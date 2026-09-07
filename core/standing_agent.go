@@ -79,11 +79,11 @@ type StandingAgent struct {
 	// dependency removed). Auto-paused and unscheduled but KEPT — not silently
 	// deleted — so the owner can relink it to a live agent or remove it. Distinct
 	// from a user Pause; BrokenReason records why.
-	Broken          bool      `json:"broken,omitempty"`
-	BrokenReason    string    `json:"broken_reason,omitempty"`
-	Created         time.Time `json:"created"`
-	NextRun         time.Time `json:"next_run,omitempty"`     // display: next scheduled fire
-	SchedulerID     string    `json:"scheduler_id,omitempty"` // current recurring task id (for cancel-and-replace)
+	Broken       bool      `json:"broken,omitempty"`
+	BrokenReason string    `json:"broken_reason,omitempty"`
+	Created      time.Time `json:"created"`
+	NextRun      time.Time `json:"next_run,omitempty"`     // display: next scheduled fire
+	SchedulerID  string    `json:"scheduler_id,omitempty"` // current recurring task id (for cancel-and-replace)
 	// Report target — the channel agent + session this standing agent was
 	// created from, so each run's result posts back where the user is watching
 	// (parallels EventMonitor's WakeAgent/WakeSession). Empty on legacy records;
@@ -106,6 +106,23 @@ type StandingAgent struct {
 	// grant would silently widen every scheduled agent's channel reach to its
 	// creator's channels. A real (saved) standing agent leaves this empty.
 	DispatchedBy []string `json:"dispatched_by,omitempty"`
+
+	// Objective (docs/loop-objectives.md). Until is what must be TRUE for this
+	// schedule to be finished, in the owner's own words; empty is an ordinary
+	// standing agent, which runs its cron and never asks whether it is done.
+	// With it set, every fire is judged from what it actually did, a met
+	// objective PAUSES the schedule, and one that runs out of attempts is
+	// marked broken with the reason — visible, resumable, not firing.
+	//
+	// UnmetCount is attempts spent in the CURRENT allowance, not a lifetime
+	// count: ClearStandingAgentBroken resets it, so an owner who fixes what a
+	// stall named gets a fresh allowance rather than one fire and the same
+	// refusal. (The recurring path measures the same thing against its own
+	// FireCount, which a standing agent does not have.)
+	Until       string             `json:"until,omitempty"`
+	MaxAttempts int                `json:"max_attempts,omitempty"`
+	UnmetCount  int                `json:"unmet_count,omitempty"`
+	Attempts    []ObjectiveAttempt `json:"attempts,omitempty"`
 }
 
 // StandingRunResult is what a registered runner reports for one run.
@@ -261,6 +278,11 @@ func ClearStandingAgentBroken(db Database, owner, name string) bool {
 	}
 	sa.Broken = false
 	sa.BrokenReason = ""
+	// A stalled objective gets a FRESH allowance. Without this the resumed
+	// schedule stalls again on its first fire and hands the owner — who has
+	// just fixed whatever the reason named — the same refusal. The attempt
+	// HISTORY is kept: the next fire still reads what the earlier ones tried.
+	sa.UnmetCount = 0
 	// Paused stays true on purpose — resume is an explicit owner action.
 	SaveStandingAgent(db, sa)
 	return true

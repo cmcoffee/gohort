@@ -161,24 +161,24 @@ func TestObjectiveAttemptsBlock(t *testing.T) {
 		Until:    "the post is published and its URL is in the thread",
 	}
 
-	if got := objectiveAttemptsBlock(base); got != "" {
+	if got := objectiveAttemptsBlock(base.objective()); got != "" {
 		t.Errorf("the first attempt has nothing to report, got %q", got)
 	}
 	notObjective := base
 	notObjective.Until = ""
-	notObjective.Attempts = []objectiveAttempt{{At: "2026-09-04T16:00:00Z", Reason: "whatever"}}
-	if got := objectiveAttemptsBlock(notObjective); got != "" {
+	notObjective.Attempts = []ObjectiveAttempt{{At: "2026-09-04T16:00:00Z", Reason: "whatever"}}
+	if got := objectiveAttemptsBlock(notObjective.objective()); got != "" {
 		t.Errorf("an ordinary recurring task gets no objective block, got %q", got)
 	}
 
 	p := base
 	p.MaxAttempts = 5
-	p.Attempts = []objectiveAttempt{
+	p.Attempts = []ObjectiveAttempt{
 		{At: "2026-09-04T16:00:00Z", Reason: "drafted but never published (create_post returned 401)"},
 		{At: "2026-09-05T16:00:00Z", Reason: "published, but the thread reply carried the title, not the URL"},
 		{At: "2026-09-06T16:00:00Z", Reason: "URL posted to the wrong thread"},
 	}
-	block := objectiveAttemptsBlock(p)
+	block := objectiveAttemptsBlock(p.objective())
 	for _, want := range []string{
 		"the post is published", // the goal, restated for this fire
 		"Attempts so far: 3.",
@@ -240,15 +240,15 @@ func TestObjectiveAttemptNumberRestartsAfterResume(t *testing.T) {
 // TestObjectiveStateLabel is what the console row and the tool's listing show:
 // enough to know whether to intervene, without opening the thread.
 func TestObjectiveStateLabel(t *testing.T) {
-	if got := objectiveStateLabel(orchUpdatePayload{}); got != "" {
+	if got := objectiveStateLabel(objectiveRun{}); got != "" {
 		t.Errorf("an ordinary recurring task has no objective state, got %q", got)
 	}
 	p := orchUpdatePayload{Until: "the post is live"}
-	if got := objectiveStateLabel(p); !strings.Contains(got, "no attempts yet") {
+	if got := objectiveStateLabel(p.objective()); !strings.Contains(got, "no attempts yet") {
 		t.Errorf("a fresh objective should say it has not tried yet, got %q", got)
 	}
-	p.Attempts = []objectiveAttempt{{Reason: "create_post returned 401"}}
-	got := objectiveStateLabel(p)
+	p.Attempts = []ObjectiveAttempt{{Reason: "create_post returned 401"}}
+	got := objectiveStateLabel(p.objective())
 	for _, want := range []string{"not yet", "1 attempt", "create_post returned 401"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("state %q is missing %q", got, want)
@@ -285,9 +285,9 @@ func TestRecurringToolOffersTheObjectiveParams(t *testing.T) {
 // original's backing array, and it must stay a note rather than growing into a
 // transcript that rides every fire's prompt.
 func TestNoteObjectiveAttemptBoundsAndIsolates(t *testing.T) {
-	p := orchUpdatePayload{Attempts: []objectiveAttempt{{Reason: "first"}}}
+	p := orchUpdatePayload{Attempts: []ObjectiveAttempt{{Reason: "first"}}}
 	armed := p // the pre-armed successor: same backing array
-	noteObjectiveAttempt(&armed, false, "second")
+	armed.Attempts = appendObjectiveAttempt(armed.Attempts, false, "second")
 	if len(p.Attempts) != 1 || p.Attempts[0].Reason != "first" {
 		t.Errorf("recording on the successor rewrote the firing payload: %+v", p.Attempts)
 	}
@@ -300,7 +300,7 @@ func TestNoteObjectiveAttemptBoundsAndIsolates(t *testing.T) {
 
 	full := orchUpdatePayload{}
 	for i := 0; i < objectiveAttemptsKept+4; i++ {
-		noteObjectiveAttempt(&full, false, fmt.Sprintf("reason %d", i))
+		full.Attempts = appendObjectiveAttempt(full.Attempts, false, fmt.Sprintf("reason %d", i))
 	}
 	if len(full.Attempts) != objectiveAttemptsKept {
 		t.Errorf("kept %d attempts, want the last %d", len(full.Attempts), objectiveAttemptsKept)
@@ -312,5 +312,66 @@ func TestNoteObjectiveAttemptBoundsAndIsolates(t *testing.T) {
 	}
 	if first := full.Attempts[0].Reason; first != "reason 4" {
 		t.Errorf("wrong window kept; first is %q", first)
+	}
+}
+
+// TestStandingObjectiveSharesTheRecurringMachinery: the two scheduling
+// surfaces keep their objective fields FLAT on their own records — an embedded
+// struct would be nested by gob and silently change the shape of everything
+// already stored — so they meet at a by-value view instead. If that view stops
+// carrying a standing agent's fields, the Fleet path silently loses its
+// objective while still accepting one.
+func TestStandingObjectiveSharesTheRecurringMachinery(t *testing.T) {
+	sa := StandingAgent{
+		Owner: "u", Name: "nightly",
+		Until:    "the report is filed",
+		Attempts: []ObjectiveAttempt{{At: "2026-09-07T04:00:00Z", Reason: "the API refused"}},
+	}
+	o := standingObjective(sa)
+	if o.Until != sa.Until || len(o.Attempts) != 1 || o.Username != "u" {
+		t.Fatalf("the standing view lost fields: %+v", o)
+	}
+
+	// The same renderers the recurring path uses, on a standing agent.
+	block := objectiveAttemptsBlock(o)
+	for _, want := range []string{"the report is filed", "the API refused", "Do not repeat an attempt"} {
+		if !strings.Contains(block, want) {
+			t.Errorf("standing attempts block is missing %q:\n%s", want, block)
+		}
+	}
+	if state := objectiveStateLabel(o); !strings.Contains(state, "not yet") {
+		t.Errorf("standing state label reads %q", state)
+	}
+	// A standing agent with no goal gets neither, exactly like a plain
+	// recurring task.
+	plain := standingObjective(StandingAgent{Owner: "u", Name: "nightly"})
+	if objectiveAttemptsBlock(plain) != "" || objectiveStateLabel(plain) != "" {
+		t.Error("an ordinary standing agent should carry no objective text")
+	}
+}
+
+// TestCreateStandingAgentOffersTheObjective: the Fleet path is the ONLY
+// scheduling path a Fleet agent has — it is not given the recurring tool — so
+// without these parameters an objective is unreachable for exactly the agents
+// most likely to be handed a goal.
+func TestCreateStandingAgentOffersTheObjective(t *testing.T) {
+	var params map[string]ToolParam
+	for _, td := range operatorManagementTools(nil, "") {
+		if td.Tool.Name == "create_standing_agent" {
+			params = td.Tool.Parameters
+		}
+	}
+	if params == nil {
+		t.Fatal("create_standing_agent is no longer registered")
+	}
+	until, ok := params["until"]
+	if !ok {
+		t.Fatal("create_standing_agent no longer offers `until` — a Fleet agent cannot be given a goal")
+	}
+	if !strings.Contains(until.Description, "OBJECTIVE") {
+		t.Error("until's description does not say what it turns the schedule into")
+	}
+	if _, ok := params["max_attempts"]; !ok {
+		t.Fatal("create_standing_agent no longer offers `max_attempts`")
 	}
 }

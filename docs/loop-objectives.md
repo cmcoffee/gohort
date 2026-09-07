@@ -1,7 +1,15 @@
 # Loop objectives — a recurring task that knows when it is done
 
-Status: **built** (v0.6.617, 2026-09-07). All three stages. Decision locked by the build: an
-objective is a recurring task with a completion check, not a fifth trigger kind.
+Status: **built** (v0.6.621, 2026-09-07). All three stages, on BOTH scheduling surfaces.
+Decision locked by the build: an objective is a schedule with a completion check, not a new
+trigger kind.
+
+**Standing agents too (v0.6.621).** The original spec scoped this to recurring tasks and put
+standing agents in Out of scope. That was wrong, and the reason is structural rather than a
+matter of taste: a Fleet agent is not given the `recurring` tool at all — it schedules through
+`create_standing_agent` — so scoping objectives to `recurring` made them unreachable for exactly
+the agents most likely to be handed a goal. Found by asking one for an objective and watching it
+do the work inline instead, because it had nothing else to reach for.
 
 Landed in stage 1 (v0.6.615): `apps/orchestrate/objective_judge.go` (the check, its evidence, and
 the outcome rule), `Until` / `MaxAttempts` on `orchUpdatePayload` and `RecurringSpec`, and the
@@ -210,10 +218,39 @@ task vanish); the attempts block lost its `of N` denominator in stage 3 (a Resum
 and it is pressure to overclaim); and `AttemptsBase` was added in stage 3 because a bound measured
 against the lifetime fire count cannot be resumed.
 
+## The standing-agent half
+
+Same judge, same outcome rule, same attempts block. What differs is only what the two records
+can offer:
+
+| | recurring task | standing agent |
+|---|---|---|
+| authored with | `recurring(action="schedule", until=…)` | `create_standing_agent(until=…)` |
+| attempt number | `FireCount + 1 - AttemptsBase` | `UnmetCount + 1` — there is no lifetime fire count to subtract from |
+| met | cancels the pre-armed successor, task retires | sets `Paused`, schedule stays listed and can be started again |
+| stalled | parks via `parkRecurringBroken` | `MarkStandingAgentBroken`, which pauses and unschedules |
+| resumed by | console **Resume**, moving `AttemptsBase` | `ClearStandingAgentBroken`, zeroing `UnmetCount` |
+
+Stopping needed no new core plumbing on either side. The standing scheduler re-arms in a
+`defer` that re-reads the record and skips a paused one, and its own comment already said that
+re-read exists to honour a pause or edit that happened during the run.
+
+One deliberate asymmetry: the recurring path judges a manual Run now but leaves the schedule
+alone, because "Run now does not touch the schedule" is that path's documented contract. The
+standing runner acts on any fire, because the runner closure is not told the trigger, and a goal
+that is met is met however the fire that met it was started.
+
+`core.ObjectiveAttempt` is the one type both records store, and it is the only objective code in
+core — the judging and the outcome rules stay with the runner in `apps/orchestrate`. The fields
+are FLAT on both records rather than shared through an embedded struct, because kvlite stores
+them with gob and gob nests an embedded struct, which would change the shape of everything
+already written.
+
 ## Out of scope
 
 - Objectives on pipelines and machines. A pipeline loop stage already has `until` as a bool
   field; a machine's phases already have exits. If a goal needs those, author it there.
+  (Standing agents WERE listed here and have since been built — see the status note.)
 - A judge that plans the next attempt. The ledger tells the next fire what failed; deciding what
   to do about it is the fire's job, with the tools it already has.
 - Cross-agent objectives. One task, one agent, one thread, like every recurring task today.

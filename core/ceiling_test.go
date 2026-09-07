@@ -113,7 +113,13 @@ const (
 	// walk and gave the phase runner, the prompt rendering and the routing
 	// (reach, tools, think, tier, depth) their own files, so the routing test
 	// has the stem it was named for.
-	coreFileCeiling = 199
+	//
+	// 199 -> 200 (v0.6.621): core/objective.go, for the one type BOTH scheduling
+	// surfaces store — a recurring task's payload and a standing agent's record
+	// each keep an attempt history, and the type they keep it in cannot live in
+	// either of their files. It is the record only; the judging and the outcome
+	// rules stay with the runner in apps/orchestrate.
+	coreFileCeiling = 200
 
 	// coreExportCeiling is the number of exported top-level symbols — funcs,
 	// types, vars, consts. Methods are excluded because they are not what
@@ -154,7 +160,13 @@ const (
 	// waker (registered from another package) reads a watch's readable card
 	// off the wake's context. The writer and the card builder stay unexported:
 	// only this package's watch poll ever attaches one.
-	coreExportCeiling = 2142
+	// 2142 -> 2168 (v0.6.621). The +25 band had been fully consumed by ordinary
+	// growth, so this re-baselines it rather than spending the last of it: the
+	// deliberate addition here is ONE exported type, core.ObjectiveAttempt, for
+	// the attempt history both scheduling surfaces store. Re-baselining is the
+	// point of typing the number by hand — a band that stays full stops meaning
+	// anything, exactly like a ceiling that is never lowered.
+	coreExportCeiling = 2168
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

@@ -151,7 +151,7 @@ type orchUpdatePayload struct {
 	// carries forward to the next fire — the same reason RemainingToday and
 	// LastActive live here — and because the next attempt needs the reasons
 	// STRUCTURED, where the run ledger holds them as prose for a person.
-	Attempts []objectiveAttempt `json:"attempts,omitempty"`
+	Attempts []ObjectiveAttempt `json:"attempts,omitempty"`
 	// AttemptsBase is the fire count at which the CURRENT attempt allowance
 	// began. Zero for a fresh objective; moved forward by a Resume, so an owner
 	// who fixed what a stall named gets a fresh allowance instead of one fire
@@ -161,13 +161,6 @@ type orchUpdatePayload struct {
 	// current day (RFC3339), so the plan survives restarts and each fire just
 	// pops the next. Empty for fixed, or when a fresh day needs planning.
 	RemainingToday []string `json:"remaining_today,omitempty"`
-}
-
-// objectiveAttempt is one earlier fire's verdict, as the next fire is told it.
-type objectiveAttempt struct {
-	At     string `json:"at"`               // RFC3339 UTC
-	Met    bool   `json:"met,omitempty"`    // recorded for completeness; a met objective retires
-	Reason string `json:"reason,omitempty"` // the checker's one line
 }
 
 // orchRef points at the running OrchestrateApp so scheduler callbacks
@@ -456,7 +449,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// What earlier attempts tried, for an objective on its second or later fire.
 	// Placed last, in the volatile tail beside the time context: recency is
 	// where it belongs and the tail never caches anyway.
-	if block := objectiveAttemptsBlock(p); block != "" {
+	if block := objectiveAttemptsBlock(p.objective()); block != "" {
 		fireContent += "\n\n" + block
 	}
 	msgs = append(msgs, Message{Role: "user", Content: fireContent})
@@ -850,7 +843,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 			// Onto the SUCCESSOR's payload, which is what carries forward. Also
 			// recorded when the chain stops: a stalled objective is parked with
 			// its history, so a resume picks up knowing what was already tried.
-			noteObjectiveAttempt(&armed, verdict.Met, objectiveReason(verdict, judged))
+			armed.Attempts = appendObjectiveAttempt(armed.Attempts, verdict.Met, objectiveReason(verdict, judged))
 		}
 		if objStopped && reArm && armedID != "" {
 			// Stand the chain down. The successor was pre-armed BEFORE this fire

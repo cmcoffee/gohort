@@ -194,18 +194,18 @@ func objectiveAttemptNumber(p orchUpdatePayload) int {
 //
 // A PARKED objective is not described here: it renders through the broken-row
 // label, which already carries the stall reason the park was given.
-func objectiveStateLabel(p orchUpdatePayload) string {
-	if strings.TrimSpace(p.Until) == "" {
+func objectiveStateLabel(o objectiveRun) string {
+	if strings.TrimSpace(o.Until) == "" {
 		return ""
 	}
-	if len(p.Attempts) == 0 {
+	if len(o.Attempts) == 0 {
 		return "objective — no attempts yet"
 	}
-	last := p.Attempts[len(p.Attempts)-1]
+	last := o.Attempts[len(o.Attempts)-1]
 	if last.Met {
 		return "objective — met: " + truncateObs(last.Reason, 160)
 	}
-	return fmt.Sprintf("objective — not yet (%d attempt(s)): %s", len(p.Attempts), truncateObs(last.Reason, 160))
+	return fmt.Sprintf("objective — not yet (%d attempt(s)): %s", len(o.Attempts), truncateObs(last.Reason, 160))
 }
 
 // brokenListReason surfaces a parked task's reason in the recurring tool's
@@ -221,24 +221,43 @@ func brokenListReason(p orchUpdatePayload) string {
 	return "parked"
 }
 
+// objectiveRun is the objective half of whatever is running, by value. Two
+// records carry one: a recurring task's payload and a standing agent. They keep
+// the fields FLAT rather than sharing an embedded struct, because kvlite stores
+// both with gob and gob nests an embedded struct — which would silently change
+// the shape of every payload already written.
+type objectiveRun struct {
+	Until    string
+	Attempts []ObjectiveAttempt
+	Username string // whose local clock the attempt timestamps are shown in
+}
+
+func (p orchUpdatePayload) objective() objectiveRun {
+	return objectiveRun{Until: p.Until, Attempts: p.Attempts, Username: p.Username}
+}
+
+func standingObjective(sa StandingAgent) objectiveRun {
+	return objectiveRun{Until: sa.Until, Attempts: sa.Attempts, Username: sa.Owner}
+}
+
 // objectiveAttemptsKept bounds the history carried on the payload. Twelve is
 // enough for the block to show a pattern and small enough that it stays a note
 // rather than a transcript — it rides the volatile tail of every fire's prompt.
 const objectiveAttemptsKept = 12
 
-// noteObjectiveAttempt records what this attempt came to, on the payload that
-// carries forward.
+// appendObjectiveAttempt records what an attempt came to, returning the new
+// history for the caller to store on its own record.
 //
 // The run ledger already holds a row per fire and is what a PERSON reads in
 // Activity. This is the other job: the structured state the next attempt is
 // told, kept where the next attempt will actually find it. Parsing the reasons
 // back out of the ledger's display prose would make a wire format out of a
 // sentence written to be read.
-func noteObjectiveAttempt(p *orchUpdatePayload, met bool, reason string) {
-	// Fresh slice rather than append-in-place: this payload was copied from the
-	// firing one and shares its backing array.
-	kept := append([]objectiveAttempt(nil), p.Attempts...)
-	kept = append(kept, objectiveAttempt{
+func appendObjectiveAttempt(attempts []ObjectiveAttempt, met bool, reason string) []ObjectiveAttempt {
+	// Fresh slice rather than append-in-place: the caller's record may have
+	// been copied from another and share its backing array.
+	kept := append([]ObjectiveAttempt(nil), attempts...)
+	kept = append(kept, ObjectiveAttempt{
 		At:     time.Now().UTC().Format(time.RFC3339),
 		Met:    met,
 		Reason: strings.TrimSpace(reason),
@@ -246,7 +265,7 @@ func noteObjectiveAttempt(p *orchUpdatePayload, met bool, reason string) {
 	if n := len(kept); n > objectiveAttemptsKept {
 		kept = kept[n-objectiveAttemptsKept:]
 	}
-	p.Attempts = kept
+	return kept
 }
 
 // objectiveAttemptsBlock is what makes a fifth attempt different from a first:
@@ -255,20 +274,20 @@ func noteObjectiveAttempt(p *orchUpdatePayload, met bool, reason string) {
 //
 // Rendered into the fire's prompt beside the time context — the volatile tail
 // that never caches anyway, so it costs no prefix reuse.
-func objectiveAttemptsBlock(p orchUpdatePayload) string {
-	objective := strings.TrimSpace(p.Until)
-	if objective == "" || len(p.Attempts) == 0 {
+func objectiveAttemptsBlock(o objectiveRun) string {
+	objective := strings.TrimSpace(o.Until)
+	if objective == "" || len(o.Attempts) == 0 {
 		return ""
 	}
-	loc := UserLocation(p.Username)
+	loc := UserLocation(o.Username)
 	var b strings.Builder
 	fmt.Fprintf(&b, "[Objective: %s\n", truncateObs(objective, 600))
 	// The COUNT, never the bound. Two reasons: after a Resume the allowance
 	// restarts while the history keeps its length, so "3 of 5" would be a lie;
 	// and telling the model it is nearly out of tries is pressure to declare
 	// success, which is the one thing the checker exists to catch.
-	fmt.Fprintf(&b, "Attempts so far: %d.\n", len(p.Attempts))
-	for i, a := range p.Attempts {
+	fmt.Fprintf(&b, "Attempts so far: %d.\n", len(o.Attempts))
+	for i, a := range o.Attempts {
 		when := a.At
 		if ts, err := time.Parse(time.RFC3339, a.At); err == nil {
 			when = ts.In(loc).Format("2006-01-02 15:04")

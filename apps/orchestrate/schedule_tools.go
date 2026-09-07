@@ -324,7 +324,7 @@ func (t *chatTurn) recurringList(args map[string]any) (string, error) {
 			Pattern: pattern, Cadence: recurringDetail(p),
 			FireCount: p.FireCount, CreatedAt: p.CreatedAt,
 			PostsTo:   postsTo,
-			Objective: p.Until, State: objectiveStateLabel(p),
+			Objective: p.Until, State: objectiveStateLabel(p.objective()),
 			Parked: brokenListReason(p),
 		})
 	}

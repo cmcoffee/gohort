@@ -923,6 +923,8 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					"pipeline_id":      {Type: "string", Description: "Name or id of a stored pipeline to run instead of an agent. Use this when the task IS the workflow — a nightly research run, a scheduled report — rather than something an agent should think about first. It runs the pipeline directly, so no model call is spent deciding to start it, and `mission` becomes the pipeline's input."},
 					"machine_id":       {Type: "string", Description: "Name or id of a stored MACHINE to run. The third target, for work that carries state between its steps: a pipeline is dataflow with nothing kept between stages, a machine has a blackboard and running lists. Reach for it when the task is \"gather, keep what is new, report on what changed\" rather than a straight-through workflow. The machine must be marked \"this RUNS instead of converses\", because a schedule fires with nobody there to answer a step that waits. `mission` becomes the run's input."},
 					"mission":          {Type: "string", Description: "What the agent should do each run."},
+					"until":            {Type: "string", Description: "(optional) Makes this an OBJECTIVE rather than a plain schedule: what must be TRUE for it to be FINISHED, in plain language (\"the file is uploaded and its link posted to the thread\"). Every run is judged against this from what it actually DID, not from what it said; the run that reaches the goal is the last, and each later attempt is told what the earlier ones tried. Use it when the user wants something DONE; omit it when they want something RUN on a schedule."},
+					"max_attempts":     {Type: "number", Description: "(optional, with until) How many runs may end with the goal still UNMET before the schedule stops trying. Reaching it marks the schedule broken with the last reason, so the owner sees it stopped and why; resuming gives it a fresh allowance. Omit for no attempt bound."},
 					"cron":             {Type: "string", Description: "Recurring wall-clock schedule in the human form DAY(S) HH:MM — NOT 5-field crontab (\"*/1 * * * *\" is INVALID). LOCAL time, the SAME zone time_in_zone reports; use the time the user stated VERBATIM, do NOT convert to UTC. e.g. \"every day at 12pm\" → \"daily 12:00\"; also \"FRI 21:30\", \"weekdays 17:00\". For sub-hourly / every-N-minutes schedules cron can't express, use interval_seconds instead (e.g. 60 = every minute). Leave empty if using interval_seconds."},
 					"start_at":         {Type: "string", Description: "ISO8601 first-run time, e.g. 2026-06-10T08:00:00-07:00. Use with interval_seconds for an arbitrary start + interval. Omit when using cron."},
 					"interval_seconds": {Type: "number", Description: "Recurrence interval in seconds (60 = every minute, 3600 = hourly, 21600 = every 6h, 86400 = daily). This is the way to schedule sub-hourly / every-N-minutes runs (cron can't). Use with optional start_at. Omit when using cron."},
@@ -1035,6 +1037,8 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				sa := StandingAgent{
 					Name: name, Owner: owner, AgentID: agentID, PipelineID: pipelineID, MachineID: machineID,
 					Mission: mission, Created: time.Now(),
+					Until:           strings.TrimSpace(stringArg(args, "until")),
+					MaxAttempts:     intFromArgs(args, "max_attempts"),
 					ReportAgentID:   controllerAgentID,
 					ReportSessionID: controllerSession,
 					// Same default as a recurring task: a controller with a cortex

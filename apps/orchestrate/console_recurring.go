@@ -169,7 +169,7 @@ func (T *OrchestrateApp) handleConsoleRecurring(w http.ResponseWriter, r *http.R
 		// Where an objective stands, for the rows that have a goal. Broken wins
 		// below: a parked task's reason is the more urgent thing to read, and
 		// for a stalled objective it already names the goal's last verdict.
-		row.State = objectiveStateLabel(rt.Payload)
+		row.State = objectiveStateLabel(rt.Payload.objective())
 		if rt.Payload.Broken {
 			row.Broken = true
 			row.State = brokenStateLabel(rt.Payload.BrokenReason)

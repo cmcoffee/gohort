@@ -16,6 +16,7 @@ package orchestrate
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -68,6 +69,11 @@ func registerStandingRunner(app *OrchestrateApp) {
 		mission := strings.TrimSpace(sa.Mission)
 		if mission == "" {
 			mission = "Run your standing task now."
+		}
+		// What earlier attempts tried, for an objective on its second or later
+		// fire. Appended to the mission because that IS this run's prompt.
+		if block := objectiveAttemptsBlock(standingObjective(sa)); block != "" {
+			mission += "\n\n" + block
 		}
 		// Live-activity registration: a standing fire has no HTTP client, so
 		// without this it was invisible while running — only its completed
@@ -138,6 +144,66 @@ func registerStandingRunner(app *OrchestrateApp) {
 			}
 			appendSessionDiag(UserDB(app.DB, sa.Owner), reportAgent, reportSession, "round-cap",
 				"Scheduled run \""+sa.Name+"\" hit its worker-round limit before finishing — the last action may not have run.")
+		}
+		// Objective check (docs/loop-objectives.md). A standing agent with an
+		// `until` is asking for a state of the world, so the fire that reaches
+		// it is the last one, and the fire that runs out of attempts stops and
+		// says so. Judged from what this run RAN and reported, never from the
+		// reply alone — see objective_judge.go.
+		//
+		// Only on the success path: a run that errored never produced an
+		// attempt to judge, and the failed result already says why.
+		//
+		// Stopping needs no new plumbing. The scheduler's deferred re-arm
+		// re-reads the record and skips a paused one, and MarkStandingAgentBroken
+		// pauses and unschedules — so writing the record here is enough.
+		if objective := strings.TrimSpace(sa.Until); objective != "" {
+			labels, failed := objectiveToolLabels(toolTrace)
+			attempt := sa.UnmetCount + 1
+			verdict, judged := app.judgeObjective(ctx, objectiveEvidence{
+				Objective:   objective,
+				Reply:       out,
+				ToolCalls:   labels,
+				ToolErrors:  failed,
+				Attempt:     attempt,
+				MaxAttempts: sa.MaxAttempts,
+			})
+			line, stop, stalled := objectiveOutcome(verdict, judged, attempt, sa.MaxAttempts)
+			reason := objectiveReason(verdict, judged)
+			// Re-read: this run may have taken minutes, and a pause or an edit
+			// during it is the owner's word, not ours to overwrite.
+			cur, ok := GetStandingAgent(RootDB, sa.Owner, sa.Name)
+			if !ok {
+				cur = sa
+			}
+			cur.Attempts = appendObjectiveAttempt(cur.Attempts, verdict.Met, reason)
+			if !verdict.Met {
+				cur.UnmetCount = attempt
+			}
+			switch {
+			case stalled:
+				SaveStandingAgent(RootDB, cur)
+				MarkStandingAgentBroken(RootDB, sa.Owner, sa.Name,
+					fmt.Sprintf("objective not met after %d attempt(s) — %s", attempt, reason))
+				Log("[orchestrate/objective] standing %s/%s stalled after attempt %d: %s", sa.Owner, sa.Name, attempt, reason)
+			case stop:
+				// Met. Paused rather than deleted: the schedule stays visible,
+				// says why it stopped, and can be started again.
+				//
+				// Deliberately unlike the recurring path, which acts only on a
+				// scheduled fire and leaves a manual Run now alone: the runner
+				// closure is not told the trigger, and a goal that is met is met
+				// however the fire that met it was started.
+				cur.Paused = true
+				SaveStandingAgent(RootDB, cur)
+				Log("[orchestrate/objective] standing %s/%s met its objective on attempt %d: %s", sa.Owner, sa.Name, attempt, reason)
+			default:
+				SaveStandingAgent(RootDB, cur)
+			}
+			res.Summary = strings.ToUpper(line[:1]) + line[1:] + ". " + res.Summary
+			if stalled {
+				res.Status = RunAttention
+			}
 		}
 		return res
 	})

@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 func TestNextCronOccurrence(t *testing.T) {
@@ -180,5 +182,47 @@ func TestScheduledRunCarriesNoDispatchChain(t *testing.T) {
 	}, "schedule")
 	if len(seen.DispatchedBy) != 0 {
 		t.Fatalf("a schedule must carry no dispatch chain, got %v", seen.DispatchedBy)
+	}
+}
+
+// TestClearStandingAgentBrokenRestartsTheObjectiveAllowance: a stalled
+// objective is parked with its reason, and the owner fixes whatever the reason
+// named and resumes. If the allowance carried its old count, the resumed
+// schedule would stall again on its very first run and hand back the same
+// refusal — the defect the recurring path measured its attempts against a
+// fresh baseline to avoid, reached here by resetting the counter instead
+// (a standing agent has no lifetime fire count to subtract from).
+//
+// The attempt HISTORY deliberately survives: the next run still gets told what
+// the earlier ones tried.
+func TestClearStandingAgentBrokenRestartsTheObjectiveAllowance(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	SaveStandingAgent(db, StandingAgent{
+		Owner: "u", Name: "nightly", AgentID: "ag",
+		Until: "the report is filed", MaxAttempts: 3, UnmetCount: 3,
+		Attempts:     []ObjectiveAttempt{{At: "2026-09-07T04:00:00Z", Reason: "the API refused"}},
+		Broken:       true,
+		BrokenReason: "objective not met after 3 attempt(s) — the API refused",
+		Paused:       true,
+	})
+
+	if !ClearStandingAgentBroken(db, "u", "nightly") {
+		t.Fatal("the parked schedule could not be resumed")
+	}
+	got, ok := GetStandingAgent(db, "u", "nightly")
+	if !ok {
+		t.Fatal("the schedule vanished on resume")
+	}
+	if got.UnmetCount != 0 {
+		t.Errorf("resumed with %d attempts already spent — it would stall on its first run", got.UnmetCount)
+	}
+	if len(got.Attempts) != 1 || got.Attempts[0].Reason != "the API refused" {
+		t.Errorf("the attempt history did not survive the resume: %+v", got.Attempts)
+	}
+	if got.Broken || got.BrokenReason != "" {
+		t.Error("the park was not cleared")
+	}
+	if !got.Paused {
+		t.Error("Paused must stay: resuming a parked schedule is a separate, explicit action")
 	}
 }
