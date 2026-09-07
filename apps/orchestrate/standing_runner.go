@@ -169,18 +169,21 @@ func registerStandingRunner(app *OrchestrateApp) {
 		if body == "" {
 			return // nothing to report
 		}
-		sess, ok := loadChatSession(udb, reportAgent, reportSession)
-		if !ok {
-			sess = ChatSession{ID: reportSession, AgentID: reportAgent}
-		}
-		sess.Messages = append(sess.Messages, ChatMessage{
-			Role:       "assistant",
-			Content:    body,
-			Created:    time.Now(),
-			ReportFrom: sa.Name,
-			ReportKind: cortexKindScheduled,
-		})
-		if _, err := saveChatSession(udb, sess); err != nil {
+		// Through the per-session append lock, re-reading the stored thread
+		// first: this report goes to a thread that scheduled fires, channel
+		// mirrors and other standing agents also write, and a bare
+		// load-append-save loses whichever card was written while this one was
+		// being composed. Observed on the scheduled path, where the daily blog
+		// post card vanished whenever the engagement fire overlapped it.
+		if err := appendToStoredSession(udb, reportAgent, reportSession,
+			ChatSession{ID: reportSession, AgentID: reportAgent},
+			ChatMessage{
+				Role:       "assistant",
+				Content:    body,
+				Created:    time.Now(),
+				ReportFrom: sa.Name,
+				ReportKind: cortexKindScheduled,
+			}); err != nil {
 			Log("[standing] report append failed for %s/%s: %v", sa.Owner, sa.Name, err)
 		}
 	})

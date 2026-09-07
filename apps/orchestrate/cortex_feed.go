@@ -52,37 +52,45 @@ func appendCortexObs(db Database, agentID, from, kind, text string) {
 		return // cortex off for this agent — nothing to feed
 	}
 	sid := cortexSessionID(agentID)
-	sess, _ := loadChatSession(db, agentID, sid)
 	now := time.Now()
-	if strings.TrimSpace(sess.ID) == "" {
-		sess.ID = sid
-		sess.AgentID = agentID
-		sess.Created = now
-	}
-	sess.Messages = append(sess.Messages, ChatMessage{
-		Role:       "assistant",
-		ReportFrom: strings.TrimSpace(from),
-		ReportKind: strings.TrimSpace(kind),
-		Content:    strings.TrimSpace(text),
-		Created:    now,
-	})
-	// Length backstop for observation-ONLY cortexes: a real turn runs the
-	// compaction + trim pipeline, but an agent that only receives
-	// observations never takes a turn, so this append grew the thread
-	// forever. Forget-old is correct here — observations are pointers by
-	// design ("cortex holds pointers, not bodies") — but ONLY while no fold
-	// cursor exists: once the thread has compaction state, dropping leading
-	// messages without decrementing the cursor desyncs it, so the turn
-	// pipeline's trimStoredHistory owns the bound instead.
-	if len(sess.Messages) > storedHistoryCap+storedHistorySlack {
-		if st := loadCompactState(db, agentID, sid); st.SummarizedThrough == 0 && strings.TrimSpace(st.Summary) == "" {
-			sess.Messages = sess.Messages[len(sess.Messages)-storedHistoryCap:]
+	// The whole read-modify-write under the per-session append lock, re-reading
+	// inside it. The cortex is the MOST shared thread there is — scheduled
+	// fires, standing reports, monitor wakes and channel mirrors all land here
+	// — and this one has a trim between the append and the save, so the lock
+	// has to span all of it rather than just the append (which is why it uses
+	// withSessionAppend directly instead of appendToStoredSession).
+	withSessionAppend(agentID, sid, func() {
+		sess, _ := loadChatSession(db, agentID, sid)
+		if strings.TrimSpace(sess.ID) == "" {
+			sess.ID = sid
+			sess.AgentID = agentID
+			sess.Created = now
 		}
-	}
-	sess.LastAt = now // mark unread (LastSeen untouched) — new cortex activity
-	if _, err := saveChatSession(db, sess); err != nil {
-		Log("[orchestrate.cortex] observation append failed for agent=%s: %v", agentID, err)
-	}
+		sess.Messages = append(sess.Messages, ChatMessage{
+			Role:       "assistant",
+			ReportFrom: strings.TrimSpace(from),
+			ReportKind: strings.TrimSpace(kind),
+			Content:    strings.TrimSpace(text),
+			Created:    now,
+		})
+		// Length backstop for observation-ONLY cortexes: a real turn runs the
+		// compaction + trim pipeline, but an agent that only receives
+		// observations never takes a turn, so this append grew the thread
+		// forever. Forget-old is correct here — observations are pointers by
+		// design ("cortex holds pointers, not bodies") — but ONLY while no fold
+		// cursor exists: once the thread has compaction state, dropping leading
+		// messages without decrementing the cursor desyncs it, so the turn
+		// pipeline's trimStoredHistory owns the bound instead.
+		if len(sess.Messages) > storedHistoryCap+storedHistorySlack {
+			if st := loadCompactState(db, agentID, sid); st.SummarizedThrough == 0 && strings.TrimSpace(st.Summary) == "" {
+				sess.Messages = sess.Messages[len(sess.Messages)-storedHistoryCap:]
+			}
+		}
+		sess.LastAt = now // mark unread (LastSeen untouched) — new cortex activity
+		if _, err := saveChatSession(db, sess); err != nil {
+			Log("[orchestrate.cortex] observation append failed for agent=%s: %v", agentID, err)
+		}
+	})
 }
 
 // cortexDeliverableTools gives a Cortex-enabled agent the file_deliverable tool —

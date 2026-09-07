@@ -69,3 +69,49 @@ func TestAppendToStoredSessionSynthesizesMissingThread(t *testing.T) {
 		t.Fatalf("thread not materialized from fallback: ok=%v msgs=%+v", ok, got.Messages)
 	}
 }
+
+// TestCortexObservationsDoNotOverwriteEachOther exercises the fix at a real
+// call site rather than on the helper alone.
+//
+// The cortex is the most shared thread there is: scheduled fires, standing
+// reports, monitor wakes and channel mirrors all land on it, each on its own
+// clock. appendCortexObs read the thread, appended one card, trimmed and saved
+// — and two observations arriving together kept only the later one.
+func TestCortexObservationsDoNotOverwriteEachOther(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	agent, err := saveAgent(db, AgentRecord{
+		Name: "Standing", Owner: "u", Cortex: true, OrchestratorPrompt: "watch things",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const n = 8
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			appendCortexObs(db, agent.ID, fmt.Sprintf("source %d", i), cortexKindMonitor,
+				fmt.Sprintf("observation %d", i))
+		}(i)
+	}
+	wg.Wait()
+
+	sess, ok := loadChatSession(db, agent.ID, cortexSessionID(agent.ID))
+	if !ok {
+		t.Fatal("the cortex thread was never written")
+	}
+	if len(sess.Messages) != n {
+		t.Fatalf("cortex holds %d observations, want %d — one overwrote another", len(sess.Messages), n)
+	}
+	seen := map[string]bool{}
+	for _, m := range sess.Messages {
+		seen[m.Content] = true
+	}
+	for i := 0; i < n; i++ {
+		if !seen[fmt.Sprintf("observation %d", i)] {
+			t.Errorf("observation %d was lost", i)
+		}
+	}
+}

@@ -163,18 +163,18 @@ func registerOperatorWake(app *OrchestrateApp) {
 				if udb == nil {
 					return false
 				}
-				sess, ok := loadChatSession(udb, wakeAgent, cardSession)
-				if !ok {
-					sess = ChatSession{ID: cardSession, AgentID: wakeAgent}
-				}
-				sess.Messages = append(sess.Messages, ChatMessage{
-					Role:       "assistant",
-					Content:    content,
-					Created:    time.Now(),
-					ReportFrom: monitorName,
-					ReportKind: cortexKindMonitor,
-				})
-				if _, err := saveChatSession(udb, sess); err != nil {
+				// Locked + re-read, like every other card written into a shared
+				// thread: a monitor fires on its own clock, so it collides with
+				// scheduled fires and standing reports by construction.
+				if err := appendToStoredSession(udb, wakeAgent, cardSession,
+					ChatSession{ID: cardSession, AgentID: wakeAgent},
+					ChatMessage{
+						Role:       "assistant",
+						Content:    content,
+						Created:    time.Now(),
+						ReportFrom: monitorName,
+						ReportKind: cortexKindMonitor,
+					}); err != nil {
 					Log("[operator.wake] %s/%s record monitor card failed: %v", owner, monitorName, err)
 					return false
 				}
