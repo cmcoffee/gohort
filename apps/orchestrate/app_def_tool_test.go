@@ -83,11 +83,8 @@ func TestNoChromeSectionsStayCountableByVerify(t *testing.T) {
 	if !strings.Contains(string(epilogue), marker) {
 		t.Fatalf("the runtime no longer marks mounted sections with %q — verify's count will read a live panel as a blank page", marker)
 	}
-	src, err := os.ReadFile("app_def_tool.go")
-	if err != nil {
-		t.Fatalf("read tool: %v", err)
-	}
-	if !strings.Contains(string(src), "[data-ui-section]") {
+	src := readSourceFile(t, "app_def_tool.go")
+	if !strings.Contains(src, "[data-ui-section]") {
 		t.Fatalf("verify's probe must count %q too, or it reports a page of no-chrome sections as blank", marker)
 	}
 }
@@ -284,11 +281,8 @@ func TestUpdateRefusesToSilentlyDropAFunctionalSection(t *testing.T) {
 // and the app was declared ready, and the first person to use it met the
 // failure instead — which is the wrong order for finding it out.
 func TestVerifyChecksTheBoundPipelineResolves(t *testing.T) {
-	src, err := os.ReadFile("app_def_tool.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	verify := string(src)[strings.Index(string(src), "func (t *chatTurn) appDefVerify"):]
+	src := readSourceFile(t, "app_def_tool.go")
+	verify := src[strings.Index(src, "func (t *chatTurn) appDefVerify"):]
 	if !strings.Contains(verify[:4000], "LookupAppPipeline") {
 		t.Fatal("verify never resolves the app's pipeline binding — a dangling pipeline_id passes every check")
 	}
