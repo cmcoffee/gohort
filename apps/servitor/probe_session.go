@@ -63,15 +63,21 @@ func normalizeTask(s string) string {
 // read from ONE place regardless of who opened it. For a non-shared appliance
 // ownerUser == userID, so behavior is unchanged. Scoped memory is keyed by the
 // appliance ID (global), so it's shared with no extra plumbing.
+
+// runSession is one investigation on one appliance: connect (or refuse),
+// build the exec seam and the tool kit, run the mode the caller asked for,
+// then persist and report. Everything the run holds lives on probeRun; each
+// stage is a method, and a stage that has to end the run early says so
+// with actReturn, which is what its `return` used to mean when this was
+// one function.
 func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string, appliance Appliance, confirm chan bool, messages []Message, udb Database, saveProfile bool) {
+	pr := &probeRun{T: T, ctx: ctx, id: id, userID: userID, ownerUser: ownerUser, appliance: appliance, confirm: confirm, messages: messages, udb: udb, saveProfile: saveProfile}
 	// scratch is this run's private write location on the target (see scratch.go).
 	// Set once the transport is up; cleared if the directory can't be created, so
 	// the classifier falls back to gating every write.
-	scratch := ""
-	var scratchCleanup func()
 	defer func() {
-		if scratchCleanup != nil {
-			scratchCleanup()
+		if pr.scratchCleanup != nil {
+			pr.scratchCleanup()
 		}
 		confirmChans.Delete(id)
 		pendingCmds.Delete(id)
@@ -80,291 +86,657 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 		probeSessions.AppendEvent(id, probeEvent{Kind: "done"}, true)
 		probeSessions.ScheduleCleanup(id)
 	}()
-
-	if ownerUser == "" {
-		ownerUser = userID
+	if pr.connect() == actReturn {
+		return
 	}
-	ownerUDB := udb
-	if ownerUser != userID {
-		ownerUDB = UserDB(T.DB, ownerUser) // shared repo: clone/store live under the owner
+	pr.execSeam()
+	pr.execTools()
+	pr.memoryTools()
+	pr.readTools()
+	pr.reportTools()
+	pr.assembleToolkit()
+	var act probeAction
+	if pr.saveProfile {
+		act = pr.mapMode()
+	} else {
+		act = pr.chatMode()
+	}
+	if act == actReturn {
+		return
+	}
+	pr.finishTurn()
+}
+
+// sessionFailures collects commands that exited nonzero during this session.
+// Emitted as a summary before the final reply so the user can see what the agent
+// tried and couldn't complete.
+type sessionFailure struct {
+	Cmd    string
+	Reason string // first non-empty line of the output
+}
+
+const loopLimit = 3
+
+type probeRun struct {
+	T                *Servitor
+	ctx              context.Context
+	id               string
+	userID           string
+	ownerUser        string
+	appliance        Appliance
+	confirm          chan bool
+	messages         []Message
+	udb              Database
+	saveProfile      bool
+	scratch          string
+	scratchCleanup   func()
+	ownerUDB         Database
+	a                *Servitor
+	termPrompt       string
+	sessionFailures  []sessionFailure
+	cmdCount         map[string]int
+	cmdMu            sync.Mutex
+	failCount        map[string]int
+	failMu           sync.Mutex
+	read_log_tool    AgentToolDef
+	search_logs_tool AgentToolDef
+	ptyCount         map[string]int
+	note_lesson_tool AgentToolDef
+	// techniqueMu serializes the techniques string between an append in the
+	// tool handler and a prune in a background audit: both are read-modify-
+	// write on one record, and without the lock a prune landing mid-append
+	// would drop whichever write finished first. An audit outliving the
+	// session is fine — it holds no session state, only the store — and is
+	// bounded by its own timeout.
+	techniqueMu           sync.Mutex
+	record_technique_tool AgentToolDef
+	record_discovery_tool AgentToolDef
+	store_fact_tool       AgentToolDef
+	link_entities_tool    AgentToolDef
+	store_rule_tool       AgentToolDef
+	count_lines_tool      AgentToolDef
+	read_range_tool       AgentToolDef
+	search_facts_tool     AgentToolDef
+	search_knowledge_tool AgentToolDef
+	// Cached recorded-knowledge blocks. These feed buildLeadSystemPrompt and
+	// the investigator's first message; the old workerPrompt concatenation
+	// that used to interleave here was dead (never sent to any model) and
+	// was removed along with its three prompt builders.
+	cachedFacts string
+	// Cached recorded-knowledge blocks. These feed buildLeadSystemPrompt and
+	// the investigator's first message; the old workerPrompt concatenation
+	// that used to interleave here was dead (never sent to any model) and
+	// was removed along with its three prompt builders.
+	cachedNotes string
+	// Cached recorded-knowledge blocks. These feed buildLeadSystemPrompt and
+	// the investigator's first message; the old workerPrompt concatenation
+	// that used to interleave here was dead (never sent to any model) and
+	// was removed along with its three prompt builders.
+	cachedTechniques string
+	// Cached recorded-knowledge blocks. These feed buildLeadSystemPrompt and
+	// the investigator's first message; the old workerPrompt concatenation
+	// that used to interleave here was dead (never sent to any model) and
+	// was removed along with its three prompt builders.
+	cachedRules string
+	// Cached recorded-knowledge blocks. These feed buildLeadSystemPrompt and
+	// the investigator's first message; the old workerPrompt concatenation
+	// that used to interleave here was dead (never sent to any model) and
+	// was removed along with its three prompt builders.
+	cachedDiscoveries       string
+	watch_condition_tool    AgentToolDef
+	list_watches_tool       AgentToolDef
+	save_to_codewriter_tool AgentToolDef
+	save_to_techwriter_tool AgentToolDef
+	list_guides_tool        AgentToolDef
+	record_finding_tool     AgentToolDef
+	push_to_guide_tool      AgentToolDef
+	ptyLocal                bool
+	// workerTools holds a placeholder run_command entry. Every call site must use
+	// withFreshRunTool(workerTools) so each invocation gets isolated counters.
+	workerTools []AgentToolDef
+	// Populated for toolset appliances only; carries the bound tools plus what
+	// was withheld and why, and feeds both the allow-list check and the
+	// orientation pass below.
+	resolvedTools resolvedToolset
+	reply         string
+	consolidateFn func()
+	// ret carries an early return out of a phase method (see exit).
+	ret probeResult
+}
+
+// probeAction is what a round method tells the driver to do next.
+type probeAction int
+
+const (
+	actNone     probeAction = iota // carry on with the next phase of this round
+	actContinue                    // next round
+	actBreak                       // leave the loop and finish
+	actReturn                      // return pr.ret from the function
+)
+
+// probeResult is the function's return, parked by exit until the driver returns it.
+type probeResult struct {
+	resp    *Response
+	history []Message
+	err     error
+}
+
+func (pr *probeRun) connect() probeAction {
+	if pr.ownerUser == "" {
+		pr.ownerUser = pr.userID
+	}
+	pr.ownerUDB = pr.udb
+	if pr.ownerUser != pr.userID {
+		pr.ownerUDB = UserDB(pr.T.DB, pr.ownerUser) // shared repo: clone/store live under the owner
 	}
 
-	a := &Servitor{}
-	a.AppCore = T.AppCore
+	pr.a = &Servitor{}
+	pr.a.AppCore = pr.T.AppCore
 
-	if appliance.Type == "workspace" {
+	if pr.appliance.Type == "workspace" {
 		// A workspace has no host, clone or credentials of its own — the
 		// coordinator fans the question out to its members, each of which
 		// re-enters this function in its own owner's context. See workspace.go.
-		T.runWorkspaceSession(ctx, id, userID, appliance, messages, udb)
-		return
+		pr.T.runWorkspaceSession(pr.ctx, pr.id, pr.userID, pr.appliance, pr.messages, pr.udb)
+		return actReturn
 	}
-	if strings.TrimSpace(appliance.PeerName) != "" {
+	if strings.TrimSpace(pr.appliance.PeerName) != "" {
 		// Reached through a peer: no connection to acquire here, because the
 		// SSH session lives on the far side. Everything ELSE about this run is
 		// ordinary — same prompts for the appliance's type, same tools, same
 		// risk gate, same knowledge — because only the exec seam differs.
-		emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf(
-			"Working %s through %s.", applianceLabel(appliance.Name, appliance.ID), appliance.PeerName)})
-	} else if appliance.Type == "command" {
-		emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Running locally: %s", appliance.Command)})
-	} else if appliance.Type == "repo" {
+		emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf(
+			"Working %s through %s.", applianceLabel(pr.appliance.Name, pr.appliance.ID), pr.appliance.PeerName)})
+	} else if pr.appliance.Type == "command" {
+		emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Running locally: %s", pr.appliance.Command)})
+	} else if pr.appliance.Type == "repo" {
 		// No connection to acquire — probes search/read the encrypted store.
 		// A Map run (saveProfile) is the repo analogue of SSH reconnaissance:
 		// it re-clones synchronously first so the map reflects CURRENT code and
 		// self-heals an empty store (e.g. right after Clear Memory). Q&A runs
 		// use whatever is already ingested.
-		if saveProfile {
-			emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Cloning %s…", repoDisplayTarget(appliance))})
-			withHeartbeat(ctx, id, "Cloning repository", func() {
-				T.cloneAndIngestRepo(ctx, ownerUser, ownerUDB, appliance.ID)
+		if pr.saveProfile {
+			emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Cloning %s…", repoDisplayTarget(pr.appliance))})
+			withHeartbeat(pr.ctx, pr.id, "Cloning repository", func() {
+				pr.T.cloneAndIngestRepo(pr.ctx, pr.ownerUser, pr.ownerUDB, pr.appliance.ID)
 			})
-			if ctx.Err() != nil {
-				probeSessions.ScheduleCleanup(id)
-				return
+			if pr.ctx.Err() != nil {
+				probeSessions.ScheduleCleanup(pr.id)
+				return actReturn
 			}
 		}
-		if repoFileCount(ownerUser, appliance.ID) == 0 {
+		if repoFileCount(pr.ownerUser, pr.appliance.ID) == 0 {
 			msg := "Repository not ingested yet — run Refresh to clone and map it."
-			if saveProfile {
+			if pr.saveProfile {
 				msg = "Clone failed — check the Git URL, branch, and access token, then try again. (Is git installed on the host?)"
 			}
-			probeSessions.AppendEvent(id, probeEvent{Kind: "error", Text: msg}, true)
-			probeSessions.ScheduleCleanup(id)
-			return
+			probeSessions.AppendEvent(pr.id, probeEvent{Kind: "error", Text: msg}, true)
+			probeSessions.ScheduleCleanup(pr.id)
+			return actReturn
 		}
-		emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Reading repository %s", repoDisplayTarget(appliance))})
-	} else if appliance.Type == "bundle" {
+		emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Reading repository %s", repoDisplayTarget(pr.appliance))})
+	} else if pr.appliance.Type == "bundle" {
 		// No connection and nothing to refresh: unlike a repo, a bundle
 		// cannot be re-fetched. A Map run reads whatever was ingested — if
 		// that is nothing, the fix is an upload, which is the user's move and
 		// not something this session can perform on their behalf.
-		if n := bundle.Open(ownerUser, appliance.ID).FileCount(); n == 0 {
+		if n := bundle.Open(pr.ownerUser, pr.appliance.ID).FileCount(); n == 0 {
 			msg := "No evidence ingested yet — upload the bundle's files first."
-			if appliance.BundleState == bundleStateIngesting {
+			if pr.appliance.BundleState == bundleStateIngesting {
 				msg = "The upload is still being expanded and ingested. Wait for it to finish, then ask again."
-			} else if appliance.BundleState == bundleStateFailed && appliance.BundleError != "" {
-				msg = "The last ingest failed: " + appliance.BundleError
+			} else if pr.appliance.BundleState == bundleStateFailed && pr.appliance.BundleError != "" {
+				msg = "The last ingest failed: " + pr.appliance.BundleError
 			}
-			probeSessions.AppendEvent(id, probeEvent{Kind: "error", Text: msg}, true)
-			probeSessions.ScheduleCleanup(id)
-			return
+			probeSessions.AppendEvent(pr.id, probeEvent{Kind: "error", Text: msg}, true)
+			probeSessions.ScheduleCleanup(pr.id)
+			return actReturn
 		}
-		emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Reading evidence bundle %s", bundleDisplayTarget(appliance))})
-	} else if appliance.Type == "toolset" {
+		emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Reading evidence bundle %s", bundleDisplayTarget(pr.appliance))})
+	} else if pr.appliance.Type == "toolset" {
 		// No connection and no filesystem: the target is reached only through
 		// the bound tools. An appliance with nothing bound has no way to
 		// investigate anything, which is a configuration gap rather than a
 		// failure, so it says so instead of running an empty session.
-		if len(appliance.Toolset) == 0 {
-			probeSessions.AppendEvent(id, probeEvent{Kind: "error",
+		if len(pr.appliance.Toolset) == 0 {
+			probeSessions.AppendEvent(pr.id, probeEvent{Kind: "error",
 				Text: "No tools are bound to this system yet — edit it and pick the tools its investigations may use."}, true)
-			probeSessions.ScheduleCleanup(id)
-			return
+			probeSessions.ScheduleCleanup(pr.id)
+			return actReturn
 		}
-		emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Working through %s", toolsetDisplayTarget(appliance))})
+		emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Working through %s", toolsetDisplayTarget(pr.appliance))})
 	} else {
-		client, err := acquireConn(userID, appliance)
+		client, err := acquireConn(pr.userID, pr.appliance)
 		if err != nil {
-			probeSessions.AppendEvent(id, probeEvent{Kind: "error", Text: "Connection failed: " + err.Error()}, true)
-			probeSessions.ScheduleCleanup(id)
-			return
+			probeSessions.AppendEvent(pr.id, probeEvent{Kind: "error", Text: "Connection failed: " + err.Error()}, true)
+			probeSessions.ScheduleCleanup(pr.id)
+			return actReturn
 		}
-		a.input.host = appliance.Host
-		a.input.port = appliance.Port
-		if a.input.port == 0 {
-			a.input.port = 22
+		pr.a.input.host = pr.appliance.Host
+		pr.a.input.port = pr.appliance.Port
+		if pr.a.input.port == 0 {
+			pr.a.input.port = 22
 		}
-		a.input.user = appliance.User
-		if a.input.user == "" {
-			a.input.user = "root"
+		pr.a.input.user = pr.appliance.User
+		if pr.a.input.user == "" {
+			pr.a.input.user = "root"
 		}
-		a.input.password = appliance.Password
-		a.conn = client
-		emit(id, probeEvent{Kind: "status", Text: "Connected."})
+		pr.a.input.password = pr.appliance.Password
+		pr.a.conn = client
+		emit(pr.id, probeEvent{Kind: "status", Text: "Connected."})
 	}
+	return actNone
+}
 
+func (pr *probeRun) termEcho(label, output string) {
+	var buf strings.Builder
+	buf.WriteString(strings.ReplaceAll(label, "\n", " "))
+	buf.WriteString("\r\n")
+	if output != "" {
+		buf.WriteString(strings.ReplaceAll(output, "\n", "\r\n"))
+		if !strings.HasSuffix(output, "\n") {
+			buf.WriteString("\r\n")
+		}
+	}
+	buf.WriteString(pr.termPrompt)
+	mirrorToTerm(pr.userID, pr.appliance.ID, []byte(buf.String()))
+}
+
+// sshExec executes a command via the appropriate exec path: local for command-type
+// appliances, SSH with transparent reconnect for ssh-type appliances. ctx is the
+// session context so a cancelled session aborts in-flight commands.
+func (pr *probeRun) sshExec(cmd string) (string, error) {
+	if strings.TrimSpace(pr.appliance.PeerName) != "" {
+		return peerExecFor(pr.ctx, pr.appliance)(cmd)
+	}
+	if pr.appliance.Type == "command" {
+		return pr.a.exec_local_ctx(pr.ctx, cmd, pr.appliance.WorkDir, pr.appliance.EnvVars)
+	}
+	result, err := pr.a.exec_command_ctx(pr.ctx, cmd)
+	if err == nil {
+		return result, nil
+	}
+	msg := err.Error()
+	isConnErr := strings.Contains(msg, "EOF") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "broken pipe") ||
+		strings.Contains(msg, "new SSH session")
+	if !isConnErr {
+		return result, err
+	}
+	emit(pr.id, probeEvent{Kind: "status", Text: "SSH connection lost — reconnecting…"})
+	dropConn(pr.userID, pr.appliance.ID)
+	newClient, rerr := acquireConn(pr.userID, pr.appliance)
+	if rerr != nil {
+		reconnMsg := fmt.Sprintf("[SSH DISCONNECTED — reconnect failed: %v. Stop issuing SSH commands; the session must be restarted.]", rerr)
+		emit(pr.id, probeEvent{Kind: "error", Text: "Reconnect failed: " + rerr.Error()})
+		return reconnMsg, nil
+	}
+	pr.a.conn = newClient
+	emit(pr.id, probeEvent{Kind: "status", Text: "SSH reconnected — retrying command…"})
+	return pr.a.exec_command_ctx(pr.ctx, cmd)
+}
+
+// gateCommand applies the risk gate to one command line: classify it against
+// this run's scratch directory, honor the operator's per-command and
+// per-category allowances, and block on a confirmation prompt when it is
+// still risky. Returns an error when the command must not run.
+//
+// Every path that executes on the target goes through here. run_pty used to
+// skip the gate entirely, which made it a way around every rule run_command
+// enforces — including with its `input` lines, which are commands typed into
+// an interactive session and are gated individually below.
+func (pr *probeRun) gateCommand(cmd string) error {
+	cat, reason := classify_command_scoped(cmd, pr.scratch)
+	if cat == RiskNone {
+		return nil
+	}
+	if pr.udb != nil {
+		// Per-command always-allow (operator trusts this exact command).
+		var alwaysOK bool
+		if pr.udb.Get(alwaysAllowTable, cmd, &alwaysOK) && alwaysOK {
+			emit(pr.id, probeEvent{Kind: "status", Text: "Auto-allowed: " + cmd})
+			return nil
+		}
+		// Per-category allowance (operator trusts this whole class of command
+		// — the web analog of the CLI --allow flag, set via the Permissions
+		// modal). Resolved per (agent, appliance): this agent on this box, else this
+		// agent anywhere, else the operator's own auto-run settings. A human
+		// at the console has no acting agent and lands on the last of those,
+		// so the console behaves exactly as it did before grants existed.
+		//
+		// The scope is named in the status line because "why did that run
+		// without asking me" is the question anyone reads this for, and a
+		// bare "auto-allowed" cannot answer it.
+		if ok, scope := autoRunAllowed(pr.udb, ActingAgent(pr.ctx), pr.appliance.ID, cat); ok {
+			emit(pr.id, probeEvent{Kind: "status", Text: "Auto-allowed (" + string(cat) + " via " + string(scope) + "): " + cmd})
+			return nil
+		}
+	}
+	// An acting agent has nobody watching this stream, so parking the
+	// command here would block for five minutes and time out. Refuse now,
+	// legibly — see agent_confirm.go for why this is a refusal rather than
+	// a queued approval.
+	if acting := ActingAgent(pr.ctx); acting != "" {
+		emit(pr.id, probeEvent{Kind: "status", Text: "Needs approval (" + string(cat) + "): " + cmd})
+		Log("[servitor] agent %s refused %q on %s: no standing permission for %s", acting, cmd, pr.appliance.ID, cat)
+		return agentCommandRefusal(cmd, cat, reason, applianceLabel(pr.appliance.Name, pr.appliance.ID))
+	}
+	pendingCmds.Store(pr.id, cmd)
+	defer pendingCmds.Delete(pr.id)
+	emit(pr.id, probeEvent{Kind: "confirm", Text: cmd, Reason: reason})
+	select {
+	case allowed := <-pr.confirm:
+		if !allowed {
+			emit(pr.id, probeEvent{Kind: "status", Text: "Command denied."})
+			return fmt.Errorf("command denied by user")
+		}
+		return nil
+	case <-time.After(5 * time.Minute):
+		return fmt.Errorf("confirmation timed out")
+	case <-pr.ctx.Done():
+		return pr.ctx.Err()
+	}
+}
+
+// Failure budget removed — sessionFailures still collected for the
+// post-session summary, but no hard block on binary or global
+// failure counts. Loop/topic-exhaustion guards (LOOP DETECTED,
+// probeLoopSignalCount, probeTopicCount) handle runaway behavior;
+// command failures are signal for the model to interpret, not a
+// reason to short-circuit the worker.
+
+// cmdBinary returns the effective binary from a shell command string,
+// skipping sudo, env, nohup, and env-var assignments so that
+// "sudo mysql -u root" and "mysql -u root -p" both map to "mysql".
+func (pr *probeRun) cmdBinary(cmd string) string {
+	skip := map[string]bool{"sudo": true, "env": true, "nohup": true, "nice": true, "time": true, "ionice": true}
+	for _, f := range strings.Fields(cmd) {
+		if strings.Contains(f, "=") {
+			continue // env var assignment
+		}
+		if skip[f] {
+			continue
+		}
+		if i := strings.LastIndex(f, "/"); i >= 0 {
+			return f[i+1:]
+		}
+		return f
+	}
+	return cmd
+}
+
+func (pr *probeRun) execSeam() {
 	// termEcho mirrors a worker command label and its output into the active terminal pane.
-	termPrompt := terminalPrompt(appliance)
-	termEcho := func(label, output string) {
-		var buf strings.Builder
-		buf.WriteString(strings.ReplaceAll(label, "\n", " "))
-		buf.WriteString("\r\n")
-		if output != "" {
-			buf.WriteString(strings.ReplaceAll(output, "\n", "\r\n"))
-			if !strings.HasSuffix(output, "\n") {
-				buf.WriteString("\r\n")
-			}
-		}
-		buf.WriteString(termPrompt)
-		mirrorToTerm(userID, appliance.ID, []byte(buf.String()))
-	}
-
-	// sshExec executes a command via the appropriate exec path: local for command-type
-	// appliances, SSH with transparent reconnect for ssh-type appliances. ctx is the
-	// session context so a cancelled session aborts in-flight commands.
-	sshExec := func(cmd string) (string, error) {
-		if strings.TrimSpace(appliance.PeerName) != "" {
-			return peerExecFor(ctx, appliance)(cmd)
-		}
-		if appliance.Type == "command" {
-			return a.exec_local_ctx(ctx, cmd, appliance.WorkDir, appliance.EnvVars)
-		}
-		result, err := a.exec_command_ctx(ctx, cmd)
-		if err == nil {
-			return result, nil
-		}
-		msg := err.Error()
-		isConnErr := strings.Contains(msg, "EOF") ||
-			strings.Contains(msg, "connection reset") ||
-			strings.Contains(msg, "broken pipe") ||
-			strings.Contains(msg, "new SSH session")
-		if !isConnErr {
-			return result, err
-		}
-		emit(id, probeEvent{Kind: "status", Text: "SSH connection lost — reconnecting…"})
-		dropConn(userID, appliance.ID)
-		newClient, rerr := acquireConn(userID, appliance)
-		if rerr != nil {
-			reconnMsg := fmt.Sprintf("[SSH DISCONNECTED — reconnect failed: %v. Stop issuing SSH commands; the session must be restarted.]", rerr)
-			emit(id, probeEvent{Kind: "error", Text: "Reconnect failed: " + rerr.Error()})
-			return reconnMsg, nil
-		}
-		a.conn = newClient
-		emit(id, probeEvent{Kind: "status", Text: "SSH reconnected — retrying command…"})
-		return a.exec_command_ctx(ctx, cmd)
-	}
-
+	pr.termPrompt = terminalPrompt(pr.appliance)
 	// Give this run a private scratch directory on the target. Repo and bundle
 	// appliances have no filesystem to write to, so they get none — their
 	// workers only read an ingested store. Setup and teardown deliberately use
 	// the RAW exec path: routing them through the gated tool would let the risk
 	// gate refuse the very cleanup that keeps the host clean.
-	if appliance.Type != "repo" && appliance.Type != "bundle" && appliance.Type != "toolset" {
+	if pr.appliance.Type != "repo" && pr.appliance.Type != "bundle" && pr.appliance.Type != "toolset" {
 		rawExec := func(c context.Context, cmd string) (string, error) {
 			// Peer first, same as sshExec above: setup and teardown must land on
 			// the machine the session is actually working, or this run makes and
 			// removes a scratch directory on the wrong host while the worker's
 			// writes into it fail.
-			if strings.TrimSpace(appliance.PeerName) != "" {
-				return peerExecFor(c, appliance)(cmd)
+			if strings.TrimSpace(pr.appliance.PeerName) != "" {
+				return peerExecFor(c, pr.appliance)(cmd)
 			}
-			if appliance.Type == "command" {
-				return a.exec_local_ctx(c, cmd, appliance.WorkDir, appliance.EnvVars)
+			if pr.appliance.Type == "command" {
+				return pr.a.exec_local_ctx(c, cmd, pr.appliance.WorkDir, pr.appliance.EnvVars)
 			}
-			return a.exec_command_ctx(c, cmd)
+			return pr.a.exec_command_ctx(c, cmd)
 		}
-		dir := scratch_dir(id)
-		if err := scratch_setup(ctx, rawExec, dir); err != nil {
+		dir := scratch_dir(pr.id)
+		if err := scratch_setup(pr.ctx, rawExec, dir); err != nil {
 			// Non-fatal: the run proceeds with no sanctioned write location, which
 			// only means writes gate as they otherwise would. Surfaced rather than
 			// swallowed so an unexpected flurry of approval prompts is explicable.
-			emit(id, probeEvent{Kind: "status", Text: "Scratch directory unavailable — writes will need approval: " + err.Error()})
+			emit(pr.id, probeEvent{Kind: "status", Text: "Scratch directory unavailable — writes will need approval: " + err.Error()})
 		} else {
-			scratch = dir
-			scratchCleanup = func() { scratch_teardown(rawExec, dir) }
+			pr.scratch = dir
+			pr.scratchCleanup = func() { scratch_teardown(rawExec, dir) }
 		}
 	}
+}
 
-	// gateCommand applies the risk gate to one command line: classify it against
-	// this run's scratch directory, honor the operator's per-command and
-	// per-category allowances, and block on a confirmation prompt when it is
-	// still risky. Returns an error when the command must not run.
-	//
-	// Every path that executes on the target goes through here. run_pty used to
-	// skip the gate entirely, which made it a way around every rule run_command
-	// enforces — including with its `input` lines, which are commands typed into
-	// an interactive session and are gated individually below.
-	gateCommand := func(cmd string) error {
-		cat, reason := classify_command_scoped(cmd, scratch)
-		if cat == RiskNone {
-			return nil
-		}
-		if udb != nil {
-			// Per-command always-allow (operator trusts this exact command).
-			var alwaysOK bool
-			if udb.Get(alwaysAllowTable, cmd, &alwaysOK) && alwaysOK {
-				emit(id, probeEvent{Kind: "status", Text: "Auto-allowed: " + cmd})
-				return nil
+// newRunTool returns a run_command tool wired to the probe-session
+// shared counters above. The tool struct itself is created fresh
+// per delegation (cheap); the counters persist across delegations.
+func (pr *probeRun) newRunTool() AgentToolDef {
+	return AgentToolDef{
+		Tool: Tool{
+			Name:        "run_command",
+			Description: "Execute a shell command on the remote Linux system via SSH and return combined stdout+stderr. Output is capped at 10,000 characters.",
+			Parameters: map[string]ToolParam{
+				"command": {Type: "string", Description: "The shell command to run on the remote host."},
+			},
+			Required: []string{"command"},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			cmd, _ := args["command"].(string)
+			if cmd == "" {
+				return "", fmt.Errorf("command is required")
 			}
-			// Per-category allowance (operator trusts this whole class of command
-			// — the web analog of the CLI --allow flag, set via the Permissions
-			// modal). Resolved per (agent, appliance): this agent on this box, else this
-			// agent anywhere, else the operator's own auto-run settings. A human
-			// at the console has no acting agent and lands on the last of those,
-			// so the console behaves exactly as it did before grants existed.
-			//
-			// The scope is named in the status line because "why did that run
-			// without asking me" is the question anyone reads this for, and a
-			// bare "auto-allowed" cannot answer it.
-			if ok, scope := autoRunAllowed(udb, ActingAgent(ctx), appliance.ID, cat); ok {
-				emit(id, probeEvent{Kind: "status", Text: "Auto-allowed (" + string(cat) + " via " + string(scope) + "): " + cmd})
-				return nil
+			pr.cmdMu.Lock()
+			pr.cmdCount[cmd]++
+			count := pr.cmdCount[cmd]
+			pr.cmdMu.Unlock()
+			if count > loopLimit {
+				msg := fmt.Sprintf("[LOOP DETECTED] run_command(%q) has been called %d times in this session. Running it again will not produce a different result. Stop. Choose a different command, different arguments, or a different investigation strategy.", cmd, count-1)
+				emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Loop detected: %q (%dx)", cmd, count-1)})
+				return msg, nil
 			}
-		}
-		// An acting agent has nobody watching this stream, so parking the
-		// command here would block for five minutes and time out. Refuse now,
-		// legibly — see agent_confirm.go for why this is a refusal rather than
-		// a queued approval.
-		if acting := ActingAgent(ctx); acting != "" {
-			emit(id, probeEvent{Kind: "status", Text: "Needs approval (" + string(cat) + "): " + cmd})
-			Log("[servitor] agent %s refused %q on %s: no standing permission for %s", acting, cmd, appliance.ID, cat)
-			return agentCommandRefusal(cmd, cat, reason, applianceLabel(appliance.Name, appliance.ID))
-		}
-		pendingCmds.Store(id, cmd)
-		defer pendingCmds.Delete(id)
-		emit(id, probeEvent{Kind: "confirm", Text: cmd, Reason: reason})
-		select {
-		case allowed := <-confirm:
-			if !allowed {
-				emit(id, probeEvent{Kind: "status", Text: "Command denied."})
-				return fmt.Errorf("command denied by user")
+			bin := pr.cmdBinary(cmd)
+			emit(pr.id, probeEvent{Kind: "cmd", Text: cmd})
+			if err := pr.gateCommand(cmd); err != nil {
+				return "", err
 			}
-			return nil
-		case <-time.After(5 * time.Minute):
-			return fmt.Errorf("confirmation timed out")
-		case <-ctx.Done():
-			return ctx.Err()
+			result, err := pr.sshExec(cmd)
+			if stripANSI(result) != "" {
+				emit(pr.id, probeEvent{Kind: "output", Text: result})
+			}
+			pr.termEcho(cmd, result)
+			if strings.Contains(result, "[exit code ") {
+				// Record nonzero exits for the failure summary surfaced
+				// at session end. No hard block — the model decides
+				// when to pivot off a failing approach based on the
+				// error text.
+				reason := result
+				if nl := strings.Index(reason, "\n"); nl > 0 {
+					reason = reason[:nl]
+				}
+				if len(reason) > 120 {
+					reason = reason[:120] + "…"
+				}
+				pr.sessionFailures = append(pr.sessionFailures, sessionFailure{Cmd: cmd, Reason: reason})
+				pr.failMu.Lock()
+				pr.failCount[bin]++
+				pr.failMu.Unlock()
+			} else {
+				// Command succeeded — if this binary had prior failures this phase,
+				// the agent just found a working approach after trying multiple things.
+				// Force it to record the technique NOW before moving on.
+				pr.failMu.Lock()
+				priorFails := pr.failCount[bin]
+				pr.failMu.Unlock()
+				if priorFails > 0 {
+					result += fmt.Sprintf("\n\n[TECHNIQUE FOUND] '%s' succeeded after %d failure(s) this phase. You MUST call record_technique NOW with the exact working command and why it worked, before doing anything else. Do not skip this step.", bin, priorFails)
+				}
+			}
+			return result, err
+		},
+		NeedsConfirm: false,
+	}
+}
+
+// newRunPtyTool returns a run_pty tool wired to the probe-session
+// shared ptyCount. Tool struct cheap to recreate; counter persists.
+func (pr *probeRun) newRunPtyTool() AgentToolDef {
+	return AgentToolDef{
+		Tool: Tool{
+			Name:        "run_pty",
+			Description: "Run a command via a PTY (pseudo-terminal) on the remote system. Use this for commands that require a TTY: password prompts (su, sudo, mysql -p), interactive programs (python3, irb, psql), or anything that checks isatty(). Output is captured with ANSI codes stripped. Provide the 'input' parameter to send responses to prompts (newline-separated).",
+			Parameters: map[string]ToolParam{
+				"command":     {Type: "string", Description: "The command to run on the remote host."},
+				"input":       {Type: "string", Description: "Optional lines to send to stdin after the command starts (newline-separated). Use for passwords, menu selections, shell commands inside an interactive session, etc."},
+				"timeout_sec": {Type: "integer", Description: "Seconds to wait for the command to finish (default 15, max 60)."},
+			},
+			Required: []string{"command"},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			cmd, _ := args["command"].(string)
+			if cmd == "" {
+				return "", fmt.Errorf("command is required")
+			}
+			pr.ptyCount[cmd]++
+			if pr.ptyCount[cmd] > loopLimit {
+				msg := fmt.Sprintf("[LOOP DETECTED] run_pty(%q) has been called %d times in this session. Stop. Use a different command or approach.", cmd, pr.ptyCount[cmd]-1)
+				emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Loop detected (pty): %q (%dx)", cmd, pr.ptyCount[cmd]-1)})
+				return msg, nil
+			}
+			inputText, _ := args["input"].(string)
+			timeout := 15
+			if t, ok := args["timeout_sec"].(float64); ok && t > 0 {
+				timeout = int(t)
+				if timeout > 60 {
+					timeout = 60
+				}
+			}
+
+			emit(pr.id, probeEvent{Kind: "cmd", Text: "pty: " + cmd})
+			if err := pr.gateCommand(cmd); err != nil {
+				return "", err
+			}
+			// The input lines are commands typed into the interactive session
+			// the command above opened — `run_pty("bash", input: "rm -rf …")`
+			// is a shell command by another route, so each line is gated too.
+			// A password line classifies as benign and passes without ever
+			// being shown in a confirmation prompt.
+			for _, line := range strings.Split(inputText, "\n") {
+				if strings.TrimSpace(line) == "" {
+					continue
+				}
+				if err := pr.gateCommand(line); err != nil {
+					return "", err
+				}
+			}
+
+			// Through newPTYSession, never the client directly: a
+			// peer-reached appliance has no local ssh.Client, and this is
+			// where the nil used to be dereferenced. The tool is also not
+			// offered in that case (see ptyLocal below) — this is the
+			// second line of defence.
+			sess, err := newPTYSession(pr.a.conn)
+			if err != nil {
+				// Attempt reconnect on connection-level errors.
+				errMsg := err.Error()
+				isConnErr := strings.Contains(errMsg, "EOF") ||
+					strings.Contains(errMsg, "connection reset") ||
+					strings.Contains(errMsg, "broken pipe") ||
+					strings.Contains(errMsg, "new SSH session")
+				if isConnErr {
+					emit(pr.id, probeEvent{Kind: "status", Text: "SSH connection lost — reconnecting…"})
+					dropConn(pr.userID, pr.appliance.ID)
+					newClient, rerr := acquireConn(pr.userID, pr.appliance)
+					if rerr != nil {
+						return fmt.Sprintf("[SSH DISCONNECTED — reconnect failed: %v. Stop issuing SSH commands; the session must be restarted.]", rerr), nil
+					}
+					pr.a.conn = newClient
+					emit(pr.id, probeEvent{Kind: "status", Text: "SSH reconnected."})
+					sess, err = newPTYSession(pr.a.conn)
+				}
+				if err != nil {
+					return "", fmt.Errorf("new SSH session: %w", err)
+				}
+			}
+			defer sess.Close()
+
+			modes := ssh.TerminalModes{
+				ssh.ECHO:          0,
+				ssh.TTY_OP_ISPEED: 14400,
+				ssh.TTY_OP_OSPEED: 14400,
+			}
+			if err := sess.RequestPty("xterm", 50, 220, modes); err != nil {
+				return "", fmt.Errorf("PTY request failed: %w", err)
+			}
+
+			stdinPipe, err := sess.StdinPipe()
+			if err != nil {
+				return "", fmt.Errorf("stdin pipe: %w", err)
+			}
+
+			var outBuf bytes.Buffer
+			sess.Stdout = &outBuf
+			sess.Stderr = &outBuf
+
+			if err := sess.Start(cmd); err != nil {
+				return "", fmt.Errorf("start: %w", err)
+			}
+
+			// Send input lines with a short delay between each to let prompts appear.
+			if inputText != "" {
+				time.Sleep(400 * time.Millisecond)
+				for _, line := range strings.Split(inputText, "\n") {
+					fmt.Fprintln(stdinPipe, line)
+					time.Sleep(200 * time.Millisecond)
+				}
+			}
+
+			done := make(chan error, 1)
+			go func() { done <- sess.Wait() }()
+
+			select {
+			case <-done:
+			case <-time.After(time.Duration(timeout) * time.Second):
+				stdinPipe.Write([]byte{3}) // Ctrl+C
+				time.Sleep(200 * time.Millisecond)
+				stdinPipe.Write([]byte{4}) // Ctrl+D
+				select {
+				case <-done:
+				case <-time.After(2 * time.Second):
+				}
+			case <-pr.ctx.Done():
+				sess.Close()
+				return "", pr.ctx.Err()
+			}
+			stdinPipe.Close()
+
+			result := stripANSI(outBuf.String())
+			if len(result) > max_output {
+				result = result[:max_output] + fmt.Sprintf("\n... [truncated — %d chars total]", len(result))
+			}
+			if result != "" {
+				emit(pr.id, probeEvent{Kind: "output", Text: result})
+			}
+			pr.termEcho("pty: "+cmd, result)
+			// If this PTY session succeeded after prior attempts, force technique recording.
+			if pr.ptyCount[cmd] > 1 {
+				result += fmt.Sprintf("\n\n[TECHNIQUE FOUND] run_pty(%q) succeeded after %d attempt(s). You MUST call record_technique NOW with the exact working command and input sequence, before doing anything else.", cmd, pr.ptyCount[cmd]-1)
+			}
+			return result, nil
+		},
+		NeedsConfirm: false,
+	}
+}
+
+// withFreshRunTool clones a tools slice, replacing run_command and run_pty
+// entries with fresh instances so each invocation gets isolated counters.
+func (pr *probeRun) withFreshRunTool(base []AgentToolDef) []AgentToolDef {
+	result := make([]AgentToolDef, len(base))
+	copy(result, base)
+	for i, t := range result {
+		switch t.Tool.Name {
+		case "run_command":
+			result[i] = pr.newRunTool()
+		case "run_pty":
+			result[i] = pr.newRunPtyTool()
 		}
 	}
+	return result
+}
 
-	// sessionFailures collects commands that exited nonzero during this session.
-	// Emitted as a summary before the final reply so the user can see what the agent
-	// tried and couldn't complete.
-	type sessionFailure struct {
-		Cmd    string
-		Reason string // first non-empty line of the output
-	}
-	var sessionFailures []sessionFailure
-
-	const loopLimit = 3
-	// Failure budget removed — sessionFailures still collected for the
-	// post-session summary, but no hard block on binary or global
-	// failure counts. Loop/topic-exhaustion guards (LOOP DETECTED,
-	// probeLoopSignalCount, probeTopicCount) handle runaway behavior;
-	// command failures are signal for the model to interpret, not a
-	// reason to short-circuit the worker.
-
-	// cmdBinary returns the effective binary from a shell command string,
-	// skipping sudo, env, nohup, and env-var assignments so that
-	// "sudo mysql -u root" and "mysql -u root -p" both map to "mysql".
-	cmdBinary := func(cmd string) string {
-		skip := map[string]bool{"sudo": true, "env": true, "nohup": true, "nice": true, "time": true, "ionice": true}
-		for _, f := range strings.Fields(cmd) {
-			if strings.Contains(f, "=") {
-				continue // env var assignment
-			}
-			if skip[f] {
-				continue
-			}
-			if i := strings.LastIndex(f, "/"); i >= 0 {
-				return f[i+1:]
-			}
-			return f
-		}
-		return cmd
-	}
-
+func (pr *probeRun) execTools() {
 	// Probe-session shared state for loop / failure detection.
 	// Previously these maps lived inside newRunTool() so each invocation
 	// (each orchestrator delegation that spawned a worker session)
@@ -380,83 +752,10 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 	// Trade: phase-boundary "reset" semantics from before are gone.
 	// If you ever want per-phase budgets, wire a reset hook from the
 	// orchestrator side rather than reverting to per-tool maps.
-	cmdCount := make(map[string]int)
-	var cmdMu sync.Mutex // protects cmdCount — agent may issue parallel tool calls
-	failCount := make(map[string]int)
-	var failMu sync.Mutex
-
-	// newRunTool returns a run_command tool wired to the probe-session
-	// shared counters above. The tool struct itself is created fresh
-	// per delegation (cheap); the counters persist across delegations.
-	newRunTool := func() AgentToolDef {
-		return AgentToolDef{
-			Tool: Tool{
-				Name:        "run_command",
-				Description: "Execute a shell command on the remote Linux system via SSH and return combined stdout+stderr. Output is capped at 10,000 characters.",
-				Parameters: map[string]ToolParam{
-					"command": {Type: "string", Description: "The shell command to run on the remote host."},
-				},
-				Required: []string{"command"},
-			},
-			Handler: func(args map[string]any) (string, error) {
-				cmd, _ := args["command"].(string)
-				if cmd == "" {
-					return "", fmt.Errorf("command is required")
-				}
-				cmdMu.Lock()
-				cmdCount[cmd]++
-				count := cmdCount[cmd]
-				cmdMu.Unlock()
-				if count > loopLimit {
-					msg := fmt.Sprintf("[LOOP DETECTED] run_command(%q) has been called %d times in this session. Running it again will not produce a different result. Stop. Choose a different command, different arguments, or a different investigation strategy.", cmd, count-1)
-					emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Loop detected: %q (%dx)", cmd, count-1)})
-					return msg, nil
-				}
-				bin := cmdBinary(cmd)
-				emit(id, probeEvent{Kind: "cmd", Text: cmd})
-				if err := gateCommand(cmd); err != nil {
-					return "", err
-				}
-				result, err := sshExec(cmd)
-				if stripANSI(result) != "" {
-					emit(id, probeEvent{Kind: "output", Text: result})
-				}
-				termEcho(cmd, result)
-				if strings.Contains(result, "[exit code ") {
-					// Record nonzero exits for the failure summary surfaced
-					// at session end. No hard block — the model decides
-					// when to pivot off a failing approach based on the
-					// error text.
-					reason := result
-					if nl := strings.Index(reason, "\n"); nl > 0 {
-						reason = reason[:nl]
-					}
-					if len(reason) > 120 {
-						reason = reason[:120] + "…"
-					}
-					sessionFailures = append(sessionFailures, sessionFailure{Cmd: cmd, Reason: reason})
-					failMu.Lock()
-					failCount[bin]++
-					failMu.Unlock()
-				} else {
-					// Command succeeded — if this binary had prior failures this phase,
-					// the agent just found a working approach after trying multiple things.
-					// Force it to record the technique NOW before moving on.
-					failMu.Lock()
-					priorFails := failCount[bin]
-					failMu.Unlock()
-					if priorFails > 0 {
-						result += fmt.Sprintf("\n\n[TECHNIQUE FOUND] '%s' succeeded after %d failure(s) this phase. You MUST call record_technique NOW with the exact working command and why it worked, before doing anything else. Do not skip this step.", bin, priorFails)
-					}
-				}
-				return result, err
-			},
-			NeedsConfirm: false,
-		}
-	}
-
+	pr.cmdCount = make(map[string]int)
+	pr.failCount = make(map[string]int)
 	// read_log — safe, targeted log reader.
-	read_log_tool := AgentToolDef{
+	pr.read_log_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "read_log",
 			Description: "Read the last N lines from a log file on the remote system, with optional grep filter. Safer and faster than run_command for log inspection.",
@@ -490,19 +789,19 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 				label = fmt.Sprintf("read_log %s (last %d lines)", path, lines)
 				cmd = fmt.Sprintf("tail -n %d %s 2>/dev/null", lines, shellQuote(path))
 			}
-			emit(id, probeEvent{Kind: "cmd", Text: label})
-			result, err := sshExec(cmd)
+			emit(pr.id, probeEvent{Kind: "cmd", Text: label})
+			result, err := pr.sshExec(cmd)
 			if stripANSI(result) != "" {
-				emit(id, probeEvent{Kind: "output", Text: result})
+				emit(pr.id, probeEvent{Kind: "output", Text: result})
 			}
-			termEcho(label, result)
+			pr.termEcho(label, result)
 			return result, err
 		},
 		NeedsConfirm: false,
 	}
 
 	// search_logs — cross-file pattern search.
-	search_logs_tool := AgentToolDef{
+	pr.search_logs_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "search_logs",
 			Description: "Search one or more log files for a pattern. Returns matching lines with surrounding context.",
@@ -548,12 +847,12 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			label := fmt.Sprintf("search_logs %q in %s", pattern, pathArgs)
 			cmd := fmt.Sprintf("grep -r -i -C %d %s %s 2>/dev/null | head -300",
 				ctx_lines, shellQuote(pattern), pathArgs)
-			emit(id, probeEvent{Kind: "cmd", Text: label})
-			result, err := sshExec(cmd)
+			emit(pr.id, probeEvent{Kind: "cmd", Text: label})
+			result, err := pr.sshExec(cmd)
 			if stripANSI(result) != "" {
-				emit(id, probeEvent{Kind: "output", Text: result})
+				emit(pr.id, probeEvent{Kind: "output", Text: result})
 			}
-			termEcho(label, result)
+			pr.termEcho(label, result)
 			return result, err
 		},
 		NeedsConfirm: false,
@@ -562,176 +861,41 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 	// Probe-session shared PTY loop counter — same rationale as
 	// cmdCount above. Per-tool isolation defeated cross-delegation
 	// detection.
-	ptyCount := make(map[string]int)
+	pr.ptyCount = make(map[string]int)
+}
 
-	// newRunPtyTool returns a run_pty tool wired to the probe-session
-	// shared ptyCount. Tool struct cheap to recreate; counter persists.
-	newRunPtyTool := func() AgentToolDef {
-		return AgentToolDef{
-			Tool: Tool{
-				Name:        "run_pty",
-				Description: "Run a command via a PTY (pseudo-terminal) on the remote system. Use this for commands that require a TTY: password prompts (su, sudo, mysql -p), interactive programs (python3, irb, psql), or anything that checks isatty(). Output is captured with ANSI codes stripped. Provide the 'input' parameter to send responses to prompts (newline-separated).",
-				Parameters: map[string]ToolParam{
-					"command":     {Type: "string", Description: "The command to run on the remote host."},
-					"input":       {Type: "string", Description: "Optional lines to send to stdin after the command starts (newline-separated). Use for passwords, menu selections, shell commands inside an interactive session, etc."},
-					"timeout_sec": {Type: "integer", Description: "Seconds to wait for the command to finish (default 15, max 60)."},
-				},
-				Required: []string{"command"},
-			},
-			Handler: func(args map[string]any) (string, error) {
-				cmd, _ := args["command"].(string)
-				if cmd == "" {
-					return "", fmt.Errorf("command is required")
-				}
-				ptyCount[cmd]++
-				if ptyCount[cmd] > loopLimit {
-					msg := fmt.Sprintf("[LOOP DETECTED] run_pty(%q) has been called %d times in this session. Stop. Use a different command or approach.", cmd, ptyCount[cmd]-1)
-					emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Loop detected (pty): %q (%dx)", cmd, ptyCount[cmd]-1)})
-					return msg, nil
-				}
-				inputText, _ := args["input"].(string)
-				timeout := 15
-				if t, ok := args["timeout_sec"].(float64); ok && t > 0 {
-					timeout = int(t)
-					if timeout > 60 {
-						timeout = 60
-					}
-				}
-
-				emit(id, probeEvent{Kind: "cmd", Text: "pty: " + cmd})
-				if err := gateCommand(cmd); err != nil {
-					return "", err
-				}
-				// The input lines are commands typed into the interactive session
-				// the command above opened — `run_pty("bash", input: "rm -rf …")`
-				// is a shell command by another route, so each line is gated too.
-				// A password line classifies as benign and passes without ever
-				// being shown in a confirmation prompt.
-				for _, line := range strings.Split(inputText, "\n") {
-					if strings.TrimSpace(line) == "" {
-						continue
-					}
-					if err := gateCommand(line); err != nil {
-						return "", err
-					}
-				}
-
-				// Through newPTYSession, never the client directly: a
-				// peer-reached appliance has no local ssh.Client, and this is
-				// where the nil used to be dereferenced. The tool is also not
-				// offered in that case (see ptyLocal below) — this is the
-				// second line of defence.
-				sess, err := newPTYSession(a.conn)
-				if err != nil {
-					// Attempt reconnect on connection-level errors.
-					errMsg := err.Error()
-					isConnErr := strings.Contains(errMsg, "EOF") ||
-						strings.Contains(errMsg, "connection reset") ||
-						strings.Contains(errMsg, "broken pipe") ||
-						strings.Contains(errMsg, "new SSH session")
-					if isConnErr {
-						emit(id, probeEvent{Kind: "status", Text: "SSH connection lost — reconnecting…"})
-						dropConn(userID, appliance.ID)
-						newClient, rerr := acquireConn(userID, appliance)
-						if rerr != nil {
-							return fmt.Sprintf("[SSH DISCONNECTED — reconnect failed: %v. Stop issuing SSH commands; the session must be restarted.]", rerr), nil
-						}
-						a.conn = newClient
-						emit(id, probeEvent{Kind: "status", Text: "SSH reconnected."})
-						sess, err = newPTYSession(a.conn)
-					}
-					if err != nil {
-						return "", fmt.Errorf("new SSH session: %w", err)
-					}
-				}
-				defer sess.Close()
-
-				modes := ssh.TerminalModes{
-					ssh.ECHO:          0,
-					ssh.TTY_OP_ISPEED: 14400,
-					ssh.TTY_OP_OSPEED: 14400,
-				}
-				if err := sess.RequestPty("xterm", 50, 220, modes); err != nil {
-					return "", fmt.Errorf("PTY request failed: %w", err)
-				}
-
-				stdinPipe, err := sess.StdinPipe()
-				if err != nil {
-					return "", fmt.Errorf("stdin pipe: %w", err)
-				}
-
-				var outBuf bytes.Buffer
-				sess.Stdout = &outBuf
-				sess.Stderr = &outBuf
-
-				if err := sess.Start(cmd); err != nil {
-					return "", fmt.Errorf("start: %w", err)
-				}
-
-				// Send input lines with a short delay between each to let prompts appear.
-				if inputText != "" {
-					time.Sleep(400 * time.Millisecond)
-					for _, line := range strings.Split(inputText, "\n") {
-						fmt.Fprintln(stdinPipe, line)
-						time.Sleep(200 * time.Millisecond)
-					}
-				}
-
-				done := make(chan error, 1)
-				go func() { done <- sess.Wait() }()
-
-				select {
-				case <-done:
-				case <-time.After(time.Duration(timeout) * time.Second):
-					stdinPipe.Write([]byte{3}) // Ctrl+C
-					time.Sleep(200 * time.Millisecond)
-					stdinPipe.Write([]byte{4}) // Ctrl+D
-					select {
-					case <-done:
-					case <-time.After(2 * time.Second):
-					}
-				case <-ctx.Done():
-					sess.Close()
-					return "", ctx.Err()
-				}
-				stdinPipe.Close()
-
-				result := stripANSI(outBuf.String())
-				if len(result) > max_output {
-					result = result[:max_output] + fmt.Sprintf("\n... [truncated — %d chars total]", len(result))
-				}
-				if result != "" {
-					emit(id, probeEvent{Kind: "output", Text: result})
-				}
-				termEcho("pty: "+cmd, result)
-				// If this PTY session succeeded after prior attempts, force technique recording.
-				if ptyCount[cmd] > 1 {
-					result += fmt.Sprintf("\n\n[TECHNIQUE FOUND] run_pty(%q) succeeded after %d attempt(s). You MUST call record_technique NOW with the exact working command and input sequence, before doing anything else.", cmd, ptyCount[cmd]-1)
-				}
-				return result, nil
-			},
-			NeedsConfirm: false,
-		}
+// auditTechniques asks the worker model which stored techniques the new one
+// supersedes and removes those lines. It reads the CURRENT stored value
+// under the lock rather than the snapshot it was given, so an append that
+// raced ahead of it survives.
+func (pr *probeRun) auditTechniques(udb Database, applianceID, existing, technique string) {
+	auditCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	auditPrompt := "You are auditing a list of stored techniques for a specific system. " +
+		"A new technique is about to be added. Identify any existing techniques that the new one " +
+		"supersedes, contradicts, or makes redundant (e.g. an old auth method that is now wrong, " +
+		"a path that has changed, an approach that the new one replaces). " +
+		"Reply with ONLY the exact lines to remove, one per line. " +
+		"If nothing should be removed, reply with exactly: NONE"
+	auditMsg := fmt.Sprintf("Existing techniques:\n%s\n\nNew technique being added:\n- %s", existing, technique)
+	auditResp, auditErr := pr.a.WorkerChat(auditCtx, []Message{{Role: "user", Content: auditMsg}},
+		WithSystemPrompt(auditPrompt), WithMaxTokens(512))
+	if auditErr != nil || auditResp == nil {
+		return
 	}
-
-	// withFreshRunTool clones a tools slice, replacing run_command and run_pty
-	// entries with fresh instances so each invocation gets isolated counters.
-	withFreshRunTool := func(base []AgentToolDef) []AgentToolDef {
-		result := make([]AgentToolDef, len(base))
-		copy(result, base)
-		for i, t := range result {
-			switch t.Tool.Name {
-			case "run_command":
-				result[i] = newRunTool()
-			case "run_pty":
-				result[i] = newRunPtyTool()
-			}
-		}
-		return result
+	removal := strings.TrimSpace(auditResp.Content)
+	if removal == "" || removal == "NONE" {
+		return
 	}
+	pr.techniqueMu.Lock()
+	defer pr.techniqueMu.Unlock()
+	pruned := pruneTechniqueLines(techniquesFor(udb, applianceID), removal)
+	udb.Set(techniquesTable, applianceID, pruned)
+}
 
+func (pr *probeRun) memoryTools() {
 	// note_lesson — append a correction or lesson to the persistent notes for this appliance.
-	note_lesson_tool := AgentToolDef{
+	pr.note_lesson_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "note_lesson",
 			Description: "Append a lesson or correction to the persistent notes for this appliance. Call this after discovering a mistake, a wrong assumption, or a non-obvious quirk about this system (e.g. 'sudo is not installed', 'mysql uses socket /tmp/mysql.sock not /var/run', 'journalctl requires sudo'). Notes are re-injected into every future session so the same mistake is not repeated.",
@@ -745,58 +909,22 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			if note == "" {
 				return "", fmt.Errorf("note is required")
 			}
-			if udb == nil {
+			if pr.udb == nil {
 				return "", fmt.Errorf("no database")
 			}
 			var existing string
-			udb.Get(notesTable, appliance.ID, &existing)
+			pr.udb.Get(notesTable, pr.appliance.ID, &existing)
 			entry := fmt.Sprintf("- %s (%s)\n", note, time.Now().Format("2006-01-02"))
-			udb.Set(notesTable, appliance.ID, existing+entry)
-			recordScopedExplicit(appliance, note) // gotcha -> Explicit Memory (always-in-prompt Shortcuts layer)
-			emit(id, probeEvent{Kind: "status", Text: "Noted: " + note})
+			pr.udb.Set(notesTable, pr.appliance.ID, existing+entry)
+			recordScopedExplicit(pr.appliance, note) // gotcha -> Explicit Memory (always-in-prompt Shortcuts layer)
+			emit(pr.id, probeEvent{Kind: "status", Text: "Noted: " + note})
 			return "noted", nil
 		},
 		NeedsConfirm: false,
 	}
 
-	// techniqueMu serializes the techniques string between an append in the
-	// tool handler and a prune in a background audit: both are read-modify-
-	// write on one record, and without the lock a prune landing mid-append
-	// would drop whichever write finished first. An audit outliving the
-	// session is fine — it holds no session state, only the store — and is
-	// bounded by its own timeout.
-	var techniqueMu sync.Mutex
-	// auditTechniques asks the worker model which stored techniques the new one
-	// supersedes and removes those lines. It reads the CURRENT stored value
-	// under the lock rather than the snapshot it was given, so an append that
-	// raced ahead of it survives.
-	auditTechniques := func(udb Database, applianceID, existing, technique string) {
-		auditCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
-		auditPrompt := "You are auditing a list of stored techniques for a specific system. " +
-			"A new technique is about to be added. Identify any existing techniques that the new one " +
-			"supersedes, contradicts, or makes redundant (e.g. an old auth method that is now wrong, " +
-			"a path that has changed, an approach that the new one replaces). " +
-			"Reply with ONLY the exact lines to remove, one per line. " +
-			"If nothing should be removed, reply with exactly: NONE"
-		auditMsg := fmt.Sprintf("Existing techniques:\n%s\n\nNew technique being added:\n- %s", existing, technique)
-		auditResp, auditErr := a.WorkerChat(auditCtx, []Message{{Role: "user", Content: auditMsg}},
-			WithSystemPrompt(auditPrompt), WithMaxTokens(512))
-		if auditErr != nil || auditResp == nil {
-			return
-		}
-		removal := strings.TrimSpace(auditResp.Content)
-		if removal == "" || removal == "NONE" {
-			return
-		}
-		techniqueMu.Lock()
-		defer techniqueMu.Unlock()
-		pruned := pruneTechniqueLines(techniquesFor(udb, applianceID), removal)
-		udb.Set(techniquesTable, applianceID, pruned)
-	}
-
 	// record_technique — save a successful approach for future sessions.
-	record_technique_tool := AgentToolDef{
+	pr.record_technique_tool = AgentToolDef{
 		Tool: Tool{
 			Name: "record_technique",
 			Description: "Record a technique that worked on this system — a successful approach, correct command syntax, " +
@@ -818,7 +946,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			if technique == "" {
 				return "", fmt.Errorf("technique is required")
 			}
-			if udb == nil {
+			if pr.udb == nil {
 				return "", fmt.Errorf("no database")
 			}
 			// The new technique is stored FIRST and the audit of older entries runs
@@ -828,14 +956,14 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			// the worker itself was waiting on. Nothing downstream needs the
 			// prune to have happened — a superseded line lingers for one probe at
 			// most, and the next read sees the pruned list.
-			existing := techniquesFor(udb, appliance.ID)
-			techniqueMu.Lock()
-			recordTechnique(udb, appliance.ID, technique)
-			techniqueMu.Unlock()
-			recordScopedExplicit(appliance, technique) // working command -> Explicit Memory (always-in-prompt Shortcuts layer)
-			emit(id, probeEvent{Kind: "status", Text: "Technique saved: " + technique})
+			existing := techniquesFor(pr.udb, pr.appliance.ID)
+			pr.techniqueMu.Lock()
+			recordTechnique(pr.udb, pr.appliance.ID, technique)
+			pr.techniqueMu.Unlock()
+			recordScopedExplicit(pr.appliance, technique) // working command -> Explicit Memory (always-in-prompt Shortcuts layer)
+			emit(pr.id, probeEvent{Kind: "status", Text: "Technique saved: " + technique})
 			if existing != "" {
-				go auditTechniques(udb, appliance.ID, existing, technique)
+				go pr.auditTechniques(pr.udb, pr.appliance.ID, existing, technique)
 			}
 			return "technique recorded", nil
 		},
@@ -843,7 +971,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 	}
 
 	// record_discovery — capture a key breakthrough finding.
-	record_discovery_tool := AgentToolDef{
+	pr.record_discovery_tool = AgentToolDef{
 		Tool: Tool{
 			Name: "record_discovery",
 			Description: "Record a key breakthrough that directly solves a goal or constitutes a major finding. " +
@@ -869,19 +997,19 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			if strings.TrimSpace(title) == "" || strings.TrimSpace(finding) == "" {
 				return "", fmt.Errorf("title and finding are required")
 			}
-			if udb == nil {
+			if pr.udb == nil {
 				return "", fmt.Errorf("no database")
 			}
-			storeDiscovery(udb, appliance.ID, title, finding, category)
-			recordScopedReference(ctx, appliance, "discoveries", title, finding) // dual-write to the orchestrate scope (lead migration, slice 1)
-			emit(id, probeEvent{Kind: "discovery", Text: "★ " + strings.TrimSpace(title)})
+			storeDiscovery(pr.udb, pr.appliance.ID, title, finding, category)
+			recordScopedReference(pr.ctx, pr.appliance, "discoveries", title, finding) // dual-write to the orchestrate scope (lead migration, slice 1)
+			emit(pr.id, probeEvent{Kind: "discovery", Text: "★ " + strings.TrimSpace(title)})
 			return "discovery recorded", nil
 		},
 		NeedsConfirm: false,
 	}
 
 	// store_fact — persist an APPLIANCE-WIDE property (not a per-component fact).
-	store_fact_tool := AgentToolDef{
+	pr.store_fact_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "store_fact",
 			Description: "Save an APPLIANCE-WIDE property (os, hostname, kernel, arch, timezone, primary role) under a short key; same key overwrites. Component-specific details — a service's version, port, or config path — go on that component's own entity via link_entities subject_attrs, NOT here. ttl='short' for volatile state, default 'long'. (The 'What to Record' section has the full routing guide.)",
@@ -907,8 +1035,8 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			// Cutover: facts now live ONLY in the appliance scope (graph attrs);
 			// ssh_facts is retired. Short-TTL (ephemeral) facts are not persisted
 			// — the graph has no expiry, and live state should be re-probed.
-			recordScopedApplianceFact(appliance, key, value, ttl)
-			emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Stored fact: %s = %s", key, value)})
+			recordScopedApplianceFact(pr.appliance, key, value, ttl)
+			emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Stored fact: %s = %s", key, value)})
 			return "fact stored", nil
 		},
 		NeedsConfirm: false,
@@ -918,7 +1046,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 	// knowledge is a real topology (services, configs, dependencies) instead of
 	// flat facts piled on one node. store_fact is for appliance-wide properties;
 	// link_entities is for everything with structure.
-	link_entities_tool := AgentToolDef{
+	pr.link_entities_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "link_entities",
 			Description: "Record a RELATIONSHIP between two named parts of this system — the structured graph map. Subject-relation-object, e.g. subject='nginx' relation='proxies to' object='app on :8080'. Entities auto-merge by name; put non-relational details (version, path, port) in subject_attrs. Call it whenever you learn how parts connect. (store_fact is only for appliance-wide properties; the 'What to Record' section has the full routing guide.)",
@@ -954,17 +1082,17 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 					}
 				}
 			}
-			if err := recordScopedLink(appliance, subjectKind, subject, attrs, relation, objectKind, object, note, replace); err != nil {
+			if err := recordScopedLink(pr.appliance, subjectKind, subject, attrs, relation, objectKind, object, note, replace); err != nil {
 				return "", err
 			}
-			emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Linked: %s → %s → %s", subject, relation, object)})
+			emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Linked: %s → %s → %s", subject, relation, object)})
 			return "relationship recorded", nil
 		},
 		NeedsConfirm: false,
 	}
 
 	// store_rule — persist a standing instruction the user has established.
-	store_rule_tool := AgentToolDef{
+	pr.store_rule_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "store_rule",
 			Description: "Save a standing instruction or preference the user has expressed about how to work with this system. Call this when the user states a rule, preference, or convention they want followed in all future sessions — e.g. 'always check staging before production', 'never restart the web server without warning', 'use sudo for all service commands'. Rules persist across sessions and are injected into every future prompt.",
@@ -978,23 +1106,25 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			if strings.TrimSpace(rule) == "" {
 				return "", fmt.Errorf("rule is required")
 			}
-			if ownerUDB == nil {
+			if pr.ownerUDB == nil {
 				return "", fmt.Errorf("no database")
 			}
 			// Rules live on the owner's store so they're shared across everyone
 			// using the appliance (see the rules read above).
-			storeRule(ownerUDB, appliance.ID, rule)
+			storeRule(pr.ownerUDB, pr.appliance.ID, rule)
 			preview := rule
 			if len(preview) > 80 {
 				preview = preview[:80] + "…"
 			}
-			emit(id, probeEvent{Kind: "status", Text: "Rule saved: " + preview})
+			emit(pr.id, probeEvent{Kind: "status", Text: "Rule saved: " + preview})
 			return "rule saved", nil
 		},
 	}
+}
 
+func (pr *probeRun) readTools() {
 	// count_lines — check file size before deciding how to read it.
-	count_lines_tool := AgentToolDef{
+	pr.count_lines_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "count_lines",
 			Description: "Return the total number of lines in a file on the remote system. Use this before read_range or before catting a file to know whether it will fit in one read or needs pagination.",
@@ -1008,16 +1138,16 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			if path == "" {
 				return "", fmt.Errorf("path is required")
 			}
-			emit(id, probeEvent{Kind: "cmd", Text: "count_lines " + path})
-			result, err := sshExec(fmt.Sprintf("wc -l %s 2>/dev/null", shellQuote(path)))
-			termEcho("wc -l "+path, result)
+			emit(pr.id, probeEvent{Kind: "cmd", Text: "count_lines " + path})
+			result, err := pr.sshExec(fmt.Sprintf("wc -l %s 2>/dev/null", shellQuote(path)))
+			pr.termEcho("wc -l "+path, result)
 			return result, err
 		},
 		NeedsConfirm: false,
 	}
 
 	// read_range — read a specific line range from a file; avoids re-running expensive commands.
-	read_range_tool := AgentToolDef{
+	pr.read_range_tool = AgentToolDef{
 		Tool: Tool{
 			Name: "read_range",
 			Description: "Read a specific range of lines from a file on the remote system. " +
@@ -1051,19 +1181,19 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			}
 			label := fmt.Sprintf("read_range %s lines %d–%d", path, start, end)
 			cmd := fmt.Sprintf("awk 'NR>=%d && NR<=%d' %s 2>/dev/null", start, end, shellQuote(path))
-			emit(id, probeEvent{Kind: "cmd", Text: label})
-			result, err := sshExec(cmd)
+			emit(pr.id, probeEvent{Kind: "cmd", Text: label})
+			result, err := pr.sshExec(cmd)
 			if stripANSI(result) != "" {
-				emit(id, probeEvent{Kind: "output", Text: result})
+				emit(pr.id, probeEvent{Kind: "output", Text: result})
 			}
-			termEcho(label, result)
+			pr.termEcho(label, result)
 			return result, err
 		},
 		NeedsConfirm: false,
 	}
 
 	// search_facts — retrieve facts from the persistent knowledge base.
-	search_facts_tool := AgentToolDef{
+	pr.search_facts_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "search_facts",
 			Description: "Search stored facts across all appliances by keyword. Checks fact keys, values, and tags. Call this before running SSH commands — the answer may already be in persistent memory.",
@@ -1081,7 +1211,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			// Cutover: facts live in THIS appliance's scope (graph attrs). Cross-
 			// appliance search is no longer supported — each appliance is its own
 			// scope — so the optional "appliance" filter is ignored.
-			attrs := scopedApplianceFacts(udb, appliance)
+			attrs := scopedApplianceFacts(pr.udb, pr.appliance)
 			keys := make([]string, 0, len(attrs))
 			for k := range attrs {
 				keys = append(keys, k)
@@ -1094,7 +1224,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 					lines = append(lines, "- "+k+": "+attrs[k])
 				}
 			}
-			emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("search_facts %q: %d result(s)", query, len(lines))})
+			emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("search_facts %q: %d result(s)", query, len(lines))})
 			if len(lines) == 0 {
 				return "no facts found", nil
 			}
@@ -1110,7 +1240,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 	// embedded via the local llama.cpp server); it never touches the live system
 	// or any third party. Only attached to the worker when the appliance has
 	// linked collections.
-	search_knowledge_tool := AgentToolDef{
+	pr.search_knowledge_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "search_knowledge",
 			Description: "Search the curated KNOWLEDGE linked to this appliance (runbooks, vendor docs, guides the owner attached) for material relevant to the task. Returns the top matching passages with their source. Use it to ground your answer in authoritative reference material — it does NOT touch the live system, so pair it with the system-probing tools rather than replacing them.",
@@ -1133,8 +1263,8 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 					k = 12
 				}
 			}
-			hits := SearchCollections(ctx, CollectionsDB(), ownerUser, appliance.Collections, query, k)
-			emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("search_knowledge %q: %d passage(s)", query, len(hits))})
+			hits := SearchCollections(pr.ctx, CollectionsDB(), pr.ownerUser, pr.appliance.Collections, query, k)
+			emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("search_knowledge %q: %d passage(s)", query, len(hits))})
 			if len(hits) == 0 {
 				return "No matching passages in the linked knowledge.", nil
 			}
@@ -1151,34 +1281,31 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 		NeedsConfirm: false,
 	}
 
-	// Cached recorded-knowledge blocks. These feed buildLeadSystemPrompt and
-	// the investigator's first message; the old workerPrompt concatenation
-	// that used to interleave here was dead (never sent to any model) and
-	// was removed along with its three prompt builders.
-	var cachedFacts, cachedNotes, cachedTechniques, cachedRules, cachedDiscoveries string
-	if udb != nil {
-		if disc := discoveriesFor(udb, appliance.ID); len(disc) > 0 {
-			cachedDiscoveries = formatDiscoveries(disc)
+	if pr.udb != nil {
+		if disc := discoveriesFor(pr.udb, pr.appliance.ID); len(disc) > 0 {
+			pr.cachedDiscoveries = formatDiscoveries(disc)
 		}
 		// Facts come from the appliance's SCOPE (graph entity attrs), not
 		// ssh_facts. Graph attrs carry no per-fact age, so the prompts lean on
 		// the standing "always re-probe live state" rule rather than age cutoffs.
-		cachedFacts = scopedFactsBlock(udb, appliance)
+		pr.cachedFacts = scopedFactsBlock(pr.udb, pr.appliance)
 		var notes string
-		if udb.Get(notesTable, appliance.ID, &notes) && strings.TrimSpace(notes) != "" {
-			cachedNotes = strings.TrimSpace(notes)
+		if pr.udb.Get(notesTable, pr.appliance.ID, &notes) && strings.TrimSpace(notes) != "" {
+			pr.cachedNotes = strings.TrimSpace(notes)
 		}
-		cachedTechniques = techniquesFor(udb, appliance.ID)
-		if rules := rulesForAppliance(ownerUDB, appliance.ID); len(rules) > 0 {
+		pr.cachedTechniques = techniquesFor(pr.udb, pr.appliance.ID)
+		if rules := rulesForAppliance(pr.ownerUDB, pr.appliance.ID); len(rules) > 0 {
 			// Rules are the owner's operator directives for THIS appliance — read
 			// from the owner's store so a shared appliance applies the same
 			// standing instructions for everyone, not just the owner.
-			cachedRules = formatRules(rules)
+			pr.cachedRules = formatRules(rules)
 		}
 	}
+}
 
+func (pr *probeRun) reportTools() {
 	// watch_condition — register a 1-minute expect-style poll until a condition is met.
-	watch_condition_tool := AgentToolDef{
+	pr.watch_condition_tool = AgentToolDef{
 		Tool: Tool{
 			Name: "watch_condition",
 			Description: "Register an expect-style watch: runs the given command every minute until " +
@@ -1211,8 +1338,8 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			now := time.Now()
 			w := ScheduledWatch{
 				ID:          UUIDv4(),
-				ApplianceID: appliance.ID,
-				UserID:      userID,
+				ApplianceID: pr.appliance.ID,
+				UserID:      pr.userID,
 				Task:        task,
 				Command:     command,
 				Pattern:     pattern,
@@ -1220,22 +1347,22 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 				NextRunAt:   now.Add(60 * time.Second).Format(time.RFC3339),
 				Created:     now.Format(time.RFC3339),
 			}
-			storeWatch(T.DB, w)
-			emit(id, probeEvent{Kind: "watch", Text: fmt.Sprintf("Watching: %s (every 60s, up to %d min)", task, timeoutMin)})
+			storeWatch(pr.T.DB, w)
+			emit(pr.id, probeEvent{Kind: "watch", Text: fmt.Sprintf("Watching: %s (every 60s, up to %d min)", task, timeoutMin)})
 			return fmt.Sprintf("Watch registered (id: %s). Will check every 60 seconds for up to %d minutes for pattern %q in: %s", w.ID[:8], timeoutMin, pattern, command), nil
 		},
 		NeedsConfirm: false,
 	}
 
 	// list_watches — show active watches for this appliance.
-	list_watches_tool := AgentToolDef{
+	pr.list_watches_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "list_watches",
 			Description: "List active watches registered for this appliance.",
 			Parameters:  map[string]ToolParam{},
 		},
 		Handler: func(args map[string]any) (string, error) {
-			watches := listWatchesForAppliance(T.DB, appliance.ID)
+			watches := listWatchesForAppliance(pr.T.DB, pr.appliance.ID)
 			if len(watches) == 0 {
 				return "No active watches.", nil
 			}
@@ -1249,7 +1376,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 		NeedsConfirm: false,
 	}
 
-	save_to_codewriter_tool := AgentToolDef{
+	pr.save_to_codewriter_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "save_to_codewriter",
 			Description: "Save a SQL query, shell script, or code snippet to the user's CodeWriter library in gohort. This is a local save action — do NOT run anything on the appliance. Use this when the user asks to save the script/query for later reuse rather than (or in addition to) running it immediately.",
@@ -1270,7 +1397,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			if name == "" || code == "" {
 				return "", fmt.Errorf("name and code are required")
 			}
-			id, err := SaveSnippetFunc(userID, name, lang, code)
+			id, err := SaveSnippetFunc(pr.userID, name, lang, code)
 			if err != nil {
 				return "", fmt.Errorf("save failed: %w", err)
 			}
@@ -1279,7 +1406,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 		NeedsConfirm: false,
 	}
 
-	save_to_techwriter_tool := AgentToolDef{
+	pr.save_to_techwriter_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "save_to_techwriter",
 			Description: "Save a report, runbook, findings summary, or any prose document to the user's TechWriter library in gohort. This is a local save action — do NOT run anything on the appliance or search for TechWriter on the remote system. Use this when the user asks to document findings, save a report, or create a runbook from the session results.",
@@ -1298,7 +1425,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			if subject == "" || body == "" {
 				return "", fmt.Errorf("subject and body are required")
 			}
-			id, err := SaveArticleFunc(userID, subject, body)
+			id, err := SaveArticleFunc(pr.userID, subject, body)
 			if err != nil {
 				return "", fmt.Errorf("save failed: %w", err)
 			}
@@ -1312,13 +1439,13 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 	// DocumentTarget seam (guides registers itself; servitor never imports it),
 	// same local-write posture as save_to_techwriter. Content lands as a new
 	// section the user can polish in the Guides app; it's a revision like any edit.
-	list_guides_tool := AgentToolDef{
+	pr.list_guides_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "list_guides",
 			Description: "List the user's existing guides (living multi-section documents in the gohort Guides app), so you can pick the right one to push a finding into with push_to_guide. Local read — do NOT look for guides on the remote system. No arguments.",
 		},
 		Handler: func(args map[string]any) (string, error) {
-			ds := ListDocuments(userID, "guide")
+			ds := ListDocuments(pr.userID, "guide")
 			if len(ds) == 0 {
 				return "The user has no guides yet. push_to_guide with a new guide name will create one.", nil
 			}
@@ -1340,7 +1467,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 	// the same run). The Guide Curator batches these and decides. push_to_guide
 	// stays for the case where the USER named a destination in the request.
 	// See docs/guides-curator.md.
-	record_finding_tool := AgentToolDef{
+	pr.record_finding_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "record_finding",
 			Description: "Report something you learned that is worth DOCUMENTING, without choosing a destination. Use this for anything durable a future reader would want: a config value, a path, a working procedure, a failure mode and its cause. A curator later decides which guide it belongs in, merges it with related findings, and drops what isn't worth keeping — so you do NOT name a guide or a section. Do NOT report that a probe ran, or that a service was up at one moment; that is not documentation. Local save action — never run anything on the appliance for this.",
@@ -1360,15 +1487,15 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			if !AcceptsFindings("guide") {
 				return "", fmt.Errorf("nothing on this deployment accepts findings for documentation")
 			}
-			id, err := SubmitFinding(userID, "guide", DocFinding{
+			id, err := SubmitFinding(pr.userID, "guide", DocFinding{
 				Content:    content,
 				Topic:      topic,
 				Confidence: strArg(args, "confidence"),
 				Origin: DocFindingOrigin{
 					SourceKind: "system",
-					ItemID:     appliance.ID,
-					ItemLabel:  applianceLabel(appliance.Name, appliance.ID),
-					RunID:      id,
+					ItemID:     pr.appliance.ID,
+					ItemLabel:  applianceLabel(pr.appliance.Name, pr.appliance.ID),
+					RunID:      pr.id,
 					Observed:   time.Now().Format(time.RFC3339),
 				},
 			})
@@ -1380,7 +1507,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 		NeedsConfirm: false,
 	}
 
-	push_to_guide_tool := AgentToolDef{
+	pr.push_to_guide_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "push_to_guide",
 			Description: "Add a finding from this investigation to one of the user's GUIDES (living documents in the gohort Guides app) as a new section. Local save action — do NOT run anything on the appliance or look for Guides on the remote system. Use when the user asks to add/document something you looked up into a guide (\"add the cron jobs to my Ops guide\"). If a guide with the given name exists it's appended to; otherwise a new guide by that name is created. Call list_guides first if unsure of the exact name.",
@@ -1403,7 +1530,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			// Resolve the guide by name; create a new one when nothing matches.
 			docID, newTitle := "", ""
 			if guide != "" {
-				for _, d := range ListDocuments(userID, "guide") {
+				for _, d := range ListDocuments(pr.userID, "guide") {
 					if strings.EqualFold(strings.TrimSpace(d.Title), guide) {
 						docID = d.ID
 						break
@@ -1413,7 +1540,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 					newTitle = guide
 				}
 			}
-			writtenID, err := AppendToDocument(ctx, userID, "guide", docID, newTitle, title, content)
+			writtenID, err := AppendToDocument(pr.ctx, pr.userID, "guide", docID, newTitle, title, content)
 			if err != nil {
 				return "", fmt.Errorf("push to guide failed: %w", err)
 			}
@@ -1425,7 +1552,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			if newTitle != "" {
 				name = newTitle
 			}
-			linkSessionGuide(udb, id, writtenID, name, newTitle != "")
+			linkSessionGuide(pr.udb, pr.id, writtenID, name, newTitle != "")
 			// Said in the session as it happens. The link is durable and the
 			// session list will show it later, but "I just wrote that up" is
 			// something the person watching should see now rather than discover
@@ -1434,7 +1561,7 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			if newTitle != "" {
 				verb = "Created"
 			}
-			emit(id, probeEvent{Kind: "status", Text: verb + " guide: " + name})
+			emit(pr.id, probeEvent{Kind: "status", Text: verb + " guide: " + name})
 			if newTitle != "" {
 				return fmt.Sprintf("Created guide %q and added the %q section.", newTitle, strings.TrimSpace(title)), nil
 			}
@@ -1442,65 +1569,60 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 		},
 		NeedsConfirm: false,
 	}
+}
 
+func (pr *probeRun) assembleToolkit() {
 	// ptyLocal reports whether this run holds an ssh.Client of its own, which is
 	// what run_pty needs and what a peer-reached appliance does not have — its
 	// session lives on the far side and only whole commands cross the wire.
 	// Read off PeerName rather than off a.conn, because the toolkit is built
 	// before any reconnect could repopulate it.
-	ptyLocal := strings.TrimSpace(appliance.PeerName) == ""
+	pr.ptyLocal = strings.TrimSpace(pr.appliance.PeerName) == ""
 
-	// workerTools holds a placeholder run_command entry. Every call site must use
-	// withFreshRunTool(workerTools) so each invocation gets isolated counters.
-	var workerTools []AgentToolDef
-	// Populated for toolset appliances only; carries the bound tools plus what
-	// was withheld and why, and feeds both the allow-list check and the
-	// orientation pass below.
-	var resolvedTools resolvedToolset
-	if appliance.Type == "repo" {
+	if pr.appliance.Type == "repo" {
 		// Repo workers search/read the encrypted code store instead of
 		// executing commands; the recording/plan/map tools are shared and
 		// scope-based, so they carry over unchanged.
-		workerTools = append(repoCodeTools(ownerUser, appliance.ID),
-			note_lesson_tool, record_technique_tool, record_discovery_tool, store_fact_tool, link_entities_tool, store_rule_tool, search_facts_tool,
-			save_to_codewriter_tool, save_to_techwriter_tool, record_finding_tool, push_to_guide_tool, list_guides_tool,
+		pr.workerTools = append(repoCodeTools(pr.ownerUser, pr.appliance.ID),
+			pr.note_lesson_tool, pr.record_technique_tool, pr.record_discovery_tool, pr.store_fact_tool, pr.link_entities_tool, pr.store_rule_tool, pr.search_facts_tool,
+			pr.save_to_codewriter_tool, pr.save_to_techwriter_tool, pr.record_finding_tool, pr.push_to_guide_tool, pr.list_guides_tool,
 		)
-	} else if appliance.Type == "toolset" {
+	} else if pr.appliance.Type == "toolset" {
 		// The bound tools ARE the target. Resolved in the owner's context, with
 		// every binding's fingerprint checked; anything that changed since it
 		// was approved is withheld and named rather than quietly handed over.
 		// The acting user as well as the owner: which identity the bound tools
 		// run under is the appliance's own setting, and the two are the same
 		// user on an unshared appliance.
-		resolvedTools = resolveToolset(ctx, ownerUser, userID, appliance)
-		workerTools = append(resolvedTools.Defs,
-			note_lesson_tool, record_technique_tool, record_discovery_tool, store_fact_tool, link_entities_tool, store_rule_tool, search_facts_tool,
-			save_to_codewriter_tool, save_to_techwriter_tool, record_finding_tool, push_to_guide_tool, list_guides_tool,
+		pr.resolvedTools = resolveToolset(pr.ctx, pr.ownerUser, pr.userID, pr.appliance)
+		pr.workerTools = append(pr.resolvedTools.Defs,
+			pr.note_lesson_tool, pr.record_technique_tool, pr.record_discovery_tool, pr.store_fact_tool, pr.link_entities_tool, pr.store_rule_tool, pr.search_facts_tool,
+			pr.save_to_codewriter_tool, pr.save_to_techwriter_tool, pr.record_finding_tool, pr.push_to_guide_tool, pr.list_guides_tool,
 		)
-		for _, w := range resolvedTools.Withheld {
+		for _, w := range pr.resolvedTools.Withheld {
 			// Surfaced, not logged. An investigation that quietly got quieter
 			// is indistinguishable from a target with less to say.
-			emit(id, probeEvent{Kind: "status", Text: "Tool withheld: " + w})
+			emit(pr.id, probeEvent{Kind: "status", Text: "Tool withheld: " + w})
 		}
-	} else if appliance.Type == "bundle" {
+	} else if pr.appliance.Type == "bundle" {
 		// Bundle workers read the encrypted evidence store. Nothing executes:
 		// there is no host here, only files somebody uploaded.
-		workerTools = append(BundleTools(ownerUser, appliance.ID),
-			note_lesson_tool, record_technique_tool, record_discovery_tool, store_fact_tool, link_entities_tool, store_rule_tool, search_facts_tool,
-			save_to_codewriter_tool, save_to_techwriter_tool, record_finding_tool, push_to_guide_tool, list_guides_tool,
+		pr.workerTools = append(BundleTools(pr.ownerUser, pr.appliance.ID),
+			pr.note_lesson_tool, pr.record_technique_tool, pr.record_discovery_tool, pr.store_fact_tool, pr.link_entities_tool, pr.store_rule_tool, pr.search_facts_tool,
+			pr.save_to_codewriter_tool, pr.save_to_techwriter_tool, pr.record_finding_tool, pr.push_to_guide_tool, pr.list_guides_tool,
 		)
-	} else if appliance.Type == "command" {
-		workerTools = []AgentToolDef{
-			newRunTool(), read_log_tool, search_logs_tool,
-			note_lesson_tool, record_technique_tool, record_discovery_tool, store_fact_tool, link_entities_tool, store_rule_tool, search_facts_tool,
-			count_lines_tool, read_range_tool, save_to_codewriter_tool, save_to_techwriter_tool, record_finding_tool, push_to_guide_tool, list_guides_tool,
+	} else if pr.appliance.Type == "command" {
+		pr.workerTools = []AgentToolDef{
+			pr.newRunTool(), pr.read_log_tool, pr.search_logs_tool,
+			pr.note_lesson_tool, pr.record_technique_tool, pr.record_discovery_tool, pr.store_fact_tool, pr.link_entities_tool, pr.store_rule_tool, pr.search_facts_tool,
+			pr.count_lines_tool, pr.read_range_tool, pr.save_to_codewriter_tool, pr.save_to_techwriter_tool, pr.record_finding_tool, pr.push_to_guide_tool, pr.list_guides_tool,
 		}
 	} else {
-		workerTools = []AgentToolDef{
-			newRunTool(), read_log_tool, search_logs_tool,
-			note_lesson_tool, record_technique_tool, record_discovery_tool, store_fact_tool, link_entities_tool, store_rule_tool, search_facts_tool,
-			count_lines_tool, read_range_tool,
-			watch_condition_tool, list_watches_tool, save_to_codewriter_tool, save_to_techwriter_tool, record_finding_tool, push_to_guide_tool, list_guides_tool,
+		pr.workerTools = []AgentToolDef{
+			pr.newRunTool(), pr.read_log_tool, pr.search_logs_tool,
+			pr.note_lesson_tool, pr.record_technique_tool, pr.record_discovery_tool, pr.store_fact_tool, pr.link_entities_tool, pr.store_rule_tool, pr.search_facts_tool,
+			pr.count_lines_tool, pr.read_range_tool,
+			pr.watch_condition_tool, pr.list_watches_tool, pr.save_to_codewriter_tool, pr.save_to_techwriter_tool, pr.record_finding_tool, pr.push_to_guide_tool, pr.list_guides_tool,
 		}
 		// run_pty is the one tool that needs the ssh.Client itself rather than
 		// an exec function, so it is the one tool the peer transport cannot
@@ -1509,796 +1631,818 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 		// and failed, because a tool that is present and always errors spends
 		// rounds and pushes the worker into improvising around it instead of
 		// reaching for run_command, which works here.
-		if ptyLocal {
-			workerTools = append(workerTools, newRunPtyTool())
+		if pr.ptyLocal {
+			pr.workerTools = append(pr.workerTools, pr.newRunPtyTool())
 		}
 	}
 	// The accumulated map, traversable. Added for EVERY appliance type: the
 	// graph is per-appliance and type-agnostic, and the questions it answers
 	// ("what does this rely on", "how does this reach that") are the same
 	// whether the thing is a service, a package or a log file.
-	workerTools = append(workerTools, mapTools(appliance.ID)...)
+	pr.workerTools = append(pr.workerTools, mapTools(pr.appliance.ID)...)
 	// Curated linked knowledge (owner-attached collections) is searchable by the
 	// worker via search_knowledge — added for every appliance type, but only when
 	// the appliance actually has collections linked, so agents without any don't
 	// see a dead tool.
-	if len(appliance.Collections) > 0 {
-		workerTools = append(workerTools, search_knowledge_tool)
+	if len(pr.appliance.Collections) > 0 {
+		pr.workerTools = append(pr.workerTools, pr.search_knowledge_tool)
 	}
 	// Linked repos — the 360 join. A system that declares which code it runs
 	// hands its investigation that repo's search/read tools, so one probe can
 	// trace a log excerpt to the emitting line WHILE inspecting the live
 	// state, instead of the human joining two investigations by hand. Repos
 	// skip this (they ARE the code); workspaces never reach here.
-	if appliance.Type != "repo" && len(appliance.LinkedRepos) > 0 {
+	if pr.appliance.Type != "repo" && len(pr.appliance.LinkedRepos) > 0 {
 		var linked []linkedRepo
-		for _, rid := range appliance.LinkedRepos {
-			if ra, raOwner, _, ok := T.resolveAppliance(userID, udb, rid); ok && ra.Type == "repo" {
+		for _, rid := range pr.appliance.LinkedRepos {
+			if ra, raOwner, _, ok := pr.T.resolveAppliance(pr.userID, pr.udb, rid); ok && ra.Type == "repo" {
 				linked = append(linked, linkedRepo{Owner: raOwner, ID: ra.ID, Name: applianceLabel(ra.Name, ra.ID)})
 			}
 		}
 		if len(linked) > 0 {
-			workerTools = append(workerTools, linkedRepoTools(linked)...)
+			pr.workerTools = append(pr.workerTools, linkedRepoTools(linked)...)
 			names := make([]string, 0, len(linked))
 			for _, lr := range linked {
 				names = append(names, lr.Name)
 			}
-			emit(id, probeEvent{Kind: "status", Text: "Code linked: " + strings.Join(names, ", ")})
+			emit(pr.id, probeEvent{Kind: "status", Text: "Code linked: " + strings.Join(names, ", ")})
 		}
 	}
 	// Enforced sanity check — servitor handles sensitive system data and
 	// must never call out to third-party services. assertOnlyAllowedTools
 	// panics if anything outside the local-only allow-list sneaks in.
-	assertAllowedWithBindings("servitor.worker", workerTools, servitorWorkerToolAllowList, toolsetBindingNames(appliance))
+	assertAllowedWithBindings("servitor.worker", pr.workerTools, servitorWorkerToolAllowList, toolsetBindingNames(pr.appliance))
+}
 
-	var reply string
-	var consolidateFn func() // set by chat mode, fired after reply is emitted
+func (pr *probeRun) mapMode() probeAction {
+	// === New investigator-driven mapping ===
+	//
+	// Phase 1: Quick snapshot (no LLM) — gives the investigator a starting point.
+	var snapshot string
+	if pr.appliance.Type == "repo" {
+		emit(pr.id, probeEvent{Kind: "status", Text: "Reading repository layout…"})
+		snapshot = runRepoSnapshot(pr.ownerUser, pr.appliance.ID)
+	} else if pr.appliance.Type == "bundle" {
+		emit(pr.id, probeEvent{Kind: "status", Text: "Reading the bundle index…"})
+		snapshot = runBundleSnapshot(pr.ownerUser, pr.appliance.ID)
+	} else if pr.appliance.Type == "toolset" {
+		// One owner-nominated tool, or nothing. See runToolsetSnapshot.
+		if pr.resolvedTools.Snapshot != "" {
+			emit(pr.id, probeEvent{Kind: "status", Text: "Orienting via " + pr.resolvedTools.Snapshot + "…"})
+		}
+		snapshot = runToolsetSnapshot(pr.resolvedTools)
+	} else {
+		emit(pr.id, probeEvent{Kind: "status", Text: "Taking system snapshot…"})
+		snapshot = runQuickSnapshot(pr.ctx, pr.sshExec)
+	}
+	if pr.ctx.Err() != nil {
+		return actReturn
+	}
+	if snapshot != "" {
+		emit(pr.id, probeEvent{Kind: "output", Text: "## System Snapshot\n\n" + snapshot})
+	}
 
-	if saveProfile {
-		// Both first-map and re-map (Refresh) run the full investigator + plan
-		// flow, so a Refresh shows the plan checklist too — the RE-MAPPING
-		// banner below activates when a profile already exists. (Option A: the
-		// old single-worker update pass had no plan and was opaque.)
-		{
-			// === New investigator-driven mapping ===
-			//
-			// Phase 1: Quick snapshot (no LLM) — gives the investigator a starting point.
-			var snapshot string
-			if appliance.Type == "repo" {
-				emit(id, probeEvent{Kind: "status", Text: "Reading repository layout…"})
-				snapshot = runRepoSnapshot(ownerUser, appliance.ID)
-			} else if appliance.Type == "bundle" {
-				emit(id, probeEvent{Kind: "status", Text: "Reading the bundle index…"})
-				snapshot = runBundleSnapshot(ownerUser, appliance.ID)
-			} else if appliance.Type == "toolset" {
-				// One owner-nominated tool, or nothing. See runToolsetSnapshot.
-				if resolvedTools.Snapshot != "" {
-					emit(id, probeEvent{Kind: "status", Text: "Orienting via " + resolvedTools.Snapshot + "…"})
-				}
-				snapshot = runToolsetSnapshot(resolvedTools)
-			} else {
-				emit(id, probeEvent{Kind: "status", Text: "Taking system snapshot…"})
-				snapshot = runQuickSnapshot(ctx, sshExec)
-			}
-			if ctx.Err() != nil {
-				return
-			}
-			if snapshot != "" {
-				emit(id, probeEvent{Kind: "output", Text: "## System Snapshot\n\n" + snapshot})
-			}
+	// Phase 2: Investigator loop — the investigator decides what to probe,
+	// follows leads, and records discoveries. Workers execute specific tasks.
+	//
+	// probeCache: results keyed by aggressively-normalized task (sorted
+	// content tokens, stop words dropped) so paraphrased re-delegations
+	// hit the cache. "list mysql tables" and "show tables in mysql"
+	// normalize to the same key.
+	//
+	// probeTopicCount: tracks how many times the orchestrator has
+	// delegated tasks sharing a content-token set with prior tasks.
+	// When the same topic gets tried 3+ ways, escalate the response
+	// from "[ALREADY PROBED]" to "[ENOUGH — pivot to a different
+	// topic entirely]" so the orchestrator stops grinding the same
+	// area through paraphrase.
+	probeCache := make(map[string]string)
+	probeTopicCount := make(map[string]int)
+	const probeTopicLimit = 3
 
-			// Phase 2: Investigator loop — the investigator decides what to probe,
-			// follows leads, and records discoveries. Workers execute specific tasks.
-			//
-			// probeCache: results keyed by aggressively-normalized task (sorted
-			// content tokens, stop words dropped) so paraphrased re-delegations
-			// hit the cache. "list mysql tables" and "show tables in mysql"
-			// normalize to the same key.
-			//
-			// probeTopicCount: tracks how many times the orchestrator has
-			// delegated tasks sharing a content-token set with prior tasks.
-			// When the same topic gets tried 3+ ways, escalate the response
-			// from "[ALREADY PROBED]" to "[ENOUGH — pivot to a different
-			// topic entirely]" so the orchestrator stops grinding the same
-			// area through paraphrase.
-			probeCache := make(map[string]string)
-			probeTopicCount := make(map[string]int)
-			const probeTopicLimit = 3
+	// Plan tools (buildPlanTools) — Map REQUIRES the plan: mapping a system
+	// is the plan. Chat builds the same group with required=false.
+	mapPlan := buildPlanTools(pr.id, true)
+	plan := mapPlan.Plan
+	set_plan_tool := mapPlan.Set
+	mark_step_in_progress_tool := mapPlan.Start
+	record_step_findings_tool := mapPlan.Findings
+	mark_step_blocked_tool := mapPlan.Blocked
+	revise_plan_tool := mapPlan.Revise
+	report_gaps_tool := mapPlan.Gaps
 
-			// Plan tools (buildPlanTools) — Map REQUIRES the plan: mapping a system
-			// is the plan. Chat builds the same group with required=false.
-			mapPlan := buildPlanTools(id, true)
-			plan := mapPlan.Plan
-			set_plan_tool := mapPlan.Set
-			mark_step_in_progress_tool := mapPlan.Start
-			record_step_findings_tool := mapPlan.Findings
-			mark_step_blocked_tool := mapPlan.Blocked
-			revise_plan_tool := mapPlan.Revise
-			report_gaps_tool := mapPlan.Gaps
-
-			// probeLoopSignalCount tracks how many delegations have ended
-			// with a worker [LOOP DETECTED] message. The orchestrator is
-			// supposed to read these messages and pivot, but in practice
-			// it often ignores them and re-delegates with paraphrased
-			// task descriptions. Counting at the orchestrator's tool-call
-			// boundary lets us refuse the (N+1)th delegation outright
-			// once the orchestrator has demonstrated it's not reading the
-			// signal — forcing model attention via tool-call refusal
-			// instead of relying on prompt-level guidance.
-			probeLoopSignalCount := 0
-			const probeLoopSignalLimit = 3
-			probe_tool := AgentToolDef{
-				Tool: Tool{
-					Name: "probe",
-					Description: "Execute a specific SSH investigation task on the target system. " +
-						"Be precise: 'show /etc/nginx/sites-enabled/myapp.conf and identify its upstream' not 'investigate nginx'. " +
-						"Pass rich context so the worker uses what you already know without re-discovering it.",
-					Parameters: map[string]ToolParam{
-						"task": {
-							Type:        "string",
-							Description: "Single clear goal: find X, read Y, verify Z. One objective per probe.",
-						},
-						"context": {
-							Type:        "string",
-							Description: "What you know so far that's relevant: paths, ports, credentials, service names.",
-						},
-					},
-					Required: []string{"task"},
+	// probeLoopSignalCount tracks how many delegations have ended
+	// with a worker [LOOP DETECTED] message. The orchestrator is
+	// supposed to read these messages and pivot, but in practice
+	// it often ignores them and re-delegates with paraphrased
+	// task descriptions. Counting at the orchestrator's tool-call
+	// boundary lets us refuse the (N+1)th delegation outright
+	// once the orchestrator has demonstrated it's not reading the
+	// signal — forcing model attention via tool-call refusal
+	// instead of relying on prompt-level guidance.
+	probeLoopSignalCount := 0
+	const probeLoopSignalLimit = 3
+	probe_tool := AgentToolDef{
+		Tool: Tool{
+			Name: "probe",
+			Description: "Execute a specific SSH investigation task on the target system. " +
+				"Be precise: 'show /etc/nginx/sites-enabled/myapp.conf and identify its upstream' not 'investigate nginx'. " +
+				"Pass rich context so the worker uses what you already know without re-discovering it.",
+			Parameters: map[string]ToolParam{
+				"task": {
+					Type:        "string",
+					Description: "Single clear goal: find X, read Y, verify Z. One objective per probe.",
 				},
-				Handler: func(args map[string]any) (string, error) {
-					task, _ := args["task"].(string)
-					if task == "" {
-						return "", fmt.Errorf("task is required")
-					}
-					// Hard refusal: orchestrator has accumulated too many
-					// worker [LOOP DETECTED] signals across prior delegations
-					// without effectively pivoting. Refuse the new delegation
-					// outright before spawning a worker — forces model
-					// attention via tool-call rejection rather than relying
-					// on the orchestrator to read [LOOP DETECTED] strings
-					// it's been ignoring.
-					if probeLoopSignalCount >= probeLoopSignalLimit {
-						emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Probe refused: orchestrator hit loop-signal limit (%d signals)", probeLoopSignalCount)})
-						return fmt.Sprintf("[DELEGATION REFUSED — your prior %d delegations have triggered worker LOOP DETECTED responses. Your current investigation strategy is not converging. STOP delegating new probes. Write your final report based on what you have already learned. Acknowledge what you could not determine and why. Do not call probe again in this session.]", probeLoopSignalCount), nil
-					}
-					cacheKey := normalizeTask(task)
-					if cached, ok := probeCache[cacheKey]; ok {
-						probeTopicCount[cacheKey]++
-						if probeTopicCount[cacheKey] >= probeTopicLimit {
-							emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Topic exhausted: %q (%dx)", task, probeTopicCount[cacheKey])})
-							return fmt.Sprintf("[TOPIC EXHAUSTED — you have re-delegated this topic %d times now. Stop probing this area entirely. Pivot to a fundamentally different domain (different service, different layer, different angle on the original goal). Re-delegating the same topic in different words will not produce new information.]\n\nLast result for reference:\n\n%s", probeTopicCount[cacheKey], cached), nil
-						}
-						return "[ALREADY PROBED — result below. Do not probe this topic again; move to a different area.]\n\n" + cached, nil
-					}
-					context, _ := args["context"].(string)
-					var msg strings.Builder
-					if context != "" {
-						msg.WriteString("## Known Context\n\n")
-						msg.WriteString(context)
-						msg.WriteString("\n\n")
-					}
-					if udb != nil {
-						if t := techniquesFor(udb, appliance.ID); t != "" {
-							msg.WriteString("## Known Techniques (use directly)\n\n")
-							msg.WriteString(t)
-							msg.WriteString("\n\n")
-						}
-						if facts := factsForAppliance(udb, appliance.ID); len(facts) > 0 {
-							msg.WriteString("## Stored Facts\n\n")
-							msg.WriteString(formatFacts(facts))
-							msg.WriteString("\n\n")
-						}
-					}
-					msg.WriteString("## Task\n\n")
-					msg.WriteString(task)
-					short := task
-					if len(short) > 80 {
-						short = short[:80] + "…"
-					}
-					emit(id, probeEvent{Kind: "intent", Text: task, Reason: context})
-					var workerResp *Response
-					var workerErr error
-					withHeartbeat(ctx, id, "Probe: "+short, func() {
-						workerResp, _, workerErr = a.RunAgentLoop(ctx,
-							[]Message{{Role: "user", Content: msg.String()}},
-							AgentLoopConfig{
-								// mapping=true: this is the reconnaissance pass, so the
-								// worker persists through failures rather than handing
-								// the first dead end back to the investigator.
-								SystemPrompt:    buildProbeWorkerPrompt(appliance, scratch, true, resolvedTools),
-								Tools:           withFreshRunTool(workerTools),
-								MaxRounds:       12,
-								RouteKey:        "app.servitor",
-								TierOverride:    applianceTierOverride(appliance.WorkerTier),
-								MaskDebugOutput: true,
-								ChatOptions:     []ChatOption{WithTemperature(0.2), WithThink(false)},
-								SerialTools:     true,
-							},
-						)
-					})
-					if workerErr != nil {
-						return "", workerErr
-					}
-					if workerResp == nil {
-						return "No findings.", nil
-					}
-					result := strings.TrimSpace(workerResp.Content)
-					result = parseProbeOutcome(result)
-					probeCache[cacheKey] = result
-					// If the worker hit the cmd loop limit during this
-					// delegation, propagate the signal up to the
-					// orchestrator-level counter so we can refuse future
-					// delegations once the orchestrator has demonstrated
-					// it's not pivoting in response.
-					if strings.Contains(result, "[LOOP DETECTED]") {
-						probeLoopSignalCount++
-						emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Worker loop signal received (%d/%d)", probeLoopSignalCount, probeLoopSignalLimit)})
-					}
-					if len(result) > 12000 {
-						result = result[:12000] + "\n… [truncated]"
-					}
-					emit(id, probeEvent{Kind: "output", Text: result})
-					return result, nil
+				"context": {
+					Type:        "string",
+					Description: "What you know so far that's relevant: paths, ports, credentials, service names.",
 				},
-				NeedsConfirm: false,
+			},
+			Required: []string{"task"},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			task, _ := args["task"].(string)
+			if task == "" {
+				return "", fmt.Errorf("task is required")
 			}
-
-			var invMsg strings.Builder
-			// Re-mapping banner — when the appliance already had a
-			// profile coming into this run, the prior facts /
-			// discoveries / techniques below can mislead the
-			// investigator into skipping the plan ("we already know
-			// this system"). Spell out that this is a fresh re-derivation
-			// before listing the prior context so the LLM doesn't read
-			// the prior data as "work is done."
-			if saveProfile && strings.TrimSpace(appliance.Profile) != "" {
-				invMsg.WriteString("## RE-MAPPING (full re-derivation)\n\n")
-				invMsg.WriteString("This system was mapped before — prior facts, discoveries, and techniques are listed below FOR YOUR REFERENCE ONLY. They are NOT a substitute for a fresh investigation. Re-verify what's still true, discover what's changed, and produce a complete new profile.\n\n")
-				invMsg.WriteString("You MUST emit a fresh `set_plan` as your first tool call. The previous plan is gone; treat this run as a clean slate that benefits from prior context, not as a continuation.\n\n")
+			// Hard refusal: orchestrator has accumulated too many
+			// worker [LOOP DETECTED] signals across prior delegations
+			// without effectively pivoting. Refuse the new delegation
+			// outright before spawning a worker — forces model
+			// attention via tool-call rejection rather than relying
+			// on the orchestrator to read [LOOP DETECTED] strings
+			// it's been ignoring.
+			if probeLoopSignalCount >= probeLoopSignalLimit {
+				emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Probe refused: orchestrator hit loop-signal limit (%d signals)", probeLoopSignalCount)})
+				return fmt.Sprintf("[DELEGATION REFUSED — your prior %d delegations have triggered worker LOOP DETECTED responses. Your current investigation strategy is not converging. STOP delegating new probes. Write your final report based on what you have already learned. Acknowledge what you could not determine and why. Do not call probe again in this session.]", probeLoopSignalCount), nil
 			}
-			invMsg.WriteString("## System Snapshot\n\n")
-			if snapshot != "" {
-				invMsg.WriteString(snapshot)
-			} else {
-				invMsg.WriteString("(snapshot unavailable)\n")
-			}
-			invMsg.WriteString("\n\n")
-			if udb != nil {
-				if disc := discoveriesFor(udb, appliance.ID); len(disc) > 0 {
-					invMsg.WriteString("## Prior Discoveries (already established)\n\n")
-					invMsg.WriteString(formatDiscoveries(disc))
-					invMsg.WriteString("\n\n")
+			cacheKey := normalizeTask(task)
+			if cached, ok := probeCache[cacheKey]; ok {
+				probeTopicCount[cacheKey]++
+				if probeTopicCount[cacheKey] >= probeTopicLimit {
+					emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Topic exhausted: %q (%dx)", task, probeTopicCount[cacheKey])})
+					return fmt.Sprintf("[TOPIC EXHAUSTED — you have re-delegated this topic %d times now. Stop probing this area entirely. Pivot to a fundamentally different domain (different service, different layer, different angle on the original goal). Re-delegating the same topic in different words will not produce new information.]\n\nLast result for reference:\n\n%s", probeTopicCount[cacheKey], cached), nil
 				}
-				if cachedFacts != "" {
-					invMsg.WriteString("## Prior Facts\n\n")
-					invMsg.WriteString(cachedFacts)
-					invMsg.WriteString("\n\n")
+				return "[ALREADY PROBED — result below. Do not probe this topic again; move to a different area.]\n\n" + cached, nil
+			}
+			context, _ := args["context"].(string)
+			var msg strings.Builder
+			if context != "" {
+				msg.WriteString("## Known Context\n\n")
+				msg.WriteString(context)
+				msg.WriteString("\n\n")
+			}
+			if pr.udb != nil {
+				if t := techniquesFor(pr.udb, pr.appliance.ID); t != "" {
+					msg.WriteString("## Known Techniques (use directly)\n\n")
+					msg.WriteString(t)
+					msg.WriteString("\n\n")
 				}
-				if gb := scopedGraphPromptBlock(appliance); gb != "" {
-					invMsg.WriteString("## System Map so far (extend it — don't re-map what's here)\n\n")
-					invMsg.WriteString(gb)
-					invMsg.WriteString("\n\n")
-				}
-				if cachedTechniques != "" {
-					invMsg.WriteString("## Prior Techniques\n\n")
-					invMsg.WriteString(cachedTechniques)
-					invMsg.WriteString("\n\n")
+				if facts := factsForAppliance(pr.udb, pr.appliance.ID); len(facts) > 0 {
+					msg.WriteString("## Stored Facts\n\n")
+					msg.WriteString(formatFacts(facts))
+					msg.WriteString("\n\n")
 				}
 			}
-			invMsg.WriteString("Begin your investigation.\n\n")
-			invMsg.WriteString("REQUIRED FIRST CALL: `set_plan` with ordered steps — typically 5–12, scale higher (15+) for complex appliances. Err toward more steps with narrower scopes rather than fewer with sprawling scopes; narrow steps produce sharper findings. Each step needs a short title and a what_to_find description. Foundation/discovery steps come first; deeper investigation later builds on what they find.\n\n")
-			invMsg.WriteString("After the plan is set, work the steps one at a time:\n")
-			invMsg.WriteString("  1. mark_step_in_progress (step_id)\n")
-			invMsg.WriteString("  2. probe (delegate worker investigation for that step — may call multiple times)\n")
-			invMsg.WriteString("  3. record_step_findings (step_id, 1–3 sentence summary) — OR mark_step_blocked (step_id, reason) if you can't complete it\n")
-			invMsg.WriteString("  4. Move to the next pending step\n\n")
-			invMsg.WriteString(fmt.Sprintf("If findings reveal something you couldn't have planned for, call `revise_plan` to add/remove/reorder steps (max %d revisions per session — use deliberately, not reflexively).\n\n", WorkPlanRevisionLimit))
-			invMsg.WriteString("BEFORE WRITING YOUR FINAL ANSWER: call `report_gaps`. It returns a structured summary of every blocked or skipped step. You MUST incorporate that into a 'What I Couldn't Determine' section in your final answer — the user trusts the report only when you're explicit about what you couldn't see. If the gap report is empty (everything completed), no such section is needed.\n\n")
-			invMsg.WriteString("Use store_fact / record_discovery / record_technique alongside step work for durable knowledge that survives the session. When all steps are done or blocked AND report_gaps has been called, write your final answer.")
-
-			emit(id, probeEvent{Kind: "status", Text: "Investigator starting…"})
-			var invResp *Response
-			var invHistory []Message
-			var invErr error
-			investigatorTools := []AgentToolDef{
-				set_plan_tool, mark_step_in_progress_tool, record_step_findings_tool, mark_step_blocked_tool,
-				revise_plan_tool, report_gaps_tool,
-				probe_tool, store_fact_tool, link_entities_tool, record_discovery_tool, record_technique_tool, note_lesson_tool,
+			msg.WriteString("## Task\n\n")
+			msg.WriteString(task)
+			short := task
+			if len(short) > 80 {
+				short = short[:80] + "…"
 			}
-			assertOnlyAllowedTools("servitor.investigator", investigatorTools, servitorOrchestratorToolAllowList)
-			// Per-step pacing reset — the soft-pacing windows
-			// (midpoint nudge, wrap-up warning, failure streak)
-			// rebase whenever the in_progress step ID changes. Stops
-			// the "you're near the wrap-up cap" message from firing
-			// at the wrong moment when the LLM is just starting a
-			// fresh step. The closure tracks the last step we
-			// announced a reset for; returns true once per real
-			// transition.
-			lastInProgressStep := 0
-			stepResetCb := func() bool {
-				cur := 0
-				for _, s := range plan.Snapshot() {
-					if s.Status == WorkStepInProgress {
-						cur = s.ID
-						break
-					}
-				}
-				if cur == 0 || cur == lastInProgressStep {
-					return false
-				}
-				lastInProgressStep = cur
-				return true
-			}
-			// PendingWorkFn lets the agent-loop's wrap-up nudge know
-			// when there are still authorized plan steps queued, so it
-			// reframes "stop exploring" as "finish the current step
-			// and continue down the list." Without this, the worker
-			// reads the default wrap-up as license to skip remaining
-			// steps and write a summary — observed dropping ~5 steps
-			// from longer plans.
-			pendingPlanWork := func() int {
-				n := 0
-				for _, s := range plan.Snapshot() {
-					if s.Status == WorkStepPending || s.Status == WorkStepInProgress {
-						n++
-					}
-				}
-				return n
-			}
-			// Per-step stuck detector — when the investigator burns too
-			// many rounds on a single step without advancing, inject a
-			// nudge urging it to mark the step blocked and move on. The
-			// 75-round budget is fleet-wide; without this guard the LLM
-			// can spend 40+ rounds wrestling with one bad path while
-			// every other plan step goes untouched, then hit the
-			// wrap-up nudge with most of the plan still pending.
-			//
-			// Thresholds:
-			//   - Soft nudge at 12 rounds on one step: "move to another step, leave this pending"
-			//   - Firm nudge at 20 rounds: "switch steps NOW; don't block for pacing"
-			// The nudges push DEFER-and-revisit, not mark_step_blocked —
-			// blocking zeroes the pending count and defeats the continuation
-			// that grants unfinished plans more rounds. A slow step stays
-			// pending/in-progress and gets revisited with more budget.
-			//
-			// The nudges are one-shot per step transition — when the
-			// LLM advances to a new step, the counter resets and the
-			// flags clear so subsequent steps get the same grace period.
-			stuckTrackedStep := 0
-			stuckRoundCount := 0
-			softNudgeFired := false
-			firmNudgeFired := false
-			stuckMsgFn := func() []Message {
-				curStep := 0
-				stepTitle := ""
-				for _, s := range plan.Snapshot() {
-					if s.Status == WorkStepInProgress {
-						curStep = s.ID
-						stepTitle = s.Title
-						break
-					}
-				}
-				if curStep == 0 {
-					// No step in progress (pre-plan, between steps, or
-					// final wrap-up). Don't count and don't nudge.
-					return nil
-				}
-				if curStep != stuckTrackedStep {
-					stuckTrackedStep = curStep
-					stuckRoundCount = 0
-					softNudgeFired = false
-					firmNudgeFired = false
-				}
-				stuckRoundCount++
-				if stuckRoundCount == 12 && !softNudgeFired {
-					softNudgeFired = true
-					return []Message{{Role: "user", Content: fmt.Sprintf(
-						"Pacing check: you've spent 12 rounds on step %d (%q) without advancing. Move to another pending step now — call mark_step_in_progress on it and work it; leave this step unfinished (do NOT mark it blocked) and revisit it later with what you learn elsewhere. Coming back fresh is faster than grinding. Don't burn more than 8 more rounds here before switching.",
-						curStep, stepTitle)}}
-				}
-				if stuckRoundCount == 20 && !firmNudgeFired {
-					firmNudgeFired = true
-					return []Message{{Role: "user", Content: fmt.Sprintf(
-						"Hard pacing limit: you've spent 20 rounds on step %d (%q). Switch to another pending step NOW — call mark_step_in_progress on the next one and work it. Leave step %d unfinished and pending; do NOT mark it blocked just because it's slow (blocking it for pacing/time is invalid — you'll get more rounds to revisit it). Only block a step for a genuine dead-end (no access, missing tool, unreachable).",
-						curStep, stepTitle, curStep)}}
-				}
-				return nil
-			}
-			// One investigator pass = one round budget. Extracted so the
-			// continuation loop below can re-run it verbatim.
-			const (
-				investigatorRoundBudget = 75 // rounds per investigator pass
-				maxInvestigatorPasses   = 2  // extra budgets granted while steps keep resolving
-			)
-			invCfg := AgentLoopConfig{
-				SystemPrompt: buildInvestigatorSystemPrompt(appliance, resolvedTools),
-				Tools:        investigatorTools,
-				MaxRounds:    investigatorRoundBudget,
-				// The investigator's OWN stage, not the worker one. It borrowed
-				// app.servitor's tier while taking its thinking budget from
-				// app.servitor.orchestrator (see orchestratorThinkOpts), which
-				// left the "Servitor: Orchestrator" row in Admin → LLM Routing
-				// offering a tier selector that decided nothing: the budget
-				// applied and the tier was silently ignored. Default is
-				// "worker (thinking)", so this changes no behavior until an
-				// operator picks something else — which is now possible.
-				RouteKey:        "app.servitor.orchestrator",
-				TierOverride:    applianceTierOverride(appliance.OrchestratorTier),
-				MaskDebugOutput: true,
-				SerialTools:     true,
-				ChatOptions:     append([]ChatOption{WithTemperature(0.3), WithThink(true)}, orchestratorThinkOpts()...),
-				OnRoundReset:    stepResetCb,
-				OnRoundStart:    stuckMsgFn,
-				PendingWorkFn:   pendingPlanWork,
-				// Analyzing a repo that may define LLM tools: the investigator
-				// legitimately names tools like store_fact when describing the
-				// code, so don't nudge it as if it meant to call them.
-				DisableToolMentionCorrection: appliance.Type == "repo",
-			}
-			withHeartbeat(ctx, id, "Investigator", func() {
-				invResp, invHistory, invErr = a.RunAgentLoop(ctx,
-					[]Message{{Role: "user", Content: invMsg.String()}}, invCfg)
-			})
-			// Productive continuation — a single round budget often isn't
-			// enough to work a 10–15 step plan to completion, so the
-			// investigator kept "running out of rounds" and synthesizing a
-			// half-finished profile. When a pass exhausts its budget
-			// (HitRoundCap) with steps still PENDING, grant another budget —
-			// but only while it keeps resolving steps. A pass that clears
-			// nothing means it's genuinely stuck (every remaining step
-			// dead-ended), so stop and synthesize what we have rather than
-			// grinding in circles. Total work is bounded at
-			// (1 + maxInvestigatorPasses) budgets.
-			prevPending := -1
-			for pass := 0; pass < maxInvestigatorPasses && invErr == nil && ctx.Err() == nil; pass++ {
-				if invResp == nil || !invResp.HitRoundCap {
-					break // natural finish — not a cap hit
-				}
-				pending := pendingPlanWork()
-				if pending == 0 {
-					break // capped, but the plan is fully resolved — nothing left
-				}
-				if prevPending >= 0 && pending >= prevPending {
-					emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf(
-						"Investigator stalled with %d step(s) still pending — wrapping up with findings so far.", pending)})
-					break
-				}
-				prevPending = pending
-				emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf(
-					"Investigator reached its round budget with %d step(s) pending — continuing the investigation…", pending)})
-				// Fresh stuck-detector window for the new budget.
-				stuckTrackedStep, stuckRoundCount, softNudgeFired, firmNudgeFired = 0, 0, false, false
-				withHeartbeat(ctx, id, "Investigator (continued)", func() {
-					invResp, invHistory, invErr = a.RunAgentLoop(ctx, invHistory, invCfg)
-				})
-			}
-			if invErr != nil && ctx.Err() == nil {
-				emit(id, probeEvent{Kind: "error", Text: "Investigator error: " + invErr.Error()})
-				// Don't return — synthesize what was gathered.
-			}
-			if ctx.Err() != nil {
-				return
-			}
-
-			// Phase 3: Synthesis — structured profile from accumulated discoveries + facts.
-			emit(id, probeEvent{Kind: "status", Text: "Synthesizing profile from investigation findings…"})
-			now := time.Now()
-			finalFacts := ""
-			if facts := factsForAppliance(udb, appliance.ID); len(facts) > 0 {
-				finalFacts = formatFactsWithAge(facts, now)
-			}
-			var finalNotes string
-			if udb != nil {
-				udb.Get(notesTable, appliance.ID, &finalNotes)
-			}
-			finalTechniques := ""
-			if udb != nil {
-				finalTechniques = techniquesFor(udb, appliance.ID)
-			}
-			finalDiscoveries := ""
-			if udb != nil {
-				finalDiscoveries = formatDiscoveries(discoveriesFor(udb, appliance.ID))
-			}
-			invNarrative := ""
-			if invResp != nil {
-				invNarrative = strings.TrimSpace(invResp.Content)
-			}
-			synthMsg := buildSynthesisMessage(invNarrative, finalFacts, finalTechniques, finalNotes, finalDiscoveries)
-			var synthResp *Response
-			var synthErr error
-			withHeartbeat(ctx, id, "Synthesizing profile", func() {
-				synthResp, _, synthErr = a.RunAgentLoop(ctx,
-					[]Message{{Role: "user", Content: synthMsg}},
+			emit(pr.id, probeEvent{Kind: "intent", Text: task, Reason: context})
+			var workerResp *Response
+			var workerErr error
+			withHeartbeat(pr.ctx, pr.id, "Probe: "+short, func() {
+				workerResp, _, workerErr = pr.a.RunAgentLoop(pr.ctx,
+					[]Message{{Role: "user", Content: msg.String()}},
 					AgentLoopConfig{
-						SystemPrompt:    buildSynthesisSystemPrompt(appliance),
-						Tools:           nil,
-						MaxRounds:       1,
+						// mapping=true: this is the reconnaissance pass, so the
+						// worker persists through failures rather than handing
+						// the first dead end back to the investigator.
+						SystemPrompt:    buildProbeWorkerPrompt(pr.appliance, pr.scratch, true, pr.resolvedTools),
+						Tools:           pr.withFreshRunTool(pr.workerTools),
+						MaxRounds:       12,
 						RouteKey:        "app.servitor",
-						TierOverride:    applianceTierOverride(appliance.OrchestratorTier),
+						TierOverride:    applianceTierOverride(pr.appliance.WorkerTier),
 						MaskDebugOutput: true,
-						ChatOptions:     []ChatOption{WithThink(false)},
+						ChatOptions:     []ChatOption{WithTemperature(0.2), WithThink(false)},
+						SerialTools:     true,
 					},
 				)
 			})
-			if synthErr != nil && ctx.Err() == nil {
-				emit(id, probeEvent{Kind: "error", Text: "Synthesis error: " + synthErr.Error()})
+			if workerErr != nil {
+				return "", workerErr
 			}
-			if synthResp != nil && strings.TrimSpace(synthResp.Content) != "" {
-				reply = strings.TrimSpace(synthResp.Content)
+			if workerResp == nil {
+				return "No findings.", nil
 			}
-			if reply == "" && invNarrative != "" {
-				reply = invNarrative
+			result := strings.TrimSpace(workerResp.Content)
+			result = parseProbeOutcome(result)
+			probeCache[cacheKey] = result
+			// If the worker hit the cmd loop limit during this
+			// delegation, propagate the signal up to the
+			// orchestrator-level counter so we can refuse future
+			// delegations once the orchestrator has demonstrated
+			// it's not pivoting in response.
+			if strings.Contains(result, "[LOOP DETECTED]") {
+				probeLoopSignalCount++
+				emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Worker loop signal received (%d/%d)", probeLoopSignalCount, probeLoopSignalLimit)})
 			}
-		}
+			if len(result) > 12000 {
+				result = result[:12000] + "\n… [truncated]"
+			}
+			emit(pr.id, probeEvent{Kind: "output", Text: result})
+			return result, nil
+		},
+		NeedsConfirm: false,
+	}
+
+	var invMsg strings.Builder
+	// Re-mapping banner — when the appliance already had a
+	// profile coming into this run, the prior facts /
+	// discoveries / techniques below can mislead the
+	// investigator into skipping the plan ("we already know
+	// this system"). Spell out that this is a fresh re-derivation
+	// before listing the prior context so the LLM doesn't read
+	// the prior data as "work is done."
+	if pr.saveProfile && strings.TrimSpace(pr.appliance.Profile) != "" {
+		invMsg.WriteString("## RE-MAPPING (full re-derivation)\n\n")
+		invMsg.WriteString("This system was mapped before — prior facts, discoveries, and techniques are listed below FOR YOUR REFERENCE ONLY. They are NOT a substitute for a fresh investigation. Re-verify what's still true, discover what's changed, and produce a complete new profile.\n\n")
+		invMsg.WriteString("You MUST emit a fresh `set_plan` as your first tool call. The previous plan is gone; treat this run as a clean slate that benefits from prior context, not as a continuation.\n\n")
+	}
+	invMsg.WriteString("## System Snapshot\n\n")
+	if snapshot != "" {
+		invMsg.WriteString(snapshot)
 	} else {
-		// Chat mode: investigator loop using probe tool — no pre-planned task list.
-
-		// read_doc — fetch a structured knowledge document.
-		read_doc_tool := AgentToolDef{
-			Tool: Tool{
-				Name:        "read_doc",
-				Description: "Read a structured knowledge document about this system. System docs: overview, databases, filesystem, services, apps. CLI maps: cli:<command> (e.g. cli:kubectl, cli:docker).",
-				Parameters: map[string]ToolParam{
-					"doc": {Type: "string", Description: "Document name: overview, databases, filesystem, services, apps, or cli:<command>."},
-				},
-				Required: []string{"doc"},
-			},
-			Handler: func(args map[string]any) (string, error) {
-				doc, _ := args["doc"].(string)
-				if doc == "" {
-					return "", fmt.Errorf("doc is required")
-				}
-				emit(id, probeEvent{Kind: "status", Text: "Reading " + doc + " knowledge..."})
-				content, age := readDocWithAge(udb, appliance.ID, doc, time.Now())
-				if content == "" {
-					if strings.HasPrefix(doc, "cli:") {
-						return fmt.Sprintf("No CLI map found for %q. Ask the user to run 'Map App' for this command first.", strings.TrimPrefix(doc, "cli:")), nil
-					}
-					return fmt.Sprintf("No %s document found. Probe the system to build it.", doc), nil
-				}
-				// Repo docs go stale when the code is refreshed (re-cloned) after the
-				// last Map run — the files update but the synthesized docs don't. Warn
-				// so the investigator re-verifies against current files.
-				staleNote := ""
-				if appliance.Type == "repo" && repoOverviewStale(appliance) {
-					staleNote = repoStaleDocBanner
-				}
-				if age != "" {
-					return fmt.Sprintf("%s[Last updated: %s]\n\n%s", staleNote, age, content), nil
-				}
-				return staleNote + content, nil
-			},
-			NeedsConfirm: false,
+		invMsg.WriteString("(snapshot unavailable)\n")
+	}
+	invMsg.WriteString("\n\n")
+	if pr.udb != nil {
+		if disc := discoveriesFor(pr.udb, pr.appliance.ID); len(disc) > 0 {
+			invMsg.WriteString("## Prior Discoveries (already established)\n\n")
+			invMsg.WriteString(formatDiscoveries(disc))
+			invMsg.WriteString("\n\n")
 		}
-
-		// update_doc — persist a structured knowledge document.
-		update_doc_tool := AgentToolDef{
-			Tool: Tool{
-				Name:        "update_doc",
-				Description: "Write or replace a structured knowledge document with new findings. Call this after every probe that yields new information. These docs are the investigator's persistent memory across sessions.",
-				Parameters: map[string]ToolParam{
-					"doc":     {Type: "string", Description: "Document name: overview, databases, filesystem, services, or apps."},
-					"content": {Type: "string", Description: "Full markdown content for this document."},
-				},
-				Required: []string{"doc", "content"},
-			},
-			Handler: func(args map[string]any) (string, error) {
-				doc, _ := args["doc"].(string)
-				content, _ := args["content"].(string)
-				if doc == "" || content == "" {
-					return "", fmt.Errorf("doc and content are required")
-				}
-				writeDoc(udb, appliance.ID, doc, content)
-				emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Knowledge updated: %s", doc)})
-				return "saved", nil
-			},
-			NeedsConfirm: false,
+		if pr.cachedFacts != "" {
+			invMsg.WriteString("## Prior Facts\n\n")
+			invMsg.WriteString(pr.cachedFacts)
+			invMsg.WriteString("\n\n")
 		}
+		if gb := scopedGraphPromptBlock(pr.appliance); gb != "" {
+			invMsg.WriteString("## System Map so far (extend it — don't re-map what's here)\n\n")
+			invMsg.WriteString(gb)
+			invMsg.WriteString("\n\n")
+		}
+		if pr.cachedTechniques != "" {
+			invMsg.WriteString("## Prior Techniques\n\n")
+			invMsg.WriteString(pr.cachedTechniques)
+			invMsg.WriteString("\n\n")
+		}
+	}
+	invMsg.WriteString("Begin your investigation.\n\n")
+	invMsg.WriteString("REQUIRED FIRST CALL: `set_plan` with ordered steps — typically 5–12, scale higher (15+) for complex appliances. Err toward more steps with narrower scopes rather than fewer with sprawling scopes; narrow steps produce sharper findings. Each step needs a short title and a what_to_find description. Foundation/discovery steps come first; deeper investigation later builds on what they find.\n\n")
+	invMsg.WriteString("After the plan is set, work the steps one at a time:\n")
+	invMsg.WriteString("  1. mark_step_in_progress (step_id)\n")
+	invMsg.WriteString("  2. probe (delegate worker investigation for that step — may call multiple times)\n")
+	invMsg.WriteString("  3. record_step_findings (step_id, 1–3 sentence summary) — OR mark_step_blocked (step_id, reason) if you can't complete it\n")
+	invMsg.WriteString("  4. Move to the next pending step\n\n")
+	invMsg.WriteString(fmt.Sprintf("If findings reveal something you couldn't have planned for, call `revise_plan` to add/remove/reorder steps (max %d revisions per session — use deliberately, not reflexively).\n\n", WorkPlanRevisionLimit))
+	invMsg.WriteString("BEFORE WRITING YOUR FINAL ANSWER: call `report_gaps`. It returns a structured summary of every blocked or skipped step. You MUST incorporate that into a 'What I Couldn't Determine' section in your final answer — the user trusts the report only when you're explicit about what you couldn't see. If the gap report is empty (everything completed), no such section is needed.\n\n")
+	invMsg.WriteString("Use store_fact / record_discovery / record_technique alongside step work for durable knowledge that survives the session. When all steps are done or blocked AND report_gaps has been called, write your final answer.")
 
-		var lastProbeResult string
-		var allProbeResults []string
-		qaProbeCache := make(map[string]string) // normalized task → last result
-		qaTopicCount := make(map[string]int)
-		const qaTopicLimit = 3
+	emit(pr.id, probeEvent{Kind: "status", Text: "Investigator starting…"})
+	var invResp *Response
+	var invHistory []Message
+	var invErr error
+	investigatorTools := []AgentToolDef{
+		set_plan_tool, mark_step_in_progress_tool, record_step_findings_tool, mark_step_blocked_tool,
+		revise_plan_tool, report_gaps_tool,
+		probe_tool, pr.store_fact_tool, pr.link_entities_tool, pr.record_discovery_tool, pr.record_technique_tool, pr.note_lesson_tool,
+	}
+	assertOnlyAllowedTools("servitor.investigator", investigatorTools, servitorOrchestratorToolAllowList)
+	// Per-step pacing reset — the soft-pacing windows
+	// (midpoint nudge, wrap-up warning, failure streak)
+	// rebase whenever the in_progress step ID changes. Stops
+	// the "you're near the wrap-up cap" message from firing
+	// at the wrong moment when the LLM is just starting a
+	// fresh step. The closure tracks the last step we
+	// announced a reset for; returns true once per real
+	// transition.
+	lastInProgressStep := 0
+	stepResetCb := func() bool {
+		cur := 0
+		for _, s := range plan.Snapshot() {
+			if s.Status == WorkStepInProgress {
+				cur = s.ID
+				break
+			}
+		}
+		if cur == 0 || cur == lastInProgressStep {
+			return false
+		}
+		lastInProgressStep = cur
+		return true
+	}
+	// PendingWorkFn lets the agent-loop's wrap-up nudge know
+	// when there are still authorized plan steps queued, so it
+	// reframes "stop exploring" as "finish the current step
+	// and continue down the list." Without this, the worker
+	// reads the default wrap-up as license to skip remaining
+	// steps and write a summary — observed dropping ~5 steps
+	// from longer plans.
+	pendingPlanWork := func() int {
+		n := 0
+		for _, s := range plan.Snapshot() {
+			if s.Status == WorkStepPending || s.Status == WorkStepInProgress {
+				n++
+			}
+		}
+		return n
+	}
+	// Per-step stuck detector — when the investigator burns too
+	// many rounds on a single step without advancing, inject a
+	// nudge urging it to mark the step blocked and move on. The
+	// 75-round budget is fleet-wide; without this guard the LLM
+	// can spend 40+ rounds wrestling with one bad path while
+	// every other plan step goes untouched, then hit the
+	// wrap-up nudge with most of the plan still pending.
+	//
+	// Thresholds:
+	//   - Soft nudge at 12 rounds on one step: "move to another step, leave this pending"
+	//   - Firm nudge at 20 rounds: "switch steps NOW; don't block for pacing"
+	// The nudges push DEFER-and-revisit, not mark_step_blocked —
+	// blocking zeroes the pending count and defeats the continuation
+	// that grants unfinished plans more rounds. A slow step stays
+	// pending/in-progress and gets revisited with more budget.
+	//
+	// The nudges are one-shot per step transition — when the
+	// LLM advances to a new step, the counter resets and the
+	// flags clear so subsequent steps get the same grace period.
+	stuckTrackedStep := 0
+	stuckRoundCount := 0
+	softNudgeFired := false
+	firmNudgeFired := false
+	stuckMsgFn := func() []Message {
+		curStep := 0
+		stepTitle := ""
+		for _, s := range plan.Snapshot() {
+			if s.Status == WorkStepInProgress {
+				curStep = s.ID
+				stepTitle = s.Title
+				break
+			}
+		}
+		if curStep == 0 {
+			// No step in progress (pre-plan, between steps, or
+			// final wrap-up). Don't count and don't nudge.
+			return nil
+		}
+		if curStep != stuckTrackedStep {
+			stuckTrackedStep = curStep
+			stuckRoundCount = 0
+			softNudgeFired = false
+			firmNudgeFired = false
+		}
+		stuckRoundCount++
+		if stuckRoundCount == 12 && !softNudgeFired {
+			softNudgeFired = true
+			return []Message{{Role: "user", Content: fmt.Sprintf(
+				"Pacing check: you've spent 12 rounds on step %d (%q) without advancing. Move to another pending step now — call mark_step_in_progress on it and work it; leave this step unfinished (do NOT mark it blocked) and revisit it later with what you learn elsewhere. Coming back fresh is faster than grinding. Don't burn more than 8 more rounds here before switching.",
+				curStep, stepTitle)}}
+		}
+		if stuckRoundCount == 20 && !firmNudgeFired {
+			firmNudgeFired = true
+			return []Message{{Role: "user", Content: fmt.Sprintf(
+				"Hard pacing limit: you've spent 20 rounds on step %d (%q). Switch to another pending step NOW — call mark_step_in_progress on the next one and work it. Leave step %d unfinished and pending; do NOT mark it blocked just because it's slow (blocking it for pacing/time is invalid — you'll get more rounds to revisit it). Only block a step for a genuine dead-end (no access, missing tool, unreachable).",
+				curStep, stepTitle, curStep)}}
+		}
+		return nil
+	}
+	// One investigator pass = one round budget. Extracted so the
+	// continuation loop below can re-run it verbatim.
+	const (
+		investigatorRoundBudget = 75 // rounds per investigator pass
+		maxInvestigatorPasses   = 2  // extra budgets granted while steps keep resolving
+	)
+	invCfg := AgentLoopConfig{
+		SystemPrompt: buildInvestigatorSystemPrompt(pr.appliance, pr.resolvedTools),
+		Tools:        investigatorTools,
+		MaxRounds:    investigatorRoundBudget,
+		// The investigator's OWN stage, not the worker one. It borrowed
+		// app.servitor's tier while taking its thinking budget from
+		// app.servitor.orchestrator (see orchestratorThinkOpts), which
+		// left the "Servitor: Orchestrator" row in Admin → LLM Routing
+		// offering a tier selector that decided nothing: the budget
+		// applied and the tier was silently ignored. Default is
+		// "worker (thinking)", so this changes no behavior until an
+		// operator picks something else — which is now possible.
+		RouteKey:        "app.servitor.orchestrator",
+		TierOverride:    applianceTierOverride(pr.appliance.OrchestratorTier),
+		MaskDebugOutput: true,
+		SerialTools:     true,
+		ChatOptions:     append([]ChatOption{WithTemperature(0.3), WithThink(true)}, orchestratorThinkOpts()...),
+		OnRoundReset:    stepResetCb,
+		OnRoundStart:    stuckMsgFn,
+		PendingWorkFn:   pendingPlanWork,
+		// Analyzing a repo that may define LLM tools: the investigator
+		// legitimately names tools like store_fact when describing the
+		// code, so don't nudge it as if it meant to call them.
+		DisableToolMentionCorrection: pr.appliance.Type == "repo",
+	}
+	withHeartbeat(pr.ctx, pr.id, "Investigator", func() {
+		invResp, invHistory, invErr = pr.a.RunAgentLoop(pr.ctx,
+			[]Message{{Role: "user", Content: invMsg.String()}}, invCfg)
+	})
+	// Productive continuation — a single round budget often isn't
+	// enough to work a 10–15 step plan to completion, so the
+	// investigator kept "running out of rounds" and synthesizing a
+	// half-finished profile. When a pass exhausts its budget
+	// (HitRoundCap) with steps still PENDING, grant another budget —
+	// but only while it keeps resolving steps. A pass that clears
+	// nothing means it's genuinely stuck (every remaining step
+	// dead-ended), so stop and synthesize what we have rather than
+	// grinding in circles. Total work is bounded at
+	// (1 + maxInvestigatorPasses) budgets.
+	prevPending := -1
+	for pass := 0; pass < maxInvestigatorPasses && invErr == nil && pr.ctx.Err() == nil; pass++ {
+		if invResp == nil || !invResp.HitRoundCap {
+			break // natural finish — not a cap hit
+		}
+		pending := pendingPlanWork()
+		if pending == 0 {
+			break // capped, but the plan is fully resolved — nothing left
+		}
+		if prevPending >= 0 && pending >= prevPending {
+			emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf(
+				"Investigator stalled with %d step(s) still pending — wrapping up with findings so far.", pending)})
+			break
+		}
+		prevPending = pending
+		emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf(
+			"Investigator reached its round budget with %d step(s) pending — continuing the investigation…", pending)})
+		// Fresh stuck-detector window for the new budget.
+		stuckTrackedStep, stuckRoundCount, softNudgeFired, firmNudgeFired = 0, 0, false, false
+		withHeartbeat(pr.ctx, pr.id, "Investigator (continued)", func() {
+			invResp, invHistory, invErr = pr.a.RunAgentLoop(pr.ctx, invHistory, invCfg)
+		})
+	}
+	if invErr != nil && pr.ctx.Err() == nil {
+		emit(pr.id, probeEvent{Kind: "error", Text: "Investigator error: " + invErr.Error()})
+		// Don't return — synthesize what was gathered.
+	}
+	if pr.ctx.Err() != nil {
+		return actReturn
+	}
 
-		// probe_tool — targeted investigation at the investigator's direction.
-		probe_tool := AgentToolDef{
-			Tool: Tool{
-				Name: "probe",
-				Description: "Execute a specific SSH investigation task on the target system. " +
-					"Be precise — one clear goal per probe. Pass rich context so the worker " +
-					"uses what you already know.",
-				Parameters: map[string]ToolParam{
-					"task":    {Type: "string", Description: "Single clear goal: find X, read Y, verify Z."},
-					"context": {Type: "string", Description: "Relevant context you already know: paths, ports, credentials."},
-				},
-				Required: []string{"task"},
+	// Phase 3: Synthesis — structured profile from accumulated discoveries + facts.
+	emit(pr.id, probeEvent{Kind: "status", Text: "Synthesizing profile from investigation findings…"})
+	now := time.Now()
+	finalFacts := ""
+	if facts := factsForAppliance(pr.udb, pr.appliance.ID); len(facts) > 0 {
+		finalFacts = formatFactsWithAge(facts, now)
+	}
+	var finalNotes string
+	if pr.udb != nil {
+		pr.udb.Get(notesTable, pr.appliance.ID, &finalNotes)
+	}
+	finalTechniques := ""
+	if pr.udb != nil {
+		finalTechniques = techniquesFor(pr.udb, pr.appliance.ID)
+	}
+	finalDiscoveries := ""
+	if pr.udb != nil {
+		finalDiscoveries = formatDiscoveries(discoveriesFor(pr.udb, pr.appliance.ID))
+	}
+	invNarrative := ""
+	if invResp != nil {
+		invNarrative = strings.TrimSpace(invResp.Content)
+	}
+	synthMsg := buildSynthesisMessage(invNarrative, finalFacts, finalTechniques, finalNotes, finalDiscoveries)
+	var synthResp *Response
+	var synthErr error
+	withHeartbeat(pr.ctx, pr.id, "Synthesizing profile", func() {
+		synthResp, _, synthErr = pr.a.RunAgentLoop(pr.ctx,
+			[]Message{{Role: "user", Content: synthMsg}},
+			AgentLoopConfig{
+				SystemPrompt:    buildSynthesisSystemPrompt(pr.appliance),
+				Tools:           nil,
+				MaxRounds:       1,
+				RouteKey:        "app.servitor",
+				TierOverride:    applianceTierOverride(pr.appliance.OrchestratorTier),
+				MaskDebugOutput: true,
+				ChatOptions:     []ChatOption{WithThink(false)},
 			},
-			Handler: func(args map[string]any) (string, error) {
-				task, _ := args["task"].(string)
-				if task == "" {
-					return "", fmt.Errorf("task is required")
+		)
+	})
+	if synthErr != nil && pr.ctx.Err() == nil {
+		emit(pr.id, probeEvent{Kind: "error", Text: "Synthesis error: " + synthErr.Error()})
+	}
+	if synthResp != nil && strings.TrimSpace(synthResp.Content) != "" {
+		pr.reply = strings.TrimSpace(synthResp.Content)
+	}
+	if pr.reply == "" && invNarrative != "" {
+		pr.reply = invNarrative
+	}
+	return actNone
+}
+
+func (pr *probeRun) chatMode() probeAction {
+	// Chat mode: investigator loop using probe tool — no pre-planned task list.
+
+	// read_doc — fetch a structured knowledge document.
+	read_doc_tool := AgentToolDef{
+		Tool: Tool{
+			Name:        "read_doc",
+			Description: "Read a structured knowledge document about this system. System docs: overview, databases, filesystem, services, apps. CLI maps: cli:<command> (e.g. cli:kubectl, cli:docker).",
+			Parameters: map[string]ToolParam{
+				"doc": {Type: "string", Description: "Document name: overview, databases, filesystem, services, apps, or cli:<command>."},
+			},
+			Required: []string{"doc"},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			doc, _ := args["doc"].(string)
+			if doc == "" {
+				return "", fmt.Errorf("doc is required")
+			}
+			emit(pr.id, probeEvent{Kind: "status", Text: "Reading " + doc + " knowledge..."})
+			content, age := readDocWithAge(pr.udb, pr.appliance.ID, doc, time.Now())
+			if content == "" {
+				if strings.HasPrefix(doc, "cli:") {
+					return fmt.Sprintf("No CLI map found for %q. Ask the user to run 'Map App' for this command first.", strings.TrimPrefix(doc, "cli:")), nil
 				}
-				cacheKey := normalizeTask(task)
-				if cached, ok := qaProbeCache[cacheKey]; ok {
-					qaTopicCount[cacheKey]++
-					if qaTopicCount[cacheKey] >= qaTopicLimit {
-						emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Topic exhausted: %q (%dx)", task, qaTopicCount[cacheKey])})
-						return fmt.Sprintf("[TOPIC EXHAUSTED — you have re-delegated this topic %d times now. Stop probing this area entirely. Pivot to a fundamentally different domain. Re-delegating the same topic in different words will not produce new information.]\n\nLast result for reference:\n\n%s", qaTopicCount[cacheKey], cached), nil
-					}
-					return "[ALREADY PROBED — result below. Do not probe this topic again; move to a different area.]\n\n" + cached, nil
+				return fmt.Sprintf("No %s document found. Probe the system to build it.", doc), nil
+			}
+			// Repo docs go stale when the code is refreshed (re-cloned) after the
+			// last Map run — the files update but the synthesized docs don't. Warn
+			// so the investigator re-verifies against current files.
+			staleNote := ""
+			if pr.appliance.Type == "repo" && repoOverviewStale(pr.appliance) {
+				staleNote = repoStaleDocBanner
+			}
+			if age != "" {
+				return fmt.Sprintf("%s[Last updated: %s]\n\n%s", staleNote, age, content), nil
+			}
+			return staleNote + content, nil
+		},
+		NeedsConfirm: false,
+	}
+
+	// update_doc — persist a structured knowledge document.
+	update_doc_tool := AgentToolDef{
+		Tool: Tool{
+			Name:        "update_doc",
+			Description: "Write or replace a structured knowledge document with new findings. Call this after every probe that yields new information. These docs are the investigator's persistent memory across sessions.",
+			Parameters: map[string]ToolParam{
+				"doc":     {Type: "string", Description: "Document name: overview, databases, filesystem, services, or apps."},
+				"content": {Type: "string", Description: "Full markdown content for this document."},
+			},
+			Required: []string{"doc", "content"},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			doc, _ := args["doc"].(string)
+			content, _ := args["content"].(string)
+			if doc == "" || content == "" {
+				return "", fmt.Errorf("doc and content are required")
+			}
+			writeDoc(pr.udb, pr.appliance.ID, doc, content)
+			emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Knowledge updated: %s", doc)})
+			return "saved", nil
+		},
+		NeedsConfirm: false,
+	}
+
+	var lastProbeResult string
+	var allProbeResults []string
+	qaProbeCache := make(map[string]string) // normalized task → last result
+	qaTopicCount := make(map[string]int)
+	const qaTopicLimit = 3
+
+	// probe_tool — targeted investigation at the investigator's direction.
+	probe_tool := AgentToolDef{
+		Tool: Tool{
+			Name: "probe",
+			Description: "Execute a specific SSH investigation task on the target system. " +
+				"Be precise — one clear goal per probe. Pass rich context so the worker " +
+				"uses what you already know.",
+			Parameters: map[string]ToolParam{
+				"task":    {Type: "string", Description: "Single clear goal: find X, read Y, verify Z."},
+				"context": {Type: "string", Description: "Relevant context you already know: paths, ports, credentials."},
+			},
+			Required: []string{"task"},
+		},
+		Handler: func(args map[string]any) (string, error) {
+			task, _ := args["task"].(string)
+			if task == "" {
+				return "", fmt.Errorf("task is required")
+			}
+			cacheKey := normalizeTask(task)
+			if cached, ok := qaProbeCache[cacheKey]; ok {
+				qaTopicCount[cacheKey]++
+				if qaTopicCount[cacheKey] >= qaTopicLimit {
+					emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Topic exhausted: %q (%dx)", task, qaTopicCount[cacheKey])})
+					return fmt.Sprintf("[TOPIC EXHAUSTED — you have re-delegated this topic %d times now. Stop probing this area entirely. Pivot to a fundamentally different domain. Re-delegating the same topic in different words will not produce new information.]\n\nLast result for reference:\n\n%s", qaTopicCount[cacheKey], cached), nil
 				}
-				context, _ := args["context"].(string)
-				var msg strings.Builder
-				if context != "" {
-					msg.WriteString("## Known Context\n\n")
-					msg.WriteString(context)
+				return "[ALREADY PROBED — result below. Do not probe this topic again; move to a different area.]\n\n" + cached, nil
+			}
+			context, _ := args["context"].(string)
+			var msg strings.Builder
+			if context != "" {
+				msg.WriteString("## Known Context\n\n")
+				msg.WriteString(context)
+				msg.WriteString("\n\n")
+			}
+			if pr.udb != nil {
+				if disc := discoveriesFor(pr.udb, pr.appliance.ID); len(disc) > 0 {
+					msg.WriteString("## Key Discoveries (pre-established — do not re-investigate)\n\n")
+					msg.WriteString(formatDiscoveries(disc))
 					msg.WriteString("\n\n")
 				}
-				if udb != nil {
-					if disc := discoveriesFor(udb, appliance.ID); len(disc) > 0 {
-						msg.WriteString("## Key Discoveries (pre-established — do not re-investigate)\n\n")
-						msg.WriteString(formatDiscoveries(disc))
-						msg.WriteString("\n\n")
-					}
-					if t := techniquesFor(udb, appliance.ID); t != "" {
-						msg.WriteString("## Known Techniques (use directly)\n\n")
-						msg.WriteString(t)
-						msg.WriteString("\n\n")
-					}
-					if facts := factsForAppliance(udb, appliance.ID); len(facts) > 0 {
-						msg.WriteString("## Stored Facts\n\n")
-						msg.WriteString(formatFacts(facts))
-						msg.WriteString("\n\n")
-					}
+				if t := techniquesFor(pr.udb, pr.appliance.ID); t != "" {
+					msg.WriteString("## Known Techniques (use directly)\n\n")
+					msg.WriteString(t)
+					msg.WriteString("\n\n")
 				}
-				msg.WriteString("## Task\n\n")
-				msg.WriteString(task)
-				// Surface the orchestrator's intent for this round as a
-				// prominent event so the user can see "what is the brain
-				// trying to do" without needing to read raw reasoning.
-				// task is the orchestrator's user-facing summary; context
-				// is the supporting briefing it passed along.
-				emit(id, probeEvent{Kind: "intent", Text: task, Reason: context})
-				var workerResp *Response
-				var err error
-				withHeartbeat(ctx, id, "Worker: investigating", func() {
-					workerResp, _, err = a.RunAgentLoop(ctx,
-						[]Message{{Role: "user", Content: msg.String()}},
-						AgentLoopConfig{
-							// mapping=false: a chat probe stops at the first dead end and
-							// lets the investigator pick the next angle.
-							SystemPrompt:    buildProbeWorkerPrompt(appliance, scratch, false, resolvedTools),
-							Tools:           withFreshRunTool(workerTools),
-							MaxRounds:       15,
-							RouteKey:        "app.servitor",
-							TierOverride:    applianceTierOverride(appliance.WorkerTier),
-							MaskDebugOutput: true,
-							ChatOptions:     []ChatOption{WithTemperature(0.2), WithThink(false)},
-							SerialTools:     true,
-							// Repo workers read code that names their own tools; don't
-							// misread a description as an intended call.
-							DisableToolMentionCorrection: appliance.Type == "repo",
-						},
-					)
-				})
-				if err != nil {
-					return "", err
+				if facts := factsForAppliance(pr.udb, pr.appliance.ID); len(facts) > 0 {
+					msg.WriteString("## Stored Facts\n\n")
+					msg.WriteString(formatFacts(facts))
+					msg.WriteString("\n\n")
 				}
-				if workerResp == nil {
-					return "Worker returned no findings.", nil
-				}
-				result := strings.TrimSpace(workerResp.Content)
-				result = parseProbeOutcome(result)
-				if result != "" {
-					qaProbeCache[cacheKey] = result
-					lastProbeResult = result
-					allProbeResults = append(allProbeResults, result)
-				}
-				if len(result) > 14000 {
-					result = result[:14000] + "\n… [truncated]"
-				}
-				emit(id, probeEvent{Kind: "status", Text: "Worker complete — reviewing findings."})
-				return result, nil
-			},
-			NeedsConfirm: false,
-		}
+			}
+			msg.WriteString("## Task\n\n")
+			msg.WriteString(task)
+			// Surface the orchestrator's intent for this round as a
+			// prominent event so the user can see "what is the brain
+			// trying to do" without needing to read raw reasoning.
+			// task is the orchestrator's user-facing summary; context
+			// is the supporting briefing it passed along.
+			emit(pr.id, probeEvent{Kind: "intent", Text: task, Reason: context})
+			var workerResp *Response
+			var err error
+			withHeartbeat(pr.ctx, pr.id, "Worker: investigating", func() {
+				workerResp, _, err = pr.a.RunAgentLoop(pr.ctx,
+					[]Message{{Role: "user", Content: msg.String()}},
+					AgentLoopConfig{
+						// mapping=false: a chat probe stops at the first dead end and
+						// lets the investigator pick the next angle.
+						SystemPrompt:    buildProbeWorkerPrompt(pr.appliance, pr.scratch, false, pr.resolvedTools),
+						Tools:           pr.withFreshRunTool(pr.workerTools),
+						MaxRounds:       15,
+						RouteKey:        "app.servitor",
+						TierOverride:    applianceTierOverride(pr.appliance.WorkerTier),
+						MaskDebugOutput: true,
+						ChatOptions:     []ChatOption{WithTemperature(0.2), WithThink(false)},
+						SerialTools:     true,
+						// Repo workers read code that names their own tools; don't
+						// misread a description as an intended call.
+						DisableToolMentionCorrection: pr.appliance.Type == "repo",
+					},
+				)
+			})
+			if err != nil {
+				return "", err
+			}
+			if workerResp == nil {
+				return "Worker returned no findings.", nil
+			}
+			result := strings.TrimSpace(workerResp.Content)
+			result = parseProbeOutcome(result)
+			if result != "" {
+				qaProbeCache[cacheKey] = result
+				lastProbeResult = result
+				allProbeResults = append(allProbeResults, result)
+			}
+			if len(result) > 14000 {
+				result = result[:14000] + "\n… [truncated]"
+			}
+			emit(pr.id, probeEvent{Kind: "status", Text: "Worker complete — reviewing findings."})
+			return result, nil
+		},
+		NeedsConfirm: false,
+	}
 
-		docs := allDocs(udb, appliance.ID)
-		hasFreshImage := false
-		for i := len(messages) - 1; i >= 0; i-- {
-			if messages[i].Role == "user" {
-				hasFreshImage = len(messages[i].Images) > 0
-				break
-			}
+	docs := allDocs(pr.udb, pr.appliance.ID)
+	hasFreshImage := false
+	for i := len(pr.messages) - 1; i >= 0; i-- {
+		if pr.messages[i].Role == "user" {
+			hasFreshImage = len(pr.messages[i].Images) > 0
+			break
 		}
-		leadPrompt := buildLeadSystemPrompt(udb, appliance, docs, cachedFacts, cachedNotes, cachedTechniques, cachedRules, cachedDiscoveries, hasFreshImage)
-		emit(id, probeEvent{Kind: "status", Text: "Investigator analyzing…"})
+	}
+	leadPrompt := buildLeadSystemPrompt(pr.udb, pr.appliance, docs, pr.cachedFacts, pr.cachedNotes, pr.cachedTechniques, pr.cachedRules, pr.cachedDiscoveries, hasFreshImage)
+	emit(pr.id, probeEvent{Kind: "status", Text: "Investigator analyzing…"})
 
-		// Resolve the per-session injection queue so the orchestrator picks
-		// up mid-flight user notes between rounds. Workers don't get the hook
-		// — they finish their current task before the orchestrator sees the note.
-		injQ := LookupInjectionQueue(id)
-		drainInjections := func() []Message {
-			if injQ == nil {
-				return nil
-			}
-			notes := injQ.Drain()
-			if len(notes) == 0 {
-				return nil
-			}
-			out := make([]Message, 0, len(notes))
-			ids := make([]string, 0, len(notes))
-			for _, n := range notes {
-				out = append(out, Message{Role: "user", Content: "[USER NOTE — submitted mid-investigation] " + n.Text})
-				ids = append(ids, n.ID)
-			}
-			emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Orchestrator picked up %d user note(s).", len(notes))})
-			// Tell the UI which notes are now locked from edit/delete.
-			emit(id, probeEvent{Kind: "notes_consumed", IDs: ids})
-			return out
+	// Resolve the per-session injection queue so the orchestrator picks
+	// up mid-flight user notes between rounds. Workers don't get the hook
+	// — they finish their current task before the orchestrator sees the note.
+	injQ := LookupInjectionQueue(pr.id)
+	drainInjections := func() []Message {
+		if injQ == nil {
+			return nil
 		}
+		notes := injQ.Drain()
+		if len(notes) == 0 {
+			return nil
+		}
+		out := make([]Message, 0, len(notes))
+		ids := make([]string, 0, len(notes))
+		for _, n := range notes {
+			out = append(out, Message{Role: "user", Content: "[USER NOTE — submitted mid-investigation] " + n.Text})
+			ids = append(ids, n.ID)
+		}
+		emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Orchestrator picked up %d user note(s).", len(notes))})
+		// Tell the UI which notes are now locked from edit/delete.
+		emit(pr.id, probeEvent{Kind: "notes_consumed", IDs: ids})
+		return out
+	}
 
-		var err error
-		// A follow-up that turns out to need real discovery gets the SAME plan
-		// machinery Map has — set a checklist, work it step by step, report what
-		// it could not determine. Without this, chat could only fire one-off
-		// probes: there was no way to say "this is bigger than one probe", the
-		// topic guard cut re-probing at 3, and the prompt told it to synthesize
-		// the moment it had an answer. So a second question that needed a real
-		// investigation quietly got a shallow one. required=false — most
-		// questions ARE one probe, and taxing every follow-up with a 5-step plan
-		// would be worse than the gap.
-		chatPlan := buildPlanTools(id, false)
-		docInvestigatorTools := append([]AgentToolDef{read_doc_tool, update_doc_tool, probe_tool}, chatPlan.All()...)
-		assertOnlyAllowedTools("servitor.doc_investigator", docInvestigatorTools, servitorOrchestratorToolAllowList)
-		const maxDocInvestigatorPasses = 2 // extra budgets while probes keep yielding new data
+	var err error
+	// A follow-up that turns out to need real discovery gets the SAME plan
+	// machinery Map has — set a checklist, work it step by step, report what
+	// it could not determine. Without this, chat could only fire one-off
+	// probes: there was no way to say "this is bigger than one probe", the
+	// topic guard cut re-probing at 3, and the prompt told it to synthesize
+	// the moment it had an answer. So a second question that needed a real
+	// investigation quietly got a shallow one. required=false — most
+	// questions ARE one probe, and taxing every follow-up with a 5-step plan
+	// would be worse than the gap.
+	chatPlan := buildPlanTools(pr.id, false)
+	docInvestigatorTools := append([]AgentToolDef{read_doc_tool, update_doc_tool, probe_tool}, chatPlan.All()...)
+	assertOnlyAllowedTools("servitor.doc_investigator", docInvestigatorTools, servitorOrchestratorToolAllowList)
+	const maxDocInvestigatorPasses = 2 // extra budgets while probes keep yielding new data
 
-		// Lead migration (slice 2b): the investigator runs through the orchestrate
-		// SCOPED path, so its sessions and tool recordings land in the appliance
-		// scope (app:servitor:<id>). It keeps its OWN complete prompt verbatim via
-		// SystemPromptOverride (content parity) and its loop knobs via Loop; the
-		// mid-flight injection drain (with the notes_consumed UI signal) rides
-		// Loop.OnRoundStart. All per-appliance context is in the system prompt, so
-		// the run message is just the conversation.
-		orch := servitorOrch()
-		if orch == nil {
-			emit(id, probeEvent{Kind: "error", Text: "orchestrate runtime unavailable"})
-			return
+	// Lead migration (slice 2b): the investigator runs through the orchestrate
+	// SCOPED path, so its sessions and tool recordings land in the appliance
+	// scope (app:servitor:<id>). It keeps its OWN complete prompt verbatim via
+	// SystemPromptOverride (content parity) and its loop knobs via Loop; the
+	// mid-flight injection drain (with the notes_consumed UI signal) rides
+	// Loop.OnRoundStart. All per-appliance context is in the system prompt, so
+	// the run message is just the conversation.
+	orch := servitorOrch()
+	if orch == nil {
+		emit(pr.id, probeEvent{Kind: "error", Text: "orchestrate runtime unavailable"})
+		return actReturn
+	}
+	var leadImages [][]byte
+	for i := len(pr.messages) - 1; i >= 0; i-- {
+		if pr.messages[i].Role == "user" {
+			leadImages = pr.messages[i].Images
+			break
 		}
-		var leadImages [][]byte
-		for i := len(messages) - 1; i >= 0; i-- {
-			if messages[i].Role == "user" {
-				leadImages = messages[i].Images
-				break
-			}
+	}
+	leadScope := orchestrate.AgentScope{
+		AgentID:   servitorInvestigatorAgentID,
+		ScopeUser: applianceMemScope(pr.appliance.ID),
+		SessionID: pr.id,
+	}
+	leadLoop := &orchestrate.AgentLoopOverrides{
+		MaxRounds:   75,
+		SerialTools: true,
+		// The appliance's own tier, on THIS path too. The map/probe branch
+		// builds an AgentLoopConfig directly and has honored it since the
+		// setting shipped; chat comes through the scoped-agent dispatch,
+		// which had no way to carry it — so the setting saved, read back
+		// correctly, and did nothing on the surface an operator actually
+		// uses to ask a system a question.
+		TierOverride: applianceTierOverride(pr.appliance.OrchestratorTier),
+		ChatOptions:  append([]ChatOption{WithTemperature(0.2), WithThink(true)}, orchestratorThinkOpts()...),
+		OnRoundStart: drainInjections,
+	}
+	leadStatus := func(s string) { emit(pr.id, probeEvent{Kind: "status", Text: s}) }
+	var res orchestrate.AgentSyncResult
+	withHeartbeat(pr.ctx, pr.id, "Investigator: working", func() {
+		res, err = orch.RunScopedAgentRich(pr.ctx, leadScope, orchestrate.AgentSyncRun{
+			SubSessionID:         pr.id,
+			Message:              buildScopedLeadMessage(pr.messages),
+			Images:               leadImages,
+			FreshSession:         true,
+			SystemPromptOverride: leadPrompt,
+			AppTools:             docInvestigatorTools,
+			Loop:                 leadLoop,
+			StatusCallback:       leadStatus,
+		})
+	})
+	if res.Text != "" {
+		pr.reply = strings.TrimSpace(res.Text)
+	}
+	// Productive continuation — when the run caps (HitRoundCap) but probes are
+	// still yielding NEW data, continue the SAME scoped session (FreshSession
+	// defaults false) with another budget; stop once a pass gathers nothing new.
+	for pass := 0; pass < maxDocInvestigatorPasses && err == nil && pr.ctx.Err() == nil; pass++ {
+		if !res.HitRoundCap {
+			break // natural finish — not a cap hit
 		}
-		leadScope := orchestrate.AgentScope{
-			AgentID:   servitorInvestigatorAgentID,
-			ScopeUser: applianceMemScope(appliance.ID),
-			SessionID: id,
+		before := len(allProbeResults)
+		if pending := chatPlan.Pending(); pending > 0 {
+			emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf(
+				"Investigator reached its round budget with %d plan step(s) pending — continuing…", pending)})
+		} else {
+			emit(pr.id, probeEvent{Kind: "status", Text: "Investigator reached its round budget — continuing the investigation…"})
 		}
-		leadLoop := &orchestrate.AgentLoopOverrides{
-			MaxRounds:   75,
-			SerialTools: true,
-			// The appliance's own tier, on THIS path too. The map/probe branch
-			// builds an AgentLoopConfig directly and has honored it since the
-			// setting shipped; chat comes through the scoped-agent dispatch,
-			// which had no way to carry it — so the setting saved, read back
-			// correctly, and did nothing on the surface an operator actually
-			// uses to ask a system a question.
-			TierOverride: applianceTierOverride(appliance.OrchestratorTier),
-			ChatOptions:  append([]ChatOption{WithTemperature(0.2), WithThink(true)}, orchestratorThinkOpts()...),
-			OnRoundStart: drainInjections,
-		}
-		leadStatus := func(s string) { emit(id, probeEvent{Kind: "status", Text: s}) }
-		var res orchestrate.AgentSyncResult
-		withHeartbeat(ctx, id, "Investigator: working", func() {
-			res, err = orch.RunScopedAgentRich(ctx, leadScope, orchestrate.AgentSyncRun{
-				SubSessionID:         id,
-				Message:              buildScopedLeadMessage(messages),
-				Images:               leadImages,
-				FreshSession:         true,
+		withHeartbeat(pr.ctx, pr.id, "Investigator: working (continued)", func() {
+			res, err = orch.RunScopedAgentRich(pr.ctx, leadScope, orchestrate.AgentSyncRun{
+				SubSessionID:         pr.id,
+				Message:              "Continue the investigation from where you left off and finish answering the user's question.",
 				SystemPromptOverride: leadPrompt,
 				AppTools:             docInvestigatorTools,
 				Loop:                 leadLoop,
@@ -2306,160 +2450,134 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 			})
 		})
 		if res.Text != "" {
-			reply = strings.TrimSpace(res.Text)
+			pr.reply = strings.TrimSpace(res.Text)
 		}
-		// Productive continuation — when the run caps (HitRoundCap) but probes are
-		// still yielding NEW data, continue the SAME scoped session (FreshSession
-		// defaults false) with another budget; stop once a pass gathers nothing new.
-		for pass := 0; pass < maxDocInvestigatorPasses && err == nil && ctx.Err() == nil; pass++ {
-			if !res.HitRoundCap {
-				break // natural finish — not a cap hit
+		if len(allProbeResults) == before && chatPlan.Pending() == 0 {
+			break // nothing new AND nothing planned left — stop rather than grind
+		}
+	}
+	if err != nil && pr.ctx.Err() == nil {
+		emit(pr.id, probeEvent{Kind: "error", Text: err.Error()})
+		return actReturn
+	}
+	if pr.reply == "" && lastProbeResult != "" {
+		pr.reply = lastProbeResult
+	}
+
+	// Consolidation and verification use allProbeResults / lastProbeResult.
+	if lastProbeResult != "" && pr.udb != nil {
+		workerOut := lastProbeResult
+		userQuestion := ""
+		if n := len(pr.messages); n > 0 && pr.messages[n-1].Role == "user" {
+			userQuestion = pr.messages[n-1].Content
+		}
+		pr.consolidateFn = func() {
+			leadAnswer := pr.reply
+			bgCtx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+			defer cancel()
+			var cMsg strings.Builder
+			cMsg.WriteString(fmt.Sprintf("Consolidate knowledge for %s.\n\n", pr.appliance.Name))
+			if userQuestion != "" {
+				cMsg.WriteString(fmt.Sprintf("## User Question\n\n%s\n\n", userQuestion))
 			}
-			before := len(allProbeResults)
-			if pending := chatPlan.Pending(); pending > 0 {
-				emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf(
-					"Investigator reached its round budget with %d plan step(s) pending — continuing…", pending)})
-			} else {
-				emit(id, probeEvent{Kind: "status", Text: "Investigator reached its round budget — continuing the investigation…"})
+			cMsg.WriteString(fmt.Sprintf("## Worker Findings\n\n%s\n\n", workerOut))
+			if leadAnswer != "" {
+				cMsg.WriteString(fmt.Sprintf("## Investigator Summary\n\n%s\n", leadAnswer))
 			}
-			withHeartbeat(ctx, id, "Investigator: working (continued)", func() {
-				res, err = orch.RunScopedAgentRich(ctx, leadScope, orchestrate.AgentSyncRun{
-					SubSessionID:         id,
-					Message:              "Continue the investigation from where you left off and finish answering the user's question.",
-					SystemPromptOverride: leadPrompt,
-					AppTools:             docInvestigatorTools,
-					Loop:                 leadLoop,
-					StatusCallback:       leadStatus,
-				})
+			pr.a.RunAgentLoop(bgCtx, []Message{{Role: "user", Content: cMsg.String()}}, AgentLoopConfig{
+				SystemPrompt:    buildConsolidationPrompt(pr.appliance),
+				Tools:           []AgentToolDef{read_doc_tool, update_doc_tool, pr.store_fact_tool, pr.link_entities_tool, pr.record_discovery_tool, pr.record_technique_tool, pr.note_lesson_tool},
+				MaxRounds:       10,
+				RouteKey:        "app.servitor",
+				TierOverride:    applianceTierOverride(pr.appliance.OrchestratorTier),
+				MaskDebugOutput: true,
+				ChatOptions:     []ChatOption{WithThink(false)},
 			})
-			if res.Text != "" {
-				reply = strings.TrimSpace(res.Text)
-			}
-			if len(allProbeResults) == before && chatPlan.Pending() == 0 {
-				break // nothing new AND nothing planned left — stop rather than grind
-			}
+			emit(pr.id, probeEvent{Kind: "status", Text: "Background: knowledge consolidated."})
 		}
-		if err != nil && ctx.Err() == nil {
-			emit(id, probeEvent{Kind: "error", Text: err.Error()})
-			return
-		}
-		if reply == "" && lastProbeResult != "" {
-			reply = lastProbeResult
-		}
+	}
 
-		// Consolidation and verification use allProbeResults / lastProbeResult.
-		if lastProbeResult != "" && udb != nil {
-			workerOut := lastProbeResult
-			userQuestion := ""
-			if n := len(messages); n > 0 && messages[n-1].Role == "user" {
-				userQuestion = messages[n-1].Content
-			}
-			consolidateFn = func() {
-				leadAnswer := reply
-				bgCtx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
-				defer cancel()
-				var cMsg strings.Builder
-				cMsg.WriteString(fmt.Sprintf("Consolidate knowledge for %s.\n\n", appliance.Name))
-				if userQuestion != "" {
-					cMsg.WriteString(fmt.Sprintf("## User Question\n\n%s\n\n", userQuestion))
-				}
-				cMsg.WriteString(fmt.Sprintf("## Worker Findings\n\n%s\n\n", workerOut))
-				if leadAnswer != "" {
-					cMsg.WriteString(fmt.Sprintf("## Investigator Summary\n\n%s\n", leadAnswer))
-				}
-				a.RunAgentLoop(bgCtx, []Message{{Role: "user", Content: cMsg.String()}}, AgentLoopConfig{
-					SystemPrompt:    buildConsolidationPrompt(appliance),
-					Tools:           []AgentToolDef{read_doc_tool, update_doc_tool, store_fact_tool, link_entities_tool, record_discovery_tool, record_technique_tool, note_lesson_tool},
-					MaxRounds:       10,
-					RouteKey:        "app.servitor",
-					TierOverride:    applianceTierOverride(appliance.OrchestratorTier),
-					MaskDebugOutput: true,
-					ChatOptions:     []ChatOption{WithThink(false)},
-				})
-				emit(id, probeEvent{Kind: "status", Text: "Background: knowledge consolidated."})
-			}
+	// Verification pass.
+	//
+	// The model is only consulted when a deterministic check finds an
+	// identifier in the reply that is NOT in the findings verbatim. The
+	// verifier's whole job is character-for-character comparison, and when
+	// every path, name, address and version in the reply already appears in
+	// the findings there is nothing for it to correct — so the call, a
+	// findings-sized prefill sitting between the finished answer and the
+	// user, is skipped. When the check finds a candidate, the model runs
+	// exactly as before: it decides, not the heuristic.
+	if pr.reply != "" && len(allProbeResults) > 0 {
+		rawFindings := strings.Join(allProbeResults, "\n\n---\n\n")
+		if len(rawFindings) > 24000 {
+			rawFindings = rawFindings[:24000] + "\n... [truncated]"
 		}
-
-		// Verification pass.
-		//
-		// The model is only consulted when a deterministic check finds an
-		// identifier in the reply that is NOT in the findings verbatim. The
-		// verifier's whole job is character-for-character comparison, and when
-		// every path, name, address and version in the reply already appears in
-		// the findings there is nothing for it to correct — so the call, a
-		// findings-sized prefill sitting between the finished answer and the
-		// user, is skipped. When the check finds a candidate, the model runs
-		// exactly as before: it decides, not the heuristic.
-		if reply != "" && len(allProbeResults) > 0 {
-			rawFindings := strings.Join(allProbeResults, "\n\n---\n\n")
-			if len(rawFindings) > 24000 {
-				rawFindings = rawFindings[:24000] + "\n... [truncated]"
-			}
-			if unverified := unverifiedIdentifiers(reply, rawFindings); len(unverified) == 0 {
-				Debug("[servitor] verification skipped: every identifier in the reply appears in the findings")
-			} else {
-				emit(id, probeEvent{Kind: "status", Text: "Verifying names and identifiers…"})
-				// Targeted find/replace pairs instead of "regenerate the whole
-				// response": the old shape accepted ANY differing output as the
-				// corrected answer, so a 27B that reformatted prose (or invented
-				// a "fix") silently replaced a correct reply. Now the model can
-				// only name identifier swaps, each one is verified against the
-				// findings before applying, and a malformed verdict changes
-				// nothing.
-				verifyPrompt := "You are a fact-checker. Compare the response against the raw worker findings below. Your ONLY job: find specific identifiers in the response — table names, service names, file paths, usernames, database names, column names, IP addresses, port numbers, version strings — that do NOT appear character-for-character in the findings (wrong underscore, wrong prefix or suffix, wrong capitalization).\n\n" +
-					"Respond with ONLY a JSON array of corrections, each {\"wrong\": \"<exact string copied from the response>\", \"right\": \"<exact string copied from the findings>\"}. If every identifier matches exactly, respond with [].\n\n" +
-					"## Raw Worker Findings\n\n" + rawFindings
-				verifyResp, verifyErr := a.WorkerChat(ctx,
-					[]Message{
-						{Role: "user", Content: "## Response to verify\n\n" + reply},
-					},
-					WithSystemPrompt(verifyPrompt),
-					WithTemperature(0.0),
-					WithThink(false),
-				)
-				if verifyErr == nil && verifyResp != nil {
-					var pairs []struct {
-						Wrong string `json:"wrong"`
-						Right string `json:"right"`
+		if unverified := unverifiedIdentifiers(pr.reply, rawFindings); len(unverified) == 0 {
+			Debug("[servitor] verification skipped: every identifier in the reply appears in the findings")
+		} else {
+			emit(pr.id, probeEvent{Kind: "status", Text: "Verifying names and identifiers…"})
+			// Targeted find/replace pairs instead of "regenerate the whole
+			// response": the old shape accepted ANY differing output as the
+			// corrected answer, so a 27B that reformatted prose (or invented
+			// a "fix") silently replaced a correct reply. Now the model can
+			// only name identifier swaps, each one is verified against the
+			// findings before applying, and a malformed verdict changes
+			// nothing.
+			verifyPrompt := "You are a fact-checker. Compare the response against the raw worker findings below. Your ONLY job: find specific identifiers in the response — table names, service names, file paths, usernames, database names, column names, IP addresses, port numbers, version strings — that do NOT appear character-for-character in the findings (wrong underscore, wrong prefix or suffix, wrong capitalization).\n\n" +
+				"Respond with ONLY a JSON array of corrections, each {\"wrong\": \"<exact string copied from the response>\", \"right\": \"<exact string copied from the findings>\"}. If every identifier matches exactly, respond with [].\n\n" +
+				"## Raw Worker Findings\n\n" + rawFindings
+			verifyResp, verifyErr := pr.a.WorkerChat(pr.ctx,
+				[]Message{
+					{Role: "user", Content: "## Response to verify\n\n" + pr.reply},
+				},
+				WithSystemPrompt(verifyPrompt),
+				WithTemperature(0.0),
+				WithThink(false),
+			)
+			if verifyErr == nil && verifyResp != nil {
+				var pairs []struct {
+					Wrong string `json:"wrong"`
+					Right string `json:"right"`
+				}
+				if derr := DecodeJSON(verifyResp.Content, &pairs); derr == nil {
+					applied := 0
+					for i, p := range pairs {
+						if i >= 20 {
+							break // runaway verdicts are noise, not corrections
+						}
+						// Both sides must check out: the wrong string has to
+						// actually be in the reply, and the replacement has to
+						// exist verbatim in the findings (no invented fixes).
+						if p.Wrong == "" || p.Wrong == p.Right ||
+							!strings.Contains(pr.reply, p.Wrong) || !strings.Contains(rawFindings, p.Right) {
+							continue
+						}
+						pr.reply = strings.ReplaceAll(pr.reply, p.Wrong, p.Right)
+						applied++
 					}
-					if derr := DecodeJSON(verifyResp.Content, &pairs); derr == nil {
-						applied := 0
-						for i, p := range pairs {
-							if i >= 20 {
-								break // runaway verdicts are noise, not corrections
-							}
-							// Both sides must check out: the wrong string has to
-							// actually be in the reply, and the replacement has to
-							// exist verbatim in the findings (no invented fixes).
-							if p.Wrong == "" || p.Wrong == p.Right ||
-								!strings.Contains(reply, p.Wrong) || !strings.Contains(rawFindings, p.Right) {
-								continue
-							}
-							reply = strings.ReplaceAll(reply, p.Wrong, p.Right)
-							applied++
-						}
-						if applied > 0 {
-							Debug("[servitor] verification corrected %d identifier(s)", applied)
-						}
+					if applied > 0 {
+						Debug("[servitor] verification corrected %d identifier(s)", applied)
 					}
 				}
 			}
 		}
-
 	}
+	return actNone
+}
 
-	if reply == "" {
-		return
+func (pr *probeRun) finishTurn() probeAction {
+	if pr.reply == "" {
+		return actReturn
 	}
-	if len(sessionFailures) > 0 { // chat mode only
+	if len(pr.sessionFailures) > 0 { // chat mode only
 		var sb strings.Builder
-		fmt.Fprintf(&sb, "%d command(s) failed this session:\n", len(sessionFailures))
-		for _, f := range sessionFailures {
+		fmt.Fprintf(&sb, "%d command(s) failed this session:\n", len(pr.sessionFailures))
+		for _, f := range pr.sessionFailures {
 			fmt.Fprintf(&sb, "• %s\n  → %s\n", f.Cmd, f.Reason)
 		}
-		emit(id, probeEvent{Kind: "status", Text: strings.TrimSpace(sb.String())})
+		emit(pr.id, probeEvent{Kind: "status", Text: strings.TrimSpace(sb.String())})
 	}
-	emit(id, probeEvent{Kind: "reply", Text: reply})
+	emit(pr.id, probeEvent{Kind: "reply", Text: pr.reply})
 
 	// Persist this turn to the chat session that backs the rail. Includes
 	// map runs (saveProfile=true): handleMap pre-creates the session
@@ -2468,52 +2586,53 @@ func (T *Servitor) runSession(ctx context.Context, id, userID, ownerUser string,
 	// session id; appendTurn no-ops if no record exists (so a saveProfile
 	// run without a pre-created session simply isn't persisted). listSessions
 	// surfaces it on the 'done' refresh, exactly like orchestrate.
-	if udb != nil {
+	if pr.udb != nil {
 		var lastUser string
-		for i := len(messages) - 1; i >= 0; i-- {
-			if messages[i].Role == "user" {
-				lastUser = messages[i].Content
+		for i := len(pr.messages) - 1; i >= 0; i-- {
+			if pr.messages[i].Role == "user" {
+				lastUser = pr.messages[i].Content
 				break
 			}
 		}
-		appendTurn(udb, appliance.ID, id, lastUser, reply)
+		appendTurn(pr.udb, pr.appliance.ID, pr.id, lastUser, pr.reply)
 	}
 
-	if consolidateFn != nil {
-		emit(id, probeEvent{Kind: "status", Text: "Background: consolidating knowledge..."})
-		go consolidateFn()
+	if pr.consolidateFn != nil {
+		emit(pr.id, probeEvent{Kind: "status", Text: "Background: consolidating knowledge..."})
+		go pr.consolidateFn()
 	}
 
-	if saveProfile && ownerUDB != nil {
+	if pr.saveProfile && pr.ownerUDB != nil {
 		// The profile is shared appliance knowledge — persist to the OWNER's
 		// store so a shared appliance has one profile regardless of who mapped it.
 		var existing Appliance
-		if ownerUDB.Get(applianceTable, appliance.ID, &existing) {
+		if pr.ownerUDB.Get(applianceTable, pr.appliance.ID, &existing) {
 			// Don't let a Map run that hit issues clobber a good profile. Only
 			// REPLACE the profile when this run actually completed and synthesized
 			// a substantive mapping — a cancelled run, or a near-empty / stub
 			// reply (a failed synthesis, an error note), or one that collapsed to
 			// a fraction of the prior profile, keeps the previous one instead. A
 			// stale-but-real profile beats an almost-empty one.
-			newProfile := strings.TrimSpace(reply)
+			newProfile := strings.TrimSpace(pr.reply)
 			prior := strings.TrimSpace(existing.Profile)
 			tooThin := len(newProfile) < minMapProfileChars ||
 				(prior != "" && len(newProfile) < len(prior)/3)
-			if ctx.Err() != nil || tooThin {
-				emit(id, probeEvent{Kind: "status", Text: "Map didn't produce a complete profile — keeping the previous one."})
+			if pr.ctx.Err() != nil || tooThin {
+				emit(pr.id, probeEvent{Kind: "status", Text: "Map didn't produce a complete profile — keeping the previous one."})
 				Log("[servitor.map] kept prior profile for %q (new=%d chars, prior=%d chars, cancelled=%v)",
-					appliance.Name, len(newProfile), len(prior), ctx.Err() != nil)
+					pr.appliance.Name, len(newProfile), len(prior), pr.ctx.Err() != nil)
 			} else {
-				existing.Profile = reply
+				existing.Profile = pr.reply
 				existing.Scanned = time.Now().Format(time.RFC3339)
-				if fresh := extractLogMap(reply); len(fresh) > 0 {
+				if fresh := extractLogMap(pr.reply); len(fresh) > 0 {
 					existing.LogMap = mergeLogMap(existing.LogMap, fresh)
 				}
-				ownerUDB.Set(applianceTable, appliance.ID, existing)
-				extractDocsFromProfile(ownerUDB, appliance.ID, reply)
+				pr.ownerUDB.Set(applianceTable, pr.appliance.ID, existing)
+				extractDocsFromProfile(pr.ownerUDB, pr.appliance.ID, pr.reply)
 			}
 		}
 	}
+	return actNone
 }
 
 // minMapProfileChars is the floor below which a Map run's synthesized profile is

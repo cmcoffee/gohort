@@ -100,7 +100,7 @@ func TestRouteKeysAreRegistered(t *testing.T) {
 // copy-paste from a neighbouring loop would quietly undo.
 func TestTheInvestigatorUsesTheOrchestratorStage(t *testing.T) {
 	body := webSource(t)
-	i := strings.Index(body, "buildInvestigatorSystemPrompt(appliance, resolvedTools)")
+	i := strings.Index(body, "buildInvestigatorSystemPrompt(pr.appliance, pr.resolvedTools)")
 	if i < 0 {
 		t.Fatal("the investigator loop config has moved")
 	}

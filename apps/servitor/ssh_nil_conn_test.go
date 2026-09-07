@@ -102,11 +102,11 @@ func TestNothingOpensAnSSHSessionUnguarded(t *testing.T) {
 // the toolkit is assembled inside runSession, which needs a live session.
 func TestRunPtyIsWithheldWhenReachedThroughAPeer(t *testing.T) {
 	body := webSource(t)
-	if !strings.Contains(body, `ptyLocal := strings.TrimSpace(appliance.PeerName) == ""`) {
+	if !strings.Contains(body, `pr.ptyLocal = strings.TrimSpace(pr.appliance.PeerName) == ""`) {
 		t.Fatal("the ptyLocal predicate is gone — run_pty may now be offered on a peer appliance")
 	}
 	// The only registration must sit under the predicate.
-	idx := strings.Index(body, "if ptyLocal {")
+	idx := strings.Index(body, "if pr.ptyLocal {")
 	if idx < 0 {
 		t.Fatal("run_pty is no longer gated on ptyLocal")
 	}
@@ -119,11 +119,14 @@ func TestRunPtyIsWithheldWhenReachedThroughAPeer(t *testing.T) {
 		if !strings.Contains(line, "newRunPtyTool()") {
 			continue
 		}
-		if strings.Contains(line, "workerTools = append(workerTools, newRunPtyTool())") {
+		if strings.Contains(line, "pr.workerTools = append(pr.workerTools, pr.newRunPtyTool())") {
 			continue // the gated one
 		}
-		if strings.Contains(line, "result[i] = newRunPtyTool()") {
+		if strings.Contains(line, "result[i] = pr.newRunPtyTool()") {
 			continue // withFreshRunTool only replaces an entry already present
+		}
+		if strings.HasPrefix(strings.TrimSpace(line), "func (pr *probeRun) newRunPtyTool()") {
+			continue // the declaration, not a registration
 		}
 		t.Errorf("run_pty is registered outside the ptyLocal gate: %s", strings.TrimSpace(line))
 	}

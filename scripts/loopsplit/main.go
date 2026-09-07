@@ -3,10 +3,7 @@
 // the function's own locals are rewritten (a shadowed `err` in an if-init is
 // left alone) and the struct fields come out with their exact types.
 //
-//	go run ./scripts/loopsplit core runAgentLoopInner agent_loop.spec /tmp/generated.go
-//
-// Run from the directory the package builds in (go/types needs the imports);
-// write the output OUTSIDE the package and assemble by hand.
+//	loopsplit <pkgdir> <func> <spec> <out.go>
 //
 // Spec lines:
 //
@@ -49,7 +46,10 @@ type rng struct{ lo, hi int }
 type method struct {
 	name, sig string
 	ranges    []rng
-	loop      bool
+	loop      bool // statements of the round loop's body
+	translate bool // returns (and, in a loop, loop branches) become actions
+	block     int  // line of an if statement whose body (or else) becomes this method
+	blockElse bool
 }
 
 type decl struct {
@@ -87,7 +87,7 @@ func main() {
 			resultType = f[1]
 		case "roundvar":
 			roundVar = f[1]
-		case "method", "loopmethod":
+		case "method", "loopmethod", "block":
 			rest := strings.TrimSpace(strings.TrimPrefix(line, f[0]))
 			head, tail, ok := strings.Cut(rest, ":")
 			if !ok {
@@ -98,10 +98,23 @@ func main() {
 			m.name = head[:strings.Index(head, "(")]
 			m.sig = head[strings.Index(head, "("):]
 			if m.loop {
-				m.sig = "() " + actionType
+				m.translate = true
 			}
 			for _, r := range strings.Fields(tail) {
 				r = strings.TrimSuffix(r, ",")
+				if r == "translate" {
+					m.translate = true
+					continue
+				}
+				if r == "else" {
+					m.blockElse = true
+					continue
+				}
+				if f[0] == "block" {
+					m.block, _ = strconv.Atoi(r)
+					m.translate = true
+					continue
+				}
 				lo, hi, ok := strings.Cut(r, "-")
 				if !ok {
 					hi = lo
@@ -109,6 +122,9 @@ func main() {
 				l, _ := strconv.Atoi(lo)
 				h, _ := strconv.Atoi(hi)
 				m.ranges = append(m.ranges, rng{l, h})
+			}
+			if m.translate {
+				m.sig = "() " + actionType
 			}
 			methods = append(methods, m)
 		}
@@ -136,7 +152,9 @@ func main() {
 	info := &types.Info{Defs: map[*ast.Ident]types.Object{}, Uses: map[*ast.Ident]types.Object{}}
 	conf := types.Config{Importer: importer.ForCompiler(fset, "source", nil), Error: func(error) {}}
 	pkg, _ := conf.Check(pkgName, fset, files, info)
-	qual := types.RelativeTo(pkg)
+	// qual names a foreign package the way the source file imports it: by its
+	// alias, or by nothing at all for a dot import.
+	var qual types.Qualifier
 
 	var fn *ast.FuncDecl
 	var file *ast.File
@@ -153,6 +171,25 @@ func main() {
 	src, err := os.ReadFile(fset.Position(file.Pos()).Filename)
 	if err != nil {
 		panic(err)
+	}
+	importName := map[string]string{}
+	for _, im := range file.Imports {
+		path, _ := strconv.Unquote(im.Path.Value)
+		if im.Name != nil {
+			importName[path] = im.Name.Name
+		}
+	}
+	qual = func(p *types.Package) string {
+		if p == pkg {
+			return ""
+		}
+		if n, ok := importName[p.Path()]; ok {
+			if n == "." {
+				return ""
+			}
+			return n
+		}
+		return p.Name()
 	}
 	off := func(p token.Pos) int { return fset.Position(p).Offset }
 	// stmtEnd is the byte after a statement's line: its trailing same-line
@@ -185,9 +222,7 @@ func main() {
 			break
 		}
 	}
-	if loop == nil {
-		panic("no top-level for loop")
-	}
+	// loop may be nil: a flat function has no round state.
 
 	// ---- collect declarations ----
 	byObj := map[types.Object]*decl{}
@@ -270,9 +305,11 @@ func main() {
 		}
 	}
 	collect(fn.Body.List, false, off(fn.Body.Lbrace)+1)
-	collect(loop.Body.List, true, off(loop.Body.Lbrace)+1)
+	if loop != nil {
+		collect(loop.Body.List, true, off(loop.Body.Lbrace)+1)
+	}
 	// the loop variable
-	if roundVar != "" {
+	if roundVar != "" && loop != nil {
 		if as, ok := loop.Init.(*ast.AssignStmt); ok {
 			for _, l := range as.Lhs {
 				if id, ok := l.(*ast.Ident); ok && id.Name == roundVar {
@@ -356,7 +393,7 @@ func main() {
 	// controlEdits translates loop-targeting branches and returns inside one
 	// loop-body statement. Returns replacements that already include the
 	// identifier prefixes of their operands.
-	controlEdits := func(node ast.Node, idents []edit) []edit {
+	controlEdits := func(node ast.Node, idents []edit, inLoop bool) []edit {
 		var eds []edit
 		type frame struct{ loops, switches int }
 		var walk func(n ast.Node, fr frame)
@@ -375,6 +412,9 @@ func main() {
 				if x.Label != nil {
 					panic("labeled branch at " + fset.Position(x.Pos()).String())
 				}
+				if !inLoop {
+					return
+				}
 				switch x.Tok {
 				case token.CONTINUE:
 					if fr.loops == 0 {
@@ -389,6 +429,10 @@ func main() {
 				}
 				return
 			case *ast.ReturnStmt:
+				if len(x.Results) == 0 {
+					eds = append(eds, edit{off(x.Pos()), off(x.End()), "return actReturn"})
+					return
+				}
 				var parts []string
 				for _, r := range x.Results {
 					s, e := off(r.Pos()), off(r.End())
@@ -415,6 +459,9 @@ func main() {
 		walk(node, frame{})
 		return eds
 	}
+
+	usesThis := func(text string) bool { return strings.Contains(text, "\t") } // unused placeholder
+	_ = usesThis
 
 	var out bytes.Buffer
 	out.WriteString("package " + pkgName + "\n\n")
@@ -444,16 +491,22 @@ func main() {
 			out.WriteString("\t" + d.name + " " + d.typ + "\n")
 		}
 		if !loopLevel {
-			out.WriteString("\n\t// " + roundField + " is the current round's state, zeroed by the driver at the top of\n\t// every round exactly as the declarations it replaces were.\n\t" + roundField + " " + roundType + "\n")
-			out.WriteString("\t// ret carries an early return out of a round method (see exit).\n\tret " + resultType + "\n")
+			if loop != nil {
+				out.WriteString("\n\t// " + roundField + " is the current round's state, zeroed by the driver at the top of\n\t// every round exactly as the declarations it replaces were.\n\t" + roundField + " " + roundType + "\n")
+			}
+			out.WriteString("\t// ret carries an early return out of a phase method (see exit).\n\tret " + resultType + "\n")
 		}
 		out.WriteString("}\n\n")
 	}
 	writeStruct(strings.TrimPrefix(recvType, "*"), false)
-	writeStruct(roundType, true)
+	if loop != nil {
+		writeStruct(roundType, true)
+	}
 	out.WriteString("// " + actionType + " is what a round method tells the driver to do next.\ntype " + actionType + " int\n\nconst (\n\tactNone " + actionType + " = iota // carry on with the next phase of this round\n\tactContinue                        // next round\n\tactBreak                           // leave the loop and finish\n\tactReturn                          // return " + recvName + ".ret from the function\n)\n\n")
 	out.WriteString("// " + resultType + " is the function's return, parked by exit until the driver returns it.\ntype " + resultType + " struct {\n\tresp    *Response\n\thistory []Message\n\terr     error\n}\n\n")
-	out.WriteString("// exit records an early return and tells the driver to take it.\nfunc (" + recvName + " " + recvType + ") exit(resp *Response, history []Message, err error) " + actionType + " {\n\t" + recvName + ".ret = " + resultType + "{resp, history, err}\n\treturn actReturn\n}\n")
+	if fn.Type.Results != nil && len(fn.Type.Results.List) > 0 {
+		out.WriteString("// exit records an early return and tells the driver to take it.\nfunc (" + recvName + " " + recvType + ") exit(resp *Response, history []Message, err error) " + actionType + " {\n\t" + recvName + ".ret = " + resultType + "{resp, history, err}\n\treturn actReturn\n}\n")
+	}
 
 	// statement index for both levels
 	type stmt struct {
@@ -461,19 +514,53 @@ func main() {
 		start, end int
 		line       int
 		loop       bool
+		block      *method // statements lifted from an if/else body belong to that method only
 	}
 	var stmts []stmt
-	index := func(list []ast.Stmt, loopLevel bool, blockStart int) {
+	index := func(list []ast.Stmt, loopLevel bool, blockStart int, block *method) {
 		prev := blockStart
 		for _, s := range list {
-			st := stmt{node: s, end: stmtEnd(s), line: fset.Position(s.Pos()).Line, loop: loopLevel}
+			st := stmt{node: s, end: stmtEnd(s), line: fset.Position(s.Pos()).Line, loop: loopLevel, block: block}
 			st.start, _ = leadingComment(prev, s)
 			stmts = append(stmts, st)
 			prev = st.end
 		}
 	}
-	index(fn.Body.List, false, off(fn.Body.Lbrace)+1)
-	index(loop.Body.List, true, off(loop.Body.Lbrace)+1)
+	index(fn.Body.List, false, off(fn.Body.Lbrace)+1, nil)
+	if loop != nil {
+		index(loop.Body.List, true, off(loop.Body.Lbrace)+1, nil)
+	}
+	for _, m := range methods {
+		if m.block == 0 {
+			continue
+		}
+		var ifs *ast.IfStmt
+		for _, s := range fn.Body.List {
+			if is, ok := s.(*ast.IfStmt); ok && fset.Position(s.Pos()).Line == m.block {
+				ifs = is
+			}
+		}
+		if ifs == nil {
+			panic(fmt.Sprintf("block %s: no if statement at line %d", m.name, m.block))
+		}
+		body := ifs.Body
+		if m.blockElse {
+			b, ok := ifs.Else.(*ast.BlockStmt)
+			if !ok {
+				panic("block " + m.name + ": else is not a plain block")
+			}
+			body = b
+		}
+		// a body that is one bare block is unwrapped
+		for len(body.List) == 1 {
+			inner, ok := body.List[0].(*ast.BlockStmt)
+			if !ok {
+				break
+			}
+			body = inner
+		}
+		index(body.List, false, off(body.Lbrace)+1, m)
+	}
 
 	emitMethod := func(name, sig, body string) {
 		out.WriteString("\nfunc (" + recvName + " " + recvType + ") " + name + sig + " {\n" + body + "\n}\n")
@@ -495,9 +582,13 @@ func main() {
 				continue
 			}
 			in := false
-			for _, r := range m.ranges {
-				if st.line >= r.lo && st.line <= r.hi {
-					in = true
+			if m.block != 0 {
+				in = st.block == m
+			} else if st.block == nil {
+				for _, r := range m.ranges {
+					if st.line >= r.lo && st.line <= r.hi {
+						in = true
+					}
 				}
 			}
 			if !in {
@@ -530,8 +621,8 @@ func main() {
 					}
 					if allShared {
 						eds := identEdits(n)
-						if m.loop {
-							eds = append(eds, controlEdits(n, identEdits(n))...)
+						if m.translate {
+							eds = append(eds, controlEdits(n, identEdits(n), m.loop)...)
 						}
 						eds = append(eds, edit{off(n.TokPos), off(n.TokPos) + 2, "="})
 						body.WriteString(apply(text, base, eds))
@@ -539,6 +630,9 @@ func main() {
 					}
 				}
 			case *ast.DeclStmt:
+				if st.block != nil {
+					break // a lifted block's own declarations stay its locals
+				}
 				gd := n.Decl.(*ast.GenDecl)
 				switch gd.Tok {
 				case token.CONST, token.TYPE:
@@ -573,13 +667,13 @@ func main() {
 				}
 			}
 			eds := identEdits(st.node)
-			if m.loop {
-				eds = append(eds, controlEdits(st.node, identEdits(st.node))...)
+			if m.translate {
+				eds = append(eds, controlEdits(st.node, identEdits(st.node), m.loop)...)
 			}
 			body.WriteString(apply(text, base, eds))
 		}
 		b := strings.TrimRight(body.String(), "\n\t ")
-		if m.loop {
+		if m.translate {
 			b += "\n\treturn actNone"
 		}
 		emitMethod(m.name, m.sig, b)

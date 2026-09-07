@@ -31,10 +31,11 @@ func TestBothInvestigatorPathsCarryTheApplianceTier(t *testing.T) {
 		t.Fatal("the chat investigator's loop overrides have moved")
 	}
 	block := body[i:]
-	if j := strings.Index(block, "\n\t\t}"); j > 0 {
+	// The overrides literal sits one level deep inside chatMode now.
+	if j := strings.Index(block, "\n\t}"); j > 0 {
 		block = block[:j]
 	}
-	if !strings.Contains(block, "TierOverride: applianceTierOverride(appliance.OrchestratorTier)") {
+	if !strings.Contains(block, "TierOverride: applianceTierOverride(pr.appliance.OrchestratorTier)") {
 		t.Errorf("the CHAT investigator does not carry the appliance's tier override — "+
 			"the setting works when you Map a system and silently does nothing when you ask "+
 			"it a question:\n%s", block)
