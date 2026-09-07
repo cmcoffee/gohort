@@ -133,6 +133,19 @@ type orchUpdatePayload struct {
 	WindowFromMin int    `json:"window_from_min,omitempty"` // window start, minutes since local midnight
 	WindowToMin   int    `json:"window_to_min,omitempty"`   // window end, minutes since local midnight
 	MaxFires      int    `json:"max_fires,omitempty"`       // per-task total cap; 0 = indefinite (run until cancelled or idle-reaped)
+
+	// Objective (docs/loop-objectives.md). Until is the completion check in the
+	// owner's own words; empty is an ordinary recurring task, which runs its
+	// cadence and never asks whether it is finished. With it set, every fire is
+	// judged and the one that reaches the goal is the last.
+	//
+	// MaxAttempts bounds the fires that may end UNMET before the task stops and
+	// says so. Distinct from MaxFires on purpose: reaching the fire cap is a
+	// budget running out and retires quietly, while reaching the attempt bound
+	// means the goal was never met, which is a thing the owner needs told.
+	// 0 leaves MaxFires as the only bound.
+	Until       string `json:"until,omitempty"`
+	MaxAttempts int    `json:"max_attempts,omitempty"`
 	// RemainingToday holds the random pattern's still-pending fire times for the
 	// current day (RFC3339), so the plan survives restarts and each fire just
 	// pops the next. Empty for fixed, or when a fresh day needs planning.
@@ -785,6 +798,51 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		return nil
 	}
 
+	// Objective check (docs/loop-objectives.md): a task carrying an `until` is
+	// asking for a state of the world, so the fire that reaches it should be the
+	// last one, and the fire that runs out of attempts should say so rather than
+	// keep going. Judged from what this attempt RAN and reported, never from the
+	// reply alone — see objective_judge.go.
+	//
+	// Acted on only when there is an armed successor to stand down. A manual Run
+	// now reports the verdict on its card and deliberately leaves the schedule
+	// alone, which is that path's whole contract; it is also how an owner retries
+	// a stalled objective after fixing what the reason named.
+	objLine, objStalled := "", false
+	if objective := strings.TrimSpace(p.Until); objective != "" {
+		labels, failed := objectiveToolLabels(toolTrace)
+		attempt := p.FireCount + 1
+		verdict, judged := app.judgeObjective(ctx, objectiveEvidence{
+			Objective:   objective,
+			Reply:       reply,
+			ToolCalls:   labels,
+			ToolErrors:  failed,
+			Attempt:     attempt,
+			MaxAttempts: p.MaxAttempts,
+		})
+		var stop bool
+		objLine, stop, objStalled = objectiveOutcome(verdict, judged, attempt, p.MaxAttempts)
+		if stop && reArm && armedID != "" {
+			// Stand the chain down. The successor was pre-armed BEFORE this fire
+			// ran (so a crash could not orphan the chain), which is exactly why
+			// it has to be cancelled here rather than simply not scheduled.
+			if err := CancelOrchestrateUpdate(p.SessionID, armedID); err != nil {
+				Log("[orchestrate/objective] task %q: could not cancel the armed successor: %v — it will fire once more", recurringName(p), err)
+			} else {
+				Log("[orchestrate/objective] task %q stopped after attempt %d: %s", recurringName(p), attempt, objLine)
+			}
+		}
+		kind := "objective-not-met"
+		switch {
+		case objStalled:
+			kind = "objective-stalled"
+		case stop:
+			kind = "objective-met"
+		}
+		appendSessionDiag(udb, p.AgentID, p.SessionID, kind,
+			fmt.Sprintf("Recurring task %q, attempt %d: %s (goal: %s)", recurringName(p), attempt, objLine, truncateObs(objective, 200)))
+	}
+
 	// Round-budget exhaustion: the loop reached its soft cap and had to be forced
 	// to wrap up, so this fire's work is probably incomplete (it ran out of rounds
 	// mid-task rather than finishing). Surface it — badge the ledger run "attention"
@@ -820,6 +878,11 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	}
 	if hitCap {
 		detail += fmt.Sprintf(" · hit round cap (%d) — may be incomplete", softCap)
+	}
+	// The verdict rides the card this fire posts, so the person reading the
+	// thread sees where the goal stands without opening Activity.
+	if objLine != "" {
+		detail += " · " + objLine
 	}
 	// FINAL fire: the pre-arm declined to schedule a successor, so this task
 	// stops here. Say so on the card. Retirement used to be a single log line
@@ -891,6 +954,14 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// path wants and leaves the person who asked with nothing.
 	deliverWakeToChannel(p, subSess, reply, toolTrace)
 	status, summary := RunOK, standingSummary(reply)
+	if objLine != "" {
+		// Prefixed rather than appended: the Activity feed truncates, and where
+		// the goal stands is the first thing to know about an objective's run.
+		summary = strings.ToUpper(objLine[:1]) + objLine[1:] + ". " + summary
+		if objStalled {
+			status = RunAttention
+		}
+	}
 	if hitCap {
 		status = RunAttention
 		summary = fmt.Sprintf("hit round cap (%d rounds) — cycle may be incomplete. %s", softCap, summary)
@@ -1164,6 +1235,8 @@ func ScheduleOrchestrateUpdate(spec RecurringSpec) (string, error) {
 		WindowFromMin:   spec.WindowFromMin,
 		WindowToMin:     spec.WindowToMin,
 		MaxFires:        spec.MaxFires,
+		Until:           spec.Until,
+		MaxAttempts:     spec.MaxAttempts,
 		Surface:         strings.TrimSpace(spec.Surface),
 		// Preserve fire count + creation time on edit-in-place; fresh schedules
 		// pass zero/empty and start clean.

@@ -1,7 +1,13 @@
 # Loop objectives — a recurring task that knows when it is done
 
-Status: **spec, nothing built** (written 2026-09-07 against v0.6.613). Decision proposed, not
-locked: an objective is a recurring task with a completion check, not a fifth trigger kind.
+Status: **stage 1 built** (v0.6.615, 2026-09-07). Stages 2 and 3 unbuilt. Decision locked by the
+build: an objective is a recurring task with a completion check, not a fifth trigger kind.
+
+Landed in stage 1: `apps/orchestrate/objective_judge.go` (the check, its evidence, and the outcome
+rule), `Until` / `MaxAttempts` on `orchUpdatePayload` and `RecurringSpec`, and the judge step,
+card line, ledger prefix and stand-down in `fireOrchestrateUpdate`. Tests:
+`apps/orchestrate/objective_test.go`. Nothing authors an objective yet — that is stage 3 — so
+today it is set by a caller of `ScheduleOrchestrateUpdate`.
 
 ## The gap
 
@@ -27,9 +33,9 @@ One `orchUpdatePayload` (a recurring task) with three new fields:
 |---|---|
 | `Until string` | the completion check, in plain language: "the post is published and its URL was posted to the thread" |
 | `MaxAttempts int` | how many fires may end without the check passing before the task escalates; 0 = `max_fires` governs |
-| `Attempts []objectiveAttempt` | the ledger: one row per fire, `{fired, verdict, reason, summary}`; capped at the last 12 |
+| ~~`Attempts`~~ | **not built, and not needed.** The run ledger already writes one row per fire stamped with the task's name (`RunRecord.Task`), and `RunFilter{Task:}` reads them back. The verdict rides that row's `Summary`. A second copy on the payload would be a second thing to keep true. |
 
-Everything else is the recurring task it already is: prompt, cadence (`interval_minutes`,
+**Stage 1 note:** built as described, minus the `Attempts` field. Everything else is the recurring task it already is: prompt, cadence (`interval_minutes`,
 `times_per_day`, the random `min_gap`/`max_gap` window, `active_from`/`active_to`), surface,
 `max_fires`, the pre-armed successor, the run ledger row per fire, the report card in the thread.
 No new scheduler kind, no new console rail, no new storage table.
@@ -44,31 +50,36 @@ card, and the cap come for free.
 `fireOrchestrateUpdate` runs the fire exactly as today. After the reply is in hand and before the
 card is appended:
 
-1. **Judge.** If `Until` is set, ask the worker tier one question against the fire's reply and
+1. **Judge.** *(built)* If `Until` is set, ask the worker tier one question against the fire's reply and
    its tool trace: *did this attempt satisfy `Until`?* Answer shape is the turn-claim judge's
    (`judgeTurnClaim` in `apps/orchestrate/turn_judge.go`): a verdict and a one-line reason,
    nothing else. The evidence is the same `TurnClaimEvidence` the reply judge already assembles,
    so an attempt cannot pass by narrating a success its tool calls do not show.
-2. **Record.** Append `{fired, verdict, reason, summary}` to `Attempts`. The run ledger row for
-   this fire (`RecordRun`, already written with `Task`, `Brief`, `Summary`, `Steps`) gets the
-   verdict in its `Summary` prefix so the Activity feed shows it without a schema change.
-3. **Card.** The report card (`ReportFrom`/`ReportKind: cortexKindScheduled`) carries a verdict
-   line under its detail: `Objective: not yet — <reason>` or `Objective: done — <reason>`. That is
-   the one visible change per fire.
-4. **Stop or continue.**
+2. **Record.** *(built)* The run ledger row for this fire (`RecordRun`, already written with
+   `Task`, `Brief`, `Summary`, `Steps`) gets the verdict as its `Summary` prefix, so the Activity
+   feed shows it without a schema change and the history is queryable by task name. A stalled
+   objective also flips that row to `RunAttention`.
+3. **Card.** *(built)* The report card (`ReportFrom`/`ReportKind: cortexKindScheduled`) carries the
+   verdict in its detail line, beside the cadence and fire number: `· objective met — <reason>`,
+   `· objective not yet — <reason>`, or `· objective STALLED after N attempt(s) — <reason>`. That
+   is the one visible change per fire.
+4. **Stop or continue.** *(built)* On a manual Run now the verdict is judged and shown, but the
+   schedule is deliberately untouched — that path's contract — so an owner can retry a stalled
+   objective after fixing what the reason named.
    - Verdict passed: the pre-armed successor is cancelled (`CancelOrchestrateUpdate`), the card's
      verdict line reads *done*, and the task is retired the way the fire cap retires it today
      (`recurring-retired` diag, final-fire wording on the card).
    - Verdict failed and attempts remain: the successor fires as scheduled.
-   - Verdict failed and `MaxAttempts` is reached: the successor is cancelled, the card says the
-     objective is *stalled* with the last reason, and the owner gets the same escalation a broken
-     task gets (`recordScheduledDrop` with `RunAttention` plus the ⚠ trail). Going quiet is the
-     failure this exists to prevent.
+   - Verdict failed and `MaxAttempts` is reached: the successor is cancelled, the card says
+     *STALLED* with the last reason, this fire's own ledger row flips to `RunAttention`, and an
+     `objective-stalled` diag lands on the ⚠ trail. The stall rides the fire's existing row rather
+     than calling `recordScheduledDrop`, which would file a second run for a fire that did post.
+     Going quiet is the failure this exists to prevent.
 
 ## The next attempt reads the ledger
 
-The reason a fifth attempt is not a first attempt: the fire's prompt gets one block, built from
-`Attempts` and placed where the time context already goes, after the prompt and before the
+The reason a fifth attempt is not a first attempt: the fire's prompt gets one block, built from the
+run ledger (`ListRuns` filtered by task name) and placed where the time context already goes, after the prompt and before the
 directive:
 
 ```
@@ -137,12 +148,12 @@ intention, and its home is with the other standing things.
 
 ## Stages
 
-1. **Fields, judge, ledger, card.** `Until`, `MaxAttempts`, `Attempts` on the payload; the judge
+1. **Fields, judge, ledger, card.** — **BUILT (v0.6.615).** `Until`, `MaxAttempts`, `Attempts` on the payload; the judge
    step and the verdict line in `fireOrchestrateUpdate`; retire on pass; stall on cap. Tests: a
    fire whose judge passes cancels its successor and posts *done*; a fire whose judge fails leaves
    the successor armed and the ledger one row longer; the cap stalls with an attention drop; a
    judge error records *unjudged* and counts.
-2. **The attempts block.** Built from the ledger into the fire prompt. Test: the block names every
+2. **The attempts block.** *(next)* Built from the ledger into the fire prompt. Test: the block names every
    prior reason, newest last, and is absent on the first attempt.
 3. **Authoring and console.** `until`/`max_attempts` on the `recurring` tool, the help paragraph,
    the two console cells and the state strings. Test: `recurring(action="list")` shows the count

@@ -52,6 +52,11 @@ type RecurringSpec struct {
 
 	MaxFires int // per-task total cap; 0 = deployment default
 
+	// Until / MaxAttempts make this an objective rather than a cadence — see
+	// orchUpdatePayload and docs/loop-objectives.md.
+	Until       string
+	MaxAttempts int
+
 	// Surface — where the fire REPORTS: "" (nobody chose; see
 	// scheduleSurfaceDefault) | "session" | "cortex" | "background". Stored on the
 	// payload and resolved at fire time against SessionID, which stays the home
