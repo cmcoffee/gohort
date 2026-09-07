@@ -444,9 +444,12 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if id == "" {
 		return "", errors.New("id is required")
 	}
-	existing, ok := loadAgent(sess.DB, id)
+	// By id or by name, the same resolution agents(action="get") uses. The
+	// model reads an agent by name and then names it again here; an id-only
+	// lookup turned that into "not found" for an agent it had just been shown.
+	existing, ok := findAgentByNameOrID(sess.DB, sess.Username, id)
 	if !ok {
-		return "", fmt.Errorf("agent %q not found", id)
+		return "", fmt.Errorf("agent %q not found by id or name", id)
 	}
 	if existing.Owner != sess.Username {
 		return "", fmt.Errorf("agent %q is not yours — clone it first to customize", id)
@@ -529,7 +532,7 @@ func (cloneAgentTool) Desc() string {
 }
 func (cloneAgentTool) Params() map[string]ToolParam {
 	return map[string]ToolParam{
-		"id":   {Type: "string", Description: "Source agent id."},
+		"id":   {Type: "string", Description: "Source agent id or name."},
 		"name": {Type: "string", Description: "Optional new name. Defaults to source name + \" (copy)\"."},
 	}
 }
@@ -548,6 +551,9 @@ func (cloneAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (st
 	// LLM-initiated clone preserves the source's OwnedBy (no promotion).
 	// Promotion (sub-agent → top-level) is a deliberate user choice
 	// available only via the chat UI's Clone button prompt.
+	if src, ok := findAgentByNameOrID(sess.DB, sess.Username, id); ok {
+		id = src.ID
+	}
 	saved, err := cloneAgent(sess.DB, id, sess.Username, newName, false)
 	if err != nil {
 		return "", err
@@ -573,7 +579,7 @@ func (deleteAgentTool) Desc() string {
 }
 func (deleteAgentTool) Params() map[string]ToolParam {
 	return map[string]ToolParam{
-		"id": {Type: "string", Description: "Agent id to delete (must be owned by the user)."},
+		"id": {Type: "string", Description: "Agent id or name to delete (must be owned by the user)."},
 	}
 }
 func (deleteAgentTool) NeedsConfirm() bool { return true }
@@ -593,10 +599,11 @@ func (deleteAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	// or the user (via the dashboard) can remove it. Prevents one agent from
 	// deleting another's. The human dashboard path (deleteAgent direct) is
 	// unrestricted.
-	if target, ok := loadAgent(sess.DB, id); ok {
+	if target, ok := findAgentByNameOrID(sess.DB, sess.Username, id); ok {
 		if msg := agentMutationLock(target, sess); msg != "" {
 			return "", errors.New(msg)
 		}
+		id = target.ID
 	}
 	orphaned, err := deleteAgentReporting(sess.DB, id, sess.Username)
 	if err != nil {
@@ -703,7 +710,7 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		// accidentally publishing or rebranding itself.
 	}
 	if includeID {
-		params["id"] = ToolParam{Type: "string", Description: "Agent id (from agents(action=\"list\"))."}
+		params["id"] = ToolParam{Type: "string", Description: "Agent id or name (from agents(action=\"list\"))."}
 	}
 	return params
 }
