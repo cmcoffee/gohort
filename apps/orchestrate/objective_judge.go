@@ -172,6 +172,55 @@ func objectiveOutcome(v objectiveVerdict, judged bool, attempt, maxAttempts int)
 	return "objective not yet — " + reason, false, false
 }
 
+// objectiveAttemptNumber is which attempt of the CURRENT allowance this fire
+// is. FireCount only ever climbs, so comparing it to MaxAttempts directly would
+// mean a resumed objective stalls again on its very first fire — the owner
+// fixed what the stall named and got one more refusal for it. Resume moves
+// AttemptsBase forward instead, which restarts the allowance while leaving the
+// fire count, the history and the ledger untouched.
+func objectiveAttemptNumber(p orchUpdatePayload) int {
+	n := p.FireCount + 1 - p.AttemptsBase
+	if n < 1 {
+		// A base ahead of the count means the payload was edited or restored;
+		// treat it as a fresh allowance rather than a negative attempt.
+		return 1
+	}
+	return n
+}
+
+// objectiveStateLabel says where an objective stands, for the console row and
+// the recurring tool's listing. Empty for an ordinary recurring task, which has
+// no goal to stand in relation to.
+//
+// A PARKED objective is not described here: it renders through the broken-row
+// label, which already carries the stall reason the park was given.
+func objectiveStateLabel(p orchUpdatePayload) string {
+	if strings.TrimSpace(p.Until) == "" {
+		return ""
+	}
+	if len(p.Attempts) == 0 {
+		return "objective — no attempts yet"
+	}
+	last := p.Attempts[len(p.Attempts)-1]
+	if last.Met {
+		return "objective — met: " + truncateObs(last.Reason, 160)
+	}
+	return fmt.Sprintf("objective — not yet (%d attempt(s)): %s", len(p.Attempts), truncateObs(last.Reason, 160))
+}
+
+// brokenListReason surfaces a parked task's reason in the recurring tool's
+// listing, so the model that scheduled an objective can see it stopped without
+// being told to go read a console.
+func brokenListReason(p orchUpdatePayload) string {
+	if !p.Broken {
+		return ""
+	}
+	if r := strings.TrimSpace(p.BrokenReason); r != "" {
+		return r
+	}
+	return "parked"
+}
+
 // objectiveAttemptsKept bounds the history carried on the payload. Twelve is
 // enough for the block to show a pattern and small enough that it stays a note
 // rather than a transcript — it rides the volatile tail of every fire's prompt.
@@ -214,11 +263,11 @@ func objectiveAttemptsBlock(p orchUpdatePayload) string {
 	loc := UserLocation(p.Username)
 	var b strings.Builder
 	fmt.Fprintf(&b, "[Objective: %s\n", truncateObs(objective, 600))
-	if p.MaxAttempts > 0 {
-		fmt.Fprintf(&b, "Attempts so far: %d of %d.\n", len(p.Attempts), p.MaxAttempts)
-	} else {
-		fmt.Fprintf(&b, "Attempts so far: %d.\n", len(p.Attempts))
-	}
+	// The COUNT, never the bound. Two reasons: after a Resume the allowance
+	// restarts while the history keeps its length, so "3 of 5" would be a lie;
+	// and telling the model it is nearly out of tries is pressure to declare
+	// success, which is the one thing the checker exists to catch.
+	fmt.Fprintf(&b, "Attempts so far: %d.\n", len(p.Attempts))
 	for i, a := range p.Attempts {
 		when := a.At
 		if ts, err := time.Parse(time.RFC3339, a.At); err == nil {

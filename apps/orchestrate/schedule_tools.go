@@ -39,6 +39,7 @@ func (t *chatTurn) recurringToolDef() AgentToolDef {
 				"  action=\"list\" — show this agent's active tasks (id, cadence, fire count, prompt, and WHERE each posts: this session, the Cortex mind, another session, or background). Call before scheduling to avoid duplicates.\n" +
 				"  action=\"cancel\" — stop one. Required: id (from schedule or list).\n" +
 				"  action=\"move\" — retarget WHERE an existing task posts its reports, keeping its timing / fire budget untouched. Required: id, to=\"cortex\" (the agent's standing mind thread — good for background engagement cycles the user shouldn't wade through in a conversation) to=\"session\" (this current conversation — or a SPECIFIC thread via session_id, e.g. one you created with open_session to give a schedule's reports their own home), or to=\"background\" (it still runs; nothing is posted to a thread). Moving to cortex requires the agent to maintain a Cortex thread.\n" +
+				"Give it `until` to make it an OBJECTIVE: the task then runs until the goal is actually reached, is judged after every fire, tells each attempt what the earlier ones tried, and stops when it is done (or parks and says so if it runs out of attempts).\n" +
 				"Use this for periodic polling / checks the agent runs itself. NOT for one-shot work, and NOT for dispatching to other agents.",
 			Parameters: map[string]ToolParam{
 				"action":           {Type: "string", Enum: []string{"schedule", "list", "cancel", "move"}, Description: "schedule | list | cancel | move."},
@@ -52,6 +53,8 @@ func (t *chatTurn) recurringToolDef() AgentToolDef {
 				"active_from":      {Type: "string", Description: "(schedule, optional) Daily window start, 24-hour HH:MM local time (e.g. 09:00). Set together with active_to. Required for random WITH times_per_day; optional otherwise."},
 				"active_to":        {Type: "string", Description: "(schedule, optional) Daily window end, 24-hour HH:MM local time (e.g. 17:30). Must be after active_from."},
 				"max_fires":        {Type: "integer", Description: "(schedule, optional) Auto-stop after this many total fires. OMIT for the default: INDEFINITE — the schedule runs until cancelled. Only set this when the user explicitly asks for a bounded number of runs (\"do this 5 times\")."},
+				"until":            {Type: "string", Description: "(schedule, optional) Makes this an OBJECTIVE instead of a plain cadence: what must be TRUE for the task to be FINISHED, in plain language (\"the blog post is published and its URL is posted to the thread\"). After every fire the framework judges the attempt against this from what it actually DID, not from what it said it did, and the fire that reaches the goal is the last one. Each later attempt is told what the earlier ones tried and why they fell short. Use it when the user wants something DONE; omit it when they want something RUN on a schedule."}, //nolint:lll
+				"max_attempts":     {Type: "integer", Description: "(schedule, optional, with until) How many fires may end with the goal still UNMET before the task stops trying. Reaching it PARKS the task with the last reason so the owner can see it stopped and why, rather than retiring quietly. OMIT to let max_fires be the only bound."},
 				"id":               {Type: "string", Description: "(cancel / move) Scheduler task id of the recurring task (from schedule or list)."},
 				"to":               {Type: "string", Enum: []string{"cortex", "session", "background"}, Description: "(schedule / move) Where the task posts its reports: cortex = the agent's standing mind thread (requires one); session = this current conversation, or the one named by session_id; background = it runs but posts to no thread. OMIT on schedule to take the agent's default (cortex when it has one, else this session). Required on move."},
 				"session_id":       {Type: "string", Description: "(move, optional, with to=\"session\") Target a specific existing session of this agent by id — e.g. a dedicated reports thread created via open_session. Omit to target this current conversation."},
@@ -122,13 +125,15 @@ func (t *chatTurn) recurringSchedule(args map[string]any) (string, error) {
 		return "", errors.New("recurring(schedule) requires an active session — start a turn first")
 	}
 	spec := RecurringSpec{
-		SessionID: t.session.ID,
-		AgentID:   t.agent.ID,
-		Username:  t.user,
-		Prompt:    strings.TrimSpace(stringArg(args, "prompt")),
-		Name:      strings.TrimSpace(stringArg(args, "name")),
-		Pattern:   strings.ToLower(strings.TrimSpace(stringArg(args, "pattern"))),
-		MaxFires:  intFromArgs(args, "max_fires"),
+		SessionID:   t.session.ID,
+		AgentID:     t.agent.ID,
+		Username:    t.user,
+		Prompt:      strings.TrimSpace(stringArg(args, "prompt")),
+		Name:        strings.TrimSpace(stringArg(args, "name")),
+		Pattern:     strings.ToLower(strings.TrimSpace(stringArg(args, "pattern"))),
+		MaxFires:    intFromArgs(args, "max_fires"),
+		Until:       strings.TrimSpace(stringArg(args, "until")),
+		MaxAttempts: intFromArgs(args, "max_attempts"),
 	}
 	if spec.Pattern == "" {
 		spec.Pattern = RecurringFixed
@@ -243,6 +248,10 @@ func (t *chatTurn) recurringList() (string, error) {
 		FireCount int    `json:"fire_count"`
 		CreatedAt string `json:"created_at"`
 		PostsTo   string `json:"posts_to"` // this_session | cortex | other_session
+		// Objective fields, present only on a task that has a goal.
+		Objective string `json:"objective,omitempty"`
+		State     string `json:"objective_state,omitempty"`
+		Parked    string `json:"parked,omitempty"`
 	}
 	var rows []row
 	for _, rt := range listAgentRecurringTasks(t.user, t.agent.ID) {
@@ -268,7 +277,9 @@ func (t *chatTurn) recurringList() (string, error) {
 			ID: rt.TaskID, Name: recurringName(p), Prompt: p.Prompt,
 			Pattern: pattern, Cadence: recurringDetail(p),
 			FireCount: p.FireCount, CreatedAt: p.CreatedAt,
-			PostsTo: postsTo,
+			PostsTo:   postsTo,
+			Objective: p.Until, State: objectiveStateLabel(p),
+			Parked: brokenListReason(p),
 		})
 	}
 	if len(rows) == 0 {

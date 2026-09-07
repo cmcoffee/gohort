@@ -1,7 +1,7 @@
 # Loop objectives — a recurring task that knows when it is done
 
-Status: **stages 1-2 built** (v0.6.616, 2026-09-07). Stage 3 unbuilt. Decision locked by the
-build: an objective is a recurring task with a completion check, not a fifth trigger kind.
+Status: **built** (v0.6.617, 2026-09-07). All three stages. Decision locked by the build: an
+objective is a recurring task with a completion check, not a fifth trigger kind.
 
 Landed in stage 1 (v0.6.615): `apps/orchestrate/objective_judge.go` (the check, its evidence, and
 the outcome rule), `Until` / `MaxAttempts` on `orchUpdatePayload` and `RecurringSpec`, and the
@@ -12,8 +12,12 @@ Landed in stage 2 (v0.6.616): `Attempts` on the payload, `noteObjectiveAttempt`,
 stage-1 mistake — see **Stop or continue** below: a stalled objective was cancelled, which made
 the task VANISH from the console rather than stand there saying it had stopped.
 
-Tests: `apps/orchestrate/objective_test.go`. Nothing authors an objective yet — that is stage 3 —
-so today it is set by a caller of `ScheduleOrchestrateUpdate`.
+Landed in stage 3 (v0.6.617): `until` / `max_attempts` on the `recurring` tool and its listing,
+the objective state on the console row, and **Resume** for a parked task
+(`handleConsoleRecurringResume`) with `AttemptsBase` so a resumed objective gets a fresh
+allowance instead of stalling on its first fire.
+
+Tests: `apps/orchestrate/objective_test.go`.
 
 ## The gap
 
@@ -121,10 +125,12 @@ Through the existing `recurring` tool, two optional parameters:
 - `until` — the completion check. Setting it makes the task an objective.
 - `max_attempts` — fires that may end unmet before the task stalls.
 
-`recurring(action="schedule")` with the same name and an `until` edits the task in place, the
-way it already does for timing. `recurring(action="list")` shows the attempt count and last
-verdict beside the cadence. The Builder-facing help text gains one paragraph: *when the user
-wants something done rather than something run, set `until`.*
+*(built)* `recurring(action="schedule")` with the same name and an `until` edits the task in
+place, the way it already does for timing. `recurring(action="list")` returns `objective`,
+`objective_state` and `parked` beside the cadence, so the model that scheduled one can see where
+it stands and that it stopped, without being told to read a console. The tool's own description
+carries the one-line rule: give it `until` when the user wants something DONE, omit it when they
+want something RUN.
 
 ## Where it shows in the UI
 
@@ -135,14 +141,25 @@ recurring view (`console_recurring.go`). An objective is a recurring row with tw
 |---|---|---|
 | Name | prompt's first line | same |
 | Cadence | `recurring · every 1440m · 09:00–09:30` | same |
-| Fires | `3 / 10` | `3 / 10 · 0 met` |
-| State | blank, or `⚠ needs relink` | `not yet — <last reason>`, `done`, or `⚠ stalled — <last reason>` |
-| Next run | RFC3339 | same; blank once done or stalled |
+| Fires | `3 / 10 fired` | same — the fire count is not the attempt count once a Resume has moved the allowance |
+| State | blank, or the broken label | `objective — no attempts yet`, or `objective — not yet (3 attempt(s)): <last reason>`; a stalled one shows the broken label, which already carries the stall reason |
+| Next run | RFC3339 | same; blank once parked |
 
-Row actions stay Delete and Run now. **Open for stage 3:** a parked objective renders through the
-existing broken-row path, which is Delete-only, so the retry-after-fixing story needs either Run
-now on a parked row or a Resume action that clears the park the way a relink does. The history
-survives either way — it is on the payload the park carries.
+**Built, differing from the sketch above:** there is no `0 met` cell. A met objective retires, so
+the count would read `0` for the whole life of every objective and `1` for none of them. The
+State cell carries the verdict instead, which is the thing worth reading.
+
+*(built)* Row actions: Run now, Move to…, Delete on a live row; **Relink** and **Resume** on a
+parked one. Run now stays hidden on a parked task because a parked payload short-circuits at the
+top of the fire, so the button would do nothing.
+
+**Resume** is the answer to "I fixed what the stall named". It clears the park, puts the task back
+on its real cadence, and moves `AttemptsBase` to the current fire count so the allowance restarts
+— without that the resumed task stalls again on its first fire, which is the whole reason the
+attempt number is measured against the allowance rather than the lifetime fire count. History is
+kept: `Attempts`, `FireCount` and the ledger are untouched. Offered on any parked row, since "the
+cause is fixed" is the same request whatever parked it; a task parked for a deleted agent simply
+re-parks with the same message.
 
 The thread the task reports to already shows one card per fire; the verdict line is the addition.
 The Activity feed (`handleConsoleActivity`, the run ledger) shows the verdict in each run's
@@ -177,12 +194,21 @@ intention, and its home is with the other standing things.
    Tests: the block names every prior reason oldest-first, is absent on the first attempt and on
    a task that is not an objective, keeps the newest twelve, and recording on the pre-armed
    successor never reaches back into the firing payload's slice.
-3. **Authoring and console.** `until`/`max_attempts` on the `recurring` tool, the help paragraph,
-   the two console cells and the state strings. Test: `recurring(action="list")` shows the count
-   and verdict; the console row for a stalled objective keeps Run now and loses Next run.
+3. **Authoring and console.** — **BUILT (v0.6.617).** `until` / `max_attempts` on the `recurring`
+   tool and its listing, the objective state on the console row, and Resume for a parked task.
+   Tests: the tool declares both parameters; the state label reads correctly at each stage; a
+   resumed objective starts a fresh allowance instead of stalling immediately.
 
-Each stage is shippable alone. Stage 1 without stage 2 already stops a met goal from re-firing,
-which is most of the value; stage 2 is what makes the unmet ones improve.
+Each stage was shippable alone, and each was shipped alone. Stage 1 stopped a met goal from
+re-firing; stage 2 made the unmet ones improve; stage 3 made the whole thing reachable from a
+conversation.
+
+**What the build changed about the spec**, in order: the `Attempts` field was dropped in stage 1
+and restored in stage 2 (the ledger holds the fire for a person, the payload holds the verdict for
+the next attempt); the stall was cancelled in stage 1 and parked in stage 2 (cancelling made the
+task vanish); the attempts block lost its `of N` denominator in stage 3 (a Resume makes it false,
+and it is pressure to overclaim); and `AttemptsBase` was added in stage 3 because a bound measured
+against the lifetime fire count cannot be resumed.
 
 ## Out of scope
 

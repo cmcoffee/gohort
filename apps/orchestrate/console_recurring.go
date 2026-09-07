@@ -166,6 +166,10 @@ func (T *OrchestrateApp) handleConsoleRecurring(w http.ResponseWriter, r *http.R
 			NextRun: rt.RunAt,
 			ID:      rt.TaskID,
 		}
+		// Where an objective stands, for the rows that have a goal. Broken wins
+		// below: a parked task's reason is the more urgent thing to read, and
+		// for a stalled objective it already names the goal's last verdict.
+		row.State = objectiveStateLabel(rt.Payload)
 		if rt.Payload.Broken {
 			row.Broken = true
 			row.State = brokenStateLabel(rt.Payload.BrokenReason)
@@ -174,6 +178,55 @@ func (T *OrchestrateApp) handleConsoleRecurring(w http.ResponseWriter, r *http.R
 		rows = append(rows, row)
 	}
 	writeJSON(w, rows)
+}
+
+// handleConsoleRecurringResume puts a PARKED task back on its cadence.
+//
+// Written for a stalled objective — the owner reads the reason, fixes what it
+// named, and wants another go — but offered on any parked row, because "I
+// believe the cause is fixed" is the same request whatever parked it. A task
+// parked for a deleted agent simply re-parks on its next fire with the same
+// message, which is self-correcting and says so.
+//
+// The history survives: Attempts, FireCount and the ledger are untouched. Only
+// the attempt ALLOWANCE restarts (AttemptsBase), or the resumed task would
+// stall again on its first fire.
+func (T *OrchestrateApp) handleConsoleRecurringResume(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" {
+		http.Error(w, "id required", http.StatusBadRequest)
+		return
+	}
+	// Ownership by payload username, the same way delete and relink enforce it:
+	// the scheduler bucket is global and keyed by opaque UUID.
+	for _, rt := range listAgentRecurringTasks(user, "") {
+		if rt.TaskID != id {
+			continue
+		}
+		UnscheduleTask(id)
+		p := rt.Payload
+		p.Broken = false
+		p.BrokenReason = ""
+		p.AttemptsBase = p.FireCount
+		p.LastActive = time.Now().Format(time.RFC3339)
+		next, err := computeNextFire(&p, time.Now().In(UserLocation(user)))
+		if err != nil {
+			http.Error(w, "resumed but couldn't schedule: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if _, err := ScheduleTask(OrchestrateScheduledUpdateKind, p, next); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		Log("[orchestrate/objective] task %q resumed by %s — allowance restarts at fire %d", recurringName(p), user, p.FireCount)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	http.Error(w, "recurring task not found", http.StatusNotFound)
 }
 
 // handleConsoleRecurringDelete removes a recurring task by scheduler id from the

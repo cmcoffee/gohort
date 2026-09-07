@@ -181,7 +181,7 @@ func TestObjectiveAttemptsBlock(t *testing.T) {
 	block := objectiveAttemptsBlock(p)
 	for _, want := range []string{
 		"the post is published", // the goal, restated for this fire
-		"Attempts so far: 3 of 5",
+		"Attempts so far: 3.",
 		"1. ", "2. ", "3. ",
 		"create_post returned 401",
 		"carried the title, not the URL",
@@ -198,12 +198,85 @@ func TestObjectiveAttemptsBlock(t *testing.T) {
 		t.Errorf("attempts are not oldest-first:\n%s", block)
 	}
 
-	// Without a bound the count still shows, because "how many times has this
-	// already failed" is the point; there is just no denominator.
-	noBound := p
-	noBound.MaxAttempts = 0
-	if b := objectiveAttemptsBlock(noBound); !strings.Contains(b, "Attempts so far: 3.") {
-		t.Errorf("an unbounded objective still reports its attempt count:\n%s", b)
+	// The count, never the bound. After a Resume the allowance restarts while
+	// the history keeps its length, so a denominator would be a lie — and
+	// telling the attempting model it is nearly out of tries is pressure to
+	// declare success, which is the one thing the checker exists to catch.
+	if strings.Contains(block, "of 5") {
+		t.Errorf("the block leaks how close the task is to being cut off:\n%s", block)
+	}
+}
+
+// TestObjectiveAttemptNumberRestartsAfterResume: the bound is measured against
+// the CURRENT allowance, not the lifetime fire count. Without that, an owner
+// who read a stall, fixed what it named and hit Resume would get exactly one
+// fire and the same refusal.
+func TestObjectiveAttemptNumberRestartsAfterResume(t *testing.T) {
+	if n := objectiveAttemptNumber(orchUpdatePayload{}); n != 1 {
+		t.Errorf("a fresh objective is on attempt %d, want 1", n)
+	}
+	if n := objectiveAttemptNumber(orchUpdatePayload{FireCount: 4}); n != 5 {
+		t.Errorf("the fifth fire is attempt %d, want 5", n)
+	}
+
+	// Stalled at 5 of 5, then resumed: the handler moves the base to the fire
+	// count, so the next fire is attempt 1 of a fresh allowance.
+	resumed := orchUpdatePayload{FireCount: 5, AttemptsBase: 5, MaxAttempts: 5}
+	if n := objectiveAttemptNumber(resumed); n != 1 {
+		t.Fatalf("a resumed objective is on attempt %d — it would stall on its first fire", n)
+	}
+	if _, stop, stalled := objectiveOutcome(objectiveVerdict{Reason: "still not published"}, true,
+		objectiveAttemptNumber(resumed), resumed.MaxAttempts); stop || stalled {
+		t.Error("a resumed objective stalled again on its first fire")
+	}
+
+	// A base ahead of the count (an edited or restored payload) reads as a
+	// fresh allowance rather than a negative attempt.
+	if n := objectiveAttemptNumber(orchUpdatePayload{FireCount: 2, AttemptsBase: 9}); n != 1 {
+		t.Errorf("a base ahead of the fire count gave attempt %d, want 1", n)
+	}
+}
+
+// TestObjectiveStateLabel is what the console row and the tool's listing show:
+// enough to know whether to intervene, without opening the thread.
+func TestObjectiveStateLabel(t *testing.T) {
+	if got := objectiveStateLabel(orchUpdatePayload{}); got != "" {
+		t.Errorf("an ordinary recurring task has no objective state, got %q", got)
+	}
+	p := orchUpdatePayload{Until: "the post is live"}
+	if got := objectiveStateLabel(p); !strings.Contains(got, "no attempts yet") {
+		t.Errorf("a fresh objective should say it has not tried yet, got %q", got)
+	}
+	p.Attempts = []objectiveAttempt{{Reason: "create_post returned 401"}}
+	got := objectiveStateLabel(p)
+	for _, want := range []string{"not yet", "1 attempt", "create_post returned 401"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("state %q is missing %q", got, want)
+		}
+	}
+}
+
+// TestRecurringToolOffersTheObjectiveParams: stages 1 and 2 built machinery
+// nothing could switch on. This is the parameter that makes an objective
+// reachable from a conversation, so its absence is the whole feature missing.
+func TestRecurringToolOffersTheObjectiveParams(t *testing.T) {
+	params := (&chatTurn{}).recurringToolDef().Tool.Parameters
+	until, ok := params["until"]
+	if !ok {
+		t.Fatal("the recurring tool no longer offers `until` — an objective cannot be authored")
+	}
+	if until.Type != "string" {
+		t.Errorf("until is %q, want string", until.Type)
+	}
+	if !strings.Contains(until.Description, "OBJECTIVE") {
+		t.Error("until's description does not tell the model what it turns the task into")
+	}
+	max, ok := params["max_attempts"]
+	if !ok {
+		t.Fatal("the recurring tool no longer offers `max_attempts`")
+	}
+	if max.Type != "integer" {
+		t.Errorf("max_attempts is %q, want integer", max.Type)
 	}
 }
 

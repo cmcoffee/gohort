@@ -152,6 +152,11 @@ type orchUpdatePayload struct {
 	// LastActive live here — and because the next attempt needs the reasons
 	// STRUCTURED, where the run ledger holds them as prose for a person.
 	Attempts []objectiveAttempt `json:"attempts,omitempty"`
+	// AttemptsBase is the fire count at which the CURRENT attempt allowance
+	// began. Zero for a fresh objective; moved forward by a Resume, so an owner
+	// who fixed what a stall named gets a fresh allowance instead of one fire
+	// that stalls again immediately. See objectiveAttemptNumber.
+	AttemptsBase int `json:"attempts_base,omitempty"`
 	// RemainingToday holds the random pattern's still-pending fire times for the
 	// current day (RFC3339), so the plan survives restarts and each fire just
 	// pops the next. Empty for fixed, or when a fresh day needs planning.
@@ -830,7 +835,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	objLine, objStopped, objStalled := "", false, false
 	if objective := strings.TrimSpace(p.Until); objective != "" {
 		labels, failed := objectiveToolLabels(toolTrace)
-		attempt := p.FireCount + 1
+		attempt := objectiveAttemptNumber(p)
 		verdict, judged := app.judgeObjective(ctx, objectiveEvidence{
 			Objective:   objective,
 			Reply:       reply,

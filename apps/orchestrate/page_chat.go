@@ -343,13 +343,19 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// sibling of Enabled agents / Event monitors. Recurring tasks
 						// have no pause concept, so Delete is the only row action.
 						{Label: "Recurring tasks", Source: "api/console/recurring", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
-							// Run now hidden on a broken (parked) task — its agent is
-							// gone. A broken recurring task can only be deleted here;
-							// relinking it to a live agent is a later enhancement.
+							// Run now is hidden on a parked task: a parked payload
+							// short-circuits at the top of the fire, so the button
+							// would do nothing. Parked rows get Relink (the agent is
+							// gone) or Resume (the cause is fixed — a stalled
+							// objective's usual path) instead.
 							{Label: "Run now", Method: "POST", URL: "api/console/recurring/run", HideIf: "_broken", Confirm: "Run this recurring task's prompt once right now? This is a one-off test — it does not change the schedule or count against the fire cap."},
 							// Relink (broken rows only): pick a live agent — recurring
 							// has no pause, so this resumes the task on its cadence.
 							{Label: "Relink", Method: "POST", URL: "api/console/recurring/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live agent", OnlyIf: "_broken"},
+							// Resume (parked rows only): the owner believes whatever
+							// parked it is fixed. A stalled objective gets a FRESH
+							// attempt allowance; its history and fire count are kept.
+							{Label: "Resume", Method: "POST", URL: "api/console/recurring/resume", OnlyIf: "_broken", Confirm: "Put this parked task back on its schedule? A stalled objective gets a fresh attempt allowance; what it already tried is kept."},
 							{Label: "Move to…", Method: "POST", URL: "api/console/recurring/move", PickerSource: "api/console/surface-options", PickerTitle: "Where the recurring conversation runs (cortex / session / background)"},
 							{Label: "Delete", Method: "DELETE", URL: "api/console/recurring/delete", Variant: "danger", Confirm: "Delete this recurring task and cancel its schedule?"},
 						}},
