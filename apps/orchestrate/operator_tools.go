@@ -877,8 +877,11 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 			Handler: func(args map[string]any) (string, error) {
 				agent := strings.TrimSpace(oArgStr(args, "agent"))
 				brief := strings.TrimSpace(oArgStr(args, "brief"))
-				if agent == "" || brief == "" {
-					return "", fmt.Errorf("agent and brief are required")
+				if err := missingArgs("the delegate call",
+					reqArg{"agent", agent, "name or id of the existing agent to delegate to"},
+					reqArg{"brief", brief, "what that agent should do, in your own words"},
+				); err != nil {
+					return "", err
 				}
 				if IsDelegationBlocked(RootDB, owner, agent) {
 					return fmt.Sprintf("Delegation to %q is blocked in the user's permission settings — not run.", agent), nil
@@ -1635,8 +1638,11 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 			Handler: func(args map[string]any) (string, error) {
 				to := strings.TrimSpace(oArgStr(args, "to"))
 				text := strings.TrimSpace(oArgStr(args, "text"))
-				if to == "" || text == "" {
-					return "", fmt.Errorf("to and text are required")
+				if err := missingArgs("the message_contact call",
+					reqArg{"to", to, "the recipient as shown by list_chats — a contact/group name, a handle, or a chat_id"},
+					reqArg{"text", text, "the message to send, sent verbatim"},
+				); err != nil {
+					return "", err
 				}
 				link, ok := ActiveMessagingLink()
 				if !ok {
@@ -1714,8 +1720,11 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 			Handler: func(args map[string]any) (string, error) {
 				chanRef := strings.TrimSpace(oArgStr(args, "channel"))
 				agentRef := strings.TrimSpace(oArgStr(args, "agent"))
-				if chanRef == "" || agentRef == "" {
-					return "", fmt.Errorf("channel and agent are both required")
+				if err := missingArgs("the authorize_channel_sender call",
+					reqArg{"channel", chanRef, "the channel to grant on — its name, its bound address/chat_id, or its id"},
+					reqArg{"agent", agentRef, "the agent to authorize, by name or id"},
+				); err != nil {
+					return "", err
 				}
 				target, ok := findAgentByNameOrID(UserDB(orchestrateBaseDB, owner), owner, agentRef)
 				if !ok {
