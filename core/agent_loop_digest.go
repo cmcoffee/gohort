@@ -50,6 +50,42 @@ type PromptDigest struct {
 	// one moment, and a total recomputed later from fields somebody may have
 	// migrated is a different number wearing the same name.
 	Estimated int `json:"estimated"`
+
+	// Text is the turn's prompt as text, present only when the agent has
+	// capture switched on. json:"-" so it can never ride a metadata surface by
+	// accident; RecordRun also strips it explicitly into the encrypted side
+	// table beside Raw, which is the rule this must not be the exception to.
+	Text string `json:"-"`
+}
+
+// capturePromptText renders the turn's prompt as text.
+//
+// The system prompt and the conversation, NOT the tool schemas. The schemas are
+// the largest part of a modern prompt and the least informative — one live turn
+// was 196KB of which 153KB was schemas — and the digest already counts them
+// while the catalog log line already names every tool. What no other record
+// holds is the TEXT: which clause was live, what the history actually said, and
+// whether something reached this turn that belongs to another conversation.
+// That last question is the one that took a night of inference to answer badly.
+func capturePromptText(systemPrompt string, tools []AgentToolDef, msgs []Message) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "=== SYSTEM PROMPT (%d bytes) ===\n%s\n", len(systemPrompt), systemPrompt)
+	names := make([]string, 0, len(tools))
+	for _, td := range tools {
+		names = append(names, td.Tool.Name)
+	}
+	fmt.Fprintf(&b, "\n=== TOOLS (%d; schemas not captured) ===\n%s\n", len(names), strings.Join(names, ", "))
+	fmt.Fprintf(&b, "\n=== HISTORY (%d message(s)) ===\n", len(msgs))
+	for i, m := range msgs {
+		fmt.Fprintf(&b, "\n--- [%d] %s ---\n%s\n", i+1, m.Role, m.Content)
+		for _, tc := range m.ToolCalls {
+			fmt.Fprintf(&b, "    (tool call: %s)\n", tc.Name)
+		}
+		if n := len(m.Images); n > 0 {
+			fmt.Fprintf(&b, "    (%d image(s), bytes not captured)\n", n)
+		}
+	}
+	return b.String()
 }
 
 // --- collecting a digest from several frames up --------------------------------

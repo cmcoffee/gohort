@@ -286,6 +286,8 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 
 	if !subAgent {
 		fields = append(fields,
+			ui.FormField{Field: "capture_prompt", Type: "toggle", Label: "Capture prompt text",
+				Help: "Keeps each run's round-1 prompt as text, readable with inspect_run. For answering \"what was actually in the prompt\" — switch it off again afterwards: it stores the whole conversation, once per turn."},
 			ui.FormField{Field: "allow_explorer", Type: "toggle", Label: "Allow explorer mode",
 				Help: "Lets the worker lift its round budget mid-turn. For agents mapping unfamiliar APIs."},
 			ui.FormField{Field: "explorer_hard_cap", Type: "number", Label: "Explorer ceiling",

@@ -162,8 +162,28 @@ variants. Do not register a string that is never sent verbatim.
 >
 > The export ceiling went 2139 -> 2141 across the two additions; see the notes
 > in core/ceiling_test.go for why neither can leave the hub or lose its name.
-> Full-text capture behind a per-agent toggle remains item 3 in Order below,
-> and is still not built.
+>
+> **Full-text capture BUILT v0.6.619.** `AgentRecord.CapturePrompt` (off by
+> default) switches it on for one agent; `AgentLoopConfig.CapturePrompt` carries
+> it into the loop, which fills `PromptDigest.Text` on round 1 only via
+> `capturePromptText`. All four loop-config sites read the agent's flag, so the
+> interactive turn, a worker step, a dispatch and a scheduled fire are covered.
+>
+> The capture is the system prompt verbatim, the tool NAMES, and the
+> conversation with roles and the calls each turn made. Deliberately not the
+> tool schemas: they were 153KB of one live 196KB prompt and are the least
+> informative part, since the digest already counts them and the catalog log
+> line already names every tool.
+>
+> Storage follows the rule this must not be the exception to: `RecordRun`
+> strips `Prompt.Text` into `run_ledger_prompt` (CryptSet) beside `Raw`, the
+> field carries `json:"-"` so it cannot ride a metadata surface by accident,
+> `GetRun` rehydrates it and `pruneRuns` deletes it with the rest. `inspect_run`
+> prints it LAST, and only when present. The toggle is on the agent editor, the
+> HTTP patch allowlist, `agents(action="get")` and `update_agent`.
+>
+> The core ceiling is untouched: one unexported function, one unexported table
+> const, two struct fields, no new file.
 
 The new capability, and the one that pays for the rest.
 
@@ -176,7 +196,7 @@ Per turn, record and surface:
 - **provider-reported input tokens** (already returned, e.g. `input_tokens=46936`)
 - a **headroom warning** when history plus prompt approaches the window
 
-Do **not** store the full prompt text by default. It is 46KB+ per turn on
+*(Built as specified.)* Do **not** store the full prompt text by default. It is 46KB+ per turn on
 ordinary chat; a ledger of those is a storage problem and a mild disclosure
 one. Store the digest above always, and the full text only behind an explicit
 per-agent capture toggle, off by default. The digest is the part that must be

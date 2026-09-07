@@ -777,6 +777,7 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 		FailureMemoryKey: failureMemoryKey(target.ID, ""),
 		OnStep:           func(info StepInfo) { telem.record(info); liveRun.SetProgress(info.Round, info.ToolCalls) },
 		TurnNotes:        func(user string) string { return turnNotes(subSess, runtimeDB, subSessID, user) },
+		CapturePrompt:    target.CapturePrompt,
 		TurnClaimJudge:   T.turnClaimJudge(ctx),
 		// And whether the reply KNOWS what it asserts. This site had the claim
 		// judge and not this one — an inconsistency rather than a decision, and

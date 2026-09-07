@@ -398,6 +398,19 @@ type AgentRecord struct {
 	// this just chooses summarize-old vs forget-old. Default false (fold).
 	DisableCompaction bool `json:"disable_compaction,omitempty"`
 
+	// CapturePrompt keeps this agent's round-1 prompt AS TEXT on each run,
+	// in the encrypted side table beside the raw output. Off by default and
+	// meant to be switched on to answer a question and off again: it is ~50KB
+	// a turn and it is the conversation itself.
+	//
+	// The digest's NUMBERS are always on, because the bug they catch (a prompt
+	// sitting on the window, a clause that stopped being included) is
+	// intermittent. The text is opt-in because the questions it answers are
+	// asked deliberately — "was that rule in the prompt", "did something from
+	// another conversation reach this turn" — and were previously answered by
+	// inference from what the turn did afterwards.
+	CapturePrompt bool `json:"capture_prompt,omitempty"`
+
 	// MemoryMode shapes the Explicit Memory layer (store_fact + the
 	// always-in-prompt facts block) — selects which "what to put here"
 	// directive the LLM sees. Two modes:

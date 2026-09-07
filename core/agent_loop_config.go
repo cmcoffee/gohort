@@ -112,6 +112,14 @@ func (cfg AgentLoopConfig) wantsLead() bool {
 }
 
 type AgentLoopConfig struct {
+	// CapturePrompt keeps the round-1 prompt AS TEXT on the turn's digest, for
+	// the agent whose owner switched capture on. Off by default and meant to
+	// stay off: it is ~50KB a turn, and it is the conversation, so it belongs
+	// in the encrypted side table and nowhere else. The digest's numbers are
+	// always-on because the bug they catch is intermittent; the text is opt-in
+	// because the question it answers is asked deliberately.
+	CapturePrompt bool
+
 	// TierOverride pins THIS run to a tier regardless of what its route stage
 	// says — the per-resource escape hatch from a deployment-wide routing
 	// decision. TierUnset (the zero value) follows RouteKey as before, so every

@@ -680,6 +680,7 @@ func slimAgentJSON(udb Database, user string, a AgentRecord) []byte {
 		"memory_mode":              a.MemoryMode,
 		"ingest_attachments":       a.IngestAttachments,
 		"allow_explorer":           a.AllowExplorer,
+		"capture_prompt":           a.CapturePrompt,
 		"gap_check":                a.GapCheck,
 		"work_plan":                a.WorkPlan,
 		"knowledge_model":          a.KnowledgeModel,

@@ -935,6 +935,9 @@ func mergeAgentArgs(rec *AgentRecord, args map[string]any) {
 	if v, ok := args["disable_explicit"].(bool); ok {
 		rec.DisableExplicit = v
 	}
+	if v, ok := args["capture_prompt"].(bool); ok {
+		rec.CapturePrompt = v
+	}
 	if v, ok := args["disable_inferred"].(bool); ok {
 		rec.DisableInferred = v
 	}

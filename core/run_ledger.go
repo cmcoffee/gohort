@@ -36,6 +36,10 @@ const (
 	runLedgerTable      = "run_ledger"       // metadata: <owner>:<id> -> RunRecord (Raw + Steps stripped)
 	runLedgerRawTable   = "run_ledger_raw"   // raw output: <owner>:<id> -> string (CryptSet)
 	runLedgerStepsTable = "run_ledger_steps" // tool trace: <owner>:<id> -> []RunStep (CryptSet)
+	// captured prompt TEXT: <owner>:<id> -> string (CryptSet). Written only for
+	// an agent with capture switched on; it is the conversation, so it lives
+	// where Raw lives and never in metadata.
+	runLedgerPromptTable = "run_ledger_prompt"
 )
 
 // maxRunsPerOwner caps retained runs per owner; oldest pruned past this.
@@ -276,15 +280,20 @@ func RecordRun(db Database, r RunRecord) RunRecord {
 	// (ListRuns reads metadata, so a leak there would surface in the feed).
 	raw := r.Raw
 	steps := r.Steps
+	promptText := r.Prompt.Text
 	meta := r
 	meta.Raw = ""
 	meta.Steps = nil
+	meta.Prompt.Text = ""
 	db.Set(runLedgerTable, key, meta)
 	if raw != "" {
 		db.CryptSet(runLedgerRawTable, key, raw)
 	}
 	if len(steps) > 0 {
 		db.CryptSet(runLedgerStepsTable, key, steps)
+	}
+	if promptText != "" {
+		db.CryptSet(runLedgerPromptTable, key, promptText)
 	}
 
 	pruneRuns(db, r.Owner)
@@ -309,6 +318,10 @@ func GetRun(db Database, owner, id string) (RunRecord, bool) {
 	var steps []RunStep
 	if db.Get(runLedgerStepsTable, key, &steps) {
 		r.Steps = steps
+	}
+	var promptText string
+	if db.Get(runLedgerPromptTable, key, &promptText) {
+		r.Prompt.Text = promptText
 	}
 	return r, true
 }
@@ -362,5 +375,6 @@ func pruneRuns(db Database, owner string) {
 		db.Unset(runLedgerTable, key)
 		db.Unset(runLedgerRawTable, key)
 		db.Unset(runLedgerStepsTable, key)
+		db.Unset(runLedgerPromptTable, key)
 	}
 }

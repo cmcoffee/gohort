@@ -1463,6 +1463,12 @@ func (lr *loopRun) prepareCall() loopAction {
 	// makes them real.
 	if !lr.digestBuilt {
 		lr.digest = buildPromptDigest(lr.systemPrompt, lr.clauseKeys, lr.tools, lr.history, lr.rs.window, lr.rs.budget)
+		// Round 1 only, and only when asked: this is the prompt a person can
+		// act on. Later rounds differ from it by tool results the model itself
+		// requested, which the trace already records.
+		if lr.cfg.CapturePrompt {
+			lr.digest.Text = capturePromptText(lr.systemPrompt, lr.tools, lr.history)
+		}
 		lr.digestBuilt = true
 	}
 	if lr.cfg.RouteKey != "" {

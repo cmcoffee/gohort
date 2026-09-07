@@ -1316,8 +1316,16 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					}
 					task += line + "\n"
 				}
-				return fmt.Sprintf("Run %s\nagent: %s\n%sstatus: %s\ntrigger: %s\nbrief: %s\nsummary: %s\n%soutput:\n%s",
-					rec.ID, rec.Agent, task, rec.Status, rec.Trigger, rec.Brief, rec.Summary, formatRunSteps(rec.Steps), rec.Raw), nil
+				// The captured prompt, for a run whose agent had capture on.
+				// LAST, and only then: it is by far the largest thing here, and
+				// everything above it is the summary a reader normally wants.
+				// Its absence is the normal case, not a missing measurement.
+				captured := ""
+				if txt := strings.TrimSpace(rec.Prompt.Text); txt != "" {
+					captured = "\n\n=== PROMPT AS SENT (round 1) ===\n" + txt
+				}
+				return fmt.Sprintf("Run %s\nagent: %s\n%sstatus: %s\ntrigger: %s\nbrief: %s\nsummary: %s\n%soutput:\n%s%s",
+					rec.ID, rec.Agent, task, rec.Status, rec.Trigger, rec.Brief, rec.Summary, formatRunSteps(rec.Steps), rec.Raw, captured), nil
 			},
 		},
 		{

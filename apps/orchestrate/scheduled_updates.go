@@ -671,6 +671,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		//
 		// No PriorWork: a fire has no machine steps running ahead of its loop,
 		// so the tools the loop ran are the whole of what happened.
+		CapturePrompt:  agent.CapturePrompt,
 		TurnClaimJudge: app.turnClaimJudge(ctx),
 		// And it is asked on every fire, not only the ones whose evidence looks
 		// wrong. The judge was already attached here for the reason above, and
