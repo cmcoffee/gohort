@@ -20,17 +20,17 @@ import (
 // at the source: the ask path must reach for the raw emitter.
 func TestBareAskIsNeverDeduped(t *testing.T) {
 	src := readOwnSource(t, "runner.go")
-	const marker = "if len(capturedOptions) == 0 {"
+	const marker = "if len(pr.capturedOptions) == 0 {"
 	i := strings.Index(src, marker)
 	if i < 0 {
 		t.Fatal("the bare-ask branch moved; re-point this test rather than deleting it")
 	}
 	// The branch is short; look at the block that follows it.
 	block := src[i : i+900]
-	if !strings.Contains(block, "emitBubble(capturedQuest)") {
+	if !strings.Contains(block, "pr.emitBubble(pr.capturedQuest)") {
 		t.Error("the bare-ask path must emit through emitBubble (no dedup) — emitCapturedAsBubble drops an ask whose text repeats the streamed lead-in")
 	}
-	if strings.Contains(block, "emitCapturedAsBubble(capturedQuest)") {
+	if strings.Contains(block, "pr.emitCapturedAsBubble(pr.capturedQuest)") {
 		t.Error("the bare-ask path is going through the near-duplicate guard again; a swallowed question leaves the turn parked with nothing on screen")
 	}
 }

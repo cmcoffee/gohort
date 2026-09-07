@@ -32,12 +32,147 @@ import (
 //   - question non-empty → relay to user, end the round.
 //   - all empty → orchestrator chose no tool. Caller substitutes a
 //     one-step "Respond" plan so the flow still produces a reply.
+
+// planRun is one orchestrator turn. runPlan was a single 1,800-line function
+// whose closures shared all of this as locals; the locals are fields now so
+// each phase of the turn is a method, and the callbacks the agent loop fires
+// (stream, step, round start, settle, retract) are methods on the same value.
+// One per runPlan call, never reused — the fields are the turn's live state.
+type planRun struct {
+	t    *chatTurn
+	msgs []ChatMessage
+	// telem is fed by onStepHandler and summarized when runPlan exits:
+	// rounds used, tool-call breakdown, dup-args fingerprinting and the exit
+	// reason, so budget-tuning and drift-pattern questions have data to
+	// look at.
+	telem *turnTelemetry
+
+	// Prompt. triggerMsg is the newest user message, hoisted because the
+	// phase machine runs ON it before there is a persona to put its findings
+	// into, and the trigger hints read it too. sys is the byte-stable system
+	// prompt; turnContext is the message-dependent tail that goes on the LAST
+	// user message instead (see assemblePrompt for the cache reason). facts is
+	// the same slice the prompt was built from — UncheckedClaims judges that
+	// slice, not a second read of the store.
+	triggerMsg  string
+	mach        turnMachine
+	sys         string
+	turnContext string
+	facts       []MemoryFact
+
+	// orchCtx is the orchestrator's child context. A control tool cancels it
+	// to stop the agent loop after the current round while t.ctx stays live;
+	// the captured state below is dispatched after the loop returns.
+	orchCtx    context.Context
+	cancelOrch context.CancelFunc
+	maxSteps   int
+
+	// Captured by the control-tool handlers (plan_set, ask_user,
+	// ask_user_form) and dispatched by finish.
+	capturedSteps     []PlanStep
+	capturedQuest     string
+	capturedOptions   []string
+	capturedMulti     bool
+	capturedFormSteps []map[string]any
+	capturedReply     string
+
+	// plan_set fixation guard: a Qwen failure mode is re-submitting a
+	// rejected (single-step / vacuous) plan_set round after round, ignoring
+	// the "use respond_directly" feedback. Count rejections; once we hit
+	// planSetDropThreshold, RoundToolFilter drops plan_set from the catalog
+	// for the rest of the turn so the model is FORCED off it.
+	// forceNoThinkAfterReject makes the round right after a rejection skip
+	// thinking — the model was burning 24k-token budgets deliberating itself
+	// back into the same plan_set. Single-threaded per turn (handler + round
+	// hooks run in the loop goroutine), so no locking needed.
+	planSetRejects          int
+	forceNoThinkAfterReject bool
+	// compactRequested: set by the compact_context tool when the LLM wants
+	// to proactively shed verbose tool-result bodies it's done with (e.g. a
+	// smoke-test report). Consumed by the RoundCompactNow hook, which forces
+	// an aggressive history compaction on the next round.
+	compactRequested bool
+
+	// The tool session and the catalog the model receives.
+	sess     *ToolSession
+	allTools []AgentToolDef
+	sessID   string
+
+	// Routing, and the keepalive that spans the loop.
+	stopKeepalive func()
+	tierPin       LLMTier
+	routeKey      string
+	think         bool
+
+	// Per-round bubbles: each agent-loop round that streams text gets its own
+	// assistant bubble, finalized at the round boundary by onStepHandler.
+	// Tool-only rounds (no streamed content) don't materialize a bubble.
+	// lastFinalizedID/Text track the MOST RECENT finalized bubble so the
+	// post-loop captured-text dispatch can avoid emitting a duplicate when
+	// the LLM streamed the same text it then passed to ask_user. The match is
+	// near-duplicate against the last bubble only, NOT substring-over-all-
+	// bubbles — that dropped a short reply whenever it happened to be a
+	// substring of a larger earlier block. Dropping a reply is far worse than
+	// an occasional double.
+	//
+	// holdStream: agents with an OUTPUT guardrail (pre_output/periodic) must
+	// not paint tokens live — a blocked reply would flash on screen before
+	// the verdict exists. Buffer silently and paint the whole bubble at round
+	// close, AFTER the guardrail has passed it (paintHeldBubble); a blocked
+	// round is retracted having shown nothing. streamFreshBubble tracks
+	// whether THIS round's bubble was minted here (so paint must open it) vs
+	// adopted from a tool bubble already on screen (paint only appends).
+	streamMsgID       string
+	streamedBuf       strings.Builder
+	lastFinalizedID   string
+	lastFinalizedText string
+	holdStream        bool
+	streamFreshBubble bool
+	// produced: what this turn has run a deliverable producer for, tracked
+	// live off the step callback. Read by the phantom-delivery guard, which
+	// has to answer "was this turn making a picture?" while the loop is still
+	// running — long before the transcript the after-the-fact backstop reads.
+	produced *deliveryWatch
+
+	// Round budget: soft cap, explorer hard cap, and the loop's absolute
+	// ceiling (initRoundCaps); roundCounter paces the nudges, orchRoundsUsed
+	// is what StopRound governs against.
+	maxR, orchHardCap, absoluteCeiling int
+	orchRoundsUsed, roundCounter       int
+
+	// The loop's input and outcome.
+	llmMsgs   []Message
+	gDecline  string
+	userSaid  string
+	orchStart time.Time
+	resp      *Response
+	loopErr   error
+}
+
+// planSetDropThreshold is how many plan_set rejections in one turn drop the
+// tool from the catalog (see planRun.planSetRejects).
+const planSetDropThreshold = 2
+
+func (t *chatTurn) newPlanRun(msgs []ChatMessage) *planRun {
+	pr := &planRun{
+		t:          t,
+		msgs:       msgs,
+		telem:      newTurnTelemetry(),
+		maxSteps:   resolveMaxPlanSteps(t.agent),
+		holdStream: agentHasOutputGuardrail(t.agent),
+		produced:   new(deliveryWatch),
+	}
+	pr.orchCtx, pr.cancelOrch = context.WithCancel(t.ctx)
+	return pr
+}
+
+// runPlan is the orchestrator round: assemble the prompt and the catalog, run
+// the agent loop with the control tools that end it, then dispatch whatever
+// the loop captured. Each phase is a method on planRun; this is the order
+// they run in and the defers that bracket them.
 func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, directReply string, err error) {
-	// Telemetry — populated by onStepHandler (set up below), summarized
-	// at function exit via deferred Log call. Captures rounds used,
-	// tool call breakdown, dup-args fingerprinting, and exit reason so
-	// budget-tuning and drift-pattern questions have data to look at.
-	telem := newTurnTelemetry()
+	pr := t.newPlanRun(msgs)
+	// Telemetry summary at function exit; see planRun.telem.
 	defer func() {
 		softCap := resolveMaxWorkerRounds(t.agent)
 		hardCap := softCap
@@ -48,25 +183,49 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		}
 		exitReason := classifyOrchestratorExit(
 			err,
-			telem.rounds, softCap,
+			pr.telem.rounds, softCap,
 			directReply != "",
 			question != "",
 			len(steps) > 0,
 			t.ctx.Err() != nil,
 		)
 		label := "orchestrate.orch"
-		Log("%s", telem.summary(label, softCap, hardCap, exitReason)+" agent="+t.agent.ID)
-		if line := telem.toolCallSummary(label); line != "" {
+		Log("%s", pr.telem.summary(label, softCap, hardCap, exitReason)+" agent="+t.agent.ID)
+		if line := pr.telem.toolCallSummary(label); line != "" {
 			Log("%s", line)
 		}
 		// Churn is a user-visible outcome, not just a log line — route it
 		// to the ⚠ trail so the person who saw the turn go wrong can see
 		// WHY without reading server logs.
-		if kind, detail, ok := telem.churnDiag(); ok {
+		if kind, detail, ok := pr.telem.churnDiag(); ok {
 			t.turnDiag(kind, detail)
 		}
 	}()
 
+	pr.assemblePrompt()
+	// Closes over t.machine, not pr.mach: change_phase may have moved the
+	// turn somewhere else since, and the handoff belongs to the phase that
+	// actually ended the turn.
+	defer func() { t.completeMachine(t.machine) }()
+	defer pr.cancelOrch()
+
+	Debug("[orchestrate.orch] runPlan: building tool session")
+	pr.sess = t.newToolSession()
+	// Persist any managed-workspace switch this inline turn performs so
+	// the next step/turn's session lands in the same workspace.
+	defer t.captureActiveWorkspace(pr.sess)
+	if err := pr.buildCatalog(); err != nil {
+		return nil, "", "", err
+	}
+	pr.resolveRouting()
+	pr.initRoundCaps()
+	pr.prepareMessages()
+	pr.runLoop()
+	return pr.finish()
+}
+
+func (pr *planRun) assemblePrompt() {
+	t := pr.t
 	// Assembly order matters — LLMs weight more-recent prompt
 	// content heavier. We want the agent's persona to be the most
 	// authoritative directive, so the universal "How this round
@@ -81,10 +240,10 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// machine needs it: a decompose phase runs ON this message, before
 	// there is a persona to put its findings into. Also feeds the trigger
 	// hints further down, which is where it used to be computed.
-	triggerMsg := ""
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == "user" {
-			triggerMsg = msgs[i].Content
+	pr.triggerMsg = ""
+	for i := len(pr.msgs) - 1; i >= 0; i-- {
+		if pr.msgs[i].Role == "user" {
+			pr.triggerMsg = pr.msgs[i].Content
 			break
 		}
 	}
@@ -97,12 +256,8 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// round-shape preamble goes before it: recency weights, and the phase
 	// is the most authoritative instruction in the turn. It is also
 	// byte-stable across a resident run, so it costs no cache.
-	mach := t.enterMachine(triggerMsg)
-	persona += mach.Block()
-	// Closes over t.machine, not the local: change_phase may have moved
-	// the turn somewhere else since, and the handoff belongs to the phase
-	// that actually ended the turn.
-	defer func() { t.completeMachine(t.machine) }()
+	pr.mach = t.enterMachine(pr.triggerMsg)
+	persona += pr.mach.Block()
 	// Incognito (clean-room) session: inherit NOTHING — no memory facts and no
 	// cortex standing context. A one-off with no baggage. Connected sessions
 	// (the default) get both.
@@ -112,9 +267,9 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// The flag is still read below, where the cortex standing context is a
 	// separate inheritance this session also severs.
 	incognito := t.session != nil && t.session.Incognito
-	facts := t.facts()
+	pr.facts = t.facts()
 	notes := t.operatingNotes()
-	sys := prependAgentContext(persona, t.agent, facts, notes)
+	pr.sys = prependAgentContext(persona, t.agent, pr.facts, notes)
 	// Cortex awareness injection — recent STANDING context (received channel
 	// messages, monitor fires) as read-only background so the agent greets you
 	// already aware. Concise live-read; empty when nothing's recent. Cross-session
@@ -136,10 +291,10 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		switch {
 		case fromOwner:
 			if odb := UserDB(t.app.DB, t.agent.Owner); odb != nil {
-				sys += cortexContextBlock(odb, t.agent.ID)
+				pr.sys += cortexContextBlock(odb, t.agent.ID)
 			}
 		case t.session.ID != cortexSessionID(t.agent.ID):
-			sys += cortexContextBlock(t.udb, t.agent.ID)
+			pr.sys += cortexContextBlock(t.udb, t.agent.ID)
 		}
 	}
 	// (credentialFirstGuidance is Builder-persona territory now: the
@@ -165,8 +320,10 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// turn re-prefilled ~16k instead of reusing the cached prefix). Keeping
 	// sys byte-stable lets turns 2+ reuse the prefix; the hints also belong
 	// next to the user message (highest salience) per their own design intent.
-	turnContext := t.renderTriggeredSkills()             // full instructions for skills already consulted
-	turnContext += t.renderSkillTriggerHints(triggerMsg) // soft nudge for skills whose triggers matched
+	pr.turnContext = t.renderTriggeredSkills()
+	// full instructions for skills already consulted
+	pr.turnContext += t.renderSkillTriggerHints(pr.triggerMsg)
+	// soft nudge for skills whose triggers matched
 	// ("Available skills" block moved into appendAgentCapabilityBlocks below, so
 	// the channel/dispatch path renders the same set — do NOT re-append here or
 	// it doubles.)
@@ -175,44 +332,45 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// them via agents(action="run", agent=..., message=...). Without
 	// this block the LLM has to call agents(action="list") to
 	// discover them, which it almost never does speculatively.
-	sys += t.renderAvailableAgentsBlock()
+	pr.sys += t.renderAvailableAgentsBlock()
 	// Per-turn dispatch nudge: when this turn matches an agent's triggers,
 	// hint "dispatch to it FIRST" right after the catalog — the salient,
 	// turn-specific signal the static block alone doesn't provide. Soft;
 	// the model still decides. No-op when no agent's triggers match.
-	turnContext += t.renderAgentTriggerHints(triggerMsg) // see turnContext note above — appended to user msg, not sys
+	pr.turnContext += t.renderAgentTriggerHints(pr.triggerMsg)
+	// see turnContext note above — appended to user msg, not sys
 	// Recall hints: a cheap scored-pointer nudge toward the agent's own
 	// knowledge corpus (opt-in per agent), so it pulls relevant material with
 	// knowledge_search instead of missing it. Pointers only, next to the message
 	// — no chunk bodies injected. No-op when off or nothing scores high enough.
-	turnContext += t.renderRecallHints(triggerMsg)
+	pr.turnContext += t.renderRecallHints(pr.triggerMsg)
 	// Active dispatch threads: remind the host of agents it already
 	// delegated to THIS session so a follow-up re-dispatches instead of
 	// being answered inline (the host's own history hides the delegation,
 	// and a generic follow-up won't re-match the agent's triggers). Near
 	// the user message for salience, like the trigger hint. No-op when no
 	// dispatch thread is open this session.
-	turnContext += t.renderActiveDispatchThreads()
+	pr.turnContext += t.renderActiveDispatchThreads()
 	// "Available sources" block — the catalog for query_source: lists each
 	// admin-exposed source hook (name — what it covers / when to use), so
 	// the model picks a source and calls query_source(source, query). One
 	// dispatcher + this menu instead of N per-hook tools (the agents
 	// pattern). No-op when no hooks are exposed.
 	if t.app != nil {
-		sys += RenderAvailableSourcesBlock(t.app.DB)
+		pr.sys += RenderAvailableSourcesBlock(t.app.DB)
 	}
 	// Builder-only: list the user's existing persistent custom tools
 	// as READ-ONLY awareness. They're hidden from Builder's executable
 	// catalog (see newToolSession's isBuilderAgent skip) — this block
 	// is how Builder still knows what exists. No-op for every other
 	// agent.
-	sys += t.renderBuilderExistingToolsBlock()
+	pr.sys += t.renderBuilderExistingToolsBlock()
 	// "Known topics" block — lists the snake_case slugs this
 	// (user, agent) has already used so the LLM reuses them when
 	// calling memory_save / memory_search instead of minting near-
 	// duplicates ("ssh_keys" vs "sshkey" vs "ssh-keys"). Replaces
 	// the per-turn topic auto-classifier — now the LLM picks.
-	sys += t.renderKnownTopicsBlock()
+	pr.sys += t.renderKnownTopicsBlock()
 	// ("Available knowledge collections" block unmounted alongside
 	// dispatch_to_worker — there's no LLM-facing tool that
 	// references collections by ID right now, so advertising them
@@ -228,54 +386,13 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// reaches the channel/dispatch path too (see appendAgentCapabilityBlocks).
 	// Each block self-gates on agent config; kept here (after the other blocks)
 	// so it's the single source both surfaces share.
-	sys = appendAgentCapabilityBlocks(sys, t.agent, t.udb, t.user, true)
-	// (Authoring-in-progress banner removed. It referenced legacy
-	// tool names (create_pipeline_tool / create_temp_tool /
-	// create_api_tool) replaced by tool_def + add_tool, and the
-	// underlying focus slot is meaningful only inside Builder's
-	// dispatched sub-sessions where the persona's Phase 4 plan_set
-	// rhythm already manages the focus implicitly. Non-Builder
-	// agents can't author anyway. Dead state — kept the
-	// AuthoringAgentID DB field for now in case a future surface
-	// wants it; just don't surface it as prompt content.)
-	maxSteps := resolveMaxPlanSteps(t.agent)
-	stepBudget := fmt.Sprintf("up to %d step%s", maxSteps, plural(maxSteps))
+	pr.sys = appendAgentCapabilityBlocks(pr.sys, t.agent, t.udb, t.user, true)
+}
 
-	// Control tools — terminal. Each handler captures its args
-	// onto local closure state and cancels the orchestrator's
-	// child context to stop the agent loop after the current
-	// round. The captured state is dispatched after the loop
-	// returns.
-	var (
-		capturedSteps     []PlanStep
-		capturedQuest     string
-		capturedOptions   []string
-		capturedMulti     bool
-		capturedFormSteps []map[string]any
-		capturedReply     string
-	)
-	// plan_set fixation guard: a Qwen failure mode is re-submitting a
-	// rejected (single-step / vacuous) plan_set round after round,
-	// ignoring the "use respond_directly" feedback. Count rejections;
-	// once we hit planSetDropThreshold, RoundToolFilter drops plan_set
-	// from the catalog for the rest of the turn so the model is FORCED
-	// off it. forceNoThinkAfterReject makes the round right after a
-	// rejection skip thinking — the model was burning 24k-token budgets
-	// deliberating itself back into the same plan_set. Single-threaded
-	// per turn (handler + round hooks run in the loop goroutine), so no
-	// locking needed.
-	var planSetRejects int
-	var forceNoThinkAfterReject bool
-	const planSetDropThreshold = 2
-	// compactRequested: set by the compact_context tool when the LLM wants
-	// to proactively shed verbose tool-result bodies it's done with (e.g.
-	// a smoke-test report). Consumed by the RoundCompactNow hook, which
-	// forces an aggressive history compaction on the next round.
-	var compactRequested bool
-	orchCtx, cancelOrch := context.WithCancel(t.ctx)
-	defer cancelOrch()
-
-	planTool := AgentToolDef{
+func (pr *planRun) planSetToolDef() AgentToolDef {
+	t := pr.t
+	stepBudget := fmt.Sprintf("up to %d step%s", pr.maxSteps, plural(pr.maxSteps))
+	return AgentToolDef{
 		Tool: Tool{
 			Name:        "plan_set",
 			Description: fmt.Sprintf("Commit to a multi-step plan for this turn. Each step is {title, intent, worker_brief}; the framework spins up a fresh focused worker LLM per step. Use ONLY when the turn genuinely needs decomposition (research with multiple branches, layered analysis, complex multi-tool workflows). For single-tool turns CALL THE TOOL DIRECTLY (you have web_search, fetch_url, calculate, etc.) instead of going through plan_set — it's much faster. **MINIMUM 2 STEPS** — a 1-step plan is wasteful (planner + worker + synthesis for what would be one inline call); the handler rejects it. Budget: %s.", stepBudget),
@@ -302,7 +419,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			Required: []string{"steps"},
 		},
 		Handler: func(args map[string]any) (string, error) {
-			steps := parsePlanSteps(args["steps"], maxSteps)
+			steps := parsePlanSteps(args["steps"], pr.maxSteps)
 			// 1-step minimum on Builder; 2-step minimum elsewhere.
 			//
 			// The general rationale for ≥2 stands for research /
@@ -321,8 +438,8 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 				minSteps = 1
 			}
 			if len(steps) < minSteps {
-				planSetRejects++
-				forceNoThinkAfterReject = true
+				pr.planSetRejects++
+				pr.forceNoThinkAfterReject = true
 				return "", fmt.Errorf("plan_set requires at least %d step(s) (got %d). For a single tool call, invoke the tool directly inline — plan_set's planner+worker+synthesis overhead is only worth it for genuinely multi-step work", minSteps, len(steps))
 			}
 			// Reject vacuous plans — steps whose intent is "just
@@ -333,16 +450,20 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			// across multiple workers; if every step is a synthesis
 			// step, the plan adds no value.
 			if vacuous := looksLikeVacuousPlan(steps); vacuous != "" {
-				planSetRejects++
-				forceNoThinkAfterReject = true
+				pr.planSetRejects++
+				pr.forceNoThinkAfterReject = true
 				return "", fmt.Errorf("plan_set rejected: %s. For a turn that needs no tool work, just write the answer as your reply text — there is no reply tool. plan_set is for genuinely multi-step research / decomposition", vacuous)
 			}
-			capturedSteps = steps
-			cancelOrch()
-			return fmt.Sprintf("Plan committed (%d step%s); the worker pipeline will now execute it.", len(capturedSteps), plural(len(capturedSteps))), nil
+			pr.capturedSteps = steps
+			pr.cancelOrch()
+			return fmt.Sprintf("Plan committed (%d step%s); the worker pipeline will now execute it.", len(pr.capturedSteps), plural(len(pr.capturedSteps))), nil
 		},
 	}
-	askTool := AgentToolDef{
+}
+
+func (pr *planRun) askUserToolDef() AgentToolDef {
+	t := pr.t
+	return AgentToolDef{
 		Tool: Tool{
 			Name:        "ask_user",
 			Description: "Pause and ask the user a clarifying question. Use whenever GUESSING is the alternative — not when SEARCHING is: 2+ plausible matches you'd be picking between arbitrarily, a choice between meaningfully different approaches, personal info only they have, or an ambiguity no tool could resolve. Don't ask for what you could look up. **DEFAULT TO `options`** whenever the answer space is bounded — one tap beats typing — and never write the choices into the question TEXT instead; without `options` this renders as plain chat text, no card and no buttons. For multi-step builds, pass `plan` to paint a checklist card above the question.",
@@ -376,20 +497,20 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			Required: []string{"question"},
 		},
 		Handler: func(args map[string]any) (string, error) {
-			capturedQuest = strings.TrimSpace(stringArg(args, "question"))
+			pr.capturedQuest = strings.TrimSpace(stringArg(args, "question"))
 			// Defensive: smaller LLMs occasionally typo "questions"
 			// (plural) for "question". Accept either so the call
 			// doesn't lose its primary content.
-			if capturedQuest == "" {
-				capturedQuest = strings.TrimSpace(stringArg(args, "questions"))
+			if pr.capturedQuest == "" {
+				pr.capturedQuest = strings.TrimSpace(stringArg(args, "questions"))
 			}
 			// Same alias tolerance as a form step's choices: options under a
 			// near-miss key are not "no options", and reading only the
 			// documented one turns a multiple-choice question into a bare
 			// prose one with the choices silently gone.
-			capturedOptions = formStepOptions(args)
+			pr.capturedOptions = formStepOptions(args)
 			if v, ok := args["multi"].(bool); ok {
-				capturedMulti = v
+				pr.capturedMulti = v
 			}
 			// If plan is provided, set up the build-plan state + emit
 			// the orchestrate_plan SSE block before the ask card lands.
@@ -415,11 +536,15 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 					}
 				}
 			}
-			cancelOrch()
+			pr.cancelOrch()
 			return "Question relayed to the user; the framework will wait for their reply.", nil
 		},
 	}
-	formTool := AgentToolDef{
+}
+
+func (pr *planRun) askUserFormToolDef() AgentToolDef {
+	t := pr.t
+	return AgentToolDef{
 		Tool: Tool{
 			Name:        "ask_user_form",
 			Description: "Pause and collect SEVERAL pieces of info from the user in one pass. Two shapes, depending on whether you need CHOICES or typed ENTRY:\n• CHOICES: each step has discrete options (e.g. language + deployment target + timeline) — the user clicks through them one at a time. PREFER this over a single ask_user with a numbered list in the question text.\n• ENTRY FIELDS: give a step a type (\"text\", \"number\", \"textarea\", \"select\", \"password\") when the user must TYPE a specific value — an API base URL, a key, a count, an endpoint. Any step with a type turns the whole thing into a single FORM: every field shows at once with one Submit, instead of a step-through. Mix freely — a select field with options plus text/number fields. For ONE question, use ask_user instead.",
@@ -499,32 +624,26 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 				Debug("[orchestrate.ask_form] steps arg in unusable shape %T: %.300v", raw, raw)
 				t.turnDiag("form-steps-unusable", fmt.Sprintf("The agent's form arrived in an unusable shape (%T) and rendered without questions.", raw))
 			}
-			capturedFormSteps = steps
-			cancelOrch()
+			pr.capturedFormSteps = steps
+			pr.cancelOrch()
 			return fmt.Sprintf("Form relayed to the user (%d step%s); the framework will wait for their reply.", len(steps), plural(len(steps))), nil
 		},
 	}
+}
 
-	// Worker tools — same surface the worker step gets. Lets the
-	// orchestrator handle single-tool turns inline (call web_search,
-	// see result, reply) without spinning up plan_set + a worker
-	// round + synthesis for what should be one round.
-	Debug("[orchestrate.orch] runPlan: building tool session")
+func (pr *planRun) buildCatalog() error {
+	t := pr.t
 	catalogStart := time.Now()
-	sess := t.newToolSession()
-	// Persist any managed-workspace switch this inline turn performs so
-	// the next step/turn's session lands in the same workspace.
-	defer t.captureActiveWorkspace(sess)
 	Debug("[orchestrate.orch] runPlan: resolving worker tools")
 	// forOrchestrator=true — this is Builder's own chat-orchestrator
 	// round, NOT a worker step. The Builder branch in resolveWorkerTools
 	// returns the LEAN authoring catalog so Builder must decompose via
 	// plan_set instead of reaching for create_agent / add_tool / tool_def
 	// inline.
-	workerTools, workerNames, err := t.resolveWorkerTools(sess, true)
+	workerTools, workerNames, err := t.resolveWorkerTools(pr.sess, true)
 	if err != nil {
 		Debug("[orchestrate.orch] runPlan: resolveWorkerTools error: %v", err)
-		return nil, "", "", fmt.Errorf("resolve tools: %w", err)
+		return fmt.Errorf("resolve tools: %w", err)
 	}
 	Debug("[orchestrate.orch] runPlan: resolved %d worker tools", len(workerTools))
 	// No per-turn classifier-trim. Every allowed tool on the agent
@@ -538,8 +657,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// without trimming.
 	workerTools, workerNames = filterToolAuthoringWithoutFocus(workerTools, workerNames, t.session)
 	t.gateAgentCRUDTools(workerTools)
-	t.wrapToolsForActivity(sess, workerTools, t.agent)
-
+	t.wrapToolsForActivity(pr.sess, workerTools, t.agent)
 	// Wrap control tools too so they emit cmd rows in the activity
 	// pane (transparency: user sees "plan_set was called" / "ask_user
 	// was called" alongside the rest of the orchestrator's tool use).
@@ -551,7 +669,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// model to do BOTH — stream the answer AND call respond_directly with
 	// the same text — producing a double reply. Workers never had it
 	// (runWorkerStep builds its own catalog), so this is lead-path only.
-	controlTools := []AgentToolDef{askTool, formTool}
+	controlTools := []AgentToolDef{pr.askUserToolDef(), pr.askUserFormToolDef()}
 	// One plan mechanism per agent. plan_set fans this turn out to fresh-context
 	// workers and ends the round; a TRACKED plan (AgentRecord.WorkPlan) is a
 	// durable checklist the agent works itself across turns. Offering both would
@@ -562,7 +680,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		controlTools = append(controlTools, planTools...)
 		t.restoreWorkPlanCard()
 	} else {
-		controlTools = append(controlTools, planTool)
+		controlTools = append(controlTools, pr.planSetToolDef())
 	}
 	t.wrapToolsForActivity(nil, controlTools, t.agent)
 	// Three orthogonal layers; each gates its own tool group:
@@ -595,7 +713,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// (Reference + Explicit + Graph), and cortex deliverables.
 	// Single source of truth so the web and channel catalogs can't drift.
 	var knowTools []AgentToolDef
-	knowTools = append(knowTools, t.frameworkConversationalTools(sess)...)
+	knowTools = append(knowTools, t.frameworkConversationalTools(pr.sess)...)
 	// Host-app tools (e.g. a workbench's co-author "add_section") — supplied by
 	// the app that dispatched this turn, callable directly by the orchestrator.
 	if len(t.appTools) > 0 {
@@ -613,7 +731,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			Description: "Free up context: discard the bodies of EARLIER tool results you've already read and no longer need — e.g. after judging a long smoke-test report, a big page fetch, or a verbose listing. Their bodies are replaced with a short marker (re-run the tool if you need the data again); the most recent result and the whole conversation stay intact. Call this at a natural breakpoint when you're carrying long tool outputs you're done with, to keep a long session from bloating its context. No arguments.",
 		},
 		Handler: func(args map[string]any) (string, error) {
-			compactRequested = true
+			pr.compactRequested = true
 			return "Acknowledged — earlier verbose tool-result bodies you've consumed will be released on your next step. Continue with your next action.", nil
 		},
 	})
@@ -727,7 +845,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// tool_def via its authoring catalog, so don't double it. AGENT and
 	// PIPELINE authoring still route to Builder; only tools are self-serve.
 	if !isBuilderAgent(t.agent.ID) {
-		knowTools = append(knowTools, ChatToolToAgentToolDefWithSession(temptool.BuildToolDef(), sess))
+		knowTools = append(knowTools, ChatToolToAgentToolDefWithSession(temptool.BuildToolDef(), pr.sess))
 		// Tool authoring stays self-serve, but CREDENTIAL authoring is Builder's
 		// job: the five credential tools (draft_oauth_credential /
 		// draft_api_credential / update_api_credential / store_credential_secret
@@ -745,7 +863,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// backward-compat with any future agent that explicitly opts in
 	// via AllowedTools, but the closure-bound default registration is
 	// removed.
-	t.wrapToolsForActivity(sess, knowTools, t.agent)
+	t.wrapToolsForActivity(pr.sess, knowTools, t.agent)
 	// Persistent temp tools also flow into the static set so the
 	// rewriter can collapse them when they're members of an admin-
 	// curated group. Otherwise vapi-style user-defined tools sit at
@@ -764,36 +882,36 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// interactive surface (dispatch/scheduled surfaces stamp IntentText on
 	// their sessions instead).
 	if t.intentText == "" {
-		for i := len(msgs) - 1; i >= 0; i-- {
-			if msgs[i].Role == "user" && strings.TrimSpace(msgs[i].Content) != "" {
-				t.intentText = msgs[i].Content
+		for i := len(pr.msgs) - 1; i >= 0; i-- {
+			if pr.msgs[i].Role == "user" && strings.TrimSpace(pr.msgs[i].Content) != "" {
+				t.intentText = pr.msgs[i].Content
 				break
 			}
 		}
 	}
-	directCustomTools, lazyCustomPrompt := t.setupCustomTools(sess)
-	sys += lazyCustomPrompt
+	directCustomTools, lazyCustomPrompt := t.setupCustomTools(pr.sess)
+	pr.sys += lazyCustomPrompt
 	// The authoring index, when the catalog was deferred. Set during
 	// resolveWorkerTools, which ran before this point.
-	sys += t.authoringLazyPrompt
-	allTools := append(controlTools, knowTools...)
-	allTools = append(allTools, workerTools...)
-	allTools = append(allTools, directCustomTools...)
+	pr.sys += t.authoringLazyPrompt
+	pr.allTools = append(controlTools, knowTools...)
+	pr.allTools = append(pr.allTools, workerTools...)
+	pr.allTools = append(pr.allTools, directCustomTools...)
 	// Attached pipelines — one callable tool per pipeline bolted onto
 	// this agent (AgentRecord.AttachedPipelines). Curated + tiny schema,
 	// so direct (not lazy load_tool). Wrap for activity so a pipeline run
 	// shows its tool_call / result in the convo + activity pane.
 	if attachedPipes := t.buildAttachedPipelineToolDefs(); len(attachedPipes) > 0 {
-		t.wrapToolsForActivity(sess, attachedPipes, t.agent)
-		allTools = append(allTools, attachedPipes...)
+		t.wrapToolsForActivity(pr.sess, attachedPipes, t.agent)
+		pr.allTools = append(pr.allTools, attachedPipes...)
 		t.noteAttachedTools(attachedPipes)
 		Log("[orchestrate.tools] surfaced %d attached pipeline tool(s) for agent=%s", len(attachedPipes), t.agent.ID)
 	}
 	// Attached reference sources (servitor systems, workspaces, connected doc
 	// spaces). Same treatment as pipelines: curated, few, surfaced directly.
-	if attachedSrc := t.buildAttachedSourceToolDefs(sess); len(attachedSrc) > 0 {
-		t.wrapToolsForActivity(sess, attachedSrc, t.agent)
-		allTools = append(allTools, attachedSrc...)
+	if attachedSrc := t.buildAttachedSourceToolDefs(pr.sess); len(attachedSrc) > 0 {
+		t.wrapToolsForActivity(pr.sess, attachedSrc, t.agent)
+		pr.allTools = append(pr.allTools, attachedSrc...)
 		t.noteAttachedTools(attachedSrc)
 		Log("[orchestrate.tools] surfaced %d attached source tool(s) for agent=%s", len(attachedSrc), t.agent.ID)
 	}
@@ -807,9 +925,9 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// whose own tools call the network — leaking the turn. Drop any
 	// AgentToolDef whose declared Caps include CapNetwork.
 	if t.privateMode {
-		filtered := allTools[:0]
+		filtered := pr.allTools[:0]
 		dropped := []string{}
-		for _, td := range allTools {
+		for _, td := range pr.allTools {
 			hasNet := false
 			for _, c := range td.Tool.Caps {
 				if c == CapNetwork {
@@ -823,7 +941,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			}
 			filtered = append(filtered, td)
 		}
-		allTools = filtered
+		pr.allTools = filtered
 		if len(dropped) > 0 {
 			Log("[orchestrate.orch] private mode dropped %d network-capable dynamic tool(s): %v", len(dropped), dropped)
 		}
@@ -833,11 +951,10 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// on a line that also prints the catalog SIZE reads as a size-triggered
 	// rewrite, which is a mechanism that no longer exists — and it is the first
 	// thing anyone greps when tools go missing between turns.
-	Debug("[orchestrate.orch] runPlan: assembled catalog of %d tools", len(allTools))
+	Debug("[orchestrate.orch] runPlan: assembled catalog of %d tools", len(pr.allTools))
 	// Building the catalog is the other phase big enough to be felt: a hundred
 	// tools resolved, temp tools loaded from the store, schemas built.
 	t.prep.mark("tools", time.Since(catalogStart))
-
 	// (Runtime tool-group rewriting retired. The per-turn
 	// classifier-trim that preceded this block is also gone — every
 	// allowed tool ships to the LLM verbatim; the model's attention
@@ -856,36 +973,39 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// catalog to the tools that phase allows (see mach.narrowCatalog). On
 	// those turns this line reports the wider pre-phase set, and the
 	// tools_to_llm_effective line printed there is the authoritative one.
-	allNames := make([]string, 0, len(allTools))
-	for _, td := range allTools {
+	allNames := make([]string, 0, len(pr.allTools))
+	for _, td := range pr.allTools {
 		allNames = append(allNames, td.Tool.Name)
 	}
-	sessID := ""
+	pr.sessID = ""
 	if t.session != nil {
-		sessID = t.session.ID
+		pr.sessID = t.session.ID
 	}
 	Log("[orchestrate.orch] session=%s msgs=%d tools_to_llm[%d]=%v (worker_subset=%v private=%v)",
-		sessID, len(msgs), len(allTools), allNames, workerNames, t.privateMode)
-
+		pr.sessID, len(pr.msgs), len(pr.allTools), allNames, workerNames, t.privateMode)
 	if len(workerTools) > 0 {
-		sys += "\n\n" + buildToolUseDirective(workerTools)
+		pr.sys += "\n\n" + buildToolUseDirective(workerTools)
 	}
-	sys += noWebAccessNotice(allTools)
+	pr.sys += noWebAccessNotice(pr.allTools)
 	// Append per-tool prompt fragments (opt-in via AgentToolDef.Prompt).
 	// Lands between the framework directive and any subsequent
 	// dynamic additions — close to the catalog so the model reads
 	// per-tool usage notes alongside the tool list.
-	if frag := RenderToolPromptFragments(allTools); frag != "" {
-		sys += "\n\n" + frag
+	if frag := RenderToolPromptFragments(pr.allTools); frag != "" {
+		pr.sys += "\n\n" + frag
 	}
+	return nil
+}
 
-	stopKeepalive := startKeepalive(t.sse)
+func (pr *planRun) resolveRouting() {
+	t := pr.t
+	pr.stopKeepalive = startKeepalive(t.sse)
 	// Tier and reasoning come off ONE resolution (turnRouting), so a machine
 	// phase that pins a tier also picks up that tier's thinking preference.
-	tierPin, routeKey := t.turnRouting()
-	think := true
-	if p := RouteThink(routeKey); p != nil {
-		think = *p
+	pr.tierPin, pr.routeKey = t.turnRouting()
+	pr.think = true
+	if p := RouteThink(pr.routeKey); p != nil {
+		pr.think = *p
 	}
 	// Per-agent override wins over the route default — the author may
 	// have decided this agent always reasons (planners, synthesizers)
@@ -893,280 +1013,305 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// keep the route default we just picked up.
 	switch t.agent.Think {
 	case "on":
-		think = true
+		pr.think = true
 	case "off":
-		think = false
+		pr.think = false
 	}
 	// A machine phase is the most specific setting in that chain, so it
 	// goes last: a cheap classify phase can turn reasoning off inside an
 	// agent that otherwise always reasons.
-	think = mach.Think(think)
-	if mach.on {
+	pr.think = pr.mach.Think(pr.think)
+	if pr.mach.on {
 		// Only while a machine is running, because that is when somebody asks
 		// "why did my lead step run on the worker" and needs one line rather
 		// than an inference across three settings. An ordinary turn's log is
 		// not made longer for a question nobody is asking of it.
 		Log("[orchestrate.routing] agent=%s step=%q model=%q think=%q → route=%s pin=%v reasoning=%v",
-			t.agent.ID, mach.Name(), mach.phase.Model, mach.phase.Think, routeKey, tierPin, think)
+			t.agent.ID, pr.mach.Name(), pr.mach.phase.Model, pr.mach.phase.Think, pr.routeKey, pr.tierPin, pr.think)
 	}
+}
 
-	// Per-round bubbles: each agent-loop round that streams text gets
-	// its own assistant bubble, finalized at the round boundary by
-	// the OnStep callback. Subsequent rounds create fresh bubbles —
-	// the chat-app pattern where the user sees discrete narration
-	// chunks rather than one accumulating wall of text.
-	//
-	// Tool-only rounds (no streamed content) don't materialize a
-	// bubble. We track whether the most-recently-finalized round
-	// actually had streamed content so the post-loop captured-text
-	// dispatch can avoid emitting a duplicate when the LLM streamed
-	// the same text it then passed to respond_directly/ask_user.
-	var streamMsgID string
-	var streamedBuf strings.Builder
-	var lastFinalizedID string
-	// lastFinalizedText is the text of the MOST RECENT finalized bubble.
-	// emitCapturedAsBubble dedups against it: a respond_directly that just
-	// repeats what the model streamed (stream answer → respond_directly
-	// same text) is suppressed; anything else emits. Match is EXACT
-	// (after trim), NOT substring-over-all-bubbles — the latter dropped a
-	// short respond_directly reply whenever it happened to be a substring
-	// of a larger earlier block. Dropping a reply is far worse than an
-	// occasional double, so we err toward emitting: suppress only on an
-	// exact repeat of the last shown bubble.
-	var lastFinalizedText string
-	// holdStream: agents with an OUTPUT guardrail (pre_output/periodic) must not
-	// paint tokens live — a blocked reply would flash on screen before the
-	// verdict exists. Buffer silently and paint the whole bubble at round close,
-	// AFTER the guardrail has passed it (paintHeldBubble); a blocked round is
-	// retracted having shown nothing. streamFreshBubble tracks whether THIS
-	// round's bubble was minted here (so paint must open it) vs adopted from a
-	// tool bubble already on screen (paint only appends). No-op for agents with
-	// no output guardrail — they stream live exactly as before.
-	holdStream := agentHasOutputGuardrail(t.agent)
-	streamFreshBubble := false
-	paintHeldBubble := func(id, text string) {
-		if !holdStream || id == "" || text == "" {
-			return
-		}
-		if streamFreshBubble {
-			t.sse.Send(map[string]any{"kind": "message", "role": "assistant", "id": id, "text": ""})
-		}
-		t.sse.Send(map[string]any{"kind": "chunk", "id": id, "text": text})
+func (pr *planRun) paintHeldBubble(id, text string) {
+	t := pr.t
+	if !pr.holdStream || id == "" || text == "" {
+		return
 	}
-	streamHandler := func(chunk string) {
-		if chunk == "" {
-			return
-		}
-		// If a tool fired this round before any text streamed, it
-		// already lazy-materialized a bubble via ensureBubbleForTool.
-		// Adopt that bubble for the streamed text rather than
-		// creating a second one.
-		if streamMsgID == "" {
-			if existing := t.getCurrentMsgID(); existing != "" {
-				streamMsgID = existing
-				streamFreshBubble = false // already on screen (tool made it)
-			} else {
-				streamMsgID = fmt.Sprintf("orch-%d", time.Now().UnixNano())
-				streamFreshBubble = true
-				if !holdStream {
-					t.sse.Send(map[string]any{
-						"kind": "message",
-						"role": "assistant",
-						"id":   streamMsgID,
-						"text": "",
-					})
-				}
-				t.setCurrentMsgID(streamMsgID)
+	if pr.streamFreshBubble {
+		t.sse.Send(map[string]any{"kind": "message", "role": "assistant", "id": id, "text": ""})
+	}
+	t.sse.Send(map[string]any{"kind": "chunk", "id": id, "text": text})
+}
+
+func (pr *planRun) streamHandler(chunk string) {
+	t := pr.t
+	if chunk == "" {
+		return
+	}
+	// If a tool fired this round before any text streamed, it
+	// already lazy-materialized a bubble via ensureBubbleForTool.
+	// Adopt that bubble for the streamed text rather than
+	// creating a second one.
+	if pr.streamMsgID == "" {
+		if existing := t.getCurrentMsgID(); existing != "" {
+			pr.streamMsgID = existing
+			pr.streamFreshBubble = false // already on screen (tool made it)
+		} else {
+			pr.streamMsgID = fmt.Sprintf("orch-%d", time.Now().UnixNano())
+			pr.streamFreshBubble = true
+			if !pr.holdStream {
+				t.sse.Send(map[string]any{
+					"kind": "message",
+					"role": "assistant",
+					"id":   pr.streamMsgID,
+					"text": "",
+				})
 			}
-		}
-		streamedBuf.WriteString(chunk)
-		if !holdStream {
-			t.sse.Send(map[string]any{
-				"kind": "chunk",
-				"id":   streamMsgID,
-				"text": chunk,
-			})
+			t.setCurrentMsgID(pr.streamMsgID)
 		}
 	}
-	// What this turn has run a deliverable producer for, tracked live off the
-	// same round callback. Read by the phantom-delivery guard below, which has
-	// to answer "was this turn making a picture?" while the loop is still
-	// running — long before the transcript the after-the-fact backstop reads.
-	produced := new(deliveryWatch)
-	// Telemetry record fires at the top of the onStep callback; the
-	// telem var is declared at function entry and summarized in the
-	// deferred block above.
-	onStepHandler := func(info StepInfo) {
-		telem.record(info)
-		produced.note(info.ToolCalls)
-		// Tool-only round with no text and no lazy-bubble: nothing
-		// to finalize, nothing visible. (Tool calls in that round
-		// already created their own bubble via ensureBubbleForTool;
-		// streamMsgID picks that up via getCurrentMsgID below.)
-		id := streamMsgID
-		if id == "" {
-			id = t.getCurrentMsgID()
-		}
-		if id == "" {
-			return
-		}
-		// Models on llama.cpp sometimes emit <tool_call><function=…>
-		// XML as TEXT instead of native tool_calls — the agent loop
-		// catches it and dispatches via ParseTextToolCall, but the
-		// markup already streamed to the user's bubble. Strip on
-		// round close so what they're left looking at is clean
-		// narration, not raw XML.
-		raw := streamedBuf.String()
-		cleaned := strings.TrimSpace(StripToolCallMarkup(raw))
-		if cleaned != strings.TrimSpace(raw) {
-			t.sse.Send(map[string]any{
-				"kind": "chunk_replace",
-				"id":   id,
-				"text": cleaned,
-			})
-		}
-		// Transient narration vs the answer. A round that ALSO calls
-		// tools (info.Done == false) is not the answer round — the model
-		// will continue and reply in a later, tool-free round. Any text
-		// it streamed here was live "working" narration, so we clear it
-		// from the bubble and do NOT finalize/persist it as an answer
-		// card. This is the deterministic half of the double-emit fix:
-		// without it, a model that writes a full answer in a tool round
-		// AND again in the final round produces two answer cards (we
-		// faithfully render both). Keep the bubble open so this round's
-		// tool pills stay and the next round folds in. Remember the text
-		// in case the model front-loaded its answer into a tool round
-		// and the final round comes back empty.
-		if !info.Done {
-			// A round that calls tools is not the answer round, but the text
-			// the model streamed here is its lead-in — "Let me grab that
-			// video." — written in its own voice (roundShapePreamble asks for
-			// exactly one such sentence before a tool call). FINALIZE it as
-			// its own message bubble, exactly like a normal streamed reply,
-			// then close it so the next round opens a fresh bubble. No clear,
-			// no separate status card — it reads as the assistant chatting as
-			// it works, with no flicker. captureMidTurnBubble persists it
-			// (with the tool calls it triggered) so a reload replays the same
-			// transcript.
-			//
-			// Guard: prose longer than leadInMaxLen is a full ANSWER mis-
-			// emitted before a tool, not a lead-in — finalizing it here AND
-			// again in the final round would double the answer (the original
-			// double-emit bug). Clear those instead; the loop's history still
-			// holds the text so the model's final reply carries the answer.
-			if cleaned == "" {
-				streamedBuf.Reset()
-				return
-			}
-			// Builder presents a PLAN (intentionally long) before it acts —
-			// exempt it from the length clear so the user actually sees what it
-			// intends to do. The clear exists for ORDINARY agents that mis-emit a
-			// full answer before a tool (and then repeat it at the end); Builder's
-			// pre-tool prose is the plan, not a doubled answer.
-			if len(cleaned) > leadInMaxLen && !isBuilderAgent(t.agent.ID) {
-				t.sse.Send(map[string]any{"kind": "chunk_replace", "id": id, "text": ""})
-				streamedBuf.Reset()
-				return
-			}
-			paintHeldBubble(id, cleaned) // held stream: paint the (now-cleared) lead-in
-			t.sse.Send(map[string]any{"kind": "message_done", "id": id})
-			t.captureMidTurnBubble(cleaned)
-			streamMsgID = ""
-			t.setCurrentMsgID("")
-			streamedBuf.Reset()
-			return
-		}
-		// Final (tool-free) round — this round's text is the answer.
-		// (Any text the model emitted in earlier tool rounds was already
-		// settled as its own card above, so there's nothing to restore.)
-		// Tool-only final round with no text: nothing to finalize — keep
-		// the bubble open (subsequent tool pills fold in).
+	pr.streamedBuf.WriteString(chunk)
+	if !pr.holdStream {
+		t.sse.Send(map[string]any{
+			"kind": "chunk",
+			"id":   pr.streamMsgID,
+			"text": chunk,
+		})
+	}
+}
+
+// Telemetry record fires at the top of the onStep callback; the
+// telem var is declared at function entry and summarized in the
+// deferred block above.
+
+func (pr *planRun) onStepHandler(info StepInfo) {
+	t := pr.t
+	pr.telem.record(info)
+	pr.produced.note(info.ToolCalls)
+	// Tool-only round with no text and no lazy-bubble: nothing
+	// to finalize, nothing visible. (Tool calls in that round
+	// already created their own bubble via ensureBubbleForTool;
+	// streamMsgID picks that up via getCurrentMsgID below.)
+	id := pr.streamMsgID
+	if id == "" {
+		id = t.getCurrentMsgID()
+	}
+	if id == "" {
+		return
+	}
+	// Models on llama.cpp sometimes emit <tool_call><function=…>
+	// XML as TEXT instead of native tool_calls — the agent loop
+	// catches it and dispatches via ParseTextToolCall, but the
+	// markup already streamed to the user's bubble. Strip on
+	// round close so what they're left looking at is clean
+	// narration, not raw XML.
+	raw := pr.streamedBuf.String()
+	cleaned := strings.TrimSpace(StripToolCallMarkup(raw))
+	if cleaned != strings.TrimSpace(raw) {
+		t.sse.Send(map[string]any{
+			"kind": "chunk_replace",
+			"id":   id,
+			"text": cleaned,
+		})
+	}
+	// Transient narration vs the answer. A round that ALSO calls
+	// tools (info.Done == false) is not the answer round — the model
+	// will continue and reply in a later, tool-free round. Any text
+	// it streamed here was live "working" narration, so we clear it
+	// from the bubble and do NOT finalize/persist it as an answer
+	// card. This is the deterministic half of the double-emit fix:
+	// without it, a model that writes a full answer in a tool round
+	// AND again in the final round produces two answer cards (we
+	// faithfully render both). Keep the bubble open so this round's
+	// tool pills stay and the next round folds in. Remember the text
+	// in case the model front-loaded its answer into a tool round
+	// and the final round comes back empty.
+	if !info.Done {
+		// A round that calls tools is not the answer round, but the text
+		// the model streamed here is its lead-in — "Let me grab that
+		// video." — written in its own voice (roundShapePreamble asks for
+		// exactly one such sentence before a tool call). FINALIZE it as
+		// its own message bubble, exactly like a normal streamed reply,
+		// then close it so the next round opens a fresh bubble. No clear,
+		// no separate status card — it reads as the assistant chatting as
+		// it works, with no flicker. captureMidTurnBubble persists it
+		// (with the tool calls it triggered) so a reload replays the same
+		// transcript.
+		//
+		// Guard: prose longer than leadInMaxLen is a full ANSWER mis-
+		// emitted before a tool, not a lead-in — finalizing it here AND
+		// again in the final round would double the answer (the original
+		// double-emit bug). Clear those instead; the loop's history still
+		// holds the text so the model's final reply carries the answer.
 		if cleaned == "" {
-			streamedBuf.Reset()
+			pr.streamedBuf.Reset()
 			return
 		}
-		paintHeldBubble(id, cleaned) // held stream: paint the answer now that pre_output has passed it
-		t.sse.Send(map[string]any{"kind": "message_done", "id": id})
-		lastFinalizedID = id
-		lastFinalizedText = cleaned
-		// Persist the answer so a reloaded session replays the same
-		// bubble the user saw live. handleSend drains the buffer right
-		// before appending the final assistant message.
-		t.captureMidTurnBubble(cleaned)
-		streamMsgID = ""
-		streamedBuf.Reset()
-		t.setCurrentMsgID("")
-	}
-
-	// settleRound finalizes whatever the CURRENT round already streamed into
-	// its own bubble, then opens the way for a fresh one — the agent loop calls
-	// it (via AgentLoopConfig.SettleRound) right before a correction guard
-	// re-prompts and continues. Without it, the rejected round's text is left
-	// in an open bubble and the retry round concatenates into it (the
-	// "…What API?Fair point…" double). Deliberately mirrors the onStep
-	// final-round finalize but OMITS the !info.Done length-clear: a correction
-	// retry is not guaranteed to repeat the earlier text, so clearing it could
-	// lose real content — finalize instead (lossless), and setting
-	// lastFinalizedText lets emitCapturedAsBubble suppress any echo the retry
-	// emits. No-op when nothing visible streamed (e.g. reasoning-collapse):
-	// the empty open bubble is left for the retry to adopt.
-	settleRound := func() {
-		id := streamMsgID
-		if id == "" {
-			id = t.getCurrentMsgID()
-		}
-		if id == "" {
-			streamedBuf.Reset()
-			return
-		}
-		raw := streamedBuf.String()
-		cleaned := strings.TrimSpace(StripToolCallMarkup(raw))
-		if cleaned == "" {
-			streamedBuf.Reset()
-			return
-		}
-		if cleaned != strings.TrimSpace(raw) {
-			t.sse.Send(map[string]any{"kind": "chunk_replace", "id": id, "text": cleaned})
-		}
-		paintHeldBubble(id, cleaned) // held stream: this settled round passed (non-guardrail correction) — show it
-		t.sse.Send(map[string]any{"kind": "message_done", "id": id})
-		lastFinalizedID = id
-		lastFinalizedText = cleaned
-		t.captureMidTurnBubble(cleaned)
-		streamMsgID = ""
-		streamedBuf.Reset()
-		t.setCurrentMsgID("")
-	}
-
-	// retractRound DISCARDS the current round's streamed bubble instead of
-	// settling it — the agent loop calls it (via AgentLoopConfig.RetractRound)
-	// when a guardrail BLOCKS a round. Unlike settleRound it must NOT persist or
-	// deliver the text: it's the very content the rule protects. So it rewrites
-	// the open bubble to empty in the client (chunk_replace, same primitive the
-	// over-long lead-in clear uses) and drops the buffer WITHOUT
-	// captureMidTurnBubble — nothing reaches t.midTurnBubbles or sess.Messages.
-	// The retry opens a fresh bubble. (Tokens streamed live before the round
-	// closed already reached the client; chunk_replace clears them — a brief
-	// flicker is the residual cost of streaming ahead of the output check.)
-	retractRound := func() {
-		id := streamMsgID
-		if id == "" {
-			id = t.getCurrentMsgID()
-		}
-		if id != "" {
+		// Builder presents a PLAN (intentionally long) before it acts —
+		// exempt it from the length clear so the user actually sees what it
+		// intends to do. The clear exists for ORDINARY agents that mis-emit a
+		// full answer before a tool (and then repeat it at the end); Builder's
+		// pre-tool prose is the plan, not a doubled answer.
+		if len(cleaned) > leadInMaxLen && !isBuilderAgent(t.agent.ID) {
 			t.sse.Send(map[string]any{"kind": "chunk_replace", "id": id, "text": ""})
+			pr.streamedBuf.Reset()
+			return
 		}
-		streamMsgID = ""
-		streamedBuf.Reset()
+		pr.paintHeldBubble(id, cleaned) // held stream: paint the (now-cleared) lead-in
+		t.sse.Send(map[string]any{"kind": "message_done", "id": id})
+		t.captureMidTurnBubble(cleaned)
+		pr.streamMsgID = ""
 		t.setCurrentMsgID("")
+		pr.streamedBuf.Reset()
+		return
 	}
+	// Final (tool-free) round — this round's text is the answer.
+	// (Any text the model emitted in earlier tool rounds was already
+	// settled as its own card above, so there's nothing to restore.)
+	// Tool-only final round with no text: nothing to finalize — keep
+	// the bubble open (subsequent tool pills fold in).
+	if cleaned == "" {
+		pr.streamedBuf.Reset()
+		return
+	}
+	pr.paintHeldBubble(id, cleaned) // held stream: paint the answer now that pre_output has passed it
+	t.sse.Send(map[string]any{"kind": "message_done", "id": id})
+	pr.lastFinalizedID = id
+	pr.lastFinalizedText = cleaned
+	// Persist the answer so a reloaded session replays the same
+	// bubble the user saw live. handleSend drains the buffer right
+	// before appending the final assistant message.
+	t.captureMidTurnBubble(cleaned)
+	pr.streamMsgID = ""
+	pr.streamedBuf.Reset()
+	t.setCurrentMsgID("")
+}
 
+// settleRound finalizes whatever the CURRENT round already streamed into
+// its own bubble, then opens the way for a fresh one — the agent loop calls
+// it (via AgentLoopConfig.SettleRound) right before a correction guard
+// re-prompts and continues. Without it, the rejected round's text is left
+// in an open bubble and the retry round concatenates into it (the
+// "…What API?Fair point…" double). Deliberately mirrors the onStep
+// final-round finalize but OMITS the !info.Done length-clear: a correction
+// retry is not guaranteed to repeat the earlier text, so clearing it could
+// lose real content — finalize instead (lossless), and setting
+// lastFinalizedText lets emitCapturedAsBubble suppress any echo the retry
+// emits. No-op when nothing visible streamed (e.g. reasoning-collapse):
+// the empty open bubble is left for the retry to adopt.
+
+func (pr *planRun) settleRound() {
+	t := pr.t
+	id := pr.streamMsgID
+	if id == "" {
+		id = t.getCurrentMsgID()
+	}
+	if id == "" {
+		pr.streamedBuf.Reset()
+		return
+	}
+	raw := pr.streamedBuf.String()
+	cleaned := strings.TrimSpace(StripToolCallMarkup(raw))
+	if cleaned == "" {
+		pr.streamedBuf.Reset()
+		return
+	}
+	if cleaned != strings.TrimSpace(raw) {
+		t.sse.Send(map[string]any{"kind": "chunk_replace", "id": id, "text": cleaned})
+	}
+	pr.paintHeldBubble(id, cleaned) // held stream: this settled round passed (non-guardrail correction) — show it
+	t.sse.Send(map[string]any{"kind": "message_done", "id": id})
+	pr.lastFinalizedID = id
+	pr.lastFinalizedText = cleaned
+	t.captureMidTurnBubble(cleaned)
+	pr.streamMsgID = ""
+	pr.streamedBuf.Reset()
+	t.setCurrentMsgID("")
+}
+
+// retractRound DISCARDS the current round's streamed bubble instead of
+// settling it — the agent loop calls it (via AgentLoopConfig.RetractRound)
+// when a guardrail BLOCKS a round. Unlike settleRound it must NOT persist or
+// deliver the text: it's the very content the rule protects. So it rewrites
+// the open bubble to empty in the client (chunk_replace, same primitive the
+// over-long lead-in clear uses) and drops the buffer WITHOUT
+// captureMidTurnBubble — nothing reaches t.midTurnBubbles or sess.Messages.
+// The retry opens a fresh bubble. (Tokens streamed live before the round
+// closed already reached the client; chunk_replace clears them — a brief
+// flicker is the residual cost of streaming ahead of the output check.)
+
+func (pr *planRun) retractRound() {
+	t := pr.t
+	id := pr.streamMsgID
+	if id == "" {
+		id = t.getCurrentMsgID()
+	}
+	if id != "" {
+		t.sse.Send(map[string]any{"kind": "chunk_replace", "id": id, "text": ""})
+	}
+	pr.streamMsgID = ""
+	pr.streamedBuf.Reset()
+	t.setCurrentMsgID("")
+}
+
+// emitCapturedAsBubble produces a new bubble for captured
+// control-tool text (respond_directly's text, ask_user's
+// question). Dedup keys on lastFinalizedText (the LAST shown
+// bubble): skip ONLY when this exact text was just shown
+// (stream-then-respond_directly with identical content). Two earlier
+// guards both dropped real replies and were removed: lastRoundHadContent
+// suppressed a 7k reply because the round streamed an 82-char preamble;
+// the shownText substring match dropped a 338-char reply because it was
+// a substring of a larger earlier block. Exact-match-last-bubble is the
+// narrowest dedup that still catches the true duplicate case.
+// emitBubble is the raw send, with NO dedup. Split out because an ASK must
+// never be suppressed: see the ask_user path below.
+
+func (pr *planRun) emitBubble(text string) {
+	t := pr.t
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return
+	}
+	id := fmt.Sprintf("orch-%d", time.Now().UnixNano())
+	t.sse.Send(map[string]any{
+		"kind": "message",
+		"role": "assistant",
+		"id":   id,
+		"text": text,
+	})
+	t.sse.Send(map[string]any{"kind": "message_done", "id": id})
+	t.emitStats(id, pr.resp, pr.orchStart)
+}
+
+func (pr *planRun) emitCapturedAsBubble(text string) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return
+	}
+	// Suppress when the captured reply is a near-duplicate of the
+	// LAST shown bubble — the stream-then-respond_directly /
+	// stream-draft-then-revised-conclusion case. Near-duplicate
+	// catches the "same analysis, different ending" pattern that
+	// exact-match missed; it's still narrow enough not to drop a
+	// short reply that coincidentally shares an opener with a
+	// longer earlier block (LCP/short ratio < 0.6 keeps it).
+	if last := strings.TrimSpace(pr.lastFinalizedText); last != "" && isNearDuplicate(trimmed, last) {
+		Debug("[orchestrate.orch] captured reply (%d ch) is a near-duplicate of last shown bubble (%d ch) — suppressing", len(trimmed), len(last))
+		return
+	}
+	Debug("[orchestrate.orch] emitting captured reply as bubble (%d ch, last bubble %d ch)", len(trimmed), len(strings.TrimSpace(pr.lastFinalizedText)))
+	pr.emitBubble(text)
+}
+
+func (pr *planRun) initRoundCaps() {
+	t := pr.t
 	// Budget injection — surface the round counter to the LLM so it
 	// can pace itself instead of calling tools until it hits the cap
 	// blind. OnRoundStart fires AFTER history is appended but BEFORE
 	// the LLM call, so each round sees the same brief note appended
 	// to history.
-	maxR := resolveMaxWorkerRounds(t.agent) // soft cap (the pace-against target)
+	pr.maxR = resolveMaxWorkerRounds(t.agent)
+	// soft cap (the pace-against target)
 	// Explorer wiring for the ORCHESTRATOR loop (mirrors runWorkerStep):
 	// MaxRounds is the HARD cap, StopRound enforces the soft cap (maxR)
 	// UNTIL the LLM flips explorerMode via enter_explorer_mode — then it
@@ -1174,10 +1319,10 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// maxR and enter_explorer_mode (which only flips a flag) is a no-op
 	// inline, so a build that runs short can't self-extend. Non-explorer
 	// agents keep orchHardCap == maxR, so StopRound is a plain cap.
-	orchHardCap := maxR
+	pr.orchHardCap = pr.maxR
 	if t.agent.AllowExplorer {
-		if ec := resolveExplorerHardCap(t.agent); ec > orchHardCap {
-			orchHardCap = ec
+		if ec := resolveExplorerHardCap(t.agent); ec > pr.orchHardCap {
+			pr.orchHardCap = ec
 		}
 	}
 	// absoluteCeiling is the loop's hard MaxRounds — set high enough that
@@ -1185,97 +1330,101 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// plan-scaled cap) always decides first. present_build_plan can lift
 	// the budget above the explorer ceiling, so add the maximum plan grant
 	// on top. Non-plan agents never reach it — StopRound stops earlier.
-	absoluteCeiling := orchHardCap + buildPlanRoundsPerStep*resolveMaxPlanSteps(t.agent)
-	var orchRoundsUsed int
-	roundCounter := 0
-	onRoundStartHandler := func() []Message {
-		roundCounter++
-		t.currentRound = roundCounter
-		// Pace against the SOFT cap normally; once the LLM has flipped
-		// explorer mode, pace against the hard cap (StopRound lets it run
-		// there); once a build plan is presented, pace against the
-		// plan-scaled cap. Explorer NUDGES only fire when NOT already
-		// exploring.
-		cap := maxR
-		if t.explorerMode {
-			cap = orchHardCap
-		}
-		if t.planBudgetCap > cap {
-			cap = t.planBudgetCap
-		}
-		remaining := cap - roundCounter
-		canExtend := t.agent.AllowExplorer && !t.explorerMode
-		if remaining <= 0 {
-			// At the cap. If the agent can still self-extend (explorer-
-			// capable and not yet exploring), offer it — extending beats
-			// getting cut off mid-build and shipping a half-built agent.
-			if canExtend {
-				return []Message{{
-					Role: "user",
-					Content: fmt.Sprintf(
-						"[Round %d/%d — FINAL round. If you are NOT finished (still mid-build / tools left to add or verify), call enter_explorer_mode NOW to extend your budget. Otherwise produce your final answer from what you have.]",
-						roundCounter, cap,
-					),
-				}}
-			}
+	pr.absoluteCeiling = pr.orchHardCap + buildPlanRoundsPerStep*resolveMaxPlanSteps(t.agent)
+	pr.roundCounter = 0
+}
+
+func (pr *planRun) onRoundStartHandler() []Message {
+	t := pr.t
+	pr.roundCounter++
+	t.currentRound = pr.roundCounter
+	// Pace against the SOFT cap normally; once the LLM has flipped
+	// explorer mode, pace against the hard cap (StopRound lets it run
+	// there); once a build plan is presented, pace against the
+	// plan-scaled cap. Explorer NUDGES only fire when NOT already
+	// exploring.
+	cap := pr.maxR
+	if t.explorerMode {
+		cap = pr.orchHardCap
+	}
+	if t.planBudgetCap > cap {
+		cap = t.planBudgetCap
+	}
+	remaining := cap - pr.roundCounter
+	canExtend := t.agent.AllowExplorer && !t.explorerMode
+	if remaining <= 0 {
+		// At the cap. If the agent can still self-extend (explorer-
+		// capable and not yet exploring), offer it — extending beats
+		// getting cut off mid-build and shipping a half-built agent.
+		if canExtend {
 			return []Message{{
 				Role: "user",
 				Content: fmt.Sprintf(
-					"[Round %d/%d — FINAL round. No more tool calls. Produce your final answer NOW from what you have so far.]",
-					roundCounter, cap,
+					"[Round %d/%d — FINAL round. If you are NOT finished (still mid-build / tools left to add or verify), call enter_explorer_mode NOW to extend your budget. Otherwise produce your final answer from what you have.]",
+					pr.roundCounter, cap,
 				),
 			}}
-		}
-		// Few rounds left and able to self-extend: nudge enter_explorer_mode
-		// so a large build / discovery stretches instead of getting cut off.
-		if canExtend && remaining <= 5 {
-			return []Message{{
-				Role: "user",
-				Content: fmt.Sprintf(
-					"[Round %d/%d — only %d round%s left. enter_explorer_mode extends your budget to %d rounds for this step. Call it if you're (a) mid-build with tools still to add or verify, (b) mapping an unfamiliar API / system surface that keeps revealing more, (c) figuring out HOW to do something multi-step where each result reveals the next move (e.g. \"scrape this for a video\" — find container, identify format, locate manifest, resolve segments), or (d) troubleshooting a misbehaving tool — probing variant args / inspecting related state to narrow down the failure mode before you can work around it or report cleanly. If you're nearly done, wrap up.]",
-					roundCounter, cap, remaining, plural(remaining), orchHardCap,
-				),
-			}}
-		}
-		// General pacing nudge — ONLY when the budget is actually getting
-		// tight. On early rounds with ample budget this note is (a) noise and
-		// (b) a CACHE POISON. OnRoundStart appends it right after the user
-		// message, but it's ephemeral: next turn the persisted assistant reply
-		// occupies that slot instead, so the prompt prefix diverges at exactly
-		// that point and the (recurrent/hybrid) worker re-prefills the ENTIRE
-		// prompt instead of reusing the cached prefix — the orchestrate turn-2
-		// latency bug (every follow-up turn paid a full ~16k re-prefill).
-		// Returning nil on ample-budget rounds keeps the prefix byte-stable so
-		// the worker's context checkpoint stays usable across turns. The
-		// FINAL-round and explorer nudges above still fire near the cap, where
-		// an occasional cache miss is irrelevant.
-		const pacerNudgeWithin = 8 // rounds-left threshold below which to start pacing aloud
-		if remaining > pacerNudgeWithin {
-			return nil
 		}
 		return []Message{{
 			Role: "user",
 			Content: fmt.Sprintf(
-				"[Round %d/%d — %d round%s left before this turn ends. Pace accordingly: if the answer needs more searches than that, use plan_set instead of iterating inline.]",
-				roundCounter, cap, remaining, plural(remaining),
+				"[Round %d/%d — FINAL round. No more tool calls. Produce your final answer NOW from what you have so far.]",
+				pr.roundCounter, cap,
 			),
 		}}
 	}
+	// Few rounds left and able to self-extend: nudge enter_explorer_mode
+	// so a large build / discovery stretches instead of getting cut off.
+	if canExtend && remaining <= 5 {
+		return []Message{{
+			Role: "user",
+			Content: fmt.Sprintf(
+				"[Round %d/%d — only %d round%s left. enter_explorer_mode extends your budget to %d rounds for this step. Call it if you're (a) mid-build with tools still to add or verify, (b) mapping an unfamiliar API / system surface that keeps revealing more, (c) figuring out HOW to do something multi-step where each result reveals the next move (e.g. \"scrape this for a video\" — find container, identify format, locate manifest, resolve segments), or (d) troubleshooting a misbehaving tool — probing variant args / inspecting related state to narrow down the failure mode before you can work around it or report cleanly. If you're nearly done, wrap up.]",
+				pr.roundCounter, cap, remaining, plural(remaining), pr.orchHardCap,
+			),
+		}}
+	}
+	// General pacing nudge — ONLY when the budget is actually getting
+	// tight. On early rounds with ample budget this note is (a) noise and
+	// (b) a CACHE POISON. OnRoundStart appends it right after the user
+	// message, but it's ephemeral: next turn the persisted assistant reply
+	// occupies that slot instead, so the prompt prefix diverges at exactly
+	// that point and the (recurrent/hybrid) worker re-prefills the ENTIRE
+	// prompt instead of reusing the cached prefix — the orchestrate turn-2
+	// latency bug (every follow-up turn paid a full ~16k re-prefill).
+	// Returning nil on ample-budget rounds keeps the prefix byte-stable so
+	// the worker's context checkpoint stays usable across turns. The
+	// FINAL-round and explorer nudges above still fire near the cap, where
+	// an occasional cache miss is irrelevant.
+	const pacerNudgeWithin = 8 // rounds-left threshold below which to start pacing aloud
+	if remaining > pacerNudgeWithin {
+		return nil
+	}
+	return []Message{{
+		Role: "user",
+		Content: fmt.Sprintf(
+			"[Round %d/%d — %d round%s left before this turn ends. Pace accordingly: if the answer needs more searches than that, use plan_set instead of iterating inline.]",
+			pr.roundCounter, cap, remaining, plural(remaining),
+		),
+	}}
+}
 
+func (pr *planRun) prepareMessages() {
+	t := pr.t
 	// Attach any image attachments to the most recent user message
 	// so vision-capable LLMs see them. Images are ephemeral — only
 	// passed for this turn; not persisted in session history (the
 	// raw bytes would balloon the DB).
-	llmMsgs := toLLMMessages(msgs)
+	pr.llmMsgs = toLLMMessages(pr.msgs)
 	if len(t.userImages) > 0 {
-		for i := len(llmMsgs) - 1; i >= 0; i-- {
-			if llmMsgs[i].Role == "user" {
-				llmMsgs[i].Images = t.userImages
+		for i := len(pr.llmMsgs) - 1; i >= 0; i-- {
+			if pr.llmMsgs[i].Role == "user" {
+				pr.llmMsgs[i].Images = t.userImages
 				// Seeing a picture is not the same as being able to name one.
 				// Without this the model has the pixels and no id, so a request
 				// to edit or combine them resolves to whatever handle it DOES
 				// have — usually an image it made earlier.
-				llmMsgs[i].Content += uploadedImageHandles(len(t.userImages))
+				pr.llmMsgs[i].Content += uploadedImageHandles(len(t.userImages))
 				break
 			}
 		}
@@ -1287,19 +1436,18 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// turns so the worker model reuses it instead of re-prefilling ~16k every
 	// turn. The new user message is new each turn anyway, so carrying the
 	// hints there costs nothing in cache terms.
-	if tc := strings.TrimSpace(turnContext); tc != "" {
-		for i := len(llmMsgs) - 1; i >= 0; i-- {
-			if llmMsgs[i].Role == "user" {
-				if strings.TrimSpace(llmMsgs[i].Content) == "" {
-					llmMsgs[i].Content = tc
+	if tc := strings.TrimSpace(pr.turnContext); tc != "" {
+		for i := len(pr.llmMsgs) - 1; i >= 0; i-- {
+			if pr.llmMsgs[i].Role == "user" {
+				if strings.TrimSpace(pr.llmMsgs[i].Content) == "" {
+					pr.llmMsgs[i].Content = tc
 				} else {
-					llmMsgs[i].Content += "\n\n" + tc
+					pr.llmMsgs[i].Content += "\n\n" + tc
 				}
 				break
 			}
 		}
 	}
-
 	// (Auto-inject removed — knowledge retrieval is now exclusively
 	// pull-driven via knowledge_search. The LLM decides when to query,
 	// scopes the search itself, and reads excerpts before deciding
@@ -1314,8 +1462,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// loop would dedupe them noisily every turn. Both copies are session-wired
 	// (the base catalog is built via GetAgentToolsWithSession), so keeping the
 	// first is harmless — this just moves the dedupe upstream of the log spam.
-	allTools = dedupeToolDefsByName(allTools)
-
+	pr.allTools = dedupeToolDefsByName(pr.allTools)
 	// Narrow the catalog to what the current machine phase may reach. A
 	// phase that names no tools (and every agent with no machine) gets
 	// the catalog back unchanged, so this can sit on the main path.
@@ -1324,87 +1471,307 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 	// BETWEEN turns of one session — the phase advances and tools the model
 	// used two turns ago stop resolving. Silently, that reads to the model
 	// as a name it got wrong, and it burns the turn retrying spellings.
-	narrowed, phaseDropped, phaseUnmatched, phaseFellBack := mach.narrowCatalog(allTools, t.attachedToolNames)
+	narrowed, phaseDropped, phaseUnmatched, phaseFellBack := pr.mach.narrowCatalog(pr.allTools, t.attachedToolNames)
 	if len(phaseDropped) > 0 {
 		Log("[orchestrate.orch] machine phase %q narrowed the catalog %d → %d tool(s); dropped: %v",
-			mach.Name(), len(allTools), len(narrowed), phaseDropped)
+			pr.mach.Name(), len(pr.allTools), len(narrowed), phaseDropped)
 	}
 	if len(phaseUnmatched) > 0 {
 		// The phase asked for something the catalog doesn't carry under that
 		// name. Nothing else reports it: the filter is a name match, so a miss
 		// looks exactly like a phase that meant to allow fewer tools.
 		Log("[orchestrate.orch] machine phase %q names %d tool(s) not in this agent's catalog: %v",
-			mach.Name(), len(phaseUnmatched), phaseUnmatched)
+			pr.mach.Name(), len(phaseUnmatched), phaseUnmatched)
 	}
 	if phaseFellBack {
 		// Every name missed. The literal reading of that is "no tools", which
 		// is both unlikely to be meant and unsurvivable — it takes the control
 		// plane with it, so the model can neither answer nor leave the phase.
 		Log("[orchestrate.orch] machine phase %q matched NOTHING in this agent's catalog — running the full %d-tool catalog rather than none",
-			mach.Name(), len(narrowed))
+			pr.mach.Name(), len(narrowed))
 		t.turnDiag("machine_phase_tools_unmatched", fmt.Sprintf(
 			"phase %q allows %v, and NONE of those names exist in this agent's catalog, so the phase ran with the full catalog instead of an empty one. Fix the phase's tool names — they must match the catalog exactly, and a remote MCP tool is exposed as \"<server>_<tool>\" in lowercase (getConfluencePage on the server is atlassian_getconfluencepage here).",
-			mach.Name(), mach.phase.Tools))
+			pr.mach.Name(), pr.mach.phase.Tools))
 	} else if len(phaseUnmatched) > 0 {
 		t.turnDiag("machine_phase_tool_missing", fmt.Sprintf(
 			"phase %q allows %v, but %v are not in this agent's catalog under those names, so the phase ran without them. Tool names in a phase must match the catalog exactly — a remote MCP tool is exposed as \"<server>_<tool>\", not its raw remote name.",
-			mach.Name(), mach.phase.Tools, phaseUnmatched))
+			pr.mach.Name(), pr.mach.phase.Tools, phaseUnmatched))
 	}
-	allTools = narrowed
+	pr.allTools = narrowed
 	// The catalog the model ACTUALLY receives. The full-surface line above
 	// runs before this narrowing, so on a machine turn it reports the wider
 	// pre-phase set — which is what sent a reader chasing catalog size when
 	// the phase filter was what moved.
 	if len(phaseDropped) > 0 || len(phaseUnmatched) > 0 {
-		effective := make([]string, 0, len(allTools))
-		for _, td := range allTools {
+		effective := make([]string, 0, len(pr.allTools))
+		for _, td := range pr.allTools {
 			effective = append(effective, td.Tool.Name)
 		}
 		Log("[orchestrate.orch] session=%s phase=%s tools_to_llm_effective[%d]=%v",
-			sessID, mach.Name(), len(allTools), effective)
+			pr.sessID, pr.mach.Name(), len(pr.allTools), effective)
 	}
-
 	// pre_input guardrail: judge the incoming request before round 1 so a
 	// topical/disclosure rule ("never mention salary") is caught at the door,
 	// not after the model has already narrated the answer in an interim turn.
-	llmMsgs, gDecline := t.applyInputGuardrail(llmMsgs)
+	pr.llmMsgs, pr.gDecline = t.applyInputGuardrail(pr.llmMsgs)
 	// What the USER actually said, captured before the loop writes on it. The
 	// loop appends turn-scoped context (the image manifest) and prepends the
 	// date stamp to this same trailing message in place, and the graph extractor
 	// below runs after that — so reading it afterwards would file the
 	// framework's own scaffolding as things the user stated.
-	userSaid := LatestUserContent(llmMsgs)
+	pr.userSaid = LatestUserContent(pr.llmMsgs)
+}
 
-	orchStart := time.Now()
+func (pr *planRun) runLoop() {
+	t := pr.t
+	pr.orchStart = time.Now()
 	// Everything above this line happened while the person waited and nothing
 	// was accounting for it: [agent_loop] turn time starts on the next line.
 	t.prep.done()
-	Debug("[orchestrate.orch] entering RunAgentLoop (msgs=%d tools=%d sys_chars=%d)", len(llmMsgs), len(allTools), len(sys))
+	Debug("[orchestrate.orch] entering RunAgentLoop (msgs=%d tools=%d sys_chars=%d)", len(pr.llmMsgs), len(pr.allTools), len(pr.sys))
 	// What the prompt is MADE OF, every turn. Without this, "the turn is slow
 	// and the prompt is 205k" is a number with nowhere to go: the system
 	// prompt, the tool catalog and the conversation are all plausible and only
 	// one of them is ever the answer. Cost is one marshal of the catalog per
 	// turn, against a request that is about to process every one of these
 	// tokens anyway.
-	logPromptComposition("plan", sessID, sys, allTools, llmMsgs)
-	resp, _, loopErr := t.app.RunAgentLoop(orchCtx, llmMsgs, AgentLoopConfig{
+	logPromptComposition("plan", pr.sessID, pr.sys, pr.allTools, pr.llmMsgs)
+	pr.resp, _, pr.loopErr = t.app.RunAgentLoop(pr.orchCtx, pr.llmMsgs, pr.loopConfig())
+	pr.stopKeepalive()
+	// Consume the silence flag. stay_silent writes ToolSession.Silenced and,
+	// until now, nothing read it: the only thing that worked was agent_loop's
+	// hardcoded break, which ends the LOOP. Recording it on the turn is what
+	// lets the plan driver honor "this turn is now closed" — the promise the
+	// tool's own result makes to the model.
+	if pr.sess != nil && pr.sess.Silenced {
+		t.turnClosed = true
+	}
+	// Off-hot-path graph population: after a clean turn, best-effort extract the
+	// entity relationships the user stated into the graph. Single-flight +
+	// cooldown + own goroutine (never blocks the turn, self-throttles on the
+	// shared GPU); gated off by default.
+	if pr.loopErr == nil {
+		// Close the books on what this turn said it would do. A turn that called
+		// a tool retires whatever was outstanding; one that ended on a fresh
+		// promise and did nothing records it for the next turn to answer for.
+		if pr.resp != nil {
+			recordTurnCommitment(t.udb, t.chatSessionID(), pr.resp.Content, len(t.persistedToolCalls()) > 0)
+		}
+		maybeExtractGraph(t.udb, factsNamespace(t.agent.ID), pr.userSaid, t.app.WorkerChat)
+	}
+	{
+		respLen := 0
+		if pr.resp != nil {
+			respLen = len(strings.TrimSpace(pr.resp.Content))
+		}
+		errStr := ""
+		if pr.loopErr != nil {
+			errStr = pr.loopErr.Error()
+		}
+		Debug("[orchestrate.orch] RunAgentLoop returned (elapsed=%s, resp.content=%dch, ctx.err=%v, orchCtx.err=%v, loopErr=%q, capturedSteps=%d, capturedReply=%dch, capturedQuest=%dch, capturedForm=%d)",
+			time.Since(pr.orchStart),
+			respLen,
+			t.ctx.Err(), pr.orchCtx.Err(), errStr,
+			len(pr.capturedSteps),
+			len(pr.capturedReply),
+			len(pr.capturedQuest),
+			len(pr.capturedFormSteps),
+		)
+	}
+}
+
+func (pr *planRun) finish() (steps []PlanStep, question, directReply string, err error) {
+	t := pr.t
+	// Catch a final round whose OnStep didn't fire (rare — happens
+	// when the loop terminates between content stream and the OnStep
+	// dispatch). Finalize and treat it as the last finalized bubble.
+	finalID := pr.streamMsgID
+	if finalID == "" {
+		finalID = t.getCurrentMsgID()
+	}
+	if finalID != "" {
+		t.sse.Send(map[string]any{"kind": "message_done", "id": finalID})
+		if pr.streamedBuf.Len() > 0 {
+			pr.lastFinalizedText = strings.TrimSpace(StripToolCallMarkup(pr.streamedBuf.String()))
+		}
+		pr.lastFinalizedID = finalID
+		// Persist the final round's narration too — same gap as the
+		// per-round capture in onStepHandler, only on the rare path
+		// where the loop terminates after streaming but before OnStep.
+		t.captureMidTurnBubble(pr.lastFinalizedText)
+		pr.streamMsgID = ""
+		t.setCurrentMsgID("")
+	}
+	// Stats land on the last bubble we finalized; RunAgentLoop only
+	// returns the last round's resp, so per-round stats aren't
+	// available without backend changes.
+	if pr.lastFinalizedID != "" {
+		t.emitStats(pr.lastFinalizedID, pr.resp, pr.orchStart)
+	}
+	// Loop end conditions:
+	//   1. A control tool fired → orchCtx is canceled (but t.ctx
+	//      is still live). Captured state below drives dispatch.
+	//   2. Loop hit MaxRounds → resp may carry content; treat as
+	//      implicit respond_directly.
+	//   3. Loop ended naturally (no tool call this round) → resp.Content
+	//      is the implicit reply.
+	//   4. Real error (network, LLM, etc.) → return it.
+	if pr.loopErr != nil && t.ctx.Err() == nil && pr.orchCtx.Err() == nil {
+		return nil, "", "", pr.loopErr
+	}
+	if len(pr.capturedFormSteps) > 0 {
+		// Multi-step form — render as a single block with all the
+		// steps; client walks the user through them one at a time
+		// and submits a compiled answer at the end. Return a brief
+		// placeholder as the captured question so the caller's
+		// session-persistence logic has something to record.
+		t.sse.Send(map[string]any{
+			"kind":  "block",
+			"type":  "ui_ask_form",
+			"id":    fmt.Sprintf("askform-%d", time.Now().UnixNano()),
+			"steps": pr.capturedFormSteps,
+		})
+		if t.session != nil {
+			t.session.AwaitingUserConfirm = true
+		}
+		return nil, fmt.Sprintf("(form with %d question%s)", len(pr.capturedFormSteps), plural(len(pr.capturedFormSteps))), "", nil
+	}
+	if pr.capturedQuest != "" {
+		// A bare question — no options — renders as PROSE, not a card. The card
+		// used to render always ("consistent affordance"), but with no buttons
+		// its only control is a textarea floating directly above the composer,
+		// which is already a textarea: two identical answer boxes for one
+		// question, and the card one gates the turn. The card earns its place
+		// exactly when it has choices to click. AwaitingUserConfirm is still
+		// set: it is still an ask, and the next turn's gated tools (agent CRUD
+		// after a Builder confirmation) depend on the flag, not the rendering.
+		if len(pr.capturedOptions) == 0 {
+			// emitBubble, NOT emitCapturedAsBubble. The near-duplicate guard is
+			// right for a REPLY (a repeat is noise) and catastrophic for an ASK:
+			// the model routinely streams a lead-in ("Several things are
+			// ambiguous:") and then captures a question that BEGINS with those
+			// same words, which scores as a duplicate on longest-common-prefix
+			// and drops the entire ask. AwaitingUserConfirm is still set below,
+			// so the turn ended parked on a question the user was never shown —
+			// a lead-in, a colon, and nothing. Live, in Guides. A repeated
+			// sentence is a cosmetic cost; a swallowed question is a dead turn.
+			pr.emitBubble(pr.capturedQuest)
+			if t.session != nil {
+				t.session.AwaitingUserConfirm = true
+			}
+			return nil, pr.capturedQuest, "", nil
+		}
+		// With options, the card is the whole point: click-to-choose.
+		t.sse.Send(map[string]any{
+			"kind":     "block",
+			"type":     "ui_ask",
+			"id":       fmt.Sprintf("ask-%d", time.Now().UnixNano()),
+			"question": pr.capturedQuest,
+			"options":  pr.capturedOptions,
+			"multi":    pr.capturedMulti,
+		})
+		// Mark this session as awaiting user confirmation. Gated tools
+		// (agent CRUD) will fire on the NEXT user turn after this
+		// pause — without this flag, those tools refuse to run.
+		if t.session != nil {
+			t.session.AwaitingUserConfirm = true
+		}
+		return nil, pr.capturedQuest, "", nil
+	}
+	if len(pr.capturedSteps) > 0 {
+		// Plan_set's pre-amble narration already streamed; the plan
+		// card will render below. Nothing further to emit here.
+		return pr.capturedSteps, "", "", nil
+	}
+	if pr.capturedReply != "" {
+		pr.emitCapturedAsBubble(pr.capturedReply)
+		return nil, "", pr.capturedReply, nil
+	}
+	if pr.resp != nil && strings.TrimSpace(pr.resp.Content) != "" {
+		// Implicit respond_directly path — the LLM streamed text in
+		// its final round but didn't call any control tool. The
+		// per-round finalizer already finalized that bubble; we
+		// just need a clean copy for the persisted history.
+		clean := strings.TrimSpace(StripToolCallMarkup(pr.resp.Content))
+		// Emit unconditionally and let emitCapturedAsBubble's near-duplicate
+		// check decide whether to actually show it. The old guard ("nothing was
+		// finalized this turn") was too coarse: the forced-final-answer rescue
+		// calls T.LLM.Chat NON-streaming (core/agent_loop.go), so its content was
+		// never streamed — but if ANY mid-turn narration bubble rendered first,
+		// lastFinalizedText was non-empty and the guard dropped a brand-new final
+		// synthesis from the LIVE path while still persisting it (visible in
+		// history, blank on screen). emitCapturedAsBubble already suppresses only
+		// a TRUE near-duplicate of the last streamed bubble, so the normal
+		// streamed-then-rescued repeat is still deduped, and a genuinely different
+		// final answer now renders as its own bubble.
+		pr.emitCapturedAsBubble(clean)
+		return nil, "", clean, nil
+	}
+	// No content anywhere. If the loop ran out of its round budget (rather
+	// than ending naturally or being deliberately silenced via stay_silent,
+	// which returns from inside the loop without HitRoundCap), don't leave
+	// the user staring at a blank turn — say so explicitly so they can narrow
+	// the ask or retry instead of assuming the agent is broken. This is the
+	// "ran out of turns, got nothing back" failure (common for retrieval-heavy
+	// agents that exhaust rounds mid-investigation).
+	if pr.resp != nil && pr.resp.HitRoundCap {
+		t.turnDiag("round-cap", "This turn ran out of worker rounds before finishing — raise the round limit or narrow the ask.")
+		msg := "I ran out of working rounds for this turn before I could finish, and didn't have a partial answer to show. Try narrowing the question, or ask me to continue and I'll pick up from here."
+		// Same as the resp.Content path above: gate on the near-duplicate check,
+		// not a coarse "already rendered something" boolean, so this shows even
+		// after a mid-turn narration bubble.
+		pr.emitCapturedAsBubble(msg)
+		return nil, "", msg, nil
+	}
+	// Nothing captured and nothing said. Reaching here with a loop error means
+	// the error was DROPPED by the guard above, which only reports when neither
+	// context is still good — and an LLM that cannot be reached is precisely the
+	// case that hangs until the turn's deadline and then fails. So the one
+	// failure a user is most likely to hit was the one that returned no content
+	// and no error: the thread kept their message, grew no reply, and the
+	// composer re-enabled. Indistinguishable from being ignored.
+	//
+	// A deliberate cancel is not a failure and stays quiet — the caller already
+	// reports that in its own words.
+	if pr.loopErr != nil && !errors.Is(t.ctx.Err(), context.Canceled) {
+		t.turnDiag("llm-unreachable", "The model could not be reached for this turn: "+pr.loopErr.Error())
+		return nil, "", "", pr.loopErr
+	}
+	// No error, no content, no cancel. stay_silent returns from inside the loop
+	// and never lands here, so this is a turn that produced nothing for a reason
+	// nobody recorded. Say so rather than rendering a blank: the round-cap
+	// branch above already sets that precedent, and a silent turn reads as the
+	// assistant ignoring the request.
+	if t.ctx.Err() == nil {
+		t.turnDiag("empty-turn", "This turn produced no reply and reported no error.")
+		return nil, "", "", fmt.Errorf("the turn finished without producing a reply")
+	}
+	return nil, "", "", nil
+}
+
+// loopConfig is the AgentLoopConfig for the orchestrator round: the prompt
+// and catalog, the callbacks the loop fires (methods on planRun), and the
+// budget governors. Read alongside runLoop, which is the call.
+func (pr *planRun) loopConfig() AgentLoopConfig {
+	t := pr.t
+	return AgentLoopConfig{
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
-		PreEmptedReply: gDecline,
+		PreEmptedReply: pr.gDecline,
 		SendGuardKey:   sendGuardKey,
-		SystemPrompt:   sys,
-		Tools:          allTools,
+		SystemPrompt:   pr.sys,
+		Tools:          pr.allTools,
 		// A machine phase may pin the tier for turns spent in it.
 		// TierUnset (no machine, or a phase that names no model) follows
 		// the route stage exactly as before. Resolved with the route key
 		// above so the two cannot disagree — see turnRouting.
-		TierOverride:         tierPin,
+		TierOverride:         pr.tierPin,
 		StampLocation:        UserLocation(t.user), // stamp the turn in the interactive user's zone
-		DynamicTools:         t.dynamicNewTempTools(sess),
+		DynamicTools:         t.dynamicNewTempTools(pr.sess),
 		ToolFallbackResolver: t.lazyToolFallback,
-		Stream:               streamHandler,
-		OnStep:               onStepHandler,
-		OnRoundStart:         onRoundStartHandler,
+		Stream:               pr.streamHandler,
+		OnStep:               pr.onStepHandler,
+		OnRoundStart:         pr.onRoundStartHandler,
 		// Route the loop's silent correction guards into this session's ⚠
 		// diagnostics trail, so a re-prompt the framework issued on the user's
 		// behalf (e.g. named-a-tool-but-didn't-call-it) leaves a breadcrumb
@@ -1417,18 +1784,18 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// Settle the rejected round's streamed bubble before a correction
 		// re-prompts, so the retry opens a fresh bubble instead of
 		// concatenating into an orphaned one (the double-emit fix).
-		SettleRound:  settleRound,
-		RetractRound: retractRound,
+		SettleRound:  pr.settleRound,
+		RetractRound: pr.retractRound,
 		// Feed view_video's sampled frames to the model on the next round so it
 		// actually sees the clip instead of describing it blind.
-		DrainViewImages: sess.DrainViewImages,
-		BeforeToolRound: func() { SnapshotImageRefs(sess) },
+		DrainViewImages: pr.sess.DrainViewImages,
+		BeforeToolRound: func() { SnapshotImageRefs(pr.sess) },
 		// Hand over the recent-image ids when the user is talking about a
 		// picture. The space can't live in the tool schema (it changes on every
 		// image operation and would re-pay cold prefill), but the newest user
 		// turn is the volatile tail that never caches anyway — same place the
 		// date stamp goes, and free for the same reason.
-		TurnNotes: func(user string) string { return turnNotes(sess, t.udb, t.chatSessionID(), user) },
+		TurnNotes: func(user string) string { return turnNotes(pr.sess, t.udb, t.chatSessionID(), user) },
 		// Last look before the reply goes out: is it true about what this turn
 		// actually did? Backstops the phrase-list guards on the shapes they don't
 		// know. See turn_judge.go.
@@ -1456,10 +1823,10 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// rather than by two reads agreeing about a condition either could
 		// forget. (facts() now enforces incognito itself, so a second read would
 		// agree today — the point stands for whatever the next condition is.)
-		UncheckedClaims:    UncheckedFactNotes(facts),
-		DeliveredCount:     func() int { return len(sess.Images) + len(sess.Videos) + len(sess.Files) },
-		Backgrounded:       func() bool { return sess.Detach.Any() },
-		BackgroundEstimate: func() string { return sess.Detach.EstimateText() },
+		UncheckedClaims:    UncheckedFactNotes(pr.facts),
+		DeliveredCount:     func() int { return len(pr.sess.Images) + len(pr.sess.Videos) + len(pr.sess.Files) },
+		Backgrounded:       func() bool { return pr.sess.Detach.Any() },
+		BackgroundEstimate: func() string { return pr.sess.Detach.EstimateText() },
 		// Catch a reply that presents a picture the turn never produced, while
 		// the loop can still do something about it. The dispatch path has had
 		// this since the phantom-delivery work; interactive chat never did, so
@@ -1467,7 +1834,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// ships a staged file and has nothing to say when there is no file. A
 		// generation that failed left the caption standing on its own.
 		PhantomDeliveryRefs: func(reply string) []string {
-			return phantomDeliveryRefs(sess, reply, produced.producedKind())
+			return phantomDeliveryRefs(pr.sess, reply, pr.produced.producedKind())
 		},
 		// Drain mid-flight user injections EACH ROUND so the orchestrator
 		// incorporates them during inline work — not just at plan-step
@@ -1504,14 +1871,14 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 			if t.machine.Denies(name) {
 				return false
 			}
-			return !(name == "plan_set" && planSetRejects >= planSetDropThreshold)
+			return !(name == "plan_set" && pr.planSetRejects >= planSetDropThreshold)
 		},
 		// The round right after a plan_set rejection skips thinking — the
 		// model was burning huge thinking budgets deliberating itself back
 		// into plan_set. Consume the flag so it applies to exactly one round.
 		RoundChatOptions: func() []ChatOption {
-			if forceNoThinkAfterReject {
-				forceNoThinkAfterReject = false
+			if pr.forceNoThinkAfterReject {
+				pr.forceNoThinkAfterReject = false
 				return []ChatOption{WithThink(false)}
 			}
 			return nil
@@ -1526,8 +1893,8 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// just consumed a long output it's done with), force an aggressive
 		// shed on the next round.
 		RoundCompactNow: func() bool {
-			if compactRequested {
-				compactRequested = false
+			if pr.compactRequested {
+				pr.compactRequested = false
 				return true
 			}
 			return false
@@ -1537,7 +1904,7 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// explorer mode, then lets it run to orchHardCap. Most chat turns
 		// need 1-3 rounds; deep research / large builds bump via the
 		// agent's worker-rounds budget + enter_explorer_mode.
-		MaxRounds:     absoluteCeiling,
+		MaxRounds:     pr.absoluteCeiling,
 		ThinkBudget:   t.agent.ThinkBudget,  // per-agent override; 0 = inherit route/global
 		ActionQuotas:  t.agent.ActionQuotas, // per-agent 24h caps; empty = uncapped
 		BudgetKey:     t.agent.ID,
@@ -1548,21 +1915,21 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// once a build plan is presented. max() semantics — a later phase
 		// never lowers the budget a prior one granted.
 		StopRound: func() bool {
-			orchRoundsUsed++
-			cap := maxR
+			pr.orchRoundsUsed++
+			cap := pr.maxR
 			if t.explorerMode {
-				cap = orchHardCap
+				cap = pr.orchHardCap
 			}
 			if t.planBudgetCap > cap {
 				cap = t.planBudgetCap
 			}
-			return orchRoundsUsed > cap
+			return pr.orchRoundsUsed > cap
 		},
 		// Escalation policy hook (confirm.go): calls through a
 		// credential flagged "Require confirm" park on an in-chat
 		// approval card; every other NeedsConfirm tool (delete_agent
 		// etc.) auto-approves as before so nothing hangs on stdin.
-		Confirm:             t.confirmFuncFor(sess),
+		Confirm:             t.confirmFuncFor(pr.sess),
 		GuardrailCheck:      t.guardrailEnforcer().Check,
 		GuardrailActionGate: t.guardrailEnforcer().ActionGate,
 		GuardrailHalted:     t.guardrailEnforcer().Halted,
@@ -1582,267 +1949,10 @@ func (t *chatTurn) runPlan(msgs []ChatMessage) (steps []PlanStep, question, dire
 		// attach calls. The architecture itself enforces deliberate
 		// per-file delivery now.)
 		ChatOptions: []ChatOption{
-			WithRouteKey(routeKey),
-			WithThink(think),
+			WithRouteKey(pr.routeKey),
+			WithThink(pr.think),
 		},
-	})
-	stopKeepalive()
-	// Consume the silence flag. stay_silent writes ToolSession.Silenced and,
-	// until now, nothing read it: the only thing that worked was agent_loop's
-	// hardcoded break, which ends the LOOP. Recording it on the turn is what
-	// lets the plan driver honor "this turn is now closed" — the promise the
-	// tool's own result makes to the model.
-	if sess != nil && sess.Silenced {
-		t.turnClosed = true
 	}
-	// Off-hot-path graph population: after a clean turn, best-effort extract the
-	// entity relationships the user stated into the graph. Single-flight +
-	// cooldown + own goroutine (never blocks the turn, self-throttles on the
-	// shared GPU); gated off by default.
-	if loopErr == nil {
-		// Close the books on what this turn said it would do. A turn that called
-		// a tool retires whatever was outstanding; one that ended on a fresh
-		// promise and did nothing records it for the next turn to answer for.
-		if resp != nil {
-			recordTurnCommitment(t.udb, t.chatSessionID(), resp.Content, len(t.persistedToolCalls()) > 0)
-		}
-		maybeExtractGraph(t.udb, factsNamespace(t.agent.ID), userSaid, t.app.WorkerChat)
-	}
-	{
-		respLen := 0
-		if resp != nil {
-			respLen = len(strings.TrimSpace(resp.Content))
-		}
-		errStr := ""
-		if loopErr != nil {
-			errStr = loopErr.Error()
-		}
-		Debug("[orchestrate.orch] RunAgentLoop returned (elapsed=%s, resp.content=%dch, ctx.err=%v, orchCtx.err=%v, loopErr=%q, capturedSteps=%d, capturedReply=%dch, capturedQuest=%dch, capturedForm=%d)",
-			time.Since(orchStart),
-			respLen,
-			t.ctx.Err(), orchCtx.Err(), errStr,
-			len(capturedSteps),
-			len(capturedReply),
-			len(capturedQuest),
-			len(capturedFormSteps),
-		)
-	}
-
-	// Catch a final round whose OnStep didn't fire (rare — happens
-	// when the loop terminates between content stream and the OnStep
-	// dispatch). Finalize and treat it as the last finalized bubble.
-	finalID := streamMsgID
-	if finalID == "" {
-		finalID = t.getCurrentMsgID()
-	}
-	if finalID != "" {
-		t.sse.Send(map[string]any{"kind": "message_done", "id": finalID})
-		if streamedBuf.Len() > 0 {
-			lastFinalizedText = strings.TrimSpace(StripToolCallMarkup(streamedBuf.String()))
-		}
-		lastFinalizedID = finalID
-		// Persist the final round's narration too — same gap as the
-		// per-round capture in onStepHandler, only on the rare path
-		// where the loop terminates after streaming but before OnStep.
-		t.captureMidTurnBubble(lastFinalizedText)
-		streamMsgID = ""
-		t.setCurrentMsgID("")
-	}
-	// Stats land on the last bubble we finalized; RunAgentLoop only
-	// returns the last round's resp, so per-round stats aren't
-	// available without backend changes.
-	if lastFinalizedID != "" {
-		t.emitStats(lastFinalizedID, resp, orchStart)
-	}
-
-	// emitCapturedAsBubble produces a new bubble for captured
-	// control-tool text (respond_directly's text, ask_user's
-	// question). Dedup keys on lastFinalizedText (the LAST shown
-	// bubble): skip ONLY when this exact text was just shown
-	// (stream-then-respond_directly with identical content). Two earlier
-	// guards both dropped real replies and were removed: lastRoundHadContent
-	// suppressed a 7k reply because the round streamed an 82-char preamble;
-	// the shownText substring match dropped a 338-char reply because it was
-	// a substring of a larger earlier block. Exact-match-last-bubble is the
-	// narrowest dedup that still catches the true duplicate case.
-	// emitBubble is the raw send, with NO dedup. Split out because an ASK must
-	// never be suppressed: see the ask_user path below.
-	emitBubble := func(text string) {
-		trimmed := strings.TrimSpace(text)
-		if trimmed == "" {
-			return
-		}
-		id := fmt.Sprintf("orch-%d", time.Now().UnixNano())
-		t.sse.Send(map[string]any{
-			"kind": "message",
-			"role": "assistant",
-			"id":   id,
-			"text": text,
-		})
-		t.sse.Send(map[string]any{"kind": "message_done", "id": id})
-		t.emitStats(id, resp, orchStart)
-	}
-
-	emitCapturedAsBubble := func(text string) {
-		trimmed := strings.TrimSpace(text)
-		if trimmed == "" {
-			return
-		}
-		// Suppress when the captured reply is a near-duplicate of the
-		// LAST shown bubble — the stream-then-respond_directly /
-		// stream-draft-then-revised-conclusion case. Near-duplicate
-		// catches the "same analysis, different ending" pattern that
-		// exact-match missed; it's still narrow enough not to drop a
-		// short reply that coincidentally shares an opener with a
-		// longer earlier block (LCP/short ratio < 0.6 keeps it).
-		if last := strings.TrimSpace(lastFinalizedText); last != "" && isNearDuplicate(trimmed, last) {
-			Debug("[orchestrate.orch] captured reply (%d ch) is a near-duplicate of last shown bubble (%d ch) — suppressing", len(trimmed), len(last))
-			return
-		}
-		Debug("[orchestrate.orch] emitting captured reply as bubble (%d ch, last bubble %d ch)", len(trimmed), len(strings.TrimSpace(lastFinalizedText)))
-		emitBubble(text)
-	}
-
-	// Loop end conditions:
-	//   1. A control tool fired → orchCtx is canceled (but t.ctx
-	//      is still live). Captured state below drives dispatch.
-	//   2. Loop hit MaxRounds → resp may carry content; treat as
-	//      implicit respond_directly.
-	//   3. Loop ended naturally (no tool call this round) → resp.Content
-	//      is the implicit reply.
-	//   4. Real error (network, LLM, etc.) → return it.
-	if loopErr != nil && t.ctx.Err() == nil && orchCtx.Err() == nil {
-		return nil, "", "", loopErr
-	}
-
-	if len(capturedFormSteps) > 0 {
-		// Multi-step form — render as a single block with all the
-		// steps; client walks the user through them one at a time
-		// and submits a compiled answer at the end. Return a brief
-		// placeholder as the captured question so the caller's
-		// session-persistence logic has something to record.
-		t.sse.Send(map[string]any{
-			"kind":  "block",
-			"type":  "ui_ask_form",
-			"id":    fmt.Sprintf("askform-%d", time.Now().UnixNano()),
-			"steps": capturedFormSteps,
-		})
-		if t.session != nil {
-			t.session.AwaitingUserConfirm = true
-		}
-		return nil, fmt.Sprintf("(form with %d question%s)", len(capturedFormSteps), plural(len(capturedFormSteps))), "", nil
-	}
-	if capturedQuest != "" {
-		// A bare question — no options — renders as PROSE, not a card. The card
-		// used to render always ("consistent affordance"), but with no buttons
-		// its only control is a textarea floating directly above the composer,
-		// which is already a textarea: two identical answer boxes for one
-		// question, and the card one gates the turn. The card earns its place
-		// exactly when it has choices to click. AwaitingUserConfirm is still
-		// set: it is still an ask, and the next turn's gated tools (agent CRUD
-		// after a Builder confirmation) depend on the flag, not the rendering.
-		if len(capturedOptions) == 0 {
-			// emitBubble, NOT emitCapturedAsBubble. The near-duplicate guard is
-			// right for a REPLY (a repeat is noise) and catastrophic for an ASK:
-			// the model routinely streams a lead-in ("Several things are
-			// ambiguous:") and then captures a question that BEGINS with those
-			// same words, which scores as a duplicate on longest-common-prefix
-			// and drops the entire ask. AwaitingUserConfirm is still set below,
-			// so the turn ended parked on a question the user was never shown —
-			// a lead-in, a colon, and nothing. Live, in Guides. A repeated
-			// sentence is a cosmetic cost; a swallowed question is a dead turn.
-			emitBubble(capturedQuest)
-			if t.session != nil {
-				t.session.AwaitingUserConfirm = true
-			}
-			return nil, capturedQuest, "", nil
-		}
-		// With options, the card is the whole point: click-to-choose.
-		t.sse.Send(map[string]any{
-			"kind":     "block",
-			"type":     "ui_ask",
-			"id":       fmt.Sprintf("ask-%d", time.Now().UnixNano()),
-			"question": capturedQuest,
-			"options":  capturedOptions,
-			"multi":    capturedMulti,
-		})
-		// Mark this session as awaiting user confirmation. Gated tools
-		// (agent CRUD) will fire on the NEXT user turn after this
-		// pause — without this flag, those tools refuse to run.
-		if t.session != nil {
-			t.session.AwaitingUserConfirm = true
-		}
-		return nil, capturedQuest, "", nil
-	}
-	if len(capturedSteps) > 0 {
-		// Plan_set's pre-amble narration already streamed; the plan
-		// card will render below. Nothing further to emit here.
-		return capturedSteps, "", "", nil
-	}
-	if capturedReply != "" {
-		emitCapturedAsBubble(capturedReply)
-		return nil, "", capturedReply, nil
-	}
-	if resp != nil && strings.TrimSpace(resp.Content) != "" {
-		// Implicit respond_directly path — the LLM streamed text in
-		// its final round but didn't call any control tool. The
-		// per-round finalizer already finalized that bubble; we
-		// just need a clean copy for the persisted history.
-		clean := strings.TrimSpace(StripToolCallMarkup(resp.Content))
-		// Emit unconditionally and let emitCapturedAsBubble's near-duplicate
-		// check decide whether to actually show it. The old guard ("nothing was
-		// finalized this turn") was too coarse: the forced-final-answer rescue
-		// calls T.LLM.Chat NON-streaming (core/agent_loop.go), so its content was
-		// never streamed — but if ANY mid-turn narration bubble rendered first,
-		// lastFinalizedText was non-empty and the guard dropped a brand-new final
-		// synthesis from the LIVE path while still persisting it (visible in
-		// history, blank on screen). emitCapturedAsBubble already suppresses only
-		// a TRUE near-duplicate of the last streamed bubble, so the normal
-		// streamed-then-rescued repeat is still deduped, and a genuinely different
-		// final answer now renders as its own bubble.
-		emitCapturedAsBubble(clean)
-		return nil, "", clean, nil
-	}
-	// No content anywhere. If the loop ran out of its round budget (rather
-	// than ending naturally or being deliberately silenced via stay_silent,
-	// which returns from inside the loop without HitRoundCap), don't leave
-	// the user staring at a blank turn — say so explicitly so they can narrow
-	// the ask or retry instead of assuming the agent is broken. This is the
-	// "ran out of turns, got nothing back" failure (common for retrieval-heavy
-	// agents that exhaust rounds mid-investigation).
-	if resp != nil && resp.HitRoundCap {
-		t.turnDiag("round-cap", "This turn ran out of worker rounds before finishing — raise the round limit or narrow the ask.")
-		msg := "I ran out of working rounds for this turn before I could finish, and didn't have a partial answer to show. Try narrowing the question, or ask me to continue and I'll pick up from here."
-		// Same as the resp.Content path above: gate on the near-duplicate check,
-		// not a coarse "already rendered something" boolean, so this shows even
-		// after a mid-turn narration bubble.
-		emitCapturedAsBubble(msg)
-		return nil, "", msg, nil
-	}
-	// Nothing captured and nothing said. Reaching here with a loop error means
-	// the error was DROPPED by the guard above, which only reports when neither
-	// context is still good — and an LLM that cannot be reached is precisely the
-	// case that hangs until the turn's deadline and then fails. So the one
-	// failure a user is most likely to hit was the one that returned no content
-	// and no error: the thread kept their message, grew no reply, and the
-	// composer re-enabled. Indistinguishable from being ignored.
-	//
-	// A deliberate cancel is not a failure and stays quiet — the caller already
-	// reports that in its own words.
-	if loopErr != nil && !errors.Is(t.ctx.Err(), context.Canceled) {
-		t.turnDiag("llm-unreachable", "The model could not be reached for this turn: "+loopErr.Error())
-		return nil, "", "", loopErr
-	}
-	// No error, no content, no cancel. stay_silent returns from inside the loop
-	// and never lands here, so this is a turn that produced nothing for a reason
-	// nobody recorded. Say so rather than rendering a blank: the round-cap
-	// branch above already sets that precedent, and a silent turn reads as the
-	// assistant ignoring the request.
-	if t.ctx.Err() == nil {
-		t.turnDiag("empty-turn", "This turn produced no reply and reported no error.")
-		return nil, "", "", fmt.Errorf("the turn finished without producing a reply")
-	}
-	return nil, "", "", nil
 }
 
 func plural(n int) string {
