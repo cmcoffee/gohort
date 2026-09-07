@@ -133,157 +133,14 @@ func ServeDashboard(addr string) error {
 		return apps[i].name < apps[j].name
 	})
 
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
-			http.NotFound(w, r)
-			return
-		}
-		visible := make([]dashApp, 0, len(apps))
-		for _, a := range apps {
-			if ra, ok := a.app.(WebAppRestricted); ok && ra.WebRestricted(r) {
-				continue
-			}
-			// Per-user app access (skip admin app, it has its own gating).
-			if a.path != "/admin" && !UserHasAppAccess(r, a.path) {
-				continue
-			}
-			visible = append(visible, a)
-		}
-		// Pull dynamic cards (e.g. one-per-exposed-agent) from any
-		// WebApp that implements DashboardCardSource. We walk the
-		// original apps slice (visible OR not) because a source may
-		// be hidden itself (WebHidden) yet still contribute cards —
-		// the apps/agents directory is the canonical case.
-		for _, a := range apps {
-			src, ok := a.app.(DashboardCardSource)
-			if !ok {
-				continue
-			}
-			for _, c := range src.DashboardCards(r) {
-				visible = append(visible, dashApp{
-					name:  c.Name,
-					desc:  c.Desc,
-					path:  c.Path,
-					order: c.Order,
-					app:   nil, // no underlying WebApp; live-view lookups skip it
-				})
-			}
-		}
-		// Stable re-sort so dynamic cards land in their declared order.
-		sort.Slice(visible, func(i, j int) bool {
-			oi, oj := visible[i].order, visible[j].order
-			if oi == 0 {
-				if o, ok := visible[i].app.(WebAppOrder); ok {
-					oi = o.WebOrder()
-				} else {
-					oi = 50
-				}
-			}
-			if oj == 0 {
-				if o, ok := visible[j].app.(WebAppOrder); ok {
-					oj = o.WebOrder()
-				} else {
-					oj = 50
-				}
-			}
-			if oi != oj {
-				return oi < oj
-			}
-			return visible[i].name < visible[j].name
-		})
-		serve_dashboard(w, r, visible)
-	})
-
-	// Global live view endpoint for the dashboard.
-	//
-	// Deep links are gated HERE rather than in the client: whether this
-	// viewer may re-enter the owning app is a server-side fact (per-user
-	// grants + the app's own WebRestricted), and the browser has no
-	// business guessing it. An entry the viewer can't follow gets its
-	// url/path cleared, which is exactly the signal the live pill reads
-	// to fall back to the Monitor.
-	mux.HandleFunc("/api/live", func(w http.ResponseWriter, r *http.Request) {
-		entries := AllLiveSessions()
-		viewer := AuthCurrentUser(r)
-		for i := range entries {
-			// Label masking runs FIRST and unconditionally — it is about who
-			// the work belongs to, not about whether this viewer can navigate
-			// to it. The access checks below only decide whether the row gets
-			// a link; an entry with no way back still renders its label.
-			entries[i].Label = entries[i].MaskedLabel(viewer)
-			entries[i].applyOwnerDestination(viewer)
-			prefix := liveEntryAppPath(entries[i])
-			if prefix == "" {
-				continue // offers no way back; already Monitor-only
-			}
-			if !userCanReachApp(r, apps, prefix) {
-				entries[i].URL, entries[i].Path = "", ""
-				continue
-			}
-			entries[i].Href = entries[i].ResolveHref()
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(entries)
-	})
-
-	// Admin-gated pprof — live runtime introspection WITHOUT restarting. The
-	// key one for diagnosing a hang ("a run shows running but nothing is
-	// happening — no GPU, no tool, no output"): GET /debug/pprof/goroutine?debug=2
-	// dumps every goroutine's stack, which names the wedged handler / blocked
-	// channel in seconds instead of an elimination exercise. Gated to admins on
-	// top of the AuthMiddleware login, since pprof exposes internal state.
-	mux.HandleFunc("/debug/pprof/", func(w http.ResponseWriter, r *http.Request) {
-		if AuthDB == nil || !AuthIsAdmin(AuthDB(), r) {
-			http.Error(w, "admin only", http.StatusForbidden)
-			return
-		}
-		switch strings.TrimPrefix(r.URL.Path, "/debug/pprof/") {
-		case "cmdline":
-			httppprof.Cmdline(w, r)
-		case "profile":
-			httppprof.Profile(w, r)
-		case "symbol":
-			httppprof.Symbol(w, r)
-		case "trace":
-			httppprof.Trace(w, r)
-		default:
-			httppprof.Index(w, r) // index + named profiles (goroutine, heap, ...)
-		}
-	})
-
-	// Persistent notify preference: GET returns it, POST toggles and persists.
-	mux.HandleFunc("/api/notify-preference", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		username := AuthCurrentUser(r)
-		if username == "" || AuthDB == nil {
-			json.NewEncoder(w).Encode(map[string]bool{"notify": false})
-			return
-		}
-		db := AuthDB()
-		if r.Method == http.MethodPost {
-			var req struct {
-				Notify bool `json:"notify"`
-			}
-			json.NewDecoder(r.Body).Decode(&req)
-			AuthSetNotifyDefault(db, username, req.Notify)
-			json.NewEncoder(w).Encode(map[string]bool{"notify": req.Notify})
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]bool{"notify": AuthGetNotifyDefault(db, username)})
-	})
-
-	// Per-request access flags. Apps implement WebAppAccess to expose
-	// named boolean flags (e.g. "techwriter": true/false).
-	mux.HandleFunc("/api/access", func(w http.ResponseWriter, r *http.Request) {
-		flags := make(map[string]bool)
-		for _, a := range apps {
-			if aa, ok := a.app.(WebAppAccess); ok {
-				flags[aa.WebAccessKey()] = aa.WebAccessCheck(r)
-			}
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(flags)
-	})
+	// The dashboard's own endpoints; each handler is documented where it is
+	// defined, below ServeDashboard.
+	host := dashboardHost{apps: apps}
+	mux.HandleFunc("/", host.handleRoot)
+	mux.HandleFunc("/api/live", host.handleLive)
+	mux.HandleFunc("/debug/pprof/", handlePprof)
+	mux.HandleFunc("/api/notify-preference", handleNotifyPreference)
+	mux.HandleFunc("/api/access", host.handleAccess)
 
 	// Mount the shared declarative-UI runtime (CSS + JS at /_ui/*).
 	// Apps that render via core/ui depend on these endpoints — register
@@ -408,6 +265,168 @@ func ServeDashboard(addr string) error {
 	// redirects and error pages).
 	handler = securityHeadersMiddleware(handler)
 	return ListenAndServeTLS(addr, handler)
+}
+
+// dashboardHost serves the dashboard's own endpoints: the app cards, the
+// global live view and the per-request access flags all read the apps the
+// dashboard was built with, so they hang off one value rather than closing
+// over a local of ServeDashboard.
+type dashboardHost struct {
+	apps []dashApp
+}
+
+// handleRoot is the dashboard page: the app cards this viewer may see plus
+// the dynamic cards any DashboardCardSource contributes, in declared order.
+func (d dashboardHost) handleRoot(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	visible := make([]dashApp, 0, len(d.apps))
+	for _, a := range d.apps {
+		if ra, ok := a.app.(WebAppRestricted); ok && ra.WebRestricted(r) {
+			continue
+		}
+		// Per-user app access (skip admin app, it has its own gating).
+		if a.path != "/admin" && !UserHasAppAccess(r, a.path) {
+			continue
+		}
+		visible = append(visible, a)
+	}
+	// Pull dynamic cards (e.g. one-per-exposed-agent) from any
+	// WebApp that implements DashboardCardSource. We walk the
+	// original d.apps slice (visible OR not) because a source may
+	// be hidden itself (WebHidden) yet still contribute cards —
+	// the d.apps/agents directory is the canonical case.
+	for _, a := range d.apps {
+		src, ok := a.app.(DashboardCardSource)
+		if !ok {
+			continue
+		}
+		for _, c := range src.DashboardCards(r) {
+			visible = append(visible, dashApp{
+				name:  c.Name,
+				desc:  c.Desc,
+				path:  c.Path,
+				order: c.Order,
+				app:   nil, // no underlying WebApp; live-view lookups skip it
+			})
+		}
+	}
+	// Stable re-sort so dynamic cards land in their declared order.
+	sort.Slice(visible, func(i, j int) bool {
+		oi, oj := visible[i].order, visible[j].order
+		if oi == 0 {
+			if o, ok := visible[i].app.(WebAppOrder); ok {
+				oi = o.WebOrder()
+			} else {
+				oi = 50
+			}
+		}
+		if oj == 0 {
+			if o, ok := visible[j].app.(WebAppOrder); ok {
+				oj = o.WebOrder()
+			} else {
+				oj = 50
+			}
+		}
+		if oi != oj {
+			return oi < oj
+		}
+		return visible[i].name < visible[j].name
+	})
+	serve_dashboard(w, r, visible)
+}
+
+// handleLive is the global live view. Deep links are gated HERE rather than
+// in the client: whether this viewer may re-enter the owning app is a
+// server-side fact (per-user grants + the app's own WebRestricted), and the
+// browser has no business guessing it. An entry the viewer can't follow gets
+// its url/path cleared, which is exactly the signal the live pill reads to
+// fall back to the Monitor.
+func (d dashboardHost) handleLive(w http.ResponseWriter, r *http.Request) {
+	entries := AllLiveSessions()
+	viewer := AuthCurrentUser(r)
+	for i := range entries {
+		// Label masking runs FIRST and unconditionally — it is about who
+		// the work belongs to, not about whether this viewer can navigate
+		// to it. The access checks below only decide whether the row gets
+		// a link; an entry with no way back still renders its label.
+		entries[i].Label = entries[i].MaskedLabel(viewer)
+		entries[i].applyOwnerDestination(viewer)
+		prefix := liveEntryAppPath(entries[i])
+		if prefix == "" {
+			continue // offers no way back; already Monitor-only
+		}
+		if !userCanReachApp(r, d.apps, prefix) {
+			entries[i].URL, entries[i].Path = "", ""
+			continue
+		}
+		entries[i].Href = entries[i].ResolveHref()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(entries)
+}
+
+// handlePprof is admin-gated pprof — live runtime introspection WITHOUT
+// restarting. The key one for diagnosing a hang ("a run shows running but
+// nothing is happening — no GPU, no tool, no output"):
+// GET /debug/pprof/goroutine?debug=2 dumps every goroutine's stack, which
+// names the wedged handler / blocked channel in seconds instead of an
+// elimination exercise. Gated to admins on top of the AuthMiddleware login,
+// since pprof exposes internal state.
+func handlePprof(w http.ResponseWriter, r *http.Request) {
+	if AuthDB == nil || !AuthIsAdmin(AuthDB(), r) {
+		http.Error(w, "admin only", http.StatusForbidden)
+		return
+	}
+	switch strings.TrimPrefix(r.URL.Path, "/debug/pprof/") {
+	case "cmdline":
+		httppprof.Cmdline(w, r)
+	case "profile":
+		httppprof.Profile(w, r)
+	case "symbol":
+		httppprof.Symbol(w, r)
+	case "trace":
+		httppprof.Trace(w, r)
+	default:
+		httppprof.Index(w, r) // index + named profiles (goroutine, heap, ...)
+	}
+}
+
+// handleNotifyPreference is the persistent notify preference: GET returns
+// it, POST toggles and persists.
+func handleNotifyPreference(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	username := AuthCurrentUser(r)
+	if username == "" || AuthDB == nil {
+		json.NewEncoder(w).Encode(map[string]bool{"notify": false})
+		return
+	}
+	db := AuthDB()
+	if r.Method == http.MethodPost {
+		var req struct {
+			Notify bool `json:"notify"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		AuthSetNotifyDefault(db, username, req.Notify)
+		json.NewEncoder(w).Encode(map[string]bool{"notify": req.Notify})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]bool{"notify": AuthGetNotifyDefault(db, username)})
+}
+
+// handleAccess is the per-request access flags. Apps implement WebAppAccess
+// to expose named boolean flags (e.g. "techwriter": true/false).
+func (d dashboardHost) handleAccess(w http.ResponseWriter, r *http.Request) {
+	flags := make(map[string]bool)
+	for _, a := range d.apps {
+		if aa, ok := a.app.(WebAppAccess); ok {
+			flags[aa.WebAccessKey()] = aa.WebAccessCheck(r)
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(flags)
 }
 
 // Dated is the minimal interface a history record must satisfy.
