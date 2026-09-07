@@ -2813,7 +2813,25 @@ func (lr *loopRun) interimGuardrail() loopAction {
 	return actNone
 }
 
+// planToolWork turns the round's tool calls into the work list the dispatcher
+// runs: reset the round's tool state, plan each call through the guards,
+// apply the abort set, then the single-fire and serial rules. Each phase is a
+// method; the first that ends the round says so.
 func (lr *loopRun) planToolWork() loopAction {
+	for _, phase := range []func() loopAction{
+		lr.toolRoundSetup,
+		lr.toolRoundPlanCalls,
+		lr.toolRoundAbort,
+		lr.toolRoundSingleFire,
+	} {
+		if act := phase(); act != actNone {
+			return act
+		}
+	}
+	return actNone
+}
+
+func (lr *loopRun) toolRoundSetup() loopAction {
 	// Execute tool calls and collect results.
 	// Independent calls run in parallel; confirmable tools are
 	// checked serially first to avoid concurrent prompts.
@@ -2889,6 +2907,10 @@ func (lr *loopRun) planToolWork() loopAction {
 	// model's own prose is deliberately absent — that is where an invented
 	// id is written, and treating it as a source would launder one.
 	lr.rs.knownIDs = collectKnownIDs(lr.systemPrompt, lr.history)
+	return actNone
+}
+
+func (lr *loopRun) toolRoundPlanCalls() loopAction {
 	for i, tc := range lr.rs.resp.ToolCalls {
 		if i >= maxToolCallsPerRound {
 			lr.rs.results[i] = ToolResult{ID: tc.ID, Content: fmt.Sprintf("Error: round batch cap — a single round may fire at most %d tool calls; this call (#%d) was dropped. Use the results you already have, or continue next round with a SMALLER, deliberate batch.", maxToolCallsPerRound, i+1), IsError: true}
@@ -3096,7 +3118,10 @@ func (lr *loopRun) planToolWork() loopAction {
 		}
 		lr.rs.work = append(lr.rs.work, toolWork{index: i, tc: tc, handler: handler, sig: sig, sendKey: sendKey})
 	}
+	return actNone
+}
 
+func (lr *loopRun) toolRoundAbort() loopAction {
 	// RoundAbortTools: when a control tool (ask_user, respond_directly,
 	// plan_set, …) is present in the batch, keep only the FIRST such
 	// tool and drop everything else with a SKIPPED notice. The loop
@@ -3134,7 +3159,10 @@ func (lr *loopRun) planToolWork() loopAction {
 			Debug("[agent_loop] round aborted by control tool %q — dropped %d other call(s)", abortName, len(lr.rs.resp.ToolCalls)-1)
 		}
 	}
+	return actNone
+}
 
+func (lr *loopRun) toolRoundSingleFire() loopAction {
 	// Single-fire enforcement. Two sources, processed uniformly:
 	//   1. cfg.SingleFireGroups — explicit cross-tool groups
 	//      (e.g. {find_image, fetch_image, generate_image} all
