@@ -108,7 +108,12 @@ const (
 	// gave validation (two files: the stage list and the reference checks)
 	// and the store their own. Its eleven topic-named tests could not merge
 	// onto a 1,551-line stem without passing the test-file cap; they can now.
-	coreFileCeiling = 196
+	//
+	// 196 -> 199 (v0.6.607): machine.go, 1,059 lines, kept the state and the
+	// walk and gave the phase runner, the prompt rendering and the routing
+	// (reach, tools, think, tier, depth) their own files, so the routing test
+	// has the stem it was named for.
+	coreFileCeiling = 199
 
 	// coreExportCeiling is the number of exported top-level symbols — funcs,
 	// types, vars, consts. Methods are excluded because they are not what

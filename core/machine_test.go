@@ -1,17 +1,267 @@
 package core
 
+import (
+	"context"
+	"encoding/json"
+	"github.com/cmcoffee/snugforge/kvlite"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+)
+
+// The machine recipes shipped in extras/ are the first thing anyone
+// pastes at /api/machines. A shipped example that 400s is worse than no
+// example, so they are validated here rather than trusted.
+
+func TestExtrasMachineRecipesValidate(t *testing.T) {
+	paths, err := filepath.Glob("../extras/*.machine.json")
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	if len(paths) == 0 {
+		t.Skip("no machine recipes in extras/")
+	}
+	for _, path := range paths {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read: %v", err)
+			}
+			var def MachineDef
+			if err := json.Unmarshal(raw, &def); err != nil {
+				t.Fatalf("not valid JSON: %v", err)
+			}
+			if err := def.Validate(); err != nil {
+				t.Fatalf("does not validate:\n%v", err)
+			}
+			// A recipe with no description is a row in the picker that
+			// says nothing about when to reach for it.
+			if strings.TrimSpace(def.Description) == "" {
+				t.Error("a shipped recipe should describe when to use it")
+			}
+			// And it should draw: the graph adapter is where a malformed
+			// edge (a guard pointing nowhere, a router with no targets)
+			// shows up as a picture nobody can read.
+			if svg := def.Graph().SVG(nil); !strings.HasPrefix(svg, "<svg ") {
+				t.Error("recipe does not render")
+			}
+			// Nothing to REPAIR. Advice is deliberately not checked
+			// here: the investigation recipe ships carrying one on
+			// purpose, because the tools its hunch step should search
+			// with are named differently in every deployment, so the
+			// description tells the importer to tick them and the
+			// finding is the reminder (see the test below, and v0.6.171).
+			// A mechanical defect is never intentional in the same way —
+			// a reference to a step that is gone means the recipe was
+			// edited by hand and not re-read.
+			if fix := def.Repairs(RepairAll); len(fix) > 0 {
+				t.Errorf("the recipe has mechanical defects:\n- %s",
+					strings.Join(RepairLines(fix), "\n- "))
+			}
+		})
+	}
+}
+
+// The investigation machine is the one with a real job (see
+// docs/investigation.md). Its shape IS the design: a hypothesis is formed
+// in one phase and TESTED in another, against evidence the first phase
+// had to name. Collapse those and you get an agent that confirms its own
+// hunch from the source that produced it — which reads as thorough and
+// is circular.
+func TestInvestigationRecipeSeparatesHunchFromVerification(t *testing.T) {
+	raw, err := os.ReadFile("../extras/investigation.machine.json")
+	if err != nil {
+		t.Skip("recipe not present")
+	}
+	var def MachineDef
+	if err := json.Unmarshal(raw, &def); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	// The front router: not every turn has something to explain.
+	triage, ok := def.Phase("triage")
+	if !ok || triage.RoutesBy() == "" {
+		t.Fatal("triage must route — a question with no observation skips the hypothesis")
+	}
+	if triage.Resident {
+		t.Error("triage decides and hands off; it does not hold the conversation")
+	}
+
+	// The hypothesis phase must hand forward what would SETTLE it, not
+	// just what it thinks. That is the field the verifying phase aims at,
+	// and without it verification has no target and drifts back to
+	// re-reading the observation.
+	hunch, ok := def.Phase("hunch")
+	if !ok {
+		t.Fatal("no hunch phase")
+	}
+	declared := map[string]bool{}
+	for _, f := range hunch.Output {
+		declared[f.Name] = true
+	}
+	for _, want := range []string{"hypothesis", "confirms_if", "refutes_if", "look_where"} {
+		if !declared[want] {
+			t.Errorf("hunch must declare %q — verification needs a target, not an opinion", want)
+		}
+	}
+	if hunch.Resident {
+		t.Error("hunch must be transient: forming a hypothesis is not where a turn ends")
+	}
+	if hunch.Think != "on" {
+		t.Error("committing to one explanation is judgment, not a transform")
+	}
+
+	// And verification has to be where the conversation lives, because
+	// that is the part a person argues with.
+	verify, ok := def.Phase("verify")
+	if !ok || !verify.Resident {
+		t.Fatal("verify must be the resident phase")
+	}
+	if verify.GuardTo != "triage" {
+		t.Error("a new problem should re-triage rather than inherit this hypothesis")
+	}
+	// It must be told the honest third outcome exists. Supported and
+	// refuted are easy; "the evidence does not settle it" is the one an
+	// agent will otherwise round into a conclusion.
+	if !strings.Contains(verify.Prompt, "UNSETTLED") {
+		t.Error("verify must be able to report that the evidence settles nothing")
+	}
+	if !strings.Contains(verify.Prompt, "REFUTED") {
+		t.Error("verify must be told to say so plainly when the hunch is wrong")
+	}
+
+	// The no-observation path exists and is its own resident phase.
+	answer, ok := def.Phase("answer")
+	if !ok || !answer.Resident {
+		t.Fatal("answer must be a resident phase for questions with no observation")
+	}
+}
+
+// The starter is what someone sees when they ask for a new machine. It
+// must be a machine the server would accept — an editor that opens on a
+// definition the save path rejects teaches the wrong lesson about the
+// whole feature in the first ten seconds.
+func TestStarterMachineValidatesAndTeachesTheShape(t *testing.T) {
+	st := StarterMachine()
+	if err := st.Validate(); err != nil {
+		t.Fatalf("the starter does not validate:\n%v", err)
+	}
+	// It has to demonstrate the distinction, or it teaches nothing: one
+	// phase that hands off, one the conversation lives in.
+	var transient, resident int
+	for _, p := range st.Phases {
+		if p.Resident {
+			resident++
+			continue
+		}
+		transient++
+		if p.Next == "" && p.NextFrom == "" {
+			t.Errorf("starter phase %q is transient and hands off nowhere", p.Name)
+		}
+		if len(p.Output) == 0 {
+			t.Errorf("starter phase %q should show what a handoff looks like", p.Name)
+		}
+	}
+	if transient == 0 || resident == 0 {
+		t.Errorf("the starter should show both kinds of phase, got %d transient %d resident", transient, resident)
+	}
+	// And it should draw, since the first thing someone may do is look at
+	// it rather than read it.
+	if svg := st.Graph().SVG(nil); !strings.HasPrefix(svg, "<svg ") {
+		t.Error("the starter does not render")
+	}
+}
+
+// Advice is for what is worth fixing but must not block a save. The rule
+// that prompted it: a phase declaring fields AND telling the model to
+// emit JSON — the author hand-rolling the mechanism the fields already
+// are, in a prompt that then reads like a schema instead of a job.
+func TestAdviceCatchesAHandRolledJSONPrompt(t *testing.T) {
+	def := MachineDef{
+		Name: "x", Start: "split",
+		Phases: []MachinePhase{
+			{Name: "split", Next: "answer",
+				Prompt: "Analyze the user's input '{input}' and identify its core components. " +
+					"Present them as a JSON object with two fields. Do not include any other text in your response.",
+				Output: []PipelineField{{Name: "question_parts", Type: "list"}}},
+			{Name: "answer", Prompt: "answer", Resident: true},
+		},
+	}
+	adv := def.Advice()
+	if len(adv) != 1 {
+		t.Fatalf("expected one piece of advice, got %v", adv)
+	}
+	if !strings.Contains(adv[0], "declares") || !strings.Contains(adv[0], "say what to FIND") {
+		t.Errorf("advice should explain what to do instead: %s", adv[0])
+	}
+	// It must NOT be a problem: a heuristic that reads wording has no
+	// business refusing somebody's save.
+	if err := def.Validate(); err != nil {
+		t.Errorf("advice must not block a save: %v", err)
+	}
+
+	// A phase whose SUBJECT is JSON but which declares nothing is left
+	// alone — the instruction is unusual there, not redundant.
+	plain := MachineDef{Name: "y", Start: "read", Phases: []MachinePhase{
+		{Name: "read", Resident: true, Prompt: "Explain this JSON object to the user in plain words."},
+	}}
+	if adv := plain.Advice(); len(adv) != 0 {
+		t.Errorf("a phase declaring no fields should not be advised: %v", adv)
+	}
+
+	// And a well-written phase gets nothing.
+	good := MachineDef{Name: "z", Start: "split", Phases: []MachinePhase{
+		{Name: "split", Next: "answer", Prompt: "Work out what the person is actually asking, and say where it came from.",
+			Output: []PipelineField{{Name: "asked", Type: "string"}}},
+		{Name: "answer", Prompt: "answer", Resident: true},
+	}}
+	if adv := good.Advice(); len(adv) != 0 {
+		t.Errorf("a clean phase should draw no advice: %v", adv)
+	}
+}
+
+// The recipe ships with hunch told to go and look — which needs tools
+// ticked in the editor, because a step that passes on reaches only what
+// it names. The advisor says so, and the recipe's own description says
+// so: an example whose last mile is invisible teaches the wrong thing.
+func TestInvestigationRecipeSaysHunchNeedsItsTools(t *testing.T) {
+	raw, err := os.ReadFile("../extras/investigation.machine.json")
+	if err != nil {
+		t.Skip("recipe not present")
+	}
+	var def MachineDef
+	if err := json.Unmarshal(raw, &def); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	// It used to have a last mile: tick the hunch step's tools, or it
+	// could reason but not look. A step that names nothing now inherits
+	// the agent's catalog, so the recipe runs as shipped and says what it
+	// searches with instead of what you must do first.
+	if strings.Contains(def.Description, "tick the tools") {
+		t.Error("the recipe still describes the last mile that no longer exists")
+	}
+	advice := strings.Join(def.Advice(), "\n")
+	if advice != "" {
+		t.Errorf("the shipped recipe should need no advice: %v", def.Advice())
+	}
+	// triage only decides, and says so with its reach rather than by
+	// being silently tool-less.
+	for _, ph := range def.Phases {
+		if ph.Name == "triage" && PhaseReach(ph) != ReachNone {
+			t.Error("triage should declare that it reaches nothing")
+		}
+		if ph.Name == "hunch" && PhaseReach(ph) != ReachAll {
+			t.Error("hunch searches with whatever the agent carries")
+		}
+	}
+}
+
 // Tests for session-resident phase machines: the validator, the turn
 // driver, state templating, and the pinned system block. No LLM and no
 // store — the driver takes a PhaseRunner callback, so the whole walk is
 // exercised against canned replies.
-
-import (
-	"context"
-	"strings"
-	"testing"
-
-	"github.com/cmcoffee/snugforge/kvlite"
-)
 
 // --- fixtures ---------------------------------------------------------
 
@@ -953,5 +1203,259 @@ func TestPhaseBlockNamesToolScope(t *testing.T) {
 		MachinePhase{Name: "gather"}, MachineState{}, PhaseVars{})
 	if strings.Contains(open, "Tools in this phase") {
 		t.Errorf("unscoped phase claimed a tool scope:\n%s", open)
+	}
+}
+
+// A machine that RUNS rather than converses: no step waits for a person,
+// the walk keeps going until one hands off nowhere, and that step's
+// result is the answer. Same driver, same blackboard, same breadcrumbs as
+// a turn; what changes is where it stops and what the stop means.
+
+// reportMachine is the shape this mode exists for: several steps of work
+// and nobody waiting. It ends at "write", which hands off nowhere.
+func reportMachine() MachineDef {
+	return MachineDef{
+		Name: "nightly", Start: "gather", Unattended: true,
+		Phases: []MachinePhase{
+			{Name: "gather", Desc: "Collect what changed.", Prompt: "Gather.", Next: "judge",
+				Output: []PipelineField{{Name: "items", Type: FieldList}}},
+			{Name: "judge", Desc: "Decide what matters.", Prompt: "Judge {state:gather.items}.", Next: "write"},
+			{Name: "write", Desc: "Write it up.", Prompt: "Write it."},
+		},
+	}
+}
+
+func TestUnattendedRunWalksToTheTerminalStep(t *testing.T) {
+	run, calls, _ := scriptedRunner(map[string]string{
+		"gather": `{"items": ["a", "b"]}`,
+		"judge":  "b matters",
+		"write":  "The report.",
+	})
+	notes, _, _ := collectNotes()
+	cur := &MachineCursor{}
+
+	final, text, err := new(AppCore).RunUnattended(context.Background(), reportMachine(), cur,
+		MachineTurn{Input: "go"}, run, notes)
+	if err != nil {
+		t.Fatalf("RunUnattended: %v", err)
+	}
+	if final.Name != "write" {
+		t.Errorf("finished at %q, want the step that hands off nowhere", final.Name)
+	}
+	if text != "The report." {
+		t.Errorf("result = %q, want the terminal step's own output", text)
+	}
+	// Every step ran, including the terminal one. This is the half of the
+	// contract that differs from a turn: AdvanceMachine hands the resident
+	// phase back UNRUN for the host to run as the reply.
+	if got := strings.Join(*calls, ","); got != "gather,judge,write" {
+		t.Errorf("calls = %q, want every step run once, in order", got)
+	}
+	// The blackboard is the run's working memory and belongs to the caller.
+	if len(cur.State) != 3 {
+		t.Errorf("state holds %d step(s), want all three", len(cur.State))
+	}
+	if items, ok := cur.State["gather"].Fields["items"].([]any); !ok || len(items) != 2 {
+		t.Errorf("declared fields should land on the blackboard: %#v", cur.State["gather"].Fields)
+	}
+}
+
+// The conversational cap is a courtesy to somebody watching a cursor.
+// Applying it to a run would stop deep research at step four.
+func TestUnattendedRunIsNotHeldToTheConversationalCap(t *testing.T) {
+	// Eight steps, chained. More than MaxPhaseTransitions, far less than
+	// the run ceiling.
+	def := MachineDef{Name: "long", Start: "s1", Unattended: true}
+	replies := map[string]string{}
+	for i := 1; i <= 8; i++ {
+		ph := MachinePhase{Name: "s" + strconv.Itoa(i), Prompt: "work"}
+		if i < 8 {
+			ph.Next = "s" + strconv.Itoa(i+1)
+		}
+		def.Phases = append(def.Phases, ph)
+		replies[ph.Name] = "out" + strconv.Itoa(i)
+	}
+	run, calls, _ := scriptedRunner(replies)
+	notes, _, _ := collectNotes()
+
+	final, text, err := new(AppCore).RunUnattended(context.Background(), def, &MachineCursor{},
+		MachineTurn{Input: "go"}, run, notes)
+	if err != nil {
+		t.Fatalf("RunUnattended: %v", err)
+	}
+	if len(*calls) != 8 || final.Name != "s8" || text != "out8" {
+		t.Errorf("ran %d step(s), finished at %q with %q; want all eight", len(*calls), final.Name, text)
+	}
+}
+
+// A cycle is caught by the ceiling, and the ceiling reports rather than
+// returning a half-answer as though it were the answer.
+func TestUnattendedRunCeilingIsAnErrorWithItsPartialResult(t *testing.T) {
+	def := MachineDef{Name: "spin", Start: "a", Unattended: true, Phases: []MachinePhase{
+		{Name: "a", Prompt: "loop", Next: "b"},
+		{Name: "b", Prompt: "loop", Next: "a"},
+	}}
+	run, calls, _ := scriptedRunner(map[string]string{"a": "again", "b": "again"})
+	notes, kinds, _ := collectNotes()
+
+	_, text, err := new(AppCore).RunUnattended(context.Background(), def, &MachineCursor{},
+		MachineTurn{Input: "go"}, run, notes)
+	if err == nil {
+		t.Fatal("a run that never finished should say so")
+	}
+	if text == "" {
+		t.Error("the partial result should come back with the error, for a caller that would rather show something")
+	}
+	if len(*calls) != MaxUnattendedTransitions {
+		t.Errorf("ran %d step(s), want the ceiling %d", len(*calls), MaxUnattendedTransitions)
+	}
+	if !hasNote(*kinds, "machine_run_cap") {
+		t.Errorf("hitting the ceiling must leave a breadcrumb, got %v", *kinds)
+	}
+}
+
+// A step that waits for a person, in a run with nobody there, is a step
+// the walk enters and cannot leave. Validate reports it at save time;
+// this is what happens when the flag was flipped afterwards.
+func TestUnattendedRunRefusesAStepThatWaits(t *testing.T) {
+	def := MachineDef{Name: "mixed", Start: "work", Unattended: true, Phases: []MachinePhase{
+		{Name: "work", Prompt: "do", Next: "talk"},
+		{Name: "talk", Prompt: "chat", Resident: true},
+	}}
+	run, _, _ := scriptedRunner(map[string]string{"work": "done"})
+	notes, _, _ := collectNotes()
+
+	_, _, err := new(AppCore).RunUnattended(context.Background(), def, &MachineCursor{},
+		MachineTurn{Input: "go"}, run, notes)
+	if err == nil || !strings.Contains(err.Error(), "talk") {
+		t.Errorf("want an error naming the step that waits, got %v", err)
+	}
+}
+
+// The mode is opt-in on the definition, not inferred from its shape.
+func TestRunUnattendedRefusesAConversationalMachine(t *testing.T) {
+	run, _, _ := scriptedRunner(nil)
+	notes, _, _ := collectNotes()
+	_, _, err := new(AppCore).RunUnattended(context.Background(), triageMachine(), &MachineCursor{},
+		MachineTurn{Input: "hi"}, run, notes)
+	if err == nil || !strings.Contains(err.Error(), "not marked unattended") {
+		t.Errorf("want a refusal that names the reason, got %v", err)
+	}
+}
+
+// A conversation is unchanged by any of this.
+func TestConversationalWalkStillStopsAtTheResidentStep(t *testing.T) {
+	run, calls, _ := scriptedRunner(map[string]string{
+		"decompose": `{"parts": ["x"]}`,
+		"route":     `{"target": "answer"}`,
+	})
+	notes, _, _ := collectNotes()
+	cur := &MachineCursor{}
+
+	ph, err := new(AppCore).AdvanceMachine(context.Background(), triageMachine(), cur,
+		MachineTurn{Input: "hi"}, run, notes)
+	if err != nil {
+		t.Fatalf("AdvanceMachine: %v", err)
+	}
+	if ph.Name != "answer" {
+		t.Errorf("stopped at %q, want the resident step", ph.Name)
+	}
+	// And it is handed back UNRUN: the host runs it as the reply.
+	for _, c := range *calls {
+		if c == "answer" {
+			t.Error("the resident step must not be run by the walk")
+		}
+	}
+}
+
+// --- validation -------------------------------------------------------
+
+func TestUnattendedValidationInvertsTheResidentRule(t *testing.T) {
+	// A run with a step that waits.
+	withResident := reportMachine()
+	withResident.Phases = append(withResident.Phases, MachinePhase{Name: "chat", Prompt: "hi", Resident: true})
+	if !anyProblem(withResident.Problems(), "no step may wait") {
+		t.Errorf("a resident step in a run should be reported: %v", withResident.Problems())
+	}
+
+	// A run with nothing that finishes it.
+	noEnd := reportMachine()
+	noEnd.Phases[2].Next = "gather"
+	if !anyProblem(noEnd.Problems(), "no step finishes it") {
+		t.Errorf("a run with no terminal step should be reported: %v", noEnd.Problems())
+	}
+
+	// The ordinary run is clean.
+	if probs := reportMachine().Problems(); len(probs) != 0 {
+		t.Errorf("a well-formed run should have nothing outstanding: %v", probs)
+	}
+
+	// And a conversation still needs its resident step.
+	conv := reportMachine()
+	conv.Unattended = false
+	if !anyProblem(conv.Problems(), "no step waits for the person") {
+		t.Errorf("a conversation with no resident step should still be reported: %v", conv.Problems())
+	}
+}
+
+func anyProblem(probs []string, want string) bool {
+	for _, p := range probs {
+		if strings.Contains(p, want) {
+			return true
+		}
+	}
+	return false
+}
+
+// --- child runs -------------------------------------------------------
+
+// Depth travels on the CONTEXT, because a child runs through the host's
+// same PhaseRunner: the depth has to move with the call, or a child's
+// phases look exactly like a parent's and nothing stops the third level.
+func TestMachineDepthTravelsOnTheContext(t *testing.T) {
+	ctx := context.Background()
+	if got := MachineDepth(ctx); got != 0 {
+		t.Errorf("a top-level run is depth %d, want 0", got)
+	}
+	if got := MachineDepth(nil); got != 0 {
+		t.Errorf("a nil context should read as top level, got %d", got)
+	}
+	child := WithMachineDepth(ctx, MachineDepth(ctx)+1)
+	if got := MachineDepth(child); got != 1 {
+		t.Errorf("a child run is depth %d, want 1", got)
+	}
+	// One level of children is what the cap allows, so a child is already
+	// standing at it: this is the comparison the runner makes before it
+	// agrees to start another.
+	if MachineDepth(child) < MaxMachineDepth {
+		t.Errorf("a child at depth 1 is below the cap of %d, so nothing would stop a third level", MaxMachineDepth)
+	}
+	// The parent's own context is untouched, so two children of the same
+	// parent both start from the parent's depth rather than stacking.
+	if got := MachineDepth(ctx); got != 0 {
+		t.Errorf("deriving a child depth mutated the parent's context: %d", got)
+	}
+}
+
+// A child's result is the phase's result, so the phase's own Accumulates
+// carries it into the parent's working set. No second merge mechanism is
+// what makes the recursive case cheap.
+func TestAChildsResultFoldsIntoTheParentsWorkingSet(t *testing.T) {
+	parent := MachinePhase{
+		Name:        "fill_gap",
+		Output:      []PipelineField{{Name: "findings", Type: FieldList}},
+		Accumulates: []MachineAccumulator{{Name: "answers", From: "findings"}},
+	}
+	st := MachineState{"answers": {
+		Text:   "1. what we knew already",
+		Fields: map[string]any{AccumulatorItemsField: []any{"what we knew already"}},
+	}}
+	// What the child run came back with, decoded into the phase's fields
+	// exactly as any other phase's reply would be.
+	MachineDef{}.accumulate(parent, map[string]any{"findings": []any{"and what the child found"}}, st, nil)
+
+	items, _ := st["answers"].Fields[AccumulatorItemsField].([]any)
+	if len(items) != 2 || items[1] != "and what the child found" {
+		t.Errorf("a child's findings should land in the parent's list: %#v", items)
 	}
 }

@@ -902,7 +902,7 @@ func TestAStepsToolsGoThroughTheTurnsApprovalGate(t *testing.T) {
 
 	// And the core seam defaults to allow ONLY for callers with nobody
 	// to ask: a nil hook is the unattended pipeline's, not a machine's.
-	if !strings.Contains(readFileForTest(t, "../../core/machine.go"), "PhaseWorkerConfirm") {
+	if !strings.Contains(readFileForTest(t, "../../core/machine_phase.go"), "PhaseWorkerConfirm") {
 		t.Error("the host needs a way to supply its own hook")
 	}
 }
