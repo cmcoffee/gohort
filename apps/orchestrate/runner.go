@@ -147,6 +147,9 @@ type planRun struct {
 	orchStart time.Time
 	resp      *Response
 	loopErr   error
+
+	// cat is the catalog build in progress; see buildCatalog.
+	cat catalogState
 }
 
 // planSetDropThreshold is how many plan_set rejections in one turn drop the
@@ -631,58 +634,13 @@ func (pr *planRun) askUserFormToolDef() AgentToolDef {
 	}
 }
 
-func (pr *planRun) buildCatalog() error {
-	t := pr.t
-	catalogStart := time.Now()
-	Debug("[orchestrate.orch] runPlan: resolving worker tools")
-	// forOrchestrator=true — this is Builder's own chat-orchestrator
-	// round, NOT a worker step. The Builder branch in resolveWorkerTools
-	// returns the LEAN authoring catalog so Builder must decompose via
-	// plan_set instead of reaching for create_agent / add_tool / tool_def
-	// inline.
-	workerTools, workerNames, err := t.resolveWorkerTools(pr.sess, true)
-	if err != nil {
-		Debug("[orchestrate.orch] runPlan: resolveWorkerTools error: %v", err)
-		return fmt.Errorf("resolve tools: %w", err)
-	}
-	Debug("[orchestrate.orch] runPlan: resolved %d worker tools", len(workerTools))
-	// No per-turn classifier-trim. Every allowed tool on the agent
-	// is shipped to the LLM verbatim — the model's own attention
-	// disambiguates better than a cosine-similarity classifier ever
-	// did, and a stateless trim broke follow-ups like "get me another"
-	// (turn 1 used get_meme; turn 2's bare text scored a different tool
-	// higher and the LLM never saw get_meme). find_tools is still
-	// registered as the escape hatch for any future massive-catalog
-	// case (a 200-tool MCP plug-in); today's agents fit fine
-	// without trimming.
-	workerTools, workerNames = filterToolAuthoringWithoutFocus(workerTools, workerNames, t.session)
-	t.gateAgentCRUDTools(workerTools)
-	t.wrapToolsForActivity(pr.sess, workerTools, t.agent)
-	// Wrap control tools too so they emit cmd rows in the activity
-	// pane (transparency: user sees "plan_set was called" / "ask_user
-	// was called" alongside the rest of the orchestrator's tool use).
-	// Control tools have no attachment surface — pass nil sess.
-	// respond_directly was removed: it was an OPTIONAL terminator whose
-	// effect is identical to the implicit path (stream the reply text and
-	// end the round with no tool call, handled below where resp.Content is
-	// non-empty). Offering it alongside "just reply as text" invited the
-	// model to do BOTH — stream the answer AND call respond_directly with
-	// the same text — producing a double reply. Workers never had it
-	// (runWorkerStep builds its own catalog), so this is lead-path only.
-	controlTools := []AgentToolDef{pr.askUserToolDef(), pr.askUserFormToolDef()}
-	// One plan mechanism per agent. plan_set fans this turn out to fresh-context
-	// workers and ends the round; a TRACKED plan (AgentRecord.WorkPlan) is a
-	// durable checklist the agent works itself across turns. Offering both would
-	// leave the model deciding which kind of plan it meant on exactly the turns
-	// that are already hard. The framework's plan_set prompt block is gated on
-	// the same flag, so the persona cannot promise a tool that is not there.
-	if planTools := t.workPlanTools(); len(planTools) > 0 {
-		controlTools = append(controlTools, planTools...)
-		t.restoreWorkPlanCard()
-	} else {
-		controlTools = append(controlTools, pr.planSetToolDef())
-	}
-	t.wrapToolsForActivity(nil, controlTools, t.agent)
+// catalogState is what buildCatalog's phases hand each other.
+type catalogState struct {
+	catalogStart time.Time
+	workerTools  []AgentToolDef
+	workerNames  []string
+	err          error
+	controlTools []AgentToolDef
 	// Three orthogonal layers; each gates its own tool group:
 	//
 	//   - Knowledge (uploaded files, read-only): knowledge_search —
@@ -712,12 +670,98 @@ func (pr *planRun) buildCatalog() error {
 	// send_status, stay_silent/keep_going, load_tool, skills, the memory layers
 	// (Reference + Explicit + Graph), and cortex deliverables.
 	// Single source of truth so the web and channel catalogs can't drift.
-	var knowTools []AgentToolDef
-	knowTools = append(knowTools, t.frameworkConversationalTools(pr.sess)...)
+	knowTools         []AgentToolDef
+	directCustomTools []AgentToolDef
+	lazyCustomPrompt  string
+	allNames          []string
+}
+
+// buildCatalog assembles the tools the orchestrator round can call: the
+// worker tools, the control tools, the framework's conversational set, the
+// custom and attached tools, then the log line and prompt notices. Each
+// phase is a method on the run's catalogState; the first that fails stops.
+func (pr *planRun) buildCatalog() error {
+	for _, phase := range []func() error{
+		pr.catalogWorkerTools,
+		pr.catalogControlTools,
+		pr.catalogKnowTools,
+		pr.catalogAssemble,
+		pr.catalogLog,
+	} {
+		if err := phase(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (pr *planRun) catalogWorkerTools() error {
+	t := pr.t
+	pr.cat.catalogStart = time.Now()
+	Debug("[orchestrate.orch] runPlan: resolving worker tools")
+	// forOrchestrator=true — this is Builder's own chat-orchestrator
+	// round, NOT a worker step. The Builder branch in resolveWorkerTools
+	// returns the LEAN authoring catalog so Builder must decompose via
+	// plan_set instead of reaching for create_agent / add_tool / tool_def
+	// inline.
+	pr.cat.workerTools, pr.cat.workerNames, pr.cat.err = t.resolveWorkerTools(pr.sess, true)
+	if pr.cat.err != nil {
+		Debug("[orchestrate.orch] runPlan: resolveWorkerTools error: %v", pr.cat.err)
+		return fmt.Errorf("resolve tools: %w", pr.cat.err)
+	}
+	Debug("[orchestrate.orch] runPlan: resolved %d worker tools", len(pr.cat.workerTools))
+	// No per-turn classifier-trim. Every allowed tool on the agent
+	// is shipped to the LLM verbatim — the model's own attention
+	// disambiguates better than a cosine-similarity classifier ever
+	// did, and a stateless trim broke follow-ups like "get me another"
+	// (turn 1 used get_meme; turn 2's bare text scored a different tool
+	// higher and the LLM never saw get_meme). find_tools is still
+	// registered as the escape hatch for any future massive-catalog
+	// case (a 200-tool MCP plug-in); today's agents fit fine
+	// without trimming.
+	pr.cat.workerTools, pr.cat.workerNames = filterToolAuthoringWithoutFocus(pr.cat.workerTools, pr.cat.workerNames, t.session)
+	t.gateAgentCRUDTools(pr.cat.workerTools)
+	t.wrapToolsForActivity(pr.sess, pr.cat.workerTools, t.agent)
+	return nil
+}
+
+func (pr *planRun) catalogControlTools() error {
+	t := pr.t
+	// Wrap control tools too so they emit cmd rows in the activity
+	// pane (transparency: user sees "plan_set was called" / "ask_user
+	// was called" alongside the rest of the orchestrator's tool use).
+	// Control tools have no attachment surface — pass nil sess.
+	// respond_directly was removed: it was an OPTIONAL terminator whose
+	// effect is identical to the implicit path (stream the reply text and
+	// end the round with no tool call, handled below where resp.Content is
+	// non-empty). Offering it alongside "just reply as text" invited the
+	// model to do BOTH — stream the answer AND call respond_directly with
+	// the same text — producing a double reply. Workers never had it
+	// (runWorkerStep builds its own catalog), so this is lead-path only.
+	pr.cat.controlTools = []AgentToolDef{pr.askUserToolDef(), pr.askUserFormToolDef()}
+	// One plan mechanism per agent. plan_set fans this turn out to fresh-context
+	// workers and ends the round; a TRACKED plan (AgentRecord.WorkPlan) is a
+	// durable checklist the agent works itself across turns. Offering both would
+	// leave the model deciding which kind of plan it meant on exactly the turns
+	// that are already hard. The framework's plan_set prompt block is gated on
+	// the same flag, so the persona cannot promise a tool that is not there.
+	if planTools := t.workPlanTools(); len(planTools) > 0 {
+		pr.cat.controlTools = append(pr.cat.controlTools, planTools...)
+		t.restoreWorkPlanCard()
+	} else {
+		pr.cat.controlTools = append(pr.cat.controlTools, pr.planSetToolDef())
+	}
+	t.wrapToolsForActivity(nil, pr.cat.controlTools, t.agent)
+	return nil
+}
+
+func (pr *planRun) catalogKnowTools() error {
+	t := pr.t
+	pr.cat.knowTools = append(pr.cat.knowTools, t.frameworkConversationalTools(pr.sess)...)
 	// Host-app tools (e.g. a workbench's co-author "add_section") — supplied by
 	// the app that dispatched this turn, callable directly by the orchestrator.
 	if len(t.appTools) > 0 {
-		knowTools = append(knowTools, t.appTools...)
+		pr.cat.knowTools = append(pr.cat.knowTools, t.appTools...)
 	}
 	// compact_context — LLM-driven context management. Lets the model
 	// proactively discard the bodies of EARLIER tool results it has
@@ -725,7 +769,7 @@ func (pr *planRun) buildCatalog() error {
 	// verbose listing), instead of carrying them until the automatic
 	// budget compaction kicks in. Framework meta-tool: always available,
 	// not classifier-trimmed (it's in knowTools).
-	knowTools = append(knowTools, AgentToolDef{
+	pr.cat.knowTools = append(pr.cat.knowTools, AgentToolDef{
 		Tool: Tool{
 			Name:        "compact_context",
 			Description: "Free up context: discard the bodies of EARLIER tool results you've already read and no longer need — e.g. after judging a long smoke-test report, a big page fetch, or a verbose listing. Their bodies are replaced with a short marker (re-run the tool if you need the data again); the most recent result and the whole conversation stay intact. Call this at a natural breakpoint when you're carrying long tool outputs you're done with, to keep a long session from bloating its context. No arguments.",
@@ -741,12 +785,12 @@ func (pr *planRun) buildCatalog() error {
 	// (authored HTML sandboxed, or a same-origin page preview by url), and
 	// upserts the artifact onto the session (UIBlocks) so it survives
 	// reload. No Caps — display-only, so it also survives private mode.
-	knowTools = append(knowTools, t.showHTMLToolDef())
+	pr.cat.knowTools = append(pr.cat.knowTools, t.showHTMLToolDef())
 	// show_link — the navigation counterpart (preview_tool.go): a clickable
 	// link card in the transcript for "go here" moments — the app Builder
 	// just created, a settings page, an external console. Display-only
 	// like show_html, so it's ungated and always available.
-	knowTools = append(knowTools, t.showLinkToolDef())
+	pr.cat.knowTools = append(pr.cat.knowTools, t.showLinkToolDef())
 	// (skills + the memory layers now come from frameworkConversationalTools
 	// above; dispatch_to_worker stays unmounted — the LLM wasn't reaching for it
 	// reliably and the surface area diluted agent dispatch. Skills still
@@ -763,7 +807,7 @@ func (pr *planRun) buildCatalog() error {
 	// appealing. Mounting it everywhere would put a tool about guardrails in
 	// front of agents that have none, which is both noise and a hint.
 	if agentCanAuthor(t.agent) {
-		knowTools = append(knowTools,
+		pr.cat.knowTools = append(pr.cat.knowTools,
 			t.presentBuildPlanToolDef(),
 			t.markStepInProgressToolDef(),
 			t.markStepDoneToolDef(),
@@ -795,7 +839,7 @@ func (pr *planRun) buildCatalog() error {
 			t.appDefToolDef(),
 		)
 	}
-	knowTools = append(knowTools,
+	pr.cat.knowTools = append(pr.cat.knowTools,
 		// agents (list / get / run) — single entry point for agent
 		// operations. Replaces the legacy trio (list_agents,
 		// get_agent, dispatch_to_agent) for new code. The legacy
@@ -823,7 +867,7 @@ func (pr *planRun) buildCatalog() error {
 	// everyone else the ~450-word description was pure prefill cost in
 	// front of a handler that refuses.
 	if t.agent.AllowExplorer {
-		knowTools = append(knowTools, t.enterExplorerModeToolDef())
+		pr.cat.knowTools = append(pr.cat.knowTools, t.enterExplorerModeToolDef())
 	}
 	// Recurring per-session interval tasks — but NOT for Fleet agents. A Fleet
 	// agent schedules recurring work through create_standing_agent (real cron
@@ -833,19 +877,19 @@ func (pr *planRun) buildCatalog() error {
 	// (The earlier dropToolsByName in resolveWorkerTools was dead — recurring
 	// is added HERE, after that assembly, so it was never in that list.)
 	if !t.agent.Fleet {
-		knowTools = append(knowTools, t.recurringToolDef())
+		pr.cat.knowTools = append(pr.cat.knowTools, t.recurringToolDef())
 	}
 	// Session spin-off — web chat only (this assembly path is never used by
 	// channel relays / dispatch / scheduled fires, and the handler's sse
 	// guard backstops that): the agent can open a fresh titled session with
 	// a seeded handoff note and offer the user a link to continue there.
-	knowTools = append(knowTools, t.openSessionToolDef())
+	pr.cat.knowTools = append(pr.cat.knowTools, t.openSessionToolDef())
 	// Tool authoring: any agent can author its OWN tools via tool_def (the way
 	// phantom always could before it was centralized). Builder already has
 	// tool_def via its authoring catalog, so don't double it. AGENT and
 	// PIPELINE authoring still route to Builder; only tools are self-serve.
 	if !isBuilderAgent(t.agent.ID) {
-		knowTools = append(knowTools, ChatToolToAgentToolDefWithSession(temptool.BuildToolDef(), pr.sess))
+		pr.cat.knowTools = append(pr.cat.knowTools, ChatToolToAgentToolDefWithSession(temptool.BuildToolDef(), pr.sess))
 		// Tool authoring stays self-serve, but CREDENTIAL authoring is Builder's
 		// job: the five credential tools (draft_oauth_credential /
 		// draft_api_credential / update_api_credential / store_credential_secret
@@ -863,7 +907,12 @@ func (pr *planRun) buildCatalog() error {
 	// backward-compat with any future agent that explicitly opts in
 	// via AllowedTools, but the closure-bound default registration is
 	// removed.
-	t.wrapToolsForActivity(pr.sess, knowTools, t.agent)
+	t.wrapToolsForActivity(pr.sess, pr.cat.knowTools, t.agent)
+	return nil
+}
+
+func (pr *planRun) catalogAssemble() error {
+	t := pr.t
 	// Persistent temp tools also flow into the static set so the
 	// rewriter can collapse them when they're members of an admin-
 	// curated group. Otherwise vapi-style user-defined tools sit at
@@ -889,14 +938,14 @@ func (pr *planRun) buildCatalog() error {
 			}
 		}
 	}
-	directCustomTools, lazyCustomPrompt := t.setupCustomTools(pr.sess)
-	pr.sys += lazyCustomPrompt
+	pr.cat.directCustomTools, pr.cat.lazyCustomPrompt = t.setupCustomTools(pr.sess)
+	pr.sys += pr.cat.lazyCustomPrompt
 	// The authoring index, when the catalog was deferred. Set during
 	// resolveWorkerTools, which ran before this point.
 	pr.sys += t.authoringLazyPrompt
-	pr.allTools = append(controlTools, knowTools...)
-	pr.allTools = append(pr.allTools, workerTools...)
-	pr.allTools = append(pr.allTools, directCustomTools...)
+	pr.allTools = append(pr.cat.controlTools, pr.cat.knowTools...)
+	pr.allTools = append(pr.allTools, pr.cat.workerTools...)
+	pr.allTools = append(pr.allTools, pr.cat.directCustomTools...)
 	// Attached pipelines — one callable tool per pipeline bolted onto
 	// this agent (AgentRecord.AttachedPipelines). Curated + tiny schema,
 	// so direct (not lazy load_tool). Wrap for activity so a pipeline run
@@ -954,7 +1003,12 @@ func (pr *planRun) buildCatalog() error {
 	Debug("[orchestrate.orch] runPlan: assembled catalog of %d tools", len(pr.allTools))
 	// Building the catalog is the other phase big enough to be felt: a hundred
 	// tools resolved, temp tools loaded from the store, schemas built.
-	t.prep.mark("tools", time.Since(catalogStart))
+	t.prep.mark("tools", time.Since(pr.cat.catalogStart))
+	return nil
+}
+
+func (pr *planRun) catalogLog() error {
+	t := pr.t
 	// (Runtime tool-group rewriting retired. The per-turn
 	// classifier-trim that preceded this block is also gone — every
 	// allowed tool ships to the LLM verbatim; the model's attention
@@ -973,18 +1027,18 @@ func (pr *planRun) buildCatalog() error {
 	// catalog to the tools that phase allows (see mach.narrowCatalog). On
 	// those turns this line reports the wider pre-phase set, and the
 	// tools_to_llm_effective line printed there is the authoritative one.
-	allNames := make([]string, 0, len(pr.allTools))
+	pr.cat.allNames = make([]string, 0, len(pr.allTools))
 	for _, td := range pr.allTools {
-		allNames = append(allNames, td.Tool.Name)
+		pr.cat.allNames = append(pr.cat.allNames, td.Tool.Name)
 	}
 	pr.sessID = ""
 	if t.session != nil {
 		pr.sessID = t.session.ID
 	}
 	Log("[orchestrate.orch] session=%s msgs=%d tools_to_llm[%d]=%v (worker_subset=%v private=%v)",
-		pr.sessID, len(pr.msgs), len(pr.allTools), allNames, workerNames, t.privateMode)
-	if len(workerTools) > 0 {
-		pr.sys += "\n\n" + buildToolUseDirective(workerTools)
+		pr.sessID, len(pr.msgs), len(pr.allTools), pr.cat.allNames, pr.cat.workerNames, t.privateMode)
+	if len(pr.cat.workerTools) > 0 {
+		pr.sys += "\n\n" + buildToolUseDirective(pr.cat.workerTools)
 	}
 	pr.sys += noWebAccessNotice(pr.allTools)
 	// Append per-tool prompt fragments (opt-in via AgentToolDef.Prompt).

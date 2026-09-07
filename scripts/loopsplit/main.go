@@ -20,6 +20,9 @@
 //	lift <name>() : if <line> [else] <line ranges>         actions, or part of an if body; no translation
 //	state m mapState                 second pass over one method: ITS locals become fields of
 //	                                 <recv>.m (type mapState); add that field to the receiver by hand
+//	keep t                           locals that stay locals (never fields), for use with:
+//	prelude t := pr.t                a line added atop every method whose body names its first token
+//	lift <name>() error : <ranges>   a lifted phase of an error-returning method ends with return nil
 //
 // The round loop is only looked for when roundvar names its variable; a flat
 // function's inner loops are ordinary statements.
@@ -42,6 +45,7 @@ import (
 	"go/ast"
 	"go/importer"
 	"go/parser"
+	"go/scanner"
 	"go/token"
 	"go/types"
 	"os"
@@ -59,7 +63,8 @@ type method struct {
 	translate bool // returns (and, in a loop, loop branches) become actions
 	block     int  // line of an if statement whose body (or else) becomes this method
 	blockElse bool
-	lift      bool // block statements by range, already translated: no rewriting of control flow
+	lift      bool   // block statements by range, already translated: no rewriting of control flow
+	tail      string // the fall-through return appended to a lifted method
 }
 
 func blockKey(line int, els bool) string {
@@ -86,7 +91,9 @@ func main() {
 		panic(err)
 	}
 	var recvName, recvType, roundField, roundType, actionType, resultType, roundVar string
-	stateMode := false // function-level locals go to the round struct (a second pass over one method)
+	stateMode := false        // function-level locals go to the round struct (a second pass over one method)
+	keep := map[string]bool{} // locals that stay locals (re-declared by a prelude in each method)
+	var preludes []string     // lines added at the top of a method whose body names their first token
 	var methods []*method
 	for _, line := range strings.Split(string(specB), "\n") {
 		line = strings.TrimSpace(line)
@@ -107,6 +114,12 @@ func main() {
 			roundVar = f[1]
 		case "state":
 			roundField, roundType, stateMode = f[1], f[2], true
+		case "keep":
+			for _, n := range f[1:] {
+				keep[n] = true
+			}
+		case "prelude":
+			preludes = append(preludes, strings.TrimSpace(strings.TrimPrefix(line, "prelude")))
 		case "method", "loopmethod", "block", "lift":
 			rest := strings.TrimSpace(strings.TrimPrefix(line, f[0]))
 			head, tail, ok := strings.Cut(rest, ":")
@@ -151,8 +164,16 @@ func main() {
 				h, _ := strconv.Atoi(hi)
 				m.ranges = append(m.ranges, rng{l, h})
 			}
-			if m.translate || m.lift {
+			if m.translate {
 				m.sig = "() " + actionType
+			}
+			if m.lift {
+				m.tail = "return actNone"
+				if res := strings.TrimSpace(m.sig[strings.LastIndex(m.sig, ")")+1:]); res != "" {
+					m.tail = "return nil" // a lifted phase of an error-returning method
+				} else {
+					m.sig = "() " + actionType
+				}
 			}
 			methods = append(methods, m)
 		}
@@ -273,7 +294,7 @@ func main() {
 	}
 	add := func(id *ast.Ident, loopLevel bool, comment string, fl *ast.FuncLit) {
 		o := info.Defs[id]
-		if o == nil || id.Name == "_" {
+		if o == nil || id.Name == "_" || keep[id.Name] {
 			return
 		}
 		d := &decl{obj: o, name: id.Name, typ: types.TypeString(o.Type(), qual), comment: comment, closure: fl, loop: loopLevel, order: order}
@@ -620,8 +641,31 @@ func main() {
 		index(body.List, false, off(body.Lbrace)+1, blockKey(m.block, m.blockElse))
 	}
 
+	usesIdent := func(body, name string) bool {
+		var sc scanner.Scanner
+		fs := token.NewFileSet()
+		f := fs.AddFile("", fs.Base(), len(body))
+		sc.Init(f, []byte(body), nil, 0)
+		prev := token.ILLEGAL
+		for {
+			_, tok, lit := sc.Scan()
+			if tok == token.EOF {
+				return false
+			}
+			if tok == token.IDENT && lit == name && prev != token.PERIOD {
+				return true
+			}
+			prev = tok
+		}
+	}
 	emitMethod := func(name, sig, body string) {
-		out.WriteString("\nfunc (" + recvName + " " + recvType + ") " + name + sig + " {\n" + body + "\n}\n")
+		var pre string
+		for _, p := range preludes {
+			if usesIdent(body, strings.Fields(p)[0]) {
+				pre += "\t" + p + "\n"
+			}
+		}
+		out.WriteString("\nfunc (" + recvName + " " + recvType + ") " + name + sig + " {\n" + pre + body + "\n}\n")
 	}
 	// closures become methods wherever they are declared
 	emitClosure := func(d *decl) {
@@ -739,8 +783,10 @@ func main() {
 			body.WriteString(apply(text, base, eds))
 		}
 		b := strings.TrimRight(body.String(), "\n\t ")
-		if m.translate || m.lift {
+		if m.translate {
 			b += "\n\treturn actNone"
+		} else if m.lift {
+			b += "\n\t" + m.tail
 		}
 		emitMethod(m.name, m.sig, b)
 	}
