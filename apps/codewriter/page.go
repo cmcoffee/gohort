@@ -1,4 +1,4 @@
-// Framework-based codewriter page using core/ui's CodeWriterPanel.
+// Framework-based codewriter page using core/ui's CodeEditorPanel.
 // Replaces the legacy hand-rolled cwBody/cwCSS/cwJS that used to
 // render the entire desktop UI inline. The component handles the
 // snippet sidebar, code editor, lang dropdown, and save/copy/new
@@ -27,7 +27,7 @@ func (T *CodeWriterAgent) handleCodeWriterPage(w http.ResponseWriter, r *http.Re
 		Sections: []ui.Section{
 			{
 				NoChrome: true,
-				Body: ui.CodeWriterPanel{
+				Body: ui.CodeEditorPanel{
 					ListURL:             "api/snippets",
 					LoadURL:             "api/snippet/{id}",
 					SaveURL:             "api/snippets",

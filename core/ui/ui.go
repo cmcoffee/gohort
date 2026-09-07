@@ -133,8 +133,8 @@ type Page struct {
 	Head *Head
 	// ExtraHeadHTML is injected into the <head> verbatim, after Head. Use
 	// sparingly — escape hatch for apps that need to bring in legacy CSS/JS
-	// that hasn't been ported into the framework yet (e.g. codewriter's
-	// inline diff renderer from core/editor). Trusted strings only; the
+	// that hasn't been ported into the framework yet (e.g. an inline diff
+	// renderer an app already ships). Trusted strings only; the
 	// framework does not escape this.
 	ExtraHeadHTML string
 }

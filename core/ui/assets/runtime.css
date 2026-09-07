@@ -1980,7 +1980,7 @@ select:-webkit-autofill {
    * phone, overflowing it and putting the composer below the fold. Both terms
    * are measured by the runtime (syncViewport in the epilogue); the literals
    * are the pre-JS fallback and match what this rule used to hardcode.
-   * Matches the codewriter / agent-loop panels. */
+   * Matches the code-editor / agent-loop panels. */
   height: calc(100vh - 70px);
   height: calc(var(--ui-vh, 100dvh) - var(--ui-chrome-h, 70px));
   min-height: 400px;
@@ -1996,7 +1996,7 @@ select:-webkit-autofill {
 }
 /* Collapsed state — hide the sessions sidebar, reflow the grid so
  * the main column fills the available width minus a small gutter
- * for the floating expand tab. Mirrors techwriter / codewriter. */
+ * for the floating expand tab. Mirrors the article editor / code editor. */
 .ui-chat.side-collapsed { grid-template-columns: 1fr; }
 .ui-chat.side-collapsed .ui-chat-side { display: none; }
 .ui-chat.side-collapsed .ui-tw-expand { display: block; }
@@ -3123,9 +3123,9 @@ select:-webkit-autofill {
 .ui-chat-send:disabled { opacity: 0.5; cursor: not-allowed; }
 .ui-chat-cancel { background: transparent; color: var(--danger); border-color: var(--danger); }
 
-/* --- CodeWriterPanel ---
+/* --- CodeEditorPanel ---
  * Reuses the .ui-tw two-pane grid (sidebar + main) and adds the
- * codewriter toolbar + monospace code editor inside the main column.
+ * code-editor toolbar + monospace code editor inside the main column.
  * Snippet titles are typically short ("list users", "backup db") so
  * the sidebar runs narrower than techwriter's article list. */
 /* Halved sidebar width vs. techwriter (which inherits .ui-tw). The
@@ -4895,7 +4895,7 @@ select:-webkit-autofill {
 }
 .ui-cw-ctx-btn.on { color: var(--accent); border-color: var(--accent); }
 
-/* --- CodeWriterPanel modal (variables / values / contexts) --- */
+/* --- CodeEditorPanel modal (variables / values / contexts) --- */
 .ui-cw-modal-overlay {
   display: none;
   position: fixed; inset: 0; z-index: 1000;
@@ -5004,7 +5004,7 @@ select:-webkit-autofill {
   /* Subtract just the page header (back link + title) so the editor
    * uses essentially every available pixel. dvh handles iOS Safari's
    * collapsing URL bar; vh fallback for everything else.
-   * Sidebar widths match codewriter — narrower than the original
+   * Sidebar widths match the code editor — narrower than the original
    * 280/340/380 because article rows are title-only with hover
    * tooltip, no body preview. */
   height: calc(100vh - 70px);

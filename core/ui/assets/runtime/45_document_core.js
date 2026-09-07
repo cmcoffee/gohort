@@ -1,7 +1,7 @@
   // --- document core ----------------------------------------------------
   //
   // Shared machinery for the document workbenches (article_editor,
-  // codewriter_panel). Those two components grew the same behaviors
+  // code_editor_panel). Those two components grew the same behaviors
   // independently: a list sidebar, revision navigation, a chat pane
   // beside the editor. This file is where those converge, one builder at
   // a time, so an improvement lands once instead of twice.
@@ -22,7 +22,7 @@
   //   listURL     — GET, returns the array of records
   //   idField / labelField / dateField — record field names
   //   metaOf(rec) — optional extra shown before the relative time in the
-  //                 row tooltip (codewriter puts the language there)
+  //                 row tooltip (the code editor puts the language there)
   //   emptyText   — copy for an empty list
   //   currentID() — the open record's id, for the active-row highlight
   //   onOpen(id, rec)  — a row was clicked; rec is the whole record, so a

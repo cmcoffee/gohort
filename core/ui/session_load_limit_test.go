@@ -125,7 +125,7 @@ func TestShowEarlierDoesNotBlankThePane(t *testing.T) {
 // rather than outlined — and None has to be a control rather than the absence
 // of a selection, or a profile can be turned on and never off.
 func TestProfileBarIsARadioSetWithNone(t *testing.T) {
-	path := filepath.Join("assets", "runtime", "50_codewriter_panel.js")
+	path := filepath.Join("assets", "runtime", "50_code_editor_panel.js")
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("reading %s: %v", path, err)
@@ -183,7 +183,7 @@ func TestProfileBarIsStyled(t *testing.T) {
 // whether or not the arrangement was ever named. That reset-to-defaults on
 // every reload is the thing all of this exists to fix.
 func TestPanelRestoresItsLastSettings(t *testing.T) {
-	path := filepath.Join("assets", "runtime", "50_codewriter_panel.js")
+	path := filepath.Join("assets", "runtime", "50_code_editor_panel.js")
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("reading %s: %v", path, err)
@@ -238,7 +238,7 @@ func TestMultiSelectSavesEveryChoice(t *testing.T) {
 // someone to a form to re-describe what the panel is already set to asks them
 // to enter the same information twice, from memory.
 func TestProfileIsSavedFromTheLiveControls(t *testing.T) {
-	path := filepath.Join("assets", "runtime", "50_codewriter_panel.js")
+	path := filepath.Join("assets", "runtime", "50_code_editor_panel.js")
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("reading %s: %v", path, err)

@@ -257,7 +257,7 @@
     main.appendChild(inputArea);
 
     // Floating expand-tab pinned to the left edge of main while the
-    // sidebar is collapsed — same pattern techwriter / codewriter
+    // sidebar is collapsed — same pattern the article editor / code editor
     // use. Single tap re-opens the sessions list.
     var expandTab = el('button', {
       class: 'ui-tw-expand', title: 'Show sessions list',

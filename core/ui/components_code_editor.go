@@ -4,14 +4,14 @@ import (
 	"encoding/json"
 )
 
-// CodeWriterPanel is the codewriter app's specialized two-pane layout —
-// a snippet sidebar + a code editor (with optional Context block) on
-// the left, and a dual-mode chat ("Chat" discusses, "Edit" proposes
-// fenced code that's applied via inline diff) on the right. Supports
-// {{NAME}} variable substitution, a saved-values library, and a saved-
-// contexts library. Distinct enough from ArticleEditor / ChatPanel
-// that it gets its own component type rather than overloading either.
-type CodeWriterPanel struct {
+// CodeEditorPanel is a two-pane code workbench: a snippet sidebar + a code
+// editor (with optional Context block) on the left, and a dual-mode chat
+// ("Chat" discusses, "Edit" proposes fenced code that's applied via inline
+// diff) on the right. Supports {{NAME}} variable substitution, a saved-values
+// library, and a saved-contexts library. Distinct enough from ArticleEditor /
+// ChatPanel that it gets its own component type rather than overloading
+// either. Every endpoint is host-supplied, so the panel names no app.
+type CodeEditorPanel struct {
 	// Snippet CRUD endpoints.
 	ListURL   string `json:"list_url"`             // GET → array of snippets
 	LoadURL   string `json:"load_url,omitempty"`   // GET {id} → snippet (defaults to "{list_url}/{id}" pattern when blank)
@@ -158,7 +158,7 @@ type CodeWriterPanel struct {
 	PlaceholderChat string `json:"placeholder_chat,omitempty"`
 }
 
-// DocTemplate is one starting skeleton in CodeWriterPanel.Templates.
+// DocTemplate is one starting skeleton in CodeEditorPanel.Templates.
 // Body is the document the editor is filled with; Name doubles as the
 // snippet name when the user hasn't typed one yet.
 //
@@ -171,12 +171,12 @@ type DocTemplate struct {
 	Body        string `json:"body"`
 }
 
-func (CodeWriterPanel) componentType() string { return "codewriter_panel" }
+func (CodeEditorPanel) componentType() string { return "code_editor_panel" }
 
-func (c CodeWriterPanel) MarshalJSON() ([]byte, error) {
-	type alias CodeWriterPanel
+func (c CodeEditorPanel) MarshalJSON() ([]byte, error) {
+	type alias CodeEditorPanel
 	return json.Marshal(struct {
 		Type string `json:"type"`
 		alias
-	}{"codewriter_panel", alias(c)})
+	}{"code_editor_panel", alias(c)})
 }

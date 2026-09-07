@@ -95,7 +95,7 @@ type ArticleEditor struct {
 	// Templates offers starting skeletons via a "Templates" button.
 	// TemplatesListURL / TemplateURL add the user's own saved templates
 	// on top (GET/POST the list, DELETE one) — same contract as
-	// CodeWriterPanel's. Leave all three unset to hide the button.
+	// CodeEditorPanel's. Leave all three unset to hide the button.
 	Templates        []DocTemplate `json:"templates,omitempty"`
 	TemplatesListURL string        `json:"templates_list_url,omitempty"`
 	TemplateURL      string        `json:"template_url,omitempty"`

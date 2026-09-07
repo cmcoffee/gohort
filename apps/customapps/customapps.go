@@ -1491,12 +1491,12 @@ func (T *CustomApps) publicPageBytes(spec AppSpec, token string) []byte {
 // per-user state, which is exactly what a public capability URL must not hand
 // to anyone holding a link.
 var sessionBoundPanels = map[string]string{
-	"pipeline_panel":   "multi-stage run",
-	"chat_panel":       "chat",
-	"agent_loop_panel": "chat",
-	"workbench_panel":  "document workbench",
-	"codewriter_panel": "workbench",
-	"article_editor":   "editor",
+	"pipeline_panel":    "multi-stage run",
+	"chat_panel":        "chat",
+	"agent_loop_panel":  "chat",
+	"workbench_panel":   "document workbench",
+	"code_editor_panel": "workbench",
+	"article_editor":    "editor",
 }
 
 // publishLimitationNote warns, at the moment the link is minted, which parts of

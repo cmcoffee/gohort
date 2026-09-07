@@ -1,4 +1,4 @@
-  components.codewriter_panel = function(cfg) {
+  components.code_editor_panel = function(cfg) {
     var idF   = cfg.id_field   || 'id';
     var nameF = cfg.name_field || 'name';
     var langF = cfg.lang_field || 'lang';
@@ -56,8 +56,8 @@
     var main = el('div', {class: 'ui-tw-main ui-cw-main'});
     main.appendChild(drawer.mobileHdr);
 
-    // Toolbar — name + lang + Save / Copy / New. Mirrors the legacy
-    // codewriter top bar but lives inside the framework page chrome.
+    // Toolbar — name + lang + Save / Copy / New. The standalone editor's
+    // top bar, living inside the framework page chrome.
     var nameInput = el('input', {
       type: 'text', class: 'ui-cw-name',
       placeholder: cfg.placeholder_name || 'Snippet name…',

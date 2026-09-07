@@ -78,7 +78,7 @@ func (T *CodeWriterAgent) WebDesc() string {
 }
 
 func (T *CodeWriterAgent) RegisterRoutes(mux *http.ServeMux, prefix string) {
-	// Framework page (page.go + CodeWriterPanel) is the only UI — it
+	// Framework page (page.go + CodeEditorPanel) is the only UI — it
 	// covers snippets, chat, diff, revisions, values, contexts, and
 	// collections. The old hand-rolled /codewriter/legacy surface has
 	// been retired.

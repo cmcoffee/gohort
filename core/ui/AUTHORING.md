@@ -226,7 +226,7 @@ behind, which is worse than not having one, so it was retired.
 | A field that must stay one line (handle, URL, slug, API key) | `ui.FormField{SingleLine: true}` — otherwise a multi-line paste grows the field into a textarea rather than flattening the content |
 | A bar chart | `ui.BarChart` |
 | An article editor with full markdown + image insertion | `ui.ArticleEditor` |
-| A code editor with diff + history | `ui.CodeWriterPanel` |
+| A code editor with diff + history | `ui.CodeEditorPanel` |
 
 If your shape doesn't fit any of these cleanly, you may need a new primitive. Prefer combining existing ones first — most app surfaces are some mix of Table + FormPanel + a chat-shaped flow.
 
