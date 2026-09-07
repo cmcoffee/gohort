@@ -213,7 +213,7 @@ type EventMonitor struct {
 	// failure-shaped result — traceback / non-zero exit / timeout). A failed poll
 	// is never delivered (so a direct-channel monitor can't spam a traceback into
 	// a human chat) and doesn't advance the baseline; the streak resets on any
-	// success. At watchFailureThreshold the monitor is marked broken + paused.
+	// success. At monitorFailureThreshold the monitor is marked broken + paused.
 	ConsecutiveFailures int       `json:"consecutive_failures,omitempty"`
 	Created             time.Time `json:"created"`
 	NextCheck           time.Time `json:"next_check,omitempty"`
@@ -922,7 +922,7 @@ func executeEventPoll(ctx context.Context, db Database, m EventMonitor) {
 	}
 	answer, err := poller(ctx, m.Owner, m.CheckAgent, m.Check)
 	if err != nil {
-		Log("[event] poll %s/%s check failed: %v", m.Owner, m.Name, err)
+		notePollFailure(db, m, truncateEvent(strings.TrimSpace(err.Error()), 200))
 		return
 	}
 	matched := eventMatch(answer, m.MatchContains)
@@ -930,6 +930,7 @@ func executeEventPoll(ctx context.Context, db Database, m EventMonitor) {
 	if !ok {
 		return
 	}
+	clearPollFailures(db, &cur)
 	switch {
 	case matched && !cur.LastMatched:
 		cur.LastMatched = true
@@ -953,18 +954,22 @@ func executeEventPoll(ctx context.Context, db Database, m EventMonitor) {
 func executeHTTPPoll(ctx context.Context, db Database, m EventMonitor) {
 	val, err := fetchAndExtract(ctx, m)
 	if err != nil {
-		Log("[event] http_poll %s/%s fetch/extract failed: %v", m.Owner, m.Name, err)
+		notePollFailure(db, m, truncateEvent(strings.TrimSpace(err.Error()), 200))
 		return
 	}
+	// A comparison that cannot be made is a failure too, and a permanent one:
+	// the threshold and the operator were written when the monitor was created
+	// and will not fix themselves on the next interval.
 	breached, cerr := compareValues(val, m.CompareOp, m.Threshold)
 	if cerr != nil {
-		Log("[event] http_poll %s/%s compare failed: %v", m.Owner, m.Name, cerr)
+		notePollFailure(db, m, truncateEvent(strings.TrimSpace(cerr.Error()), 200))
 		return
 	}
 	cur, ok := GetEventMonitor(db, m.Owner, m.Name)
 	if !ok {
 		return
 	}
+	clearPollFailures(db, &cur)
 	switch {
 	case breached && !cur.LastBreached:
 		cur.LastBreached = true
@@ -982,11 +987,61 @@ func executeHTTPPoll(ctx context.Context, db Database, m EventMonitor) {
 	}
 }
 
-// watchFailureThreshold is how many consecutive FAILED polls a watch monitor
-// tolerates before it's marked broken + paused. Low enough to stop spam / a
-// definitively-dead dependency (a revoked binding) quickly; high enough that a
-// single transient blip self-heals on the next successful poll.
-const watchFailureThreshold = 3
+// monitorFailureThreshold is how many consecutive FAILED checks a polled
+// monitor tolerates before it's marked broken + paused. Low enough to stop
+// spam / a definitively-dead dependency (a revoked binding, a hostname that
+// does not resolve) quickly; high enough that a single transient blip
+// self-heals on the next successful check.
+const monitorFailureThreshold = 3
+
+// notePollFailure records one failed check and parks the monitor when the
+// streak reaches the threshold. It reports whether it parked.
+//
+// Every polled kind goes through here. Only watch used to: an http_poll whose
+// URL never resolved logged its error and returned, so it retried every
+// interval forever with NOTHING to show for it — no ledger row, no state
+// change, a console row still reading "active" with a freshly-stamped
+// last-checked time. Live, that ran for three hours against a hostname in a
+// reserved TLD that cannot resolve by definition, and the only symptom
+// available to the owner was that the monitor never fired.
+//
+// A failure is never delivered anywhere and never advances a baseline, so
+// without a bound the failing state IS the silence.
+func notePollFailure(db Database, m EventMonitor, reason string) bool {
+	cur, ok := GetEventMonitor(db, m.Owner, m.Name)
+	if !ok {
+		return false
+	}
+	cur.ConsecutiveFailures++
+	Log("[event] %s %s/%s failed check %d/%d: %s",
+		cur.Kind, m.Owner, m.Name, cur.ConsecutiveFailures, monitorFailureThreshold, reason)
+	if cur.ConsecutiveFailures < monitorFailureThreshold {
+		SaveEventMonitor(db, cur)
+		return false
+	}
+	MarkEventMonitorBroken(db, m.Owner, m.Name, cur.Kind+" checks are failing: "+reason)
+	// The row is the half the owner can actually see. Written once, when the
+	// monitor stops trying — a row per failed check would bury the feed under
+	// the same sentence every interval.
+	RecordRun(db, RunRecord{
+		Owner: m.Owner, Agent: m.Name, Trigger: cur.Kind, Task: m.Name,
+		Status: RunAttention,
+		Summary: fmt.Sprintf("Stopped checking after %d consecutive failures — %s. The monitor is paused and needs attention; fix what it points at, then resume it.",
+			cur.ConsecutiveFailures, reason),
+		Started: time.Now(), Ended: time.Now(),
+	}.AboutMonitor(m.Name))
+	return true
+}
+
+// clearPollFailures resets an accumulated streak on the caller's copy and
+// persists it, so a transient blip self-heals on the next good check.
+func clearPollFailures(db Database, m *EventMonitor) {
+	if m == nil || m.ConsecutiveFailures == 0 {
+		return
+	}
+	m.ConsecutiveFailures = 0
+	SaveEventMonitor(db, *m)
+}
 
 // watchPollFailed reports whether a watch tool invocation should be treated as a
 // FAILED poll — never delivered, counted toward the broken threshold. It catches
@@ -1024,24 +1079,15 @@ func executeWatchPoll(ctx context.Context, db Database, m EventMonitor) {
 	// monitor would otherwise post a raw traceback into a human chat, and a
 	// revoked secured-credential binding fails in exactly this shape. Don't advance
 	// the baseline (so a genuine recovery still registers as a change), count the
-	// streak, and after watchFailureThreshold consecutive failures mark the monitor
+	// streak, and after monitorFailureThreshold consecutive failures mark the monitor
 	// broken — which pauses + unschedules it and surfaces a "needs attention" state
 	// — instead of retrying into the void or spamming.
 	if failed, reason := watchPollFailed(body, err); failed {
-		cur.ConsecutiveFailures++
-		Log("[event] watch %s/%s failed poll %d/%d: %s", m.Owner, m.Name, cur.ConsecutiveFailures, watchFailureThreshold, reason)
-		if cur.ConsecutiveFailures >= watchFailureThreshold {
-			MarkEventMonitorBroken(db, m.Owner, m.Name, "watch tool is failing: "+reason)
-			return
-		}
-		SaveEventMonitor(db, cur)
+		notePollFailure(db, m, reason)
 		return
 	}
 	// Success: clear any accumulated failure streak so a transient blip self-heals.
-	if cur.ConsecutiveFailures != 0 {
-		cur.ConsecutiveFailures = 0
-		SaveEventMonitor(db, cur)
-	}
+	clearPollFailures(db, &cur)
 	// Hash and diff the COMPARABLE form: JSON re-rendered canonically with
 	// presence timestamps dropped (see watchComparable). The failure guard
 	// above judged the raw output; everything from here — the baseline, the

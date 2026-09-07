@@ -4,10 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/cmcoffee/snugforge/kvlite"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 func TestEventMonitorStoreRoundTrip(t *testing.T) {
@@ -337,13 +340,13 @@ func TestWatchFailureCircuitBreaker(t *testing.T) {
 
 	// Now K straight failures → broken + paused.
 	result = traceback
-	for i := 0; i < watchFailureThreshold; i++ {
+	for i := 0; i < monitorFailureThreshold; i++ {
 		executeWatchPoll(context.Background(), db, m)
 	}
 	got, _ := GetEventMonitor(db, "u", "w")
 	if !got.Broken || !got.Paused {
 		t.Fatalf("after %d consecutive failures the monitor must be broken+paused; broken=%v paused=%v failures=%d",
-			watchFailureThreshold, got.Broken, got.Paused, got.ConsecutiveFailures)
+			monitorFailureThreshold, got.Broken, got.Paused, got.ConsecutiveFailures)
 	}
 }
 
@@ -735,5 +738,120 @@ func TestAOneShotAwaitStillRemovesItself(t *testing.T) {
 
 	if _, ok := GetEventMonitor(db, "craig", "await_read_chat_x"); ok {
 		t.Error("a one-shot await survived its fire")
+	}
+}
+
+// --- failing checks ----------------------------------------------------------
+
+// TestAFailingHTTPPollStopsInsteadOfRetryingForever. Only the watch kind used
+// to count its failures; an http_poll logged the error and returned, so a
+// monitor pointed at a hostname that cannot resolve retried every interval
+// with nothing to show for it — no ledger row, no state change, and a console
+// row still reading "active" with a freshly stamped last-checked time. Live,
+// that ran for three hours and the only symptom was that it never fired.
+func TestAFailingHTTPPollStopsInsteadOfRetryingForever(t *testing.T) {
+	db := memDB(t)
+	// Port 1 on loopback refuses instantly: a real failure with no network.
+	m := EventMonitor{
+		Name: "dead-endpoint", Owner: "craig", Kind: EventKindHTTP,
+		URL: "http://127.0.0.1:1/status", CompareOp: ">", Threshold: "1",
+		IntervalSeconds: 300,
+	}
+	SaveEventMonitor(db, m)
+
+	for i := 1; i < monitorFailureThreshold; i++ {
+		executeHTTPPoll(context.Background(), db, m)
+		cur, _ := GetEventMonitor(db, "craig", "dead-endpoint")
+		if cur.Broken {
+			t.Fatalf("parked after %d failure(s); the threshold is %d and a blip must self-heal", i, monitorFailureThreshold)
+		}
+		if cur.ConsecutiveFailures != i {
+			t.Errorf("failure %d was not counted: streak is %d", i, cur.ConsecutiveFailures)
+		}
+	}
+
+	executeHTTPPoll(context.Background(), db, m)
+	cur, ok := GetEventMonitor(db, "craig", "dead-endpoint")
+	if !ok {
+		t.Fatal("the monitor was deleted rather than parked")
+	}
+	if !cur.Broken || !cur.Paused {
+		t.Errorf("still checking after %d consecutive failures: broken=%v paused=%v", monitorFailureThreshold, cur.Broken, cur.Paused)
+	}
+	// The reason has to name what failed, or "needs attention" is another
+	// dead end for whoever reads the row.
+	if !strings.Contains(cur.BrokenReason, "127.0.0.1") {
+		t.Errorf("the broken reason does not say what failed: %q", cur.BrokenReason)
+	}
+
+	// And it says so once, in Activity, where the owner is actually looking.
+	rows := 0
+	for _, r := range ListRuns(db, "craig", RunFilter{}) {
+		if strings.Contains(r.Summary, "Stopped checking after") {
+			rows++
+			if r.Status != RunAttention {
+				t.Errorf("a monitor that gave up is attention, got %q", r.Status)
+			}
+		}
+	}
+	if rows != 1 {
+		t.Errorf("want exactly one row for the stop, got %d — one per failed check would bury the feed", rows)
+	}
+}
+
+// TestABadComparisonCountsAsAFailure: a threshold that cannot be compared was
+// written when the monitor was created and will not fix itself on the next
+// interval, so retrying it forever is the same silence by another route.
+func TestABadComparisonCountsAsAFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("not-a-number"))
+	}))
+	defer srv.Close()
+
+	db := memDB(t)
+	m := EventMonitor{
+		Name: "bad-compare", Owner: "craig", Kind: EventKindHTTP,
+		URL: srv.URL, CompareOp: ">", Threshold: "10",
+	}
+	SaveEventMonitor(db, m)
+	for i := 0; i < monitorFailureThreshold; i++ {
+		executeHTTPPoll(context.Background(), db, m)
+	}
+	cur, _ := GetEventMonitor(db, "craig", "bad-compare")
+	if !cur.Broken {
+		t.Error("a comparison that can never succeed retried forever")
+	}
+}
+
+// TestAGoodCheckClearsTheFailureStreak — the threshold counts CONSECUTIVE
+// failures, so an endpoint that blips and recovers keeps watching.
+func TestAGoodCheckClearsTheFailureStreak(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("42"))
+	}))
+	defer srv.Close()
+	RegisterEventWaker(func(ctx context.Context, owner, name, summary string) (bool, string) {
+		return true, ""
+	})
+	defer RegisterEventWaker(nil)
+
+	db := memDB(t)
+	m := EventMonitor{
+		Name: "flaky", Owner: "craig", Kind: EventKindHTTP,
+		URL: srv.URL, CompareOp: ">", Threshold: "10",
+		ConsecutiveFailures: monitorFailureThreshold - 1,
+	}
+	SaveEventMonitor(db, m)
+
+	executeHTTPPoll(context.Background(), db, m)
+	cur, _ := GetEventMonitor(db, "craig", "flaky")
+	if cur.ConsecutiveFailures != 0 {
+		t.Errorf("a good check left the streak at %d", cur.ConsecutiveFailures)
+	}
+	if cur.Broken || cur.Paused {
+		t.Error("a monitor that recovered was parked anyway")
+	}
+	if !cur.LastBreached {
+		t.Error("the recovering check did not fire the crossing it observed")
 	}
 }
