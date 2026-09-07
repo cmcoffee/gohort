@@ -219,7 +219,7 @@ func (T *OrchestrateApp) settleMonitorObjective(ctx context.Context, m EventMoni
 	cur.Attempts = appendObjectiveAttempt(cur.Attempts, judged && v.Met, reason)
 	SaveEventMonitor(RootDB, cur)
 	if judged && v.Met {
-		StopEventMonitor(RootDB, m.Owner, m.Name,
+		StopEventMonitor(RootDB, m.Owner, m.Name, MonitorStopMet,
 			"Stopped: the condition it was watching for is met — "+reason+" Nothing is broken; resume it to watch again.")
 	}
 }

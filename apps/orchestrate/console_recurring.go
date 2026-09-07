@@ -45,6 +45,11 @@ func (T *OrchestrateApp) handleSchedules(w http.ResponseWriter, r *http.Request)
 			"category":       "monitor",
 			"category_label": "Event monitors",
 		}
+		// A monitor that has stopped says why on its own row, with the same
+		// mark the channel rail uses.
+		if st := monitorRowState(m); st != nil {
+			row["state"] = st
+		}
 		// Schedulable kinds (poll / http_poll / watch) get a click-to-edit-interval
 		// modal; webhook monitors are push-only, so no edit affordance.
 		if IsScheduledEventKind(m.Kind) {

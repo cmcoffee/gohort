@@ -4181,6 +4181,14 @@
           if (!ch.service) {
             rowKids.push(el('span', {class: 'ui-channels-inert', title: 'No source hooked in — inert'}, ['inert']));
           }
+          // Optional state mark: when the app says something feeding this row
+          // has come to rest, show it here rather than making the reader open
+          // another pane to find out why the row went quiet. core/ui knows the
+          // SHAPE names only; the app decides what they mean and writes the
+          // tooltip.
+          if (ch.state && ch.state.icon) {
+            rowKids.push(uiStateGlyph(ch.state.icon, ch.state.tone, ch.state.title));
+          }
           // manage_only: the channel relays into its agent's cortex (no thread of
           // its own — the conversation lives in the cortex home thread). Clicking
           // the row opens THAT conversation (what the user expects: "show what's
@@ -4259,6 +4267,11 @@
           [(s.paused ? 'paused · ' : '') + (s.detail || '')])
       ]);
       var row = el('div', {class: 'ui-chat-side-item ui-channels-item'}, [main]);
+      // Same optional state mark the channel rows take — a stopped schedule
+      // says WHY on its own row.
+      if (s.state && s.state.icon) {
+        row.appendChild(uiStateGlyph(s.state.icon, s.state.tone, s.state.title));
+      }
       // Optional per-row edit: when the server tags a row with edit_action,
       // clicking its body invokes that app-registered client action with the
       // row id (+ a reload cb). core/ui doesn't know what the action does.

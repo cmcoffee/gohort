@@ -202,6 +202,16 @@ type EventMonitor struct {
 	Attempts []ObjectiveAttempt `json:"attempts,omitempty"`
 
 	Paused bool `json:"paused"`
+	// StopReason says WHY this monitor is at rest, which Paused alone cannot.
+	// Four things stop a monitor and only two of them are anybody's problem:
+	// a person paused it, it finished, it went quiet long enough to stop
+	// watching, or it broke. Read off a bare bool they are one state, so a row
+	// can only say "paused" and leave the reader to find out which — the same
+	// silence that let a monitor with a dead endpoint look healthy for hours.
+	// One of the MonitorStop* causes; empty while the monitor is running, and
+	// cleared on resume. MonitorStopCause reads it, with a fallback for
+	// records written before this field existed.
+	StopReason string `json:"stop_reason,omitempty"`
 	// Broken marks a monitor whose dependency is gone — its wake agent deleted,
 	// or (re-checked at fire time) a credential/tool/connector it needs removed.
 	// A broken monitor is auto-paused and unscheduled but KEPT, not silently
@@ -440,6 +450,7 @@ func MarkEventMonitorBroken(db Database, owner, name, reason string) bool {
 	m.Broken = true
 	m.BrokenReason = reason
 	m.Paused = true // stops firing against the missing dependency
+	m.StopReason = MonitorStopBroken
 	m.NextCheck = time.Time{}
 	SaveEventMonitor(db, m)
 	return true
@@ -498,6 +509,7 @@ func pauseIdleWatch(db Database, m EventMonitor, days int) {
 		cur.SchedulerID = ""
 	}
 	cur.Paused = true
+	cur.StopReason = MonitorStopIdle
 	cur.NextCheck = time.Time{}
 	SaveEventMonitor(db, cur)
 	reason := fmt.Sprintf(
@@ -508,6 +520,62 @@ func pauseIdleWatch(db Database, m EventMonitor, days int) {
 		Status: RunAttention, Summary: reason,
 		Started: time.Now(), Ended: time.Now(),
 	}.AboutMonitor(m.Name))
+}
+
+// --- why a monitor is at rest ------------------------------------------------
+
+// The causes a monitor can be stopped for. Two of them are outcomes (it did
+// what it was asked, or somebody asked it to stop) and two are conditions the
+// owner may want to act on.
+const (
+	MonitorStopOwner    = "owner"    // a person paused it
+	MonitorStopFinished = "finished" // it spent the fire allowance it was created with
+	MonitorStopMet      = "met"      // the condition it was watching for came true
+	MonitorStopIdle     = "idle"     // it went long enough with nothing to report that it stopped watching
+	MonitorStopBroken   = "broken"   // it cannot run: its checks keep failing, or a dependency is gone
+)
+
+// MonitorStopCause is why a monitor is at rest, or empty while it is running.
+//
+// Falls back for records written before StopReason existed: broken and spent
+// are both derivable, and anything else that is paused reads as owner-paused,
+// which is what a paused monitor meant when a person was the only thing that
+// could pause one.
+func MonitorStopCause(m EventMonitor) string {
+	if !m.Paused && !m.Broken {
+		return ""
+	}
+	if r := strings.TrimSpace(m.StopReason); r != "" {
+		return r
+	}
+	switch {
+	case m.Broken:
+		return MonitorStopBroken
+	case MonitorFiredOut(m):
+		return MonitorStopFinished
+	}
+	return MonitorStopOwner
+}
+
+// MonitorStopLabel is the cause in the owner's words, for a row that has space
+// for a few. Empty for a running monitor.
+func MonitorStopLabel(m EventMonitor) string {
+	switch MonitorStopCause(m) {
+	case MonitorStopOwner:
+		return "paused"
+	case MonitorStopFinished:
+		return "finished — it fired the number of times it was created with"
+	case MonitorStopMet:
+		return "finished — what it was watching for happened"
+	case MonitorStopIdle:
+		return "stopped — nothing to report for long enough that it stopped watching"
+	case MonitorStopBroken:
+		if r := strings.TrimSpace(m.BrokenReason); r != "" {
+			return "needs attention — " + r
+		}
+		return "needs attention"
+	}
+	return ""
 }
 
 // --- fire allowance ----------------------------------------------------------
@@ -562,7 +630,7 @@ func RearmMonitorFires(m *EventMonitor) bool {
 // Exported because the two things that finish a monitor sit on opposite sides
 // of the package line: the fire limit is counted here, and an objective is
 // judged by the app that owns the model.
-func StopEventMonitor(db Database, owner, name, reason string) bool {
+func StopEventMonitor(db Database, owner, name, cause, reason string) bool {
 	cur, ok := GetEventMonitor(db, owner, name)
 	if !ok || cur.Paused {
 		return false
@@ -572,9 +640,10 @@ func StopEventMonitor(db Database, owner, name, reason string) bool {
 		cur.SchedulerID = ""
 	}
 	cur.Paused = true
+	cur.StopReason = cause
 	cur.NextCheck = time.Time{}
 	SaveEventMonitor(db, cur)
-	Log("[event] monitor %s/%s stopped: %s", owner, name, reason)
+	Log("[event] monitor %s/%s stopped (%s): %s", owner, name, cause, reason)
 	RecordRun(db, RunRecord{
 		Owner: owner, Agent: name, Trigger: cur.Kind, Task: name,
 		Status: RunOK, Summary: reason,
@@ -594,7 +663,7 @@ func stopFiredOutMonitor(db Database, m EventMonitor) {
 	if until := strings.TrimSpace(m.Until); until != "" {
 		reason += " It stopped without seeing what it was watching for: " + until
 	}
-	StopEventMonitor(db, m.Owner, m.Name, reason)
+	StopEventMonitor(db, m.Owner, m.Name, MonitorStopFinished, reason)
 }
 
 // ClearEventMonitorBroken lifts the broken flag once the dependency is restored
@@ -608,7 +677,10 @@ func ClearEventMonitorBroken(db Database, owner, name string) bool {
 	}
 	m.Broken = false
 	m.BrokenReason = ""
-	// Paused stays true on purpose — resume is an explicit owner action.
+	// Paused stays true on purpose — resume is an explicit owner action. The
+	// cause moves with it: the monitor is no longer broken, it is a monitor
+	// waiting for its owner to turn it back on.
+	m.StopReason = MonitorStopOwner
 	SaveEventMonitor(db, m)
 	return true
 }

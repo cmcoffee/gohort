@@ -188,12 +188,16 @@ func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Re
 		}
 		state := "active"
 		if m.Paused {
-			state = "paused"
-			// Distinguish the two ways a monitor comes to rest: the owner
-			// paused it, or it reached the bound they gave it. Both are
-			// stopped; only one of them is something they did.
-			if MonitorFiredOut(m) {
+			// The four ways a monitor comes to rest, told apart. All of them
+			// are stopped; only one of them is something the owner did, and
+			// only one of them wants their attention.
+			switch MonitorStopCause(m) {
+			case MonitorStopFinished, MonitorStopMet:
 				state = "done"
+			case MonitorStopIdle:
+				state = "stopped — quiet"
+			default:
+				state = "paused"
 			}
 		}
 		if m.Broken {
@@ -312,11 +316,16 @@ func (T *OrchestrateApp) setConsoleMonitorPaused(w http.ResponseWriter, r *http.
 		return
 	}
 	m.Paused = paused
-	if !paused {
+	if paused {
+		// A person did this, which is one of the four things that stop a
+		// monitor and the only one that needs no explanation.
+		m.StopReason = MonitorStopOwner
+	} else {
 		// Resuming a monitor that stopped at its bound means "watch again", not
 		// "fire once more and stop immediately". Its lifetime count is kept;
 		// only the allowance restarts.
 		RearmMonitorFires(&m)
+		m.StopReason = ""
 	}
 	if paused {
 		if m.SchedulerID != "" {
@@ -387,4 +396,84 @@ func (T *OrchestrateApp) handleConsoleMonitorRun(w http.ResponseWriter, r *http.
 		}
 	}()
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// --- the row mark ------------------------------------------------------------
+
+// monitorRowState maps a monitor that has come to rest onto the generic state
+// mark core/ui draws on a list row, or nil for one that is still running.
+//
+// core/ui names shapes and nothing else; this is where a shape acquires a
+// meaning. Two of the four causes are outcomes the owner asked for and read
+// muted; the one that needs them reads as a warning. Idle gets its own shape
+// rather than the pause bars because "I stopped watching, nothing was
+// happening" is a different sentence from "you paused me", and collapsing them
+// is exactly what the bare Paused bool used to do.
+func monitorRowState(m EventMonitor) map[string]any {
+	cause := MonitorStopCause(m)
+	if cause == "" {
+		return nil
+	}
+	icon, tone := "pause", "muted"
+	switch cause {
+	case MonitorStopFinished, MonitorStopMet:
+		icon = "check"
+	case MonitorStopBroken:
+		icon, tone = "alert", "warn"
+	case MonitorStopIdle:
+		icon = "off"
+	}
+	return map[string]any{"icon": icon, "tone": tone, "title": m.Name + " — " + MonitorStopLabel(m)}
+}
+
+// monitorStopUrgency ranks the causes so a row fed by several monitors shows
+// the one worth acting on. A channel with one broken watcher and three
+// finished ones has a problem, and the problem is what the row should say.
+func monitorStopUrgency(cause string) int {
+	switch cause {
+	case MonitorStopBroken:
+		return 4
+	case MonitorStopIdle:
+		return 3
+	case MonitorStopFinished, MonitorStopMet:
+		return 2
+	case MonitorStopOwner:
+		return 1
+	}
+	return 0
+}
+
+// channelRowState is the mark for a channel row: the most urgent stopped
+// monitor that DELIVERS INTO this channel, or nil when none has stopped.
+//
+// Delivery is the test, deliberately. A monitor that wakes an agent in a
+// thread has nothing to do with this channel even when the same agent is bound
+// to it, and marking the channel for it would say something untrue about a
+// conversation.
+func channelRowState(ch Channel, monitors []EventMonitor) map[string]any {
+	best := 0
+	var found EventMonitor
+	for _, m := range monitors {
+		if !monitorDeliversTo(m, ch) {
+			continue
+		}
+		if u := monitorStopUrgency(MonitorStopCause(m)); u > best {
+			best, found = u, m
+		}
+	}
+	if best == 0 {
+		return nil
+	}
+	return monitorRowState(found)
+}
+
+// monitorDeliversTo reports whether a monitor's alert lands in this channel —
+// either bound to it (WakeChannel) or posting into the conversation it sits on
+// (DeliverChatID, which is that conversation's own id).
+func monitorDeliversTo(m EventMonitor, ch Channel) bool {
+	if id := strings.TrimSpace(ch.ID); id != "" && strings.TrimSpace(m.WakeChannel) == id {
+		return true
+	}
+	addr := strings.TrimSpace(ch.Address)
+	return addr != "" && strings.TrimSpace(m.DeliverChatID) == addr
 }

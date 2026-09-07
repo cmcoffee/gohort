@@ -38,8 +38,15 @@ func (T *OrchestrateApp) handleChannels(w http.ResponseWriter, r *http.Request) 
 			// dialog instead of an (empty) thread; the conversation is read in the
 			// cortex hero. Multi-channel / non-cortex agents keep per-room threads.
 			ManageOnly bool `json:"manage_only,omitempty"`
+			// State: the mark the rail draws when something feeding this
+			// channel has come to rest — shape + tone + the sentence saying
+			// why. Absent while everything feeding it is running, which is
+			// most rows most of the time.
+			State map[string]any `json:"state,omitempty"`
 		}
 		udb := UserDB(T.DB, user)
+		// Read the monitors once for the whole listing rather than per row.
+		monitors := ListEventMonitors(RootDB, user)
 		out := []channelView{}
 		for _, ch := range ListChannels(RootDB, user) {
 			if agentID != "" && ch.AgentID != agentID {
@@ -50,7 +57,10 @@ func (T *OrchestrateApp) handleChannels(w http.ResponseWriter, r *http.Request) 
 				len(ListChannelsForAgent(RootDB, user, ch.AgentID)) == 1 {
 				manage = true
 			}
-			out = append(out, channelView{Channel: ch, ServiceLabel: ServiceDisplayName(ch.Service), ManageOnly: manage})
+			out = append(out, channelView{
+				Channel: ch, ServiceLabel: ServiceDisplayName(ch.Service), ManageOnly: manage,
+				State: channelRowState(ch, monitors),
+			})
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(out)

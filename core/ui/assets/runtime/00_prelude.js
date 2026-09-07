@@ -76,6 +76,76 @@
     }
     return n;
   }
+  // uiStateGlyph(name, tone, title) — a 16px state mark for a list row.
+  //
+  // One circle family, five names, so a rail reads as one vocabulary rather
+  // than a handful of borrowed symbols. The shapes were chosen by rendering
+  // them at the size they ship at: at 16px anything whose meaning lives in a
+  // thin gap (an open-vs-closed eye, a slashed bell, a broken link) collapses
+  // into a blob, while closed circles and straight edges survive. The state
+  // lives in the inner mark and the colour; `title` is what the reader gets on
+  // hover and is the only place a caller may say anything domain-specific.
+  //
+  // Generic on purpose: core/ui names SHAPES (check / alert / pause / off /
+  // dot), never what an app means by them. Apps map their own states onto
+  // these names when they build a row.
+  var UI_STATE_PATHS = {
+    check: ['M22 33l7 8 14-16'],
+    alert: ['M32 20v14'],
+    pause: null, // drawn as two bars below
+    off:   ['M16 48L48 16'],
+    dot:   null, // drawn as a filled centre below
+  };
+  function uiStateGlyph(name, tone, title) {
+    var ns = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 64 64');
+    svg.setAttribute('width', '16');
+    svg.setAttribute('height', '16');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    // 6 units in a 64 grid is 1.5px at 16px — thinner than that and the
+    // downsample eats the stroke.
+    svg.setAttribute('stroke-width', '6');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.setAttribute('class', 'ui-state-glyph ui-state-' + (tone || 'muted'));
+    if (title) svg.setAttribute('aria-label', title);
+    svg.setAttribute('role', 'img');
+    var ring = document.createElementNS(ns, 'circle');
+    ring.setAttribute('cx', '32'); ring.setAttribute('cy', '32'); ring.setAttribute('r', '23');
+    svg.appendChild(ring);
+    (UI_STATE_PATHS[name] || []).forEach(function(d) {
+      var p = document.createElementNS(ns, 'path');
+      p.setAttribute('d', d);
+      svg.appendChild(p);
+    });
+    if (name === 'pause') {
+      [24, 35].forEach(function(x) {
+        var r = document.createElementNS(ns, 'rect');
+        r.setAttribute('x', String(x)); r.setAttribute('y', '23');
+        r.setAttribute('width', '6'); r.setAttribute('height', '18');
+        r.setAttribute('rx', '2'); r.setAttribute('fill', 'currentColor');
+        r.setAttribute('stroke', 'none');
+        svg.appendChild(r);
+      });
+    }
+    if (name === 'alert' || name === 'dot') {
+      var c = document.createElementNS(ns, 'circle');
+      c.setAttribute('cx', '32');
+      c.setAttribute('cy', name === 'dot' ? '32' : '43');
+      c.setAttribute('r', name === 'dot' ? '9' : '3.5');
+      c.setAttribute('fill', 'currentColor');
+      c.setAttribute('stroke', 'none');
+      svg.appendChild(c);
+    }
+    // The tooltip goes on a wrapper: a <title> inside an inline SVG is not
+    // reliably shown on hover across browsers, and the wrapper is also what
+    // gives the mark a hit area of its own in a tight row.
+    return el('span', {class: 'ui-state-mark', title: title || ''}, [svg]);
+  }
+  window.uiStateGlyph = uiStateGlyph;
+
   function fetchJSON(url, opts) {
     // Live dashboard data — never serve a stale HTTP-cached copy. Embedded
     // webviews (e.g. the gohort-desktop WKWebView behind its proxy) will

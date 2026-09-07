@@ -5364,3 +5364,14 @@ select:-webkit-autofill {
   .ui-upload-row { grid-template-columns: 1fr auto auto; }
   .ui-upload-name { grid-column: 1 / -1; }
 }
+
+/* State marks (uiStateGlyph) — a 16px circle-family mark on a list row saying
+   why the thing behind that row has come to rest. The tone classes are the
+   only colour vocabulary: muted for an outcome nobody has to act on, warning
+   for one somebody does. */
+.ui-state-mark { display: inline-flex; flex: 0 0 auto; align-items: center; }
+.ui-state-glyph { display: block; }
+.ui-state-muted { color: var(--text-mute, #8b90a0); }
+.ui-state-warn { color: var(--warning, #d98c34); }
+.ui-state-danger { color: var(--danger, #d9534f); }
+.ui-state-accent { color: var(--accent, #6366f1); }
