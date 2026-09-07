@@ -13,10 +13,16 @@
 //	result loopResult                the struct that carries an early return (fields resp, history, err)
 //	roundvar round                   the loop variable, exposed as a field of the receiver
 //	method <name>(<params>) <results> : <line ranges>     function-level statements, verbatim
+//	method <name>() : <line ranges> translate              same, with bare/valued returns made actions
 //	loopmethod <name>() : <line ranges>                   loop-body statements; continue/break/return translated
-//	block <name>() : <if-line> [else]                       an if (or else) body lifted whole, returns translated
-//	lift <name>() : <if-line> [else] <line ranges>          part of an if body whose returns are ALREADY actions
-//	                                                        (a second pass over a method this tool produced)
+//	block <name>() : <if-line> [else]                      an if (or else) body lifted whole, returns translated
+//	lift <name>() : <line ranges>                          function-level statements whose returns are ALREADY
+//	lift <name>() : if <line> [else] <line ranges>         actions, or part of an if body; no translation
+//	state m mapState                 second pass over one method: ITS locals become fields of
+//	                                 <recv>.m (type mapState); add that field to the receiver by hand
+//
+// The round loop is only looked for when roundvar names its variable; a flat
+// function's inner loops are ordinary statements.
 //
 // Function-level locals become fields of the receiver; loop-body locals become
 // fields of the per-round struct (zeroed by the driver each round, exactly like
@@ -80,6 +86,7 @@ func main() {
 		panic(err)
 	}
 	var recvName, recvType, roundField, roundType, actionType, resultType, roundVar string
+	stateMode := false // function-level locals go to the round struct (a second pass over one method)
 	var methods []*method
 	for _, line := range strings.Split(string(specB), "\n") {
 		line = strings.TrimSpace(line)
@@ -98,6 +105,8 @@ func main() {
 			resultType = f[1]
 		case "roundvar":
 			roundVar = f[1]
+		case "state":
+			roundField, roundType, stateMode = f[1], f[2], true
 		case "method", "loopmethod", "block", "lift":
 			rest := strings.TrimSpace(strings.TrimPrefix(line, f[0]))
 			head, tail, ok := strings.Cut(rest, ":")
@@ -111,7 +120,15 @@ func main() {
 			if m.loop {
 				m.translate = true
 			}
-			for _, r := range strings.Fields(tail) {
+			toks := strings.Fields(tail)
+			if f[0] == "lift" {
+				m.lift = true
+				if len(toks) > 0 && toks[0] == "if" {
+					m.block, _ = strconv.Atoi(toks[1])
+					toks = toks[2:]
+				}
+			}
+			for _, r := range toks {
 				r = strings.TrimSuffix(r, ",")
 				if r == "translate" {
 					m.translate = true
@@ -121,10 +138,9 @@ func main() {
 					m.blockElse = true
 					continue
 				}
-				if f[0] == "block" || (f[0] == "lift" && m.block == 0) {
+				if f[0] == "block" {
 					m.block, _ = strconv.Atoi(r)
-					m.translate = f[0] == "block"
-					m.lift = f[0] == "lift"
+					m.translate = true
 					continue
 				}
 				lo, hi, ok := strings.Cut(r, "-")
@@ -227,11 +243,15 @@ func main() {
 		return j
 	}
 
+	// The round loop is only looked for when the spec named its variable; a
+	// flat function's inner loops are ordinary statements.
 	var loop *ast.ForStmt
-	for _, s := range fn.Body.List {
-		if fs, ok := s.(*ast.ForStmt); ok {
-			loop = fs
-			break
+	if roundVar != "" {
+		for _, s := range fn.Body.List {
+			if fs, ok := s.(*ast.ForStmt); ok {
+				loop = fs
+				break
+			}
 		}
 	}
 	// loop may be nil: a flat function has no round state.
@@ -321,6 +341,26 @@ func main() {
 	collect(fn.Body.List, false, off(fn.Body.Lbrace)+1)
 	if loop != nil {
 		collect(loop.Body.List, true, off(loop.Body.Lbrace)+1)
+	}
+	if stateMode {
+		params := map[types.Object]bool{}
+		if fn.Recv != nil {
+			for _, f := range fn.Recv.List {
+				for _, n := range f.Names {
+					params[info.Defs[n]] = true
+				}
+			}
+		}
+		for _, f := range fn.Type.Params.List {
+			for _, n := range f.Names {
+				params[info.Defs[n]] = true
+			}
+		}
+		for _, d := range decls {
+			if !params[d.obj] {
+				d.loop = true
+			}
+		}
 	}
 	// the loop variable
 	if roundVar != "" && loop != nil {
@@ -512,8 +552,10 @@ func main() {
 		}
 		out.WriteString("}\n\n")
 	}
-	writeStruct(strings.TrimPrefix(recvType, "*"), false)
-	if loop != nil {
+	if !stateMode {
+		writeStruct(strings.TrimPrefix(recvType, "*"), false)
+	}
+	if loop != nil || stateMode {
 		writeStruct(roundType, true)
 	}
 	out.WriteString("// " + actionType + " is what a round method tells the driver to do next.\ntype " + actionType + " int\n\nconst (\n\tactNone " + actionType + " = iota // carry on with the next phase of this round\n\tactContinue                        // next round\n\tactBreak                           // leave the loop and finish\n\tactReturn                          // return " + recvName + ".ret from the function\n)\n\n")

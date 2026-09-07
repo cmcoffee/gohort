@@ -200,6 +200,9 @@ type probeRun struct {
 	resolvedTools resolvedToolset
 	reply         string
 	consolidateFn func()
+	// m and c are the map and chat modes' own state; see mapMode and chatMode.
+	m mapState
+	c chatState
 	// ret carries an early return out of a phase method (see exit).
 	ret probeResult
 }
@@ -1674,34 +1677,102 @@ func (pr *probeRun) assembleToolkit() {
 	assertAllowedWithBindings("servitor.worker", pr.workerTools, servitorWorkerToolAllowList, toolsetBindingNames(pr.appliance))
 }
 
-func (pr *probeRun) mapMode() probeAction {
+const probeTopicLimit = 3
+
+const probeLoopSignalLimit = 3
+
+// One investigator pass = one round budget. Extracted so the
+// continuation loop below can re-run it verbatim.
+const (
+	investigatorRoundBudget = 75 // rounds per investigator pass
+	maxInvestigatorPasses   = 2  // extra budgets granted while steps keep resolving
+)
+
+type mapState struct {
 	// === New investigator-driven mapping ===
 	//
 	// Phase 1: Quick snapshot (no LLM) — gives the investigator a starting point.
-	var snapshot string
+	snapshot                   string
+	probeCache                 map[string]string
+	probeTopicCount            map[string]int
+	mapPlan                    planToolSet
+	plan                       *WorkPlan
+	set_plan_tool              AgentToolDef
+	mark_step_in_progress_tool AgentToolDef
+	record_step_findings_tool  AgentToolDef
+	mark_step_blocked_tool     AgentToolDef
+	revise_plan_tool           AgentToolDef
+	report_gaps_tool           AgentToolDef
+	probeLoopSignalCount       int
+	probe_tool                 AgentToolDef
+	invMsg                     strings.Builder
+	invResp                    *Response
+	invHistory                 []Message
+	invErr                     error
+	investigatorTools          []AgentToolDef
+	lastInProgressStep         int
+	stuckTrackedStep           int
+	stuckRoundCount            int
+	softNudgeFired             bool
+	firmNudgeFired             bool
+	invCfg                     AgentLoopConfig
+	prevPending                int
+	now                        time.Time
+	finalFacts                 string
+	finalNotes                 string
+	finalTechniques            string
+	finalDiscoveries           string
+	invNarrative               string
+	synthMsg                   string
+	synthResp                  *Response
+	synthErr                   error
+}
+
+// mapMode is a Map run: snapshot the target, arm the probe tool, brief the
+// investigator, run it against the plan, then synthesize the profile. Each
+// stage is a method on the run's mapState; the first that ends the run says so.
+func (pr *probeRun) mapMode() probeAction {
+	for _, stage := range []func() probeAction{
+		pr.mapSnapshot,
+		pr.mapProbeTool,
+		pr.mapBrief,
+		pr.mapInvestigate,
+		pr.mapSynthesize,
+	} {
+		if act := stage(); act != actNone {
+			return act
+		}
+	}
+	return actNone
+}
+
+func (pr *probeRun) mapSnapshot() probeAction {
 	if pr.appliance.Type == "repo" {
 		emit(pr.id, probeEvent{Kind: "status", Text: "Reading repository layout…"})
-		snapshot = runRepoSnapshot(pr.ownerUser, pr.appliance.ID)
+		pr.m.snapshot = runRepoSnapshot(pr.ownerUser, pr.appliance.ID)
 	} else if pr.appliance.Type == "bundle" {
 		emit(pr.id, probeEvent{Kind: "status", Text: "Reading the bundle index…"})
-		snapshot = runBundleSnapshot(pr.ownerUser, pr.appliance.ID)
+		pr.m.snapshot = runBundleSnapshot(pr.ownerUser, pr.appliance.ID)
 	} else if pr.appliance.Type == "toolset" {
 		// One owner-nominated tool, or nothing. See runToolsetSnapshot.
 		if pr.resolvedTools.Snapshot != "" {
 			emit(pr.id, probeEvent{Kind: "status", Text: "Orienting via " + pr.resolvedTools.Snapshot + "…"})
 		}
-		snapshot = runToolsetSnapshot(pr.resolvedTools)
+		pr.m.snapshot = runToolsetSnapshot(pr.resolvedTools)
 	} else {
 		emit(pr.id, probeEvent{Kind: "status", Text: "Taking system snapshot…"})
-		snapshot = runQuickSnapshot(pr.ctx, pr.sshExec)
+		pr.m.snapshot = runQuickSnapshot(pr.ctx, pr.sshExec)
 	}
 	if pr.ctx.Err() != nil {
 		return actReturn
 	}
-	if snapshot != "" {
-		emit(pr.id, probeEvent{Kind: "output", Text: "## System Snapshot\n\n" + snapshot})
+	if pr.m.snapshot != "" {
+		emit(pr.id, probeEvent{Kind: "output", Text: "## System Snapshot\n\n" + pr.m.snapshot})
 	}
+	return actNone
+}
 
+func (pr *probeRun) mapProbeTool() probeAction {
 	// Phase 2: Investigator loop — the investigator decides what to probe,
 	// follows leads, and records discoveries. Workers execute specific tasks.
 	//
@@ -1716,20 +1787,18 @@ func (pr *probeRun) mapMode() probeAction {
 	// from "[ALREADY PROBED]" to "[ENOUGH — pivot to a different
 	// topic entirely]" so the orchestrator stops grinding the same
 	// area through paraphrase.
-	probeCache := make(map[string]string)
-	probeTopicCount := make(map[string]int)
-	const probeTopicLimit = 3
-
+	pr.m.probeCache = make(map[string]string)
+	pr.m.probeTopicCount = make(map[string]int)
 	// Plan tools (buildPlanTools) — Map REQUIRES the plan: mapping a system
 	// is the plan. Chat builds the same group with required=false.
-	mapPlan := buildPlanTools(pr.id, true)
-	plan := mapPlan.Plan
-	set_plan_tool := mapPlan.Set
-	mark_step_in_progress_tool := mapPlan.Start
-	record_step_findings_tool := mapPlan.Findings
-	mark_step_blocked_tool := mapPlan.Blocked
-	revise_plan_tool := mapPlan.Revise
-	report_gaps_tool := mapPlan.Gaps
+	pr.m.mapPlan = buildPlanTools(pr.id, true)
+	pr.m.plan = pr.m.mapPlan.Plan
+	pr.m.set_plan_tool = pr.m.mapPlan.Set
+	pr.m.mark_step_in_progress_tool = pr.m.mapPlan.Start
+	pr.m.record_step_findings_tool = pr.m.mapPlan.Findings
+	pr.m.mark_step_blocked_tool = pr.m.mapPlan.Blocked
+	pr.m.revise_plan_tool = pr.m.mapPlan.Revise
+	pr.m.report_gaps_tool = pr.m.mapPlan.Gaps
 
 	// probeLoopSignalCount tracks how many delegations have ended
 	// with a worker [LOOP DETECTED] message. The orchestrator is
@@ -1740,9 +1809,8 @@ func (pr *probeRun) mapMode() probeAction {
 	// once the orchestrator has demonstrated it's not reading the
 	// signal — forcing model attention via tool-call refusal
 	// instead of relying on prompt-level guidance.
-	probeLoopSignalCount := 0
-	const probeLoopSignalLimit = 3
-	probe_tool := AgentToolDef{
+	pr.m.probeLoopSignalCount = 0
+	pr.m.probe_tool = AgentToolDef{
 		Tool: Tool{
 			Name: "probe",
 			Description: "Execute a specific SSH investigation task on the target system. " +
@@ -1772,16 +1840,16 @@ func (pr *probeRun) mapMode() probeAction {
 			// attention via tool-call rejection rather than relying
 			// on the orchestrator to read [LOOP DETECTED] strings
 			// it's been ignoring.
-			if probeLoopSignalCount >= probeLoopSignalLimit {
-				emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Probe refused: orchestrator hit loop-signal limit (%d signals)", probeLoopSignalCount)})
-				return fmt.Sprintf("[DELEGATION REFUSED — your prior %d delegations have triggered worker LOOP DETECTED responses. Your current investigation strategy is not converging. STOP delegating new probes. Write your final report based on what you have already learned. Acknowledge what you could not determine and why. Do not call probe again in this session.]", probeLoopSignalCount), nil
+			if pr.m.probeLoopSignalCount >= probeLoopSignalLimit {
+				emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Probe refused: orchestrator hit loop-signal limit (%d signals)", pr.m.probeLoopSignalCount)})
+				return fmt.Sprintf("[DELEGATION REFUSED — your prior %d delegations have triggered worker LOOP DETECTED responses. Your current investigation strategy is not converging. STOP delegating new probes. Write your final report based on what you have already learned. Acknowledge what you could not determine and why. Do not call probe again in this session.]", pr.m.probeLoopSignalCount), nil
 			}
 			cacheKey := normalizeTask(task)
-			if cached, ok := probeCache[cacheKey]; ok {
-				probeTopicCount[cacheKey]++
-				if probeTopicCount[cacheKey] >= probeTopicLimit {
-					emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Topic exhausted: %q (%dx)", task, probeTopicCount[cacheKey])})
-					return fmt.Sprintf("[TOPIC EXHAUSTED — you have re-delegated this topic %d times now. Stop probing this area entirely. Pivot to a fundamentally different domain (different service, different layer, different angle on the original goal). Re-delegating the same topic in different words will not produce new information.]\n\nLast result for reference:\n\n%s", probeTopicCount[cacheKey], cached), nil
+			if cached, ok := pr.m.probeCache[cacheKey]; ok {
+				pr.m.probeTopicCount[cacheKey]++
+				if pr.m.probeTopicCount[cacheKey] >= probeTopicLimit {
+					emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Topic exhausted: %q (%dx)", task, pr.m.probeTopicCount[cacheKey])})
+					return fmt.Sprintf("[TOPIC EXHAUSTED — you have re-delegated this topic %d times now. Stop probing this area entirely. Pivot to a fundamentally different domain (different service, different layer, different angle on the original goal). Re-delegating the same topic in different words will not produce new information.]\n\nLast result for reference:\n\n%s", pr.m.probeTopicCount[cacheKey], cached), nil
 				}
 				return "[ALREADY PROBED — result below. Do not probe this topic again; move to a different area.]\n\n" + cached, nil
 			}
@@ -1839,15 +1907,15 @@ func (pr *probeRun) mapMode() probeAction {
 			}
 			result := strings.TrimSpace(workerResp.Content)
 			result = parseProbeOutcome(result)
-			probeCache[cacheKey] = result
+			pr.m.probeCache[cacheKey] = result
 			// If the worker hit the cmd loop limit during this
 			// delegation, propagate the signal up to the
 			// orchestrator-level counter so we can refuse future
 			// delegations once the orchestrator has demonstrated
 			// it's not pivoting in response.
 			if strings.Contains(result, "[LOOP DETECTED]") {
-				probeLoopSignalCount++
-				emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Worker loop signal received (%d/%d)", probeLoopSignalCount, probeLoopSignalLimit)})
+				pr.m.probeLoopSignalCount++
+				emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Worker loop signal received (%d/%d)", pr.m.probeLoopSignalCount, probeLoopSignalLimit)})
 			}
 			if len(result) > 12000 {
 				result = result[:12000] + "\n… [truncated]"
@@ -1857,8 +1925,10 @@ func (pr *probeRun) mapMode() probeAction {
 		},
 		NeedsConfirm: false,
 	}
+	return actNone
+}
 
-	var invMsg strings.Builder
+func (pr *probeRun) mapBrief() probeAction {
 	// Re-mapping banner — when the appliance already had a
 	// profile coming into this run, the prior facts /
 	// discoveries / techniques below can mislead the
@@ -1867,60 +1937,129 @@ func (pr *probeRun) mapMode() probeAction {
 	// before listing the prior context so the LLM doesn't read
 	// the prior data as "work is done."
 	if pr.saveProfile && strings.TrimSpace(pr.appliance.Profile) != "" {
-		invMsg.WriteString("## RE-MAPPING (full re-derivation)\n\n")
-		invMsg.WriteString("This system was mapped before — prior facts, discoveries, and techniques are listed below FOR YOUR REFERENCE ONLY. They are NOT a substitute for a fresh investigation. Re-verify what's still true, discover what's changed, and produce a complete new profile.\n\n")
-		invMsg.WriteString("You MUST emit a fresh `set_plan` as your first tool call. The previous plan is gone; treat this run as a clean slate that benefits from prior context, not as a continuation.\n\n")
+		pr.m.invMsg.WriteString("## RE-MAPPING (full re-derivation)\n\n")
+		pr.m.invMsg.WriteString("This system was mapped before — prior facts, discoveries, and techniques are listed below FOR YOUR REFERENCE ONLY. They are NOT a substitute for a fresh investigation. Re-verify what's still true, discover what's changed, and produce a complete new profile.\n\n")
+		pr.m.invMsg.WriteString("You MUST emit a fresh `set_plan` as your first tool call. The previous plan is gone; treat this run as a clean slate that benefits from prior context, not as a continuation.\n\n")
 	}
-	invMsg.WriteString("## System Snapshot\n\n")
-	if snapshot != "" {
-		invMsg.WriteString(snapshot)
+	pr.m.invMsg.WriteString("## System Snapshot\n\n")
+	if pr.m.snapshot != "" {
+		pr.m.invMsg.WriteString(pr.m.snapshot)
 	} else {
-		invMsg.WriteString("(snapshot unavailable)\n")
+		pr.m.invMsg.WriteString("(snapshot unavailable)\n")
 	}
-	invMsg.WriteString("\n\n")
+	pr.m.invMsg.WriteString("\n\n")
 	if pr.udb != nil {
 		if disc := discoveriesFor(pr.udb, pr.appliance.ID); len(disc) > 0 {
-			invMsg.WriteString("## Prior Discoveries (already established)\n\n")
-			invMsg.WriteString(formatDiscoveries(disc))
-			invMsg.WriteString("\n\n")
+			pr.m.invMsg.WriteString("## Prior Discoveries (already established)\n\n")
+			pr.m.invMsg.WriteString(formatDiscoveries(disc))
+			pr.m.invMsg.WriteString("\n\n")
 		}
 		if pr.cachedFacts != "" {
-			invMsg.WriteString("## Prior Facts\n\n")
-			invMsg.WriteString(pr.cachedFacts)
-			invMsg.WriteString("\n\n")
+			pr.m.invMsg.WriteString("## Prior Facts\n\n")
+			pr.m.invMsg.WriteString(pr.cachedFacts)
+			pr.m.invMsg.WriteString("\n\n")
 		}
 		if gb := scopedGraphPromptBlock(pr.appliance); gb != "" {
-			invMsg.WriteString("## System Map so far (extend it — don't re-map what's here)\n\n")
-			invMsg.WriteString(gb)
-			invMsg.WriteString("\n\n")
+			pr.m.invMsg.WriteString("## System Map so far (extend it — don't re-map what's here)\n\n")
+			pr.m.invMsg.WriteString(gb)
+			pr.m.invMsg.WriteString("\n\n")
 		}
 		if pr.cachedTechniques != "" {
-			invMsg.WriteString("## Prior Techniques\n\n")
-			invMsg.WriteString(pr.cachedTechniques)
-			invMsg.WriteString("\n\n")
+			pr.m.invMsg.WriteString("## Prior Techniques\n\n")
+			pr.m.invMsg.WriteString(pr.cachedTechniques)
+			pr.m.invMsg.WriteString("\n\n")
 		}
 	}
-	invMsg.WriteString("Begin your investigation.\n\n")
-	invMsg.WriteString("REQUIRED FIRST CALL: `set_plan` with ordered steps — typically 5–12, scale higher (15+) for complex appliances. Err toward more steps with narrower scopes rather than fewer with sprawling scopes; narrow steps produce sharper findings. Each step needs a short title and a what_to_find description. Foundation/discovery steps come first; deeper investigation later builds on what they find.\n\n")
-	invMsg.WriteString("After the plan is set, work the steps one at a time:\n")
-	invMsg.WriteString("  1. mark_step_in_progress (step_id)\n")
-	invMsg.WriteString("  2. probe (delegate worker investigation for that step — may call multiple times)\n")
-	invMsg.WriteString("  3. record_step_findings (step_id, 1–3 sentence summary) — OR mark_step_blocked (step_id, reason) if you can't complete it\n")
-	invMsg.WriteString("  4. Move to the next pending step\n\n")
-	invMsg.WriteString(fmt.Sprintf("If findings reveal something you couldn't have planned for, call `revise_plan` to add/remove/reorder steps (max %d revisions per session — use deliberately, not reflexively).\n\n", WorkPlanRevisionLimit))
-	invMsg.WriteString("BEFORE WRITING YOUR FINAL ANSWER: call `report_gaps`. It returns a structured summary of every blocked or skipped step. You MUST incorporate that into a 'What I Couldn't Determine' section in your final answer — the user trusts the report only when you're explicit about what you couldn't see. If the gap report is empty (everything completed), no such section is needed.\n\n")
-	invMsg.WriteString("Use store_fact / record_discovery / record_technique alongside step work for durable knowledge that survives the session. When all steps are done or blocked AND report_gaps has been called, write your final answer.")
+	pr.m.invMsg.WriteString("Begin your investigation.\n\n")
+	pr.m.invMsg.WriteString("REQUIRED FIRST CALL: `set_plan` with ordered steps — typically 5–12, scale higher (15+) for complex appliances. Err toward more steps with narrower scopes rather than fewer with sprawling scopes; narrow steps produce sharper findings. Each step needs a short title and a what_to_find description. Foundation/discovery steps come first; deeper investigation later builds on what they find.\n\n")
+	pr.m.invMsg.WriteString("After the plan is set, work the steps one at a time:\n")
+	pr.m.invMsg.WriteString("  1. mark_step_in_progress (step_id)\n")
+	pr.m.invMsg.WriteString("  2. probe (delegate worker investigation for that step — may call multiple times)\n")
+	pr.m.invMsg.WriteString("  3. record_step_findings (step_id, 1–3 sentence summary) — OR mark_step_blocked (step_id, reason) if you can't complete it\n")
+	pr.m.invMsg.WriteString("  4. Move to the next pending step\n\n")
+	pr.m.invMsg.WriteString(fmt.Sprintf("If findings reveal something you couldn't have planned for, call `revise_plan` to add/remove/reorder steps (max %d revisions per session — use deliberately, not reflexively).\n\n", WorkPlanRevisionLimit))
+	pr.m.invMsg.WriteString("BEFORE WRITING YOUR FINAL ANSWER: call `report_gaps`. It returns a structured summary of every blocked or skipped step. You MUST incorporate that into a 'What I Couldn't Determine' section in your final answer — the user trusts the report only when you're explicit about what you couldn't see. If the gap report is empty (everything completed), no such section is needed.\n\n")
+	pr.m.invMsg.WriteString("Use store_fact / record_discovery / record_technique alongside step work for durable knowledge that survives the session. When all steps are done or blocked AND report_gaps has been called, write your final answer.")
+	return actNone
+}
 
-	emit(pr.id, probeEvent{Kind: "status", Text: "Investigator starting…"})
-	var invResp *Response
-	var invHistory []Message
-	var invErr error
-	investigatorTools := []AgentToolDef{
-		set_plan_tool, mark_step_in_progress_tool, record_step_findings_tool, mark_step_blocked_tool,
-		revise_plan_tool, report_gaps_tool,
-		probe_tool, pr.store_fact_tool, pr.link_entities_tool, pr.record_discovery_tool, pr.record_technique_tool, pr.note_lesson_tool,
+func (pr *probeRun) stepResetCb() bool {
+	cur := 0
+	for _, s := range pr.m.plan.Snapshot() {
+		if s.Status == WorkStepInProgress {
+			cur = s.ID
+			break
+		}
 	}
-	assertOnlyAllowedTools("servitor.investigator", investigatorTools, servitorOrchestratorToolAllowList)
+	if cur == 0 || cur == pr.m.lastInProgressStep {
+		return false
+	}
+	pr.m.lastInProgressStep = cur
+	return true
+}
+
+// PendingWorkFn lets the agent-loop's wrap-up nudge know
+// when there are still authorized plan steps queued, so it
+// reframes "stop exploring" as "finish the current step
+// and continue down the list." Without this, the worker
+// reads the default wrap-up as license to skip remaining
+// steps and write a summary — observed dropping ~5 steps
+// from longer plans.
+func (pr *probeRun) pendingPlanWork() int {
+	n := 0
+	for _, s := range pr.m.plan.Snapshot() {
+		if s.Status == WorkStepPending || s.Status == WorkStepInProgress {
+			n++
+		}
+	}
+	return n
+}
+
+func (pr *probeRun) stuckMsgFn() []Message {
+	curStep := 0
+	stepTitle := ""
+	for _, s := range pr.m.plan.Snapshot() {
+		if s.Status == WorkStepInProgress {
+			curStep = s.ID
+			stepTitle = s.Title
+			break
+		}
+	}
+	if curStep == 0 {
+		// No step in progress (pre-plan, between steps, or
+		// final wrap-up). Don't count and don't nudge.
+		return nil
+	}
+	if curStep != pr.m.stuckTrackedStep {
+		pr.m.stuckTrackedStep = curStep
+		pr.m.stuckRoundCount = 0
+		pr.m.softNudgeFired = false
+		pr.m.firmNudgeFired = false
+	}
+	pr.m.stuckRoundCount++
+	if pr.m.stuckRoundCount == 12 && !pr.m.softNudgeFired {
+		pr.m.softNudgeFired = true
+		return []Message{{Role: "user", Content: fmt.Sprintf(
+			"Pacing check: you've spent 12 rounds on step %d (%q) without advancing. Move to another pending step now — call mark_step_in_progress on it and work it; leave this step unfinished (do NOT mark it blocked) and revisit it later with what you learn elsewhere. Coming back fresh is faster than grinding. Don't burn more than 8 more rounds here before switching.",
+			curStep, stepTitle)}}
+	}
+	if pr.m.stuckRoundCount == 20 && !pr.m.firmNudgeFired {
+		pr.m.firmNudgeFired = true
+		return []Message{{Role: "user", Content: fmt.Sprintf(
+			"Hard pacing limit: you've spent 20 rounds on step %d (%q). Switch to another pending step NOW — call mark_step_in_progress on the next one and work it. Leave step %d unfinished and pending; do NOT mark it blocked just because it's slow (blocking it for pacing/time is invalid — you'll get more rounds to revisit it). Only block a step for a genuine dead-end (no access, missing tool, unreachable).",
+			curStep, stepTitle, curStep)}}
+	}
+	return nil
+}
+
+func (pr *probeRun) mapInvestigate() probeAction {
+	emit(pr.id, probeEvent{Kind: "status", Text: "Investigator starting…"})
+	pr.m.investigatorTools = []AgentToolDef{
+		pr.m.set_plan_tool, pr.m.mark_step_in_progress_tool, pr.m.record_step_findings_tool, pr.m.mark_step_blocked_tool,
+		pr.m.revise_plan_tool, pr.m.report_gaps_tool,
+		pr.m.probe_tool, pr.store_fact_tool, pr.link_entities_tool, pr.record_discovery_tool, pr.record_technique_tool, pr.note_lesson_tool,
+	}
+	assertOnlyAllowedTools("servitor.investigator", pr.m.investigatorTools, servitorOrchestratorToolAllowList)
 	// Per-step pacing reset — the soft-pacing windows
 	// (midpoint nudge, wrap-up warning, failure streak)
 	// rebase whenever the in_progress step ID changes. Stops
@@ -1929,37 +2068,7 @@ func (pr *probeRun) mapMode() probeAction {
 	// fresh step. The closure tracks the last step we
 	// announced a reset for; returns true once per real
 	// transition.
-	lastInProgressStep := 0
-	stepResetCb := func() bool {
-		cur := 0
-		for _, s := range plan.Snapshot() {
-			if s.Status == WorkStepInProgress {
-				cur = s.ID
-				break
-			}
-		}
-		if cur == 0 || cur == lastInProgressStep {
-			return false
-		}
-		lastInProgressStep = cur
-		return true
-	}
-	// PendingWorkFn lets the agent-loop's wrap-up nudge know
-	// when there are still authorized plan steps queued, so it
-	// reframes "stop exploring" as "finish the current step
-	// and continue down the list." Without this, the worker
-	// reads the default wrap-up as license to skip remaining
-	// steps and write a summary — observed dropping ~5 steps
-	// from longer plans.
-	pendingPlanWork := func() int {
-		n := 0
-		for _, s := range plan.Snapshot() {
-			if s.Status == WorkStepPending || s.Status == WorkStepInProgress {
-				n++
-			}
-		}
-		return n
-	}
+	pr.m.lastInProgressStep = 0
 	// Per-step stuck detector — when the investigator burns too
 	// many rounds on a single step without advancing, inject a
 	// nudge urging it to mark the step blocked and move on. The
@@ -1979,55 +2088,13 @@ func (pr *probeRun) mapMode() probeAction {
 	// The nudges are one-shot per step transition — when the
 	// LLM advances to a new step, the counter resets and the
 	// flags clear so subsequent steps get the same grace period.
-	stuckTrackedStep := 0
-	stuckRoundCount := 0
-	softNudgeFired := false
-	firmNudgeFired := false
-	stuckMsgFn := func() []Message {
-		curStep := 0
-		stepTitle := ""
-		for _, s := range plan.Snapshot() {
-			if s.Status == WorkStepInProgress {
-				curStep = s.ID
-				stepTitle = s.Title
-				break
-			}
-		}
-		if curStep == 0 {
-			// No step in progress (pre-plan, between steps, or
-			// final wrap-up). Don't count and don't nudge.
-			return nil
-		}
-		if curStep != stuckTrackedStep {
-			stuckTrackedStep = curStep
-			stuckRoundCount = 0
-			softNudgeFired = false
-			firmNudgeFired = false
-		}
-		stuckRoundCount++
-		if stuckRoundCount == 12 && !softNudgeFired {
-			softNudgeFired = true
-			return []Message{{Role: "user", Content: fmt.Sprintf(
-				"Pacing check: you've spent 12 rounds on step %d (%q) without advancing. Move to another pending step now — call mark_step_in_progress on it and work it; leave this step unfinished (do NOT mark it blocked) and revisit it later with what you learn elsewhere. Coming back fresh is faster than grinding. Don't burn more than 8 more rounds here before switching.",
-				curStep, stepTitle)}}
-		}
-		if stuckRoundCount == 20 && !firmNudgeFired {
-			firmNudgeFired = true
-			return []Message{{Role: "user", Content: fmt.Sprintf(
-				"Hard pacing limit: you've spent 20 rounds on step %d (%q). Switch to another pending step NOW — call mark_step_in_progress on the next one and work it. Leave step %d unfinished and pending; do NOT mark it blocked just because it's slow (blocking it for pacing/time is invalid — you'll get more rounds to revisit it). Only block a step for a genuine dead-end (no access, missing tool, unreachable).",
-				curStep, stepTitle, curStep)}}
-		}
-		return nil
-	}
-	// One investigator pass = one round budget. Extracted so the
-	// continuation loop below can re-run it verbatim.
-	const (
-		investigatorRoundBudget = 75 // rounds per investigator pass
-		maxInvestigatorPasses   = 2  // extra budgets granted while steps keep resolving
-	)
-	invCfg := AgentLoopConfig{
+	pr.m.stuckTrackedStep = 0
+	pr.m.stuckRoundCount = 0
+	pr.m.softNudgeFired = false
+	pr.m.firmNudgeFired = false
+	pr.m.invCfg = AgentLoopConfig{
 		SystemPrompt: buildInvestigatorSystemPrompt(pr.appliance, pr.resolvedTools),
-		Tools:        investigatorTools,
+		Tools:        pr.m.investigatorTools,
 		MaxRounds:    investigatorRoundBudget,
 		// The investigator's OWN stage, not the worker one. It borrowed
 		// app.servitor's tier while taking its thinking budget from
@@ -2042,17 +2109,17 @@ func (pr *probeRun) mapMode() probeAction {
 		MaskDebugOutput: true,
 		SerialTools:     true,
 		ChatOptions:     append([]ChatOption{WithTemperature(0.3), WithThink(true)}, orchestratorThinkOpts()...),
-		OnRoundReset:    stepResetCb,
-		OnRoundStart:    stuckMsgFn,
-		PendingWorkFn:   pendingPlanWork,
+		OnRoundReset:    pr.stepResetCb,
+		OnRoundStart:    pr.stuckMsgFn,
+		PendingWorkFn:   pr.pendingPlanWork,
 		// Analyzing a repo that may define LLM tools: the investigator
 		// legitimately names tools like store_fact when describing the
 		// code, so don't nudge it as if it meant to call them.
 		DisableToolMentionCorrection: pr.appliance.Type == "repo",
 	}
 	withHeartbeat(pr.ctx, pr.id, "Investigator", func() {
-		invResp, invHistory, invErr = pr.a.RunAgentLoop(pr.ctx,
-			[]Message{{Role: "user", Content: invMsg.String()}}, invCfg)
+		pr.m.invResp, pr.m.invHistory, pr.m.invErr = pr.a.RunAgentLoop(pr.ctx,
+			[]Message{{Role: "user", Content: pr.m.invMsg.String()}}, pr.m.invCfg)
 	})
 	// Productive continuation — a single round budget often isn't
 	// enough to work a 10–15 step plan to completion, so the
@@ -2064,66 +2131,66 @@ func (pr *probeRun) mapMode() probeAction {
 	// dead-ended), so stop and synthesize what we have rather than
 	// grinding in circles. Total work is bounded at
 	// (1 + maxInvestigatorPasses) budgets.
-	prevPending := -1
-	for pass := 0; pass < maxInvestigatorPasses && invErr == nil && pr.ctx.Err() == nil; pass++ {
-		if invResp == nil || !invResp.HitRoundCap {
+	pr.m.prevPending = -1
+	for pass := 0; pass < maxInvestigatorPasses && pr.m.invErr == nil && pr.ctx.Err() == nil; pass++ {
+		if pr.m.invResp == nil || !pr.m.invResp.HitRoundCap {
 			break // natural finish — not a cap hit
 		}
-		pending := pendingPlanWork()
+		pending := pr.pendingPlanWork()
 		if pending == 0 {
 			break // capped, but the plan is fully resolved — nothing left
 		}
-		if prevPending >= 0 && pending >= prevPending {
+		if pr.m.prevPending >= 0 && pending >= pr.m.prevPending {
 			emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf(
 				"Investigator stalled with %d step(s) still pending — wrapping up with findings so far.", pending)})
 			break
 		}
-		prevPending = pending
+		pr.m.prevPending = pending
 		emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf(
 			"Investigator reached its round budget with %d step(s) pending — continuing the investigation…", pending)})
 		// Fresh stuck-detector window for the new budget.
-		stuckTrackedStep, stuckRoundCount, softNudgeFired, firmNudgeFired = 0, 0, false, false
+		pr.m.stuckTrackedStep, pr.m.stuckRoundCount, pr.m.softNudgeFired, pr.m.firmNudgeFired = 0, 0, false, false
 		withHeartbeat(pr.ctx, pr.id, "Investigator (continued)", func() {
-			invResp, invHistory, invErr = pr.a.RunAgentLoop(pr.ctx, invHistory, invCfg)
+			pr.m.invResp, pr.m.invHistory, pr.m.invErr = pr.a.RunAgentLoop(pr.ctx, pr.m.invHistory, pr.m.invCfg)
 		})
 	}
-	if invErr != nil && pr.ctx.Err() == nil {
-		emit(pr.id, probeEvent{Kind: "error", Text: "Investigator error: " + invErr.Error()})
+	if pr.m.invErr != nil && pr.ctx.Err() == nil {
+		emit(pr.id, probeEvent{Kind: "error", Text: "Investigator error: " + pr.m.invErr.Error()})
 		// Don't return — synthesize what was gathered.
 	}
 	if pr.ctx.Err() != nil {
 		return actReturn
 	}
+	return actNone
+}
 
+func (pr *probeRun) mapSynthesize() probeAction {
 	// Phase 3: Synthesis — structured profile from accumulated discoveries + facts.
 	emit(pr.id, probeEvent{Kind: "status", Text: "Synthesizing profile from investigation findings…"})
-	now := time.Now()
-	finalFacts := ""
+	pr.m.now = time.Now()
+	pr.m.finalFacts = ""
 	if facts := factsForAppliance(pr.udb, pr.appliance.ID); len(facts) > 0 {
-		finalFacts = formatFactsWithAge(facts, now)
+		pr.m.finalFacts = formatFactsWithAge(facts, pr.m.now)
 	}
-	var finalNotes string
 	if pr.udb != nil {
-		pr.udb.Get(notesTable, pr.appliance.ID, &finalNotes)
+		pr.udb.Get(notesTable, pr.appliance.ID, &pr.m.finalNotes)
 	}
-	finalTechniques := ""
+	pr.m.finalTechniques = ""
 	if pr.udb != nil {
-		finalTechniques = techniquesFor(pr.udb, pr.appliance.ID)
+		pr.m.finalTechniques = techniquesFor(pr.udb, pr.appliance.ID)
 	}
-	finalDiscoveries := ""
+	pr.m.finalDiscoveries = ""
 	if pr.udb != nil {
-		finalDiscoveries = formatDiscoveries(discoveriesFor(pr.udb, pr.appliance.ID))
+		pr.m.finalDiscoveries = formatDiscoveries(discoveriesFor(pr.udb, pr.appliance.ID))
 	}
-	invNarrative := ""
-	if invResp != nil {
-		invNarrative = strings.TrimSpace(invResp.Content)
+	pr.m.invNarrative = ""
+	if pr.m.invResp != nil {
+		pr.m.invNarrative = strings.TrimSpace(pr.m.invResp.Content)
 	}
-	synthMsg := buildSynthesisMessage(invNarrative, finalFacts, finalTechniques, finalNotes, finalDiscoveries)
-	var synthResp *Response
-	var synthErr error
+	pr.m.synthMsg = buildSynthesisMessage(pr.m.invNarrative, pr.m.finalFacts, pr.m.finalTechniques, pr.m.finalNotes, pr.m.finalDiscoveries)
 	withHeartbeat(pr.ctx, pr.id, "Synthesizing profile", func() {
-		synthResp, _, synthErr = pr.a.RunAgentLoop(pr.ctx,
-			[]Message{{Role: "user", Content: synthMsg}},
+		pr.m.synthResp, _, pr.m.synthErr = pr.a.RunAgentLoop(pr.ctx,
+			[]Message{{Role: "user", Content: pr.m.synthMsg}},
 			AgentLoopConfig{
 				SystemPrompt:    buildSynthesisSystemPrompt(pr.appliance),
 				Tools:           nil,
@@ -2135,23 +2202,67 @@ func (pr *probeRun) mapMode() probeAction {
 			},
 		)
 	})
-	if synthErr != nil && pr.ctx.Err() == nil {
-		emit(pr.id, probeEvent{Kind: "error", Text: "Synthesis error: " + synthErr.Error()})
+	if pr.m.synthErr != nil && pr.ctx.Err() == nil {
+		emit(pr.id, probeEvent{Kind: "error", Text: "Synthesis error: " + pr.m.synthErr.Error()})
 	}
-	if synthResp != nil && strings.TrimSpace(synthResp.Content) != "" {
-		pr.reply = strings.TrimSpace(synthResp.Content)
+	if pr.m.synthResp != nil && strings.TrimSpace(pr.m.synthResp.Content) != "" {
+		pr.reply = strings.TrimSpace(pr.m.synthResp.Content)
 	}
-	if pr.reply == "" && invNarrative != "" {
-		pr.reply = invNarrative
+	if pr.reply == "" && pr.m.invNarrative != "" {
+		pr.reply = pr.m.invNarrative
 	}
 	return actNone
 }
 
+const qaTopicLimit = 3
+
+const maxDocInvestigatorPasses = 2
+
+type chatState struct {
+	read_doc_tool        AgentToolDef
+	update_doc_tool      AgentToolDef
+	lastProbeResult      string
+	allProbeResults      []string
+	qaProbeCache         map[string]string
+	qaTopicCount         map[string]int
+	probe_tool           AgentToolDef
+	docs                 map[string]string
+	hasFreshImage        bool
+	leadPrompt           string
+	injQ                 *InjectionQueue
+	err                  error
+	chatPlan             planToolSet
+	docInvestigatorTools []AgentToolDef
+	orch                 *orchestrate.OrchestrateApp
+	leadImages           [][]byte
+	leadScope            orchestrate.AgentScope
+	leadLoop             *orchestrate.AgentLoopOverrides
+	res                  orchestrate.AgentSyncResult
+}
+
+// chatMode answers a question about the appliance: the document tools, the
+// probe tool, the investigator, then the follow-through that stores what the
+// probes found. Each stage is a method on the run's chatState; the first that
+// ends the run says so.
 func (pr *probeRun) chatMode() probeAction {
+	for _, stage := range []func() probeAction{
+		pr.chatDocTools,
+		pr.chatProbeTool,
+		pr.chatInvestigate,
+		pr.chatAfter,
+	} {
+		if act := stage(); act != actNone {
+			return act
+		}
+	}
+	return actNone
+}
+
+func (pr *probeRun) chatDocTools() probeAction {
 	// Chat mode: investigator loop using probe tool — no pre-planned task list.
 
 	// read_doc — fetch a structured knowledge document.
-	read_doc_tool := AgentToolDef{
+	pr.c.read_doc_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "read_doc",
 			Description: "Read a structured knowledge document about this system. System docs: overview, databases, filesystem, services, apps. CLI maps: cli:<command> (e.g. cli:kubectl, cli:docker).",
@@ -2189,7 +2300,7 @@ func (pr *probeRun) chatMode() probeAction {
 	}
 
 	// update_doc — persist a structured knowledge document.
-	update_doc_tool := AgentToolDef{
+	pr.c.update_doc_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "update_doc",
 			Description: "Write or replace a structured knowledge document with new findings. Call this after every probe that yields new information. These docs are the investigator's persistent memory across sessions.",
@@ -2211,15 +2322,14 @@ func (pr *probeRun) chatMode() probeAction {
 		},
 		NeedsConfirm: false,
 	}
+	return actNone
+}
 
-	var lastProbeResult string
-	var allProbeResults []string
-	qaProbeCache := make(map[string]string) // normalized task → last result
-	qaTopicCount := make(map[string]int)
-	const qaTopicLimit = 3
-
+func (pr *probeRun) chatProbeTool() probeAction {
+	pr.c.qaProbeCache = make(map[string]string) // normalized task → last result
+	pr.c.qaTopicCount = make(map[string]int)
 	// probe_tool — targeted investigation at the investigator's direction.
-	probe_tool := AgentToolDef{
+	pr.c.probe_tool = AgentToolDef{
 		Tool: Tool{
 			Name: "probe",
 			Description: "Execute a specific SSH investigation task on the target system. " +
@@ -2237,11 +2347,11 @@ func (pr *probeRun) chatMode() probeAction {
 				return "", fmt.Errorf("task is required")
 			}
 			cacheKey := normalizeTask(task)
-			if cached, ok := qaProbeCache[cacheKey]; ok {
-				qaTopicCount[cacheKey]++
-				if qaTopicCount[cacheKey] >= qaTopicLimit {
-					emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Topic exhausted: %q (%dx)", task, qaTopicCount[cacheKey])})
-					return fmt.Sprintf("[TOPIC EXHAUSTED — you have re-delegated this topic %d times now. Stop probing this area entirely. Pivot to a fundamentally different domain. Re-delegating the same topic in different words will not produce new information.]\n\nLast result for reference:\n\n%s", qaTopicCount[cacheKey], cached), nil
+			if cached, ok := pr.c.qaProbeCache[cacheKey]; ok {
+				pr.c.qaTopicCount[cacheKey]++
+				if pr.c.qaTopicCount[cacheKey] >= qaTopicLimit {
+					emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Topic exhausted: %q (%dx)", task, pr.c.qaTopicCount[cacheKey])})
+					return fmt.Sprintf("[TOPIC EXHAUSTED — you have re-delegated this topic %d times now. Stop probing this area entirely. Pivot to a fundamentally different domain. Re-delegating the same topic in different words will not produce new information.]\n\nLast result for reference:\n\n%s", pr.c.qaTopicCount[cacheKey], cached), nil
 				}
 				return "[ALREADY PROBED — result below. Do not probe this topic again; move to a different area.]\n\n" + cached, nil
 			}
@@ -2308,9 +2418,9 @@ func (pr *probeRun) chatMode() probeAction {
 			result := strings.TrimSpace(workerResp.Content)
 			result = parseProbeOutcome(result)
 			if result != "" {
-				qaProbeCache[cacheKey] = result
-				lastProbeResult = result
-				allProbeResults = append(allProbeResults, result)
+				pr.c.qaProbeCache[cacheKey] = result
+				pr.c.lastProbeResult = result
+				pr.c.allProbeResults = append(pr.c.allProbeResults, result)
 			}
 			if len(result) > 14000 {
 				result = result[:14000] + "\n… [truncated]"
@@ -2320,43 +2430,49 @@ func (pr *probeRun) chatMode() probeAction {
 		},
 		NeedsConfirm: false,
 	}
+	return actNone
+}
 
-	docs := allDocs(pr.udb, pr.appliance.ID)
-	hasFreshImage := false
+func (pr *probeRun) drainInjections() []Message {
+	if pr.c.injQ == nil {
+		return nil
+	}
+	notes := pr.c.injQ.Drain()
+	if len(notes) == 0 {
+		return nil
+	}
+	out := make([]Message, 0, len(notes))
+	ids := make([]string, 0, len(notes))
+	for _, n := range notes {
+		out = append(out, Message{Role: "user", Content: "[USER NOTE — submitted mid-investigation] " + n.Text})
+		ids = append(ids, n.ID)
+	}
+	emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Orchestrator picked up %d user note(s).", len(notes))})
+	// Tell the UI which notes are now locked from edit/delete.
+	emit(pr.id, probeEvent{Kind: "notes_consumed", IDs: ids})
+	return out
+}
+
+func (pr *probeRun) leadStatus(s string) {
+	emit(pr.id, probeEvent{Kind: "status", Text: s})
+}
+
+func (pr *probeRun) chatInvestigate() probeAction {
+	pr.c.docs = allDocs(pr.udb, pr.appliance.ID)
+	pr.c.hasFreshImage = false
 	for i := len(pr.messages) - 1; i >= 0; i-- {
 		if pr.messages[i].Role == "user" {
-			hasFreshImage = len(pr.messages[i].Images) > 0
+			pr.c.hasFreshImage = len(pr.messages[i].Images) > 0
 			break
 		}
 	}
-	leadPrompt := buildLeadSystemPrompt(pr.udb, pr.appliance, docs, pr.cachedFacts, pr.cachedNotes, pr.cachedTechniques, pr.cachedRules, pr.cachedDiscoveries, hasFreshImage)
+	pr.c.leadPrompt = buildLeadSystemPrompt(pr.udb, pr.appliance, pr.c.docs, pr.cachedFacts, pr.cachedNotes, pr.cachedTechniques, pr.cachedRules, pr.cachedDiscoveries, pr.c.hasFreshImage)
 	emit(pr.id, probeEvent{Kind: "status", Text: "Investigator analyzing…"})
 
 	// Resolve the per-session injection queue so the orchestrator picks
 	// up mid-flight user notes between rounds. Workers don't get the hook
 	// — they finish their current task before the orchestrator sees the note.
-	injQ := LookupInjectionQueue(pr.id)
-	drainInjections := func() []Message {
-		if injQ == nil {
-			return nil
-		}
-		notes := injQ.Drain()
-		if len(notes) == 0 {
-			return nil
-		}
-		out := make([]Message, 0, len(notes))
-		ids := make([]string, 0, len(notes))
-		for _, n := range notes {
-			out = append(out, Message{Role: "user", Content: "[USER NOTE — submitted mid-investigation] " + n.Text})
-			ids = append(ids, n.ID)
-		}
-		emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Orchestrator picked up %d user note(s).", len(notes))})
-		// Tell the UI which notes are now locked from edit/delete.
-		emit(pr.id, probeEvent{Kind: "notes_consumed", IDs: ids})
-		return out
-	}
-
-	var err error
+	pr.c.injQ = LookupInjectionQueue(pr.id)
 	// A follow-up that turns out to need real discovery gets the SAME plan
 	// machinery Map has — set a checklist, work it step by step, report what
 	// it could not determine. Without this, chat could only fire one-off
@@ -2366,11 +2482,9 @@ func (pr *probeRun) chatMode() probeAction {
 	// investigation quietly got a shallow one. required=false — most
 	// questions ARE one probe, and taxing every follow-up with a 5-step plan
 	// would be worse than the gap.
-	chatPlan := buildPlanTools(pr.id, false)
-	docInvestigatorTools := append([]AgentToolDef{read_doc_tool, update_doc_tool, probe_tool}, chatPlan.All()...)
-	assertOnlyAllowedTools("servitor.doc_investigator", docInvestigatorTools, servitorOrchestratorToolAllowList)
-	const maxDocInvestigatorPasses = 2 // extra budgets while probes keep yielding new data
-
+	pr.c.chatPlan = buildPlanTools(pr.id, false)
+	pr.c.docInvestigatorTools = append([]AgentToolDef{pr.c.read_doc_tool, pr.c.update_doc_tool, pr.c.probe_tool}, pr.c.chatPlan.All()...)
+	assertOnlyAllowedTools("servitor.doc_investigator", pr.c.docInvestigatorTools, servitorOrchestratorToolAllowList)
 	// Lead migration (slice 2b): the investigator runs through the orchestrate
 	// SCOPED path, so its sessions and tool recordings land in the appliance
 	// scope (app:servitor:<id>). It keeps its OWN complete prompt verbatim via
@@ -2378,24 +2492,23 @@ func (pr *probeRun) chatMode() probeAction {
 	// mid-flight injection drain (with the notes_consumed UI signal) rides
 	// Loop.OnRoundStart. All per-appliance context is in the system prompt, so
 	// the run message is just the conversation.
-	orch := servitorOrch()
-	if orch == nil {
+	pr.c.orch = servitorOrch()
+	if pr.c.orch == nil {
 		emit(pr.id, probeEvent{Kind: "error", Text: "orchestrate runtime unavailable"})
 		return actReturn
 	}
-	var leadImages [][]byte
 	for i := len(pr.messages) - 1; i >= 0; i-- {
 		if pr.messages[i].Role == "user" {
-			leadImages = pr.messages[i].Images
+			pr.c.leadImages = pr.messages[i].Images
 			break
 		}
 	}
-	leadScope := orchestrate.AgentScope{
+	pr.c.leadScope = orchestrate.AgentScope{
 		AgentID:   servitorInvestigatorAgentID,
 		ScopeUser: applianceMemScope(pr.appliance.ID),
 		SessionID: pr.id,
 	}
-	leadLoop := &orchestrate.AgentLoopOverrides{
+	pr.c.leadLoop = &orchestrate.AgentLoopOverrides{
 		MaxRounds:   75,
 		SerialTools: true,
 		// The appliance's own tier, on THIS path too. The map/probe branch
@@ -2406,67 +2519,69 @@ func (pr *probeRun) chatMode() probeAction {
 		// uses to ask a system a question.
 		TierOverride: applianceTierOverride(pr.appliance.OrchestratorTier),
 		ChatOptions:  append([]ChatOption{WithTemperature(0.2), WithThink(true)}, orchestratorThinkOpts()...),
-		OnRoundStart: drainInjections,
+		OnRoundStart: pr.drainInjections,
 	}
-	leadStatus := func(s string) { emit(pr.id, probeEvent{Kind: "status", Text: s}) }
-	var res orchestrate.AgentSyncResult
 	withHeartbeat(pr.ctx, pr.id, "Investigator: working", func() {
-		res, err = orch.RunScopedAgentRich(pr.ctx, leadScope, orchestrate.AgentSyncRun{
+		pr.c.res, pr.c.err = pr.c.orch.RunScopedAgentRich(pr.ctx, pr.c.leadScope, orchestrate.AgentSyncRun{
 			SubSessionID:         pr.id,
 			Message:              buildScopedLeadMessage(pr.messages),
-			Images:               leadImages,
+			Images:               pr.c.leadImages,
 			FreshSession:         true,
-			SystemPromptOverride: leadPrompt,
-			AppTools:             docInvestigatorTools,
-			Loop:                 leadLoop,
-			StatusCallback:       leadStatus,
+			SystemPromptOverride: pr.c.leadPrompt,
+			AppTools:             pr.c.docInvestigatorTools,
+			Loop:                 pr.c.leadLoop,
+			StatusCallback:       pr.leadStatus,
 		})
 	})
-	if res.Text != "" {
-		pr.reply = strings.TrimSpace(res.Text)
+	if pr.c.res.Text != "" {
+		pr.reply = strings.TrimSpace(pr.c.res.Text)
 	}
 	// Productive continuation — when the run caps (HitRoundCap) but probes are
 	// still yielding NEW data, continue the SAME scoped session (FreshSession
 	// defaults false) with another budget; stop once a pass gathers nothing new.
-	for pass := 0; pass < maxDocInvestigatorPasses && err == nil && pr.ctx.Err() == nil; pass++ {
-		if !res.HitRoundCap {
+	for pass := 0; pass < maxDocInvestigatorPasses && pr.c.err == nil && pr.ctx.Err() == nil; pass++ {
+		if !pr.c.res.HitRoundCap {
 			break // natural finish — not a cap hit
 		}
-		before := len(allProbeResults)
-		if pending := chatPlan.Pending(); pending > 0 {
+		before := len(pr.c.allProbeResults)
+		if pending := pr.c.chatPlan.Pending(); pending > 0 {
 			emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf(
 				"Investigator reached its round budget with %d plan step(s) pending — continuing…", pending)})
 		} else {
 			emit(pr.id, probeEvent{Kind: "status", Text: "Investigator reached its round budget — continuing the investigation…"})
 		}
 		withHeartbeat(pr.ctx, pr.id, "Investigator: working (continued)", func() {
-			res, err = orch.RunScopedAgentRich(pr.ctx, leadScope, orchestrate.AgentSyncRun{
+			pr.c.res, pr.c.err = pr.c.orch.RunScopedAgentRich(pr.ctx, pr.c.leadScope, orchestrate.AgentSyncRun{
 				SubSessionID:         pr.id,
 				Message:              "Continue the investigation from where you left off and finish answering the user's question.",
-				SystemPromptOverride: leadPrompt,
-				AppTools:             docInvestigatorTools,
-				Loop:                 leadLoop,
-				StatusCallback:       leadStatus,
+				SystemPromptOverride: pr.c.leadPrompt,
+				AppTools:             pr.c.docInvestigatorTools,
+				Loop:                 pr.c.leadLoop,
+				StatusCallback:       pr.leadStatus,
 			})
 		})
-		if res.Text != "" {
-			pr.reply = strings.TrimSpace(res.Text)
+		if pr.c.res.Text != "" {
+			pr.reply = strings.TrimSpace(pr.c.res.Text)
 		}
-		if len(allProbeResults) == before && chatPlan.Pending() == 0 {
+		if len(pr.c.allProbeResults) == before && pr.c.chatPlan.Pending() == 0 {
 			break // nothing new AND nothing planned left — stop rather than grind
 		}
 	}
-	if err != nil && pr.ctx.Err() == nil {
-		emit(pr.id, probeEvent{Kind: "error", Text: err.Error()})
+	if pr.c.err != nil && pr.ctx.Err() == nil {
+		emit(pr.id, probeEvent{Kind: "error", Text: pr.c.err.Error()})
 		return actReturn
 	}
-	if pr.reply == "" && lastProbeResult != "" {
-		pr.reply = lastProbeResult
+	return actNone
+}
+
+func (pr *probeRun) chatAfter() probeAction {
+	if pr.reply == "" && pr.c.lastProbeResult != "" {
+		pr.reply = pr.c.lastProbeResult
 	}
 
 	// Consolidation and verification use allProbeResults / lastProbeResult.
-	if lastProbeResult != "" && pr.udb != nil {
-		workerOut := lastProbeResult
+	if pr.c.lastProbeResult != "" && pr.udb != nil {
+		workerOut := pr.c.lastProbeResult
 		userQuestion := ""
 		if n := len(pr.messages); n > 0 && pr.messages[n-1].Role == "user" {
 			userQuestion = pr.messages[n-1].Content
@@ -2486,7 +2601,7 @@ func (pr *probeRun) chatMode() probeAction {
 			}
 			pr.a.RunAgentLoop(bgCtx, []Message{{Role: "user", Content: cMsg.String()}}, AgentLoopConfig{
 				SystemPrompt:    buildConsolidationPrompt(pr.appliance),
-				Tools:           []AgentToolDef{read_doc_tool, update_doc_tool, pr.store_fact_tool, pr.link_entities_tool, pr.record_discovery_tool, pr.record_technique_tool, pr.note_lesson_tool},
+				Tools:           []AgentToolDef{pr.c.read_doc_tool, pr.c.update_doc_tool, pr.store_fact_tool, pr.link_entities_tool, pr.record_discovery_tool, pr.record_technique_tool, pr.note_lesson_tool},
 				MaxRounds:       10,
 				RouteKey:        "app.servitor",
 				TierOverride:    applianceTierOverride(pr.appliance.OrchestratorTier),
@@ -2507,8 +2622,8 @@ func (pr *probeRun) chatMode() probeAction {
 	// findings-sized prefill sitting between the finished answer and the
 	// user, is skipped. When the check finds a candidate, the model runs
 	// exactly as before: it decides, not the heuristic.
-	if pr.reply != "" && len(allProbeResults) > 0 {
-		rawFindings := strings.Join(allProbeResults, "\n\n---\n\n")
+	if pr.reply != "" && len(pr.c.allProbeResults) > 0 {
+		rawFindings := strings.Join(pr.c.allProbeResults, "\n\n---\n\n")
 		if len(rawFindings) > 24000 {
 			rawFindings = rawFindings[:24000] + "\n... [truncated]"
 		}
