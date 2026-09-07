@@ -267,6 +267,12 @@ func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Re
 			if lbl := objectiveStateLabel(monitorObjective(m)); lbl != "" {
 				detail += " · " + lbl
 			}
+			// A monitor that has fired and whose condition never went false
+			// again is running without being able to do anything. It is not
+			// stopped, so it gets no stop mark — it gets told.
+			if lbl := MonitorStuckLabel(m); lbl != "" {
+				detail += " · " + lbl
+			}
 		}
 		last := ""
 		if !m.LastFired.IsZero() {

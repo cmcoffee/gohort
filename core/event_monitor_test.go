@@ -855,3 +855,146 @@ func TestAGoodCheckClearsTheFailureStreak(t *testing.T) {
 		t.Error("the recovering check did not fire the crossing it observed")
 	}
 }
+
+// TestAConditionThatNeverClearsSaysSoOnce. Both polled kinds are
+// edge-triggered: they fire on the crossing and re-arm only when a check finds
+// the condition false. So a checker written to answer with the match word
+// every time fires ONCE and then never again — while the schedule keeps
+// running and, for this kind, keeps paying for an LLM checker every interval.
+// Live, that produced one wake, a second attempt that could never arrive, and
+// a stop_after that could never be reached, all of which looked from the
+// outside like a monitor quietly working.
+func TestAConditionThatNeverClearsSaysSoOnce(t *testing.T) {
+	db := memDB(t)
+	m := EventMonitor{
+		Name: "always-yes", Owner: "craig", Kind: EventKindPoll,
+		CheckAgent: "Checker", Check: "end your answer with YES", IntervalSeconds: 300,
+	}
+	SaveEventMonitor(db, m)
+	RegisterEventPoller(func(ctx context.Context, owner, agentID, check string) (string, error) {
+		return "fetch failed. YES", nil // the checker that always matches
+	})
+	defer RegisterEventPoller(nil)
+	wakes := 0
+	RegisterEventWaker(func(ctx context.Context, owner, name, summary string) (bool, string) {
+		wakes++
+		return true, ""
+	})
+	defer RegisterEventWaker(nil)
+
+	notices := func() int {
+		n := 0
+		for _, r := range ListRuns(db, "craig", RunFilter{}) {
+			if strings.Contains(r.Summary, "has been true at every check") {
+				n++
+			}
+		}
+		return n
+	}
+
+	// The first check fires; every later one finds the condition still true.
+	for i := 0; i < 6; i++ {
+		cur, _ := GetEventMonitor(db, "craig", "always-yes")
+		executeEventPoll(context.Background(), db, cur)
+	}
+	if wakes != 1 {
+		t.Fatalf("edge-triggered means one wake for a condition that never clears, got %d", wakes)
+	}
+	cur, _ := GetEventMonitor(db, "craig", "always-yes")
+	if cur.StuckMatches != 5 {
+		t.Errorf("still-true checks counted %d, want 5", cur.StuckMatches)
+	}
+	if n := notices(); n != 1 {
+		t.Errorf("the owner was told %d times; once is the whole design — a row per check would bury the feed", n)
+	}
+	if lbl := MonitorStuckLabel(cur); !strings.Contains(lbl, "armed but silent") {
+		t.Errorf("the listing does not say the monitor can no longer fire: %q", lbl)
+	}
+
+	// It is NOT paused. "The checker always matches" and "the condition really
+	// persists" look identical from here, and pausing the second would stop
+	// watching for the recovery-then-recur cycle the monitor exists for.
+	if cur.Paused || cur.Broken {
+		t.Error("the monitor was stopped; this guard informs, it does not act")
+	}
+}
+
+// TestClearingTheConditionResetsTheCount — the guard is about a condition that
+// never clears, so one that does clear must leave no trace and must re-arm.
+func TestClearingTheConditionResetsTheCount(t *testing.T) {
+	db := memDB(t)
+	m := EventMonitor{Name: "cve", Owner: "craig", Kind: EventKindPoll, CheckAgent: "c", Check: "any?"}
+	SaveEventMonitor(db, m)
+	answer := "YES"
+	RegisterEventPoller(func(ctx context.Context, owner, agentID, check string) (string, error) {
+		return answer, nil
+	})
+	defer RegisterEventPoller(nil)
+	wakes := 0
+	RegisterEventWaker(func(ctx context.Context, owner, name, summary string) (bool, string) {
+		wakes++
+		return true, ""
+	})
+	defer RegisterEventWaker(nil)
+
+	for i := 0; i < 3; i++ {
+		cur, _ := GetEventMonitor(db, "craig", "cve")
+		executeEventPoll(context.Background(), db, cur)
+	}
+	cur, _ := GetEventMonitor(db, "craig", "cve")
+	if cur.StuckMatches != 2 {
+		t.Fatalf("expected 2 still-true checks, got %d", cur.StuckMatches)
+	}
+	if MonitorStuckLabel(cur) != "" {
+		t.Error("two checks is not yet a stuck monitor — an ordinary condition may hold for a while")
+	}
+
+	answer = "no"
+	cur, _ = GetEventMonitor(db, "craig", "cve")
+	executeEventPoll(context.Background(), db, cur)
+	cur, _ = GetEventMonitor(db, "craig", "cve")
+	if cur.StuckMatches != 0 {
+		t.Errorf("the count survived the condition clearing: %d", cur.StuckMatches)
+	}
+
+	answer = "YES"
+	cur, _ = GetEventMonitor(db, "craig", "cve")
+	executeEventPoll(context.Background(), db, cur)
+	if wakes != 2 {
+		t.Errorf("a re-armed monitor did not fire on the next onset: %d wakes", wakes)
+	}
+}
+
+// TestAThresholdThatNeverRecoversSaysSoToo: the http_poll kind has the same
+// edge trigger and the same silence, without the LLM bill.
+func TestAThresholdThatNeverRecoversSaysSoToo(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("500"))
+	}))
+	defer srv.Close()
+	RegisterEventWaker(func(ctx context.Context, owner, name, summary string) (bool, string) {
+		return true, ""
+	})
+	defer RegisterEventWaker(nil)
+
+	db := memDB(t)
+	m := EventMonitor{Name: "over", Owner: "craig", Kind: EventKindHTTP, URL: srv.URL, CompareOp: ">", Threshold: "100"}
+	SaveEventMonitor(db, m)
+	for i := 0; i < 4; i++ {
+		cur, _ := GetEventMonitor(db, "craig", "over")
+		executeHTTPPoll(context.Background(), db, cur)
+	}
+	cur, _ := GetEventMonitor(db, "craig", "over")
+	if MonitorStuckLabel(cur) == "" {
+		t.Errorf("a breach that never recovers said nothing (stuck=%d)", cur.StuckMatches)
+	}
+	said := false
+	for _, r := range ListRuns(db, "craig", RunFilter{}) {
+		if strings.Contains(r.Summary, "has been true at every check") {
+			said = true
+		}
+	}
+	if !said {
+		t.Error("nothing in the ledger says the monitor can no longer fire")
+	}
+}

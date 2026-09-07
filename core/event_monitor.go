@@ -228,11 +228,22 @@ type EventMonitor struct {
 	Created             time.Time `json:"created"`
 	NextCheck           time.Time `json:"next_check,omitempty"`
 	LastFired           time.Time `json:"last_fired,omitempty"`
-	LastChecked         time.Time `json:"last_checked,omitempty"`  // last time the poll ran (every interval) — proves liveness even with no change
-	LastResult          string    `json:"last_result,omitempty"`   // last answer/value seen (poll debounce / http display)
-	LastBreached        bool      `json:"last_breached,omitempty"` // http_poll edge-trigger: was the condition met last check
-	LastMatched         bool      `json:"last_matched,omitempty"`  // poll edge-trigger: did the checker answer match last check
-	SchedulerID         string    `json:"scheduler_id,omitempty"`
+	LastChecked         time.Time `json:"last_checked,omitempty"` // last time the poll ran (every interval) — proves liveness even with no change
+	LastResult          string    `json:"last_result,omitempty"`  // last answer/value seen (poll debounce / http display)
+	// StuckMatches counts checks that found the condition STILL true while the
+	// monitor was already tripped. Both polled kinds are edge-triggered: they
+	// fire on the crossing and re-arm only when a check finds the condition
+	// false again. So a condition that can never go false fires exactly once
+	// and then goes silent forever, while the schedule keeps running — and for
+	// the poll kind, keeps paying for an LLM checker every interval. Nothing
+	// said so. Live, a checker written to end every answer with the match word
+	// produced one wake, an unreachable second attempt and an unreachable
+	// stop_after, all of which looked from outside like a monitor quietly
+	// working. Reset by the fire and by the re-arm; see noteStuckMonitor.
+	StuckMatches int    `json:"stuck_matches,omitempty"`
+	LastBreached bool   `json:"last_breached,omitempty"` // http_poll edge-trigger: was the condition met last check
+	LastMatched  bool   `json:"last_matched,omitempty"`  // poll edge-trigger: did the checker answer match last check
+	SchedulerID  string `json:"scheduler_id,omitempty"`
 }
 
 // WakeFunc wakes the Operator with an event. Provided by orchestrate; it injects
@@ -520,6 +531,50 @@ func pauseIdleWatch(db Database, m EventMonitor, days int) {
 		Status: RunAttention, Summary: reason,
 		Started: time.Now(), Ended: time.Now(),
 	}.AboutMonitor(m.Name))
+}
+
+// monitorStuckMatchNotice is how many consecutive still-true checks pass
+// before the monitor says it has nothing left to detect. Three is long enough
+// that an ordinary condition riding out a few intervals says nothing, and
+// short enough to catch one that will never clear before it has spent much.
+const monitorStuckMatchNotice = 3
+
+// noteStuckMonitor says, once, that an edge-triggered monitor has fired and
+// cannot fire again until its condition goes false.
+//
+// It does NOT pause the monitor, and that restraint is the point: "the checker
+// was written to always match" and "the condition genuinely persists" are
+// indistinguishable from here, and pausing the second would stop watching for
+// exactly the recovery-then-recur cycle the monitor exists for. So this tells
+// the owner and leaves the decision with them.
+func noteStuckMonitor(db Database, m EventMonitor) {
+	when := "its last fire"
+	if !m.LastFired.IsZero() {
+		when = m.LastFired.Local().Format("Jan 2 3:04 PM")
+	}
+	Log("[event] %s %s/%s has matched every check since %s — it cannot fire again until one does not match",
+		m.Kind, m.Owner, m.Name, when)
+	RecordRun(db, RunRecord{
+		Owner: m.Owner, Agent: m.Name, Trigger: m.Kind, Task: m.Name,
+		Status: RunAttention,
+		Summary: "Fired once, and its condition has been true at every check since " + when +
+			". It will NOT fire again until a check finds the condition false — that is what re-arms it. If the condition cannot go false (a checker told to always answer the match word, a threshold that will never recover), this monitor has nothing left to detect, and work that should simply repeat on a clock is a scheduled run rather than a monitor.",
+		Started: time.Now(), Ended: time.Now(),
+	}.AboutMonitor(m.Name))
+}
+
+// MonitorStuckLabel is the same thing in one line, for a listing. Empty until
+// the notice threshold, so an ordinary condition holding for a check or two
+// says nothing.
+func MonitorStuckLabel(m EventMonitor) string {
+	if m.StuckMatches < monitorStuckMatchNotice {
+		return ""
+	}
+	when := "its last fire"
+	if !m.LastFired.IsZero() {
+		when = m.LastFired.Local().Format("Jan 2 3:04 PM")
+	}
+	return "armed but silent — matched every check since " + when
 }
 
 // --- why a monitor is at rest ------------------------------------------------
@@ -1008,13 +1063,25 @@ func executeEventPoll(ctx context.Context, db Database, m EventMonitor) {
 		cur.LastMatched = true
 		cur.LastResult = answer
 		cur.LastFired = time.Now()
+		cur.StuckMatches = 0
 		SaveEventMonitor(db, cur)
 		fireWake(ctx, db, m.Owner, m.Name, answer, "poll")
 	case !matched && cur.LastMatched:
 		// Condition cleared — re-arm so the next onset fires again. No wake.
 		cur.LastMatched = false
 		cur.LastResult = answer
+		cur.StuckMatches = 0
 		SaveEventMonitor(db, cur)
+	case matched && cur.LastMatched:
+		// Still true, so nothing fires. Counted, because a condition that never
+		// goes false means this monitor has already done everything it will
+		// ever do — while still running a checker agent every interval.
+		cur.StuckMatches++
+		cur.LastResult = answer
+		SaveEventMonitor(db, cur)
+		if cur.StuckMatches == monitorStuckMatchNotice {
+			noteStuckMonitor(db, cur)
+		}
 	}
 }
 
@@ -1047,6 +1114,7 @@ func executeHTTPPoll(ctx context.Context, db Database, m EventMonitor) {
 		cur.LastBreached = true
 		cur.LastResult = val
 		cur.LastFired = time.Now()
+		cur.StuckMatches = 0
 		SaveEventMonitor(db, cur)
 		summary := fmt.Sprintf("Monitor %q tripped: observed value %s %s %s (from %s).",
 			m.Name, val, m.CompareOp, m.Threshold, m.URL)
@@ -1055,7 +1123,18 @@ func executeHTTPPoll(ctx context.Context, db Database, m EventMonitor) {
 		// Recovered — reset so the next breach fires again. No wake.
 		cur.LastBreached = false
 		cur.LastResult = val
+		cur.StuckMatches = 0
 		SaveEventMonitor(db, cur)
+	case breached && cur.LastBreached:
+		// Still over the line. The same silence as the poll kind, cheaper: no
+		// LLM runs here, but the owner is just as entitled to know the monitor
+		// has nothing left to tell them.
+		cur.StuckMatches++
+		cur.LastResult = val
+		SaveEventMonitor(db, cur)
+		if cur.StuckMatches == monitorStuckMatchNotice {
+			noteStuckMonitor(db, cur)
+		}
 	}
 }
 

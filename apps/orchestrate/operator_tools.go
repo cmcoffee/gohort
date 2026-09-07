@@ -1901,6 +1901,9 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					if lbl := objectiveStateLabel(monitorObjective(m)); lbl != "" {
 						fmt.Fprintf(&b, "; %s", lbl)
 					}
+					if lbl := MonitorStuckLabel(m); lbl != "" {
+						fmt.Fprintf(&b, "; %s", lbl)
+					}
 					b.WriteString("\n")
 				}
 				return strings.TrimSpace(b.String()), nil
