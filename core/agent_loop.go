@@ -1981,187 +1981,8 @@ func (lr *loopRun) noToolCallRound() loopAction {
 	// to invoke. Try Content first, then fall back to Reasoning so
 	// those calls don't slip through and render as visible text.
 	if len(lr.rs.resp.ToolCalls) == 0 {
-		// Clean-finish gate on the PROSE scan only. A model that
-		// reports "stop" with a substantial body has answered; reading
-		// a tool call out of that body turns a finished turn into a
-		// tool round, and if the loop-guard then blocks the phantom
-		// call the real answer is replaced by a regenerated one.
-		// Observed: an 8366-char final answer re-read as a moltbook
-		// call, blocked as a repeat, then regenerated over 39s.
-		//
-		// Length matters as well as the stop reason: a model that
-		// only ever NARRATES its calls emits a short lead-in ("I'll
-		// call X with…") and still finishes with "stop", so gating on
-		// the stop reason alone would silently stop doing its work.
-		// Short + stop stays extractable; long + stop does not.
-		allowProse := true
-		if lr.rs.resp.StopReason == "stop" && len(lr.rs.resp.Content) >= cleanFinishProseFloor {
-			allowProse = false
-			Debug("[agent_loop] prose tool-call scan skipped — model finished cleanly with %d chars (stop_reason=%q)", len(lr.rs.resp.Content), lr.rs.resp.StopReason)
-		}
-		parsed := ParseTextToolCall(lr.rs.resp.Content, lr.handlers, lr.toolDefs, allowProse)
-		if parsed == nil && lr.rs.resp.Reasoning != "" && strings.Contains(lr.rs.resp.Reasoning, "<function=") {
-			// Reasoning-channel markup only — never the prose scan.
-			if reasoningCall := ParseTextToolCall(lr.rs.resp.Reasoning, lr.handlers, lr.toolDefs, false); reasoningCall != nil {
-				Debug("[agent_loop] parsed tool call out of reasoning channel: %s", reasoningCall.Name)
-				parsed = reasoningCall
-			}
-		}
-		if parsed != nil {
-			// Keep the answer the model actually produced. If this
-			// synthesized call turns out to be a phantom (the loop-guard
-			// blocks it), the turn ends with this instead of paying to
-			// regenerate something already in hand. Cleared as soon as a
-			// tool really runs.
-			if txt := strings.TrimSpace(StripToolCallMarkup(lr.rs.resp.Content)); txt != "" {
-				lr.synthesizedFrom = txt
-			}
-			Debug("[agent_loop] parsed text-based tool call: %s", parsed.Name)
-			lr.rs.resp.ToolCalls = []ToolCall{*parsed}
-			// Strip the synthesized tool-call markup (XML <tool_call>
-			// or bare <function=...>...</function>) from resp.Content
-			// so subsequent rounds and the rescue path don't expose
-			// the markup OR any preceding narration to the user. The
-			// real action lives in the dispatched tool now; the text
-			// shouldn't trail along.
-			lr.rs.resp.Content = StripToolCallMarkup(lr.rs.resp.Content)
-			lr.history[len(lr.history)-1] = Message{
-				Role:      "assistant",
-				Content:   lr.rs.resp.Content,
-				Reasoning: lr.rs.resp.Reasoning,
-				ToolCalls: lr.rs.resp.ToolCalls,
-			}
-		} else if strings.Contains(lr.rs.resp.Content, "<function=") || strings.Contains(lr.rs.resp.Content, "<tool_call>") {
-			// Orphaned XML — the model emitted a tool-call attempt
-			// but the name didn't resolve (typo, hallucinated tool
-			// name like "run_shell_command" instead of "run_local").
-			// Strip the markup so the user doesn't see XML, and
-			// inject a corrective so the model gets a chance to
-			// retry with the right name.
-			attemptedName, _ := parseFunctionTagToolCall(lr.rs.resp.Content)
-			lr.rs.resp.Content = StripToolCallMarkup(lr.rs.resp.Content)
-			lr.history[len(lr.history)-1] = Message{
-				Role:      "assistant",
-				Content:   lr.rs.resp.Content,
-				Reasoning: lr.rs.resp.Reasoning,
-			}
-			lr.noteUncorrected(correctionOrphanedXML, "The reply again wrote tool-call XML for an unknown tool; the markup was stripped but no further re-prompt was left to spend.")
-			if lr.corrections.available(correctionOrphanedXML) && lr.round < lr.maxRounds {
-				hint := ""
-				if attemptedName != "" {
-					hint = fmt.Sprintf(" You attempted to call %q which is not a registered tool.", attemptedName)
-					if suggestion := nearestToolName(attemptedName, lr.handlers); suggestion != "" {
-						hint += fmt.Sprintf(" Did you mean %q?", suggestion)
-					}
-				}
-				Debug("[agent_loop] orphaned XML tool-call detected (name=%q), re-prompting: correction %d/%d", attemptedName, lr.corrections.spend(correctionOrphanedXML), maxCorrectionsPerKind)
-				lr.emitDiag("tool-markup-corrected", fmt.Sprintf("The reply wrote tool-call XML for an unknown tool (%q); markup stripped and re-prompted for a real call.", attemptedName))
-				lr.settleRound() // finalize the stripped prose so the retry doesn't concatenate into it
-				lr.history = append(lr.history, Message{
-					Role:    "user",
-					Content: frameworkNoticeTag + "Your previous response contained tool-call XML markup with a name that doesn't match any available tool." + hint + " Look at your tool catalog for the exact tool name. Use the native function-calling format, not text markup. Try again now.",
-				})
-				return actContinue
-			}
-		} else if refs := phantomDeliveryRefs(lr.cfg, lr.rs.resp.Content); len(refs) > 0 {
-			// The reply promises a file that does not exist and the turn
-			// produced nothing to deliver. Same class as a fake tool call —
-			// an action claimed but never taken — and it gets the same
-			// remedy: strip the claim, say what was wrong, let the model
-			// either do the work or admit it can't. Left alone, this leaves
-			// the reply empty after stripping and the person on the other
-			// end gets a generic apology about their phrasing.
-			lr.rs.resp.Content = StripDeliveryMarkers(lr.rs.resp.Content)
-			lr.history[len(lr.history)-1] = Message{
-				Role:      "assistant",
-				Content:   lr.rs.resp.Content,
-				Reasoning: lr.rs.resp.Reasoning,
-			}
-			if lr.corrections.available(correctionPhantomDelivery) && lr.round < lr.maxRounds {
-				// Joined, not %v: a ref is a filename when the reply named
-				// one and a plain noun phrase ("the image") when it didn't,
-				// and "[the image]" reads as a placeholder the model is
-				// meant to fill in rather than the thing it just claimed.
-				named := strings.Join(refs, ", ")
-				Debug("[agent_loop] phantom delivery detected (%s), re-prompting: correction %d/%d", named, lr.corrections.spend(correctionPhantomDelivery), maxCorrectionsPerKind)
-				lr.emitDiag("phantom-delivery-corrected", fmt.Sprintf("The reply presented %s as delivered, but nothing was attached and nothing exists to attach. The claim was removed and the model re-prompted.", named))
-				// Retract, not settle. On a streaming surface the false
-				// claim has already been painted, and settling would leave
-				// it standing above the correction — the user reads "Here's
-				// your picture" and then, underneath, that there is no
-				// picture. Same class as a blocked guardrail draft: a
-				// statement the framework has decided must not stand.
-				// It stays in `history` either way, which is what the model
-				// needs to see to understand what it is being corrected on.
-				// Falls back to settleRound on hosts with no retract wired.
-				lr.retractRound()
-				lr.history = append(lr.history, Message{
-					Role: "user",
-					Content: frameworkNoticeTag + fmt.Sprintf(
-						"You wrote your reply as though you were handing over %s. Nothing was attached and nothing exists to attach — it was never created, fetched, or it failed. The user received your words and no file. Either call the tool that actually produces it now, or tell them plainly that you do not have it. Do NOT present a file you have not made, and do not write a delivery marker for one.", named),
-				})
-				return actContinue
-			}
-			// Out of corrections, and the claim is still false. Everything
-			// above assumed the model could be talked into fixing it; twice
-			// now it has rewritten the same claim, and the old code simply
-			// let the third one through — the guard that ruled it false being
-			// the only thing that ever noticed.
-			//
-			// Delivering a promise about a file that does not exist is worse
-			// than delivering nothing, so the claim is replaced with something
-			// true. Same principle as a substituted guardrail decline: the
-			// framework writes in the agent's voice only when the alternative
-			// is letting a false statement stand.
-			if lr.corrections.exhausted(correctionPhantomDelivery) {
-				named := strings.Join(refs, ", ")
-				Debug("[agent_loop] phantom delivery still uncorrected after %d attempts (%s) — substituting a truthful reply", maxCorrectionsPerKind, named)
-				lr.emitDiag("phantom-delivery-uncorrected", fmt.Sprintf("The reply claimed %s again after two corrections, and no such file exists. The claim was replaced rather than delivered.", named))
-				lr.retractRound()
-				lr.rs.resp.Content = UnfulfilledDeliveryReply(refs)
-				lr.history[len(lr.history)-1] = Message{
-					Role:      "assistant",
-					Content:   lr.rs.resp.Content,
-					Reasoning: lr.rs.resp.Reasoning,
-				}
-			}
-		} else if containsFakeToolCodeBlock(lr.rs.resp.Content) {
-			// Training-data artifact: the model writes its tool call
-			// as plain text in a <tool_code> block (Gemini format) or
-			// with ::name(...):: cascade syntax (gohort-shaped fake).
-			// This happens most often near the round cap when the
-			// wrap-up nudge fires and the model interprets "respond
-			// directly now" as "polish a final message" — so it
-			// describes the call in narrative form ("Creating the
-			// updated tool now…") and appends the fake invocation.
-			// The actual tool_calls field is empty, so the loop
-			// would otherwise terminate with nothing executed.
-			//
-			// Recovery: strip the fake markup from the visible
-			// content and inject a corrective re-prompt so the
-			// model issues the real structured call next round.
-			attemptedName := extractFakeToolCodeName(lr.rs.resp.Content)
-			lr.rs.resp.Content = stripFakeToolCodeBlocks(lr.rs.resp.Content)
-			lr.history[len(lr.history)-1] = Message{
-				Role:      "assistant",
-				Content:   lr.rs.resp.Content,
-				Reasoning: lr.rs.resp.Reasoning,
-			}
-			lr.noteUncorrected(correctionFakeToolCode, "The reply again wrote a tool call as a text block instead of calling it; the markup was stripped but no further re-prompt was left to spend.")
-			if lr.corrections.available(correctionFakeToolCode) && lr.round < lr.maxRounds {
-				hint := ""
-				if attemptedName != "" {
-					hint = fmt.Sprintf(" You appeared to invoke %q.", attemptedName)
-				}
-				Debug("[agent_loop] fake <tool_code>/::name():: block detected (name=%q), re-prompting: correction %d/%d", attemptedName, lr.corrections.spend(correctionFakeToolCode), maxCorrectionsPerKind)
-				lr.emitDiag("tool-markup-corrected", fmt.Sprintf("The reply wrote a tool call as plain text (%q) instead of a real call; markup stripped and re-prompted.", attemptedName))
-				lr.settleRound() // finalize the stripped prose so the retry doesn't concatenate into it
-				lr.history = append(lr.history, Message{
-					Role:    "user",
-					Content: frameworkNoticeTag + "Your previous response wrote a tool invocation as plain TEXT (in a <tool_code> block or ::name(...):: form)." + hint + " That format does NOT execute — only structured tool_calls do. Re-issue the call NOW using the framework's native tool-calling mechanism. Do not wrap it in <tool_code>, do not use ::name():: syntax, do not narrate 'Creating the tool now…' — just emit the structured call.",
-				})
-				return actContinue
-			}
+		if act := lr.finalRoundTextToolCall(); act != actNone {
+			return act
 		}
 	}
 
@@ -2174,504 +1995,18 @@ func (lr *loopRun) noToolCallRound() loopAction {
 	// corrective user message and re-loop instead of returning,
 	// up to maxCorrectionsPerKind times per turn.
 	if len(lr.rs.resp.ToolCalls) == 0 {
-		// Cut off, not finished. The provider says so outright, and until
-		// this the loop read "no tool calls + some content" as a completed
-		// turn and exited respond_directly with rounds to spare.
-		//
-		// What that looked like: a lead spent its whole output allowance
-		// thinking, emitted 133 characters and no tool call, and the turn
-		// ended on "Doing it now." Twice in a row, three minutes and a
-		// couple of dollars each, with 29 of 30 rounds unused. stop_reason
-		// said max_tokens both times and nothing was listening — the only
-		// consumers were providerRefused (safety reasons only) and a Warn.
-		//
-		// Checked BEFORE the behavioural corrections below because this is
-		// a mechanical fact rather than an inference about intent: the
-		// reply ISN'T an unkept promise or an announced call, it is an
-		// unfinished one, and the corrections that pattern-match prose
-		// would either miss it or scold the model for being interrupted.
-		if responseWasTruncated(lr.rs.resp) {
-			if lr.corrections.available(correctionTruncated) {
-				Debug("[agent_loop] round %d: output truncated (stop_reason=%q, %d chars) — continuing (correction %d/%d)",
-					lr.round, lr.rs.resp.StopReason, len(lr.rs.resp.Content), lr.corrections.spend(correctionTruncated), maxCorrectionsPerKind)
-				lr.emitDiag("output-truncated", truncationDiag(lr.rs.resp))
-				lr.settleRound() // finalize the partial so the continuation doesn't concatenate into it
-				// The continuation needs a round of its own. This used to
-				// be gated on round < maxRounds, which left a one-round
-				// call — a synthesis pass, a summary — with no way to
-				// finish: its only round was the cut one, and the fragment
-				// shipped as the report. Extend the runway by the round the
-				// continuation takes, keeping an active wrap-up hard stop
-				// in step; the correction budget above bounds how often.
-				lr.graceRounds++
-				if lr.hardStop >= 0 {
-					lr.hardStop++
-				}
-				lr.truncatedLead.WriteString(lr.rs.resp.Content)
-				lr.history = append(lr.history, Message{
-					Role:    "user",
-					Content: frameworkNoticeTag + "Your previous reply was CUT OFF before you finished it — you did not choose to stop. Continue from where you left off without repeating what you already said. If you were about to call a tool, emit the real structured tool call now; keep any preamble short so the call itself fits.",
-				})
-				return actContinue
-			}
-			lr.noteUncorrected(correctionTruncated, "The reply was cut off at the output limit again and no further continuation was left to spend, so the partial answer was delivered as written.")
-		}
-
-		// Cut off by the provider, not by the model. Anthropic's streaming
-		// classifier can stop a reply partway with stop_reason=refusal,
-		// and the fragment arrives exactly like a finished answer: content,
-		// no tool calls. Nothing else here looks at it — providerRefused
-		// wants EMPTY content, the truncation check wants max_tokens — so
-		// the fragment was delivered as the answer with a Warn in the log
-		// and nothing in the turn's diagnostics. No retry: a continuation
-		// on the same model meets the same classifier, and a regenerate
-		// re-bills the whole prompt. The user gets told what they are
-		// looking at and decides.
-		if providerCutReply(lr.rs.resp) {
-			Log("[agent_loop] round %d: provider stopped the reply partway (stop_reason=%q, %d chars) — delivering the fragment with a diagnostic",
-				lr.round, lr.rs.resp.StopReason, len(lr.rs.resp.Content))
-			lr.emitDiag("provider-refusal", "The provider's content classifier stopped this reply partway (stop_reason=refusal); what you see is the fragment produced before the stop, not a finished answer. Rephrasing the request or retrying may get a complete one.")
-		}
-
-		// Action-promise correction DISABLED for now — it false-positived
-		// on ordinary conversational replies ("I'll try to nail the house
-		// next time."), burning rounds re-prompting for an action the model
-		// never intended. Flip to true to re-enable; the reasoning-collapse
-		// correction below is unaffected either way.
-		const actionPromiseCorrection = false
-		if actionPromiseCorrection && lr.corrections.available(correctionActionPromise) && lr.round < lr.maxRounds && !lr.toolFiredThisTurn && containsActionPromise(lr.rs.resp.Content) {
-			Debug("[agent_loop] action-promise without tool call detected, re-prompting (correction %d/%d): %q", lr.corrections.spend(correctionActionPromise), maxCorrectionsPerKind, truncForLog(lr.rs.resp.Content, 80))
-			lr.history = append(lr.history, Message{
-				Role:    "user",
-				Content: frameworkNoticeTag + "You stated an intention to take an action (e.g. 'let me try', 'one moment') but called no tool. Either call the tool now to actually do what you said, or reply plainly that you can't proceed and explain what you tried. Do NOT promise further action without taking it.",
-			})
-			return actContinue
-		}
-
-		// Announced-call correction: the reply ENDS on a colon
-		// introducing a call that never came — "Here's the
-		// `update_agent` call to implement these changes:" and the turn
-		// stops (observed: Builder settled a turn exactly there and the
-		// user watched nothing happen). Unlike the disabled
-		// actionPromiseCorrection above, the trailing-colon +
-		// call-announcement shape doesn't occur in complete replies, so
-		// it's safe to re-prompt on. No !toolFiredThisTurn gate:
-		// announcing a follow-up call and stopping is just as broken
-		// after earlier tools succeeded. Budget-shared with the other
-		// promise corrections so it can't loop.
-		if endsWithCallAnnouncement(lr.rs.resp.Content) {
-			lr.noteUncorrected(correctionAnnouncedCall, "The reply again ended announcing a call it never made; no further re-prompt was left to spend, so it was delivered as written.")
-		}
-		if lr.corrections.available(correctionAnnouncedCall) && lr.round < lr.maxRounds && endsWithCallAnnouncement(lr.rs.resp.Content) {
-			Debug("[agent_loop] reply ends announcing a call that never followed, re-prompting: correction %d/%d: %q", lr.corrections.spend(correctionAnnouncedCall), maxCorrectionsPerKind, truncForLog(lr.rs.resp.Content, 80))
-			lr.emitDiag("announced-call-corrected", "The reply ended by announcing a tool call it never made; re-prompted to actually make the call or finish the reply.")
-			lr.settleRound() // finalize the announcement so the retry doesn't concatenate into it
-			lr.history = append(lr.history, Message{
-				Role:    "user",
-				Content: frameworkNoticeTag + "Your previous reply ended by announcing a call or content that never followed (it ends with a colon). If you meant to run a tool, emit the REAL structured tool call NOW — never write it out as text or stop after describing it. If no tool exists for what you described, say so plainly and finish the reply instead.",
-			})
-			return actContinue
-		}
-
-		// Tool-mention correction: the model named a KNOWN tool in its
-		// reply (e.g. "let me get_joke", or "I can't reach
-		// read_support_bundles") but emitted no structured call.
-		// parseNaturalToolCall rescues a narration only when arguments
-		// are readable off the prose, so a no-arg tool (nothing to
-		// extract) and a tool merely TALKED about both fall through it
-		// — the tool silently never runs, and the model either narrates
-		// a result it never got or reports an inability that isn't one.
-		// Nudge once to either issue the real call or answer plainly.
-		// FAR narrower than the disabled actionPromiseCorrection above: it
-		// fires ONLY on an exact, token-bounded, snake_case tool NAME (those
-		// don't occur in ordinary prose), only when NO tool fired this turn,
-		// only on a reply short enough to be a lead-in, is capped by its own
-		// correction budget, and the nudge gives an explicit "if you didn't
-		// mean to, answer directly" out. Flip the const to disable if it
-		// ever proves noisy.
-		const toolMentionCorrection = true
-		// Full-reply gate (double-emit prevention). This correction fires by
-		// re-prompting, and re-prompting a round whose content ALREADY
-		// streamed to the client makes the retry stream a SECOND time — the
-		// "…What API?" + "Fair point, I was just describing…" double. That's
-		// only worth the risk when the round is a genuine PREAMBLE ("Let me
-		// get_joke") that plausibly meant to fire the tool. When the content
-		// is a full reply that merely MENTIONS a tool in passing, it's
-		// exposition, not a missed call — a complete answer never needed a
-		// tool to exist, so re-prompting can only produce restated noise.
-		// Gate on the same lead-in/full-answer cutoff the runner uses for
-		// the analogous mis-emit case (leadInMaxLen, 600): only nudge when
-		// the visible reply is short enough to be a lead-in. Source-side and
-		// lossless — a skipped correction leaves the full answer standing.
-		const noArgCorrectionMaxContentLen = 600
-		contentIsPreamble := len(strings.TrimSpace(lr.rs.resp.Content)) <= noArgCorrectionMaxContentLen
-		if toolMentionCorrection && contentIsPreamble && !lr.cfg.DisableToolMentionCorrection && !lr.toolFiredThisTurn {
-			name, needsArgs := mentionedUncalledTool(lr.rs.resp.Content, lr.handlers, lr.toolDefs)
-			if name != "" && !(lr.corrections.available(correctionToolMention) && lr.round < lr.maxRounds) {
-				lr.noteUncorrected(correctionToolMention, "The reply again named a tool in prose without calling it; no further re-prompt was left to spend.")
-			} else if name != "" {
-				Debug("[agent_loop] tool %q named in prose without a call (needs_args=%v), re-prompting: correction %d/%d", name, needsArgs, lr.corrections.spend(correctionToolMention), maxCorrectionsPerKind)
-				lr.emitDiag("tool-mention-corrected", fmt.Sprintf("The reply named the %q tool without calling it; re-prompted to either run it or answer plainly.", name))
-				lr.settleRound() // finalize the preamble so the retry doesn't concatenate into it
-				// Two different reasons nothing ran, and the model can only
-				// fix the one it is told about. The parameterized wording
-				// also has to say the tool IS available: the reply that
-				// triggers this is often a refusal ("I don't have access to
-				// those files"), and repeating the nudge without correcting
-				// the premise just gets the refusal restated.
-				why := "it takes no arguments, so there was nothing to run"
-				if needsArgs {
-					why = "naming a tool in text does not run it — the arguments have to travel in a real structured call"
-				}
-				lr.history = append(lr.history, Message{
-					Role:    "user",
-					Content: fmt.Sprintf(frameworkNoticeTag+"Your previous response referred to the %q tool but did not actually call it (%s). That tool IS available to you on this turn — do not say you lack access to what it reaches. If you intend to use it, emit the real structured tool call NOW. If you did NOT mean to use it, answer the user directly and do not claim you used it.", name, why),
-				})
-				return actContinue
-			}
-		}
-
-		// Reasoning-collapse correction: Qwen-style models with
-		// thinking enabled sometimes burn the entire budget on
-		// reasoning and emit ~no visible content, while reporting
-		// finish=stop. From the user's view: black hole — sent a
-		// message, got nothing back. Detect: substantial reasoning
-		// (>200 chars), EMPTY content (a bare stub like ""/"."/"…"
-		// after trim), and no tool calls. Inject a corrective and
-		// retry so the next round either produces text or calls a
-		// tool. Budget-gated per kind (correctionBudget) so it
-		// can't loop.
-		//
-		// The threshold is deliberately near-zero, NOT "short": a
-		// complete short reply ("Yes.", "7:57 AM PDT.") is normal
-		// for a thinking model, and this round's content has
-		// ALREADY streamed to the client — re-prompting makes the
-		// model repeat it, so the user watches the same sentence
-		// render once per correction (and each retry re-bills the
-		// full prompt). Only a round that showed nothing may retry.
-		trimmedContent := strings.TrimSpace(lr.rs.resp.Content)
-		collapsed := len(trimmedContent) < 3 && len(lr.rs.resp.Reasoning) > 200
-		if collapsed {
-			lr.noteUncorrected(correctionCollapse, "The round again produced no visible reply and called no tool; no further re-prompt was left to spend.")
-		}
-		if collapsed && lr.corrections.available(correctionCollapse) && lr.round < lr.maxRounds {
-			Debug("[agent_loop] reasoning-collapse detected (reasoning=%d chars, content=%d chars), re-prompting: correction %d/%d", len(lr.rs.resp.Reasoning), len(trimmedContent), lr.corrections.spend(correctionCollapse), maxCorrectionsPerKind)
-			lr.emitDiag("empty-round-retried", "A round produced reasoning but no visible reply and no tool call; re-prompted for concrete output.")
-			lr.settleRound() // no-op when nothing streamed; keeps the discipline uniform across guards
-			lr.history = append(lr.history, Message{
-				Role:    "user",
-				Content: frameworkNoticeTag + "Your previous round produced no visible reply (you reasoned but wrote nothing the user can see) and called no tool. Don't end a turn empty-handed: either produce concrete text now, or call a relevant tool. If the user's question is too vague to act on, ask a clarifying question.",
-			})
-			return actContinue
-		}
-
-		// Give-up-with-errors-pending catch. Model emitted no tool
-		// calls and ~empty content while tool errors accumulated
-		// earlier in this turn AND budget remains — the "I tried,
-		// give up" pattern. The forced-final-answer rescue path
-		// after the loop would otherwise paper over this with a
-		// polite "here's what I did" summary instead of fixing the
-		// underlying problem. Push back: inject a continuation
-		// nudge that names the error count and the rounds remaining,
-		// and re-loop. Budget-gated per kind (correctionBudget) so
-		// pathological cases can't infinitely re-prompt.
-		//
-		// Triggers:
-		//   - no tool calls THIS round
-		//   - empty content (or nearly so — <30 chars after trim), OR a
-		//     reply that only PROMISES the work (see replyStalledOnAPromise)
-		//   - cumulative tool errors > 0
-		//   - more than 5 rounds remain (don't push at the cap;
-		//     the existing wrap-up message owns that case)
-		//   - haven't already burned the correction budget
-		// trimmedContent reuses the variable declared in the
-		// reasoning-collapse check above — same scope, already trimmed.
-		roundsLeft := lr.maxRounds - lr.round
-		// A promise is the same give-up wearing a nicer hat, and it is the
-		// worse of the two: an empty round shows the user nothing, while
-		// "let me create this" reads as progress and ends the turn anyway.
-		// Observed: two image backends errored, and the turn closed on "Got
-		// it — let me create this. I'll blend Alex onto the picture of me
-		// wasting away in the garage." Nothing followed. The user's next
-		// message was "you forgot to attach the image."
-		promised := replyStalledOnAPromise(trimmedContent)
-		// Two ways a turn ends without doing the work, and only the first
-		// was covered. The second arrived as a transcript: "On it — let me
-		// grab some reference photos and composite them into that scene",
-		// no tool call, turn over, nothing errored — so a guard keyed on
-		// pending errors never looked. The errors were incidental to the
-		// original sighting, not the thing that made it a stall.
-		//
-		// The carve-out that makes the second safe is !toolFiredThisTurn.
-		// "I'll let you know when it's done" is the reply the detached-task
-		// notice explicitly ASKS for, and a detached call is a tool call —
-		// so a promise backed by work that actually started is left alone,
-		// and only a promise backed by nothing gets pushed.
-		stalledOnErrors := lr.cumulativeToolErrors > 0 && (len(trimmedContent) < 30 || promised)
-		stalledOnNothing := promised && !lr.toolFiredThisTurn
-		gaveUp := roundsLeft >= 5 && (stalledOnErrors || stalledOnNothing)
-		if gaveUp {
-			lr.noteUncorrected(correctionGiveUp, "The turn again stopped with tool errors unaddressed and rounds to spare; no further re-prompt was left to spend.")
-		}
-		if gaveUp && lr.corrections.available(correctionGiveUp) {
-			Debug("[agent_loop] give-up-with-errors-pending detected (errors=%d, rounds_left=%d, content=%dch, promised=%v), re-prompting: correction %d/%d",
-				lr.cumulativeToolErrors, roundsLeft, len(trimmedContent), promised, lr.corrections.spend(correctionGiveUp), maxCorrectionsPerKind)
-			// Two failures, two messages. Telling a model to "re-read the
-			// error messages" when nothing errored sends it hunting for a
-			// problem that isn't there, and it will invent one.
-			var diag, nudge string
-			roundPlural := ""
-			if roundsLeft != 1 {
-				roundPlural = "s"
-			}
-			if stalledOnErrors {
-				errPlural := ""
-				if lr.cumulativeToolErrors != 1 {
-					errPlural = "s"
-				}
-				stopped := "stopped without producing a reply and without calling any tool"
-				diag = fmt.Sprintf("The turn stopped with %d unaddressed tool error(s) and rounds to spare; re-prompted to adjust and retry rather than give up.", lr.cumulativeToolErrors)
-				if promised && len(trimmedContent) >= 30 {
-					stopped = "ended your turn by saying you were ABOUT to do the work, and then called no tool"
-					diag = fmt.Sprintf("The reply promised work it never did — it announced the next step, called no tool, and left %d tool error(s) unaddressed with rounds to spare. Re-prompted to actually do it.", lr.cumulativeToolErrors)
-				}
-				nudge = fmt.Sprintf(
-					frameworkNoticeTag+"You %s, but %d tool call%s errored earlier this turn that you didn't follow up on, and you have %d round%s remaining. Saying what you are about to do is not doing it — the user sees the sentence and nothing else, and nothing runs after your turn ends. DON'T end here with a polite summary of what you tried — that's giving up. Re-read the most recent error message(s) carefully, ADJUST your approach (different args, different tool, different sequence), and TRY AGAIN with a real tool call. If you genuinely have no other avenues, say so explicitly — but only after you've actually tried adjusting at least once.",
-					stopped, lr.cumulativeToolErrors, errPlural, roundsLeft, roundPlural)
-			} else {
-				diag = "The reply said the work was about to happen and then ended the turn without calling a single tool. Re-prompted to do it now or say plainly what is stopping it."
-				nudge = fmt.Sprintf(
-					frameworkNoticeTag+"You ended your turn saying you were about to do something, and then called no tool at all — so nothing happened. Nothing runs after your turn ends; the user is left holding a sentence. You have %d round%s remaining. Do it NOW with a real tool call, or say plainly what is stopping you. Do not repeat the promise, and do not apologize for it: do the work or explain why you can't.",
-					roundsLeft, roundPlural)
-			}
-			lr.emitDiag("giveup-retried", diag)
-			lr.settleRound() // no-op when nothing streamed; keeps the discipline uniform across guards
-			lr.history = append(lr.history, Message{Role: "user", Content: nudge})
-			return actContinue
-		}
-
-		// Pre-finalize injection drain. Mid-flight user notes are
-		// normally picked up at round start, but a note that lands
-		// DURING this final round would otherwise be lost — the loop
-		// is about to return. Re-drain here: if anything is pending,
-		// append it and do another round instead of finishing.
-		// Uses InjectionDrain (NOT OnRoundStart) — InjectionDrain
-		// empties its queue and returns nil when nothing's pending,
-		// so this re-call terminates. OnRoundStart may return content
-		// every call (budget pacer) and would loop forever here.
-		if lr.cfg.InjectionDrain != nil && lr.round < lr.maxRounds {
-			if injected := lr.cfg.InjectionDrain(); len(injected) > 0 {
-				Debug("[agent_loop] pre-finalize injection: %d note(s) arrived during the final round — continuing instead of finishing", len(injected))
-				lr.history = append(lr.history, injected...)
-				return actContinue
-			}
-		}
-
-		// A turn that called NOTHING leaves no trail but its own words, and
-		// without them a failure cannot be diagnosed at all. Observed: "Wiwee,
-		// try again" answered in 66 characters with zero tool calls — the
-		// framework recorded the length and nothing else, so whether the reply
-		// was an honest refusal or a fresh empty promise was unknowable after
-		// the fact. Every OTHER shape of turn is reconstructable from its tool
-		// calls; this one is not.
-		//
-		// Logged for the whole turn, not the round, so it fires once on the
-		// reply that actually goes out. Masked sessions get lengths only —
-		// MaskDebugOutput exists because some sessions carry credentials and
-		// private files, and a diagnostic is not worth leaking them.
-		if len(lr.turnToolCalls) == 0 {
-			Debug("%s", noToolDiagLine(lr.round, LatestUserContent(lr.messages), lr.rs.resp.Content, lr.cfg.MaskDebugOutput))
-		}
-
-		// Turn judge: the reply is about to go out, so this is the last moment
-		// anything can ask whether it is TRUE about what the turn did. Runs
-		// after the phrase-list guards above have had their say and only when
-		// the evidence warrants a model call — see turn_judge.go for the
-		// pre-filter and why it is deliberately looser than the guards.
-		//
-		// Placed before the guardrail gate on purpose: a reply that claims work
-		// it never did should be fixed before a warden spends a call judging
-		// its content, and the correction below re-prompts anyway.
-		if verdict, convicted := judgeTurnClaim(lr.cfg, TurnClaimEvidence{
-			Request:       LatestUserContent(lr.messages),
-			Reply:         lr.rs.resp.Content,
-			ToolCalls:     lr.turnToolCalls,
-			PriorWork:     lr.cfg.priorWork(),
-			PriorReports:  lr.cfg.priorReports(),
-			ToolErrors:    lr.cumulativeToolErrors,
-			LastToolError: lr.lastToolError,
-			Delivered:     lr.cfg.deliveredCount(),
-			Backgrounded:  lr.cfg.backgrounded(),
-			GivenEstimate: lr.cfg.backgroundEstimate(),
-			Unattended:    lr.cfg.Unattended,
-		}); convicted {
-			// Two independent findings share one verdict, so each branch checks
-			// its own. A machinery-only conviction reaching the claim branch
-			// would tell the model its reply "did not happen" about a sentence
-			// that was true.
-			if verdict.Unkept && lr.corrections.available(correctionUnkeptClaim) && lr.round < lr.maxRounds {
-				Debug("[agent_loop] turn judge: reply claims work the turn did not do (%q) — %s; re-prompting: correction %d/%d",
-					truncForLog(verdict.Claim, 80), verdict.Why, lr.corrections.spend(correctionUnkeptClaim), maxCorrectionsPerKind)
-				lr.emitDiag("unkept-claim-corrected", fmt.Sprintf("The reply said %q, which did not happen: %s. Re-prompted to do it or say so.", truncForLog(verdict.Claim, 120), verdict.Why))
-				// Retract rather than settle: the claim is false and, on a
-				// streaming surface, already painted. Same call as the phantom
-				// guard makes about the same class of statement.
-				lr.retractRound()
-				lr.history[len(lr.history)-1] = Message{Role: "assistant", Content: lr.rs.resp.Content, Reasoning: lr.rs.resp.Reasoning}
-				lr.history = append(lr.history, Message{
-					Role: "user",
-					Content: frameworkNoticeTag + fmt.Sprintf(
-						"Your reply says: %q. That did not happen — %s. The user reads your words and gets nothing else; nothing runs after your turn ends. Either do it NOW with a real tool call, or rewrite the reply to say plainly what actually happened and what you could not do. Do not apologize, do not restate the claim, and do not promise it for later.",
-						verdict.Claim, verdict.Why),
-				})
-				return actContinue
-			}
-			if verdict.Unkept && lr.corrections.exhausted(correctionUnkeptClaim) {
-				lr.emitDiag("unkept-claim-uncorrected", fmt.Sprintf("The reply still says %q after correction, and it did not happen: %s. Delivered as written.", truncForLog(verdict.Claim, 120), verdict.Why))
-			}
-			// Machinery is a separate finding with a separate budget, because it
-			// is a separate failure: the reply is usually TRUE and merely says
-			// things nobody asked to hear. A rewrite fixes it, where a false
-			// claim needs the work done or admitted — so it must not spend the
-			// allowance the serious one might need in the same turn.
-			if leak := strings.TrimSpace(verdict.Machinery); leak != "" && !verdict.Unkept {
-				if lr.corrections.available(correctionMachinery) && lr.round < lr.maxRounds {
-					Debug("[agent_loop] turn judge: reply explains machinery (%q); re-prompting: correction %d/%d",
-						truncForLog(leak, 80), lr.corrections.spend(correctionMachinery), maxCorrectionsPerKind)
-					lr.emitDiag("machinery-corrected", fmt.Sprintf("The reply explained how the work is being run (%q), which nobody asked about. Re-prompted for the same message without it.", truncForLog(leak, 120)))
-					lr.retractRound()
-					lr.history[len(lr.history)-1] = Message{Role: "assistant", Content: lr.rs.resp.Content, Reasoning: lr.rs.resp.Reasoning}
-					lr.history = append(lr.history, Message{
-						Role: "user",
-						Content: frameworkNoticeTag + fmt.Sprintf(
-							"Your reply says: %q. That is plumbing — how the work is being carried out — and they did not ask about it. Nothing else is wrong with the reply. Send the SAME message with that part removed: what you are doing for them, in one line, the way a person would. No ids, no mention of how or where anything runs, no invitation to check back, no time estimate you were not given.",
-							leak),
-					})
-					return actContinue
-				}
-				if lr.corrections.exhausted(correctionMachinery) {
-					lr.emitDiag("machinery-uncorrected", fmt.Sprintf("The reply still explains how the work is run (%q) after correction. Delivered as written.", truncForLog(leak, 120)))
-				}
-			}
-		}
-
-		// Grounding: the claim judge asked whether the turn DID what the reply
-		// describes; this asks whether it KNOWS what the reply asserts. Only
-		// notes the memory block marked unchecked are in scope, so a turn
-		// carrying none never reaches a model call.
-		//
-		// The live note is built here rather than inline so the correction
-		// below can recognise it: where the claim came FROM changes what the
-		// rewrite should say, and calling a meme somebody posted seconds ago
-		// a "stored note" is what produced a reply apologising for not having
-		// checked a joke.
-		liveNote := liveClaimNote(lr.cfg.LiveClaimSpeaker, LatestUserContent(lr.messages))
-		if gv, convicted := judgeTurnGrounding(lr.cfg, TurnGroundingEvidence{
-			Reply: lr.rs.resp.Content,
-			// Stored notes plus, on a channel, whatever the person just
-			// said. Composed here rather than by the host so the live entry
-			// is worded the same way everywhere it is judged.
-			Unchecked: withLiveClaim(lr.cfg.UncheckedClaims, lr.cfg.LiveClaimSpeaker, LatestUserContent(lr.messages)),
-			ToolCalls: lr.turnToolCalls,
-		}); convicted {
-			if lr.corrections.available(correctionUngrounded) && lr.round < lr.maxRounds {
-				Debug("[agent_loop] grounding judge: reply asserts an unchecked claim (%q) — re-prompting: correction %d/%d",
-					truncForLog(gv.Claim, 80), lr.corrections.spend(correctionUngrounded), maxCorrectionsPerKind)
-				lr.emitDiag("ungrounded-claim-corrected", fmt.Sprintf("The reply stated %q as fact; it traces to an unchecked note (%q). Re-prompted to check it or attribute it.",
-					truncForLog(gv.Claim, 120), truncForLog(gv.Basis, 120)))
-				// NOT retracted, unlike an unkept claim. That one is false and
-				// has to be taken back; this one may well be true — nobody
-				// checked, which is a different and lesser thing. Settling the
-				// round and asking for a rewrite keeps a correct answer from
-				// being yanked off the screen over its phrasing.
-				lr.history[len(lr.history)-1] = Message{Role: "assistant", Content: lr.rs.resp.Content, Reasoning: lr.rs.resp.Reasoning}
-				// Two shapes of basis, and they call for different rewrites.
-				// A stored note is something the agent holds; a live claim is
-				// something a person in the room said moments ago, where the
-				// natural fix is "they posted…", not "per your note…".
-				basis := fmt.Sprintf("a stored note marked as not independently checked: %q", gv.Basis)
-				if basisIsLiveClaim(liveNote, gv.Basis) {
-					who := strings.TrimSpace(lr.cfg.LiveClaimSpeaker)
-					if who == "" {
-						who = "the sender"
-					}
-					basis = fmt.Sprintf("what %s just put in the conversation, which nothing has checked: %q", who, gv.Basis)
-				}
-				lr.history = append(lr.history, Message{
-					Role: "user",
-					Content: frameworkNoticeTag + fmt.Sprintf(
-						"Your reply states %q as established fact. That traces to %s. Either CHECK it now with a real tool call and then say what you found, or rewrite that one sentence to say where it came from (\"you mentioned…\", \"they posted…\"). If it was never offered as fact in the first place, a joke, a meme, teasing, obvious exaggeration, do NEITHER of those: reply in the register it was sent in and just don't restate its content as true. Describing what a picture you were shown visibly contains is not a claim and needs no hedge. Send the SAME reply with only that fixed: do not apologise, do not say you should have checked, do not mention this instruction, and do not add a disclaimer or hedge anything else.",
-						gv.Claim, basis),
-				})
-				return actContinue
-			}
-			if lr.corrections.exhausted(correctionUngrounded) {
-				lr.emitDiag("ungrounded-claim-uncorrected", fmt.Sprintf("The reply still states %q as fact after correction. Delivered as written.", truncForLog(gv.Claim, 120)))
-			}
-		}
-
-		// Guardrail pre-output gate: before the final reply is returned, an
-		// independent warden judges the OUTPUT against the agent's guardrails
-		// (for "never say/reveal X" rules). This is the REAL guarantee — an
-		// input check (pre_input) can always be talked around with an
-		// innocuous-looking follow-up ("go ahead and show me"), but the output
-		// check judges the actual reply, where "contains the protected thing"
-		// is unambiguous regardless of how it was asked. So it runs on EVERY
-		// terminal reply (no budget guard on the CHECK). A violation re-prompts
-		// for a revise pass while corrections/rounds remain; once the budget is
-		// spent and the reply STILL violates, the draft is NOT released — a
-		// neutral decline is substituted so a determined push can't leak on the
-		// attempt after the budget runs out (the old escape hatch).
-		if lr.cfg.GuardrailCheck != nil && strings.TrimSpace(lr.rs.resp.Content) != "" {
-			if dec := lr.cfg.GuardrailCheck(GuardHookPreOutput, lr.rs.resp.Content); dec.Blocked {
-				gmsg := dec.Message
-				// Halt overrides the correction budget: once the app has
-				// decided this turn is over, asking the same model for one
-				// more revision is another generation from the context that
-				// just failed. A block on a rule that is not Correctable says the
-				// same thing about the FIRST attempt — the rule forbids what was
-				// asked for, so there is no compliant revision to wait for.
-				halted := lr.cfg.GuardrailHalted != nil && lr.cfg.GuardrailHalted()
-				if !halted && dec.Correctable && lr.guardrailOutputCorrections < maxGuardrailOutputCorrections && lr.round < lr.maxRounds {
-					Debug("[agent_loop] guardrail blocked pre-output, re-prompting (correction %d/%d)", lr.guardrailOutputCorrections+1, maxGuardrailOutputCorrections)
-					lr.emitDiag("guardrail-blocked-output", "The reply was withheld by an enforced guardrail; re-prompted to revise.")
-					lr.retractRound()                              // DISCARD the withheld bubble — not persisted or delivered (settle would commit it)
-					lr.replaceBlockedDraft(guardrailRedactedDraft) // scrub the leaked draft from history — never persisted or delivered
-					lr.history = append(lr.history, Message{Role: "user", Content: frameworkNoticeTag + gmsg})
-					lr.guardrailOutputCorrections++
-					// The revise pass is a rewrite of text the model just
-					// produced, against one stated constraint — the most
-					// expensive round in the turn and the one with least to
-					// reason about.
-					lr.guardrailQuietNextRound = true
-					return actContinue
-				}
-				// Not correctable, halted, or the budget/rounds are spent and the
-				// reply STILL violates. Do not release it — overwrite the draft in
-				// place with the safe decline and return that. The floor is a
-				// canned reply, not the leak, no matter how hard the turn was
-				// pushed.
-				Debug("[agent_loop] guardrail pre-output final (correctable=%v halted=%v) — handing the reply to the rejection model", dec.Correctable, halted)
-				lr.emitDiag("guardrail-output-substituted", "A reply kept violating an enforced guardrail; a neutral decline was substituted so nothing protected was released.")
-				lr.retractRound() // DISCARD the leaking draft bubble; the safe reply below is what gets delivered
-				fallback := guardrailRejectionReply(lr.cfg, "pre_output", lr.history)
-				lr.replaceBlockedDraft(fallback)
-				// The decline alone leaves the request looking OPEN. A model
-				// reading back "user asked X / assistant brushed it off"
-				// treats X as unfinished business and answers it at the next
-				// opportunity — observed live: an agent asked the date
-				// answered the refused question instead. The refusal has to
-				// be recorded as a CLOSED outcome, not an evasion.
-				//
-				// Carried in a meta note because it is for the model and not
-				// for the reader: StripMetaTags runs at every delivery
-				// boundary (channel, web, phantom) while the persisted copy
-				// keeps it, so the next turn sees it and the contact never
-				// does.
-				lr.rs.resp.Content = fallback + guardrailClosedNote
-				lr.rs.resp.Reasoning = ""
-				lr.rs.resp.ToolCalls = nil
-				return lr.exit(lr.rs.resp, lr.history, nil)
+		// The final-round guards, in the order they always ran. The first one
+		// that ends the round says so and the rest do not run.
+		for _, guard := range []func() loopAction{
+			lr.finalRoundTruncation,
+			lr.finalRoundPromiseGuards,
+			lr.finalRoundToolMentionGuard,
+			lr.finalRoundStallGuards,
+			lr.finalRoundJudges,
+			lr.finalRoundOutputGuardrail,
+		} {
+			if act := guard(); act != actNone {
+				return act
 			}
 		}
 
@@ -2695,6 +2030,711 @@ func (lr *loopRun) noToolCallRound() loopAction {
 			})
 		}
 		return lr.exit(lr.rs.resp, lr.history, nil)
+	}
+	return actNone
+}
+
+func (lr *loopRun) finalRoundTextToolCall() loopAction {
+	// Clean-finish gate on the PROSE scan only. A model that
+	// reports "stop" with a substantial body has answered; reading
+	// a tool call out of that body turns a finished turn into a
+	// tool round, and if the loop-guard then blocks the phantom
+	// call the real answer is replaced by a regenerated one.
+	// Observed: an 8366-char final answer re-read as a moltbook
+	// call, blocked as a repeat, then regenerated over 39s.
+	//
+	// Length matters as well as the stop reason: a model that
+	// only ever NARRATES its calls emits a short lead-in ("I'll
+	// call X with…") and still finishes with "stop", so gating on
+	// the stop reason alone would silently stop doing its work.
+	// Short + stop stays extractable; long + stop does not.
+	allowProse := true
+	if lr.rs.resp.StopReason == "stop" && len(lr.rs.resp.Content) >= cleanFinishProseFloor {
+		allowProse = false
+		Debug("[agent_loop] prose tool-call scan skipped — model finished cleanly with %d chars (stop_reason=%q)", len(lr.rs.resp.Content), lr.rs.resp.StopReason)
+	}
+	parsed := ParseTextToolCall(lr.rs.resp.Content, lr.handlers, lr.toolDefs, allowProse)
+	if parsed == nil && lr.rs.resp.Reasoning != "" && strings.Contains(lr.rs.resp.Reasoning, "<function=") {
+		// Reasoning-channel markup only — never the prose scan.
+		if reasoningCall := ParseTextToolCall(lr.rs.resp.Reasoning, lr.handlers, lr.toolDefs, false); reasoningCall != nil {
+			Debug("[agent_loop] parsed tool call out of reasoning channel: %s", reasoningCall.Name)
+			parsed = reasoningCall
+		}
+	}
+	if parsed != nil {
+		// Keep the answer the model actually produced. If this
+		// synthesized call turns out to be a phantom (the loop-guard
+		// blocks it), the turn ends with this instead of paying to
+		// regenerate something already in hand. Cleared as soon as a
+		// tool really runs.
+		if txt := strings.TrimSpace(StripToolCallMarkup(lr.rs.resp.Content)); txt != "" {
+			lr.synthesizedFrom = txt
+		}
+		Debug("[agent_loop] parsed text-based tool call: %s", parsed.Name)
+		lr.rs.resp.ToolCalls = []ToolCall{*parsed}
+		// Strip the synthesized tool-call markup (XML <tool_call>
+		// or bare <function=...>...</function>) from resp.Content
+		// so subsequent rounds and the rescue path don't expose
+		// the markup OR any preceding narration to the user. The
+		// real action lives in the dispatched tool now; the text
+		// shouldn't trail along.
+		lr.rs.resp.Content = StripToolCallMarkup(lr.rs.resp.Content)
+		lr.history[len(lr.history)-1] = Message{
+			Role:      "assistant",
+			Content:   lr.rs.resp.Content,
+			Reasoning: lr.rs.resp.Reasoning,
+			ToolCalls: lr.rs.resp.ToolCalls,
+		}
+	} else if strings.Contains(lr.rs.resp.Content, "<function=") || strings.Contains(lr.rs.resp.Content, "<tool_call>") {
+		// Orphaned XML — the model emitted a tool-call attempt
+		// but the name didn't resolve (typo, hallucinated tool
+		// name like "run_shell_command" instead of "run_local").
+		// Strip the markup so the user doesn't see XML, and
+		// inject a corrective so the model gets a chance to
+		// retry with the right name.
+		attemptedName, _ := parseFunctionTagToolCall(lr.rs.resp.Content)
+		lr.rs.resp.Content = StripToolCallMarkup(lr.rs.resp.Content)
+		lr.history[len(lr.history)-1] = Message{
+			Role:      "assistant",
+			Content:   lr.rs.resp.Content,
+			Reasoning: lr.rs.resp.Reasoning,
+		}
+		lr.noteUncorrected(correctionOrphanedXML, "The reply again wrote tool-call XML for an unknown tool; the markup was stripped but no further re-prompt was left to spend.")
+		if lr.corrections.available(correctionOrphanedXML) && lr.round < lr.maxRounds {
+			hint := ""
+			if attemptedName != "" {
+				hint = fmt.Sprintf(" You attempted to call %q which is not a registered tool.", attemptedName)
+				if suggestion := nearestToolName(attemptedName, lr.handlers); suggestion != "" {
+					hint += fmt.Sprintf(" Did you mean %q?", suggestion)
+				}
+			}
+			Debug("[agent_loop] orphaned XML tool-call detected (name=%q), re-prompting: correction %d/%d", attemptedName, lr.corrections.spend(correctionOrphanedXML), maxCorrectionsPerKind)
+			lr.emitDiag("tool-markup-corrected", fmt.Sprintf("The reply wrote tool-call XML for an unknown tool (%q); markup stripped and re-prompted for a real call.", attemptedName))
+			lr.settleRound() // finalize the stripped prose so the retry doesn't concatenate into it
+			lr.history = append(lr.history, Message{
+				Role:    "user",
+				Content: frameworkNoticeTag + "Your previous response contained tool-call XML markup with a name that doesn't match any available tool." + hint + " Look at your tool catalog for the exact tool name. Use the native function-calling format, not text markup. Try again now.",
+			})
+			return actContinue
+		}
+	} else if refs := phantomDeliveryRefs(lr.cfg, lr.rs.resp.Content); len(refs) > 0 {
+		// The reply promises a file that does not exist and the turn
+		// produced nothing to deliver. Same class as a fake tool call —
+		// an action claimed but never taken — and it gets the same
+		// remedy: strip the claim, say what was wrong, let the model
+		// either do the work or admit it can't. Left alone, this leaves
+		// the reply empty after stripping and the person on the other
+		// end gets a generic apology about their phrasing.
+		lr.rs.resp.Content = StripDeliveryMarkers(lr.rs.resp.Content)
+		lr.history[len(lr.history)-1] = Message{
+			Role:      "assistant",
+			Content:   lr.rs.resp.Content,
+			Reasoning: lr.rs.resp.Reasoning,
+		}
+		if lr.corrections.available(correctionPhantomDelivery) && lr.round < lr.maxRounds {
+			// Joined, not %v: a ref is a filename when the reply named
+			// one and a plain noun phrase ("the image") when it didn't,
+			// and "[the image]" reads as a placeholder the model is
+			// meant to fill in rather than the thing it just claimed.
+			named := strings.Join(refs, ", ")
+			Debug("[agent_loop] phantom delivery detected (%s), re-prompting: correction %d/%d", named, lr.corrections.spend(correctionPhantomDelivery), maxCorrectionsPerKind)
+			lr.emitDiag("phantom-delivery-corrected", fmt.Sprintf("The reply presented %s as delivered, but nothing was attached and nothing exists to attach. The claim was removed and the model re-prompted.", named))
+			// Retract, not settle. On a streaming surface the false
+			// claim has already been painted, and settling would leave
+			// it standing above the correction — the user reads "Here's
+			// your picture" and then, underneath, that there is no
+			// picture. Same class as a blocked guardrail draft: a
+			// statement the framework has decided must not stand.
+			// It stays in `history` either way, which is what the model
+			// needs to see to understand what it is being corrected on.
+			// Falls back to settleRound on hosts with no retract wired.
+			lr.retractRound()
+			lr.history = append(lr.history, Message{
+				Role: "user",
+				Content: frameworkNoticeTag + fmt.Sprintf(
+					"You wrote your reply as though you were handing over %s. Nothing was attached and nothing exists to attach — it was never created, fetched, or it failed. The user received your words and no file. Either call the tool that actually produces it now, or tell them plainly that you do not have it. Do NOT present a file you have not made, and do not write a delivery marker for one.", named),
+			})
+			return actContinue
+		}
+		// Out of corrections, and the claim is still false. Everything
+		// above assumed the model could be talked into fixing it; twice
+		// now it has rewritten the same claim, and the old code simply
+		// let the third one through — the guard that ruled it false being
+		// the only thing that ever noticed.
+		//
+		// Delivering a promise about a file that does not exist is worse
+		// than delivering nothing, so the claim is replaced with something
+		// true. Same principle as a substituted guardrail decline: the
+		// framework writes in the agent's voice only when the alternative
+		// is letting a false statement stand.
+		if lr.corrections.exhausted(correctionPhantomDelivery) {
+			named := strings.Join(refs, ", ")
+			Debug("[agent_loop] phantom delivery still uncorrected after %d attempts (%s) — substituting a truthful reply", maxCorrectionsPerKind, named)
+			lr.emitDiag("phantom-delivery-uncorrected", fmt.Sprintf("The reply claimed %s again after two corrections, and no such file exists. The claim was replaced rather than delivered.", named))
+			lr.retractRound()
+			lr.rs.resp.Content = UnfulfilledDeliveryReply(refs)
+			lr.history[len(lr.history)-1] = Message{
+				Role:      "assistant",
+				Content:   lr.rs.resp.Content,
+				Reasoning: lr.rs.resp.Reasoning,
+			}
+		}
+	} else if containsFakeToolCodeBlock(lr.rs.resp.Content) {
+		// Training-data artifact: the model writes its tool call
+		// as plain text in a <tool_code> block (Gemini format) or
+		// with ::name(...):: cascade syntax (gohort-shaped fake).
+		// This happens most often near the round cap when the
+		// wrap-up nudge fires and the model interprets "respond
+		// directly now" as "polish a final message" — so it
+		// describes the call in narrative form ("Creating the
+		// updated tool now…") and appends the fake invocation.
+		// The actual tool_calls field is empty, so the loop
+		// would otherwise terminate with nothing executed.
+		//
+		// Recovery: strip the fake markup from the visible
+		// content and inject a corrective re-prompt so the
+		// model issues the real structured call next round.
+		attemptedName := extractFakeToolCodeName(lr.rs.resp.Content)
+		lr.rs.resp.Content = stripFakeToolCodeBlocks(lr.rs.resp.Content)
+		lr.history[len(lr.history)-1] = Message{
+			Role:      "assistant",
+			Content:   lr.rs.resp.Content,
+			Reasoning: lr.rs.resp.Reasoning,
+		}
+		lr.noteUncorrected(correctionFakeToolCode, "The reply again wrote a tool call as a text block instead of calling it; the markup was stripped but no further re-prompt was left to spend.")
+		if lr.corrections.available(correctionFakeToolCode) && lr.round < lr.maxRounds {
+			hint := ""
+			if attemptedName != "" {
+				hint = fmt.Sprintf(" You appeared to invoke %q.", attemptedName)
+			}
+			Debug("[agent_loop] fake <tool_code>/::name():: block detected (name=%q), re-prompting: correction %d/%d", attemptedName, lr.corrections.spend(correctionFakeToolCode), maxCorrectionsPerKind)
+			lr.emitDiag("tool-markup-corrected", fmt.Sprintf("The reply wrote a tool call as plain text (%q) instead of a real call; markup stripped and re-prompted.", attemptedName))
+			lr.settleRound() // finalize the stripped prose so the retry doesn't concatenate into it
+			lr.history = append(lr.history, Message{
+				Role:    "user",
+				Content: frameworkNoticeTag + "Your previous response wrote a tool invocation as plain TEXT (in a <tool_code> block or ::name(...):: form)." + hint + " That format does NOT execute — only structured tool_calls do. Re-issue the call NOW using the framework's native tool-calling mechanism. Do not wrap it in <tool_code>, do not use ::name():: syntax, do not narrate 'Creating the tool now…' — just emit the structured call.",
+			})
+			return actContinue
+		}
+	}
+	return actNone
+}
+
+func (lr *loopRun) finalRoundTruncation() loopAction {
+	// Cut off, not finished. The provider says so outright, and until
+	// this the loop read "no tool calls + some content" as a completed
+	// turn and exited respond_directly with rounds to spare.
+	//
+	// What that looked like: a lead spent its whole output allowance
+	// thinking, emitted 133 characters and no tool call, and the turn
+	// ended on "Doing it now." Twice in a row, three minutes and a
+	// couple of dollars each, with 29 of 30 rounds unused. stop_reason
+	// said max_tokens both times and nothing was listening — the only
+	// consumers were providerRefused (safety reasons only) and a Warn.
+	//
+	// Checked BEFORE the behavioural corrections below because this is
+	// a mechanical fact rather than an inference about intent: the
+	// reply ISN'T an unkept promise or an announced call, it is an
+	// unfinished one, and the corrections that pattern-match prose
+	// would either miss it or scold the model for being interrupted.
+	if responseWasTruncated(lr.rs.resp) {
+		if lr.corrections.available(correctionTruncated) {
+			Debug("[agent_loop] round %d: output truncated (stop_reason=%q, %d chars) — continuing (correction %d/%d)",
+				lr.round, lr.rs.resp.StopReason, len(lr.rs.resp.Content), lr.corrections.spend(correctionTruncated), maxCorrectionsPerKind)
+			lr.emitDiag("output-truncated", truncationDiag(lr.rs.resp))
+			lr.settleRound() // finalize the partial so the continuation doesn't concatenate into it
+			// The continuation needs a round of its own. This used to
+			// be gated on round < maxRounds, which left a one-round
+			// call — a synthesis pass, a summary — with no way to
+			// finish: its only round was the cut one, and the fragment
+			// shipped as the report. Extend the runway by the round the
+			// continuation takes, keeping an active wrap-up hard stop
+			// in step; the correction budget above bounds how often.
+			lr.graceRounds++
+			if lr.hardStop >= 0 {
+				lr.hardStop++
+			}
+			lr.truncatedLead.WriteString(lr.rs.resp.Content)
+			lr.history = append(lr.history, Message{
+				Role:    "user",
+				Content: frameworkNoticeTag + "Your previous reply was CUT OFF before you finished it — you did not choose to stop. Continue from where you left off without repeating what you already said. If you were about to call a tool, emit the real structured tool call now; keep any preamble short so the call itself fits.",
+			})
+			return actContinue
+		}
+		lr.noteUncorrected(correctionTruncated, "The reply was cut off at the output limit again and no further continuation was left to spend, so the partial answer was delivered as written.")
+	}
+
+	// Cut off by the provider, not by the model. Anthropic's streaming
+	// classifier can stop a reply partway with stop_reason=refusal,
+	// and the fragment arrives exactly like a finished answer: content,
+	// no tool calls. Nothing else here looks at it — providerRefused
+	// wants EMPTY content, the truncation check wants max_tokens — so
+	// the fragment was delivered as the answer with a Warn in the log
+	// and nothing in the turn's diagnostics. No retry: a continuation
+	// on the same model meets the same classifier, and a regenerate
+	// re-bills the whole prompt. The user gets told what they are
+	// looking at and decides.
+	if providerCutReply(lr.rs.resp) {
+		Log("[agent_loop] round %d: provider stopped the reply partway (stop_reason=%q, %d chars) — delivering the fragment with a diagnostic",
+			lr.round, lr.rs.resp.StopReason, len(lr.rs.resp.Content))
+		lr.emitDiag("provider-refusal", "The provider's content classifier stopped this reply partway (stop_reason=refusal); what you see is the fragment produced before the stop, not a finished answer. Rephrasing the request or retrying may get a complete one.")
+	}
+	return actNone
+}
+
+func (lr *loopRun) finalRoundPromiseGuards() loopAction {
+	// Action-promise correction DISABLED for now — it false-positived
+	// on ordinary conversational replies ("I'll try to nail the house
+	// next time."), burning rounds re-prompting for an action the model
+	// never intended. Flip to true to re-enable; the reasoning-collapse
+	// correction below is unaffected either way.
+	const actionPromiseCorrection = false
+	if actionPromiseCorrection && lr.corrections.available(correctionActionPromise) && lr.round < lr.maxRounds && !lr.toolFiredThisTurn && containsActionPromise(lr.rs.resp.Content) {
+		Debug("[agent_loop] action-promise without tool call detected, re-prompting (correction %d/%d): %q", lr.corrections.spend(correctionActionPromise), maxCorrectionsPerKind, truncForLog(lr.rs.resp.Content, 80))
+		lr.history = append(lr.history, Message{
+			Role:    "user",
+			Content: frameworkNoticeTag + "You stated an intention to take an action (e.g. 'let me try', 'one moment') but called no tool. Either call the tool now to actually do what you said, or reply plainly that you can't proceed and explain what you tried. Do NOT promise further action without taking it.",
+		})
+		return actContinue
+	}
+
+	// Announced-call correction: the reply ENDS on a colon
+	// introducing a call that never came — "Here's the
+	// `update_agent` call to implement these changes:" and the turn
+	// stops (observed: Builder settled a turn exactly there and the
+	// user watched nothing happen). Unlike the disabled
+	// actionPromiseCorrection above, the trailing-colon +
+	// call-announcement shape doesn't occur in complete replies, so
+	// it's safe to re-prompt on. No !toolFiredThisTurn gate:
+	// announcing a follow-up call and stopping is just as broken
+	// after earlier tools succeeded. Budget-shared with the other
+	// promise corrections so it can't loop.
+	if endsWithCallAnnouncement(lr.rs.resp.Content) {
+		lr.noteUncorrected(correctionAnnouncedCall, "The reply again ended announcing a call it never made; no further re-prompt was left to spend, so it was delivered as written.")
+	}
+	if lr.corrections.available(correctionAnnouncedCall) && lr.round < lr.maxRounds && endsWithCallAnnouncement(lr.rs.resp.Content) {
+		Debug("[agent_loop] reply ends announcing a call that never followed, re-prompting: correction %d/%d: %q", lr.corrections.spend(correctionAnnouncedCall), maxCorrectionsPerKind, truncForLog(lr.rs.resp.Content, 80))
+		lr.emitDiag("announced-call-corrected", "The reply ended by announcing a tool call it never made; re-prompted to actually make the call or finish the reply.")
+		lr.settleRound() // finalize the announcement so the retry doesn't concatenate into it
+		lr.history = append(lr.history, Message{
+			Role:    "user",
+			Content: frameworkNoticeTag + "Your previous reply ended by announcing a call or content that never followed (it ends with a colon). If you meant to run a tool, emit the REAL structured tool call NOW — never write it out as text or stop after describing it. If no tool exists for what you described, say so plainly and finish the reply instead.",
+		})
+		return actContinue
+	}
+	return actNone
+}
+
+func (lr *loopRun) finalRoundToolMentionGuard() loopAction {
+	// Tool-mention correction: the model named a KNOWN tool in its
+	// reply (e.g. "let me get_joke", or "I can't reach
+	// read_support_bundles") but emitted no structured call.
+	// parseNaturalToolCall rescues a narration only when arguments
+	// are readable off the prose, so a no-arg tool (nothing to
+	// extract) and a tool merely TALKED about both fall through it
+	// — the tool silently never runs, and the model either narrates
+	// a result it never got or reports an inability that isn't one.
+	// Nudge once to either issue the real call or answer plainly.
+	// FAR narrower than the disabled actionPromiseCorrection above: it
+	// fires ONLY on an exact, token-bounded, snake_case tool NAME (those
+	// don't occur in ordinary prose), only when NO tool fired this turn,
+	// only on a reply short enough to be a lead-in, is capped by its own
+	// correction budget, and the nudge gives an explicit "if you didn't
+	// mean to, answer directly" out. Flip the const to disable if it
+	// ever proves noisy.
+	const toolMentionCorrection = true
+	// Full-reply gate (double-emit prevention). This correction fires by
+	// re-prompting, and re-prompting a round whose content ALREADY
+	// streamed to the client makes the retry stream a SECOND time — the
+	// "…What API?" + "Fair point, I was just describing…" double. That's
+	// only worth the risk when the round is a genuine PREAMBLE ("Let me
+	// get_joke") that plausibly meant to fire the tool. When the content
+	// is a full reply that merely MENTIONS a tool in passing, it's
+	// exposition, not a missed call — a complete answer never needed a
+	// tool to exist, so re-prompting can only produce restated noise.
+	// Gate on the same lead-in/full-answer cutoff the runner uses for
+	// the analogous mis-emit case (leadInMaxLen, 600): only nudge when
+	// the visible reply is short enough to be a lead-in. Source-side and
+	// lossless — a skipped correction leaves the full answer standing.
+	const noArgCorrectionMaxContentLen = 600
+	contentIsPreamble := len(strings.TrimSpace(lr.rs.resp.Content)) <= noArgCorrectionMaxContentLen
+	if toolMentionCorrection && contentIsPreamble && !lr.cfg.DisableToolMentionCorrection && !lr.toolFiredThisTurn {
+		name, needsArgs := mentionedUncalledTool(lr.rs.resp.Content, lr.handlers, lr.toolDefs)
+		if name != "" && !(lr.corrections.available(correctionToolMention) && lr.round < lr.maxRounds) {
+			lr.noteUncorrected(correctionToolMention, "The reply again named a tool in prose without calling it; no further re-prompt was left to spend.")
+		} else if name != "" {
+			Debug("[agent_loop] tool %q named in prose without a call (needs_args=%v), re-prompting: correction %d/%d", name, needsArgs, lr.corrections.spend(correctionToolMention), maxCorrectionsPerKind)
+			lr.emitDiag("tool-mention-corrected", fmt.Sprintf("The reply named the %q tool without calling it; re-prompted to either run it or answer plainly.", name))
+			lr.settleRound() // finalize the preamble so the retry doesn't concatenate into it
+			// Two different reasons nothing ran, and the model can only
+			// fix the one it is told about. The parameterized wording
+			// also has to say the tool IS available: the reply that
+			// triggers this is often a refusal ("I don't have access to
+			// those files"), and repeating the nudge without correcting
+			// the premise just gets the refusal restated.
+			why := "it takes no arguments, so there was nothing to run"
+			if needsArgs {
+				why = "naming a tool in text does not run it — the arguments have to travel in a real structured call"
+			}
+			lr.history = append(lr.history, Message{
+				Role:    "user",
+				Content: fmt.Sprintf(frameworkNoticeTag+"Your previous response referred to the %q tool but did not actually call it (%s). That tool IS available to you on this turn — do not say you lack access to what it reaches. If you intend to use it, emit the real structured tool call NOW. If you did NOT mean to use it, answer the user directly and do not claim you used it.", name, why),
+			})
+			return actContinue
+		}
+	}
+	return actNone
+}
+
+func (lr *loopRun) finalRoundStallGuards() loopAction {
+	// Reasoning-collapse correction: Qwen-style models with
+	// thinking enabled sometimes burn the entire budget on
+	// reasoning and emit ~no visible content, while reporting
+	// finish=stop. From the user's view: black hole — sent a
+	// message, got nothing back. Detect: substantial reasoning
+	// (>200 chars), EMPTY content (a bare stub like ""/"."/"…"
+	// after trim), and no tool calls. Inject a corrective and
+	// retry so the next round either produces text or calls a
+	// tool. Budget-gated per kind (correctionBudget) so it
+	// can't loop.
+	//
+	// The threshold is deliberately near-zero, NOT "short": a
+	// complete short reply ("Yes.", "7:57 AM PDT.") is normal
+	// for a thinking model, and this round's content has
+	// ALREADY streamed to the client — re-prompting makes the
+	// model repeat it, so the user watches the same sentence
+	// render once per correction (and each retry re-bills the
+	// full prompt). Only a round that showed nothing may retry.
+	trimmedContent := strings.TrimSpace(lr.rs.resp.Content)
+	collapsed := len(trimmedContent) < 3 && len(lr.rs.resp.Reasoning) > 200
+	if collapsed {
+		lr.noteUncorrected(correctionCollapse, "The round again produced no visible reply and called no tool; no further re-prompt was left to spend.")
+	}
+	if collapsed && lr.corrections.available(correctionCollapse) && lr.round < lr.maxRounds {
+		Debug("[agent_loop] reasoning-collapse detected (reasoning=%d chars, content=%d chars), re-prompting: correction %d/%d", len(lr.rs.resp.Reasoning), len(trimmedContent), lr.corrections.spend(correctionCollapse), maxCorrectionsPerKind)
+		lr.emitDiag("empty-round-retried", "A round produced reasoning but no visible reply and no tool call; re-prompted for concrete output.")
+		lr.settleRound() // no-op when nothing streamed; keeps the discipline uniform across guards
+		lr.history = append(lr.history, Message{
+			Role:    "user",
+			Content: frameworkNoticeTag + "Your previous round produced no visible reply (you reasoned but wrote nothing the user can see) and called no tool. Don't end a turn empty-handed: either produce concrete text now, or call a relevant tool. If the user's question is too vague to act on, ask a clarifying question.",
+		})
+		return actContinue
+	}
+
+	// Give-up-with-errors-pending catch. Model emitted no tool
+	// calls and ~empty content while tool errors accumulated
+	// earlier in this turn AND budget remains — the "I tried,
+	// give up" pattern. The forced-final-answer rescue path
+	// after the loop would otherwise paper over this with a
+	// polite "here's what I did" summary instead of fixing the
+	// underlying problem. Push back: inject a continuation
+	// nudge that names the error count and the rounds remaining,
+	// and re-loop. Budget-gated per kind (correctionBudget) so
+	// pathological cases can't infinitely re-prompt.
+	//
+	// Triggers:
+	//   - no tool calls THIS round
+	//   - empty content (or nearly so — <30 chars after trim), OR a
+	//     reply that only PROMISES the work (see replyStalledOnAPromise)
+	//   - cumulative tool errors > 0
+	//   - more than 5 rounds remain (don't push at the cap;
+	//     the existing wrap-up message owns that case)
+	//   - haven't already burned the correction budget
+	// trimmedContent reuses the variable declared in the
+	// reasoning-collapse check above — same scope, already trimmed.
+	roundsLeft := lr.maxRounds - lr.round
+	// A promise is the same give-up wearing a nicer hat, and it is the
+	// worse of the two: an empty round shows the user nothing, while
+	// "let me create this" reads as progress and ends the turn anyway.
+	// Observed: two image backends errored, and the turn closed on "Got
+	// it — let me create this. I'll blend Alex onto the picture of me
+	// wasting away in the garage." Nothing followed. The user's next
+	// message was "you forgot to attach the image."
+	promised := replyStalledOnAPromise(trimmedContent)
+	// Two ways a turn ends without doing the work, and only the first
+	// was covered. The second arrived as a transcript: "On it — let me
+	// grab some reference photos and composite them into that scene",
+	// no tool call, turn over, nothing errored — so a guard keyed on
+	// pending errors never looked. The errors were incidental to the
+	// original sighting, not the thing that made it a stall.
+	//
+	// The carve-out that makes the second safe is !toolFiredThisTurn.
+	// "I'll let you know when it's done" is the reply the detached-task
+	// notice explicitly ASKS for, and a detached call is a tool call —
+	// so a promise backed by work that actually started is left alone,
+	// and only a promise backed by nothing gets pushed.
+	stalledOnErrors := lr.cumulativeToolErrors > 0 && (len(trimmedContent) < 30 || promised)
+	stalledOnNothing := promised && !lr.toolFiredThisTurn
+	gaveUp := roundsLeft >= 5 && (stalledOnErrors || stalledOnNothing)
+	if gaveUp {
+		lr.noteUncorrected(correctionGiveUp, "The turn again stopped with tool errors unaddressed and rounds to spare; no further re-prompt was left to spend.")
+	}
+	if gaveUp && lr.corrections.available(correctionGiveUp) {
+		Debug("[agent_loop] give-up-with-errors-pending detected (errors=%d, rounds_left=%d, content=%dch, promised=%v), re-prompting: correction %d/%d",
+			lr.cumulativeToolErrors, roundsLeft, len(trimmedContent), promised, lr.corrections.spend(correctionGiveUp), maxCorrectionsPerKind)
+		// Two failures, two messages. Telling a model to "re-read the
+		// error messages" when nothing errored sends it hunting for a
+		// problem that isn't there, and it will invent one.
+		var diag, nudge string
+		roundPlural := ""
+		if roundsLeft != 1 {
+			roundPlural = "s"
+		}
+		if stalledOnErrors {
+			errPlural := ""
+			if lr.cumulativeToolErrors != 1 {
+				errPlural = "s"
+			}
+			stopped := "stopped without producing a reply and without calling any tool"
+			diag = fmt.Sprintf("The turn stopped with %d unaddressed tool error(s) and rounds to spare; re-prompted to adjust and retry rather than give up.", lr.cumulativeToolErrors)
+			if promised && len(trimmedContent) >= 30 {
+				stopped = "ended your turn by saying you were ABOUT to do the work, and then called no tool"
+				diag = fmt.Sprintf("The reply promised work it never did — it announced the next step, called no tool, and left %d tool error(s) unaddressed with rounds to spare. Re-prompted to actually do it.", lr.cumulativeToolErrors)
+			}
+			nudge = fmt.Sprintf(
+				frameworkNoticeTag+"You %s, but %d tool call%s errored earlier this turn that you didn't follow up on, and you have %d round%s remaining. Saying what you are about to do is not doing it — the user sees the sentence and nothing else, and nothing runs after your turn ends. DON'T end here with a polite summary of what you tried — that's giving up. Re-read the most recent error message(s) carefully, ADJUST your approach (different args, different tool, different sequence), and TRY AGAIN with a real tool call. If you genuinely have no other avenues, say so explicitly — but only after you've actually tried adjusting at least once.",
+				stopped, lr.cumulativeToolErrors, errPlural, roundsLeft, roundPlural)
+		} else {
+			diag = "The reply said the work was about to happen and then ended the turn without calling a single tool. Re-prompted to do it now or say plainly what is stopping it."
+			nudge = fmt.Sprintf(
+				frameworkNoticeTag+"You ended your turn saying you were about to do something, and then called no tool at all — so nothing happened. Nothing runs after your turn ends; the user is left holding a sentence. You have %d round%s remaining. Do it NOW with a real tool call, or say plainly what is stopping you. Do not repeat the promise, and do not apologize for it: do the work or explain why you can't.",
+				roundsLeft, roundPlural)
+		}
+		lr.emitDiag("giveup-retried", diag)
+		lr.settleRound() // no-op when nothing streamed; keeps the discipline uniform across guards
+		lr.history = append(lr.history, Message{Role: "user", Content: nudge})
+		return actContinue
+	}
+	return actNone
+}
+
+func (lr *loopRun) finalRoundJudges() loopAction {
+	// Pre-finalize injection drain. Mid-flight user notes are
+	// normally picked up at round start, but a note that lands
+	// DURING this final round would otherwise be lost — the loop
+	// is about to return. Re-drain here: if anything is pending,
+	// append it and do another round instead of finishing.
+	// Uses InjectionDrain (NOT OnRoundStart) — InjectionDrain
+	// empties its queue and returns nil when nothing's pending,
+	// so this re-call terminates. OnRoundStart may return content
+	// every call (budget pacer) and would loop forever here.
+	if lr.cfg.InjectionDrain != nil && lr.round < lr.maxRounds {
+		if injected := lr.cfg.InjectionDrain(); len(injected) > 0 {
+			Debug("[agent_loop] pre-finalize injection: %d note(s) arrived during the final round — continuing instead of finishing", len(injected))
+			lr.history = append(lr.history, injected...)
+			return actContinue
+		}
+	}
+
+	// A turn that called NOTHING leaves no trail but its own words, and
+	// without them a failure cannot be diagnosed at all. Observed: "Wiwee,
+	// try again" answered in 66 characters with zero tool calls — the
+	// framework recorded the length and nothing else, so whether the reply
+	// was an honest refusal or a fresh empty promise was unknowable after
+	// the fact. Every OTHER shape of turn is reconstructable from its tool
+	// calls; this one is not.
+	//
+	// Logged for the whole turn, not the round, so it fires once on the
+	// reply that actually goes out. Masked sessions get lengths only —
+	// MaskDebugOutput exists because some sessions carry credentials and
+	// private files, and a diagnostic is not worth leaking them.
+	if len(lr.turnToolCalls) == 0 {
+		Debug("%s", noToolDiagLine(lr.round, LatestUserContent(lr.messages), lr.rs.resp.Content, lr.cfg.MaskDebugOutput))
+	}
+
+	// Turn judge: the reply is about to go out, so this is the last moment
+	// anything can ask whether it is TRUE about what the turn did. Runs
+	// after the phrase-list guards above have had their say and only when
+	// the evidence warrants a model call — see turn_judge.go for the
+	// pre-filter and why it is deliberately looser than the guards.
+	//
+	// Placed before the guardrail gate on purpose: a reply that claims work
+	// it never did should be fixed before a warden spends a call judging
+	// its content, and the correction below re-prompts anyway.
+	if verdict, convicted := judgeTurnClaim(lr.cfg, TurnClaimEvidence{
+		Request:       LatestUserContent(lr.messages),
+		Reply:         lr.rs.resp.Content,
+		ToolCalls:     lr.turnToolCalls,
+		PriorWork:     lr.cfg.priorWork(),
+		PriorReports:  lr.cfg.priorReports(),
+		ToolErrors:    lr.cumulativeToolErrors,
+		LastToolError: lr.lastToolError,
+		Delivered:     lr.cfg.deliveredCount(),
+		Backgrounded:  lr.cfg.backgrounded(),
+		GivenEstimate: lr.cfg.backgroundEstimate(),
+		Unattended:    lr.cfg.Unattended,
+	}); convicted {
+		// Two independent findings share one verdict, so each branch checks
+		// its own. A machinery-only conviction reaching the claim branch
+		// would tell the model its reply "did not happen" about a sentence
+		// that was true.
+		if verdict.Unkept && lr.corrections.available(correctionUnkeptClaim) && lr.round < lr.maxRounds {
+			Debug("[agent_loop] turn judge: reply claims work the turn did not do (%q) — %s; re-prompting: correction %d/%d",
+				truncForLog(verdict.Claim, 80), verdict.Why, lr.corrections.spend(correctionUnkeptClaim), maxCorrectionsPerKind)
+			lr.emitDiag("unkept-claim-corrected", fmt.Sprintf("The reply said %q, which did not happen: %s. Re-prompted to do it or say so.", truncForLog(verdict.Claim, 120), verdict.Why))
+			// Retract rather than settle: the claim is false and, on a
+			// streaming surface, already painted. Same call as the phantom
+			// guard makes about the same class of statement.
+			lr.retractRound()
+			lr.history[len(lr.history)-1] = Message{Role: "assistant", Content: lr.rs.resp.Content, Reasoning: lr.rs.resp.Reasoning}
+			lr.history = append(lr.history, Message{
+				Role: "user",
+				Content: frameworkNoticeTag + fmt.Sprintf(
+					"Your reply says: %q. That did not happen — %s. The user reads your words and gets nothing else; nothing runs after your turn ends. Either do it NOW with a real tool call, or rewrite the reply to say plainly what actually happened and what you could not do. Do not apologize, do not restate the claim, and do not promise it for later.",
+					verdict.Claim, verdict.Why),
+			})
+			return actContinue
+		}
+		if verdict.Unkept && lr.corrections.exhausted(correctionUnkeptClaim) {
+			lr.emitDiag("unkept-claim-uncorrected", fmt.Sprintf("The reply still says %q after correction, and it did not happen: %s. Delivered as written.", truncForLog(verdict.Claim, 120), verdict.Why))
+		}
+		// Machinery is a separate finding with a separate budget, because it
+		// is a separate failure: the reply is usually TRUE and merely says
+		// things nobody asked to hear. A rewrite fixes it, where a false
+		// claim needs the work done or admitted — so it must not spend the
+		// allowance the serious one might need in the same turn.
+		if leak := strings.TrimSpace(verdict.Machinery); leak != "" && !verdict.Unkept {
+			if lr.corrections.available(correctionMachinery) && lr.round < lr.maxRounds {
+				Debug("[agent_loop] turn judge: reply explains machinery (%q); re-prompting: correction %d/%d",
+					truncForLog(leak, 80), lr.corrections.spend(correctionMachinery), maxCorrectionsPerKind)
+				lr.emitDiag("machinery-corrected", fmt.Sprintf("The reply explained how the work is being run (%q), which nobody asked about. Re-prompted for the same message without it.", truncForLog(leak, 120)))
+				lr.retractRound()
+				lr.history[len(lr.history)-1] = Message{Role: "assistant", Content: lr.rs.resp.Content, Reasoning: lr.rs.resp.Reasoning}
+				lr.history = append(lr.history, Message{
+					Role: "user",
+					Content: frameworkNoticeTag + fmt.Sprintf(
+						"Your reply says: %q. That is plumbing — how the work is being carried out — and they did not ask about it. Nothing else is wrong with the reply. Send the SAME message with that part removed: what you are doing for them, in one line, the way a person would. No ids, no mention of how or where anything runs, no invitation to check back, no time estimate you were not given.",
+						leak),
+				})
+				return actContinue
+			}
+			if lr.corrections.exhausted(correctionMachinery) {
+				lr.emitDiag("machinery-uncorrected", fmt.Sprintf("The reply still explains how the work is run (%q) after correction. Delivered as written.", truncForLog(leak, 120)))
+			}
+		}
+	}
+
+	// Grounding: the claim judge asked whether the turn DID what the reply
+	// describes; this asks whether it KNOWS what the reply asserts. Only
+	// notes the memory block marked unchecked are in scope, so a turn
+	// carrying none never reaches a model call.
+	//
+	// The live note is built here rather than inline so the correction
+	// below can recognise it: where the claim came FROM changes what the
+	// rewrite should say, and calling a meme somebody posted seconds ago
+	// a "stored note" is what produced a reply apologising for not having
+	// checked a joke.
+	liveNote := liveClaimNote(lr.cfg.LiveClaimSpeaker, LatestUserContent(lr.messages))
+	if gv, convicted := judgeTurnGrounding(lr.cfg, TurnGroundingEvidence{
+		Reply: lr.rs.resp.Content,
+		// Stored notes plus, on a channel, whatever the person just
+		// said. Composed here rather than by the host so the live entry
+		// is worded the same way everywhere it is judged.
+		Unchecked: withLiveClaim(lr.cfg.UncheckedClaims, lr.cfg.LiveClaimSpeaker, LatestUserContent(lr.messages)),
+		ToolCalls: lr.turnToolCalls,
+	}); convicted {
+		if lr.corrections.available(correctionUngrounded) && lr.round < lr.maxRounds {
+			Debug("[agent_loop] grounding judge: reply asserts an unchecked claim (%q) — re-prompting: correction %d/%d",
+				truncForLog(gv.Claim, 80), lr.corrections.spend(correctionUngrounded), maxCorrectionsPerKind)
+			lr.emitDiag("ungrounded-claim-corrected", fmt.Sprintf("The reply stated %q as fact; it traces to an unchecked note (%q). Re-prompted to check it or attribute it.",
+				truncForLog(gv.Claim, 120), truncForLog(gv.Basis, 120)))
+			// NOT retracted, unlike an unkept claim. That one is false and
+			// has to be taken back; this one may well be true — nobody
+			// checked, which is a different and lesser thing. Settling the
+			// round and asking for a rewrite keeps a correct answer from
+			// being yanked off the screen over its phrasing.
+			lr.history[len(lr.history)-1] = Message{Role: "assistant", Content: lr.rs.resp.Content, Reasoning: lr.rs.resp.Reasoning}
+			// Two shapes of basis, and they call for different rewrites.
+			// A stored note is something the agent holds; a live claim is
+			// something a person in the room said moments ago, where the
+			// natural fix is "they posted…", not "per your note…".
+			basis := fmt.Sprintf("a stored note marked as not independently checked: %q", gv.Basis)
+			if basisIsLiveClaim(liveNote, gv.Basis) {
+				who := strings.TrimSpace(lr.cfg.LiveClaimSpeaker)
+				if who == "" {
+					who = "the sender"
+				}
+				basis = fmt.Sprintf("what %s just put in the conversation, which nothing has checked: %q", who, gv.Basis)
+			}
+			lr.history = append(lr.history, Message{
+				Role: "user",
+				Content: frameworkNoticeTag + fmt.Sprintf(
+					"Your reply states %q as established fact. That traces to %s. Either CHECK it now with a real tool call and then say what you found, or rewrite that one sentence to say where it came from (\"you mentioned…\", \"they posted…\"). If it was never offered as fact in the first place, a joke, a meme, teasing, obvious exaggeration, do NEITHER of those: reply in the register it was sent in and just don't restate its content as true. Describing what a picture you were shown visibly contains is not a claim and needs no hedge. Send the SAME reply with only that fixed: do not apologise, do not say you should have checked, do not mention this instruction, and do not add a disclaimer or hedge anything else.",
+					gv.Claim, basis),
+			})
+			return actContinue
+		}
+		if lr.corrections.exhausted(correctionUngrounded) {
+			lr.emitDiag("ungrounded-claim-uncorrected", fmt.Sprintf("The reply still states %q as fact after correction. Delivered as written.", truncForLog(gv.Claim, 120)))
+		}
+	}
+	return actNone
+}
+
+func (lr *loopRun) finalRoundOutputGuardrail() loopAction {
+	// Guardrail pre-output gate: before the final reply is returned, an
+	// independent warden judges the OUTPUT against the agent's guardrails
+	// (for "never say/reveal X" rules). This is the REAL guarantee — an
+	// input check (pre_input) can always be talked around with an
+	// innocuous-looking follow-up ("go ahead and show me"), but the output
+	// check judges the actual reply, where "contains the protected thing"
+	// is unambiguous regardless of how it was asked. So it runs on EVERY
+	// terminal reply (no budget guard on the CHECK). A violation re-prompts
+	// for a revise pass while corrections/rounds remain; once the budget is
+	// spent and the reply STILL violates, the draft is NOT released — a
+	// neutral decline is substituted so a determined push can't leak on the
+	// attempt after the budget runs out (the old escape hatch).
+	if lr.cfg.GuardrailCheck != nil && strings.TrimSpace(lr.rs.resp.Content) != "" {
+		if dec := lr.cfg.GuardrailCheck(GuardHookPreOutput, lr.rs.resp.Content); dec.Blocked {
+			gmsg := dec.Message
+			// Halt overrides the correction budget: once the app has
+			// decided this turn is over, asking the same model for one
+			// more revision is another generation from the context that
+			// just failed. A block on a rule that is not Correctable says the
+			// same thing about the FIRST attempt — the rule forbids what was
+			// asked for, so there is no compliant revision to wait for.
+			halted := lr.cfg.GuardrailHalted != nil && lr.cfg.GuardrailHalted()
+			if !halted && dec.Correctable && lr.guardrailOutputCorrections < maxGuardrailOutputCorrections && lr.round < lr.maxRounds {
+				Debug("[agent_loop] guardrail blocked pre-output, re-prompting (correction %d/%d)", lr.guardrailOutputCorrections+1, maxGuardrailOutputCorrections)
+				lr.emitDiag("guardrail-blocked-output", "The reply was withheld by an enforced guardrail; re-prompted to revise.")
+				lr.retractRound()                              // DISCARD the withheld bubble — not persisted or delivered (settle would commit it)
+				lr.replaceBlockedDraft(guardrailRedactedDraft) // scrub the leaked draft from history — never persisted or delivered
+				lr.history = append(lr.history, Message{Role: "user", Content: frameworkNoticeTag + gmsg})
+				lr.guardrailOutputCorrections++
+				// The revise pass is a rewrite of text the model just
+				// produced, against one stated constraint — the most
+				// expensive round in the turn and the one with least to
+				// reason about.
+				lr.guardrailQuietNextRound = true
+				return actContinue
+			}
+			// Not correctable, halted, or the budget/rounds are spent and the
+			// reply STILL violates. Do not release it — overwrite the draft in
+			// place with the safe decline and return that. The floor is a
+			// canned reply, not the leak, no matter how hard the turn was
+			// pushed.
+			Debug("[agent_loop] guardrail pre-output final (correctable=%v halted=%v) — handing the reply to the rejection model", dec.Correctable, halted)
+			lr.emitDiag("guardrail-output-substituted", "A reply kept violating an enforced guardrail; a neutral decline was substituted so nothing protected was released.")
+			lr.retractRound() // DISCARD the leaking draft bubble; the safe reply below is what gets delivered
+			fallback := guardrailRejectionReply(lr.cfg, "pre_output", lr.history)
+			lr.replaceBlockedDraft(fallback)
+			// The decline alone leaves the request looking OPEN. A model
+			// reading back "user asked X / assistant brushed it off"
+			// treats X as unfinished business and answers it at the next
+			// opportunity — observed live: an agent asked the date
+			// answered the refused question instead. The refusal has to
+			// be recorded as a CLOSED outcome, not an evasion.
+			//
+			// Carried in a meta note because it is for the model and not
+			// for the reader: StripMetaTags runs at every delivery
+			// boundary (channel, web, phantom) while the persisted copy
+			// keeps it, so the next turn sees it and the contact never
+			// does.
+			lr.rs.resp.Content = fallback + guardrailClosedNote
+			lr.rs.resp.Reasoning = ""
+			lr.rs.resp.ToolCalls = nil
+			return lr.exit(lr.rs.resp, lr.history, nil)
+		}
 	}
 	return actNone
 }

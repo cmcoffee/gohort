@@ -14,6 +14,9 @@
 //	roundvar round                   the loop variable, exposed as a field of the receiver
 //	method <name>(<params>) <results> : <line ranges>     function-level statements, verbatim
 //	loopmethod <name>() : <line ranges>                   loop-body statements; continue/break/return translated
+//	block <name>() : <if-line> [else]                       an if (or else) body lifted whole, returns translated
+//	lift <name>() : <if-line> [else] <line ranges>          part of an if body whose returns are ALREADY actions
+//	                                                        (a second pass over a method this tool produced)
 //
 // Function-level locals become fields of the receiver; loop-body locals become
 // fields of the per-round struct (zeroed by the driver each round, exactly like
@@ -50,6 +53,14 @@ type method struct {
 	translate bool // returns (and, in a loop, loop branches) become actions
 	block     int  // line of an if statement whose body (or else) becomes this method
 	blockElse bool
+	lift      bool // block statements by range, already translated: no rewriting of control flow
+}
+
+func blockKey(line int, els bool) string {
+	if els {
+		return strconv.Itoa(line) + "else"
+	}
+	return strconv.Itoa(line)
 }
 
 type decl struct {
@@ -87,7 +98,7 @@ func main() {
 			resultType = f[1]
 		case "roundvar":
 			roundVar = f[1]
-		case "method", "loopmethod", "block":
+		case "method", "loopmethod", "block", "lift":
 			rest := strings.TrimSpace(strings.TrimPrefix(line, f[0]))
 			head, tail, ok := strings.Cut(rest, ":")
 			if !ok {
@@ -110,9 +121,10 @@ func main() {
 					m.blockElse = true
 					continue
 				}
-				if f[0] == "block" {
+				if f[0] == "block" || (f[0] == "lift" && m.block == 0) {
 					m.block, _ = strconv.Atoi(r)
-					m.translate = true
+					m.translate = f[0] == "block"
+					m.lift = f[0] == "lift"
 					continue
 				}
 				lo, hi, ok := strings.Cut(r, "-")
@@ -123,7 +135,7 @@ func main() {
 				h, _ := strconv.Atoi(hi)
 				m.ranges = append(m.ranges, rng{l, h})
 			}
-			if m.translate {
+			if m.translate || m.lift {
 				m.sig = "() " + actionType
 			}
 			methods = append(methods, m)
@@ -253,7 +265,9 @@ func main() {
 	if fn.Recv != nil {
 		for _, f := range fn.Recv.List {
 			for _, n := range f.Names {
-				add(n, false, "", nil)
+				if n.Name != recvName {
+					add(n, false, "", nil)
+				}
 			}
 		}
 	}
@@ -514,10 +528,10 @@ func main() {
 		start, end int
 		line       int
 		loop       bool
-		block      *method // statements lifted from an if/else body belong to that method only
+		block      string // key of the if/else body these statements were lifted from, "" at function level
 	}
 	var stmts []stmt
-	index := func(list []ast.Stmt, loopLevel bool, blockStart int, block *method) {
+	index := func(list []ast.Stmt, loopLevel bool, blockStart int, block string) {
 		prev := blockStart
 		for _, s := range list {
 			st := stmt{node: s, end: stmtEnd(s), line: fset.Position(s.Pos()).Line, loop: loopLevel, block: block}
@@ -526,14 +540,16 @@ func main() {
 			prev = st.end
 		}
 	}
-	index(fn.Body.List, false, off(fn.Body.Lbrace)+1, nil)
+	index(fn.Body.List, false, off(fn.Body.Lbrace)+1, "")
 	if loop != nil {
-		index(loop.Body.List, true, off(loop.Body.Lbrace)+1, nil)
+		index(loop.Body.List, true, off(loop.Body.Lbrace)+1, "")
 	}
+	indexed := map[string]bool{}
 	for _, m := range methods {
-		if m.block == 0 {
+		if m.block == 0 || indexed[blockKey(m.block, m.blockElse)] {
 			continue
 		}
+		indexed[blockKey(m.block, m.blockElse)] = true
 		var ifs *ast.IfStmt
 		for _, s := range fn.Body.List {
 			if is, ok := s.(*ast.IfStmt); ok && fset.Position(s.Pos()).Line == m.block {
@@ -559,7 +575,7 @@ func main() {
 			}
 			body = inner
 		}
-		index(body.List, false, off(body.Lbrace)+1, m)
+		index(body.List, false, off(body.Lbrace)+1, blockKey(m.block, m.blockElse))
 	}
 
 	emitMethod := func(name, sig, body string) {
@@ -583,8 +599,16 @@ func main() {
 			}
 			in := false
 			if m.block != 0 {
-				in = st.block == m
-			} else if st.block == nil {
+				in = st.block == blockKey(m.block, m.blockElse)
+				if in && len(m.ranges) > 0 {
+					in = false
+					for _, r := range m.ranges {
+						if st.line >= r.lo && st.line <= r.hi {
+							in = true
+						}
+					}
+				}
+			} else if st.block == "" {
 				for _, r := range m.ranges {
 					if st.line >= r.lo && st.line <= r.hi {
 						in = true
@@ -630,7 +654,7 @@ func main() {
 					}
 				}
 			case *ast.DeclStmt:
-				if st.block != nil {
+				if st.block != "" {
 					break // a lifted block's own declarations stay its locals
 				}
 				gd := n.Decl.(*ast.GenDecl)
@@ -673,7 +697,7 @@ func main() {
 			body.WriteString(apply(text, base, eds))
 		}
 		b := strings.TrimRight(body.String(), "\n\t ")
-		if m.translate {
+		if m.translate || m.lift {
 			b += "\n\treturn actNone"
 		}
 		emitMethod(m.name, m.sig, b)
