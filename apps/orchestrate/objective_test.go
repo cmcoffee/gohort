@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -147,5 +148,96 @@ func TestObjectiveToolLabelsNameTheAction(t *testing.T) {
 	}
 	if failed != 1 {
 		t.Errorf("failed = %d, want 1", failed)
+	}
+}
+
+// TestObjectiveAttemptsBlock: what makes a fifth attempt different from a
+// first. Absent on the first fire and on any task that is not an objective;
+// otherwise every earlier reason, oldest first, so the model reads them in the
+// order they happened and the newest sits nearest its own turn.
+func TestObjectiveAttemptsBlock(t *testing.T) {
+	base := orchUpdatePayload{
+		Username: "u",
+		Until:    "the post is published and its URL is in the thread",
+	}
+
+	if got := objectiveAttemptsBlock(base); got != "" {
+		t.Errorf("the first attempt has nothing to report, got %q", got)
+	}
+	notObjective := base
+	notObjective.Until = ""
+	notObjective.Attempts = []objectiveAttempt{{At: "2026-09-04T16:00:00Z", Reason: "whatever"}}
+	if got := objectiveAttemptsBlock(notObjective); got != "" {
+		t.Errorf("an ordinary recurring task gets no objective block, got %q", got)
+	}
+
+	p := base
+	p.MaxAttempts = 5
+	p.Attempts = []objectiveAttempt{
+		{At: "2026-09-04T16:00:00Z", Reason: "drafted but never published (create_post returned 401)"},
+		{At: "2026-09-05T16:00:00Z", Reason: "published, but the thread reply carried the title, not the URL"},
+		{At: "2026-09-06T16:00:00Z", Reason: "URL posted to the wrong thread"},
+	}
+	block := objectiveAttemptsBlock(p)
+	for _, want := range []string{
+		"the post is published", // the goal, restated for this fire
+		"Attempts so far: 3 of 5",
+		"1. ", "2. ", "3. ",
+		"create_post returned 401",
+		"carried the title, not the URL",
+		"URL posted to the wrong thread",
+		"Do not repeat an attempt that already failed",
+	} {
+		if !strings.Contains(block, want) {
+			t.Errorf("block is missing %q:\n%s", want, block)
+		}
+	}
+	// Oldest first: the newest reason must be the last one mentioned, or the
+	// model reads the history backwards.
+	if strings.Index(block, "create_post returned 401") > strings.Index(block, "wrong thread") {
+		t.Errorf("attempts are not oldest-first:\n%s", block)
+	}
+
+	// Without a bound the count still shows, because "how many times has this
+	// already failed" is the point; there is just no denominator.
+	noBound := p
+	noBound.MaxAttempts = 0
+	if b := objectiveAttemptsBlock(noBound); !strings.Contains(b, "Attempts so far: 3.") {
+		t.Errorf("an unbounded objective still reports its attempt count:\n%s", b)
+	}
+}
+
+// TestNoteObjectiveAttemptBoundsAndIsolates: the history rides a payload that
+// was COPIED from the firing one, so appending must not reach back into the
+// original's backing array, and it must stay a note rather than growing into a
+// transcript that rides every fire's prompt.
+func TestNoteObjectiveAttemptBoundsAndIsolates(t *testing.T) {
+	p := orchUpdatePayload{Attempts: []objectiveAttempt{{Reason: "first"}}}
+	armed := p // the pre-armed successor: same backing array
+	noteObjectiveAttempt(&armed, false, "second")
+	if len(p.Attempts) != 1 || p.Attempts[0].Reason != "first" {
+		t.Errorf("recording on the successor rewrote the firing payload: %+v", p.Attempts)
+	}
+	if len(armed.Attempts) != 2 || armed.Attempts[1].Reason != "second" {
+		t.Fatalf("the attempt was not recorded: %+v", armed.Attempts)
+	}
+	if armed.Attempts[1].At == "" {
+		t.Error("an attempt with no timestamp cannot be ordered or shown")
+	}
+
+	full := orchUpdatePayload{}
+	for i := 0; i < objectiveAttemptsKept+4; i++ {
+		noteObjectiveAttempt(&full, false, fmt.Sprintf("reason %d", i))
+	}
+	if len(full.Attempts) != objectiveAttemptsKept {
+		t.Errorf("kept %d attempts, want the last %d", len(full.Attempts), objectiveAttemptsKept)
+	}
+	// The ones dropped are the OLDEST: a bound that forgot the newest failure
+	// would leave the next attempt repeating the mistake it just made.
+	if last := full.Attempts[len(full.Attempts)-1].Reason; last != fmt.Sprintf("reason %d", objectiveAttemptsKept+3) {
+		t.Errorf("the newest attempt was dropped; last is %q", last)
+	}
+	if first := full.Attempts[0].Reason; first != "reason 4" {
+		t.Errorf("wrong window kept; first is %q", first)
 	}
 }

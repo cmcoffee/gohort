@@ -16,6 +16,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -140,6 +141,17 @@ func (T *OrchestrateApp) judgeObjective(ctx context.Context, ev objectiveEvidenc
 	return objectiveVerdict{Met: met, Reason: reason}, true
 }
 
+// objectiveReason is the one line the card, the ledger and the NEXT attempt are
+// all told. An attempt nobody could judge says so in those words: the next fire
+// reading "the check could not be judged" knows it learned nothing, where a
+// blank reason would read as a clean attempt that simply found nothing to say.
+func objectiveReason(v objectiveVerdict, judged bool) string {
+	if !judged {
+		return "the check could not be judged this cycle"
+	}
+	return v.Reason
+}
+
 // objectiveOutcome turns a verdict into what the task does about it: the line
 // the card and the ledger carry, whether the chain stands down, and whether it
 // stands down UNMET (which is a thing to escalate, not a quiet retirement).
@@ -151,16 +163,75 @@ func objectiveOutcome(v objectiveVerdict, judged bool, attempt, maxAttempts int)
 	if judged && v.Met {
 		return "objective met — " + v.Reason, true, false
 	}
-	reason := v.Reason
-	if !judged {
-		// Not "met, probably". An attempt nobody could judge is an attempt that
-		// showed nothing, and it costs a fire like any other.
-		reason = "the check could not be judged this cycle"
-	}
+	// Not "met, probably". An attempt nobody could judge is an attempt that
+	// showed nothing, and it costs a fire like any other.
+	reason := objectiveReason(v, judged)
 	if maxAttempts > 0 && attempt >= maxAttempts {
 		return fmt.Sprintf("objective STALLED after %d attempt(s) — %s", attempt, reason), true, true
 	}
 	return "objective not yet — " + reason, false, false
+}
+
+// objectiveAttemptsKept bounds the history carried on the payload. Twelve is
+// enough for the block to show a pattern and small enough that it stays a note
+// rather than a transcript — it rides the volatile tail of every fire's prompt.
+const objectiveAttemptsKept = 12
+
+// noteObjectiveAttempt records what this attempt came to, on the payload that
+// carries forward.
+//
+// The run ledger already holds a row per fire and is what a PERSON reads in
+// Activity. This is the other job: the structured state the next attempt is
+// told, kept where the next attempt will actually find it. Parsing the reasons
+// back out of the ledger's display prose would make a wire format out of a
+// sentence written to be read.
+func noteObjectiveAttempt(p *orchUpdatePayload, met bool, reason string) {
+	// Fresh slice rather than append-in-place: this payload was copied from the
+	// firing one and shares its backing array.
+	kept := append([]objectiveAttempt(nil), p.Attempts...)
+	kept = append(kept, objectiveAttempt{
+		At:     time.Now().UTC().Format(time.RFC3339),
+		Met:    met,
+		Reason: strings.TrimSpace(reason),
+	})
+	if n := len(kept); n > objectiveAttemptsKept {
+		kept = kept[n-objectiveAttemptsKept:]
+	}
+	p.Attempts = kept
+}
+
+// objectiveAttemptsBlock is what makes a fifth attempt different from a first:
+// what was already tried, and why each one fell short, in the checker's own
+// words. Empty on the first attempt, and for any task that is not an objective.
+//
+// Rendered into the fire's prompt beside the time context — the volatile tail
+// that never caches anyway, so it costs no prefix reuse.
+func objectiveAttemptsBlock(p orchUpdatePayload) string {
+	objective := strings.TrimSpace(p.Until)
+	if objective == "" || len(p.Attempts) == 0 {
+		return ""
+	}
+	loc := UserLocation(p.Username)
+	var b strings.Builder
+	fmt.Fprintf(&b, "[Objective: %s\n", truncateObs(objective, 600))
+	if p.MaxAttempts > 0 {
+		fmt.Fprintf(&b, "Attempts so far: %d of %d.\n", len(p.Attempts), p.MaxAttempts)
+	} else {
+		fmt.Fprintf(&b, "Attempts so far: %d.\n", len(p.Attempts))
+	}
+	for i, a := range p.Attempts {
+		when := a.At
+		if ts, err := time.Parse(time.RFC3339, a.At); err == nil {
+			when = ts.In(loc).Format("2006-01-02 15:04")
+		}
+		verdict := "not yet"
+		if a.Met {
+			verdict = "met"
+		}
+		fmt.Fprintf(&b, " %d. %s — %s: %s\n", i+1, when, verdict, truncateObs(a.Reason, 200))
+	}
+	b.WriteString("Do not repeat an attempt that already failed for the same reason.]")
+	return b.String()
 }
 
 // objectiveToolLabels renders a fire's tool trace the way the checker reads it:

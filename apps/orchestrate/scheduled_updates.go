@@ -146,10 +146,23 @@ type orchUpdatePayload struct {
 	// 0 leaves MaxFires as the only bound.
 	Until       string `json:"until,omitempty"`
 	MaxAttempts int    `json:"max_attempts,omitempty"`
+	// Attempts is what earlier fires came to, oldest first, capped at
+	// objectiveAttemptsKept. It rides the payload because the payload is what
+	// carries forward to the next fire — the same reason RemainingToday and
+	// LastActive live here — and because the next attempt needs the reasons
+	// STRUCTURED, where the run ledger holds them as prose for a person.
+	Attempts []objectiveAttempt `json:"attempts,omitempty"`
 	// RemainingToday holds the random pattern's still-pending fire times for the
 	// current day (RFC3339), so the plan survives restarts and each fire just
 	// pops the next. Empty for fixed, or when a fresh day needs planning.
 	RemainingToday []string `json:"remaining_today,omitempty"`
+}
+
+// objectiveAttempt is one earlier fire's verdict, as the next fire is told it.
+type objectiveAttempt struct {
+	At     string `json:"at"`               // RFC3339 UTC
+	Met    bool   `json:"met,omitempty"`    // recorded for completeness; a met objective retires
+	Reason string `json:"reason,omitempty"` // the checker's one line
 }
 
 // orchRef points at the running OrchestrateApp so scheduler callbacks
@@ -434,6 +447,12 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		p.FireCount+1, recurringDetail(p), p.Prompt, scheduledFireDirective, timeCtx)
 	if isTaskWake(p.Prompt) {
 		fireContent = p.Prompt + "\n\n" + timeCtx
+	}
+	// What earlier attempts tried, for an objective on its second or later fire.
+	// Placed last, in the volatile tail beside the time context: recency is
+	// where it belongs and the tail never caches anyway.
+	if block := objectiveAttemptsBlock(p); block != "" {
+		fireContent += "\n\n" + block
 	}
 	msgs = append(msgs, Message{Role: "user", Content: fireContent})
 
@@ -808,7 +827,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// now reports the verdict on its card and deliberately leaves the schedule
 	// alone, which is that path's whole contract; it is also how an owner retries
 	// a stalled objective after fixing what the reason named.
-	objLine, objStalled := "", false
+	objLine, objStopped, objStalled := "", false, false
 	if objective := strings.TrimSpace(p.Until); objective != "" {
 		labels, failed := objectiveToolLabels(toolTrace)
 		attempt := p.FireCount + 1
@@ -820,9 +839,14 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 			Attempt:     attempt,
 			MaxAttempts: p.MaxAttempts,
 		})
-		var stop bool
-		objLine, stop, objStalled = objectiveOutcome(verdict, judged, attempt, p.MaxAttempts)
-		if stop && reArm && armedID != "" {
+		objLine, objStopped, objStalled = objectiveOutcome(verdict, judged, attempt, p.MaxAttempts)
+		if reArm {
+			// Onto the SUCCESSOR's payload, which is what carries forward. Also
+			// recorded when the chain stops: a stalled objective is parked with
+			// its history, so a resume picks up knowing what was already tried.
+			noteObjectiveAttempt(&armed, verdict.Met, objectiveReason(verdict, judged))
+		}
+		if objStopped && reArm && armedID != "" {
 			// Stand the chain down. The successor was pre-armed BEFORE this fire
 			// ran (so a crash could not orphan the chain), which is exactly why
 			// it has to be cancelled here rather than simply not scheduled.
@@ -831,12 +855,23 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 			} else {
 				Log("[orchestrate/objective] task %q stopped after attempt %d: %s", recurringName(p), attempt, objLine)
 			}
+			// A goal that was never reached must not VANISH. Cancelling alone
+			// removes the last trace of the task from the console — the fired
+			// occurrence was already off the queue and the successor is now
+			// gone — so an owner who was never going to get their objective
+			// would also never see that it stopped. Park it instead, the way a
+			// task whose agent was deleted is parked: still listed, still
+			// carrying its reason and its history, not firing. A met objective
+			// is genuinely finished and retires like any capped task.
+			if objStalled {
+				parkRecurringBroken(armed, fmt.Sprintf("objective not met after %d attempt(s) — %s", attempt, objectiveReason(verdict, judged)))
+			}
 		}
 		kind := "objective-not-met"
 		switch {
 		case objStalled:
 			kind = "objective-stalled"
-		case stop:
+		case objStopped:
 			kind = "objective-met"
 		}
 		appendSessionDiag(udb, p.AgentID, p.SessionID, kind,
@@ -971,7 +1006,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	Log("[orchestrate/scheduled] agent=%s session=%s posted fire %d (%d chars)",
 		agentLabel, p.SessionID, p.FireCount+1, len(reply))
 
-	if reArm && armedID != "" {
+	if reArm && armedID != "" && !objStopped {
 		// Productive fire — reaching here means toolTrace was non-empty (a
 		// preamble-only fire returns at the guard above), so the task did real
 		// work this cycle. Renew the idle clock ON THE ALREADY-ARMED next

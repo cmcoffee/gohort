@@ -1,13 +1,19 @@
 # Loop objectives — a recurring task that knows when it is done
 
-Status: **stage 1 built** (v0.6.615, 2026-09-07). Stages 2 and 3 unbuilt. Decision locked by the
+Status: **stages 1-2 built** (v0.6.616, 2026-09-07). Stage 3 unbuilt. Decision locked by the
 build: an objective is a recurring task with a completion check, not a fifth trigger kind.
 
-Landed in stage 1: `apps/orchestrate/objective_judge.go` (the check, its evidence, and the outcome
-rule), `Until` / `MaxAttempts` on `orchUpdatePayload` and `RecurringSpec`, and the judge step,
-card line, ledger prefix and stand-down in `fireOrchestrateUpdate`. Tests:
-`apps/orchestrate/objective_test.go`. Nothing authors an objective yet — that is stage 3 — so
-today it is set by a caller of `ScheduleOrchestrateUpdate`.
+Landed in stage 1 (v0.6.615): `apps/orchestrate/objective_judge.go` (the check, its evidence, and
+the outcome rule), `Until` / `MaxAttempts` on `orchUpdatePayload` and `RecurringSpec`, and the
+judge step, card line, ledger prefix and stand-down in `fireOrchestrateUpdate`.
+
+Landed in stage 2 (v0.6.616): `Attempts` on the payload, `noteObjectiveAttempt`,
+`objectiveAttemptsBlock`, and the block's injection into the fire's prompt. Stage 2 also fixed a
+stage-1 mistake — see **Stop or continue** below: a stalled objective was cancelled, which made
+the task VANISH from the console rather than stand there saying it had stopped.
+
+Tests: `apps/orchestrate/objective_test.go`. Nothing authors an objective yet — that is stage 3 —
+so today it is set by a caller of `ScheduleOrchestrateUpdate`.
 
 ## The gap
 
@@ -33,9 +39,16 @@ One `orchUpdatePayload` (a recurring task) with three new fields:
 |---|---|
 | `Until string` | the completion check, in plain language: "the post is published and its URL was posted to the thread" |
 | `MaxAttempts int` | how many fires may end without the check passing before the task escalates; 0 = `max_fires` governs |
-| ~~`Attempts`~~ | **not built, and not needed.** The run ledger already writes one row per fire stamped with the task's name (`RunRecord.Task`), and `RunFilter{Task:}` reads them back. The verdict rides that row's `Summary`. A second copy on the payload would be a second thing to keep true. |
+| `Attempts []objectiveAttempt` | `{at, met, reason}` per earlier fire, oldest first, capped at twelve. Carried on the PAYLOAD, which is what survives into the next fire — the same reason `RemainingToday` and `LastActive` live there. |
 
-**Stage 1 note:** built as described, minus the `Attempts` field. Everything else is the recurring task it already is: prompt, cadence (`interval_minutes`,
+**On `Attempts` and the run ledger.** The spec first proposed this field, then dropped it on the
+grounds that the ledger already records a row per fire. Building stage 2 showed that was half
+right and settled it the other way: the ledger holds the *fire*, in prose written for a person to
+read in Activity, while the next attempt needs the *verdict*, structured. Recovering reasons by
+parsing a display string would make a wire format out of a sentence written to be read. Two
+records, two jobs, and the bound counts neither — `MaxAttempts` is measured against `FireCount`.
+
+Everything else is the recurring task it already is: prompt, cadence (`interval_minutes`,
 `times_per_day`, the random `min_gap`/`max_gap` window, `active_from`/`active_to`), surface,
 `max_fires`, the pre-armed successor, the run ledger row per fire, the report card in the thread.
 No new scheduler kind, no new console rail, no new storage table.
@@ -70,17 +83,23 @@ card is appended:
      verdict line reads *done*, and the task is retired the way the fire cap retires it today
      (`recurring-retired` diag, final-fire wording on the card).
    - Verdict failed and attempts remain: the successor fires as scheduled.
-   - Verdict failed and `MaxAttempts` is reached: the successor is cancelled, the card says
-     *STALLED* with the last reason, this fire's own ledger row flips to `RunAttention`, and an
-     `objective-stalled` diag lands on the ⚠ trail. The stall rides the fire's existing row rather
-     than calling `recordScheduledDrop`, which would file a second run for a fire that did post.
-     Going quiet is the failure this exists to prevent.
+   - Verdict failed and `MaxAttempts` is reached: the card says *STALLED* with the last reason,
+     this fire's own ledger row flips to `RunAttention`, and an `objective-stalled` diag lands on
+     the ⚠ trail. The stall rides the fire's existing row rather than calling
+     `recordScheduledDrop`, which would file a second run for a fire that did post.
 
-## The next attempt reads the ledger
+     The successor is cancelled and the task is then **parked** (`parkRecurringBroken`), carrying
+     its reason and its attempt history. Stage 1 only cancelled, and that was wrong: the fired
+     occurrence is already off the queue before the handler runs, so cancelling the successor too
+     removed the last trace of the task — an owner who was never going to get their objective
+     would also never see that it had stopped trying. A parked task stays listed, stops firing,
+     and can be resumed. A MET objective still retires outright, the way any capped task does.
 
-The reason a fifth attempt is not a first attempt: the fire's prompt gets one block, built from the
-run ledger (`ListRuns` filtered by task name) and placed where the time context already goes, after the prompt and before the
-directive:
+## The next attempt reads the earlier ones
+
+*(built)* The reason a fifth attempt is not a first attempt: the fire's prompt gets one block,
+built from `Attempts` and placed last, in the volatile tail beside the time context — recency is
+where it belongs, and that tail never caches, so the block costs no prefix reuse:
 
 ```
 [Objective: <Until>. Attempts so far: 3 of 5.
@@ -120,9 +139,10 @@ recurring view (`console_recurring.go`). An objective is a recurring row with tw
 | State | blank, or `⚠ needs relink` | `not yet — <last reason>`, `done`, or `⚠ stalled — <last reason>` |
 | Next run | RFC3339 | same; blank once done or stalled |
 
-Row actions stay Delete and Run now. A stalled objective keeps Run now, so the owner can retry
-after fixing what the reason names, and the retry resets nothing: the ledger keeps its history and
-the attempt count continues.
+Row actions stay Delete and Run now. **Open for stage 3:** a parked objective renders through the
+existing broken-row path, which is Delete-only, so the retry-after-fixing story needs either Run
+now on a parked row or a Resume action that clears the park the way a relink does. The history
+survives either way — it is on the payload the park carries.
 
 The thread the task reports to already shows one card per fire; the verdict line is the addition.
 The Activity feed (`handleConsoleActivity`, the run ledger) shows the verdict in each run's
@@ -153,8 +173,10 @@ intention, and its home is with the other standing things.
    fire whose judge passes cancels its successor and posts *done*; a fire whose judge fails leaves
    the successor armed and the ledger one row longer; the cap stalls with an attention drop; a
    judge error records *unjudged* and counts.
-2. **The attempts block.** *(next)* Built from the ledger into the fire prompt. Test: the block names every
-   prior reason, newest last, and is absent on the first attempt.
+2. **The attempts block.** — **BUILT (v0.6.616).** Built from `Attempts` into the fire prompt.
+   Tests: the block names every prior reason oldest-first, is absent on the first attempt and on
+   a task that is not an objective, keeps the newest twelve, and recording on the pre-armed
+   successor never reaches back into the firing payload's slice.
 3. **Authoring and console.** `until`/`max_attempts` on the `recurring` tool, the help paragraph,
    the two console cells and the state strings. Test: `recurring(action="list")` shows the count
    and verdict; the console row for a stalled objective keeps Run now and loses Next run.
