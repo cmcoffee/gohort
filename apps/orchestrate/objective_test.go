@@ -375,3 +375,151 @@ func TestCreateStandingAgentOffersTheObjective(t *testing.T) {
 		t.Fatal("create_standing_agent no longer offers `max_attempts`")
 	}
 }
+
+// --- monitor objectives -------------------------------------------------------
+
+// TestTheObservationCheckerDoesNotAskWhatWasDONE is why a monitor gets its own
+// prompt instead of reusing the attempt checker. That one treats the ACTIONS as
+// the evidence and is told an attempt which ran none has almost certainly not
+// reached its goal — the rule that stops an agent claiming success it did not
+// earn. A monitor fire runs no actions by design: it watched something. Through
+// the attempt checker, every fire would look like an attempt that did nothing.
+func TestTheObservationCheckerDoesNotAskWhatWasDONE(t *testing.T) {
+	for _, banned := range []string{"ACTIONS", "attempt ran", "actions the attempt"} {
+		if strings.Contains(objectiveObservationSysPrompt, banned) {
+			t.Errorf("the observation checker asks about actions (%q) — a monitor takes none", banned)
+		}
+	}
+	// It has to say so positively, or a model that has seen a thousand
+	// "did it do the work" checkers will supply the rule itself.
+	if !strings.Contains(objectiveObservationSysPrompt, "takes no actions") {
+		t.Error("the prompt never tells the checker that no actions is the normal case")
+	}
+	if !strings.Contains(objectiveObservationSysPrompt, "OBSERVATION is the evidence") {
+		t.Error("the prompt does not name what the evidence actually is")
+	}
+	// And the shared rules that make a verdict usable are still there.
+	for _, want := range []string{"MET", "NOT_YET", "ONE short sentence", "JSON only"} {
+		if !strings.Contains(objectiveObservationSysPrompt, want) {
+			t.Errorf("the observation checker dropped %q", want)
+		}
+	}
+}
+
+// TestMonitorObservationMessageCarriesTheChange: the verdict turns entirely on
+// this message, so it must carry the condition and what was actually seen.
+func TestMonitorObservationMessageCarriesTheChange(t *testing.T) {
+	msg := monitorObservationMessage("the PR is merged", "PR #12: state changed open → merged", 3)
+	for _, want := range []string{"STOPPING CONDITION", "the PR is merged", "FIRE: 3", "WHAT THE MONITOR OBSERVED", "open → merged"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the evidence is missing %q:\n%s", want, msg)
+		}
+	}
+}
+
+// TestAMetConditionStopsTheMonitor is the end of the wire: judged met → the
+// monitor is paused, kept, and says why.
+func TestAMetConditionStopsTheMonitor(t *testing.T) {
+	db := pinRootDB(t)
+	m := EventMonitor{Name: "pr-12", Owner: "craig", Kind: EventKindWatch, Until: "the PR is merged"}
+	SaveEventMonitor(db, m)
+
+	T := &OrchestrateApp{AppCore: AppCore{LLM: &stubLLM{reply: `{"verdict":"MET","reason":"the PR shows state merged"}`}}}
+	T.settleMonitorObjective(context.Background(), m, "PR #12: state changed open → merged")
+
+	cur, ok := GetEventMonitor(db, "craig", "pr-12")
+	if !ok {
+		t.Fatal("the monitor was deleted rather than stopped")
+	}
+	if !cur.Paused {
+		t.Error("the condition was met and the monitor kept watching")
+	}
+	if len(cur.Attempts) != 1 || !cur.Attempts[0].Met {
+		t.Fatalf("the verdict was not recorded on the monitor: %+v", cur.Attempts)
+	}
+	if !strings.Contains(cur.Attempts[0].Reason, "state merged") {
+		t.Errorf("the reason did not survive: %q", cur.Attempts[0].Reason)
+	}
+	if lbl := objectiveStateLabel(monitorObjective(cur)); !strings.Contains(lbl, "met") {
+		t.Errorf("the listing would not show the goal as met: %q", lbl)
+	}
+}
+
+// TestAnUnmetConditionLeavesTheMonitorWatching, and records the attempt so the
+// row can say where the goal stands rather than only that it fired.
+func TestAnUnmetConditionLeavesTheMonitorWatching(t *testing.T) {
+	db := pinRootDB(t)
+	m := EventMonitor{Name: "pr-12", Owner: "craig", Kind: EventKindWatch, Until: "the PR is merged"}
+	SaveEventMonitor(db, m)
+
+	T := &OrchestrateApp{AppCore: AppCore{LLM: &stubLLM{reply: `{"verdict":"NOT_YET","reason":"the PR is still open with one review pending"}`}}}
+	T.settleMonitorObjective(context.Background(), m, "PR #12: a new review comment")
+
+	cur, _ := GetEventMonitor(db, "craig", "pr-12")
+	if cur.Paused {
+		t.Error("an unmet condition stopped the monitor")
+	}
+	if len(cur.Attempts) != 1 || cur.Attempts[0].Met {
+		t.Fatalf("the unmet verdict was not recorded: %+v", cur.Attempts)
+	}
+
+	// A verdict nobody could read is NOT a pass — the monitor keeps watching.
+	// Failing open here would retire a monitor whose condition never happened,
+	// which is the one outcome nobody would notice.
+	unreadable := &OrchestrateApp{AppCore: AppCore{LLM: &stubLLM{reply: `I think so?`}}}
+	unreadable.settleMonitorObjective(context.Background(), m, "PR #12: another comment")
+	cur, _ = GetEventMonitor(db, "craig", "pr-12")
+	if cur.Paused {
+		t.Error("an unreadable verdict stopped the monitor")
+	}
+	if len(cur.Attempts) != 2 {
+		t.Errorf("an unjudged fire is still an attempt and must be recorded: %+v", cur.Attempts)
+	}
+}
+
+// TestAMonitorWithNoConditionIsNeverJudged: the model call is opt-in. A
+// monitor without a stopping condition must not pay for one.
+func TestAMonitorWithNoConditionIsNeverJudged(t *testing.T) {
+	db := pinRootDB(t)
+	m := EventMonitor{Name: "roster", Owner: "craig", Kind: EventKindWatch}
+	SaveEventMonitor(db, m)
+
+	// An LLM whose every answer is MET: if it is consulted at all, the monitor
+	// stops and this test fails.
+	T := &OrchestrateApp{AppCore: AppCore{LLM: &stubLLM{reply: `{"verdict":"MET","reason":"sure"}`}}}
+	T.settleMonitorObjective(context.Background(), m, "the roster changed")
+
+	cur, _ := GetEventMonitor(db, "craig", "roster")
+	if cur.Paused || len(cur.Attempts) != 0 {
+		t.Error("a monitor with no stopping condition was judged anyway")
+	}
+}
+
+// TestCreateEventMonitorOffersTheStoppingControls: both are only reachable if
+// the tool declares them. Their absence is the whole gap — a bound the user
+// asked for that the record could not hold, reported back as set up.
+func TestCreateEventMonitorOffersTheStoppingControls(t *testing.T) {
+	var tool Tool
+	for _, td := range operatorManagementTools(&ToolSession{Username: "craig"}, "agent-1") {
+		if td.Tool.Name == "create_event_monitor" {
+			tool = td.Tool
+		}
+	}
+	if tool.Name == "" {
+		t.Fatal("create_event_monitor is gone")
+	}
+	stop, ok := tool.Parameters["stop_after"]
+	if !ok {
+		t.Fatal("stop_after is gone — a bounded monitor cannot be created again")
+	}
+	if stop.Type != "number" {
+		t.Errorf("stop_after is %q, want number", stop.Type)
+	}
+	until, ok := tool.Parameters["until"]
+	if !ok {
+		t.Fatal("until is gone — a monitor can no longer be given a stopping condition")
+	}
+	if until.Type != "string" {
+		t.Errorf("until is %q, want string", until.Type)
+	}
+}

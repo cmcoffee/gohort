@@ -189,6 +189,12 @@ func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Re
 		state := "active"
 		if m.Paused {
 			state = "paused"
+			// Distinguish the two ways a monitor comes to rest: the owner
+			// paused it, or it reached the bound they gave it. Both are
+			// stopped; only one of them is something they did.
+			if MonitorFiredOut(m) {
+				state = "done"
+			}
 		}
 		if m.Broken {
 			state = brokenStateLabel(m.BrokenReason)
@@ -245,6 +251,18 @@ func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Re
 			// Show where the monitor surfaces (Surface) so the user sees + can change
 			// it via the Move-to action (its card/badge/wake all follow).
 			detail += surfaceSuffix(m.Surface)
+			// A bounded monitor says so in the row. Without this the list shows
+			// "active" for a monitor with one fire left and for one that will
+			// run forever, which is the whole reason a missing bound went
+			// unnoticed until the alerts kept arriving.
+			if lbl := MonitorFireLabel(m); lbl != "" {
+				detail += " · " + lbl
+			}
+			// And where its stopping condition stands, in the checker's own
+			// words — the same label the other two scheduling surfaces show.
+			if lbl := objectiveStateLabel(monitorObjective(m)); lbl != "" {
+				detail += " · " + lbl
+			}
 		}
 		last := ""
 		if !m.LastFired.IsZero() {
@@ -294,6 +312,12 @@ func (T *OrchestrateApp) setConsoleMonitorPaused(w http.ResponseWriter, r *http.
 		return
 	}
 	m.Paused = paused
+	if !paused {
+		// Resuming a monitor that stopped at its bound means "watch again", not
+		// "fire once more and stop immediately". Its lifetime count is kept;
+		// only the allowance restarts.
+		RearmMonitorFires(&m)
+	}
 	if paused {
 		if m.SchedulerID != "" {
 			UnscheduleTask(m.SchedulerID)

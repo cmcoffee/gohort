@@ -196,6 +196,9 @@ func (t *chatTurn) introspectToolDef() AgentToolDef {
 					if m.Paused {
 						state = "paused"
 					}
+					if lbl := MonitorFireLabel(m); lbl != "" {
+						state += ", " + lbl
+					}
 					fmt.Fprintf(&b, "- monitor %q — %s, every %ds, %s\n", m.Name, m.Kind, m.IntervalSeconds, state)
 				}
 				if monCount == 0 {

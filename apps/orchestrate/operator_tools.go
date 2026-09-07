@@ -1348,6 +1348,8 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					"deliver_to":       {Type: "string", Description: "Optional: a chat_id from list_chats (e.g. \"any;+;chat872212368359368118\"). When set, the formatted alert is posted DIRECTLY to THAT conversation with NO LLM, instead of waking you in this thread — use it to route a watch/http_poll alert straight to a group chat or other channel. Setting it forces notify=\"direct\" to that chat. Omit to alert in this thread per notify."},
 					"surface":          {Type: "string", Enum: []string{"session", "cortex", "background"}, Description: "Where the fire surfaces for the agent — its trace card, rail badge, and (for a channel wake) its LLM turn all follow. Optional; OMIT it for the default rather than passing an empty string. \"session\" (default) = the creating session; \"cortex\" = the agent's cortex home thread (only if it has one); \"background\" = NO agent visibility (deliver externally via deliver_to only, no card, no badge — for a pure feed like a join/leave ticker you only want in the group chat). Relocatable later without recreate via the console's Move-to control."},
 					"interval_seconds": {Type: "number", Description: "http_poll/watch/poll: how often to check, in seconds (minimum 30; 900 = every 15 min, 3600 = hourly)."},
+					"until":            {Type: "string", Description: "Optional: the stopping CONDITION in plain words — \"the PR is merged\", \"the build goes green\". After each fire the change it saw is judged against this, and the monitor stops itself when the condition is met (kept, not deleted). Use it when the user wants to keep hearing about something UNTIL a state is reached: the monitor's own trigger says when to alert, this says when to stop. Costs one small model call per fire, so omit it when a fire count (stop_after) already says when to stop."},
+					"stop_after":       {Type: "number", Description: "Optional: stop the monitor after it has fired this many times. Use it whenever the user bounds the alerts — \"tell me the next two times\", \"just once\", \"stop after 3\". On the last fire the monitor pauses itself and says so; it is kept, not deleted, and resuming gives it a fresh allowance. Omit for a monitor that should keep watching until the user stops it."},
 					"tool_name":        {Type: "string", Description: "watch only: the tool invoked each interval; its output is hashed and you're woken ONLY when it changes. Use an existing tool that returns the thing to watch (e.g. read_chat for a chat). No LLM runs between changes — the cheapest detection."},
 					"tool_args":        {Type: "object", Description: "watch only: arguments passed to tool_name every invocation, e.g. {\"chat_id\":\"any;+;chat123\",\"limit\":10}."},
 					"format_script":    {Type: "string", Description: "watch only, optional: sandboxed python that shapes the alert. It receives {\"prior\":...,\"current\":...} JSON on stdin (the previous and current tool output) and prints the notification text to stdout. Printing NOTHING no longer suppresses — it FAILS OPEN to the built-in diff so a broken script can't silently eat a change; to intentionally drop a change, print the sentinel \"SKIP\" (or {\"skip\":true}). No network, no LLM. Omit to use the built-in diff summary. Use this to format exactly the notification you want (e.g. parse a client list and print only \"X joined\" / \"X left\", or \"SKIP\" when only serveradmin changed)."},
@@ -1405,11 +1407,17 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 						return ""
 					}(),
 					WakeBrief: strings.TrimSpace(oArgStr(args, "wake_brief")), Created: time.Now(),
+					// A bound on the alerts, for every kind including webhook —
+					// fireWake counts and stops. Negative reads as unbounded
+					// rather than as an immediate stop, which would create a
+					// monitor that is over before it starts.
+					MaxFires: maxInt(oArgInt(args, "stop_after"), 0),
+					Until:    strings.TrimSpace(oArgStr(args, "until")),
 				}
 				if kind == EventKindWebhook {
 					m.Token = NewEventToken()
 					SaveEventMonitor(RootDB, m)
-					return fmt.Sprintf("Webhook monitor %q created. Have the external system POST JSON {\"summary\":\"...\"} to:\n  <your gohort base URL>/orchestrate/api/operator/event/%s\nEach POST wakes me in this thread.", name, m.Token), nil
+					return fmt.Sprintf("Webhook monitor %q created. Have the external system POST JSON {\"summary\":\"...\"} to:\n  <your gohort base URL>/orchestrate/api/operator/event/%s\nEach POST wakes me in this thread.%s", name, m.Token, fireLimitSentence(m)), nil
 				}
 				if kind == EventKindHTTP {
 					m.URL = strings.TrimSpace(oArgStr(args, "url"))
@@ -1444,9 +1452,9 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 						return "", fmt.Errorf("saved but scheduling failed: %w", err)
 					}
 					got, _ := GetEventMonitor(RootDB, owner, name)
-					return fmt.Sprintf("HTTP monitor %q created: every %ds I fetch %s, read %s, and wake you when the value %s %s. Fires once on the crossing (and re-arms after it recovers). Next check: %s.",
+					return fmt.Sprintf("HTTP monitor %q created: every %ds I fetch %s, read %s, and wake you when the value %s %s. Fires once on the crossing (and re-arms after it recovers).%s Next check: %s.",
 						name, got.IntervalSeconds, m.URL, extractDesc, m.CompareOp, m.Threshold,
-						got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")) + dupMonitorWarning(m), nil
+						fireLimitSentence(m), got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")) + dupMonitorWarning(m), nil
 				}
 				if kind == EventKindWatch {
 					m.ToolName = strings.TrimSpace(oArgStr(args, "tool_name"))
@@ -1475,11 +1483,11 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					}
 					got, _ := GetEventMonitor(RootDB, owner, name)
 					if m.DeliverChatID != "" {
-						return fmt.Sprintf("Watch monitor %q created: every %ds I run %s and, when its output changes, post the formatted alert DIRECTLY to chat %s — no LLM, it does NOT come back to this thread. Next check: %s.",
-							name, got.IntervalSeconds, m.ToolName, m.DeliverChatID, got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")) + dupMonitorWarning(m), nil
+						return fmt.Sprintf("Watch monitor %q created: every %ds I run %s and, when its output changes, post the formatted alert DIRECTLY to chat %s — no LLM, it does NOT come back to this thread.%s Next check: %s.",
+							name, got.IntervalSeconds, m.ToolName, m.DeliverChatID, fireLimitSentence(m), got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")) + dupMonitorWarning(m), nil
 					}
-					return fmt.Sprintf("Watch monitor %q created: every %ds I run %s and wake you ONLY when its output changes — no LLM runs in between. Next check: %s.",
-						name, got.IntervalSeconds, m.ToolName, got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")) + dupMonitorWarning(m), nil
+					return fmt.Sprintf("Watch monitor %q created: every %ds I run %s and wake you ONLY when its output changes — no LLM runs in between.%s Next check: %s.",
+						name, got.IntervalSeconds, m.ToolName, fireLimitSentence(m), got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")) + dupMonitorWarning(m), nil
 				}
 				wantAgent := strings.TrimSpace(oArgStr(args, "check_agent"))
 				m.Check = strings.TrimSpace(oArgStr(args, "check"))
@@ -1506,8 +1514,8 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					match = "YES"
 				}
 				got, _ := GetEventMonitor(RootDB, owner, name)
-				return fmt.Sprintf("Poll monitor %q created: every %ds, agent %q is asked %q; I wake when the answer contains %q. Next check: %s.",
-					name, got.IntervalSeconds, m.CheckAgent, m.Check, match, got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")) + dupMonitorWarning(m), nil
+				return fmt.Sprintf("Poll monitor %q created: every %ds, agent %q is asked %q; I wake when the answer contains %q.%s Next check: %s.",
+					name, got.IntervalSeconds, m.CheckAgent, m.Check, match, fireLimitSentence(m), got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")) + dupMonitorWarning(m), nil
 			},
 		},
 		{
@@ -1887,6 +1895,12 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					if !m.LastFired.IsZero() {
 						fmt.Fprintf(&b, "; last fired %s", m.LastFired.Local().Format("Jan 2 3:04 PM"))
 					}
+					if lbl := MonitorFireLabel(m); lbl != "" {
+						fmt.Fprintf(&b, "; %s", lbl)
+					}
+					if lbl := objectiveStateLabel(monitorObjective(m)); lbl != "" {
+						fmt.Fprintf(&b, "; %s", lbl)
+					}
 					b.WriteString("\n")
 				}
 				return strings.TrimSpace(b.String()), nil
@@ -2029,4 +2043,33 @@ func joinWords(items []string) string {
 		return items[0] + " and " + items[1]
 	}
 	return strings.Join(items[:len(items)-1], ", ") + ", and " + items[len(items)-1]
+}
+
+// fireLimitSentence states a monitor's fire bound in the sentence that confirms
+// it was created, or nothing when it has none. The confirmation is the only
+// place the caller learns whether the bound it asked for was taken: before
+// stop_after existed, a request to alert twice produced a cheerful "monitor
+// created" and an unbounded monitor, and nothing anywhere said otherwise.
+func fireLimitSentence(m EventMonitor) string {
+	var parts []string
+	if until := strings.TrimSpace(m.Until); until != "" {
+		parts = append(parts, fmt.Sprintf("It stops itself when this is true: %s.", until))
+	}
+	switch {
+	case m.MaxFires == 1:
+		parts = append(parts, "It fires ONCE and then stops itself (kept, not deleted — resume it for another).")
+	case m.MaxFires > 1:
+		parts = append(parts, fmt.Sprintf("It stops itself after %d fires (kept, not deleted — resume it for another %d).", m.MaxFires, m.MaxFires))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " " + strings.Join(parts, " ")
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

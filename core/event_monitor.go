@@ -165,7 +165,43 @@ type EventMonitor struct {
 	// finishing), not on every subsequent change, so after the first wake the
 	// monitor is done. Standing monitors leave this false and keep watching.
 	OneShot bool `json:"one_shot,omitempty"`
-	Paused  bool `json:"paused"`
+
+	// MaxFires bounds how many times this monitor may fire before it stops
+	// itself. 0 = unbounded, which is what every monitor was until now: the
+	// only stopping condition the record could express was OneShot, and only
+	// await_result ever set it. So "watch this, but only tell me twice" had
+	// nowhere to go — the monitor was created, reported as set up, and then
+	// polled forever. A cap that cannot be written down is a cap the owner
+	// has to enforce by hand, and they only find out it was never there when
+	// the alerts keep coming.
+	//
+	// Reaching it PAUSES the monitor rather than deleting it (see
+	// stopFiredOutMonitor): the record stays visible, says what it did, and
+	// resumes with one click. OneShot keeps its own delete-on-fire path — an
+	// await is transient and nobody wants its corpse in the list.
+	MaxFires int `json:"max_fires,omitempty"`
+	// FireCount is every fire this monitor has ever delivered. It only climbs.
+	FireCount int `json:"fire_count,omitempty"`
+	// FiresBase is where the CURRENT allowance began, so resuming a monitor
+	// that stopped at its cap gives it a fresh one instead of stopping again on
+	// its very next fire. Same shape as a recurring objective's AttemptsBase,
+	// and for the same reason: the lifetime count is worth keeping, the
+	// allowance is worth restarting.
+	FiresBase int `json:"fires_base,omitempty"`
+
+	// Until is a goal in the owner's own words, judged after each fire from
+	// what the fire OBSERVED. A monitor's own condition says when to alert;
+	// this says when to stop — "keep telling me about this PR, and stop when
+	// it's merged". Empty for an ordinary monitor, which alerts until somebody
+	// stops it. Judged by the app (core owns the record, not the policy),
+	// which pauses the monitor through StopEventMonitor when the goal is met.
+	Until string `json:"until,omitempty"`
+	// Attempts is what each judged fire came to, newest last. Same record as
+	// the other two scheduling surfaces keep, so a goal reads the same way
+	// wherever it was set.
+	Attempts []ObjectiveAttempt `json:"attempts,omitempty"`
+
+	Paused bool `json:"paused"`
 	// Broken marks a monitor whose dependency is gone — its wake agent deleted,
 	// or (re-checked at fire time) a credential/tool/connector it needs removed.
 	// A broken monitor is auto-paused and unscheduled but KEPT, not silently
@@ -472,6 +508,93 @@ func pauseIdleWatch(db Database, m EventMonitor, days int) {
 		Status: RunAttention, Summary: reason,
 		Started: time.Now(), Ended: time.Now(),
 	}.AboutMonitor(m.Name))
+}
+
+// --- fire allowance ----------------------------------------------------------
+
+// MonitorFiresUsed is how many fires the CURRENT allowance has spent. Reads 0
+// for an uncapped monitor's fresh allowance and never goes negative, so a
+// record edited or restored out from under the count still renders.
+func MonitorFiresUsed(m EventMonitor) int {
+	if n := m.FireCount - m.FiresBase; n > 0 {
+		return n
+	}
+	return 0
+}
+
+// MonitorFiredOut reports whether a capped monitor has spent its allowance.
+func MonitorFiredOut(m EventMonitor) bool {
+	return m.MaxFires > 0 && MonitorFiresUsed(m) >= m.MaxFires
+}
+
+// MonitorFireLabel renders the allowance for a listing — "fired 1 of 2". Empty
+// for an uncapped monitor, which has nothing to count toward. This is the half
+// of the fix the owner actually sees: a bounded monitor that shows no bound is
+// indistinguishable from one that will run forever, which is exactly how a cap
+// that silently did not exist stayed invisible.
+func MonitorFireLabel(m EventMonitor) string {
+	if m.MaxFires <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("fired %d of %d", MonitorFiresUsed(m), m.MaxFires)
+}
+
+// RearmMonitorFires restarts a spent allowance, and reports whether it did.
+// Called on resume: the owner turning a stopped monitor back on means "watch
+// again", not "fire once more and stop". A monitor that has NOT spent its
+// allowance is left alone, so an ordinary unpause keeps its remaining fires.
+func RearmMonitorFires(m *EventMonitor) bool {
+	if m == nil || !MonitorFiredOut(*m) {
+		return false
+	}
+	m.FiresBase = m.FireCount
+	return true
+}
+
+// StopEventMonitor ends a monitor that is finished, for the reason given.
+//
+// Paused, not deleted, and not broken: nothing failed — the monitor did what it
+// was asked to do. It keeps the record, its history and its settings, states
+// the stop in the run ledger where Activity shows it, and Resume turns it back
+// on. Reports whether it stopped anything (false for a missing or already
+// stopped monitor), so a caller racing another stop does not report twice.
+//
+// Exported because the two things that finish a monitor sit on opposite sides
+// of the package line: the fire limit is counted here, and an objective is
+// judged by the app that owns the model.
+func StopEventMonitor(db Database, owner, name, reason string) bool {
+	cur, ok := GetEventMonitor(db, owner, name)
+	if !ok || cur.Paused {
+		return false
+	}
+	if cur.SchedulerID != "" {
+		UnscheduleTask(cur.SchedulerID)
+		cur.SchedulerID = ""
+	}
+	cur.Paused = true
+	cur.NextCheck = time.Time{}
+	SaveEventMonitor(db, cur)
+	Log("[event] monitor %s/%s stopped: %s", owner, name, reason)
+	RecordRun(db, RunRecord{
+		Owner: owner, Agent: name, Trigger: cur.Kind, Task: name,
+		Status: RunOK, Summary: reason,
+		Started: time.Now(), Ended: time.Now(),
+	}.AboutMonitor(name))
+	return true
+}
+
+// stopFiredOutMonitor ends a monitor that has spent its fire allowance.
+func stopFiredOutMonitor(db Database, m EventMonitor) {
+	reason := fmt.Sprintf(
+		"Stopped: fired %d time(s), which is the limit it was created with. Nothing is broken — it reached its bound and stopped watching. Resume it for another %d, or delete it.",
+		MonitorFiresUsed(m), m.MaxFires)
+	// A monitor that also had a condition to watch for ran out of fires
+	// WITHOUT reaching it. Said here because the two stops look identical from
+	// the outside, and only one of them means the thing was waited out.
+	if until := strings.TrimSpace(m.Until); until != "" {
+		reason += " It stopped without seeing what it was watching for: " + until
+	}
+	StopEventMonitor(db, m.Owner, m.Name, reason)
 }
 
 // ClearEventMonitorBroken lifts the broken flag once the dependency is restored
@@ -1603,9 +1726,25 @@ func fireWake(ctx context.Context, db Database, owner, name, summary, trigger st
 	// any pending scheduler task). The poll handler's defer reschedule re-reads
 	// the monitor and skips it when gone, so deleting here ends the chain cleanly
 	// without an orphaned timer.
-	if m, ok := GetEventMonitor(db, owner, name); ok && m.OneShot {
+	cur, ok := GetEventMonitor(db, owner, name)
+	if !ok {
+		return
+	}
+	if cur.OneShot {
 		DeleteEventMonitor(db, owner, name)
 		Debug("[event] one-shot await %s/%s fired once — removed", owner, name)
+		return
+	}
+	// The fire is spent whether or not it reached anybody. Counting only
+	// DELIVERED fires would leave a monitor whose delivery is broken running
+	// without a bound, which is the shape this exists to end — and the ledger
+	// row just written already says which of the two happened. Re-read rather
+	// than carry a copy: the executor saved the fire's own state (LastFired,
+	// LastBreached) before calling in here.
+	cur.FireCount++
+	SaveEventMonitor(db, cur)
+	if MonitorFiredOut(cur) {
+		stopFiredOutMonitor(db, cur)
 	}
 }
 

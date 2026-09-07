@@ -238,6 +238,10 @@ func registerOperatorWake(app *OrchestrateApp) {
 			}
 			delivered = true
 		}
+		// A monitor with a stopping condition is judged on what it just saw,
+		// and stops itself when the condition is met. Only a monitor that was
+		// given one pays for this — it is one worker-tier call per fire.
+		app.settleMonitorObjective(ctx, m, summary)
 		if !delivered {
 			return false, "no notify destination accepted the event"
 		}

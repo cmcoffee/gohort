@@ -1,6 +1,6 @@
 # Loop objectives — a recurring task that knows when it is done
 
-Status: **built** (v0.6.621, 2026-09-07). All three stages, on BOTH scheduling surfaces.
+Status: **built** (v0.6.624, 2026-09-07). All three stages, on ALL THREE scheduling surfaces.
 Decision locked by the build: an objective is a schedule with a completion check, not a new
 trigger kind.
 
@@ -25,7 +25,14 @@ the objective state on the console row, and **Resume** for a parked task
 (`handleConsoleRecurringResume`) with `AttemptsBase` so a resumed objective gets a fresh
 allowance instead of stalling on its first fire.
 
-Tests: `apps/orchestrate/objective_test.go`.
+**Event monitors too (v0.6.624).** The third surface, added after a user asked a Fleet agent to
+fetch a status endpoint every five minutes and stop after two: the monitor was created, reported
+as set up, and then polled forever. `EventMonitor` had no fire counter and no cap — the only
+stopping condition the record could express was `OneShot`, and only `await_result` ever set it —
+so a bound the user stated out loud had nowhere to go, and nothing anywhere said so. Monitors
+now take both a fire count (`stop_after`) and a condition (`until`); see **The monitor half**.
+
+Tests: `apps/orchestrate/objective_test.go`, `core/event_monitor_test.go`.
 
 ## The gap
 
@@ -246,11 +253,43 @@ are FLAT on both records rather than shared through an embedded struct, because 
 them with gob and gob nests an embedded struct, which would change the shape of everything
 already written.
 
+## The monitor half
+
+A monitor is not an agent making attempts. It watches something and reports what changed, which
+makes it the one surface where the two halves of "stop" come apart:
+
+- **`stop_after` — a count.** Bounds the ALERTS. Counted in `fireWake` and enforced by
+  `StopEventMonitor`, with no model anywhere in it. This is what "tell me the next two times"
+  needs, and it is what the reported failure actually asked for.
+- **`until` — a condition.** Bounds the WATCHING. Judged after each fire from what the fire
+  observed, so a monitor can keep alerting on every change and stop when one of them means the
+  goal is reached: "keep telling me about this PR, and stop when it's merged."
+
+Both stop the same way the standing half does: `Paused`, kept, and stated in the run ledger. A
+resumed monitor gets a fresh allowance through `RearmMonitorFires`, which moves `FiresBase`
+rather than resetting `FireCount` — the same reason `AttemptsBase` exists on the recurring side.
+A cap reached with an unmet condition says so, because from the outside the two stops look
+identical and only one of them means the thing was waited out.
+
+**The observation checker is a separate prompt, and has to be.** The attempt checker treats the
+ACTIONS as the evidence and is told that an attempt which ran none has almost certainly not
+reached its goal — the rule that stops an agent from claiming success it did not earn. A monitor
+fire runs no actions BY DESIGN. Sent through the attempt checker, every fire would look like an
+attempt that did nothing, and a goal plainly visible in the change would read NOT_YET forever.
+`objectiveObservationSysPrompt` judges the observation instead and says outright that taking no
+actions is normal here. The model call and the answer-reading are shared through
+`judgeWithPrompt`, which is the part worth having in one place: an unreadable verdict is no
+opinion rather than a pass, on every surface.
+
+`until` costs one worker-tier call per fire and is opt-in per monitor; `stop_after` costs
+nothing. A monitor given neither behaves exactly as every monitor did before.
+
 ## Out of scope
 
 - Objectives on pipelines and machines. A pipeline loop stage already has `until` as a bool
   field; a machine's phases already have exits. If a goal needs those, author it there.
-  (Standing agents WERE listed here and have since been built — see the status note.)
+  (Standing agents AND event monitors were both listed here and have since been built — see the
+  status note.)
 - A judge that plans the next attempt. The ledger tells the next fire what failed; deciding what
   to do about it is the fire's job, with the tools it already has.
 - Cross-agent objectives. One task, one agent, one thread, like every recurring task today.

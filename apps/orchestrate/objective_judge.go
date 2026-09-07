@@ -92,11 +92,19 @@ func objectiveEvidenceMessage(ev objectiveEvidence) string {
 // still counts, never as a pass: failing open here would retire a task whose
 // goal was never reached, which is the one outcome nobody would notice.
 func (T *OrchestrateApp) judgeObjective(ctx context.Context, ev objectiveEvidence) (objectiveVerdict, bool) {
+	return T.judgeWithPrompt(ctx, objectiveJudgeSysPrompt, objectiveEvidenceMessage(ev), ev.Attempt, len(ev.ToolCalls), ev.ToolErrors)
+}
+
+// judgeWithPrompt is the model call and the answer-reading, shared by every
+// kind of evidence. Only the prompt and the message differ between them; the
+// rule that an unreadable verdict is NO opinion rather than a pass is the same
+// everywhere, and is the part worth having in one place.
+func (T *OrchestrateApp) judgeWithPrompt(ctx context.Context, sysPrompt, message string, attempt, tools, toolErrors int) (objectiveVerdict, bool) {
 	if T == nil || T.LLM == nil {
 		return objectiveVerdict{}, false
 	}
-	resp, err := T.LLM.Chat(ctx, []Message{{Role: "user", Content: objectiveEvidenceMessage(ev)}},
-		WithSystemPrompt(objectiveJudgeSysPrompt), WithJSONMode(),
+	resp, err := T.LLM.Chat(ctx, []Message{{Role: "user", Content: message}},
+		WithSystemPrompt(sysPrompt), WithJSONMode(),
 		WithRouteKey("app.orchestrate.worker"), WithThink(false))
 	if err != nil {
 		Debug("[objective] LLM error: %v — no opinion", err)
@@ -137,8 +145,83 @@ func (T *OrchestrateApp) judgeObjective(ctx context.Context, ev objectiveEvidenc
 		word = "MET"
 	}
 	Log("[objective] %s (attempt %d) — %q (tools=%d errors=%d)",
-		word, ev.Attempt, truncateObs(reason, 140), len(ev.ToolCalls), ev.ToolErrors)
+		word, attempt, truncateObs(reason, 140), tools, toolErrors)
 	return objectiveVerdict{Met: met, Reason: reason}, true
+}
+
+// objectiveObservationSysPrompt judges a goal from what a monitor OBSERVED.
+//
+// It is a separate prompt rather than a reuse of the attempt checker because
+// the two are judging opposite things. The attempt checker treats the actions
+// as the evidence and is told that an attempt which ran no actions has almost
+// certainly not reached its goal — the rule that stops an agent from declaring
+// success it did not earn. A monitor fire runs no actions BY DESIGN: it
+// watched something and reports what changed. Sent through the attempt
+// checker, every monitor fire would look like an attempt that did nothing, and
+// a goal that was plainly reached would read NOT_YET forever.
+const objectiveObservationSysPrompt = `You are an OBJECTIVE CHECKER. A monitor is watching something on the owner's behalf, and has just observed a change. Decide whether the owner's stopping condition is satisfied NOW.
+
+You are given the condition and what the monitor observed.
+
+Rules:
+- The OBSERVATION is the evidence. Judge only what it shows.
+- Answer MET only when the observation shows the condition is satisfied. A change in the right direction is not the condition being reached.
+- The monitor takes no actions and is not supposed to. Never answer NOT_YET on the grounds that nothing was done.
+- An observation that does not mention the condition either way is NOT_YET.
+- reason: ONE short sentence naming what in the observation decided it. No preamble, no advice.
+
+Answer with JSON only: {"verdict":"MET"|"NOT_YET","reason":"..."}`
+
+// monitorObservationMessage renders a fire for the observation checker. Split
+// out from the call for the same reason as the attempt version: the verdict
+// turns entirely on what this says, so it is assertable without a model.
+func monitorObservationMessage(until, observed string, fire int) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "STOPPING CONDITION:\n%s\n\n", truncateObs(strings.TrimSpace(until), 600))
+	fmt.Fprintf(&b, "FIRE: %d\n\n", fire)
+	fmt.Fprintf(&b, "WHAT THE MONITOR OBSERVED:\n%s\n", truncateObs(strings.TrimSpace(observed), 2000))
+	return b.String()
+}
+
+// judgeMonitorObjective asks whether a monitor's stopping condition is met by
+// the change it just saw.
+func (T *OrchestrateApp) judgeMonitorObjective(ctx context.Context, until, observed string, fire int) (objectiveVerdict, bool) {
+	return T.judgeWithPrompt(ctx, objectiveObservationSysPrompt, monitorObservationMessage(until, observed, fire), fire, 0, 0)
+}
+
+// monitorObjective is the shared by-value view of a monitor's goal, so the
+// state label and the attempts block read a monitor the same way they read the
+// other two scheduling surfaces.
+func monitorObjective(m EventMonitor) objectiveRun {
+	return objectiveRun{Until: m.Until, Attempts: m.Attempts, Username: m.Owner}
+}
+
+// settleMonitorObjective judges a monitor's stopping condition against the
+// change it just reported, records the verdict on the monitor's own record,
+// and stops the monitor when the condition is met.
+//
+// Judged whether or not the alert reached anybody: the condition is about the
+// world, not about delivery, and the ledger already carries a row for each.
+func (T *OrchestrateApp) settleMonitorObjective(ctx context.Context, m EventMonitor, observed string) {
+	until := strings.TrimSpace(m.Until)
+	if until == "" {
+		return
+	}
+	// This fire is counted after the wake returns, so it is one past the
+	// allowance the record currently shows.
+	fire := MonitorFiresUsed(m) + 1
+	v, judged := T.judgeMonitorObjective(ctx, until, observed, fire)
+	reason := objectiveReason(v, judged)
+	cur, ok := GetEventMonitor(RootDB, m.Owner, m.Name)
+	if !ok {
+		return
+	}
+	cur.Attempts = appendObjectiveAttempt(cur.Attempts, judged && v.Met, reason)
+	SaveEventMonitor(RootDB, cur)
+	if judged && v.Met {
+		StopEventMonitor(RootDB, m.Owner, m.Name,
+			"Stopped: the condition it was watching for is met — "+reason+" Nothing is broken; resume it to watch again.")
+	}
 }
 
 // objectiveReason is the one line the card, the ledger and the NEXT attempt are

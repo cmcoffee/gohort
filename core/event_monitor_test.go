@@ -585,3 +585,155 @@ func TestIdleWatchDueRespectsTheClockAndTheExemptions(t *testing.T) {
 		}
 	}
 }
+
+// --- fire allowance ----------------------------------------------------------
+
+// TestAMonitorStopsWhenItHasFiredItsLimit is the behavior the record could not
+// express before: OneShot was the only stopping condition, and only
+// await_result ever set it. A user who asked to be told the next two times got
+// a monitor that was created, reported as set up, and then polled forever.
+func TestAMonitorStopsWhenItHasFiredItsLimit(t *testing.T) {
+	db := memDB(t)
+	RegisterEventWaker(func(ctx context.Context, owner, name, summary string) (bool, string) {
+		return true, ""
+	})
+	defer RegisterEventWaker(nil)
+
+	m := EventMonitor{Name: "status", Owner: "craig", Kind: EventKindHTTP, MaxFires: 2, IntervalSeconds: 300, NextCheck: time.Now().Add(5 * time.Minute)}
+	SaveEventMonitor(db, m)
+
+	FireEventMonitor(context.Background(), db, m, "status went red")
+	cur, _ := GetEventMonitor(db, "craig", "status")
+	if cur.Paused {
+		t.Fatal("it stopped on the FIRST fire of a two-fire allowance")
+	}
+	if got := MonitorFiresUsed(cur); got != 1 {
+		t.Errorf("one fire spent, allowance says %d", got)
+	}
+
+	FireEventMonitor(context.Background(), db, m, "status went red again")
+	cur, _ = GetEventMonitor(db, "craig", "status")
+	if !cur.Paused {
+		t.Error("the monitor kept watching past the limit it was created with")
+	}
+	if !cur.NextCheck.IsZero() {
+		t.Error("a stopped monitor still has a next check scheduled")
+	}
+	// Stopped, not broken and not deleted: nothing failed, and the owner can
+	// still see it, read why, and turn it back on.
+	if cur.Broken {
+		t.Error("reaching an agreed limit is not a fault")
+	}
+	if _, ok := GetEventMonitor(db, "craig", "status"); !ok {
+		t.Error("the monitor was deleted rather than kept")
+	}
+
+	// And the stop says so where the owner looks, rather than the monitor just
+	// going quiet.
+	said := false
+	for _, r := range ListRuns(db, "craig", RunFilter{}) {
+		if strings.Contains(r.Summary, "limit it was created with") {
+			said = true
+		}
+	}
+	if !said {
+		t.Error("nothing in the run ledger says the monitor stopped or why")
+	}
+}
+
+// TestAnUndeliveredFireStillSpendsTheAllowance: counting only fires that
+// reached somebody would leave a monitor with broken delivery running without
+// a bound — the exact shape the limit exists to end. The ledger row already
+// records which of the two happened.
+func TestAnUndeliveredFireStillSpendsTheAllowance(t *testing.T) {
+	db := memDB(t)
+	RegisterEventWaker(func(ctx context.Context, owner, name, summary string) (bool, string) {
+		return false, "nowhere to deliver"
+	})
+	defer RegisterEventWaker(nil)
+
+	m := EventMonitor{Name: "status", Owner: "craig", Kind: EventKindHTTP, MaxFires: 1}
+	SaveEventMonitor(db, m)
+	FireEventMonitor(context.Background(), db, m, "tripped")
+
+	cur, _ := GetEventMonitor(db, "craig", "status")
+	if !cur.Paused {
+		t.Error("an undelivered fire left the allowance unspent, so the monitor runs on")
+	}
+}
+
+// TestAnUnboundedMonitorKeepsWatching — the default is unchanged. Every
+// monitor that existed before this had no limit, and must still have none.
+func TestAnUnboundedMonitorKeepsWatching(t *testing.T) {
+	db := memDB(t)
+	RegisterEventWaker(func(ctx context.Context, owner, name, summary string) (bool, string) {
+		return true, ""
+	})
+	defer RegisterEventWaker(nil)
+
+	m := EventMonitor{Name: "roster", Owner: "craig", Kind: EventKindWatch}
+	SaveEventMonitor(db, m)
+	for i := 0; i < 4; i++ {
+		FireEventMonitor(context.Background(), db, m, "changed")
+	}
+	cur, _ := GetEventMonitor(db, "craig", "roster")
+	if cur.Paused {
+		t.Error("a monitor with no limit stopped itself")
+	}
+	if cur.FireCount != 4 {
+		t.Errorf("fires are counted even with no limit (it is what a later limit measures): got %d", cur.FireCount)
+	}
+	if MonitorFireLabel(cur) != "" {
+		t.Errorf("an unbounded monitor has no allowance to show: %q", MonitorFireLabel(cur))
+	}
+}
+
+// TestResumingAStoppedMonitorGivesItAFreshAllowance. Turning a finished
+// monitor back on means "watch again", not "fire once more and stop" — which
+// is what comparing the lifetime count to the limit would have meant.
+func TestResumingAStoppedMonitorGivesItAFreshAllowance(t *testing.T) {
+	spent := EventMonitor{Name: "status", Owner: "craig", Kind: EventKindHTTP, MaxFires: 2, FireCount: 2}
+	if !MonitorFiredOut(spent) {
+		t.Fatal("two of two fires is spent")
+	}
+	if !RearmMonitorFires(&spent) {
+		t.Fatal("resume did not restart the allowance")
+	}
+	if MonitorFiredOut(spent) {
+		t.Error("the monitor is still out of fires immediately after being resumed")
+	}
+	if spent.FireCount != 2 {
+		t.Errorf("the lifetime count was reset instead of the allowance: %d", spent.FireCount)
+	}
+	if got := MonitorFireLabel(spent); got != "fired 0 of 2" {
+		t.Errorf("the fresh allowance reads %q", got)
+	}
+
+	// An ordinary unpause of a monitor with fires left keeps them.
+	partial := EventMonitor{Name: "status", Owner: "craig", MaxFires: 3, FireCount: 1}
+	if RearmMonitorFires(&partial) {
+		t.Error("an unspent allowance was needlessly restarted")
+	}
+	if got := MonitorFireLabel(partial); got != "fired 1 of 3" {
+		t.Errorf("remaining fires misreported as %q", got)
+	}
+}
+
+// TestAOneShotAwaitStillRemovesItself: the transient await keeps its own
+// delete-on-fire path. It is not a limit — nobody wants an await's corpse in
+// the monitor list.
+func TestAOneShotAwaitStillRemovesItself(t *testing.T) {
+	db := memDB(t)
+	RegisterEventWaker(func(ctx context.Context, owner, name, summary string) (bool, string) {
+		return true, ""
+	})
+	defer RegisterEventWaker(nil)
+
+	m := EventMonitor{Name: "await_read_chat_x", Owner: "craig", Kind: EventKindWatch, OneShot: true}
+	SaveEventMonitor(db, m)
+	FireEventMonitor(context.Background(), db, m, "Alex replied")
+
+	if _, ok := GetEventMonitor(db, "craig", "await_read_chat_x"); ok {
+		t.Error("a one-shot await survived its fire")
+	}
+}
