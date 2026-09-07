@@ -56,6 +56,7 @@ func (t *chatTurn) recurringToolDef() AgentToolDef {
 				"until":            {Type: "string", Description: "(schedule, optional) Makes this an OBJECTIVE instead of a plain cadence: what must be TRUE for the task to be FINISHED, in plain language (\"the blog post is published and its URL is posted to the thread\"). After every fire the framework judges the attempt against this from what it actually DID, not from what it said it did, and the fire that reaches the goal is the last one. Each later attempt is told what the earlier ones tried and why they fell short. Use it when the user wants something DONE; omit it when they want something RUN on a schedule."}, //nolint:lll
 				"max_attempts":     {Type: "integer", Description: "(schedule, optional, with until) How many fires may end with the goal still UNMET before the task stops trying. Reaching it PARKS the task with the last reason so the owner can see it stopped and why, rather than retiring quietly. OMIT to let max_fires be the only bound."},
 				"id":               {Type: "string", Description: "(cancel / move) Scheduler task id of the recurring task (from schedule or list)."},
+				"agent":            {Type: "string", Description: "(list / cancel / move, optional) WHOSE schedules to act on: another of your own agents, by name or id — or \"all\" (list only) for every agent you own. Omit for the agent you are talking to. Reach for it the moment you are asked about a schedule belonging to a different agent: without it that task is invisible here, and guessing from other records is how a turn ends up describing the wrong thing. EDITING another agent's task is not offered — say plainly that it has to be changed from that agent's own session or the Scheduler console."},
 				"to":               {Type: "string", Enum: []string{"cortex", "session", "background"}, Description: "(schedule / move) Where the task posts its reports: cortex = the agent's standing mind thread (requires one); session = this current conversation, or the one named by session_id; background = it runs but posts to no thread. OMIT on schedule to take the agent's default (cortex when it has one, else this session). Required on move."},
 				"session_id":       {Type: "string", Description: "(move, optional, with to=\"session\") Target a specific existing session of this agent by id — e.g. a dedicated reports thread created via open_session. Omit to target this current conversation."},
 			},
@@ -67,7 +68,7 @@ func (t *chatTurn) recurringToolDef() AgentToolDef {
 			case "schedule":
 				return t.recurringSchedule(args)
 			case "list":
-				return t.recurringList()
+				return t.recurringList(args)
 			case "cancel":
 				return t.recurringCancel(args)
 			case "move":
@@ -118,6 +119,45 @@ func recurringEditTarget(p orchUpdatePayload, name, prompt string) bool {
 	}
 	prompt = strings.TrimSpace(prompt)
 	return prompt != "" && strings.TrimSpace(p.Prompt) == prompt
+}
+
+// recurringScope resolves WHOSE schedules an action works on.
+//
+// Omitted is the agent being talked to, which is what every caller meant before
+// this existed. "all" is every agent the user owns — the answer to "what is
+// scheduled anywhere?". A name or id is that agent, resolved the way
+// agents(action="get") resolves one, so a model can pass back the name it was
+// given rather than hunting for an id.
+//
+// The reason it exists: a recurring task belongs to the agent that created it,
+// so an agent asked about ANOTHER agent's schedule could not see it at all.
+// Live, that produced neither an answer nor a refusal — the turn fetched a pile
+// of unrelated records and narrated them instead of saying it could not look.
+//
+// Ownership never widens here: listAgentRecurringTasks filters by username, so
+// every scope below is still only this user's tasks.
+func (t *chatTurn) recurringScope(args map[string]any) (agentID, label string, err error) {
+	key := strings.TrimSpace(stringArg(args, "agent"))
+	switch {
+	case key == "":
+		return t.agent.ID, "this agent", nil
+	case strings.EqualFold(key, "all"):
+		return "", "any of your agents", nil
+	}
+	a, ok := findAgentByNameOrID(t.udb, t.user, key)
+	if !ok {
+		return "", "", fmt.Errorf("no agent %q — agents(action=\"list\") shows what you have", key)
+	}
+	return a.ID, fmt.Sprintf("%q", a.Name), nil
+}
+
+// recurringAgentName labels a task by the agent that owns it, so a listing that
+// spans agents says which is which and a cancel names what it just stopped.
+func (t *chatTurn) recurringAgentName(id string) string {
+	if a, ok := loadAgent(t.udb, id); ok && strings.TrimSpace(a.Name) != "" {
+		return a.Name
+	}
+	return id
 }
 
 func (t *chatTurn) recurringSchedule(args map[string]any) (string, error) {
@@ -235,12 +275,13 @@ func (t *chatTurn) recurringSchedule(args map[string]any) (string, error) {
 // once a task can live in the Cortex thread (recurring(move)), a
 // session-scoped list would hide exactly the tasks the user asks about.
 // posts_to tells the model (and the user) where each task's reports land.
-func (t *chatTurn) recurringList() (string, error) {
+func (t *chatTurn) recurringList(args map[string]any) (string, error) {
 	if t.session == nil || t.session.ID == "" {
 		return "(no active session)", nil
 	}
 	type row struct {
 		ID        string `json:"id"`
+		Agent     string `json:"agent"` // whose task it is; a listing may span agents
 		Name      string `json:"name"`
 		Prompt    string `json:"prompt"`
 		Pattern   string `json:"pattern"`
@@ -253,8 +294,12 @@ func (t *chatTurn) recurringList() (string, error) {
 		State     string `json:"objective_state,omitempty"`
 		Parked    string `json:"parked,omitempty"`
 	}
+	scopeID, scopeLabel, err := t.recurringScope(args)
+	if err != nil {
+		return "", err
+	}
 	var rows []row
-	for _, rt := range listAgentRecurringTasks(t.user, t.agent.ID) {
+	for _, rt := range listAgentRecurringTasks(t.user, scopeID) {
 		p := rt.Payload
 		pattern := p.Pattern
 		if pattern == "" {
@@ -268,13 +313,14 @@ func (t *chatTurn) recurringList() (string, error) {
 		switch {
 		case !record:
 			postsTo = "background"
-		case dest == cortexSessionID(t.agent.ID):
+		case dest == cortexSessionID(p.AgentID):
 			postsTo = "cortex"
 		case dest == t.session.ID:
 			postsTo = "this_session"
 		}
 		rows = append(rows, row{
-			ID: rt.TaskID, Name: recurringName(p), Prompt: p.Prompt,
+			ID: rt.TaskID, Agent: t.recurringAgentName(p.AgentID),
+			Name: recurringName(p), Prompt: p.Prompt,
 			Pattern: pattern, Cadence: recurringDetail(p),
 			FireCount: p.FireCount, CreatedAt: p.CreatedAt,
 			PostsTo:   postsTo,
@@ -283,7 +329,7 @@ func (t *chatTurn) recurringList() (string, error) {
 		})
 	}
 	if len(rows) == 0 {
-		return "(no recurring tasks for this agent)", nil
+		return fmt.Sprintf("(no recurring tasks for %s)", scopeLabel), nil
 	}
 	b, _ := json.MarshalIndent(rows, "", "  ")
 	return string(b), nil
@@ -300,13 +346,19 @@ func (t *chatTurn) recurringCancel(args map[string]any) (string, error) {
 	if id == "" {
 		return "", errors.New("id is required for recurring(cancel)")
 	}
-	for _, rt := range listAgentRecurringTasks(t.user, t.agent.ID) {
+	scopeID, scopeLabel, err := t.recurringScope(args)
+	if err != nil {
+		return "", err
+	}
+	for _, rt := range listAgentRecurringTasks(t.user, scopeID) {
 		if rt.TaskID == id {
 			UnscheduleTask(id)
-			return fmt.Sprintf("CANCELLED ok. Recurring task %s removed.", id), nil
+			// Names the agent: cancelling across agents must never read as
+			// having cancelled one of your own.
+			return fmt.Sprintf("CANCELLED ok. Recurring task %s on %s removed.", id, t.recurringAgentName(rt.Payload.AgentID)), nil
 		}
 	}
-	return "", fmt.Errorf("no recurring task %s on this agent — recurring(action=\"list\") shows ids", id)
+	return "", fmt.Errorf("no recurring task %s on %s — recurring(action=\"list\", agent=\"all\") shows every id you own", id, scopeLabel)
 }
 
 // recurringMove retargets where an existing task posts its reports — the agent's
@@ -329,7 +381,25 @@ func (t *chatTurn) recurringMove(args map[string]any) (string, error) {
 	if id == "" {
 		return "", errors.New("id is required for recurring(move)")
 	}
-	surface, err := recurringSurfaceArg(args, t.agent.Cortex)
+	scopeID, scopeLabel, err := t.recurringScope(args)
+	if err != nil {
+		return "", err
+	}
+	cross := scopeID != t.agent.ID
+	// Whether the DESTINATION agent has a cortex thread, not whether this one
+	// does: moving another agent's task to "cortex" means that agent's.
+	hasCortex := t.agent.Cortex
+	if cross {
+		if scopeID == "" {
+			return "", errors.New(`recurring(move) needs one agent — agent="all" is for list only`)
+		}
+		tgt, ok := loadAgent(t.udb, scopeID)
+		if !ok {
+			return "", fmt.Errorf("agent %s no longer exists", scopeID)
+		}
+		hasCortex = tgt.Cortex
+	}
+	surface, err := recurringSurfaceArg(args, hasCortex)
 	if err != nil {
 		return "", err
 	}
@@ -339,6 +409,12 @@ func (t *chatTurn) recurringMove(args map[string]any) (string, error) {
 	// home is the session the task is re-homed to; only a move to a session
 	// changes it, so switching to cortex/background and back always returns to
 	// the thread the task was created in.
+	// A session move re-homes the task to a thread of the agent being talked
+	// to, which is meaningless for someone else's task — refused rather than
+	// silently re-homing another agent's schedule into this conversation.
+	if cross && surface == "session" {
+		return "", errors.New(`to="session" re-homes a task into a thread of the agent you are talking to, so it cannot target another agent's task — use "cortex" or "background", or move it from that agent's own session`)
+	}
 	home, destLabel := "", surfaceDestLabel(surface)
 	if surface == "session" {
 		home = t.session.ID
@@ -355,7 +431,7 @@ func (t *chatTurn) recurringMove(args map[string]any) (string, error) {
 			destLabel = fmt.Sprintf("the session %q", firstNonEmptyStr(strings.TrimSpace(sess.Title), sid))
 		}
 	}
-	for _, rt := range listAgentRecurringTasks(t.user, t.agent.ID) {
+	for _, rt := range listAgentRecurringTasks(t.user, scopeID) {
 		if rt.TaskID != id {
 			continue
 		}
@@ -384,5 +460,5 @@ func (t *chatTurn) recurringMove(args map[string]any) (string, error) {
 		}
 		return fmt.Sprintf("MOVED_OK id=%s — the recurring task now posts its reports into %s. Timing, fire count, and budget are unchanged. Tell the user where its reports will appear from now on.", id, destLabel), nil
 	}
-	return "", fmt.Errorf("no recurring task %s on this agent — recurring(action=\"list\") shows ids", id)
+	return "", fmt.Errorf("no recurring task %s on %s — recurring(action=\"list\", agent=\"all\") shows every id you own", id, scopeLabel)
 }
