@@ -523,3 +523,72 @@ func TestCreateEventMonitorOffersTheStoppingControls(t *testing.T) {
 		t.Errorf("until is %q, want string", until.Type)
 	}
 }
+
+// TestTheTwoSchedulingToolsSayWhichJobIsTheirs. A live session spent ten
+// create_event_monitor calls on "every 5 minutes, fetch X and report the
+// value, stop after 2" — unconditional work on a clock, which is a standing
+// agent with until/max_attempts, and which the agent had in its toolset the
+// whole time. It never considered it. The pull got stronger when stop_after
+// gave the monitor tool a home for "stop after 2" while the tool that was
+// actually right said nothing about counts, so the routing lives in the
+// descriptions and its absence is the fix missing.
+func TestTheTwoSchedulingToolsSayWhichJobIsTheirs(t *testing.T) {
+	tools := map[string]Tool{}
+	for _, td := range operatorManagementTools(&ToolSession{Username: "craig"}, "agent-1") {
+		tools[td.Tool.Name] = td.Tool
+	}
+
+	mon, ok := tools["create_event_monitor"]
+	if !ok {
+		t.Fatal("create_event_monitor is gone")
+	}
+	// It has to state the NEGATIVE case — and only that. The description is
+	// re-sent on every turn the tool is in the catalog, so the detail lives
+	// where it is read only when needed: the error the model gets while it is
+	// already stuck (see below).
+	for _, want := range []string{"NOT for work", "create_standing_agent"} {
+		if !strings.Contains(mon.Description, want) {
+			t.Errorf("the monitor tool no longer routes away from the job that is not its own: missing %q", want)
+		}
+	}
+
+	// The redirect that matters most arrives at the moment of contortion, from
+	// the real handler: an empty threshold IS the signature of having picked a
+	// monitor for a schedule's job, and it was left empty twice in the live
+	// session before the agent gave up on the kind.
+	pinRootDB(t)
+	var create func(map[string]any) (string, error)
+	for _, td := range operatorManagementTools(&ToolSession{Username: "craig"}, "agent-1") {
+		if td.Tool.Name == "create_event_monitor" {
+			create = td.Handler
+		}
+	}
+	_, err := create(map[string]any{
+		"name": "unconditional", "kind": "http_poll",
+		"url": "https://example.com/status", "compare_op": "contains", "threshold": "",
+	})
+	if err == nil {
+		t.Fatal("an http_poll with no threshold was accepted")
+	}
+	if !strings.Contains(err.Error(), "create_standing_agent") {
+		t.Errorf("the error names no alternative, so the next attempt is another guess: %v", err)
+	}
+
+	stand, ok := tools["create_standing_agent"]
+	if !ok {
+		t.Fatal("create_standing_agent is gone")
+	}
+	// And the right tool has to claim the job in the words people use for it,
+	// including the finish line — otherwise it reads as "cron" and loses to
+	// the tool that mentions stopping.
+	for _, want := range []string{"RUNS on a clock", "until", "max_attempts", "stop after 2"} {
+		if !strings.Contains(stand.Description, want) {
+			t.Errorf("the standing-agent tool does not claim the job it is for: missing %q", want)
+		}
+	}
+
+	// stop_after must not read as "run this N times".
+	if p := mon.Parameters["stop_after"]; !strings.Contains(p.Description, "bounds the ALERTS") {
+		t.Errorf("stop_after does not distinguish alerts from runs: %s", p.Description)
+	}
+}
