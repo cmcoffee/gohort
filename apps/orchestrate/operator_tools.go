@@ -12,6 +12,7 @@ package orchestrate
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -1417,8 +1418,12 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					if m.IntervalSeconds <= 0 {
 						m.IntervalSeconds = 900
 					}
-					if m.URL == "" || m.CompareOp == "" || m.Threshold == "" {
-						return "", fmt.Errorf("http_poll monitors need url, compare_op, and threshold")
+					if err := missingArgs("http_poll monitor "+strconv.Quote(name),
+						reqArg{"url", m.URL, "the address fetched each interval, e.g. \"https://example.com/status\""},
+						reqArg{"compare_op", m.CompareOp, "one of < > <= >= == != contains"},
+						reqArg{"threshold", m.Threshold, "the value compared against, always as a string — \"200\" with compare_op \"==\", or \"error\" with compare_op \"contains\""},
+					); err != nil {
+						return "", err
 					}
 					switch m.CompareOp {
 					case "<", ">", "<=", ">=", "==", "!=", "contains":
@@ -1450,8 +1455,10 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					if m.IntervalSeconds <= 0 {
 						m.IntervalSeconds = 60
 					}
-					if m.ToolName == "" {
-						return "", fmt.Errorf("watch monitors need tool_name (the tool whose output is hashed)")
+					if err := missingArgs("watch monitor "+strconv.Quote(name),
+						reqArg{"tool_name", m.ToolName, "the tool invoked each interval, whose output is hashed to detect a change"},
+					); err != nil {
+						return "", err
 					}
 					// Seed the change baseline now from a known-good probe, so the
 					// first poll detects a REAL change instead of firing on the
@@ -1475,8 +1482,11 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				m.Check = strings.TrimSpace(oArgStr(args, "check"))
 				m.MatchContains = strings.TrimSpace(oArgStr(args, "match_contains"))
 				m.IntervalSeconds = oArgInt(args, "interval_seconds")
-				if wantAgent == "" || m.Check == "" {
-					return "", fmt.Errorf("poll monitors need check_agent and check")
+				if err := missingArgs("poll monitor "+strconv.Quote(name),
+					reqArg{"check_agent", wantAgent, "name or id of an existing agent that runs the check"},
+					reqArg{"check", m.Check, "the question that agent is asked each interval"},
+				); err != nil {
+					return "", err
 				}
 				// Resolve the checker to a REAL agent. The LLM may pass a display
 				// name or its own conversational nickname that isn't an actual
@@ -1951,4 +1961,63 @@ func oArgInt(args map[string]any, k string) int {
 		return n
 	}
 	return 0
+}
+
+// --- required-argument reporting --------------------------------------------
+
+// reqArg is one argument a tool needs, paired with what belongs in it.
+type reqArg struct {
+	name  string
+	value string
+	hint  string // shown only when THIS argument is the one missing
+}
+
+// missingArgs reports the arguments that are actually empty, and explains only
+// those. It returns nil when nothing is missing, so a validator reads as one
+// line at the call site.
+//
+// The shape it replaces listed every required argument whenever any one of
+// them was empty: "http_poll monitors need url, compare_op, and threshold".
+// Live, an agent that had sent url and compare_op correctly on every attempt
+// read that as a verdict on all three. It spent six rounds re-sending the same
+// call, dropping arguments that were never the problem, and finally switching
+// to a different monitor kind, because the message never once said which field
+// was blank. An error that names the whole contract instead of the one broken
+// term makes the caller debug by elimination.
+func missingArgs(subject string, req ...reqArg) error {
+	var names, hints []string
+	for _, r := range req {
+		if strings.TrimSpace(r.value) != "" {
+			continue
+		}
+		names = append(names, r.name)
+		if r.hint != "" {
+			hints = append(hints, "  "+r.name+": "+r.hint)
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	// Said explicitly, because the caller cannot see it: the rest of the call
+	// was accepted. Without this the natural repair is to rebuild the whole
+	// call from scratch, which is what cost those six rounds.
+	msg := fmt.Sprintf("%s is missing %s — everything else you sent is fine, so resend the same call with %s filled in",
+		subject, joinWords(names), pluralIt(len(names)))
+	if len(hints) > 0 {
+		msg += ":\n" + strings.Join(hints, "\n")
+	}
+	return errors.New(msg)
+}
+
+// joinWords writes a list the way a sentence would.
+func joinWords(items []string) string {
+	switch len(items) {
+	case 0:
+		return ""
+	case 1:
+		return items[0]
+	case 2:
+		return items[0] + " and " + items[1]
+	}
+	return strings.Join(items[:len(items)-1], ", ") + ", and " + items[len(items)-1]
 }
