@@ -103,7 +103,12 @@ const (
 	// and gave the rest files named for it: the task queue, the HTML shell,
 	// the middleware and internal-request helpers, the dashboard and its
 	// page, the live session map and the live entry.
-	coreFileCeiling = 193
+	//
+	// 193 -> 196 (v0.6.606): pipeline_def.go, 1,551 lines, kept the types and
+	// gave validation (two files: the stage list and the reference checks)
+	// and the store their own. Its eleven topic-named tests could not merge
+	// onto a 1,551-line stem without passing the test-file cap; they can now.
+	coreFileCeiling = 196
 
 	// coreExportCeiling is the number of exported top-level symbols — funcs,
 	// types, vars, consts. Methods are excluded because they are not what

@@ -32,7 +32,17 @@ import (
 )
 
 // hub files declare the shared vocabulary; every test scores against them.
+// TESTMERGE_HUBS adds more, comma-separated, for a package whose type file
+// would otherwise draw every test in a family onto itself.
 var hub = map[string]bool{"common": true, "core": true, "llm": true, "types": true}
+
+func init() {
+	for _, h := range strings.Split(os.Getenv("TESTMERGE_HUBS"), ",") {
+		if h = strings.TrimSpace(h); h != "" {
+			hub[h] = true
+		}
+	}
+}
 
 type group struct {
 	target string
