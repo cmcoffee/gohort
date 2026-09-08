@@ -610,7 +610,7 @@ func TestAMonitorStopsWhenItHasFiredItsLimit(t *testing.T) {
 	if cur.Paused {
 		t.Fatal("it stopped on the FIRST fire of a two-fire allowance")
 	}
-	if got := MonitorFiresUsed(cur); got != 1 {
+	if got := cur.FiresUsed(); got != 1 {
 		t.Errorf("one fire spent, allowance says %d", got)
 	}
 
@@ -686,8 +686,8 @@ func TestAnUnboundedMonitorKeepsWatching(t *testing.T) {
 	if cur.FireCount != 4 {
 		t.Errorf("fires are counted even with no limit (it is what a later limit measures): got %d", cur.FireCount)
 	}
-	if MonitorFireLabel(cur) != "" {
-		t.Errorf("an unbounded monitor has no allowance to show: %q", MonitorFireLabel(cur))
+	if cur.FireLabel() != "" {
+		t.Errorf("an unbounded monitor has no allowance to show: %q", cur.FireLabel())
 	}
 }
 
@@ -696,19 +696,19 @@ func TestAnUnboundedMonitorKeepsWatching(t *testing.T) {
 // is what comparing the lifetime count to the limit would have meant.
 func TestResumingAStoppedMonitorGivesItAFreshAllowance(t *testing.T) {
 	spent := EventMonitor{Name: "status", Owner: "craig", Kind: EventKindHTTP, MaxFires: 2, FireCount: 2}
-	if !MonitorFiredOut(spent) {
+	if !spent.firedOut() {
 		t.Fatal("two of two fires is spent")
 	}
 	if !RearmMonitorFires(&spent) {
 		t.Fatal("resume did not restart the allowance")
 	}
-	if MonitorFiredOut(spent) {
+	if spent.firedOut() {
 		t.Error("the monitor is still out of fires immediately after being resumed")
 	}
 	if spent.FireCount != 2 {
 		t.Errorf("the lifetime count was reset instead of the allowance: %d", spent.FireCount)
 	}
-	if got := MonitorFireLabel(spent); got != "fired 0 of 2" {
+	if got := spent.FireLabel(); got != "fired 0 of 2" {
 		t.Errorf("the fresh allowance reads %q", got)
 	}
 
@@ -717,7 +717,7 @@ func TestResumingAStoppedMonitorGivesItAFreshAllowance(t *testing.T) {
 	if RearmMonitorFires(&partial) {
 		t.Error("an unspent allowance was needlessly restarted")
 	}
-	if got := MonitorFireLabel(partial); got != "fired 1 of 3" {
+	if got := partial.FireLabel(); got != "fired 1 of 3" {
 		t.Errorf("remaining fires misreported as %q", got)
 	}
 }
@@ -907,7 +907,7 @@ func TestAConditionThatNeverClearsSaysSoOnce(t *testing.T) {
 	if n := notices(); n != 1 {
 		t.Errorf("the owner was told %d times; once is the whole design — a row per check would bury the feed", n)
 	}
-	if lbl := MonitorStuckLabel(cur); !strings.Contains(lbl, "armed but silent") {
+	if lbl := cur.StuckLabel(); !strings.Contains(lbl, "armed but silent") {
 		t.Errorf("the listing does not say the monitor can no longer fire: %q", lbl)
 	}
 
@@ -945,7 +945,7 @@ func TestClearingTheConditionResetsTheCount(t *testing.T) {
 	if cur.StuckMatches != 2 {
 		t.Fatalf("expected 2 still-true checks, got %d", cur.StuckMatches)
 	}
-	if MonitorStuckLabel(cur) != "" {
+	if cur.StuckLabel() != "" {
 		t.Error("two checks is not yet a stuck monitor — an ordinary condition may hold for a while")
 	}
 
@@ -985,7 +985,7 @@ func TestAThresholdThatNeverRecoversSaysSoToo(t *testing.T) {
 		executeHTTPPoll(context.Background(), db, cur)
 	}
 	cur, _ := GetEventMonitor(db, "craig", "over")
-	if MonitorStuckLabel(cur) == "" {
+	if cur.StuckLabel() == "" {
 		t.Errorf("a breach that never recovers said nothing (stuck=%d)", cur.StuckMatches)
 	}
 	said := false

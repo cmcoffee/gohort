@@ -75,6 +75,18 @@ type StandingAgent struct {
 	StartAt         time.Time `json:"start_at,omitempty"`
 	IntervalSeconds int       `json:"interval_seconds,omitempty"`
 	Paused          bool      `json:"paused"`
+	// StopCause / StopNote say why a PAUSED-but-not-broken schedule is at rest,
+	// which the bool alone cannot. A schedule that REACHED its objective was
+	// stopped by setting Paused and nothing else, so the one outcome an
+	// objective exists to produce rendered exactly like a schedule somebody
+	// paused by hand — the reason lived only in the run ledger and the log.
+	// One of the StoppedBy* causes, with the checker's sentence in StopNote;
+	// both cleared on resume. Records written before this read as StoppedByOwner,
+	// which is what a paused schedule used to mean. (The BROKEN causes are
+	// separate — see BrokenCause — because a broken schedule and a finished one
+	// are not the same kind of stop.)
+	StopCause string `json:"stop_cause,omitempty"`
+	StopNote  string `json:"stop_note,omitempty"`
 	// Broken marks a standing agent that has stopped and is being KEPT rather
 	// than silently deleted — auto-paused and unscheduled, distinct from a user
 	// Pause. BrokenReason records why in words.
@@ -266,6 +278,13 @@ const (
 	ParkedByObjective  = "objective"  // its goal went unmet for every attempt it had — give it more, or let it stand
 )
 
+// Why a schedule that is NOT broken has stopped. Nothing is wrong in either
+// case; only one of them is something a person did.
+const (
+	StoppedByOwner = "owner" // somebody paused it
+	StoppedByMet   = "met"   // it reached the goal it was given, which is the point of having one
+)
+
 // MarkStandingAgentBroken flags a standing agent as no longer usable (its target
 // agent was deleted, or another dependency removed), pauses it, and cancels its
 // recurring task — but KEEPS the record so the owner can relink or delete it
@@ -312,6 +331,8 @@ func ClearStandingAgentBroken(db Database, owner, name string) bool {
 	sa.Broken = false
 	sa.BrokenReason = ""
 	sa.BrokenCause = ""
+	sa.StopCause = ""
+	sa.StopNote = ""
 	// A stalled objective gets a FRESH allowance. Without this the resumed
 	// schedule stalls again on its first fire and hands the owner — who has
 	// just fixed whatever the reason named — the same refusal. The attempt
@@ -320,6 +341,31 @@ func ClearStandingAgentBroken(db Database, owner, name string) bool {
 	// Paused stays true on purpose — resume is an explicit owner action.
 	SaveStandingAgent(db, sa)
 	return true
+}
+
+// StandingStopCause is why a schedule is at rest, or empty for one that is
+// running: a park cause when it is broken, otherwise a StoppedBy* cause. One
+// reader so a caller never has to know which of the two flags is set.
+func StandingStopCause(sa StandingAgent) string {
+	if sa.Broken {
+		return StandingParkCause(sa)
+	}
+	if !sa.Paused {
+		return ""
+	}
+	if c := strings.TrimSpace(sa.StopCause); c != "" {
+		return c
+	}
+	return StoppedByOwner
+}
+
+// StandingStopNote is the sentence behind the cause — the checker's reason for
+// a met objective, the failure for a park.
+func StandingStopNote(sa StandingAgent) string {
+	if sa.Broken {
+		return sa.BrokenReason
+	}
+	return sa.StopNote
 }
 
 // StandingParkCause is why a parked schedule is parked, or empty for one that

@@ -195,7 +195,7 @@ func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Re
 			// The four ways a monitor comes to rest, told apart. All of them
 			// are stopped; only one of them is something the owner did, and
 			// only one of them wants their attention.
-			switch MonitorStopCause(m) {
+			switch m.StopCause() {
 			case MonitorStopFinished, MonitorStopMet:
 				state = "done"
 			case MonitorStopIdle:
@@ -208,7 +208,7 @@ func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Re
 			// "needs relink" only when something is actually gone. Checks that
 			// keep failing are a target to fix, not a link to re-point — the
 			// label says so, and Relink is withheld below.
-			state = "⚠ " + MonitorStopLabel(m)
+			state = "⚠ " + m.StopLabel()
 		}
 		detail := ""
 		switch m.Kind {
@@ -266,7 +266,7 @@ func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Re
 			// "active" for a monitor with one fire left and for one that will
 			// run forever, which is the whole reason a missing bound went
 			// unnoticed until the alerts kept arriving.
-			if lbl := MonitorFireLabel(m); lbl != "" {
+			if lbl := m.FireLabel(); lbl != "" {
 				detail += " · " + lbl
 			}
 			// And where its stopping condition stands, in the checker's own
@@ -277,7 +277,7 @@ func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Re
 			// A monitor that has fired and whose condition never went false
 			// again is running without being able to do anything. It is not
 			// stopped, so it gets no stop mark — it gets told.
-			if lbl := MonitorStuckLabel(m); lbl != "" {
+			if lbl := m.StuckLabel(); lbl != "" {
 				detail += " · " + lbl
 			}
 		}
@@ -297,7 +297,7 @@ func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Re
 		// click-to-expand toggle, so send it whole rather than truncating here.
 		script := strings.TrimSpace(m.FormatScript)
 		rows = append(rows, consoleMonitorRow{Name: m.Name, Kind: m.Kind, State: state, Detail: detail, Script: script, Checked: checked, Seen: seen, Last: last, ID: m.Name, Paused: m.Paused, Schedulable: IsScheduledEventKind(m.Kind), Broken: m.Broken,
-			Relinkable: MonitorStopCause(m) == MonitorStopBroken})
+			Relinkable: m.StopCause() == MonitorStopBroken})
 	}
 	writeJSON(w, rows)
 }
@@ -424,7 +424,7 @@ func (T *OrchestrateApp) handleConsoleMonitorRun(w http.ResponseWriter, r *http.
 // happening" is a different sentence from "you paused me", and collapsing them
 // is exactly what the bare Paused bool used to do.
 func monitorRowState(m EventMonitor) map[string]any {
-	cause := MonitorStopCause(m)
+	cause := m.StopCause()
 	if cause == "" {
 		return nil
 	}
@@ -437,7 +437,7 @@ func monitorRowState(m EventMonitor) map[string]any {
 	case MonitorStopIdle:
 		icon = "off"
 	}
-	return map[string]any{"icon": icon, "tone": tone, "title": m.Name + " — " + MonitorStopLabel(m)}
+	return map[string]any{"icon": icon, "tone": tone, "title": m.Name + " — " + m.StopLabel()}
 }
 
 // monitorStopUrgency ranks the causes so a row fed by several monitors shows
@@ -471,7 +471,7 @@ func channelRowState(ch Channel, monitors []EventMonitor) map[string]any {
 		if !monitorDeliversTo(m, ch) {
 			continue
 		}
-		if u := monitorStopUrgency(MonitorStopCause(m)); u > best {
+		if u := monitorStopUrgency(m.StopCause()); u > best {
 			best, found = u, m
 		}
 	}
@@ -490,4 +490,48 @@ func monitorDeliversTo(m EventMonitor, ch Channel) bool {
 	}
 	addr := strings.TrimSpace(ch.Address)
 	return addr != "" && strings.TrimSpace(m.DeliverChatID) == addr
+}
+
+// scheduleStopLabel is what a standing agent or recurring task shows for the
+// state it is in — the same four kinds of stop a monitor has, in the words
+// each one earns. A schedule that REACHED its objective reads as done rather
+// than as "paused", which is what it looked like when Paused was the only
+// thing the record stored.
+func scheduleStopLabel(cause, note string) string {
+	switch cause {
+	case StoppedByMet:
+		if strings.TrimSpace(note) != "" {
+			return "✓ done — objective met: " + note
+		}
+		return "✓ done — objective met"
+	case StoppedByOwner:
+		return "paused"
+	case ParkedByObjective, ParkedByDependency:
+		return parkedStateLabel(cause, note)
+	}
+	return ""
+}
+
+// scheduleRowState maps a stopped schedule onto the same generic row mark the
+// channel rail and the monitor rows use. Nil for a running one.
+//
+// The tones carry the only distinction that matters at a glance: amber for the
+// two stops that are waiting on a person, muted for the two that are not.
+func scheduleRowState(name, cause, note string) map[string]any {
+	icon, tone := "", "muted"
+	switch cause {
+	case StoppedByMet:
+		icon = "check"
+	case StoppedByOwner:
+		icon = "pause"
+	case ParkedByObjective, ParkedByDependency:
+		icon, tone = "alert", "warn"
+	default:
+		return nil
+	}
+	title := name
+	if lbl := scheduleStopLabel(cause, note); lbl != "" {
+		title += " — " + strings.TrimPrefix(strings.TrimPrefix(lbl, "✓ "), "⚠ ")
+	}
+	return map[string]any{"icon": icon, "tone": tone, "title": title}
 }

@@ -1166,6 +1166,10 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					return "", fmt.Errorf("no standing agent named %q", name)
 				}
 				sa.Paused = oArgBool(args, "paused")
+				sa.StopCause, sa.StopNote = "", ""
+				if sa.Paused {
+					sa.StopCause = StoppedByOwner
+				}
 				if sa.Paused {
 					if sa.SchedulerID != "" {
 						UnscheduleTask(sa.SchedulerID)
@@ -1895,13 +1899,13 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					if !m.LastFired.IsZero() {
 						fmt.Fprintf(&b, "; last fired %s", m.LastFired.Local().Format("Jan 2 3:04 PM"))
 					}
-					if lbl := MonitorFireLabel(m); lbl != "" {
+					if lbl := m.FireLabel(); lbl != "" {
 						fmt.Fprintf(&b, "; %s", lbl)
 					}
 					if lbl := objectiveStateLabel(monitorObjective(m)); lbl != "" {
 						fmt.Fprintf(&b, "; %s", lbl)
 					}
-					if lbl := MonitorStuckLabel(m); lbl != "" {
+					if lbl := m.StuckLabel(); lbl != "" {
 						fmt.Fprintf(&b, "; %s", lbl)
 					}
 					b.WriteString("\n")

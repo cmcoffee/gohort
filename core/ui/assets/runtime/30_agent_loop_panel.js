@@ -4241,8 +4241,30 @@
           el('span', {style: 'flex:none'}, ['🕐']),
           el('div', {style: 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'}, ['Scheduler'])
         ];
+        // Two counts, because they answer different questions. The total says
+        // how much is scheduled; the amber one says how much of it is waiting
+        // on YOU. Before this the rail showed only the total, so a stopped
+        // schedule contributed the same 1 as a healthy one and nothing on the
+        // rail distinguished "you have six schedules" from "one of your six
+        // stopped and needs you".
+        //
+        // Attention is read off the rows' own state marks — a warn tone is the
+        // app saying this one needs a person. core/ui never decides which
+        // states those are.
+        var needing = list.filter(function(s) {
+          return s && s.state && s.state.tone === 'warn';
+        }).length;
+        if (needing) {
+          kids.push(el('span', {
+            class: 'ui-sched-attention',
+            title: needing + (needing === 1 ? ' schedule needs' : ' schedules need') + ' attention',
+            style: 'margin-left:auto;flex:none;background:var(--warning,#d98c34);color:#fff;border-radius:10px;padding:0 0.5em;font-size:0.72em;line-height:1.5;min-width:1.4em;text-align:center;font-weight:700'},
+            [String(needing)]));
+        }
         if (list.length) {
-          kids.push(el('span', {style: 'margin-left:auto;flex:none;background:var(--accent,#6366f1);color:#fff;border-radius:10px;padding:0 0.5em;font-size:0.72em;line-height:1.5;min-width:1.4em;text-align:center'},
+          kids.push(el('span', {
+            title: list.length + (list.length === 1 ? ' schedule' : ' schedules'),
+            style: (needing ? 'margin-left:0.3em;' : 'margin-left:auto;') + 'flex:none;background:var(--accent,#6366f1);color:#fff;border-radius:10px;padding:0 0.5em;font-size:0.72em;line-height:1.5;min-width:1.4em;text-align:center'},
             [String(list.length)]));
         }
         var btn = el('div', {class: 'ui-chat-side-item ui-channels-item', style: 'cursor:pointer;display:flex;align-items:center;gap:0.4em', title: 'View all schedules'}, kids);

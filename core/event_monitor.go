@@ -209,7 +209,7 @@ type EventMonitor struct {
 	// can only say "paused" and leave the reader to find out which — the same
 	// silence that let a monitor with a dead endpoint look healthy for hours.
 	// One of the MonitorStop* causes; empty while the monitor is running, and
-	// cleared on resume. MonitorStopCause reads it, with a fallback for
+	// cleared on resume. StopCause() reads it, with a fallback for
 	// records written before this field existed.
 	StopReason string `json:"stop_reason,omitempty"`
 	// Broken marks a monitor whose dependency is gone — its wake agent deleted,
@@ -574,10 +574,10 @@ func noteStuckMonitor(db Database, m EventMonitor) {
 	}.AboutMonitor(m.Name))
 }
 
-// MonitorStuckLabel is the same thing in one line, for a listing. Empty until
+// StuckLabel is the same thing in one line, for a listing. Empty until
 // the notice threshold, so an ordinary condition holding for a check or two
 // says nothing.
-func MonitorStuckLabel(m EventMonitor) string {
+func (m EventMonitor) StuckLabel() string {
 	if m.StuckMatches < monitorStuckMatchNotice {
 		return ""
 	}
@@ -602,13 +602,13 @@ const (
 	MonitorStopFailing  = "failing"  // it can still reach everything it needs; the checks themselves keep failing
 )
 
-// MonitorStopCause is why a monitor is at rest, or empty while it is running.
+// StopCause is why a monitor is at rest, or empty while it is running.
 //
 // Falls back for records written before StopReason existed: broken and spent
 // are both derivable, and anything else that is paused reads as owner-paused,
 // which is what a paused monitor meant when a person was the only thing that
 // could pause one.
-func MonitorStopCause(m EventMonitor) string {
+func (m EventMonitor) StopCause() string {
 	if !m.Paused && !m.Broken {
 		return ""
 	}
@@ -618,16 +618,16 @@ func MonitorStopCause(m EventMonitor) string {
 	switch {
 	case m.Broken:
 		return MonitorStopBroken
-	case MonitorFiredOut(m):
+	case m.firedOut():
 		return MonitorStopFinished
 	}
 	return MonitorStopOwner
 }
 
-// MonitorStopLabel is the cause in the owner's words, for a row that has space
+// StopLabel is the cause in the owner's words, for a row that has space
 // for a few. Empty for a running monitor.
-func MonitorStopLabel(m EventMonitor) string {
-	switch MonitorStopCause(m) {
+func (m EventMonitor) StopLabel() string {
+	switch m.StopCause() {
 	case MonitorStopOwner:
 		return "paused"
 	case MonitorStopFinished:
@@ -655,31 +655,31 @@ func MonitorStopLabel(m EventMonitor) string {
 
 // --- fire allowance ----------------------------------------------------------
 
-// MonitorFiresUsed is how many fires the CURRENT allowance has spent. Reads 0
+// FiresUsed is how many fires the CURRENT allowance has spent. Reads 0
 // for an uncapped monitor's fresh allowance and never goes negative, so a
 // record edited or restored out from under the count still renders.
-func MonitorFiresUsed(m EventMonitor) int {
+func (m EventMonitor) FiresUsed() int {
 	if n := m.FireCount - m.FiresBase; n > 0 {
 		return n
 	}
 	return 0
 }
 
-// MonitorFiredOut reports whether a capped monitor has spent its allowance.
-func MonitorFiredOut(m EventMonitor) bool {
-	return m.MaxFires > 0 && MonitorFiresUsed(m) >= m.MaxFires
+// firedOut reports whether a capped monitor has spent its allowance.
+func (m EventMonitor) firedOut() bool {
+	return m.MaxFires > 0 && m.FiresUsed() >= m.MaxFires
 }
 
-// MonitorFireLabel renders the allowance for a listing — "fired 1 of 2". Empty
+// FireLabel renders the allowance for a listing — "fired 1 of 2". Empty
 // for an uncapped monitor, which has nothing to count toward. This is the half
 // of the fix the owner actually sees: a bounded monitor that shows no bound is
 // indistinguishable from one that will run forever, which is exactly how a cap
 // that silently did not exist stayed invisible.
-func MonitorFireLabel(m EventMonitor) string {
+func (m EventMonitor) FireLabel() string {
 	if m.MaxFires <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("fired %d of %d", MonitorFiresUsed(m), m.MaxFires)
+	return fmt.Sprintf("fired %d of %d", m.FiresUsed(), m.MaxFires)
 }
 
 // RearmMonitorFires restarts a spent allowance, and reports whether it did.
@@ -687,7 +687,7 @@ func MonitorFireLabel(m EventMonitor) string {
 // again", not "fire once more and stop". A monitor that has NOT spent its
 // allowance is left alone, so an ordinary unpause keeps its remaining fires.
 func RearmMonitorFires(m *EventMonitor) bool {
-	if m == nil || !MonitorFiredOut(*m) {
+	if m == nil || !m.firedOut() {
 		return false
 	}
 	m.FiresBase = m.FireCount
@@ -731,7 +731,7 @@ func StopEventMonitor(db Database, owner, name, cause, reason string) bool {
 func stopFiredOutMonitor(db Database, m EventMonitor) {
 	reason := fmt.Sprintf(
 		"Stopped: fired %d time(s), which is the limit it was created with. Nothing is broken — it reached its bound and stopped watching. Resume it for another %d, or delete it.",
-		MonitorFiresUsed(m), m.MaxFires)
+		m.FiresUsed(), m.MaxFires)
 	// A monitor that also had a condition to watch for ran out of fires
 	// WITHOUT reaching it. Said here because the two stops look identical from
 	// the outside, and only one of them means the thing was waited out.
@@ -1960,7 +1960,7 @@ func fireWake(ctx context.Context, db Database, owner, name, summary, trigger st
 	// LastBreached) before calling in here.
 	cur.FireCount++
 	SaveEventMonitor(db, cur)
-	if MonitorFiredOut(cur) {
+	if cur.firedOut() {
 		stopFiredOutMonitor(db, cur)
 	}
 }

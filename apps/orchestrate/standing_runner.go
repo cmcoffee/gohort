@@ -195,6 +195,11 @@ func registerStandingRunner(app *OrchestrateApp) {
 				// closure is not told the trigger, and a goal that is met is met
 				// however the fire that met it was started.
 				cur.Paused = true
+				// Say WHY. Setting Paused alone made the one outcome an
+				// objective exists to reach look exactly like a schedule
+				// somebody paused by hand.
+				cur.StopCause = StoppedByMet
+				cur.StopNote = reason
 				SaveStandingAgent(RootDB, cur)
 				Log("[orchestrate/objective] standing %s/%s met its objective on attempt %d: %s", sa.Owner, sa.Name, attempt, reason)
 			default:

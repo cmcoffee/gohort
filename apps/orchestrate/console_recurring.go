@@ -103,6 +103,9 @@ func (T *OrchestrateApp) handleSchedules(w http.ResponseWriter, r *http.Request)
 			"category_label": "Scheduled agents",
 			"id":             sa.Name,
 			"edit_action":    "orchestrate_edit_standing",
+			// The same mark the monitor rows carry, so all three kinds of
+			// schedule say what state they are in the same way.
+			"state": scheduleRowState(sa.Name, StandingStopCause(sa), StandingStopNote(sa)),
 		})
 	}
 	// Recurring tasks (the `recurring` tool → per-session scheduled updates).
@@ -124,6 +127,7 @@ func (T *OrchestrateApp) handleSchedules(w http.ResponseWriter, r *http.Request)
 			"edit_action":    "orchestrate_edit_schedule",
 			"category":       "recurring",
 			"category_label": "Recurring tasks",
+			"state":          scheduleRowState(label, recurringParkCause(rt.Payload), rt.Payload.BrokenReason),
 		})
 	}
 	writeJSON(w, rows)

@@ -338,8 +338,8 @@ func (T *OrchestrateApp) handleConsoleAgents(w http.ResponseWriter, r *http.Requ
 			continue
 		}
 		state := "active"
-		if sa.Paused {
-			state = "paused"
+		if lbl := scheduleStopLabel(StandingStopCause(sa), StandingStopNote(sa)); lbl != "" {
+			state = lbl
 		}
 		row := consoleAgentRow{Name: sa.Name, Mission: sa.Mission, State: state, Schedule: StandingScheduleLabel(sa), ID: sa.Name, Paused: sa.Paused}
 		if sa.Broken {
@@ -450,6 +450,11 @@ func (T *OrchestrateApp) setConsoleAgentPaused(w http.ResponseWriter, r *http.Re
 		return
 	}
 	sa.Paused = paused
+	if paused {
+		sa.StopCause, sa.StopNote = StoppedByOwner, ""
+	} else {
+		sa.StopCause, sa.StopNote = "", ""
+	}
 	if paused {
 		if sa.SchedulerID != "" {
 			UnscheduleTask(sa.SchedulerID)

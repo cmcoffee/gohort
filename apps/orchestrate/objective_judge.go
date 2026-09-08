@@ -209,7 +209,7 @@ func (T *OrchestrateApp) settleMonitorObjective(ctx context.Context, m EventMoni
 	}
 	// This fire is counted after the wake returns, so it is one past the
 	// allowance the record currently shows.
-	fire := MonitorFiresUsed(m) + 1
+	fire := m.FiresUsed() + 1
 	v, judged := T.judgeMonitorObjective(ctx, until, observed, fire)
 	reason := objectiveReason(v, judged)
 	cur, ok := GetEventMonitor(RootDB, m.Owner, m.Name)

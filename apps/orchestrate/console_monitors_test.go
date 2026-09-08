@@ -59,20 +59,20 @@ func TestTheRowMarkSaysWHYNotJustTHAT(t *testing.T) {
 // StopReason existed carry an empty one, and must not render as a blank or a
 // wrong state.
 func TestALegacyPausedMonitorStillReadsSensibly(t *testing.T) {
-	if got := MonitorStopCause(EventMonitor{Paused: true}); got != MonitorStopOwner {
+	if got := (EventMonitor{Paused: true}).StopCause(); got != MonitorStopOwner {
 		t.Errorf("a legacy paused monitor reads as %q, want owner-paused — the only thing that could pause one back then", got)
 	}
-	if got := MonitorStopCause(EventMonitor{Paused: true, Broken: true}); got != MonitorStopBroken {
+	if got := (EventMonitor{Paused: true, Broken: true}).StopCause(); got != MonitorStopBroken {
 		t.Errorf("a legacy broken monitor reads as %q", got)
 	}
 	// Spent is derivable, so a legacy capped monitor reads as finished rather
 	// than as something the owner did.
 	spent := EventMonitor{Paused: true, MaxFires: 2, FireCount: 2}
-	if got := MonitorStopCause(spent); got != MonitorStopFinished {
+	if got := spent.StopCause(); got != MonitorStopFinished {
 		t.Errorf("a legacy spent monitor reads as %q, want finished", got)
 	}
 	// And a running one is not at rest at all.
-	if got := MonitorStopCause(EventMonitor{}); got != "" {
+	if got := (EventMonitor{}).StopCause(); got != "" {
 		t.Errorf("a running monitor has a stop cause %q", got)
 	}
 }
@@ -113,5 +113,76 @@ func TestAChannelIsMarkedOnlyByWhatDeliversIntoIt(t *testing.T) {
 	running := EventMonitor{Name: "fine", WakeChannel: "ch1"}
 	if st := channelRowState(ch, []EventMonitor{running}); st != nil {
 		t.Errorf("a healthy channel was marked: %v", st)
+	}
+}
+
+// TestAMetObjectiveDoesNotReadAsAPause. The runner used to stop a schedule
+// that reached its goal by setting Paused and nothing else, so the one outcome
+// an objective exists to produce rendered exactly like a schedule somebody
+// paused by hand. The reason lived in the run ledger and the log — neither of
+// which is where you look when scanning a list of schedules.
+func TestAMetObjectiveDoesNotReadAsAPause(t *testing.T) {
+	met := StandingAgent{Name: "blog", Paused: true, StopCause: StoppedByMet, StopNote: "the post is live and linked"}
+	lbl := scheduleStopLabel(StandingStopCause(met), StandingStopNote(met))
+	if !strings.Contains(lbl, "done") {
+		t.Errorf("a met objective reads as %q", lbl)
+	}
+	if !strings.Contains(lbl, "the post is live") {
+		t.Errorf("the checker's reason is not shown: %q", lbl)
+	}
+	if lbl == "paused" {
+		t.Error("a met objective is still indistinguishable from a manual pause")
+	}
+
+	// A person's pause still reads as exactly that, and says nothing more.
+	if got := scheduleStopLabel(StandingStopCause(StandingAgent{Paused: true, StopCause: StoppedByOwner}), ""); got != "paused" {
+		t.Errorf("an owner pause reads as %q", got)
+	}
+	// A schedule written before the cause existed reads as an owner pause,
+	// which is what a paused schedule used to mean.
+	if got := StandingStopCause(StandingAgent{Paused: true}); got != StoppedByOwner {
+		t.Errorf("a legacy paused schedule reads as %q", got)
+	}
+	// And a running one is not stopped at all.
+	if got := scheduleStopLabel(StandingStopCause(StandingAgent{}), ""); got != "" {
+		t.Errorf("a running schedule shows the state %q", got)
+	}
+}
+
+// TestOnlyTheStopsThatNeedAPersonAreAmber is what makes the rail's attention
+// count mean anything: it counts warn-toned marks, so every state that tones
+// warn is a claim on someone's time.
+func TestOnlyTheStopsThatNeedAPersonAreAmber(t *testing.T) {
+	cases := []struct {
+		cause    string
+		wantIcon string
+		wantTone string
+	}{
+		{StoppedByMet, "check", "muted"},
+		{StoppedByOwner, "pause", "muted"},
+		{ParkedByObjective, "alert", "warn"},
+		{ParkedByDependency, "alert", "warn"},
+	}
+	for _, c := range cases {
+		st := scheduleRowState("nightly", c.cause, "because")
+		if st == nil {
+			t.Fatalf("%s produced no mark", c.cause)
+		}
+		if st["icon"] != c.wantIcon || st["tone"] != c.wantTone {
+			t.Errorf("%s → %v/%v, want %s/%s", c.cause, st["icon"], st["tone"], c.wantIcon, c.wantTone)
+		}
+		title, _ := st["title"].(string)
+		if !strings.HasPrefix(title, "nightly — ") {
+			t.Errorf("%s: the tooltip does not name the schedule: %q", c.cause, title)
+		}
+		// The glyph symbols belong in the glyph, not in the hover text.
+		if strings.ContainsAny(title, "⚠✓") {
+			t.Errorf("%s: the tooltip repeats the mark: %q", c.cause, title)
+		}
+	}
+	// A running schedule gets no mark, so it cannot be counted as needing
+	// anything.
+	if st := scheduleRowState("nightly", "", ""); st != nil {
+		t.Errorf("a running schedule was marked: %v", st)
 	}
 }

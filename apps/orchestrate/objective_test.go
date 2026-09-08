@@ -696,10 +696,10 @@ func TestAMonitorWhoseChecksFailIsNotAnUnlinkEither(t *testing.T) {
 
 	MarkEventMonitorFailing(db, "craig", "dead", "http_poll checks are failing: no such host")
 	m, _ := GetEventMonitor(db, "craig", "dead")
-	if MonitorStopCause(m) != MonitorStopFailing {
-		t.Fatalf("the failure park recorded %q", MonitorStopCause(m))
+	if m.StopCause() != MonitorStopFailing {
+		t.Fatalf("the failure park recorded %q", m.StopCause())
 	}
-	if lbl := MonitorStopLabel(m); strings.Contains(lbl, "relink") {
+	if lbl := m.StopLabel(); strings.Contains(lbl, "relink") {
 		t.Errorf("a failing check asks for a relink: %q", lbl)
 	} else if !strings.Contains(lbl, "needs attention") || !strings.Contains(lbl, "no such host") {
 		t.Errorf("the label does not say what to go and fix: %q", lbl)
@@ -709,7 +709,7 @@ func TestAMonitorWhoseChecksFailIsNotAnUnlinkEither(t *testing.T) {
 	// that IS the repair.
 	MarkEventMonitorBroken(db, "craig", "dead", "wakes deleted agent \"X\"")
 	m, _ = GetEventMonitor(db, "craig", "dead")
-	if lbl := MonitorStopLabel(m); !strings.Contains(lbl, "needs relink") {
+	if lbl := m.StopLabel(); !strings.Contains(lbl, "needs relink") {
 		t.Errorf("a missing wake agent lost its repair: %q", lbl)
 	}
 }
