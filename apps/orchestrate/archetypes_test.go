@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -164,5 +165,89 @@ func TestEveryRecipeSaysWhatBelongsInRules(t *testing.T) {
 		if !strings.Contains(a.Body, "persona") || !strings.Contains(a.Body, "\"") {
 			t.Errorf("%s: needs a concrete rule to copy", a.Slug)
 		}
+	}
+}
+
+// TestResearchTemplateAndArchetypeAgree. A new user can reach a research agent
+// two ways — the wizard's "Start from a template" row clones the seed-research
+// RECORD, and asking Builder for one has it follow the research ARCHETYPE. Two
+// separately-maintained descriptions of the same agent, and they had already
+// drifted on the load-bearing one: the archetype argues that the citation
+// contract belongs in `rules` because rules outrank memory and the persona and
+// this is exactly the constraint a persona loses when a plausible answer is
+// already in the model's head — and the seed carried no rules at all. So the
+// three-click path produced the agent the archetype warns about.
+//
+// This reads the archetype doc rather than restating it: whichever artifact
+// changes, the other has to keep up.
+func TestResearchTemplateAndArchetypeAgree(t *testing.T) {
+	// Every wizard template has an archetype describing the same agent. Both
+	// pairs had the same omission, so both are checked.
+	for _, pair := range []struct{ seedID, slug string }{
+		{"seed-research", "research"},
+		{"seed-kb", "knowledge_base"},
+	} {
+		t.Run(pair.slug, func(t *testing.T) { checkTemplateAgainstArchetype(t, pair.seedID, pair.slug) })
+	}
+}
+
+func checkTemplateAgainstArchetype(t *testing.T, seedID, slug string) {
+	t.Helper()
+	doc, ok := archetypeBySlug(slug)
+	if !ok {
+		t.Fatalf("the %s archetype is gone — the wizard template now has no counterpart", slug)
+	}
+	var seed AgentRecord
+	for _, a := range seedAgents() {
+		if a.ID == seedID {
+			seed = a
+		}
+	}
+	if seed.ID == "" {
+		t.Fatalf("%s is gone, but the wizard still offers it as a template", seedID)
+	}
+
+	// The tool set is stated in the doc as an inline-code list on the
+	// allowed_tools bullet; the seed must allow exactly those.
+	line := ""
+	for _, l := range strings.Split(doc.Body, "\n") {
+		if strings.Contains(l, "**allowed_tools**") {
+			line = l
+		}
+	}
+	// Only an archetype that names its tools inline can be compared on them;
+	// the knowledge-base doc describes its allowlist in prose instead.
+	want := regexp.MustCompile("`([a-z_]+)`").FindAllStringSubmatch(line, -1)
+	if len(want) == 0 {
+		want = nil
+	}
+	named := map[string]bool{}
+	for _, m := range want {
+		named[m[1]] = true
+	}
+	allowed := map[string]bool{}
+	for _, tool := range seed.AllowedTools {
+		allowed[tool] = true
+	}
+	for tool := range named {
+		if !allowed[tool] {
+			t.Errorf("the archetype builds with %q and the template does not allow it", tool)
+		}
+	}
+	if len(named) > 0 {
+		for tool := range allowed {
+			if !named[tool] {
+				t.Errorf("the template allows %q and the archetype does not name it — an agent's reach should not depend on which path you took", tool)
+			}
+		}
+	}
+
+	// And the rule the archetype exists to hold.
+	if strings.Contains(doc.Body, "`rules`") && strings.TrimSpace(seed.Rules) == "" {
+		t.Error("the archetype puts the citation contract in rules; the cloned template carries none, " +
+			"so the wizard path produces the agent the archetype warns about")
+	}
+	if !strings.Contains(strings.ToLower(seed.Rules), "training") {
+		t.Error("the template's rules no longer refuse to fill a gap from training — the one thing both archetypes put in rules")
 	}
 }

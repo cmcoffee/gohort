@@ -454,6 +454,17 @@ Multi-step clarifications (several distinct decisions to make) → use ask_user_
 				"browse_page",
 				"screenshot_page",
 			},
+			// The citation contract lives in Rules, not in the persona.
+			// Rules render above memory and above the persona and win
+			// every conflict, and this is precisely the constraint a long
+			// persona loses on the turn a plausible answer is already in
+			// the model's head. The research ARCHETYPE says exactly this
+			// and the seed did not carry it, so a user who cloned the
+			// wizard template got the persona without the one rule the
+			// archetype exists to hold; pinned now by
+			// TestResearchTemplateAndArchetypeAgree.
+			Rules: "Never state a fact from training as if it were sourced — search it, or say plainly that you could not verify it.\n" +
+				"Every factual claim in an answer carries an inline citation tied to the specific source URL you actually read.",
 			PlanGuidance:    "Decompose research questions into 3-5 narrow subquestions that, taken together, answer the whole thing. Each subquestion should have a definite, source-citable answer. Avoid overlap between subquestions.",
 			MaxPlanSteps:    6,
 			MaxWorkerRounds: 16,
@@ -554,6 +565,13 @@ When the user uploads a document (via paperclip or intake), the framework extrac
 			// decomposition; MaxPlanSteps stays low to discourage over-
 			// planning. Worker rounds match: a few rounds is enough to
 			// search → read → answer.
+			// The no-outside-knowledge contract lives in Rules, which its own
+			// archetype calls the clearest case in the library for it: the tight
+			// allowlist is the real guarantee, and the rule is what governs the
+			// WORDS on the turn something else is pulling the other way. The
+			// same omission the research template had.
+			Rules: "Answer only from the attached corpus. When it does not cover the question, say so plainly rather than filling the gap from training.\n" +
+				"Every factual claim traces to a knowledge_search hit returned this turn.",
 			MaxPlanSteps:    3,
 			MaxWorkerRounds: 6,
 			// The full anti-contamination stack:
