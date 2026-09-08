@@ -450,6 +450,17 @@ func DeleteEventMonitor(db Database, owner, name string) {
 // owner can relink or delete it deliberately instead of losing it silently.
 // Idempotent; returns false if the monitor is missing.
 func MarkEventMonitorBroken(db Database, owner, name, reason string) bool {
+	return parkEventMonitor(db, owner, name, MonitorStopBroken, reason)
+}
+
+// MarkEventMonitorFailing parks a monitor whose CHECKS keep failing while
+// everything it depends on is still there. Same stop, different repair: the
+// endpoint or the tool is what needs fixing, and no relink would touch it.
+func MarkEventMonitorFailing(db Database, owner, name, reason string) bool {
+	return parkEventMonitor(db, owner, name, MonitorStopFailing, reason)
+}
+
+func parkEventMonitor(db Database, owner, name, cause, reason string) bool {
 	m, ok := GetEventMonitor(db, owner, name)
 	if !ok {
 		return false
@@ -461,7 +472,7 @@ func MarkEventMonitorBroken(db Database, owner, name, reason string) bool {
 	m.Broken = true
 	m.BrokenReason = reason
 	m.Paused = true // stops firing against the missing dependency
-	m.StopReason = MonitorStopBroken
+	m.StopReason = cause
 	m.NextCheck = time.Time{}
 	SaveEventMonitor(db, m)
 	return true
@@ -587,7 +598,8 @@ const (
 	MonitorStopFinished = "finished" // it spent the fire allowance it was created with
 	MonitorStopMet      = "met"      // the condition it was watching for came true
 	MonitorStopIdle     = "idle"     // it went long enough with nothing to report that it stopped watching
-	MonitorStopBroken   = "broken"   // it cannot run: its checks keep failing, or a dependency is gone
+	MonitorStopBroken   = "broken"   // a dependency it needs is gone — relink it
+	MonitorStopFailing  = "failing"  // it can still reach everything it needs; the checks themselves keep failing
 )
 
 // MonitorStopCause is why a monitor is at rest, or empty while it is running.
@@ -625,6 +637,14 @@ func MonitorStopLabel(m EventMonitor) string {
 	case MonitorStopIdle:
 		return "stopped — nothing to report for long enough that it stopped watching"
 	case MonitorStopBroken:
+		// A missing dependency is the one case a relink actually fixes.
+		if r := strings.TrimSpace(m.BrokenReason); r != "" {
+			return "needs relink — " + r
+		}
+		return "needs relink"
+	case MonitorStopFailing:
+		// Nothing is unlinked: the target is failing. Pointing this monitor at
+		// a different agent would not touch the hostname that will not resolve.
 		if r := strings.TrimSpace(m.BrokenReason); r != "" {
 			return "needs attention — " + r
 		}
@@ -1170,7 +1190,7 @@ func notePollFailure(db Database, m EventMonitor, reason string) bool {
 		SaveEventMonitor(db, cur)
 		return false
 	}
-	MarkEventMonitorBroken(db, m.Owner, m.Name, cur.Kind+" checks are failing: "+reason)
+	MarkEventMonitorFailing(db, m.Owner, m.Name, cur.Kind+" checks are failing: "+reason)
 	// The row is the half the owner can actually see. Written once, when the
 	// monitor stops trying — a row per failed check would bury the feed under
 	// the same sentence every interval.

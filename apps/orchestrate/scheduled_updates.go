@@ -109,14 +109,18 @@ type orchUpdatePayload struct {
 	// in whichever thread it surfaces to.
 	Surface string `json:"surface,omitempty"`
 
-	// Broken parks a recurring task whose target agent was deleted. Unlike a
+	// Broken parks a recurring task that has stopped and is being KEPT. Unlike a
 	// monitor/standing agent (which have a stored record), a recurring task lives
 	// ONLY as its scheduler entry — so "keep it, don't drop it" means re-arming a
 	// dormant no-op tick with this flag set (parkRecurringBroken) instead of the
-	// old silent stop. The fire handler skips running a broken task; the console
-	// shows a "needs relink" row. BrokenReason records why.
+	// old silent stop. The fire handler skips running a broken task.
+	// BrokenReason records why in words; BrokenCause records which KIND of stop
+	// it was (one of the ParkedBy* values), because a missing dependency wants a
+	// relink and an unmet objective wants more attempts. Empty on tasks parked
+	// before the split, which read as ParkedByDependency.
 	Broken       bool   `json:"broken,omitempty"`
 	BrokenReason string `json:"broken_reason,omitempty"`
+	BrokenCause  string `json:"broken_cause,omitempty"`
 	// LastActive (RFC3339) is renewed on a productive fire (one that called
 	// tools) and on create / edit-in-place. The idle guard reaps a task whose
 	// LastActive — or CreatedAt, for legacy tasks that predate this field — is
@@ -863,7 +867,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 			// carrying its reason and its history, not firing. A met objective
 			// is genuinely finished and retires like any capped task.
 			if objStalled {
-				parkRecurringBroken(armed, fmt.Sprintf("objective not met after %d attempt(s) — %s", attempt, objectiveReason(verdict, judged)))
+				parkRecurringStalled(armed, fmt.Sprintf("objective not met after %d attempt(s) — %s", attempt, objectiveReason(verdict, judged)))
 			}
 		}
 		kind := "objective-not-met"
@@ -1126,7 +1130,19 @@ func recordScheduledDrop(p orchUpdatePayload, status RunStatus, summary string) 
 }
 
 func parkRecurringBroken(p orchUpdatePayload, reason string) {
+	parkRecurring(p, ParkedByDependency, reason)
+}
+
+// parkRecurringStalled parks a task whose OBJECTIVE went unmet for every
+// attempt it had. Nothing is missing here, so the recovery is more attempts
+// (Resume, which moves AttemptsBase) or leaving it stopped — never a relink.
+func parkRecurringStalled(p orchUpdatePayload, reason string) {
+	parkRecurring(p, ParkedByObjective, reason)
+}
+
+func parkRecurring(p orchUpdatePayload, cause, reason string) {
 	p.Broken = true
+	p.BrokenCause = cause
 	if reason != "" {
 		p.BrokenReason = reason
 	}

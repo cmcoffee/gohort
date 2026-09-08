@@ -311,7 +311,12 @@ type consoleAgentRow struct {
 	NextRun  string `json:"next_run"`
 	ID       string `json:"_id"`               // hidden; row-action target (the agent name)
 	Paused   bool   `json:"_paused"`           // hidden; gates Pause vs Resume per row
-	Broken   bool   `json:"_broken,omitempty"` // hidden; broken (target agent gone) → needs relink
+	Broken   bool   `json:"_broken,omitempty"` // hidden; parked and kept — see State for which kind
+	// Relinkable gates the Relink row action: true only when something the
+	// schedule needs is GONE. An objective that stalled needs attempts, not a
+	// new target, and offering it a picker of live agents describes a problem
+	// it does not have.
+	Relinkable bool `json:"_relinkable,omitempty"`
 }
 
 // handleConsoleAgents lists the owner's standing (scheduled) agents, each
@@ -339,7 +344,10 @@ func (T *OrchestrateApp) handleConsoleAgents(w http.ResponseWriter, r *http.Requ
 		row := consoleAgentRow{Name: sa.Name, Mission: sa.Mission, State: state, Schedule: StandingScheduleLabel(sa), ID: sa.Name, Paused: sa.Paused}
 		if sa.Broken {
 			row.Broken = true
-			row.State = brokenStateLabel(sa.BrokenReason)
+			row.State = parkedStateLabel(StandingParkCause(sa), sa.BrokenReason)
+			// Relink is offered only where relinking is the repair. A stalled
+			// objective keeps Resume, which gives it a fresh allowance.
+			row.Relinkable = StandingParkCause(sa) == ParkedByDependency
 		}
 		if !sa.NextRun.IsZero() {
 			row.NextRun = sa.NextRun.UTC().Format(time.RFC3339)

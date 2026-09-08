@@ -169,10 +169,23 @@ func credentialDeleted(cred string) {
 // when its record is broken. Shared by the monitor / standing / recurring list
 // handlers so all three read identically.
 func brokenStateLabel(reason string) string {
-	if strings.TrimSpace(reason) == "" {
-		return "⚠ needs relink"
+	return parkedStateLabel(ParkedByDependency, reason)
+}
+
+// parkedStateLabel is the visible state for a parked schedule, and it changes
+// with WHY it parked. A missing dependency is the only one a relink fixes; a
+// stalled objective is a schedule that did its job and did not get there, and
+// telling its owner to "relink" sends them to re-point a target that was never
+// the problem. The word carries the recovery, so it has to be the right word.
+func parkedStateLabel(cause, reason string) string {
+	head := "⚠ needs relink"
+	if cause == ParkedByObjective {
+		head = "⚠ stalled"
 	}
-	return "⚠ needs relink — " + reason
+	if strings.TrimSpace(reason) == "" {
+		return head
+	}
+	return head + " — " + reason
 }
 
 // wireDependencyGuards installs the fire-path resolvers + the credential-delete

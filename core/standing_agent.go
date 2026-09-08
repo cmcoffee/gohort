@@ -75,12 +75,20 @@ type StandingAgent struct {
 	StartAt         time.Time `json:"start_at,omitempty"`
 	IntervalSeconds int       `json:"interval_seconds,omitempty"`
 	Paused          bool      `json:"paused"`
-	// Broken marks a standing agent whose target agent was deleted (or another
-	// dependency removed). Auto-paused and unscheduled but KEPT — not silently
-	// deleted — so the owner can relink it to a live agent or remove it. Distinct
-	// from a user Pause; BrokenReason records why.
+	// Broken marks a standing agent that has stopped and is being KEPT rather
+	// than silently deleted — auto-paused and unscheduled, distinct from a user
+	// Pause. BrokenReason records why in words.
+	//
+	// BrokenCause records which KIND of stop it was, because the two that land
+	// here want opposite recoveries: a missing dependency wants a relink, and
+	// an objective that went unmet wants more attempts. One bool could only
+	// offer the first, so a schedule whose goal was not reached told the owner
+	// to re-point it at a live agent that was never the problem. One of the
+	// ParkedBy* causes; empty on records written before the split, which read
+	// as ParkedByDependency (the only thing that used to park one).
 	Broken       bool      `json:"broken,omitempty"`
 	BrokenReason string    `json:"broken_reason,omitempty"`
+	BrokenCause  string    `json:"broken_cause,omitempty"`
 	Created      time.Time `json:"created"`
 	NextRun      time.Time `json:"next_run,omitempty"`     // display: next scheduled fire
 	SchedulerID  string    `json:"scheduler_id,omitempty"` // current recurring task id (for cancel-and-replace)
@@ -246,11 +254,35 @@ func DeleteStandingAgent(db Database, owner, name string) {
 	db.Unset(standingAgentsTable, standingKey(owner, name))
 }
 
+// Why a schedule is parked. Two very different situations used to share one
+// Broken bool, so the console could only offer the recovery for one of them: a
+// schedule whose GOAL was not reached showed "needs relink" and a picker
+// asking the owner to re-point it at a live agent, when the agent was never
+// the problem and nothing needed relinking.
+//
+// The recurring payload stores the same two values; see parkRecurringBroken.
+const (
+	ParkedByDependency = "dependency" // something it needs is gone — relink it at a live target
+	ParkedByObjective  = "objective"  // its goal went unmet for every attempt it had — give it more, or let it stand
+)
+
 // MarkStandingAgentBroken flags a standing agent as no longer usable (its target
 // agent was deleted, or another dependency removed), pauses it, and cancels its
 // recurring task — but KEEPS the record so the owner can relink or delete it
 // deliberately. Idempotent; returns false if the standing agent is missing.
 func MarkStandingAgentBroken(db Database, owner, name, reason string) bool {
+	return parkStandingAgent(db, owner, name, ParkedByDependency, reason)
+}
+
+// MarkStandingAgentStalled parks a schedule whose OBJECTIVE went unmet for
+// every attempt it was given. Same stop, different recovery: nothing is
+// missing, so the answer is more attempts (Resume, which zeroes UnmetCount) or
+// leaving it stopped — never a relink.
+func MarkStandingAgentStalled(db Database, owner, name, reason string) bool {
+	return parkStandingAgent(db, owner, name, ParkedByObjective, reason)
+}
+
+func parkStandingAgent(db Database, owner, name, cause, reason string) bool {
 	sa, ok := GetStandingAgent(db, owner, name)
 	if !ok {
 		return false
@@ -261,6 +293,7 @@ func MarkStandingAgentBroken(db Database, owner, name, reason string) bool {
 	}
 	sa.Broken = true
 	sa.BrokenReason = reason
+	sa.BrokenCause = cause
 	sa.Paused = true
 	sa.NextRun = time.Time{}
 	SaveStandingAgent(db, sa)
@@ -278,6 +311,7 @@ func ClearStandingAgentBroken(db Database, owner, name string) bool {
 	}
 	sa.Broken = false
 	sa.BrokenReason = ""
+	sa.BrokenCause = ""
 	// A stalled objective gets a FRESH allowance. Without this the resumed
 	// schedule stalls again on its first fire and hands the owner — who has
 	// just fixed whatever the reason named — the same refusal. The attempt
@@ -286,6 +320,19 @@ func ClearStandingAgentBroken(db Database, owner, name string) bool {
 	// Paused stays true on purpose — resume is an explicit owner action.
 	SaveStandingAgent(db, sa)
 	return true
+}
+
+// StandingParkCause is why a parked schedule is parked, or empty for one that
+// is running. Records written before the split carry no cause and read as a
+// dependency, which is the only thing that used to park one.
+func StandingParkCause(sa StandingAgent) string {
+	if !sa.Broken {
+		return ""
+	}
+	if c := strings.TrimSpace(sa.BrokenCause); c != "" {
+		return c
+	}
+	return ParkedByDependency
 }
 
 // StandingAgentDependencyError, when set by the orchestrate app at startup,

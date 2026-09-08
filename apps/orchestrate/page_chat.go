@@ -307,14 +307,16 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							{Label: "Run now", Method: "POST", URL: "api/console/agents/run", HideIf: "_broken", Confirm: "Run this agent's mission once right now? This is a one-off test and does not change its schedule."},
 							{Label: "Pause", Method: "POST", URL: "api/console/agents/pause", HideIf: "_paused"},
 							{Label: "Resume", Method: "POST", URL: "api/console/agents/resume", OnlyIf: "_paused"},
-							// Relink shows only on a broken row: pick a live agent to
-							// re-point the standing agent at (clears broken, stays
-							// paused → then Resume).
+							// Relink shows only where relinking is the repair — a row
+							// parked because something it needs is GONE. A stalled
+							// objective is parked too, and offering it a picker of
+							// live agents describes a problem it does not have; it
+							// gets Resume (a fresh attempt allowance) instead.
 							// "target" rather than "agent": this column holds
 							// schedules, and a schedule can run a pipeline. The
 							// source answers for the row it is asked about, so
 							// the list is agents or pipelines accordingly.
-							{Label: "Relink", Method: "POST", URL: "api/console/agents/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live target", OnlyIf: "_broken"},
+							{Label: "Relink", Method: "POST", URL: "api/console/agents/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live target", OnlyIf: "_relinkable"},
 							{Label: "Move to…", Method: "POST", URL: "api/console/agents/move", PickerSource: "api/console/surface-options", PickerTitle: "Where the per-run report lands (cortex / session / background)"},
 							{Label: "Delete", Method: "DELETE", URL: "api/console/agents/delete", Variant: "danger", Confirm: "Delete this standing agent and cancel its schedule?"},
 						}},
@@ -334,7 +336,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							{Label: "Test", Method: "POST", URL: "api/console/monitors/run", OnlyIf: "_schedulable", HideIf: "_broken", Confirm: "Run this monitor's check once right now? If its condition matches, it will fire (wake/notify) as it would on a normal poll."},
 							{Label: "Pause", Method: "POST", URL: "api/console/monitors/pause", HideIf: "_paused"},
 							{Label: "Resume", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_paused"},
-							{Label: "Relink", Method: "POST", URL: "api/console/monitors/relink", PickerSource: "api/console/agent-options?with_default=1", PickerTitle: "Relink (Default agent, or pick a specific one)", OnlyIf: "_broken"},
+							{Label: "Relink", Method: "POST", URL: "api/console/monitors/relink", PickerSource: "api/console/agent-options?with_default=1", PickerTitle: "Relink (Default agent, or pick a specific one)", OnlyIf: "_relinkable"},
 							{Label: "Move to…", Method: "POST", URL: "api/console/monitors/move", PickerSource: "api/console/surface-options", PickerTitle: "Move this monitor — its card, badge & wake all follow"},
 							{Label: "Delete", Method: "DELETE", URL: "api/console/monitors/delete", Variant: "danger", Confirm: "Delete this event monitor?"},
 						}},
@@ -349,9 +351,11 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							// gone) or Resume (the cause is fixed — a stalled
 							// objective's usual path) instead.
 							{Label: "Run now", Method: "POST", URL: "api/console/recurring/run", HideIf: "_broken", Confirm: "Run this recurring task's prompt once right now? This is a one-off test — it does not change the schedule or count against the fire cap."},
-							// Relink (broken rows only): pick a live agent — recurring
-							// has no pause, so this resumes the task on its cadence.
-							{Label: "Relink", Method: "POST", URL: "api/console/recurring/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live agent", OnlyIf: "_broken"},
+							// Relink (a task whose agent is GONE): pick a live agent —
+							// recurring has no pause, so this resumes it on its
+							// cadence. A stalled objective is parked without anything
+							// missing, so it gets Resume rather than this.
+							{Label: "Relink", Method: "POST", URL: "api/console/recurring/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live agent", OnlyIf: "_relinkable"},
 							// Resume (parked rows only): the owner believes whatever
 							// parked it is fixed. A stalled objective gets a FRESH
 							// attempt allowance; its history and fire count are kept.

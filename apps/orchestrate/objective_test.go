@@ -592,3 +592,124 @@ func TestTheTwoSchedulingToolsSayWhichJobIsTheirs(t *testing.T) {
 		t.Errorf("stop_after does not distinguish alerts from runs: %s", p.Description)
 	}
 }
+
+// TestAStalledObjectiveIsNotAnUnlink. Two very different stops used to share
+// one Broken bool, so the console could only offer the recovery for one of
+// them: a schedule whose GOAL was not reached rendered "⚠ needs relink" and a
+// picker asking the owner to re-point it at a live agent. Nothing was
+// unlinked; the agent was never the problem.
+func TestAStalledObjectiveIsNotAnUnlink(t *testing.T) {
+	stalled := parkedStateLabel(ParkedByObjective, "objective not met after 3 attempt(s) — the post was never published")
+	if strings.Contains(stalled, "relink") {
+		t.Errorf("a stalled objective still tells the owner to relink: %q", stalled)
+	}
+	if !strings.Contains(stalled, "stalled") {
+		t.Errorf("a stalled objective does not say what happened: %q", stalled)
+	}
+	// The reason still rides along — it is the whole content of the state.
+	if !strings.Contains(stalled, "never published") {
+		t.Errorf("the stall reason was dropped: %q", stalled)
+	}
+
+	// A missing dependency keeps the word that names its repair.
+	gone := parkedStateLabel(ParkedByDependency, "its agent was deleted")
+	if !strings.Contains(gone, "needs relink") {
+		t.Errorf("a missing dependency lost its recovery: %q", gone)
+	}
+	// And the legacy path — brokenStateLabel is what every dependency guard
+	// still calls — must be unchanged.
+	if brokenStateLabel("its agent was deleted") != gone {
+		t.Error("the dependency wording drifted between the two entry points")
+	}
+}
+
+// TestParkCauseFallsBackForRecordsWrittenBeforeTheSplit: a schedule parked by
+// the old code carries no cause, and must read as the only thing that could
+// park one back then — a missing dependency — rather than as a blank.
+func TestParkCauseFallsBackForRecordsWrittenBeforeTheSplit(t *testing.T) {
+	if got := StandingParkCause(StandingAgent{Broken: true}); got != ParkedByDependency {
+		t.Errorf("a legacy parked standing agent reads as %q", got)
+	}
+	if got := StandingParkCause(StandingAgent{Broken: true, BrokenCause: ParkedByObjective}); got != ParkedByObjective {
+		t.Errorf("a stalled standing agent reads as %q", got)
+	}
+	if got := StandingParkCause(StandingAgent{}); got != "" {
+		t.Errorf("a running standing agent has a park cause %q", got)
+	}
+	if got := recurringParkCause(orchUpdatePayload{Broken: true}); got != ParkedByDependency {
+		t.Errorf("a legacy parked recurring task reads as %q", got)
+	}
+	if got := recurringParkCause(orchUpdatePayload{Broken: true, BrokenCause: ParkedByObjective}); got != ParkedByObjective {
+		t.Errorf("a stalled recurring task reads as %q", got)
+	}
+}
+
+// TestTheStallParkRecordsItsCause drives the real park helpers, so the wiring
+// between "the objective stalled" and what the row shows is covered rather
+// than assumed.
+func TestTheStallParkRecordsItsCause(t *testing.T) {
+	db := pinRootDB(t)
+	SaveStandingAgent(db, StandingAgent{Name: "nightly", Owner: "craig", AgentID: "a1", Until: "the post is live"})
+
+	if !MarkStandingAgentStalled(db, "craig", "nightly", "objective not met after 2 attempt(s) — nothing was published") {
+		t.Fatal("the stall park did not find the schedule")
+	}
+	sa, _ := GetStandingAgent(db, "craig", "nightly")
+	if !sa.Broken || !sa.Paused {
+		t.Error("a stalled schedule must stop and be kept")
+	}
+	if StandingParkCause(sa) != ParkedByObjective {
+		t.Errorf("the stall was recorded as %q", StandingParkCause(sa))
+	}
+	if sa.AgentID != "a1" {
+		t.Errorf("the target was changed by a stall: %q", sa.AgentID)
+	}
+	if strings.Contains(parkedStateLabel(StandingParkCause(sa), sa.BrokenReason), "relink") {
+		t.Error("the row still asks for a relink")
+	}
+
+	// Resume clears the cause along with the flag, and hands back a fresh
+	// allowance — the recovery a stall actually wants.
+	if !ClearStandingAgentBroken(db, "craig", "nightly") {
+		t.Fatal("resume did not find the schedule")
+	}
+	sa, _ = GetStandingAgent(db, "craig", "nightly")
+	if sa.Broken || sa.BrokenCause != "" || sa.UnmetCount != 0 {
+		t.Errorf("resume left the stall behind: broken=%v cause=%q unmet=%d", sa.Broken, sa.BrokenCause, sa.UnmetCount)
+	}
+
+	// A dependency park still records the cause that offers a relink.
+	MarkStandingAgentBroken(db, "craig", "nightly", "its agent was deleted")
+	sa, _ = GetStandingAgent(db, "craig", "nightly")
+	if StandingParkCause(sa) != ParkedByDependency {
+		t.Errorf("a dependency park recorded %q", StandingParkCause(sa))
+	}
+}
+
+// TestAMonitorWhoseChecksFailIsNotAnUnlinkEither — the same defect one surface
+// over, and one I introduced: the failure breaker parks through the broken
+// flag, so a hostname that will not resolve was rendering as "needs relink".
+// No choice of agent fixes DNS.
+func TestAMonitorWhoseChecksFailIsNotAnUnlinkEither(t *testing.T) {
+	db := pinRootDB(t)
+	SaveEventMonitor(db, EventMonitor{Name: "dead", Owner: "craig", Kind: EventKindHTTP, WakeAgent: "a1"})
+
+	MarkEventMonitorFailing(db, "craig", "dead", "http_poll checks are failing: no such host")
+	m, _ := GetEventMonitor(db, "craig", "dead")
+	if MonitorStopCause(m) != MonitorStopFailing {
+		t.Fatalf("the failure park recorded %q", MonitorStopCause(m))
+	}
+	if lbl := MonitorStopLabel(m); strings.Contains(lbl, "relink") {
+		t.Errorf("a failing check asks for a relink: %q", lbl)
+	} else if !strings.Contains(lbl, "needs attention") || !strings.Contains(lbl, "no such host") {
+		t.Errorf("the label does not say what to go and fix: %q", lbl)
+	}
+
+	// A monitor whose wake agent is gone keeps the relink wording, because
+	// that IS the repair.
+	MarkEventMonitorBroken(db, "craig", "dead", "wakes deleted agent \"X\"")
+	m, _ = GetEventMonitor(db, "craig", "dead")
+	if lbl := MonitorStopLabel(m); !strings.Contains(lbl, "needs relink") {
+		t.Errorf("a missing wake agent lost its repair: %q", lbl)
+	}
+}

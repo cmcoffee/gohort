@@ -139,6 +139,9 @@ type consoleRecurringRow struct {
 	State   string `json:"state,omitempty"`    // visible only when broken ("⚠ needs relink — …")
 	ID      string `json:"_id"`                // hidden; row-action target (the scheduler task id)
 	Broken  bool   `json:"_broken,omitempty"`  // hidden gate (Delete-only on a broken row)
+	// Relinkable gates the Relink row action: only a schedule whose target is
+	// GONE has anything to relink. A stalled objective gets Resume instead.
+	Relinkable bool `json:"_relinkable,omitempty"`
 }
 
 // handleConsoleRecurring lists the owner's recurring tasks (the `recurring` tool
@@ -177,7 +180,8 @@ func (T *OrchestrateApp) handleConsoleRecurring(w http.ResponseWriter, r *http.R
 		row.State = objectiveStateLabel(rt.Payload.objective())
 		if rt.Payload.Broken {
 			row.Broken = true
-			row.State = brokenStateLabel(rt.Payload.BrokenReason)
+			row.State = parkedStateLabel(recurringParkCause(rt.Payload), rt.Payload.BrokenReason)
+			row.Relinkable = recurringParkCause(rt.Payload) == ParkedByDependency
 			row.NextRun = "" // parked: the dormant re-check isn't a real next run
 		}
 		rows = append(rows, row)

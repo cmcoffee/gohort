@@ -183,7 +183,7 @@ func registerStandingRunner(app *OrchestrateApp) {
 			switch {
 			case stalled:
 				SaveStandingAgent(RootDB, cur)
-				MarkStandingAgentBroken(RootDB, sa.Owner, sa.Name,
+				MarkStandingAgentStalled(RootDB, sa.Owner, sa.Name,
 					fmt.Sprintf("objective not met after %d attempt(s) — %s", attempt, reason))
 				Log("[orchestrate/objective] standing %s/%s stalled after attempt %d: %s", sa.Owner, sa.Name, attempt, reason)
 			case stop:

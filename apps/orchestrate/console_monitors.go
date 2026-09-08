@@ -160,7 +160,11 @@ type consoleMonitorRow struct {
 	// Schedulable gates the "Test" row action: only poll / http_poll / watch
 	// monitors have a check to run on demand — a webhook is push-only.
 	Schedulable bool `json:"_schedulable"`
-	Broken      bool `json:"_broken,omitempty"` // hidden; dependency gone → needs relink
+	Broken      bool `json:"_broken,omitempty"` // hidden; parked and kept — see State for which kind
+	// Relinkable gates Relink: a monitor whose dependency is GONE can be
+	// re-pointed. One whose checks keep failing cannot be repaired that way —
+	// no choice of agent fixes a hostname that does not resolve.
+	Relinkable bool `json:"_relinkable,omitempty"`
 }
 
 // handleConsoleMonitors lists the owner's event monitors (webhook / poll /
@@ -201,7 +205,10 @@ func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Re
 			}
 		}
 		if m.Broken {
-			state = brokenStateLabel(m.BrokenReason)
+			// "needs relink" only when something is actually gone. Checks that
+			// keep failing are a target to fix, not a link to re-point — the
+			// label says so, and Relink is withheld below.
+			state = "⚠ " + MonitorStopLabel(m)
 		}
 		detail := ""
 		switch m.Kind {
@@ -289,7 +296,8 @@ func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Re
 		// Full script — the UI table renders long/multi-line cells with a
 		// click-to-expand toggle, so send it whole rather than truncating here.
 		script := strings.TrimSpace(m.FormatScript)
-		rows = append(rows, consoleMonitorRow{Name: m.Name, Kind: m.Kind, State: state, Detail: detail, Script: script, Checked: checked, Seen: seen, Last: last, ID: m.Name, Paused: m.Paused, Schedulable: IsScheduledEventKind(m.Kind), Broken: m.Broken})
+		rows = append(rows, consoleMonitorRow{Name: m.Name, Kind: m.Kind, State: state, Detail: detail, Script: script, Checked: checked, Seen: seen, Last: last, ID: m.Name, Paused: m.Paused, Schedulable: IsScheduledEventKind(m.Kind), Broken: m.Broken,
+			Relinkable: MonitorStopCause(m) == MonitorStopBroken})
 	}
 	writeJSON(w, rows)
 }
