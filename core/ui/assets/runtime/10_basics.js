@@ -303,12 +303,25 @@
         input.checked = !!rec[act.field];
         input.addEventListener('change', function() {
           var url = substitute(act.post_to, rec);
+          var was = rec[act.field];
           var body = {}; body[act.field] = input.checked;
+          // Show the new state AT ONCE. Every other cell bound to this field —
+          // a status badge, a muted class, an only_if action — is rendered
+          // from the record, so updating the record without re-rendering left
+          // the switch in its new position beside a row still saying the old
+          // thing, until something else happened to reload the table.
+          rec[act.field] = input.checked;
+          renderRows();
           fetchJSON(url, {
             method: act.method || 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(body)
-          }).catch(function(err){ showToast('Save failed: ' + err.message); input.checked = !input.checked; });
-          rec[act.field] = input.checked;
+          }).catch(function(err){
+            // The server refused (it may have its own rules about what can be
+            // switched), so the row must stop claiming otherwise.
+            showToast('Save failed: ' + err.message);
+            rec[act.field] = was;
+            renderRows();
+          });
         });
         // Optional label rendered to the LEFT of the switch so the
         // operator knows what the toggle controls. Used in tables
