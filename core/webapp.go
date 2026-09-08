@@ -305,51 +305,34 @@ func HubNav(activePath string) []ui.NavLink {
 		order       int
 	}
 	var tabs []tab
-	// Enumerate every web-capable component the same way the dashboard does —
-	// explicit WebApps PLUS registered Apps/Agents that implement WebApp (most
-	// apps, incl. Agency/Bridges/Knowledge, register via RegisterApp, not
-	// RegisterWebApp) — deduped by path. Collect the ones opting into the hub.
-	// Timed per SOURCE. Everything in this function reads as free — three slice
-	// walks, a map check, a constant-returning interface method — and it was
-	// measured at 1.97 SECONDS on a live page. Something behind one of these
-	// interface calls is not what it appears to be, and the only honest way to
-	// find out which is to time them separately rather than reason about the
-	// bodies again.
+	// One enumeration for the whole deployment: AllWebApps is what the
+	// dashboard and the admin switchboard read too, so the tab row cannot
+	// disagree with them about what runs here. It used to be a third inline
+	// copy of that union — and a second copy is precisely how the switchboard
+	// came to list nothing at all.
+	//
+	// Timed as a whole. It reads as free (a few slice walks and constant
+	// interface methods) and was once measured at 1.97 SECONDS on a live page,
+	// so the log stays: it costs nothing when the function behaves and is the
+	// only warning if something behind one of those interface methods is not
+	// what it appears to be.
 	navStart := time.Now()
-	var webAppsAt, appsAt, agentsAt time.Duration
-
-	seen := make(map[string]bool)
-	consider := func(wa WebApp) {
-		if seen[wa.WebPath()] {
-			return
+	apps := AllWebApps()
+	for _, wa := range apps {
+		// A switched-off app keeps no tab. The same rule the dashboard card
+		// follows, for the same reason it gives: every link on this row would
+		// land on the 503 the availability gate answers with, and a tab that
+		// leads nowhere is worse than an absent one.
+		if !AppEnabledHere(wa.WebPath()) {
+			continue
 		}
-		seen[wa.WebPath()] = true
 		if ht, ok := wa.(WebAppHubTab); ok {
 			label, order := ht.HubTab()
 			tabs = append(tabs, tab{label: label, path: wa.WebPath(), order: order})
 		}
 	}
-	for _, wa := range RegisteredWebApps() {
-		consider(wa)
-	}
-	webAppsAt = time.Since(navStart)
-	for _, a := range RegisteredApps() {
-		if wa, ok := a.(WebApp); ok {
-			consider(wa)
-		}
-	}
-	appsAt = time.Since(navStart)
-	for _, a := range RegisteredAgents() {
-		if wa, ok := a.(WebApp); ok {
-			consider(wa)
-		}
-	}
-	agentsAt = time.Since(navStart)
-	if agentsAt > 250*time.Millisecond {
-		Log("[hubnav] slow: %s total — webapps %s, apps %s, agents %s (counts %d/%d/%d)",
-			agentsAt.Round(time.Millisecond), webAppsAt.Round(time.Millisecond),
-			(appsAt - webAppsAt).Round(time.Millisecond), (agentsAt - appsAt).Round(time.Millisecond),
-			len(RegisteredWebApps()), len(RegisteredApps()), len(RegisteredAgents()))
+	if took := time.Since(navStart); took > 250*time.Millisecond {
+		Log("[hubnav] slow: %s to build the tab row from %d app(s)", took.Round(time.Millisecond), len(apps))
 	}
 	sort.SliceStable(tabs, func(i, j int) bool { return tabs[i].order < tabs[j].order })
 	out := make([]ui.NavLink, 0, len(tabs))
