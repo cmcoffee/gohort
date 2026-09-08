@@ -221,13 +221,15 @@ Built and maintained by one person, in the open, at the pace of something used d
 
 The toolkit composes today around **agents + skills + collections + pipelines + machines**, and the through-line is that every new app either uses an existing primitive or proves a new one should exist — so the next app is faster to build than the last. Machines are the most recent instance of that rule: they exist because a *conversation* needed a shape a start-to-finish pipeline could not hold.
 
+Two things that used to sit on this list have since shipped, and are worth knowing about because they are unusual:
+
+- **A panel is a multi-agent turn.** A `panel` stage puts several voices on the same question, in parallel, for as many rounds as you ask for — and each round reads the last. One round is a poll; two is the smallest thing that can honestly be called a debate, because until the second round nobody has replied to anybody. The roster is declarative, so a debate-shaped workflow is a list of names rather than one stage per participant.
+- **A pipeline is a callable target.** It did not land as an agent's body, which is what this list used to predict. It landed better: a pipeline is dispatchable as a peer (with its own per-turn dispatch ACL), schedulable on its own, and shareable — a workflow that is an *actor*, callable and with a result, without pretending to be a persona. Machines remain the other half: a machine gives an agent's **conversation** a shape, parks between turns, and returns nothing to a caller.
+
 On deck:
 - **Artifact marketplace** — every artifact type already exports as a portable, identity-free bundle; next is a remote catalog with signing and provenance, so a pipeline or agent recipe can travel between deployments the way a package does.
 - **Scoping parity across primitives** — collections and tools have per-user *and* shared tiers; skills are catching up, so "governed" means the same story everywhere.
-- **A multi-agent turn** — N agents seeing the same context, each contributing per round, with a synthesizer composing the result. Pipelines can express this today only by naming each participant as its own stage; making the roster declarative is what a debate-shaped app actually wants.
-- **Pipelines as agents** — a pipeline is now expressive enough to describe a real multi-round workflow (typed fields between stages, breadth, depth, branching, direct tool calls), but it still has no identity of its own. Next is letting an agent's *body* be a pipeline, so a composed workflow gets a name, an ACL, dispatch, and a schedule for free instead of a second copy of that plumbing.
-
-  *Didn't machines do that?* Nearly, and the difference is worth stating because the two look alike. A machine gives an agent's **conversation** a shape: its unit is the turn, it parks between them, and it never returns a value to a caller. A pipeline-as-agent wants the opposite — a workflow that is an **actor**: callable, dispatchable, schedulable, with a result. Machines proved the pattern (an agent's body can be a declared workflow, authored once and reused) and did *not* absorb the item. The clearest evidence is a known gap in machines themselves: a **dispatched** turn — a schedule firing, a delegation, a sub-agent call — runs *without* the machine, because those paths have no session to hold a position in. Dispatch and schedule are exactly the plumbing this item wants for free, and a machine does not get them.
+- **The dispatched-turn gap in machines** — a schedule firing, a delegation or a sub-agent call runs *without* the machine, because those paths have no session to hold a position in. That is the one place where the two halves above do not meet.
 
 ## Learn more
 
