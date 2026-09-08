@@ -114,7 +114,13 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 
 	// Apps tab: the enable/disable switchboard and the per-app summary rows
 	// (apps_tab.go).
-	sub.HandleFunc("/api/apps", a.handleApps)
+	//
+	// NOT /api/apps: that path is the permission picker's options source
+	// (registerSystemRoutes → handleListApps), which answers with a different
+	// population — it includes the dynamic per-agent surfaces a grant can name
+	// and the switchboard cannot toggle. Both on one path is a duplicate
+	// registration, which ServeMux answers with a panic at startup.
+	sub.HandleFunc("/api/app-switches", a.handleApps)
 	sub.HandleFunc("/api/app-summary", a.handleAppSummary)
 
 	// The rest of the API, one file per area. Each register*Routes lives in

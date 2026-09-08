@@ -111,7 +111,7 @@ func appsAvailabilitySection() ui.Section {
 		Group: AppsTabGroup,
 		Wide:  true,
 		Body: ui.Table{
-			Source: "api/apps",
+			Source: "api/app-switches",
 			RowKey: "path",
 			Columns: []ui.Col{
 				{Field: "name", Label: "App", Flex: 1},
@@ -124,7 +124,7 @@ func appsAvailabilitySection() ui.Section {
 			},
 			RowActions: []ui.RowAction{
 				{Type: "toggle", Field: "enabled", Leading: true,
-					PostTo: "api/apps?path={path}", Method: "POST"},
+					PostTo: "api/app-switches?path={path}", Method: "POST"},
 			},
 			EmptyText: "No apps registered.",
 		},
