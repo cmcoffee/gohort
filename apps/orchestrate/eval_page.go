@@ -298,7 +298,14 @@ func (T *OrchestrateApp) handleEvalSuiteOne(w http.ResponseWriter, r *http.Reque
 		}
 		suite.Name, suite.Desc, suite.Runs, suite.Cases = in.Name, in.Desc, in.Runs, cases
 		if in.Stub != nil {
-			suite.Stub = in.Stub
+			// The wire keeps the boolean the form sends; the RECORD keeps a
+			// string, because gob cannot store a pointer to false (see
+			// EvalSuite.StubMode).
+			suite.StubMode = "on"
+			if !*in.Stub {
+				suite.StubMode = "off"
+			}
+			suite.Stub = nil
 		}
 		suite.Owner = user
 		saved, err := SaveEvalSuite(udb, suite)

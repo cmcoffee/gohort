@@ -1,7 +1,9 @@
 package orchestrate
 
 import (
+	"bytes"
 	"context"
+	"encoding/gob"
 	"errors"
 	"strings"
 	"testing"
@@ -608,5 +610,57 @@ func TestEvalCardDescribesTheState(t *testing.T) {
 	// place people look every day.
 	if strings.Contains(got, "1 suites") {
 		t.Errorf("desc = %q should read singular", got)
+	}
+}
+
+// TestStubbingOffSurvivesASaveAndReload. kvlite stores records with gob, and
+// gob does not encode a pointer to a zero value: a *bool holding false came
+// back as nil, which this type reads as unset, which reads as ON. So turning
+// stubbing OFF saved nothing and the suite silently re-armed it on the next
+// load — the control worked in the page and forgot itself on reload.
+func TestStubbingOffSurvivesASaveAndReload(t *testing.T) {
+	roundTrip := func(s EvalSuite) EvalSuite {
+		t.Helper()
+		var buf bytes.Buffer
+		if err := gob.NewEncoder(&buf).Encode(s); err != nil {
+			t.Fatalf("encode: %v", err)
+		}
+		var out EvalSuite
+		if err := gob.NewDecoder(&buf).Decode(&out); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return out
+	}
+
+	off := roundTrip(EvalSuite{Name: "s", StubMode: "off"})
+	if off.Stubbed() {
+		t.Error("a suite saved with stubbing OFF came back stubbing — its tools would be scripted when the owner asked for real runs")
+	}
+	on := roundTrip(EvalSuite{Name: "s", StubMode: "on"})
+	if !on.Stubbed() {
+		t.Error("a suite saved with stubbing ON came back unstubbed — this is the direction that spends money")
+	}
+	// Unset is the safety default and must stay it: an eval that runs for
+	// real sends the emails and files the tickets.
+	if !roundTrip(EvalSuite{Name: "s"}).Stubbed() {
+		t.Error("an unset suite is not stubbed by default")
+	}
+
+	// The pointer this replaced is still read, so suites written before the
+	// change keep their meaning. Note the asymmetry that WAS the bug: a
+	// legacy record can only carry "on", because false never reached the
+	// disk.
+	no := false
+	legacyOff := EvalSuite{Name: "s", Stub: &no}
+	if legacyOff.Stubbed() {
+		t.Error("a legacy record explicitly set to false is no longer honored")
+	}
+	yes := true
+	if !(EvalSuite{Name: "s", Stub: &yes}).Stubbed() {
+		t.Error("a legacy record set to true is no longer honored")
+	}
+	// And the string wins when both are present — the fold is one-way.
+	if (EvalSuite{StubMode: "off", Stub: &yes}).Stubbed() {
+		t.Error("the legacy field overrode the current one")
 	}
 }

@@ -65,22 +65,50 @@ type EvalSuite struct {
 	// EvalResult has carried Runs/Passes since before this record existed.
 	Runs int `json:"runs,omitempty"`
 
-	// Stub scripts what each tool RETURNS instead of executing it.
+	// StubMode scripts what each tool RETURNS instead of executing it:
+	// "" (unset) or "on" to stub, "off" to run the tools for real.
 	//
-	// A POINTER so "unset" is distinguishable from "off", because the default
-	// is the whole safety story and it has to survive a record written before
-	// anybody thought about it. An eval that runs for real sends the emails,
-	// files the tickets and spends the money — every time anybody clicks Run,
-	// which for a suite is dozens of times a day. Unset reads as ON.
-	Stub *bool `json:"stub,omitempty"`
+	// Three states, because the default is the whole safety story and it has
+	// to survive a record written before anybody thought about it: an eval
+	// that runs for real sends the emails, files the tickets and spends the
+	// money, every time anybody clicks Run. Unset reads as ON.
+	//
+	// A STRING rather than the *bool this was, because kvlite stores records
+	// with gob and gob does not encode a pointer to a zero value: `&false`
+	// came back as nil, which this type reads as unset, which reads as ON. So
+	// turning stubbing off saved nothing and the suite silently re-armed it on
+	// the next load. The same fix, for the same reason, as PipelineStage's
+	// ThinkMode.
+	StubMode string `json:"stub,omitempty"`
+
+	// Stub is the pre-string field, kept ONLY so records written before the
+	// change still decode — gob matches on field NAME, so removing it would
+	// fail the whole record rather than one field. Folded into StubMode by
+	// normalizeEvalStub on load and then cleared; never written.
+	//
+	// Deprecated: read Stubbed() instead.
+	Stub *bool `json:"-"`
 
 	Created time.Time `json:"created,omitempty"`
 	Updated time.Time `json:"updated,omitempty"`
 }
 
 // Stubbed reports whether tool calls are scripted rather than executed.
-// Unset means yes; see EvalSuite.Stub.
-func (s EvalSuite) Stubbed() bool { return s.Stub == nil || *s.Stub }
+// Stubbed reports whether the suite's tools are scripted rather than run.
+// Unset means yes; see EvalSuite.StubMode.
+func (s EvalSuite) Stubbed() bool { return normalizedStub(s) != "off" }
+
+// normalizedStub folds the legacy *bool into the string, so one answer serves
+// records written on either side of the change.
+func normalizedStub(s EvalSuite) string {
+	if m := strings.TrimSpace(strings.ToLower(s.StubMode)); m != "" {
+		return m
+	}
+	if s.Stub != nil && !*s.Stub {
+		return "off"
+	}
+	return "on"
+}
 
 // RunCount is how many times each case runs, floored at one.
 func (s EvalSuite) RunCount() int {
