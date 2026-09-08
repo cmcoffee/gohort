@@ -30,7 +30,7 @@ That shape is not decoration. **Tool selection degrades as the tool surface wide
 make build && ./build/gohort --setup && ./build/gohort serve :8080
 ```
 
-That's the whole install. One static binary, no runtime, no venv — or skip the toolchain entirely and [download one](#download-a-release).
+That's the whole install. One static binary, no runtime, no venv — or skip the toolchain entirely and [download one](#download-a-release). Ten direct dependencies, and source you can read end to end.
 
 ## Give Claude Desktop deputies, not tools
 
@@ -61,7 +61,7 @@ The checkable version of the claim: **a frontier model and a local Qwen run on t
 
 "Credential isolation" is a phrase others use too, so here is the design instead. Keys are registered once and stored encrypted. They are injected **server-side at call time**, never rendered into a prompt. Every outbound call is checked against a base-URL and endpoint allowlist **before** the secret attaches. A universal rule forbids any agent from asking for one in chat. Shell work runs in a bubblewrap sandbox whose only network path is an audited hook, with `urllib` / `requests` / `curl` / `wget` refused at authoring time.
 
-Most projects mean the key stays on your disk. This means **the model demonstrably cannot exfiltrate it**.
+Most projects mean the key stays on your disk. This means **the model demonstrably cannot exfiltrate it**. There has been no external security review of that design — it is set out above, and in the source, so you can judge it rather than take it on faith.
 
 One thing to be straight about, because it is the question a careful reader asks: gohort **skills can carry tools**, and activating one is the opt-in that lets its bundled scripts run. They are not merely prompt text. What bounds them is that they are per-user and authored in-product rather than installed from a public registry, and that anything they bring still runs inside the sandbox and under the same credential allowlist as everything else.
 
@@ -82,10 +82,6 @@ Because a step can narrow its own tools, a router agent can be built with **no c
 gohort registers credentials **per user**: each person brings their own API key, and no key is shared between accounts. It does not support subscription OAuth tokens for programmatic use — API keys only.
 
 That is a design choice, and it also happens to be the shape that keeps you on the right side of most providers' terms, which generally expect each end user to authenticate with their own credential and treat subscription plans as individual usage rather than a backend for automation. Check your provider's current terms rather than taking a README's word for it — especially for scheduled or autonomous agents, which are exactly the case those limits are written about.
-
-## Maturity, honestly
-
-Solo maintainer. No external security review. Zero known CVEs in an unaudited codebase is an absence of evidence, not a safety record — worth saying plainly, because the readers who matter already know it. What you can check for yourself: ten direct dependencies, one static binary, and source you can read end to end.
 
 ## Three ways to think about it
 
@@ -220,6 +216,8 @@ Full descriptions in the [reference](docs/REFERENCE.md#built-in-apps).
 **`gohort-desktop`** — a native Wails host (macOS): a viewer window plus an always-on menu-bar **Bridge** daemon that owns the host's OS permissions (filesystem, screenshot, contacts) and, on macOS, relays iMessage into the Bridges app. Its tool surface is expandable at runtime — the server can push an admin-approved, user-consented capability that lands as a new local tool without reshipping. See [`gohort-desktop/README.md`](gohort-desktop/README.md).
 
 ## Where it's going
+
+Built and maintained by one person, in the open, at the pace of something used daily rather than demoed occasionally.
 
 The toolkit composes today around **agents + skills + collections + pipelines + machines**, and the through-line is that every new app either uses an existing primitive or proves a new one should exist — so the next app is faster to build than the last. Machines are the most recent instance of that rule: they exist because a *conversation* needed a shape a start-to-finish pipeline could not hold.
 
