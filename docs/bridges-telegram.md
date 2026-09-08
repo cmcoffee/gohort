@@ -21,6 +21,11 @@ The connector speaks exactly two gohort endpoints, both authenticated with the
 bridge key in an `X-API-Key` header. It is stateless beyond an inbound dedup set
 and an update offset.
 
+The service-agnostic version of this contract — the same two endpoints, the
+payload fields, the `chat_id` encoding, the handle rules, and how to write an
+iMessage connector without the desktop app — is `docs/bridges-connector-contract.md`.
+This page is that contract worked through for one service.
+
 ## One-time setup
 
 1. **Create the bot**: talk to [@BotFather](https://t.me/BotFather), `/newbot`,

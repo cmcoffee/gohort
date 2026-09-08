@@ -6,7 +6,8 @@
 //
 // A Bridge is defined by its SERVICE and the contract it speaks to the server:
 // POST inbound to /bridges/api/hook, poll /bridges/api/poll for outbound, and
-// authenticate with a bridge key (which declares the service). HOW a bridge
+// authenticate with a bridge key (which declares the service). That contract is
+// written up for connector authors in docs/bridges-connector-contract.md. HOW a bridge
 // sources messages varies — iMessage runs as the gohort-desktop daemon
 // (device-side, Mac-only); Telegram/Slack would be server-side pollers/webhooks
 // — but to Bridges they're all just connectors speaking the same contract.
