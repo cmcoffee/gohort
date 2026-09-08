@@ -112,7 +112,9 @@ func (a *AdminApp) RegisterRoutes(mux *http.ServeMux, prefix string) {
 	sub.HandleFunc("/api/peers/add", a.handlePeerAdd)
 	sub.HandleFunc("/api/peers/", a.handlePeerItem)
 
-	// Apps tab summary (apps_tab.go).
+	// Apps tab: the enable/disable switchboard and the per-app summary rows
+	// (apps_tab.go).
+	sub.HandleFunc("/api/apps", a.handleApps)
 	sub.HandleFunc("/api/app-summary", a.handleAppSummary)
 
 	// The rest of the API, one file per area. Each register*Routes lives in

@@ -261,6 +261,13 @@ func ServeDashboard(addr string) error {
 	if AuthDB != nil {
 		handler = AuthMiddleware(AuthDB(), handler)
 	}
+	// Outside the auth middleware on purpose: whether an app is switched on is
+	// a fact about the DEPLOYMENT, not about the caller, so it is settled
+	// before anything asks who is calling — and therefore ahead of every
+	// documented way past the per-user grant (public paths, internal calls,
+	// the deployment API key, an install with no accounts). See
+	// AppAvailabilityMiddleware.
+	handler = AppAvailabilityMiddleware(handler)
 	// Outermost: baseline security headers on every response (incl. auth
 	// redirects and error pages).
 	handler = securityHeadersMiddleware(handler)
@@ -287,8 +294,14 @@ func (d dashboardHost) handleRoot(w http.ResponseWriter, r *http.Request) {
 		if ra, ok := a.app.(WebAppRestricted); ok && ra.WebRestricted(r) {
 			continue
 		}
+		// Switched off deployment-wide by an administrator: no card, for
+		// anybody. The routes are refused too (AppAvailabilityMiddleware); a
+		// card that leads to a 503 is worse than no card.
+		if !AppEnabledHere(a.path) {
+			continue
+		}
 		// Per-user app access (skip admin app, it has its own gating).
-		if a.path != "/admin" && !UserHasAppAccess(r, a.path) {
+		if a.path != adminAppPath && !UserHasAppAccess(r, a.path) {
 			continue
 		}
 		visible = append(visible, a)
@@ -301,6 +314,12 @@ func (d dashboardHost) handleRoot(w http.ResponseWriter, r *http.Request) {
 	for _, a := range d.apps {
 		src, ok := a.app.(DashboardCardSource)
 		if !ok {
+			continue
+		}
+		// A disabled host takes its dynamic cards with it. The cards live
+		// under the host's mount prefix, so leaving them would draw tiles
+		// whose every link the availability gate refuses.
+		if !AppEnabledHere(a.path) {
 			continue
 		}
 		for _, c := range src.DashboardCards(r) {
@@ -422,7 +441,10 @@ func (d dashboardHost) handleAccess(w http.ResponseWriter, r *http.Request) {
 	flags := make(map[string]bool)
 	for _, a := range d.apps {
 		if aa, ok := a.app.(WebAppAccess); ok {
-			flags[aa.WebAccessKey()] = aa.WebAccessCheck(r)
+			// A disabled app's flag reads false regardless of what its own
+			// check would say: the flag exists so another app can decide
+			// whether to offer a link, and the answer is no.
+			flags[aa.WebAccessKey()] = AppEnabledHere(a.path) && aa.WebAccessCheck(r)
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")

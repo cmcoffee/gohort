@@ -184,6 +184,12 @@ func liveEntryAppPath(e LiveEntry) string {
 // Apps registered WebHidden are absent from the dashboard list, so they
 // clear on the grant check alone. Hidden means "no card", not "no entry".
 func userCanReachApp(r *http.Request, apps []dashApp, prefix string) bool {
+	// An app switched off deployment-wide offers no way back to anyone, so a
+	// live row that points into one loses its link and falls back to the
+	// Monitor — the same treatment as a row the viewer isn't granted.
+	if !AppEnabledHere(prefix) {
+		return false
+	}
 	if !UserHasAppAccess(r, prefix) {
 		return false
 	}

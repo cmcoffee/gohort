@@ -1,6 +1,7 @@
 # The Apps Tab — admin organised by subject, not only by mechanism
 
-Status: **design / target** (not built).
+Status: the list, the per-app summary rows and the availability switch are
+built; gathering each app's own controls onto its pane is still design/target.
 
 Admin is organised by MECHANISM. Everything configurable about techwriter is
 spread across three tabs: its tier in **LLMs** (a route stage), its knobs in
@@ -133,6 +134,49 @@ today, and those are precisely "settings for this app" wearing a tab name.
 **Nothing else.** An app with no declared controls renders identity and access
 and stops. That is a true statement about it, and a truer one than a page of
 empty groups implying there is something to set.
+
+## The availability switch (built)
+
+The tab leads with **Enabled apps**: every app in the list above, with one
+switch each. Off means off for the deployment — no dashboard card for anybody,
+and every page and API under the mount answers 503 — and it takes effect on the
+next request, with no restart.
+
+Three properties are the whole design:
+
+**It is not another per-user grant.** `AuthResolveUserApps` already answers who
+may open an app that is running. This answers whether it runs here at all.
+Because they are separate, switching an app off disturbs no grant: the grants
+sit underneath untouched, and switching it back on restores exactly the access
+it had. Folding "off" into the grant model would have meant clearing every
+user's access to say it, and then guessing at how to put it back.
+
+**What is stored is the DISABLED set**, keyed on the mount prefix under
+`web_config/disabled_apps`. A deployment that has never touched the switch reads
+as everything-on, and an app arriving in a later build ships enabled rather than
+invisible until somebody notices it missing. Same non-breaking default, for the
+same reason, as the feature gate in `core/feature_access.go`.
+
+**The gate sits outside the auth middleware.** Every other way into an app — a
+registered public path, an internal inter-app call, the deployment-wide API key,
+an install with no accounts configured — is a documented bypass of the per-user
+grant, and each one would be a way past this too if the check lived among them.
+Switched-off is a fact about the deployment rather than about the caller, so
+`AppAvailabilityMiddleware` decides it before anything asks who is calling.
+
+Scope, because the tab promises exactly this and no more: the switch governs an
+app's WEB SURFACE. Chat tools, scheduled tasks and route stages an app
+registered at startup keep running. An app whose background half must also stop
+is a bigger question than a toggle, and answering it halfway would be worse than
+not answering it.
+
+Two things are deliberately absent from the list, and both are what you would
+need to get back: `/admin` (the only surface that can re-enable anything —
+`SetAppEnabled` refuses it, and a hand-written record naming it is ignored), and
+every `WebHidden()` app, which is the plumbing the rest is built on (the account
+page, the monitor, the OpenAI-compatible endpoint). The POST endpoint re-checks
+the list rather than trusting its path argument, so neither can be reached by
+hand.
 
 ## Both axes, one storage
 

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -317,4 +318,194 @@ func HubNav(activePath string) []ui.NavLink {
 		out = append(out, ui.NavLink{Label: t.label, URL: t.path, Active: t.path == activePath})
 	}
 	return out
+}
+
+// --- app availability --------------------------------------------------------
+
+// App availability: the administrator's switch for taking a whole app off this
+// deployment — its dashboard card, its pages and its API — without a rebuild,
+// a build tag, or a restart.
+//
+// Deliberately NOT another flavour of the per-user grant. AuthResolveUserApps
+// already answers "who may open an app that is running" (explicit grants,
+// group expansions, deployment defaults); this answers whether it runs here at
+// all. Keeping the two separate is what makes the switch safe to flip: turning
+// an app off and back on disturbs no grant, because the grants sit underneath
+// untouched and mean exactly what they meant before. Folding "off" into the
+// grant model would have meant clearing every user's access to say it, and
+// then guessing at how to put it back.
+//
+// What is stored is the DISABLED set, so a deployment that has never touched
+// the switch reads as "everything on", and an app that arrives in a later
+// build ships enabled rather than invisible until somebody notices it missing.
+// Same non-breaking default, for the same reason, as the feature gate in
+// feature_access.go.
+//
+// Scope, stated plainly because the admin UI promises exactly this and no
+// more: the switch governs the app's WEB SURFACE. Work an app registered with
+// the rest of the framework at startup — chat tools, scheduled tasks, route
+// stages — is not unregistered by flipping it off. An app whose background
+// half must also stop is a bigger question than a toggle, and answering it
+// halfway here would be worse than not answering it.
+
+const disabledAppsKey = "disabled_apps"
+
+// adminAppPath is the one app the switch will not touch. Disabling the
+// administrator panel would take away the only surface that can re-enable
+// anything, which is not a state an operator can be allowed to reach by
+// clicking a switch. Mirrors the same literal in dashboard.go's card gate.
+const adminAppPath = "/admin"
+
+// DisabledApps returns the app paths currently switched off, sorted. Empty on
+// a deployment that has never used the switch.
+func DisabledApps(db Database) []string {
+	if db == nil {
+		return nil
+	}
+	var paths []string
+	db.Get(WebTable, disabledAppsKey, &paths)
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if p = normalizeAppPath(p); p != "" && p != adminAppPath {
+			out = append(out, p)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// AppEnabled reports whether the app mounted at path is switched on.
+func AppEnabled(db Database, path string) bool {
+	path = normalizeAppPath(path)
+	if path == "" || path == adminAppPath {
+		return true
+	}
+	for _, p := range DisabledApps(db) {
+		if p == path {
+			return false
+		}
+	}
+	return true
+}
+
+// AppEnabledHere is AppEnabled against the deployment's own store, for the
+// request gates that hold no database handle of their own.
+//
+// Fails OPEN when no auth database is wired (a CLI-only build, or a request
+// arriving before startup finished): an app that cannot yet be switched off
+// has not been switched off, and a gate that guessed the other way would take
+// the whole dashboard down on a deployment that never asked for any of this.
+func AppEnabledHere(path string) bool {
+	if AuthDB == nil {
+		return true
+	}
+	return AppEnabled(AuthDB(), path)
+}
+
+// SetAppEnabled switches an app on or off deployment-wide. Admin-authorized at
+// the caller. Refuses to disable the admin panel — see adminAppPath.
+func SetAppEnabled(db Database, path string, enabled bool) error {
+	if db == nil {
+		return fmt.Errorf("no database")
+	}
+	path = normalizeAppPath(path)
+	if path == "" {
+		return fmt.Errorf("no app path given")
+	}
+	if path == adminAppPath && !enabled {
+		return fmt.Errorf("the administrator panel cannot be disabled — it is the only way back")
+	}
+	current := DisabledApps(db)
+	next := make([]string, 0, len(current)+1)
+	for _, p := range current {
+		if p != path {
+			next = append(next, p)
+		}
+	}
+	if !enabled {
+		next = append(next, path)
+	}
+	sort.Strings(next)
+	db.Set(WebTable, disabledAppsKey, next)
+	return nil
+}
+
+// normalizeAppPath reduces whatever a caller has to the mount prefix the
+// switch is keyed on: one leading slash, no trailing slash, first segment
+// only. So "/servitor/", "servitor" and "/servitor/api/x" all name the same
+// app — which matters because the callers legitimately hold all three shapes.
+func normalizeAppPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	path = "/" + strings.Trim(path, "/")
+	if path == "/" {
+		return ""
+	}
+	if i := strings.Index(path[1:], "/"); i >= 0 {
+		path = path[:i+1]
+	}
+	return path
+}
+
+// appPathOf returns the app mount prefix a request URL belongs to
+// ("/servitor" for "/servitor/api/x"), or "" when the path is not an app's.
+//
+// The empty cases are the dashboard root, the auth pages, the top-level
+// /api/* endpoints the dashboard serves itself, and the "/_"-prefixed
+// framework assets (/_ui/ui.js, /_ui/ui.css) that EVERY app page loads. That
+// last one is load-bearing: gate it as though it were an app and a page the
+// viewer is perfectly entitled to see renders blank.
+func appPathOf(url_path string) string {
+	switch url_path {
+	case "", "/", "/login", "/logout", "/signup", "/forgot", "/reset":
+		return ""
+	}
+	if strings.HasPrefix(url_path, "/api/") || strings.HasPrefix(url_path, "/_") {
+		return ""
+	}
+	return normalizeAppPath(url_path)
+}
+
+// AppAvailabilityMiddleware refuses every request bound for an app an
+// administrator has switched off.
+//
+// Sits OUTSIDE the auth middleware, and that placement is the point. Every
+// other way into an app — a registered public path, an internal inter-app
+// call, the deployment-wide API key, a deployment with no accounts configured
+// at all — is a documented bypass of the per-user grant, and each one would be
+// a way past this too if the check lived down among them. "Switched off" is a
+// fact about the deployment rather than about the caller, so it is decided
+// before anyone asks who the caller is.
+func AppAvailabilityMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if path := appPathOf(r.URL.Path); path != "" && !AppEnabledHere(path) {
+			writeAppDisabled(w, r, path)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// writeAppDisabled answers a request for an app that is switched off.
+//
+// 503 rather than 404: the app exists, it is compiled in, and it will answer
+// again the moment someone flips the switch back. A 404 would send whoever
+// hits it — most often the admin who just flipped it, following their own
+// bookmark — hunting for a routing bug that isn't there.
+func writeAppDisabled(w http.ResponseWriter, r *http.Request, app_path string) {
+	if strings.Contains(strings.ToLower(r.URL.Path), "/api/") ||
+		strings.Contains(r.Header.Get("Accept"), "application/json") {
+		http.Error(w, "unavailable: "+app_path+" has been disabled by an administrator",
+			http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	body := fmt.Sprintf(`    <h1>App unavailable</h1>
+    <p><code>%s</code> has been switched off by an administrator.</p>
+    <p>It can be switched back on from the Apps tab of the administrator panel.</p>
+    <p><a href="/">Return to dashboard</a></p>`, app_path)
+	fmt.Fprint(w, authPageHTML("App unavailable", body))
 }

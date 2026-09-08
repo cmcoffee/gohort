@@ -29,19 +29,12 @@ import (
 // AppsTabGroup is the tab both admin and the custom-app source render into.
 const AppsTabGroup = "Apps"
 
-// appsTabSections builds one section per COMPILED app.
+// appsTabSections builds the availability switchboard plus one section per
+// COMPILED app.
 func (a *AdminApp) appsTabSections() []ui.Section {
-	type row struct{ path, name, desc string }
-	var rows []row
-	for _, wa := range RegisteredWebApps() {
-		if wa.WebPath() == "/admin" || appIsHidden(wa) {
-			continue
-		}
-		rows = append(rows, row{path: wa.WebPath(), name: wa.WebName(), desc: wa.WebDesc()})
-	}
-	sort.Slice(rows, func(i, j int) bool { return strings.ToLower(rows[i].name) < strings.ToLower(rows[j].name) })
-
-	out := make([]ui.Section, 0, len(rows))
+	rows := listableApps()
+	out := make([]ui.Section, 0, len(rows)+1)
+	out = append(out, appsAvailabilitySection())
 	for _, rw := range rows {
 		out = append(out, ui.Section{
 			Title:    rw.name,
@@ -52,6 +45,7 @@ func (a *AdminApp) appsTabSections() []ui.Section {
 				Source: "api/app-summary?path=" + rw.path,
 				Pairs: []ui.DisplayPair{
 					{Label: "Path", Field: "path", Mono: true},
+					{Label: "State", Field: "state", StatusField: "state_severity"},
 					{Label: "What it is", Field: "desc"},
 					{Label: "Who can open it", Field: "access"},
 					{Label: "Its own controls", Field: "controls"},
@@ -69,6 +63,133 @@ func appIsHidden(wa WebApp) bool {
 	type hidden interface{ WebHidden() bool }
 	h, ok := wa.(hidden)
 	return ok && h.WebHidden()
+}
+
+// appRow is one administrable app: what it is called, where it is mounted,
+// and what it says it does.
+type appRow struct{ path, name, desc string }
+
+// listableApps enumerates the compiled apps this tab administers, by name.
+//
+// The two exclusions are the same ones the tab has always made, and both
+// matter more now that the tab can switch things off. The administrator panel
+// is left out because disabling it would remove the only surface that can
+// re-enable anything. Hidden apps are left out because they are not surfaces
+// anybody was given access to in the first place — they are the plumbing other
+// apps are built on (the account page, the monitor, the OpenAI-compatible
+// endpoint), and a switch that could take the account page away while
+// presenting itself as a list of apps would be a trap.
+func listableApps() []appRow {
+	var rows []appRow
+	for _, wa := range RegisteredWebApps() {
+		if wa.WebPath() == "/admin" || appIsHidden(wa) {
+			continue
+		}
+		rows = append(rows, appRow{path: wa.WebPath(), name: wa.WebName(), desc: wa.WebDesc()})
+	}
+	sort.Slice(rows, func(i, j int) bool { return strings.ToLower(rows[i].name) < strings.ToLower(rows[j].name) })
+	return rows
+}
+
+// appsAvailabilitySection is the switchboard: every app the deployment ships,
+// with one switch each.
+//
+// A table rather than a switch on each app's own section below, because the
+// question this answers is comparative — which of these are we running — and
+// that is a thing you read down a column, not by scrolling through a dozen
+// cards. The per-app sections still report their own state, so an operator who
+// arrives at one directly is not left guessing.
+func appsAvailabilitySection() ui.Section {
+	return ui.Section{
+		Title: "Enabled apps",
+		Subtitle: "Switch an app off to take it off this deployment: its dashboard card disappears for everyone " +
+			"and its pages and API answer 503 until it is switched back on. Takes effect immediately — no restart. " +
+			"Per-user grants are left untouched, so switching an app back on restores exactly the access it had. " +
+			"This governs the app's web surface only; tools, scheduled tasks and routing an app registered at " +
+			"startup keep running. The administrator panel and the framework's own internal apps (your account " +
+			"page, the monitor, the API endpoints) are not listed — they are what you would need to get back.",
+		Group: AppsTabGroup,
+		Wide:  true,
+		Body: ui.Table{
+			Source: "api/apps",
+			RowKey: "path",
+			Columns: []ui.Col{
+				{Field: "name", Label: "App", Flex: 1},
+				{Field: "path", Label: "Path", Flex: 1, Mute: true},
+				{Field: "enabled", Label: "State", Type: "badge", Badges: []ui.BadgeMapping{
+					{Value: true, Label: "Enabled", Color: "success"},
+					{Value: false, Label: "Disabled", Color: "danger"},
+				}},
+				{Field: "desc", Label: "What it is", Flex: 3, Mute: true},
+			},
+			RowActions: []ui.RowAction{
+				{Type: "toggle", Field: "enabled", Leading: true,
+					PostTo: "api/apps?path={path}", Method: "POST"},
+			},
+			EmptyText: "No apps registered.",
+		},
+	}
+}
+
+// handleApps lists the administrable apps (GET) and flips one on or off
+// (POST ?path=<mount>, body {"enabled": bool}).
+func (a *AdminApp) handleApps(w http.ResponseWriter, r *http.Request) {
+	if !a.requireAdmin(w, r) {
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method == http.MethodPost {
+		path := strings.TrimSpace(r.URL.Query().Get("path"))
+		var req struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "bad request body", http.StatusBadRequest)
+			return
+		}
+		// Only apps this tab actually offers. Without this the endpoint would
+		// switch off anything with a mount prefix — including the hidden
+		// framework apps the list deliberately withholds, which is exactly the
+		// trap the list was shaped to avoid.
+		if !isListableApp(path) {
+			http.Error(w, "not an app that can be switched off: "+path, http.StatusBadRequest)
+			return
+		}
+		if err := SetAppEnabled(a.db, path, req.Enabled); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		state := "disabled"
+		if req.Enabled {
+			state = "enabled"
+		}
+		Log("[admin] app %s %s by %s", path, state, AuthCurrentUser(r))
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "path": path, "enabled": req.Enabled})
+		return
+	}
+
+	rows := listableApps()
+	out := make([]map[string]any, 0, len(rows))
+	for _, rw := range rows {
+		out = append(out, map[string]any{
+			"path":    rw.path,
+			"name":    rw.name,
+			"desc":    rw.desc,
+			"enabled": AppEnabled(a.db, rw.path),
+		})
+	}
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+// isListableApp reports whether path names an app the Apps tab offers.
+func isListableApp(path string) bool {
+	for _, rw := range listableApps() {
+		if rw.path == path {
+			return true
+		}
+	}
+	return false
 }
 
 // handleAppSummary answers one app's row.
@@ -93,11 +214,19 @@ func (a *AdminApp) handleAppSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	// state_severity colours the state line: core/ui has no way to know which
+	// of two words is the bad news, so the server says.
+	state, severity := "Enabled", "ok"
+	if !AppEnabled(a.db, path) {
+		state, severity = "Disabled — its pages and API answer 503", "bad"
+	}
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"path":     path,
-		"desc":     app.WebDesc(),
-		"access":   describeAppAccess(a.db, path),
-		"controls": describeAppControls(r, path),
+		"path":           path,
+		"desc":           app.WebDesc(),
+		"state":          state,
+		"state_severity": severity,
+		"access":         describeAppAccess(a.db, path),
+		"controls":       describeAppControls(r, path),
 	})
 }
 

@@ -330,3 +330,152 @@ func TestHandleLiveMasksOtherUsersLabels(t *testing.T) {
 		t.Error("the owner must still see their own label")
 	}
 }
+
+// --- app availability: the admin switch that takes an app off this deployment
+
+func TestAppEnabledDefaultsOn(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+
+	// Never touched → every app is on. An app added in a later build must
+	// ship enabled, not invisible until somebody notices it missing.
+	if !AppEnabled(db, "/servitor") {
+		t.Error("an app with no stored record must read as enabled")
+	}
+	if got := DisabledApps(db); len(got) != 0 {
+		t.Errorf("untouched deployment must disable nothing, got %v", got)
+	}
+
+	if err := SetAppEnabled(db, "/servitor", false); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if AppEnabled(db, "/servitor") {
+		t.Error("switched off, must read as disabled")
+	}
+	if !AppEnabled(db, "/guides") {
+		t.Error("disabling one app must not touch another")
+	}
+
+	// Every spelling of the same mount names the same app: callers hold the
+	// bare name, the trailing slash, and full request paths.
+	for _, spelling := range []string{"servitor", "/servitor/", "/servitor/api/x"} {
+		if AppEnabled(db, spelling) {
+			t.Errorf("%q names the disabled app, must read as disabled", spelling)
+		}
+	}
+
+	if err := SetAppEnabled(db, "/servitor", true); err != nil {
+		t.Fatalf("re-enable: %v", err)
+	}
+	if !AppEnabled(db, "/servitor") {
+		t.Error("switched back on, must read as enabled")
+	}
+	if got := DisabledApps(db); len(got) != 0 {
+		t.Errorf("re-enabling must leave the disabled set empty, got %v", got)
+	}
+}
+
+func TestAppEnabledAdminPanelCannotBeDisabled(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+
+	// The only surface that can re-enable anything must not be reachable by
+	// the switch — including by a hand-written record.
+	if err := SetAppEnabled(db, "/admin", false); err == nil {
+		t.Error("disabling the admin panel must be refused")
+	}
+	db.Set(WebTable, disabledAppsKey, []string{"/admin", "/guides"})
+	if !AppEnabled(db, "/admin") {
+		t.Error("a stored record naming /admin must still read as enabled")
+	}
+	if got := DisabledApps(db); len(got) != 1 || got[0] != "/guides" {
+		t.Errorf("DisabledApps must drop /admin, got %v", got)
+	}
+}
+
+func TestAppPathOf(t *testing.T) {
+	cases := map[string]string{
+		"/servitor":              "/servitor",
+		"/servitor/":             "/servitor",
+		"/servitor/api/terminal": "/servitor",
+		"/":                      "",
+		"":                       "",
+		"/login":                 "",
+		"/logout":                "",
+		"/signup":                "",
+		"/forgot":                "",
+		"/reset":                 "",
+		"/api/live":              "",
+		"/api/access":            "",
+		// The shared runtime every page loads. Treat it as an app and a
+		// gated user's every page renders blank.
+		"/_ui/ui.js":  "",
+		"/_ui/ui.css": "",
+	}
+	for in, want := range cases {
+		if got := appPathOf(in); got != want {
+			t.Errorf("appPathOf(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestAppAvailabilityMiddleware(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	prev := AuthDB
+	AuthDB = func() Database { return db }
+	defer func() { AuthDB = prev }()
+
+	reached := false
+	h := AppAvailabilityMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	get := func(path, accept string) *httptest.ResponseRecorder {
+		reached = false
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		if accept != "" {
+			req.Header.Set("Accept", accept)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := get("/guides/", ""); rec.Code != http.StatusOK || !reached {
+		t.Fatalf("enabled app must pass through, got %d reached=%v", rec.Code, reached)
+	}
+
+	if err := SetAppEnabled(db, "/guides", false); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+
+	// 503, not 404: the app exists and will answer again the moment the
+	// switch goes back — a 404 sends the admin who just flipped it hunting
+	// for a routing bug that isn't there.
+	rec := get("/guides/", "")
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("disabled app page = %d, want 503", rec.Code)
+	}
+	if reached {
+		t.Error("disabled app must not reach its handler")
+	}
+	if rec := get("/guides/api/list", "application/json"); rec.Code != http.StatusServiceUnavailable || reached {
+		t.Errorf("disabled app API = %d reached=%v, want 503 and no handler", rec.Code, reached)
+	}
+
+	// Everything that is not this app is untouched — including the paths the
+	// gate must never claim.
+	for _, path := range []string{"/", "/login", "/api/live", "/_ui/ui.js", "/knowledge/"} {
+		if rec := get(path, ""); rec.Code != http.StatusOK || !reached {
+			t.Errorf("%s = %d reached=%v, want 200 and a handler call", path, rec.Code, reached)
+		}
+	}
+}
+
+func TestAppEnabledHereFailsOpenWithoutAuthDB(t *testing.T) {
+	prev := AuthDB
+	AuthDB = nil
+	defer func() { AuthDB = prev }()
+	if !AppEnabledHere("/guides") {
+		t.Error("no auth database wired: an app that cannot be switched off has not been")
+	}
+}

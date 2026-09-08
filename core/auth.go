@@ -1329,21 +1329,18 @@ func AuthMiddleware(db Database, next http.Handler) http.Handler {
 			return
 		}
 
-		// Per-app access check. Extract the app path from the URL
-		// (first path segment, e.g. "/research" from "/research/api/...").
-		// Skip for root, login, logout, signup, and top-level API routes.
-		path := r.URL.Path
-		// "/_"-prefixed paths are framework-internal shared assets (e.g.
-		// /_ui/ui.js, /_ui/ui.css) that EVERY app page loads — they are not apps
-		// and must never be per-app gated, or a locked-down (non-admin) user gets
-		// a 403 on the runtime and every page they DO have access to renders
-		// blank. They still sit behind the session check above; only the per-app
-		// grant is skipped. (Admins bypass UserHasAppAccess entirely, which is why
-		// this only bit restricted users.)
-		if path != "/" && !strings.HasPrefix(path, "/api/") && !strings.HasPrefix(path, "/_") &&
-			path != "/login" && path != "/logout" && path != "/signup" &&
-			path != "/forgot" && path != "/reset" {
-			app_path := "/" + strings.SplitN(strings.TrimPrefix(path, "/"), "/", 2)[0]
+		// Per-app access check. appPathOf (app_enabled.go) extracts the mount
+		// prefix a URL belongs to ("/research" from "/research/api/..."), and
+		// returns "" for the paths that are not an app's: the dashboard root,
+		// the auth pages, the top-level /api/* endpoints, and the "/_"-prefixed
+		// framework assets (/_ui/ui.js, /_ui/ui.css) that EVERY app page loads.
+		// That last exclusion is load-bearing — gate the shared runtime as
+		// though it were an app and a locked-down (non-admin) user gets a 403
+		// on it, so every page they DO have access to renders blank. Those
+		// paths still sit behind the session check above; only the per-app
+		// grant is skipped. (Admins bypass UserHasAppAccess entirely, which is
+		// why this only ever bit restricted users.)
+		if app_path := appPathOf(r.URL.Path); app_path != "" {
 			if !UserHasAppAccess(r, app_path) {
 				writeForbidden(w, r, app_path)
 				return
