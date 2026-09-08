@@ -195,8 +195,16 @@ func LoadSourceHooks(db Store) {
 			sourceHookRegistry.hooks = append(sourceHookRegistry.hooks, hook)
 		}
 	}
-	keys := db.Keys(sourceHookTable)
-	nfo.Log("[hooks] source_hooks table has %d keys, loaded %d hooks", len(keys), len(sourceHookRegistry.hooks))
+	// Say nothing when there is nothing to say. An empty table is the normal
+	// state of a fresh install, and this line was the FIRST thing a new user
+	// saw — an internal table name and two zeroes, before any output they
+	// asked for. Counts still log once there is something to count, which is
+	// when the number answers a question ("did my hooks load?").
+	if n := len(sourceHookRegistry.hooks); n > 0 {
+		nfo.Log("[hooks] loaded %d source hook(s) from %d key(s)", n, len(db.Keys(sourceHookTable)))
+	} else if keys := db.Keys(sourceHookTable); len(keys) > 0 {
+		nfo.Log("[hooks] source_hooks has %d key(s) but loaded 0 hooks", len(keys))
+	}
 }
 
 // SaveSourceHook stores a hook in the database.

@@ -28,12 +28,20 @@ func TestSearchConfigReadsEveryFieldItIsSaved(t *testing.T) {
 	}
 	body := string(src)
 
+	// The WRITES moved to the admin app when search configuration left the CLI
+	// menu (the terminal only sets what has to be right before a browser can
+	// reach you). The loader stayed here. The invariant is unchanged and spans
+	// both files: every field written must be read by whatever serves a search.
+	writers, err := os.ReadFile("apps/admin/api_net_config.go")
+	if err != nil {
+		t.Fatal(err)
+	}
 	saved := map[string]bool{}
-	for _, m := range regexp.MustCompile(`global\.db\.(?:Crypt)?Set\(SearchTable, "([a-z_]+)"`).FindAllStringSubmatch(body, -1) {
+	for _, m := range regexp.MustCompile(`(?:global\.db|a\.db)\.(?:Crypt)?Set\(SearchTable, "([a-z_]+)"`).FindAllStringSubmatch(body+string(writers), -1) {
 		saved[m[1]] = true
 	}
 	if len(saved) == 0 {
-		t.Fatal("found no SearchTable writes; the scan pattern has drifted from the code")
+		t.Fatal("found no SearchTable writes in config.go or apps/admin/api_net_config.go; the scan has drifted from the code")
 	}
 
 	// Scoped to the RUNTIME loader, not the file. Counting reads file-wide
@@ -59,56 +67,13 @@ func TestSearchConfigReadsEveryFieldItIsSaved(t *testing.T) {
 	}
 }
 
-// The CLI menu offers no way to pick a peer, so a visit that answers nothing
-// about peers must change nothing about them. Saving the search block without
-// carrying source through would silently unpair a search configured on the web.
-func TestTheSetupMenuCarriesSourceThrough(t *testing.T) {
-	src, err := os.ReadFile("config.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := string(src)
-	at := strings.Index(body, `global.db.Set(SearchTable, "source"`)
-	if at < 0 {
-		t.Fatal("the setup menu no longer writes source back; a CLI save will unpair a peer search")
-	}
-	// And it must write back what it read, not a fresh empty string.
-	if !strings.Contains(body, `global.db.Get(SearchTable, "source", &searchSource)`) {
-		t.Error("source is written by the menu but never read into it — the save would blank it")
-	}
-}
-
-// The setup menu edits a handful of fields on configs that carry more than it
-// shows. Rebuilding one from scratch does not blank a field, it CONVERTS the
-// config: for a peer-backed setup, Provider drops while the resolved peer
-// endpoint stays behind, and "embed on peer den" silently becomes "embed on
-// this URL by hand" — after which nothing overlays the peer's live endpoint or
-// swaps in a live credential, because the config no longer mentions a peer, and
-// every request 401s while the peer itself is healthy.
+// The two tests that used to live here — "the setup menu carries source
+// through" and "the setup menu preserves fields it does not show" — are gone
+// with their subject: the CLI menu no longer configures search, embeddings or
+// transcription, so it can no longer erase a field it does not display.
 //
-// Observed exactly that way: a peer-backed embeddings config found sitting on a
-// manual endpoint pointing at the peer's own URL.
-func TestTheSetupMenuPreservesFieldsItDoesNotShow(t *testing.T) {
-	src, err := os.ReadFile("config.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := string(src)
-
-	// Each of these must be built FROM what was stored, not from scratch. A
-	// composite literal here is the bug: it says "these are all the fields",
-	// and the struct disagrees.
-	for _, tc := range []struct{ built, from string }{
-		{"newEmbedCfg", "storedEmbed"},
-		{"newSTT", "storedSTT"},
-	} {
-		if strings.Contains(body, tc.built+" := EmbeddingConfig{") ||
-			strings.Contains(body, tc.built+" := TranscribeConfig{") {
-			t.Errorf("%s is rebuilt from a literal — every field the menu does not show is erased, "+
-				"which converts a peer-backed config into a manual one pointed at the peer's URL", tc.built)
-		}
-		if !strings.Contains(body, tc.built+" := "+tc.from) {
-			t.Errorf("%s should start from %s so unshown fields survive the save", tc.built, tc.from)
-		}
-	}
-}
+// The RISK they described did not disappear, it moved: the admin API decodes a
+// whole config from the request, so a form that omits a field still posts a
+// zero for it. Nothing pins that today. If it bites, the guard belongs in
+// apps/admin, written against how that surface actually saves (whole-record
+// POST), not copied from a menu that edited a loaded struct in place.

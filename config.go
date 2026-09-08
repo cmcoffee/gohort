@@ -362,8 +362,47 @@ func setup_quickstart() {
 		saveWebString("addr", addr)
 	}
 
-	Stdout("\nDone — start the server with:  gohort serve\n")
-	Stdout("Opening the full settings menu next (press q to skip anything).\n")
+	Stdout("\nDone. Start the server with:\n\n  gohort serve\n\n")
+	Stdout("Then finish setting up in the browser:\n\n  %s\n\n", setupDashboardURL())
+	Stdout("Sign in as the admin account above. The model, search, embeddings,\n")
+	Stdout("transcription and the rest are configured there — this menu only\n")
+	Stdout("covers what has to be set before the browser can reach you.\n")
+	Stdout("\nOpening the remaining terminal settings next (press q to skip).\n")
+}
+
+// setupDashboardURL renders the address the operator should actually open,
+// which is not the bind address: 0.0.0.0 and an empty host are things you
+// LISTEN on, not things you can type into a browser. Printing the bind string
+// verbatim is how a first run ends with someone pasting "https://0.0.0.0:8181"
+// and concluding the server did not start.
+func setupDashboardURL() string {
+	return renderDashboardURL(
+		loadWebString("addr", "127.0.0.1:8181"),
+		loadWebBool("tls_self_signed", false),
+		loadWebString("tls_cert", ""),
+	)
+}
+
+// renderDashboardURL is the pure half, so the address arithmetic can be tested
+// without a configured deployment.
+func renderDashboardURL(bindAddr string, selfSigned bool, tlsCert string) string {
+	addr := strings.TrimSpace(bindAddr)
+	scheme := "http"
+	if selfSigned || strings.TrimSpace(tlsCert) != "" {
+		scheme = "https"
+	}
+	host, port := addr, ""
+	if i := strings.LastIndex(addr, ":"); i >= 0 {
+		host, port = addr[:i], addr[i+1:]
+	}
+	switch strings.TrimSpace(host) {
+	case "", "0.0.0.0", "::", "[::]":
+		host = "localhost" // listening everywhere; localhost is what works here
+	}
+	if port == "" {
+		return scheme + "://" + host
+	}
+	return scheme + "://" + host + ":" + port
 }
 
 func setup_fuzz() {
@@ -394,103 +433,13 @@ func setup_fuzz() {
 	// The terminal's job is to get the web UI reachable; configuration is the
 	// web UI's job.
 
-	// --- External Sources ---
-	var searchProvider, searchAPIKey, searchEndpoint, searchSource string
-	global.db.Get(SearchTable, "provider", &searchProvider)
-	global.db.Get(SearchTable, "api_key", &searchAPIKey)
-	global.db.Get(SearchTable, "endpoint", &searchEndpoint)
-	// Read and written back untouched: this menu offers no way to pick a peer,
-	// and saving without it would silently unpair a search configured on the
-	// web admin page. A CLI visit that answers nothing about peers should
-	// change nothing about them.
-	global.db.Get(SearchTable, "source", &searchSource)
-
-	search := NewOptions(" [Web Search] ", "(selection or 'q' to return to previous)", 'q')
-	search.StringSelectVar(&searchProvider, "Search Provider", searchProvider, "duckduckgo", "brave", "google", "serper", "searxng")
-	search.SecretVar(&searchAPIKey, "API Key", searchAPIKey, "API key for search provider.")
-	search.ShowWhen(func() bool { return searchProvider != "duckduckgo" && searchProvider != "searxng" })
-	search.StringVar(&searchEndpoint, "Endpoint", searchEndpoint, "Custom endpoint (e.g. https://search.example.com).")
-	search.ShowWhen(func() bool { return searchProvider == "searxng" })
-
-	LoadSourceHooks(global.db)
-	hooks := NewOptions(" [Source Hooks] ", "(selection or 'q' to return to previous)", 'q')
-	hooks.Func("List Configured Hooks", func() bool {
-		list_source_hooks()
-		return true
-	})
-	hooks.Func("Quick Add (Templates)", func() bool {
-		add_template_hook()
-		return true
-	})
-	hooks.Func("Add Custom Hook", func() bool {
-		add_source_hook()
-		return true
-	})
-	hooks.Func("Update Hook Triggers", func() bool {
-		update_hook_triggers()
-		return true
-	})
-	hooks.Func("Remove Source Hook", func() bool {
-		remove_source_hook()
-		return true
-	})
-
-	// Mail settings.
-	mail := NewOptions(" [Mail Settings] ", "(selection or 'q' to return to previous)", 'q')
-	mail.StringVar(&mailServer, "SMTP Server", mailServer, "SMTP server address, e.g. smtp.gmail.com:587 (leave blank for localhost:25).")
-	mail.StringVar(&mailFrom, "From Address", mailFrom, "Sender email address (leave blank for fuzz@hostname).")
-	mail.StringVar(&mailRecipient, "Default Recipient", mailRecipient, "Default report recipient email address (used when no --to is specified).")
-	mail.StringVar(&mailUser, "SMTP Username", mailUser, "SMTP auth username (leave blank if not required).")
-	mail.SecretVar(&mailPass, "SMTP Password", mailPass, NONE)
-	mail.Func("Send Test Email", func() bool {
-		to := mailRecipient
-		if to == "" {
-			to = GetInput("Recipient email: ")
-			if to == "" {
-				return true
-			}
-		}
-		// Build a temporary config from the current (possibly unsaved) values.
-		cfg := MailConfig{
-			Server:   mailServer,
-			From:     mailFrom,
-			Username: mailUser,
-			Password: mailPass,
-		}
-		// Temporarily override the config loader so SendNotification uses
-		// the in-progress values rather than what's saved in the DB.
-		orig := LoadMailConfigFunc
-		LoadMailConfigFunc = func() MailConfig { return cfg }
-		err := SendNotification(to, "Gohort Test Email", "This is a test email from Gohort.\n\nIf you received this, mail is configured correctly.\n")
-		LoadMailConfigFunc = orig
-		if err != nil {
-			Stderr("\n  Failed: %s\n\n", err)
-		} else {
-			Stdout("\n  Test email sent to %s.\n\n", to)
-		}
-		return true
-	})
-
-	services := NewOptions(" [External Services] ", "(selection or 'q' to return to previous)", 'q')
-	services.Options("Web Search", search, false)
-	services.Options("Source Hooks (API, RAG, Paywall)", hooks, false)
-	services.Options("Mail (SMTP)", mail, false)
-	setup.Options("External Services", services, false)
-
 	// Web Server Settings.
 	var webAddr, webTLSCert, webTLSKey string
 	var webTLSSelfSigned bool
 	var webMaxConcurrent int
 	var webAdminIPs string
 	var webAdminUser, webAdminPass string
-	var webAllowSignup bool
-	var webSessionDays int
-	var webAPIKey string
-	var webExternalURL string
-	var webServiceName string
 	var webMaxLoginAttempts int
-	var webLockoutMinutes int
-	webTimezone := DeploymentTimezoneName(global.db)
 	// Operator-set-once settings live in gohort.ini (with one-time
 	// migration from the kvlite store baked into the helpers). The
 	// remaining DB-only settings stay on the global.db.Get path.
@@ -500,23 +449,9 @@ func setup_fuzz() {
 	webTLSSelfSigned = loadWebBool("tls_self_signed", false)
 	webMaxConcurrent = loadWebInt("max_concurrent", 0)
 	webAdminIPs = loadWebString("admin_allowed_ips", "")
-	global.db.Get(WebTable, "allow_signup", &webAllowSignup)
-	global.db.Get(WebTable, "session_days", &webSessionDays)
-	global.db.Get(WebTable, "api_key", &webAPIKey)
-	global.db.Get(WebTable, "external_url", &webExternalURL)
-	global.db.Get(WebTable, "service_name", &webServiceName)
 	global.db.Get(WebTable, "max_login_attempts", &webMaxLoginAttempts)
-	global.db.Get(WebTable, "lockout_minutes", &webLockoutMinutes)
 	if webMaxLoginAttempts == 0 {
 		webMaxLoginAttempts = 5
-	}
-	if webLockoutMinutes == 0 {
-		webLockoutMinutes = 15
-	}
-	var webNotifyFrom string
-	global.db.Get(WebTable, "notify_from", &webNotifyFrom)
-	if webSessionDays == 0 {
-		webSessionDays = 7
 	}
 	if webMaxConcurrent == 0 {
 		webMaxConcurrent = 1
@@ -535,7 +470,6 @@ func setup_fuzz() {
 
 	webmenu := NewOptions(" [Web Server Settings] ", "(selection or 'q' to return to previous)", 'q')
 	webmenu.StringVar(&webAddr, "Listen Address", webAddr, "Address for web dashboard (e.g. ':8080', '0.0.0.0:443').")
-	webmenu.StringVar(&webTimezone, "Timezone", webTimezone, "Deployment timezone for all day boundaries, schedules, and displayed times. IANA name ('America/New_York'), city ('Tokyo'), or US abbreviation ('PST'). Blank = host zone. Applies on restart.")
 	webmenu.IntVar(&webMaxConcurrent, "Max Concurrent Tasks", webMaxConcurrent, "Max simultaneous apps. Others are queued.", 1, 32)
 	webmenu.ToggleVar(&webTLSSelfSigned, "TLS (self-signed auto-certificate)", webTLSSelfSigned)
 	webmenu.StringVar(&webTLSCert, "TLS Certificate", webTLSCert, "Path to PEM certificate file (overrides self-signed).")
@@ -545,99 +479,13 @@ func setup_fuzz() {
 	webmenu.StringVar(&webAdminUser, "Administrator Email", webAdminUser, "Login email for the web admin account.")
 	webmenu.SecretVar(&webAdminPass, "Administrator Password", webAdminPass, "Password for the web admin account (leave blank to keep current).")
 	webmenu.ShowWhen(func() bool { return webAdminUser != "" })
-	webmenu.IntVar(&webSessionDays, "Session Length (days)", webSessionDays, "How long login sessions last before requiring re-authentication.", 1, 90)
 	webmenu.IntVar(&webMaxLoginAttempts, "Max Login Attempts", webMaxLoginAttempts, "Failed login attempts before IP lockout.", 1, 100)
-	webmenu.IntVar(&webLockoutMinutes, "Lockout Duration (minutes)", webLockoutMinutes, "How long an IP is locked out after max failed attempts.", 1, 1440)
-	webmenu.ToggleVar(&webAllowSignup, "Allow New User Signup", webAllowSignup)
 	webmenu.StringVar(&webAdminIPs, "Admin Allowed IPs", webAdminIPs, "Comma-separated CIDR/IP allowlist for /admin (empty = no IP restriction).")
-	webmenu.SecretVar(&webAPIKey, "API Key", webAPIKey, "Deployment-wide key for machine-to-machine access. Send it as the X-Gohort-Key header; the ?key= query form still works but puts the credential in URLs and logs. It bypasses login and per-app access for every route (never admin, which needs a session cookie) — prefer a per-user token from the Account page where one will do. Blank this field to revoke it.")
-	webmenu.StringVar(&webExternalURL, "External URL", webExternalURL, "Public-facing URL for email notification links (e.g. https://gohort.example.com). Leave blank to use listen address.")
-	webmenu.StringVar(&webServiceName, "Service Name", webServiceName, "Name used in notification email subjects (default: Gohort).")
-	webmenu.StringVar(&webNotifyFrom, "Notification From Address", webNotifyFrom, "From address for notification emails (default: uses mail config).")
 
 	authmenu, _ := BuildAuthSetup(global.db)
 	webmenu.Options("Manage Additional Users", authmenu, false)
 
 	setup.Options("Web Server Settings", webmenu, false)
-
-	// --- Cost Rates (per-run usage telemetry) ---
-	// Cost rates are entered as decimal dollar amounts. Stored via
-	// SaveCostRatesToDB below. A record's presence in the DB means the
-	// operator has been through setup at least once; absence means
-	// "never configured." $0.00 is a legitimate rate (free local worker)
-	// distinct from "unconfigured."
-	var stored_rates CostRates
-	rates_exist := global.db.Get("cost_rates", "current", &stored_rates)
-	render_rate := func(v float64) string {
-		if !rates_exist {
-			return ""
-		}
-		return strconv.FormatFloat(v, 'f', -1, 64)
-	}
-	cost_worker_in := render_rate(stored_rates.WorkerInputPer1K)
-	cost_worker_out := render_rate(stored_rates.WorkerOutputPer1K)
-	cost_lead_in := render_rate(stored_rates.LeadInputPer1K)
-	cost_lead_out := render_rate(stored_rates.LeadOutputPer1K)
-	// Effective values, not stored: both default when unset, and showing a
-	// blank for a multiplier that is being applied invites the operator to
-	// conclude it is not.
-	cost_cache_read := render_rate(stored_rates.EffectiveCacheReadMultiplier())
-	cost_cache_write := render_rate(stored_rates.EffectiveCacheWriteMultiplier())
-	cost_search := render_rate(stored_rates.SearchPerCall)
-	cost_image := render_rate(stored_rates.ImagePerCall)
-
-	costs := NewOptions(" [Cost Rates] ", "(selection or 'q' to return to previous)", 'q')
-	costs.StringVar(&cost_worker_in, "Worker Input $/1K tokens", cost_worker_in, "Dollar cost per 1,000 input tokens for the worker (primary) LLM. Example Gemini Flash 2.5: 0.075")
-	costs.StringVar(&cost_worker_out, "Worker Output $/1K tokens", cost_worker_out, "Dollar cost per 1,000 output tokens for the worker LLM. Example Gemini Flash 2.5: 0.30")
-	costs.StringVar(&cost_lead_in, "Lead Input $/1K tokens", cost_lead_in, "Dollar cost per 1,000 input tokens for the lead (precision) LLM. Example Claude Sonnet 5: 3.00")
-	costs.StringVar(&cost_lead_out, "Lead Output $/1K tokens", cost_lead_out, "Dollar cost per 1,000 output tokens for the lead LLM. Example Claude Sonnet 5: 15.00")
-	costs.StringVar(&cost_cache_read, "Cached-read weight (x input)", cost_cache_read, "What a token served FROM cache costs as a fraction of the input rate. Anthropic and OpenAI both bill 0.1. A long conversation is mostly cache reads.")
-	costs.StringVar(&cost_cache_write, "Cache-write weight (x input)", cost_cache_write, "What WRITING a token into the cache costs, times the input rate. Anthropic: 1.25 for the 5-minute TTL, 2.0 for the 1-hour one. Using 1-hour caching and leaving this at 1.25 under-reports every write by 37.5%.")
-	costs.StringVar(&cost_search, "Search $/call", cost_search, "Dollar cost per external search-API call. Example Serper: 0.0003")
-	costs.StringVar(&cost_image, "Image $/call", cost_image, "Dollar cost per image generation call. Example DALL-E 3 1792x1024 standard: 0.08; Gemini Imagen 16:9: 0.03")
-	setup.Options("Cost Rates (per-run telemetry)", costs, false)
-
-	// --- Embeddings (vector-DB ingestion + semantic chat search) ---
-	var storedEmbed EmbeddingConfig
-	global.db.Get(EmbeddingTable, "current", &storedEmbed)
-	embedEnabled := "no"
-	if storedEmbed.Enabled {
-		embedEnabled = "yes"
-	}
-	embedEndpoint := storedEmbed.Endpoint
-	if embedEndpoint == "" {
-		// Default to the worker LLM's endpoint. Read straight from the DB:
-		// LLM connection settings are owned by the web UI now, so there is no
-		// local copy here to borrow.
-		global.db.Get(LLMTable, "endpoint", &embedEndpoint)
-	}
-	embedModel := storedEmbed.Model
-	if embedModel == "" {
-		embedModel = "nomic-embed-text"
-	}
-
-	embedOpts := NewOptions(" [Embeddings] ", "(selection or 'q' to return to previous)", 'q')
-	embedOpts.StringSelectVar(&embedEnabled, "Enable embeddings", embedEnabled, "yes", "no")
-	embedOpts.StringVar(&embedEndpoint, "Embedding endpoint", embedEndpoint, "Base URL of the ollama-compatible /api/embed server. Typically the same host as the worker LLM (e.g. http://localhost:11434).")
-	embedOpts.StringVar(&embedModel, "Embedding model", embedModel, "Model name the endpoint should load. Default nomic-embed-text (run `ollama pull nomic-embed-text` on the server first). Alternatives: mxbai-embed-large, all-minilm.")
-	setup.Options("Embeddings (vector-DB semantic search)", embedOpts, false)
-
-	// --- Audio transcription (STT — folded into download_video) ---
-	var storedSTT TranscribeConfig
-	global.db.Get(TranscribeTable, "current", &storedSTT)
-	sttEnabled := "no"
-	if storedSTT.Enabled {
-		sttEnabled = "yes"
-	}
-	sttEndpoint := storedSTT.Endpoint
-	sttModel := storedSTT.Model
-	sttKey := storedSTT.APIKey
-	sttOpts := NewOptions(" [Transcription] ", "(selection or 'q' to return to previous)", 'q')
-	sttOpts.StringSelectVar(&sttEnabled, "Enable transcription", sttEnabled, "yes", "no")
-	sttOpts.StringVar(&sttEndpoint, "STT endpoint", sttEndpoint, "Base URL of an OpenAI-compatible /audio/transcriptions server. For a local whisper.cpp HTTP server on the llama box: http://your-llama-host:8089/v1 (just /v1, not /v1/audio/transcriptions — Transcribe appends the rest).")
-	sttOpts.StringVar(&sttModel, "STT model", sttModel, "Optional. whisper.cpp ignores this; OpenAI uses 'whisper-1'. Leave empty for local servers.")
-	sttOpts.StringVar(&sttKey, "STT API key", sttKey, "Optional bearer token. Set for real OpenAI / authenticated proxies; leave empty for local whisper.cpp.")
-	setup.Options("Audio transcription (STT — feeds download_video and future audio paths)", sttOpts, false)
 
 	// --- Network Settings ---
 	var netConnectSec, netRequestSec int
@@ -680,70 +528,6 @@ func setup_fuzz() {
 		global.db.CryptSet(MailTable, "password", mailPass)
 	}
 
-	// Save search configuration.
-	global.db.Set(SearchTable, "provider", searchProvider)
-	global.db.Set(SearchTable, "endpoint", searchEndpoint)
-	global.db.Set(SearchTable, "source", searchSource)
-	if searchAPIKey != "" {
-		global.db.CryptSet(SearchTable, "api_key", searchAPIKey)
-	}
-
-	// Save cost rates. Parsed from the string inputs; invalid or blank
-	// values default to zero. SetCostRates also updates the process's
-	// in-memory rates so the change takes effect on any further runs
-	// started from this setup session (no restart required).
-	new_rates := CostRates{
-		WorkerInputPer1K:     parseDollarRate(cost_worker_in),
-		WorkerOutputPer1K:    parseDollarRate(cost_worker_out),
-		CacheReadMultiplier:  parseDollarRate(cost_cache_read),
-		CacheWriteMultiplier: parseDollarRate(cost_cache_write),
-		LeadInputPer1K:       parseDollarRate(cost_lead_in),
-		LeadOutputPer1K:      parseDollarRate(cost_lead_out),
-		SearchPerCall:        parseDollarRate(cost_search),
-		ImagePerCall:         parseDollarRate(cost_image),
-	}
-	if err := SaveCostRatesToDB(global.db, new_rates); err != nil {
-		Err("Failed to save cost rates: %s", err)
-	} else {
-		SetCostRates(new_rates)
-	}
-
-	// Save embedding configuration. SaveEmbeddingConfigToDB also
-	// updates the in-memory config so the change takes effect without
-	// a restart.
-	//
-	// Built FROM the stored config rather than from scratch, so the fields this
-	// menu does not offer survive it. Constructing a fresh struct here silently
-	// erased Provider and APIKey — and for a peer-backed setup that is not a
-	// blanked field, it is a conversion: Provider drops, the resolved peer
-	// endpoint stays behind in Endpoint, and what was "embed on peer den"
-	// becomes "embed on this URL by hand". Nothing then overlays the peer's
-	// live endpoint or swaps in a live credential, because the config no longer
-	// mentions a peer, and every embed answers 401 while the peer itself is
-	// perfectly healthy. A CLI visit that answers nothing about peers must
-	// change nothing about them.
-	newEmbedCfg := storedEmbed
-	newEmbedCfg.Endpoint = strings.TrimSpace(embedEndpoint)
-	newEmbedCfg.Model = strings.TrimSpace(embedModel)
-	newEmbedCfg.Enabled = embedEnabled == "yes"
-	if err := SaveEmbeddingConfigToDB(global.db, newEmbedCfg); err != nil {
-		Err("Failed to save embedding config: %s", err)
-	}
-
-	// Save STT (transcription) configuration. Same pattern as
-	// embeddings — DB save also installs the process-wide config so
-	// the change takes effect without a restart.
-	// Same shape, same reason: Provider carries the peer selection and this
-	// menu has no field for it.
-	newSTT := storedSTT
-	newSTT.Endpoint = strings.TrimSpace(sttEndpoint)
-	newSTT.Model = strings.TrimSpace(sttModel)
-	newSTT.APIKey = strings.TrimSpace(sttKey)
-	newSTT.Enabled = sttEnabled == "yes"
-	if err := SaveTranscribeConfigToDB(global.db, newSTT); err != nil {
-		Err("Failed to save transcription config: %s", err)
-	}
-
 	// Save network timeouts and apply immediately so the running process
 	// picks them up without a restart.
 	global.db.Set(NetworkTable, "connect_timeout_seconds", netConnectSec)
@@ -763,38 +547,7 @@ func setup_fuzz() {
 	saveWebBool("tls_self_signed", webTLSSelfSigned)
 	saveWebInt("max_concurrent", webMaxConcurrent)
 	saveWebString("admin_allowed_ips", strings.TrimSpace(webAdminIPs))
-	// Timezone: validate before storing so a typo can't strand the box in the
-	// wrong zone on next boot. Blank clears the override (back to host zone).
-	if tz := strings.TrimSpace(webTimezone); tz == "" {
-		global.db.Set(WebTable, TimezoneKey, "")
-	} else if _, iana, err := ResolveZone(tz); err != nil {
-		Err("Timezone %q not recognized — leaving previous value: %s", tz, err)
-	} else {
-		global.db.Set(WebTable, TimezoneKey, iana)
-	}
-	// allow_signup stays in the DB — runtime-toggleable from the
-	// admin UI; not an operator-deploy-time decision.
-	global.db.Set(WebTable, "allow_signup", webAllowSignup)
-	global.db.Set(WebTable, "session_days", webSessionDays)
-	// Blanking the field REVOKES the key. It used to be write-only — an empty
-	// value meant "keep what is there" — so a blanket auth bypass, once set,
-	// could not be turned off from the only screen that could set it. Clearing
-	// is the more important of the two operations for a credential; keeping is
-	// what you get by not touching the field.
-	if webAPIKey != "" {
-		global.db.CryptSet(WebTable, "api_key", webAPIKey)
-	} else {
-		var existing string
-		if global.db.Get(WebTable, "api_key", &existing); existing != "" {
-			global.db.Unset(WebTable, "api_key")
-			Log("[config] deployment API key cleared — the ?key= / X-Gohort-Key bypass is now off")
-		}
-	}
-	global.db.Set(WebTable, "external_url", webExternalURL)
-	global.db.Set(WebTable, "service_name", webServiceName)
 	global.db.Set(WebTable, "max_login_attempts", webMaxLoginAttempts)
-	global.db.Set(WebTable, "lockout_minutes", webLockoutMinutes)
-	global.db.Set(WebTable, "notify_from", webNotifyFrom)
 
 	// Create or update the administrator account.
 	// Skip password update if unchanged from the placeholder.

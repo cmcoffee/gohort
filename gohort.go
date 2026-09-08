@@ -318,7 +318,7 @@ func main() {
 		}
 		Log("### %s v%s ###", APPNAME, VERSION)
 		go LogDependencyHealth() // probe external tools; warn on any missing or stale (e.g. an out-of-date yt-dlp)
-		init_database() // sets RootDB itself — see the note there
+		init_database()          // sets RootDB itself — see the note there
 		// Legacy chunk homes to fold into the dedicated VectorDB on the
 		// first boot after the split: RootDB root (deployment-collection
 		// chunks) and the orchestrate bucket (agent knowledge + user
@@ -462,24 +462,6 @@ func main() {
 	}
 
 	// Check for chat mode before processing other flags.
-	if args := flags.Args(); len(args) > 0 && args[0] == "chat" {
-		if len(args) > 1 && args[1] == "--help" {
-			Stderr("Usage: %s chat [--private]\n\n  --private    Disable internet-facing tools (web_search, browse_page, etc.).", os.Args[0])
-			Exit(0)
-		}
-		privateMode := false
-		for _, a := range args[1:] {
-			if a == "--private" {
-				privateMode = true
-			}
-		}
-		if err := startChat(privateMode); err != nil {
-			Stderr(err)
-			Exit(1)
-		}
-		Exit(0)
-	}
-
 	nfo.SignalCallback(syscall.SIGINT, func() bool {
 		Log("Application interrupt received. (shutting down)")
 		ShutdownApp()
@@ -499,12 +481,21 @@ func main() {
 	// Read and process CLI arguments.
 	args := flags.Args()
 
-	// No command given — launch interactive chat.
+	// No command given — say what this is and how to start it.
+	//
+	// This used to drop into a single-model CLI chat: one agent, one model, no
+	// fleet, no delegation, no scoped memory, no guardrails. It was the first
+	// thing anyone typed after downloading a release, and it demonstrated an
+	// early version of the product at the front door of the current one.
+	// Terminal access is servitor over MCP now — a governed agent with its own
+	// loop and memory — and the dashboard is where the rest lives.
 	if len(args) == 0 {
-		if err := startChat(false); err != nil {
-			Stderr(err)
-			Exit(1)
-		}
+		Stdout("gohort — run a fleet of agents on your own hardware.\n\n")
+		Stdout("  %s --setup    first-time setup: admin account, listen address, TLS\n", os.Args[0])
+		Stdout("  %s serve      start the web dashboard\n", os.Args[0])
+		Stdout("\nEverything else — models, agents, credentials, schedules — is configured\nin the dashboard once it is running.\n\n")
+		flags.Usage()
+		command.Show()
 		return
 	}
 

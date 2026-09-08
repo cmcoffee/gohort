@@ -67,7 +67,7 @@ func (t *TranscribeTool) RunWithSession(args map[string]any, sess *ToolSession) 
 		return "", fmt.Errorf("transcribe requires a session with a workspace")
 	}
 	if !GetTranscribeConfig().Enabled {
-		return "", fmt.Errorf("transcription endpoint is not configured — set it via `gohort --setup` (Audio transcription section)")
+		return "", fmt.Errorf("transcription is not configured — enable it in the admin dashboard, under Audio Transcription (STT)")
 	}
 	relPath := strings.TrimSpace(StringArg(args, "path"))
 	if relPath == "" {

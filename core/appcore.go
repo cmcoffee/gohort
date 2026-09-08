@@ -139,7 +139,7 @@ func (T *AppCore) SetTools(names ...string) {
 // RequireLLM returns an error if no LLM is configured.
 func (T *AppCore) RequireLLM() error {
 	if T.LLM == nil {
-		return fmt.Errorf("LLM is required, run --setup")
+		return fmt.Errorf("no language model is configured — set one up in the admin dashboard, under Worker LLM")
 	}
 	return nil
 }

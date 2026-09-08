@@ -159,8 +159,6 @@ make build
 ./build/gohort serve :8080
 ./build/gohort serve :8443 --tls     # with a self-signed cert
 
-# Or talk to it from the terminal
-./build/gohort chat                  # interactive chat with tool access; bare `./build/gohort` does the same
 ./build/gohort --version
 ```
 

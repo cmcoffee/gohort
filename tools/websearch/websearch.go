@@ -1020,7 +1020,7 @@ type braveResponse struct {
 // searchBrave uses the Brave Search API.
 func searchBrave(query string, apiKey string) (string, error) {
 	if apiKey == "" {
-		return "", fmt.Errorf("brave search requires an API key (configure with --setup)")
+		return "", fmt.Errorf("brave search requires an API key (configure it in the admin dashboard, under Web Search)")
 	}
 
 	client := &apiclient.APIClient{
@@ -1075,7 +1075,7 @@ type serperResponse struct {
 // searchSerper uses the Serper.dev Google Search API.
 func searchSerper(query string, apiKey string) (string, error) {
 	if apiKey == "" {
-		return "", fmt.Errorf("serper search requires an API key (configure with --setup)")
+		return "", fmt.Errorf("serper search requires an API key (configure it in the admin dashboard, under Web Search)")
 	}
 
 	payload, _ := json.Marshal(map[string]any{
@@ -1138,7 +1138,7 @@ type googleResponse struct {
 // API key format should be "key:cx" (API key and custom search engine ID separated by colon).
 func searchGoogle(query string, apiKey string) (string, error) {
 	if apiKey == "" {
-		return "", fmt.Errorf("google search requires an API key in 'key:cx' format (configure with --setup)")
+		return "", fmt.Errorf("google search requires an API key in 'key:cx' format (configure it in the admin dashboard, under Web Search)")
 	}
 
 	parts := strings.SplitN(apiKey, ":", 2)
@@ -1210,7 +1210,7 @@ func query(sr SearchRequest) string { return sr.Query }
 func searchSearXNG(sr SearchRequest) (string, error) {
 	endpoint := strings.TrimSuffix(strings.TrimSpace(sr.Endpoint), "/")
 	if endpoint == "" {
-		return "", fmt.Errorf("searxng requires an endpoint URL (configure with --setup)")
+		return "", fmt.Errorf("searxng requires an endpoint URL (configure it in the admin dashboard, under Web Search)")
 	}
 
 	parsed, err := url.Parse(endpoint)
