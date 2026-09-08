@@ -81,7 +81,7 @@ type appRow struct{ path, name, desc string }
 // presenting itself as a list of apps would be a trap.
 func listableApps() []appRow {
 	var rows []appRow
-	for _, wa := range RegisteredWebApps() {
+	for _, wa := range AllWebApps() {
 		if wa.WebPath() == "/admin" || appIsHidden(wa) {
 			continue
 		}

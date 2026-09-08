@@ -30,28 +30,7 @@ func ServeDashboard(addr string) error {
 
 	var apps []dashApp
 
-	// Collect all web-capable components: explicitly registered WebApps
-	// plus any registered Agent/App that implements the WebApp interface.
-	seen := make(map[string]bool)
-	var webApps []WebApp
-	for _, wa := range RegisteredWebApps() {
-		if !seen[wa.WebPath()] {
-			seen[wa.WebPath()] = true
-			webApps = append(webApps, wa)
-		}
-	}
-	for _, a := range RegisteredApps() {
-		if wa, ok := a.(WebApp); ok && !seen[wa.WebPath()] {
-			seen[wa.WebPath()] = true
-			webApps = append(webApps, wa)
-		}
-	}
-	for _, a := range RegisteredAgents() {
-		if wa, ok := a.(WebApp); ok && !seen[wa.WebPath()] {
-			seen[wa.WebPath()] = true
-			webApps = append(webApps, wa)
-		}
-	}
+	webApps := AllWebApps()
 
 	// First pass: initialize all web app databases so cross-app
 	// lookups via FindAgent see a fully wired agent.

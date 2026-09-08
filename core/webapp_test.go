@@ -479,3 +479,51 @@ func TestAppEnabledHereFailsOpenWithoutAuthDB(t *testing.T) {
 		t.Error("no auth database wired: an app that cannot be switched off has not been")
 	}
 }
+
+// stubWebApp arrives through the APP registry — the way every app except the
+// admin panel actually registers.
+type stubWebApp struct{ path string }
+
+func (s stubWebApp) Get() *AppCore                                    { return nil }
+func (s stubWebApp) Name() string                                     { return s.path }
+func (s stubWebApp) Desc() string                                     { return "stub" }
+func (s stubWebApp) SystemPrompt() string                             { return "" }
+func (s stubWebApp) Init() error                                      { return nil }
+func (s stubWebApp) Main() error                                      { return nil }
+func (s stubWebApp) WebPath() string                                  { return s.path }
+func (s stubWebApp) WebName() string                                  { return s.path }
+func (s stubWebApp) WebDesc() string                                  { return "stub" }
+func (s stubWebApp) RegisterRoutes(mux *http.ServeMux, prefix string) {}
+
+// TestAllWebAppsSpansEveryRegistry. Only the admin panel calls RegisterWebApp;
+// every other app arrives as an App or an Agent and is picked up because it
+// implements the interface. Anything reading RegisteredWebApps() alone
+// therefore sees ONE app and believes that is the deployment — which is what
+// the admin Apps switchboard did: it listed what it could find, excluded the
+// admin panel as undisablable, and rendered an empty table under a heading
+// promising one row per app.
+func TestAllWebAppsSpansEveryRegistry(t *testing.T) {
+	savedWeb, savedApps, savedAgents := registeredWebApps, registeredApps, registeredAgents
+	t.Cleanup(func() { registeredWebApps, registeredApps, registeredAgents = savedWeb, savedApps, savedAgents })
+	registeredWebApps, registeredApps, registeredAgents = nil, nil, nil
+
+	RegisterWebApp(stubWebApp{path: "/admin"})
+	RegisterApp(stubWebApp{path: "/research"})
+	RegisterAgent(stubWebApp{path: "/debate"})
+	// A component registered twice is one app, not two rows.
+	RegisterApp(stubWebApp{path: "/research"})
+
+	var paths []string
+	for _, wa := range AllWebApps() {
+		paths = append(paths, wa.WebPath())
+	}
+	want := []string{"/admin", "/research", "/debate"}
+	if len(paths) != len(want) {
+		t.Fatalf("AllWebApps returned %v, want the three registries deduped: %v", paths, want)
+	}
+	for i, w := range want {
+		if paths[i] != w {
+			t.Errorf("position %d is %q, want %q — registry order is the dashboard's order", i, paths[i], w)
+		}
+	}
+}
