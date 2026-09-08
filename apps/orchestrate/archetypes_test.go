@@ -251,3 +251,38 @@ func checkTemplateAgainstArchetype(t *testing.T, seedID, slug string) {
 		t.Error("the template's rules no longer refuse to fill a gap from training — the one thing both archetypes put in rules")
 	}
 }
+
+// TestArchetypeSummaryIsTheWholeParagraph. The summary is the one line Builder
+// reads when choosing between archetypes, and it was the first LINE of the
+// paragraph — so every entry in that list stopped mid-sentence at the margin
+// the doc happened to wrap on ("A deep-research agent that answers a factual
+// question by searching the web,"). The function's own comment said paragraph;
+// only the code said line.
+func TestArchetypeSummaryIsTheWholeParagraph(t *testing.T) {
+	got := archetypeSummary("# Archetype: Thing\n\nFirst line of the summary,\nsecond line of it.\n\nA later paragraph.\n\n## Section\n")
+	if want := "First line of the summary, second line of it."; got != want {
+		t.Errorf("summary = %q, want %q", got, want)
+	}
+
+	// No prose before the first section, and a doc with nothing after the
+	// heading, both fall back to the heading rather than to a section title
+	// or an empty string.
+	if got := archetypeSummary("# Archetype: Thing\n\n## Composition\n\n- a bullet\n"); got != "Archetype: Thing" {
+		t.Errorf("a doc that starts with a section summarised as %q", got)
+	}
+	if got := archetypeSummary("# Archetype: Thing\n"); got != "Archetype: Thing" {
+		t.Errorf("a heading-only doc summarised as %q", got)
+	}
+
+	// And the real library: no summary trails off. A comma at the end is the
+	// signature of the old behaviour — a line cut at the margin its author
+	// happened to wrap on.
+	for _, a := range loadArchetypes() {
+		if strings.HasSuffix(a.Summary, ",") {
+			t.Errorf("%s summarises as %q — that is a wrapped line, not a sentence", a.Slug, a.Summary)
+		}
+		if !strings.Contains(a.Summary, ".") {
+			t.Errorf("%s has no sentence in its summary: %q", a.Slug, a.Summary)
+		}
+	}
+}

@@ -65,16 +65,33 @@ func archetypeSummary(body string) string {
 	lines := strings.Split(body, "\n")
 	heading := ""
 	for i, ln := range lines {
-		if strings.HasPrefix(ln, "# ") {
-			heading = strings.TrimSpace(strings.TrimPrefix(ln, "# "))
-			// The first non-empty line after the heading is the summary.
-			for _, next := range lines[i+1:] {
-				if s := strings.TrimSpace(next); s != "" {
-					return s
-				}
-			}
-			break
+		if !strings.HasPrefix(ln, "# ") {
+			continue
 		}
+		heading = strings.TrimSpace(strings.TrimPrefix(ln, "# "))
+		// The whole first paragraph, joined — not its first line. Docs are
+		// wrapped at the margin, so taking one line cut every summary off
+		// mid-sentence ("A deep-research agent that answers a factual question
+		// by searching the web,") in the one place Builder reads to choose
+		// between them.
+		var para []string
+		for _, next := range lines[i+1:] {
+			t := strings.TrimSpace(next)
+			if t == "" {
+				if len(para) > 0 {
+					break // end of the first paragraph
+				}
+				continue // blank lines between heading and paragraph
+			}
+			if strings.HasPrefix(t, "#") {
+				break // a section started before any prose did
+			}
+			para = append(para, t)
+		}
+		if len(para) > 0 {
+			return strings.Join(para, " ")
+		}
+		break
 	}
 	return heading
 }
