@@ -333,7 +333,19 @@ func (d dashboardHost) handleRoot(w http.ResponseWriter, r *http.Request) {
 		}
 		return visible[i].name < visible[j].name
 	})
-	serve_dashboard(w, r, visible)
+	// Notices from any app with something the viewer must act on. Walked over
+	// the ORIGINAL list, like card sources, so a hidden app can still speak —
+	// but never a switched-off one, whose links would land on the 503 the
+	// availability gate answers with.
+	var notices []DashboardNotice
+	for _, a := range d.apps {
+		src, ok := a.app.(DashboardNoticeSource)
+		if !ok || !AppEnabledHere(a.path) {
+			continue
+		}
+		notices = append(notices, src.DashboardNotices(r)...)
+	}
+	serve_dashboard(w, r, visible, notices)
 }
 
 // handleLive is the global live view. Deep links are gated HERE rather than

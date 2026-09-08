@@ -110,6 +110,28 @@ type DashboardCardSource interface {
 	DashboardCards(r *http.Request) []DashboardCard
 }
 
+// DashboardNotice is something the viewer has to do before this deployment is
+// useful, said on the dashboard where they actually land.
+//
+// The case it exists for: a fresh install serves with no model configured, and
+// the admin app has a guided wizard for exactly that — but login redirects to
+// "/" and the wizard's redirect only fires on the admin app's own root. So the
+// first admin met a grid of app cards, opened one, and watched it fail with no
+// model, while a well-built wizard sat at a URL nothing had sent them to.
+type DashboardNotice struct {
+	Text   string // what is wrong, in the viewer's terms
+	Action string // the button's label
+	URL    string // where the button goes
+}
+
+// DashboardNoticeSource is implemented by a WebApp that has something to tell
+// the viewer above the cards. Same shape as DashboardCardSource, and generic
+// for the same reason: core renders notices, apps decide what is worth saying
+// and to whom — this package knows nothing about models, wizards or admins.
+type DashboardNoticeSource interface {
+	DashboardNotices(r *http.Request) []DashboardNotice
+}
+
 // GrantableApp is one entry in the admin user-apps permission picker.
 // Dynamic apps (like exposed agents under /agents/<slug>) implement
 // GrantableAppListSource to surface their per-slug paths as grantable

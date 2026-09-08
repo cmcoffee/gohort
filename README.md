@@ -24,6 +24,13 @@ make build && ./build/gohort --setup && ./build/gohort serve :8080
 That's the whole install. One static binary, no runtime, no dependency tree —
 or skip the toolchain entirely and [download one](#download-a-release).
 
+<!-- Screenshots: take these from a FRESH deployment with demo data, never from a
+     live instance — a real dashboard carries private app names, contacts and
+     chat content, and a README image is in git history for good. Drop the files
+     at the paths below and these render as-is. -->
+
+![The Gohort dashboard: every installed app on one page, running from a single binary](docs/images/dashboard.png)
+
 ## Three ways to think about it
 
 **🏗️ A platform.** A web dashboard that runs a fleet, not a single bot. Multi-agent dispatch with per-caller allowlists, declarative multi-stage **pipelines** (parallel fan-out, bounded loops, branching, and direct tool calls — attached to an agent as a callable tool, or mounted as a page of their own), **machines** that hold a conversation in one shape across turns, messaging **channels**, scheduled + event-triggered agents, real multi-user auth with per-user data isolation, cross-user sharing, and cost telemetry — all first-class, not bolted on.
@@ -41,6 +48,8 @@ You tell the Builder agent:
 It drafts an API credential for the status endpoint, authors a poll connector that checks it on a schedule, wires the result to a channel agent that speaks to your team's messaging service, and hands your admin a single approval to paste the secret into. You never wrote code, never opened a flow editor, and never pasted a key into a chat window — and the model that assembled the whole thing still can't read that key.
 
 That's the loop: **describe it, approve it, it runs.**
+
+![An agent turn: the reply alongside the tool calls that produced it](docs/images/agent-turn.png)
 
 ## What makes it different
 
@@ -77,7 +86,7 @@ sha256sum --ignore-missing -c SHA256SUMS     # macOS: shasum -a 256 -c SHA256SUM
 tar xzf gohort_<version>_linux_amd64.tar.gz
 cd gohort_<version>_linux_amd64
 
-./gohort --setup                     # TLS, listen addr, admin account, a minimal LLM provider
+./gohort --setup                     # TLS, listen addr, admin account (LLM + the rest: web UI)
 ./gohort serve 127.0.0.1:8080        # the web dashboard
 ```
 
@@ -91,7 +100,7 @@ On macOS the download is unsigned, so Gatekeeper quarantines it: `xattr -d com.a
 # Build — one static binary, plus the notices it has to travel with
 make build
 
-# First-boot setup (TLS, listen addr, admin account, a minimal LLM provider)
+# First-boot setup (TLS, listen addr, admin account — the rest is configured in the web UI)
 ./build/gohort --setup
 
 # Run the web dashboard (the primary surface)

@@ -385,41 +385,14 @@ func setup_fuzz() {
 
 	setup := NewOptions("--- Gohort Configuration ---", "(selection or 'q' to save & exit)", 'q')
 
-	// LLM settings.
-	// LLM Routing settings — built dynamically from registered route stages.
-	stages := ListRouteStages()
-	routeVals := make([]string, len(stages))
-	for i, s := range stages {
-		global.db.Get(RoutingTable, s.Key, &routeVals[i])
-		if routeVals[i] == "" {
-			routeVals[i] = "lead"
-		}
-	}
-
-	// Image Generation settings.
-	var imageProvider, imageAPIKey string
-	global.db.Get(ImageTable, "provider", &imageProvider)
-	global.db.Get(ImageTable, "api_key", &imageAPIKey)
-	if imageProvider == "" {
-		imageProvider = "gemini"
-	}
-
-	imagegen := NewOptions(" [Image Generation] ", "(selection or 'q' to return to previous)", 'q')
-	imagegen.StringSelectVar(&imageProvider, "Provider", imageProvider, "gemini", "openai", "none")
-	imagegen.SecretVar(&imageAPIKey, "API Key", imageAPIKey, "API key for image generation. Leave blank to reuse the matching LLM provider key.")
-	imagegen.ShowWhen(func() bool { return imageProvider != "none" })
-
-	// Group all LLM settings under one menu.
-	llmSettings := NewOptions(" [LLM Settings] ", "(selection or 'q' to return to previous)", 'q')
-	if len(stages) > 0 {
-		routing := NewOptions(" [LLM Routing] ", "(selection or 'q' to return to previous)", 'q')
-		for i, s := range stages {
-			routing.StringSelectVar(&routeVals[i], s.Label, routeVals[i], RouteValues()...)
-		}
-		llmSettings.Options("Routing (worker = local, lead = remote)", routing, false)
-	}
-	llmSettings.Options("Image Generation", imagegen, false)
-	setup.Options("LLM Settings", llmSettings, false)
+	// LLM settings are NOT here. Routing, providers and image generation all
+	// live at /admin, which owns the whole surface — worker and lead tiers,
+	// per-route stages, per-provider tuning — and can connection-test what it
+	// saves. This menu wrote the same keys with none of that, so an operator
+	// could configure a provider here that the web UI would then report as
+	// untested, and two ways in meant one of them was always the stale one.
+	// The terminal's job is to get the web UI reachable; configuration is the
+	// web UI's job.
 
 	// --- External Sources ---
 	var searchProvider, searchAPIKey, searchEndpoint, searchSource string
@@ -715,14 +688,6 @@ func setup_fuzz() {
 		global.db.CryptSet(SearchTable, "api_key", searchAPIKey)
 	}
 
-	// Save Image Generation configuration.
-	global.db.Set(ImageTable, "provider", imageProvider)
-	if imageAPIKey != "" {
-		global.db.CryptSet(ImageTable, "api_key", imageAPIKey)
-	} else {
-		global.db.Unset(ImageTable, "api_key")
-	}
-
 	// Save cost rates. Parsed from the string inputs; invalid or blank
 	// values default to zero. SetCostRates also updates the process's
 	// in-memory rates so the change takes effect on any further runs
@@ -839,16 +804,6 @@ func setup_fuzz() {
 			pass = ""
 		}
 		AuthSetUser(global.db, webAdminUser, pass, true)
-	}
-
-	// Save LLM routing configuration. "lead" stored as empty string so the
-	// loader returns "" and RouteToWorker returns false (the default).
-	for i, s := range stages {
-		val := routeVals[i]
-		if val == "lead" {
-			val = ""
-		}
-		global.db.Set(RoutingTable, s.Key, val)
 	}
 
 	Stdout(NONE)

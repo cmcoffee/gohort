@@ -312,3 +312,36 @@ func bedrockRegionPresets() []ui.FieldPreset {
 		{Label: "ap-southeast-2", Value: "ap-southeast-2", Hint: "Sydney"},
 	}
 }
+
+// DashboardNotices tells a fresh admin, on the page they actually land on,
+// that no model is configured yet — and hands them the wizard.
+//
+// The wizard has always existed and always redirected... from the ADMIN app's
+// root. Login redirects to "/", so the first admin met a grid of app cards,
+// opened one, and watched it fail with no model, while the guided flow sat at
+// a URL nothing had sent them to. This is the missing signpost, not a second
+// wizard.
+//
+// Shown only to an admin (nobody else can fix it, and telling a regular user
+// their deployment is broken helps no one) and only until a provider is saved
+// or the wizard is dismissed — the same two conditions the redirect uses, read
+// from the same helpers, so the notice and the redirect cannot disagree.
+func (a *AdminApp) DashboardNotices(r *http.Request) []DashboardNotice {
+	if a.db == nil || !AuthIsAdmin(AuthDB(), r) {
+		return nil
+	}
+	return a.firstRunNotices(AuthGetFirstRunDismissed(AuthDB(), AuthCurrentUser(r)))
+}
+
+// firstRunNotices is the decision itself, separated from the request so it can
+// be exercised without minting a session.
+func (a *AdminApp) firstRunNotices(dismissed bool) []DashboardNotice {
+	if dismissed || !systemNeedsSetup(a.db) {
+		return nil
+	}
+	return []DashboardNotice{{
+		Text:   "No language model is configured yet, so agents cannot run. Connecting one takes about a minute.",
+		Action: "Set up a model",
+		URL:    a.setupWizardPath(),
+	}}
+}

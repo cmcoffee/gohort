@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"html/template"
 	"net/http"
 	"sort"
 	"strings"
@@ -9,7 +10,7 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
-func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
+func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, notices []DashboardNotice) {
 	renderCard := func(b *strings.Builder, a dashApp, extraCls string) {
 		fmt.Fprintf(b, `<a class="card%s" href="%s/">
 			<div class="card-name">%s</div>
@@ -103,6 +104,23 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
     background-clip: text;
   }
   .subtitle { color: #8b949e; margin-bottom: 3rem; font-size: 1rem; }
+  /* A notice is a thing to DO, so it reads as one: an accent edge, the
+     sentence, and the button that resolves it. Sized to the grid so it sits
+     with the cards rather than floating over them. */
+  .notice {
+    width: 100%; max-width: var(--dash-w); margin: 0 auto 1.25rem;
+    display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+    padding: 0.85rem 1.1rem; border-radius: 8px;
+    background: rgba(99,102,241,0.10); border: 1px solid rgba(99,102,241,0.35);
+    color: #c9d1d9; font-size: 0.95rem; line-height: 1.5;
+  }
+  .notice span { flex: 1; min-width: 14rem; }
+  .notice-act {
+    flex: 0 0 auto; text-decoration: none; font-weight: 600; font-size: 0.9rem;
+    padding: 0.45rem 0.9rem; border-radius: 6px;
+    background: #6366f1; color: #fff;
+  }
+  .notice-act:hover { background: #4f46e5; }
   /* Column width for the PHONE layout, where one centred column is the right
      answer. Desktop stops being that shape entirely — see the wide layout
      below — so this is not a cap that grows, it is the narrow case's width. */
@@ -286,6 +304,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp) {
 | |_| | (_) | | | | (_) | |  | |_
  \____|\___/|_| |_|\___/|_|   \__|</div>
   <p class="subtitle">Agent Dashboard</p>
+  %NOTICES%
   <div class="grid">%CARDS%</div>
   <div id="live-panel"><h3><a href="/monitor" style="color:inherit;text-decoration:none">Live Sessions &rarr;</a></h3><div id="live-list"></div></div>
 <script>
@@ -334,6 +353,21 @@ setInterval(refreshLive, 10000);
 	html = strings.Replace(html, "%THEME%", ui.ActiveTheme(), 1)
 	html = strings.Replace(html, "%THEMECSS%", ui.ThemeCSS(), 1)
 	html = strings.Replace(html, "%FAVICON%", faviconLinkTag, 1)
+	// Notices sit above the cards, because the point is to be read before the
+	// grid is used — an admin who scrolls past them has already clicked into
+	// the app that cannot work yet.
+	var noticeB strings.Builder
+	for _, n := range notices {
+		if strings.TrimSpace(n.Text) == "" {
+			continue
+		}
+		noticeB.WriteString(`<div class="notice"><span>` + template.HTMLEscapeString(n.Text) + `</span>`)
+		if strings.TrimSpace(n.URL) != "" && strings.TrimSpace(n.Action) != "" {
+			fmt.Fprintf(&noticeB, `<a class="notice-act" href="%s">%s</a>`, template.HTMLEscapeString(n.URL), template.HTMLEscapeString(n.Action))
+		}
+		noticeB.WriteString(`</div>`)
+	}
+	html = strings.Replace(html, "%NOTICES%", noticeB.String(), 1)
 	html = strings.Replace(html, "%AUTH%", auth_html, 1)
 	html = strings.Replace(html, "%CARDS%", cards.String(), 1)
 
