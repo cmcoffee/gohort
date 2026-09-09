@@ -330,6 +330,14 @@ func (bundleSource) ItemTools(user, itemID string) []AgentToolDef {
 			Handler: func(map[string]any) (string, error) { return "", nil }},
 		{Tool: Tool{Name: "read_support_bundles", Description: "Read a window of one file.", Caps: []Capability{CapRead}},
 			Handler: func(map[string]any) (string, error) { return "", nil }},
+		// A REMOTE read, declared the way core declares one (a source hook,
+		// an MCP proxy tool): CapNetwork rides alongside CapRead because
+		// answering means leaving the box. It only reads, and a read-only
+		// reach drops it anyway — which is the whole subtlety this store
+		// exists to keep honest.
+		{Tool: Tool{Name: "investigate_support_bundles", Description: "Ask the far side about a bundle.",
+			Caps: []Capability{CapNetwork, CapRead}},
+			Handler: func(map[string]any) (string, error) { return "", nil }},
 	}
 }
 
@@ -1344,5 +1352,66 @@ func TestDenyHoldsForToolsThatArriveLater(t *testing.T) {
 	// No machine running: a plain turn denies nothing.
 	if (turnMachine{}).Denies("web_search") {
 		t.Error("a turn with no machine has nothing to deny")
+	}
+}
+
+// Three different things can take a named tool away from a step, and only one
+// of them is a typo. A step whose reach dropped a name it also names was told
+// its spelling was wrong — the message that sent an author hunting a mistake
+// they had not made. Say which control did it.
+func TestAStepDistinguishesAReachDropFromATypo(t *testing.T) {
+	withBundleSource(t)
+	turn, _ := machineTurnFixture(t, residentMachine())
+	turn.agent.AttachedSources = []ReferenceSelection{{Kind: "testfiles", ItemID: "support_bundles"}}
+
+	// investigate_support_bundles declares CapNetwork alongside CapRead — a
+	// remote read — so a read-only reach drops it however plainly it only reads.
+	turn.machineCatalog(MachinePhase{Name: "scan", Reach: ReachRead,
+		Tools: []string{"investigate_support_bundles"}})
+
+	var list []SessionDiag
+	turn.udb.Get(sessionDiagTable, "a1:"+turn.session.ID, &list)
+	var found string
+	for _, d := range list {
+		if d.Kind == "machine_step_tools_missing" {
+			found = d.Detail
+		}
+	}
+	if found == "" {
+		t.Fatalf("a reach that drops a named tool must leave a breadcrumb; diags: %+v", list)
+	}
+	if !strings.Contains(found, "tool reach") || !strings.Contains(found, "Read-only") {
+		t.Errorf("the breadcrumb must blame the reach and name the setting: %q", found)
+	}
+	if strings.Contains(found, "does not carry under those names") ||
+		strings.Contains(found, "must match the catalog exactly") {
+		t.Errorf("a reach drop is not a naming problem and must not be reported as one: %q", found)
+	}
+	if !strings.Contains(found, "no tools at all") {
+		t.Errorf("the step reached nothing, and the breadcrumb should say so: %q", found)
+	}
+}
+
+// The deny list is the third cause: naming a tool it denies cannot bring it
+// back, and neither the reach advice nor the spelling advice applies.
+func TestAStepSaysWhenItsOwnDenyTookTheToolItNamed(t *testing.T) {
+	withBundleSource(t)
+	turn, _ := machineTurnFixture(t, residentMachine())
+	turn.agent.AttachedSources = []ReferenceSelection{{Kind: "testfiles", ItemID: "support_bundles"}}
+
+	turn.machineCatalog(MachinePhase{Name: "scan",
+		Tools: []string{"search_support_bundles"},
+		Deny:  []string{"search_support_bundles"}})
+
+	var list []SessionDiag
+	turn.udb.Get(sessionDiagTable, "a1:"+turn.session.ID, &list)
+	var found string
+	for _, d := range list {
+		if d.Kind == "machine_step_tools_missing" {
+			found = d.Detail
+		}
+	}
+	if !strings.Contains(found, "names and denies") {
+		t.Errorf("a denied name must be reported as a deny, not a miss: %q", found)
 	}
 }

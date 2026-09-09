@@ -255,10 +255,14 @@ func (t *chatTurn) reportUnreachableStepTools(ph MachinePhase) {
 	if len(ph.Tools) == 0 {
 		return
 	}
-	// Judged against what the step will ACTUALLY be handed — the pool
-	// after its own reach — so a name the reach dropped is reported as
-	// the step's two controls disagreeing rather than as a tool nobody
-	// has.
+	// Judged against what the step will ACTUALLY be handed, and split by
+	// WHICH control did the taking: the reach, the Deny list, or the
+	// catalog simply not having it. Those three read nothing alike from
+	// the author's chair and each has a different repair, so a single
+	// sentence covering all of them is wrong twice out of three times —
+	// telling someone their spelling is off when the reach they set is
+	// what dropped the tool sends them hunting a mistake they did not
+	// make.
 	reachable := PhaseTools(ph, t.machineTools)
 	have := make(map[string]bool, len(reachable))
 	for _, td := range reachable {
@@ -268,33 +272,90 @@ func (t *chatTurn) reportUnreachableStepTools(ph MachinePhase) {
 	for _, td := range t.machineTools {
 		inPool[td.Tool.Name] = true
 	}
-	var missing []string
+	// The reach ALONE: the same phase carrying only its reach, which is
+	// how PhaseTools spells "reach, then inherit whatever survived" — an
+	// empty Tools inherits and an empty Deny subtracts nothing. Asking the
+	// real filter a second question beats repeating the capability rule
+	// here, where it would drift the first time a reach learns a new one.
+	survivedReach := make(map[string]bool, len(t.machineTools))
+	for _, td := range PhaseTools(MachinePhase{Reach: PhaseReach(ph)}, t.machineTools) {
+		survivedReach[td.Tool.Name] = true
+	}
+	var byReach, byDeny, unknown []string
 	for _, n := range ph.Tools {
 		n = strings.TrimSpace(n)
 		if n == "" || n == NoToolsMarker || have[n] {
 			continue
 		}
-		if inPool[n] {
-			missing = append(missing, n+" (dropped by this step's reach)")
-			continue
+		switch {
+		case !inPool[n]:
+			unknown = append(unknown, n)
+		case !survivedReach[n]:
+			byReach = append(byReach, n)
+		default:
+			byDeny = append(byDeny, n)
 		}
-		missing = append(missing, n)
 	}
-	if len(missing) == 0 {
+	if len(byReach)+len(byDeny)+len(unknown) == 0 {
 		return
 	}
-	Log("[orchestrate.orch] step %q names %d tool(s) this turn's catalog does not carry: %v",
-		ph.Name, len(missing), missing)
-	detail := "step " + ph.Name + " names " + strings.Join(missing, ", ") +
-		", which this agent's catalog does not carry under those names, so the step ran without them. " +
-		"Names must match the catalog exactly — an attached source mints its own (search_<store>), " +
-		"and a remote MCP tool is published as \"<server>_<tool>\" in lowercase."
-	if len(missing) == len(ph.Tools) {
-		detail = "step " + ph.Name + " reached NONE of the tools it names (" + strings.Join(missing, ", ") +
-			"), so it ran with no tools at all and could only answer from its prompt. " +
-			"Check the names against the agent's catalog, and check the agent is attached to the source they come from."
+	Log("[orchestrate.orch] step %q could not reach tools it names: reach dropped %v, deny dropped %v, catalog missing %v",
+		ph.Name, byReach, byDeny, unknown)
+
+	var says []string
+	if len(byReach) > 0 {
+		says = append(says, "step "+ph.Name+" names "+strings.Join(byReach, ", ")+
+			" — in this agent's catalog, but taken away before the step ran by the step's own tool reach ("+
+			reachSays(PhaseReach(ph))+"). Reach is applied first and the name list only narrows what "+
+			"survives it, so this step's two tool controls are asking for different things. "+reachWhy(PhaseReach(ph)))
+	}
+	if len(byDeny) > 0 {
+		says = append(says, "step "+ph.Name+" both names and denies "+strings.Join(byDeny, ", ")+
+			". Deny is the final word, applied after the name list, so naming a tool cannot bring it back — "+
+			"take it off one of the two lists.")
+	}
+	if len(unknown) > 0 {
+		says = append(says, "step "+ph.Name+" names "+strings.Join(unknown, ", ")+
+			", which this agent's catalog does not carry under those names. "+
+			"Names must match the catalog exactly — an attached source mints its own (search_<store>), "+
+			"and a remote MCP tool is published as \"<server>_<tool>\" in lowercase. "+
+			"Check too that the agent is attached to the source they come from.")
+	}
+	detail := strings.Join(says, " ")
+	if len(reachable) == 0 {
+		detail += " The step reached none of the tools it names and ran with no tools at all, so it could only answer from its prompt."
+	} else {
+		detail += " The step ran without them."
 	}
 	t.turnDiag("machine_step_tools_missing", detail)
+}
+
+// reachSays names a reach the way the step editor's dropdown does, so the
+// breadcrumb and the control that caused it use the same words.
+func reachSays(reach string) string {
+	switch reach {
+	case ReachNone:
+		return "\"Nothing — this step only decides\""
+	case ReachRead:
+		return "\"Read-only — nothing that writes or reaches the network\""
+	}
+	return "\"Everything the agent has\""
+}
+
+// reachWhy is the part an author cannot read off the label: which way to turn
+// the controls so they stop contradicting, and — for read-only — why a tool
+// that plainly only reads was dropped anyway.
+func reachWhy(reach string) string {
+	switch reach {
+	case ReachNone:
+		return "That reach admits nothing at all, so no name can resolve under it: give the step a reach, or drop the name list."
+	case ReachRead:
+		return "Read-only admits a tool only if EVERY capability it declares is a read, and reaching the " +
+			"network is not one — so a remote MCP tool and an attached source's search tool are dropped " +
+			"however plainly they only read. Set the reach to \"Everything the agent has\" and let the name " +
+			"list do the bounding, or use the step's Deny list to subtract."
+	}
+	return "Widen the step's reach, or drop the names it excludes."
 }
 
 // machineConfirm is the approval gate a step's tools go through: the
