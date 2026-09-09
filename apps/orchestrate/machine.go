@@ -224,6 +224,20 @@ func (t *chatTurn) machineCatalog(ph MachinePhase) []AgentToolDef {
 		// looks IN are attachments.
 		pool = append(pool, t.buildAttachedSourceToolDefs(sess)...)
 		pool = append(pool, t.buildAttachedPipelineToolDefs()...)
+		// And the agent's own CORPUS, for exactly the reason above. The
+		// knowledge tools are framework-injected by the conversational
+		// catalog and by nothing else, so a step told to "search the
+		// collections first" was built with no way to do it — not narrowed
+		// out, never present — and clearing its tool list could not give it
+		// one, because an empty list inherits a pool the tool was never in.
+		//
+		// Observed on a support agent whose every phase prompt said "call
+		// knowledge_search FIRST, this is not conditional": it reported,
+		// accurately, that the tool was not in its tool set, and answered
+		// from recollection. The same question dispatched to the same agent
+		// answered from the corpus, because a dispatched run has no session
+		// and therefore no machine.
+		pool = append(pool, t.corpusToolDefs()...)
 		// Prefixed so the activity pane reads as what it is: work done
 		// inside a step, before the turn's own answer began.
 		t.machineTools = t.wrapToolsForActivity(sess, pool, t.agent, "↳ [step] ")

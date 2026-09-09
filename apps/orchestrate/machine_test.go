@@ -1715,3 +1715,63 @@ func TestReachAllIsSayableWithoutAnEmptyEnumValue(t *testing.T) {
 		t.Error("the stored value must read back as ReachAll through the shared accessor")
 	}
 }
+
+// The live failure, and the third wrong guess before it: a support agent whose
+// every phase prompt said "call knowledge_search FIRST, this is not
+// conditional" reported that the tool was not in its tool set. It was not
+// narrowed out — clearing the phase's tool list changed nothing, and the tool
+// was in no deny list. It was never in the step's pool at all.
+//
+// A transient step builds its own catalog out of resolveWorkerTools plus the
+// agent's attachments; the knowledge tools are appended by the CONVERSATIONAL
+// catalog and by nothing else. Same omission the attached-source fix addressed,
+// hit again with a different set of tools.
+//
+// The tell, in hindsight: the same question dispatched to the same agent
+// answered from the corpus, because a dispatched run has no session and
+// therefore runs no machine.
+func TestATransientStepCanReachTheAgentsCorpus(t *testing.T) {
+	turn, _ := machineTurnFixture(t, residentMachine())
+	turn.agent.AttachedCollections = []string{"c-kiteworks"}
+
+	var names []string
+	for _, td := range turn.machineCatalog(MachinePhase{Name: "assess",
+		Prompt: "Call knowledge_search FIRST, this is not conditional."}) {
+		names = append(names, td.Tool.Name)
+	}
+	joined := strings.Join(names, " ")
+	for _, want := range []string{"knowledge_search", "fetch_knowledge_doc"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("a step told to search the corpus must be built holding %q; pool had %v", want, names)
+		}
+	}
+}
+
+// The gate the conversational catalog already applied, kept: a knowledge tool
+// over an empty corpus invites doc_ids the handler must then refuse.
+func TestAStepWithNoCorpusIsNotGivenKnowledgeTools(t *testing.T) {
+	turn, _ := machineTurnFixture(t, residentMachine())
+	turn.agent.AttachedCollections = nil
+	turn.agent.IngestAttachments = false
+
+	for _, td := range turn.machineCatalog(MachinePhase{Name: "assess", Prompt: "decide"}) {
+		if td.Tool.Name == "knowledge_search" {
+			t.Error("an agent with nothing retrievable should not be handed a tool that searches it")
+		}
+	}
+}
+
+// And a step that NARROWS still gets it, as long as it names it — the tool has
+// to be in the pool before a list can keep it.
+func TestANamedKnowledgeToolSurvivesAStepsNarrowing(t *testing.T) {
+	turn, _ := machineTurnFixture(t, residentMachine())
+	turn.agent.AttachedCollections = []string{"c-kiteworks"}
+
+	ph := MachinePhase{Name: "assess", Prompt: "search first",
+		Tools: []string{"knowledge_search"}}
+	pool := turn.machineCatalog(ph)
+	narrowed := PhaseTools(ph, pool)
+	if len(narrowed) != 1 || narrowed[0].Tool.Name != "knowledge_search" {
+		t.Errorf("a step naming the corpus tool should reach exactly it, got %+v", narrowed)
+	}
+}

@@ -130,14 +130,47 @@ func (t *chatTurn) dispatchListNamesARunnable() bool {
 // for its activity pane). Session-bound where the handler needs it: find_tools
 // searches the session catalog, send_status reaches the StatusCallback,
 // stay_silent sets Silenced.
+// corpusToolDefs is this turn's reach into the agent's own corpus, in whichever
+// memory mode is live: the knowledge pair normally, the unified surface when
+// that flag is on and the agent has a layer to reach.
+//
+// Extracted because a SECOND caller needed it and the gate had been written
+// inline. A transient machine step builds its own pool (machineCatalog) out of
+// resolveWorkerTools plus the agent's attachments, and framework tools are
+// appended by the conversational catalog and by nothing else — so a step never
+// had knowledge_search at all, whatever its tool list said, and clearing that
+// list could not give it one.
+//
+// That is the same omission the comment above buildAttachedSourceToolDefs
+// describes for attached sources, hit again with a different set of tools: "the
+// step that goes and looks is the whole reason a step names tools at all, and
+// the things it looks IN are attachments." A corpus is one of the things it
+// looks in.
+//
+// Nil when the agent has nothing retrievable — the gate the conversational
+// catalog already applied, and for its stated reason: a knowledge tool over an
+// empty corpus invites doc_ids the handler must then refuse.
+func (t *chatTurn) corpusToolDefs() []AgentToolDef {
+	if unifiedMemoryEnabled() {
+		// recall fronts knowledge search under the collapsed surface, and
+		// recall(id="doc:…") is the drill-down.
+		if !t.hasAnyMemoryLayer() {
+			return nil
+		}
+		return t.unifiedMemoryTools()
+	}
+	if !t.agentHasRetrievableContent() {
+		return nil
+	}
+	return []AgentToolDef{t.searchKnowledgeToolDef(), t.fetchKnowledgeDocToolDef()}
+}
+
 func (t *chatTurn) frameworkConversationalTools(sess *ToolSession) []AgentToolDef {
 	out := []AgentToolDef{t.introspectToolDef()} // self-awareness — always
 	// Knowledge — only when the agent has a corpus, else it hallucinates
 	// doc_ids the handler must refuse. Skipped under the unified surface:
 	// recall fronts knowledge search, and recall(id="doc:…") the drill-down.
-	if !unifiedMemoryEnabled() && t.agentHasRetrievableContent() {
-		out = append(out, t.searchKnowledgeToolDef(), t.fetchKnowledgeDocToolDef())
-	}
+	out = append(out, t.corpusToolDefs()...)
 	for _, n := range []string{"find_tools", "send_status", "stay_silent", "keep_going"} {
 		if ct, ok := LookupChatTool(n); ok {
 			out = append(out, ChatToolToAgentToolDefWithSession(ct, sess))
