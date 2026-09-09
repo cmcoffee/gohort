@@ -1503,7 +1503,7 @@ func phaseRecord(p MachinePhase) map[string]any {
 		"resident": p.Resident, "next": p.Next, "next_from": p.NextFrom, "agent": p.Agent,
 		"pipeline": p.Pipeline, "machine": p.Machine, "accumulates": accumulatorRows(p),
 		"guard": p.Guard, "guard_to": p.GuardTo,
-		"think": p.Think, "reach": PhaseReach(p), "tools": p.Tools, "output": rows,
+		"think": p.Think, "reach": PhaseReach(p), "tools": p.Tools, "deny": p.Deny, "output": rows,
 		"tool": p.Tool, "args": nameValueRowsOf(p.Args),
 		"model": p.Model, "keep": p.Keep, "targets": routingTargetsOf(p), "exits_to": p.ExitsTo,
 		"choices": p.Choices,
