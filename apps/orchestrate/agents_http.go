@@ -412,6 +412,20 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		_ = json.NewEncoder(w).Encode(clone)
 		return
 	}
+	if action == "detach" {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		rec, err := detachAgentFromShape(udb, id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(rec)
+		return
+	}
 	if action == "facts" {
 		T.handleAgentFacts(w, r, user, id)
 		return

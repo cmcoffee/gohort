@@ -77,8 +77,10 @@ func loadAgent(db Database, id string) (AgentRecord, bool) {
 		// No shadow exists: return the framework default.
 		return enforceSubAgentPosture(applyLegacyMode(seed)), true
 	}
-	// Non-seed (user-created / cloned) agent: the DB record is authoritative.
+	// Non-seed (user-created / cloned) agent: the DB record is authoritative,
+	// except for the fields a tracking instance has left to its shape.
 	if db.Get(agentsTable, id, &a) {
+		a = resolveShapeInstance(a)
 		a = selfHealAllowedTools(db, a)
 		a = enforceSubAgentPosture(applyLegacyMode(a))
 		return a, true
@@ -270,13 +272,14 @@ func writeAgent(db Database, a AgentRecord, maySetLocked bool) (AgentRecord, err
 	if seed, ok := seedAgentByID(a.ID); ok && !isBuilderAgent(a.ID) {
 		return resolveSeedShadow(seed, a), nil
 	}
-	return a, nil
+	return resolveShapeInstance(a), nil
 }
 
-// recordSeedOverrides stamps a seed shadow with the fields it has decided for
-// itself, so every OTHER field keeps tracking the seed. A record that is not a
-// seed shadow is returned untouched: a user's own agent is a whole agent, not
-// an overlay on anything.
+// recordSeedOverrides stamps an overlay record with the fields it has decided
+// for itself, so every OTHER field keeps tracking what it came from. Two kinds
+// of record are overlays: a seed shadow, and an instance that tracks a shape.
+// Anything else is returned untouched, because an agent built from a brief is
+// a whole agent and not an overlay on anything.
 //
 // Recomputed on every save rather than accumulated, which gives revert for
 // free: set a field back to the framework's value and it stops being an
@@ -289,12 +292,22 @@ func recordSeedOverrides(a AgentRecord) AgentRecord {
 	if isBuilderAgent(a.ID) {
 		return a
 	}
-	seed, ok := seedAgentByID(a.ID)
-	if !ok {
+	if seed, ok := seedAgentByID(a.ID); ok {
+		a.OverriddenFields = agentOverrides(seed, a, frameworkOwnedSeedFields(seed.ID))
+		a.OverlayRev = 1
 		return a
 	}
-	a.OverriddenFields = agentOverrides(seed, a)
-	a.OverlayRev = 1
+	if a.ShapeID == "" {
+		return a
+	}
+	if base, ok := shapeBaseRecord(a.ShapeID); ok {
+		a.OverriddenFields = instanceOverrides(base, a)
+		a.OverlayRev = 1
+		return a
+	}
+	// A shape that no longer exists: keep the record standing alone rather
+	// than tracking something unresolvable.
+	a.ShapeID = ""
 	return a
 }
 
@@ -332,6 +345,11 @@ func listAgents(db Database, owner string) []AgentRecord {
 				continue
 			}
 		}
+		// A tracking instance reads its unclaimed fields from its shape. This
+		// listing walks rows directly rather than through loadAgent, so
+		// without this the picker and every scope surface would show the
+		// values frozen at the moment the agent was created.
+		a = resolveShapeInstance(a)
 		// Skip stale rows from the pre-shadow era when NON-seed records were
 		// installed into per-user sub-stores with Owner=seedOwner.
 		// Migration drops them on first list, but harden anyway.

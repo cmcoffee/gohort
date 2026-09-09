@@ -982,12 +982,25 @@ type AgentRecord struct {
 	// KnowledgeModel is a Phase 3 placeholder.
 	KnowledgeModel string `json:"knowledge_model,omitempty"`
 
+	// ShapeID names the archetype this agent was built from, and means the
+	// agent TRACKS that shape: every field it has not decided for itself is
+	// read from the shape at load, so a framework improvement reaches an
+	// agent somebody created months ago. Empty means the agent stands alone,
+	// which is what every agent built from a brief is and what a tracking
+	// agent becomes when its owner detaches it.
+	//
+	// A copy is the alternative, and it is the one that does not work: the
+	// wizard and materializeArchetypeAgent hand out snapshots, so a fix to
+	// the research prompt would reach nobody who already had a research
+	// agent. See agent_overlay.go.
+	ShapeID string `json:"shape_id,omitempty"`
+
 	// OverriddenFields names the json fields this record has decided for
-	// itself. It is meaningful only on a SEED SHADOW, where the record is an
-	// overlay rather than a copy: loadAgent starts from the framework's seed
-	// and takes only these fields from here, so a field the user never
-	// touched keeps tracking the seed instead of freezing at whatever it held
-	// the first time anything wrote a shadow. See agent_overlay.go.
+	// itself. It applies to a SEED SHADOW and to a tracking instance alike:
+	// loadAgent starts from the framework's record and takes only these
+	// fields from here, so a field the user never touched keeps tracking
+	// instead of freezing at whatever it held the first time anything wrote a
+	// record. See agent_overlay.go.
 	OverriddenFields []string `json:"overridden_fields,omitempty"`
 
 	// OverlayRev marks OverriddenFields as authoritative. Zero means a shadow

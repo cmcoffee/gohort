@@ -2,6 +2,7 @@ package orchestrate
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -134,7 +135,7 @@ func TestStampingALegacyShadowEndsTheFreeze(t *testing.T) {
 	shadow.OverlayRev = 0
 
 	// What the migration does.
-	shadow.OverriddenFields = agentOverrides(seed, shadow)
+	shadow.OverriddenFields = agentOverrides(seed, shadow, frameworkOwnedSeedFields(seed.ID))
 	shadow.OverlayRev = 1
 	if !reflect.DeepEqual(shadow.OverriddenFields, []string{"max_worker_rounds"}) {
 		t.Fatalf("the migration recorded %v", shadow.OverriddenFields)
@@ -288,5 +289,199 @@ func TestLoadingASeedShadowTwiceDoesNotKeepWriting(t *testing.T) {
 	}
 	if !reflect.DeepEqual(first.AllowedTools, second.AllowedTools) {
 		t.Errorf("two reads disagreed on the tool list: %v then %v", first.AllowedTools, second.AllowedTools)
+	}
+}
+
+// --- instances -------------------------------------------------------------
+
+// Cloning a shape produces an agent that TRACKS it. Until this, the wizard and
+// materializeArchetypeAgent handed out snapshots, so a fix to the research
+// prompt reached nobody who already had a research agent.
+func TestACloneOfAShapeTracksIt(t *testing.T) {
+	db := overlayTestDB(t)
+	clone, err := cloneAgent(db, "seed-research", "craig@example.com", "My Researcher", true)
+	if err != nil {
+		t.Fatalf("clone: %v", err)
+	}
+	if clone.ShapeID != "research" {
+		t.Fatalf("the clone tracks %q, want the research shape", clone.ShapeID)
+	}
+	// The name is the owner's, always: renaming somebody's agent because the
+	// framework renamed a shape is jarring and has no upside.
+	if !hasField(clone.OverriddenFields, "name") {
+		t.Errorf("the clone's name is not its own: %v", clone.OverriddenFields)
+	}
+	if clone.Name != "My Researcher" {
+		t.Errorf("name = %q", clone.Name)
+	}
+	if clone.Owner != "craig@example.com" || clone.ID == "seed-research" {
+		t.Errorf("the clone is not the user's own record: owner=%q id=%q", clone.Owner, clone.ID)
+	}
+}
+
+// A shape improvement reaches an agent created before it, in every field its
+// owner never claimed.
+func TestAShapeImprovementReachesAnExistingInstance(t *testing.T) {
+	db := overlayTestDB(t)
+	clone, err := cloneAgent(db, "seed-research", "craig@example.com", "My Researcher", true)
+	if err != nil {
+		t.Fatalf("clone: %v", err)
+	}
+	// The owner tightens one budget, months later.
+	clone.MaxWorkerRounds = 3
+	if _, err := saveAgent(db, clone); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	var stored AgentRecord
+	if !db.Get(agentsTable, clone.ID, &stored) {
+		t.Fatal("no stored instance")
+	}
+	// Simulate the framework moving the shape by resolving against a changed
+	// base: the same thing a new release does.
+	base, ok := shapeBaseRecord("research")
+	if !ok {
+		t.Fatal("the research shape does not resolve")
+	}
+	next := base
+	next.PlanGuidance = "Decompose differently."
+	next.MaxWorkerRounds = 40
+	got := applyAgentOverrides(next, stored, stored.OverriddenFields, nil)
+
+	if got.PlanGuidance != next.PlanGuidance {
+		t.Error("a shape improvement did not reach an agent that never claimed that field")
+	}
+	if got.MaxWorkerRounds != 3 {
+		t.Errorf("the owner's own budget was overwritten: %d", got.MaxWorkerRounds)
+	}
+}
+
+// An instance may claim ANY field, including the persona. That is the
+// difference from a seed shadow: a shadow is the framework's agent and may not
+// rewrite what it is, while an instance is already the user's own.
+func TestAnInstanceMayRewriteItsPersona(t *testing.T) {
+	db := overlayTestDB(t)
+	clone, err := cloneAgent(db, "seed-research", "craig@example.com", "My Researcher", true)
+	if err != nil {
+		t.Fatalf("clone: %v", err)
+	}
+	clone.OrchestratorPrompt = "You are mine, and you answer only about boats."
+	saved, err := saveAgent(db, clone)
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if !hasField(saved.OverriddenFields, "orchestrator_prompt") {
+		t.Fatalf("the rewritten persona was not recorded: %v", saved.OverriddenFields)
+	}
+	got, ok := loadAgent(db, saved.ID)
+	if !ok {
+		t.Fatal("not found")
+	}
+	if got.OrchestratorPrompt != "You are mine, and you answer only about boats." {
+		t.Errorf("the owner's persona was replaced by the shape's: %q", got.OrchestratorPrompt)
+	}
+}
+
+// Cloning a user's own agent tracks nothing: there is no shape behind it, and
+// inheriting the source's override list would claim the source's decisions as
+// this record's own.
+func TestCloningAPlainAgentTracksNothing(t *testing.T) {
+	db := overlayTestDB(t)
+	first, err := cloneAgent(db, "seed-research", "craig@example.com", "First", true)
+	if err != nil {
+		t.Fatalf("clone: %v", err)
+	}
+	second, err := cloneAgent(db, first.ID, "craig@example.com", "Second", true)
+	if err != nil {
+		t.Fatalf("clone of a clone: %v", err)
+	}
+	if second.ShapeID != "" {
+		t.Errorf("a copy of a user's agent tracks %q", second.ShapeID)
+	}
+}
+
+// An instance whose shape is gone keeps working. The stored row is a full
+// agent, so losing the link costs nothing but future updates.
+func TestAnInstanceSurvivesAMissingShape(t *testing.T) {
+	db := overlayTestDB(t)
+	clone, err := cloneAgent(db, "seed-research", "craig@example.com", "My Researcher", true)
+	if err != nil {
+		t.Fatalf("clone: %v", err)
+	}
+	var stored AgentRecord
+	if !db.Get(agentsTable, clone.ID, &stored) {
+		t.Fatal("no stored instance")
+	}
+	stored.ShapeID = "a_shape_that_was_removed"
+	got := resolveShapeInstance(stored)
+	if got.Name != "My Researcher" || strings.TrimSpace(got.OrchestratorPrompt) == "" {
+		t.Errorf("an instance with a missing shape lost its content: name=%q prompt=%d bytes",
+			got.Name, len(got.OrchestratorPrompt))
+	}
+}
+
+// Only shapes that ship a record can be instantiated. A watcher's subject
+// varies, so there is nothing to copy and nothing to track.
+func TestOnlyShapesWithARecordInstantiate(t *testing.T) {
+	if _, ok := shapeBaseRecord("research"); !ok {
+		t.Error("research does not instantiate")
+	}
+	if _, ok := shapeBaseRecord("scheduled_watcher"); ok {
+		t.Error("scheduled_watcher instantiates, but it describes an agent whose subject is not known yet")
+	}
+	if _, ok := shapeBaseRecord("investigator"); ok {
+		t.Error("investigator instantiates, but it describes a sub-agent pointed at a subject")
+	}
+}
+
+// Detaching freezes the agent as it READS, not as it was stored. The stored
+// row's unclaimed fields hold whatever the shape said when the agent was
+// created, so writing that back would silently revert the agent to an older
+// version of itself at the moment its owner asked to freeze it.
+func TestDetachingFreezesWhatTheAgentReadsNow(t *testing.T) {
+	db := overlayTestDB(t)
+	clone, err := cloneAgent(db, "seed-research", "craig@example.com", "My Researcher", true)
+	if err != nil {
+		t.Fatalf("clone: %v", err)
+	}
+	live, ok := loadAgent(db, clone.ID)
+	if !ok {
+		t.Fatal("not found")
+	}
+
+	detached, err := detachAgentFromShape(db, clone.ID)
+	if err != nil {
+		t.Fatalf("detach: %v", err)
+	}
+	if detached.ShapeID != "" || len(detached.OverriddenFields) != 0 || detached.OverlayRev != 0 {
+		t.Errorf("still tracking after detach: shape=%q fields=%v rev=%d",
+			detached.ShapeID, detached.OverriddenFields, detached.OverlayRev)
+	}
+	if detached.Name != "My Researcher" {
+		t.Errorf("name = %q", detached.Name)
+	}
+	if detached.OrchestratorPrompt != live.OrchestratorPrompt {
+		t.Error("detaching changed the agent's prompt, which is the one thing freezing must not do")
+	}
+	if detached.MaxWorkerRounds != live.MaxWorkerRounds || detached.MaxPlanSteps != live.MaxPlanSteps {
+		t.Errorf("detaching changed a budget: %d/%d, was %d/%d",
+			detached.MaxWorkerRounds, detached.MaxPlanSteps, live.MaxWorkerRounds, live.MaxPlanSteps)
+	}
+
+	// And it stays frozen: a later shape change reaches nothing.
+	var stored AgentRecord
+	if !db.Get(agentsTable, clone.ID, &stored) {
+		t.Fatal("no stored record")
+	}
+	base, _ := shapeBaseRecord("research")
+	next := base
+	next.PlanGuidance = "Decompose differently."
+	if got := resolveShapeInstance(stored); got.PlanGuidance == next.PlanGuidance {
+		t.Error("a detached agent still followed the shape")
+	}
+
+	// Detaching twice is an error worth reading, not a silent no-op.
+	if _, err := detachAgentFromShape(db, clone.ID); err == nil {
+		t.Error("detaching an agent that follows nothing reported success")
 	}
 }

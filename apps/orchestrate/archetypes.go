@@ -198,6 +198,12 @@ func parseArchetype(name string, data []byte) (archetype, error) {
 // might use ("knowledge base" → knowledge_base, "kb" → knowledge_base).
 func archetypeBySlug(slug string) (archetype, bool) {
 	want := normalizeArchetypeSlug(slug)
+	// An empty name matches NOTHING. The contained-word pass below is a
+	// substring test, and every slug contains the empty string, so without
+	// this an unset shape resolves to whichever recipe sorts first.
+	if want == "" {
+		return archetype{}, false
+	}
 	for _, a := range loadArchetypes() {
 		if a.Slug == want {
 			return a, true

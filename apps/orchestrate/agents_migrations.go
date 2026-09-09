@@ -396,7 +396,7 @@ func (T *OrchestrateApp) migrateSeedShadowOverlays() {
 			if shadow.OverlayRev != 0 {
 				continue
 			}
-			shadow.OverriddenFields = agentOverrides(seed, shadow)
+			shadow.OverriddenFields = agentOverrides(seed, shadow, frameworkOwnedSeedFields(seed.ID))
 			shadow.OverlayRev = 1
 			udb.Set(agentsTable, seed.ID, shadow)
 			stamped++

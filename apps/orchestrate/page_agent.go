@@ -583,6 +583,43 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	// surface is retiring with phantom; channel threads are inspected via the
 	// rail + the channel-scoped chat tools now.)
 
+	// Built from: shown only for an agent that FOLLOWS a framework shape.
+	// Tracking is invisible otherwise, and an agent whose prompt can change
+	// under its owner has to say so somewhere they will see it. The exit is
+	// here beside the explanation rather than in a menu, because the question
+	// "will this change without me?" and the answer "not if I stop it" belong
+	// on the same screen.
+	if id != "" && !isSeedID(id) {
+		if rec, ok := loadAgent(udb, id); ok && rec.ShapeID != "" {
+			shapeName := rec.ShapeID
+			if doc, ok := archetypeBySlug(rec.ShapeID); ok {
+				shapeName = doc.Slug
+			}
+			kept := "Nothing yet, so all of it follows the framework."
+			if n := len(rec.OverriddenFields); n > 0 {
+				kept = fmt.Sprintf("%d field%s stay yours; everything else follows the framework.",
+					n, plural(n))
+			}
+			sections = append(sections, ui.Section{
+				Title: "Built from the " + shapeName + " shape",
+				Subtitle: "Fields you have changed here are yours permanently. " + kept +
+					" That is how a framework improvement reaches an agent you made months ago. Stop following to freeze this agent exactly as it reads now.",
+				Body: ui.DisplayPanel{
+					Source: "../api/agents/" + id,
+					Pairs:  []ui.DisplayPair{},
+					Actions: []ui.ToolbarAction{
+						{
+							Label:   "Stop following the shape",
+							Method:  "POST",
+							URL:     "../api/agents/" + id + "/detach",
+							Confirm: "Freeze this agent as it reads now? It keeps everything it has, and stops receiving framework improvements to the fields you never changed. This cannot be undone.",
+						},
+					},
+				},
+			})
+		}
+	}
+
 	// Delete — the human's authoritative remove for any existing agent the editor
 	// is open on, INCLUDING a sub-agent reached via the picker (which agents
 	// can't delete once the cross-agent lock is in place). Non-seed only: seeds

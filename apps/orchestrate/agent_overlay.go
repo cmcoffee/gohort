@@ -1,11 +1,13 @@
 package orchestrate
 
 import (
+	"fmt"
 	"reflect"
 	"sort"
 	"strings"
 	"sync"
 
+	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appagents"
 )
 
@@ -72,8 +74,7 @@ func frameworkOwnedSeedFields(id string) map[string]bool {
 // the user chose and how a legacy shadow is read: a shadow written before
 // overlays carries no list, and every field where it differs from the seed is
 // the best available evidence of an intentional change.
-func agentOverrides(base, rec AgentRecord) []string {
-	owned := frameworkOwnedSeedFields(rec.ID)
+func agentOverrides(base, rec AgentRecord, owned map[string]bool) []string {
 	bv, rv := reflect.ValueOf(base), reflect.ValueOf(rec)
 	var out []string
 	for name, idx := range agentFieldsByJSONName() {
@@ -93,11 +94,10 @@ func agentOverrides(base, rec AgentRecord) []string {
 // A name this build does not know is skipped rather than refused: a record
 // written by a newer build and read by an older one should lose one field, not
 // fail to load an agent.
-func applyAgentOverrides(seed, shadow AgentRecord, fields []string) AgentRecord {
-	owned := frameworkOwnedSeedFields(seed.ID)
-	out := seed
+func applyAgentOverrides(base, over AgentRecord, fields []string, owned map[string]bool) AgentRecord {
+	out := base
 	ov := reflect.ValueOf(&out).Elem()
-	sv := reflect.ValueOf(shadow)
+	sv := reflect.ValueOf(over)
 	byName := agentFieldsByJSONName()
 	for _, name := range fields {
 		if owned[name] || identityField[name] {
@@ -121,9 +121,9 @@ func resolveSeedShadow(seed, shadow AgentRecord) AgentRecord {
 		// nothing else about it can be trusted to be a choice. Resolving this
 		// way leaves such a user seeing exactly what they saw yesterday, and
 		// the list becomes explicit the next time they save.
-		fields = agentOverrides(seed, shadow)
+		fields = agentOverrides(seed, shadow, frameworkOwnedSeedFields(seed.ID))
 	}
-	out := applyAgentOverrides(seed, shadow, fields)
+	out := applyAgentOverrides(seed, shadow, fields, frameworkOwnedSeedFields(seed.ID))
 	// Identity always comes from the stored row: it is what makes this the
 	// user's record rather than the framework's.
 	out.ID = shadow.ID
@@ -154,6 +154,7 @@ var identityField = map[string]bool{
 	"created":           true,
 	"updated":           true,
 	"overridden_fields": true,
+	"shape_id":          true,
 	"overlay_rev":       true,
 }
 
@@ -185,3 +186,122 @@ var (
 	agentFieldsOnce sync.Once
 	agentFields     map[string]int
 )
+
+// --- instances -------------------------------------------------------------
+//
+// A tracking instance is the same overlay pointed at a shape instead of at a
+// seed, with one difference: nothing is framework-owned. A seed shadow may not
+// rewrite the persona, because it IS the framework's agent and cloning is the
+// path to a different one. An instance already is the user's own agent, so
+// every field is theirs to take, and the shape is only where the answers come
+// from until they give one.
+
+// instanceOwnedFields are recorded as the instance's own whether or not they
+// differ from the shape. A name is how its owner refers to the agent, and
+// renaming an agent somebody talks to daily because the framework renamed a
+// shape is jarring with no upside, unlike a prompt fix.
+var instanceOwnedFields = map[string]bool{"name": true}
+
+// shapeBaseRecord returns the record a shape instantiates: the seed the
+// archetype names. A shape with no seed describes an agent whose subject
+// varies (a watcher, an investigator), so there is nothing to instantiate and
+// nothing to track.
+func shapeBaseRecord(shapeID string) (AgentRecord, bool) {
+	if shapeID == "" {
+		return AgentRecord{}, false
+	}
+	doc, ok := archetypeBySlug(shapeID)
+	if !ok || doc.Seed == "" {
+		return AgentRecord{}, false
+	}
+	return seedAgentByID(doc.Seed)
+}
+
+// instanceOverrides is what a tracking instance has decided for itself.
+func instanceOverrides(base, rec AgentRecord) []string {
+	fields := agentOverrides(base, rec, nil)
+	for name := range instanceOwnedFields {
+		if !hasStringField(fields, name) {
+			fields = append(fields, name)
+		}
+	}
+	sort.Strings(fields)
+	return fields
+}
+
+// resolveShapeInstance layers an instance's decisions onto its shape. An
+// instance whose shape is gone, or which was written before it tracked
+// anything, is returned as the standalone record it already is: the stored row
+// is a full agent, so losing the link costs nothing but future updates.
+func resolveShapeInstance(rec AgentRecord) AgentRecord {
+	if rec.ShapeID == "" || rec.OverlayRev == 0 {
+		return rec
+	}
+	base, ok := shapeBaseRecord(rec.ShapeID)
+	if !ok {
+		return rec
+	}
+	out := applyAgentOverrides(base, rec, rec.OverriddenFields, nil)
+	out.ID = rec.ID
+	out.Owner = rec.Owner
+	out.Created = rec.Created
+	out.Updated = rec.Updated
+	out.ShapeID = rec.ShapeID
+	out.OverriddenFields = rec.OverriddenFields
+	out.OverlayRev = rec.OverlayRev
+	// An instance is never the framework's record, whatever the shape says.
+	out.OwnedBy = rec.OwnedBy
+	out.Locked = rec.Locked
+	return out
+}
+
+// shapeForSeed returns the archetype slug that ships a given seed, which is
+// what a clone of that seed should track.
+func shapeForSeed(seedID string) (string, bool) {
+	if seedID == "" {
+		return "", false
+	}
+	for _, doc := range loadArchetypes() {
+		if doc.Seed == seedID {
+			return doc.Slug, true
+		}
+	}
+	return "", false
+}
+
+func hasStringField(fields []string, name string) bool {
+	for _, f := range fields {
+		if f == name {
+			return true
+		}
+	}
+	return false
+}
+
+// detachAgentFromShape stops an instance tracking, keeping the agent exactly as
+// it reads today.
+//
+// The resolved record is what gets written, not the stored row. The row's
+// unclaimed fields hold whatever the shape said when the agent was created, so
+// writing it back would silently revert the agent to an older version of
+// itself at the moment its owner asked to freeze it.
+//
+// One way on purpose. Re-attaching would have to decide which of the owner's
+// fields were "really" theirs, and that is a question only they can answer, by
+// building a new agent from the shape.
+func detachAgentFromShape(db Database, id string) (AgentRecord, error) {
+	if db == nil || id == "" {
+		return AgentRecord{}, fmt.Errorf("agent %q not found", id)
+	}
+	rec, ok := loadAgent(db, id)
+	if !ok {
+		return AgentRecord{}, fmt.Errorf("agent %q not found", id)
+	}
+	if rec.ShapeID == "" {
+		return rec, fmt.Errorf("%q does not follow a framework shape", rec.Name)
+	}
+	rec.ShapeID = ""
+	rec.OverriddenFields = nil
+	rec.OverlayRev = 0
+	return saveAgent(db, rec)
+}

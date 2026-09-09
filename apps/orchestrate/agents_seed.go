@@ -159,6 +159,19 @@ func cloneAgent(db Database, srcID, owner, newName string, promote bool) (AgentR
 	clone.Name = strings.TrimSpace(newName)
 	clone.Created = time.Time{}
 	clone.Tools = nil // flattened namespace: kit membership is store scope, not record copies
+	// A copy of a SHAPE tracks that shape: everything the owner does not go on
+	// to decide keeps coming from the framework, so a fix to the research
+	// prompt reaches the research agent somebody cloned months ago. Copying a
+	// user's own agent tracks nothing, because there is nothing behind it to
+	// track. The overlay bookkeeping is reset either way and recomputed on
+	// save; inheriting the source's list would claim the source's decisions as
+	// this record's own.
+	clone.ShapeID = ""
+	clone.OverriddenFields = nil
+	clone.OverlayRev = 0
+	if shape, ok := shapeForSeed(src.ID); ok {
+		clone.ShapeID = shape
+	}
 	if promote {
 		clone.OwnedBy = ""
 	}

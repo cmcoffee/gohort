@@ -300,3 +300,15 @@ func TestParseArchetypeRejectsBadDocs(t *testing.T) {
 		}
 	}
 }
+
+// An empty slug must match nothing. The alias pass is a substring test and
+// every slug contains the empty string, so an unset shape used to resolve to
+// whichever recipe sorted first, which is how an agent that follows nothing
+// came back following Chat.
+func TestAnEmptySlugResolvesToNothing(t *testing.T) {
+	for _, s := range []string{"", "   ", "\t"} {
+		if a, ok := archetypeBySlug(s); ok {
+			t.Errorf("archetypeBySlug(%q) resolved to %q", s, a.Slug)
+		}
+	}
+}
