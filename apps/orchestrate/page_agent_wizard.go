@@ -23,6 +23,13 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
+// assistantShape is the shape an assistant built by this wizard follows: the
+// conversational recipe, which ships the framework's own Chat record. Named
+// here rather than inlined because it is the one place the wizard reaches into
+// the shape library, and a shape that gets renamed should break loudly at this
+// line rather than quietly stop being followed.
+const assistantShape = "conversational"
+
 // wizard_kinds maps the wizard's "agent type" answer to the same
 // character-defining defaults the editor's Agent-type presets stamp
 // (agentTypeTemplates): Cortex + memory mode, Fleet off, recall hints on.
@@ -578,6 +585,51 @@ func wizardSkipLinkHTML(hasShared bool) string {
 </script>`, label, title)
 }
 
+// wizardBaseRecord is what a wizard-built agent starts as, before the answers
+// and the drafted persona go on top.
+//
+// An assistant built here IS the conversational shape wearing a persona
+// drafted from this person's answers, so it starts from that shape's
+// record and FOLLOWS it. Two things come of that.
+//
+// It arrives complete. Built from an empty struct, a wizard assistant got
+// no budgets at all and fell back to the framework floor of five worker
+// rounds, while the shape it obviously was carries eighteen precisely
+// because inline multi-tool turns ("compare these three products") iterate
+// across rounds before replying. Same for the per-turn Private toggle and
+// the plan-first discipline: settings nobody would think to ask a new user
+// about, which the shape already answers.
+//
+// And it keeps arriving complete. The persona, the name and whatever the
+// wizard's questions decided are this agent's own forever; everything else
+// tracks, so a framework improvement reaches the agent a person talks to
+// every day rather than stopping at whoever had not signed up yet.
+//
+// A specialist starts empty as before: no shape ships a specialist record,
+// because what a specialist DOES is the whole question and the wizard's
+// brief is the only thing that answers it.
+func wizardBaseRecord(kind string) AgentRecord {
+	if kind != "assistant" {
+		return AgentRecord{}
+	}
+	base, ok := shapeBaseRecord(assistantShape)
+	if !ok {
+		return AgentRecord{}
+	}
+	base.ID = ""         // a new agent, not the framework's
+	base.Hidden = false  // the user's own front door, not a seed
+	base.Exposed = false // reachable from their own agent list
+	// Fleet stays OFF here even though the shape carries it, because the
+	// caller turns it on for the FIRST-RUN assistant only. Conductor tools are
+	// a real block of prompt on every turn, which is the "forty tools instead
+	// of four" cost this system exists to avoid, and it is worth paying only
+	// for the agent whose job is to delegate. Inheriting it would hand the
+	// toolset to every later assistant too, and quietly.
+	base.Fleet = false
+	base.ShapeID = assistantShape
+	return base
+}
+
 // handleAgentWizard creates an agent from the wizard's brief:
 // POST /api/agents/wizard {agent_kind, name, description, purpose,
 // example_tasks, style, triggers, tag_name}. The orchestrator prompt
@@ -638,15 +690,14 @@ func (T *OrchestrateApp) handleAgentWizard(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	rec := AgentRecord{
-		Owner:       user,
-		Name:        req.Name,
-		Description: strings.TrimSpace(req.Description),
-		Triggers:    req.Triggers,
-		Cortex:      kind.cortex,
-		MemoryMode:  kind.memory_mode,
-		RecallHints: true,
-	}
+	rec := wizardBaseRecord(req.Kind)
+	rec.Owner = user
+	rec.Name = req.Name
+	rec.Description = strings.TrimSpace(req.Description)
+	rec.Triggers = req.Triggers
+	rec.Cortex = kind.cortex
+	rec.MemoryMode = kind.memory_mode
+	rec.RecallHints = true
 	if !applyWizardMemory(&rec, req) {
 		http.Error(w, "unknown memory setting", http.StatusBadRequest)
 		return

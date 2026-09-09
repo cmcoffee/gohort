@@ -485,3 +485,84 @@ func TestDetachingFreezesWhatTheAgentReadsNow(t *testing.T) {
 		t.Error("detaching an agent that follows nothing reported success")
 	}
 }
+
+// The agent a person talks to every day is the one built by the first-run
+// wizard, and it was the one agent following nothing: built from an empty
+// struct, so it carried no budgets and fell back to the framework floor, and
+// no framework improvement could ever reach it.
+func TestTheWizardsAssistantFollowsTheConversationalShape(t *testing.T) {
+	shape, ok := shapeBaseRecord(assistantShape)
+	if !ok {
+		t.Fatalf("the %q shape does not ship a record", assistantShape)
+	}
+
+	got := wizardBaseRecord("assistant")
+	if got.ShapeID != assistantShape {
+		t.Errorf("a wizard assistant follows %q", got.ShapeID)
+	}
+	if got.ID != "" {
+		t.Errorf("it starts as the framework's own record: id=%q", got.ID)
+	}
+	if got.Hidden || got.Exposed {
+		t.Errorf("it inherited a seed's visibility: hidden=%v exposed=%v", got.Hidden, got.Exposed)
+	}
+	// The settings nobody would think to ask a new user about.
+	if got.MaxWorkerRounds != shape.MaxWorkerRounds || got.MaxPlanSteps != shape.MaxPlanSteps {
+		t.Errorf("budgets = %d/%d, want the shape's %d/%d",
+			got.MaxWorkerRounds, got.MaxPlanSteps, shape.MaxWorkerRounds, shape.MaxPlanSteps)
+	}
+	if got.MaxWorkerRounds == 0 {
+		t.Error("a wizard assistant still starts with no round budget at all")
+	}
+	if !got.AllowPrivateMode || !got.PreMortem {
+		t.Errorf("it lost a shape default: private=%v premortem=%v", got.AllowPrivateMode, got.PreMortem)
+	}
+	// Not everything is inherited. Conductor tools are a block of prompt on
+	// every turn, and the caller turns them on for the FIRST-RUN assistant
+	// alone; taking them from the shape would hand them to every later
+	// assistant too, and quietly.
+	if got.Fleet {
+		t.Error("every wizard assistant now carries the conductor toolset, which was meant for the first-run one")
+	}
+
+	// A specialist has no shape: what it DOES is the whole question, and only
+	// the wizard's brief answers it.
+	if s := wizardBaseRecord("specialist"); s.ShapeID != "" {
+		t.Errorf("a specialist follows %q", s.ShapeID)
+	}
+}
+
+// And once saved, the drafted persona is the agent's own while everything
+// untouched keeps tracking.
+func TestAWizardAssistantKeepsItsPersonaAndTracksTheRest(t *testing.T) {
+	db := overlayTestDB(t)
+	rec := wizardBaseRecord("assistant")
+	rec.Owner = "craig@example.com"
+	rec.Name = "Otto"
+	rec.Description = "My assistant."
+	rec.OrchestratorPrompt = "You are Otto. You are dry, brief, and you never flatter."
+
+	saved, err := saveAgent(db, rec)
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	for _, want := range []string{"name", "orchestrator_prompt"} {
+		if !hasField(saved.OverriddenFields, want) {
+			t.Errorf("%q is not recorded as the agent's own: %v", want, saved.OverriddenFields)
+		}
+	}
+	if hasField(saved.OverriddenFields, "max_worker_rounds") {
+		t.Error("the round budget was claimed as the user's, so a framework change will never reach it")
+	}
+
+	got, ok := loadAgent(db, saved.ID)
+	if !ok {
+		t.Fatal("not found")
+	}
+	if got.OrchestratorPrompt != rec.OrchestratorPrompt {
+		t.Error("the drafted persona was replaced by the shape's")
+	}
+	if got.Name != "Otto" {
+		t.Errorf("name = %q", got.Name)
+	}
+}
