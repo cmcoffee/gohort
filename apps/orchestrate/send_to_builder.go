@@ -10,6 +10,15 @@
 // the agent's current config, diagnoses the misbehavior, and proposes
 // changes interactively before applying anything.
 //
+// The brief asks for the failing case BEFORE the fix, which is the whole
+// difference between improving an agent and believing you did. A correction
+// the user made by hand is already the case: the message that produced the bad
+// turn is the prompt, and what they corrected it to is the assertion. Written
+// first, it fails; written afterwards, it passes the moment it is created and
+// proves nothing. The eval tool (eval_tool.go) is what makes that reachable
+// from here — before it, this handoff ended at a proposal and nothing ever
+// checked whether the proposal worked.
+//
 // Endpoints:
 //
 //	POST /api/sessions/{sid}/send-to-builder?agent_id=<id>
@@ -128,7 +137,13 @@ func buildBuilderBrief(agent AgentRecord, sess ChatSession) string {
 	b.WriteString("\nPlease:\n")
 	b.WriteString("1. Pull this agent's current configuration (agents tool, action \"get\", full true) so you can see its prompt, rules, and tools before changing anything.\n")
 	b.WriteString("2. Read the session transcript below and pinpoint where its behavior fell short of what I wanted — the spots where I had to correct, redirect, or repeat myself.\n")
-	b.WriteString("3. Propose specific changes (prompt wording, standing rules, tools, or knowledge) that would prevent the problem, and walk me through them before you apply anything.\n\n")
+	b.WriteString("3. Write the failing case FIRST. Turn the correction into an eval case: the message that produced the bad turn is the prompt, and what I corrected it TO is the assertion. " +
+		"Use eval(action=\"list\") to find a suite that grades this agent and eval(action=\"add_case\", ...) to add it; if there is no suite yet, eval(action=\"create_suite\", target_kind=\"agent\", target=\"" + agent.ID + "\", ...).\n")
+	b.WriteString("4. Run that suite now, BEFORE you change anything: eval(action=\"run\", suite=\"<name>\", note=\"before\"). Suites run with tools stubbed, so nothing external happens. " +
+		"The case you just wrote should FAIL. If it passes, the case does not capture the problem — fix the case rather than the agent, or the score will say a bug is gone that never left.\n")
+	b.WriteString("5. Propose specific changes (prompt wording, standing rules, tools, or knowledge) that would prevent the problem, and walk me through them before you apply anything.\n")
+	b.WriteString("6. After I accept a change, run the suite again with a note saying what you changed, and tell me BOTH scores. " +
+		"A fix that does not move the number is not a fix, and a fix that moves this case while breaking another is worth knowing about before I find out in production.\n\n")
 
 	transcript := renderSessionMarkdown(agent, sess)
 	if len(transcript) > maxBriefTranscript {

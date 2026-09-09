@@ -85,6 +85,12 @@ func builderAuthoringTools(sess *ToolSession, t *chatTurn) []AgentToolDef {
 		// Builder reads a recipe and composes a user-owned agent from it
 		// instead of a fixed framework persona living in the fleet.
 		ChatToolToAgentToolDefWithSession(archetypeTool(), sess),
+		// eval — measure a change instead of asserting it helped. Paired with
+		// create/update because this is the half that was missing: an agent
+		// able to EDIT another agent and unable to find out whether the edit
+		// was an improvement will always find something to change, and nothing
+		// will ever tell it that last week's change made things worse.
+		ChatToolToAgentToolDefWithSession(evalTool(t), sess),
 		ChatToolToAgentToolDefWithSession(&cloneAgentTool{}, sess),
 		ChatToolToAgentToolDefWithSession(&deleteAgentTool{}, sess),
 		ChatToolToAgentToolDefWithSession(addToolTool{}, sess),
