@@ -220,7 +220,7 @@ func (t *chatTurn) rememberToolDef() AgentToolDef {
 			Required: []string{"content"},
 			Caps:     []Capability{CapWrite},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			content := strings.TrimSpace(stringArg(args, "content"))
 			if content == "" {
 				return "", errors.New("content is required")
@@ -276,7 +276,7 @@ func (t *chatTurn) recallToolDef() AgentToolDef {
 			// forget-adjacent ids; CapRead keeps it in every read pool.
 			Caps: []Capability{CapRead},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			if id := strings.TrimSpace(stringArg(args, "id")); id != "" {
 				return t.recallFetch(id)
 			}
@@ -749,7 +749,7 @@ func (t *chatTurn) recallFetch(id string) (string, error) {
 		// Both curated docs and derived findings reconstruct through the
 		// same doc-assembly handler — its allow predicate already spans the
 		// agent's own derived corpus plus attached/curated collections.
-		return t.fetchKnowledgeDocToolDef().Handler(map[string]any{"doc_id": ref})
+		return t.fetchKnowledgeDocToolDef().Handler(t.ctx, map[string]any{"doc_id": ref})
 	case "span":
 		source := operatorLCMSource(t.agent.ID, cortexSessionID(t.agent.ID))
 		chunks := FetchRecallSpanChunks(t.udb, source, ref)
@@ -788,7 +788,7 @@ func (t *chatTurn) forgetToolDef() AgentToolDef {
 			},
 			Caps: []Capability{CapWrite},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			id := strings.TrimSpace(stringArg(args, "id"))
 			if id == "" {
 				// Query-mode: bulk finding delete, same engine as the legacy

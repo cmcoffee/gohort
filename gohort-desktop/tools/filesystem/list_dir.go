@@ -20,6 +20,7 @@
 package filesystem
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -73,7 +74,7 @@ func (t *list_dir_tool) Required() []string { return nil } // path is optional â
 func (t *list_dir_tool) Enabled() bool { return true }
 
 func (t *list_dir_tool) Handler() core.ToolHandler {
-	return func(args map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
 		path, _ := args["path"].(string)
 		path = strings.TrimSpace(path)
 

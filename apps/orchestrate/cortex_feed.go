@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -116,7 +117,7 @@ func cortexDeliverableTools(db Database, agentID string) []AgentToolDef {
 				},
 				Required: []string{"title", "body"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				title := strings.TrimSpace(oArgStr(args, "title"))
 				body := strings.TrimSpace(oArgStr(args, "body"))
 				if title == "" || body == "" {
@@ -148,7 +149,7 @@ func cortexDeliverableTools(db Database, agentID string) []AgentToolDef {
 				},
 				Required: []string{"note"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				note := strings.TrimSpace(oArgStr(args, "note"))
 				if note == "" {
 					return "", fmt.Errorf("note is required")

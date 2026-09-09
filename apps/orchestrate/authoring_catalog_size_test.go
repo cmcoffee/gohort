@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -120,7 +121,7 @@ func TestDeferralSurvivesTheRealInitialisationOrder(t *testing.T) {
 
 	// Load one through the REAL load_tool handler, not a shortcut.
 	handler := turn.loadToolToolDef(sess).Handler
-	out, err := handler(map[string]any{"names": []any{"create_agent"}})
+	out, err := handler(context.Background(), map[string]any{"names": []any{"create_agent"}})
 	if err != nil {
 		t.Fatalf("load_tool: %v", err)
 	}
@@ -155,7 +156,7 @@ func TestDeferralSurvivesTheRealInitialisationOrder(t *testing.T) {
 
 	// Deterministic surfacing order: the tool list is part of the serialized
 	// request, and order jitter between rounds busts the prompt cache.
-	if _, err := handler(map[string]any{"names": []any{"update_agent", "tool_def"}}); err != nil {
+	if _, err := handler(context.Background(), map[string]any{"names": []any{"update_agent", "tool_def"}}); err != nil {
 		t.Fatalf("second load: %v", err)
 	}
 	first := fmt.Sprint(namesOf(turn.loadedDeferredAuthoringTools()))

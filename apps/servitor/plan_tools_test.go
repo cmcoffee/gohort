@@ -1,6 +1,7 @@
 package servitor
 
 import (
+	"context"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -52,7 +53,7 @@ func TestPendingCountsUnfinishedWork(t *testing.T) {
 	if ts.Pending() != 0 {
 		t.Fatal("an unset plan has no pending work")
 	}
-	if _, err := ts.Set.Handler(map[string]any{"steps": []any{
+	if _, err := ts.Set.Handler(context.Background(), map[string]any{"steps": []any{
 		map[string]any{"title": "Find the config", "what_to_find": "path to app config"},
 		map[string]any{"title": "Read the DB block", "what_to_find": "connection string"},
 	}}); err != nil {
@@ -61,13 +62,13 @@ func TestPendingCountsUnfinishedWork(t *testing.T) {
 	if got := ts.Pending(); got != 2 {
 		t.Fatalf("both steps pending, got %d", got)
 	}
-	if _, err := ts.Start.Handler(map[string]any{"step_id": float64(1)}); err != nil {
+	if _, err := ts.Start.Handler(context.Background(), map[string]any{"step_id": float64(1)}); err != nil {
 		t.Fatal(err)
 	}
 	if got := ts.Pending(); got != 2 {
 		t.Fatalf("in-progress still counts as unfinished, got %d", got)
 	}
-	if _, err := ts.Findings.Handler(map[string]any{"step_id": float64(1), "findings": "/etc/app/config.yml"}); err != nil {
+	if _, err := ts.Findings.Handler(context.Background(), map[string]any{"step_id": float64(1), "findings": "/etc/app/config.yml"}); err != nil {
 		t.Fatal(err)
 	}
 	if got := ts.Pending(); got != 1 {

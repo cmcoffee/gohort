@@ -605,7 +605,8 @@ func toolEvalExecutor(tool AgentToolDef) evalExecutor {
 			row.Reasons = append(row.Reasons, row.ErrText)
 			return row
 		}
-		out, err := tool.Handler(args)
+		// No turn behind an eval case, so nothing to inherit a cancel from.
+		out, err := tool.Handler(context.Background(), args)
 		row.Output = truncateForEval(out, 2000)
 		if err != nil {
 			row.ErrText = err.Error()

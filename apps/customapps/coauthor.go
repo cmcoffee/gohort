@@ -12,6 +12,7 @@
 package customapps
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -64,7 +65,7 @@ func (T *CustomApps) coauthorTools(udb Database, spec AppSpec) []AgentToolDef {
 		// Authoring action — only one append per batch (don't let a single reply
 		// fan out into many duplicate writes).
 		SingleFirePerBatch: true,
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
 			md := strings.TrimSpace(fmt.Sprint(args["markdown"]))
 			if md == "" {

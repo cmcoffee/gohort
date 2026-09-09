@@ -15,6 +15,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -144,7 +145,7 @@ func WorkPlanTools(spec WorkPlanToolSpec) WorkPlanToolSet {
 			},
 			Required: []string{"steps"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			if plan.IsSet() {
 				return "[PLAN ALREADY SET] Work the steps you committed to: mark_step_in_progress / record_step_findings / mark_step_blocked, or revise_plan to change what is left.", nil
 			}
@@ -169,7 +170,7 @@ func WorkPlanTools(spec WorkPlanToolSpec) WorkPlanToolSet {
 			},
 			Required: []string{"step_id"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			if !plan.IsSet() {
 				return "[NO PLAN] Call set_plan first.", nil
 			}
@@ -203,7 +204,7 @@ func WorkPlanTools(spec WorkPlanToolSpec) WorkPlanToolSet {
 			},
 			Required: []string{"step_id", "findings"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			if !plan.IsSet() {
 				return "[NO PLAN] Call set_plan first.", nil
 			}
@@ -235,7 +236,7 @@ func WorkPlanTools(spec WorkPlanToolSpec) WorkPlanToolSet {
 			},
 			Required: []string{"step_id", "reason"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			if !plan.IsSet() {
 				return "[NO PLAN] Call set_plan first.", nil
 			}
@@ -270,7 +271,7 @@ func WorkPlanTools(spec WorkPlanToolSpec) WorkPlanToolSet {
 			},
 			Required: []string{"reason"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			if !plan.IsSet() {
 				return "[NO PLAN] Call set_plan first.", nil
 			}
@@ -325,7 +326,7 @@ func WorkPlanTools(spec WorkPlanToolSpec) WorkPlanToolSet {
 				"The answer is trusted because you are honest about what you could not see.",
 			Parameters: map[string]ToolParam{},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			if !plan.IsSet() {
 				return "[NO PLAN] Call set_plan first.", nil
 			}

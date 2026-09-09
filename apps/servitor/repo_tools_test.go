@@ -4,6 +4,7 @@
 package servitor
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -50,7 +51,7 @@ func TestLinkedRepoToolsMultiRequireRepoArg(t *testing.T) {
 			t.Errorf("%s must require `repo` when several are linked", td.Tool.Name)
 		}
 		// An unknown repo must fail naming the valid choices, not guess.
-		_, err := td.Handler(map[string]any{"repo": "nope", "path": "x"})
+		_, err := td.Handler(context.Background(), map[string]any{"repo": "nope", "path": "x"})
 		if err == nil || !strings.Contains(err.Error(), "api") {
 			t.Errorf("%s with unknown repo: want error naming the linked repos, got %v", td.Tool.Name, err)
 		}

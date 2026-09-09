@@ -86,7 +86,7 @@ func TestDetachedCallStillRunsAndReturnsANotice(t *testing.T) {
 	tool := &slowTool{dur: taskDetachThreshold(nil) + time.Hour, ran: ran, result: "the real result"}
 
 	def := ChatToolToAgentToolDefWithSession(tool, &ToolSession{})
-	out, err := def.Handler(map[string]any{"action": "edit", "prompt": "make it snowy"})
+	out, err := def.Handler(context.Background(), map[string]any{"action": "edit", "prompt": "make it snowy"})
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestABadArgumentIsReportedBeforeTheCallDetaches(t *testing.T) {
 	}
 
 	def := ChatToolToAgentToolDefWithSession(tool, &ToolSession{})
-	out, err := def.Handler(map[string]any{"action": "edit"})
+	out, err := def.Handler(context.Background(), map[string]any{"action": "edit"})
 	if err == nil {
 		t.Fatalf("a call that cannot succeed must fail now, not later; got %q", out)
 	}
@@ -164,7 +164,7 @@ func TestAGoodCallStillDetachesAfterPreflight(t *testing.T) {
 	started := withTaskRunner(t)
 	tool := &preflightTool{slowTool: slowTool{dur: taskDetachThreshold(nil) + time.Hour, result: "rendered"}}
 	def := ChatToolToAgentToolDefWithSession(tool, &ToolSession{})
-	out, err := def.Handler(map[string]any{"action": "edit"})
+	out, err := def.Handler(context.Background(), map[string]any{"action": "edit"})
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestFailureToDetachFallsBackToRunningInline(t *testing.T) {
 
 	tool := &slowTool{dur: taskDetachThreshold(nil) + time.Hour, result: "inline result"}
 	def := ChatToolToAgentToolDefWithSession(tool, &ToolSession{})
-	out, err := def.Handler(map[string]any{})
+	out, err := def.Handler(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestDetachedWorkSurvivesTheTurnEnding(t *testing.T) {
 
 	tool := &ctxCapturingTool{dur: taskDetachThreshold(nil) + time.Hour, saw: saw}
 	def := ChatToolToAgentToolDefWithSession(tool, turnSess)
-	if _, err := def.Handler(map[string]any{}); err != nil {
+	if _, err := def.Handler(context.Background(), map[string]any{}); err != nil {
 		t.Fatalf("handler: %v", err)
 	}
 
@@ -444,7 +444,7 @@ func TestDetachedCallHandsBackWhatItAttached(t *testing.T) {
 	turnSess := &ToolSession{Username: "alice"}
 	tool := &attachingTool{dur: taskDetachThreshold(nil) + time.Hour}
 	def := ChatToolToAgentToolDefWithSession(tool, turnSess)
-	if _, err := def.Handler(map[string]any{}); err != nil {
+	if _, err := def.Handler(context.Background(), map[string]any{}); err != nil {
 		t.Fatalf("handler: %v", err)
 	}
 
@@ -501,7 +501,7 @@ func TestTheMarkNeverReachesTheModel(t *testing.T) {
 	// safeInvoke is the one place every tool call passes through, so the strip
 	// there is what guarantees the token can't leak into context on a path that
 	// happens to have no app wrapper.
-	out, err := safeInvoke("t", func(map[string]any) (string, error) {
+	out, err := safeInvoke(context.Background(), "t", func(context.Context, map[string]any) (string, error) {
 		return MarkFrameworkResult("the notice"), nil
 	}, nil)
 	if err != nil {

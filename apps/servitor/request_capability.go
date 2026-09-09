@@ -220,7 +220,7 @@ func RequestCapabilityToolDef(sess *ToolSession, udb Database, chat FactChatFunc
 			Required: []string{"system", "intent"},
 			Caps:     []Capability{CapWrite},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			return RequestCapability(sess.Context(), udb, chat, owner, agentID, RequestCapabilityArgs{
 				System: StringArg(args, "system"),
 				Intent: StringArg(args, "intent"),

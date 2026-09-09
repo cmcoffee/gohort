@@ -1408,7 +1408,7 @@ func (s *SecureAPI) agentToolFromCredential(c SecureCredential, sess *ToolSessio
 			Caps:     []Capability{CapNetwork},
 		},
 		NeedsConfirm: c.RequiresConfirm,
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			return s.dispatch(c, args, sess)
 		},
 	}

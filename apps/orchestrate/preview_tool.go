@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -88,7 +89,7 @@ func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 			},
 			Required: []string{"title"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			title := strings.TrimSpace(stringArg(args, "title"))
 			html := stringArg(args, "html")
 			url := strings.TrimSpace(stringArg(args, "url"))
@@ -226,7 +227,7 @@ func (t *chatTurn) showLinkToolDef() AgentToolDef {
 			},
 			Required: []string{"url", "title"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			url := strings.TrimSpace(stringArg(args, "url"))
 			title := strings.TrimSpace(stringArg(args, "title"))
 			note := strings.TrimSpace(stringArg(args, "note"))

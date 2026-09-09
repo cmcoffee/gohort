@@ -131,7 +131,9 @@ func dispatchPipelineStepsTempTool(sess *ToolSession, tt *TempTool, args map[str
 		if err != nil || len(defs) == 0 {
 			return "", fmt.Errorf("step %d: tool %q not found in catalog: %v", stepNum, toolName, err)
 		}
-		out, err := defs[0].Handler(resolved)
+		// The session's context: a step pipeline runs N tools in sequence, and
+		// a Stop pressed during step 2 should not have to wait for steps 3..N.
+		out, err := defs[0].Handler(sess.Context(), resolved)
 		if err != nil {
 			Log("[temptool.pipeline_steps] tool=%q step %d (%s) FAILED: %v", tt.Name, stepNum, toolName, err)
 			return "", fmt.Errorf("step %d (%s): %v", stepNum, toolName, err)

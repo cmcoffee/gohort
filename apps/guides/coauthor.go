@@ -75,7 +75,7 @@ func (T *Guides) coauthorTools(ctx context.Context, udb Database, orch *orchestr
 			Required: []string{"section_title", "markdown"},
 		},
 		SingleFirePerBatch: true,
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
 			md := strings.TrimSpace(fmt.Sprint(args["markdown"]))
 			if md == "" {
@@ -102,7 +102,7 @@ func (T *Guides) coauthorTools(ctx context.Context, udb Database, orch *orchestr
 			Required: []string{"section_title", "markdown"},
 		},
 		SingleFirePerBatch: true,
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
 			md := strings.TrimSpace(fmt.Sprint(args["markdown"]))
 			g, ownerUDB, _, ok := openGuide()
@@ -135,7 +135,7 @@ func (T *Guides) coauthorTools(ctx context.Context, udb Database, orch *orchestr
 			Required: []string{"section_title", "instructions"},
 		},
 		SingleFirePerBatch: true,
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
 			instr := strings.TrimSpace(fmt.Sprint(args["instructions"]))
 			if title == "" {
@@ -194,7 +194,7 @@ func (T *Guides) coauthorTools(ctx context.Context, udb Database, orch *orchestr
 			Name:        "list_sections",
 			Description: "List the sections of the OPEN guide, in order, with their titles. Call this to see the guide's current structure before renaming, deleting, moving, or editing a section — so you use the exact existing titles and correct positions. No arguments.",
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			g, _, _, ok := openGuide()
 			if !ok {
 				return "", fmt.Errorf("no guide is open — ask the user to select or create one first")
@@ -222,7 +222,7 @@ func (T *Guides) coauthorTools(ctx context.Context, udb Database, orch *orchestr
 			Required: []string{"section_title"},
 		},
 		SingleFirePerBatch: true,
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
 			g, ownerUDB, _, ok := openGuide()
 			if !ok {
@@ -251,7 +251,7 @@ func (T *Guides) coauthorTools(ctx context.Context, udb Database, orch *orchestr
 			Required: []string{"section_title", "new_title"},
 		},
 		SingleFirePerBatch: true,
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
 			newTitle := strings.TrimSpace(fmt.Sprint(args["new_title"]))
 			if newTitle == "" {
@@ -282,7 +282,7 @@ func (T *Guides) coauthorTools(ctx context.Context, udb Database, orch *orchestr
 			Required: []string{"section_title", "position"},
 		},
 		SingleFirePerBatch: true,
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
 			pos := coerceIntArg(args["position"])
 			g, ownerUDB, _, ok := openGuide()
@@ -322,7 +322,7 @@ func (T *Guides) coauthorTools(ctx context.Context, udb Database, orch *orchestr
 			},
 			Required: []string{"topic"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			topic := strings.TrimSpace(fmt.Sprint(args["topic"]))
 			if topic == "" {
 				return "", fmt.Errorf("topic is required")
@@ -362,7 +362,7 @@ func (T *Guides) coauthorTools(ctx context.Context, udb Database, orch *orchestr
 			},
 			Required: []string{"query"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			query := strings.TrimSpace(fmt.Sprint(args["query"]))
 			if query == "" {
 				return "", fmt.Errorf("query is required")
@@ -406,7 +406,7 @@ func (T *Guides) coauthorTools(ctx context.Context, udb Database, orch *orchestr
 			Name:        "list_reference_sources",
 			Description: "List the internal knowledge sources you can pull into the guide from OTHER gohort services — e.g. Systems (facts gathered about the user's own servers/appliances) and connected document sources like Confluence. Returns each source's items with their IDs. Call this to discover what's available before pull_reference, especially when the user asks to build a guide ABOUT a specific system or from internal docs. No arguments.",
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			// Reader of a shared guide: only the sources the OWNER linked to this
 			// guide, resolved under the owner's identity. The reader never sees the
 			// wider registry — just the guide's own sources.
@@ -463,7 +463,7 @@ func (T *Guides) coauthorTools(ctx context.Context, udb Database, orch *orchestr
 			},
 			Required: []string{"kind", "item_id"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			kind := strings.TrimSpace(fmt.Sprint(args["kind"]))
 			itemID := strings.TrimSpace(fmt.Sprint(args["item_id"]))
 			if kind == "" || itemID == "" {

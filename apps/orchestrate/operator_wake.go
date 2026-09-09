@@ -270,7 +270,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 		// (1) operator-management tools (read_phantom_chat, list_phantom_chats…).
 		for _, td := range operatorManagementTools(sess, defaultConsoleAgent) {
 			if td.Tool.Name == toolName {
-				return td.Handler(toolArgs)
+				return td.Handler(sess.Context(), toolArgs)
 			}
 		}
 		// (2) channel-scoped tools (read_chat, list_chats, list_members): built
@@ -281,7 +281,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 		if agentID != "" {
 			for _, td := range channelChatTools(sess, owner, agentID) {
 				if td.Tool.Name == toolName {
-					return td.Handler(toolArgs)
+					return td.Handler(sess.Context(), toolArgs)
 				}
 			}
 		}
@@ -316,7 +316,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 		}
 		for _, td := range temptool.BuildAgentToolDefs(sess) {
 			if td.Tool.Name == toolName {
-				return td.Handler(toolArgs)
+				return td.Handler(sess.Context(), toolArgs)
 			}
 		}
 		return "", ErrWatchToolNotHandled

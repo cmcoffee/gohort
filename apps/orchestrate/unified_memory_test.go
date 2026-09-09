@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 	"strings"
@@ -88,7 +89,7 @@ func TestUnifiedRememberInferredOff_NoPinSteering(t *testing.T) {
 	ct := driftTurn(db)
 	ct.agent.DisableInferred = true
 
-	_, err := ct.rememberToolDef().Handler(map[string]any{"content": "long reference finding about the Acme API"})
+	_, err := ct.rememberToolDef().Handler(context.Background(), map[string]any{"content": "long reference finding about the Acme API"})
 	if err == nil {
 		t.Fatal("remember(pin=false) with Inferred off must refuse")
 	}
@@ -140,11 +141,11 @@ func TestUnifiedForget_ChunkIDFallback(t *testing.T) {
 // neither is an error, and query-mode with Reference memory off refuses.
 func TestUnifiedForget_RequiresIDOrQuery(t *testing.T) {
 	ct := driftTurn(&DBase{Store: kvlite.MemStore()})
-	if _, err := ct.forgetToolDef().Handler(map[string]any{}); err == nil {
+	if _, err := ct.forgetToolDef().Handler(context.Background(), map[string]any{}); err == nil {
 		t.Fatal("forget with neither id nor query must error")
 	}
 	ct.agent.DisableInferred = true
-	if _, err := ct.forgetToolDef().Handler(map[string]any{"query": "acme api"}); err == nil || !strings.Contains(err.Error(), "disabled") {
+	if _, err := ct.forgetToolDef().Handler(context.Background(), map[string]any{"query": "acme api"}); err == nil || !strings.Contains(err.Error(), "disabled") {
 		t.Fatalf("query-mode with Inferred off must refuse: %v", err)
 	}
 }

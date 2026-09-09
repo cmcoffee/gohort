@@ -39,7 +39,7 @@ func BundleTools(ctx context.Context, owner, bundleID string) []AgentToolDef {
 				Name:        "bundle_summary",
 				Description: "Overview of the whole evidence bundle: how many files, what period they cover, which files are noisiest, and which are present but unread (binaries, archives nothing could open). ALWAYS call this first — it tells you what you are looking at and which file to search, without reading any log content.",
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				files := bundle.Open(owner, bundleID).Index()
 				if len(files) == 0 {
 					return errBundleNotLoaded, nil
@@ -55,7 +55,7 @@ func BundleTools(ctx context.Context, owner, bundleID string) []AgentToolDef {
 					"glob": {Type: "string", Description: "Optional filter, e.g. \"*.log\", \"var/log/*\", or just a fragment of the path. Empty lists everything."},
 				},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				files := bundle.Open(owner, bundleID).Index()
 				if len(files) == 0 {
 					return errBundleNotLoaded, nil
@@ -95,7 +95,7 @@ func BundleTools(ctx context.Context, owner, bundleID string) []AgentToolDef {
 				},
 				Required: []string{"pattern"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				if bundle.Open(owner, bundleID).FileCount() == 0 {
 					return errBundleNotLoaded, nil
 				}
@@ -130,7 +130,7 @@ func BundleTools(ctx context.Context, owner, bundleID string) []AgentToolDef {
 				},
 				Required: []string{"path"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				if bundle.Open(owner, bundleID).FileCount() == 0 {
 					return errBundleNotLoaded, nil
 				}
@@ -172,7 +172,7 @@ func BundleTools(ctx context.Context, owner, bundleID string) []AgentToolDef {
 					"max_lines": {Type: "integer", Description: fmt.Sprintf("Maximum lines to return (default %d).", bundle.MaxTimelineLines)},
 				},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				if bundle.Open(owner, bundleID).FileCount() == 0 {
 					return errBundleNotLoaded, nil
 				}

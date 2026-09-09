@@ -220,7 +220,7 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 			},
 			Required: []string{"command"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			cmd, _ := args["command"].(string)
 			if cmd == "" {
 				return "", fmt.Errorf("command is required")
@@ -261,7 +261,7 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 			},
 			Required: []string{"lesson"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			lesson, _ := args["lesson"].(string)
 			if lesson == "" {
 				return "", fmt.Errorf("lesson is required")

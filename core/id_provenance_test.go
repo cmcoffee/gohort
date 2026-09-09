@@ -101,7 +101,7 @@ func TestTheLoopRefusesAnInventedIDWithoutCallingTheTool(t *testing.T) {
 		MaxRounds: 3, RouteKey: "test.idprov",
 		Tools: []AgentToolDef{{
 			Tool:    Tool{Name: "get_post", Description: "read a post"},
-			Handler: func(map[string]any) (string, error) { ran++; return "{}", nil },
+			Handler: func(context.Context, map[string]any) (string, error) { ran++; return "{}", nil },
 		}},
 		OnDiag: func(kind, detail string) { diags = append(diags, kind+": "+detail) },
 	})
@@ -150,7 +150,7 @@ func TestTheGateCanBeTurnedOff(t *testing.T) {
 		MaxRounds: 3, RouteKey: "test.idprov.off", DisableIDProvenanceGate: true,
 		Tools: []AgentToolDef{{
 			Tool:    Tool{Name: "get_post"},
-			Handler: func(map[string]any) (string, error) { ran++; return "{}", nil },
+			Handler: func(context.Context, map[string]any) (string, error) { ran++; return "{}", nil },
 		}},
 	}); err != nil {
 		t.Fatal(err)
@@ -274,7 +274,7 @@ func TestAnActionQuotaIsEnforcedNotRequested(t *testing.T) {
 		ActionQuotas: map[string]int{"moltbook/create_post": 2}, BudgetKey: "agent-1",
 		Tools: []AgentToolDef{{
 			Tool:    Tool{Name: "moltbook"},
-			Handler: func(map[string]any) (string, error) { posts++; return `{"id":"p"}`, nil },
+			Handler: func(context.Context, map[string]any) (string, error) { posts++; return `{"id":"p"}`, nil },
 		}},
 		OnDiag: func(kind, detail string) { diags = append(diags, kind) },
 	})

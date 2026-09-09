@@ -421,7 +421,7 @@ func (pr *planRun) planSetToolDef() AgentToolDef {
 			},
 			Required: []string{"steps"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			steps := parsePlanSteps(args["steps"], pr.maxSteps)
 			// 1-step minimum on Builder; 2-step minimum elsewhere.
 			//
@@ -499,7 +499,7 @@ func (pr *planRun) askUserToolDef() AgentToolDef {
 			},
 			Required: []string{"question"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			pr.capturedQuest = strings.TrimSpace(stringArg(args, "question"))
 			// Defensive: smaller LLMs occasionally typo "questions"
 			// (plural) for "question". Accept either so the call
@@ -578,7 +578,7 @@ func (pr *planRun) askUserFormToolDef() AgentToolDef {
 			},
 			Required: []string{"steps"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			raw, _ := args["steps"]
 			// Smaller models wrap the array in fallback shapes: a
 			// JSON-encoded string, or a bare single step object. Coerce
@@ -774,7 +774,7 @@ func (pr *planRun) catalogKnowTools() error {
 			Name:        "compact_context",
 			Description: "Free up context: discard the bodies of EARLIER tool results you've already read and no longer need — e.g. after judging a long smoke-test report, a big page fetch, or a verbose listing. Their bodies are replaced with a short marker (re-run the tool if you need the data again); the most recent result and the whole conversation stay intact. Call this at a natural breakpoint when you're carrying long tool outputs you're done with, to keep a long session from bloating its context. No arguments.",
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			pr.compactRequested = true
 			return "Acknowledged — earlier verbose tool-result bodies you've consumed will be released on your next step. Continue with your next action.", nil
 		},

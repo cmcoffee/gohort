@@ -568,12 +568,12 @@ func (t *chatTurn) skillToolDefs() []AgentToolDef {
 		BuildReadSkillTool(t.udb, t.user, allowed, t.deliveredSkills),
 		BuildSkillKnowledgeSearchTool(t.udb, t.user, allowed, t.deliveredSkills,
 			func(skill SkillRecord, query string) string {
-				res, _ := t.knowledgeToolDefScoped([]SkillRecord{skill}).Handler(map[string]any{"query": query})
+				res, _ := t.knowledgeToolDefScoped([]SkillRecord{skill}).Handler(t.ctx, map[string]any{"query": query})
 				return res
 			}),
 		BuildSkillKnowledgeFetchDocTool(t.udb, t.user, allowed, t.deliveredSkills,
 			func(skill SkillRecord, docID string) (string, error) {
-				return t.fetchKnowledgeDocScoped([]SkillRecord{skill}).Handler(map[string]any{"doc_id": docID})
+				return t.fetchKnowledgeDocScoped([]SkillRecord{skill}).Handler(t.ctx, map[string]any{"doc_id": docID})
 			}),
 	}
 }

@@ -116,9 +116,9 @@ func WrapDetachable(p DetachPolicy, sess *ToolSession, inline ToolHandlerFunc) T
 	if sess == nil || p.Detached == nil || p.Tool == "" {
 		return inline
 	}
-	return func(args map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
 		if !shouldDetachPolicy(p, args, sess) {
-			return inline(args)
+			return inline(ctx, args)
 		}
 		// Everything the call can rule out from its arguments alone is ruled
 		// out HERE, while the model still has a round to fix it in. Past this
@@ -179,7 +179,7 @@ func WrapDetachable(p DetachPolicy, sess *ToolSession, inline ToolHandlerFunc) T
 			// refuse the next call over nothing.
 			sess.ReleaseDetachSlot(p.key())
 			Debug("[task] %s stayed inline: %v", p.Tool, err)
-			return inline(args)
+			return inline(ctx, args)
 		}
 		sess.RecordDetachSlot(p.key(), run) // so a later refusal can name it
 		// What to SAY about the wait is a measured number or nothing at all —

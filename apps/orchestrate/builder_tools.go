@@ -25,6 +25,7 @@
 package orchestrate
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -213,7 +214,7 @@ func draftOAuthCredentialToolDef(t *chatTurn) AgentToolDef {
 			},
 			Required: []string{"name", "grant", "token_url", "base_url"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			c := SecureCredential{
 				Name:        strings.TrimSpace(stringArg(args, "name")),
 				Type:        SecureCredOAuth2,
@@ -265,7 +266,7 @@ func draftAPICredentialToolDef(t *chatTurn) AgentToolDef {
 			},
 			Required: []string{"name", "type", "base_url"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			credName := strings.TrimSpace(stringArg(args, "name"))
 			// Guard a WORKING credential from a destructive re-draft. A re-draft
 			// overwrites the config and sets Disabled=true, so re-drafting a live
@@ -372,7 +373,7 @@ func updateAPICredentialToolDef(t *chatTurn) AgentToolDef {
 			},
 			Required: []string{"name"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			name := strings.TrimSpace(stringArg(args, "name"))
 			cur, ok := Secure().LoadUser(t.user, name)
 			if !ok {
@@ -417,7 +418,7 @@ func storeCredentialSecretToolDef() AgentToolDef {
 			},
 			Required: []string{"name", "secret"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			name := strings.TrimSpace(stringArg(args, "name"))
 			if err := Secure().SetCredentialSecret(name, stringArg(args, "secret")); err != nil {
 				return "", err
@@ -455,7 +456,7 @@ func checkCredentialToolDef(t *chatTurn) AgentToolDef {
 			},
 			Required: []string{"name"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			name := strings.TrimSpace(stringArg(args, "name"))
 			allDispatches := boolArg(args, "all_dispatches")
 			if name == "" {
@@ -615,7 +616,7 @@ func surveyWorkspaceToolDef(t *chatTurn) AgentToolDef {
 			Description: "ORIENT before you build: return a compact map of everything that already exists in this user's gohort — agents (+ their tool surface), tools (mode + credential), credentials (+ the tools wired to each), apps, pipelines, event monitors, standing agents. This is your 'read the repo' move — call it FIRST when a request could reuse or must stay consistent with existing work (a new tool on a credential others already use, an app like one that exists, an agent with a similar job). Reuse what it shows instead of re-guessing or re-building. Read-only; takes no arguments.",
 			Parameters:  map[string]ToolParam{},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			return surveyWorkspace(owner), nil
 		},
 	}

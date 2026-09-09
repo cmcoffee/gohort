@@ -12,6 +12,7 @@ package filesystem
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -96,7 +97,7 @@ func (t *stat_file_tool) Required() []string { return []string{"path"} }
 func (t *stat_file_tool) Enabled() bool      { return true }
 
 func (t *stat_file_tool) Handler() core.ToolHandler {
-	return func(args map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
 		path, _ := args["path"].(string)
 		abs, err := resolve_query_path(path)
 		if err != nil {
@@ -131,7 +132,7 @@ func (t *head_file_tool) Required() []string { return []string{"path"} }
 func (t *head_file_tool) Enabled() bool      { return true }
 
 func (t *head_file_tool) Handler() core.ToolHandler {
-	return func(args map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
 		path, _ := args["path"].(string)
 		n := int_arg_or(args, "lines", 50)
 		abs, err := resolve_query_path(path)
@@ -165,7 +166,7 @@ func (t *tail_file_tool) Required() []string { return []string{"path"} }
 func (t *tail_file_tool) Enabled() bool      { return true }
 
 func (t *tail_file_tool) Handler() core.ToolHandler {
-	return func(args map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
 		path, _ := args["path"].(string)
 		n := int_arg_or(args, "lines", 50)
 		abs, err := resolve_query_path(path)
@@ -201,7 +202,7 @@ func (t *read_lines_tool) Required() []string { return []string{"path", "start"}
 func (t *read_lines_tool) Enabled() bool      { return true }
 
 func (t *read_lines_tool) Handler() core.ToolHandler {
-	return func(args map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
 		path, _ := args["path"].(string)
 		start := int_arg_or(args, "start", 0)
 		end := int_arg_or(args, "end", 0)
@@ -241,7 +242,7 @@ func (t *grep_file_tool) Required() []string { return []string{"path", "pattern"
 func (t *grep_file_tool) Enabled() bool      { return true }
 
 func (t *grep_file_tool) Handler() core.ToolHandler {
-	return func(args map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
 		path, _ := args["path"].(string)
 		pattern, _ := args["pattern"].(string)
 		context := int_arg_or(args, "context", 0)

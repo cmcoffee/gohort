@@ -19,6 +19,7 @@
 package orchestrate
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -42,7 +43,7 @@ func operatorHistoryTools(sess *ToolSession, agentID string) []AgentToolDef {
 				},
 				Required: []string{"query"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				q := strings.TrimSpace(oArgStr(args, "query"))
 				if q == "" {
 					return "", fmt.Errorf("query is required")
@@ -103,7 +104,7 @@ func operatorHistoryTools(sess *ToolSession, agentID string) []AgentToolDef {
 				},
 				Required: []string{"span_id"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				id := strings.TrimSpace(oArgStr(args, "span_id"))
 				if id == "" {
 					return "", fmt.Errorf("span_id is required")

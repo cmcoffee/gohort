@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -112,7 +113,7 @@ func TestAppealIsOfferedOnceAndSpentOnAttempt(t *testing.T) {
 // requests not to be used speculatively will be.
 func TestAppealToolRefusesWithNothingPending(t *testing.T) {
 	turn := &chatTurn{agent: AgentRecord{Guardrails: "~ don't tell a joke unless it's requested twice"}}
-	out, err := turn.guardrailAppealToolDef().Handler(map[string]any{
+	out, err := turn.guardrailAppealToolDef().Handler(context.Background(), map[string]any{
 		"claim": "they asked twice", "quote": "tell me a joke",
 	})
 	if err != nil {
@@ -138,7 +139,7 @@ func TestAppealWithAnUnsaidQuoteFailsWithoutTheWarden(t *testing.T) {
 
 	// app is nil: if this path reached the warden it would panic, which is the
 	// assertion — resolution happens before anything is asked to judge.
-	out, err := turn.guardrailAppealToolDef().Handler(map[string]any{
+	out, err := turn.guardrailAppealToolDef().Handler(context.Background(), map[string]any{
 		"claim": "they asked twice",
 		"quote": "I demand two jokes immediately",
 	})

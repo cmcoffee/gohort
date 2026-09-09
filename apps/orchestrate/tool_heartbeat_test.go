@@ -87,7 +87,7 @@ func TestHeartbeatIsWiredIntoTheWrapper(t *testing.T) {
 	// It must start BEFORE the handler runs, or it can never fire during
 	// the call it is reporting on.
 	beat := strings.Index(src, "stopBeat := make(chan struct{})")
-	call := strings.Index(src, "out, err := orig(args)\n\t\t\tclose(stopBeat)")
+	call := strings.Index(src, "out, err := orig(ctx, args)\n\t\t\tclose(stopBeat)")
 	if beat < 0 || call < 0 || beat > call {
 		t.Error("the heartbeat must be armed before the handler is called")
 	}

@@ -21,6 +21,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -438,7 +439,7 @@ func querySkillSourceHooks(skill SkillRecord, query string) string {
 		if !ok || def.Handler == nil {
 			continue
 		}
-		res, err := def.Handler(map[string]any{"query": query})
+		res, err := def.Handler(context.Background(), map[string]any{"query": query})
 		if err != nil || strings.TrimSpace(res) == "" {
 			continue
 		}
@@ -522,7 +523,7 @@ func BuildReadSkillTool(db Database, owner string, allowed []string, delivered m
 			Required: []string{"skill"},
 			Caps:     []Capability{CapRead},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			found, err := resolveAllowedSkill(db, owner, allowed, stringArgSkill(args, "skill"))
 			if err != nil {
 				return "", err
@@ -557,7 +558,7 @@ func BuildSkillKnowledgeSearchTool(db Database, owner string, allowed []string, 
 			Required: []string{"skill", "query"},
 			Caps:     []Capability{CapRead, CapNetwork},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			found, err := resolveAllowedSkill(db, owner, allowed, stringArgSkill(args, "skill"))
 			if err != nil {
 				return "", err
@@ -611,7 +612,7 @@ func BuildSkillKnowledgeFetchDocTool(db Database, owner string, allowed []string
 			Required: []string{"skill", "doc_id"},
 			Caps:     []Capability{CapRead},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			found, err := resolveAllowedSkill(db, owner, allowed, stringArgSkill(args, "skill"))
 			if err != nil {
 				return "", err

@@ -1,6 +1,7 @@
 package temptool
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -208,7 +209,7 @@ func perActionToolDef(sess *ToolSession, tt *TempTool, act TempToolAction) Agent
 		// Require-confirm toggle decides, not a blanket true — an expanded
 		// action must not be stricter than the toolbox it came from.
 		NeedsConfirm: tempToolNeedsConfirm(tt),
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			a2 := make(map[string]any, len(args)+1)
 			for k, v := range args {
 				a2[k] = v
@@ -395,7 +396,7 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 		// The schema shown to the LLM still reflects the snapshot until the
 		// next turn (cosmetic — the model calls the name it just authored,
 		// and both dispatch and the help action resolve against live).
-		def.Handler = func(args map[string]any) (string, error) {
+		def.Handler = func(ctx context.Context, args map[string]any) (string, error) {
 			live := sess.LookupTempTool(tt.Name)
 			if live == nil || live.Mode != TempToolModeToolbox {
 				return snapshot.RunWithSession(args, sess)
@@ -446,7 +447,7 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 		// CapExecute) must wait for the next turn's fresh build + gate, so it
 		// can't run an un-gated shell pipe this turn; until then the snapshot
 		// dispatches. Non-cap edits — the common case — apply immediately.
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			live := sess.LookupTempTool(tt.Name)
 			if live == nil {
 				return dispatchTempTool(sess, tt, args)

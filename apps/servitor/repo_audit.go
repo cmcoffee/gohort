@@ -60,7 +60,7 @@ func (T *Servitor) runRepoMemoryAudit(ctx context.Context, sid, user string, udb
 			},
 			Required: []string{"doc", "content"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			doc := strings.ToLower(strings.TrimSpace(fmt.Sprint(args["doc"])))
 			valid := false
 			for _, n := range knowledgeDocNames {
@@ -96,7 +96,7 @@ func (T *Servitor) runRepoMemoryAudit(ctx context.Context, sid, user string, udb
 			},
 			Required: []string{"key", "value"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			key := strings.TrimSpace(fmt.Sprint(args["key"]))
 			value := strings.TrimSpace(fmt.Sprint(args["value"]))
 			if key == "" || value == "" {
@@ -119,7 +119,7 @@ func (T *Servitor) runRepoMemoryAudit(ctx context.Context, sid, user string, udb
 			},
 			Required: []string{"key"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			key := strings.TrimSpace(fmt.Sprint(args["key"]))
 			if key == "" {
 				return "", fmt.Errorf("key is required")

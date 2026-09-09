@@ -6,13 +6,14 @@ package orchestrate
 // its test fail twice, and then wrote a confident "this can't be fixed" reply.
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
 
 func TestReportBuildGapsWorksWithoutAPlan(t *testing.T) {
 	turn := &chatTurn{session: &ChatSession{ID: "s1"}}
-	out, err := turn.reportBuildGapsToolDef().Handler(map[string]any{})
+	out, err := turn.reportBuildGapsToolDef().Handler(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("a repair has no build plan; report_build_gaps must still run: %v", err)
 	}
@@ -23,7 +24,7 @@ func TestReportBuildGapsWorksWithoutAPlan(t *testing.T) {
 
 func TestReportBuildGapsStillNeedsASession(t *testing.T) {
 	turn := &chatTurn{}
-	if _, err := turn.reportBuildGapsToolDef().Handler(map[string]any{}); err == nil {
+	if _, err := turn.reportBuildGapsToolDef().Handler(context.Background(), map[string]any{}); err == nil {
 		t.Error("without a session there is no ledger to grade — that must still error")
 	}
 }

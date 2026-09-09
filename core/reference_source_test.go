@@ -164,7 +164,7 @@ func TestSynthesizedSearchToolUsesTheSessionContext(t *testing.T) {
 	if len(defs) != 1 {
 		t.Fatalf("want the default search tool, got %d defs", len(defs))
 	}
-	if _, err := defs[0].Handler(map[string]any{"query": "anything"}); err != nil {
+	if _, err := defs[0].Handler(context.Background(), map[string]any{"query": "anything"}); err != nil {
 		t.Fatalf("handler: %v", err)
 	}
 	if !src.sawDone {
@@ -182,7 +182,7 @@ func TestNilSessionFallsBackToBackground(t *testing.T) {
 	if len(defs) != 1 {
 		t.Fatalf("want the default search tool, got %d defs", len(defs))
 	}
-	if _, err := defs[0].Handler(map[string]any{"query": "anything"}); err != nil {
+	if _, err := defs[0].Handler(context.Background(), map[string]any{"query": "anything"}); err != nil {
 		t.Fatalf("handler: %v", err)
 	}
 	if src.sawDone {

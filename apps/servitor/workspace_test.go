@@ -180,7 +180,7 @@ func TestMapToolsDegradeWithoutMemory(t *testing.T) {
 	}
 	for _, td := range tools {
 		args := map[string]any{"name": "thing", "from": "a", "to": "b"}
-		out, err := td.Handler(args)
+		out, err := td.Handler(context.Background(), args)
 		if err != nil {
 			t.Errorf("%s errored with no memory wired: %v", td.Tool.Name, err)
 			continue

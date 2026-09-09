@@ -66,7 +66,7 @@ func (t *chatTurn) pipelineGroupedToolDef() AgentToolDef {
 			// reach the network. Tag so private mode filters it.
 			Caps: []Capability{CapNetwork},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			action := strings.ToLower(strings.TrimSpace(stringArg(args, "action")))
 			switch action {
 			case "create", "update":

@@ -11,6 +11,7 @@
 package orchestrate
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -874,7 +875,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				},
 				Required: []string{"agent", "brief"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				agent := strings.TrimSpace(oArgStr(args, "agent"))
 				brief := strings.TrimSpace(oArgStr(args, "brief"))
 				if err := missingArgs("the delegate call",
@@ -935,7 +936,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				},
 				Required: []string{"name", "agent_id"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				name := strings.TrimSpace(oArgStr(args, "name"))
 				agentID := strings.TrimSpace(oArgStr(args, "agent_id"))
 				cron := strings.TrimSpace(oArgStr(args, "cron"))
@@ -1094,7 +1095,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				Name:        "list_standing_agents",
 				Description: "List the user's standing agents with their schedule, paused state, last run status, and next run.",
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				list := ListStandingAgents(RootDB, owner)
 				if len(list) == 0 {
 					return "No standing agents are set up yet.", nil
@@ -1149,7 +1150,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				Parameters:  map[string]ToolParam{"name": {Type: "string", Description: "The standing agent's name."}},
 				Required:    []string{"name"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				name := strings.TrimSpace(oArgStr(args, "name"))
 				if _, ok := GetStandingAgent(RootDB, owner, name); !ok {
 					return "", fmt.Errorf("no standing agent named %q", name)
@@ -1170,7 +1171,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				},
 				Required: []string{"name", "paused"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				name := strings.TrimSpace(oArgStr(args, "name"))
 				sa, ok := GetStandingAgent(RootDB, owner, name)
 				if !ok {
@@ -1205,7 +1206,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				Parameters:  map[string]ToolParam{"name": {Type: "string", Description: "The standing agent's name."}},
 				Required:    []string{"name"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				name := strings.TrimSpace(oArgStr(args, "name"))
 				if _, ok := GetStandingAgent(RootDB, owner, name); !ok {
 					return "", fmt.Errorf("no standing agent named %q", name)
@@ -1224,7 +1225,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					"limit": {Type: "number", Description: "Optional: max rows (default 15, max 50)."},
 				},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				limit := oArgInt(args, "limit")
 				if limit <= 0 || limit > 50 {
 					limit = 15
@@ -1293,7 +1294,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				Parameters:  map[string]ToolParam{"id": {Type: "string", Description: "The run id."}},
 				Required:    []string{"id"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				id := strings.TrimSpace(oArgStr(args, "id"))
 				// Binding-slip guard. Small models sometimes reason correctly
 				// ("call get_joke directly") but emit THIS tool with the wanted
@@ -1380,7 +1381,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				},
 				Required: []string{"name", "kind"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				name := strings.TrimSpace(oArgStr(args, "name"))
 				kind := strings.ToLower(strings.TrimSpace(oArgStr(args, "kind")))
 				if name == "" {
@@ -1560,7 +1561,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				},
 				Required: []string{"tool_name"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				toolName := strings.TrimSpace(oArgStr(args, "tool_name"))
 				if toolName == "" {
 					return "", fmt.Errorf("tool_name is required — the tool whose output signals the result (e.g. read_chat for a reply)")
@@ -1624,7 +1625,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				},
 				Required: []string{"text"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				link, ok := ActiveMessagingLink()
 				if !ok {
 					return "", fmt.Errorf("the messaging bridge is not available")
@@ -1672,7 +1673,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				},
 				Required: []string{"to", "text"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				to := strings.TrimSpace(oArgStr(args, "to"))
 				text := strings.TrimSpace(oArgStr(args, "text"))
 				if err := missingArgs("the message_contact call",
@@ -1754,7 +1755,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				},
 				Required: []string{"channel", "agent"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				chanRef := strings.TrimSpace(oArgStr(args, "channel"))
 				agentRef := strings.TrimSpace(oArgStr(args, "agent"))
 				if err := missingArgs("the authorize_channel_sender call",
@@ -1798,7 +1799,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				},
 				Required: []string{"to"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				to := strings.TrimSpace(oArgStr(args, "to"))
 				if to == "" {
 					return "", fmt.Errorf("to is required — the person's handle/number for their 1:1 thread")
@@ -1843,7 +1844,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				},
 				Required: []string{"to", "wake"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				to := strings.TrimSpace(oArgStr(args, "to"))
 				if to == "" {
 					return "", fmt.Errorf("to is required")
@@ -1875,7 +1876,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				},
 				Required: []string{"to"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				to := strings.TrimSpace(oArgStr(args, "to"))
 				if to == "" {
 					return "", fmt.Errorf("to is required")
@@ -1893,7 +1894,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				Name:        "list_event_monitors",
 				Description: "List the user's event monitors (webhook + poll) with their kind, schedule, paused state, and when each last fired.",
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				// Scope to THIS agent's monitors (WakeAgent set on create), not
 				// every monitor the owner has across all their agents.
 				var ms []EventMonitor
@@ -1945,7 +1946,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				Parameters:  map[string]ToolParam{"name": {Type: "string", Description: "The monitor's name."}},
 				Required:    []string{"name"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				name := strings.TrimSpace(oArgStr(args, "name"))
 				// Scope to THIS agent — don't let one agent delete another's monitor.
 				if m, ok := GetEventMonitor(RootDB, owner, name); !ok || m.WakeAgent != controllerAgentID {

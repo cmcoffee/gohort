@@ -274,7 +274,7 @@ func (s servitorSource) ItemToolsWithSession(sess *ToolSession, user, itemID str
 			Required: []string{"query"},
 			Caps:     []Capability{CapRead},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			query := strings.TrimSpace(fmt.Sprint(args["query"]))
 			txt := s.Fetch(sess.Context(), user, id, query)
 			if strings.TrimSpace(txt) == "" {
@@ -290,7 +290,7 @@ func (s servitorSource) ItemToolsWithSession(sess *ToolSession, user, itemID str
 			Description: fmt.Sprintf("Return the discrete structured facts gohort has recorded about %q — versions, ports, paths, hostnames, service names — as a key/value list. Read-only and instant; no live access. Use to ground EXACT values in a guide section without re-investigating.", name),
 			Caps:        []Capability{CapRead},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			return s.factsBlock(user, id)
 		},
 	}
@@ -305,7 +305,7 @@ func (s servitorSource) ItemToolsWithSession(sess *ToolSession, user, itemID str
 			Required: []string{"question"},
 			Caps:     []Capability{CapNetwork, CapExecute},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			question := strings.TrimSpace(fmt.Sprint(args["question"]))
 			if question == "" {
 				return "", fmt.Errorf("question is required")

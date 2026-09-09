@@ -217,7 +217,7 @@ func (h *machineHost) runToolPhase(ctx context.Context, ph MachinePhase, tool, p
 			return "", Error("step " + ph.Name + ": " + tool + " was not approved")
 		}
 	}
-	out, err := handler(args)
+	out, err := handler(ctx, args)
 	if err != nil {
 		return "", err
 	}

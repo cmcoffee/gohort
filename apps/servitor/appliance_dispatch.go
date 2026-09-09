@@ -158,7 +158,7 @@ func ApplianceToolDefs(sess *ToolSession, udb Database, userID, agentID string, 
 				Required:    tool.Required,
 				Caps:        []Capability{CapWrite},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				return DispatchApplianceTool(WithActingAgent(sess.Context(), agentID), udb,
 					ApplianceDispatch{Appliance: app, ToolName: tool.Name, Args: args, AgentID: agentID, UserID: userID})
 			},

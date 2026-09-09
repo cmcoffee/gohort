@@ -29,7 +29,7 @@ func TestSendGuardHoldsBatchedDuplicateSends(t *testing.T) {
 		Tool: Tool{Name: "message_contact", Description: "send", Parameters: map[string]ToolParam{
 			"to": {Type: "string"}, "text": {Type: "string"},
 		}},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			delivered++
 			return "sent", nil
 		},
@@ -77,7 +77,7 @@ func TestSendGuardPerRecipientAndCrossRound(t *testing.T) {
 	seen := map[string]int{}
 	sendTool := AgentToolDef{
 		Tool: Tool{Name: "message_contact", Parameters: map[string]ToolParam{"to": {Type: "string"}, "text": {Type: "string"}}},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			seen[fmt.Sprint(args["to"])]++
 			return "sent", nil
 		},

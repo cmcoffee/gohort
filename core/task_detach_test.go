@@ -41,12 +41,12 @@ func TestAHandBuiltToolDetachesOnTheSameTerms(t *testing.T) {
 			d.AppendImage("AAAA")
 			return "the sub-agent's answer", nil
 		},
-	}, sess, func(map[string]any) (string, error) {
+	}, sess, func(context.Context, map[string]any) (string, error) {
 		t.Error("it should not have run inline")
 		return "", nil
 	})
 
-	out, err := h(map[string]any{})
+	out, err := h(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}
@@ -73,11 +73,11 @@ func TestAHandBuiltToolStaysInlineBelowTheThreshold(t *testing.T) {
 			t.Error("a one-second call must not detach")
 			return "", nil
 		},
-	}, &ToolSession{ChatSessionID: "s"}, func(map[string]any) (string, error) {
+	}, &ToolSession{ChatSessionID: "s"}, func(context.Context, map[string]any) (string, error) {
 		inlineRan = true
 		return "answered", nil
 	})
-	if _, err := h(map[string]any{}); err != nil {
+	if _, err := h(context.Background(), map[string]any{}); err != nil {
 		t.Fatalf("handler: %v", err)
 	}
 	if !inlineRan {
@@ -115,9 +115,9 @@ func TestAHandBuiltToolPreflightsBeforeClaimingTheSlot(t *testing.T) {
 			t.Error("preflight failed — nothing should have started")
 			return "", nil
 		},
-	}, sess, func(map[string]any) (string, error) { return "", nil })
+	}, sess, func(context.Context, map[string]any) (string, error) { return "", nil })
 
-	if _, err := h(map[string]any{}); err != errTestPreflight {
+	if _, err := h(context.Background(), map[string]any{}); err != errTestPreflight {
 		t.Fatalf("err = %v, want the preflight error surfaced inline", err)
 	}
 	if _, free := sess.ClaimDetachSlot("agents"); !free {

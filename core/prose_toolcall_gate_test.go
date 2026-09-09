@@ -10,13 +10,14 @@ package core
 // repeat, and the wedge spent 39s regenerating an answer already in hand.
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
 
 func gateTestTools() (map[string]ToolHandlerFunc, []Tool) {
 	handlers := map[string]ToolHandlerFunc{
-		"moltbook": func(args map[string]any) (string, error) { return "", nil },
+		"moltbook": func(ctx context.Context, args map[string]any) (string, error) { return "", nil },
 	}
 	defs := []Tool{{
 		Name: "moltbook",

@@ -439,7 +439,7 @@ func TestToolCasePromptIsJSONArguments(t *testing.T) {
 	called := map[string]any(nil)
 	tool := AgentToolDef{
 		Tool:    Tool{Name: "adder"},
-		Handler: func(args map[string]any) (string, error) { called = args; return "42", nil },
+		Handler: func(ctx context.Context, args map[string]any) (string, error) { called = args; return "42", nil },
 	}
 	exec := toolEvalExecutor(tool)
 

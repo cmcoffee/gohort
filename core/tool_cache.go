@@ -22,6 +22,7 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"sort"
 	"strings"
@@ -105,12 +106,12 @@ func WrapToolsWithRunCache(cache *RunToolCache, tools []AgentToolDef) []AgentToo
 			continue
 		}
 		name, inner := td.Tool.Name, td.Handler
-		td.Handler = func(args map[string]any) (string, error) {
+		td.Handler = func(ctx context.Context, args map[string]any) (string, error) {
 			key := runCacheKey(name, args)
 			if v, ok := cache.get(key); ok {
 				return v, nil
 			}
-			v, err := inner(args)
+			v, err := inner(ctx, args)
 			if err != nil {
 				// Errors are never cached. A search that failed on a
 				// timeout is a question that has not been answered, and

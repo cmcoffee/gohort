@@ -17,8 +17,24 @@ import (
 	"github.com/cmcoffee/gohort/core/prompts"
 )
 
-// ToolHandlerFunc is a function that executes a tool call and returns its output.
-type ToolHandlerFunc func(args map[string]any) (string, error)
+// ToolHandlerFunc is a function that executes a tool call and returns its
+// output.
+//
+// The context is the RUN's, and a handler that can take a long time is expected
+// to honor it. This is not decoration: the loop tests for cancellation only at
+// a round boundary (roundHead), so between the moment a user presses stop and
+// the moment a handler returns, the only thing that can end the work is the
+// handler itself. Before the context was here, cancellation was a discipline
+// each handler had to remember through a captured *ToolSession, twenty places
+// in the tree remembered it, and none of them were the ones that ran long: a
+// search over an evidence bundle, a scan of a file store budgeted in minutes, a
+// remote MCP call. Stop did nothing anyone could see.
+//
+// Ignoring it is still allowed, and for most handlers correct — a tool that
+// formats an argument and returns has nothing to cancel. What changed is that
+// forgetting is now a choice made in front of the parameter rather than an
+// absence nobody could see.
+type ToolHandlerFunc func(ctx context.Context, args map[string]any) (string, error)
 
 // safeInvoke runs a tool handler, converting a panic into an ordinary error.
 // A tool handler is arbitrary app code; without this a panic (a) crashes the
@@ -28,7 +44,7 @@ type ToolHandlerFunc func(args map[string]any) (string, error)
 // error the loop surfaces as an IsError result, so the model sees "tool
 // panicked: …" and can adjust. The full stack goes to the debug log, never into
 // the model's context (stacks are large and not useful to the LLM).
-func safeInvoke(name string, handler ToolHandlerFunc, args map[string]any) (output string, err error) {
+func safeInvoke(ctx context.Context, name string, handler ToolHandlerFunc, args map[string]any) (output string, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			buf := make([]byte, 8192)
@@ -38,7 +54,21 @@ func safeInvoke(name string, handler ToolHandlerFunc, args map[string]any) (outp
 			err = fmt.Errorf("tool panicked: %v", r)
 		}
 	}()
-	output, err = handler(args)
+	// Nil reads as uncancellable rather than panicking: safeInvoke is reached
+	// from CLI paths and tests that never had a context to give.
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	// A call that has ALREADY been cancelled does not start. This is the case
+	// the round-boundary check cannot cover: a round with three tool calls
+	// cancelled during the first would still run the second and the third, each
+	// to completion, because the loop does not look again until they are all
+	// back. Cheap, and it is the difference between one long call outliving a
+	// stop and three of them doing it.
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	output, err = handler(ctx, args)
 	// Strip the framework mark unconditionally: whether or not an app wrapper
 	// read it, it must never reach the model. This is the one place every tool
 	// call passes through.
@@ -1918,7 +1948,7 @@ func (lr *loopRun) recordResponse() loopAction {
 		}
 
 		// Execute the tool.
-		output, toolErr := safeInvoke(tc.Name, lr.handlers[tc.Name], tc.Args)
+		output, toolErr := safeInvoke(lr.ctx, tc.Name, lr.handlers[tc.Name], tc.Args)
 		lr.toolFiredThisTurn = true
 		toolErrors := 0
 		var resultText string
@@ -3267,7 +3297,7 @@ func (lr *loopRun) dispatchTools() loopAction {
 	if len(lr.rs.work) == 1 {
 		// Single call — no goroutine overhead.
 		w := lr.rs.work[0]
-		output, err := safeInvoke(w.tc.Name, w.handler, w.tc.Args)
+		output, err := safeInvoke(lr.ctx, w.tc.Name, w.handler, w.tc.Args)
 		if err != nil {
 			lr.debugToolErr(toolCallLabel(w.tc), err)
 			lr.rs.results[w.index] = ToolResult{ID: w.tc.ID, Content: fmt.Sprintf("Error: %s", err), IsError: true}
@@ -3281,7 +3311,7 @@ func (lr *loopRun) dispatchTools() loopAction {
 		var wg sync.WaitGroup
 		var errCount int32
 		invokeStore := func(w toolWork) {
-			output, err := safeInvoke(w.tc.Name, w.handler, w.tc.Args)
+			output, err := safeInvoke(lr.ctx, w.tc.Name, w.handler, w.tc.Args)
 			if err != nil {
 				lr.debugToolErr(toolCallLabel(w.tc), err)
 				lr.rs.results[w.index] = ToolResult{ID: w.tc.ID, Content: fmt.Sprintf("Error: %s", err), IsError: true}

@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -24,7 +25,7 @@ func TestBuildPlanStepsAreTolerant(t *testing.T) {
 
 	// Out-of-range mark_step_done: no error, soft note, work continues.
 	turn := newTurn()
-	out, err := turn.markStepDoneToolDef().Handler(map[string]any{"step": 20, "summary": "x"})
+	out, err := turn.markStepDoneToolDef().Handler(context.Background(), map[string]any{"step": 20, "summary": "x"})
 	if err != nil {
 		t.Fatalf("out-of-range mark_step_done must not error; got %v", err)
 	}
@@ -34,10 +35,10 @@ func TestBuildPlanStepsAreTolerant(t *testing.T) {
 
 	// mark_step_in_progress auto-advances a stale in_progress step (no refusal).
 	turn = newTurn()
-	if _, err := turn.markStepInProgressToolDef().Handler(map[string]any{"step": 1}); err != nil {
+	if _, err := turn.markStepInProgressToolDef().Handler(context.Background(), map[string]any{"step": 1}); err != nil {
 		t.Fatalf("first in_progress: %v", err)
 	}
-	out, err = turn.markStepInProgressToolDef().Handler(map[string]any{"step": 2})
+	out, err = turn.markStepInProgressToolDef().Handler(context.Background(), map[string]any{"step": 2})
 	if err != nil {
 		t.Fatalf("second in_progress must not refuse; got %v", err)
 	}
@@ -51,7 +52,7 @@ func TestBuildPlanStepsAreTolerant(t *testing.T) {
 
 	// No plan at all: soft note, not an error.
 	empty := &chatTurn{session: &ChatSession{}}
-	if out, err := empty.markStepDoneToolDef().Handler(map[string]any{"step": 1, "summary": "x"}); err != nil || !strings.Contains(out, "No active build plan") {
+	if out, err := empty.markStepDoneToolDef().Handler(context.Background(), map[string]any{"step": 1, "summary": "x"}); err != nil || !strings.Contains(out, "No active build plan") {
 		t.Fatalf("no-plan mark_step_done should soft-note; got %q, %v", out, err)
 	}
 }

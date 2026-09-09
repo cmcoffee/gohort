@@ -200,7 +200,7 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 			},
 			Required: []string{"member", "task"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			ref, _ := args["member"].(string)
 			m, ok := findMember(members, ref)
 			if !ok {
@@ -251,7 +251,7 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 			},
 			Required: []string{"members", "task"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			refs := stringList(args["members"])
 			if len(refs) < 2 {
 				return "", fmt.Errorf("investigate_cluster needs at least 2 members; use investigate_member for one")
@@ -372,7 +372,7 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 			},
 			Required: []string{"member", "query"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			ref, _ := args["member"].(string)
 			m, ok := findMember(members, ref)
 			if !ok {
@@ -421,7 +421,7 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 			},
 			Required: []string{"member", "pattern"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			ref, _ := args["member"].(string)
 			m, ok := findMember(members, ref)
 			if !ok {
@@ -475,7 +475,7 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 				},
 				Required: []string{"query"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				query, _ := args["query"].(string)
 				if strings.TrimSpace(query) == "" {
 					return "", fmt.Errorf("query is required")

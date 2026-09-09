@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -77,7 +78,7 @@ func TestListReferenceSourcesToolShape(t *testing.T) {
 	if len(td.Tool.Parameters) != 0 {
 		t.Errorf("tool takes %d parameters, want none", len(td.Tool.Parameters))
 	}
-	out, err := td.Handler(map[string]any{})
+	out, err := td.Handler(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("handler errored: %v", err)
 	}

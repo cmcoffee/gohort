@@ -188,7 +188,7 @@ func buildDispatchWorker(sess *ToolSession, workerLLM LLM, workerToolNames []str
 			},
 			Required: []string{"task"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			task := strings.TrimSpace(StringArg(args, "task"))
 			if task == "" {
 				return "", fmt.Errorf("task is required")

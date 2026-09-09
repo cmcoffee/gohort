@@ -327,9 +327,9 @@ func (bundleSource) ItemTools(user, itemID string) []AgentToolDef {
 	}
 	return []AgentToolDef{
 		{Tool: Tool{Name: "search_support_bundles", Description: "Search the bundles.", Caps: []Capability{CapRead}},
-			Handler: func(map[string]any) (string, error) { return "", nil }},
+			Handler: func(context.Context, map[string]any) (string, error) { return "", nil }},
 		{Tool: Tool{Name: "read_support_bundles", Description: "Read a window of one file.", Caps: []Capability{CapRead}},
-			Handler: func(map[string]any) (string, error) { return "", nil }},
+			Handler: func(context.Context, map[string]any) (string, error) { return "", nil }},
 		// A REMOTE read, declared the way core declares one (a source hook,
 		// an MCP proxy tool): CapNetwork rides alongside CapRead because
 		// answering means leaving the box. It only reads, and a read-only
@@ -337,7 +337,7 @@ func (bundleSource) ItemTools(user, itemID string) []AgentToolDef {
 		// exists to keep honest.
 		{Tool: Tool{Name: "investigate_support_bundles", Description: "Ask the far side about a bundle.",
 			Caps: []Capability{CapNetwork, CapRead}},
-			Handler: func(map[string]any) (string, error) { return "", nil }},
+			Handler: func(context.Context, map[string]any) (string, error) { return "", nil }},
 	}
 }
 
@@ -671,7 +671,7 @@ func TestChangePhaseTool_MovesTheCursorAndReturnsTheNewDirective(t *testing.T) {
 	})
 	turn.enterMachine("hi")
 
-	out, err := turn.changePhaseToolDef().Handler(map[string]any{
+	out, err := turn.changePhaseToolDef().Handler(context.Background(), map[string]any{
 		"phase": "work", "why": "they told me what they want",
 	})
 	if err != nil {
@@ -707,7 +707,7 @@ func TestChangePhaseTool_RefusesUnknownPhasesAndThrashing(t *testing.T) {
 	turn.enterMachine("hi")
 	tool := turn.changePhaseToolDef()
 
-	if _, err := tool.Handler(map[string]any{"phase": "ghost", "why": "x"}); err == nil {
+	if _, err := tool.Handler(context.Background(), map[string]any{"phase": "ghost", "why": "x"}); err == nil {
 		t.Error("expected a refusal naming the available phases")
 	} else if !strings.Contains(err.Error(), "b, c") && !strings.Contains(err.Error(), "a, b, c") {
 		t.Errorf("the refusal should list the real choices, got: %v", err)
@@ -718,11 +718,11 @@ func TestChangePhaseTool_RefusesUnknownPhasesAndThrashing(t *testing.T) {
 
 	for i := 0; i < maxPhaseChangesPerTurn; i++ {
 		want := []string{"b", "c"}[i%2]
-		if _, err := tool.Handler(map[string]any{"phase": want, "why": "moved on"}); err != nil {
+		if _, err := tool.Handler(context.Background(), map[string]any{"phase": want, "why": "moved on"}); err != nil {
 			t.Fatalf("change %d should succeed: %v", i+1, err)
 		}
 	}
-	if _, err := tool.Handler(map[string]any{"phase": "a", "why": "again"}); err == nil {
+	if _, err := tool.Handler(context.Background(), map[string]any{"phase": "a", "why": "again"}); err == nil {
 		t.Error("expected the cap to refuse a third change in one turn")
 	}
 }

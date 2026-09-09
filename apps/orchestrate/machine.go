@@ -15,6 +15,7 @@ package orchestrate
 // caller's input unchanged.
 
 import (
+	"context"
 	"strconv"
 	"strings"
 	"time"
@@ -427,7 +428,7 @@ func (t *chatTurn) changePhaseToolDef() AgentToolDef {
 			Required: []string{"phase", "why"},
 			Caps:     []Capability{CapRead},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			m := t.machine
 			if !m.on {
 				return "", Error("this conversation is not running a phase machine, so there is no phase to change to")
@@ -548,8 +549,8 @@ func (t *chatTurn) noteStepToolCalls(tools []AgentToolDef) {
 		if inner == nil {
 			continue
 		}
-		tools[i].Handler = func(args map[string]any) (string, error) {
-			out, err := inner(args)
+		tools[i].Handler = func(ctx context.Context, args map[string]any) (string, error) {
+			out, err := inner(ctx, args)
 			// Only what SUCCEEDED. A failed call is not work the reply
 			// may claim, and handing the judge a name that errored would
 			// excuse the one reply it exists to catch.

@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -24,7 +25,7 @@ func (t *chatTurn) introspectToolDef() AgentToolDef {
 			},
 			Caps: []Capability{CapRead},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			section := strings.ToLower(strings.TrimSpace(stringArg(args, "section")))
 			if section == "" {
 				section = "all"

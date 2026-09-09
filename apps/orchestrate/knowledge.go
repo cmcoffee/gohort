@@ -1180,7 +1180,7 @@ func (t *chatTurn) memoryToolDef() AgentToolDef {
 			// don't strip it from agents allowed to write.
 			Caps: []Capability{CapWrite},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			action := strings.TrimSpace(stringArg(args, "action"))
 			switch action {
 			case "", "help":
@@ -1352,7 +1352,7 @@ func (t *chatTurn) knowledgeToolDefScoped(scopeSkills []SkillRecord) AgentToolDe
 			Required: []string{"query"},
 			Caps:     []Capability{CapRead},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			query := strings.TrimSpace(stringArg(args, "query"))
 			if query == "" {
 				return "", errors.New("query is required")
@@ -1498,7 +1498,7 @@ func (t *chatTurn) fetchKnowledgeDocScoped(scopeSkills []SkillRecord) AgentToolD
 			Required: []string{"doc_id"},
 			Caps:     []Capability{CapRead},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			docID := strings.TrimSpace(stringArg(args, "doc_id"))
 			if docID == "" {
 				return "", errors.New("doc_id is required")

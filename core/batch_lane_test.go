@@ -66,7 +66,7 @@ func TestBatchLaneSerializesWithinLane(t *testing.T) {
 			"target": {Type: "string"}, "msg": {Type: "string"},
 		}},
 		BatchLane: func(args map[string]any) string { return fmt.Sprint(args["target"]) },
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			lane, id := fmt.Sprint(args["target"]), fmt.Sprint(args["msg"])
 			probe.enter(lane, id)
 			// Long enough that an unserialized sibling would land inside it.
@@ -122,7 +122,7 @@ func TestBatchLaneRunsDistinctLanesConcurrently(t *testing.T) {
 			"target": {Type: "string"},
 		}},
 		BatchLane: func(args map[string]any) string { return fmt.Sprint(args["target"]) },
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			arrived <- fmt.Sprint(args["target"])
 			both.Done()
 			done := make(chan struct{})
@@ -169,7 +169,7 @@ func TestBatchLaneEmptyKeyJoinsSharedSerialLane(t *testing.T) {
 	})
 
 	probe := newLaneProbe()
-	run := func(args map[string]any) (string, error) {
+	run := func(ctx context.Context, args map[string]any) (string, error) {
 		probe.enter("shared", fmt.Sprint(args["msg"]))
 		time.Sleep(40 * time.Millisecond)
 		probe.exit("shared")

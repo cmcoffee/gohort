@@ -663,7 +663,7 @@ func (t *chatTurn) loadToolToolDef(sess *ToolSession) AgentToolDef {
 			Required: nil, // validated in the handler (also tolerates a singular `name`)
 			Caps:     nil, // control/meta — no side effects of its own
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			// Collect from names[] plus a tolerated singular `name` (LLMs
 			// fall back to the old singular form out of habit), dedupe.
 			raw := stringSliceFromArgs(args, "names")

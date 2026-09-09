@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"sort"
@@ -189,7 +190,7 @@ func ChatToolToAgentToolDef(ct ChatTool) AgentToolDef {
 			TrustedOutput: trusted,
 			Category:      ToolCategory(ct),
 		},
-		Handler:      ct.Run,
+		Handler:      chatToolHandler(ct),
 		NeedsConfirm: confirm,
 	}
 }
@@ -256,6 +257,18 @@ func diffWorkspaceFiles(sess *ToolSession, before map[string]bool) []string {
 	return added
 }
 
+// chatToolHandler adapts a plain ChatTool to the handler signature.
+//
+// The context is dropped, and that is the honest shape: a ChatTool's Run takes
+// only args, so there is nothing to hand it. A tool of this kind that runs long
+// gets its cancellation the way it always has — by implementing SessionChatTool
+// and reading sess.Context(), which is the same context the loop passes here.
+func chatToolHandler(ct ChatTool) ToolHandlerFunc {
+	return func(_ context.Context, args map[string]any) (string, error) {
+		return ct.Run(args)
+	}
+}
+
 // ChatToolToAgentToolDefWithSession converts a ChatTool into an AgentToolDef,
 // binding a ToolSession so that tools implementing SessionChatTool receive it.
 func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentToolDef {
@@ -266,13 +279,13 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 	var handler ToolHandlerFunc
 	if sess != nil {
 		if sct, ok := ct.(SessionChatTool); ok {
-			handler = func(args map[string]any) (string, error) {
+			handler = func(ctx context.Context, args map[string]any) (string, error) {
 				return sct.RunWithSession(args, sess)
 			}
 		}
 	}
 	if handler == nil {
-		handler = ct.Run
+		handler = chatToolHandler(ct)
 	}
 	// Detach a call the tool says will outrun the turn. Wrapping HERE rather
 	// than inside each tool means the decision, the notice the model gets back,
@@ -297,7 +310,7 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 	// same notice for free.
 	if sess != nil {
 		base := handler
-		handler = func(args map[string]any) (string, error) {
+		handler = func(ctx context.Context, args map[string]any) (string, error) {
 			imgBefore := len(sess.Images)
 			vidBefore := len(sess.Videos)
 			fileBefore := len(sess.Files)
@@ -309,7 +322,7 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 			// LLM guessing at filenames that may or may not
 			// exist in the workspace.
 			wsBefore := snapshotWorkspaceFiles(sess)
-			out, err := base(args)
+			out, err := base(ctx, args)
 			// A result that is purely a data:image/...;base64,... URI is a
 			// vision attachment, not text. Decode it into the session's
 			// image list so vision LLMs see it, and replace the unwieldy
@@ -380,11 +393,11 @@ func ChatToolToAgentToolDefWithSession(ct ChatTool, sess *ToolSession) AgentTool
 	// SnapshotImageRefs for what "when it wrote the call" means.
 	if sess != nil {
 		inner := handler
-		handler = func(args map[string]any) (string, error) {
+		handler = func(ctx context.Context, args map[string]any) (string, error) {
 			if n := FreezeImageRefs(sess, args); n > 0 {
 				Debug("[image_space] froze %d positional image ref(s) to stable ids for %s", n, ct.Name())
 			}
-			return inner(args)
+			return inner(ctx, args)
 		}
 	}
 	var caps []Capability

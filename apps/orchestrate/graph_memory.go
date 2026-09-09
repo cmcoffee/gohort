@@ -153,7 +153,7 @@ func (t *chatTurn) linkEntitiesToolDef() AgentToolDef {
 			Required: []string{"subject", "relation", "object"},
 			Caps:     []Capability{CapWrite},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			// The graph is durable state like the facts block, and
 			// UpsertGraphEntity / LinkGraphEdge below write straight into the
 			// user's own namespace — so a clean room refuses it for the same
@@ -206,7 +206,7 @@ func (t *chatTurn) forgetGraphToolDef() AgentToolDef {
 			},
 			Caps: []Capability{CapWrite},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			ns := factsNamespace(t.agent.ID)
 			subject := strings.TrimSpace(stringArg(args, "subject"))
 			relation := strings.TrimSpace(stringArg(args, "relation"))
@@ -262,7 +262,7 @@ func (t *chatTurn) recallAboutToolDef() AgentToolDef {
 			Required: []string{"name"},
 			Caps:     []Capability{CapRead},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			name := strings.TrimSpace(stringArg(args, "name"))
 			if name == "" {
 				return "", errors.New("name is required")

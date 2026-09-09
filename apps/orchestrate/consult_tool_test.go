@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -21,7 +22,7 @@ func TestConsultToolRequiresQuestionAndEvidence(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if _, err := td.Handler(tc.args); err == nil {
+			if _, err := td.Handler(context.Background(), tc.args); err == nil {
 				t.Fatal("expected an error")
 			} else if !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("error should say %q: %v", tc.want, err)

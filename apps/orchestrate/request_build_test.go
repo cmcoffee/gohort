@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -19,11 +20,11 @@ func TestRequestBuildQueuesAuthorization(t *testing.T) {
 	td := requestBuildTool("alice", "agent-moltbook", "Moltbook")
 
 	// Blank brief refused.
-	if _, err := td.Handler(map[string]any{"brief": "   "}); err == nil {
+	if _, err := td.Handler(context.Background(), map[string]any{"brief": "   "}); err == nil {
 		t.Error("blank brief must be refused")
 	}
 
-	out, err := td.Handler(map[string]any{"brief": "A viral-post researcher for Moltbook.", "name": "Viral Researcher"})
+	out, err := td.Handler(context.Background(), map[string]any{"brief": "A viral-post researcher for Moltbook.", "name": "Viral Researcher"})
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}

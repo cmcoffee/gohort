@@ -31,6 +31,7 @@
 package orchestrate
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -156,7 +157,7 @@ func (t *chatTurn) guardrailAppealToolDef() AgentToolDef {
 			Required: []string{"claim", "quote"},
 			Caps:     []Capability{CapRead},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			offer := t.appealOffer
 			if offer == nil {
 				return "There is nothing to appeal — no guardrail has blocked you. Carry on with the work.", nil

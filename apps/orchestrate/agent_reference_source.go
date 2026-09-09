@@ -124,7 +124,7 @@ func (s agentReferenceSource) ItemTools(user, itemID string) []AgentToolDef {
 			// business and its own tools' declarations, not this wrapper's.
 			Caps: []Capability{CapRead},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			q, _ := args["question"].(string)
 			if strings.TrimSpace(q) == "" {
 				return "", fmt.Errorf("question is required")

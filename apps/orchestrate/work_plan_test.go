@@ -7,6 +7,7 @@
 package orchestrate
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -36,13 +37,13 @@ func TestATrackedPlanSurvivesTheTurn(t *testing.T) {
 	if len(tools) != 6 {
 		t.Fatalf("an agent with a tracked plan should hold the six plan tools, got %d", len(tools))
 	}
-	if _, err := turn.workPlan.Set.Handler(map[string]any{"steps": []any{
+	if _, err := turn.workPlan.Set.Handler(context.Background(), map[string]any{"steps": []any{
 		map[string]any{"title": "read the logs", "what_to_find": "what failed"},
 		map[string]any{"title": "check the config", "what_to_find": "whether it is set"},
 	}}); err != nil {
 		t.Fatalf("set_plan: %v", err)
 	}
-	if _, err := turn.workPlan.Findings.Handler(map[string]any{"step_id": 1, "findings": "the disk filled"}); err != nil {
+	if _, err := turn.workPlan.Findings.Handler(context.Background(), map[string]any{"step_id": 1, "findings": "the disk filled"}); err != nil {
 		t.Fatal(err)
 	}
 	// A LATER turn, built fresh from the stored session — the way the next

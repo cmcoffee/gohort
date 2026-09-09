@@ -29,6 +29,7 @@
 package wsbridge
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"

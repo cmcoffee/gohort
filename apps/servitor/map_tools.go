@@ -24,6 +24,7 @@
 package servitor
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -78,7 +79,7 @@ func mapTools(applianceID string) []AgentToolDef {
 				},
 				Required: []string{"name"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				return mapFind(applianceID, strArg(args, "name"))
 			},
 		},
@@ -93,7 +94,7 @@ func mapTools(applianceID string) []AgentToolDef {
 				},
 				Required: []string{"name"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				return mapNeighbors(applianceID, strArg(args, "name"),
 					clampInt(repoIntArg(args, "depth"), 1, mapMaxDepth), strArg(args, "relation"))
 			},
@@ -108,7 +109,7 @@ func mapTools(applianceID string) []AgentToolDef {
 				},
 				Required: []string{"from", "to"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				return mapPath(applianceID, strArg(args, "from"), strArg(args, "to"))
 			},
 		},

@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -28,7 +29,7 @@ func TestDraftRefusesReDraftOverWorkingCred(t *testing.T) {
 	}
 
 	turn := &chatTurn{user: "alice"}
-	out, err := draftAPICredentialToolDef(turn).Handler(map[string]any{
+	out, err := draftAPICredentialToolDef(turn).Handler(context.Background(), map[string]any{
 		"name": "apple_caldav", "type": "basic_auth",
 		"base_url": "https://p188-caldav.icloud.com/195178399",
 	})
@@ -42,7 +43,7 @@ func TestDraftRefusesReDraftOverWorkingCred(t *testing.T) {
 	// A user with NO such credential can still draft fresh (no refusal). Refusal
 	// path returns before the SSE card, so a nil-sse turn is fine here.
 	bob := &chatTurn{user: "bob"}
-	out, _ = updateAPICredentialToolDef(bob).Handler(map[string]any{"name": "nope", "base_url": "https://x"})
+	out, _ = updateAPICredentialToolDef(bob).Handler(context.Background(), map[string]any{"name": "nope", "base_url": "https://x"})
 	if !strings.Contains(out, "No credential named") {
 		t.Fatalf("update on a missing cred should say so; got:\n%s", out)
 	}
@@ -64,7 +65,7 @@ func TestUpdateProposesDiff(t *testing.T) {
 	}
 	turn := &chatTurn{user: "alice"}
 
-	out, err := updateAPICredentialToolDef(turn).Handler(map[string]any{
+	out, err := updateAPICredentialToolDef(turn).Handler(context.Background(), map[string]any{
 		"name": "apple_caldav", "base_url": "https://p188-caldav.icloud.com/195178399",
 	})
 	if err != nil {
@@ -75,7 +76,7 @@ func TestUpdateProposesDiff(t *testing.T) {
 	}
 
 	// Same value → no change proposed.
-	out, _ = updateAPICredentialToolDef(turn).Handler(map[string]any{
+	out, _ = updateAPICredentialToolDef(turn).Handler(context.Background(), map[string]any{
 		"name": "apple_caldav", "base_url": "https://p188-caldav.icloud.com",
 	})
 	if !strings.Contains(out, "No config changes") {

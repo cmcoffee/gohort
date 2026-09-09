@@ -27,7 +27,7 @@ func TestBundleToolsReportNotIngestedRatherThanEmpty(t *testing.T) {
 		case "read_bundle_file":
 			args["path"] = "var/log/messages"
 		}
-		out, err := td.Handler(args)
+		out, err := td.Handler(context.Background(), args)
 		if err != nil {
 			t.Errorf("%s on an empty store errored: %v", td.Tool.Name, err)
 			continue

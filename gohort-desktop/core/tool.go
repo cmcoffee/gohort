@@ -20,7 +20,10 @@
 
 package core
 
-import "strings"
+import (
+	"context"
+	"strings"
+)
 
 // ToolParam describes one parameter on a Tool. Matches gohort's own
 // ToolParam shape so catalogs interop without translation.
@@ -32,7 +35,7 @@ type ToolParam struct {
 // ToolHandler is the per-tool execution function. Returns the
 // result as a string (typically JSON-encoded for structured results,
 // plain text otherwise) and an error for the LLM to see on failure.
-type ToolHandler func(args map[string]any) (string, error)
+type ToolHandler func(ctx context.Context, args map[string]any) (string, error)
 
 // Tool is the contract every local capability implements.
 //

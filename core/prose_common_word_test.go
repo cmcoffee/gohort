@@ -8,12 +8,15 @@ package core
 // Two guards keep English from reading as a call — token-bounded matching,
 // and the adjacent-paren requirement for names that aren't snake_case.
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func commonWordTools() (map[string]ToolHandlerFunc, []Tool) {
 	handlers := map[string]ToolHandlerFunc{
-		"image":      func(map[string]any) (string, error) { return "", nil },
-		"web_search": func(map[string]any) (string, error) { return "", nil },
+		"image":      func(context.Context, map[string]any) (string, error) { return "", nil },
+		"web_search": func(context.Context, map[string]any) (string, error) { return "", nil },
 	}
 	defs := []Tool{
 		{

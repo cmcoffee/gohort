@@ -1236,7 +1236,7 @@ func (r *pipelineRun) runToolStage(ctx context.Context, stage PipelineStage, pre
 			return "", Error("stage " + stage.Name + ": tool " + strconv.Quote(name) + " was not called — a constraint on the agent running this pipeline covers it")
 		}
 	}
-	out, err := handler(args)
+	out, err := handler(ctx, args)
 	if err != nil {
 		return "", err
 	}

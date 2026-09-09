@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -93,7 +94,7 @@ func TestIncognitoRefusesDurableMemoryWrites(t *testing.T) {
 	}
 
 	// link_entities writes into the same user's durable graph.
-	_, err = clean.linkEntitiesToolDef().Handler(map[string]any{
+	_, err = clean.linkEntitiesToolDef().Handler(context.Background(), map[string]any{
 		"subject": "Robin", "relation": "works at", "object": "Acme",
 	})
 	if err == nil {
@@ -102,7 +103,7 @@ func TestIncognitoRefusesDurableMemoryWrites(t *testing.T) {
 
 	// forget_fact is destructive AND blind here — the index refers to a facts
 	// block this prompt does not carry.
-	_, err = clean.forgetFactToolDef().Handler(map[string]any{"index": 1, "quote": "Rex"})
+	_, err = clean.forgetFactToolDef().Handler(context.Background(), map[string]any{"index": 1, "quote": "Rex"})
 	if err == nil {
 		t.Error("incognito deleted a stored fact by an index it could not see")
 	}

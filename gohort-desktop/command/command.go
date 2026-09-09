@@ -115,7 +115,7 @@ func (t *commandTool) Params() map[string]core.ToolParam { return t.spec.Params 
 func (t *commandTool) Required() []string                { return t.spec.Required }
 func (t *commandTool) Enabled() bool                     { return true }
 func (t *commandTool) Handler() core.ToolHandler {
-	return func(args map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
 		cmdArgs := make([]string, 0, len(t.spec.Args))
 		for _, a := range t.spec.Args {
 			cmdArgs = append(cmdArgs, substituteArgs(a, args))

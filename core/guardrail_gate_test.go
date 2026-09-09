@@ -32,7 +32,7 @@ func TestGuardrailPreActionGateBlocksHandler(t *testing.T) {
 			Parameters:  map[string]ToolParam{"amount": {Type: "string", Description: "how much"}},
 		},
 		NeedsConfirm: true,
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			handlerRan = true
 			return "spent", nil
 		},
@@ -262,7 +262,7 @@ func TestGuardrailHaltEndsTheTurn(t *testing.T) {
 	spend := AgentToolDef{
 		Tool:         Tool{Name: "spend", Description: "spends money", Parameters: map[string]ToolParam{"amount": {Type: "string", Description: "how much"}}},
 		NeedsConfirm: true,
-		Handler:      func(args map[string]any) (string, error) { handlerRan = true; return "spent", nil },
+		Handler:      func(ctx context.Context, args map[string]any) (string, error) { handlerRan = true; return "spent", nil },
 	}
 
 	resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
@@ -461,7 +461,7 @@ func narratingApp(t *testing.T, routeKey string, stub *narratingStubLLM) (*AppCo
 	RegisterRouteStage(RouteStage{Key: routeKey, Label: "test", Default: "lead"})
 	noop := AgentToolDef{
 		Tool:    Tool{Name: "noop", Description: "does nothing", Parameters: map[string]ToolParam{}},
-		Handler: func(args map[string]any) (string, error) { return "ok", nil },
+		Handler: func(ctx context.Context, args map[string]any) (string, error) { return "ok", nil },
 	}
 	return &AppCore{LLM: stub, LeadLLM: stub}, noop
 }
@@ -616,7 +616,7 @@ func TestBlockingRuleDoesNotEndTheTurnAtPreAction(t *testing.T) {
 	spend := AgentToolDef{
 		Tool:         Tool{Name: "spend", Description: "spends money", Parameters: map[string]ToolParam{"amount": {Type: "string", Description: "how much"}}},
 		NeedsConfirm: true,
-		Handler:      func(args map[string]any) (string, error) { handlerRan = true; return "spent", nil },
+		Handler:      func(ctx context.Context, args map[string]any) (string, error) { handlerRan = true; return "spent", nil },
 	}
 	resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
 		Tools:     []AgentToolDef{spend},

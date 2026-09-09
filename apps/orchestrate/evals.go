@@ -51,7 +51,7 @@ func stubTools(tools []AgentToolDef, scripted map[string]string) []AgentToolDef 
 		name := td.Tool.Name
 		canned := strings.TrimSpace(scripted[name])
 		out[i] = td // copies schema + flags; only the handler is replaced below
-		out[i].Handler = func(args map[string]any) (string, error) {
+		out[i].Handler = func(ctx context.Context, args map[string]any) (string, error) {
 			if canned != "" {
 				return canned, nil
 			}

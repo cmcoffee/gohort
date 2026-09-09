@@ -29,7 +29,7 @@ func TestBatchDedupRunsIdenticalCallOnce(t *testing.T) {
 		Tool: Tool{Name: "fetch_news", Description: "fetch", Parameters: map[string]ToolParam{
 			"category": {Type: "string"}, "max_items": {Type: "integer"},
 		}},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			atomic.AddInt32(&ran, 1)
 			return "HEADLINES", nil
 		},
@@ -90,8 +90,11 @@ func TestBatchDedupKeepsDistinctArgs(t *testing.T) {
 
 	var ran int32
 	tool := AgentToolDef{
-		Tool:    Tool{Name: "read_page", Description: "read", Parameters: map[string]ToolParam{"page": {Type: "integer"}}},
-		Handler: func(args map[string]any) (string, error) { atomic.AddInt32(&ran, 1); return "page body", nil },
+		Tool: Tool{Name: "read_page", Description: "read", Parameters: map[string]ToolParam{"page": {Type: "integer"}}},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			atomic.AddInt32(&ran, 1)
+			return "page body", nil
+		},
 	}
 
 	if _, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "read"}}, AgentLoopConfig{

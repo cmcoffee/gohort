@@ -17,6 +17,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"strings"
 )
@@ -148,7 +149,7 @@ func sourceHookToAgentToolDef(h SourceHook) (AgentToolDef, bool) {
 			// when the user wants a local-only turn.
 			Caps: []Capability{CapNetwork, CapRead},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			query := strings.TrimSpace(stringArgForHook(args, "query"))
 			if query == "" {
 				return "", fmt.Errorf("query is required")
@@ -241,7 +242,7 @@ func QuerySourceToolDef(db Database) (AgentToolDef, bool) {
 			Required: []string{"source", "query"},
 			Caps:     []Capability{CapNetwork, CapRead},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			source := strings.TrimSpace(stringArgForHook(args, "source"))
 			query := strings.TrimSpace(stringArgForHook(args, "query"))
 			if source == "" || query == "" {

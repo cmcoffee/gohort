@@ -11,6 +11,7 @@
 package orchestrate
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -63,7 +64,7 @@ func (t *chatTurn) recurringToolDef() AgentToolDef {
 			Required: []string{"action"},
 			Caps:     []Capability{CapRead, CapWrite},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			switch strings.ToLower(strings.TrimSpace(stringArg(args, "action"))) {
 			case "schedule":
 				return t.recurringSchedule(args)

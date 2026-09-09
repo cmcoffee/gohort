@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -233,7 +234,7 @@ func TestReMarkingTheActiveStepReportsNoChange(t *testing.T) {
 		t.Fatal("no mark_step_in_progress tool")
 	}
 
-	first, err := start.Handler(map[string]any{"step_id": 1})
+	first, err := start.Handler(context.Background(), map[string]any{"step_id": 1})
 	if err != nil {
 		t.Fatalf("first call failed: %v", err)
 	}
@@ -242,7 +243,7 @@ func TestReMarkingTheActiveStepReportsNoChange(t *testing.T) {
 	}
 
 	// The same call again — the shape that looped.
-	second, err := start.Handler(map[string]any{"step": 1})
+	second, err := start.Handler(context.Background(), map[string]any{"step": 1})
 	if err != nil {
 		t.Fatalf("the synonym form failed: %v", err)
 	}
@@ -266,7 +267,7 @@ func TestAMissingStepIDNamesTheParameter(t *testing.T) {
 		if td.Tool.Name != "mark_step_in_progress" {
 			continue
 		}
-		_, err := td.Handler(map[string]any{})
+		_, err := td.Handler(context.Background(), map[string]any{})
 		if err == nil {
 			t.Fatal("a call with no step id succeeded")
 		}
@@ -411,10 +412,10 @@ func TestWorkPlanToolsReportEveryChangeAndAreNeverCached(t *testing.T) {
 		}
 	}
 	// Nothing works before the plan is set, and saying so beats a bare error.
-	if out, _ := set.Start.Handler(map[string]any{"step_id": 1}); !strings.Contains(out, "NO PLAN") {
+	if out, _ := set.Start.Handler(context.Background(), map[string]any{"step_id": 1}); !strings.Contains(out, "NO PLAN") {
 		t.Errorf("a step tool before set_plan should say what is missing: %q", out)
 	}
-	out, err := set.Set.Handler(map[string]any{"steps": []any{
+	out, err := set.Set.Handler(context.Background(), map[string]any{"steps": []any{
 		map[string]any{"title": "read the logs", "what_to_find": "what failed"},
 	}})
 	if err != nil {
@@ -423,7 +424,7 @@ func TestWorkPlanToolsReportEveryChangeAndAreNeverCached(t *testing.T) {
 	if !strings.Contains(out, "mark_step_in_progress") {
 		t.Errorf("set_plan should say what to do next: %q", out)
 	}
-	if _, err := set.Findings.Handler(map[string]any{"step_id": 1, "findings": "it was the disk"}); err != nil {
+	if _, err := set.Findings.Handler(context.Background(), map[string]any{"step_id": 1, "findings": "it was the disk"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(changes) != 2 || changes[0].Kind != "set" || changes[1].Kind != "step" {
@@ -444,12 +445,12 @@ func TestWorkPlanToolsReportEveryChangeAndAreNeverCached(t *testing.T) {
 // step nobody can tell was finished.
 func TestASetStepNeedsBothHalves(t *testing.T) {
 	set := WorkPlanTools(WorkPlanToolSpec{})
-	if _, err := set.Set.Handler(map[string]any{"steps": []any{
+	if _, err := set.Set.Handler(context.Background(), map[string]any{"steps": []any{
 		map[string]any{"title": "look at it"},
 	}}); err == nil {
 		t.Error("a step with no what_to_find should be refused")
 	}
-	if _, err := set.Set.Handler(map[string]any{"steps": []any{}}); err == nil {
+	if _, err := set.Set.Handler(context.Background(), map[string]any{"steps": []any{}}); err == nil {
 		t.Error("an empty plan is not a plan")
 	}
 }
@@ -457,14 +458,14 @@ func TestASetStepNeedsBothHalves(t *testing.T) {
 // Revision is capped so the model works the plan instead of rewriting it.
 func TestRevisionIsCapped(t *testing.T) {
 	set := WorkPlanTools(WorkPlanToolSpec{})
-	if _, err := set.Set.Handler(map[string]any{"steps": []any{
+	if _, err := set.Set.Handler(context.Background(), map[string]any{"steps": []any{
 		map[string]any{"title": "a", "what_to_find": "x"},
 	}}); err != nil {
 		t.Fatal(err)
 	}
 	var last string
 	for i := 0; i < WorkPlanRevisionLimit+1; i++ {
-		out, err := set.Revise.Handler(map[string]any{"reason": "found something new"})
+		out, err := set.Revise.Handler(context.Background(), map[string]any{"reason": "found something new"})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -418,7 +418,7 @@ func toolsetDisplayTarget(a Appliance) string {
 // find out would fire writes on any toolset containing one, and "read tools
 // only" is a convention nothing enforces. So it is one owner-set flag, or
 // nothing, and with nothing the investigator opens by calling tools itself.
-func runToolsetSnapshot(rt resolvedToolset) string {
+func runToolsetSnapshot(ctx context.Context, rt resolvedToolset) string {
 	if rt.Snapshot == "" {
 		return ""
 	}
@@ -426,7 +426,7 @@ func runToolsetSnapshot(rt resolvedToolset) string {
 		if def.Tool.Name != rt.Snapshot || def.Handler == nil {
 			continue
 		}
-		out, err := def.Handler(map[string]any{})
+		out, err := def.Handler(ctx, map[string]any{})
 		if err != nil {
 			return fmt.Sprintf("### Orientation\n\n`%s` failed: %v\n\n", rt.Snapshot, err)
 		}

@@ -7,6 +7,7 @@
 package contacts
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -51,7 +52,7 @@ func (lookupTool) Params() map[string]core.ToolParam {
 func (lookupTool) Required() []string { return []string{"handle"} }
 func (lookupTool) Enabled() bool      { return true }
 func (lookupTool) Handler() core.ToolHandler {
-	return func(args map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
 		handle, _ := args["handle"].(string)
 		name := Lookup(handle)
 		if name == "" {
@@ -138,7 +139,7 @@ func (searchTool) Params() map[string]core.ToolParam {
 func (searchTool) Required() []string { return []string{"name"} }
 func (searchTool) Enabled() bool      { return true }
 func (searchTool) Handler() core.ToolHandler {
-	return func(args map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
 		query, _ := args["name"].(string)
 		limit := 10
 		switch v := args["limit"].(type) {

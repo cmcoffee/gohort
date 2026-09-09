@@ -5,6 +5,7 @@
 package servitor
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -33,7 +34,7 @@ func repoCodeTools(user, applianceID string) []AgentToolDef {
 				},
 				Required: []string{"query"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				query, _ := args["query"].(string)
 				if strings.TrimSpace(query) == "" {
 					return "", fmt.Errorf("query is required")
@@ -66,7 +67,7 @@ func repoCodeTools(user, applianceID string) []AgentToolDef {
 				},
 				Required: []string{"path"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				path, _ := args["path"].(string)
 				content, ok := readRepoFile(user, applianceID, path)
 				if !ok {
@@ -105,7 +106,7 @@ func repoCodeTools(user, applianceID string) []AgentToolDef {
 					"path": {Type: "string", Description: "Repo-relative directory path, e.g. 'internal/auth'. Empty for the root."},
 				},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				path, _ := args["path"].(string)
 				entries := listRepoDir(user, applianceID, path)
 				if len(entries) == 0 {
@@ -173,7 +174,7 @@ func linkedRepoTools(repos []linkedRepo) []AgentToolDef {
 				},
 				Required: []string{"query"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				query, _ := args["query"].(string)
 				if strings.TrimSpace(query) == "" {
 					return "", fmt.Errorf("query is required")
@@ -211,7 +212,7 @@ func linkedRepoTools(repos []linkedRepo) []AgentToolDef {
 				},
 				Required: []string{"repo", "path"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				ref, _ := args["repo"].(string)
 				r, ok := findLinked(ref)
 				if !ok {
@@ -257,7 +258,7 @@ func linkedRepoTools(repos []linkedRepo) []AgentToolDef {
 				},
 				Required: []string{"repo"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				ref, _ := args["repo"].(string)
 				r, ok := findLinked(ref)
 				if !ok {

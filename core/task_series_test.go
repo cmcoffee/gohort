@@ -357,11 +357,11 @@ func TestACallThatCannotDetachStillRuns(t *testing.T) {
 		t.Error("nothing can detach without a host to run it")
 	}
 	ran := false
-	h := WrapDetachable(p, &ToolSession{ChatSessionID: "s"}, func(map[string]any) (string, error) {
+	h := WrapDetachable(p, &ToolSession{ChatSessionID: "s"}, func(context.Context, map[string]any) (string, error) {
 		ran = true
 		return "done inline", nil
 	})
-	out, err := h(map[string]any{})
+	out, err := h(context.Background(), map[string]any{})
 	if err != nil || out != "done inline" || !ran {
 		t.Errorf("the inline fallback must still do the work: out=%q err=%v ran=%v", out, err, ran)
 	}

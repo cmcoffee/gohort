@@ -14,6 +14,7 @@
 package filesystem
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -74,7 +75,7 @@ func (t *read_file_tool) Required() []string { return []string{"path"} }
 func (t *read_file_tool) Enabled() bool { return true }
 
 func (t *read_file_tool) Handler() core.ToolHandler {
-	return func(args map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
 		path, _ := args["path"].(string)
 		path = strings.TrimSpace(path)
 		if path == "" {

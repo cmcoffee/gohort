@@ -15,6 +15,7 @@
 package orchestrate
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -52,7 +53,7 @@ func (t *chatTurn) enterExplorerModeToolDef() AgentToolDef {
 			Required: []string{"reason"},
 			Caps:     []Capability{CapRead},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			if !t.agent.AllowExplorer {
 				return "", errors.New("enter_explorer_mode: this agent doesn't have AllowExplorer set; ask the admin to enable it on the agent config")
 			}

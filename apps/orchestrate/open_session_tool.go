@@ -14,6 +14,7 @@
 package orchestrate
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -38,7 +39,7 @@ func (t *chatTurn) openSessionToolDef() AgentToolDef {
 			Required: []string{"title", "seed_note"},
 			Caps:     []Capability{CapWrite},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			// Web-surface guard: no live stream = this turn isn't a browser
 			// user who can click the link (channel relay, dispatch, scheduled
 			// fire — none of which should ever see this tool anyway).

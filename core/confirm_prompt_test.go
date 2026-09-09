@@ -34,7 +34,7 @@ func TestConfirmationAloneGatesTheCall(t *testing.T) {
 		Tools: []AgentToolDef{{
 			Tool:         Tool{Name: "wipe", Description: "wipe", Parameters: map[string]ToolParam{"path": {Type: "string"}}},
 			Confirmation: &ToolConfirmation{Prompt: "Really wipe it?"}, // NeedsConfirm deliberately unset
-			Handler: func(map[string]any) (string, error) {
+			Handler: func(context.Context, map[string]any) (string, error) {
 				ran = true
 				return "done", nil
 			},
@@ -71,7 +71,7 @@ func TestToolWithoutConfirmFieldsIsNotGated(t *testing.T) {
 		Confirm:   func(name, args string) bool { asked = true; return true },
 		Tools: []AgentToolDef{{
 			Tool:    Tool{Name: "peek", Description: "peek", Parameters: map[string]ToolParam{}},
-			Handler: func(map[string]any) (string, error) { ran = true; return "ok", nil },
+			Handler: func(context.Context, map[string]any) (string, error) { ran = true; return "ok", nil },
 		}},
 	})
 	if err != nil {

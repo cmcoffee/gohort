@@ -22,6 +22,7 @@
 package orchestrate
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -57,7 +58,7 @@ func (t *chatTurn) presentBuildPlanToolDef() AgentToolDef {
 			Required: []string{"steps"},
 			Caps:     []Capability{CapRead},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			if t.session == nil {
 				return "", errors.New("present_build_plan requires an active session")
 			}
@@ -138,7 +139,7 @@ func (t *chatTurn) markStepDoneToolDef() AgentToolDef {
 			Required: []string{"step", "summary"},
 			Caps:     []Capability{CapRead},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			// This is a COSMETIC checklist update — never hard-error on a
 			// stale/out-of-range step number, or the model burns the turn in an
 			// apology loop instead of doing the actual work. Soft-note and move on.
@@ -249,7 +250,7 @@ func (t *chatTurn) markStepInProgressToolDef() AgentToolDef {
 			Required: []string{"step"},
 			Caps:     []Capability{CapRead},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			// Cosmetic checklist update — tolerant by design (see mark_step_done).
 			if t.session == nil || t.session.BuildPlan == nil {
 				return "No active build plan, so there's nothing to mark — the checklist is optional. Just keep doing the actual work.", nil
@@ -298,7 +299,7 @@ func (t *chatTurn) markStepBlockedToolDef() AgentToolDef {
 			Required: []string{"step", "reason"},
 			Caps:     []Capability{CapRead},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			if t.session == nil || t.session.BuildPlan == nil {
 				return "No active build plan, so there's nothing to mark — the checklist is optional. Just keep doing the actual work.", nil
 			}
@@ -358,7 +359,7 @@ func (t *chatTurn) reviseBuildPlanToolDef() AgentToolDef {
 			Required: []string{"action"},
 			Caps:     []Capability{CapRead},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			if t.session == nil || t.session.BuildPlan == nil {
 				return "", errors.New("revise_build_plan: no active build plan — call present_build_plan first")
 			}
@@ -481,7 +482,7 @@ func (t *chatTurn) reportBuildGapsToolDef() AgentToolDef {
 			Parameters:  map[string]ToolParam{},
 			Caps:        []Capability{CapRead},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			if t.session == nil {
 				return "", errors.New("report_build_gaps: no session")
 			}

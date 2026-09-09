@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"encoding/json"
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appagents"
@@ -243,7 +244,7 @@ func notesTurn(t *testing.T) *chatTurn {
 
 func callNotes(t *testing.T, turn *chatTurn, args map[string]any) (string, error) {
 	t.Helper()
-	return turn.updateNotesToolDef().Handler(args)
+	return turn.updateNotesToolDef().Handler(context.Background(), args)
 }
 
 func storedNotes(t *testing.T, turn *chatTurn) string {

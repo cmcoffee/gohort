@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -632,8 +633,8 @@ func (t *chatTurn) gateAgentCRUDTools(tools []AgentToolDef) {
 			continue
 		}
 		toolName := name // closure capture
-		tools[i].Handler = func(args map[string]any) (string, error) {
-			result, err := orig(args)
+		tools[i].Handler = func(ctx context.Context, args map[string]any) (string, error) {
+			result, err := orig(ctx, args)
 			if err == nil {
 				// Auto-advance the next pending plan step. Summary is
 				// the first line of the tool result (typically the
@@ -748,11 +749,11 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 			t.noteOutboundTool(name)
 		}
 		inner := orig
-		orig = func(args map[string]any) (string, error) {
-			out, err := inner(args)
+		orig = func(ctx context.Context, args map[string]any) (string, error) {
+			out, err := inner(ctx, args)
 			return t.applyToolResultPolicy(name, policy, args, out, err)
 		}
-		tools[i].Handler = func(args map[string]any) (string, error) {
+		tools[i].Handler = func(ctx context.Context, args map[string]any) (string, error) {
 			// Activity-pane cmd / inline tool_call go in parallel so
 			// both views work: apps with activity visible (servitor)
 			// see the cmd row; apps with it hidden (orchestrate)
@@ -906,7 +907,7 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 					}
 				}(prefix + name)
 			}
-			out, err := orig(args)
+			out, err := orig(ctx, args)
 			close(stopBeat)
 			// Spill-to-workspace guard. When a tool result is larger
 			// than the inline cap, write the full body to the session

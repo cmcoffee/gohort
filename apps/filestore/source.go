@@ -232,7 +232,7 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 			Description: fmt.Sprintf("List the commands an admin has registered against the %q file store — what each one does to a folder, and whether it asks a person for input. Read-only and instant: this NAMES them, it does not run them. Reach for it when a folder looks empty, unreadable, or still packaged: the usual reason is that one of these has to be run on it first, and telling the user WHICH one is the useful answer. Running one is a person's click in Files, not a tool call.", label),
 			Caps:        []Capability{CapRead},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			return describeStoreCommands(s.app.DB, st), nil
 		},
 	}
@@ -247,7 +247,7 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 				},
 				Caps: []Capability{CapRead},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				within := stringArg(args, "within")
 				if within == "" {
 					return s.folderMenu(st), nil
@@ -289,7 +289,7 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 				Required: []string{"pattern"},
 				Caps:     []Capability{CapRead},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				dir, err := SubRoot(st.Path, stringArg(args, "within"))
 				if err != nil {
 					return "", err
@@ -333,7 +333,7 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 				Required: []string{"file"},
 				Caps:     []Capability{CapRead},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				dir, err := SubRoot(st.Path, stringArg(args, "within"))
 				if err != nil {
 					return "", err

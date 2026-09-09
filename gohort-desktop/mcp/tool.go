@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -25,7 +26,7 @@ func (t *mcpTool) Params() map[string]core.ToolParam { return t.params }
 func (t *mcpTool) Required() []string                { return t.required }
 func (t *mcpTool) Enabled() bool                     { return t.srv.alive() } // drops from the catalog if the server dies
 func (t *mcpTool) Handler() core.ToolHandler {
-	return func(args map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
 		return t.srv.callTool(t.rawName, args)
 	}
 }

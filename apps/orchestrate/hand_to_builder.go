@@ -18,6 +18,7 @@
 package orchestrate
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -66,7 +67,7 @@ func handToBuilderTool(t *chatTurn) *AgentToolDef {
 			},
 			Required: []string{"brief"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			return t.handToBuilder(args)
 		},
 	}

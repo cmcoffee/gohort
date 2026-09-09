@@ -557,13 +557,13 @@ func TestTheTwoSchedulingToolsSayWhichJobIsTheirs(t *testing.T) {
 	// monitor for a schedule's job, and it was left empty twice in the live
 	// session before the agent gave up on the kind.
 	pinRootDB(t)
-	var create func(map[string]any) (string, error)
+	var create func(context.Context, map[string]any) (string, error)
 	for _, td := range operatorManagementTools(&ToolSession{Username: "craig"}, "agent-1") {
 		if td.Tool.Name == "create_event_monitor" {
 			create = td.Handler
 		}
 	}
-	_, err := create(map[string]any{
+	_, err := create(context.Background(), map[string]any{
 		"name": "unconditional", "kind": "http_poll",
 		"url": "https://example.com/status", "compare_op": "contains", "threshold": "",
 	})

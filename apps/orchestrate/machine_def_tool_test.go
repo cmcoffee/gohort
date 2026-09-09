@@ -5,6 +5,7 @@ package orchestrate
 // pill's endpoint and the agent-editor picker.
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -482,7 +483,7 @@ func TestTheMachineToolReportsItsOwnAdvice(t *testing.T) {
 	turn := machineToolFixture(t)
 	tool := turn.machineGroupedToolDef()
 
-	out, err := tool.Handler(map[string]any{
+	out, err := tool.Handler(context.Background(), map[string]any{
 		"action": "create",
 		"name":   "Triage",
 		"phases": []any{
@@ -511,7 +512,7 @@ func TestTheMachineToolReportsItsOwnAdvice(t *testing.T) {
 
 	// A clean machine gets no note — a tool that appends an empty
 	// section every time teaches the reader to skip the section.
-	clean, err := tool.Handler(map[string]any{
+	clean, err := tool.Handler(context.Background(), map[string]any{
 		"action": "create", "name": "Simple",
 		"phases": []any{map[string]any{"name": "answer", "prompt": "reply plainly", "resident": true}},
 	})
@@ -542,7 +543,7 @@ func TestTheMachineToolCanRepairWhatItCanRepair(t *testing.T) {
 		}})
 
 	// get names the problem AND says what can be done about it.
-	got, err := tool.Handler(map[string]any{"action": "get", "name": "Broken"})
+	got, err := tool.Handler(context.Background(), map[string]any{"action": "get", "name": "Broken"})
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
@@ -553,7 +554,7 @@ func TestTheMachineToolCanRepairWhatItCanRepair(t *testing.T) {
 		t.Errorf("and should say the mechanical half can be settled:\n%s", got)
 	}
 
-	out, err := tool.Handler(map[string]any{"action": "repair", "name": "Broken"})
+	out, err := tool.Handler(context.Background(), map[string]any{"action": "repair", "name": "Broken"})
 	if err != nil {
 		t.Fatalf("repair: %v", err)
 	}
@@ -579,7 +580,7 @@ func TestTheMachineToolCanRepairWhatItCanRepair(t *testing.T) {
 	// Nothing mechanical to do says so rather than reporting success.
 	SaveMachineDef(turn.udb, MachineDef{Owner: "u", Name: "Fine", Start: "s",
 		Phases: []MachinePhase{{Name: "s", Prompt: "reply", Resident: true}}})
-	quiet, err := tool.Handler(map[string]any{"action": "repair", "name": "Fine"})
+	quiet, err := tool.Handler(context.Background(), map[string]any{"action": "repair", "name": "Fine"})
 	if err != nil {
 		t.Fatalf("repair clean: %v", err)
 	}
@@ -589,7 +590,7 @@ func TestTheMachineToolCanRepairWhatItCanRepair(t *testing.T) {
 
 	// And list counts outstanding work, so "fix my machine" has a
 	// starting point.
-	lst, err := tool.Handler(map[string]any{"action": "list"})
+	lst, err := tool.Handler(context.Background(), map[string]any{"action": "list"})
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}

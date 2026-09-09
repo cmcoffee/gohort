@@ -44,7 +44,7 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 				"A destination that reports available=false cannot be used — pass its reason on to the user as their next step.",
 			Parameters: map[string]ToolParam{},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			doc, ok := open()
 			if !ok {
 				return "", fmt.Errorf("no document is open to publish")
@@ -101,7 +101,7 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 			},
 			Required: []string{"destination"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			kind := strings.TrimSpace(fmt.Sprint(args["destination"]))
 			targets, err := docs.PublishTargets(ctx, user, kind)
 			if err != nil {
@@ -140,7 +140,7 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 		// One publish per round: two calls in a batch is how a document ends up
 		// on a wiki twice.
 		SingleFirePerBatch: true,
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			doc, ok := open()
 			if !ok {
 				return "", fmt.Errorf("no document is open to publish")

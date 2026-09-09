@@ -516,7 +516,7 @@ func (pr *probeRun) newRunTool() AgentToolDef {
 			},
 			Required: []string{"command"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			cmd, _ := args["command"].(string)
 			if cmd == "" {
 				return "", fmt.Errorf("command is required")
@@ -587,7 +587,7 @@ func (pr *probeRun) newRunPtyTool() AgentToolDef {
 			},
 			Required: []string{"command"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			cmd, _ := args["command"].(string)
 			if cmd == "" {
 				return "", fmt.Errorf("command is required")
@@ -769,7 +769,7 @@ func (pr *probeRun) execTools() {
 			},
 			Required: []string{"path"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			path, _ := args["path"].(string)
 			if path == "" {
 				return "", fmt.Errorf("path is required")
@@ -819,7 +819,7 @@ func (pr *probeRun) execTools() {
 			},
 			Required: []string{"pattern"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			pattern, _ := args["pattern"].(string)
 			if pattern == "" {
 				return "", fmt.Errorf("pattern is required")
@@ -907,7 +907,7 @@ func (pr *probeRun) memoryTools() {
 			},
 			Required: []string{"note"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			note, _ := args["note"].(string)
 			if note == "" {
 				return "", fmt.Errorf("note is required")
@@ -944,7 +944,7 @@ func (pr *probeRun) memoryTools() {
 			},
 			Required: []string{"technique"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			technique, _ := args["technique"].(string)
 			if technique == "" {
 				return "", fmt.Errorf("technique is required")
@@ -993,7 +993,7 @@ func (pr *probeRun) memoryTools() {
 			},
 			Required: []string{"title", "finding"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			title, _ := args["title"].(string)
 			finding, _ := args["finding"].(string)
 			category, _ := args["category"].(string)
@@ -1028,7 +1028,7 @@ func (pr *probeRun) memoryTools() {
 			},
 			Required: []string{"key", "value"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			key, _ := args["key"].(string)
 			value, _ := args["value"].(string)
 			if key == "" || value == "" {
@@ -1065,7 +1065,7 @@ func (pr *probeRun) memoryTools() {
 			},
 			Required: []string{"subject", "relation", "object"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			subject, _ := args["subject"].(string)
 			relation, _ := args["relation"].(string)
 			object, _ := args["object"].(string)
@@ -1104,7 +1104,7 @@ func (pr *probeRun) memoryTools() {
 			},
 			Required: []string{"rule"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			rule, _ := args["rule"].(string)
 			if strings.TrimSpace(rule) == "" {
 				return "", fmt.Errorf("rule is required")
@@ -1136,7 +1136,7 @@ func (pr *probeRun) readTools() {
 			},
 			Required: []string{"path"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			path, _ := args["path"].(string)
 			if path == "" {
 				return "", fmt.Errorf("path is required")
@@ -1163,7 +1163,7 @@ func (pr *probeRun) readTools() {
 			},
 			Required: []string{"path", "start_line", "end_line"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			path, _ := args["path"].(string)
 			if path == "" {
 				return "", fmt.Errorf("path is required")
@@ -1206,7 +1206,7 @@ func (pr *probeRun) readTools() {
 			},
 			Required: []string{"query"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			query, _ := args["query"].(string)
 			if query == "" {
 				return "", fmt.Errorf("query is required")
@@ -1253,7 +1253,7 @@ func (pr *probeRun) readTools() {
 			},
 			Required: []string{"query"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			query, _ := args["query"].(string)
 			query = strings.TrimSpace(query)
 			if query == "" {
@@ -1324,7 +1324,7 @@ func (pr *probeRun) reportTools() {
 			},
 			Required: []string{"task", "command", "success_pattern"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			task, _ := args["task"].(string)
 			command, _ := args["command"].(string)
 			pattern, _ := args["success_pattern"].(string)
@@ -1364,7 +1364,7 @@ func (pr *probeRun) reportTools() {
 			Description: "List active watches registered for this appliance.",
 			Parameters:  map[string]ToolParam{},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			watches := listWatchesForAppliance(pr.T.DB, pr.appliance.ID)
 			if len(watches) == 0 {
 				return "No active watches.", nil
@@ -1390,7 +1390,7 @@ func (pr *probeRun) reportTools() {
 			},
 			Required: []string{"name", "lang", "code"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			if SaveSnippetFunc == nil {
 				return "", fmt.Errorf("CodeWriter is not available")
 			}
@@ -1419,7 +1419,7 @@ func (pr *probeRun) reportTools() {
 			},
 			Required: []string{"subject", "body"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			if SaveArticleFunc == nil {
 				return "", fmt.Errorf("TechWriter is not available")
 			}
@@ -1447,7 +1447,7 @@ func (pr *probeRun) reportTools() {
 			Name:        "list_guides",
 			Description: "List the user's existing guides (living multi-section documents in the gohort Guides app), so you can pick the right one to push a finding into with push_to_guide. Local read — do NOT look for guides on the remote system. No arguments.",
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			ds := ListDocuments(pr.userID, "guide")
 			if len(ds) == 0 {
 				return "The user has no guides yet. push_to_guide with a new guide name will create one.", nil
@@ -1481,7 +1481,7 @@ func (pr *probeRun) reportTools() {
 			},
 			Required: []string{"topic", "content"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			topic := strings.TrimSpace(strArg(args, "topic"))
 			content := strings.TrimSpace(strArg(args, "content"))
 			if content == "" {
@@ -1521,7 +1521,7 @@ func (pr *probeRun) reportTools() {
 			},
 			Required: []string{"guide", "section_title", "content"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			guide, _ := args["guide"].(string)
 			title, _ := args["section_title"].(string)
 			content, _ := args["content"].(string)
@@ -1758,7 +1758,7 @@ func (pr *probeRun) mapSnapshot() probeAction {
 		if pr.resolvedTools.Snapshot != "" {
 			emit(pr.id, probeEvent{Kind: "status", Text: "Orienting via " + pr.resolvedTools.Snapshot + "…"})
 		}
-		pr.m.snapshot = runToolsetSnapshot(pr.resolvedTools)
+		pr.m.snapshot = runToolsetSnapshot(pr.ctx, pr.resolvedTools)
 	} else {
 		emit(pr.id, probeEvent{Kind: "status", Text: "Taking system snapshot…"})
 		pr.m.snapshot = runQuickSnapshot(pr.ctx, pr.sshExec)
@@ -1828,7 +1828,7 @@ func (pr *probeRun) mapProbeTool() probeAction {
 			},
 			Required: []string{"task"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			task, _ := args["task"].(string)
 			if task == "" {
 				return "", fmt.Errorf("task is required")
@@ -2271,7 +2271,7 @@ func (pr *probeRun) chatDocTools() probeAction {
 			},
 			Required: []string{"doc"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			doc, _ := args["doc"].(string)
 			if doc == "" {
 				return "", fmt.Errorf("doc is required")
@@ -2310,7 +2310,7 @@ func (pr *probeRun) chatDocTools() probeAction {
 			},
 			Required: []string{"doc", "content"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			doc, _ := args["doc"].(string)
 			content, _ := args["content"].(string)
 			if doc == "" || content == "" {
@@ -2341,7 +2341,7 @@ func (pr *probeRun) chatProbeTool() probeAction {
 			},
 			Required: []string{"task"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			task, _ := args["task"].(string)
 			if task == "" {
 				return "", fmt.Errorf("task is required")

@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"sort"
@@ -434,7 +435,7 @@ func listReferenceSourcesToolDef(user string) AgentToolDef {
 				"Returns each source's kind and its items with ids, ready to pass as \"<kind>:<item_id>\". " +
 				"Attaching one gives the agent named tools for it, shaped by the source: instant search over what has already been gathered, its recorded facts and a live read-only investigation for a system; list/search/read for a folder of files. No arguments.",
 		},
-		Handler: func(map[string]any) (string, error) { return renderReferenceSources(user), nil },
+		Handler: func(context.Context, map[string]any) (string, error) { return renderReferenceSources(user), nil },
 	}
 }
 

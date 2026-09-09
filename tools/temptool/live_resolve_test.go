@@ -1,6 +1,7 @@
 package temptool
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -47,7 +48,7 @@ func TestToolboxHandlerLiveResolvesAfterRename(t *testing.T) {
 	}
 
 	// help must list the renamed action and drop the stale one.
-	help, err := def.Handler(map[string]any{"action": "help"})
+	help, err := def.Handler(context.Background(), map[string]any{"action": "help"})
 	if err != nil {
 		t.Fatalf("help: %v", err)
 	}
@@ -60,7 +61,7 @@ func TestToolboxHandlerLiveResolvesAfterRename(t *testing.T) {
 
 	// A call to the now-removed action must be rejected as unknown — proof the
 	// frozen snapshot is no longer the dispatch source.
-	if _, err := def.Handler(map[string]any{"action": "post_message"}); err == nil ||
+	if _, err := def.Handler(context.Background(), map[string]any{"action": "post_message"}); err == nil ||
 		!strings.Contains(err.Error(), "unknown action") {
 		t.Errorf("expected unknown-action error for the removed action, got: %v", err)
 	}
@@ -123,7 +124,7 @@ func TestToolboxDisabledActionQuarantined(t *testing.T) {
 	}
 	def := agentToolFromTemp(sess, tt)
 
-	help, err := def.Handler(map[string]any{"action": "help"})
+	help, err := def.Handler(context.Background(), map[string]any{"action": "help"})
 	if err != nil {
 		t.Fatalf("help: %v", err)
 	}
@@ -133,7 +134,7 @@ func TestToolboxDisabledActionQuarantined(t *testing.T) {
 	if !strings.Contains(help, "read_thing") {
 		t.Errorf("live action missing from help:\n%s", help)
 	}
-	if _, err := def.Handler(map[string]any{"action": "broken"}); err == nil ||
+	if _, err := def.Handler(context.Background(), map[string]any{"action": "broken"}); err == nil ||
 		!strings.Contains(err.Error(), "unknown action") {
 		t.Errorf("disabled action should be unroutable, got: %v", err)
 	}

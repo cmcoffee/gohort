@@ -10,6 +10,7 @@
 package orchestrate
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -178,7 +179,7 @@ func (t *chatTurn) updateNotesToolDef() AgentToolDef {
 			Required: []string{"text"},
 			Caps:     []Capability{CapWrite},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			text := strings.TrimSpace(stringArg(args, "text"))
 			section := strings.TrimSpace(stringArg(args, "section"))
 			ns := factsNamespace(t.agent.ID)

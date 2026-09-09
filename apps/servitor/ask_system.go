@@ -67,7 +67,7 @@ func AskSystemToolDef(sess *ToolSession, udb Database, owner, agentID string, co
 			Required: []string{"system", "question"},
 			Caps:     []Capability{CapRead, CapExecute},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			system := StringArg(args, "system")
 			question := StringArg(args, "question")
 			appliance, ok := findAppliance(udb, system)

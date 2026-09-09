@@ -12,6 +12,7 @@
 package orchestrate
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -63,7 +64,7 @@ func (t *chatTurn) storeFactToolDef() AgentToolDef {
 			Required: []string{"note"},
 			Caps:     []Capability{CapWrite},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			return t.storeFactNote(stringArg(args, "note"), claimDomainArg(args))
 		},
 	}
@@ -178,7 +179,7 @@ func (t *chatTurn) forgetFactToolDef() AgentToolDef {
 			Required: []string{"index"},
 			Caps:     []Capability{CapWrite},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			// Refused in a clean room, and this one is not symmetry for its own
 			// sake. The index is documented as "matching the number prefix in
 			// your facts block" — and an incognito prompt has no facts block,
@@ -217,7 +218,7 @@ func (t *chatTurn) searchFactsToolDef() AgentToolDef {
 			},
 			Caps: []Capability{CapRead},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			query := strings.TrimSpace(stringArg(args, "query"))
 			facts := SearchMemoryFacts(t.udb, factsNamespace(t.agent.ID), query)
 			if len(facts) == 0 {

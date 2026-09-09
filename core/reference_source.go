@@ -363,7 +363,7 @@ func ReferenceItemToolsWithSession(sess *ToolSession, user, kind, itemID string)
 			// source), so tag it accordingly — a Private consumer then strips it.
 			Caps: []Capability{CapNetwork, CapRead},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			q := strings.TrimSpace(fmt.Sprint(args["query"]))
 			// The turn's context, not Background: this Fetch may be a
 			// network round-trip to a remote source, and a stopped turn

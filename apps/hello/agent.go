@@ -264,7 +264,7 @@ func demoTools(s *demoSession) []AgentToolDef {
 				Name:        "get_time",
 				Description: "Returns the current server time in RFC3339 format. Use when the user asks what time it is.",
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				return time.Now().UTC().Format(time.RFC3339), nil
 			},
 		},
@@ -278,7 +278,7 @@ func demoTools(s *demoSession) []AgentToolDef {
 				Required: []string{"text"},
 			},
 			NeedsConfirm: true,
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				text, _ := args["text"].(string)
 				if strings.TrimSpace(text) == "" {
 					return "", fmt.Errorf("text is required")

@@ -27,6 +27,7 @@
 package orchestrate
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"strings"
@@ -101,7 +102,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 			},
 			Required: []string{"action"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			action := strings.ToLower(strings.TrimSpace(stringArg(args, "action")))
 			switch action {
 			case "create", "update":

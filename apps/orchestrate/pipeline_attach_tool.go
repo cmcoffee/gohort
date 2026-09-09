@@ -25,6 +25,7 @@
 package orchestrate
 
 import (
+	"context"
 	"errors"
 	"strconv"
 	"strings"
@@ -108,7 +109,7 @@ func (t *chatTurn) buildAttachedPipelineToolDefs() []AgentToolDef {
 				// as the `pipeline` grouped tool.
 				Caps: []Capability{CapNetwork},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				input := strings.TrimSpace(stringArg(args, "input"))
 				if input == "" {
 					return "", errors.New("input is required")

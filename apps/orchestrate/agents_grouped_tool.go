@@ -224,7 +224,7 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 
 // agentsHandler is the tool's own behaviour, before the framework wraps it.
 func (t *chatTurn) agentsHandler(allowRun, allowRunTool bool) ToolHandlerFunc {
-	return func(args map[string]any) (string, error) {
+	return func(ctx context.Context, args map[string]any) (string, error) {
 		action := strings.TrimSpace(stringArg(args, "action"))
 		switch action {
 		case "", "help":

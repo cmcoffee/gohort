@@ -91,7 +91,7 @@ func (T *FileStoreApp) mappingTools(ctx context.Context, st Store, cmd StoreComm
 				},
 				Caps: []Capability{CapExecute},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				return T.probeCommand(ctx, cmd, stringArg(args, "args"))
 			},
 		},
@@ -109,7 +109,7 @@ func (T *FileStoreApp) mappingTools(ctx context.Context, st Store, cmd StoreComm
 				Required: []string{"description", "actions"},
 				Caps:     []Capability{CapWrite},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				return T.proposeTools(st, cmd, args)
 			},
 		},

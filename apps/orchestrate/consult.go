@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -78,7 +79,7 @@ func consultTool(t *chatTurn) AgentToolDef {
 			Required: []string{"question", "evidence"},
 			Caps:     []Capability{CapNetwork},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			question := strings.TrimSpace(StringArg(args, "question"))
 			evidence := strings.TrimSpace(StringArg(args, "evidence"))
 			if question == "" {

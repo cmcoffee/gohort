@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -237,7 +238,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 				Description: "List the conversations on the channels YOU can reach — your own, plus any inherited from the agent that dispatched you — with display name, handle, and chat id, so you can read or message one. Scoped to those channels only (you can't see chats outside them). Read-only.",
 				Parameters:  map[string]ToolParam{"limit": {Type: "number", Description: "Max conversations (default 20)."}},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				limit := oArgInt(args, "limit")
 				if limit <= 0 {
 					limit = 20
@@ -275,7 +276,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 				},
 				Required: []string{"chat_id"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				chatID := strings.TrimSpace(oArgStr(args, "chat_id"))
 				if chatID == "" {
 					return "", fmt.Errorf("chat_id is required")
@@ -337,7 +338,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 				},
 				Required: []string{"chat_id"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				chatID := strings.TrimSpace(oArgStr(args, "chat_id"))
 				if chatID == "" {
 					return "", fmt.Errorf("chat_id is required")
@@ -382,7 +383,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 				// No hard-required set: a recipient may arrive as `to` OR `chat_id`
 				// and the body as `text` OR `message`; the handler validates the pair.
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				to := strings.TrimSpace(oArgStr(args, "to"))
 				if to == "" {
 					to = strings.TrimSpace(oArgStr(args, "chat_id")) // alias
@@ -470,7 +471,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 				},
 				Required: []string{"query"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				query := strings.TrimSpace(oArgStr(args, "query"))
 				if query == "" {
 					return "", fmt.Errorf("query is required")

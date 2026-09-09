@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -80,7 +81,7 @@ func TestReportBuildGapsFlagsUnverifiedToolOnDoneSteps(t *testing.T) {
 	}
 
 	// Baseline: all done, nothing authored — the gate signs off.
-	out, err := turn.reportBuildGapsToolDef().Handler(map[string]any{})
+	out, err := turn.reportBuildGapsToolDef().Handler(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("report_build_gaps: %v", err)
 	}
@@ -92,7 +93,7 @@ func TestReportBuildGapsFlagsUnverifiedToolOnDoneSteps(t *testing.T) {
 	// "done" — the transcript's exact state.
 	recordToolVerify(db, sid, "sentiment_analyzer", false, "verification call failed: script not found")
 
-	out, err = turn.reportBuildGapsToolDef().Handler(map[string]any{})
+	out, err = turn.reportBuildGapsToolDef().Handler(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("report_build_gaps: %v", err)
 	}
@@ -112,7 +113,7 @@ func TestReportBuildGapsFlagsUnverifiedToolOnDoneSteps(t *testing.T) {
 	// Verifying it clears the gate — the gate must be satisfiable, or the model
 	// learns to ignore it.
 	recordToolVerify(db, sid, "sentiment_analyzer", true, "")
-	out, err = turn.reportBuildGapsToolDef().Handler(map[string]any{})
+	out, err = turn.reportBuildGapsToolDef().Handler(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("report_build_gaps: %v", err)
 	}

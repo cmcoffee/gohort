@@ -76,7 +76,7 @@ func alwaysFailTool(name, failure string) AgentToolDef {
 				"when": {Type: "string", Description: "varies per call"},
 			},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			return "", fmt.Errorf("%s", failure)
 		},
 	}
@@ -212,7 +212,7 @@ func TestNoDeescalationOnAHealthyTurn(t *testing.T) {
 		Tool: Tool{Name: "probe", Description: "test tool", Parameters: map[string]ToolParam{
 			"when": {Type: "string", Description: "varies"},
 		}},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			return fmt.Sprintf("result for %v", args["when"]), nil
 		},
 	}
@@ -326,5 +326,64 @@ func TestNormalizeFailureShapeKeepsShortNumbers(t *testing.T) {
 	other := normalizeFailureShape("Failed to create calendar: [exit: exit status 2]")
 	if got == other {
 		t.Fatalf("different exit codes are different failures; both normalized to %q", got)
+	}
+}
+
+// A tool handler is the only thing that can end its own work: the loop tests
+// for cancellation at a round boundary, so between a user pressing stop and a
+// handler returning, nothing else is looking. These two cover the framework's
+// half of that bargain — the handler is HANDED the run's context, and a call
+// that was already cancelled never starts.
+
+func TestAHandlerIsHandedTheRunsContext(t *testing.T) {
+	type runKey struct{}
+	ctx := context.WithValue(context.Background(), runKey{}, "this run")
+	var saw any
+	if _, err := safeInvoke(ctx, "probe", func(c context.Context, _ map[string]any) (string, error) {
+		saw = c.Value(runKey{})
+		return "", nil
+	}, nil); err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	if saw != "this run" {
+		t.Errorf("the handler got a detached context, so nothing it starts can be cancelled: %v", saw)
+	}
+}
+
+// The case the round-boundary check cannot cover: a round with three calls,
+// cancelled during the first, would still run the second and third to
+// completion because the loop does not look again until they are all back.
+func TestACancelledCallNeverStarts(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ran := false
+	out, err := safeInvoke(ctx, "probe", func(context.Context, map[string]any) (string, error) {
+		ran = true
+		return "scanned the whole store", nil
+	}, nil)
+	if ran {
+		t.Error("a call cancelled before it started should not run")
+	}
+	if err == nil {
+		t.Fatalf("want the cancellation reported, got output %q and no error", out)
+	}
+	if out != "" {
+		t.Errorf("a call that did not run has no output: %q", out)
+	}
+
+	// A live context still runs, or the guard has turned every call into a
+	// refusal — the failure that would be much worse than the one it fixes.
+	if out, err := safeInvoke(context.Background(), "probe", func(context.Context, map[string]any) (string, error) {
+		return "ran", nil
+	}, nil); err != nil || out != "ran" {
+		t.Errorf("an uncancelled call must still run: out=%q err=%v", out, err)
+	}
+
+	// And nil reads as uncancellable: safeInvoke is reached from CLI paths
+	// that never had a context to give.
+	if out, err := safeInvoke(nil, "probe", func(context.Context, map[string]any) (string, error) {
+		return "ran", nil
+	}, nil); err != nil || out != "ran" {
+		t.Errorf("a nil context should run, got out=%q err=%v", out, err)
 	}
 }

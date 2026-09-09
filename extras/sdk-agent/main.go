@@ -43,7 +43,7 @@ func main() {
 			},
 			Required: []string{"a", "b"},
 		},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			a, _ := args["a"].(float64)
 			b, _ := args["b"].(float64)
 			return strconv.Itoa(int(a) + int(b)), nil

@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -47,7 +48,7 @@ func requestBuildTool(user, agentID, agentName string) AgentToolDef {
 			Caps:     []Capability{CapExecute},
 		},
 		NeedsConfirm: false, // the approval IS the gate; no per-call confirm on top
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			brief := strings.TrimSpace(StringArg(args, "brief"))
 			if brief == "" {
 				return "", fmt.Errorf("brief is required — describe the sub-agent to build (its job, persona, tools, schedule)")

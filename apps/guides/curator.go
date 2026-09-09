@@ -132,7 +132,7 @@ func (cs *curatorSession) tools() []AgentToolDef {
 				Name:        "list_guides",
 				Description: "List the guides you may write to, with their id, title, and section count. Your starting point every run.",
 			},
-			Handler: func(map[string]any) (string, error) { return cs.listGuides(), nil },
+			Handler: func(context.Context, map[string]any) (string, error) { return cs.listGuides(), nil },
 		},
 		{
 			Tool: Tool{
@@ -141,7 +141,9 @@ func (cs *curatorSession) tools() []AgentToolDef {
 				Parameters:  map[string]ToolParam{"guide_id": guideArg},
 				Required:    []string{"guide_id"},
 			},
-			Handler: func(args map[string]any) (string, error) { return cs.listSections(str(args, "guide_id")) },
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
+				return cs.listSections(str(args, "guide_id"))
+			},
 		},
 		{
 			Tool: Tool{
@@ -153,7 +155,7 @@ func (cs *curatorSession) tools() []AgentToolDef {
 				},
 				Required: []string{"guide_id", "section_title"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				return cs.readSection(str(args, "guide_id"), str(args, "section_title"))
 			},
 		},
@@ -168,7 +170,7 @@ func (cs *curatorSession) tools() []AgentToolDef {
 				},
 				Required: []string{"finding_id", "guide_id", "section_title"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				return cs.place(str(args, "finding_id"), str(args, "guide_id"), str(args, "section_title"))
 			},
 		},
@@ -183,7 +185,7 @@ func (cs *curatorSession) tools() []AgentToolDef {
 				},
 				Required: []string{"finding_id", "guide_id", "section_title"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				return cs.supersede(str(args, "finding_id"), str(args, "guide_id"), str(args, "section_title"))
 			},
 		},
@@ -199,7 +201,7 @@ func (cs *curatorSession) tools() []AgentToolDef {
 				},
 				Required: []string{"finding_id", "guide_id", "section_title", "note"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				return cs.flag(str(args, "finding_id"), str(args, "guide_id"), str(args, "section_title"), str(args, "note"))
 			},
 		},
@@ -213,7 +215,7 @@ func (cs *curatorSession) tools() []AgentToolDef {
 				},
 				Required: []string{"title", "finding_ids"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				return cs.createGuide(str(args, "title"), strList(args, "finding_ids"))
 			},
 		},
@@ -227,7 +229,7 @@ func (cs *curatorSession) tools() []AgentToolDef {
 				},
 				Required: []string{"finding_id", "reason"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				return cs.simple(OutcomeDiscarded, str(args, "finding_id"), str(args, "reason"), "Discarded")
 			},
 		},
@@ -241,7 +243,7 @@ func (cs *curatorSession) tools() []AgentToolDef {
 				},
 				Required: []string{"finding_id", "reason"},
 			},
-			Handler: func(args map[string]any) (string, error) {
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				return cs.hold(str(args, "finding_id"), str(args, "reason"))
 			},
 		},

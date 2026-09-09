@@ -6,6 +6,7 @@ package core
 // clothes.
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"testing"
@@ -14,7 +15,7 @@ import (
 func countingTool(name string, caps []Capability, calls *int) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{Name: name, Caps: caps},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			*calls++
 			return "result for " + name, nil
 		},
@@ -29,11 +30,11 @@ func TestRunCacheAnswersARepeatFromTheFirstCall(t *testing.T) {
 	})
 	args := map[string]any{"query": "what changed", "limit": 5}
 
-	first, err := tools[0].Handler(args)
+	first, err := tools[0].Handler(context.Background(), args)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := tools[0].Handler(map[string]any{"limit": 5, "query": "what changed"})
+	second, err := tools[0].Handler(context.Background(), map[string]any{"limit": 5, "query": "what changed"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +48,7 @@ func TestRunCacheAnswersARepeatFromTheFirstCall(t *testing.T) {
 		t.Errorf("hits = %d, want 1 — the count is how somebody sees it earned its keep", cache.Hits())
 	}
 	// Different arguments are a different question.
-	if _, err := tools[0].Handler(map[string]any{"query": "something else"}); err != nil {
+	if _, err := tools[0].Handler(context.Background(), map[string]any{"query": "something else"}); err != nil {
 		t.Fatal(err)
 	}
 	if calls != 2 {
@@ -65,13 +66,13 @@ func TestRunCacheRefusesAnythingConsequential(t *testing.T) {
 	}
 	for what, td := range cases {
 		calls := 0
-		td.Handler = func(map[string]any) (string, error) { calls++; return "done", nil }
+		td.Handler = func(context.Context, map[string]any) (string, error) { calls++; return "done", nil }
 		tools := WrapToolsWithRunCache(NewRunToolCache(), []AgentToolDef{td})
 		args := map[string]any{"to": "alice", "text": "hello"}
-		if _, err := tools[0].Handler(args); err != nil {
+		if _, err := tools[0].Handler(context.Background(), args); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := tools[0].Handler(args); err != nil {
+		if _, err := tools[0].Handler(context.Background(), args); err != nil {
 			t.Fatal(err)
 		}
 		if calls != 2 {
@@ -86,7 +87,7 @@ func TestRunCacheNeverCachesAFailure(t *testing.T) {
 	calls := 0
 	td := AgentToolDef{
 		Tool: Tool{Name: "fetch_url", Caps: []Capability{CapRead, CapNetwork}},
-		Handler: func(map[string]any) (string, error) {
+		Handler: func(context.Context, map[string]any) (string, error) {
 			calls++
 			if calls == 1 {
 				return "", Error("timed out")
@@ -96,10 +97,10 @@ func TestRunCacheNeverCachesAFailure(t *testing.T) {
 	}
 	tools := WrapToolsWithRunCache(NewRunToolCache(), []AgentToolDef{td})
 	args := map[string]any{"url": "https://example.com"}
-	if _, err := tools[0].Handler(args); err == nil {
+	if _, err := tools[0].Handler(context.Background(), args); err == nil {
 		t.Fatal("the first call should have failed")
 	}
-	out, err := tools[0].Handler(args)
+	out, err := tools[0].Handler(context.Background(), args)
 	if err != nil || out != "the page" {
 		t.Errorf("a retry should reach the tool again: %q / %v", out, err)
 	}
@@ -112,7 +113,7 @@ func TestRunCacheIsSafeUnderParallelBranches(t *testing.T) {
 	calls := 0
 	td := AgentToolDef{
 		Tool: Tool{Name: "web_search", Caps: []Capability{CapRead, CapNetwork}},
-		Handler: func(map[string]any) (string, error) {
+		Handler: func(context.Context, map[string]any) (string, error) {
 			mu.Lock()
 			calls++
 			mu.Unlock()
@@ -125,7 +126,7 @@ func TestRunCacheIsSafeUnderParallelBranches(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			tools[0].Handler(map[string]any{"query": "the same thing"})
+			tools[0].Handler(context.Background(), map[string]any{"query": "the same thing"})
 		}()
 	}
 	wg.Wait()
@@ -146,8 +147,8 @@ func TestRunCacheNilIsANoOp(t *testing.T) {
 	if len(out) != 1 {
 		t.Fatal("the catalog should come back whole")
 	}
-	out[0].Handler(nil)
-	out[0].Handler(nil)
+	out[0].Handler(context.Background(), nil)
+	out[0].Handler(context.Background(), nil)
 	if calls != 2 {
 		t.Errorf("without a cache every call reaches the tool, got %d", calls)
 	}

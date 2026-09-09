@@ -995,7 +995,7 @@ func confirmingTool(ran *bool) []AgentToolDef {
 	return []AgentToolDef{{
 		Tool:         Tool{Name: "send_message", Parameters: map[string]ToolParam{"to": {Type: "string"}}},
 		NeedsConfirm: true,
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			*ran = true
 			return "sent", nil
 		},
@@ -1176,7 +1176,7 @@ func TestWorkerStage_UngovernedStageCostsNothing(t *testing.T) {
 func calcTool(seen *[]map[string]any, reply string) []AgentToolDef {
 	return []AgentToolDef{{
 		Tool: Tool{Name: "calculate", Parameters: map[string]ToolParam{"expr": {Type: "string"}}},
-		Handler: func(args map[string]any) (string, error) {
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			*seen = append(*seen, args)
 			return reply, nil
 		},
@@ -1275,7 +1275,7 @@ func TestToolStage_MissingToolIsAClearError(t *testing.T) {
 	// Caller has a catalog, just not this tool — the error should say so
 	// and list what IS available.
 	_, err := app.executePipelineDef(context.Background(), def, "x", nil, nil,
-		[]AgentToolDef{{Tool: Tool{Name: "web_search"}, Handler: func(map[string]any) (string, error) { return "", nil }}})
+		[]AgentToolDef{{Tool: Tool{Name: "web_search"}, Handler: func(context.Context, map[string]any) (string, error) { return "", nil }}})
 	if err == nil {
 		t.Fatal("expected an error for a tool the caller doesn't have")
 	}

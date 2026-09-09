@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -547,7 +548,10 @@ func WebSearch(query string) string {
 	if err != nil || len(tools) == 0 {
 		return ""
 	}
-	result, err := tools[0].Handler(map[string]any{"query": query})
+	// Background: this helper is reached from callers with no turn behind them
+	// (a connectivity check in admin, a video lookup), so there is no
+	// cancellation to inherit. A caller inside a turn calls the tool itself.
+	result, err := tools[0].Handler(context.Background(), map[string]any{"query": query})
 	if err != nil {
 		Debug("web search failed: %s", err)
 		return ""

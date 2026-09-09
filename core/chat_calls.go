@@ -214,7 +214,7 @@ func calcKit(calc ChatTool) []AgentToolDef {
 			Description: calc.Desc(),
 			Parameters:  calc.Params(),
 		},
-		Handler: calc.Run,
+		Handler: chatToolHandler(calc),
 	}}
 }
 
@@ -295,7 +295,7 @@ func chatToolLoop(ctx context.Context, call func(context.Context, []Message, ...
 					results = append(results, ToolResult{ID: tc.ID, Content: "unknown tool: " + tc.Name, IsError: true})
 					continue
 				}
-				result, runErr := safeInvoke(tc.Name, handler, tc.Args)
+				result, runErr := safeInvoke(ctx, tc.Name, handler, tc.Args)
 				if runErr != nil {
 					results = append(results, ToolResult{ID: tc.ID, Content: runErr.Error(), IsError: true})
 				} else {
@@ -314,7 +314,7 @@ func chatToolLoop(ctx context.Context, call func(context.Context, []Message, ...
 			resp.OutputTokens = cumOutput
 			return resp, nil
 		}
-		result, runErr := safeInvoke(tc.Name, handlers[tc.Name], tc.Args)
+		result, runErr := safeInvoke(ctx, tc.Name, handlers[tc.Name], tc.Args)
 		var resultText string
 		if runErr != nil {
 			resultText = "Error: " + runErr.Error()

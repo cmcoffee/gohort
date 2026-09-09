@@ -1,6 +1,9 @@
 package core
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestMentionedUncalledTool(t *testing.T) {
 	defs := []Tool{
@@ -16,7 +19,7 @@ func TestMentionedUncalledTool(t *testing.T) {
 	}
 	handlers := map[string]ToolHandlerFunc{}
 	for _, d := range defs {
-		handlers[d.Name] = func(map[string]any) (string, error) { return "", nil }
+		handlers[d.Name] = func(context.Context, map[string]any) (string, error) { return "", nil }
 	}
 
 	cases := []struct {
