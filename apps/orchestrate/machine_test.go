@@ -1527,3 +1527,54 @@ func TestAReachOfNoneWithAToolInstructionSaysSo(t *testing.T) {
 		t.Errorf("a none reach should be named as the cause: %q", got)
 	}
 }
+
+// The trap that made the live bug unfixable from the UI: a phase's tool list
+// drops framework tools it does not name, the picker did not offer them, and
+// typing the name by hand got it reported as a tool that does not exist —
+// three surfaces agreeing that a real, working tool was not real.
+func TestThePhaseToolPickerOffersTheFrameworkTools(t *testing.T) {
+	var offered []string
+	for _, o := range phaseToolOptions("u") {
+		offered = append(offered, o.Value)
+	}
+	for _, want := range []string{"knowledge_search", "fetch_knowledge_doc"} {
+		if !contains(offered, want) {
+			t.Errorf("a phase must be able to name %q — without it the narrowing has no cure in the editor", want)
+		}
+	}
+
+	// The control plane survives narrowing whatever a phase names, so offering
+	// it would be a tick that changes nothing.
+	for _, exempt := range []string{"plan_set", "change_phase", "stay_silent", "keep_going"} {
+		if contains(offered, exempt) {
+			t.Errorf("%q is exempt from narrowing; offering it invites a tick that does nothing", exempt)
+		}
+	}
+
+	// The AGENT editor stays unchanged: an allowlist does not govern these, so
+	// a control there would be one that genuinely does nothing.
+	var agentSide []string
+	for _, o := range availableWorkerToolOptions("u") {
+		agentSide = append(agentSide, o.Value)
+	}
+	if contains(agentSide, "knowledge_search") {
+		t.Error("the agent tools modal must not offer a framework tool — listing it in allowed_tools grants nothing")
+	}
+}
+
+// And the save-time name check must stop calling it a typo, since it reads the
+// same pool the picker draws from.
+func TestNamingAFrameworkToolInAPhaseIsNotATypo(t *testing.T) {
+	udb, user := preflightFixture(t)
+	def := MachineDef{ID: "m1", Name: "intake", Owner: user, Phases: []MachinePhase{
+		{Name: "assess", Prompt: "call knowledge_search first",
+			Tools: []string{"knowledge_search", "fetch_knowledge_doc"}},
+	}}
+	if got := unknownPhaseToolFindings(udb, user, def); len(got) != 0 {
+		t.Errorf("naming a framework tool is the CURE for the narrowing, not a typo: %v", got)
+	}
+	// And with them named, the framework-drop finding goes quiet too.
+	if got := frameworkDropFindings(machineToolUnits(def)); len(got) != 0 {
+		t.Errorf("the step names what its prompt asks for; nothing to report: %v", got)
+	}
+}

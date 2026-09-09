@@ -570,5 +570,44 @@ func keepUnofferedValues(offered []ui.SelectOption, current []string, group, hel
 // not there), while a phase's list decides what it may REACH out of
 // whatever the turn assembled — and that assembly includes its sources.
 func phaseToolOptions(user string) []ui.SelectOption {
-	return append(availableWorkerToolOptions(user), attachedSourceToolOptions(user)...)
+	out := append(availableWorkerToolOptions(user), attachedSourceToolOptions(user)...)
+	return append(out, frameworkPhaseToolOptions()...)
+}
+
+// frameworkPhaseToolOptions are the framework-injected tools a phase or stage
+// must be able to NAME.
+//
+// They belong here for exactly the reason attached-source tools do, and the
+// reason they are absent from the agent editor is the same one in reverse. The
+// agent's list decides what it CARRIES, and a framework tool is not carried —
+// it arrives because a condition about the agent holds, so ticking it there
+// would be a control that does nothing. A phase's list decides what it may
+// REACH out of what the turn assembled, and the turn assembled these. A phase
+// with a tool list drops every one it does not name.
+//
+// Which left an author with no way out: the phase prompt says "call
+// knowledge_search FIRST", the narrowing removes it, the picker does not offer
+// it, and typing the name by hand got it reported as a tool that does not exist
+// (knownAgentToolNames is built from this same list). Three surfaces agreeing
+// that a real, working tool was not real.
+//
+// The control plane is excluded: change_phase, plan_set and the rest survive
+// narrowing whatever a phase names, so offering them would be a tick that
+// changes nothing.
+func frameworkPhaseToolOptions() []ui.SelectOption {
+	var out []ui.SelectOption
+	for _, name := range frameworkAlwaysOnToolNames() {
+		if machineControlTools[name] {
+			continue
+		}
+		out = append(out, ui.SelectOption{
+			Value: name,
+			Label: name,
+			Group: "Framework (provided automatically)",
+			Help: "Provided by the framework rather than by the agent's tool list — it arrives when the condition behind it holds " +
+				"(a corpus attached, for knowledge_search / fetch_knowledge_doc). A step that names ANY tools drops the ones it does not name, " +
+				"including this one, so tick it here if this step's prompt calls for it.",
+		})
+	}
+	return out
 }
