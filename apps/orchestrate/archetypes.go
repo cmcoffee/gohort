@@ -75,6 +75,18 @@ type archetypeHeader struct {
 	// package away from the shape, and adding one was a code change.
 	Template *archetypeTemplate `json:"template,omitempty"`
 
+	// Match are the words a request uses when it wants THIS shape, scored
+	// against what the user typed so a creation dialog can open with a draft
+	// instead of an interview (see shape_match.go). Each recipe already
+	// carries a "Build this when the user asks for..." sentence written for a
+	// model to read; these are the same phrases in a form a matcher can score,
+	// and a test holds them to what the recipe actually says.
+	//
+	// Write phrases the way a person types them ("watch this page", "answers
+	// from my docs"), not categories. Longer phrases score higher, because
+	// "cites sources" identifies a shape and "agent" identifies nothing.
+	Match []string `json:"match,omitempty"`
+
 	// Record is the agent this shape ships, when it ships one. Its fields are
 	// AgentRecord's own json keys, and its prompt is the Persona section of
 	// this document rather than a field, because a persona is prose.

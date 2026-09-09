@@ -7,6 +7,28 @@
     "probe",
     "scout",
     "inspector"
+  ],
+  "match": [
+    "investigate",
+    "look into",
+    "go and check",
+    "figure out what's going on",
+    "what's actually going on",
+    "diagnose",
+    "poke around",
+    "find out why",
+    "look at the system",
+    "check the repo",
+    "figure out why",
+    "find out what happened",
+    "work out why",
+    "look at the logs",
+    "why it keeps failing",
+    "keeps failing",
+    "go look at",
+    "inspect the",
+    "what servitor does",
+    "like servitor"
   ]
 }
 ---

@@ -6,6 +6,38 @@
     "monitor",
     "scheduled",
     "watch"
+  ],
+  "match": [
+    "every n minutes",
+    "every five minutes",
+    "every hour",
+    "every morning",
+    "watch this",
+    "watch our",
+    "keep an eye on",
+    "alert me if",
+    "alert me when",
+    "tell me when it changes",
+    "let me know when",
+    "notify me when",
+    "goes down",
+    "on a schedule",
+    "check it regularly",
+    "every n hours",
+    "every n seconds",
+    "every day",
+    "every week",
+    "watches our",
+    "watches the",
+    "watch the",
+    "watch a page",
+    "check it every",
+    "checks every",
+    "daily",
+    "nightly",
+    "when it changes",
+    "if it goes down",
+    "when it goes down"
   ]
 }
 ---

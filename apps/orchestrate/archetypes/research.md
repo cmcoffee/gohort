@@ -5,6 +5,23 @@
     "researcher",
     "web_research"
   ],
+  "match": [
+    "research agent",
+    "web researcher",
+    "looks things up",
+    "look things up",
+    "cites sources",
+    "cite sources",
+    "with citations",
+    "answers questions from the internet",
+    "deep research",
+    "find out about",
+    "search the web",
+    "look it up",
+    "cite its sources",
+    "with sources",
+    "reads the sources"
+  ],
   "template": {
     "label": "Research Assistant: multi-step research with gap checking",
     "order": 1

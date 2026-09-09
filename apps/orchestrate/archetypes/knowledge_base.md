@@ -6,6 +6,33 @@
     "knowledgebase",
     "knowledge"
   ],
+  "match": [
+    "answers from my docs",
+    "answer from my documents",
+    "grounded in our documentation",
+    "support bot",
+    "kb assistant",
+    "knowledge base",
+    "only answers from what i upload",
+    "answers from our handbook",
+    "from the documents i give it",
+    "admits when it doesn't know",
+    "from my docs",
+    "from our docs",
+    "from the docs",
+    "from our documentation",
+    "from our handbook",
+    "from the handbook",
+    "from our wiki",
+    "from the manual",
+    "from what i upload",
+    "from the documents",
+    "from documents i upload",
+    "from the pdfs",
+    "answers questions from our",
+    "answers questions from my",
+    "only from the documents"
+  ],
   "template": {
     "label": "Knowledge Base Agent: answers from documents you upload",
     "order": 2

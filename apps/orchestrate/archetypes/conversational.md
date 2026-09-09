@@ -7,6 +7,18 @@
     "general",
     "conversation"
   ],
+  "match": [
+    "general assistant",
+    "personal assistant",
+    "chat agent",
+    "everyday helper",
+    "assistant that can also do things",
+    "someone to talk to",
+    "day to day help",
+    "general purpose assistant",
+    "day to day assistant",
+    "talk to about"
+  ],
   "record": {
     "id": "seed-chat",
     "name": "Chat",
