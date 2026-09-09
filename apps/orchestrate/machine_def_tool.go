@@ -34,14 +34,33 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "machine",
-			Description: "Author phase machines — workflows an agent LIVES IN across a conversation, rather than running once and returning. A machine is a set of phases; the session remembers which phase it is in between turns, and what earlier phases decided. Actions: create, update, list, get, delete.\n\nUse a machine when a conversation should do something ONCE and then settle: work out what is being asked, pick an approach, then answer in that frame for the rest of the thread. Use a PIPELINE instead when the work runs start-to-finish and hands back a result. Use neither for a one-off question.\n\n**Pass `attach_to_agents` in the same call** — an unattached machine does nothing at all, because a machine only runs inside a session on an agent that points at it. Call action=\"help\" for the full spec.",
+			Description: "Author phase machines — workflows an agent LIVES IN across a conversation, rather than running once and returning. A machine is a set of phases; the session remembers which phase it is in between turns, and what earlier phases decided. Actions: create, update, update_phase, list, get, delete.\n\n`update` REPLACES the whole phase list, which is right while authoring and wrong for every small edit after: use `update_phase` to change one field of one step (clear a tool list, reword a prompt, widen a reach) and leave the rest of the machine alone.\n\nUse a machine when a conversation should do something ONCE and then settle: work out what is being asked, pick an approach, then answer in that frame for the rest of the thread. Use a PIPELINE instead when the work runs start-to-finish and hands back a result. Use neither for a one-off question.\n\n**Pass `attach_to_agents` in the same call** — an unattached machine does nothing at all, because a machine only runs inside a session on an agent that points at it. Call action=\"help\" for the full spec.",
 			Parameters: map[string]ToolParam{
-				"action":      {Type: "string", Description: "One of: create | update | list | get | repair | delete | help."},
+				"action":      {Type: "string", Description: "One of: create | update | update_phase | list | get | repair | delete | help."},
 				"name":        {Type: "string", Description: "Machine name. Required for create; get/update/repair/delete also accept the id."},
 				"id":          {Type: "string", Description: "(update/get/delete) Machine id, if you have it instead of the name."},
 				"description": {Type: "string", Description: "(create/update) One-line summary of what the machine is for."},
 				"start":       {Type: "string", Description: "(create/update) Name of the phase a fresh session enters. Defaults to the first phase in the list."},
 				"full":        {Type: "boolean", Description: "(get) When true, return every phase's full prompt. Default false previews them to save context."},
+				"phase":       {Type: "string", Description: "(update_phase) Which step to change. Only the fields you pass are written; every other field of that step, and every other step, is left exactly as it was."},
+				"tools": {
+					Type:        "array",
+					Description: "(update_phase) Exact tool names this step may reach, applied on top of its reach. Pass an EMPTY array to clear the list, which makes the step inherit the whole catalog again — that is the only way to say it, since an omitted list and an empty one are the same value once parsed. Note that a non-empty list drops framework-provided tools it does not name (knowledge_search, fetch_knowledge_doc, ask_user), so name those here if the step's prompt calls for them.",
+					Items:       &ToolParam{Type: "string"},
+				},
+				"deny": {
+					Type:        "array",
+					Description: "(update_phase) Tool names this step may NOT reach, subtracted last. Empty array clears.",
+					Items:       &ToolParam{Type: "string"},
+				},
+				"reach":    {Type: "string", Description: "(update_phase) \"all\" (everything the agent has — the default), \"read\" (only what reads: nothing that writes, runs, or reaches the network), or \"none\" (this step only decides).", Enum: []string{"all", "read", "none"}},
+				"prompt":   {Type: "string", Description: "(update_phase) The step's directive."},
+				"desc":     {Type: "string", Description: "(update_phase) One-line summary of what the step is for."},
+				"think":    {Type: "string", Description: "(update_phase) \"on\" or \"off\".", Enum: []string{"on", "off"}},
+				"model":    {Type: "string", Description: "(update_phase) \"worker\" or \"lead\".", Enum: []string{"worker", "lead"}},
+				"next":     {Type: "string", Description: "(update_phase) The phase a transient step hands to."},
+				"guard":    {Type: "string", Description: "(update_phase) Plain-language condition that moves the conversation out of this step."},
+				"guard_to": {Type: "string", Description: "(update_phase) Where the guard sends it."},
 				"phases": {
 					Type:        "array",
 					Description: "(create/update) Ordered phases, each an object: {\"name\": unique label, \"desc\": one line, \"prompt\": the directive}. The KEY field is \"resident\": true marks a phase user turns come back to (a turn ENDS there); false/omitted marks a transient phase that runs, produces a result, and hands straight off inside the same turn. Every machine needs at least one resident phase. Transient phases declare \"output\": [{name,type,desc,required}] and hand off with \"next\", or, to decide at run time, list the phases they may hand to in \"choices\" (the framework declares the routing field itself — do not declare one, and do not list the options in a prompt). Resident phases may NOT declare output — their reply goes to the user. A resident phase with \"next\" gets ONE turn then hands off (an intake beat); without one it stays. Add \"guard\": a plain-language condition that, checked each turn, moves the conversation out (\"the user has moved on to a different subject\"), with \"guard_to\" naming where it goes. Per-phase \"reach\" (\"\"|\"read\"|\"none\" — prefer this to naming tools; it survives being run by a different agent), \"tools\" (exact names on top of reach; empty inherits), \"deny\" (names this phase may NOT reach, subtracted last — the list for \"everything it had except this one\"), \"model\" (\"worker\"|\"lead\"), \"think\" (\"on\"|\"off\" — OFF by default on a transient phase; turn it ON for one that genuinely judges, such as decomposing an ambiguous request or routing between close options). Prompts template a fixed set of built-ins — {input}/{original_input}/{established}/{prev}/{now}/{user}/{agent}/{step}/{machine} (transient only; the message AND the earlier findings are supplied anyway if you never place them) and {state:PHASE} / {state:PHASE.field} (anywhere). **Call action=\"help\" for the full spec.**",
@@ -67,6 +86,8 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 				return t.machineGet(args)
 			case "delete":
 				return t.machineDelete(args)
+			case "update_phase":
+				return t.machineUpdatePhase(args)
 			case "repair":
 				return t.machineRepair(args)
 			case "help", "":
@@ -535,6 +556,144 @@ func (t *chatTurn) machineGet(args map[string]any) (string, error) {
 	}
 	out += t.machineFindingsNote(def)
 	return out, nil
+}
+
+// machineUpdatePhase changes named fields on ONE phase, leaving the rest of the
+// machine exactly as it was.
+//
+// update replaces the whole phases array (def.Phases = phases), which is right
+// when you are authoring a machine and wrong for every small edit afterwards.
+// To clear one phase's tool list you had to re-send every phase in full, and
+// any field parseMachinePhases does not read is dropped on the way through — so
+// the cost of fixing one list was risking the rest of the machine. Same shape
+// as the temp-tool round-trip that quietly dropped fields.
+//
+// PRESENCE is the intent. An omitted field is left alone; a field that arrives
+// is written, including an empty one. That is what makes "clear this list"
+// sayable at all: tools=[] means the step inherits the catalog again, and there
+// is no other way to say it — an omitted tools and an empty tools are the same
+// value once they reach a Go slice, so only the args map can tell them apart.
+//
+// Structural changes stay on update: a step's output fields, what it delegates
+// to, its branching. Those reshape what the step IS, the whole-phase form is
+// the honest way to say so, and a partial edit spread across three calls would
+// leave a machine that does not run in between.
+func (t *chatTurn) machineUpdatePhase(args map[string]any) (string, error) {
+	def, ok := t.findMachine(args)
+	if !ok {
+		return "", errors.New("no machine found by that name or id — machine(action=\"list\") shows what you have")
+	}
+	want := strings.TrimSpace(stringArg(args, "phase"))
+	if want == "" {
+		return "", errors.New("name the phase to change (phase=\"<name>\") — this machine has: " + strings.Join(def.PhaseNames(), ", "))
+	}
+	idx := -1
+	for i, ph := range def.Phases {
+		if strings.EqualFold(strings.TrimSpace(ph.Name), want) {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return "", errors.New("no phase named " + strconv.Quote(want) + " in " + strconv.Quote(def.Name) +
+			" — it has: " + strings.Join(def.PhaseNames(), ", "))
+	}
+
+	ph := &def.Phases[idx]
+	var changed []string
+	setStr := func(key string, dst *string, lower bool) {
+		v, present := args[key]
+		if !present {
+			return
+		}
+		s := strings.TrimSpace(fmt.Sprint(v))
+		if lower {
+			s = strings.ToLower(s)
+		}
+		*dst = s
+		if s == "" {
+			changed = append(changed, key+" (cleared)")
+			return
+		}
+		changed = append(changed, key)
+	}
+	setList := func(key string, dst *[]string) {
+		if _, present := args[key]; !present {
+			return
+		}
+		*dst = stringSliceArg(args, key)
+		if len(*dst) == 0 {
+			changed = append(changed, key+" (cleared — the step inherits the catalog again)")
+			return
+		}
+		changed = append(changed, key+" = "+strings.Join(*dst, ", "))
+	}
+
+	if v, present := args["reach"]; present {
+		r := strings.ToLower(strings.TrimSpace(fmt.Sprint(v)))
+		// "all" is the sayable spelling of the stored empty string. The enum
+		// cannot offer "" — an empty enum value makes Gemini reject the whole
+		// request, disabling every tool for that turn (see
+		// TestNoEmptyEnumValuesInSource) — and "omit the param for the default"
+		// does not work here, where an omitted field means "leave it alone" and
+		// widening a narrowed step back to everything has to be sayable.
+		if r == "all" {
+			r = ReachAll
+		}
+		switch r {
+		case ReachAll, ReachRead, ReachNone:
+		default:
+			return "", errors.New("reach " + strconv.Quote(r) + " is not one of: \"all\" (everything the agent has), \"read\", \"none\"")
+		}
+		ph.Reach = r
+		if r == ReachAll {
+			changed = append(changed, "reach = all (inherits everything the agent has)")
+		} else {
+			changed = append(changed, "reach = "+r)
+		}
+	}
+	// The prompt is the one field an empty value must NOT clear.
+	//
+	// Presence-is-intent is right for a list, where clearing is the whole point
+	// and there is no other way to say it. It is wrong here: a step's prompt is
+	// authored text with no undo, an empty one is a step that says nothing, and
+	// a model that passes prompt:"" when it meant to omit the field would erase
+	// work in a call that looked like it was about tools. Validate does not
+	// object — it deliberately declines to judge prompt wording — so the guard
+	// belongs here, where the intent is legible. Rewriting a prompt to empty on
+	// purpose is still sayable through the whole-phase form.
+	if v, present := args["prompt"]; present {
+		if strings.TrimSpace(fmt.Sprint(v)) == "" {
+			return "", errors.New("refusing to empty the prompt of step " + strconv.Quote(ph.Name) +
+				" — an empty prompt is a step that says nothing, and this call looks more like an omitted field than a deliberate erasure. " +
+				"Pass the wording you want, or use action=\"update\" if you really mean to rewrite the step")
+		}
+		ph.Prompt = fmt.Sprint(v)
+		changed = append(changed, "prompt")
+	}
+	setStr("desc", &ph.Desc, false)
+	setStr("think", &ph.Think, true)
+	setStr("model", &ph.Model, true)
+	setStr("next", &ph.Next, false)
+	setStr("guard", &ph.Guard, false)
+	setStr("guard_to", &ph.GuardTo, false)
+	setList("tools", &ph.Tools)
+	setList("deny", &ph.Deny)
+
+	if len(changed) == 0 {
+		return "", errors.New("nothing to change — name at least one field (tools, deny, reach, prompt, desc, think, model, next, guard, guard_to). " +
+			"An omitted field is left alone; pass tools=[] to CLEAR a list")
+	}
+	if err := def.Validate(); err != nil {
+		return "", fmt.Errorf("that change leaves the machine unrunnable, so nothing was saved: %w", err)
+	}
+	saved := SaveMachineDef(t.udb, def)
+	Log("[orchestrate.machines] user=%q updated phase %q of machine %q: %s",
+		t.user, saved.Phases[idx].Name, saved.Name, strings.Join(changed, "; "))
+	out := fmt.Sprintf("Updated step %q of %q — changed %s. Every other step is untouched.",
+		saved.Phases[idx].Name, saved.Name, strings.Join(changed, ", "))
+	out += " Sessions already open keep the phase they are parked in; the change applies from their next turn."
+	return out + t.machineFindingsNote(saved), nil
 }
 
 // machineRepair settles the findings with exactly one right answer.

@@ -1578,3 +1578,140 @@ func TestNamingAFrameworkToolInAPhaseIsNotATypo(t *testing.T) {
 		t.Errorf("the step names what its prompt asks for; nothing to report: %v", got)
 	}
 }
+
+// machineUpdatePhase fixture: a machine whose assess step carries a tool list
+// that drops the framework tool its own prompt calls for — the live shape.
+func phaseEditFixture(t *testing.T) (*chatTurn, MachineDef) {
+	t.Helper()
+	udb, user := preflightFixture(t)
+	def := MachineDef{
+		ID: "m-edit", Name: "intake", Owner: user, Start: "assess",
+		Phases: []MachinePhase{
+			{Name: "assess", Resident: true, Desc: "work out what is being asked",
+				Prompt: "Call knowledge_search FIRST, this is not conditional.",
+				Tools:  []string{"web_search", "fetch_url"}},
+			{Name: "answer", Resident: true, Desc: "answer in that frame",
+				Prompt: "Answer from what was established.", Model: "lead"},
+		},
+	}
+	def = SaveMachineDef(udb, def)
+	return &chatTurn{udb: udb, user: user}, def
+}
+
+// The motivating case, and the one that has no other spelling: an empty array
+// CLEARS the list. An omitted list and an empty one are the same value once
+// parsed, so only the args map can tell them apart.
+func TestClearingOnePhaseToolListLeavesEverythingElseAlone(t *testing.T) {
+	turn, def := phaseEditFixture(t)
+
+	out, err := turn.machineUpdatePhase(map[string]any{
+		"name": "intake", "phase": "assess", "tools": []any{},
+	})
+	if err != nil {
+		t.Fatalf("update_phase: %v", err)
+	}
+	if !strings.Contains(out, "cleared") || !strings.Contains(out, "inherits the catalog") {
+		t.Errorf("say what clearing a list MEANS, not just that a field changed: %q", out)
+	}
+
+	saved, ok := LoadMachineDef(turn.udb, turn.user, def.ID)
+	if !ok {
+		t.Fatal("machine vanished")
+	}
+	if len(saved.Phases) != 2 {
+		t.Fatalf("a one-field edit rewrote the phase list: %d phases", len(saved.Phases))
+	}
+	if len(saved.Phases[0].Tools) != 0 {
+		t.Errorf("the list should be empty, got %v", saved.Phases[0].Tools)
+	}
+	// Everything else on the edited phase, untouched.
+	if saved.Phases[0].Prompt != def.Phases[0].Prompt || saved.Phases[0].Desc != def.Phases[0].Desc ||
+		!saved.Phases[0].Resident {
+		t.Errorf("the edited phase lost fields it did not name: %+v", saved.Phases[0])
+	}
+	// And the phase nobody mentioned.
+	if saved.Phases[1].Prompt != def.Phases[1].Prompt || saved.Phases[1].Model != "lead" {
+		t.Errorf("an unrelated phase was rewritten: %+v", saved.Phases[1])
+	}
+}
+
+// An omitted field is left alone. That is the whole difference from update, so
+// it needs a test rather than a comment.
+func TestAnOmittedFieldIsNotCleared(t *testing.T) {
+	turn, def := phaseEditFixture(t)
+	if _, err := turn.machineUpdatePhase(map[string]any{
+		"name": "intake", "phase": "assess", "desc": "reworded",
+	}); err != nil {
+		t.Fatalf("update_phase: %v", err)
+	}
+	saved, _ := LoadMachineDef(turn.udb, turn.user, def.ID)
+	if saved.Phases[0].Desc != "reworded" {
+		t.Errorf("the named field did not change: %q", saved.Phases[0].Desc)
+	}
+	if len(saved.Phases[0].Tools) != 2 {
+		t.Errorf("an omitted list must be left alone, got %v", saved.Phases[0].Tools)
+	}
+	if saved.Phases[0].Prompt == "" {
+		t.Error("an omitted prompt must be left alone")
+	}
+}
+
+func TestUpdatePhaseRefusesWhatItCannotDo(t *testing.T) {
+	turn, _ := phaseEditFixture(t)
+	base := func(extra map[string]any) map[string]any {
+		m := map[string]any{"name": "intake", "phase": "assess"}
+		for k, v := range extra {
+			m[k] = v
+		}
+		return m
+	}
+	// A phase that does not exist, named alongside the ones that do.
+	if _, err := turn.machineUpdatePhase(base(map[string]any{"phase": "asses", "desc": "x"})); err == nil ||
+		!strings.Contains(err.Error(), "assess") {
+		t.Errorf("a misnamed phase should be refused and the real names offered: %v", err)
+	}
+	// No fields at all is a no-op the caller meant something by.
+	if _, err := turn.machineUpdatePhase(base(nil)); err == nil ||
+		!strings.Contains(err.Error(), "tools=[]") {
+		t.Errorf("an empty edit should say how to clear a list, since that is the likely intent: %v", err)
+	}
+	// A reach outside the three settings must not be stored.
+	if _, err := turn.machineUpdatePhase(base(map[string]any{"reach": "readonly"})); err == nil {
+		t.Error("an invalid reach must be refused rather than stored")
+	}
+	// Emptying a prompt is the one clear that is refused: authored text, no
+	// undo, and prompt:"" is far more likely an omitted field than an intent.
+	if _, err := turn.machineUpdatePhase(base(map[string]any{"prompt": ""})); err == nil ||
+		!strings.Contains(err.Error(), "says nothing") {
+		t.Errorf("emptying a prompt should be refused with its reason: %v", err)
+	}
+	saved, _ := LoadMachineDef(turn.udb, turn.user, "m-edit")
+	if saved.Phases[0].Prompt == "" || len(saved.Phases[0].Tools) != 2 {
+		t.Errorf("a refused edit must leave the record untouched: %+v", saved.Phases[0])
+	}
+}
+
+// Widening a narrowed step back to everything has to be sayable, and the enum
+// cannot offer "" — an empty enum value makes Gemini reject the whole request,
+// disabling every tool for that turn. "all" is the spelling; the stored value
+// is still the empty string every other reader expects.
+func TestReachAllIsSayableWithoutAnEmptyEnumValue(t *testing.T) {
+	turn, def := phaseEditFixture(t)
+	if _, err := turn.machineUpdatePhase(map[string]any{
+		"name": "intake", "phase": "assess", "reach": "read",
+	}); err != nil {
+		t.Fatalf("narrow: %v", err)
+	}
+	if _, err := turn.machineUpdatePhase(map[string]any{
+		"name": "intake", "phase": "assess", "reach": "all",
+	}); err != nil {
+		t.Fatalf("widen: %v", err)
+	}
+	saved, _ := LoadMachineDef(turn.udb, turn.user, def.ID)
+	if got := saved.Phases[0].Reach; got != ReachAll {
+		t.Errorf(`"all" must store as the empty ReachAll every other reader expects, got %q`, got)
+	}
+	if PhaseReach(saved.Phases[0]) != ReachAll {
+		t.Error("the stored value must read back as ReachAll through the shared accessor")
+	}
+}
