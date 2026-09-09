@@ -129,21 +129,7 @@ func (T *OrchestrateApp) agentEvalExecutor(udb Database, agent AgentRecord, stub
 	facts := ListMemoryFacts(udb, factsNamespace(agent.ID))
 
 	// Pre-resolve the agent's tool set once; same set for every case.
-	toolNames := agent.AllowedTools
-	if len(toolNames) == 0 {
-		for _, td := range RegisteredChatTools() {
-			toolNames = append(toolNames, td.Name())
-		}
-	}
-	tools, err := GetAgentTools(toolNames...)
-	if err != nil {
-		tools = nil
-		for _, n := range toolNames {
-			if td, terr := GetAgentTools(n); terr == nil && len(td) > 0 {
-				tools = append(tools, td[0])
-			}
-		}
-	}
+	tools := T.evalAgentCatalog(udb, agent)
 
 	sysPrompt := prependAgentContext(agent.OrchestratorPrompt, agent, facts, agentOperatingNotes(udb, agent))
 	sysPrompt = StripPromptSectionsForTools(sysPrompt, nil)
@@ -151,6 +137,89 @@ func (T *OrchestrateApp) agentEvalExecutor(udb Database, agent AgentRecord, stub
 	return func(ctx context.Context, c EvalCase) EvalResult {
 		return T.runOneEvalCase(ctx, agent, sysPrompt, tools, c, stub, allowConsequential)
 	}
+}
+
+// evalAgentCatalog assembles the tool surface the agent ACTUALLY runs with.
+//
+// This used to be GetAgentTools(agent.AllowedTools...) — the global registry
+// and nothing else — which graded a materially different agent from the one
+// that ships. Missing from it: every framework-injected tool (knowledge_search
+// and fetch_knowledge_doc above all), the tools an attached source mints
+// (search_<store>, investigate_<system>), and attached pipelines. None of those
+// are in the registry and none are named in an allowlist, because none of them
+// come FROM one.
+//
+// What that cost, observed: a support agent whose whole job is answering from a
+// curated corpus was graded by a harness that could not reach the corpus. It
+// improvised, every time, by construction. A case asserting
+// must_call_tools:["knowledge_search"] could never pass however well the agent
+// behaved, and the failure read as the agent's. Somebody then went and "fixed"
+// the agent against a number that was measuring this function.
+//
+// Assembled through the turn's own resolver rather than a list built here, for
+// the reason the rest of the package keeps stating: two definitions of "what
+// tools does this agent have" drift, and the one nobody looks at is the one
+// that rots.
+//
+// The MACHINE is deliberately not modelled. A machine narrows per phase and
+// advances across turns; an eval case is one turn against a fresh session, so
+// t.session is nil and t.machine.on is false. The catalog here is therefore the
+// UNNARROWED one, which is right for an agent without a machine and optimistic
+// for one with it. evalAgentCarriesMachine reports that rather than papering
+// over it: a score that silently ignored a phase's tool list would be the same
+// class of lie this function exists to stop telling.
+func (T *OrchestrateApp) evalAgentCatalog(udb Database, agent AgentRecord) []AgentToolDef {
+	turn := &chatTurn{app: T, agent: agent, user: agent.Owner, udb: udb, ctx: context.Background()}
+	sess := turn.newToolSession()
+
+	pool, _, err := turn.resolveWorkerTools(sess, true)
+	if err != nil {
+		// Degrade to the old behaviour rather than grading nothing: a suite
+		// that reports "the agent called no tools" because the harness could
+		// not build a catalog is worse than one graded on a thin one.
+		Log("[orchestrate.evals] agent %q: catalog resolve failed (%v) — grading on the allowlist alone", agent.Name, err)
+		pool, _ = GetAgentTools(agent.AllowedTools...)
+	}
+	// The three sources an allowlist cannot name.
+	pool = append(pool, turn.frameworkConversationalTools(sess)...)
+	pool = append(pool, turn.buildAttachedSourceToolDefs(sess)...)
+	pool = append(pool, turn.buildAttachedPipelineToolDefs()...)
+
+	// First writer wins, in assembly order: resolveWorkerTools has already
+	// applied the allowlist and the authoring gate, so a later duplicate is the
+	// same tool arriving by a second route rather than a different one.
+	seen := make(map[string]bool, len(pool))
+	out := make([]AgentToolDef, 0, len(pool))
+	for _, td := range pool {
+		if td.Tool.Name == "" || seen[td.Tool.Name] {
+			continue
+		}
+		seen[td.Tool.Name] = true
+		out = append(out, td)
+	}
+	return out
+}
+
+// evalAgentCarriesMachine reports whether a graded agent has a machine whose
+// phases narrow tools, so a caller can say that the score is measured without
+// it. Empty when the agent has no machine, or has one that never narrows.
+func (T *OrchestrateApp) evalAgentCarriesMachine(udb Database, agent AgentRecord) string {
+	name := strings.TrimSpace(agent.Machine)
+	if name == "" {
+		return ""
+	}
+	// Resolved the way sessionMachine resolves it, so the two cannot disagree
+	// about which machine an agent carries.
+	def, ok := LoadMachineDef(udb, agent.Owner, name)
+	if !ok {
+		return ""
+	}
+	for _, ph := range def.Phases {
+		if len(ph.Tools) > 0 || PhaseReach(ph) != ReachAll {
+			return def.Name
+		}
+	}
+	return ""
 }
 
 // agentFingerprint hashes what makes an agent BEHAVE as it does: its prompt,
@@ -166,7 +235,39 @@ func agentFingerprint(agent AgentRecord) string {
 	if agent.LeadModel {
 		tier = "lead"
 	}
-	return EvalTargetFingerprint(agent.OrchestratorPrompt, strings.Join(tools, ","), tier)
+	// RULES, and everything else that decides what the agent can reach.
+	//
+	// The hash carries the promise that "two runs sharing a fingerprint graded
+	// the same thing, so their difference is noise". It covered the prompt, the
+	// allowlist and the tier — and rules render ABOVE the persona and win every
+	// conflict with it, so an agent could have its standing policy rewritten
+	// and report the same version. Observed doing exactly that: three runs
+	// across an allowlist change AND two new rules, all three stamped 526408c4,
+	// with the history inviting the reader to treat the difference as noise.
+	//
+	// Attachments are here for the same reason they are now in the graded
+	// catalog: a collection or a source added to an agent changes what it can
+	// answer from, which is a behaviour change by any reading. So is the
+	// machine, whose phases narrow what any turn may reach.
+	//
+	// Existing suites will show one version bump on first run after this. That
+	// is honest rather than unfortunate: what is graded really did change.
+	collections := append([]string{}, agent.AttachedCollections...)
+	sort.Strings(collections)
+	var sources []string
+	for _, ref := range agent.AttachedSources {
+		sources = append(sources, ref.Kind+":"+ref.ItemID)
+	}
+	sort.Strings(sources)
+	return EvalTargetFingerprint(
+		agent.OrchestratorPrompt,
+		agent.Rules,
+		strings.Join(tools, ","),
+		tier,
+		strings.Join(collections, ","),
+		strings.Join(sources, ","),
+		strings.TrimSpace(agent.Machine),
+	)
 }
 
 // gradeEvalText applies the substring assertions to whatever a target produced.
