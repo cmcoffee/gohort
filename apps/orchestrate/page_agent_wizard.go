@@ -1209,16 +1209,6 @@ func (T *OrchestrateApp) createFromShape(r *http.Request, udb Database, user, sh
 	if err != nil {
 		return AgentRecord{}, err
 	}
-	// A shape ships Hidden because a SEED should not appear in other agents'
-	// dispatch lists; the seed's own note says the clones are where that
-	// decision gets made. This is a clone, and its owner has made no such
-	// decision, so it starts as an ordinary agent of theirs.
-	if rec.Hidden {
-		rec.Hidden = false
-		if saved, serr := saveAgent(udb, rec); serr == nil {
-			rec = saved
-		}
-	}
 
 	brief := shapeAnswerBrief(doc, req)
 	if brief == "" {

@@ -566,3 +566,40 @@ func TestAWizardAssistantKeepsItsPersonaAndTracksTheRest(t *testing.T) {
 		t.Errorf("name = %q", got.Name)
 	}
 }
+
+// A clone of a framework record is an ordinary agent of the user's, including
+// in whether other agents may dispatch it. The shape ships Hidden so the SEED
+// stays out of dispatch lists, and the seed's own note says the clones are
+// where that decision gets made; inheriting it meant every agent made from a
+// template arrived with a posture nobody had chosen.
+func TestCloningAShapeDoesNotInheritItsHiddenPosture(t *testing.T) {
+	db := overlayTestDB(t)
+	seed, ok := seedAgentByID("seed-kb")
+	if !ok || !seed.Hidden {
+		t.Fatal("seed-kb is not the hidden template this test is about")
+	}
+	clone, err := cloneAgent(db, "seed-kb", "craig@example.com", "Handbook", false)
+	if err != nil {
+		t.Fatalf("clone: %v", err)
+	}
+	if clone.Hidden {
+		t.Error("an agent cloned from a shape arrived hidden from every fleet")
+	}
+
+	// A copy of the user's OWN agent inherits what they set, because there the
+	// value is a decision somebody made on purpose.
+	mine, err := saveAgent(db, AgentRecord{
+		Owner: "craig@example.com", Name: "Private helper",
+		OrchestratorPrompt: "You help.", Hidden: true,
+	})
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	copyOfMine, err := cloneAgent(db, mine.ID, "craig@example.com", "Second helper", false)
+	if err != nil {
+		t.Fatalf("clone: %v", err)
+	}
+	if !copyOfMine.Hidden {
+		t.Error("copying a hidden agent of my own published it")
+	}
+}

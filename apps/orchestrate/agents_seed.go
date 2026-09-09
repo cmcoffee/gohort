@@ -172,6 +172,21 @@ func cloneAgent(db Database, srcID, owner, newName string, promote bool) (AgentR
 	if shape, ok := shapeForSeed(src.ID); ok {
 		clone.ShapeID = shape
 	}
+	// A framework record ships Hidden so that the SEED does not appear in
+	// other agents' dispatch lists; the seed's own note says the clones are
+	// where that decision gets made. This IS the clone, and its owner has made
+	// no such decision yet, so it starts as an ordinary agent of theirs.
+	//
+	// Copying a user's own agent inherits whatever they set, because there the
+	// value is a decision somebody made on purpose.
+	//
+	// A sub-agent is excluded: it is pinned Hidden by enforceSubAgentPosture
+	// for a different reason (it is reached through its parent, and an
+	// unhidden one is a loose agent nobody meant to publish), and promote is
+	// how a caller asks for a top-level agent instead.
+	if src.Owner == seedOwner && clone.OwnedBy == "" {
+		clone.Hidden = false
+	}
 	if promote {
 		clone.OwnedBy = ""
 	}
