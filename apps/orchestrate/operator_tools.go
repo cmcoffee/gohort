@@ -1041,15 +1041,26 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				sa := StandingAgent{
 					Name: name, Owner: owner, AgentID: agentID, PipelineID: pipelineID, MachineID: machineID,
 					Mission: mission, Created: time.Now(),
-					Until:           strings.TrimSpace(stringArg(args, "until")),
-					MaxAttempts:     intFromArgs(args, "max_attempts"),
-					ReportAgentID:   controllerAgentID,
-					ReportSessionID: controllerSession,
+					Until:       strings.TrimSpace(stringArg(args, "until")),
+					MaxAttempts: intFromArgs(args, "max_attempts"),
+					// Where the runs report. Usually the agent that set this
+					// up; for an AUTHOR wiring a schedule onto somebody else's
+					// agent, that agent, because a build session is not a home
+					// (see scheduleHomeAgent). The session link goes with it:
+					// pinning a handed-over schedule to the session it was
+					// authored in would send every run back to the workshop.
+					ReportAgentID: scheduleHomeAgent(sess, controllerAgentID, agentID),
+					ReportSessionID: func() string {
+						if scheduleHomeAgent(sess, controllerAgentID, agentID) != controllerAgentID {
+							return ""
+						}
+						return controllerSession
+					}(),
 					// Same default as a recurring task: a controller with a cortex
 					// reads its scheduled runs there, not interleaved into whichever
 					// conversation set the schedule up. The report session stays the
 					// home, so the console's Move-to → Session brings it back.
-					Surface: scheduleSurfaceDefault("", hasCortexThread(owner, controllerAgentID)),
+					Surface: scheduleSurfaceDefault("", hasCortexThread(owner, scheduleHomeAgent(sess, controllerAgentID, agentID))),
 				}
 				switch {
 				case cron != "":
@@ -1349,6 +1360,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					"kind":             {Type: "string", Description: "\"webhook\", \"http_poll\", \"watch\", or \"poll\" — prefer the cheapest that fits (see the tool description)."},
 					"wake_brief":       {Type: "string", Description: "What you should do when it fires (guides your reaction). Only used for notify=\"channel\"."},
 					"notify":           {Type: "string", Enum: []string{"channel", "direct", "text"}, Description: "How the user is alerted when it fires. \"channel\" (default): wake here in the thread so you can react/summarize (uses an LLM). \"direct\": post the change verbatim into the channel thread with NO LLM (it just shows up here + lights the unread dot). \"text\": text the owner's phone with the change, no LLM. ASK the user which they want when setting a monitor up."},
+					"wake_agent":       {Type: "string", Description: "(optional) Name or id of the agent this monitor belongs to: the one woken when it fires. Defaults to you. Set it when you are wiring a watch onto ANOTHER agent, so the alert lands in that agent's thread rather than in this conversation."},
 					"deliver_to":       {Type: "string", Description: "Optional: a chat_id from list_chats (e.g. \"any;+;chat872212368359368118\"). When set, the formatted alert is posted DIRECTLY to THAT conversation with NO LLM, instead of waking you in this thread — use it to route a watch/http_poll alert straight to a group chat or other channel. Setting it forces notify=\"direct\" to that chat. Omit to alert in this thread per notify."},
 					"surface":          {Type: "string", Enum: []string{"session", "cortex", "background"}, Description: "Where the fire surfaces for the agent — its trace card, rail badge, and (for a channel wake) its LLM turn all follow. Optional; OMIT it for the default rather than passing an empty string. \"session\" (default) = the creating session; \"cortex\" = the agent's cortex home thread (only if it has one); \"background\" = NO agent visibility (deliver externally via deliver_to only, no card, no badge — for a pure feed like a join/leave ticker you only want in the group chat). Relocatable later without recreate via the console's Move-to control."},
 					"interval_seconds": {Type: "number", Description: "http_poll/watch/poll: how often to check, in seconds (minimum 30; 900 = every 15 min, 3600 = hourly)."},
@@ -1395,6 +1407,10 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				if deliverTo != "" {
 					notify = EventNotifyDirect
 				}
+				wakeAgentID, err := resolveMonitorWakeAgent(sess, agentID, oArgStr(args, "wake_agent"), notify, deliverTo)
+				if err != nil {
+					return "", err
+				}
 				m := EventMonitor{
 					Name: name, Owner: owner, Kind: kind, Notify: notify,
 					DeliverChatID: deliverTo,
@@ -1403,8 +1419,17 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					// was created in, so the event lands back where the user set
 					// it up (not a hardcoded default thread). WakeSession falls
 					// back to the agent's channel home thread when unknown.
-					WakeAgent: agentID,
+					//
+					// wake_agent overrides both, and exists because a monitor has
+					// no other way to name a target: unlike a standing agent, its
+					// whole shape is "wake me when this happens". An AUTHOR
+					// setting one up for somebody else's agent has to say whose,
+					// or the alert fires into a build session nobody reopens.
+					WakeAgent: wakeAgentID,
 					WakeSession: func() string {
+						if wakeAgentID != agentID {
+							return "" // handed over: its own thread, not the author's
+						}
 						if sess != nil {
 							return sess.ChatSessionID
 						}
@@ -2079,4 +2104,102 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// scheduleHomeAgent decides which agent a schedule created in THIS turn
+// belongs to: where its runs report, and which thread a monitor wakes.
+//
+// The default is the agent that set it up, and for a controller that is right.
+// A Fleet agent schedules specialists on the user's behalf and is where the
+// user reads, so its runs belong in its thread.
+//
+// For an AUTHORING agent it is wrong, and this is the bug it exists to fix.
+// Builder holds the operator toolset deliberately, so that "build me a tool and
+// run it every 30 minutes" is one job rather than a build plus a handoff. But
+// Builder is a workshop, not a home: it has no ongoing thread, and its sessions
+// are build sessions nobody returns to. A schedule that reported there ran
+// correctly and then filed its findings where the user was never going to look
+// again, which reads exactly like the schedule going to the wrong agent.
+//
+// So when an author wires up a schedule for a DIFFERENT agent, that agent gets
+// it. The author built it; the agent owns it.
+func scheduleHomeAgent(sess *ToolSession, controllerAgentID, runnerAgentID string) string {
+	runner := strings.TrimSpace(runnerAgentID)
+	controller := strings.TrimSpace(controllerAgentID)
+	if runner == "" || runner == controller {
+		return controller
+	}
+	if !authoringHandoffAgent(sess, controller) {
+		return controller
+	}
+	return runner
+}
+
+// authoringHandoffAgent reports an agent that authors things for others rather
+// than running them itself: it should hand a schedule to whoever will run it.
+//
+// Builder by identity, since its authoring catalog comes from an identity check
+// rather than from any record. Any other agent that holds the authoring
+// capability WITHOUT being a Fleet controller is the same case: authoring is a
+// capability now, not an identity, so an agent somebody granted it to has the
+// same problem for the same reason. A Fleet controller keeps its schedules,
+// because delegating and then reading the results is what it is for.
+func authoringHandoffAgent(sess *ToolSession, agentID string) bool {
+	if agentID == "" {
+		return false
+	}
+	if isBuilderAgent(agentID) {
+		return true
+	}
+	if sess == nil || sess.DB == nil {
+		return false
+	}
+	rec, ok := loadAgent(sess.DB, agentID)
+	if !ok {
+		return false
+	}
+	return agentHandsOffSchedules(rec)
+}
+
+// agentHandsOffSchedules is the same question asked of a record already in
+// hand, which is what the turn-scoped schedule tools have.
+func agentHandsOffSchedules(rec AgentRecord) bool {
+	if isBuilderAgent(rec.ID) {
+		return true
+	}
+	return agentCanAuthor(rec) && !rec.Fleet
+}
+
+// resolveMonitorWakeAgent decides which agent an event monitor wakes.
+//
+// A monitor has no run target the way a standing agent does: its entire shape
+// is "wake me when this happens", so the creator is the default and usually
+// the right answer. The exception is an AUTHOR setting one up for somebody
+// else's agent, where the default fires the alert into a build session nobody
+// reopens, which is indistinguishable from the monitor never firing.
+//
+// So an author must say whose monitor it is, and is told so rather than left
+// to find out. The one case that needs no agent is a monitor that delivers
+// straight to a person or a chat: nothing has to wake up for that to work.
+func resolveMonitorWakeAgent(sess *ToolSession, creatorAgentID, requested, notify, deliverTo string) (string, error) {
+	if want := strings.TrimSpace(requested); want != "" {
+		if sess == nil || sess.DB == nil {
+			return "", fmt.Errorf("cannot resolve wake_agent %q here", want)
+		}
+		target, ok := findAgentByNameOrID(sess.DB, sess.Username, want)
+		if !ok {
+			return "", fmt.Errorf("no agent named %q to wake; create_agent first, or leave wake_agent empty to wake yourself", want)
+		}
+		return target.ID, nil
+	}
+	if !authoringHandoffAgent(sess, creatorAgentID) {
+		return creatorAgentID, nil
+	}
+	// Delivered rather than woken: no agent has to read this for it to work.
+	if deliverTo != "" || notify == EventNotifyDirect || notify == EventNotifyText {
+		return creatorAgentID, nil
+	}
+	return "", fmt.Errorf("say which agent this monitor should wake: pass wake_agent with the name of the agent that owns this watch. " +
+		"Waking you would fire the alert into this build session, where nobody will see it again. " +
+		"If the alert should go straight to the user instead, set notify=\"direct\"")
 }

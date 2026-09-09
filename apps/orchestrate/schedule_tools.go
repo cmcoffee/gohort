@@ -164,6 +164,22 @@ func (t *chatTurn) recurringSchedule(args map[string]any) (string, error) {
 	if t.session == nil || t.session.ID == "" {
 		return "", errors.New("recurring(schedule) requires an active session — start a turn first")
 	}
+	// A recurring task runs THIS agent, in THIS session: that is its whole
+	// shape, and there is no parameter to point it elsewhere. For an author
+	// that is never what was meant. Asked to put an agent on a schedule,
+	// Builder would schedule ITSELF to replay a build prompt forever, in a
+	// session nobody reopens, and the agent the user was talking about would
+	// have nothing on it at all.
+	//
+	// Refuse and name the tool that does this properly, rather than accept and
+	// be wrong on a clock. create_standing_agent takes agent_id precisely
+	// because "run THAT agent every morning" is a different job from "do this
+	// again in an hour".
+	if agentHandsOffSchedules(t.agent) {
+		return "", fmt.Errorf("recurring(schedule) puts THIS agent on a clock, and scheduling %s is not what you want. "+
+			"Use create_standing_agent with agent_id set to the agent that should run, and mission set to what it should do each time",
+			t.agent.Name)
+	}
 	spec := RecurringSpec{
 		SessionID:   t.session.ID,
 		AgentID:     t.agent.ID,
