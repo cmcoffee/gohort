@@ -324,7 +324,7 @@ func reachAdvice(udb Database, user string, def MachineDef) []string {
 func machineToolUnits(def MachineDef) []toolScopeUnit {
 	units := make([]toolScopeUnit, 0, len(def.Phases))
 	for _, p := range def.Phases {
-		units = append(units, toolScopeUnit{Label: "step " + p.Name, Reach: PhaseReach(p), Tools: p.Tools})
+		units = append(units, toolScopeUnit{Label: "step " + p.Name, Reach: PhaseReach(p), Tools: p.Tools, Prompt: p.Prompt})
 	}
 	return units
 }
@@ -332,7 +332,8 @@ func machineToolUnits(def MachineDef) []toolScopeUnit {
 // machineReachConflicts reports a step whose reach removes a tool the same
 // step names.
 func machineReachConflicts(user string, def MachineDef) []string {
-	return reachConflictFor(machineToolUnits(def), user)
+	units := machineToolUnits(def)
+	return append(reachConflictFor(units, user), frameworkDropFindings(units)...)
 }
 
 // toolScopeUnit is one thing that narrows tools: a machine's step, or a
@@ -343,6 +344,11 @@ type toolScopeUnit struct {
 	Label string // "step scan" / "stage gather" — how the finding names it
 	Reach string
 	Tools []string
+	// Prompt is what the step or stage tells the model to DO, carried so a
+	// check can compare the instruction against the reach. A prompt that says
+	// "call knowledge_search FIRST" beside a tool list that drops it is a
+	// contradiction visible from the record alone.
+	Prompt string
 }
 
 // reachAdviceFor is the judgement, over whichever surface gathered the units.
@@ -485,7 +491,88 @@ func reachConflictFor(units []toolScopeUnit, user string) []string {
 	return out
 }
 
-// toolCapIndex maps a tool name to its declared capabilities, and marks the
+// frameworkDropFindings reports a step or stage whose own PROMPT tells the
+// model to call a framework tool that the step's own narrowing removes.
+//
+// The gap this closes is the one the other two checks cannot see. A framework
+// tool — knowledge_search, fetch_knowledge_doc, ask_user — arrives because a
+// condition about the agent holds, never because somebody listed it, so it
+// appears in no allowlist and an author has no reason to think a tool list
+// governs it. But narrowCatalog exempts only the control plane and the agent's
+// attachments: a phase with a non-empty Tools list drops every framework tool
+// it does not name, silently, while the phase prompt goes on instructing the
+// model to call one.
+//
+// Observed, and expensive: a support agent whose phase prompts said "call
+// knowledge_search FIRST, this is not conditional" ran without it, reported
+// truthfully that the tool was not in its tool set, and answered from
+// recollection instead of the corpus. Nothing anywhere said why. The owner then
+// added the name to allowed_tools, which governs a different thing entirely,
+// and the symptom stayed.
+//
+// Restricted to the framework set on purpose. Scanning a prompt for ANY tool
+// name it mentions would fire on "do not call web_search here", which is a
+// correct configuration, and a check that fires on those is one people learn to
+// scroll past. A framework tool is never deliberately excluded by name, so a
+// prompt naming one it cannot reach is a bug every time.
+func frameworkDropFindings(units []toolScopeUnit) []string {
+	var out []string
+	for _, u := range units {
+		named := map[string]bool{}
+		for _, n := range u.Tools {
+			if n = strings.TrimSpace(n); n != "" && n != NoToolsMarker {
+				named[n] = true
+			}
+		}
+		// Nothing narrows: an empty list inherits and ReachAll admits.
+		if len(named) == 0 && u.Reach != ReachNone {
+			continue
+		}
+		var dropped []string
+		for _, n := range frameworkAlwaysOnToolNames() {
+			if named[n] || !strings.Contains(u.Prompt, n) {
+				continue
+			}
+			dropped = append(dropped, n)
+		}
+		if len(dropped) == 0 {
+			continue
+		}
+		how := "its tool list does not name " + plainList(dropped)
+		if u.Reach == ReachNone {
+			how = "its reach admits nothing at all"
+		}
+		out = append(out, u.Label+" tells the model to call "+plainList(dropped)+", but "+how+
+			", so the narrowing removes "+itThem(len(dropped))+" before the step runs. "+
+			"A framework tool is not granted by an allowlist and is not exempt from this narrowing the way the workflow controls are: "+
+			"name "+itThem(len(dropped))+" in this step's tools, or clear the list so the step inherits the catalog.")
+	}
+	return out
+}
+
+// plainList renders names for a sentence rather than for a log line.
+func plainList(names []string) string {
+	switch len(names) {
+	case 0:
+		return ""
+	case 1:
+		return names[0]
+	case 2:
+		return names[0] + " and " + names[1]
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
+}
+
+// itThem agrees the pronoun with a count, so a one-name finding does not read
+// as a list.
+func itThem(n int) string {
+	if n == 1 {
+		return "it"
+	}
+	return "them"
+}
+
+// toolCapIndex maps a tool name to its declared capabilities, and marks the// toolCapIndex maps a tool name to its declared capabilities, and marks the
 // ones whose existence is conditional — minted by an MCP server that has to be
 // connected, or by an attachment on one agent.
 //

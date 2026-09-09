@@ -470,14 +470,6 @@ func gatedPersonaFor(agent AgentRecord, prompt string) string {
 	if len(agent.AllowedTools) == 0 {
 		return StripPromptSectionsForTools(prompt, nil)
 	}
-	gate := append([]string{
-		// Framework always-on tools — sections that depend on these
-		// never get stripped regardless of admin allowlist.
-		"plan_set",
-		"ask_user", "ask_user_form",
-		"knowledge_search", "fetch_knowledge_doc",
-		"memory",
-		"store_fact", "forget_fact", "list_facts",
-	}, agent.AllowedTools...)
+	gate := append(frameworkAlwaysOnToolNames(), agent.AllowedTools...)
 	return StripPromptSectionsForTools(prompt, gate)
 }

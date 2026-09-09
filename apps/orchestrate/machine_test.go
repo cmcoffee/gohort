@@ -1465,3 +1465,65 @@ func TestAReachThatRemovesWhatTheStepNamesIsReportedAtSaveTime(t *testing.T) {
 		t.Errorf("the no-tools marker is not a conflict with itself: %v", got)
 	}
 }
+
+// The gap the other two checks cannot see: a framework tool arrives because a
+// condition about the AGENT holds, never because somebody listed it, so it is
+// in no allowlist and an author has no reason to think a phase's tool list
+// governs it. narrowCatalog exempts only the control plane, so a non-empty list
+// drops it silently while the prompt goes on telling the model to call it.
+//
+// The live cost: a support agent whose phases said "call knowledge_search
+// FIRST, this is not conditional" ran without it and answered from
+// recollection. Nothing anywhere said why.
+func TestAPhaseThatNamesAFrameworkToolItCannotReachIsReported(t *testing.T) {
+	def := MachineDef{ID: "m1", Name: "support_intake", Owner: "u", Phases: []MachinePhase{
+		{Name: "assess", Resident: true,
+			Prompt: "Call knowledge_search FIRST, this is not conditional. Then answer.",
+			Tools:  []string{"web_search", "fetch_url"}},
+	}}
+	got := strings.Join(frameworkDropFindings(machineToolUnits(def)), "\n")
+	if !strings.Contains(got, "step assess") || !strings.Contains(got, "knowledge_search") {
+		t.Fatalf("a phase naming a framework tool its list drops must be reported: %q", got)
+	}
+	if !strings.Contains(got, "not granted by an allowlist") {
+		t.Errorf("say where the tool actually comes from, or the reader edits allowed_tools: %q", got)
+	}
+	if !strings.Contains(got, "name it in this step's tools") && !strings.Contains(got, "clear the list") {
+		t.Errorf("the finding must carry both repairs: %q", got)
+	}
+}
+
+// Correct configurations must stay silent, or the finding is one people learn
+// to scroll past and it takes the real ones with it.
+func TestTheFrameworkDropCheckStaysQuietOnWorkingSteps(t *testing.T) {
+	quiet := []MachineDef{
+		// Names it: it survives the narrowing.
+		{Phases: []MachinePhase{{Name: "a", Prompt: "call knowledge_search first",
+			Tools: []string{"knowledge_search", "web_search"}}}},
+		// Empty list inherits everything, so nothing is dropped.
+		{Phases: []MachinePhase{{Name: "b", Prompt: "call knowledge_search first"}}},
+		// A list, but the prompt never asks for a framework tool.
+		{Phases: []MachinePhase{{Name: "c", Prompt: "search the web and summarize",
+			Tools: []string{"web_search"}}}},
+		// The legacy no-tools marker is a reach, and a step that only decides
+		// is not instructed to call anything.
+		{Phases: []MachinePhase{{Name: "d", Prompt: "route to the right phase",
+			Tools: []string{NoToolsMarker}}}},
+	}
+	for i, def := range quiet {
+		if got := frameworkDropFindings(machineToolUnits(def)); len(got) != 0 {
+			t.Errorf("case %d fired on a working configuration: %v", i, got)
+		}
+	}
+}
+
+// A reach of none plus a prompt that calls for a tool is the same contradiction
+// stated harder, and the repair is different, so the wording has to differ too.
+func TestAReachOfNoneWithAToolInstructionSaysSo(t *testing.T) {
+	def := MachineDef{Phases: []MachinePhase{{Name: "decide", Reach: ReachNone,
+		Prompt: "Use knowledge_search to check, then pick a branch."}}}
+	got := strings.Join(frameworkDropFindings(machineToolUnits(def)), "\n")
+	if !strings.Contains(got, "admits nothing at all") {
+		t.Errorf("a none reach should be named as the cause: %q", got)
+	}
+}

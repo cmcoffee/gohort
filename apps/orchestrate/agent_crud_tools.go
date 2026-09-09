@@ -408,14 +408,80 @@ func unresolvedAllowedTools(sess *ToolSession, rec *AgentRecord) []string {
 	return missing
 }
 
+// frameworkAlwaysOnTools are provided by the FRAMEWORK, not by an allowlist.
+//
+// They arrive because a condition about the agent is true — it has a corpus, it
+// is in a machine phase with an exit, it can be asked a question — and never
+// because somebody listed them. Naming one in allowed_tools therefore grants
+// nothing, and leaving it out removes nothing.
+//
+// Which matters most when something has gone wrong. An agent that could not
+// reach knowledge_search sends its owner looking at the allowlist, because that
+// is where tools appear to come from; adding the name there changes nothing,
+// the symptom persists, and the real cause (a machine phase's tool list, an
+// agent with no retrievable content) goes on being invisible. So the name is
+// worth recognizing wherever an allowlist is explained.
+var frameworkAlwaysOnTools = map[string]bool{
+	"plan_set":            true,
+	"ask_user":            true,
+	"ask_user_form":       true,
+	"knowledge_search":    true,
+	"fetch_knowledge_doc": true,
+	"memory":              true,
+	"store_fact":          true,
+	"forget_fact":         true,
+	"list_facts":          true,
+}
+
+// frameworkAlwaysOnToolNames is the same set as a slice, for callers building a
+// gate list. Sorted so a prompt built from it is byte-stable across turns.
+func frameworkAlwaysOnToolNames() []string {
+	out := make([]string, 0, len(frameworkAlwaysOnTools))
+	for n := range frameworkAlwaysOnTools {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// isAre agrees the verb with a count, so a one-name note does not read as a
+// list. Small, and the alternative is a message that says "knowledge_search are
+// provided by the framework" to somebody already unsure what is going on.
+func isAre(n int) string {
+	if n == 1 {
+		return "is"
+	}
+	return "are"
+}
+
 // unresolvedToolsWarning renders the trailing warning clause for a create/
 // update success message, or "" when every allowed_tools name resolved.
 func unresolvedToolsWarning(sess *ToolSession, rec *AgentRecord) string {
-	missing := unresolvedAllowedTools(sess, rec)
-	if len(missing) == 0 {
-		return ""
+	all := unresolvedAllowedTools(sess, rec)
+	// Split before saying anything. A framework-injected name in an allowlist
+	// is not a typo and telling somebody it was "dropped" sends them to fix the
+	// one place that was never the problem — which is exactly what happened
+	// when an agent that could not reach knowledge_search had the name added
+	// here, the warning said it had been dropped, and the real cause was a
+	// machine phase narrowing the catalog.
+	var framework, missing []string
+	for _, n := range all {
+		if frameworkAlwaysOnTools[n] {
+			framework = append(framework, n)
+			continue
+		}
+		missing = append(missing, n)
 	}
-	return fmt.Sprintf(
+	var out string
+	if len(framework) > 0 {
+		out += fmt.Sprintf(
+			" NOTE: %s %s provided by the framework, not by this list — the agent gets them when the condition behind them holds (a corpus attached, for knowledge_search / fetch_knowledge_doc), and listing them here neither grants nor removes them. Harmless to leave; if the agent CANNOT reach one, the cause is elsewhere — most often a machine phase or pipeline stage whose own tool list narrows the catalog, which drops framework tools it does not name.",
+			strings.Join(framework, ", "), isAre(len(framework)))
+	}
+	if len(missing) == 0 {
+		return out
+	}
+	return out + fmt.Sprintf(
 		" ⚠ WARNING: these allowed_tools entries match no known tool and were dropped (typo, or a tool you haven't actually created yet): %s. The agent will NOT have them. Create the tool first (tool_def), then update_agent to add it.",
 		strings.Join(missing, ", "),
 	)

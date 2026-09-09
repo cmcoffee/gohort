@@ -166,7 +166,7 @@ func stageToolUnits(def PipelineDef) []toolScopeUnit {
 	stages := flattenStages(def.Stages)
 	units := make([]toolScopeUnit, 0, len(stages))
 	for _, s := range stages {
-		units = append(units, toolScopeUnit{Label: "stage " + s.Name, Reach: StageReach(s), Tools: s.Tools})
+		units = append(units, toolScopeUnit{Label: "stage " + s.Name, Reach: StageReach(s), Tools: s.Tools, Prompt: s.Prompt})
 	}
 	return units
 }
@@ -175,7 +175,8 @@ func stageToolUnits(def PipelineDef) []toolScopeUnit {
 // A stage runs for whichever agent attached the pipeline, and several can, so
 // it meets more catalogs than a step does and gets this wrong more often.
 func stageReachConflicts(user string, def PipelineDef) []string {
-	return reachConflictFor(stageToolUnits(def), user)
+	units := stageToolUnits(def)
+	return append(reachConflictFor(units, user), frameworkDropFindings(units)...)
 }
 
 // panelVoiceFindings reports a panel whose voices are PART agents and part
