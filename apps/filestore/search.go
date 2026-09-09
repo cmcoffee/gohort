@@ -17,6 +17,7 @@ package filestore
 import (
 	"bufio"
 	"compress/gzip"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -253,8 +254,16 @@ func (g gzReadCloser) Close() error {
 // and "the first 60 of many" are different answers and an investigator
 // acting on the first as though it were the second draws a conclusion
 // from a truncated set.
-func Search(root string, opts SearchOpts) (SearchResult, error) {
+// Search takes a context because its own deadline is a ceiling, not an answer
+// to a person. The default budget is fifteen minutes and the agent loop only
+// tests for cancellation between rounds, so before this a Stop pressed during a
+// search over a large store did nothing at all until the search finished on its
+// own terms. Nil ctx reads as uncancellable rather than panicking.
+func Search(ctx context.Context, root string, opts SearchOpts) (SearchResult, error) {
 	var res SearchResult
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	pattern := strings.TrimSpace(opts.Pattern)
 	if pattern == "" {
 		return res, fmt.Errorf("no pattern given")
@@ -297,6 +306,13 @@ func Search(root string, opts SearchOpts) (SearchResult, error) {
 		if lf.Size > maxFileBytes {
 			continue
 		}
+		// Cancellation rides beside the clock, on the same reasoning: a
+		// folder of ten thousand small files gives the outer loop plenty of
+		// chances to notice, and one enormous file gives it none — which is
+		// why searchFile carries the check too.
+		if err := ctx.Err(); err != nil {
+			return res, err
+		}
 		// Checked between files as well as inside one: a folder of ten
 		// thousand small files exhausts the clock without any single
 		// file being slow.
@@ -308,13 +324,19 @@ func Search(root string, opts SearchOpts) (SearchResult, error) {
 			res.Stopped = fmt.Sprintf("stopped after reading %d MB, at %d of %d files", scanned>>20, res.Scanned, len(files))
 			break
 		}
-		got, hitCap, read := searchFile(filepath.Join(rootAbs, lf.Rel), lf.Rel, re, ctxLines, limit-len(res.Matches), deadline)
+		got, hitCap, read := searchFile(ctx, filepath.Join(rootAbs, lf.Rel), lf.Rel, re, ctxLines, limit-len(res.Matches), deadline)
 		res.Matches = append(res.Matches, got...)
 		res.Scanned++
 		scanned += read
 		if hitCap {
 			res.Capped = true
 		}
+	}
+	// A cancel inside the LAST file leaves the loop by its own condition, so
+	// the error has to be asked for again on the way out or a stopped search
+	// reports as a complete one that found little.
+	if err := ctx.Err(); err != nil {
+		return res, err
 	}
 	res.Bytes = scanned
 	res.Elapsed = time.Since(started)
@@ -323,7 +345,7 @@ func Search(root string, opts SearchOpts) (SearchResult, error) {
 
 // searchFile scans one file, keeping a small ring of preceding lines so a
 // hit can carry its context without a second pass over the file.
-func searchFile(path, rel string, re *regexp.Regexp, ctxLines, limit int, deadline time.Time) ([]Match, bool, int64) {
+func searchFile(ctx context.Context, path, rel string, re *regexp.Regexp, ctxLines, limit int, deadline time.Time) ([]Match, bool, int64) {
 	if limit <= 0 {
 		return nil, true, 0
 	}
@@ -354,7 +376,7 @@ func searchFile(path, rel string, re *regexp.Regexp, ctxLines, limit int, deadli
 		// has to be cheap enough that it is never the reason to skip it.
 		// A .gz that decompresses to something enormous is caught here
 		// and nowhere else — its on-disk size passed the file cap.
-		if lineNo%4096 == 0 && time.Now().After(deadline) {
+		if lineNo%4096 == 0 && (time.Now().After(deadline) || ctx.Err() != nil) {
 			return out, true, read
 		}
 		line := truncateRunes(sc.Text(), maxLineRunes)

@@ -1791,7 +1791,9 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 			// Interactive OAuth: use the CALLING user's per-user access token
 			// (refreshed when expired). secret holds the bearer token; the OAuth2
 			// injection branch below uses it directly instead of minting one.
-			tctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			// The turn's context, for the reason DeriveCancelCtx states below:
+			// a mint that outlives a Stop holds the call it was minting for.
+			tctx, cancel := context.WithTimeout(sess.Context(), 30*time.Second)
 			tok, terr := s.userAccessToken(tctx, c, callUser)
 			cancel()
 			if terr != nil || tok == "" {

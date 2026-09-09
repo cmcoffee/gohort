@@ -124,7 +124,7 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 		// directly). Used for public JSON endpoints (Reddit,
 		// Wikipedia, public data feeds) where requiring a fake
 		// credential just to satisfy the dispatcher would be silly.
-		raw, err = dispatchPublicAPICall(urlStr, method, body, tt.ContentType, tt.Headers)
+		raw, err = dispatchPublicAPICall(sess.Context(), urlStr, method, body, tt.ContentType, tt.Headers)
 	} else {
 		// Headers ride along: a protocol like CalDAV carries required
 		// semantics in one (Depth: 1 on a REPORT/PROPFIND), and without
@@ -174,7 +174,7 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 			return body, nil
 		}
 	}
-	pipeCtx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	pipeCtx, cancel := context.WithTimeout(sess.Context(), commandTimeout)
 	defer cancel()
 	pres := RunSandboxedShellPipe(pipeCtx, tt.ResponsePipe, body)
 	piped := strings.TrimSpace(pres.Output)
@@ -246,11 +246,17 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 // Returns the same "HTTP <code> <text>\n<body>" shape as
 // Secure().DispatchToolCall so downstream response_pipe logic and
 // status-line handling keep working unchanged.
-func dispatchPublicAPICall(urlStr, method, body, contentType string, headers map[string]string) (string, error) {
+// Takes the turn's context so a Stop reaches a request already on the wire.
+// The client Timeout stays as the ceiling for a server that never answers;
+// the context is what answers to the person who pressed the button.
+func dispatchPublicAPICall(ctx context.Context, urlStr, method, body, contentType string, headers map[string]string) (string, error) {
 	if method == "" {
 		method = "GET"
 	}
-	req, err := http.NewRequest(method, urlStr, strings.NewReader(body))
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req, err := http.NewRequestWithContext(ctx, method, urlStr, strings.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("build request: %w", err)
 	}

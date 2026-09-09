@@ -8,6 +8,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -27,7 +28,11 @@ const bundleListCap = 300
 
 // BundleTools builds the read/search tools bound to one (user, bundle
 // appliance), decrypting the store in memory.
-func BundleTools(owner, bundleID string) []AgentToolDef {
+// BundleTools takes the run's context so its one long operation — a regex
+// scan over an entire encrypted dump — stops when the run does. The agent loop
+// tests for cancellation only between rounds, so a search that ignored its
+// context was a Stop the user could press and watch do nothing.
+func BundleTools(ctx context.Context, owner, bundleID string) []AgentToolDef {
 	return []AgentToolDef{
 		{
 			Tool: Tool{
@@ -107,7 +112,7 @@ func BundleTools(owner, bundleID string) []AgentToolDef {
 				if q.Until, err = ParseBundleArgTime(bundleStrArg(args, "until")); err != nil {
 					return "", err
 				}
-				res, err := bundle.Open(owner, bundleID).Search(q)
+				res, err := bundle.Open(owner, bundleID).Search(ctx, q)
 				if err != nil {
 					return "", err
 				}

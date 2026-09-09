@@ -110,7 +110,7 @@ func (s storeSource) Fetch(ctx context.Context, user, itemID, query string) stri
 	if err != nil {
 		return ""
 	}
-	res, err := Search(dir, SearchOpts{Pattern: regexpQuote(query), IgnoreCase: true, Context: 2, Max: 20})
+	res, err := Search(ctx, dir, SearchOpts{Pattern: regexpQuote(query), IgnoreCase: true, Context: 2, Max: 20})
 	if err != nil || len(res.Matches) == 0 {
 		return ""
 	}
@@ -173,7 +173,7 @@ func storeToolNames(slug string) []string {
 // folder. It needs a session because a mapped action runs with one — a
 // workspace to work in, a context to be cancelled by.
 func (s storeSource) ItemToolsWithSession(sess *ToolSession, user, itemID string) []AgentToolDef {
-	tools := s.ItemTools(user, itemID)
+	tools := s.itemTools(sess, user, itemID)
 	if sess == nil || len(tools) == 0 {
 		return tools
 	}
@@ -184,7 +184,19 @@ func (s storeSource) ItemToolsWithSession(sess *ToolSession, user, itemID string
 	return append(tools, s.commandToolDefs(sess, user, st)...)
 }
 
+// ItemTools is the session-less form, for a caller that only wants to know
+// what this store contributes. Its search then cannot be cancelled, which is
+// the honest consequence of having nothing to cancel it WITH — every caller
+// inside a turn goes through ItemToolsWithSession.
 func (s storeSource) ItemTools(user, itemID string) []AgentToolDef {
+	return s.itemTools(nil, user, itemID)
+}
+
+// itemTools builds the per-store tools, carrying the session so the one long
+// operation among them — a regex scan of the whole store, budgeted in MINUTES —
+// can be stopped when the turn is. Nil-safe: sess.Context() falls back to an
+// uncancellable one.
+func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentToolDef {
 	st, ok := LoadStore(s.app.DB, itemID)
 	// No tools at all for a store this user may not reach, so a stale
 	// attachment degrades to the store simply not being there rather
@@ -286,7 +298,7 @@ func (s storeSource) ItemTools(user, itemID string) []AgentToolDef {
 				if n, ok := numArg(args, "context"); ok {
 					ctxLines = n
 				}
-				res, err := Search(dir, SearchOpts{
+				res, err := Search(sess.Context(), dir, SearchOpts{
 					Pattern:    stringArg(args, "pattern"),
 					Glob:       stringArg(args, "file_glob"),
 					IgnoreCase: boolArg(args, "ignore_case"),

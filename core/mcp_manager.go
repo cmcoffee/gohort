@@ -1387,7 +1387,21 @@ func (t *mcpProxyTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	if sess != nil {
 		user = sess.Username
 	}
-	out, err := t.mgr.callTool(user, t.server, t.rawName, args)
+	// Parented on the TURN's context rather than Background, so a Stop reaches
+	// a call already in flight. The timeout stays as the ceiling; what the
+	// parent adds is the cancel.
+	//
+	// Without it, pressing stop during a remote call did nothing visible for up
+	// to tune_mcp_call_timeout — the loop only tests its context between rounds
+	// (agent_loop roundHead), and a tool handler holds the round open until it
+	// returns. An agent whose subject lives behind an MCP server spends most of
+	// its turn inside this call, which is where cancel looked broken.
+	//
+	// sess.Context() is nil-safe and falls back to Background, so a caller
+	// without a session gets exactly the old behavior.
+	ctx, cancel := context.WithTimeout(sess.Context(), mcpCallTimeout())
+	defer cancel()
+	out, err := t.mgr.callToolForUser(ctx, user, t.server, t.rawName, args)
 	// The user holds no token for this oauth server yet. Raise an inline
 	// Connect affordance (the app wires ConnectPrompt to emit a
 	// connect_required block) and return LLM-actionable guidance instead of a

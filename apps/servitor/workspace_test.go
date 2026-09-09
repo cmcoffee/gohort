@@ -314,7 +314,7 @@ func TestScoutBlockLabelsEvidenceHits(t *testing.T) {
 // never reach by accident.
 func TestRegexpQuoteMetaProtectsTheCheapPass(t *testing.T) {
 	for _, term := range []string{"foo(bar", "a*b", "x[", "why?"} {
-		res, err := bundle.Open("no-such-user", "no-such-bundle").Search(bundle.Query{Pattern: regexpQuoteMeta(term)})
+		res, err := bundle.Open("no-such-user", "no-such-bundle").Search(context.Background(), bundle.Query{Pattern: regexpQuoteMeta(term)})
 		// No store, so no hits — but it must not be a REGEX error.
 		if err != nil && strings.Contains(err.Error(), "not a valid regular expression") {
 			t.Errorf("term %q was not escaped: %v", term, err)

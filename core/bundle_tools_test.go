@@ -10,6 +10,7 @@ package core
 // it there is exactly the drift it exists to catch.
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -18,7 +19,7 @@ import (
 // search found nothing". The second is a negative an LLM will report as fact:
 // it answers "was there an OOM?" with "no" on a bundle nobody uploaded.
 func TestBundleToolsReportNotIngestedRatherThanEmpty(t *testing.T) {
-	for _, td := range BundleTools("u1", "empty") {
+	for _, td := range BundleTools(context.Background(), "u1", "empty") {
 		args := map[string]any{}
 		switch td.Tool.Name {
 		case "search_bundle":
@@ -46,7 +47,7 @@ func TestBundleToolsAreTheFullSet(t *testing.T) {
 		"read_bundle_file": true, "bundle_timeline": true,
 	}
 	got := map[string]bool{}
-	for _, td := range BundleTools("u1", "b1") {
+	for _, td := range BundleTools(context.Background(), "u1", "b1") {
 		got[td.Tool.Name] = true
 	}
 	if len(got) != len(want) {

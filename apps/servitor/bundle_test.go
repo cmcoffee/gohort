@@ -14,6 +14,7 @@ package servitor
 // and purge guards to core/bundle.
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
@@ -37,7 +38,7 @@ func withBundleDB(t *testing.T) {
 // session start rather than failing quietly.
 func TestBundleToolsAreOnTheWorkerAllowList(t *testing.T) {
 	withBundleDB(t)
-	tools := BundleTools("u1", "b1")
+	tools := BundleTools(context.Background(), "u1", "b1")
 	if len(tools) != 5 {
 		t.Errorf("bundleCodeTools returned %d tools, want 5", len(tools))
 	}

@@ -452,7 +452,7 @@ func scriptSyntaxCheck(tt TempTool, sess *ToolSession) (lang, problem string, ch
 		return lang, "", false
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	ctx, cancel := context.WithTimeout(sess.Context(), commandTimeout)
 	defer cancel()
 	// Authoring-time checks are still sandboxed runs, so they carry the same
 	// caller stamp as a dispatch — otherwise an admin on a host that cannot
@@ -651,7 +651,7 @@ func emptyResultBody(body string, ep TempToolAction) bool {
 // error against the dummy input (null iteration, missing field) is not a
 // compile bug and yields "" (the real shape is checked live for reads).
 func pipeCompileError(pipe string, sess *ToolSession) string {
-	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	ctx, cancel := context.WithTimeout(sess.Context(), commandTimeout)
 	defer cancel()
 	// Authoring-time checks are still sandboxed runs, so they carry the same
 	// caller stamp as a dispatch — otherwise an admin on a host that cannot
@@ -672,7 +672,7 @@ func pipeCompileError(pipe string, sess *ToolSession) string {
 // runPipeAgainst runs a response_pipe against a real response body and
 // returns a non-empty message if it failed (bad filter, shape mismatch).
 func runPipeAgainst(pipe, body string, sess *ToolSession) string {
-	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	ctx, cancel := context.WithTimeout(sess.Context(), commandTimeout)
 	defer cancel()
 	// Authoring-time checks are still sandboxed runs, so they carry the same
 	// caller stamp as a dispatch — otherwise an admin on a host that cannot

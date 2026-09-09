@@ -68,7 +68,7 @@ func dispatchPipelineModeTempTool(sess *ToolSession, tt *TempTool, args map[stri
 	// context.Background() (bounded only by max_rounds), so a stalled or looping
 	// pipeline hung the parent turn with no recovery. The deadline propagates
 	// into the sub-agent's LLM calls, which cancel at the boundary.
-	pctx, cancel := context.WithTimeout(context.Background(), TuneDuration("tune_pipeline_tool_timeout"))
+	pctx, cancel := context.WithTimeout(sess.Context(), TuneDuration("tune_pipeline_tool_timeout"))
 	defer cancel()
 	out, err := sess.SubAgentRunner(pctx, sys, userMsg, tt.PipelineTools, maxRounds)
 	if err != nil {

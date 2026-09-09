@@ -18,6 +18,7 @@
 package bundle
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -272,8 +273,24 @@ type SearchResult struct {
 
 // Search runs a regex across the bundle's files with optional path, time,
 // and context narrowing.
-func (b Bundle) Search(q Query) (SearchResult, error) {
+// Search takes a context because a search over a multi-gigabyte dump is the
+// longest thing this package does, and the agent loop can only notice a cancel
+// between rounds — a tool handler that ignores its context holds the round open
+// however hard the user presses stop. Checked between files and periodically
+// inside one, since a single 2GB log is one iteration of the outer loop.
+//
+// A nil ctx is treated as an uncancellable one rather than panicking: the
+// callers that predate this are all real, and none of them should crash.
+// searchCancelEvery is how often the line scanner tests for cancellation.
+// Small enough that a stop feels immediate on any real file, large enough that
+// the check does not show up next to the regexp match that is the actual work.
+const searchCancelEvery = 2048
+
+func (b Bundle) Search(ctx context.Context, q Query) (SearchResult, error) {
 	var res SearchResult
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if strings.TrimSpace(q.Pattern) == "" {
 		return res, fmt.Errorf("pattern is required")
 	}
@@ -291,6 +308,9 @@ func (b Bundle) Search(q Query) (SearchResult, error) {
 	windowed := !q.Since.IsZero() || !q.Until.IsZero()
 	filesHit := 0
 	for _, bf := range b.Index() {
+		if err := ctx.Err(); err != nil {
+			return res, err
+		}
 		if q.Glob != "" && !MatchGlob(q.Glob, bf.Path) {
 			res.Skipped++
 			continue
@@ -314,7 +334,7 @@ func (b Bundle) Search(q Query) (SearchResult, error) {
 			}
 		}
 		res.Scanned++
-		hitsHere := searchOneFile(store, bf, re, q, windowed, &res)
+		hitsHere := searchOneFile(ctx, store, bf, re, q, windowed, &res)
 		if hitsHere > 0 {
 			filesHit++
 		}
@@ -334,7 +354,7 @@ func (b Bundle) Search(q Query) (SearchResult, error) {
 // pointer: res.Hits grows during the scan, and a pointer into it would be left
 // addressing a stale backing array the moment append reallocates — trailing
 // context would then be written to a copy nobody reads.
-func searchOneFile(store Store, bf File, re *regexp.Regexp, q Query, windowed bool, res *SearchResult) int {
+func searchOneFile(ctx context.Context, store Store, bf File, re *regexp.Regexp, q Query, windowed bool, res *SearchResult) int {
 	type owed struct{ idx, remaining int }
 	var (
 		prev    []string // rolling "N: text" of the last q.Before lines
@@ -343,6 +363,12 @@ func searchOneFile(store Store, bf File, re *regexp.Regexp, q Query, windowed bo
 	)
 	year := fileYear(bf)
 	scanFile(store, bf, func(n int, text string) bool {
+		// One file can be the whole search, so the outer loop's check is not
+		// enough on its own. Sampled rather than per-line: ctx.Err() takes a
+		// lock, and this callback runs once per line of every log in the dump.
+		if n%searchCancelEvery == 0 && ctx.Err() != nil {
+			return false
+		}
 		numbered := fmt.Sprintf("%d: %s", n, text)
 		// Pay down trailing context owed to earlier hits.
 		if len(pending) > 0 {

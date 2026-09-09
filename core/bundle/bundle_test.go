@@ -14,6 +14,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/gob"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -314,7 +315,7 @@ func TestBundleIngestReadSearchTimeline(t *testing.T) {
 	}
 
 	// --- search, with trailing context ---
-	res, err := Open("u1", "b1").Search(Query{Pattern: "connection refused", After: 1})
+	res, err := Open("u1", "b1").Search(context.Background(), Query{Pattern: "connection refused", After: 1})
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -327,12 +328,12 @@ func TestBundleIngestReadSearchTimeline(t *testing.T) {
 		}
 	}
 	// A glob narrows to one file.
-	res, _ = Open("u1", "b1").Search(Query{Pattern: "connection refused", Glob: "*.log"})
+	res, _ = Open("u1", "b1").Search(context.Background(), Query{Pattern: "connection refused", Glob: "*.log"})
 	if len(res.Hits) != 1 {
 		t.Errorf("globbed search found %d hits, want 1", len(res.Hits))
 	}
 	// A bad regex is an error the caller can act on, not zero results.
-	if _, err := Open("u1", "b1").Search(Query{Pattern: "("}); err == nil {
+	if _, err := Open("u1", "b1").Search(context.Background(), Query{Pattern: "("}); err == nil {
 		t.Error("an invalid regular expression was accepted")
 	}
 
@@ -376,7 +377,7 @@ func TestSearchContextSurvivesHitGrowth(t *testing.T) {
 	if _, err := Open("u1", "b1").Ingest(context.Background(), stage); err != nil {
 		t.Fatalf("ingest: %v", err)
 	}
-	res, err := Open("u1", "b1").Search(Query{Pattern: "failure number", After: 1})
+	res, err := Open("u1", "b1").Search(context.Background(), Query{Pattern: "failure number", After: 1})
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
@@ -527,5 +528,40 @@ func TestBundleSlicingRoundTrip(t *testing.T) {
 	}
 	if len(lines) != 1 || lines[0] != fmt.Sprintf("line %d", total) {
 		t.Errorf("last line = %q", lines)
+	}
+}
+
+// A search over a multi-gigabyte dump is the longest thing this package does,
+// and the agent loop can only notice a cancel between rounds — so a search that
+// ignored its context was a Stop the user could press and watch do nothing.
+func TestBundleSearchStopsWhenTheRunIsCancelled(t *testing.T) {
+	withMemStore(t)
+	stage := writeStage(t, map[string]string{
+		"var/log/messages":    testSyslog,
+		"var/log/app/app.log": testAppLog,
+	})
+	if _, err := Open("u1", "b1").Ingest(context.Background(), stage); err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	res, err := Open("u1", "b1").Search(ctx, Query{Pattern: "connection refused"})
+	if err == nil {
+		t.Fatalf("a cancelled search must report the cancellation, got %d hit(s) and no error", len(res.Hits))
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("want context.Canceled, got %v", err)
+	}
+
+	// And the same search on a live context still works — the guard must not
+	// have turned every search into a refusal.
+	if res, err := Open("u1", "b1").Search(context.Background(), Query{Pattern: "connection refused"}); err != nil || len(res.Hits) == 0 {
+		t.Errorf("an uncancelled search should still find things: %d hit(s), err=%v", len(res.Hits), err)
+	}
+
+	// A nil context is the pre-context callers' shape and must scan, not panic.
+	if _, err := Open("u1", "b1").Search(nil, Query{Pattern: "connection refused"}); err != nil {
+		t.Errorf("a nil context should read as uncancellable, got %v", err)
 	}
 }

@@ -1,6 +1,7 @@
 package servitor
 
 import (
+	"context"
 	"fmt"
 	"regexp"
 	"sort"
@@ -268,7 +269,10 @@ func scout_terms(question string) []string {
 // already ingested); live systems are judged from the map we accumulated on
 // previous visits, because a running host cannot be searched without dialing it
 // — that's what the drill is for.
-func (T *Servitor) scoutWorkspace(ws Appliance, members []wsMember, question string) []memberScout {
+// Takes the session's context: the scout searches every evidence member before
+// the lead has said anything, so on a workspace of large bundles it is the part
+// of the turn a user is most likely to try to stop.
+func (T *Servitor) scoutWorkspace(ctx context.Context, ws Appliance, members []wsMember, question string) []memberScout {
 	terms := scout_terms(question)
 	now := time.Now()
 	out := make([]memberScout, 0, len(members))
@@ -309,7 +313,7 @@ func (T *Servitor) scoutWorkspace(ws Appliance, members []wsMember, question str
 			}
 			seen := make(map[string]bool)
 			for _, term := range terms {
-				res, err := bundle.Open(m.Owner, m.ID).Search(bundle.Query{Pattern: regexpQuoteMeta(term), MaxHits: 6})
+				res, err := bundle.Open(m.Owner, m.ID).Search(ctx, bundle.Query{Pattern: regexpQuoteMeta(term), MaxHits: 6})
 				if err != nil {
 					continue
 				}

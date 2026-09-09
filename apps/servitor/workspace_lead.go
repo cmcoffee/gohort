@@ -442,7 +442,7 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 			if q.Until, terr = ParseBundleArgTime(strings.TrimSpace(fmt.Sprint(args["until"]))); terr != nil && args["until"] != nil {
 				return "", terr
 			}
-			res, err := bundle.Open(m.Owner, m.ID).Search(q)
+			res, err := bundle.Open(m.Owner, m.ID).Search(ctx, q)
 			if err != nil {
 				return "", err
 			}

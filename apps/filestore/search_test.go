@@ -6,6 +6,8 @@ package filestore
 
 import (
 	"compress/gzip"
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -53,7 +55,7 @@ func folderFixture(t *testing.T) (root, bundle string) {
 
 func TestSearchFindsMatchesWithContext(t *testing.T) {
 	_, bundle := folderFixture(t)
-	res, err := Search(bundle, SearchOpts{Pattern: "connection refused", Context: 1})
+	res, err := Search(context.Background(), bundle, SearchOpts{Pattern: "connection refused", Context: 1})
 	matches, capped := res.Matches, res.Capped
 	if err != nil {
 		t.Fatalf("search: %v", err)
@@ -89,7 +91,7 @@ func TestSearchFindsMatchesWithContext(t *testing.T) {
 
 func TestSearchGlobNarrowsAndCaseFlagWidens(t *testing.T) {
 	_, bundle := folderFixture(t)
-	globbed, err := Search(bundle, SearchOpts{Pattern: "GET", Glob: "access.log"})
+	globbed, err := Search(context.Background(), bundle, SearchOpts{Pattern: "GET", Glob: "access.log"})
 	got := globbed.Matches
 	if err != nil {
 		t.Fatalf("search: %v", err)
@@ -97,10 +99,10 @@ func TestSearchGlobNarrowsAndCaseFlagWidens(t *testing.T) {
 	if len(got) != 2 {
 		t.Errorf("glob should have narrowed to one file, got %d matches", len(got))
 	}
-	if hits, _ := Search(bundle, SearchOpts{Pattern: "error connection"}); len(hits.Matches) != 0 {
+	if hits, _ := Search(context.Background(), bundle, SearchOpts{Pattern: "error connection"}); len(hits.Matches) != 0 {
 		t.Errorf("exact match is the default, got %d", len(hits.Matches))
 	}
-	if hits, _ := Search(bundle, SearchOpts{Pattern: "error connection", IgnoreCase: true}); len(hits.Matches) == 0 {
+	if hits, _ := Search(context.Background(), bundle, SearchOpts{Pattern: "error connection", IgnoreCase: true}); len(hits.Matches) == 0 {
 		t.Error("ignore_case should have matched")
 	}
 }
@@ -118,7 +120,7 @@ func TestSearchCapsAndSaysSo(t *testing.T) {
 	}
 	_ = os.WriteFile(filepath.Join(bundle, "flood.log"), []byte(b.String()), 0o644)
 
-	res, err := Search(bundle, SearchOpts{Pattern: "ERROR"})
+	res, err := Search(context.Background(), bundle, SearchOpts{Pattern: "ERROR"})
 	matches, capped := res.Matches, res.Capped
 	if err != nil {
 		t.Fatalf("search: %v", err)
@@ -141,7 +143,7 @@ func TestSearchTruncatesAMonstrousLine(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(bundle, "wide.log"),
 		[]byte("ERROR "+strings.Repeat("x", 50000)), 0o644)
 
-	res, err := Search(bundle, SearchOpts{Pattern: "ERROR"})
+	res, err := Search(context.Background(), bundle, SearchOpts{Pattern: "ERROR"})
 	matches := res.Matches
 	if err != nil {
 		t.Fatalf("search: %v", err)
@@ -252,7 +254,7 @@ func TestFlatStoreSearchesWithoutASubfolder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("flat store should resolve: %v", err)
 	}
-	res, err := Search(dir, SearchOpts{Pattern: "ERROR"})
+	res, err := Search(context.Background(), dir, SearchOpts{Pattern: "ERROR"})
 	matches := res.Matches
 	if err != nil {
 		t.Fatalf("search: %v", err)
@@ -393,7 +395,7 @@ func TestSearchStopsAtItsDeadlineAndSaysSo(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	res, err := Search(root, SearchOpts{Pattern: "NOTHINGMATCHESTHIS", Deadline: time.Nanosecond})
+	res, err := Search(context.Background(), root, SearchOpts{Pattern: "NOTHINGMATCHESTHIS", Deadline: time.Nanosecond})
 	if err != nil {
 		t.Fatalf("a search that runs out of time is not an error: %v", err)
 	}
@@ -412,7 +414,7 @@ func TestSearchStopsAtItsDeadlineAndSaysSo(t *testing.T) {
 	}
 
 	// And with a real budget the same search completes and says nothing.
-	full, err := Search(root, SearchOpts{Pattern: "NOTHINGMATCHESTHIS"})
+	full, err := Search(context.Background(), root, SearchOpts{Pattern: "NOTHINGMATCHESTHIS"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -442,7 +444,7 @@ func TestSearchIgnoresWhatIsNotARegularFile(t *testing.T) {
 	// hung suite.
 	done := make(chan SearchResult, 1)
 	go func() {
-		res, _ := Search(root, SearchOpts{Pattern: "ERROR"})
+		res, _ := Search(context.Background(), root, SearchOpts{Pattern: "ERROR"})
 		done <- res
 	}()
 	select {
@@ -468,5 +470,33 @@ func TestSearchIgnoresWhatIsNotARegularFile(t *testing.T) {
 		if f.Rel == "a.pipe" {
 			t.Error("a fifo was listed as a searchable file")
 		}
+	}
+}
+
+// The search budget is a ceiling, not an answer to a person: fifteen minutes by
+// default, and the agent loop only tests for cancellation between rounds. So a
+// Stop pressed during a search over a large store did nothing at all until the
+// search finished on its own terms.
+func TestSearchStopsWhenTheTurnIsCancelled(t *testing.T) {
+	_, bundle := folderFixture(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	res, err := Search(ctx, bundle, SearchOpts{Pattern: "connection refused"})
+	if err == nil {
+		t.Fatalf("a cancelled search must report it, got %d match(es) and no error", len(res.Matches))
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("want context.Canceled, got %v", err)
+	}
+
+	// The guard must not have turned every search into a refusal.
+	if res, err := Search(context.Background(), bundle, SearchOpts{Pattern: "connection refused"}); err != nil || len(res.Matches) == 0 {
+		t.Errorf("an uncancelled search should still find things: %d match(es), err=%v", len(res.Matches), err)
+	}
+
+	// A nil context reads as uncancellable rather than panicking.
+	if _, err := Search(nil, bundle, SearchOpts{Pattern: "connection refused"}); err != nil {
+		t.Errorf("a nil context should scan, got %v", err)
 	}
 }

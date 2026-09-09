@@ -1610,7 +1610,7 @@ func (pr *probeRun) assembleToolkit() {
 	} else if pr.appliance.Type == "bundle" {
 		// Bundle workers read the encrypted evidence store. Nothing executes:
 		// there is no host here, only files somebody uploaded.
-		pr.workerTools = append(BundleTools(pr.ownerUser, pr.appliance.ID),
+		pr.workerTools = append(BundleTools(pr.ctx, pr.ownerUser, pr.appliance.ID),
 			pr.note_lesson_tool, pr.record_technique_tool, pr.record_discovery_tool, pr.store_fact_tool, pr.link_entities_tool, pr.store_rule_tool, pr.search_facts_tool,
 			pr.save_to_codewriter_tool, pr.save_to_techwriter_tool, pr.record_finding_tool, pr.push_to_guide_tool, pr.list_guides_tool,
 		)

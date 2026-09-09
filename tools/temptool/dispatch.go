@@ -438,7 +438,11 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	// The TURN's context, not Background: the timeout is the ceiling, the
+	// parent is what makes a Stop reach a command already running. The loop
+	// tests its own context only between rounds, so a handler that ignores
+	// cancellation is a handler the user cannot stop.
+	ctx, cancel := context.WithTimeout(sess.Context(), commandTimeout)
 	defer cancel()
 	// Wrap with the session's network connector so the sandbox
 	// applies --unshare-net when the calling turn is in private
