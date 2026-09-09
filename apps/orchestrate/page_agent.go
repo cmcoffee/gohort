@@ -665,6 +665,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		// The relabel prompt for the picture library. App-specific behavior, so
 		// it rides in through a client action rather than into core/ui.
 		lockHead += imageLibraryHeadHTML(id)
+		lockHead += agentAssistHTML(id)
 	}
 	page := ui.Page{
 		Title:     title,
@@ -742,6 +743,150 @@ func agentLockIconHTML(id string, locked bool) string {
   mount();
 })();
 </script>`, locked, id)
+}
+
+// agentAssistHTML mounts the "Assist" button beside the lock, and the dialog
+// behind it: a conversation about the WHOLE agent that answers with changes
+// you accept.
+//
+// App-specific behavior, so it rides in through ExtraHeadHTML rather than into
+// core/ui, same as the lock icon. It reuses uiOpenModal (THE modal) and the
+// existing PATCH endpoint to apply, which is what keeps it small: no new
+// persistence path, no form-field plumbing, and a reload afterwards so the
+// editor is showing what was actually stored rather than what we hoped.
+//
+// Why a whole-agent dialog next to a per-field one: the field workbench sees
+// the field it was opened on, so it cannot notice that an agent has no rules,
+// or that its allowlist and its persona disagree about whether it browses. The
+// answer to "stop it making things up" is a rule plus a line in the persona,
+// not one line in whichever box happened to be focused.
+func agentAssistHTML(id string) string {
+	return fmt.Sprintf(`<style>
+#agent-assist{cursor:pointer;border:none;background:none;font-size:1.05rem;line-height:1;opacity:.85;padding:0 .2rem}
+#agent-assist:hover{opacity:1;transform:scale(1.1)}
+#agent-assist[disabled]{opacity:.4;cursor:wait}
+.aa-log{display:flex;flex-direction:column;gap:.5rem;margin-bottom:.75rem;max-height:38vh;overflow-y:auto}
+.aa-msg{padding:.45rem .6rem;border-radius:6px;font-size:.9rem;line-height:1.45;white-space:pre-wrap}
+.aa-you{background:var(--bg-2);align-self:flex-end;max-width:85%%}
+.aa-them{background:var(--bg-2);border-left:3px solid var(--accent,#6366f1)}
+.aa-change{border:1px solid var(--border);border-radius:6px;padding:.5rem .6rem;margin:.4rem 0;background:var(--bg-2)}
+.aa-change label{display:flex;gap:.5rem;align-items:baseline;cursor:pointer;font-weight:600}
+.aa-why{font-size:.85rem;opacity:.8;margin:.2rem 0 .35rem 1.4rem}
+.aa-val{margin-left:1.4rem;font-size:.85rem;white-space:pre-wrap;max-height:9rem;overflow:auto;padding:.4rem;background:var(--bg-1);border:1px solid var(--border);border-radius:4px}
+.aa-row{display:flex;gap:.5rem;align-items:flex-end}
+.aa-row textarea{flex:1;min-height:3.2rem;resize:vertical}
+</style>
+<script>
+(function(){
+  var id=%q, history=[], pending=[];
+  function el(t,a,kids){var n=document.createElement(t);a=a||{};for(var k in a){if(k==='class')n.className=a[k];else if(k==='text')n.textContent=a[k];else n.setAttribute(k,a[k]);}
+    (kids||[]).forEach(function(c){n.appendChild(c);});return n;}
+
+  function open(){
+    window.uiOpenModal({
+      title:'Assist',
+      subtitle:'Ask for a change and review what it proposes. Nothing is saved until you apply.',
+      width:'760px',
+      actions:[],
+      mount:function(body,api){
+        var log=el('div',{class:'aa-log'});
+        var changes=el('div');
+        var input=el('textarea',{placeholder:'What should be different? For example: it keeps answering from memory, make it stick to sources.'});
+        var send=el('button',{type:'button',class:'ui-btn primary',text:'Ask'});
+        var apply=el('button',{type:'button',class:'ui-btn',text:'Apply selected'});
+        apply.style.display='none';
+        var close=el('button',{type:'button',class:'ui-btn',text:'Close'});
+        close.onclick=function(){api.close();};
+
+        function say(role,text){
+          log.appendChild(el('div',{class:'aa-msg '+(role==='you'?'aa-you':'aa-them'),text:text}));
+          log.scrollTop=log.scrollHeight;
+        }
+        function renderChanges(list){
+          changes.innerHTML=''; pending=list||[];
+          apply.style.display=pending.length?'':'none';
+          pending.forEach(function(c,i){
+            var box=el('div',{class:'aa-change'});
+            var cb=el('input',{type:'checkbox'}); cb.checked=true; cb.dataset.i=String(i);
+            var lab=el('label'); lab.appendChild(cb); lab.appendChild(el('span',{text:c.label}));
+            box.appendChild(lab);
+            if(c.why) box.appendChild(el('div',{class:'aa-why',text:c.why}));
+            box.appendChild(el('div',{class:'aa-val',text:c.value}));
+            changes.appendChild(box);
+          });
+        }
+        function ask(){
+          var msg=(input.value||'').trim();
+          if(!msg) return;
+          say('you',msg); input.value=''; send.disabled=true; send.textContent='Thinking…';
+          fetch('../api/agents/'+id+'/assist',{method:'POST',headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({message:msg,history:history})})
+            .then(function(r){ if(!r.ok) return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));}); return r.json(); })
+            .then(function(d){
+              history.push({role:'user',content:msg});
+              if(d.reply) history.push({role:'assistant',content:d.reply});
+              say('them',d.reply||'(no reply)');
+              renderChanges(d.changes);
+            })
+            .catch(function(e){ say('them','Could not ask: '+((e&&e.message)||e)); })
+            .then(function(){ send.disabled=false; send.textContent='Ask'; });
+        }
+        send.onclick=ask;
+        input.addEventListener('keydown',function(ev){
+          if(ev.key==='Enter'&&(ev.metaKey||ev.ctrlKey)){ ev.preventDefault(); ask(); }
+        });
+        apply.onclick=function(){
+          var patch={},n=0;
+          // Index loop, not NodeList.forEach: this ships to whatever WebView
+          // the user's phone has, and the rest of the runtime walks nodes the
+          // same way for the same reason.
+          var boxes=changes.querySelectorAll('input[type=checkbox]');
+          for(var bi=0;bi<boxes.length;bi++){
+            var cb=boxes[bi];
+            if(!cb.checked) continue;
+            var c=pending[parseInt(cb.dataset.i,10)];
+            if(!c) continue;
+            // triggers is a list on the record; every other assistable field
+            // is text. Sending a string here would store one trigger that is
+            // the whole box.
+            patch[c.field]=(c.field==='triggers')
+              ? c.value.split('\n').map(function(s){return s.trim();}).filter(Boolean)
+              : c.value;
+            n++;
+          }
+          if(!n){ say('them','Nothing selected.'); return; }
+          apply.disabled=true; apply.textContent='Applying…';
+          fetch('../api/agents/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(patch)})
+            .then(function(r){ if(!r.ok) return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));}); location.reload(); })
+            .catch(function(e){ apply.disabled=false; apply.textContent='Apply selected'; say('them','Could not apply: '+((e&&e.message)||e)); });
+        };
+
+        body.appendChild(log);
+        body.appendChild(changes);
+        body.appendChild(el('div',{class:'aa-row'},[input,send]));
+        var foot=el('div',{class:'aa-row'}); foot.style.marginTop='.75rem'; foot.style.justifyContent='flex-end';
+        foot.appendChild(apply); foot.appendChild(close);
+        body.appendChild(foot);
+        say('them','Tell me what is not working about this agent, or what you want it to do differently. I will propose changes you can review before anything is saved.');
+        input.focus();
+      }
+    });
+  }
+
+  var b=document.createElement('button');
+  b.id='agent-assist'; b.type='button'; b.textContent='✨';
+  b.title='Assist: talk about the whole agent and review proposed changes';
+  b.onclick=open;
+  var tries=0;
+  function mount(){
+    if(document.getElementById('agent-assist')) return;
+    var slot=document.querySelector('.ui-section .ui-section-h-r');
+    if(slot){ slot.insertBefore(b, slot.firstChild); return; }
+    if(tries++ < 180) requestAnimationFrame(mount);
+  }
+  mount();
+})();
+</script>`, id)
 }
 
 // dispatchModeOptions builds the "Dispatch policy" select options with `first`

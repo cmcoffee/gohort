@@ -412,6 +412,10 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		_ = json.NewEncoder(w).Encode(clone)
 		return
 	}
+	if action == "assist" {
+		T.handleAgentAssist(w, r, user, udb, id)
+		return
+	}
 	if action == "detach" {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

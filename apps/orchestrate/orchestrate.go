@@ -228,6 +228,8 @@ func (T *OrchestrateApp) WebRestricted(r *http.Request) bool {
 //	/agent/{id}                — agent editor (edit)
 //	/api/agents                — list / create
 //	/api/agents/{id}           — read / update / delete one
+//	/api/agents/{id}/assist    — POST: converse about the whole agent; returns
+//	                             a reply plus proposed field changes to accept
 //	/api/agents/{id}/clone     — POST: clone into a new agent
 //	/api/agents/{id}/export    — GET: download the agent as a portable JSON recipe
 //	/api/agents/{id}/facts     — GET/POST: Explicit Memory facts (was /memory)
