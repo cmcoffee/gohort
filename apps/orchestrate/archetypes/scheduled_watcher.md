@@ -1,3 +1,18 @@
+---
+{
+  "summary": "An agent that checks something on a clock and reports what it found, every time it looks or only when what it sees crosses a line.",
+  "aliases": [
+    "watcher",
+    "monitor",
+    "scheduled",
+    "watch"
+  ],
+  "settings": {
+    "max_worker_rounds": 8,
+    "gap_check": false
+  }
+}
+---
 # Archetype: Scheduled watcher
 
 An agent that checks something on a clock and reports what it found — every time it looks, or only when what it sees crosses a line.

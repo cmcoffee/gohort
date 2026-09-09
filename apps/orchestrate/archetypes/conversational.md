@@ -1,3 +1,20 @@
+---
+{
+  "summary": "A helpful chat-with-tools agent: replies directly for casual turns, plans and uses tools when the turn needs them, remembers user preferences, and can optionally conduct a fleet (schedule other agents, run monitors, delegate).",
+  "aliases": [
+    "chat",
+    "assistant",
+    "general",
+    "conversation"
+  ],
+  "seed": "seed-chat",
+  "settings": {
+    "allowed_tools": [],
+    "max_plan_steps": 6,
+    "max_worker_rounds": 18
+  }
+}
+---
 # Archetype: Conversational / general-purpose agent
 
 A helpful chat-with-tools agent: replies directly for casual turns, plans and

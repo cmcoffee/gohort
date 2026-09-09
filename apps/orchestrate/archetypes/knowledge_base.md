@@ -1,3 +1,22 @@
+---
+{
+  "summary": "An agent that answers STRICTLY from an uploaded knowledge corpus: no internet, no sub-agents, no training-knowledge fill-in. Every factual claim traces to a knowledge_search hit returned that turn; a miss returns an honest \"not in my knowledge base.\"",
+  "aliases": [
+    "kb",
+    "knowledgebase",
+    "knowledge"
+  ],
+  "seed": "seed-kb",
+  "settings": {
+    "allowed_tools": [
+      "ask_user"
+    ],
+    "max_plan_steps": 3,
+    "max_worker_rounds": 6,
+    "rules_required": true
+  }
+}
+---
 # Archetype: Knowledge-base agent
 
 An agent that answers STRICTLY from an uploaded knowledge corpus — no internet,

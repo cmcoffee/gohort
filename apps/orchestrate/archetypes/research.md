@@ -1,3 +1,25 @@
+---
+{
+  "summary": "A deep-research agent that answers a factual question by searching the web, fetching sources, synthesizing with inline citations, and persisting durable findings so the next question on the same topic starts warm.",
+  "aliases": [
+    "researcher",
+    "web_research"
+  ],
+  "seed": "seed-research",
+  "settings": {
+    "allowed_tools": [
+      "web_search",
+      "fetch_url",
+      "browse_page",
+      "screenshot_page"
+    ],
+    "max_plan_steps": 6,
+    "max_worker_rounds": 16,
+    "gap_check": true,
+    "rules_required": true
+  }
+}
+---
 # Archetype: Research agent
 
 A deep-research agent that answers a factual question by searching the web,

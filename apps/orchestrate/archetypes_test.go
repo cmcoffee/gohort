@@ -2,7 +2,7 @@ package orchestrate
 
 import (
 	"os"
-	"regexp"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -168,121 +168,131 @@ func TestEveryRecipeSaysWhatBelongsInRules(t *testing.T) {
 	}
 }
 
-// TestResearchTemplateAndArchetypeAgree. A new user can reach a research agent
-// two ways — the wizard's "Start from a template" row clones the seed-research
-// RECORD, and asking Builder for one has it follow the research ARCHETYPE. Two
-// separately-maintained descriptions of the same agent, and they had already
-// drifted on the load-bearing one: the archetype argues that the citation
-// contract belongs in `rules` because rules outrank memory and the persona and
-// this is exactly the constraint a persona loses when a plausible answer is
-// already in the model's head — and the seed carried no rules at all. So the
-// three-click path produced the agent the archetype warns about.
+// TestArchetypesAgreeWithTheirSeeds. A user can reach one of these shapes two
+// ways: the wizard clones the seed RECORD, and asking Builder for one has it
+// follow the ARCHETYPE. Two separately-maintained descriptions of the same
+// agent, and they had already drifted on the load-bearing one. The archetype
+// argues that the citation contract belongs in rules, because rules outrank
+// memory and the persona and win on the turn a plausible answer is already in
+// the model's head, and the seed carried no rules at all. So the three-click
+// path produced the agent the archetype warns about.
 //
-// This reads the archetype doc rather than restating it: whichever artifact
-// changes, the other has to keep up.
-func TestResearchTemplateAndArchetypeAgree(t *testing.T) {
-	// Every wizard template has an archetype describing the same agent. Both
-	// pairs had the same omission, so both are checked.
-	for _, pair := range []struct{ seedID, slug string }{
-		{"seed-research", "research"},
-		{"seed-kb", "knowledge_base"},
-	} {
-		t.Run(pair.slug, func(t *testing.T) { checkTemplateAgainstArchetype(t, pair.seedID, pair.slug) })
-	}
-}
-
-func checkTemplateAgainstArchetype(t *testing.T, seedID, slug string) {
-	t.Helper()
-	doc, ok := archetypeBySlug(slug)
-	if !ok {
-		t.Fatalf("the %s archetype is gone — the wizard template now has no counterpart", slug)
-	}
-	var seed AgentRecord
-	for _, a := range seedAgents() {
-		if a.ID == seedID {
-			seed = a
+// The pairs come from the "seed" field in each recipe's header, so a new
+// shape that ships as a seed is checked the day it lands, and the comparison
+// reads declared settings rather than regex-matching a bullet for backticked
+// tool names, which quietly exempted every recipe that phrased its allowlist
+// any other way.
+func TestArchetypesAgreeWithTheirSeeds(t *testing.T) {
+	pairs := 0
+	for _, doc := range loadArchetypes() {
+		if doc.Seed == "" {
+			continue
 		}
-	}
-	if seed.ID == "" {
-		t.Fatalf("%s is gone, but the wizard still offers it as a template", seedID)
-	}
-
-	// The tool set is stated in the doc as an inline-code list on the
-	// allowed_tools bullet; the seed must allow exactly those.
-	line := ""
-	for _, l := range strings.Split(doc.Body, "\n") {
-		if strings.Contains(l, "**allowed_tools**") {
-			line = l
-		}
-	}
-	// Only an archetype that names its tools inline can be compared on them;
-	// the knowledge-base doc describes its allowlist in prose instead.
-	want := regexp.MustCompile("`([a-z_]+)`").FindAllStringSubmatch(line, -1)
-	if len(want) == 0 {
-		want = nil
-	}
-	named := map[string]bool{}
-	for _, m := range want {
-		named[m[1]] = true
-	}
-	allowed := map[string]bool{}
-	for _, tool := range seed.AllowedTools {
-		allowed[tool] = true
-	}
-	for tool := range named {
-		if !allowed[tool] {
-			t.Errorf("the archetype builds with %q and the template does not allow it", tool)
-		}
-	}
-	if len(named) > 0 {
-		for tool := range allowed {
-			if !named[tool] {
-				t.Errorf("the template allows %q and the archetype does not name it — an agent's reach should not depend on which path you took", tool)
+		pairs++
+		t.Run(doc.Slug, func(t *testing.T) {
+			seed, ok := seedAgentByID(doc.Seed)
+			if !ok {
+				t.Fatalf("the %s recipe ships as %q, and no such seed exists", doc.Slug, doc.Seed)
 			}
-		}
+			s := doc.Settings
+			if s == nil {
+				t.Fatalf("%s names a seed but prescribes no settings, so nothing keeps the two in step", doc.Slug)
+			}
+			if s.AllowedTools != nil && !reflect.DeepEqual(*s.AllowedTools, normalizedTools(seed.AllowedTools)) {
+				t.Errorf("the recipe builds with %v and the seed allows %v; an agent's reach should not depend on which path you took",
+					*s.AllowedTools, seed.AllowedTools)
+			}
+			if s.MaxPlanSteps != nil && *s.MaxPlanSteps != seed.MaxPlanSteps {
+				t.Errorf("max_plan_steps: recipe %d, seed %d", *s.MaxPlanSteps, seed.MaxPlanSteps)
+			}
+			if s.MaxWorkerRounds != nil && *s.MaxWorkerRounds != seed.MaxWorkerRounds {
+				t.Errorf("max_worker_rounds: recipe %d, seed %d", *s.MaxWorkerRounds, seed.MaxWorkerRounds)
+			}
+			if s.GapCheck != nil && *s.GapCheck != seed.GapCheck {
+				t.Errorf("gap_check: recipe %v, seed %v", *s.GapCheck, seed.GapCheck)
+			}
+			// The rule the recipe exists to hold.
+			if s.RulesRequired && strings.TrimSpace(seed.Rules) == "" {
+				t.Error("the recipe puts this shape's contract in rules; the seed carries none, " +
+					"so the wizard path produces the agent the recipe warns about")
+			}
+		})
 	}
-
-	// And the rule the archetype exists to hold.
-	if strings.Contains(doc.Body, "`rules`") && strings.TrimSpace(seed.Rules) == "" {
-		t.Error("the archetype puts the citation contract in rules; the cloned template carries none, " +
-			"so the wizard path produces the agent the archetype warns about")
-	}
-	if !strings.Contains(strings.ToLower(seed.Rules), "training") {
-		t.Error("the template's rules no longer refuse to fill a gap from training — the one thing both archetypes put in rules")
+	if pairs == 0 {
+		t.Error("no recipe names a seed, so nothing is being compared")
 	}
 }
 
-// TestArchetypeSummaryIsTheWholeParagraph. The summary is the one line Builder
-// reads when choosing between archetypes, and it was the first LINE of the
-// paragraph — so every entry in that list stopped mid-sentence at the margin
-// the doc happened to wrap on ("A deep-research agent that answers a factual
-// question by searching the web,"). The function's own comment said paragraph;
-// only the code said line.
-func TestArchetypeSummaryIsTheWholeParagraph(t *testing.T) {
-	got := archetypeSummary("# Archetype: Thing\n\nFirst line of the summary,\nsecond line of it.\n\nA later paragraph.\n\n## Section\n")
-	if want := "First line of the summary, second line of it."; got != want {
-		t.Errorf("summary = %q, want %q", got, want)
+// normalizedTools treats nil and empty as the same thing, because a JSON [] and
+// an unset Go slice both mean "no allowlist beyond the default pool".
+func normalizedTools(tools []string) []string {
+	if tools == nil {
+		return []string{}
 	}
+	return tools
+}
 
-	// No prose before the first section, and a doc with nothing after the
-	// heading, both fall back to the heading rather than to a section title
-	// or an empty string.
-	if got := archetypeSummary("# Archetype: Thing\n\n## Composition\n\n- a bullet\n"); got != "Archetype: Thing" {
-		t.Errorf("a doc that starts with a section summarised as %q", got)
-	}
-	if got := archetypeSummary("# Archetype: Thing\n"); got != "Archetype: Thing" {
-		t.Errorf("a heading-only doc summarised as %q", got)
-	}
-
-	// And the real library: no summary trails off. A comma at the end is the
-	// signature of the old behaviour — a line cut at the margin its author
-	// happened to wrap on.
+// TestArchetypeHeadersAreUsable pins what the header has to carry. The summary
+// is the one line Builder reads when choosing between shapes, and it used to be
+// scraped from the first paragraph: taking the first LINE cut every entry off
+// at whatever margin its author wrapped on ("A deep-research agent that answers
+// a factual question by searching the web,").
+func TestArchetypeHeadersAreUsable(t *testing.T) {
 	for _, a := range loadArchetypes() {
 		if strings.HasSuffix(a.Summary, ",") {
-			t.Errorf("%s summarises as %q — that is a wrapped line, not a sentence", a.Slug, a.Summary)
+			t.Errorf("%s summarises as %q, which is a wrapped line rather than a sentence", a.Slug, a.Summary)
 		}
 		if !strings.Contains(a.Summary, ".") {
 			t.Errorf("%s has no sentence in its summary: %q", a.Slug, a.Summary)
+		}
+		for _, alias := range a.Aliases {
+			if alias != normalizeArchetypeSlug(alias) && archetypeAliasOwner(alias) != a.Slug {
+				t.Errorf("%s declares the alias %q, which resolves elsewhere", a.Slug, alias)
+			}
+			if alias == a.Slug {
+				t.Errorf("%s declares its own slug as an alias", a.Slug)
+			}
+		}
+	}
+}
+
+func archetypeAliasOwner(alias string) string {
+	for _, a := range loadArchetypes() {
+		for _, x := range a.Aliases {
+			if x == alias {
+				return a.Slug
+			}
+		}
+	}
+	return ""
+}
+
+// TestParseArchetypeRejectsBadDocs: a recipe that does not parse has to stop
+// the build. Skipped quietly, it would present as a shape Builder was never
+// given, and Builder would compose from scratch with nobody the wiser.
+func TestParseArchetypeRejectsBadDocs(t *testing.T) {
+	good := "---\n{\"summary\":\"Does a thing.\"}\n---\n# Thing\n\nbody\n"
+	a, err := parseArchetype("thing.md", []byte(good))
+	if err != nil {
+		t.Fatalf("valid recipe rejected: %v", err)
+	}
+	if a.Slug != "thing" || a.Summary != "Does a thing." {
+		t.Errorf("parsed as slug=%q summary=%q", a.Slug, a.Summary)
+	}
+	if strings.HasPrefix(a.Body, "---") {
+		t.Error("the frontmatter reached the body Builder reads")
+	}
+
+	for name, doc := range map[string]string{
+		"no fence":       "# Thing\n\nbody\n",
+		"unclosed fence": "---\n{\"summary\":\"x.\"}\n# Thing\n",
+		"bad json":       "---\n{\"summary\":,}\n---\n# Thing\n",
+		"unknown key":    "---\n{\"summary\":\"x.\",\"alises\":[\"a\"]}\n---\n# Thing\n",
+		"no summary":     "---\n{\"aliases\":[\"a\"]}\n---\n# Thing\n",
+		"no body":        "---\n{\"summary\":\"x.\"}\n---\n\n",
+	} {
+		if _, err := parseArchetype("thing.md", []byte(doc)); err == nil {
+			t.Errorf("%s: parsed without error", name)
 		}
 	}
 }

@@ -1,9 +1,7 @@
 package orchestrate
 
 import (
-	"bytes"
 	"embed"
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"path"
@@ -52,11 +50,6 @@ type seedFile struct {
 	AgentRecord
 	Notes map[string]string `json:"notes,omitempty"`
 }
-
-const (
-	seedFrontmatterFence = "---"
-	seedReadmeName       = "README.md"
-)
 
 // seedSnippets are the runtime-resolved fragments a seed body can splice in
 // with a {{name}} placeholder. They exist because two of these prompts are not
@@ -111,19 +104,14 @@ func expandSeedSnippets(body string) string {
 // an error naming the file: a seed that does not parse must be loud, because
 // the alternative is an agent that silently is not there.
 func parseSeedFile(name string, data []byte) (AgentRecord, error) {
-	front, body, err := splitSeedFrontmatter(data)
+	front, body, err := splitFrontmatter(data)
 	if err != nil {
 		return AgentRecord{}, fmt.Errorf("seed %s: %v", name, err)
 	}
 
-	dec := json.NewDecoder(bytes.NewReader(front))
-	// Strict: a misspelled key ("alowed_tools") would otherwise be dropped
-	// without a word, and the agent would come up missing a setting its
-	// file plainly asks for.
-	dec.DisallowUnknownFields()
 	var sf seedFile
-	if err := dec.Decode(&sf); err != nil {
-		return AgentRecord{}, fmt.Errorf("seed %s: frontmatter: %v", name, err)
+	if err := decodeFrontmatter(front, &sf); err != nil {
+		return AgentRecord{}, fmt.Errorf("seed %s: %v", name, err)
 	}
 
 	rec := sf.AgentRecord
@@ -150,22 +138,6 @@ func parseSeedFile(name string, data []byte) (AgentRecord, error) {
 	// a file that could name its own owner could hand itself to a user.
 	rec.Owner = seedOwner
 	return rec, nil
-}
-
-// splitSeedFrontmatter separates the leading fenced JSON block from the body.
-func splitSeedFrontmatter(data []byte) ([]byte, string, error) {
-	text := strings.ReplaceAll(string(data), "\r\n", "\n")
-	if !strings.HasPrefix(text, seedFrontmatterFence+"\n") {
-		return nil, "", fmt.Errorf("file must start with a %q frontmatter fence", seedFrontmatterFence)
-	}
-	rest := text[len(seedFrontmatterFence)+1:]
-	end := strings.Index(rest, "\n"+seedFrontmatterFence+"\n")
-	if end < 0 {
-		return nil, "", fmt.Errorf("frontmatter is never closed by a %q line", seedFrontmatterFence)
-	}
-	front := rest[:end+1]
-	body := rest[end+len(seedFrontmatterFence)+2:]
-	return []byte(front), strings.TrimRight(body, "\n"), nil
 }
 
 // fileSeedAgents returns every seed declared under seeds/, sorted by filename
@@ -229,10 +201,7 @@ func loadSeedDocs() []AgentRecord {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 			continue
 		}
-		// The one reserved name: seeds/README.md documents the format for
-		// whoever opens the directory next. Every OTHER .md here is a seed
-		// and must parse as one.
-		if e.Name() == seedReadmeName {
+		if e.Name() == libraryReadmeName {
 			continue
 		}
 		names = append(names, e.Name())

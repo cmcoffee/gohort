@@ -65,7 +65,7 @@ func TestSeedDocumentsUnchanged(t *testing.T) {
 			t.Errorf("%s: %v", tc.file, err)
 			continue
 		}
-		_, body, err := splitSeedFrontmatter(data)
+		_, body, err := splitFrontmatter(data)
 		if err != nil {
 			t.Errorf("%s: %v", tc.file, err)
 			continue
@@ -198,7 +198,7 @@ func TestSeedSnippetsResolve(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", tc.file, err)
 		}
-		_, body, err := splitSeedFrontmatter(data)
+		_, body, err := splitFrontmatter(data)
 		if err != nil {
 			t.Fatalf("%s: %v", tc.file, err)
 		}

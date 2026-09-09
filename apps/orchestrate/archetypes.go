@@ -10,6 +10,17 @@
 //
 // Docs live in archetypes/*.md, embedded at build so there's no runtime file
 // dependency. Builder reaches them via the `archetype` tool (list + read).
+//
+// Each doc opens with a JSON frontmatter header (see frontmatter.go) carrying
+// the facts a machine needs: the one-line summary, the aliases a model is
+// likely to type, the seed this shape ships as when it ships as one, and the
+// settings the recipe prescribes. Everything else stays prose, because the
+// rest of a recipe is judgement and a reader is the only thing that can apply
+// it. The header exists because the prose was being SCRAPED: the summary came
+// out of the first paragraph, the aliases were a switch statement in this
+// file, and the test that stops a shape's two descriptions from drifting
+// regex-matched a bullet for backticked tool names, so a recipe that phrased
+// its allowlist any other way was silently exempt from the check.
 package orchestrate
 
 import (
@@ -18,6 +29,7 @@ import (
 	"io/fs"
 	"sort"
 	"strings"
+	"sync"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -25,75 +37,130 @@ import (
 //go:embed archetypes/*.md
 var archetypeFS embed.FS
 
-// archetype is one build recipe: a slug (the filename stem), a one-line summary
-// pulled from the doc's first heading, and the full markdown body.
+// archetype is one build recipe: a slug (the filename stem), the header the
+// doc declares, and the markdown body below it.
 type archetype struct {
-	Slug    string
-	Summary string
-	Body    string
+	Slug string
+	Body string
+	archetypeHeader
 }
 
-// loadArchetypes reads every embedded archetype doc. Deterministic order (by
-// slug) so the list tool and any log line are stable across runs.
+// archetypeHeader is a recipe's frontmatter.
+type archetypeHeader struct {
+	// Summary is the one line Builder reads when choosing between shapes.
+	Summary string `json:"summary"`
+
+	// Aliases are the words a model actually types for this shape ("kb",
+	// "probe", "watcher"). They live in the doc rather than in a switch here
+	// so adding a shape is adding a file.
+	Aliases []string `json:"aliases,omitempty"`
+
+	// Seed names the seed agent that ships THIS shape, when one does. It is
+	// the link between a recipe and the record a user can reach without
+	// Builder, and TestArchetypesAgreeWithTheirSeeds walks it: a user who
+	// clones the template and a user who asks Builder for one should not end
+	// up with agents of different reach.
+	Seed string `json:"seed,omitempty"`
+
+	// Settings are the parts of the recipe a test can check. Optional, and
+	// deliberately narrow: what the agent may reach, how far it may go, and
+	// whether the shape's contract belongs in rules. Everything else about a
+	// recipe is prose because it is judgement.
+	Settings *archetypeSettings `json:"settings,omitempty"`
+}
+
+// archetypeSettings are the machine-checkable prescriptions of a recipe.
+// Pointers so "the recipe does not say" stays distinguishable from "the recipe
+// says zero", since an unstated budget is not a budget of nothing.
+type archetypeSettings struct {
+	// AllowedTools is the exact allowlist the shape prescribes. An empty
+	// slice is meaningful (the conversational shape prescribes the default
+	// pool), so nil means unstated and [] means "grant nothing extra".
+	AllowedTools    *[]string `json:"allowed_tools,omitempty"`
+	MaxPlanSteps    *int      `json:"max_plan_steps,omitempty"`
+	MaxWorkerRounds *int      `json:"max_worker_rounds,omitempty"`
+	GapCheck        *bool     `json:"gap_check,omitempty"`
+
+	// RulesRequired marks a shape whose contract has to live in rules rather
+	// than in the persona, because rules outrank memory and the persona and
+	// win on the turn a plausible answer is already in the model's head. Two
+	// recipes argued exactly this while the records they describe carried no
+	// rules at all.
+	RulesRequired bool `json:"rules_required,omitempty"`
+}
+
+// loadArchetypes returns every embedded archetype doc, ordered by slug so the
+// list tool and any log line are stable across runs.
+//
+// Read and parsed once. The docs are embedded, so nothing about them changes
+// while the process runs, and the list tool used to re-read the directory
+// three times to answer one call.
 func loadArchetypes() []archetype {
+	archetypesOnce.Do(func() { archetypes = parseArchetypes() })
+	return archetypes
+}
+
+var (
+	archetypesOnce sync.Once
+	archetypes     []archetype
+)
+
+// parseArchetypes reads the library. Every failure is fatal rather than
+// skipped: this used to swallow a read error and a directory error alike, so a
+// broken doc presented as a shape Builder had never been given, and Builder
+// would compose the agent from scratch and nobody would learn why it came out
+// different.
+func parseArchetypes() []archetype {
 	entries, err := fs.ReadDir(archetypeFS, "archetypes")
 	if err != nil {
-		return nil
+		Fatal("archetypes: %v", err)
 	}
 	var out []archetype
+	seen := map[string]bool{}
 	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") || e.Name() == libraryReadmeName {
 			continue
 		}
-		body, err := archetypeFS.ReadFile("archetypes/" + e.Name())
+		data, err := archetypeFS.ReadFile("archetypes/" + e.Name())
 		if err != nil {
-			continue
+			Fatal("archetypes: %s: %v", e.Name(), err)
 		}
-		out = append(out, archetype{
-			Slug:    strings.TrimSuffix(e.Name(), ".md"),
-			Summary: archetypeSummary(string(body)),
-			Body:    string(body),
-		})
+		a, err := parseArchetype(e.Name(), data)
+		if err != nil {
+			Fatal("%v", err)
+		}
+		if seen[a.Slug] {
+			Fatal("archetypes: two docs claim the slug %q", a.Slug)
+		}
+		seen[a.Slug] = true
+		out = append(out, a)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Slug < out[j].Slug })
 	return out
 }
 
-// archetypeSummary extracts a one-line description: the paragraph after the
-// first "# " heading, collapsed to a single line. Falls back to the heading.
-func archetypeSummary(body string) string {
-	lines := strings.Split(body, "\n")
-	heading := ""
-	for i, ln := range lines {
-		if !strings.HasPrefix(ln, "# ") {
-			continue
-		}
-		heading = strings.TrimSpace(strings.TrimPrefix(ln, "# "))
-		// The whole first paragraph, joined — not its first line. Docs are
-		// wrapped at the margin, so taking one line cut every summary off
-		// mid-sentence ("A deep-research agent that answers a factual question
-		// by searching the web,") in the one place Builder reads to choose
-		// between them.
-		var para []string
-		for _, next := range lines[i+1:] {
-			t := strings.TrimSpace(next)
-			if t == "" {
-				if len(para) > 0 {
-					break // end of the first paragraph
-				}
-				continue // blank lines between heading and paragraph
-			}
-			if strings.HasPrefix(t, "#") {
-				break // a section started before any prose did
-			}
-			para = append(para, t)
-		}
-		if len(para) > 0 {
-			return strings.Join(para, " ")
-		}
-		break
+// parseArchetype turns one doc into a recipe. The slug is the filename stem,
+// so a doc cannot disagree with its own name.
+func parseArchetype(name string, data []byte) (archetype, error) {
+	front, body, err := splitFrontmatter(data)
+	if err != nil {
+		return archetype{}, fmt.Errorf("archetype %s: %v", name, err)
 	}
-	return heading
+	var hdr archetypeHeader
+	if err := decodeFrontmatter(front, &hdr); err != nil {
+		return archetype{}, fmt.Errorf("archetype %s: %v", name, err)
+	}
+	if strings.TrimSpace(hdr.Summary) == "" {
+		return archetype{}, fmt.Errorf("archetype %s: no summary, which is the one line Builder reads to choose between shapes", name)
+	}
+	if strings.TrimSpace(body) == "" {
+		return archetype{}, fmt.Errorf("archetype %s: no recipe below the frontmatter", name)
+	}
+	return archetype{
+		Slug:            strings.TrimSuffix(name, ".md"),
+		Body:            body,
+		archetypeHeader: hdr,
+	}, nil
 }
 
 // archetypeBySlug returns one archetype's body, tolerating a name the model
@@ -114,17 +181,18 @@ func archetypeBySlug(slug string) (archetype, bool) {
 	return archetype{}, false
 }
 
+// normalizeArchetypeSlug folds a typed name toward a slug, then resolves the
+// aliases each doc declares for itself.
 func normalizeArchetypeSlug(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	s = strings.ReplaceAll(s, " ", "_")
 	s = strings.ReplaceAll(s, "-", "_")
-	switch s {
-	case "kb", "knowledgebase", "knowledge":
-		return "knowledge_base"
-	case "chat", "assistant", "general", "conversation":
-		return "conversational"
-	case "investigate", "investigation", "probe", "scout", "inspector":
-		return "investigator"
+	for _, a := range loadArchetypes() {
+		for _, alias := range a.Aliases {
+			if s == alias {
+				return a.Slug
+			}
+		}
 	}
 	return s
 }
