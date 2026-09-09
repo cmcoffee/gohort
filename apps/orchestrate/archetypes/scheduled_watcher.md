@@ -38,6 +38,10 @@
     "when it changes",
     "if it goes down",
     "when it goes down"
+  ],
+  "asks": [
+    "What should it look at, and how often?",
+    "Do you want to hear from it every time, or only when something crosses a line?"
   ]
 }
 ---

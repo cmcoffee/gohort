@@ -87,6 +87,16 @@ type archetypeHeader struct {
 	// "cites sources" identifies a shape and "agent" identifies nothing.
 	Match []string `json:"match,omitempty"`
 
+	// Asks are the questions worth putting to somebody who wants THIS shape:
+	// the two or three whose answers actually change the build. A creation
+	// dialog opens with a draft and then asks these, rather than interviewing
+	// from a blank page.
+	//
+	// Keep the list short and keep every entry load-bearing. A question whose
+	// answer changes nothing is a question that teaches people to skim, and a
+	// dialog they skim is the form again with extra steps.
+	Asks []string `json:"asks,omitempty"`
+
 	// Record is the agent this shape ships, when it ships one. Its fields are
 	// AgentRecord's own json keys, and its prompt is the Persona section of
 	// this document rather than a field, because a persona is prose.

@@ -22,6 +22,10 @@
     "with sources",
     "reads the sources"
   ],
+  "asks": [
+    "What subject should it cover, and how narrow should it stay?",
+    "Should it stick to sources you name, or search the open web?"
+  ],
   "template": {
     "label": "Research Assistant: multi-step research with gap checking",
     "order": 1

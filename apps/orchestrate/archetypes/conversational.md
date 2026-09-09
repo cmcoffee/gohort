@@ -19,6 +19,10 @@
     "day to day assistant",
     "talk to about"
   ],
+  "asks": [
+    "What should it help you with most days?",
+    "How should it talk to you?"
+  ],
   "record": {
     "id": "seed-chat",
     "name": "Chat",

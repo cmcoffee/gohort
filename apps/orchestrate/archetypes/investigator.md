@@ -29,6 +29,10 @@
     "inspect the",
     "what servitor does",
     "like servitor"
+  ],
+  "asks": [
+    "What is it investigating: a machine, a repo, a service?",
+    "Should it only look, or is it allowed to change things?"
   ]
 }
 ---

@@ -33,6 +33,10 @@
     "answers questions from my",
     "only from the documents"
   ],
+  "asks": [
+    "Which documents should it answer from?",
+    "Who is asking it questions, and what should it say when the corpus does not cover one?"
+  ],
   "template": {
     "label": "Knowledge Base Agent: answers from documents you upload",
     "order": 2
