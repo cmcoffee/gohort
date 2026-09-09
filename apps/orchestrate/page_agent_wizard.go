@@ -461,6 +461,13 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 	}
 
 	head := wizardAdvancedLinkHTML()
+	// The draft-first entry, offered beside the guided form rather than
+	// instead of it: first-run is a different job (its questions ARE the
+	// product, giving somebody a character they recognize), and a person who
+	// knows exactly what they want should not have to describe it in prose.
+	if !firstRun {
+		head += wizardDescribeHTML()
+	}
 	title := "New agent"
 	sectionTitle := "Guided setup"
 	sectionSub := "Answer a few questions and the agent's working prompt is drafted for you. Nothing is created until the last step."
@@ -654,6 +661,26 @@ func (T *OrchestrateApp) handleAgentWizard(w http.ResponseWriter, r *http.Reques
 	req.Name = strings.TrimSpace(req.Name)
 	req.Purpose = strings.TrimSpace(req.Purpose)
 
+	// Shape path: build the shape the "Describe it" dialog proposed. The user
+	// has already seen what this agent is, so there is nothing to interview
+	// them about; what is left is a name, and whatever they said in answer to
+	// the shape's own questions.
+	//
+	// Answered, the persona is drafted from those answers and becomes this
+	// agent's own. Unanswered, the shape's persona stands, which is a complete
+	// agent rather than a stub: that is the whole difference between starting
+	// from a shape and starting from a blank page.
+	if shape := strings.TrimSpace(req.Shape); shape != "" {
+		saved, err := T.createFromShape(r, udb, user, shape, req)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(saved)
+		return
+	}
+
 	// Template path: clone the crafted seed record whole (prompt,
 	// budgets, tools) under the chosen name — no brief, no drafting.
 	if tpl := strings.TrimSpace(req.Template); tpl != "" {
@@ -725,7 +752,7 @@ func (T *OrchestrateApp) handleAgentWizard(w http.ResponseWriter, r *http.Reques
 
 	// Draft the persona from the brief. Two sequential worker calls at
 	// most (prompt, then description when blank), inside one deadline.
-	ctx, cancel := context.WithTimeout(r.Context(), 150*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), wizardDraftTimeout)
 	defer cancel()
 	brief := wizardBrief(kind.label, req)
 	record := map[string]any{"name": rec.Name, "description": rec.Description}
@@ -757,10 +784,20 @@ type wizardRequest struct {
 	// Template short-circuits the guided flow: clone this wizard
 	// template (a crafted seed) as the user's agent. "" = build from
 	// the brief below.
-	Template    string `json:"template"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Purpose     string `json:"purpose"`
+	Template string `json:"template"`
+	// Shape short-circuits the guided flow the other way: build this SHAPE
+	// (archetypes/*.md), optionally tailored by Answers to the questions that
+	// shape says matter. Set by the "Describe it" dialog, which matched what
+	// the user typed and showed them the agent it would be before asking
+	// anything.
+	Shape string `json:"shape"`
+	// Answers are the replies to that shape's own questions, in order. They
+	// become the brief the persona is drafted from; empty answers mean the
+	// user took the shape as it ships, which is a complete agent already.
+	Answers     []string `json:"answers"`
+	Name        string   `json:"name"`
+	Description string   `json:"description"`
+	Purpose     string   `json:"purpose"`
 	// PurposePicks is the checklist. RawMessage because a "checklist" field
 	// saves a JSON array, but a form nobody touched sends a string or nothing
 	// at all — the same shape apps/admin decodes for its capability lists.
@@ -991,4 +1028,289 @@ func wizardMoments(req wizardRequest) string {
 		}
 	}
 	return b.String()
+}
+
+// wizardDraftTimeout bounds a persona draft. Long, because a cold model on a
+// small box takes its time and the alternative is a half-built agent; bounded,
+// because somebody is watching a spinner.
+const wizardDraftTimeout = 150 * time.Second
+
+// wizardDescribeHTML mounts "Describe it instead": the creation dialog that
+// opens with a DRAFT rather than an interview.
+//
+// The guided form asks its questions up front, and most of them a person
+// cannot answer before they have seen an agent, which is how "what should its
+// purpose be?" collects a restatement of itself. This asks one question, shows
+// the agent that would be built, and then asks only the two things that shape
+// says change the build.
+//
+// The proposal costs no model call: matching is deterministic and the shape
+// already ships the agent, so the first screen is instant and the same every
+// time. Only tailoring the persona from the answers costs anything, and
+// skipping the answers is a complete agent rather than a stub.
+func wizardDescribeHTML() string {
+	return `<style>
+#wiz-describe{margin:0 0 1rem;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+#wiz-describe .ui-btn{white-space:nowrap}
+.wd-hint{font-size:.85rem;opacity:.75}
+.wd-card{border:1px solid var(--border);border-radius:6px;padding:.7rem .8rem;margin:.6rem 0;background:var(--bg-2)}
+.wd-card h4{margin:0 0 .2rem;font-size:1rem}
+.wd-sum{font-size:.9rem;opacity:.9;margin:0 0 .5rem}
+.wd-pts{margin:0;padding-left:1.1rem;font-size:.88rem;line-height:1.5}
+.wd-ask{margin:.7rem 0}
+.wd-ask label{display:block;font-size:.9rem;margin-bottom:.25rem}
+.wd-ask input{width:100%;box-sizing:border-box}
+.wd-row{display:flex;gap:.5rem;align-items:flex-end;margin-top:.5rem}
+.wd-row textarea{flex:1;min-height:3.4rem;resize:vertical}
+.wd-foot{display:flex;gap:.5rem;justify-content:flex-end;margin-top:.9rem}
+</style>
+<script>
+(function(){
+  function el(t,a,kids){var n=document.createElement(t);a=a||{};for(var k in a){if(k==='class')n.className=a[k];else if(k==='text')n.textContent=a[k];else n.setAttribute(k,a[k]);}
+    (kids||[]).forEach(function(c){n.appendChild(c);});return n;}
+
+  function open(){
+    window.uiOpenModal({
+      title:'Describe it',
+      subtitle:'Say what you want it to do. You will see the agent before anything is created.',
+      width:'680px',
+      actions:[],
+      mount:function(body,api){
+        var out=el('div');
+        var input=el('textarea',{placeholder:'For example: something that answers questions from our handbook, or watches our status page and tells me when it goes down.'});
+        var go=el('button',{type:'button',class:'ui-btn primary',text:'Show me'});
+        var close=el('button',{type:'button',class:'ui-btn',text:'Cancel'});
+        close.onclick=function(){api.close();};
+        var proposal=null;
+
+        function askRow(q,i){
+          var wrap=el('div',{class:'wd-ask'});
+          wrap.appendChild(el('label',{text:q}));
+          var inp=el('input',{type:'text',placeholder:'Optional'});
+          inp.dataset.ask=String(i);
+          wrap.appendChild(inp);
+          return wrap;
+        }
+
+        function renderProposal(d,request){
+          out.innerHTML=''; proposal=d;
+          if(!d.matched){
+            out.appendChild(el('p',{class:'wd-hint',text:'I could not tell which kind of agent that is. Use the guided setup below, or say it another way: what should it look at, and what should it do with what it finds?'}));
+            return;
+          }
+          var card=el('div',{class:'wd-card'});
+          card.appendChild(el('h4',{text:d.name}));
+          if(d.summary) card.appendChild(el('p',{class:'wd-sum',text:d.summary}));
+          if(d.points&&d.points.length){
+            var ul=el('ul',{class:'wd-pts'});
+            d.points.forEach(function(p){ul.appendChild(el('li',{text:p}));});
+            card.appendChild(ul);
+          }
+          out.appendChild(card);
+
+          if(d.needs_composing){
+            out.appendChild(el('p',{class:'wd-hint',text:'This kind of agent has to be pointed at something before it can run, so Builder composes it. Answer these and use the guided setup, or ask Builder directly.'}));
+            (d.asks||[]).forEach(function(q){ out.appendChild(el('p',{class:'wd-hint',text:'· '+q})); });
+            return;
+          }
+
+          var nameWrap=el('div',{class:'wd-ask'});
+          nameWrap.appendChild(el('label',{text:'What should it be called?'}));
+          var nameInp=el('input',{type:'text'}); nameInp.value=d.name||''; nameInp.id='wd-name';
+          nameWrap.appendChild(nameInp);
+          out.appendChild(nameWrap);
+          (d.asks||[]).forEach(function(q,i){ out.appendChild(askRow(q,i)); });
+          out.appendChild(el('p',{class:'wd-hint',text:'Leave the questions blank to take it exactly as described. Answering them tailors what it says.'}));
+
+          var create=el('button',{type:'button',class:'ui-btn primary',text:'Create it'});
+          create.onclick=function(){
+            var answers=[];
+            var inps=out.querySelectorAll('input[data-ask]');
+            for(var i=0;i<inps.length;i++){ answers[parseInt(inps[i].dataset.ask,10)]=inps[i].value||''; }
+            create.disabled=true; create.textContent='Creating…';
+            fetch('../api/agents/wizard',{method:'POST',headers:{'Content-Type':'application/json'},
+              body:JSON.stringify({shape:d.shape,name:(nameInp.value||d.name),purpose:request,answers:answers})})
+              .then(function(r){ if(!r.ok) return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));}); return r.json(); })
+              .then(function(rec){ window.location.href='agent/'+encodeURIComponent(rec.id); })
+              .catch(function(e){
+                create.disabled=false; create.textContent='Create it';
+                out.appendChild(el('p',{class:'wd-hint',text:'Could not create it: '+((e&&e.message)||e)}));
+              });
+          };
+          var foot=el('div',{class:'wd-foot'}); foot.appendChild(create);
+          out.appendChild(foot);
+        }
+
+        function propose(){
+          var req=(input.value||'').trim();
+          if(!req) return;
+          go.disabled=true; go.textContent='Looking…';
+          fetch('../api/agents/propose',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request:req})})
+            .then(function(r){ if(!r.ok) return r.text().then(function(t){throw new Error(t||('HTTP '+r.status));}); return r.json(); })
+            .then(function(d){ renderProposal(d,req); })
+            .catch(function(e){ out.innerHTML=''; out.appendChild(el('p',{class:'wd-hint',text:'Could not look: '+((e&&e.message)||e)})); })
+            .then(function(){ go.disabled=false; go.textContent='Show me'; });
+        }
+        go.onclick=propose;
+        input.addEventListener('keydown',function(ev){
+          if(ev.key==='Enter'&&(ev.metaKey||ev.ctrlKey)){ ev.preventDefault(); propose(); }
+        });
+
+        body.appendChild(el('div',{class:'wd-row'},[input,go]));
+        body.appendChild(out);
+        var foot=el('div',{class:'wd-foot'}); foot.appendChild(close);
+        body.appendChild(foot);
+        input.focus();
+      }
+    });
+  }
+
+  var tries=0;
+  function mount(){
+    if(document.getElementById('wiz-describe')) return;
+    var host=document.querySelector('.ui-section .ui-section-body') || document.querySelector('.ui-section');
+    if(host){
+      var bar=el('div',{id:'wiz-describe'});
+      var b=el('button',{type:'button',class:'ui-btn',text:'Describe it instead'});
+      b.onclick=open;
+      bar.appendChild(b);
+      bar.appendChild(el('span',{class:'wd-hint',text:'Say what you want in a sentence and see the agent before answering anything.'}));
+      host.insertBefore(bar,host.firstChild);
+      return;
+    }
+    if(tries++ < 180) requestAnimationFrame(mount);
+  }
+  mount();
+})();
+</script>`
+}
+
+// createFromShape builds the agent a proposal described.
+//
+// It clones through the shape's record rather than assembling one here, so the
+// new agent FOLLOWS the shape: everything its owner does not go on to change
+// keeps tracking, and a framework improvement reaches an agent somebody made
+// from a sentence they typed months ago.
+func (T *OrchestrateApp) createFromShape(r *http.Request, udb Database, user, shape string, req wizardRequest) (AgentRecord, error) {
+	doc, ok := archetypeBySlug(shape)
+	if !ok {
+		return AgentRecord{}, fmt.Errorf("no shape %q", shape)
+	}
+	if doc.Record == nil {
+		// A shape whose subject is not known yet has nothing to instantiate,
+		// and quietly building something else would be worse than saying so.
+		return AgentRecord{}, fmt.Errorf("the %s shape describes an agent whose subject varies, so there is nothing to copy; ask Builder to compose one", doc.Slug)
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = doc.Record.Name
+	}
+	rec, err := cloneAgent(udb, doc.Record.ID, user, name, true)
+	if err != nil {
+		return AgentRecord{}, err
+	}
+	// A shape ships Hidden because a SEED should not appear in other agents'
+	// dispatch lists; the seed's own note says the clones are where that
+	// decision gets made. This is a clone, and its owner has made no such
+	// decision, so it starts as an ordinary agent of theirs.
+	if rec.Hidden {
+		rec.Hidden = false
+		if saved, serr := saveAgent(udb, rec); serr == nil {
+			rec = saved
+		}
+	}
+
+	brief := shapeAnswerBrief(doc, req)
+	if brief == "" {
+		return rec, nil
+	}
+	// Draft a persona from what they said. A failed draft leaves the shape's
+	// own persona in place, which is a working agent: better than refusing to
+	// create one because the model was busy.
+	ctx, cancel := context.WithTimeout(r.Context(), wizardDraftTimeout)
+	defer cancel()
+	drafted := T.wizardDraftField(ctx, "orchestrator_prompt", brief,
+		map[string]any{"name": rec.Name, "description": rec.Description})
+	if strings.TrimSpace(drafted) == "" {
+		return rec, nil
+	}
+	rec.OrchestratorPrompt = drafted
+	saved, err := saveAgent(udb, rec)
+	if err != nil {
+		return rec, nil // created, just not tailored
+	}
+	return saved, nil
+}
+
+// shapeAnswerBrief turns the shape's questions and the user's answers into the
+// brief a persona is drafted from. Empty when they answered nothing, which is
+// the signal to keep the shape's own persona.
+//
+// The questions are included, not just the answers: "our runbooks, and say you
+// do not know" means nothing without the two questions it answers, and a brief
+// that reads as a list of fragments drafts like one.
+func shapeAnswerBrief(doc archetype, req wizardRequest) string {
+	var b strings.Builder
+	answered := false
+	for i, q := range doc.Asks {
+		if i >= len(req.Answers) {
+			break
+		}
+		a := strings.TrimSpace(req.Answers[i])
+		if a == "" {
+			continue
+		}
+		answered = true
+		fmt.Fprintf(&b, "%s\n%s\n\n", q, a)
+	}
+	if !answered {
+		return ""
+	}
+	var out strings.Builder
+	fmt.Fprintf(&out, "Agent type: %s\n", doc.Summary)
+	if p := strings.TrimSpace(req.Purpose); p != "" {
+		fmt.Fprintf(&out, "What the user asked for: %s\n", p)
+	}
+	out.WriteString("\nWhat they said about it:\n\n")
+	out.WriteString(b.String())
+	return strings.TrimSpace(out.String())
+}
+
+// handleAgentPropose answers a typed description with the agent it would
+// build: POST /api/agents/propose {request}.
+//
+// No model call: the shape match is deterministic and the shape already ships
+// the agent, so the first screen costs nothing and is the same every time.
+func (T *OrchestrateApp) handleAgentPropose(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Request string `json:"request"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	p, ok := proposeAgent(req.Request)
+	if !ok {
+		// Nothing fit well enough to open with. Saying so is an answer: the
+		// dialog asks a question instead of showing a guess.
+		_ = json.NewEncoder(w).Encode(map[string]any{"matched": false})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"matched":         true,
+		"shape":           p.Shape,
+		"name":            p.Name,
+		"summary":         p.Summary,
+		"points":          p.Points,
+		"asks":            p.Asks,
+		"needs_composing": p.NeedsComposing,
+	})
 }

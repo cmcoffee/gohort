@@ -235,6 +235,9 @@ func (T *OrchestrateApp) WebRestricted(r *http.Request) bool {
 //	/api/agents/{id}/facts     — GET/POST: Explicit Memory facts (was /memory)
 //	/api/agents/import         — POST: create a new agent from an uploaded recipe
 //	/api/agents/suggest        — POST: ✨ per-field AI suggestion for the editor
+//	/api/agents/propose        POST: match a typed description to a shape and
+//	                           return the agent it would build, before asking
+//	                           anything
 //	/api/agents/wizard         — POST: guided create (drafts prompt from the brief)
 //	/api/machines              — list / create phase machines
 //	/api/machines/{id}         — read / replace / delete one (+ /export)
@@ -518,6 +521,7 @@ func (T *OrchestrateApp) Routes() {
 	// Guided create: drafts the prompt from the wizard brief, saves,
 	// and echoes the new record for the redirect into the editor.
 	T.HandleFunc("/api/agents/wizard", g(T.handleAgentWizard))
+	T.HandleFunc("/api/agents/propose", g(T.handleAgentPropose))
 	// Per-user Default agent preference (surfaced on /account via the
 	// account-section registry — account_prefs.go).
 	T.HandleFunc("/api/default-agent", g(T.handleDefaultAgentPref))

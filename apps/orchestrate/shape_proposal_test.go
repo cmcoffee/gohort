@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -121,5 +122,110 @@ func TestDescribeAgentPlainly(t *testing.T) {
 func TestShapeTitle(t *testing.T) {
 	if got := shapeTitle("scheduled_watcher"); got != "Scheduled watcher" {
 		t.Errorf("shapeTitle = %q", got)
+	}
+}
+
+// --- creating from a proposal ----------------------------------------------
+
+// Taking the shape as described creates a complete agent that FOLLOWS it. This
+// is the difference between starting from a shape and starting from a blank
+// page: the unanswered case is not a stub.
+func TestCreatingFromAShapeWithNoAnswers(t *testing.T) {
+	db := overlayTestDB(t)
+	app := &OrchestrateApp{}
+	rec, err := app.createFromShape(httptest.NewRequest("POST", "/", nil), db, "craig@example.com", "knowledge_base",
+		wizardRequest{Name: "Handbook"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if rec.Name != "Handbook" {
+		t.Errorf("name = %q", rec.Name)
+	}
+	if rec.ShapeID != "knowledge_base" {
+		t.Errorf("the new agent follows %q", rec.ShapeID)
+	}
+	if rec.Owner != "craig@example.com" || rec.ID == "seed-kb" {
+		t.Errorf("not the user's own record: owner=%q id=%q", rec.Owner, rec.ID)
+	}
+	// It arrives complete: the shape's persona, rules and posture, not a stub
+	// waiting for a draft that never came.
+	shape, _ := shapeBaseRecord("knowledge_base")
+	if rec.OrchestratorPrompt != shape.OrchestratorPrompt {
+		t.Error("the shape's persona did not come with it")
+	}
+	if rec.Rules != shape.Rules || !rec.ForcePrivate {
+		t.Errorf("the shape's contract did not come with it: rules=%q private=%v", rec.Rules, rec.ForcePrivate)
+	}
+	if rec.Hidden {
+		t.Error("the user's own agent inherited a seed's hidden posture")
+	}
+}
+
+// A shape whose subject is not known yet has nothing to copy, and quietly
+// building something else would be worse than saying so.
+func TestCreatingFromAShapeThatShipsNothing(t *testing.T) {
+	db := overlayTestDB(t)
+	app := &OrchestrateApp{}
+	_, err := app.createFromShape(httptest.NewRequest("POST", "/", nil), db, "craig@example.com", "scheduled_watcher",
+		wizardRequest{Name: "Watcher"})
+	if err == nil {
+		t.Fatal("a watcher was created from a shape that ships no agent")
+	}
+	if !strings.Contains(err.Error(), "Builder") {
+		t.Errorf("the error does not say what to do instead: %v", err)
+	}
+	if _, err := app.createFromShape(httptest.NewRequest("POST", "/", nil), db, "craig@example.com", "nonsense", wizardRequest{}); err == nil {
+		t.Error("an unknown shape was accepted")
+	}
+}
+
+// The brief drafts from the QUESTIONS as well as the answers: "our runbooks,
+// and say you do not know" means nothing without the two questions it answers,
+// and a brief that reads as fragments drafts like one.
+func TestShapeAnswerBrief(t *testing.T) {
+	doc, ok := archetypeBySlug("knowledge_base")
+	if !ok {
+		t.Fatal("no shape")
+	}
+	got := shapeAnswerBrief(doc, wizardRequest{
+		Purpose: "answers from our handbook",
+		Answers: []string{"Our runbooks and the onboarding guide", ""},
+	})
+	if !strings.Contains(got, doc.Asks[0]) {
+		t.Errorf("the question is missing from the brief: %q", got)
+	}
+	if !strings.Contains(got, "Our runbooks") || !strings.Contains(got, "answers from our handbook") {
+		t.Errorf("the answer or the request is missing: %q", got)
+	}
+	if strings.Contains(got, doc.Asks[1]) {
+		t.Errorf("an unanswered question was briefed anyway: %q", got)
+	}
+
+	// Nothing answered is the signal to keep the shape's own persona, and it
+	// has to be distinguishable from an answer of whitespace.
+	if b := shapeAnswerBrief(doc, wizardRequest{Answers: []string{"", "  "}}); b != "" {
+		t.Errorf("blank answers produced a brief: %q", b)
+	}
+	if b := shapeAnswerBrief(doc, wizardRequest{}); b != "" {
+		t.Errorf("no answers produced a brief: %q", b)
+	}
+}
+
+// The dialog is injected HTML, so the checks a compiler cannot make live here.
+func TestWizardDescribeHTML(t *testing.T) {
+	got := wizardDescribeHTML()
+	for _, want := range []string{
+		"../api/agents/propose",
+		"../api/agents/wizard",
+		"window.uiOpenModal",
+		"needs_composing", // the shape that ships nothing reads differently
+		"shape:d.shape",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the dialog does not contain %q", want)
+		}
+	}
+	if strings.Contains(got, "%!") {
+		t.Error("a format verb went unfilled, which ships a script that cannot parse")
 	}
 }
