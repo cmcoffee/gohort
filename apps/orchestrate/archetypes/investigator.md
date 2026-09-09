@@ -6,7 +6,11 @@
     "investigation",
     "probe",
     "scout",
-    "inspector"
+    "inspector",
+    "troubleshoot",
+    "troubleshooter",
+    "triage",
+    "diagnostic"
   ],
   "match": [
     "investigate",
@@ -28,7 +32,10 @@
     "go look at",
     "inspect the",
     "what servitor does",
-    "like servitor"
+    "like servitor",
+    "trace it back",
+    "root cause",
+    "troubleshoot"
   ],
   "asks": [
     "What is it investigating: a machine, a repo, a service?",
@@ -116,6 +123,45 @@ It fails CLOSED, which is worth telling the user: a tool that only reads but
 declares an execute capability is dropped too. An investigator that cannot
 reach something it safely could is a smaller problem than one that changes a
 system nobody asked it to touch.
+
+### When the subject is behind the network
+
+Read the paragraph above once more before you set `reach: "read"` on an
+investigator whose subject is a remote service, because read-only is stricter
+than it reads and this is where it bites.
+
+A tool is admitted only if EVERY capability it declares is a read. Reaching the
+network is not a read. And a REMOTE read declares both: a remote MCP tool, and
+the search tool an attached source mints, each carry `CapNetwork` alongside
+`CapRead`. So they are dropped, however plainly they only look.
+
+An investigator pointed at Confluence, Jira, a GitLab project and a running box,
+given the read-only gate that "read-only" obviously means, arrives holding
+nothing but memory. Concretely, for a servitor system attached as a Source:
+
+| tool | caps | under `reach: "read"` |
+|---|---|---|
+| `search_<system>_knowledge` | `CapRead` | kept |
+| `get_<system>_facts` | `CapRead` | kept |
+| `investigate_<system>` | `CapNetwork`, `CapExecute` | dropped |
+| any `<server>_<tool>` from MCP | `CapNetwork`, `CapRead` | dropped |
+
+That is a real configuration and sometimes the one you want: the step answers
+from what was already gathered and never touches the live system. It is not an
+investigator. It cannot go and look, which is the one thing this shape is for.
+
+**When the looking IS remote, leave the reach at `""` and bound the step with
+its `Deny` list instead**, naming the tools that write. Deny is applied last and
+is the final word, so it holds whatever the reach admitted. It costs you the
+property that made reach worth preferring — a name list describes one caller —
+so keep it short and aim it at the write-shaped names rather than trying to
+enumerate the safe ones. Remote MCP tools whose names look mutating are already
+confirmation-gated underneath (`mcpLooksMutating`), so Deny is the second lock
+rather than the only one.
+
+The editor's checklist and the `machine` tool's reply both report a step whose
+reach removes a tool the same step names, so this shows up when you save it
+rather than when it runs.
 
 ## Orchestrator prompt — the shape
 

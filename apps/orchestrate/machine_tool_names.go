@@ -287,7 +287,8 @@ func didYouMeanTool(name string, known map[string]bool) string {
 // same list. They used to answer with def.Problems() individually, which is
 // how a check added in one place quietly failed to exist in the others.
 func machineChecklist(udb Database, user string, def MachineDef) []string {
-	return append(def.Problems(), unknownPhaseToolFindings(udb, user, def)...)
+	out := append(def.Problems(), unknownPhaseToolFindings(udb, user, def)...)
+	return append(out, machineReachConflicts(user, def)...)
 }
 
 // reachAdvice suggests the coarse control to a step that is approximating it
@@ -314,11 +315,24 @@ func machineChecklist(udb Database, user string, def MachineDef) []string {
 // configuration is advice people learn to scroll past, and it takes the
 // findings that matter down with it.
 func reachAdvice(udb Database, user string, def MachineDef) []string {
+	return reachAdviceFor(machineToolUnits(def), user)
+}
+
+// machineToolUnits is a machine's steps as the two controls that narrow tools,
+// shared by every judgement made about them so none can be told about a step
+// the others cannot see.
+func machineToolUnits(def MachineDef) []toolScopeUnit {
 	units := make([]toolScopeUnit, 0, len(def.Phases))
 	for _, p := range def.Phases {
 		units = append(units, toolScopeUnit{Label: "step " + p.Name, Reach: PhaseReach(p), Tools: p.Tools})
 	}
-	return reachAdviceFor(units, user)
+	return units
+}
+
+// machineReachConflicts reports a step whose reach removes a tool the same
+// step names.
+func machineReachConflicts(user string, def MachineDef) []string {
+	return reachConflictFor(machineToolUnits(def), user)
 }
 
 // toolScopeUnit is one thing that narrows tools: a machine's step, or a
@@ -383,6 +397,90 @@ func reachAdviceFor(units []toolScopeUnit, user string) []string {
 				"says it in a word and keeps saying it for another caller — the list grants exactly these and "+
 				"nothing else, which is narrower, so keep it if that is the point.")
 		}
+	}
+	return out
+}
+
+// reachConflictFor reports a step or stage whose REACH removes a tool the same
+// step NAMES — the two controls it carries contradicting each other.
+//
+// The controls are ANDed, and an author who sets both usually reads them as
+// additive: the reach says what KIND of thing this may do, the list says which
+// ones, and naming a tool looks like granting it. It does not. Reach is applied
+// first and the names only narrow what survived, so a name the reach excluded
+// buys nothing at all.
+//
+// The case that keeps happening is read-only, because it is stricter than it
+// reads: a tool is admitted only if EVERY capability it declares is a read, and
+// reaching the network is not one. So a REMOTE read — a remote MCP tool, an
+// attached source's search tool, both declaring CapNetwork alongside CapRead —
+// is dropped however plainly it only reads. An investigator built to look at
+// Confluence, a repo and a live box, given the read-only gate that "read-only"
+// obviously means, arrives holding nothing.
+//
+// Caught HERE because the run-time symptom is silence. The step still runs, the
+// tools are simply absent, and the model reports — accurately — that it could
+// not find what it was sent for. reportUnreachableStepTools leaves the same
+// finding as a session breadcrumb when it happens; this is the half that
+// arrives BEFORE it runs, on the surface where a model authors.
+//
+// Reports, does not refuse: same posture as the name check above, and for the
+// same reason. A machine mid-build is the normal state.
+func reachConflictFor(units []toolScopeUnit, user string) []string {
+	relevant := false
+	for _, u := range units {
+		if len(u.Tools) > 0 && u.Reach != ReachAll {
+			relevant = true
+			break
+		}
+	}
+	if !relevant {
+		return nil
+	}
+	caps, _ := toolCapIndex(user)
+	var out []string
+	for _, u := range units {
+		if len(u.Tools) == 0 || u.Reach == ReachAll {
+			continue
+		}
+		var named []AgentToolDef
+		for _, n := range u.Tools {
+			n = strings.TrimSpace(n)
+			if n == "" || n == NoToolsMarker {
+				continue
+			}
+			cs, ok := caps[n]
+			if !ok {
+				continue // a name nothing answers to is the other check's business
+			}
+			named = append(named, AgentToolDef{Tool: Tool{Name: n, Caps: cs}})
+		}
+		if len(named) == 0 {
+			continue
+		}
+		// Asked of the real filter, carrying only the reach — an empty Tools
+		// inherits and an empty Deny subtracts nothing, so this is the reach
+		// and nothing else. Repeating the capability rule here would drift the
+		// first time a reach learns a new one.
+		kept := map[string]bool{}
+		for _, td := range PhaseTools(MachinePhase{Reach: u.Reach}, named) {
+			kept[td.Tool.Name] = true
+		}
+		var dropped []string
+		for _, td := range named {
+			if !kept[td.Tool.Name] {
+				dropped = append(dropped, td.Tool.Name)
+			}
+		}
+		if len(dropped) == 0 {
+			continue
+		}
+		line := u.Label + " sets reach " + reachSays(u.Reach) + " and then names " + strings.Join(dropped, ", ") +
+			", which that reach removes before the names are read. Naming a tool cannot grant it back. "
+		if len(dropped) == len(named) {
+			line += "Nothing it names survives, so this one will run with no tools at all. "
+		}
+		out = append(out, line+reachWhy(u.Reach))
 	}
 	return out
 }

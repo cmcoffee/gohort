@@ -1415,3 +1415,53 @@ func TestAStepSaysWhenItsOwnDenyTookTheToolItNamed(t *testing.T) {
 		t.Errorf("a denied name must be reported as a deny, not a miss: %q", found)
 	}
 }
+
+// The save-time half of the run-time breadcrumb: a step whose reach removes a
+// tool the same step NAMES is a machine that cannot do what it says, and the
+// author should hear it while they are looking at it rather than hours later
+// on a turn nobody is watching.
+//
+// Read-only is the case that keeps happening, because it is stricter than it
+// reads: a remote read declares CapNetwork alongside CapRead and is dropped
+// however plainly it only reads.
+func TestAReachThatRemovesWhatTheStepNamesIsReportedAtSaveTime(t *testing.T) {
+	udb, user := preflightFixture(t)
+	withBundleSource(t)
+
+	clash := MachineDef{ID: "m1", Name: "diag", Owner: user, Phases: []MachinePhase{
+		{Name: "scan", Prompt: "look", Reach: ReachRead,
+			Tools: []string{"investigate_support_bundles"}},
+	}}
+	got := strings.Join(machineChecklist(udb, user, clash), "\n")
+	if !strings.Contains(got, "step scan") || !strings.Contains(got, "Read-only") {
+		t.Fatalf("the checklist must name the step and the reach that emptied it: %q", got)
+	}
+	if !strings.Contains(got, "no tools at all") {
+		t.Errorf("nothing this step names survives its reach; say so: %q", got)
+	}
+
+	// A local read under the same reach is exactly what read-only is FOR, and
+	// reporting it would teach people to scroll past the finding that matters.
+	fine := clash
+	fine.Phases[0].Tools = []string{"search_support_bundles"}
+	if got := machineReachConflicts(user, fine); len(got) != 0 {
+		t.Errorf("a read tool under a read reach is a working configuration: %v", got)
+	}
+
+	// Reach "none" plus a name list is the same contradiction stated harder.
+	silent := clash
+	silent.Phases[0].Reach = ReachNone
+	silent.Phases[0].Tools = []string{"search_support_bundles"}
+	if got := strings.Join(machineReachConflicts(user, silent), "\n"); !strings.Contains(got, "cannot grant it back") {
+		t.Errorf("a step that admits nothing and then names something should say so: %q", got)
+	}
+
+	// The legacy marker IS a reach of none and must not be reported as a name
+	// contradicting it — the record is correct, just old.
+	legacy := clash
+	legacy.Phases[0].Reach = ""
+	legacy.Phases[0].Tools = []string{NoToolsMarker}
+	if got := machineReachConflicts(user, legacy); len(got) != 0 {
+		t.Errorf("the no-tools marker is not a conflict with itself: %v", got)
+	}
+}

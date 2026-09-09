@@ -157,12 +157,25 @@ func flattenStages(stages []PipelineStage) []PipelineStage {
 // so a list of exact names describes one caller's catalog and misdescribes the
 // next one's.
 func stageReachAdvice(user string, def PipelineDef) []string {
+	return reachAdviceFor(stageToolUnits(def), user)
+}
+
+// stageToolUnits is a pipeline's stages as the two controls that narrow tools,
+// flattened so a loop's or a fanout's body is judged like any other stage.
+func stageToolUnits(def PipelineDef) []toolScopeUnit {
 	stages := flattenStages(def.Stages)
 	units := make([]toolScopeUnit, 0, len(stages))
 	for _, s := range stages {
 		units = append(units, toolScopeUnit{Label: "stage " + s.Name, Reach: StageReach(s), Tools: s.Tools})
 	}
-	return reachAdviceFor(units, user)
+	return units
+}
+
+// stageReachConflicts reports a stage whose reach removes a tool it names.
+// A stage runs for whichever agent attached the pipeline, and several can, so
+// it meets more catalogs than a step does and gets this wrong more often.
+func stageReachConflicts(user string, def PipelineDef) []string {
+	return reachConflictFor(stageToolUnits(def), user)
 }
 
 // panelVoiceFindings reports a panel whose voices are PART agents and part
@@ -216,5 +229,6 @@ func panelVoiceFindings(udb Database, user string, def PipelineDef) []string {
 func pipelineChecklist(udb Database, user string, def PipelineDef) []string {
 	out := append(def.Advice(), unknownStageToolFindings(udb, user, def)...)
 	out = append(out, panelVoiceFindings(udb, user, def)...)
+	out = append(out, stageReachConflicts(user, def)...)
 	return append(out, stageReachAdvice(user, def)...)
 }

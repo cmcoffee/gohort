@@ -377,7 +377,13 @@ func (t *chatTurn) machineCreateOrUpdate(args map[string]any, isUpdate bool) (st
 // Same functions behind both surfaces, so the tool cannot report a
 // different machine than the page does.
 func (t *chatTurn) machineFindingsNote(def MachineDef) string {
-	return machineFindingsText(unknownPhaseToolFindings(t.udb, t.user, def), machineAdvice(t.udb, t.user, def))
+	findings := unknownPhaseToolFindings(t.udb, t.user, def)
+	// A step whose reach removes what it names belongs with the names that do
+	// not resolve, not with the advice: both are the machine unable to do what
+	// it says, and neither is a matter of taste. It reaches Builder here or
+	// nowhere — a model authoring through this tool never sees the page.
+	findings = append(findings, machineReachConflicts(t.user, def)...)
+	return machineFindingsText(findings, machineAdvice(t.udb, t.user, def))
 }
 
 // machineFindingsText is the wording, split from the gathering so the
