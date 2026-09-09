@@ -34,6 +34,7 @@ Builder is handed the body only; the header is for the framework.
 | `summary` | required. The one line Builder reads when choosing between shapes. Write a sentence. |
 | `aliases` | the words a model actually types for this shape (`kb`, `probe`, `watcher`). Slug resolution also matches on a contained word, so near-misses still land. |
 | `seed` | the seed agent that ships this shape, when one does. |
+| `template` | this shape's label in the New Agent wizard's "Start from a template" row. Present means the wizard offers it, and picking it clones `seed`, so a `template` without a `seed` is refused. |
 | `settings` | the parts of the recipe a test can check. Optional. |
 
 `settings` holds `allowed_tools`, `max_plan_steps`, `max_worker_rounds`,
@@ -54,6 +55,15 @@ pinning; the rest of a recipe is judgement, and prose is the right form for it.
 - A recipe naming a `seed` must agree with that seed on every setting it
   declares. A user who clones the wizard template and a user who asks Builder
   for the same thing should not end up with agents of different reach.
+- A `template` label with no `seed` is an error: the wizard would offer a
+  starting point with nothing behind it.
+
+## The wizard row
+
+The "Start from a template" options are read from these headers, ordered by
+label. Adding a shape to that row is adding a `template` line to its recipe;
+there is no list of templates anywhere else. The create endpoint guards on the
+same derivation, so a forged POST cannot clone a seed the row does not offer.
 
 ## Adding one
 

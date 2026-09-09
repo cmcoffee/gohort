@@ -7,6 +7,7 @@
     "knowledge"
   ],
   "seed": "seed-kb",
+  "template": "Knowledge Base Agent: answers from documents you upload",
   "settings": {
     "allowed_tools": [
       "ask_user"

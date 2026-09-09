@@ -62,6 +62,17 @@ type archetypeHeader struct {
 	// up with agents of different reach.
 	Seed string `json:"seed,omitempty"`
 
+	// Template, when set, is this shape's label in the New Agent wizard's
+	// "Start from a template" row. Present means the wizard offers it; the
+	// record it clones is Seed, so a template without a seed has nothing to
+	// copy and is refused at parse.
+	//
+	// The label lives here because this file is where the shape is described.
+	// It used to be a two-entry list of {seed id, label} pairs in
+	// page_agent_wizard.go, which meant a shape's name for users sat a
+	// package away from the shape, and adding one was a code change.
+	Template string `json:"template,omitempty"`
+
 	// Settings are the parts of the recipe a test can check. Optional, and
 	// deliberately narrow: what the agent may reach, how far it may go, and
 	// whether the shape's contract belongs in rules. Everything else about a
@@ -155,6 +166,9 @@ func parseArchetype(name string, data []byte) (archetype, error) {
 	}
 	if strings.TrimSpace(body) == "" {
 		return archetype{}, fmt.Errorf("archetype %s: no recipe below the frontmatter", name)
+	}
+	if hdr.Template != "" && hdr.Seed == "" {
+		return archetype{}, fmt.Errorf("archetype %s: offered as a wizard template with no seed to clone", name)
 	}
 	return archetype{
 		Slug:            strings.TrimSuffix(name, ".md"),

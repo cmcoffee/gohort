@@ -290,6 +290,8 @@ func TestParseArchetypeRejectsBadDocs(t *testing.T) {
 		"unknown key":    "---\n{\"summary\":\"x.\",\"alises\":[\"a\"]}\n---\n# Thing\n",
 		"no summary":     "---\n{\"aliases\":[\"a\"]}\n---\n# Thing\n",
 		"no body":        "---\n{\"summary\":\"x.\"}\n---\n\n",
+		// Offered in the wizard with nothing to clone.
+		"template without a seed": "---\n{\"summary\":\"x.\",\"template\":\"A thing\"}\n---\n# Thing\n",
 	} {
 		if _, err := parseArchetype("thing.md", []byte(doc)); err == nil {
 			t.Errorf("%s: parsed without error", name)

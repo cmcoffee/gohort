@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -42,26 +43,46 @@ var wizard_kinds = map[string]struct {
 	"specialist": {"Specialist — a focused agent for one job, used directly or by dispatch", false, "agent"},
 }
 
-// wizard_templates are the crafted starting points offered by the
-// wizard's "Start from a template" row — seed records whose value is
-// the TUNING (budgets, curated tools, prompt craft) that a
-// from-scratch draft can't reproduce. Picking one clones the full
-// record as the user's own agent and collapses the guided questions to
-// just a name; this is where the retiring seeds live on for users. IDs
-// must resolve via seedAgentByID (a test asserts it).
-var wizard_templates = []struct {
+// wizard_template is one crafted starting point offered by the wizard's
+// "Start from a template" row: a seed record whose value is the TUNING
+// (budgets, curated tools, prompt craft) that a from-scratch draft cannot
+// reproduce. Picking one clones the full record as the user's own agent and
+// collapses the guided questions to just a name.
+type wizard_template struct {
 	id    string
 	label string
-}{
-	{"seed-research", "Research Assistant — multi-step research with gap checking"},
-	{"seed-kb", "Knowledge Base Agent — answers from documents you upload"},
 }
 
-// isWizardTemplate reports whether id is one of the offered templates —
-// the create endpoint's guard, so a forged POST can't clone arbitrary
-// seed IDs through the wizard path.
+// wizardTemplates reads the offered templates off the archetype library: a
+// recipe that carries a "template" label is offered, and the record it clones
+// is the seed that recipe names.
+//
+// Derived rather than listed because a template is a SHAPE the user can pick,
+// and the shape is already described in one place. As a Go list here, a
+// shape's name for users sat a package away from the shape, adding one was a
+// code change in a file about form rendering, and nothing tied the offered
+// label to the recipe describing the same agent.
+//
+// Ordered by label so the row is stable and reads alphabetically however many
+// shapes gain one.
+func wizardTemplates() []wizard_template {
+	var out []wizard_template
+	for _, a := range loadArchetypes() {
+		if a.Template == "" {
+			continue
+		}
+		// parseArchetype refuses a template with no seed, so Seed is set.
+		out = append(out, wizard_template{id: a.Seed, label: a.Template})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].label < out[j].label })
+	return out
+}
+
+// isWizardTemplate reports whether id is one of the offered templates. This is
+// the create endpoint's guard, so a forged POST cannot clone arbitrary seed
+// IDs through the wizard path.
 func isWizardTemplate(id string) bool {
-	for _, t := range wizard_templates {
+	for _, t := range wizardTemplates() {
 		if t.id == id {
 			return true
 		}
@@ -119,7 +140,7 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 		// down to Name → Create. Not offered on preset deep links —
 		// they've already committed to a build.
 		tplOpts := []ui.SelectOption{{Value: "", Label: "No template — guided setup"}}
-		for _, t := range wizard_templates {
+		for _, t := range wizardTemplates() {
 			tplOpts = append(tplOpts, ui.SelectOption{Value: t.id, Label: t.label})
 		}
 		typeStep.Fields[0].ShowWhen = "!template" // type select is a guided-path question
@@ -208,7 +229,7 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 	personaStep := ui.FormStep{
 		Title:    "Personality",
 		ShowWhen: "!template",
-		Intro: "How should it write, and what should it do when the work goes sideways? This shapes its voice and its judgement, not what it can reach, and all of it is editable later.",
+		Intro:    "How should it write, and what should it do when the work goes sideways? This shapes its voice and its judgement, not what it can reach, and all of it is editable later.",
 		Fields: []ui.FormField{
 			{Field: "style", Type: "select", Label: "Its manner",
 				Options: []ui.SelectOption{

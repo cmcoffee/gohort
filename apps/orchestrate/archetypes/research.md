@@ -6,6 +6,7 @@
     "web_research"
   ],
   "seed": "seed-research",
+  "template": "Research Assistant: multi-step research with gap checking",
   "settings": {
     "allowed_tools": [
       "web_search",
