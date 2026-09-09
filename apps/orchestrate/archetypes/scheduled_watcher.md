@@ -6,11 +6,7 @@
     "monitor",
     "scheduled",
     "watch"
-  ],
-  "settings": {
-    "max_worker_rounds": 8,
-    "gap_check": false
-  }
+  ]
 }
 ---
 # Archetype: Scheduled watcher

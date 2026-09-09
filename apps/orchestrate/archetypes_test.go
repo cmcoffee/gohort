@@ -1,8 +1,9 @@
 package orchestrate
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
-	"reflect"
 	"strings"
 	"testing"
 )
@@ -168,68 +169,65 @@ func TestEveryRecipeSaysWhatBelongsInRules(t *testing.T) {
 	}
 }
 
-// TestArchetypesAgreeWithTheirSeeds. A user can reach one of these shapes two
-// ways: the wizard clones the seed RECORD, and asking Builder for one has it
-// follow the ARCHETYPE. Two separately-maintained descriptions of the same
-// agent, and they had already drifted on the load-bearing one. The archetype
-// argues that the citation contract belongs in rules, because rules outrank
-// memory and the persona and win on the turn a plausible answer is already in
-// the model's head, and the seed carried no rules at all. So the three-click
-// path produced the agent the archetype warns about.
+// TestAShapeShipsTheAgentItDescribes. There is one document per shape now, so
+// nothing CAN disagree with anything: the record the wizard clones, the record
+// a dispatch materializes, and the recipe Builder reads are the same file.
+// This checks what one file can still get wrong.
 //
-// The pairs come from the "seed" field in each recipe's header, so a new
-// shape that ships as a seed is checked the day it lands, and the comparison
-// reads declared settings rather than regex-matching a bullet for backticked
-// tool names, which quietly exempted every recipe that phrased its allowlist
-// any other way.
-func TestArchetypesAgreeWithTheirSeeds(t *testing.T) {
-	pairs := 0
+// The two documents drifted exactly where it mattered, with the research
+// recipe insisting the citation contract belongs in rules and the record
+// carrying no rules at all, so the three-click path produced the agent the
+// recipe warns about. rules_required is what is left of that check: a shape
+// says the contract belongs in rules, and its own record has to carry them.
+func TestAShapeShipsTheAgentItDescribes(t *testing.T) {
+	shipped := 0
 	for _, doc := range loadArchetypes() {
-		if doc.Seed == "" {
+		if doc.Record == nil {
+			if doc.Template != nil {
+				t.Errorf("%s is offered as a wizard template and ships no record", doc.Slug)
+			}
 			continue
 		}
-		pairs++
+		shipped++
 		t.Run(doc.Slug, func(t *testing.T) {
-			seed, ok := seedAgentByID(doc.Seed)
+			rec := *doc.Record
+			if rec.ID == "" || rec.Name == "" {
+				t.Fatalf("the shipped record has no id or name: %+v", rec)
+			}
+			// The record resolves by ID, which is how every by-id caller in
+			// the tree reaches it: the console default, the MCP default, the
+			// dispatches from collections and guides.
+			live, ok := seedAgentByID(rec.ID)
 			if !ok {
-				t.Fatalf("the %s recipe ships as %q, and no such seed exists", doc.Slug, doc.Seed)
+				t.Fatalf("%s ships %q and it does not resolve", doc.Slug, rec.ID)
 			}
-			s := doc.Settings
-			if s == nil {
-				t.Fatalf("%s names a seed but prescribes no settings, so nothing keeps the two in step", doc.Slug)
+			if live.Owner != seedOwner {
+				t.Errorf("owner = %q, want the framework marker", live.Owner)
 			}
-			if s.AllowedTools != nil && !reflect.DeepEqual(*s.AllowedTools, normalizedTools(seed.AllowedTools)) {
-				t.Errorf("the recipe builds with %v and the seed allows %v; an agent's reach should not depend on which path you took",
-					*s.AllowedTools, seed.AllowedTools)
+			if strings.TrimSpace(live.OrchestratorPrompt) == "" {
+				t.Error("the shipped agent has no persona")
 			}
-			if s.MaxPlanSteps != nil && *s.MaxPlanSteps != seed.MaxPlanSteps {
-				t.Errorf("max_plan_steps: recipe %d, seed %d", *s.MaxPlanSteps, seed.MaxPlanSteps)
+			// The persona is the Persona SECTION, and the recipe above it is
+			// what Builder reads. A recipe that leaks into the prompt would
+			// tell the agent how to build itself.
+			if strings.Contains(live.OrchestratorPrompt, "## Composition") {
+				t.Error("the recipe leaked into the persona")
 			}
-			if s.MaxWorkerRounds != nil && *s.MaxWorkerRounds != seed.MaxWorkerRounds {
-				t.Errorf("max_worker_rounds: recipe %d, seed %d", *s.MaxWorkerRounds, seed.MaxWorkerRounds)
+			if strings.Contains(doc.Body, personaHeading) {
+				t.Error("the persona leaked into the recipe Builder reads")
 			}
-			if s.GapCheck != nil && *s.GapCheck != seed.GapCheck {
-				t.Errorf("gap_check: recipe %v, seed %v", *s.GapCheck, seed.GapCheck)
+			if doc.RulesRequired && strings.TrimSpace(live.Rules) == "" {
+				t.Error("this shape says its contract belongs in rules, and ships a record carrying none")
 			}
-			// The rule the recipe exists to hold.
-			if s.RulesRequired && strings.TrimSpace(seed.Rules) == "" {
-				t.Error("the recipe puts this shape's contract in rules; the seed carries none, " +
-					"so the wizard path produces the agent the recipe warns about")
+			// A shape's own instances resolve back to it.
+			if slug, ok := shapeForSeed(rec.ID); !ok || slug != doc.Slug {
+				t.Errorf("an agent built from %s traces back to %q (found=%v)", doc.Slug, slug, ok)
 			}
 		})
 	}
-	if pairs == 0 {
-		t.Error("no recipe names a seed, so nothing is being compared")
+	if shipped == 0 {
+		t.Error("no shape ships an agent, so the framework has no agents but Builder")
 	}
-}
-
-// normalizedTools treats nil and empty as the same thing, because a JSON [] and
-// an unset Go slice both mean "no allowlist beyond the default pool".
-func normalizedTools(tools []string) []string {
-	if tools == nil {
-		return []string{}
-	}
-	return tools
 }
 
 // TestArchetypeHeadersAreUsable pins what the header has to carry. The summary
@@ -310,5 +308,58 @@ func TestAnEmptySlugResolvesToNothing(t *testing.T) {
 		if a, ok := archetypeBySlug(s); ok {
 			t.Errorf("archetypeBySlug(%q) resolved to %q", s, a.Slug)
 		}
+	}
+}
+
+// TestShippedPersonasUnchanged proves the personas moved out of seeds/ without
+// changing. Each digest is of the Persona section exactly as written, and each
+// value is the one the old seed document carried: research's is checked before
+// snippet expansion, because the memory-tool name resolves differently
+// depending on a deployment flag.
+//
+// A failure means an edit changed what one of these agents says. If that was
+// the intent, update the digest in the same commit so it shows in the diff.
+func TestShippedPersonasUnchanged(t *testing.T) {
+	for _, tc := range []struct{ slug, sum string }{
+		{"conversational", "02180e1ef22e3f234b5883aa2b9ca9e246f75327981abd2f134821df0ecf4702"},
+		{"knowledge_base", "a8254110d50093eaa81ad73ad41a1c46f002f8066cb4d09af3466139b7bd590c"},
+		{"research", "2a570183462b68e77a0837242ee79f83120c4bfc67f5d7757e3ac38afa636a30"},
+	} {
+		data, err := archetypeFS.ReadFile("archetypes/" + tc.slug + ".md")
+		if err != nil {
+			t.Errorf("%s: %v", tc.slug, err)
+			continue
+		}
+		_, body, err := splitFrontmatter(data)
+		if err != nil {
+			t.Errorf("%s: %v", tc.slug, err)
+			continue
+		}
+		_, persona := splitPersona(body)
+		sum := sha256.Sum256([]byte(persona))
+		if got := hex.EncodeToString(sum[:]); got != tc.sum {
+			t.Errorf("%s: persona digest = %s (%d bytes), want %s", tc.slug, got, len(persona), tc.sum)
+		}
+	}
+}
+
+// splitPersona has to be unambiguous about which half is which, because one
+// half is read by Builder and the other is sent to a model as its identity.
+func TestSplitPersona(t *testing.T) {
+	recipe, persona := splitPersona("# Shape\n\nBuild this when.\n\n## Persona\n\nYou are a thing.")
+	if recipe != "# Shape\n\nBuild this when." {
+		t.Errorf("recipe = %q", recipe)
+	}
+	if persona != "You are a thing." {
+		t.Errorf("persona = %q", persona)
+	}
+	// A document with no persona is all recipe: that is a shape whose subject
+	// is not known yet, and there is nothing to instantiate.
+	if r, p := splitPersona("# Shape\n\nBuild this when."); r != "# Shape\n\nBuild this when." || p != "" {
+		t.Errorf("a recipe-only doc split as recipe=%q persona=%q", r, p)
+	}
+	// A heading that merely mentions the word is not the marker.
+	if _, p := splitPersona("# Shape\n\n## Persona notes\n\nnot the marker\n"); p != "" {
+		t.Errorf("a lookalike heading was treated as the persona: %q", p)
 	}
 }

@@ -211,10 +211,10 @@ func shapeBaseRecord(shapeID string) (AgentRecord, bool) {
 		return AgentRecord{}, false
 	}
 	doc, ok := archetypeBySlug(shapeID)
-	if !ok || doc.Seed == "" {
+	if !ok || doc.Seed() == "" {
 		return AgentRecord{}, false
 	}
-	return seedAgentByID(doc.Seed)
+	return seedAgentByID(doc.Seed())
 }
 
 // instanceOverrides is what a tracking instance has decided for itself.
@@ -262,7 +262,7 @@ func shapeForSeed(seedID string) (string, bool) {
 		return "", false
 	}
 	for _, doc := range loadArchetypes() {
-		if doc.Seed == seedID {
+		if doc.Seed() == seedID {
 			return doc.Slug, true
 		}
 	}

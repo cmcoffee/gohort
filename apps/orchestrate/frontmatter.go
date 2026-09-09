@@ -8,7 +8,7 @@ import (
 )
 
 // JSON frontmatter, shared by the two embedded markdown libraries in this
-// package: the seed agents under seeds/ and Builder's build recipes under
+// package: the built-in agents under builtin/ and the agent shapes under
 // archetypes/. Both are documents with a header of settings, and both want the
 // same two things from the header: keys that ARE the struct's keys, and a
 // misspelled key that stops the build instead of silently dropping a setting.

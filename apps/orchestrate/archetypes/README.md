@@ -1,74 +1,84 @@
-# Agent archetypes
+# Agent shapes
 
-One file per agent SHAPE. These are build recipes, not agents: Builder reads
-one and composes a user-owned agent from it, so a shape can be versioned,
-diffed and customized without a framework persona living in everybody's fleet.
-
-Seeds are the neighbouring library (`../seeds/`) and answer a different
-question. A seed IS an agent, written in second person to the model. A recipe
-is written to Builder about how to build one. Where a shape exists as both, the
-recipe names its seed and a test holds the two together.
+One file per agent SHAPE. Each is a build recipe Builder reads, and, when the
+shape ships an agent, the record and the persona that agent wears. One document
+per shape, whichever way a user reaches it: cloning it from the wizard, asking
+Builder for one, or being handed it as a framework default.
 
 ## Format
 
-JSON frontmatter between `---` fences, then the recipe as markdown:
+JSON frontmatter between `---` fences, then the recipe, then the persona:
 
 ```
 ---
 {
   "summary": "A deep-research agent that answers a factual question by searching the web.",
   "aliases": ["researcher"],
-  "seed": "seed-research",
-  "settings": { "allowed_tools": ["web_search"], "max_worker_rounds": 16 }
+  "template": { "label": "Research Assistant: cited multi-step research", "order": 1 },
+  "rules_required": true,
+  "record": { "id": "seed-research", "name": "Research", "allowed_tools": ["web_search"] }
 }
 ---
 # Archetype: Research agent
-...
+
+Build this when the user asks for...
+
+## Persona
+
+You are a research orchestrator. ...
 ```
 
 The slug is the filename stem, so a doc cannot disagree with its own name.
-Builder is handed the body only; the header is for the framework.
 
 | key | meaning |
 |---|---|
 | `summary` | required. The one line Builder reads when choosing between shapes. Write a sentence. |
 | `aliases` | the words a model actually types for this shape (`kb`, `probe`, `watcher`). Slug resolution also matches on a contained word, so near-misses still land. |
-| `seed` | the seed agent that ships this shape, when one does. |
-| `template` | `{label, order}`. Present means the New Agent wizard offers this shape on its "Start from a template" row, and picking it clones `seed`, so a `template` without a `seed` (or without a label) is refused. |
-| `settings` | the parts of the recipe a test can check. Optional. |
+| `record` | the agent this shape ships, in `AgentRecord`'s own json keys. Present means the shape can be instantiated. |
+| `template` | `{label, order}`. Offers the shape on the wizard's "Start from a template" row. Needs a `record` to clone. |
+| `rules_required` | this shape's contract belongs in `rules` rather than in the persona. A record shipping without them is refused. |
+| `notes` | free text for whoever reads the file. JSON has no comments, and the reason a setting is the way it is belongs beside the setting. The loader discards it. |
 
-`settings` holds `allowed_tools`, `max_plan_steps`, `max_worker_rounds`,
-`gap_check` and `rules_required`. Everything is optional and unset means the
-recipe does not say, which is different from saying zero: an empty
-`allowed_tools` prescribes the default pool, while omitting it leaves the
-allowlist to the subject at hand.
+## The two halves of the body
 
-Keep `settings` narrow. What an agent may reach and how far it may go are worth
-pinning; the rest of a recipe is judgement, and prose is the right form for it.
+Everything above `## Persona` is the RECIPE, written to Builder about
+construction: which tools, which budgets, what belongs in rules, which traps
+this shape falls into. Everything below is the PROMPT, written to the model in
+second person.
+
+They were two files once, one in `seeds/` and one here, and they said the same
+thing twice: the five numbered beats of the research recipe were the five
+numbered beats of the research persona. They drifted exactly where it mattered,
+with the recipe insisting the citation contract belongs in `rules` while the
+record carried none, so the wizard produced the agent the recipe warns about.
+
+Builder is handed the recipe alone. It composes agents, and a persona it can
+copy verbatim is one it will copy instead of composing.
+
+## Shapes that ship nothing
+
+`investigator` and `scheduled_watcher` have no `record` and no persona, because
+a watcher's prompt has to name the thing it watches. A shape is instantiable
+exactly when its prompt can be written without knowing the subject; otherwise
+Builder composes one from the recipe.
 
 ## Rules the loader enforces
 
-- Unknown frontmatter keys, a missing summary, an empty body and a duplicate
-  slug are all errors, and any of them stops startup. This used to swallow read
-  errors instead, so a broken recipe presented as a shape Builder had never been
-  given and nobody learned why the agent came out different.
-- A recipe naming a `seed` must agree with that seed on every setting it
-  declares. A user who clones the wizard template and a user who asks Builder
-  for the same thing should not end up with agents of different reach.
-- A `template` label with no `seed` is an error: the wizard would offer a
-  starting point with nothing behind it.
-
-## The wizard row
-
-The "Start from a template" options are read from these headers, ordered by
-`template.order` and then by label. Order is stated rather than derived because
-the first option is the prominent one, and which shape a new user most often
-wants is an editorial call; a shape that omits it lands alphabetically among
-its peers. Adding a shape to that row is adding a `template` block to its
-recipe; there is no list of templates anywhere else. The create endpoint guards on the
-same derivation, so a forged POST cannot clone a seed the row does not offer.
+- Unknown frontmatter keys, a missing summary, an empty recipe and a duplicate
+  slug are errors, and any of them stops startup. This used to swallow read
+  errors instead, so a broken recipe presented as a shape Builder had never
+  been given and nobody learned why the agent came out different.
+- A record with no id or no name, a record with no persona, a persona with no
+  record, a persona placed in `orchestrator_prompt` instead of its section, a
+  template with no record, and `rules_required` with no rules are all errors.
 
 ## Adding one
 
-Drop a new `.md` file here and the `archetype` tool lists it. `README.md` is the
-one reserved name.
+Drop a new `.md` file here. `README.md` is the one reserved name. That is the
+whole change: the shape appears in `archetype(list)`, ships an agent if it
+declares a record, joins the wizard row if it declares a template, and every
+agent built from it follows it and can be detached.
+
+Keep ids stable. Live agents record the shape they follow, `seed-<something>`
+ids are compared by name in dozens of places, and other apps dispatch some of
+them by literal id, so renaming one is a code change rather than a file edit.

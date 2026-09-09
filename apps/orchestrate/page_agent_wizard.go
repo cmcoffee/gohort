@@ -73,7 +73,7 @@ func wizardTemplates() []wizard_template {
 			continue
 		}
 		// parseArchetype refuses a template with no seed or no label.
-		out = append(out, wizard_template{id: a.Seed, label: a.Template.Label, order: a.Template.Order})
+		out = append(out, wizard_template{id: a.Seed(), label: a.Template.Label, order: a.Template.Order})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].order != out[j].order {

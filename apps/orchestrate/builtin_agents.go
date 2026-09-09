@@ -13,7 +13,7 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
-// Seed agents live in seeds/*.md, one file per agent, rather than as
+// Seed agents live in builtin/*.md, one file per agent, rather than as
 // AgentRecord literals in Go. A seed is mostly a long persona prompt with a
 // short header of settings, which is a document with a config block on top,
 // not code. Every edit to one used to be a recompile plus an escaping exercise
@@ -38,15 +38,15 @@ import (
 // a deployment cannot end up with a half-populated agent list because a
 // directory was not copied.
 //
-//go:embed seeds/*.md
-var seedFilesFS embed.FS
+//go:embed builtin/*.md
+var builtinFS embed.FS
 
 // seedFile is what one seed document decodes into: the record itself, plus a
 // notes object that exists only for the humans reading the file. JSON has no
 // comments, and the rationale for a setting ("why disable_skills is on here")
 // is the part of a seed most worth keeping next to the setting. The loader
 // reads notes and discards them.
-type seedFile struct {
+type builtinFile struct {
 	AgentRecord
 	Notes map[string]string `json:"notes,omitempty"`
 }
@@ -100,37 +100,37 @@ func expandSeedSnippets(body string) string {
 	return out
 }
 
-// parseSeedFile turns one seed document into an AgentRecord. Every failure is
+// parseBuiltinAgent turns one seed document into an AgentRecord. Every failure is
 // an error naming the file: a seed that does not parse must be loud, because
 // the alternative is an agent that silently is not there.
-func parseSeedFile(name string, data []byte) (AgentRecord, error) {
+func parseBuiltinAgent(name string, data []byte) (AgentRecord, error) {
 	front, body, err := splitFrontmatter(data)
 	if err != nil {
-		return AgentRecord{}, fmt.Errorf("seed %s: %v", name, err)
+		return AgentRecord{}, fmt.Errorf("builtin agent %s: %v", name, err)
 	}
 
-	var sf seedFile
+	var sf builtinFile
 	if err := decodeFrontmatter(front, &sf); err != nil {
-		return AgentRecord{}, fmt.Errorf("seed %s: %v", name, err)
+		return AgentRecord{}, fmt.Errorf("builtin agent %s: %v", name, err)
 	}
 
 	rec := sf.AgentRecord
 	if strings.TrimSpace(rec.ID) == "" {
-		return AgentRecord{}, fmt.Errorf("seed %s: no id", name)
+		return AgentRecord{}, fmt.Errorf("builtin agent %s: no id", name)
 	}
 	if strings.TrimSpace(rec.Name) == "" {
-		return AgentRecord{}, fmt.Errorf("seed %s: no name", name)
+		return AgentRecord{}, fmt.Errorf("builtin agent %s: no name", name)
 	}
 	if strings.TrimSpace(body) == "" {
-		return AgentRecord{}, fmt.Errorf("seed %s: no prompt body below the frontmatter", name)
+		return AgentRecord{}, fmt.Errorf("builtin agent %s: no prompt body below the frontmatter", name)
 	}
 	if rec.OrchestratorPrompt != "" {
-		return AgentRecord{}, fmt.Errorf("seed %s: put the prompt in the body, not in orchestrator_prompt", name)
+		return AgentRecord{}, fmt.Errorf("builtin agent %s: put the prompt in the body, not in orchestrator_prompt", name)
 	}
 	if err := checkSeedPlaceholders(body); err != nil {
-		return AgentRecord{}, fmt.Errorf("seed %s: %v", name, err)
+		return AgentRecord{}, fmt.Errorf("builtin agent %s: %v", name, err)
 	}
-	// Placeholders stay unexpanded here. parseSeedFile is the parse; the
+	// Placeholders stay unexpanded here. parseBuiltinAgent is the parse; the
 	// snippets resolve per load, in copySeedRecord.
 	rec.OrchestratorPrompt = body
 
@@ -140,7 +140,7 @@ func parseSeedFile(name string, data []byte) (AgentRecord, error) {
 	return rec, nil
 }
 
-// fileSeedAgents returns every seed declared under seeds/, sorted by filename
+// builtinAgents returns every agent declared under builtin/, sorted by filename
 // so the agent list has a stable order.
 //
 // The documents are read and decoded once. Decoding a record costs a few
@@ -148,18 +148,18 @@ func parseSeedFile(name string, data []byte) (AgentRecord, error) {
 // that resolve an agent several times per request), while the snippets that
 // have to stay live are re-expanded on every call. Callers get their own copy,
 // so a caller that appends to a seed's tool list cannot reach into the cache.
-func fileSeedAgents() []AgentRecord {
-	seedDocsOnce.Do(func() { seedDocs = loadSeedDocs() })
-	out := make([]AgentRecord, len(seedDocs))
-	for i, rec := range seedDocs {
+func builtinAgents() []AgentRecord {
+	builtinDocsOnce.Do(func() { builtinDocs = loadBuiltinDocs() })
+	out := make([]AgentRecord, len(builtinDocs))
+	for i, rec := range builtinDocs {
 		out[i] = copySeedRecord(rec)
 	}
 	return out
 }
 
 var (
-	seedDocsOnce sync.Once
-	seedDocs     []AgentRecord
+	builtinDocsOnce sync.Once
+	builtinDocs     []AgentRecord
 )
 
 // copySeedRecord hands out a record that shares nothing mutable with the
@@ -184,17 +184,17 @@ func copySeedRecord(rec AgentRecord) AgentRecord {
 	return rec
 }
 
-// loadSeedDocs reads and parses every seed document. Bodies come back with
-// their {{snippet}} placeholders intact; fileSeedAgents expands them per call.
+// loadBuiltinDocs reads and parses every seed document. Bodies come back with
+// their {{snippet}} placeholders intact; builtinAgents expands them per call.
 //
 // A parse failure is fatal rather than skipped. Dropping a seed quietly would
 // present a deployment that is missing an agent as a deployment that never had
 // one, and the person who broke the file is the one person who would not see
 // it.
-func loadSeedDocs() []AgentRecord {
-	entries, err := fs.ReadDir(seedFilesFS, "seeds")
+func loadBuiltinDocs() []AgentRecord {
+	entries, err := fs.ReadDir(builtinFS, "builtin")
 	if err != nil {
-		Fatal("seed agents: %v", err)
+		Fatal("builtin agents: %v", err)
 	}
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -211,16 +211,16 @@ func loadSeedDocs() []AgentRecord {
 	out := make([]AgentRecord, 0, len(names))
 	seen := make(map[string]string, len(names))
 	for _, name := range names {
-		data, err := seedFilesFS.ReadFile(path.Join("seeds", name))
+		data, err := builtinFS.ReadFile(path.Join("builtin", name))
 		if err != nil {
-			Fatal("seed agents: %v", err)
+			Fatal("builtin agents: %v", err)
 		}
-		rec, err := parseSeedFile(name, data)
+		rec, err := parseBuiltinAgent(name, data)
 		if err != nil {
 			Fatal("%v", err)
 		}
 		if prior, dup := seen[rec.ID]; dup {
-			Fatal("seed agents: %s and %s both declare id %q", prior, name, rec.ID)
+			Fatal("builtin agents: %s and %s both declare id %q", prior, name, rec.ID)
 		}
 		seen[rec.ID] = name
 		out = append(out, rec)

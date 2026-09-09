@@ -37,12 +37,22 @@ import (
 //go:embed archetypes/*.md
 var archetypeFS embed.FS
 
-// archetype is one build recipe: a slug (the filename stem), the header the
-// doc declares, and the markdown body below it.
+// archetype is one build recipe: a slug (the filename stem), the recipe body
+// Builder reads, the persona the shipped agent wears, and the header.
 type archetype struct {
 	Slug string
 	Body string
 	archetypeHeader
+}
+
+// Seed is the ID of the agent this shape ships, or empty when it ships none.
+// Callers use it to go the other way, from a running agent back to the shape
+// it follows.
+func (a archetype) Seed() string {
+	if a.Record == nil {
+		return ""
+	}
+	return a.Record.ID
 }
 
 // archetypeHeader is a recipe's frontmatter.
@@ -55,16 +65,9 @@ type archetypeHeader struct {
 	// so adding a shape is adding a file.
 	Aliases []string `json:"aliases,omitempty"`
 
-	// Seed names the seed agent that ships THIS shape, when one does. It is
-	// the link between a recipe and the record a user can reach without
-	// Builder, and TestArchetypesAgreeWithTheirSeeds walks it: a user who
-	// clones the template and a user who asks Builder for one should not end
-	// up with agents of different reach.
-	Seed string `json:"seed,omitempty"`
-
 	// Template, when set, offers this shape in the New Agent wizard's "Start
-	// from a template" row. The record it clones is Seed, so a template
-	// without a seed has nothing to copy and is refused at parse.
+	// from a template" row. What it clones is Record, so a template without a
+	// record has nothing to copy and is refused at parse.
 	//
 	// It lives here because this file is where the shape is described. It
 	// used to be a two-entry list of {seed id, label} pairs in
@@ -72,11 +75,35 @@ type archetypeHeader struct {
 	// package away from the shape, and adding one was a code change.
 	Template *archetypeTemplate `json:"template,omitempty"`
 
-	// Settings are the parts of the recipe a test can check. Optional, and
-	// deliberately narrow: what the agent may reach, how far it may go, and
-	// whether the shape's contract belongs in rules. Everything else about a
-	// recipe is prose because it is judgement.
-	Settings *archetypeSettings `json:"settings,omitempty"`
+	// Record is the agent this shape ships, when it ships one. Its fields are
+	// AgentRecord's own json keys, and its prompt is the Persona section of
+	// this document rather than a field, because a persona is prose.
+	//
+	// A shape with a record can be INSTANTIATED: cloned by the wizard,
+	// materialized on a dispatch, followed by the agents built from it. A
+	// shape without one describes an agent whose subject is not known yet (a
+	// watcher, an investigator), so there is nothing to copy and Builder
+	// composes from the recipe instead.
+	//
+	// The record and the recipe used to be two documents, one in seeds/ and
+	// one here, saying the same thing to two readers: the five numbered beats
+	// of the research recipe were the five numbered beats of the research
+	// persona. They drifted exactly where it mattered, with the recipe
+	// insisting the citation contract belongs in rules and the record
+	// carrying no rules at all, so the three-click path produced the agent the
+	// recipe warns about.
+	Record *AgentRecord `json:"record,omitempty"`
+
+	// Notes is free text for whoever reads the file: JSON has no comments,
+	// and the reason a setting on the record is the way it is belongs beside
+	// the setting. The loader reads it and discards it.
+	Notes map[string]string `json:"notes,omitempty"`
+
+	// RulesRequired marks a shape whose contract has to live in rules rather
+	// than in the persona, because rules outrank memory and the persona and
+	// win on the turn a plausible answer is already in the model's head. A
+	// record that ships without them is refused at parse.
+	RulesRequired bool `json:"rules_required,omitempty"`
 }
 
 // archetypeTemplate is a shape's offer in the wizard's template row.
@@ -90,26 +117,6 @@ type archetypeTemplate struct {
 	// derived from a label. Equal orders fall back to the label, so a shape
 	// that does not care lands alphabetically among its peers.
 	Order int `json:"order,omitempty"`
-}
-
-// archetypeSettings are the machine-checkable prescriptions of a recipe.
-// Pointers so "the recipe does not say" stays distinguishable from "the recipe
-// says zero", since an unstated budget is not a budget of nothing.
-type archetypeSettings struct {
-	// AllowedTools is the exact allowlist the shape prescribes. An empty
-	// slice is meaningful (the conversational shape prescribes the default
-	// pool), so nil means unstated and [] means "grant nothing extra".
-	AllowedTools    *[]string `json:"allowed_tools,omitempty"`
-	MaxPlanSteps    *int      `json:"max_plan_steps,omitempty"`
-	MaxWorkerRounds *int      `json:"max_worker_rounds,omitempty"`
-	GapCheck        *bool     `json:"gap_check,omitempty"`
-
-	// RulesRequired marks a shape whose contract has to live in rules rather
-	// than in the persona, because rules outrank memory and the persona and
-	// win on the turn a plausible answer is already in the model's head. Two
-	// recipes argued exactly this while the records they describe carried no
-	// rules at all.
-	RulesRequired bool `json:"rules_required,omitempty"`
 }
 
 // loadArchetypes returns every embedded archetype doc, ordered by slug so the
@@ -176,22 +183,89 @@ func parseArchetype(name string, data []byte) (archetype, error) {
 	if strings.TrimSpace(hdr.Summary) == "" {
 		return archetype{}, fmt.Errorf("archetype %s: no summary, which is the one line Builder reads to choose between shapes", name)
 	}
-	if strings.TrimSpace(body) == "" {
+	recipe, persona := splitPersona(body)
+	if strings.TrimSpace(recipe) == "" {
 		return archetype{}, fmt.Errorf("archetype %s: no recipe below the frontmatter", name)
+	}
+	if hdr.Record != nil {
+		if strings.TrimSpace(hdr.Record.ID) == "" {
+			return archetype{}, fmt.Errorf("archetype %s: the record it ships has no id", name)
+		}
+		if strings.TrimSpace(hdr.Record.Name) == "" {
+			return archetype{}, fmt.Errorf("archetype %s: the record it ships has no name", name)
+		}
+		if strings.TrimSpace(hdr.Record.OrchestratorPrompt) != "" {
+			return archetype{}, fmt.Errorf("archetype %s: put the persona in a %q section, not in orchestrator_prompt", name, personaHeading)
+		}
+		if strings.TrimSpace(persona) == "" {
+			return archetype{}, fmt.Errorf("archetype %s: ships a record with no %q section, so there is no agent to instantiate", name, personaHeading)
+		}
+		if err := checkSeedPlaceholders(persona); err != nil {
+			return archetype{}, fmt.Errorf("archetype %s: %v", name, err)
+		}
+		hdr.Record.OrchestratorPrompt = persona
+		hdr.Record.Owner = seedOwner
+	} else if strings.TrimSpace(persona) != "" {
+		return archetype{}, fmt.Errorf("archetype %s: has a %q section but ships no record to wear it", name, personaHeading)
+	}
+	if hdr.RulesRequired {
+		if hdr.Record == nil {
+			return archetype{}, fmt.Errorf("archetype %s: requires rules but ships no record", name)
+		}
+		if strings.TrimSpace(hdr.Record.Rules) == "" {
+			return archetype{}, fmt.Errorf("archetype %s: says its contract belongs in rules, and ships a record carrying none", name)
+		}
 	}
 	if hdr.Template != nil {
 		if strings.TrimSpace(hdr.Template.Label) == "" {
 			return archetype{}, fmt.Errorf("archetype %s: offered as a wizard template with no label", name)
 		}
-		if hdr.Seed == "" {
-			return archetype{}, fmt.Errorf("archetype %s: offered as a wizard template with no seed to clone", name)
+		if hdr.Record == nil {
+			return archetype{}, fmt.Errorf("archetype %s: offered as a wizard template with no record to clone", name)
 		}
 	}
 	return archetype{
 		Slug:            strings.TrimSuffix(name, ".md"),
-		Body:            body,
+		Body:            recipe,
 		archetypeHeader: hdr,
 	}, nil
+}
+
+// personaHeading opens the section a shipped agent wears. Everything above it
+// is the recipe, written to Builder about construction; everything below is
+// the prompt itself, written to the model in second person.
+//
+// Two sections rather than two files because they are the same instructions at
+// two levels of detail, and keeping them apart is what let them disagree.
+// Builder is handed the recipe alone: it composes agents, and a persona it can
+// copy verbatim is one it will copy instead of composing.
+const personaHeading = "## Persona"
+
+// splitPersona divides a document at its persona heading. A document with no
+// such heading is all recipe.
+func splitPersona(body string) (recipe, persona string) {
+	marker := "\n" + personaHeading + "\n"
+	i := strings.Index(body, marker)
+	if i < 0 {
+		if strings.HasPrefix(body, personaHeading+"\n") {
+			return "", strings.TrimSpace(body[len(personaHeading)+1:])
+		}
+		return body, ""
+	}
+	return strings.TrimRight(body[:i], "\n"), strings.TrimSpace(body[i+len(marker):])
+}
+
+// archetypeRecords returns the agents the shapes ship, ready to run: the
+// framework's copy of each, with its runtime snippets resolved.
+func archetypeRecords() []AgentRecord {
+	var out []AgentRecord
+	for _, a := range loadArchetypes() {
+		if a.Record == nil {
+			continue
+		}
+		out = append(out, copySeedRecord(*a.Record))
+	}
+	return out
 }
 
 // archetypeBySlug returns one archetype's body, tolerating a name the model

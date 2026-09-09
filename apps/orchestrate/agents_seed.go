@@ -218,10 +218,11 @@ func sandboxPythonNoteSection() string {
 
 // seedAgents returns the built-in starters. Stable IDs so they stay
 // recognizable across rebuilds. Users clone these to customize.
-// coreSeedAgents are orchestrate's own seeds, declared as documents under
-// seeds/ and loaded by seeds_file.go. seedAgents() (see app_agents.go) wraps
-// this to also fold in cross-app registered App Agents, so both resolve
-// through the same shadow-overlay machinery.
+// coreSeedAgents are the framework's own agents, all of them documents: the
+// built-ins under builtin/ (Builder alone) plus the agent each SHAPE ships
+// under archetypes/. seedAgents() (see app_agents.go) wraps this to also fold
+// in cross-app registered App Agents, so all three resolve through the same
+// overlay machinery.
 func coreSeedAgents() []AgentRecord {
-	return fileSeedAgents()
+	return append(builtinAgents(), archetypeRecords()...)
 }

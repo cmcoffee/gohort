@@ -7,11 +7,7 @@
     "probe",
     "scout",
     "inspector"
-  ],
-  "settings": {
-    "max_worker_rounds": 14,
-    "gap_check": true
-  }
+  ]
 }
 ---
 # Archetype: Investigator sub-agent

@@ -8,13 +8,20 @@ import (
 	"testing"
 )
 
-// TestFileSeedsLoad pins the shared contract of every seed document: it
-// parses, it carries an id and a prompt, the framework owns it, and no two
+// TestBuiltinAgentsLoad pins the shared contract of every built-in document:
+// it parses, it carries an id and a prompt, the framework owns it, and no two
 // files claim the same id.
-func TestFileSeedsLoad(t *testing.T) {
-	got := fileSeedAgents()
+func TestBuiltinAgentsLoad(t *testing.T) {
+	got := builtinAgents()
 	if len(got) == 0 {
-		t.Fatal("no seeds loaded from seeds/*.md")
+		t.Fatal("no agents loaded from builtin/*.md")
+	}
+	// Builder is the only built-in, and the directory exists to say so. Every
+	// other framework agent is a shape under archetypes/, which users clone,
+	// follow and detach from; Builder cannot be one, because its authoring
+	// catalog comes from an identity check rather than from any record.
+	if len(got) != 1 || got[0].ID != "seed-builder" {
+		t.Errorf("builtin/ holds %d agent(s); it should hold Builder alone. A new framework agent is a SHAPE.", len(got))
 	}
 	seen := map[string]bool{}
 	for _, rec := range got {
@@ -39,41 +46,33 @@ func TestFileSeedsLoad(t *testing.T) {
 	}
 }
 
-// TestSeedDocumentsUnchanged proves the move out of Go was a no-op. Each
-// digest is of the file's body EXACTLY as written, before snippet expansion,
-// because two of these prompts resolve differently per host (the sandbox
-// Python probe) and per deployment (the memory-surface flag) and a digest of
-// the expanded text would fail on a machine that merely has a newer Python.
+// TestBuiltinDocumentUnchanged proves the moves were a no-op. The digest is of
+// the file's body EXACTLY as written, before snippet expansion, because
+// Builder's prompt resolves differently per host (the sandbox Python probe)
+// and a digest of the expanded text would fail on a machine with a newer
+// Python.
 //
-// The values were read off the AgentRecord literals that used to live in
-// agents_seed.go, and each prompt was compared byte for byte against its
-// literal before the literal was deleted. A failure here means an edit
-// changed a seed; if that was the intent, update the digest in the same
-// commit so the change is visible in the diff.
-func TestSeedDocumentsUnchanged(t *testing.T) {
-	for _, tc := range []struct {
-		file string
-		sum  string
-	}{
-		{"builder.md", "017cd19feec78829453f3e1b016c3e9829103701564b1964d052d74b8d9ed5f3"},
-		{"conversational.md", "02180e1ef22e3f234b5883aa2b9ca9e246f75327981abd2f134821df0ecf4702"},
-		{"knowledge_base.md", "a8254110d50093eaa81ad73ad41a1c46f002f8066cb4d09af3466139b7bd590c"},
-		{"research.md", "2a570183462b68e77a0837242ee79f83120c4bfc67f5d7757e3ac38afa636a30"},
-	} {
-		data, err := seedFilesFS.ReadFile("seeds/" + tc.file)
-		if err != nil {
-			t.Errorf("%s: %v", tc.file, err)
-			continue
-		}
-		_, body, err := splitFrontmatter(data)
-		if err != nil {
-			t.Errorf("%s: %v", tc.file, err)
-			continue
-		}
-		sum := sha256.Sum256([]byte(body))
-		if got := hex.EncodeToString(sum[:]); got != tc.sum {
-			t.Errorf("%s: prompt digest = %s (%d bytes), want %s", tc.file, got, len(body), tc.sum)
-		}
+// The value was read off the AgentRecord literal that used to live in
+// agents_seed.go, and the prompt was compared byte for byte against that
+// literal before it was deleted. A failure here means an edit changed the
+// agent; if that was the intent, update the digest in the same commit so the
+// change is visible in the diff.
+func TestBuiltinDocumentUnchanged(t *testing.T) {
+	const (
+		file = "builder.md"
+		want = "017cd19feec78829453f3e1b016c3e9829103701564b1964d052d74b8d9ed5f3"
+	)
+	data, err := builtinFS.ReadFile("builtin/" + file)
+	if err != nil {
+		t.Fatalf("%s: %v", file, err)
+	}
+	_, body, err := splitFrontmatter(data)
+	if err != nil {
+		t.Fatalf("%s: %v", file, err)
+	}
+	sum := sha256.Sum256([]byte(body))
+	if got := hex.EncodeToString(sum[:]); got != want {
+		t.Errorf("%s: prompt digest = %s (%d bytes), want %s", file, got, len(body), want)
 	}
 }
 
@@ -174,7 +173,7 @@ func TestSeedSettingsUnchanged(t *testing.T) {
 
 	// No seed publishes itself, and none of them answer another agent's
 	// dispatch by default.
-	for _, rec := range fileSeedAgents() {
+	for _, rec := range builtinAgents() {
 		if rec.Exposed {
 			t.Errorf("%s is exposed", rec.ID)
 		}
@@ -188,25 +187,25 @@ func TestSeedSettingsUnchanged(t *testing.T) {
 // names the memory-save tool by its live surface, the other appends a Python
 // note only when the sandbox interpreter is old enough to need it. A
 // placeholder that survives into a loaded prompt would reach the model as
-// prose.
+// prose. They now live in different libraries, which is the point of checking
+// them together: expansion belongs to the framework, not to a directory.
 func TestSeedSnippetsResolve(t *testing.T) {
-	for _, tc := range []struct{ file, token string }{
-		{"builder.md", "{{sandbox_python_note}}"},
-		{"research.md", "{{memory_save_call}}"},
-	} {
-		data, err := seedFilesFS.ReadFile("seeds/" + tc.file)
-		if err != nil {
-			t.Fatalf("%s: %v", tc.file, err)
-		}
-		_, body, err := splitFrontmatter(data)
-		if err != nil {
-			t.Fatalf("%s: %v", tc.file, err)
-		}
-		if n := strings.Count(body, tc.token); n != 1 {
-			t.Errorf("%s: %s appears %d times, want once", tc.file, tc.token, n)
-		}
+	data, err := builtinFS.ReadFile("builtin/builder.md")
+	if err != nil {
+		t.Fatalf("builder.md: %v", err)
 	}
-	for _, rec := range fileSeedAgents() {
+	if _, body, _ := splitFrontmatter(data); strings.Count(body, "{{sandbox_python_note}}") != 1 {
+		t.Errorf("builder.md names the sandbox note %d times, want once", strings.Count(body, "{{sandbox_python_note}}"))
+	}
+	doc, ok := archetypeBySlug("research")
+	if !ok {
+		t.Fatal("the research shape is gone")
+	}
+	if n := strings.Count(doc.Record.OrchestratorPrompt, "{{memory_save_call}}"); n != 1 {
+		t.Errorf("the research persona names the memory call %d times, want once", n)
+	}
+
+	for _, rec := range coreSeedAgents() {
 		if strings.Contains(rec.OrchestratorPrompt, "{{") {
 			t.Errorf("%s: an unexpanded placeholder reached the prompt", rec.ID)
 		}
@@ -221,11 +220,11 @@ func TestSeedSnippetsResolve(t *testing.T) {
 	}
 }
 
-// TestParseSeedFileRejectsBadFiles: a seed that does not parse has to be an
+// TestParseBuiltinAgentRejectsBadFiles: a seed that does not parse has to be an
 // error, because the alternative is an agent that silently is not there.
-func TestParseSeedFileRejectsBadFiles(t *testing.T) {
+func TestParseBuiltinAgentRejectsBadFiles(t *testing.T) {
 	good := "---\n{\"id\":\"seed-x\",\"name\":\"X\"}\n---\nbody\n"
-	if _, err := parseSeedFile("t.md", []byte(good)); err != nil {
+	if _, err := parseBuiltinAgent("t.md", []byte(good)); err != nil {
 		t.Fatalf("valid seed rejected: %v", err)
 	}
 
@@ -240,13 +239,13 @@ func TestParseSeedFileRejectsBadFiles(t *testing.T) {
 		"prompt in front": "---\n{\"id\":\"seed-x\",\"name\":\"X\",\"orchestrator_prompt\":\"hi\"}\n---\nbody\n",
 		"unknown snippet": "---\n{\"id\":\"seed-x\",\"name\":\"X\"}\n---\nbody {{sandbox_pyton_note}}\n",
 	} {
-		if _, err := parseSeedFile("t.md", []byte(doc)); err == nil {
+		if _, err := parseBuiltinAgent("t.md", []byte(doc)); err == nil {
 			t.Errorf("%s: parsed without error", name)
 		}
 	}
 
 	// Owner is stamped by the loader, so a file cannot hand itself to a user.
-	rec, err := parseSeedFile("t.md", []byte("---\n{\"id\":\"seed-x\",\"name\":\"X\",\"owner\":\"someone\"}\n---\nbody\n"))
+	rec, err := parseBuiltinAgent("t.md", []byte("---\n{\"id\":\"seed-x\",\"name\":\"X\",\"owner\":\"someone\"}\n---\nbody\n"))
 	if err != nil {
 		t.Fatalf("owner-bearing seed rejected: %v", err)
 	}
@@ -255,7 +254,7 @@ func TestParseSeedFileRejectsBadFiles(t *testing.T) {
 	}
 
 	// notes exist for the humans reading the file and never reach the record.
-	if _, err := parseSeedFile("t.md", []byte("---\n{\"id\":\"seed-x\",\"name\":\"X\",\"notes\":{\"why\":\"because\"}}\n---\nbody\n")); err != nil {
+	if _, err := parseBuiltinAgent("t.md", []byte("---\n{\"id\":\"seed-x\",\"name\":\"X\",\"notes\":{\"why\":\"because\"}}\n---\nbody\n")); err != nil {
 		t.Errorf("notes rejected: %v", err)
 	}
 }
@@ -308,19 +307,19 @@ func TestSeedCopyCoversEverySliceField(t *testing.T) {
 			}
 		}
 	}
-	for _, rec := range fileSeedAgents() {
+	for _, rec := range builtinAgents() {
 		walk(reflect.ValueOf(rec), "")
 	}
 
 	// And the copy is real: mutating what a caller got must not reach the
 	// next caller.
-	first := fileSeedAgents()
+	first := builtinAgents()
 	for i := range first {
 		for j := range first[i].AllowedTools {
 			first[i].AllowedTools[j] = "clobbered"
 		}
 	}
-	for _, rec := range fileSeedAgents() {
+	for _, rec := range builtinAgents() {
 		for _, tool := range rec.AllowedTools {
 			if tool == "clobbered" {
 				t.Fatalf("%s: allowed_tools is shared with the cache", rec.ID)
