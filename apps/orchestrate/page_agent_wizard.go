@@ -134,8 +134,17 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 		// hidden carrier and retitle the step around naming.
 		typeStep.Title = "Name"
 		typeStep.Intro = "Give it a name. Everything stays adjustable in the editor afterward."
+		// first_run rides along as a hidden carrier so the create endpoint
+		// knows this is the front-door agent, not the fourth one someone made.
+		firstRunDefault := ""
+		if firstRun {
+			firstRunDefault = "true"
+		}
 		typeStep.Fields = append(
-			[]ui.FormField{{Field: "agent_kind", Type: "hidden", Default: kindPreset}},
+			[]ui.FormField{
+				{Field: "agent_kind", Type: "hidden", Default: kindPreset},
+				{Field: "first_run", Type: "hidden", Default: firstRunDefault},
+			},
 			typeStep.Fields[1:]...)
 		if assistantRun {
 			typeStep.Intro = "Let's set up your personal assistant. Give it a name — you can rename it any time."
@@ -148,20 +157,41 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 		ShowWhen: "!template",
 		Intro:    "Describe the job in plain language. You are not writing the agent's prompt — this is the brief it gets drafted from, so concrete beats polished.",
 		Fields: []ui.FormField{
-			{Field: "purpose", Type: "textarea", Label: "What should it do?", Rows: 4, Required: true,
+			// Pick-first, then write. A blank textarea is the hardest question
+			// on the form for someone who has not used the thing yet: they do
+			// not know what it CAN do, so "describe the job" asks them to
+			// invent the product. These are the jobs it is actually good at,
+			// and picking two gets a working agent without typing anything.
+			{Field: "purpose_picks", Type: "checklist", Label: "What should it help with?",
+				ShowWhen: "agent_kind:assistant",
+				Options: []ui.SelectOption{
+					{Value: "keep track of my projects, deadlines and what I said I would do", Label: "Keep track of my work",
+						Help: "Projects, deadlines, follow-ups, and it remembers between conversations."},
+					{Value: "look things up on the web and answer with sources I can check", Label: "Look things up",
+						Help: "Searches, reads the pages, cites what it used."},
+					{Value: "answer questions from documents and files I give it", Label: "Answer from my documents",
+						Help: "Upload a corpus; it answers from that rather than from training."},
+					{Value: "draft and tidy up my writing: emails, notes, documents", Label: "Draft and edit writing"},
+					{Value: "watch things and tell me when they change or go wrong", Label: "Watch things for me",
+						Help: "A page, an endpoint, a feed. It stays quiet until something happens."},
+					{Value: "run work on a schedule and report back", Label: "Run things on a schedule",
+						Help: "Daily summaries, periodic checks, anything on a clock."},
+					{Value: "help me think something through before I commit to it", Label: "Think things through with me"},
+				}},
+			{Field: "purpose", Type: "textarea", Label: "What should it do?", Rows: 4,
 				Placeholder: "e.g. Answer questions about our internal deployment runbooks: find the relevant doc, quote the exact steps, and flag anything out of date."},
 			{Field: "example_tasks", Type: "textarea", Label: "Example requests", Rows: 3,
 				Help:        "A few real asks users will make of it, one per line. These sharpen the draft a lot.",
 				Placeholder: "How do I roll back the api tier?\nWhich runbooks mention the standby database?"},
-			{Field: "style", Type: "text", Label: "Tone & style (optional)",
-				Placeholder: "e.g. terse and technical / warm and plain-spoken"},
 		},
 	}
 	if assistantRun {
+		// Fields: 0 = purpose_picks, 1 = purpose (free text), 2 = example_tasks.
+		purposeStep.Fields[1].Label = "Anything else, in your own words?"
+		purposeStep.Fields[1].Rows = 3
 		purposeStep.Intro = "What do you want help with day to day? Plain language is perfect — this becomes the brief your assistant's working prompt is drafted from."
-		purposeStep.Fields[0].Label = "What should it help you with?"
-		purposeStep.Fields[0].Placeholder = "e.g. Keep track of my projects and deadlines, draft and tidy up emails, dig up answers when I ask, and remind me about the things I tell it to remember."
-		purposeStep.Fields[1].Placeholder = "What's on my plate this week?\nDraft a reply to this email.\nRemind me to call the vet tomorrow."
+		purposeStep.Fields[1].Placeholder = "e.g. Keep track of my projects and deadlines, draft and tidy up emails, dig up answers when I ask, and remind me about the things I tell it to remember."
+		purposeStep.Fields[2].Placeholder = "What's on my plate this week?\nDraft a reply to this email.\nRemind me to call the vet tomorrow."
 	}
 
 	// The personalization step — an assistant that knows you from message
@@ -169,6 +199,82 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 	// appears live when the user picks Assistant in step 1, and with the
 	// ?kind=assistant preset it's simply always there (the hidden field
 	// seeds the form state at render).
+	// Personality — first-run assistants only. This is the same `style`
+	// field the Purpose step offers every other agent as an optional extra,
+	// promoted to a question of its own and asked with real answers, because
+	// for the agent someone is going to talk to every day it is not a detail:
+	// it is most of what makes the thing feel like theirs rather than like a
+	// deployment. Free text still wins if they'd rather write it.
+	personaStep := ui.FormStep{
+		Title:    "Personality",
+		ShowWhen: "!template",
+		Intro:    "How should it write? This shapes its voice, not what it can do, and it is editable the moment you change your mind.",
+		Fields: []ui.FormField{
+			{Field: "style", Type: "select", Label: "Its manner",
+				Options: []ui.SelectOption{
+					{Value: "warm and plain-spoken, friendly without being chatty", Label: "Warm and plain-spoken"},
+					{Value: "terse and technical; assume expertise, skip the preamble", Label: "Terse and technical"},
+					{Value: "dry and a little wry, never at the expense of being useful", Label: "Dry, with a sense of humour"},
+					{Value: "formal and precise, the register of a written brief", Label: "Formal and precise"},
+					{Value: "", Label: "No preference, draft something sensible"},
+				}},
+			{Field: "traits", Type: "checklist", Label: "How it should handle you",
+				Options: []ui.SelectOption{
+					{Value: "leads with the answer, then the reasoning", Label: "Answer first, reasoning after"},
+					{Value: "pushes back when something looks wrong rather than agreeing", Label: "Pushes back",
+						Help: "Says when it thinks you are wrong, instead of going along with it."},
+					{Value: "asks before assuming what was meant, rather than guessing", Label: "Asks rather than assumes"},
+					{Value: "keeps replies short unless depth is asked for", Label: "Brief by default"},
+					{Value: "shows its working and cites what it actually used", Label: "Shows its working"},
+					{Value: "says plainly when it does not know, instead of hedging", Label: "Admits what it doesn't know"},
+					{Value: "offers the next step without being asked", Label: "Suggests the next move"},
+				}},
+			// Situations, not adjectives. "Pushes back" is a label someone has
+			// to translate; a quoted reply is the thing itself, and the answer
+			// they pick IS an example of the voice — which is far better
+			// material for the draft than the word "direct".
+			{Field: "on_wrong", Type: "select", Label: "You say something it believes is wrong",
+				ShowWhen: "agent_kind:assistant",
+				Options: []ui.SelectOption{
+					{Value: "corrects the user directly and immediately, without softening it", Label: "\"That is not right. It is in /etc, not /usr/local.\""},
+					{Value: "raises the doubt as a question and invites the user to check", Label: "\"I might be misreading this. Isn't it /etc?\""},
+					{Value: "states the correction plainly but leaves room for the user to know better", Label: "\"Worth checking: I have it as /etc, unless yours is custom.\""},
+					{Value: "", Label: "No preference"},
+				}},
+			{Field: "on_unsure", Type: "select", Label: "It doesn't know the answer",
+				ShowWhen: "agent_kind:assistant",
+				Options: []ui.SelectOption{
+					{Value: "says plainly that it does not know, and offers to find out", Label: "\"I don't know. Want me to look?\""},
+					{Value: "gives its best guess, clearly labelled as a guess, with the reasoning", Label: "\"Not certain. Best guess, and here is why.\""},
+					{Value: "goes and checks first, and answers once it actually knows", Label: "\"Give me a moment, I will check.\""},
+					{Value: "", Label: "No preference"},
+				}},
+			{Field: "on_vague", Type: "select", Label: "You ask for something big and vague",
+				ShowWhen: "agent_kind:assistant",
+				Options: []ui.SelectOption{
+					{Value: "asks one clarifying question before starting", Label: "\"Before I start: do you mean X or Y?\""},
+					{Value: "takes its best shot immediately and shows the assumptions it made", Label: "\"Assuming X, here's a first pass.\""},
+					{Value: "breaks the work into steps and asks which one to begin with", Label: "\"That's about four things. Which first?\""},
+					{Value: "", Label: "No preference"},
+				}},
+			{Field: "on_done", Type: "select", Label: "It finishes something you asked for",
+				ShowWhen: "agent_kind:assistant",
+				Options: []ui.SelectOption{
+					{Value: "reports completion and stops", Label: "\"Done.\""},
+					{Value: "reports completion and mentions anything it noticed on the way", Label: "\"Done. One thing looked odd while I was in there.\""},
+					{Value: "reports completion and proposes the next step", Label: "\"Done. Want me to do the follow-up too?\""},
+					{Value: "", Label: "No preference"},
+				}},
+			{Field: "style_notes", Type: "textarea", Label: "Anything else about how it should behave?", Rows: 3,
+				Help:        "Habits, not capabilities. What it should always do, or never do, in how it responds to you.",
+				Placeholder: "e.g. Ask before assuming what I meant.\nLead with the answer, then the reasoning.\nNever apologise for things that aren't its fault."},
+		},
+	}
+
+	if assistantRun {
+		personaStep.Intro = "This is the agent you will speak to every day, so it is worth a minute.\n\nPick the answers you would actually want to hear. There are no wrong ones — they shape how it talks to you, not what it can do, and all of it is editable the moment you change your mind."
+	}
+
 	aboutStep := ui.FormStep{
 		Title:    "About you",
 		ShowWhen: "!template;agent_kind:assistant",
@@ -243,7 +349,43 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 		redirectURL = "../?agent={id}"
 	}
 
-	steps := []ui.FormStep{typeStep, purposeStep, aboutStep, memoryStep, tuningStep, createStep, createFromTemplateStep}
+	steps := []ui.FormStep{typeStep, purposeStep, personaStep, aboutStep, memoryStep, tuningStep, createStep, createFromTemplateStep}
+
+	if firstRun {
+		// A different flow, not the same one retitled. Somebody meeting this
+		// for the first time is not configuring an agent — they are deciding
+		// who their agent IS. So: say what this is before asking anything,
+		// ask about character before capability, and leave the name until
+		// last, when there is something to suggest a name FROM. The generic
+		// wizard keeps its own order, where naming first is right because the
+		// user already knows what they came to build.
+		welcome := ui.FormStep{
+			Title: "Welcome",
+			Intro: "You are about to create your agent: the one you will actually talk to.\n\n" +
+				"It keeps its own memory of you and your work, and it can hand jobs to specialist agents you add later: a researcher, a watcher, something that answers from your own documents. You talk to one thing; it decides who does the work.\n\n" +
+				"The next few questions are about who it is rather than what it does — how it talks to you, and how it handles you when you're wrong. None of it is permanent; all of it is editable the moment you change your mind.",
+			Fields: []ui.FormField{
+				{Field: "agent_kind", Type: "hidden", Default: "assistant"},
+				{Field: "first_run", Type: "hidden", Default: "true"},
+			},
+		}
+		// Naming last: the suggest endpoint can only propose something good
+		// once it has the character and the job to go on. Asked first — which
+		// is where it used to be — it suggests into a vacuum.
+		nameStep := ui.FormStep{
+			Title: "Name",
+			Intro: "Last thing. Give it a name, or take one of the suggestions, which are drawn from everything you just said.",
+			Fields: []ui.FormField{
+				{Field: "name", Type: "text", Label: "Name", Required: true,
+					Placeholder: "e.g. Jarvis, Ada, Scout", SuggestURL: "../api/agents/suggest",
+					SuggestOnOpen: true},
+				{Field: "description", Type: "text", Label: "One line about it (optional)",
+					Placeholder: "Leave blank and it will write its own.",
+					SuggestURL:  "../api/agents/suggest"},
+			},
+		}
+		steps = []ui.FormStep{welcome, personaStep, purposeStep, aboutStep, nameStep, createStep}
+	}
 
 	head := wizardAdvancedLinkHTML()
 	title := "New agent"
@@ -422,8 +564,11 @@ func (T *OrchestrateApp) handleAgentWizard(w http.ResponseWriter, r *http.Reques
 	}
 
 	kind, kindOK := wizard_kinds[req.Kind]
+	// Picked jobs and typed words are the same answer arriving two ways; either
+	// alone is enough to draft from, which is the point of offering the picks.
+	req.Purpose = strings.TrimSpace(joinWizardPurpose(decodeWizardPicks(req.PurposePicks), req.Purpose))
 	if !kindOK || req.Name == "" || req.Purpose == "" {
-		http.Error(w, "agent type, name, and purpose are required", http.StatusBadRequest)
+		http.Error(w, "agent type, a name, and at least one thing for it to do are required", http.StatusBadRequest)
 		return
 	}
 
@@ -442,6 +587,18 @@ func (T *OrchestrateApp) handleAgentWizard(w http.ResponseWriter, r *http.Reques
 	}
 	// Assistant personalization ("About you" step) lands as the agent's
 	// initial Working notes, so it knows the user from message one.
+	// The first-run assistant is the front door: the agent a person talks to,
+	// which hands work to the specialists they make later. So it is created a
+	// CONDUCTOR — delegation, schedules and monitors — where a later assistant
+	// is not. That asymmetry is deliberate: conductor tools are a real block of
+	// prompt on every turn, which is the "forty tools instead of four" cost
+	// this system exists to avoid, and it is only worth paying for the agent
+	// whose job is actually to delegate.
+	//
+	// It is a DEFAULT, not a species: the toggle is in the editor either way.
+	if req.Kind == "assistant" && strings.TrimSpace(req.FirstRun) != "" {
+		rec.Fleet = true
+	}
 	if req.Kind == "assistant" {
 		if notes := wizardSeedNotes(req); notes != "" {
 			rec.EnableNotes = true
@@ -483,13 +640,27 @@ type wizardRequest struct {
 	// Template short-circuits the guided flow: clone this wizard
 	// template (a crafted seed) as the user's agent. "" = build from
 	// the brief below.
-	Template    string   `json:"template"`
-	Name        string   `json:"name"`
-	Description string   `json:"description"`
-	Purpose     string   `json:"purpose"`
-	Examples    string   `json:"example_tasks"`
-	Style       string   `json:"style"`
-	Triggers    []string `json:"triggers"`
+	Template    string `json:"template"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Purpose     string `json:"purpose"`
+	// PurposePicks is the checklist. RawMessage because a "checklist" field
+	// saves a JSON array, but a form nobody touched sends a string or nothing
+	// at all — the same shape apps/admin decodes for its capability lists.
+	PurposePicks json.RawMessage `json:"purpose_picks"`
+	Traits       json.RawMessage `json:"traits"`
+	OnWrong      string          `json:"on_wrong"`
+	OnUnsure     string          `json:"on_unsure"`
+	OnVague      string          `json:"on_vague"`
+	OnDone       string          `json:"on_done"`
+	Examples     string          `json:"example_tasks"`
+	Style        string          `json:"style"`
+	StyleNotes   string          `json:"style_notes"`
+	// A STRING, because the form carries it as a hidden field and a hidden
+	// field submits text: decoding "true" into a bool fails the whole request,
+	// which would have taken agent creation with it.
+	FirstRun string   `json:"first_run"`
+	Triggers []string `json:"triggers"`
 	// Memory-step dials; "" = the type's default.
 	// Memory: "personalized" | "lessons" | "none".
 	// Cortex: "on" | "off".
@@ -546,6 +717,18 @@ func wizardBrief(kindLabel string, req wizardRequest) string {
 	if s := strings.TrimSpace(req.Style); s != "" {
 		b.WriteString("Tone & style: " + s + "\n")
 	}
+	if tr := decodeWizardPicks(req.Traits); len(tr) > 0 {
+		b.WriteString("Character — how it deals with its user:\n")
+		for _, t := range tr {
+			b.WriteString("- " + t + "\n")
+		}
+	}
+	if m := wizardMoments(req); m != "" {
+		b.WriteString("How it should handle specific moments — the user picked these:\n" + m)
+	}
+	if n := strings.TrimSpace(req.StyleNotes); n != "" {
+		b.WriteString("How it should behave, in the user's words:\n" + n + "\n")
+	}
 	if c := strings.TrimSpace(req.CallYou); c != "" {
 		b.WriteString("The agent should address its user as: " + c + "\n")
 	}
@@ -594,12 +777,19 @@ func (T *OrchestrateApp) wizardDraftField(ctx context.Context, field, hint strin
 // brief when the LLM draft is unavailable — the agent still works on
 // day one and the editor's ✨ Suggest can rewrite it later.
 func wizardFallbackPrompt(name, purpose, style string) string {
+	// Sectioned, like a drafted prompt: this is what the agent gets when the
+	// model call fails, and a fallback that lands as one block would open in
+	// the editor's free-form area with every slot empty. A person arriving to
+	// fix a failed draft should find the same structure they would have edited
+	// had it succeeded.
 	var b strings.Builder
+	b.WriteString("## Role & voice\n\n")
 	b.WriteString("You are " + name + ". " + purpose)
 	if s := strings.TrimSpace(style); s != "" {
 		b.WriteString("\n\nTone and style: " + s + ".")
 	}
-	b.WriteString("\n\nDecompose non-trivial requests into a few concrete steps, brief each step with the specific deliverable and format you need back, and synthesize a direct answer. If the request is ambiguous, ask one clarifying question instead of guessing.")
+	b.WriteString("\n\n## Approach\n\n")
+	b.WriteString("Decompose non-trivial requests into a few concrete steps, brief each step with the specific deliverable and format you need back, and synthesize a direct answer. If the request is ambiguous, ask one clarifying question instead of guessing.\n")
 	return b.String()
 }
 
@@ -615,4 +805,65 @@ func wizardFallbackDescription(purpose string) string {
 		s = strings.TrimSpace(s[:157]) + "…"
 	}
 	return s
+}
+
+// decodeWizardPicks reads a "checklist" field, tolerating every shape a form
+// can send it: the JSON array it saves, a bare string from a control that was
+// never touched, or nothing at all. Rejecting an agent over the encoding of an
+// empty list would be a poor way to meet someone.
+func decodeWizardPicks(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var list []string
+	if json.Unmarshal(raw, &list) == nil {
+		return list
+	}
+	var one string
+	if json.Unmarshal(raw, &one) == nil && strings.TrimSpace(one) != "" {
+		// A single value, or the array re-encoded as a string by a client that
+		// stringified it on the way out.
+		var nested []string
+		if json.Unmarshal([]byte(one), &nested) == nil {
+			return nested
+		}
+		return []string{one}
+	}
+	return nil
+}
+
+// joinWizardPurpose renders the picked jobs and the typed sentence as one brief.
+func joinWizardPurpose(picks []string, written string) string {
+	var b strings.Builder
+	for _, p := range picks {
+		if p = strings.TrimSpace(p); p != "" {
+			b.WriteString("- " + p + "\n")
+		}
+	}
+	if w := strings.TrimSpace(written); w != "" {
+		if b.Len() > 0 {
+			b.WriteString("\nAlso, in the user's own words: ")
+		}
+		b.WriteString(w)
+	}
+	return b.String()
+}
+
+// wizardMoments renders the situational answers. They were asked as quoted
+// replies rather than adjectives, so what comes back is a description of the
+// BEHAVIOUR the user picked — which is what a persona draft can act on, where
+// "direct" would have to be interpreted first.
+func wizardMoments(req wizardRequest) string {
+	var b strings.Builder
+	for _, m := range []struct{ when, picked string }{
+		{"when the user says something it believes is wrong", req.OnWrong},
+		{"when it does not know the answer", req.OnUnsure},
+		{"when a request is big or vague", req.OnVague},
+		{"when it finishes something", req.OnDone},
+	} {
+		if p := strings.TrimSpace(m.picked); p != "" {
+			b.WriteString("- " + m.when + ": " + p + "\n")
+		}
+	}
+	return b.String()
 }

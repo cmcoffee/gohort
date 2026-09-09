@@ -423,6 +423,12 @@ type FormField struct {
 	// field type and triggers save. Supported types: text, textarea,
 	// number, rules.
 	//
+	// A server may answer {values: [...]} instead of {value} to offer
+	// SEVERAL candidates: the runtime shows them as a pick-one list with
+	// "write my own" alongside, and applies the chosen one through the
+	// same setter. Naming is what this is for — one generated name is a
+	// guess to argue with, three are a choice to make.
+	//
 	// Long-text types ("textarea", "rules") open the assist workbench
 	// instead of the hint prompt: the draft beside a conversation, with
 	// a walk back through earlier versions. Those turns POST the same
@@ -439,6 +445,16 @@ type FormField struct {
 	// "✨ Draft" — there are no sections there to target, and someone in
 	// raw mode has already chosen to work on the document as a whole.
 	SuggestURL string `json:"suggest_url,omitempty"`
+
+	// SuggestOnOpen fetches the suggestion as soon as the field's STEP
+	// becomes visible, rather than waiting for the button, and skips the
+	// hint prompt (nobody is there to answer one on arrival). Only fires
+	// when the field is still empty, and only once per field, so stepping
+	// back and forward does not re-roll an answer the user has seen.
+	//
+	// For a field whose whole purpose is to offer choices: a naming step
+	// that arrives with names beats a blank box next to a button.
+	SuggestOnOpen bool `json:"suggest_on_open,omitempty"`
 
 	// RowEditor adds an "Edit" button to each row of a Type=="rules" list,
 	// which swaps the field in place for a single-rule editor: a full-height

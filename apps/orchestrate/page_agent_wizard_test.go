@@ -1,6 +1,8 @@
 package orchestrate
 
 import (
+	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -147,5 +149,148 @@ func TestWizardKindsMatchEditorPresets(t *testing.T) {
 		if want, ok := vals["memory_mode"].(string); ok && want != def.memory_mode {
 			t.Errorf("kind %q memory_mode=%q but editor preset stamps %q", kind, def.memory_mode, want)
 		}
+	}
+}
+
+// TestTheFirstRunAssistantIsAConductor. The first agent someone meets is the
+// front door — the one they talk to, which hands work to the specialists they
+// make later. It used to be created with Fleet OFF, so the agent the README
+// describes as an executive with a cabinet could not delegate, schedule, or
+// set up a monitor.
+//
+// Also pins the carrier's TYPE. first_run rides the form as a hidden field,
+// and a hidden field submits text; decoding "true" into a bool fails the whole
+// request, which would take agent creation down with it.
+func TestTheFirstRunAssistantIsAConductor(t *testing.T) {
+	var req wizardRequest
+	if err := json.Unmarshal([]byte(`{"agent_kind":"assistant","name":"Ada","first_run":"true"}`), &req); err != nil {
+		t.Fatalf("a form-shaped payload no longer decodes: %v", err)
+	}
+	if req.FirstRun == "" {
+		t.Fatal("first_run did not survive the decode, so the front-door agent is indistinguishable from any other")
+	}
+
+	// The later assistant is NOT a conductor: those tools are a real block of
+	// prompt on every turn, and only the agent whose job is delegation should
+	// pay for them.
+	var later wizardRequest
+	if err := json.Unmarshal([]byte(`{"agent_kind":"assistant","name":"Second"}`), &later); err != nil {
+		t.Fatal(err)
+	}
+	if later.FirstRun != "" {
+		t.Error("an ordinary assistant looks like a first run")
+	}
+}
+
+// TestPurposePicksSurviveEveryShapeAFormSends. A "checklist" saves a JSON
+// array, but a control nobody touched sends a bare string or nothing, and some
+// clients stringify the array on the way out. Rejecting an agent over the
+// encoding of an empty list would be a poor way to meet someone.
+func TestPurposePicksSurviveEveryShapeAFormSends(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want int
+	}{
+		{"the array it saves", `["a","b"]`, 2},
+		{"a single bare string", `"a"`, 1},
+		{"the array stringified", `"[\"a\",\"b\"]"`, 2},
+		{"an empty array", `[]`, 0},
+		{"an empty string", `""`, 0},
+		{"absent", ``, 0},
+	}
+	for _, c := range cases {
+		got := decodeWizardPicks(json.RawMessage(c.raw))
+		if len(got) != c.want {
+			t.Errorf("%s: decoded %d pick(s), want %d (%v)", c.name, len(got), c.want, got)
+		}
+	}
+}
+
+// TestAPickedJobIsEnoughToDraftFrom: the picks exist so somebody can get a
+// working agent without typing anything, so a purpose made only of picks has
+// to satisfy the same requirement the free text used to.
+func TestAPickedJobIsEnoughToDraftFrom(t *testing.T) {
+	only := joinWizardPurpose([]string{"look things up", "watch things"}, "")
+	if strings.TrimSpace(only) == "" {
+		t.Fatal("picks alone produced an empty brief, so the form would refuse to create")
+	}
+	if !strings.Contains(only, "look things up") || !strings.Contains(only, "watch things") {
+		t.Errorf("a pick was dropped: %q", only)
+	}
+	both := joinWizardPurpose([]string{"look things up"}, "and keep an eye on the deploy")
+	if !strings.Contains(both, "look things up") || !strings.Contains(both, "keep an eye on the deploy") {
+		t.Errorf("picks and prose do not both reach the brief: %q", both)
+	}
+	if strings.TrimSpace(joinWizardPurpose(nil, "")) != "" {
+		t.Error("nothing at all should stay empty, so the handler still refuses it")
+	}
+}
+
+// TestTheFirstRunFlowAsksWhoBeforeWhat. Somebody meeting gohort for the first
+// time is not configuring an agent, they are deciding who their agent is. The
+// flow opens by saying what is being made, asks about character before
+// capability, and leaves the name until last — where the suggest endpoint has
+// the character and the job to draw on. Asked first, which is where it was, it
+// suggests into a vacuum.
+func TestTheFirstRunFlowAsksWhoBeforeWhat(t *testing.T) {
+	src, err := os.ReadFile("page_agent_wizard.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	i := strings.Index(body, "steps = []ui.FormStep{welcome,")
+	if i < 0 {
+		t.Fatal("the first-run flow no longer builds its own step order")
+	}
+	order := body[i : i+120]
+	for _, pair := range []struct{ earlier, later string }{
+		{"welcome", "personaStep"},     // say what this is before asking anything
+		{"personaStep", "purposeStep"}, // who it is before what it does
+		{"purposeStep", "nameStep"},    // and the name last, with something to suggest from
+	} {
+		if strings.Index(order, pair.earlier) > strings.Index(order, pair.later) {
+			t.Errorf("%s must come before %s in the first-run flow: %s", pair.earlier, pair.later, order)
+		}
+	}
+
+	// The welcome step carries the two hidden fields the rest of the flow
+	// depends on; without them the create endpoint cannot tell this is the
+	// front-door agent, and the assistant-only steps never show.
+	w := body[strings.Index(body, "welcome := ui.FormStep{"):]
+	w = w[:strings.Index(w, "nameStep :=")]
+	for _, f := range []string{`Field: "agent_kind", Type: "hidden"`, `Field: "first_run", Type: "hidden"`} {
+		if !strings.Contains(w, f) {
+			t.Errorf("the welcome step no longer carries %s", f)
+		}
+	}
+}
+
+// TestTheSituationalAnswersReachTheDraft. The personality step asks about
+// moments — being wrong, not knowing, a vague request, finishing — and offers
+// quoted replies rather than adjectives, because the reply the user picks IS
+// an example of the voice. That only pays off if the picked BEHAVIOUR reaches
+// the brief the persona is drafted from.
+func TestTheSituationalAnswersReachTheDraft(t *testing.T) {
+	got := wizardMoments(wizardRequest{
+		OnWrong:  "corrects the user directly and immediately, without softening it",
+		OnUnsure: "says plainly that it does not know, and offers to find out",
+	})
+	for _, want := range []string{
+		"says something it believes is wrong", "corrects the user directly",
+		"does not know the answer", "offers to find out",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the brief is missing %q:\n%s", want, got)
+		}
+	}
+	// The unanswered ones say nothing rather than asserting a default: "no
+	// preference" is an answer, and inventing behaviour the user did not pick
+	// is how a persona ends up with opinions nobody chose.
+	if strings.Contains(got, "big or vague") || strings.Contains(got, "finishes something") {
+		t.Errorf("an unanswered moment was given a value anyway:\n%s", got)
+	}
+	if wizardMoments(wizardRequest{}) != "" {
+		t.Error("a wizard nobody answered still produced character notes")
 	}
 }

@@ -69,7 +69,7 @@ func sectionGuidance(field, section string) string {
 func fieldGuidance(field string) string {
 	switch field {
 	case "name":
-		return "A short, human-readable agent name (2-5 words). Examples: \"Research Helper\", \"Code Reviewer\", \"Travel Planner\"."
+		return "FIVE candidate names, one per line, nothing else — no numbering, no commentary. Each 1-3 words, the kind of name someone would actually call this agent. Draw on its character and its job: a dry technical assistant that watches deploys earns a different name from a warm one that keeps track of a family calendar. Mix registers — a human first name, something descriptive, something with a bit of wit. Never repeat the user's own words back as the name. Examples of the FORM only: \"Ada\", \"Scout\", \"Deploy Watch\". Original examples: \"Research Helper\", \"Code Reviewer\", \"Travel Planner\"."
 	case "description":
 		return "One sentence summarizing what this agent is for. Examples: \"Decomposes research questions into subquestions, drafts factual answers, synthesizes.\""
 	case "orchestrator_prompt":
@@ -202,8 +202,18 @@ func (T *OrchestrateApp) handleAgentSuggest(w http.ResponseWriter, r *http.Reque
 	if req.Section != "" {
 		value = stripSectionHeading(value, req.Section)
 	}
+	out := map[string]any{"value": value}
+	// A name is chosen, not computed. The model returns a handful; the client
+	// shows them as a pick-one list with "write my own" alongside, and a single
+	// candidate still lands straight in the field as before.
+	if req.Field == "name" {
+		if cands := suggestionCandidates(resp.Content); len(cands) > 1 {
+			out["values"] = cands
+			out["value"] = cands[0]
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"value": value})
+	_ = json.NewEncoder(w).Encode(out)
 }
 
 // suggestTurn is one exchange in an assist conversation.
@@ -348,12 +358,27 @@ func buildSuggestPrompt(field, section, hint string, record map[string]any) stri
 		b.WriteString(g)
 		b.WriteString("\n\n")
 	}
+	// A whole-field draft of a SECTIONED field has to arrive in sections, or it
+	// lands as one undifferentiated block in the editor's free-form area with
+	// every slot left empty. The outline is the same declaration the editor
+	// renders and the per-section drafts read their guidance from, so what the
+	// model is told and what the author sees cannot drift.
+	if outline := fieldOutline(field); outline != "" {
+		b.WriteString("### Structure to write it in\n")
+		b.WriteString(outline)
+		b.WriteString("\n")
+	}
 	if h := strings.TrimSpace(hint); h != "" {
 		b.WriteString("### User's guidance\n")
 		b.WriteString(h)
 		b.WriteString("\n\n")
 	}
 	b.WriteString("## Your reply\n\n")
+	if fieldOutline(field) != "" {
+		b.WriteString("Return ONLY the finished markdown document, using exactly the `## ` headings listed above, in that order. " +
+			"Omit a heading entirely rather than writing a placeholder under it. No preamble, no explanation, no surrounding quotes or code fences.\n")
+		return b.String()
+	}
 	b.WriteString("Return ONLY the new value for the field — no preamble, no explanation, no surrounding quotes. Just the value as it should appear in the form input.")
 	return b.String()
 }
@@ -400,4 +425,55 @@ func cleanSuggestion(field, raw string) string {
 		return fmt.Sprintf("%d", n)
 	}
 	return s
+}
+
+// suggestionCandidates splits a multi-line suggestion into its options,
+// tolerating the shapes a model reaches for when told "one per line": bullets,
+// numbering, surrounding quotes, and a stray blank line. Anything that arrives
+// as one line comes back as one candidate, which the caller treats as the
+// ordinary single-value answer.
+func suggestionCandidates(raw string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(raw, "\n") {
+		t := strings.TrimSpace(line)
+		t = strings.TrimLeft(t, "-*•0123456789.) \t")
+		t = strings.Trim(t, "\"'`")
+		t = strings.TrimSpace(t)
+		// A model that ignores "nothing else" tends to add a sentence; a real
+		// name is short, so length is the cheap filter that keeps prose out.
+		if t == "" || len(t) > 40 || strings.Count(t, " ") > 4 {
+			continue
+		}
+		if key := strings.ToLower(t); !seen[key] {
+			seen[key] = true
+			out = append(out, t)
+		}
+		if len(out) == 6 {
+			break
+		}
+	}
+	return out
+}
+
+// fieldOutline renders the section outline a sectioned field expects, so a
+// WHOLE-field draft produces the same structure the editor offers slot by slot.
+// Empty for every other field, which keeps the one-value contract unchanged.
+func fieldOutline(field string) string {
+	if field != "orchestrator_prompt" {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Write it as markdown under these headings, in this order. Each is optional except the first: omit one rather than pad it.\n\n")
+	for _, sec := range orchestratorPromptSections {
+		fmt.Fprintf(&b, "## %s\n", sec.Title)
+		if sec.Help != "" {
+			fmt.Fprintf(&b, "%s\n", sec.Help)
+		}
+		if sec.Mode == "list" {
+			b.WriteString("Write this one as a markdown list, one item per line.\n")
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
 }

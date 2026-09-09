@@ -263,3 +263,49 @@ func TestOrchestratorPromptSectionsDeclareHelp(t *testing.T) {
 		}
 	}
 }
+
+// TestAWholeFieldDraftIsToldTheOutline. The prompt editor offers the persona
+// as five named sections, and the per-section drafts read their guidance from
+// that same declaration. A WHOLE-field draft was told none of it, so the
+// wizard produced one undifferentiated block: it opened in the editor's
+// free-form area with every slot empty, which is not what the author is shown
+// the field is for.
+func TestAWholeFieldDraftIsToldTheOutline(t *testing.T) {
+	p := buildSuggestPrompt("orchestrator_prompt", "", "", map[string]any{"name": "Ada"})
+	for _, sec := range orchestratorPromptSections {
+		if !strings.Contains(p, "## "+sec.Title) {
+			t.Errorf("the draft prompt never mentions the %q section", sec.Title)
+		}
+	}
+	if !strings.Contains(p, "using exactly the `## ` headings") {
+		t.Error("nothing tells the model to actually use the headings, so it may return prose anyway")
+	}
+
+	// A section-scoped draft is unchanged: it writes one body, with no
+	// heading, and must not be handed the whole outline.
+	one := buildSuggestPrompt("orchestrator_prompt", "Rules", "", map[string]any{})
+	if strings.Contains(one, "Structure to write it in") {
+		t.Error("a single-section draft was handed the whole outline")
+	}
+	if !strings.Contains(one, "no heading") {
+		t.Error("the single-section contract changed")
+	}
+
+	// Every other field keeps the plain one-value contract.
+	if strings.Contains(buildSuggestPrompt("description", "", "", map[string]any{}), "Structure to write it in") {
+		t.Error("an unsectioned field was given an outline")
+	}
+}
+
+// TestTheFallbackPromptIsSectionedToo. The fallback is what an agent gets when
+// the draft call fails, so it is exactly the case where someone will open the
+// editor to fix it. It should hand them the same structure a successful draft
+// would have.
+func TestTheFallbackPromptIsSectionedToo(t *testing.T) {
+	got := wizardFallbackPrompt("Ada", "keep track of my projects", "warm and plain-spoken")
+	for _, want := range []string{"## Role & voice", "## Approach", "You are Ada.", "warm and plain-spoken"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the fallback prompt is missing %q:\n%s", want, got)
+		}
+	}
+}

@@ -1162,6 +1162,14 @@
     // accept a suggestion (parsing for number, list rebuild for rules,
     // straight assignment for text/textarea).
     var fieldSetters = {};
+    // Where a field's suggestion candidates render: the row under its suggest
+    // button. Kept beside the setters because the two are looked up together
+    // (apply the pick, and put the picks somewhere the user can see them).
+    var suggestHosts = {};
+    // Fields that want their suggestion fetched when their step opens, paired
+    // with the runner that does it. Filled during field render, fired by the
+    // stepper.
+    var suggestOnOpen = [];
 
     function save(field, value) {
       if (submitMode) {
@@ -2634,12 +2642,31 @@
       if (fieldSuggestable || expandEditBtn) {
         var suggestRow = el('div', {class: 'ui-form-suggest-row'});
         if (fieldSuggestable) {
+          // A field that suggests on arrival has already made its offer, so
+          // its button is a re-roll rather than an invitation: "another set"
+          // reads as what it does, and it skips the guidance prompt the cold
+          // path asks for, because the user is answering the suggestions in
+          // front of them rather than starting from nothing.
+          var autoSuggest = !!f.suggest_on_open;
           var sBtn = el('button', {type: 'button', class: 'ui-form-suggest-btn'},
-            ['✨ Suggest']);
+            [autoSuggest ? '↻ Suggest again' : '✨ Suggest']);
           sBtn.addEventListener('click', function() {
-            runFieldSuggest(f, sBtn);
+            runFieldSuggest(f, sBtn, autoSuggest);
           });
           suggestRow.appendChild(sBtn);
+          var picks = el('div', {class: 'ui-suggest-host'});
+          suggestHosts[f.field] = picks;
+          fieldWrap.appendChild(picks);
+          // suggest_on_open: the field asks the moment its step arrives, so
+          // the user meets choices instead of a blank box and a button. Only
+          // when it is still empty: re-suggesting over an answer somebody
+          // already gave would be the form arguing with them.
+          if (f.suggest_on_open) {
+            suggestOnOpen.push({f: f, run: function() {
+              var cur = current[f.field];
+              if (cur == null || String(cur).trim() === '') runFieldSuggest(f, null, true);
+            }});
+          }
         }
         if (expandEditBtn) suggestRow.appendChild(expandEditBtn);
         fieldWrap.appendChild(suggestRow);
@@ -2716,7 +2743,7 @@
       });
     }
 
-    async function runFieldSuggest(f, btn) {
+    async function runFieldSuggest(f, btn, auto) {
       if (assistFieldTypes[f.type || 'text']) {
         var setter = fieldSetters[f.field];
         if (!setter) { showToast('No setter registered for ' + f.field); return; }
@@ -2724,13 +2751,46 @@
         openAssist(f, '', cur == null ? '' : String(cur), function(text) { setter(text); });
         return;
       }
-      var hint = await uiPrompt('Optional guidance — what should the AI consider? Leave blank to let it decide:', '');
+      // auto: the field asked for this the moment its step opened, so there is
+      // nobody to answer a prompt yet — and interrupting an arrival with a
+      // dialog is the opposite of what suggest_on_open is for.
+      var hint = auto ? '' : await uiPrompt('Optional guidance — what should the AI consider? Leave blank to let it decide:', '');
       if (hint === null) return; // user cancelled
-      btn.classList.add('busy');
-      btn.disabled = true;
+      if (btn) { btn.classList.add('busy'); btn.disabled = true; }
+      if (suggestHosts[f.field]) {
+        suggestHosts[f.field].innerHTML = '';
+        suggestHosts[f.field].appendChild(
+          el('div', {class: 'ui-suggest-pick-label'}, ['Finding suggestions…']));
+      }
       postSuggest(f, {hint: hint || ''}).then(function(d) {
         var setter = fieldSetters[f.field];
         if (!setter) { showToast('No setter registered for ' + f.field); return; }
+        // A backend may answer with SEVERAL candidates instead of one.
+        // Naming is the case it exists for: a single generated name is a
+        // guess the user then has to argue with, where three are a choice
+        // they can make in a second — and typing their own stays the
+        // default, because the field is right there either way.
+        var opts = (d && Array.isArray(d.values)) ? d.values.filter(function(v) {
+          return typeof v === 'string' && v.trim() !== '';
+        }) : [];
+        if (opts.length > 1 && suggestHosts[f.field]) {
+          var host = suggestHosts[f.field];
+          host.innerHTML = ''; // a re-roll replaces the set; stale picks would read as still on offer
+          host.appendChild(el('div', {class: 'ui-suggest-pick-label'}, ['Pick one, or write your own:']));
+          var row = el('div', {class: 'ui-suggest-picks'});
+          opts.forEach(function(v) {
+            var b = el('button', {type: 'button', class: 'ui-suggest-pick'}, [v]);
+            b.addEventListener('click', function() {
+              setter(v);
+              Array.prototype.forEach.call(row.children, function(c) { c.classList.remove('chosen'); });
+              b.classList.add('chosen');
+            });
+            row.appendChild(b);
+          });
+          host.appendChild(row);
+          return;
+        }
+        if (suggestHosts[f.field] && opts.length <= 1) suggestHosts[f.field].innerHTML = '';
         if (d && d.value !== undefined && d.value !== null) {
           setter(d.value);
         }
@@ -2747,10 +2807,15 @@
           });
         }
       }).catch(function(err) {
+        // A suggestion the user asked for and did not get is worth a dialog.
+        // One that failed on arrival is not: they never asked, the field is
+        // right there, and an error box in front of an empty form is a worse
+        // first impression than no suggestion at all.
+        if (suggestHosts[f.field]) suggestHosts[f.field].innerHTML = '';
+        if (auto) { showToast('No suggestions came back'); return; }
         window.uiAlert('Suggest failed: ' + (err && err.message || err));
       }).then(function() {
-        btn.classList.remove('busy');
-        btn.disabled = false;
+        if (btn) { btn.classList.remove('busy'); btn.disabled = false; }
       });
     }
 
@@ -3291,10 +3356,21 @@
           return out;
         }
 
+        var openFired = {};
         function show(i) {
           idx = i;
           bodies.forEach(function(b, j) { b.style.display = j === i ? '' : 'none'; });
           refreshRail();
+          // Fields on this step that asked to suggest on arrival. Once each:
+          // stepping back and forward should not re-roll an answer the user
+          // has already seen, or spend a model call to do it.
+          (steps[i].fields || []).forEach(function(sf) {
+            if (!sf || !sf.suggest_on_open || openFired[sf.field]) return;
+            openFired[sf.field] = true;
+            suggestOnOpen.forEach(function(entry) {
+              if (entry.f.field === sf.field) entry.run();
+            });
+          });
           var isFirst = nextVisible(i, -1) < 0;
           var isLast = nextVisible(i, +1) < 0;
           backBtn.style.visibility = isFirst ? 'hidden' : 'visible';
