@@ -55,3 +55,26 @@ else ending in `.md` is read as a seed, in filename order.
 Keep ids stable. `seed-<something>` ids are compared by name in dozens of places
 (`isSeedID`, the wizard templates, the scope pill, clone gating), so renaming an
 id is a code change, not a file edit.
+
+## Runtime snippets
+
+Two of these prompts are not fixed text, so a body can splice in a fragment the
+framework resolves at load time:
+
+| placeholder | expands to |
+|---|---|
+| `{{memory_save_call}}` | the memory-save tool's name on the live surface, which the collapsed remember/recall envelope renames |
+| `{{sandbox_python_note}}` | a Python compatibility block when the sandbox interpreter predates 3.7, and nothing otherwise |
+
+Expansion runs on every load rather than once at parse, so a prompt tracks the
+live flag and the live probe with no restart. A placeholder naming a snippet
+that does not exist is an error, because the alternative is shipping
+`{{sandbox_pyton_note}}` to the model as prose.
+
+An optional snippet carries its own separator, so write it flush against the
+text it follows (`…might be true.{{sandbox_python_note}}`) rather than after a
+blank line. An empty expansion then adds nothing at all.
+
+This is a substitution table for facts the framework knows about itself, not a
+template language. A seed that wants to compute something is a seed that
+belongs in Go.
