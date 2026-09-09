@@ -208,7 +208,7 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 	personaStep := ui.FormStep{
 		Title:    "Personality",
 		ShowWhen: "!template",
-		Intro:    "How should it write? This shapes its voice, not what it can do, and it is editable the moment you change your mind.",
+		Intro: "How should it write, and what should it do when the work goes sideways? This shapes its voice and its judgement, not what it can reach, and all of it is editable later.",
 		Fields: []ui.FormField{
 			{Field: "style", Type: "select", Label: "Its manner",
 				Options: []ui.SelectOption{
@@ -263,6 +263,45 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 					{Value: "reports completion and stops", Label: "\"Done.\""},
 					{Value: "reports completion and mentions anything it noticed on the way", Label: "\"Done. One thing looked odd while I was in there.\""},
 					{Value: "reports completion and proposes the next step", Label: "\"Done. Want me to do the follow-up too?\""},
+					{Value: "", Label: "No preference"},
+				}},
+			// The specialist's counterparts. Same idea, different situations:
+			// a specialist is usually answering a dispatch rather than talking
+			// to a person, so what defines it is not how it addresses you but
+			// what it does when the work goes sideways. These map onto the
+			// persona outline's "Failure modes" section, which that outline
+			// calls its highest-value part and which is exactly where a
+			// specialist earns its keep.
+			{Field: "on_nothing", Type: "select", Label: "It finds nothing",
+				ShowWhen: "agent_kind:specialist",
+				Options: []ui.SelectOption{
+					{Value: "reports plainly that it found nothing, and says where it looked", Label: "\"Nothing found. Here is where I looked.\""},
+					{Value: "reports nothing found, and proposes the next place worth trying", Label: "\"Nothing there. Worth trying X next?\""},
+					{Value: "widens the search once on its own before reporting an empty result", Label: "Tries a wider search first, then reports"},
+					{Value: "", Label: "No preference"},
+				}},
+			{Field: "on_conflict", Type: "select", Label: "Its sources disagree",
+				ShowWhen: "agent_kind:specialist",
+				Options: []ui.SelectOption{
+					{Value: "reports the disagreement and cites both sides rather than picking one", Label: "\"Two sources, two answers. Both cited.\""},
+					{Value: "picks the more authoritative source, says which and why", Label: "\"Going with the vendor doc over the blog, because…\""},
+					{Value: "reports the disagreement and asks which source to trust", Label: "\"These conflict. Which do you trust?\""},
+					{Value: "", Label: "No preference"},
+				}},
+			{Field: "on_outofreach", Type: "select", Label: "The request needs something it cannot reach",
+				ShowWhen: "agent_kind:specialist",
+				Options: []ui.SelectOption{
+					{Value: "says exactly what it would need and stops, rather than approximating", Label: "\"I would need access to X. Stopping here.\""},
+					{Value: "answers the part it can reach and names the part it cannot", Label: "\"Here is the half I can see. The rest needs X.\""},
+					{Value: "reasons from what it does have, labelling clearly that it is inference", Label: "\"Can't check directly. Inferring from Y:\""},
+					{Value: "", Label: "No preference"},
+				}},
+			{Field: "on_partial", Type: "select", Label: "It is only half sure",
+				ShowWhen: "agent_kind:specialist",
+				Options: []ui.SelectOption{
+					{Value: "gives the answer with an explicit confidence note attached", Label: "\"Likely X, though I am not certain.\""},
+					{Value: "gives only what it can stand behind and omits the rest", Label: "Says only the part it can defend"},
+					{Value: "does one more check before answering at all", Label: "Checks once more, then answers"},
 					{Value: "", Label: "No preference"},
 				}},
 			{Field: "style_notes", Type: "textarea", Label: "Anything else about how it should behave?", Rows: 3,
@@ -653,6 +692,10 @@ type wizardRequest struct {
 	OnUnsure     string          `json:"on_unsure"`
 	OnVague      string          `json:"on_vague"`
 	OnDone       string          `json:"on_done"`
+	OnNothing    string          `json:"on_nothing"`
+	OnConflict   string          `json:"on_conflict"`
+	OnOutOfReach string          `json:"on_outofreach"`
+	OnPartial    string          `json:"on_partial"`
 	Examples     string          `json:"example_tasks"`
 	Style        string          `json:"style"`
 	StyleNotes   string          `json:"style_notes"`
@@ -860,6 +903,10 @@ func wizardMoments(req wizardRequest) string {
 		{"when it does not know the answer", req.OnUnsure},
 		{"when a request is big or vague", req.OnVague},
 		{"when it finishes something", req.OnDone},
+		{"when it finds nothing", req.OnNothing},
+		{"when its sources disagree", req.OnConflict},
+		{"when the request needs something it cannot reach", req.OnOutOfReach},
+		{"when it is only partly sure of an answer", req.OnPartial},
 	} {
 		if p := strings.TrimSpace(m.picked); p != "" {
 			b.WriteString("- " + m.when + ": " + p + "\n")

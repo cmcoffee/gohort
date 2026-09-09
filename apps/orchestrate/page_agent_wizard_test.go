@@ -294,3 +294,65 @@ func TestTheSituationalAnswersReachTheDraft(t *testing.T) {
 		t.Error("a wizard nobody answered still produced character notes")
 	}
 }
+
+// TestSpecialistsAreAskedAboutFailureNotManners. A specialist usually answers
+// a dispatch rather than a person, so what defines it is not how it addresses
+// you but what it does when the work goes sideways. Its situational questions
+// are the counterparts of the assistant's, aimed at the persona outline's
+// "Failure modes" section, and the two sets must not bleed into each other.
+func TestSpecialistsAreAskedAboutFailureNotManners(t *testing.T) {
+	src, err := os.ReadFile("page_agent_wizard.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+
+	gate := func(field string) string {
+		i := strings.Index(body, `{Field: "`+field+`"`)
+		if i < 0 {
+			t.Fatalf("field %q is gone", field)
+		}
+		seg := body[i : i+300]
+		switch {
+		case strings.Contains(seg, "agent_kind:assistant"):
+			return "assistant"
+		case strings.Contains(seg, "agent_kind:specialist"):
+			return "specialist"
+		}
+		return "everyone"
+	}
+	for _, f := range []string{"on_wrong", "on_unsure", "on_vague", "on_done"} {
+		if g := gate(f); g != "assistant" {
+			t.Errorf("%s is shown to %s; it is written for someone being talked to", f, g)
+		}
+	}
+	for _, f := range []string{"on_nothing", "on_conflict", "on_outofreach", "on_partial"} {
+		if g := gate(f); g != "specialist" {
+			t.Errorf("%s is shown to %s; it is written for work that goes sideways", f, g)
+		}
+	}
+	// Manner and traits stay common: every agent has a voice, whoever is
+	// reading it.
+	for _, f := range []string{"style", "traits", "style_notes"} {
+		if g := gate(f); g != "everyone" {
+			t.Errorf("%s is gated to %s, but every agent has a voice", f, g)
+		}
+	}
+}
+
+// TestSpecialistAnswersReachTheDraftToo — the same rendering as the
+// assistant's, so a specialist's failure behaviour is not silently dropped.
+func TestSpecialistAnswersReachTheDraftToo(t *testing.T) {
+	got := wizardMoments(wizardRequest{
+		OnNothing:    "reports plainly that it found nothing, and says where it looked",
+		OnOutOfReach: "says exactly what it would need and stops, rather than approximating",
+	})
+	for _, want := range []string{"finds nothing", "says where it looked", "cannot reach", "would need and stops"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the brief is missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "sources disagree") {
+		t.Errorf("an unanswered moment was given a value:\n%s", got)
+	}
+}
