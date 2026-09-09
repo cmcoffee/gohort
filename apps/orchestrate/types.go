@@ -982,6 +982,22 @@ type AgentRecord struct {
 	// KnowledgeModel is a Phase 3 placeholder.
 	KnowledgeModel string `json:"knowledge_model,omitempty"`
 
+	// OverriddenFields names the json fields this record has decided for
+	// itself. It is meaningful only on a SEED SHADOW, where the record is an
+	// overlay rather than a copy: loadAgent starts from the framework's seed
+	// and takes only these fields from here, so a field the user never
+	// touched keeps tracking the seed instead of freezing at whatever it held
+	// the first time anything wrote a shadow. See agent_overlay.go.
+	OverriddenFields []string `json:"overridden_fields,omitempty"`
+
+	// OverlayRev marks OverriddenFields as authoritative. Zero means a shadow
+	// written before overlays existed, whose overrides have to be inferred by
+	// diffing it against the seed. It is a marker rather than a bool because
+	// gob omits a false bool and a nil slice alike, so an empty list of
+	// overrides would otherwise be indistinguishable from a legacy record and
+	// every untouched field would refreeze on the next read.
+	OverlayRev int `json:"overlay_rev,omitempty"`
+
 	Created time.Time `json:"created"`
 	Updated time.Time `json:"updated"`
 }

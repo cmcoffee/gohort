@@ -438,6 +438,7 @@ func (T *OrchestrateApp) Routes() {
 	// default-pool sentinel so toolbox-mode tools and other non-standard
 	// approvals are no longer silently blocked.
 	T.migrateSeedChatFrozenAllowedTools()
+	T.migrateSeedShadowOverlays()
 
 	// One-shot removal of the retired Operator seed. It folded into Chat
 	// (seed-chat) and is gone from seedAgents(); this deletes any stale

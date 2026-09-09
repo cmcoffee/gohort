@@ -7,7 +7,6 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/appagents"
 )
 
 const (
@@ -55,68 +54,25 @@ func loadAgent(db Database, id string) (AgentRecord, bool) {
 	// ENTIRELY, which froze the OrchestratorPrompt at that instant, so
 	// framework prompt updates never reached the deployment (the symptom:
 	// a flat input-token count across redeploys even after prompt edits).
-	// We now keep the shadow as the BASE (preserving AllowedTools, Rules,
-	// think budget, attached skills/collections, exposure, etc.) and ALWAYS
-	// refresh the prompt-bearing fields from the in-code seed, so prompt
-	// improvements land without discarding the user's customizations. A
-	// seed's OrchestratorPrompt is never user-editable in place (clone_agent
-	// is the path for that), so this only ever replaces a stale framework
-	// prompt with the current one. Builder above is the stricter sibling:
-	// fully locked, so it rebases everything except Rules onto code.
+	// The fix after that was a hand-written list of fields to refresh from
+	// the seed, which grew a rule per bug report and covered only the fields
+	// somebody had already noticed. So the SEED is the base now, and the
+	// shadow contributes exactly the fields the user decided for themselves
+	// (AllowedTools, Rules, think budget, attached skills/collections,
+	// exposure, and the rest). Everything else tracks. Builder above is the
+	// stricter sibling: fully locked, so it rebases everything except a short
+	// deployment list onto code.
 	if seed, ok := seedAgentByID(id); ok {
 		var shadow AgentRecord
 		if db.Get(agentsTable, id, &shadow) {
-			shadow.OrchestratorPrompt = seed.OrchestratorPrompt
-			shadow.Description = seed.Description
-			// Mode defines the agent's TYPE (chat vs orchestrator) — it's
-			// framework-owned operational state, not a user customization, so
-			// it MUST refresh from the seed. A minimal shadow created by a
-			// tool-approval has Mode=="" and would otherwise silently demote
-			// the Operator to a plain chat agent (the pinned-thread pin and
-			// the orchestrator nav both gate on Mode).
-			shadow.Mode = seed.Mode
-			// Channel + Fleet are framework-owned TYPE flags too (same
-			// rationale as Mode): a minimal tool-approval shadow has them
-			// false and would otherwise silently strip seed-chat's channel
-			// thread + fleet tools. Refresh from the seed. Per-agent override
-			// of these on a seed is deferred toggle-persistence work; clone
-			// for a different stance.
-			shadow.Cortex = seed.Cortex
-			shadow.Fleet = seed.Fleet
-			// PreMortem is a framework-owned behavior flag (no user toggle; a
-			// code-owned default for orchestrator seeds), so it refreshes from the
-			// seed too — otherwise an existing shadow (created by a tool-approval
-			// before this flag existed) never picks it up and the plan-first
-			// behavior silently doesn't land after redeploy.
-			shadow.PreMortem = seed.PreMortem
-			// App-agents (registered via RegisterAppAgent, e.g. Casefile's
-			// "Case Analyzer") are framework-owned for VISIBILITY too — the app
-			// decides Hidden, not the user. A stale shadow, created the moment a
-			// tool got mis-scoped onto the app-agent (the bundle path's
-			// saveAgent), otherwise pins Hidden at whatever it was then, so
-			// flipping the spec to Hidden:true never takes: the app-agent keeps
-			// showing in the fleet picker and the scope pills. Refresh from the
-			// spec so the app's decision wins (mirrors the prompt/Mode refresh).
-			// Regular seeds keep their shadow Hidden — a user CAN flip a normal
-			// agent's Hide toggle, and that's legitimate deployment state.
-			if _, isApp := appagents.AppAgentByID(id); isApp {
-				shadow.Hidden = seed.Hidden
-				// ForcePrivate refreshes too, and this is the root of the
-				// staleness the enforcement helper defends against: a minimal
-				// shadow minted by a tool-approval (the bundle path's saveAgent,
-				// same origin as the Hidden case above) carries
-				// ForcePrivate=false, and every field around it rebased while
-				// this one never did. So an app agent whose spec declares itself
-				// private stayed non-private in that user's store forever.
-				//
-				// OR, not assignment. Privacy ratchets UP only: a spec that says
-				// false must never clear a flag the user turned on for their own
-				// copy. Every other field here is framework-owned and overwrites;
-				// this one is framework-owned in one direction.
-				shadow.ForcePrivate = shadow.ForcePrivate || seed.ForcePrivate
-			}
-			shadow = selfHealAllowedTools(db, shadow)
-			return enforceSubAgentPosture(applyLegacyMode(shadow)), true
+			// The shadow is an OVERLAY: the framework's record wearing the
+			// user's decisions. Anything they never decided tracks the seed,
+			// which is what stops a fix from stopping at whoever happened to
+			// approve a tool once. resolveSeedShadow carries the reasoning,
+			// including which fields the framework keeps for itself.
+			merged := resolveSeedShadow(seed, shadow)
+			merged = selfHealAllowedTools(db, merged)
+			return enforceSubAgentPosture(applyLegacyMode(merged)), true
 		}
 		// No shadow exists: return the framework default.
 		return enforceSubAgentPosture(applyLegacyMode(seed)), true
@@ -245,6 +201,13 @@ func writeAgent(db Database, a AgentRecord, maySetLocked bool) (AgentRecord, err
 			a.Locked = existing.Locked
 		}
 	}
+	// What the CALLER decided, recorded before the invariants below get a
+	// vote. A rule that fires on save is the framework's decision, not the
+	// user's, and recording it as an override would freeze that field against
+	// every future framework change. The Locked preservation above runs first
+	// on purpose: an unchanged lock is not a user decision either, but losing
+	// it would be.
+	a = recordSeedOverrides(a)
 	if strings.TrimSpace(a.Name) == "" {
 		return a, fmt.Errorf("name is required")
 	}
@@ -300,7 +263,39 @@ func writeAgent(db Database, a AgentRecord, maySetLocked bool) (AgentRecord, err
 	}
 	a.Updated = now
 	db.Set(agentsTable, a.ID, a)
+	// Hand back what a load would now give, not the row that went to storage.
+	// For a seed shadow those differ: the row is a full snapshot, while the
+	// agent is the seed wearing this record's overrides, so returning the row
+	// would report values a subsequent read does not agree with.
+	if seed, ok := seedAgentByID(a.ID); ok && !isBuilderAgent(a.ID) {
+		return resolveSeedShadow(seed, a), nil
+	}
 	return a, nil
+}
+
+// recordSeedOverrides stamps a seed shadow with the fields it has decided for
+// itself, so every OTHER field keeps tracking the seed. A record that is not a
+// seed shadow is returned untouched: a user's own agent is a whole agent, not
+// an overlay on anything.
+//
+// Recomputed on every save rather than accumulated, which gives revert for
+// free: set a field back to the framework's value and it stops being an
+// override, so the next improvement to it lands.
+//
+// Builder is excluded because it resolves through applyBuilderDeploymentState,
+// the inverse policy: an allowlist of what the deployment owns rather than a
+// list of what the user changed.
+func recordSeedOverrides(a AgentRecord) AgentRecord {
+	if isBuilderAgent(a.ID) {
+		return a
+	}
+	seed, ok := seedAgentByID(a.ID)
+	if !ok {
+		return a
+	}
+	a.OverriddenFields = agentOverrides(seed, a)
+	a.OverlayRev = 1
+	return a
 }
 
 // listAgents returns agents visible to the given user — their own

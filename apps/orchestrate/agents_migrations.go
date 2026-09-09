@@ -354,3 +354,57 @@ func (T *OrchestrateApp) migrateLegacyOrchestratorMode() {
 		return changed
 	})
 }
+
+// migrateSeedShadowOverlays stamps every pre-overlay seed shadow with the
+// fields it had actually decided (see agent_overlay.go).
+//
+// A shadow written before overlays carries no list, so its overrides have to
+// be inferred by diffing it against the seed. That inference is correct only
+// against the seed the shadow was written from, and running it lazily at read
+// time compares against the CURRENT seed instead: a field the framework
+// changed after the shadow was written looks exactly like a field the user
+// edited, so it would freeze. Doing it once, now, fixes the comparison at the
+// moment the deployment upgrades, which is the last moment the two are still
+// in step.
+//
+// The effect on the user is nothing. Every difference their shadow has today
+// is preserved as an override, so their agents look exactly as they did
+// before; what changes is that every field they never touched starts tracking
+// the framework again.
+func (T *OrchestrateApp) migrateSeedShadowOverlays() {
+	if T == nil || T.DB == nil || AuthDB == nil {
+		return
+	}
+	authDB := AuthDB()
+	if authDB == nil {
+		return
+	}
+	stamped := 0
+	for _, u := range AuthListUsers(authDB) {
+		udb := UserDB(T.DB, u.Username)
+		if udb == nil {
+			continue
+		}
+		for _, seed := range seedAgents() {
+			if isBuilderAgent(seed.ID) {
+				continue // resolves through applyBuilderDeploymentState
+			}
+			var shadow AgentRecord
+			if !udb.Get(agentsTable, seed.ID, &shadow) {
+				continue
+			}
+			if shadow.OverlayRev != 0 {
+				continue
+			}
+			shadow.OverriddenFields = agentOverrides(seed, shadow)
+			shadow.OverlayRev = 1
+			udb.Set(agentsTable, seed.ID, shadow)
+			stamped++
+			Log("[orchestrate.migrate] seed overlay: %s for user=%q keeps %d decision(s), the rest now tracks",
+				seed.ID, u.Username, len(shadow.OverriddenFields))
+		}
+	}
+	if stamped > 0 {
+		Log("[orchestrate.migrate] migrateSeedShadowOverlays: stamped %d shadow(s)", stamped)
+	}
+}

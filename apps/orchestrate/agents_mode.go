@@ -185,6 +185,12 @@ func selfHealAllowedTools(db Database, a AgentRecord) AgentRecord {
 		a.AllowedTools = cleaned
 	}
 	a.Updated = time.Now()
+	// On a seed shadow, record the narrowed list as this deployment's
+	// decision. Healing is a fact about what exists HERE, so without recording
+	// it the overlay would hand back the seed's wider list on the next load,
+	// heal it again, and write again: a store write on every read of the
+	// agent, forever.
+	a = recordSeedOverrides(a)
 	db.Set(agentsTable, a.ID, a)
 	return a
 }
