@@ -34,7 +34,7 @@ Builder is handed the body only; the header is for the framework.
 | `summary` | required. The one line Builder reads when choosing between shapes. Write a sentence. |
 | `aliases` | the words a model actually types for this shape (`kb`, `probe`, `watcher`). Slug resolution also matches on a contained word, so near-misses still land. |
 | `seed` | the seed agent that ships this shape, when one does. |
-| `template` | this shape's label in the New Agent wizard's "Start from a template" row. Present means the wizard offers it, and picking it clones `seed`, so a `template` without a `seed` is refused. |
+| `template` | `{label, order}`. Present means the New Agent wizard offers this shape on its "Start from a template" row, and picking it clones `seed`, so a `template` without a `seed` (or without a label) is refused. |
 | `settings` | the parts of the recipe a test can check. Optional. |
 
 `settings` holds `allowed_tools`, `max_plan_steps`, `max_worker_rounds`,
@@ -61,8 +61,11 @@ pinning; the rest of a recipe is judgement, and prose is the right form for it.
 ## The wizard row
 
 The "Start from a template" options are read from these headers, ordered by
-label. Adding a shape to that row is adding a `template` line to its recipe;
-there is no list of templates anywhere else. The create endpoint guards on the
+`template.order` and then by label. Order is stated rather than derived because
+the first option is the prominent one, and which shape a new user most often
+wants is an editorial call; a shape that omits it lands alphabetically among
+its peers. Adding a shape to that row is adding a `template` block to its
+recipe; there is no list of templates anywhere else. The create endpoint guards on the
 same derivation, so a forged POST cannot clone a seed the row does not offer.
 
 ## Adding one

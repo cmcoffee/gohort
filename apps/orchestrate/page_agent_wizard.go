@@ -51,6 +51,7 @@ var wizard_kinds = map[string]struct {
 type wizard_template struct {
 	id    string
 	label string
+	order int
 }
 
 // wizardTemplates reads the offered templates off the archetype library: a
@@ -63,18 +64,23 @@ type wizard_template struct {
 // code change in a file about form rendering, and nothing tied the offered
 // label to the recipe describing the same agent.
 //
-// Ordered by label so the row is stable and reads alphabetically however many
-// shapes gain one.
+// Ordered by each recipe's declared order, then by label, so the row is stable
+// and a shape that expresses no preference lands alphabetically.
 func wizardTemplates() []wizard_template {
 	var out []wizard_template
 	for _, a := range loadArchetypes() {
-		if a.Template == "" {
+		if a.Template == nil {
 			continue
 		}
-		// parseArchetype refuses a template with no seed, so Seed is set.
-		out = append(out, wizard_template{id: a.Seed, label: a.Template})
+		// parseArchetype refuses a template with no seed or no label.
+		out = append(out, wizard_template{id: a.Seed, label: a.Template.Label, order: a.Template.Order})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].label < out[j].label })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].order != out[j].order {
+			return out[i].order < out[j].order
+		}
+		return out[i].label < out[j].label
+	})
 	return out
 }
 

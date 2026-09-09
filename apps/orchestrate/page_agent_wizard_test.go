@@ -147,10 +147,18 @@ func TestWizardTemplatesResolve(t *testing.T) {
 		}
 	}
 
-	// Ordered by label, so the row does not shuffle when a shape is added.
+	// Research leads the row. It is the shape a new user most often wants,
+	// and the first option is the prominent one, so this is an editorial
+	// decision the recipes state rather than something a sort derives.
+	if tpls[0].id != "seed-research" {
+		t.Errorf("the row leads with %q; Research should be first", tpls[0].id)
+	}
+	// Declared order first, label as the tiebreak, so the row does not
+	// shuffle when a shape is added.
 	for i := 1; i < len(tpls); i++ {
-		if tpls[i-1].label > tpls[i].label {
-			t.Errorf("templates are out of order: %q before %q", tpls[i-1].label, tpls[i].label)
+		prev, cur := tpls[i-1], tpls[i]
+		if prev.order > cur.order || (prev.order == cur.order && prev.label > cur.label) {
+			t.Errorf("templates are out of order: %q (%d) before %q (%d)", prev.label, prev.order, cur.label, cur.order)
 		}
 	}
 }

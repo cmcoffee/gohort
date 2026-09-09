@@ -62,22 +62,34 @@ type archetypeHeader struct {
 	// up with agents of different reach.
 	Seed string `json:"seed,omitempty"`
 
-	// Template, when set, is this shape's label in the New Agent wizard's
-	// "Start from a template" row. Present means the wizard offers it; the
-	// record it clones is Seed, so a template without a seed has nothing to
-	// copy and is refused at parse.
+	// Template, when set, offers this shape in the New Agent wizard's "Start
+	// from a template" row. The record it clones is Seed, so a template
+	// without a seed has nothing to copy and is refused at parse.
 	//
-	// The label lives here because this file is where the shape is described.
-	// It used to be a two-entry list of {seed id, label} pairs in
+	// It lives here because this file is where the shape is described. It
+	// used to be a two-entry list of {seed id, label} pairs in
 	// page_agent_wizard.go, which meant a shape's name for users sat a
 	// package away from the shape, and adding one was a code change.
-	Template string `json:"template,omitempty"`
+	Template *archetypeTemplate `json:"template,omitempty"`
 
 	// Settings are the parts of the recipe a test can check. Optional, and
 	// deliberately narrow: what the agent may reach, how far it may go, and
 	// whether the shape's contract belongs in rules. Everything else about a
 	// recipe is prose because it is judgement.
 	Settings *archetypeSettings `json:"settings,omitempty"`
+}
+
+// archetypeTemplate is a shape's offer in the wizard's template row.
+type archetypeTemplate struct {
+	// Label is what the user reads on the row.
+	Label string `json:"label"`
+
+	// Order places it. The row is a short list of starting points where the
+	// first one is the most prominent, and that is an editorial decision
+	// about which shape a new user most often wants, not something to be
+	// derived from a label. Equal orders fall back to the label, so a shape
+	// that does not care lands alphabetically among its peers.
+	Order int `json:"order,omitempty"`
 }
 
 // archetypeSettings are the machine-checkable prescriptions of a recipe.
@@ -167,8 +179,13 @@ func parseArchetype(name string, data []byte) (archetype, error) {
 	if strings.TrimSpace(body) == "" {
 		return archetype{}, fmt.Errorf("archetype %s: no recipe below the frontmatter", name)
 	}
-	if hdr.Template != "" && hdr.Seed == "" {
-		return archetype{}, fmt.Errorf("archetype %s: offered as a wizard template with no seed to clone", name)
+	if hdr.Template != nil {
+		if strings.TrimSpace(hdr.Template.Label) == "" {
+			return archetype{}, fmt.Errorf("archetype %s: offered as a wizard template with no label", name)
+		}
+		if hdr.Seed == "" {
+			return archetype{}, fmt.Errorf("archetype %s: offered as a wizard template with no seed to clone", name)
+		}
 	}
 	return archetype{
 		Slug:            strings.TrimSuffix(name, ".md"),
