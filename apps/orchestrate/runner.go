@@ -1037,18 +1037,49 @@ func (pr *planRun) catalogLog() error {
 	}
 	Log("[orchestrate.orch] session=%s msgs=%d tools_to_llm[%d]=%v (worker_subset=%v private=%v)",
 		pr.sessID, len(pr.msgs), len(pr.allTools), pr.cat.allNames, pr.cat.workerNames, t.privateMode)
-	if len(pr.cat.workerTools) > 0 {
-		pr.sys += "\n\n" + buildToolUseDirective(pr.cat.workerTools)
+	// The three blocks that DESCRIBE the catalog are appended by
+	// appendCatalogPromptBlocks, at the end of prepareMessages. They used to
+	// land here, and both halves of that were wrong: they were built before
+	// the machine-phase narrowing that decides the final catalog, and the
+	// tool roster was built from the WORKER SUBSET while the request carried
+	// the whole thing. See appendCatalogPromptBlocks.
+	return nil
+}
+
+// appendCatalogPromptBlocks adds the prompt blocks that describe the catalog,
+// once the catalog has stopped changing.
+//
+// The roster block asserts "every tool named here is live and callable this
+// turn". A prompt that says that about the wrong list does not merely omit a
+// tool, it OVERRIDES the schemas in the same request: the model reads the
+// sentence, not the payload.
+//
+// Observed live, and it cost days. The roster was built from
+// pr.cat.workerTools, nine tools, while thirty-five schemas shipped. A support
+// agent read the nine, reported accurately and repeatedly that knowledge_search
+// was not in its callable set, and refused to call it. When a guardrail forced
+// the call it SUCCEEDED and returned real documentation, whereupon the agent
+// told the user that result was not genuine and should not be trusted, which is
+// the correct inference from a false premise and worse than the silence it
+// replaced. The line immediately below the bug already used pr.allTools, which
+// is what made it read as a slip rather than a decision.
+//
+// Called after the phase narrowing in prepareMessages rather than during
+// catalog assembly, because a machine phase can still remove tools after the
+// catalog is built. Listing a tool the phase just took away teaches the model
+// to call it and be refused; the same false-roster failure pointed the other
+// way.
+func (pr *planRun) appendCatalogPromptBlocks() {
+	if len(pr.allTools) > 0 {
+		pr.sys += "\n\n" + buildToolUseDirective(pr.allTools)
 	}
 	pr.sys += noWebAccessNotice(pr.allTools)
-	// Append per-tool prompt fragments (opt-in via AgentToolDef.Prompt).
-	// Lands between the framework directive and any subsequent
-	// dynamic additions — close to the catalog so the model reads
-	// per-tool usage notes alongside the tool list.
+	// Per-tool prompt fragments (opt-in via AgentToolDef.Prompt). Kept
+	// adjacent to the roster so the model reads per-tool usage notes
+	// alongside the tool list.
 	if frag := RenderToolPromptFragments(pr.allTools); frag != "" {
 		pr.sys += "\n\n" + frag
 	}
-	return nil
 }
 
 func (pr *planRun) resolveRouting() {
@@ -1564,6 +1595,9 @@ func (pr *planRun) prepareMessages() {
 		Log("[orchestrate.orch] session=%s phase=%s tools_to_llm_effective[%d]=%v",
 			pr.sessID, pr.mach.Name(), len(pr.allTools), effective)
 	}
+	// The catalog is final here, so the blocks that describe it can be
+	// written. Still the tail of the system prompt, exactly where they were.
+	pr.appendCatalogPromptBlocks()
 	// pre_input guardrail: judge the incoming request before round 1 so a
 	// topical/disclosure rule ("never mention salary") is caught at the door,
 	// not after the model has already narrated the answer in an interim turn.

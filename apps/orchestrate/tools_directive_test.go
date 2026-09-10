@@ -67,3 +67,53 @@ func TestToolUseDirective_FatFormStillRenders(t *testing.T) {
 		t.Error("fat digest should still carry description first-lines")
 	}
 }
+
+// The roster describes the CATALOG, never the worker subset.
+//
+// It used to be built from pr.cat.workerTools while the request carried
+// pr.allTools, and the block asserts "every tool named here is live and
+// callable this turn". A prompt that says that about the wrong list does not
+// merely omit a tool, it overrides the schemas shipped alongside it: the model
+// reads the sentence, not the payload.
+//
+// Live cost: nine names in the roster against thirty-five schemas. The agent
+// reported accurately and repeatedly that knowledge_search was not callable,
+// refused to call it, and when a guardrail forced the call and it returned real
+// documentation, told the user that result was not genuine.
+func TestTheToolRosterNamesTheWholeCatalogNotTheWorkerSubset(t *testing.T) {
+	pr := &planRun{
+		allTools: []AgentToolDef{
+			{Tool: Tool{Name: "knowledge_search", Description: "search the corpus"}},
+			{Tool: Tool{Name: "web_search", Description: "search the web"}},
+		},
+		cat: catalogState{workerTools: []AgentToolDef{
+			{Tool: Tool{Name: "web_search", Description: "search the web"}},
+		}},
+	}
+	pr.appendCatalogPromptBlocks()
+
+	if !strings.Contains(pr.sys, "knowledge_search") {
+		t.Errorf("a tool the model can call must be named in the roster:\n%s", pr.sys)
+	}
+	if !strings.Contains(pr.sys, "web_search") {
+		t.Errorf("the worker tools are part of the catalog too:\n%s", pr.sys)
+	}
+}
+
+// And it is written after the machine-phase narrowing, so a phase that removed
+// a tool does not leave it advertised. Same false-roster failure, pointed the
+// other way: naming a tool the phase just took away teaches the model to call
+// it and be refused.
+func TestTheToolRosterFollowsTheNarrowedCatalog(t *testing.T) {
+	pr := &planRun{allTools: []AgentToolDef{
+		{Tool: Tool{Name: "web_search", Description: "search the web"}},
+	}}
+	pr.appendCatalogPromptBlocks()
+
+	if strings.Contains(pr.sys, "knowledge_search") {
+		t.Errorf("a tool absent from the final catalog must not be advertised:\n%s", pr.sys)
+	}
+	if !strings.Contains(pr.sys, "web_search") {
+		t.Errorf("what survived narrowing must still be named:\n%s", pr.sys)
+	}
+}
