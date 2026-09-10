@@ -515,3 +515,29 @@ func TestFailureMemoryCarriesOneAttemptBack(t *testing.T) {
 		t.Error("a second failure in the same run must reach the limit")
 	}
 }
+
+// A refusal has to say the tool survived it. Observed live on a support agent:
+// the gate correctly refused a fabricated doc_id, and the agent concluded that
+// fetch_knowledge_doc was not in its tool set, told the user so, and repeated
+// it every turn afterwards once the claim was in its own history. "was NOT
+// called", delivered as a tool error, reads as absence on its own.
+//
+// Same lesson the user-denial message learned earlier: a refusal refuses the
+// OPERATION, not the route to it, and the difference has to be said out loud.
+func TestARefusalSaysTheToolItselfStillWorks(t *testing.T) {
+	known := collectKnownIDs("", []Message{{Role: "user", Content: "why are my license counts off"}})
+	refusal := idProvenanceRefusal("fetch_knowledge_doc",
+		map[string]any{"doc_id": "3bcd03bc-baea-43a0-98b2-f65e3c900d64"}, known)
+	if refusal == "" {
+		t.Fatal("a fabricated doc_id must be refused")
+	}
+	for _, want := range []string{
+		"'fetch_knowledge_doc' itself is available and working",
+		"What was refused is this one argument",
+		"absent from your tool set",
+	} {
+		if !strings.Contains(refusal, want) {
+			t.Errorf("refusal lacks %q:\n%s", want, refusal)
+		}
+	}
+}

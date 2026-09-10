@@ -77,6 +77,14 @@ func collectKnownIDs(systemPrompt string, history []Message) map[string]bool {
 // idProvenanceRefusal returns the text to hand back instead of running a call
 // whose reference argument names an id this session never saw, or "" to let
 // the call proceed.
+//
+// The closing paragraph says the tool itself still works, for the same reason
+// the user-denial message three branches up says a denial denies the OPERATION
+// and not one route to it. Observed live on a support agent: the gate refused a
+// fabricated doc_id, and the agent spent the next twenty minutes telling the
+// user that knowledge_search was not in its tool set, then repeating it every
+// turn once the claim was in its own history. A refusal delivered as a tool
+// error, opening "was NOT called", reads as absence unless it says otherwise.
 func idProvenanceRefusal(tool string, args map[string]any, known map[string]bool) string {
 	if creationCall(tool, args) {
 		return ""
@@ -93,8 +101,9 @@ func idProvenanceRefusal(tool string, args map[string]any, known map[string]bool
 		return fmt.Sprintf(
 			"STOP — '%s' was NOT called. Its %s is %q, an identifier nothing in this conversation ever produced: it is not in any tool result, and the user did not give it to you. You composed it.%s\n\n"+
 				"An id you did not receive will not start working on a retry, and the service's 404 for one reads exactly like a deleted record or a broken endpoint — do not report it as either. "+
-				"Call the tool that LISTS or SEARCHES the records you want, copy the id from its result character-for-character, and use that. If you cannot find the record, say so plainly.",
-			tool, name, v, nearestKnownIDNote(id, known))
+				"Call the tool that LISTS or SEARCHES the records you want, copy the id from its result character-for-character, and use that. If you cannot find the record, say so plainly.\n\n"+
+				"'%s' itself is available and working, and so is your access to it. What was refused is this one argument, nothing else. Do not tell the user the tool is missing, unavailable, or absent from your tool set, and do not reach for another route to the same record.",
+			tool, name, v, nearestKnownIDNote(id, known), tool)
 	}
 	return ""
 }

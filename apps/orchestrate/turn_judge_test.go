@@ -323,6 +323,23 @@ func TestPromptRulesOutActionsThatAreNotListed(t *testing.T) {
 	}
 }
 
+// The judge convicted a reply for reporting, truthfully, that a tool was not in
+// its tool set: "there is no evidence that knowledge_search specifically was
+// unavailable". The evidence never carries the catalog, so that demand cannot
+// be met by any turn, and the retry pushes an honest agent toward claiming it
+// searched.
+func TestPromptRefusesToConvictAStatementOfInability(t *testing.T) {
+	for _, want := range []string{
+		"what the assistant HAS rather than about what it did",
+		"You are shown what RAN, never what was AVAILABLE",
+		"proof of a negative",
+	} {
+		if !strings.Contains(turnJudgeSysPrompt, want) {
+			t.Fatalf("the judge is never told %q", want)
+		}
+	}
+}
+
 // The Cortex shape of the PriorWork gap. A standing thread exists so that
 // scheduled work reports into it, so the ordinary thing to say there is a recap
 // — and a recap reaches the judge with an empty action list, because the runs
