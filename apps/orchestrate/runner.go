@@ -75,6 +75,9 @@ type planRun struct {
 	capturedMulti     bool
 	capturedFormSteps []map[string]any
 	capturedReply     string
+	// withheldLeadIn is prose a tool round streamed and the length guard took
+	// back, kept so the turn can put it back if the guard's bet does not pay.
+	withheldLeadIn string
 
 	// plan_set fixation guard: a Qwen failure mode is re-submitting a
 	// rejected (single-step / vacuous) plan_set round after round, ignoring
@@ -1236,8 +1239,18 @@ func (pr *planRun) onStepHandler(info StepInfo) {
 		// intends to do. The clear exists for ORDINARY agents that mis-emit a
 		// full answer before a tool (and then repeat it at the end); Builder's
 		// pre-tool prose is the plan, not a doubled answer.
-		if len(cleaned) > leadInMaxLen && !isBuilderAgent(t.agent.ID) {
+		// A round whose only tools SHOW the user something is the one case
+		// where long prose beside a call is correct rather than early: the
+		// tool is the delivery and the prose is the explanation that goes
+		// with it. Clearing it leaves a link with nothing said about it.
+		if len(cleaned) > leadInMaxLen && !isBuilderAgent(t.agent.ID) && !presentationOnlyRound(info.ToolCalls) {
 			t.sse.Send(map[string]any{"kind": "chunk_replace", "id": id, "text": ""})
+			// Held, not dropped. The guard is betting the final round will say
+			// this again; restoreWithheldLeadIn collects if it does not.
+			pr.withheldLeadIn = cleaned
+			t.turnDiag("lead-in-withheld", fmt.Sprintf(
+				"%d characters the assistant wrote alongside a tool call were held back: prose that long before a tool is usually an answer written early and repeated at the end, which would show twice. It is restored after the reply if the final answer comes back much shorter.",
+				len(cleaned)))
 			pr.streamedBuf.Reset()
 			return
 		}
@@ -1336,6 +1349,69 @@ func (pr *planRun) retractRound() {
 	pr.streamMsgID = ""
 	pr.streamedBuf.Reset()
 	t.setCurrentMsgID("")
+}
+
+// presentationOnlyRound reports whether every tool this round called exists to
+// SHOW the user something.
+//
+// Prose beside one of those is not an answer written too early, which is what
+// the length guard is looking for. It is the explanation that belongs with the
+// thing being shown, and the tool call IS the delivery, so there is no later
+// round that would repeat it and no double to prevent.
+func presentationOnlyRound(calls []ToolCall) bool {
+	if len(calls) == 0 {
+		return false
+	}
+	for _, c := range calls {
+		switch c.Name {
+		case "show_link", "show_html":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// restoreWithheldLeadIn puts back the prose the length guard took, on the turns
+// where the bet it made did not pay.
+//
+// The guard clears a long tool-round reply on the reasoning that the model will
+// say the same thing in its final round, since the loop's history still carries
+// the text. Usually true. When it is not, everything the user was going to be
+// told is gone and nothing anywhere says so. Observed on a turn that created a
+// Jira issue, linked it, wrote 1109 characters about what it had done alongside
+// show_link, and then finished with a 30-character "done": the work happened,
+// the account of it did not survive, and the only trace was a Debug line about
+// an unrelated dedup.
+//
+// Restores only when what the user ended up seeing is less than half of what
+// was taken. A model that genuinely restated its answer clears that bar without
+// trying, so the double-emit the guard exists to prevent stays prevented.
+//
+// The restored text lands after the short reply rather than in its original
+// place, which reads slightly out of order. That is the price of only knowing
+// the bet failed once the turn is over, and it beats the alternative.
+func (pr *planRun) restoreWithheldLeadIn(question, shown string) {
+	held := strings.TrimSpace(pr.withheldLeadIn)
+	pr.withheldLeadIn = ""
+	// A turn that ends by ASKING is not one whose answer went missing, and
+	// dropping a paragraph in after the question would talk over it.
+	if held == "" || strings.TrimSpace(question) != "" {
+		return
+	}
+	visible := strings.TrimSpace(shown)
+	if visible == "" {
+		visible = strings.TrimSpace(pr.lastFinalizedText)
+	}
+	if len(visible)*2 >= len(held) {
+		return // the final reply carried it, exactly as the guard assumed
+	}
+	Log("[orchestrate.orch] restoring %d withheld character(s): the final reply came back at %d", len(held), len(visible))
+	pr.t.turnDiag("lead-in-restored", fmt.Sprintf(
+		"%d characters written alongside a tool call were held back, and the final reply came back at %d, so the held text was restored below it rather than lost.",
+		len(held), len(visible)))
+	pr.emitBubble(held)
+	pr.t.captureMidTurnBubble(held)
 }
 
 // emitCapturedAsBubble produces a new bubble for captured
@@ -1669,6 +1745,9 @@ func (pr *planRun) runLoop() {
 }
 
 func (pr *planRun) finish() (steps []PlanStep, question, directReply string, err error) {
+	// Deferred so it sees what the turn actually ended up showing, including
+	// the bubbles the branches below emit.
+	defer func() { pr.restoreWithheldLeadIn(question, directReply) }()
 	t := pr.t
 	// Catch a final round whose OnStep didn't fire (rare — happens
 	// when the loop terminates between content stream and the OnStep
