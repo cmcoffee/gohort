@@ -2544,6 +2544,25 @@ func (lr *loopRun) finalRoundStallGuards() loopAction {
 	return actNone
 }
 
+// catalogToolNames is what this turn could call, sorted so the judge's prompt
+// stays byte-stable across turns that share a catalog.
+//
+// Read off the handler map rather than off any prompt block, because the
+// handler map is what a call is actually dispatched against: a name in it is
+// callable, and a name absent from it is not, whatever else in the request
+// claims about either.
+func (lr *loopRun) catalogToolNames() []string {
+	if len(lr.handlers) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(lr.handlers))
+	for n := range lr.handlers {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (lr *loopRun) finalRoundJudges() loopAction {
 	// Pre-finalize injection drain. Mid-flight user notes are
 	// normally picked up at round start, but a note that lands
@@ -2591,6 +2610,7 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 		Request:       LatestUserContent(lr.messages),
 		Reply:         lr.rs.resp.Content,
 		ToolCalls:     lr.turnToolCalls,
+		CatalogTools:  lr.catalogToolNames(),
 		PriorWork:     lr.cfg.priorWork(),
 		PriorReports:  lr.cfg.priorReports(),
 		ToolErrors:    lr.cumulativeToolErrors,

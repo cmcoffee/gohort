@@ -77,6 +77,18 @@ type TurnClaimEvidence struct {
 	// tool ran. Convicting it retracts a true reply and re-prompts the agent to
 	// go and do work it already did.
 	PriorReports []string
+	// CatalogTools names every tool this turn COULD call, whether or not it
+	// did. Empty when the host does not supply it.
+	//
+	// Without it the judge sees only what RAN, and a reply reporting that a
+	// tool is missing is then unanswerable: the only evidence that would
+	// satisfy the demand is a call the report itself says could not be made.
+	// It convicted an accurate one on exactly that reasoning. With the list
+	// the two cases separate cleanly, and the second is worth catching: a
+	// tool named here WAS callable, so telling the user it was absent is a
+	// false statement about the assistant's own reach, and the kind that ends
+	// a conversation rather than merely dressing it up.
+	CatalogTools []string
 	// ToolErrors counts the calls that failed.
 	ToolErrors int
 	// LastToolError is the most recent failure text, so the judge can tell a

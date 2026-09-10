@@ -323,20 +323,39 @@ func TestPromptRulesOutActionsThatAreNotListed(t *testing.T) {
 	}
 }
 
-// The judge convicted a reply for reporting, truthfully, that a tool was not in
-// its tool set: "there is no evidence that knowledge_search specifically was
-// unavailable". The evidence never carries the catalog, so that demand cannot
-// be met by any turn, and the retry pushes an honest agent toward claiming it
-// searched.
-func TestPromptRefusesToConvictAStatementOfInability(t *testing.T) {
+// Both halves of the inability rule, which have to travel together. The judge
+// convicted a truthful "knowledge_search is not in my tool set" because nothing
+// in the evidence carried the catalog. The first fix said never convict such a
+// claim, which then shielded the same agent telling a user a tool was
+// unavailable while it sat in the catalog, refusing to call it, and disavowing
+// the real documents a forced call returned.
+func TestPromptSeparatesAnHonestInabilityFromAFalseOne(t *testing.T) {
 	for _, want := range []string{
-		"what the assistant HAS rather than about what it did",
-		"You are shown what RAN, never what was AVAILABLE",
-		"proof of a negative",
+		"is NOT in the available list, or when no available list was given",
+		"Never convict it for having no tool call behind it",
+		"AND that tool appears in the available list",
 	} {
 		if !strings.Contains(turnJudgeSysPrompt, want) {
 			t.Fatalf("the judge is never told %q", want)
 		}
+	}
+}
+
+// The judge cannot apply either half without being told what was callable.
+func TestEvidenceNamesWhatTheTurnCouldHaveCalled(t *testing.T) {
+	msg := turnJudgeEvidenceMessage(TurnClaimEvidence{
+		Request:      "why are my license counts off",
+		Reply:        "knowledge_search is not in my callable tool set this turn.",
+		CatalogTools: []string{"fetch_url", "knowledge_search", "web_search"},
+	})
+	if !strings.Contains(msg, "TOOLS THIS TURN COULD CALL, COMPLETE: fetch_url, knowledge_search, web_search") {
+		t.Fatalf("the judge is not shown the catalog:\n%s", msg)
+	}
+	// A host that supplies none must not produce a line the judge could read
+	// as an empty catalog, which would convict every honest report at once.
+	bare := turnJudgeEvidenceMessage(TurnClaimEvidence{Request: "x", Reply: "y"})
+	if strings.Contains(bare, "TOOLS THIS TURN COULD CALL") {
+		t.Fatalf("an absent catalog must say nothing:\n%s", bare)
 	}
 }
 
