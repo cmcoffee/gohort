@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -182,5 +183,46 @@ func TestNoCorpusByEitherRouteStillWithholdsTheKnowledgeTools(t *testing.T) {
 
 	if got := corpusNames(turn); got != "" {
 		t.Errorf("nothing retrievable must stay tool-less; got %q", got)
+	}
+}
+
+// corpusToolDefs is the ONE place the knowledge pair is minted, and this test
+// is what keeps it that way.
+//
+// Three callers need the corpus: the conversational catalog, a machine step,
+// and a worker step. Every one of them that hand-rolled it drifted. The step
+// path never had the tools at all. The worker path had them and appended them
+// UNCONDITIONALLY, skipping the "nothing retrievable" gate the other two
+// applied, so a worker on an agent with an empty corpus got a search tool over
+// nothing and was invited to compose the doc_ids its handler then refused. It
+// also resolved the legacy-vs-unified split in two branches of its own, a
+// second copy of a decision that has one home.
+//
+// A fourth caller will drift the same way. Route it through corpusToolDefs.
+func TestOnlyCorpusToolDefsMintsTheKnowledgePair(t *testing.T) {
+	allowed := map[string]bool{
+		"knowledge.go":      true, // the constructors themselves
+		"runner_routing.go": true, // corpusToolDefs: the one gate
+		"unified_memory.go": true, // reuses the def's HANDLER for a drill-down; exposes no tool
+	}
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package dir: %v", err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || allowed[name] {
+			continue
+		}
+		body, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		for _, ctor := range []string{"searchKnowledgeToolDef()", "fetchKnowledgeDocToolDef()"} {
+			if strings.Contains(string(body), ctor) {
+				t.Errorf("%s builds the knowledge pair directly (%s). Call corpusToolDefs instead, "+
+					"or the empty-corpus gate and the memory-mode split drift again.", name, ctor)
+			}
+		}
 	}
 }

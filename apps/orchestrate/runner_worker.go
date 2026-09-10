@@ -109,10 +109,21 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	// Three layers, each gated by its own helper — same split as
 	// the orchestrator catalog in runPlan. Workers are the ones
 	// actually researching, so they get write access to the Inferred
-	// Memory layer when it's enabled. Knowledge is always available.
-	if !unifiedMemoryEnabled() {
-		tools = append(tools, t.searchKnowledgeToolDef(), t.fetchKnowledgeDocToolDef())
-		toolNames = append(toolNames, "knowledge_search", "fetch_knowledge_doc")
+	// Memory layer when it's enabled.
+	//
+	// The corpus comes from corpusToolDefs, the one helper all three
+	// callers share (conversational catalog, machine step, worker). This
+	// path is the drift it was extracted to prevent and had already
+	// drifted twice over: it appended the knowledge pair UNCONDITIONALLY,
+	// skipping the "nothing retrievable" gate the other two apply, so a
+	// worker on an agent with an empty corpus was handed a search tool
+	// over nothing and invited to make up the doc_ids its handler then had
+	// to refuse. And it resolved the legacy-vs-unified split itself, in
+	// two separate branches, which is the second copy of a decision that
+	// now lives in one place.
+	for _, td := range t.corpusToolDefs() {
+		tools = append(tools, td)
+		toolNames = append(toolNames, td.Tool.Name)
 	}
 	for _, td := range t.skillToolDefs() {
 		tools = append(tools, td)
@@ -122,14 +133,6 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	// too — same reason as the orchestrator catalog: discoverability
 	// problem, not a wiring problem.)
 	if unifiedMemoryEnabled() {
-		// Collapsed surface (see frameworkConversationalTools). recall fronts
-		// knowledge search, so the legacy knowledge tools above are skipped too.
-		if t.hasAnyMemoryLayer() {
-			for _, td := range t.unifiedMemoryTools() {
-				tools = append(tools, td)
-				toolNames = append(toolNames, td.Tool.Name)
-			}
-		}
 		if !t.explicitOff() {
 			tools = append(tools, t.linkEntitiesToolDef(), t.recallAboutToolDef(), t.forgetGraphToolDef())
 		}
