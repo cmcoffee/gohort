@@ -503,6 +503,13 @@ type chatTurn struct {
 	// loop that tunes the threshold. Populated by renderRecallHints; read under mu.
 	hintedDocIDs   map[string]bool
 	hintedDocIDsMu sync.Mutex
+	// hintedKnowledge counts the curated-corpus documents that same search
+	// found this turn, pointers and auto-promoted bodies together. Read by
+	// corpusToolDefs: a search that came back with documents is direct proof
+	// the agent has retrievable content, and it outranks the configuration
+	// predicate that tries to infer the same thing from collection
+	// attachments. Populated by renderRecallHints; read under hintedDocIDsMu.
+	hintedKnowledge int
 	// deliveredSkills tracks which skills' instructions have been shown
 	// THIS turn (via read_skill, skill_knowledge_search, or trigger
 	// injection) so they aren't repeated. Per-turn only — never persisted,

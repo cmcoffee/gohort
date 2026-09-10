@@ -123,3 +123,64 @@ func TestAutoPromote(t *testing.T) {
 		t.Fatalf("mid pointer missing:\n%s", block)
 	}
 }
+
+// corpusNames is the knowledge pair a turn would be given, by name.
+func corpusNames(turn *chatTurn) string {
+	var names []string
+	for _, td := range turn.corpusToolDefs() {
+		names = append(names, td.Tool.Name)
+	}
+	return strings.Join(names, " ")
+}
+
+// The live failure this signal exists for. agentHasRetrievableContent INFERS a
+// corpus from collection attachments; renderRecallHints SEARCHES one. They
+// disagreed, and the losing reading was the damaging one: the hint block
+// printed document titles and named fetch_knowledge_doc(doc_id=…) as the way to
+// read them, while the catalog carried neither tool. The agent reported,
+// accurately, that the tool was not in its tool set, and kept reporting it.
+//
+// A search that came back with documents is proof. It outranks the inference.
+func TestASearchThatFoundDocumentsMintsTheKnowledgeTools(t *testing.T) {
+	turn, _ := machineTurnFixture(t, residentMachine())
+	turn.agent.AttachedCollections = nil
+	turn.agent.IngestAttachments = false
+	if got := corpusNames(turn); got != "" {
+		t.Fatalf("fixture should start with nothing retrievable, got %q", got)
+	}
+
+	turn.hintedKnowledge = 3 // the recall search found three curated documents
+	got := corpusNames(turn)
+	for _, want := range []string{"knowledge_search", "fetch_knowledge_doc"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("a turn whose search found documents must carry %q; got %q", want, got)
+		}
+	}
+}
+
+// One-way, and it has to be: recall hints are per-agent opt-in and skip short
+// queries, so zero hits means "found nothing OR never looked". It can prove a
+// corpus is reachable and must never be read as proof that one is not.
+func TestTheHintSignalNeverWithholdsTheKnowledgeTools(t *testing.T) {
+	turn, _ := machineTurnFixture(t, residentMachine())
+	turn.agent.AttachedCollections = []string{"c-kiteworks"}
+	turn.hintedKnowledge = 0 // hints off, or a query too short to run one
+
+	if got := corpusNames(turn); !strings.Contains(got, "knowledge_search") {
+		t.Errorf("a configured corpus stands on its own without a hint; got %q", got)
+	}
+}
+
+// The gate the conversational catalog has always applied, unchanged: no corpus
+// by either route, no tool. A knowledge tool over an empty corpus invites
+// doc_ids the handler must then refuse.
+func TestNoCorpusByEitherRouteStillWithholdsTheKnowledgeTools(t *testing.T) {
+	turn, _ := machineTurnFixture(t, residentMachine())
+	turn.agent.AttachedCollections = nil
+	turn.agent.IngestAttachments = false
+	turn.hintedKnowledge = 0
+
+	if got := corpusNames(turn); got != "" {
+		t.Errorf("nothing retrievable must stay tool-less; got %q", got)
+	}
+}

@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"fmt"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -155,14 +156,61 @@ func (t *chatTurn) corpusToolDefs() []AgentToolDef {
 		// recall fronts knowledge search under the collapsed surface, and
 		// recall(id="doc:…") is the drill-down.
 		if !t.hasAnyMemoryLayer() {
+			t.noteToolWithheld("the unified memory tools",
+				"the collapsed surface is on and this agent has no memory layer to reach")
 			return nil
 		}
 		return t.unifiedMemoryTools()
 	}
 	if !t.agentHasRetrievableContent() {
+		// The predicate INFERS from configuration what a search can answer
+		// outright, and the recall nudge has usually already run that search
+		// this turn. When it came back with documents, that is proof and it
+		// outranks the inference.
+		//
+		// Withholding the tools over the disagreement is the worst of the two
+		// readings, because the same turn is about to show the model those
+		// documents: renderRecallHints prints their titles and names
+		// fetch_knowledge_doc(doc_id=…) as the way to read them. A door is
+		// advertised and the handle removed, and the agent reports, accurately
+		// and repeatedly, that the tool is not in its tool set.
+		if n := t.knowledgeHitsThisTurn(); n > 0 {
+			Log("[orchestrate.orch] agent=%s knowledge tools minted over a negative config check: the recall search found %d curated hit(s) this turn", t.agent.ID, n)
+			t.turnDiag("corpus-config-disagrees", fmt.Sprintf(
+				"This agent's configuration says it has no knowledge corpus, but the recall search found %d document(s) in one this turn, so the knowledge tools were provided anyway. Until the collection is attached to the agent itself (or marked deployment-scope), the tools appear only on turns whose question happens to match something, which reads from inside the turn as a tool that comes and goes.", n))
+			return []AgentToolDef{t.searchKnowledgeToolDef(), t.fetchKnowledgeDocToolDef()}
+		}
+		t.noteToolWithheld("knowledge_search and fetch_knowledge_doc", corpusWithheldWhy)
 		return nil
 	}
 	return []AgentToolDef{t.searchKnowledgeToolDef(), t.fetchKnowledgeDocToolDef()}
+}
+
+// corpusWithheldWhy names every input agentHasRetrievableContent consults. All
+// of them are false whenever it returns false, so this is the whole reason
+// rather than a summary of one.
+const corpusWithheldWhy = "the agent has no attached collections, uploaded-file ingestion is off, no skill active this turn carries a collection, and no deployment-scope collection exists"
+
+// noteToolWithheld is the breadcrumb a self-gating framework tool leaves when it
+// decides not to appear.
+//
+// The framework logs what a catalog CONTAINS and never why something is absent,
+// so every diagnosis of "the model says it lacks X" starts by trying to prove a
+// negative from a positive list. The narrowing path solved this already:
+// narrowCatalog reports what it dropped, what a phase named that the catalog
+// lacks, and when an allow-list missed entirely. The minting path reported
+// nothing at all, and one silent `return nil` here cost days of a live support
+// agent answering from recollection while three plausible causes were ruled out
+// one at a time.
+//
+// Log rather than turnDiag: most agents have no corpus and never wanted one, so
+// a per-turn entry in the trail a person reads would be noise. The trail is
+// reserved for the disagreement above, which is always worth acting on.
+func (t *chatTurn) noteToolWithheld(tools, reason string) {
+	if t == nil {
+		return
+	}
+	Log("[orchestrate.orch] agent=%s withheld %s: %s", t.agent.ID, tools, reason)
 }
 
 func (t *chatTurn) frameworkConversationalTools(sess *ToolSession) []AgentToolDef {

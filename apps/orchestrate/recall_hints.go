@@ -369,18 +369,35 @@ func (t *chatTurn) recordRecallHints(promoted []SearchHit, scored []recallHint) 
 			memCount++
 		}
 	}
+	t.hintedDocIDsMu.Lock()
 	if len(ids) > 0 {
-		t.hintedDocIDsMu.Lock()
 		if t.hintedDocIDs == nil {
 			t.hintedDocIDs = map[string]bool{}
 		}
 		for id := range ids {
 			t.hintedDocIDs[id] = true
 		}
-		t.hintedDocIDsMu.Unlock()
 	}
+	// Counted whether or not any hit carried a doc_id: a hit with no parent
+	// document still proves the corpus has something in it, which is the
+	// question corpusToolDefs is asking.
+	t.hintedKnowledge = len(promoted) + knCount
+	t.hintedDocIDsMu.Unlock()
 	Log("[recall.hints] agent=%s shown=%d promoted=%d top=%.2f knowledge=%d memory=%d",
 		t.agent.ID, len(scored), len(promoted), topScore, knCount, memCount)
+}
+
+// knowledgeHitsThisTurn is what the recall search actually found in the curated
+// corpus this turn. Zero when the search found nothing, and also when it never
+// ran: recall hints are per-agent opt-in and skip short queries, so this is a
+// one-way signal. It can prove a corpus is reachable and never prove one is not.
+func (t *chatTurn) knowledgeHitsThisTurn() int {
+	if t == nil {
+		return 0
+	}
+	t.hintedDocIDsMu.Lock()
+	defer t.hintedDocIDsMu.Unlock()
+	return t.hintedKnowledge
 }
 
 // noteRecallHintPull is the follow-through half of the telemetry loop: called
