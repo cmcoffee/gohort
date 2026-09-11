@@ -373,6 +373,10 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		// And what this agent's own scheduled runs already filed into the
 		// thread — the work a recap is about, which this turn did not do.
 		PriorReports: t.priorReportsForJudge,
+		// And what EARLIER turns of this conversation ran, so a reply asked to
+		// write up the work so far is read as the recap it is rather than as a
+		// claim about a turn that called nothing.
+		PriorTurnWork: t.priorTurnWorkForJudge,
 		// And whether the reply KNOWS what it asserts. Scope is the notes the
 		// memory block marked unchecked, so a turn holding none never reaches a
 		// model call. See grounding_judge.go.

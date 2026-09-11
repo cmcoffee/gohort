@@ -230,3 +230,21 @@ func TestUnattendedStillNeedsAReply(t *testing.T) {
 		t.Fatal("judged a turn with no reply")
 	}
 }
+
+// Earlier turns' work is context for the VERDICT, never a reason to skip the
+// judge. A turn that ran nothing itself is still the turn worth looking at:
+// the point of showing the judge what came before is that it can then tell a
+// true recap from an invented one, which it cannot do if it is never asked.
+func TestEarlierTurnWorkDoesNotSkipTheJudge(t *testing.T) {
+	ev := TurnClaimEvidence{
+		Request:       "write that up as an email",
+		Reply:         "We traced this in the diagnostic bundle.",
+		PriorTurnWork: []string{"fetch_doc"},
+	}
+	if ev.TurnDidWork() {
+		t.Error("work done in an EARLIER turn is not work this turn did")
+	}
+	if !turnClaimWorthJudging(ev) {
+		t.Error("a turn that ran nothing must still reach the judge")
+	}
+}

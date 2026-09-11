@@ -2613,6 +2613,7 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 		CatalogTools:  lr.catalogToolNames(),
 		PriorWork:     lr.cfg.priorWork(),
 		PriorReports:  lr.cfg.priorReports(),
+		PriorTurnWork: lr.cfg.priorTurnWork(),
 		ToolErrors:    lr.cumulativeToolErrors,
 		LastToolError: lr.lastToolError,
 		Delivered:     lr.cfg.deliveredCount(),

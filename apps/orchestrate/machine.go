@@ -622,7 +622,18 @@ func (t *chatTurn) priorReportsForJudge() []string {
 	if t.session == nil {
 		return nil
 	}
-	msgs := t.session.Messages
+	return priorReportsFrom(t.session.Messages)
+}
+
+// priorReportsFrom is the read itself, off a thread's messages rather than off
+// a turn, for the same reason priorTurnWorkFrom is: a scheduled fire holds its
+// thread as a record and has no session pointer on its turn.
+//
+// And the fire is where these matter most. Its own replies are stored as
+// ReportFrom cards on this very thread, so a recurring cycle asked to report on
+// standing work is recapping the cards its earlier fires left — while the
+// judge, which sees one turn, is told nothing ran.
+func priorReportsFrom(msgs []ChatMessage) []string {
 	if len(msgs) > judgeReportWindow {
 		msgs = msgs[len(msgs)-judgeReportWindow:]
 	}
@@ -640,6 +651,67 @@ func (t *chatTurn) priorReportsForJudge() []string {
 	}
 	if len(out) > judgeReportsShown {
 		out = out[len(out)-judgeReportsShown:]
+	}
+	return out
+}
+
+// judgeTurnActionsShown bounds the earlier-turn action list. Distinct labels,
+// so a thread that fetched forty pages contributes one entry: the judge needs
+// to know the conversation has done this kind of work, not to re-read its log.
+const judgeTurnActionsShown = 12
+
+// priorTurnWorkForJudge names the tool actions EARLIER turns of this
+// conversation ran, read off the persisted trace on the assistant messages.
+//
+// The third shape of the PriorWork gap, and the one that shows up in plain
+// chat. The judge is shown one turn, so a reply that recaps the session so far
+// looks identical to one inventing work: "we traced this in the diagnostic
+// bundle" arrives with an empty action list because the tracing was five turns
+// ago. That reply only reaches the judge at all when the turn ran nothing
+// itself, which is precisely the turn where the user asked ABOUT the work
+// rather than for more of it, so the class this rescues is the honest write-up
+// and the cost of missing it is a retracted summary plus a re-prompt to go and
+// redo finished work.
+//
+// Successful calls only, on the same reasoning as the step ledger: a call that
+// errored is not work a later reply may claim.
+func (t *chatTurn) priorTurnWorkForJudge() []string {
+	if t.session == nil {
+		return nil
+	}
+	return priorTurnWorkFrom(t.session.Messages)
+}
+
+// priorTurnWorkFrom is the read itself, off a thread's messages rather than off
+// a turn. A scheduled fire runs a REAL session and holds it as a record rather
+// than as a *chatTurn (its turn was built for the run and carries no session
+// pointer), so the method above cannot serve it and the fire is exactly the
+// place a recap of earlier work goes unwatched.
+func priorTurnWorkFrom(msgs []ChatMessage) []string {
+	if len(msgs) > judgeReportWindow {
+		msgs = msgs[len(msgs)-judgeReportWindow:]
+	}
+	seen := make(map[string]bool)
+	var out []string
+	for _, m := range msgs {
+		for _, tc := range m.ToolCalls {
+			if strings.TrimSpace(tc.Err) != "" {
+				continue
+			}
+			labels, _ := objectiveToolLabels([]PersistedToolCall{tc})
+			if len(labels) == 0 {
+				continue
+			}
+			label := strings.TrimSpace(labels[0])
+			if label == "" || seen[label] {
+				continue
+			}
+			seen[label] = true
+			out = append(out, label)
+		}
+	}
+	if len(out) > judgeTurnActionsShown {
+		out = out[len(out)-judgeTurnActionsShown:]
 	}
 	return out
 }

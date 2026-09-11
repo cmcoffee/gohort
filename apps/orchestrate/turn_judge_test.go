@@ -415,3 +415,62 @@ func TestPriorReportsAreNamedNotQuoted(t *testing.T) {
 		t.Error("no session, no reports")
 	}
 }
+
+// The plain-chat shape of the same gap, and the one a person hit: "we traced
+// this in the diagnostic bundle" inside an email the user had just asked for.
+// The tracing was real and several turns old; the turn writing it up called
+// nothing, so every line of the evidence said nothing happened and the
+// correction sent the agent back to redo finished work.
+func TestEarlierTurnWorkIsEvidence(t *testing.T) {
+	msg := turnJudgeEvidenceMessage(TurnClaimEvidence{
+		Request:       "write that up as an email to the team",
+		Reply:         "We traced this in the diagnostic bundle.",
+		PriorTurnWork: []string{"fetch_doc", "agents/dispatch"},
+	})
+	if !strings.Contains(msg, "fetch_doc") || !strings.Contains(msg, "agents/dispatch") {
+		t.Error("the judge must be shown what earlier turns ran")
+	}
+	if !strings.Contains(msg, "BEFORE the turn in front of you") || !strings.Contains(msg, "KEPT") {
+		t.Error("and told why they are absent from the action list, or it convicts on the absence")
+	}
+	plain := turnJudgeEvidenceMessage(TurnClaimEvidence{Request: "hi", Reply: "hello"})
+	if strings.Contains(plain, "EARLIER TURNS OF THIS SAME CONVERSATION") {
+		t.Error("a turn with no earlier work must not mention it")
+	}
+	if !strings.Contains(turnJudgeSysPrompt, "already did in earlier turns") {
+		t.Error("the KEPT list must name recaps of the conversation's own earlier work")
+	}
+	// The other half of the reported case: the reply IS the email. What it
+	// narrates is the content that was asked for, not a report of this turn.
+	if !strings.Contains(turnJudgeSysPrompt, "document the user asked the assistant to write") {
+		t.Error("the KEPT list must exempt a requested draft's own narration")
+	}
+}
+
+// Distinct labels off the persisted trace, successes only: a failed call is not
+// work a later reply may claim, on the same reasoning as the step ledger.
+func TestPriorTurnWorkReadsThePersistedTrace(t *testing.T) {
+	turn := &chatTurn{session: &ChatSession{Messages: []ChatMessage{
+		{Role: "user", Content: "look at the bundle"},
+		{Role: "assistant", Content: "traced it", ToolCalls: []PersistedToolCall{
+			{Name: "fetch_doc", Result: "ok"},
+			{Name: "fetch_doc", Result: "ok again"},
+			{Name: "agents", Args: map[string]any{"action": "dispatch"}, Result: "ok"},
+			{Name: "workspace", Args: map[string]any{"action": "write"}, Err: "permission denied"},
+		}},
+		{Role: "user", Content: "write it up"},
+	}}}
+	got := turn.priorTurnWorkForJudge()
+	want := []string{"fetch_doc", "agents/dispatch"}
+	if len(got) != len(want) {
+		t.Fatalf("want %v, got %v", want, got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("want %v, got %v", want, got)
+		}
+	}
+	if (&chatTurn{}).priorTurnWorkForJudge() != nil {
+		t.Error("no session, no earlier work")
+	}
+}

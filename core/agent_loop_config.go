@@ -641,6 +641,10 @@ type AgentLoopConfig struct {
 	// reports this agent's own scheduled runs already filed into the thread,
 	// which a reply may be recapping. Nil = none.
 	PriorReports func() []string
+	// PriorTurnWork supplies TurnClaimEvidence.PriorTurnWork: the tool actions
+	// EARLIER turns of this same conversation ran, which a reply recapping the
+	// work so far is talking about. Nil = none.
+	PriorTurnWork func() []string
 
 	// Unattended marks a turn nobody is reading as it happens — a scheduled
 	// fire, a task wake, an autonomous run. Set by the host, which is the only
@@ -843,6 +847,15 @@ func (c AgentLoopConfig) priorReports() []string {
 		return nil
 	}
 	return c.PriorReports()
+}
+
+// priorTurnWork is what EARLIER turns of this conversation ran. Nil-safe, and
+// empty on the hosts that keep no transcript.
+func (c AgentLoopConfig) priorTurnWork() []string {
+	if c.PriorTurnWork == nil {
+		return nil
+	}
+	return c.PriorTurnWork()
 }
 
 func (c AgentLoopConfig) backgrounded() bool {

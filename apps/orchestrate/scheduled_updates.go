@@ -668,8 +668,26 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		//
 		// No PriorWork: a fire has no machine steps running ahead of its loop,
 		// so the tools the loop ran are the whole of what happened.
+		//
+		// PriorTurnWork, though, matters here more than anywhere. A recurring
+		// fire re-runs a REAL thread, so the work it may be recapping is the
+		// work its own earlier fires did, and a cycle whose job is to report on
+		// standing work says so in the past tense with an empty action list.
+		// Read off the loaded session record rather than the turn: this fire's
+		// chatTurn was built for the run and carries no session pointer.
+		//
+		// It widens what the judge will ACQUIT and does not narrow what it
+		// convicts: earlier actions never back a claim about THIS turn, which
+		// the evidence says in as many words, so the fire that reads nine times
+		// and reports three posts is caught exactly as before.
 		CapturePrompt:  agent.CapturePrompt,
 		TurnClaimJudge: app.turnClaimJudge(ctx),
+		PriorTurnWork:  func() []string { return priorTurnWorkFrom(sess.Messages) },
+		// And the reports this thread already holds, which on a recurring
+		// schedule are this fire's own earlier cycles: their replies are stored
+		// as ReportFrom cards right here, so a cycle whose job is to report on
+		// standing work is recapping them.
+		PriorReports: func() []string { return priorReportsFrom(sess.Messages) },
 		// And it is asked on every fire, not only the ones whose evidence looks
 		// wrong. The judge was already attached here for the reason above, and
 		// the pre-filter then declined to call it on exactly the turn this

@@ -77,6 +77,25 @@ type TurnClaimEvidence struct {
 	// tool ran. Convicting it retracts a true reply and re-prompts the agent to
 	// go and do work it already did.
 	PriorReports []string
+	// PriorTurnWork names the tool actions this conversation ran in EARLIER
+	// turns: what the assistant and the user already did together, before the
+	// turn now being judged. Deduplicated labels, most recent turns only.
+	//
+	// The third and last shape of the same gap, and the one that closes it for
+	// ordinary chat. PriorWork covers work done for THIS turn outside its loop;
+	// PriorReports covers work an earlier turn's scheduled run filed into the
+	// thread; this covers work an earlier turn did in the open, at the user's
+	// request, with the user watching it happen.
+	//
+	// It only ever reaches the judge on a turn that ran nothing itself, which
+	// is exactly the turn where a user asks about the work rather than for more
+	// of it: "write that up as an email". The reply is then a recap in the past
+	// tense, every sentence of it about actions no line of this evidence
+	// mentions, and convicting it retracts a true summary and sends the agent
+	// back to redo work that is already done. Observed on "we traced this in
+	// the diagnostic bundle", where the tracing had happened several turns
+	// earlier.
+	PriorTurnWork []string
 	// CatalogTools names every tool this turn COULD call, whether or not it
 	// did. Empty when the host does not supply it.
 	//
