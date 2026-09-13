@@ -160,7 +160,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 		},
 		{
 			Title:    "Pending promotions",
-			Subtitle: "Users' bottom-up requests to publish their own resources deployment-wide. Approve a tool request to Share it to the global catalog (each user then opts in from their Extensions page). Approve an app request to share it with every signed-in user — each gets their own copy of the app, and its scripts run with the owner's credentials, which is why an admin sees it first. Deny to dismiss. Credential and agent promotion arrive with their approve paths.",
+			Subtitle: "Users' bottom-up requests to publish their own resources deployment-wide. Approve a tool request to Share it to the global catalog (each user then opts in from their Extensions page). Approve an app request to share it with every signed-in user — each gets their own copy of the app, and its scripts run with the owner's credentials, which is why an admin sees it first. Approve a public_link request to mint the app's anonymous link: anyone who has the URL then runs its data sources as the owner, with no login. Deny to dismiss. Credential and agent promotion arrive with their approve paths.",
 			Body: ui.Table{
 				Source: "api/promotions",
 				RowKey: "id",
@@ -173,8 +173,9 @@ func (a *AdminApp) governanceSections() []ui.Section {
 				},
 				RowActions: []ui.RowAction{
 					{Type: "button", Label: "Approve",
-						PostTo: "api/promotions?action=approve&id={id}",
-						Method: "POST",
+						PostTo:  "api/promotions?action=approve&id={id}",
+						Method:  "POST",
+						Confirm: "Approve this publish request? It goes live for its audience at once, running with its owner's credentials.",
 						// Approving a tool promotion shares it deployment-wide
 						// — which is a badge on that tool's row two sections
 						// down, in the table this queue exists to feed.

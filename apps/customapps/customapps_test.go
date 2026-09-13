@@ -507,3 +507,86 @@ func TestShareIsAPublishRequestForNonAdmins(t *testing.T) {
 		t.Fatalf("an admin's share must not queue a request; pending = %d", n)
 	}
 }
+
+// TestPublicLinkIsAnAdminDecision covers the public-link gate. A non-admin
+// owner asking for a link files a pending "public_link" request and no token
+// exists; the row says so; the administrator's approval (the registered
+// approver) is what mints the token and registers it in the public index; the
+// owner revokes directly; and an admin owner mints directly.
+func TestPublicLinkIsAnAdminDecision(t *testing.T) {
+	T := sharingTestApp(t)
+	auth := &DBase{Store: kvlite.MemStore()}
+	savedAuth, savedAdmin := AuthDB, requestIsAdmin
+	AuthDB = func() Database { return auth }
+	requestIsAdmin = func(*http.Request) bool { return false }
+	t.Cleanup(func() { AuthDB, requestIsAdmin = savedAuth, savedAdmin })
+	promotion.RegisterApprover("public_link", T.approvePublicLink)
+
+	SaveAppSpec(AppSpec{Slug: "hn", Name: "HN", Owner: "alice"})
+
+	public := func(on string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/apps/_app/public?slug=hn&on="+on, strings.NewReader(`{"note":"for the newsletter"}`))
+		T.handlePublishApp(w, r, "alice")
+		return w
+	}
+
+	w := public("true")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"requested":true`) || strings.Contains(w.Body.String(), `"url"`) {
+		t.Fatalf("non-admin public: %d %s", w.Code, w.Body.String())
+	}
+	if s, _ := loadSpec("alice", "hn"); s.PublicToken != "" {
+		t.Fatal("no token may exist before an admin approves")
+	}
+	if len(T.DB.Keys(publicAppsIndex)) != 0 {
+		t.Fatal("the public index must not hold a merely requested link")
+	}
+	if !PendingPromotion(auth, "alice", "public_link", "hn") {
+		t.Fatal("the request must be pending")
+	}
+
+	w = httptest.NewRecorder()
+	T.handleAppsList(w, httptest.NewRequest(http.MethodGet, "/apps/_apps", nil), "alice")
+	if !strings.Contains(w.Body.String(), `"public_requested":"1"`) || !strings.Contains(w.Body.String(), `"status":"public link requested"`) || strings.Contains(w.Body.String(), `"direct"`) {
+		t.Fatalf("row must show the request and no direct flag: %s", w.Body.String())
+	}
+
+	// Approval mints the link.
+	if err := promotion.Approve(auth, PromotionRequestKey("public_link", "alice", "hn"), "root"); err != nil {
+		t.Fatal(err)
+	}
+	s, _ := loadSpec("alice", "hn")
+	if s.PublicToken == "" {
+		t.Fatal("approval must mint the token")
+	}
+	if ref, ok := lookupPublicApp(T.DB, s.PublicToken); !ok || ref.Owner != "alice" || ref.Slug != "hn" {
+		t.Fatalf("approved link must resolve: %+v %v", ref, ok)
+	}
+	w = httptest.NewRecorder()
+	T.handleAppsList(w, httptest.NewRequest(http.MethodGet, "/apps/_apps", nil), "alice")
+	if !strings.Contains(w.Body.String(), `"public":"1"`) || !strings.Contains(w.Body.String(), `"status":"public link"`) {
+		t.Fatalf("row must carry the live link: %s", w.Body.String())
+	}
+
+	// The owner revokes directly — and the link stops resolving.
+	if w = public("false"); w.Code != http.StatusOK {
+		t.Fatalf("revoke: %d %s", w.Code, w.Body.String())
+	}
+	if _, ok := lookupPublicApp(T.DB, s.PublicToken); ok {
+		t.Fatal("a revoked link must not resolve")
+	}
+
+	// An admin owner mints directly, no request filed, and the row says so.
+	requestIsAdmin = func(*http.Request) bool { return true }
+	if w = public("true"); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"url"`) {
+		t.Fatalf("admin public: %d %s", w.Code, w.Body.String())
+	}
+	if n := len(ListPromotionRequests(auth, true)); n != 0 {
+		t.Fatalf("an admin's link must not queue a request; pending = %d", n)
+	}
+	w = httptest.NewRecorder()
+	T.handleAppsList(w, httptest.NewRequest(http.MethodGet, "/apps/_apps", nil), "alice")
+	if !strings.Contains(w.Body.String(), `"direct":"1"`) {
+		t.Fatalf("an admin's row must carry the direct flag: %s", w.Body.String())
+	}
+}

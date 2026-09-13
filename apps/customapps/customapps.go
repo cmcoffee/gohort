@@ -123,6 +123,9 @@ func (T *CustomApps) Routes() {
 	// Approving an "app" publish request is the same act as the owner's
 	// Share toggle would have been: share it to every signed-in user.
 	promotion.RegisterApprover("app", T.approvePublish)
+	// Approving a "public_link" request mints the anonymous capability URL —
+	// the admin's act, since the link runs the owner's scripts for anyone.
+	promotion.RegisterApprover("public_link", T.approvePublicLink)
 }
 
 // route parses "/<slug>/<rest>" off the (prefix-stripped) sub-mux and
@@ -493,8 +496,13 @@ const shareModalScript = `<script>
   var rec = ctx.record || {};
   var slug = rec.slug;
   function truthy(v){ return v === '1' || v === 1 || v === true; }
-  var shareHelp = 'Every signed-in user gets their own copy. Your data-source and action scripts run with your credentials for them.';
+  var direct = truthy(rec.direct);
+  var shareHelp = 'Every signed-in user gets their own copy. Your data-source and action scripts run with your credentials for them.'
+    + (direct ? '' : ' An administrator approves this before it goes live.');
   var requestedHelp = 'Publish requested — an administrator reviews it before it goes live. ' + shareHelp;
+  var publicHelp = 'Anonymous, read-only. Your data sources run with your credentials for anyone who has the link. Nothing is saved. Revoke anytime by turning this off.'
+    + (direct ? '' : ' An administrator approves the link before it exists.');
+  var publicRequestedHelp = 'Public link requested — an administrator reviews it before the link exists. ' + publicHelp;
   function makeToggle(label, help, checked, onChange) {
     var wrap = document.createElement('label');
     wrap.style.cssText = 'display:block;cursor:pointer';
@@ -562,21 +570,27 @@ const shareModalScript = `<script>
       linkRow.appendChild(input); linkRow.appendChild(copyBtn);
       var pub = makeToggle(
         'Public link (anyone with the URL)',
-        'Anonymous, read-only. Your data sources run with your credentials for anyone who has the link. Nothing is saved. Revoke anytime by turning this off.',
+        truthy(rec.public_requested) ? publicRequestedHelp : publicHelp,
         truthy(rec.public),
         function(on, cb){
           if (!on) {
-            post('_app/public?slug=' + encodeURIComponent(slug) + '&on=false', cb, function(){ linkRow.style.display = 'none'; });
+            post('_app/public?slug=' + encodeURIComponent(slug) + '&on=false', cb, function(){ linkRow.style.display = 'none'; pub.help.textContent = publicHelp; });
             return;
           }
           // Enabling public exposes the app to anyone with the URL, running the
           // owner's credentialed data sources with no login — confirm before it
-          // goes live. uiConfirm is the runtime's cross-host dialog (native
-          // confirm is broken in the gohort-desktop WKWebView).
-          var msg = 'Create a public link? Anyone who has the URL can open this app and run its data sources with YOUR credentials, with no login. Nothing is saved, and you can revoke the link anytime by turning this off.';
+          // goes live (or before the request is filed). uiConfirm is the
+          // runtime's cross-host dialog (native confirm is broken in the
+          // gohort-desktop WKWebView).
+          var msg = direct
+            ? 'Create a public link? Anyone who has the URL can open this app and run its data sources with YOUR credentials, with no login. Nothing is saved, and you can revoke the link anytime by turning this off.'
+            : 'Request a public link? An administrator reviews it first. Once approved, anyone who has the URL can open this app and run its data sources with YOUR credentials, with no login. Nothing is saved, and you can revoke the link anytime by turning this off.';
           Promise.resolve(window.uiConfirm ? window.uiConfirm(msg) : window.confirm(msg)).then(function(ok){
             if (!ok) { cb.checked = false; return; }
             post('_app/public?slug=' + encodeURIComponent(slug) + '&on=true', cb, function(d){
+              // A non-admin's link is a REQUEST: nothing exists yet, so the
+              // box stays clear and the help says who it is waiting on.
+              if (d.requested) { cb.checked = false; pub.help.textContent = publicRequestedHelp; return; }
               if (d.url) { input.value = d.url; linkRow.style.display = 'flex'; }
               // Say up front which parts the link cannot carry. Found out the
               // hard way, the answer looks like a broken app: the panel renders
@@ -693,28 +707,36 @@ func (T *CustomApps) ListGrantableApps() []GrantableApp {
 func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owner string) {
 	out := []map[string]string{}
 	seen := map[string]bool{}
+	direct := requestIsAdmin(r) // shares and links directly, no request
 	for _, s := range listSpecs(owner) {
 		seen[s.Slug] = true
 		// "mine" gates the owner-only Share/Delete actions. shared/public/public_url
 		// carry the current sharing state into the Share modal (a client action)
 		// so it opens pre-filled and can show + copy the live public link.
 		row := map[string]string{"slug": s.Slug, "name": s.Name, "desc": s.Desc, "mine": "1"}
-		status := "private"
+		if direct {
+			// The modal words its toggles as acts or as requests by this.
+			row["direct"] = "1"
+		}
+		var parts []string
 		if s.Shared {
 			row["shared"] = "1"
-			status = "shared to users"
-		} else if publishRequested(owner, s.Slug) {
+			parts = append(parts, "shared to users")
+		} else if publishRequested(owner, "app", s.Slug) {
 			row["requested"] = "1"
-			status = "publish requested"
+			parts = append(parts, "publish requested")
 		}
 		if s.PublicToken != "" {
 			row["public"] = "1"
 			row["public_url"] = T.publicURL(s.PublicToken) // absolute — copyable off 127.0.0.1
-			if s.Shared {
-				status = "shared to users + public link"
-			} else {
-				status = "public link"
-			}
+			parts = append(parts, "public link")
+		} else if publishRequested(owner, "public_link", s.Slug) {
+			row["public_requested"] = "1"
+			parts = append(parts, "public link requested")
+		}
+		status := "private"
+		if len(parts) > 0 {
+			status = strings.Join(parts, " + ")
 		}
 		if s.Disabled {
 			row["disabled"] = "1"
@@ -1386,11 +1408,11 @@ func (T *CustomApps) approvePublish(owner, slug string) error {
 // publishRequested reports whether the owner has asked to share this app and
 // is still waiting on an administrator. Tools keep their request in the auth
 // store, so apps do too — one queue for the admin to work.
-func publishRequested(owner, slug string) bool {
+func publishRequested(owner, kind, slug string) bool {
 	if AuthDB == nil {
 		return false
 	}
-	return PendingPromotion(AuthDB(), owner, "app", slug)
+	return PendingPromotion(AuthDB(), owner, kind, slug)
 }
 
 // handlePublishApp mints or revokes the anonymous capability URL for an app the
@@ -1410,25 +1432,69 @@ func (T *CustomApps) handlePublishApp(w http.ResponseWriter, r *http.Request, us
 		return
 	}
 	on := r.URL.Query().Get("on") != "false"
+	if on && spec.PublicToken == "" && !requestIsAdmin(r) {
+		// A public link runs the owner's scripts, with the owner's credentials,
+		// for anyone who has the URL and no login at all — so it is the
+		// administrator's decision, not the owner's: the owner asks, and the
+		// approval on the Pending promotions queue is what mints the link.
+		var body struct {
+			Note string `json:"note"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body) // note is optional
+		if err := CreatePromotionRequest(AuthDB(), user, "public_link", slug, body.Note); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "public": false, "requested": true})
+		return
+	}
+	spec, err := T.setPublic(user, slug, on)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	if !on {
+		writeJSON(w, map[string]any{"ok": true, "public": false})
+		return
+	}
+	out := map[string]any{"ok": true, "public": true, "url": T.publicURL(spec.PublicToken)}
+	if note := publishLimitationNote(spec); note != "" {
+		out["note"] = note
+	}
+	writeJSON(w, out)
+}
+
+// setPublic mints (on) or revokes (off) the anonymous capability URL for an
+// app the owner holds. Minting reuses a token that already exists; revoking
+// deletes it from the public index, which is what makes a handed-out link
+// stop resolving. Returns the saved spec so a caller can read the token.
+func (T *CustomApps) setPublic(owner, slug string, on bool) (AppSpec, error) {
+	spec, ok := loadSpec(owner, slug)
+	if !ok {
+		return spec, Error("no app " + slug + " for " + owner)
+	}
 	if on {
 		if spec.PublicToken == "" {
 			spec.PublicToken = newPublicToken()
 		}
 		SaveAppSpec(spec)
-		T.DB.Set(publicAppsIndex, spec.PublicToken, publicRef{Owner: user, Slug: slug})
-		out := map[string]any{"ok": true, "public": true, "url": T.publicURL(spec.PublicToken)}
-		if note := publishLimitationNote(spec); note != "" {
-			out["note"] = note
-		}
-		writeJSON(w, out)
-		return
+		T.DB.Set(publicAppsIndex, spec.PublicToken, publicRef{Owner: owner, Slug: slug})
+		return spec, nil
 	}
 	if spec.PublicToken != "" {
 		T.DB.Unset(publicAppsIndex, spec.PublicToken) // revoke the link
 	}
 	spec.PublicToken = ""
 	SaveAppSpec(spec)
-	writeJSON(w, map[string]any{"ok": true, "public": false})
+	return spec, nil
+}
+
+// approvePublicLink is the "public_link" kind's promotion approver: an
+// administrator granting the request mints the app's anonymous capability
+// URL. The owner reads the link off their My Apps row once it exists.
+func (T *CustomApps) approvePublicLink(owner, slug string) error {
+	_, err := T.setPublic(owner, slug, true)
+	return err
 }
 
 // Ceilings for the anonymous capability surface. A published app is meant to

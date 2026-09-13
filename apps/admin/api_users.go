@@ -295,7 +295,7 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 	// their own resource be published deployment-wide; the admin approves (runs the
 	// kind-specific side effect) or denies. Approve runs the kind's registered
 	// approver: a tool is Shared to the global catalog, an app is shared to
-	// every signed-in user.
+	// every signed-in user, a public_link mints an app's anonymous URL.
 	sub.HandleFunc("/api/promotions", func(w http.ResponseWriter, r *http.Request) {
 		if !a.requireAdmin(w, r) {
 			return
