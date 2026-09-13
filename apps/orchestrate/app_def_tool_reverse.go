@@ -34,6 +34,7 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 	if !ok {
 		return "", errors.New("no matching app — check the slug (app_def action=list)")
 	}
+	records := appStoredRecords(t.user, spec)
 	// One script's body, on request. Bodies are omitted from the full view for
 	// size; an author about to patch one needs the exact current text.
 	if want := strings.TrimSpace(stringArg(args, "script")); want != "" {
@@ -63,6 +64,12 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 		"change_note": spec.ChangeNote,
 		"notes":       spec.Notes,
 		"schema":      spec.SchemaVersion(),
+		// The record shape, derived from the sections, next to what the store
+		// actually holds — so a rename is a decision made with the count in view.
+		"record_fields":               appFieldList(recordFieldsOf(spec)),
+		"records":                     len(records),
+		"stored_fields_not_in_schema": appStoredFieldsOutsideSchema(recordFieldsOf(spec), records),
+		"sample":                      spec.Sample,
 		// What a later author most needs and could not know: whether the
 		// revision serving now has ever passed verify.
 		"status": spec.VerifyStatus(),
@@ -247,4 +254,27 @@ func appVerifyWord(spec AppSpec) string {
 	default:
 		return "fail"
 	}
+}
+
+// recordFieldsOf returns the stored schema, deriving it for a spec saved
+// before the field existed so a get never shows an empty shape for an app
+// that plainly has one.
+func recordFieldsOf(spec AppSpec) map[string]string {
+	if len(spec.RecordFields) > 0 {
+		return spec.RecordFields
+	}
+	return appRecordFields(appSpecSectionsRaw(spec), spec.RecordKey)
+}
+
+// appSpecSectionsRaw is the stored authoring sections as the []any shape the
+// parsers take, or nil when the spec predates section storage.
+func appSpecSectionsRaw(spec AppSpec) any {
+	if len(spec.Sections) == 0 {
+		return nil
+	}
+	var raw any
+	if json.Unmarshal(spec.Sections, &raw) != nil {
+		return nil
+	}
+	return raw
 }

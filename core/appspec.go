@@ -133,6 +133,20 @@ type AppSpec struct {
 	Notes string `json:"notes,omitempty"`
 	// Schema is the wire schema the spec was last saved under (appSpecSchema).
 	Schema int `json:"schema,omitempty"`
+	// RecordFields is the record schema DERIVED from the sections at save time:
+	// field name → the form type that writes it ("text", "number", "select"…),
+	// or "column" for a field a table reads that no form writes, or "key" for
+	// the record key. Nothing declares it; the host computes it so a later
+	// author can see what the records look like without parsing the sections,
+	// and so an update that drops a field can be checked against the records
+	// that still carry it before it strands them.
+	RecordFields map[string]string `json:"record_fields,omitempty"`
+	// Sample is the last example-record set an author handed to test or verify,
+	// kept on the app so the next run — and the auto-check on every save —
+	// exercises the same form→record→data-source chain without inventing
+	// records again. It doubles as documentation of what a record holds. Part
+	// of the app's shape: it exports.
+	Sample []map[string]any `json:"sample,omitempty"`
 	// Verify is the last verify outcome, pinned to the revision it ran against.
 	// Verify used to print "if you updated after this, this report is about the
 	// OLD revision" and trust the author to remember; nothing stored the answer,
@@ -444,4 +458,21 @@ func (s AppSpec) NotesOver() int {
 		return n - appNotesCap
 	}
 	return 0
+}
+
+// RecordSample stores an example-record set on the app WITHOUT touching
+// Updated or history, the way RecordVerify stores a verdict: a sample is a
+// test fixture, not a revision of the document. nil clears.
+func (s AppSpec) RecordSample(sample []map[string]any) bool {
+	db := appSpecStore(s.Owner)
+	if db == nil {
+		return false
+	}
+	var stored AppSpec
+	if !db.Get(AppSpecTable, s.Slug, &stored) {
+		return false
+	}
+	stored.Sample = sample
+	db.Set(AppSpecTable, s.Slug, stored)
+	return true
 }

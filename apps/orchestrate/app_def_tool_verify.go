@@ -74,15 +74,24 @@ func (t *chatTurn) appDefTest(args map[string]any) (string, error) {
 	// keyed by the form's field names; `params` simulates query-param inputs.
 	sample := appSampleRecords(args["sample"])
 	params := mapArg(args["params"])
-	report, records, pass, fail := t.checkScripts(spec, true, sample, params)
 	src := "stored"
 	if sample != nil {
+		// Keep it: the next test, the next verify and every save's auto-check
+		// run against the same fixture instead of a fresh invention.
+		spec.RecordSample(sample)
+		spec.Sample = sample
 		src = "sample"
+	} else if len(spec.Sample) > 0 && len(appStoredRecords(t.user, spec)) == 0 {
+		src = "retained sample"
 	}
+	report, records, pass, fail := t.checkScripts(spec, true, sample, params)
 	var b strings.Builder
 	fmt.Fprintf(&b, "Tested app %q with %d %s record(s).\n\n%s\n%d passed, %d failed.", spec.Name, records, src, report, pass, fail)
+	for _, w := range appSampleFieldWarnings(spec.RecordFields, sample) {
+		b.WriteString("\n" + w)
+	}
 	if sample == nil && records == 0 {
-		b.WriteString("\nNote: the store is empty, so data sources only saw []. Pass sample=[{...}] (example form submissions) to test the full form→data-source→output chain with real input.")
+		b.WriteString("\nNote: the store is empty, so data sources only saw []. Pass sample=[{...}] (example form submissions) to test the full form→data-source→output chain with real input; it is kept on the app for later runs.")
 	}
 	if fail > 0 {
 		b.WriteString(" Fix the failing scripts with app_def action=update, then test again before telling the user the app is ready.")
@@ -130,9 +139,17 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 	}
 
 	if len(spec.DataSources) > 0 || len(spec.Actions) > 0 {
-		report, _, _, fail := t.checkScripts(spec, true, appSampleRecords(args["sample"]), mapArg(args["params"]))
+		sample := appSampleRecords(args["sample"])
+		if sample != nil {
+			spec.RecordSample(sample)
+			spec.Sample = sample
+		}
+		report, _, _, fail := t.checkScripts(spec, true, sample, mapArg(args["params"]))
 		failures += fail
 		fmt.Fprintf(&b, "Script checks:\n%s\n", strings.TrimSpace(report))
+		for _, w := range appSampleFieldWarnings(spec.RecordFields, sample) {
+			b.WriteString(w + "\n")
+		}
 	}
 
 	// A browser load is a weak witness for an html app: a canvas game runs
@@ -387,21 +404,20 @@ func appSampleRecords(raw any) []map[string]any {
 func (t *chatTurn) checkScripts(spec AppSpec, includeActions bool, sample []map[string]any, params map[string]any) (report string, records, pass, fail int) {
 	db := UserDB(RootDB, t.user)
 	recs := sample
+	var b strings.Builder
 	if recs == nil {
-		recs = []map[string]any{}
-		if db != nil {
-			tbl := "custom_records:" + spec.Slug
-			for _, k := range db.Keys(tbl) {
-				var rec map[string]any
-				if db.Get(tbl, k, &rec) {
-					recs = append(recs, rec)
-				}
-			}
+		recs = appStoredRecords(t.user, spec)
+		// An empty store with a retained sample: run against the sample, and
+		// say so, rather than testing every data source against [].
+		if len(recs) == 0 && len(spec.Sample) > 0 {
+			recs = spec.Sample
+			fmt.Fprintf(&b, "NOTE the store is empty; running against the app's retained sample (%d record(s)).\n", len(recs))
+		}
+		if recs == nil {
+			recs = []map[string]any{}
 		}
 	}
 	recJSON, _ := json.Marshal(recs)
-
-	var b strings.Builder
 	run := func(kind, name, lang, script string, caps []string) {
 		label := fmt.Sprintf("%s %q", kind, name)
 		scriptArgs := map[string]any{"records": string(recJSON)}

@@ -149,6 +149,19 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 				return "", errors.New(risk)
 			}
 		}
+		// The record schema the new sections imply, checked against the rows
+		// before anything is stored: a field the update drops that records
+		// still carry is refused by name (app_record_schema.go).
+		nextFields := appRecordFields(raw, spec.RecordKey)
+		if isUpdate && !boolArg(args, "confirm_rewrite") {
+			prevFields := spec.RecordFields
+			if len(prevFields) == 0 {
+				prevFields = appRecordFields(appSpecSectionsRaw(spec), spec.RecordKey)
+			}
+			if stranded := appStrandedFields(prevFields, nextFields, appStoredRecords(t.user, spec)); len(stranded) > 0 {
+				return "", errors.New(appStrandedFieldsMessage(stranded, spec.Slug))
+			}
+		}
 		page, err := buildAppPage(spec, raw)
 		if err != nil {
 			return "", err
@@ -158,6 +171,7 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 			return "", fmt.Errorf("render app page: %w", err)
 		}
 		spec.Page = blob
+		spec.RecordFields = nextFields
 		// Keep the AUTHORING sections next to the page they compiled into, so
 		// action=get can hand back something action=update actually accepts.
 		// The rendered page is not valid input; without this, revising an app

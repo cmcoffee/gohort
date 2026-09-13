@@ -92,3 +92,24 @@ func TestAppVerifyStateDoesNotTravel(t *testing.T) {
 		t.Fatal("import should land disabled")
 	}
 }
+
+// A sample is a test fixture, not a revision: storing it leaves Updated and
+// the history alone, and nil clears it.
+func TestRecordSampleDoesNotBumpTheRevision(t *testing.T) {
+	verifyTestStore(t)
+	spec := SaveAppSpec(AppSpec{Slug: "digest", Name: "Digest", Owner: "alice", Page: json.RawMessage(`{"a":1}`)})
+	if !spec.RecordSample([]map[string]any{{"city": "Santa Cruz"}}) {
+		t.Fatal("sample not stored")
+	}
+	got, _ := LoadAppSpec("alice", "digest")
+	if got.Updated != spec.Updated || len(got.Sample) != 1 || got.Sample[0]["city"] != "Santa Cruz" {
+		t.Fatalf("sample/Updated wrong: %+v", got)
+	}
+	if len(ListAppRevisions("alice", "digest")) != 0 {
+		t.Fatal("a sample must not file a revision")
+	}
+	spec.RecordSample(nil)
+	if got, _ := LoadAppSpec("alice", "digest"); len(got.Sample) != 0 {
+		t.Fatal("nil should clear the sample")
+	}
+}
