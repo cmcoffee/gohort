@@ -182,9 +182,19 @@ func TestFailureMemoryCarriesBetweenLoops(t *testing.T) {
 
 	saveFailureMemory(key, map[string]int{sig: 2})
 	carried := map[string]int{}
-	loadFailureMemory(key, carried, 0)
+	names := loadFailureMemory(key, carried, 0)
 	if carried[sig] != 2 {
 		t.Fatalf("the count must carry, got %d", carried[sig])
+	}
+	// What was carried comes back readable, for the session trail.
+	if len(names) != 1 || names[0] != "reply_to_comment({parent_id:...}) ×2" {
+		t.Fatalf("carried names = %v", names)
+	}
+	if d := failureMemoryDiag(names); !strings.Contains(d, "1 call(s)") || !strings.Contains(d, "reply_to_comment(") || !strings.Contains(d, "ONE attempt") {
+		t.Fatalf("diag = %q", d)
+	}
+	if failureMemoryDiag(nil) != "" {
+		t.Fatal("nothing carried, nothing to say")
 	}
 	// One more failure next cycle crosses the limit, where a fresh loop would
 	// have been on its first.

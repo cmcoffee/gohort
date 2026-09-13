@@ -2,6 +2,8 @@ package core
 
 import (
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -350,16 +352,21 @@ type failureMemory struct {
 // overnight comes back by itself and its count clears on the success, while
 // a genuinely dead one costs one call a cycle instead of three — and nothing
 // the framework refuses forever on evidence it gathered yesterday.
-func loadFailureMemory(key string, counts map[string]int, carryMax int) {
+//
+// Returns the carried signatures, readable, sorted, so the caller can say in
+// the session trail what this turn starts out refusing. Until it did, a turn
+// could begin already declining a call on evidence gathered yesterday, and the
+// only record of that was a debug line.
+func loadFailureMemory(key string, counts map[string]int, carryMax int) []string {
 	if strings.TrimSpace(key) == "" || RootDB == nil {
-		return
+		return nil
 	}
 	var mem failureMemory
 	if !RootDB.Get(failureMemoryTable, key, &mem) {
-		return
+		return nil
 	}
 	cutoff := time.Now().Add(-failureMemoryTTL)
-	carried := 0
+	var carried []string
 	for sig, n := range mem.Counts {
 		if at, ok := mem.Seen[sig]; ok && at.Before(cutoff) {
 			continue
@@ -369,12 +376,49 @@ func loadFailureMemory(key string, counts map[string]int, carryMax int) {
 				n = carryMax
 			}
 			counts[sig] = n
-			carried++
+			carried = append(carried, readableFailureSig(sig, mem.Counts[sig]))
 		}
 	}
-	if carried > 0 {
-		Debug("[agent_loop] failure memory %q: carried %d failing call signature(s) from earlier work", key, carried)
+	sort.Strings(carried)
+	if len(carried) > 0 {
+		Debug("[agent_loop] failure memory %q: carried %d failing call signature(s) from earlier work", key, len(carried))
 	}
+	return carried
+}
+
+// readableFailureSig turns the guard's key (name, NUL, formatted args) into
+// "name(args) ×N" for a person, args trimmed so a long payload does not
+// swallow the trail entry.
+func readableFailureSig(sig string, n int) string {
+	name, args := sig, ""
+	if i := strings.IndexByte(sig, 0); i >= 0 {
+		name, args = sig[:i], sig[i+1:]
+	}
+	args = strings.TrimSpace(args)
+	if r := []rune(args); len(r) > 80 {
+		args = string(r[:80]) + "…"
+	}
+	out := name + "(" + args + ")"
+	if n > 0 {
+		out += " ×" + strconv.Itoa(n)
+	}
+	return out
+}
+
+// failureMemoryDiag is the trail entry for a turn that starts with carried
+// failures: what is carried, and what it means for this turn.
+func failureMemoryDiag(carried []string) string {
+	if len(carried) == 0 {
+		return ""
+	}
+	shown := carried
+	more := ""
+	if len(shown) > 6 {
+		more = fmt.Sprintf(" (+%d more)", len(shown)-6)
+		shown = shown[:6]
+	}
+	return fmt.Sprintf("%d call(s) that failed in earlier runs of this work (within the last %s) are remembered, so each gets ONE attempt this turn before the repeat guard stops it: %s%s. A success clears the memory; a call that stays here needs its tool or its arguments fixed.",
+		len(carried), failureMemoryTTL.String(), strings.Join(shown, "; "), more)
 }
 
 // saveFailureMemory persists the counts that are still failing. A signature

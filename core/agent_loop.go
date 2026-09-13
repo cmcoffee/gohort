@@ -1030,7 +1030,9 @@ func (lr *loopRun) setupState() {
 	lr.repeatFail = map[string]int{}
 	// Carry in what this standing work already learned, before history is
 	// consulted: a scheduled fire's history has no tool results to learn from.
-	loadFailureMemory(lr.cfg.FailureMemoryKey, lr.repeatFail, repeatFailLimit-1)
+	if carried := loadFailureMemory(lr.cfg.FailureMemoryKey, lr.repeatFail, repeatFailLimit-1); len(carried) > 0 {
+		lr.emitDiag("failure-memory-carried", failureMemoryDiag(carried))
+	}
 	// Identical-repeat guard. repeatFail above only counts ERRORS (it resets
 	// on success), so a model that re-issues the same call and keeps getting a
 	// valid-but-useless SAME result never trips it (observed live: inspect_run
