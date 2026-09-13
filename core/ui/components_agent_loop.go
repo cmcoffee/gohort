@@ -463,7 +463,29 @@ type OrchestratorNavItem struct {
 	// grid) or "cards" (one card per row — first field bold as the title, the
 	// rest as detail lines, row actions as buttons). Cards suit an approval
 	// queue (Permissions) where each row is a decision, not a data point.
+	//
+	// A "cards" row may carry a hidden "_section" field; when its value
+	// changes from the previous row's, that heading is drawn before the card.
+	// It is how one source renders as several titled lists — a summary view —
+	// without the menu growing an entry per list.
 	Layout string `json:"layout,omitempty"`
+	// Group names the heading this item sits under in the "Manage ▾" dropdown.
+	// Items keep their declared order; each new group value draws its heading
+	// once. Empty means no heading.
+	//
+	// It exists because a menu that mixes what acts on the OPEN thing with
+	// what reports on ALL of them reads as neither: every entry looks scoped
+	// to whatever is selected, so the fleet-wide ones quietly mislead.
+	Group string `json:"group,omitempty"`
+	// Scope decides what the item's Source is asked about. The default ("" or
+	// "agent") appends the selected agent, which is what a per-agent view
+	// needs. "fleet" appends nothing, so the handler answers for everything
+	// the user owns.
+	//
+	// Without this every source is asked about one agent whether it means to
+	// be or not, and a handler written to answer fleet-wide when given no
+	// agent can never actually do so through this menu.
+	Scope string `json:"scope,omitempty"`
 	// Icon is an optional leading glyph (emoji or short text) shown before the
 	// label on a Pinned rail row — so a pinned action queue reads as a distinct
 	// tier alongside the Channel hero, not as a bare list entry.

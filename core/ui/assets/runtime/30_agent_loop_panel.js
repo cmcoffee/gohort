@@ -370,8 +370,19 @@
         }
         if (item && item.layout === 'cards') {
           var cactions = (item && item.row_actions) || [];
-          var ckeys = Object.keys(rows[0]).filter(function(k) { return k.charAt(0) !== '_'; });
+          var lastSection = null;
           rows.forEach(function(row) {
+            // A "_section" heading, drawn once each time the value changes. It
+            // is what lets ONE source render as several titled lists (a summary
+            // view) instead of one list per menu entry.
+            if (row._section && row._section !== lastSection) {
+              lastSection = row._section;
+              orchView.appendChild(el('div', {style: 'margin:0.9rem 0 0.35rem;font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-mute, #999)'}, [row._section]));
+            }
+            // Each row's OWN visible keys, not the first row's: a view that
+            // groups several kinds of thing has a different shape per section,
+            // and reading the shape off row one renders the rest blank.
+            var ckeys = Object.keys(row).filter(function(k) { return k.charAt(0) !== '_'; });
             var card = el('div', {style: 'display:flex;align-items:center;gap:0.6rem;border:1px solid var(--border, rgba(127,127,127,0.25));border-radius:7px;padding:0.45rem 0.7rem;margin-bottom:0.4rem;background:var(--bg-1, rgba(127,127,127,0.03));flex-wrap:wrap'});
             // Left: title + status pill + inline muted details, all on one line.
             var info = el('div', {style: 'flex:1 1 11rem;min-width:0;display:flex;align-items:baseline;gap:0.45rem;flex-wrap:wrap'});
@@ -497,8 +508,12 @@
       // off ?agent=…); without this the fetch omits the param and the server
       // falls back to its default agent, so a non-default channel's History
       // always renders empty. Mirrors the action_url agent-stamping below.
-      function orchSourceURL(src) {
+      // A fleet-scoped item (scope:"fleet") is asked about everything the user
+      // owns, so it must NOT carry an agent: a handler that answers fleet-wide
+      // when given none can otherwise never be reached from this menu.
+      function orchSourceURL(src, item) {
         if (!src) return src;
+        if (item && item.scope === 'fleet') return src;
         return src + (src.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '');
       }
       // openHomeThread lands on the agent's home thread — a pinned session in
@@ -576,7 +591,7 @@
           if (drawer && drawer.mobileTitle) drawer.mobileTitle.textContent = item.label || '';
           orchView.textContent = 'Loading…';
           var reload = function() { selectOrchNav(idx); };
-          fetch(orchSourceURL(item.source)).then(function(r) { return r.ok ? r.json() : []; })
+          fetch(orchSourceURL(item.source, item)).then(function(r) { return r.ok ? r.json() : []; })
             .then(function(rows) { renderOrchTable(rows, item, reload); })
             .catch(function(err) { orchView.textContent = 'Failed to load: ' + err.message; });
           // Live views: silently re-fetch + re-render on the configured
@@ -589,7 +604,7 @@
                 clearOrchViewTimer();
                 return;
               }
-              fetch(orchSourceURL(item.source)).then(function(r) { return r.ok ? r.json() : null; })
+              fetch(orchSourceURL(item.source, item)).then(function(r) { return r.ok ? r.json() : null; })
                 .then(function(rows) { if (rows) renderOrchTable(rows, item, reload); })
                 .catch(function() {});
             }, item.auto_refresh_ms);
@@ -646,7 +661,7 @@
           var badge = orchBadges[i];
           if (!item.source || !badge) return;
           if (onlyAllAgents && !((item.pinned || item.topbar) && item.all_agents)) return;
-          fetch(orchSourceURL(item.source)).then(function(r) { return r.ok ? r.json() : []; })
+          fetch(orchSourceURL(item.source, item)).then(function(r) { return r.ok ? r.json() : []; })
             .then(function(rows) {
               // BadgeField counts only matching rows (e.g. _pending on a page
               // that also lists granted permissions); empty counts every row.
@@ -686,6 +701,7 @@
       // carries the Cortex hero thread but no management surface) shows no empty
       // Manage button — applyOrchMode gates manageControl on this.
       var hasManageMenu = (cfg.orchestrator_nav || []).some(function(it){ return !it.pinned && !it.topbar; });
+      var lastNavGroup = null; // heading drawn most recently in the dropdown
       // Pinned rows flagged all_agents render for every agent, not just the
       // alt-nav ones — their queue belongs to the USER, so gating it on which
       // agent is selected would hide pending work (and strand it completely
@@ -744,6 +760,13 @@
             onclick: function() { selectOrchNav(i); }}, pkids);
           pinnedEl.appendChild(b);
         } else {
+          // A new Group value draws its heading once, before this row. The
+          // menu then reads as what it is: things that act on the open agent,
+          // and things that report on the whole fleet.
+          if (item.group && item.group !== lastNavGroup) {
+            lastNavGroup = item.group;
+            navEl.appendChild(el('div', {style: 'padding:0.45rem 0.6rem 0.2rem;font-size:0.66rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-mute, #999)'}, [item.group]));
+          }
           var label = el('span', {style: 'flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'}, [item.label || ('View ' + (i + 1))]);
           var kids = [label];
           if (item.action_url) {

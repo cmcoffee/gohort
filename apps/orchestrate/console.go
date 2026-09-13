@@ -160,6 +160,11 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/agents/update", gw(T.handleConsoleAgentUpdate))
 	T.HandleFunc("/api/console/activity", g(T.handleConsoleActivity))
 	T.HandleFunc("/api/console/activity/cancel", gw(T.handleConsoleActivityCancel))
+	// The two summaries. Overview answers for the agent in view; fleet answers
+	// for everything the user owns and is marked fleet-scoped in the menu so no
+	// agent is appended to its request.
+	T.HandleFunc("/api/console/overview", g(T.handleConsoleOverview))
+	T.HandleFunc("/api/console/fleet", g(T.handleConsoleFleet))
 	T.HandleFunc("/api/console/runs", g(T.handleConsoleRuns))
 	T.HandleFunc("/api/console/run-detail", g(T.handleConsoleRunDetail))
 	T.HandleFunc("/api/console/approvals", g(T.handleConsoleApprovals))

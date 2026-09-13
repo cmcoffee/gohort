@@ -285,33 +285,33 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 					// per-turn scrubbing is the inline ✕ on each bubble (works on
 					// every thread, not only the home thread). What remains is the
 					// fleet-management views + the channel-wide actions.
+					// The menu is grouped, because it answers two different
+					// questions and used to answer them in one undifferentiated
+					// list. Everything under "This agent" acts on or reports on
+					// the agent whose topbar the menu is in; everything under
+					// "Your fleet" is about all of them. Without the headings the
+					// fleet entries read as the open agent's, since that is what
+					// every other control in this topbar means.
+					//
+					// "Active now" is deliberately absent. The Monitor app's first
+					// table reads the same endpoint on the same interval and also
+					// covers app and pipeline activity, so a second copy here was
+					// the lesser of two identical views.
 					OrchestratorNav: []ui.OrchestratorNavItem{
-						// Live fleet activity — what the AI is doing RIGHT NOW. The
-						// per-session live card only covers the thread you're looking
-						// at; this view lists every in-flight run for the user (chat
-						// turns, scheduled fires, standing fires) plus the recently
-						// completed ones, refreshed while open. The badge counts
-						// currently-running work; Cancel is the kill switch for a
-						// runaway cycle.
-						{Label: "Active now", Source: "api/console/activity", Layout: "cards",
-							AutoRefreshMS: 3000, BadgeField: "_running", RowActions: []ui.OrchestratorRowAction{
-								{Label: "Cancel", Method: "POST", URL: "api/console/activity/cancel", OnlyIf: "_running", Variant: "danger", Confirm: "Cancel this in-flight run? The agent stops mid-turn; anything it already did stays done."},
+						// What this agent has been doing, in one read: how much it
+						// has run, what it costs, what it has standing, and what
+						// needs a person. Every figure is gathered through the same
+						// helper the detailed pane below uses, so the summary and
+						// the list it summarizes cannot disagree. Details opens the
+						// same run record the Runs pane opens.
+						{Label: "Agent overview", Group: "This agent", Source: "api/console/overview", Layout: "cards",
+							RowActions: []ui.OrchestratorRowAction{
+								{Label: "Details", Method: "GET", URL: "api/console/run-detail", ShowResult: true, OnlyIf: "_run"},
 							}},
-						// The durable record behind the live view: every scheduled,
-						// standing, monitor and dispatched run this user owns, newest
-						// first, long after the activity registry has forgotten it.
-						// Details opens the full record — the step trace with each
-						// call's arguments and result, the output, and the prompt
-						// digest — which until now only the Operator agent could read
-						// (list_runs / inspect_run), so "what did my 3am run actually
-						// do" meant asking an agent.
-						{Label: "Runs", Source: "api/console/runs", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
-							{Label: "Details", Method: "GET", URL: "api/console/run-detail", ShowResult: true},
-						}},
 						// Cards layout so each agent's mission (the standing brief it
 						// runs with — "what it's told to do") renders as a detail line
 						// under the name, alongside its schedule / status / next run.
-						{Label: "Enabled agents", Source: "api/console/agents", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
+						{Label: "Enabled agents", Group: "This agent", Source: "api/console/agents", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
 							// Run now is hidden on a broken row — there's no live agent
 							// to run. Resume stays visible as the gated recovery button
 							// (its handler refuses while the dependency is still gone).
@@ -331,30 +331,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							{Label: "Move to…", Method: "POST", URL: "api/console/agents/move", PickerSource: "api/console/surface-options", PickerTitle: "Where the per-run report lands (cortex / session / background)"},
 							{Label: "Delete", Method: "DELETE", URL: "api/console/agents/delete", Variant: "danger", Confirm: "Delete this standing agent and cancel its schedule?"},
 						}},
-						// What the enforced rules have actually STOPPED, across every
-						// agent. The per-agent log lives in the Rules modal, which is
-						// the right place while editing one agent's rules and the
-						// wrong one for "is anything being blocked that shouldn't
-						// be" — that question is about the fleet. Read-only: the
-						// block already happened; the only action is to go and look
-						// at the rule.
-						{Label: "Guardrail blocks", Source: "api/console/guardrail-blocks", Layout: "cards"},
-						// Tool actions that have failed repeatedly and never once
-						// succeeded — the standing tally the outcome ledger keeps per
-						// action, which until now surfaced as ONE breadcrumb on the
-						// fifth failure in whichever thread tripped it. The badge is the
-						// count of broken actions. Forget clears one tally after the
-						// definition is fixed; a success clears it on its own.
-						// What each agent costs: every run banks its own scoped usage
-						// against the agent it ran (agent_spend.go), priced at read time
-						// with the configured rates and in tokens always. The first
-						// per-agent cost view; before it the only per-agent cost fact an
-						// owner saw was the daily-cap breadcrumb.
-						{Label: "Spend", Source: "api/console/spend", Layout: "cards"},
-						{Label: "Broken tools", Source: "api/console/broken-tools", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
-							{Label: "Forget", Method: "POST", URL: "api/console/broken-tools/forget", Confirm: "Forget this action's failure tally? It starts counting again from zero; if the definition is still wrong it will be back here after five more failures."},
-						}},
-						{Label: "Event monitors", Source: "api/console/monitors", RowActions: []ui.OrchestratorRowAction{
+						{Label: "Event monitors", Group: "This agent", Source: "api/console/monitors", RowActions: []ui.OrchestratorRowAction{
 							// Test = run the check once now. Only scheduled kinds
 							// (poll / http_poll / watch) have a check to run — a
 							// webhook is push-only, so gate on _schedulable; and not on
@@ -370,7 +347,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// count, and next run alongside the name — the status-card
 						// sibling of Enabled agents / Event monitors. Recurring tasks
 						// have no pause concept, so Delete is the only row action.
-						{Label: "Recurring tasks", Source: "api/console/recurring", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
+						{Label: "Recurring tasks", Group: "This agent", Source: "api/console/recurring", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
 							// Run now is hidden on a parked task: a parked payload
 							// short-circuits at the top of the fire, so the button
 							// would do nothing. Parked rows get Relink (the agent is
@@ -424,12 +401,66 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 								{Label: "Dismiss", Method: "POST", URL: "api/console/approvals/deny", OnlyIf: "_suggestion"},
 								{Label: "Remove", Method: "POST", URL: "api/console/permissions/remove", Variant: "danger", OnlyIf: "_managed", Confirm: "Forget this permission entirely? It returns to the default (needs approval)."},
 							}},
-						{Label: "Compact Cortex", ActionURL: "api/console/channel/compact",
+						{Label: "Compact Cortex", Group: "This agent", ActionURL: "api/console/channel/compact",
 							Confirm: "Compact this Cortex thread now? Older messages fold into its rolling summary (still searchable via history recall); the recent tail is kept verbatim. Runs in the background — reopen the thread to see the shorter view."},
-						{Label: "Clear Cortex", ActionURL: "api/console/channel/clear", Variant: "warning",
+						{Label: "Clear Cortex", Group: "This agent", ActionURL: "api/console/channel/clear", Variant: "warning",
 							Confirm: "Clear this Cortex thread's conversation and rolling summary? Your monitors, standing agents, and approvals are kept."},
-						{Label: "Decommission", ActionURL: "api/console/channel/decommission", Variant: "danger",
-							Confirm: "Decommission: permanently delete ALL your event monitors and standing agents, and cancel every pending approval and standing grant? This cannot be undone."},
+
+						// --- Your fleet: everything the user owns, not the agent in
+						// view. Each of these is fleet-scoped, so the selected agent
+						// is NOT appended to the request.
+
+						// What every agent is doing on the owner's behalf, in one
+						// read: how much has run, what it cost, what is standing, and
+						// what has stopped and is waiting on a person.
+						{Label: "Fleet overview", Group: "Your fleet", Scope: "fleet", Source: "api/console/fleet", Layout: "cards",
+							RowActions: []ui.OrchestratorRowAction{
+								{Label: "Details", Method: "GET", URL: "api/console/run-detail", ShowResult: true, OnlyIf: "_run"},
+							}},
+						// The durable record behind the live view: every scheduled,
+						// standing, monitor and dispatched run this user owns, newest
+						// first, long after the activity registry has forgotten it.
+						// Details opens the full record — the step trace with each
+						// call's arguments and result, the output, and the prompt
+						// digest — which until now only the Operator agent could read
+						// (list_runs / inspect_run), so "what did my 3am run actually
+						// do" meant asking an agent.
+						{Label: "Runs", Group: "Your fleet", Scope: "fleet", Source: "api/console/runs", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
+							{Label: "Details", Method: "GET", URL: "api/console/run-detail", ShowResult: true},
+						}},
+						// What each agent costs: every run banks its own scoped usage
+						// against the agent it ran (agent_spend.go), priced at read time
+						// with the configured rates and in tokens always. One row per
+						// agent, so this is a fleet view however it is opened.
+						{Label: "Spend", Group: "Your fleet", Scope: "fleet", Source: "api/console/spend", Layout: "cards"},
+						// What the enforced rules have actually STOPPED, across every
+						// agent. The per-agent log lives in the Rules modal, which is
+						// the right place while editing one agent's rules and the
+						// wrong one for "is anything being blocked that shouldn't
+						// be" — that question is about the fleet. Read-only: the
+						// block already happened; the only action is to go and look
+						// at the rule.
+						//
+						// Fleet-scoped on purpose. This handler answers fleet-wide
+						// only when given no agent, and the menu appended one to
+						// every request, so until now it could never actually do so.
+						{Label: "Guardrail blocks", Group: "Your fleet", Scope: "fleet", Source: "api/console/guardrail-blocks", Layout: "cards"},
+						// Tool actions that have failed repeatedly and never once
+						// succeeded — the standing tally the outcome ledger keeps per
+						// action, which until now surfaced as ONE breadcrumb on the
+						// fifth failure in whichever thread tripped it. Forget clears
+						// one tally after the definition is fixed; a success clears it
+						// on its own.
+						{Label: "Broken tools", Group: "Your fleet", Scope: "fleet", Source: "api/console/broken-tools", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
+							{Label: "Forget", Method: "POST", URL: "api/console/broken-tools/forget", Confirm: "Forget this action's failure tally? It starts counting again from zero; if the definition is still wrong it will be back here after five more failures."},
+						}},
+						// Decommission is fleet-wide and irreversible, and it used to
+						// sit directly under two Cortex actions that touch only the
+						// open agent — so it read as scoped to that agent, which is
+						// the one thing it is not. It belongs here, under the heading
+						// that says what it reaches.
+						{Label: "Decommission", Group: "Your fleet", ActionURL: "api/console/channel/decommission", Variant: "danger",
+							Confirm: "Decommission your whole fleet: permanently delete ALL your event monitors and standing agents, and cancel every pending approval and standing grant? This affects every agent, not just the one you have open, and cannot be undone."},
 					},
 					// core/ui is domain-agnostic: it reads the opt-in agent set
 					// from the named window-global this app sets — an agentId→
