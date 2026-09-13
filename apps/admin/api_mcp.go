@@ -2,6 +2,7 @@ package admin
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -173,8 +174,13 @@ func (a *AdminApp) registerMCPRoutes(sub *http.ServeMux) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		msg, err := MCP().Test(body.MCPServerConfig, body.Token)
+		// Under the request's context: the form's Cancel closes the request
+		// and the handshake is dropped with it.
+		msg, err := MCP().Test(r.Context(), body.MCPServerConfig, body.Token)
 		if err != nil {
+			if r.Context().Err() != nil {
+				err = errors.New("cancelled before the server finished the handshake")
+			}
 			json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
 			return
 		}

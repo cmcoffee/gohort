@@ -910,8 +910,13 @@ func (m *MCPManager) validOAuthToken(user, server string) (string, error) {
 
 // Test connects to a candidate config (without persisting) and reports
 // the tool count. Used by the admin "Test" button. A non-empty token
-// overrides the stored one for the probe; never echoed back.
-func (m *MCPManager) Test(cfg MCPServerConfig, token string) (string, error) {
+// overrides the stored one for the probe; never echoed back. Runs under the
+// caller's context so the button's Cancel ends the handshake; the handshake
+// timeout still applies, nested inside it.
+func (m *MCPManager) Test(ctx context.Context, cfg MCPServerConfig, token string) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	auth := m.authorizer(cfg)
 	if cfg.AuthMode == MCPAuthBearer && strings.TrimSpace(token) != "" {
 		t := strings.TrimSpace(token)
@@ -922,7 +927,7 @@ func (m *MCPManager) Test(cfg MCPServerConfig, token string) (string, error) {
 	}
 	cl := mcpclient.New(mcpclient.NewHTTPTransport(strings.TrimSpace(cfg.URL), mcpclient.HTTPOptions{Auth: auth}))
 	defer cl.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), mcpHandshakeTimeout())
+	ctx, cancel := context.WithTimeout(ctx, mcpHandshakeTimeout())
 	defer cancel()
 	if err := cl.Initialize(ctx); err != nil {
 		return "", err

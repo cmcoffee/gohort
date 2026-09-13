@@ -123,6 +123,16 @@ func (s *SecureAPI) oauthClient(c SecureCredential, secret string) *apiclient.AP
 // returns (access, refresh, ttl). The grant builds the body/auth; response
 // parsing is shared. Token endpoint must be https.
 func (s *SecureAPI) mintOAuthGrant(c SecureCredential, secret string) (string, string, time.Duration, error) {
+	return s.mintOAuthGrantCtx(context.Background(), c, secret)
+}
+
+// mintOAuthGrantCtx is mintOAuthGrant under a caller's context, so an admin
+// test's Cancel ends the token request instead of leaving it to the request
+// timeout. The timeout still applies, nested inside the caller's.
+func (s *SecureAPI) mintOAuthGrantCtx(ctx context.Context, c SecureCredential, secret string) (string, string, time.Duration, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if strings.TrimSpace(c.TokenURL) == "" {
 		return "", "", 0, fmt.Errorf("oauth credential %q has no token_url", c.Name)
 	}
@@ -168,7 +178,7 @@ func (s *SecureAPI) mintOAuthGrant(c SecureCredential, secret string) (string, s
 		form.Set("scope", c.Scope)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), secureAPIRequestTimeout())
+	ctx, cancel := context.WithTimeout(ctx, secureAPIRequestTimeout())
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, "POST", c.TokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
@@ -401,7 +411,7 @@ func (s *SecureAPI) OAuthDraftPending(name string) bool {
 // the secret field untouched) it falls back to the stored secret. This is
 // what the admin UI's inline "Test token" button calls so the operator can
 // verify the config + secret before or after committing it.
-func (s *SecureAPI) TestMintFromPosted(c SecureCredential, postedSecret string) (string, error) {
+func (s *SecureAPI) TestMintFromPosted(ctx context.Context, c SecureCredential, postedSecret string) (string, error) {
 	if !s.ready() {
 		return "", fmt.Errorf("secure-api store not initialized")
 	}
@@ -423,7 +433,7 @@ func (s *SecureAPI) TestMintFromPosted(c SecureCredential, postedSecret string) 
 	// Don't let a test built from possibly-unsaved config poison the cached
 	// client for the saved credential — invalidate on both sides of the mint.
 	invalidateOAuthClient(c.Name)
-	_, _, ttl, err := s.mintOAuthGrant(c, secret)
+	_, _, ttl, err := s.mintOAuthGrantCtx(ctx, c, secret)
 	invalidateOAuthClient(c.Name)
 	if err != nil {
 		return "", err
@@ -435,7 +445,7 @@ func (s *SecureAPI) TestMintFromPosted(c SecureCredential, postedSecret string) 
 // credential and reports the outcome — the enabler for LLM-assisted setup:
 // the model fills the config in from the API's OAuth docs, calls this to
 // verify, and reads any error to iterate. Never returns the token itself.
-func (s *SecureAPI) TestMintToken(name string) (string, error) {
+func (s *SecureAPI) TestMintToken(ctx context.Context, name string) (string, error) {
 	c, ok := s.Load(name)
 	if !ok {
 		return "", fmt.Errorf("credential %q not found", name)
@@ -448,7 +458,7 @@ func (s *SecureAPI) TestMintToken(name string) (string, error) {
 		return "", fmt.Errorf("credential %q has no stored secret (the client_secret / private key / refresh token)", name)
 	}
 	invalidateOAuthClient(name)
-	_, _, ttl, err := s.mintOAuthGrant(c, secret)
+	_, _, ttl, err := s.mintOAuthGrantCtx(ctx, c, secret)
 	if err != nil {
 		return "", err
 	}

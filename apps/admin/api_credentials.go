@@ -2,6 +2,7 @@ package admin
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -212,7 +213,7 @@ func (a *AdminApp) registerCredentialsRoutes(sub *http.ServeMux) {
 					// secret before relying on the credential. Returns the
 					// outcome (incl. the provider's error on failure) so the
 					// admin / LLM-assisted setup can iterate.
-					msg, terr := Secure().TestMintToken(name)
+					msg, terr := Secure().TestMintToken(r.Context(), name)
 					w.Header().Set("Content-Type", "application/json")
 					if terr != nil {
 						json.NewEncoder(w).Encode(map[string]any{"ok": false, "message": terr.Error()})
@@ -370,8 +371,12 @@ func (a *AdminApp) registerCredentialsRoutes(sub *http.ServeMux) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		msg, err := Secure().TestMintFromPosted(body.SecureCredential, body.Secret)
+		// Under the request's context, so Cancel ends the token request.
+		msg, err := Secure().TestMintFromPosted(r.Context(), body.SecureCredential, body.Secret)
 		if err != nil {
+			if r.Context().Err() != nil {
+				err = errors.New("cancelled before the token endpoint answered")
+			}
 			json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
 			return
 		}
