@@ -174,7 +174,14 @@ const (
 	// did NOT get exported is the reader and the writer: VerifyStatus and
 	// RecordVerify are methods on AppSpec, which the count excludes because a
 	// method never lands in a dot-importer's namespace.
-	coreExportCeiling = 2169
+	//
+	// Raised 2169 -> 2170 for AppSetting, ONE type: an authored app's declared
+	// tunable, a slice on AppSpec, which is the portable recipe — the same
+	// outbound TYPE edge as AppVerifyState above, and it arrived at the top of
+	// the band the same way. Everything that reads or writes a value (the
+	// page, the coercion, the scope rule) stays in apps/customapps; PerUser is
+	// a method, which the count excludes.
+	coreExportCeiling = 2170
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

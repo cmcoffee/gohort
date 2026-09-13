@@ -237,6 +237,13 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		// keeps its owner-side tracker running.
 		T.touchAppView(spec)
 		_ = ui.RenderPageJSON(w, spec.Page, "", recordsInvalidationBridge(spec), spec.Name) // "" → resolved theme (see RegisterThemeResolver)
+	case rest == "_settings":
+		// The app's Settings page — a form over the tunables it declares.
+		T.handleSettingsPage(w, r, spec, user == ownerUser)
+	case rest == "_settings/values":
+		T.handleSettingsValues(w, r, spec, user, user == ownerUser)
+	case rest == "_settings/reset":
+		T.handleSettingsReset(w, r, spec, user, user == ownerUser)
 	case strings.HasPrefix(rest, "data/"):
 		T.handleData(w, r, ownerUser, appdb, spec, strings.TrimPrefix(rest, "data/"))
 	case rest == "actions":
@@ -458,6 +465,9 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 				EmptyText: "No apps yet.",
 				RowActions: []ui.RowAction{
 					{Type: "button", Label: "Open", Method: "GET", PostTo: "{slug}/", HideIf: "disabled"},
+					// Only an app that declares tunables gets the button; for a
+					// shared app, only when some of them are the reader's own.
+					{Type: "button", Label: "Settings", Method: "GET", PostTo: "{slug}/_settings", OnlyIf: "has_settings", HideIf: "disabled"},
 					{Type: "button", Label: "Enable", Method: "POST", PostTo: "_app/enable?slug={slug}", OnlyIf: "disabled",
 						Confirm: "Enable this imported app? Review its data-source and action scripts first — they run in your sandbox once the app is live."},
 					// One Share button opens the sharing modal (customapps_share).
@@ -714,6 +724,9 @@ func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owne
 		// carry the current sharing state into the Share modal (a client action)
 		// so it opens pre-filled and can show + copy the live public link.
 		row := map[string]string{"slug": s.Slug, "name": s.Name, "desc": s.Desc, "mine": "1"}
+		if len(visibleSettings(s, true)) > 0 {
+			row["has_settings"] = "1"
+		}
 		if direct {
 			// The modal words its toggles as acts or as requests by this.
 			row["direct"] = "1"
@@ -779,10 +792,14 @@ func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owne
 		if !T.sharedAppReachableBy(r, slug) || !appadmin.UserMayReach(RootDB, ownerName, slug, owner) {
 			continue
 		}
-		out = append(out, map[string]string{
+		row := map[string]string{
 			"slug": s.Slug, "name": s.Name, "desc": s.Desc,
 			"status": "shared by " + ownerName,
-		})
+		}
+		if len(visibleSettings(s, false)) > 0 {
+			row["has_settings"] = "1"
+		}
+		out = append(out, row)
 	}
 	writeJSON(w, out)
 }

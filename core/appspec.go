@@ -93,6 +93,14 @@ type AppSpec struct {
 	// logic seam. Served at /apps/<slug>/action/<name>; surfaced by an "actions"
 	// section.
 	Actions []AppAction `json:"actions,omitempty"`
+	// Settings are the app's declared tunables — the knobs a person would
+	// plausibly change without re-authoring the app (an interval, a threshold,
+	// a unit, which source). Declared by the author, stored per app (and per
+	// user for Scope "user"), edited on the app's Settings page, and handed
+	// to every script as environment variables named after each setting. The
+	// declaration is part of the app's shape and exports with it; the VALUES
+	// are deployment-local and do not.
+	Settings []AppSetting `json:"settings,omitempty"`
 	// Disabled blocks the app from serving (the host 403s every sub-route) until
 	// the owner enables it from the My Apps index. It exists as the bundle-
 	// import review gate: a spec can carry sandboxed data-source/action scripts,
@@ -221,6 +229,31 @@ func (s AppSpec) RecordVerify(pass bool, summary string) bool {
 	db.Set(AppSpecTable, s.Slug, stored)
 	return true
 }
+
+// AppSetting is one tunable an app declares. Type is one of "string" (the
+// default), "number", "toggle" or "choice" (Options lists the values). Default
+// is the value every script sees until someone sets one; it is a string
+// because that is what an environment variable is. Scope decides where a set
+// value lives for a SHARED app: "owner" (the default) is one value everybody
+// gets, for things that run against the owner's credentials — which repo,
+// which calendar; "user" is a value per person, stored beside their own copy
+// of the records — their city, their units. Min/Max bound a number when
+// Max > Min; both zero means unbounded (a pointer would not survive gob).
+type AppSetting struct {
+	Name    string   `json:"name"`
+	Label   string   `json:"label,omitempty"`
+	Type    string   `json:"type,omitempty"`
+	Default string   `json:"default,omitempty"`
+	Help    string   `json:"help,omitempty"`
+	Scope   string   `json:"scope,omitempty"`
+	Options []string `json:"options,omitempty"`
+	Min     int      `json:"min,omitempty"`
+	Max     int      `json:"max,omitempty"`
+}
+
+// PerUser reports whether a set value of this setting is one person's own
+// (Scope "user") rather than the owner's, shared by every user of the app.
+func (s AppSetting) PerUser() bool { return strings.EqualFold(strings.TrimSpace(s.Scope), "user") }
 
 // AppDataSource is a script-backed data endpoint for a custom app: a sandboxed
 // script (python by default) that COMPUTES the JSON a table/display section
