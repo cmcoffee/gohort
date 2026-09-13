@@ -8,6 +8,47 @@
     // delete URLs get a single-column panel (no sidebar).
     var hasList = !!(cfg.list_url && cfg.load_url && cfg.delete_url);
 
+    // renderDetailValue draws one JSON value for a show_result modal, generically:
+    // an object as labelled fields, an array of objects as one sub-card each,
+    // a long or multi-line string as preformatted text, anything else inline.
+    // Keys starting with "_" are plumbing and stay hidden, as in the table.
+    function renderDetailValue(container, v, depth) {
+      depth = depth || 0;
+      if (v == null || v === '') return;
+      if (Array.isArray(v)) {
+        if (!v.length) return;
+        v.forEach(function(item, i) {
+          var card = el('div', {style: 'border:1px solid var(--border, rgba(127,127,127,0.25));border-radius:6px;padding:0.4rem 0.6rem;margin:0.3rem 0;background:var(--bg-2, rgba(127,127,127,0.05))'});
+          if (item && typeof item === 'object' && !Array.isArray(item)) {
+            card.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:0.72rem;margin-bottom:0.2rem'}, [String(i + 1)]));
+            renderDetailValue(card, item, depth + 1);
+          } else {
+            renderDetailValue(card, item, depth + 1);
+          }
+          container.appendChild(card);
+        });
+        return;
+      }
+      if (typeof v === 'object') {
+        Object.keys(v).forEach(function(k) {
+          if (k.charAt(0) === '_') return;
+          var val = v[k];
+          if (val == null || val === '' || (Array.isArray(val) && !val.length)) return;
+          var row = el('div', {style: 'margin:0.35rem 0'});
+          row.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:0.74rem;margin-bottom:0.1rem'}, [k]));
+          renderDetailValue(row, val, depth + 1);
+          container.appendChild(row);
+        });
+        return;
+      }
+      var s = String(v);
+      if (s.length > 80 || s.indexOf('\n') >= 0) {
+        container.appendChild(el('pre', {style: 'white-space:pre-wrap;word-break:break-word;margin:0;font-size:0.8rem;max-height:320px;overflow:auto;background:var(--bg-1, rgba(127,127,127,0.1));padding:0.45rem;border-radius:4px'}, [s]));
+      } else {
+        container.appendChild(el('div', {style: 'font-size:0.85rem;word-break:break-word'}, [s]));
+      }
+    }
+
     // Alternate-nav mode (domain-agnostic): for designated agents the host
     // app can replace the session list with a fixed nav and pin the panel to
     // ONE ongoing thread per agent. The app names a JS global (alt_nav_flag)
@@ -295,46 +336,6 @@
               })
               .catch(function(err) { status.textContent = 'Failed to load: ' + err.message; });
           }});
-        }
-        // renderDetailValue draws one JSON value for a show_result modal, generically:
-        // an object as labelled fields, an array of objects as one sub-card each,
-        // a long or multi-line string as preformatted text, anything else inline.
-        // Keys starting with "_" are plumbing and stay hidden, as in the table.
-        function renderDetailValue(container, v, depth) {
-          depth = depth || 0;
-          if (v == null || v === '') return;
-          if (Array.isArray(v)) {
-            if (!v.length) return;
-            v.forEach(function(item, i) {
-              var card = el('div', {style: 'border:1px solid var(--border, rgba(127,127,127,0.25));border-radius:6px;padding:0.4rem 0.6rem;margin:0.3rem 0;background:var(--bg-2, rgba(127,127,127,0.05))'});
-              if (item && typeof item === 'object' && !Array.isArray(item)) {
-                card.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:0.72rem;margin-bottom:0.2rem'}, [String(i + 1)]));
-                renderDetailValue(card, item, depth + 1);
-              } else {
-                renderDetailValue(card, item, depth + 1);
-              }
-              container.appendChild(card);
-            });
-            return;
-          }
-          if (typeof v === 'object') {
-            Object.keys(v).forEach(function(k) {
-              if (k.charAt(0) === '_') return;
-              var val = v[k];
-              if (val == null || val === '' || (Array.isArray(val) && !val.length)) return;
-              var row = el('div', {style: 'margin:0.35rem 0'});
-              row.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:0.74rem;margin-bottom:0.1rem'}, [k]));
-              renderDetailValue(row, val, depth + 1);
-              container.appendChild(row);
-            });
-            return;
-          }
-          var s = String(v);
-          if (s.length > 80 || s.indexOf('\n') >= 0) {
-            container.appendChild(el('pre', {style: 'white-space:pre-wrap;word-break:break-word;margin:0;font-size:0.8rem;max-height:320px;overflow:auto;background:var(--bg-1, rgba(127,127,127,0.1));padding:0.45rem;border-radius:4px'}, [s]));
-          } else {
-            container.appendChild(el('div', {style: 'font-size:0.85rem;word-break:break-word'}, [s]));
-          }
         }
         // fireRowAction runs one row action the way both layouts need: a picker
         // opens its chooser; a show_result action GETs the record and shows it
@@ -1018,6 +1019,7 @@
     // panel knows only the shape: {label, title, tone}, empty label = render
     // nothing, so a session with nothing to report stays quiet.
     var statusPill = null;
+    var statusLast = null; // the last status payload, for the click-through
     function refreshStatusPill() {
       if (!cfg.status_url || !statusPill) return;
       var sid = activeSessionId || '';
@@ -1025,19 +1027,81 @@
       var url = substituteExtras(cfg.status_url).replace('{session}', encodeURIComponent(sid));
       fetchJSON(url).then(function(s) {
         var label = (s && s.label) || '';
-        if (!label) { statusPill.style.display = 'none'; return; }
+        if (!label) { statusPill.style.display = 'none'; statusLast = null; return; }
+        statusLast = s;
         statusPill.textContent = label;
         statusPill.title = (s && s.title) || '';
         statusPill.style.color = (s && s.tone === 'active') ? 'var(--accent)' : 'var(--text-mute)';
+        // A status with a detail view behind it reads as a control.
+        var openable = !!(s && s.detail_url);
+        statusPill.style.cursor = openable ? 'pointer' : '';
+        statusPill.style.textDecoration = openable ? 'underline dotted' : '';
         statusPill.style.display = '';
       }).catch(function() {
         // A status readout is decoration. It never gets to interrupt a
         // conversation with an error toast.
         statusPill.style.display = 'none';
+        statusLast = null;
       });
     }
+    // openStatusDetail is the click-through: the status payload's detail_url
+    // rendered generically, plus its actions as buttons. The panel knows the
+    // shape and nothing about what a phase, a stage or a connection is.
+    function openStatusDetail(s) {
+      if (!s || !s.detail_url) return;
+      fetchJSON(s.detail_url).then(function(data) {
+        var handle = window.uiOpenModal({
+          title: s.label || 'Status',
+          subtitle: s.title || '',
+          width: 'min(720px, 94vw)',
+          mount: function(body) {
+            var empty = data == null || (typeof data === 'object' && !Object.keys(data).length);
+            if (empty) {
+              body.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:0.85rem'}, ['Nothing to show.']));
+            } else {
+              renderDetailValue(body, data, 0);
+            }
+            var actions = (s.actions || []);
+            if (!actions.length) return;
+            var bar = el('div', {style: 'display:flex;flex-wrap:wrap;gap:0.5rem;align-items:center;margin-top:0.9rem;padding-top:0.6rem;border-top:1px solid var(--border, rgba(127,127,127,0.25))'});
+            var status = el('span', {style: 'color:var(--text-mute, #999);font-size:0.78rem'});
+            actions.forEach(function(a) {
+              var group = el('span', {style: 'display:inline-flex;gap:0.35rem;align-items:center'});
+              var select = null;
+              if (a.options_url) {
+                select = el('select', {style: 'font:inherit;font-size:0.8rem;padding:0.15rem 0.3rem;border:1px solid var(--border, rgba(127,127,127,0.35));border-radius:4px;background:var(--bg-1);color:var(--text)'});
+                fetchJSON(a.options_url).then(function(opts) {
+                  (opts || []).forEach(function(o) {
+                    var opt = el('option', {value: String(o.value)}, [String(o.label || o.value)]);
+                    select.appendChild(opt);
+                  });
+                }).catch(function() {});
+                group.appendChild(select);
+              }
+              var btn = el('button', {type: 'button', class: 'ui-row-btn compact' + (a.variant ? ' ' + a.variant : ''), onclick: async function() {
+                if (a.confirm && window.uiConfirm && !(await window.uiConfirm(a.confirm))) return;
+                var url = a.url;
+                if (select) url += (url.indexOf('?') >= 0 ? '&' : '?') + 'value=' + encodeURIComponent(select.value || '');
+                status.textContent = 'Working…';
+                fetch(url, {method: a.method || 'POST'}).then(function(r) {
+                  if (!r.ok) { return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); }); }
+                  status.textContent = '';
+                  if (handle && handle.close) handle.close();
+                  refreshStatusPill();
+                }).catch(function(err) { status.textContent = String(err.message || err); });
+              }}, [a.label]);
+              group.appendChild(btn);
+              bar.appendChild(group);
+            });
+            bar.appendChild(status);
+            body.appendChild(bar);
+          }
+        });
+      }).catch(function() {});
+    }
     if (cfg.status_url) {
-      statusPill = el('span', {class: 'ui-status-pill', style: 'display:none;font-size:0.72rem;padding:0.15rem 0.5rem;border:1px solid var(--border);border-radius:999px;white-space:nowrap;align-self:center'});
+      statusPill = el('span', {class: 'ui-status-pill', style: 'display:none;font-size:0.72rem;padding:0.15rem 0.5rem;border:1px solid var(--border);border-radius:999px;white-space:nowrap;align-self:center',
+        onclick: function() { openStatusDetail(statusLast); }});
       actionsBar.appendChild(statusPill);
     }
     // Session diagnostics — the framework's decisions made on the user's

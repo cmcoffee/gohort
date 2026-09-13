@@ -562,6 +562,12 @@ func (T *OrchestrateApp) Routes() {
 	T.HandleFunc("/api/machines", g(T.handleMachines))
 	// Feeds the chat toolbar's status pill with the session's current phase.
 	T.HandleFunc("/api/session-status", g(T.handleSessionStatus))
+	// The pill's drawer: the cursor laid out for a reader, and the two owner
+	// levers (move the phase, clear the blackboard). machine_session_state.go.
+	T.HandleFunc("/api/session-state", g(T.handleSessionState))
+	T.HandleFunc("/api/session-phases", g(T.handleSessionPhases))
+	T.HandleFunc("/api/session-phase", g(T.handleSessionPhase))
+	T.HandleFunc("/api/session-state-clear", g(T.handleSessionStateClear))
 	T.HandleFunc("/api/machines/import", g(T.handleMachineImport))
 	T.HandleFunc("/api/machines/draft", g(T.handleMachineDraft))
 	T.HandleFunc("/api/machines/", g(T.handleMachineOne))

@@ -84,7 +84,12 @@ func (T *OrchestrateApp) handleSessionStatus(w http.ResponseWriter, r *http.Requ
 	if n := len(sess.MachineState); n > 0 {
 		title += " " + strconv.Itoa(n) + " earlier phase result(s) pinned to this conversation."
 	}
-	writeJSON(w, map[string]any{"label": sess.Phase, "title": title, "tone": "active"})
+	// The pill is a door now: detail_url opens the state drawer (blackboard,
+	// opening message, transition log) and actions are the owner's two
+	// levers. See machine_session_state.go.
+	detail, actions := machineStatusActions(agentID, sessionID)
+	writeJSON(w, map[string]any{"label": sess.Phase, "title": title + " Click for the blackboard and transitions.", "tone": "active",
+		"detail_url": detail, "actions": actions})
 }
 
 // machineRow is the trimmed list shape: enough for a picker and a list

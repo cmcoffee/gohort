@@ -387,6 +387,28 @@ func (d MachineDef) resume(cur *MachineCursor, note func(kind, detail string)) (
 	return ph, false, nil
 }
 
+// MoveCursor moves a session's cursor to a named phase on somebody's say-so
+// rather than the walk's — the owner from the console, a repair tool — and
+// records the hop with the reason given. It goes through the same moveTo as
+// an exit condition or change_phase, so the phase's Keep list applies on a
+// re-entry exactly as it would have: an owner-driven move must not be the
+// one path that leaves stale findings in front of a step. The cursor is only
+// changed on success. Nothing here persists; the caller writes the session.
+func (d MachineDef) MoveCursor(cur *MachineCursor, to, why string, note func(kind, detail string)) (MachinePhase, error) {
+	if cur == nil {
+		return MachinePhase{}, Error("no cursor to move")
+	}
+	ph, ok := d.Phase(strings.TrimSpace(to))
+	if !ok {
+		return MachinePhase{}, Error("machine " + d.Name + " has no phase " + strings.TrimSpace(to))
+	}
+	if note == nil {
+		note = func(string, string) {}
+	}
+	cur.moveTo(cur.Phase, ph, why, note, d.accumulatorNames())
+	return ph, nil
+}
+
 // moveTo records a transition into a phase, applying that phase's Keep
 // list when this is a RE-ENTRY (it has already run in this session).
 //

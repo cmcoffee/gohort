@@ -133,10 +133,22 @@ type AgentLoopPanel struct {
 	// active session changes and after each turn completes. {session} in the
 	// URL is substituted with the active session id.
 	//
-	//	GET → {label, title?, tone?}
+	//	GET → {label, title?, tone?, detail_url?, actions?}
 	//
 	// label is the pill's text; empty / absent renders NOTHING, which is how a
-	// session with nothing to report stays quiet. title is the hover text. tone
+	// session with nothing to report stays quiet. title is the hover text.
+	//
+	// detail_url, when present, makes the pill a BUTTON: clicking it GETs the
+	// URL and renders whatever JSON comes back in a modal, generically (an
+	// object as labelled fields, arrays of objects as sub-cards, long text
+	// preformatted — the same renderer the row actions' ShowResult uses), so
+	// a status that has more behind it than a word can show the rest without
+	// the panel knowing what it is. actions is an optional list of buttons for
+	// that modal — [{label, url, method?, confirm?, options_url?}] — each
+	// firing "<method> <url>[&value=<picked>]" and then refreshing the pill;
+	// an action with options_url GETs [{value,label}] first and offers them
+	// in a select, for "move to one of these" controls. URLs are served
+	// concrete (the app embeds agent and session itself). tone
 	// is "mute" (default) or "active" for a stronger treatment.
 	//
 	// Deliberately generic: the panel knows a session can have a one-word state
