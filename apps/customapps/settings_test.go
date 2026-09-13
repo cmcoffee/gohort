@@ -155,3 +155,78 @@ func TestSettingsPageShowsWhatThePersonMaySet(t *testing.T) {
 		t.Fatal("an app without settings must render the empty state")
 	}
 }
+
+// TestSettingsForResolvesByScope: defaults first, the owner's set values for
+// owner-scoped settings, each person's own for per-user ones; an anonymous
+// reader gets the owner's copy; every declared setting is always present.
+func TestSettingsForResolvesByScope(t *testing.T) {
+	T := sharingTestApp(t)
+	spec := settingsSpec()
+	T.settingsBase(spec, "alice").Set(settingsTable, "wx", map[string]string{"refresh_minutes": "15", "city": "Oakland, CA"})
+	T.settingsBase(spec, "bob").Set(settingsTable, "wx", map[string]string{"city": "Reno, NV", "refresh_minutes": "1"})
+
+	own := T.settingsFor(spec, "alice")
+	if own["refresh_minutes"] != "15" || own["city"] != "Oakland, CA" || own["alerts"] != "false" || own["units"] != "metric" {
+		t.Fatalf("owner = %v", own)
+	}
+	bob := T.settingsFor(spec, "bob")
+	if bob["refresh_minutes"] != "15" {
+		t.Fatalf("an owner-scoped setting must come from the owner even when bob stored one: %v", bob)
+	}
+	if bob["city"] != "Reno, NV" || bob["units"] != "metric" {
+		t.Fatalf("bob's per-user values = %v", bob)
+	}
+	anon := T.settingsFor(spec, "")
+	if anon["city"] != "Oakland, CA" || anon["refresh_minutes"] != "15" {
+		t.Fatalf("anonymous must get the owner's copy: %v", anon)
+	}
+	if len(anon) != 4 {
+		t.Fatalf("every declared setting must be present: %v", anon)
+	}
+	if n := len(T.settingsFor(AppSpec{Slug: "x", Owner: "alice"}, "alice")); n != 0 {
+		t.Fatalf("an app without settings adds nothing: %d", n)
+	}
+}
+
+// TestSettingsWinOverParams: a query param with a setting's name — which
+// anyone holding a public link can put in the URL — never overrides the
+// value set on the Settings page.
+func TestSettingsWinOverParams(t *testing.T) {
+	T := sharingTestApp(t)
+	spec := settingsSpec()
+	T.settingsBase(spec, "alice").Set(settingsTable, "wx", map[string]string{"city": "Oakland, CA"})
+	args := map[string]any{"records": "[]", "city": "Hacked", "q": "1"}
+	T.applySettings(args, spec, "alice")
+	if args["city"] != "Oakland, CA" || args["q"] != "1" || args["refresh_minutes"] != "5" {
+		t.Fatalf("args = %v", args)
+	}
+}
+
+// TestSettingsReachTheScript runs a real data source and reads the settings
+// back out of its environment. Skips where the sandbox cannot exec.
+func TestSettingsReachTheScript(t *testing.T) {
+	T := sharingTestApp(t)
+	spec := settingsSpec()
+	spec.DataSources = []AppDataSource{{
+		Name:         "env",
+		Language:     "bash",
+		Script:       `printf '{"city":"%s","refresh":"%s","q":"%s"}' "$city" "$refresh_minutes" "$q"`,
+		Capabilities: []string{},
+	}}
+	T.settingsBase(spec, "alice").Set(settingsTable, "wx", map[string]string{"refresh_minutes": "30"})
+	T.settingsBase(spec, "bob").Set(settingsTable, "wx", map[string]string{"city": "Reno, NV"})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/apps/wx/data/env?city=Hacked&q=1", nil)
+	T.handleData(w, r, "alice", "bob", T.recordBase(spec, "bob"), spec, "env")
+	if w.Code != http.StatusOK {
+		t.Skipf("sandbox/bash unavailable in this environment: %d %s", w.Code, w.Body.String())
+	}
+	var got map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Skipf("non-JSON output (likely no sandbox): %q", w.Body.String())
+	}
+	if got["city"] != "Reno, NV" || got["refresh"] != "30" || got["q"] != "1" {
+		t.Fatalf("script env = %v", got)
+	}
+}

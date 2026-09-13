@@ -424,6 +424,14 @@ func (t *chatTurn) checkScripts(spec AppSpec, includeActions bool, sample []map[
 		for k, v := range params {
 			scriptArgs[k] = fmt.Sprint(v)
 		}
+		// Every declared setting is present at its default, the way it is
+		// live, so a script that reads one runs here the way it runs there.
+		// A test param of the same name stands in for a value someone set.
+		for _, st := range spec.Settings {
+			if _, given := scriptArgs[st.Name]; st.Name != "" && !given {
+				scriptArgs[st.Name] = st.Default
+			}
+		}
 		out, err := appscript.Run(t.user, db, spec.Slug, kind, name, lang, script, caps, scriptArgs)
 		if err != nil {
 			fail++

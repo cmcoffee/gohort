@@ -245,11 +245,11 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 	case rest == "_settings/reset":
 		T.handleSettingsReset(w, r, spec, user, user == ownerUser)
 	case strings.HasPrefix(rest, "data/"):
-		T.handleData(w, r, ownerUser, appdb, spec, strings.TrimPrefix(rest, "data/"))
+		T.handleData(w, r, ownerUser, user, appdb, spec, strings.TrimPrefix(rest, "data/"))
 	case rest == "actions":
 		T.handleActionsList(w, r, spec)
 	case strings.HasPrefix(rest, "action/"):
-		T.handleAction(w, r, ownerUser, appdb, spec, strings.TrimPrefix(rest, "action/"))
+		T.handleAction(w, r, ownerUser, user, appdb, spec, strings.TrimPrefix(rest, "action/"))
 	case rest == "records":
 		T.handleRecords(w, r, appdb, spec)
 	case rest == "record":
@@ -864,7 +864,7 @@ func (T *CustomApps) handleEnableApp(w http.ResponseWriter, r *http.Request, use
 // reading the opening user's own records (the per-user-copy model). For an
 // owned app owner == requester, so this is byte-identical to the old behavior.
 // Read-only: a data source computes a view, it never writes the store.
-func (T *CustomApps) handleData(w http.ResponseWriter, r *http.Request, owner string, udb Database, spec AppSpec, name string) {
+func (T *CustomApps) handleData(w http.ResponseWriter, r *http.Request, owner, uid string, udb Database, spec AppSpec, name string) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -899,6 +899,7 @@ func (T *CustomApps) handleData(w http.ResponseWriter, r *http.Request, owner st
 			args[k] = vs[0]
 		}
 	}
+	T.applySettings(args, spec, uid) // last: a param never overrides a setting
 
 	// The script executes in the OWNER's context (sandbox identity + hook DB), so
 	// a shared app's data source reaches the owner's credentials/integrations.
@@ -1087,7 +1088,7 @@ func (T *CustomApps) handleActionsList(w http.ResponseWriter, r *http.Request, s
 // store (udb) — so on a shared app a user's action runs the owner's trusted
 // logic against, and saves into, that user's own copy. owner == requester for
 // an owned app.
-func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, owner string, udb Database, spec AppSpec, name string) {
+func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, owner, uid string, udb Database, spec AppSpec, name string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -1140,6 +1141,7 @@ func (T *CustomApps) handleAction(w http.ResponseWriter, r *http.Request, owner 
 		}
 	}
 
+	T.applySettings(args, spec, uid) // last: neither a param nor the body overrides a setting
 	msg, saved, err := runActionAndPersist(owner, T.recordBase(spec, owner), udb, spec, *act, args)
 	if err != nil {
 		Log("[customapps] action %q/%q failed: %v", spec.Slug, name, err)
@@ -1785,6 +1787,9 @@ func (T *CustomApps) handlePublicData(w http.ResponseWriter, r *http.Request, sp
 			args[k] = vs[0]
 		}
 	}
+	// Anonymous readers get the owner's own settings: a public app IS the
+	// owner's copy, and the params in the link must not override them.
+	T.applySettings(args, spec, spec.Owner)
 	out, err := cachedRunDataSource(spec.Owner, ownerDB, spec.Slug, *ds, args)
 	if err != nil {
 		Log("[customapps] PUBLIC data source %q/%q failed: %v", spec.Slug, name, err)

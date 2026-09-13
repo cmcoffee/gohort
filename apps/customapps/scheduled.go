@@ -161,7 +161,9 @@ func (T *CustomApps) dispatchScheduledAction(_ context.Context, t ScheduledTrigg
 
 	db := T.recordBase(spec, owner)
 	records := gatherRecords(db, recTable(slug))
-	msg, saved, err := runActionAndPersist(owner, db, db, spec, *act, map[string]any{"records": records})
+	args := map[string]any{"records": records}
+	T.applySettings(args, spec, owner) // a scheduled fire is the owner's own run
+	msg, saved, err := runActionAndPersist(owner, db, db, spec, *act, args)
 	if err != nil {
 		Log("[customapps] scheduled action %q/%q failed: %v", slug, actName, err)
 		return

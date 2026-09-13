@@ -279,3 +279,46 @@ func (T *CustomApps) handleSettingsReset(w http.ResponseWriter, r *http.Request,
 	}
 	writeJSON(w, map[string]bool{"ok": true})
 }
+
+// settingsFor resolves the values an app's scripts see when run for one
+// person: the declared defaults, then the owner's set values for owner-scoped
+// settings, then the person's own for per-user ones. An anonymous reader (a
+// public link) and the owner both get the owner's own copy, so uid is the
+// owner there. Every declared setting is present, so a script reads each one
+// without a default of its own.
+func (T *CustomApps) settingsFor(spec AppSpec, uid string) map[string]string {
+	vals := map[string]string{}
+	if len(spec.Settings) == 0 {
+		return vals
+	}
+	ownerVals := loadSettingValues(T.settingsBase(spec, spec.Owner), spec.Slug)
+	userVals := ownerVals
+	if uid != "" && uid != spec.Owner {
+		userVals = loadSettingValues(T.settingsBase(spec, uid), spec.Slug)
+	}
+	for _, s := range spec.Settings {
+		if strings.TrimSpace(s.Name) == "" {
+			continue
+		}
+		src := ownerVals
+		if s.PerUser() {
+			src = userVals
+		}
+		v := s.Default
+		if set, ok := src[s.Name]; ok {
+			v = set
+		}
+		vals[s.Name] = v
+	}
+	return vals
+}
+
+// applySettings adds the resolved settings to a script's args, named after
+// each setting like every other input. It runs LAST, after the query params
+// and the body, so a param — which anyone holding a public link can set —
+// never overrides a value someone chose on the Settings page.
+func (T *CustomApps) applySettings(args map[string]any, spec AppSpec, uid string) {
+	for k, v := range T.settingsFor(spec, uid) {
+		args[k] = v
+	}
+}
