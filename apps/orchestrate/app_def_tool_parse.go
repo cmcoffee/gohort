@@ -420,3 +420,91 @@ func floatVal(v any) (float64, bool) {
 	}
 	return 0, false
 }
+
+// appSettingTypes are the control kinds a declared setting may take.
+var appSettingTypes = map[string]bool{"string": true, "number": true, "toggle": true, "choice": true}
+
+// appSettings coerces the LLM-supplied `settings` array into AppSettings.
+// A setting needs a name; the rest has defaults. Names are slugified with
+// underscores, not hyphens, because a setting becomes an environment
+// variable and a hyphen is not legal in one. A choice with no options, a
+// number whose default is not one, and an unknown type are reported and
+// corrected rather than dropped: the declaration still exists, the note
+// says what changed.
+func appSettings(raw any) (out []AppSetting, notes []string) {
+	arr, ok := raw.([]any)
+	if !ok {
+		return nil, nil
+	}
+	seen := map[string]bool{}
+	for i, item := range arr {
+		m, ok := item.(map[string]any)
+		if !ok {
+			notes = append(notes, fmt.Sprintf("settings entry %d IGNORED — not an object", i+1))
+			continue
+		}
+		given := strings.TrimSpace(mapStr(m, "name"))
+		name := strings.ReplaceAll(slugify(given), "-", "_")
+		if name == "" {
+			notes = append(notes, fmt.Sprintf("settings entry %d IGNORED — needs a name", i+1))
+			continue
+		}
+		if name != given {
+			notes = append(notes, fmt.Sprintf("setting %q is registered as %q (a setting is an env var: lowercase, non-alphanumerics → \"_\") — read os.environ.get(%q) in scripts", given, name, name))
+		}
+		if seen[name] {
+			notes = append(notes, fmt.Sprintf("setting %q declared twice — the later one IGNORED", name))
+			continue
+		}
+		seen[name] = true
+		typ := strings.ToLower(strings.TrimSpace(mapStr(m, "type")))
+		if typ == "" {
+			typ = "string"
+		}
+		if !appSettingTypes[typ] {
+			notes = append(notes, fmt.Sprintf("setting %q has unknown type %q — treated as string (types: string, number, toggle, choice)", name, typ))
+			typ = "string"
+		}
+		st := AppSetting{
+			Name:    name,
+			Label:   strings.TrimSpace(mapStr(m, "label")),
+			Type:    typ,
+			Default: strings.TrimSpace(fmt.Sprint(m["default"])),
+			Help:    strings.TrimSpace(mapStr(m, "help")),
+			Scope:   strings.ToLower(strings.TrimSpace(mapStr(m, "scope"))),
+			Options: appStringList(m["options"]),
+			Min:     mapInt(m, "min"),
+			Max:     mapInt(m, "max"),
+		}
+		if m["default"] == nil {
+			st.Default = ""
+		}
+		switch st.Scope {
+		case "", "owner", "user":
+		default:
+			notes = append(notes, fmt.Sprintf("setting %q has unknown scope %q — treated as owner (scopes: owner, user)", name, st.Scope))
+			st.Scope = ""
+		}
+		switch typ {
+		case "choice":
+			if len(st.Options) == 0 {
+				notes = append(notes, fmt.Sprintf("setting %q is a choice with no options — it renders as free text until options are given", name))
+				st.Type = "string"
+			} else if st.Default != "" && !containsString(st.Options, st.Default) {
+				notes = append(notes, fmt.Sprintf("setting %q defaults to %q, which is not one of its options (%s) — the first option is the default", name, st.Default, strings.Join(st.Options, ", ")))
+				st.Default = st.Options[0]
+			}
+		case "number":
+			if st.Default != "" {
+				if _, err := strconv.ParseFloat(st.Default, 64); err != nil {
+					notes = append(notes, fmt.Sprintf("setting %q is a number but defaults to %q — default cleared", name, st.Default))
+					st.Default = ""
+				}
+			}
+		case "toggle":
+			st.Default = strconv.FormatBool(st.Default == "true" || st.Default == "on" || st.Default == "1" || st.Default == "yes")
+		}
+		out = append(out, st)
+	}
+	return out, notes
+}

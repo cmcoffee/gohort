@@ -130,6 +130,13 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		spec.Actions, notes = appActionDefs(raw)
 		parseNotes = append(parseNotes, notes...)
 	}
+	// Declared tunables: the framework renders their Settings page and hands
+	// them to every script as env vars. Passed wholesale replaces the list.
+	if raw, ok := args["settings"]; ok && raw != nil {
+		var notes []string
+		spec.Settings, notes = appSettings(raw)
+		parseNotes = append(parseNotes, notes...)
+	}
 
 	// Build the Page from the declarative sections. On update with no sections
 	// passed, keep the existing page.
@@ -226,6 +233,13 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		verb, saved.Name, saved.Slug, saved.Updated, saved.Slug, saved.VerifyStatus())
 
 	msg += "\n\n" + t.appInventoryLine(saved)
+	if n := len(saved.Settings); n > 0 {
+		names := make([]string, 0, n)
+		for _, st := range saved.Settings {
+			names = append(names, st.Name)
+		}
+		msg += fmt.Sprintf("\n\nSettings (%d): %s — a Settings button on the app's My Apps row opens the page; each reaches every script as an env var of that name.", n, strings.Join(names, ", "))
+	}
 
 	// Report any name-normalization or dropped entries up front — a
 	// slugified data-source name silently breaks a source_script/fetch

@@ -126,7 +126,7 @@ var sectionKeys = map[string][]string{
 // it put a real key one level too deep, which is a different mistake with a
 // different fix. pipeline_id is absent deliberately: it is valid in both places.
 var topLevelAppKeys = map[string]bool{
-	"actions": true, "data_sources": true, "agent_id": true,
+	"actions": true, "data_sources": true, "settings": true, "agent_id": true,
 	"full_width": true, "private_db": true, "record_key": true,
 	"name": true, "description": true, "slug": true,
 }
