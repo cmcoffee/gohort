@@ -1,10 +1,13 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -139,7 +142,16 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 		orig := LoadWebSearchConfigFunc
 		LoadWebSearchConfigFunc = func() WebSearchConfig { return req }
 		defer func() { LoadWebSearchConfigFunc = orig }()
-		out := WebSearch("gohort connectivity test")
+		// Under the request's context: the form's Cancel closes the request,
+		// and the search tool's handler takes a context, so the provider call
+		// is dropped with it rather than running out its own timeout.
+		ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		out, serr := webSearchCtx(ctx, "gohort connectivity test")
+		if serr != nil {
+			writeTestResult(w, false, "", serr.Error())
+			return
+		}
 		if strings.TrimSpace(out) == "" {
 			writeTestResult(w, false, "", "no results returned — check provider/key/endpoint")
 			return
@@ -213,11 +225,17 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 			writeTestResult(w, false, "", "set a Default Recipient first; test mail needs an address")
 			return
 		}
-		orig := LoadMailConfigFunc
-		LoadMailConfigFunc = func() MailConfig { return req }
-		defer func() { LoadMailConfigFunc = orig }()
-		if err := SendNotification(to, "Gohort Admin Test Email",
+		// The posted (unsaved) config sends directly, under the request's
+		// context, so Cancel ends the SMTP conversation wherever it is
+		// blocked instead of leaving it to the server's timeout.
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		if err := req.SendNotification(ctx, to, "Gohort Admin Test Email",
 			"This is a test from the gohort admin UI.\n\nIf you received this, mail is configured correctly.\n"); err != nil {
+			if ctx.Err() != nil {
+				writeTestResult(w, false, "", "cancelled before the mail server answered")
+				return
+			}
 			writeTestResult(w, false, "", err.Error())
 			return
 		}
@@ -302,4 +320,25 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 		})
 	})
 
+}
+
+// webSearchCtx is core.WebSearch under a context: the registered web_search
+// tool's handler, which takes one, called directly so a cancelled admin test
+// cancels the provider call.
+func webSearchCtx(ctx context.Context, query string) (string, error) {
+	tools, err := GetAgentTools("web_search")
+	if err != nil || len(tools) == 0 {
+		return "", errors.New("no web_search tool is registered — enable a search provider first")
+	}
+	out, err := tools[0].Handler(ctx, map[string]any{"query": query})
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", errors.New("cancelled before the search provider answered")
+		}
+		return "", err
+	}
+	if out == "No results found." {
+		return "", nil
+	}
+	return out, nil
 }
