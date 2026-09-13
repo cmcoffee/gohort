@@ -81,9 +81,15 @@ func (T *OrchestrateApp) handleSendToBuilder(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "no session to send — chat with the agent first", http.StatusNotFound)
 		return
 	}
+	// Why the user is sending it. Optional, and best-effort to read: a body
+	// that will not parse costs the reason, not the handoff.
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
 	brief := builderBriefRecord{
 		ID:            UUIDv4(),
-		Text:          buildBuilderBrief(agent, sess),
+		Text:          buildBuilderBrief(agent, sess, body.Reason),
 		SourceAgentID: agent.ID,
 		Created:       time.Now(),
 	}
@@ -127,16 +133,39 @@ const maxBriefTranscript = 60000
 // receives. It frames the task (improve THIS agent), points Builder at
 // the agent's live config, and appends the full session transcript so
 // Builder can see exactly where the behavior fell short.
-func buildBuilderBrief(agent AgentRecord, sess ChatSession) string {
+//
+// reason is what the USER said is wrong, asked for at the button. It leads
+// the brief, because the alternative is Builder inferring a reason from a
+// transcript it has already been told contains a failure — which produces a
+// confident diagnosis of whichever problem it noticed first, and that is not
+// reliably the one the user cared about. An empty reason is stated as absent
+// rather than papered over, so Builder asks instead of guessing.
+func buildBuilderBrief(agent AgentRecord, sess ChatSession, reason string) string {
 	var b strings.Builder
-	b.WriteString("I was just working with one of my agents and had to correct it during the session below. Please review what happened and improve the agent so it handles this kind of thing correctly next time.\n\n")
+	reason = strings.TrimSpace(reason)
+	if reason != "" {
+		b.WriteString("I want to improve one of my agents. Here is what is wrong with it, in my own words:\n\n")
+		// The reason is the user's own text and it is the INSTRUCTION here, so
+		// it is quoted for legibility rather than fenced as untrusted: it came
+		// from the person Builder is working for, typed into this button.
+		for _, line := range strings.Split(reason, "\n") {
+			b.WriteString("> " + line + "\n")
+		}
+		b.WriteString("\nThe session below is where it happened. Treat what I just said as the problem to solve; use the transcript as evidence for it, and tell me if what I described is not what you find there.\n\n")
+	} else {
+		b.WriteString("I was just working with one of my agents and want it improved. I have NOT told you what went wrong — read the session below, and if more than one thing could be the problem, ask me which before you change anything.\n\n")
+	}
 	fmt.Fprintf(&b, "**Agent to improve:** %s  (id: `%s`)\n", agent.Name, agent.ID)
 	if d := strings.TrimSpace(agent.Description); d != "" {
 		fmt.Fprintf(&b, "**What it's for:** %s\n", d)
 	}
 	b.WriteString("\nPlease:\n")
 	b.WriteString("1. Pull this agent's current configuration (agents tool, action \"get\", full true) so you can see its prompt, rules, and tools before changing anything.\n")
-	b.WriteString("2. Read the session transcript below and pinpoint where its behavior fell short of what I wanted — the spots where I had to correct, redirect, or repeat myself.\n")
+	if reason != "" {
+		b.WriteString("2. Find the behavior I described in the transcript below — the turns where it actually happened. If you cannot find it, say so rather than fixing something else.\n")
+	} else {
+		b.WriteString("2. Read the session transcript below and pinpoint where its behavior fell short of what I wanted — the spots where I had to correct, redirect, or repeat myself.\n")
+	}
 	b.WriteString("3. Write the failing case FIRST. Turn the correction into an eval case: the message that produced the bad turn is the prompt, and what I corrected it TO is the assertion. " +
 		"Use eval(action=\"list\") to find a suite that grades this agent and eval(action=\"add_case\", ...) to add it; if there is no suite yet, eval(action=\"create_suite\", target_kind=\"agent\", target=\"" + agent.ID + "\", ...).\n")
 	b.WriteString("4. Run that suite now, BEFORE you change anything: eval(action=\"run\", suite=\"<name>\", note=\"before\"). Suites run with tools stubbed, so nothing external happens. " +

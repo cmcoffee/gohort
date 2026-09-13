@@ -280,7 +280,7 @@ func (T *OrchestrateApp) handleGrantRevoke(w http.ResponseWriter, r *http.Reques
 // handleChannelClear wipes an agent's Cortex home-thread conversation and its
 // rolling summary / fold cursor — the cheap fix for a crystallized thread.
 // Operational state (monitors, standing agents, approvals) is left untouched;
-// that's Decommission's job. POST ?agent=<id>.
+// that is not this button's job. POST ?agent=<id>.
 func (T *OrchestrateApp) handleChannelClear(w http.ResponseWriter, r *http.Request) {
 	_, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
@@ -329,37 +329,5 @@ func (T *OrchestrateApp) handleChannelCompact(w http.ResponseWriter, r *http.Req
 	// Trigger=1 forces a fold regardless of how short the unsummarized tail is:
 	// everything older than the KeepRecent verbatim tail folds now.
 	T.maybeFoldOperatorHistory(udb, agent, cortexSessionID(agentID), CompactionConfig{KeepRecent: keepRecent, Trigger: 1})
-	w.WriteHeader(http.StatusNoContent)
-}
-
-// handleChannelDecommission tears down the owner's standing fleet — every event
-// monitor, standing agent, and pending authorization. Destructive and explicit
-// (confirm-gated client-side); the Cortex thread itself is left intact
-// (use Clear Cortex for that). POST ?agent=<id>.
-func (T *OrchestrateApp) handleChannelDecommission(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	for _, m := range ListEventMonitors(RootDB, user) {
-		DeleteEventMonitor(RootDB, user, m.Name)
-	}
-	for _, s := range ListStandingAgents(RootDB, user) {
-		DeleteStandingAgent(RootDB, user, s.Name)
-	}
-	for _, a := range ListAuthorizations(RootDB, user) {
-		DeleteAuthorization(RootDB, user, a.ID)
-	}
-	// Standing grants too — a clean slate means future actions all re-queue.
-	for _, agent := range ListDelegationPreAuthorizations(RootDB, user) {
-		SetDelegationPreAuthorized(RootDB, user, agent, false)
-	}
-	for _, handle := range ListContactPreAuthorizations(RootDB, user) {
-		SetContactPreAuthorized(RootDB, user, handle, false)
-	}
 	w.WriteHeader(http.StatusNoContent)
 }

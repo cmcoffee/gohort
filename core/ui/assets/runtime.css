@@ -2532,6 +2532,8 @@ select:-webkit-autofill {
   padding: 0.45rem 0.6rem; border-radius: 5px;
   border: 1px solid var(--border); background: var(--bg-0); color: var(--text); font: inherit;
 }
+/* The multiline variant of the same box (uiPrompt opts.multiline). */
+textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; }
 .ui-modal-actions { display: flex; gap: 0.5rem; justify-content: flex-end; }
 .ui-chat-attachments {
   display: flex; flex-direction: column; align-items: flex-start;

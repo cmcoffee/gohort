@@ -178,7 +178,6 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/credential-update/apply", gw(T.handleCredentialUpdateApply))
 	T.HandleFunc("/api/console/channel/clear", g(T.handleChannelClear))
 	T.HandleFunc("/api/console/channel/compact", g(T.handleChannelCompact))
-	T.HandleFunc("/api/console/channel/decommission", g(T.handleChannelDecommission))
 	T.HandleFunc("/api/console/grants", g(T.handleConsoleGrants))
 	T.HandleFunc("/api/console/grants/revoke", g(T.handleGrantRevoke))
 	// Bridges — deployment-wide admin management of the credential-

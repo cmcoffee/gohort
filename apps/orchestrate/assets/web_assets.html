@@ -2371,11 +2371,30 @@
         }
         var sessionID = (ctx && ctx.sessionId) || '';
         if (!sessionID) { window.uiAlert('Open a session first — there is nothing to send yet.'); return; }
+        // Ask what went wrong before sending. Without this the brief asserts a
+        // reason on the user's behalf ("I had to correct it"), and Builder goes
+        // looking in the transcript for a problem it has already been told
+        // exists — so it finds one, whether or not it is the one that matters.
+        // Cancel aborts the send; an empty answer sends it unexplained, and the
+        // brief then says so rather than inventing a reason.
+        window.uiPrompt(
+          'What should Builder fix about this agent? One or two lines is plenty — the whole session goes with it.',
+          '',
+          {multiline: true, rows: 4, ok: 'Send to Builder',
+           placeholder: 'e.g. it kept summarising when I asked for the raw numbers'}
+        ).then(function(reason) {
+          if (reason === null) return; // cancelled
+          sendSessionToBuilder(agentID, sessionID, reason);
+        });
+      });
+
+      // The send itself, once the reason is known.
+      function sendSessionToBuilder(agentID, sessionID, reason) {
         fetch('api/sessions/' + encodeURIComponent(sessionID) +
               '/send-to-builder?agent_id=' + encodeURIComponent(agentID), {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: '{}',
+          body: JSON.stringify({reason: reason || ''}),
         }).then(function(r) {
           if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
           return r.json();
@@ -2391,7 +2410,7 @@
         }).catch(function(err) {
           window.uiAlert('Send to Builder failed: ' + (err && err.message || err));
         });
-      });
+      }
 
       window.uiRegisterClientAction('orchestrate_import_agent', function() {
         var input = document.createElement('input');

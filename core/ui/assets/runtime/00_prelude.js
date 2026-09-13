@@ -382,9 +382,18 @@
       dlg.appendChild(msg);
       var input = null;
       if (opts.kind === 'prompt') {
-        input = document.createElement('input');
-        input.type = 'text';
+        // Multiline when the caller asks for it. A one-line box tells the
+        // person what length of answer is wanted, so asking for a sentence
+        // or two in an <input> gets a few words back.
+        if (opts.multiline) {
+          input = document.createElement('textarea');
+          input.rows = opts.rows || 4;
+        } else {
+          input = document.createElement('input');
+          input.type = 'text';
+        }
         input.className = 'ui-modal-input';
+        if (opts.placeholder) input.placeholder = opts.placeholder;
         input.value = (opts.def != null ? opts.def : '');
         dlg.appendChild(input);
       }
@@ -417,10 +426,12 @@
         done(opts.kind === 'confirm' ? false : (opts.kind === 'prompt' ? null : undefined));
       });
       dlg.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter' && opts.kind !== 'alert') {
-          e.preventDefault();
-          done(opts.kind === 'confirm' ? true : (input ? input.value : null));
-        }
+        // Enter submits, except inside a multiline box where it is how you
+        // write a second line. There, Ctrl/Cmd+Enter submits.
+        if (e.key !== 'Enter' || opts.kind === 'alert') return;
+        if (opts.multiline && !(e.ctrlKey || e.metaKey)) return;
+        e.preventDefault();
+        done(opts.kind === 'confirm' ? true : (input ? input.value : null));
       });
       document.body.appendChild(dlg);
       if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', '');
@@ -436,9 +447,16 @@
     if (typeof window.__uiAlertImpl === 'function') return Promise.resolve(window.__uiAlertImpl(msg));
     return uiDefaultModal({kind: 'alert', msg: msg});
   };
-  window.uiPrompt = function(msg, def) {
+  // uiPrompt(msg, def, opts) — opts.multiline gives a textarea (opts.rows,
+  // opts.placeholder), for an ask whose honest answer is a sentence rather
+  // than a word. A host-injected impl takes precedence and may not offer
+  // multiline, so a caller must treat the box size as a courtesy, not a
+  // guarantee.
+  window.uiPrompt = function(msg, def, opts) {
+    opts = opts || {};
     if (typeof window.__uiPromptImpl === 'function') return Promise.resolve(window.__uiPromptImpl(msg, def));
-    return uiDefaultModal({kind: 'prompt', msg: msg, def: def});
+    return uiDefaultModal({kind: 'prompt', msg: msg, def: def,
+      multiline: opts.multiline, rows: opts.rows, placeholder: opts.placeholder, ok: opts.ok});
   };
   // Data-source invalidation. Apps and components fire this when a
   // write completes so any list/table fetched from the same source

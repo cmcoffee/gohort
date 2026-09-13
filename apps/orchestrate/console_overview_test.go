@@ -35,7 +35,7 @@ func TestManageMenuIsGroupedAndScoped(t *testing.T) {
 	nav := page[start : start+end]
 
 	perAgent := []string{"Agent overview", "Enabled agents", "Event monitors", "Recurring tasks", "Compact Cortex", "Clear Cortex"}
-	fleet := []string{"Fleet overview", "Runs", "Spend", "Guardrail blocks", "Broken tools", "Decommission"}
+	fleet := []string{"Fleet overview", "All enabled agents", "All event monitors", "All recurring tasks", "Runs", "Spend", "Guardrail blocks", "Broken tools"}
 
 	for _, label := range perAgent {
 		line := navLine(t, nav, label)
@@ -52,9 +52,8 @@ func TestManageMenuIsGroupedAndScoped(t *testing.T) {
 			t.Errorf("%q reports on every agent but is not grouped under the fleet:\n%s", label, line)
 		}
 	}
-	// Every fleet entry that FETCHES must be fleet-scoped. Decommission is an
-	// action, not a source, so it is exempt.
-	for _, label := range []string{"Fleet overview", "Runs", "Spend", "Guardrail blocks", "Broken tools"} {
+	// Every fleet entry fetches, so every one of them must be fleet-scoped.
+	for _, label := range fleet {
 		line := navLine(t, nav, label)
 		if !strings.Contains(line, `Scope: "fleet"`) {
 			t.Errorf("%q is fleet-wide but its source is fetched for one agent, so it answers about the wrong thing:\n%s", label, line)
@@ -65,6 +64,29 @@ func TestManageMenuIsGroupedAndScoped(t *testing.T) {
 	if strings.Contains(nav, `"Active now"`) {
 		t.Error("Active now is back in the Manage menu — it duplicates the Monitor app's live table")
 	}
+	// Decommission is gone, and so is the endpoint behind it: one irreversible
+	// click that showed no list of what it was about to delete, replaced by the
+	// fleet panes above, which put the same control on each row.
+	if strings.Contains(page, "Decommission") && strings.Contains(page, "ActionURL") && strings.Contains(nav, "decommission") {
+		t.Error("the Decommission action is back in the menu")
+	}
+	for _, f := range []string{"console.go", "console_bridges.go"} {
+		body, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(body), "handleChannelDecommission") {
+			t.Errorf("%s still wires the decommission endpoint; a route nothing points at is a way to delete a fleet by URL", f)
+		}
+	}
+	// The fleet panes have to be able to ACT, or they are a report where a
+	// teardown used to be.
+	for _, label := range []string{"All enabled agents", "All event monitors", "All recurring tasks"} {
+		entry := navEntry(t, nav, label)
+		if !strings.Contains(entry, `{Label: "Delete"`) {
+			t.Errorf("%q lists standing work but cannot remove any of it", label)
+		}
+	}
 	// And its cancel button has to survive that removal somewhere.
 	mon, err := os.ReadFile("../monitor/monitor.go")
 	if err != nil {
@@ -73,6 +95,21 @@ func TestManageMenuIsGroupedAndScoped(t *testing.T) {
 	if !strings.Contains(string(mon), "api/console/activity/cancel") {
 		t.Error("nothing can cancel an in-flight run any more: the Manage pane that could is gone and Monitor did not take the button")
 	}
+}
+
+// navEntry returns the whole declaration for one nav label, through to the
+// start of the next one — the row actions included.
+func navEntry(t *testing.T, nav, label string) string {
+	t.Helper()
+	i := strings.Index(nav, `{Label: "`+label+`"`)
+	if i < 0 {
+		t.Fatalf("no nav entry labelled %q", label)
+	}
+	rest := nav[i+1:]
+	if j := strings.Index(rest, "\n\t\t\t\t\t\t{Label: "); j >= 0 {
+		return rest[:j]
+	}
+	return rest
 }
 
 // navLine returns the declaration line for one nav label.
