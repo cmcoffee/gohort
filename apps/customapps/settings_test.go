@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/appadmin"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 // settingsSpec is one app with every setting type and both scopes.
@@ -228,5 +230,52 @@ func TestSettingsReachTheScript(t *testing.T) {
 	}
 	if got["city"] != "Reno, NV" || got["refresh"] != "30" || got["q"] != "1" {
 		t.Fatalf("script env = %v", got)
+	}
+}
+
+// TestShareStatusLines: the Share modal's status block says what the owner
+// cannot see from the toggles — a pending or denied request (and by whom),
+// the audience an administrator narrowed, a disable that was not theirs —
+// and says nothing when there is nothing to say.
+func TestShareStatusLines(t *testing.T) {
+	T := sharingTestApp(t)
+	_ = T
+	auth := &DBase{Store: kvlite.MemStore()}
+	saved := AuthDB
+	AuthDB = func() Database { return auth }
+	t.Cleanup(func() { AuthDB = saved })
+
+	spec := AppSpec{Slug: "tally", Name: "Tally", Owner: "alice"}
+	if l := shareStatusLines(spec); len(l) != 0 {
+		t.Fatalf("a private app with no history has no status: %v", l)
+	}
+
+	CreatePromotionRequest(auth, "alice", "app", "tally", "")
+	CreatePromotionRequest(auth, "alice", "public_link", "tally", "")
+	l := shareStatusLines(spec)
+	if len(l) != 2 || !strings.Contains(l[0], "Share with signed-in users: requested") || !strings.Contains(l[1], "Public link: requested") {
+		t.Fatalf("pending = %v", l)
+	}
+
+	SetPromotionRequestState(auth, PromotionRequestKey("app", "alice", "tally"), PromotionDeniedState, "root")
+	if l = shareStatusLines(spec); !strings.Contains(l[0], "request denied by root") {
+		t.Fatalf("denied = %v", l)
+	}
+
+	// Approved and on: the request is not news; the audience is.
+	SetPromotionRequestState(auth, PromotionRequestKey("app", "alice", "tally"), PromotionApprovedState, "root")
+	spec.Shared = true
+	if l = shareStatusLines(spec); len(l) != 2 || l[0] != "Audience: every signed-in user." {
+		t.Fatalf("shared = %v", l)
+	}
+	appadmin.Save(RootDB, "alice", "tally", appadmin.State{AllowedUsers: []string{"bob", "carol"}, UpdatedBy: "root"})
+	if l = shareStatusLines(spec); l[0] != "Audience: bob, carol — narrowed by root." {
+		t.Fatalf("narrowed = %v", l)
+	}
+
+	spec.Disabled = true
+	appadmin.Save(RootDB, "alice", "tally", appadmin.State{AllowedUsers: []string{"bob"}, DisabledBy: "root"})
+	if l = shareStatusLines(spec); !strings.HasPrefix(l[0], "Disabled by root") {
+		t.Fatalf("disabled = %v", l)
 	}
 }

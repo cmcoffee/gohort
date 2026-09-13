@@ -548,6 +548,17 @@ const shareModalScript = `<script>
     title: 'Share "' + (rec.name || slug) + '"',
     width: '520px',
     mount: function(body) {
+      // Status: what the owner cannot see from the toggles — a request
+      // pending or denied, the audience an administrator set, a disable
+      // that was not theirs. Server-worded, one line each; absent when
+      // there is nothing to say.
+      var lines = (rec.status_lines || '').split('\n').filter(function(l){ return l; });
+      if (lines.length) {
+        var status = document.createElement('div');
+        status.style.cssText = 'margin:0 0 0.9rem;padding:0.55rem 0.7rem;border:1px solid var(--border);border-radius:6px;background:var(--bg-2);font-size:0.8rem;line-height:1.5;color:var(--text-mute)';
+        lines.forEach(function(l){ var d = document.createElement('div'); d.textContent = l; status.appendChild(d); });
+        body.appendChild(status);
+      }
       var share = makeToggle(
         'Share with signed-in users',
         truthy(rec.requested) ? requestedHelp : shareHelp,
@@ -750,6 +761,11 @@ func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owne
 		status := "private"
 		if len(parts) > 0 {
 			status = strings.Join(parts, " + ")
+		}
+		// The Share modal's status block: where each request stands, who the
+		// administrator let in, who turned it off. One line per fact.
+		if lines := shareStatusLines(s); len(lines) > 0 {
+			row["status_lines"] = strings.Join(lines, "\n")
 		}
 		if s.Disabled {
 			row["disabled"] = "1"
