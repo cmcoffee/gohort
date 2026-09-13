@@ -452,8 +452,12 @@ func runStandingMachine(ctx context.Context, app *OrchestrateApp, sa StandingAge
 	catalog = WrapToolsWithRunCache(cache, catalog)
 
 	cur := &MachineCursor{}
-	var notes []string
-	note := func(kind, detail string) { notes = append(notes, kind+": "+detail) }
+	// Everything the walk says about itself — each step's result, every
+	// framework decision, a sub-run's progress — lands in the ledger as the
+	// run's Steps, and the live row advances per step. Before this the notes
+	// went into a slice nobody read (standing_machine_trace.go says why that
+	// mattered).
+	trace := newMachineRunTrace(liveRun)
 	// The full host: a scheduled machine whose steps delegate, run a pipeline,
 	// or run a child machine now does that at 3am the same way it does in a
 	// conversation. It used to run those steps as an ordinary prompt and report
@@ -462,18 +466,19 @@ func runStandingMachine(ctx context.Context, app *OrchestrateApp, sa StandingAge
 	// The run id is per FIRE, not per schedule: a delegate's thread hangs off it,
 	// and one that persisted across fires would carry January's findings into
 	// February's run.
-	runner := app.unattendedHost(unattendedRun{
-		User:   sa.Owner,
-		ID:     "standing:" + sa.Name + ":" + strconv.FormatInt(time.Now().UnixNano(), 36),
-		Tools:  catalog,
-		Cursor: cur,
-		Note:   note,
-	}).phaseRunner()
+	runner := trace.wrap(app.unattendedHost(unattendedRun{
+		User:     sa.Owner,
+		ID:       "standing:" + sa.Name + ":" + strconv.FormatInt(time.Now().UnixNano(), 36),
+		Tools:    catalog,
+		Cursor:   cur,
+		Note:     trace.note,
+		Activity: trace.activity,
+	}).phaseRunner())
 	final, out, err := app.RunUnattended(ctx, def, cur, MachineTurn{
 		Input: input,
 		User:  sa.Owner,
 		Now:   time.Now().In(UserLocation(sa.Owner)).Format("Mon, January 2, 2006 at 3:04 PM MST"),
-	}, runner, note)
+	}, runner, trace.note)
 	if err != nil {
 		liveRun.Complete(RunStatusFailed)
 		// The partial result rides along: a run that stopped at step nine
@@ -483,10 +488,10 @@ func runStandingMachine(ctx context.Context, app *OrchestrateApp, sa StandingAge
 		if partial := strings.TrimSpace(out); partial != "" {
 			summary += "\n\nWhat it had produced:\n" + partial
 		}
-		return StandingRunResult{Status: RunFailed, Summary: summary}
+		return StandingRunResult{Status: RunFailed, Summary: summary, Steps: trace.Steps()}
 	}
 	liveRun.Complete(RunStatusCompleted)
-	Log("[orchestrate.standing] user=%q fired machine %q → finished at %s after %d step(s), %d bytes out, %d cached tool call(s)",
-		sa.Owner, def.Name, final.Name, len(cur.Log)+1, len(out), cache.Hits())
-	return StandingRunResult{Status: RunOK, Summary: strings.TrimSpace(out)}
+	Log("[orchestrate.standing] user=%q fired machine %q → finished at %s after %d step(s), %d bytes out, %d cached tool call(s), %d trace entries",
+		sa.Owner, def.Name, final.Name, trace.phases(), len(out), cache.Hits(), len(trace.Steps()))
+	return StandingRunResult{Status: RunOK, Summary: strings.TrimSpace(out), Steps: trace.Steps()}
 }

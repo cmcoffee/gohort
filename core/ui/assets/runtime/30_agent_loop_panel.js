@@ -296,6 +296,77 @@
               .catch(function(err) { status.textContent = 'Failed to load: ' + err.message; });
           }});
         }
+        // renderDetailValue draws one JSON value for a show_result modal, generically:
+        // an object as labelled fields, an array of objects as one sub-card each,
+        // a long or multi-line string as preformatted text, anything else inline.
+        // Keys starting with "_" are plumbing and stay hidden, as in the table.
+        function renderDetailValue(container, v, depth) {
+          depth = depth || 0;
+          if (v == null || v === '') return;
+          if (Array.isArray(v)) {
+            if (!v.length) return;
+            v.forEach(function(item, i) {
+              var card = el('div', {style: 'border:1px solid var(--border, rgba(127,127,127,0.25));border-radius:6px;padding:0.4rem 0.6rem;margin:0.3rem 0;background:var(--bg-2, rgba(127,127,127,0.05))'});
+              if (item && typeof item === 'object' && !Array.isArray(item)) {
+                card.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:0.72rem;margin-bottom:0.2rem'}, [String(i + 1)]));
+                renderDetailValue(card, item, depth + 1);
+              } else {
+                renderDetailValue(card, item, depth + 1);
+              }
+              container.appendChild(card);
+            });
+            return;
+          }
+          if (typeof v === 'object') {
+            Object.keys(v).forEach(function(k) {
+              if (k.charAt(0) === '_') return;
+              var val = v[k];
+              if (val == null || val === '' || (Array.isArray(val) && !val.length)) return;
+              var row = el('div', {style: 'margin:0.35rem 0'});
+              row.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:0.74rem;margin-bottom:0.1rem'}, [k]));
+              renderDetailValue(row, val, depth + 1);
+              container.appendChild(row);
+            });
+            return;
+          }
+          var s = String(v);
+          if (s.length > 80 || s.indexOf('\n') >= 0) {
+            container.appendChild(el('pre', {style: 'white-space:pre-wrap;word-break:break-word;margin:0;font-size:0.8rem;max-height:320px;overflow:auto;background:var(--bg-1, rgba(127,127,127,0.1));padding:0.45rem;border-radius:4px'}, [s]));
+          } else {
+            container.appendChild(el('div', {style: 'font-size:0.85rem;word-break:break-word'}, [s]));
+          }
+        }
+        // fireRowAction runs one row action the way both layouts need: a picker
+        // opens its chooser; a show_result action GETs the record and shows it
+        // in a modal; everything else fires and reloads the view. One place, so
+        // the cards and the table cannot drift on what a button does.
+        function fireRowAction(a, row) {
+          if (a.picker_source) { openRowPicker(a, row); return; }
+          var rowURL = a.url + '?id=' + encodeURIComponent(row._id) + '&agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '');
+          if (a.show_result) {
+            fetch(rowURL, {method: a.method || 'GET'})
+              .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+              .then(function(data) {
+                window.uiOpenModal({
+                  title: a.label,
+                  width: 'min(760px, 94vw)',
+                  mount: function(body) {
+                    var empty = data == null || (typeof data === 'object' && !Object.keys(data).length);
+                    if (empty) {
+                      body.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:0.85rem'}, ['Nothing to show — this record is gone or empty.']));
+                      return;
+                    }
+                    renderDetailValue(body, data, 0);
+                  }
+                });
+              })
+              .catch(function(err) { console.error('row detail failed: ' + err.message); });
+            return;
+          }
+          fetch(rowURL, {method: a.method || 'POST'})
+            .then(function() { if (reload) reload(); })
+            .catch(function(err) { console.error('row action failed: ' + err.message); });
+        }
         if (item && item.layout === 'cards') {
           var cactions = (item && item.row_actions) || [];
           var ckeys = Object.keys(rows[0]).filter(function(k) { return k.charAt(0) !== '_'; });
@@ -345,11 +416,7 @@
               var btn = el('button', {type: 'button', class: cls, onclick: async function(ev) {
                 if (ev) ev.stopPropagation();
                 if (a.confirm && window.uiConfirm && !(await window.uiConfirm(a.confirm))) return;
-                if (a.picker_source) { openRowPicker(a, row); return; }
-                var rowURL = a.url + '?id=' + encodeURIComponent(row._id) + '&agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '');
-                fetch(rowURL, {method: a.method || 'POST'})
-                  .then(function() { if (reload) reload(); })
-                  .catch(function(err) { console.error('row action failed: ' + err.message); });
+                fireRowAction(a, row);
               }}, [a.label]);
               controls.appendChild(btn);
             });
@@ -399,13 +466,9 @@
               var btn = el('button', {type: 'button', class: cls, style: 'margin-right:0.3rem', onclick: async function(ev) {
                 if (ev) ev.stopPropagation(); // don't toggle the row expand
                 if (a.confirm && window.uiConfirm && !(await window.uiConfirm(a.confirm))) return;
-                if (a.picker_source) { openRowPicker(a, row); return; }
-                // Stamp the in-view agent so per-agent row actions (e.g. History
-                // turn-scrub) target the right agent's thread, not the default.
-                var rowURL = a.url + '?id=' + encodeURIComponent(row._id) + '&agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '');
-                fetch(rowURL, {method: a.method || 'POST'})
-                  .then(function() { if (reload) reload(); })
-                  .catch(function(err) { console.error('row action failed: ' + err.message); });
+                // fireRowAction stamps the in-view agent so per-agent row actions
+                // (e.g. History turn-scrub) target the right agent's thread.
+                fireRowAction(a, row);
               }}, [a.label]);
               cell.appendChild(btn);
             });

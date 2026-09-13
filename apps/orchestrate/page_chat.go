@@ -297,6 +297,17 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							AutoRefreshMS: 3000, BadgeField: "_running", RowActions: []ui.OrchestratorRowAction{
 								{Label: "Cancel", Method: "POST", URL: "api/console/activity/cancel", OnlyIf: "_running", Variant: "danger", Confirm: "Cancel this in-flight run? The agent stops mid-turn; anything it already did stays done."},
 							}},
+						// The durable record behind the live view: every scheduled,
+						// standing, monitor and dispatched run this user owns, newest
+						// first, long after the activity registry has forgotten it.
+						// Details opens the full record — the step trace with each
+						// call's arguments and result, the output, and the prompt
+						// digest — which until now only the Operator agent could read
+						// (list_runs / inspect_run), so "what did my 3am run actually
+						// do" meant asking an agent.
+						{Label: "Runs", Source: "api/console/runs", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
+							{Label: "Details", Method: "GET", URL: "api/console/run-detail", ShowResult: true},
+						}},
 						// Cards layout so each agent's mission (the standing brief it
 						// runs with — "what it's told to do") renders as a detail line
 						// under the name, alongside its schedule / status / next run.

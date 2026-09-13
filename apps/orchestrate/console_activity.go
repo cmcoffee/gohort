@@ -10,17 +10,162 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
-// handleConsoleRuns returns the run-ledger feed (owner-scoped, status-level).
+// consoleRunRow is one card in the Runs pane: the ledger's metadata for a run
+// (never Raw / Steps — those are GetRun-only and travel in the Details modal).
+// Field order is display order: the first field is the card title, Status the
+// pill, the rest muted detail. _id is the Details row action's target.
+type consoleRunRow struct {
+	Run     string `json:"run"`
+	Status  string `json:"Status"`
+	When    string `json:"when"`
+	Trigger string `json:"trigger,omitempty"`
+	Brief   string `json:"brief,omitempty"`
+	Summary string `json:"summary,omitempty"`
+	ID      string `json:"_id"`
+}
+
+// handleConsoleRuns returns the run-ledger feed (owner-scoped, status-level)
+// shaped for the Runs cards pane, newest first.
 func (T *OrchestrateApp) handleConsoleRuns(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
-	runs := ListRuns(RootDB, user, RunFilter{Limit: 100})
-	if runs == nil {
-		runs = []RunRecord{}
+	loc := UserLocation(user)
+	rows := []consoleRunRow{}
+	for _, rec := range ListRuns(RootDB, user, RunFilter{Limit: 100}) {
+		rows = append(rows, consoleRunRow{
+			Run:     consoleRunTitle(rec),
+			Status:  string(rec.Status),
+			When:    consoleRunWhen(rec, loc),
+			Trigger: rec.Trigger,
+			Brief:   truncateObs(rec.Brief, 120),
+			Summary: truncateObs(firstNonEmpty(rec.Summary, rec.Err), 160),
+			ID:      rec.ID,
+		})
 	}
-	writeJSON(w, runs)
+	writeJSON(w, rows)
+}
+
+// consoleRunTitle names a run the way its owner thinks of it: the schedule
+// that fired, when one did, else the agent / standing name the ledger holds.
+func consoleRunTitle(rec RunRecord) string {
+	if task := strings.TrimSpace(rec.Task); task != "" && task != rec.Agent {
+		return task + " → " + rec.Agent
+	}
+	return rec.Agent
+}
+
+// consoleRunWhen renders start time (in the owner's zone) plus duration, or
+// "running" for a row the ledger has not closed.
+func consoleRunWhen(rec RunRecord, loc *time.Location) string {
+	when := rec.Started.In(loc).Format("Jan 2 15:04")
+	if rec.Ended.IsZero() {
+		return when + ", running"
+	}
+	d := rec.Ended.Sub(rec.Started).Round(time.Second)
+	if d < time.Second {
+		return when
+	}
+	return when + ", " + d.String()
+}
+
+func firstNonEmpty(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return a
+	}
+	return b
+}
+
+// consoleRunDetail is the Details modal's view of one run — the full record
+// GetRun rehydrates (steps, output, prompt), with field order chosen for a
+// reader: what ran and how it ended first, the trace next, the bulk last.
+type consoleRunDetail struct {
+	Run       string            `json:"Run"`
+	Status    string            `json:"Status"`
+	Trigger   string            `json:"Trigger,omitempty"`
+	Started   string            `json:"Started"`
+	Ended     string            `json:"Ended,omitempty"`
+	Duration  string            `json:"Duration,omitempty"`
+	Brief     string            `json:"Brief,omitempty"`
+	Summary   string            `json:"Summary,omitempty"`
+	Error     string            `json:"Error,omitempty"`
+	Steps     []consoleRunStep  `json:"Steps,omitempty"`
+	Artifacts []RunArtifact     `json:"Artifacts,omitempty"`
+	Output    string            `json:"Output,omitempty"`
+	Prompt    *consoleRunPrompt `json:"Prompt,omitempty"`
+}
+
+type consoleRunStep struct {
+	Step   string `json:"step"`
+	Args   string `json:"args,omitempty"`
+	Result string `json:"result,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+// consoleRunPrompt is the prompt digest a reader can act on, plus the exact
+// text when the agent's CapturePrompt flag kept it.
+type consoleRunPrompt struct {
+	SystemTokens  int    `json:"system_tokens,omitempty"`
+	ToolCount     int    `json:"tools,omitempty"`
+	ToolTokens    int    `json:"tool_tokens,omitempty"`
+	Messages      int    `json:"messages,omitempty"`
+	HistoryTokens int    `json:"history_tokens,omitempty"`
+	Window        int    `json:"window,omitempty"`
+	Budget        int    `json:"history_budget,omitempty"`
+	Headroom      int    `json:"headroom,omitempty"`
+	Tight         bool   `json:"tight,omitempty"`
+	Text          string `json:"as_sent,omitempty"`
+}
+
+// handleConsoleRunDetail serves one run's full record for the Details modal.
+// An unknown or foreign id answers an empty object, which the modal reads as
+// "gone", rather than confirming the id exists.
+func (T *OrchestrateApp) handleConsoleRunDetail(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	rec, found := GetRun(RootDB, user, r.URL.Query().Get("id"))
+	if !found {
+		writeJSON(w, map[string]any{})
+		return
+	}
+	writeJSON(w, consoleRunDetailOf(rec, UserLocation(user)))
+}
+
+func consoleRunDetailOf(rec RunRecord, loc *time.Location) consoleRunDetail {
+	d := consoleRunDetail{
+		Run:       consoleRunTitle(rec),
+		Status:    string(rec.Status),
+		Trigger:   rec.Trigger,
+		Started:   rec.Started.In(loc).Format("Jan 2, 2006 15:04:05"),
+		Brief:     rec.Brief,
+		Summary:   rec.Summary,
+		Error:     rec.Err,
+		Artifacts: rec.Artifacts,
+		Output:    rec.Raw,
+	}
+	if !rec.Ended.IsZero() {
+		d.Ended = rec.Ended.In(loc).Format("Jan 2, 2006 15:04:05")
+		d.Duration = rec.Ended.Sub(rec.Started).Round(time.Second).String()
+	}
+	// The summary usually IS the output for a run that produced one thing;
+	// showing it twice makes the modal longer without saying more.
+	if strings.TrimSpace(d.Output) == strings.TrimSpace(d.Summary) {
+		d.Output = ""
+	}
+	for _, st := range rec.Steps {
+		d.Steps = append(d.Steps, consoleRunStep{Step: st.Name, Args: st.Args, Result: st.Result, Error: st.Err})
+	}
+	if p := rec.Prompt; p.SystemTokens > 0 || p.Messages > 0 || strings.TrimSpace(p.Text) != "" {
+		d.Prompt = &consoleRunPrompt{
+			SystemTokens: p.SystemTokens, ToolCount: p.ToolCount, ToolTokens: p.ToolTokens,
+			Messages: p.Messages, HistoryTokens: p.HistoryTokens, Window: p.Window,
+			Budget: p.Budget, Headroom: p.Headroom, Tight: p.Tight, Text: p.Text,
+		}
+	}
+	return d
 }
 
 // consoleActivityRow is one row of the live "Active now" pane. Cards layout:
@@ -143,15 +288,3 @@ func shortElapsed(d time.Duration) string {
 
 // handleConsoleRunDetail returns one run's full record (encrypted raw fetched
 // on demand).
-func (T *OrchestrateApp) handleConsoleRunDetail(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	rec, found := GetRun(RootDB, user, r.URL.Query().Get("id"))
-	if !found {
-		writeJSON(w, map[string]any{})
-		return
-	}
-	writeJSON(w, rec)
-}

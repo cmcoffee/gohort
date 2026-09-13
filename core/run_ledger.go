@@ -69,11 +69,14 @@ type RunArtifact struct {
 	Value string `json:"value"` // path, URL, or inline content
 }
 
-// RunStep is one tool invocation captured during a run, so the ledger records
-// WHAT the run did (its steps) and not just its final output. Populated from the
-// same per-message tool trace the chat UI renders as chips; kept as a core type
-// so every trigger (schedule, dispatch, standing agent) can fill it without a
-// dependency on an app package. As sensitive as Raw — args/results can carry
+// RunStep is one thing the run did, captured in order, so the ledger records
+// WHAT the run did (its steps) and not just its final output. For an agent
+// run that is one tool invocation, populated from the same per-message tool
+// trace the chat UI renders as chips; for a machine run it is one phase (its
+// output in Result) or one framework decision about the walk (a transition,
+// a guard verdict — the kind in Name, the detail in Result). Kept as a core
+// type so every trigger (schedule, dispatch, standing agent) can fill it
+// without a dependency on an app package. As sensitive as Raw — args/results can carry
 // fetched data — so it travels ONLY in the encrypted side table (never in
 // metadata / ListRuns), rehydrated only by GetRun.
 type RunStep struct {

@@ -497,6 +497,14 @@ type OrchestratorRowAction struct {
 	// When empty the action is a plain fixed-URL button as before.
 	PickerSource string `json:"picker_source,omitempty"`
 	PickerTitle  string `json:"picker_title,omitempty"` // modal heading (default: Label)
+	// ShowResult makes the action a READ: the runtime fetches URL?id=<row._id>
+	// (Method defaults to GET) and renders the JSON reply in a modal titled
+	// Label, instead of firing-and-reloading. Objects render as labelled
+	// fields, long or multi-line strings as preformatted text, arrays of
+	// objects as one sub-card each — so a row can open its full record (a
+	// run's step trace, a request's payload) without the list carrying it.
+	// Field order follows the reply, so the server decides what reads first.
+	ShowResult bool `json:"show_result,omitempty"`
 }
 
 // AgentTerminal configures the optional bottom-right terminal pane
