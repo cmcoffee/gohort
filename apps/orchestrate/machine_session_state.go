@@ -90,6 +90,10 @@ type sessionStateView struct {
 	Blackboard  []sessionPhaseView `json:"Blackboard,omitempty"`
 	Transitions []sessionHopView   `json:"Transitions,omitempty"`
 	Note        string             `json:"Note,omitempty"`
+	// Context is what the thread actually carries into a turn (session_context.go),
+	// shown under the machine's state so one drawer answers both "where is the
+	// walk" and "what does it still remember".
+	Context *sessionContextView `json:"Context,omitempty"`
 }
 
 type sessionPhaseView struct {
@@ -112,7 +116,7 @@ func (T *OrchestrateApp) handleSessionState(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	user, _, sess, def, ok := T.sessionStateQuery(w, r)
+	user, udb, sess, def, ok := T.sessionStateQuery(w, r)
 	if !ok {
 		return
 	}
@@ -160,6 +164,9 @@ func (T *OrchestrateApp) handleSessionState(w http.ResponseWriter, r *http.Reque
 	}
 	if len(sess.MachineState) == 0 && len(sess.MachineLog) == 0 {
 		view.Note = "No phase has completed yet; the walk is at its first step."
+	}
+	if cv := sessionContextOf(udb, sess); cv != nil {
+		view.Context = cv
 	}
 	writeJSON(w, view)
 }

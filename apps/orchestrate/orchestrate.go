@@ -568,6 +568,8 @@ func (T *OrchestrateApp) Routes() {
 	T.HandleFunc("/api/session-phases", g(T.handleSessionPhases))
 	T.HandleFunc("/api/session-phase", g(T.handleSessionPhase))
 	T.HandleFunc("/api/session-state-clear", g(T.handleSessionStateClear))
+	// The context view for a thread that has folded (session_context.go).
+	T.HandleFunc("/api/session-context", g(T.handleSessionContext))
 	T.HandleFunc("/api/machines/import", g(T.handleMachineImport))
 	T.HandleFunc("/api/machines/draft", g(T.handleMachineDraft))
 	T.HandleFunc("/api/machines/", g(T.handleMachineOne))

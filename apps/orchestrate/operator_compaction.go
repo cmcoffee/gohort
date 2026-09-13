@@ -379,6 +379,11 @@ func (T *OrchestrateApp) foldOperatorHistory(udb Database, agent AgentRecord, se
 		return
 	}
 	saveCompactState(udb, agent.ID, sessID, newSt)
+	// The one moment the thread's shape changes under the owner: say so in the
+	// trail they can open, with the numbers. Until this, a fold was a server
+	// log line, and "why doesn't it remember what I said an hour ago" had no
+	// answer anywhere a person looks.
+	appendSessionDiag(udb, agent.ID, sessID, "history-folded", foldDiagDetail(st, newSt, len(cm)))
 	// Fact extraction respects BOTH memory toggles: DisableInferred (the
 	// fold facts are model-inferred — a phantom: dispatch with it forced
 	// on still gets its history bounded, just no fact seeding) AND
@@ -431,6 +436,8 @@ func (T *OrchestrateApp) trimStoredHistory(udb Database, agent AgentRecord, sess
 	}
 	if agent.DisableCompaction {
 		Log("[operator.compact] %s:%s storage capped to %d (compaction off; older forgotten)", agent.ID, sessID, keep)
+		appendSessionDiag(udb, agent.ID, sessID, "history-forgotten",
+			fmt.Sprintf("this thread reached %d stored messages with compaction OFF, so the oldest %d were dropped for good — no summary, no archive. Turn compaction on for this agent to keep older turns as a rolling summary instead.", len(msgs), len(msgs)-keep))
 		return msgs[len(msgs)-keep:]
 	}
 	if operatorFoldBusy(agent.ID, sessID) {
@@ -454,6 +461,8 @@ func (T *OrchestrateApp) trimStoredHistory(udb Database, agent AgentRecord, sess
 	st.SummarizedThrough -= drop
 	saveCompactState(udb, agent.ID, sessID, st)
 	Log("[operator.compact] %s:%s storage trimmed %d folded leading msgs (kept %d + summary; older in recall)", agent.ID, sessID, drop, len(msgs)-drop)
+	appendSessionDiag(udb, agent.ID, sessID, "history-trimmed",
+		fmt.Sprintf("%d of the oldest stored messages were removed from this thread; all of them were already folded into the rolling summary and archived, so they remain reachable through recall (%d messages kept verbatim).", drop, len(msgs)-drop))
 	return msgs[drop:]
 }
 
@@ -739,4 +748,16 @@ func historyOutgrewItsSession(msgs []ChatMessage, contextSize int) bool {
 		}
 	}
 	return false
+}
+
+// foldDiagDetail is the history-folded breadcrumb: what moved into the summary,
+// which fold this was, and how big the summary now is. Numbers the owner can
+// check against the context view.
+func foldDiagDetail(before, after CompactState, total int) string {
+	folded := after.SummarizedThrough - before.SummarizedThrough
+	if folded < 0 {
+		folded = after.SummarizedThrough
+	}
+	return fmt.Sprintf("fold #%d: %d older message(s) were folded into the rolling summary (now %d chars) and archived for recall; %d of %d stored messages are covered by the summary and the rest stay verbatim. Open the context view (the status pill) to read the summary.",
+		after.FoldSeq, folded, len([]rune(after.Summary)), after.SummarizedThrough, total)
 }

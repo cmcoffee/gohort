@@ -61,8 +61,15 @@ func (T *OrchestrateApp) handleSessionStatus(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	sess, ok := loadChatSession(udb, agentID, sessionID)
-	if !ok || sess.Phase == "" || sess.MachineID == "" {
+	if !ok {
 		writeJSON(w, map[string]any{})
+		return
+	}
+	if sess.Phase == "" || sess.MachineID == "" {
+		// No machine: the pill is the thread's CONTEXT readout instead, when
+		// the thread has folded — the one moment its shape changed under the
+		// owner (session_context.go). Silent until then.
+		writeJSON(w, contextStatus(udb, sess))
 		return
 	}
 	def, ok := LoadMachineDef(udb, user, sess.MachineID)
