@@ -203,7 +203,7 @@ Add `WebPath()` / `WebName()` / `WebDesc()` / `Routes()` and it gets a web dashb
 | `guides` | Living multi-section guide documents co-authored with an AI Guide Author; source-grounded, exportable, shareable |
 | `techwriter` · `codewriter` | Documentation and script/query co-editors |
 | `mcpserver` | Expose gohort agents to an external MCP client (e.g. Claude Desktop) |
-| `customapps` | Host for Builder-authored apps at `/custom/<slug>/` — declarative sections (form, table, chart, chat, workbench, pipeline, or a raw HTML canvas), a per-app record store, sandboxed data/action scripts, schedules, and per-user sharing or an anonymous link |
+| `customapps` | Host for Builder-authored apps (the My Apps tile) at `/apps/<slug>/` — declarative sections (form, table, chart, chat, workbench, pipeline, or a raw HTML canvas), a per-app record store, sandboxed data/action scripts, schedules, and per-user sharing or an anonymous link |
 | `hello` | Minimal scaffold for a new app |
 | `ollama_proxy` | Ollama-compatible HTTP proxy |
 

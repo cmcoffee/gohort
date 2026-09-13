@@ -89,7 +89,7 @@ func (T *CustomApps) Main() error {
 // capability link is a URL somebody was HANDED, and breaking those is not a
 // rename, it is a deletion they find out about later.
 func (T *CustomApps) WebPath() string { return "/apps" }
-func (T *CustomApps) WebName() string { return "Custom Apps" }
+func (T *CustomApps) WebName() string { return "My Apps" }
 func (T *CustomApps) WebDesc() string { return "Apps composed from primitives." }
 
 func (T *CustomApps) Routes() {
@@ -202,7 +202,7 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 	// data-source/action scripts. Bundle imports land disabled; the Custom
 	// Apps index's Enable button is the review gate.
 	if spec.Disabled {
-		http.Error(w, "this app is disabled — review it and press Enable on the Custom Apps page to activate it", http.StatusForbidden)
+		http.Error(w, "this app is disabled — review it and press Enable on the My Apps page to activate it", http.StatusForbidden)
 		return
 	}
 	// appdb is the app's record store for THIS user: a dedicated per-app file when
@@ -428,7 +428,7 @@ func (T *CustomApps) handleChat(w http.ResponseWriter, r *http.Request, udb Data
 
 func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 	ui.Page{
-		Title:     "Custom Apps",
+		Title:     "My Apps",
 		ShowTitle: true,
 		BackURL:   "/",
 		MaxWidth:  "900px",
@@ -438,7 +438,7 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 		// in core/ui.
 		ExtraHeadHTML: shareModalScript,
 		Sections: []ui.Section{{
-			Title:    "Your apps",
+			Title:    "My apps",
 			Subtitle: "Data-driven apps composed from ui primitives.",
 			Body: ui.Table{
 				Source: "_apps",
@@ -448,7 +448,7 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 					{Field: "desc", Flex: 2, Mute: true},
 					{Field: "status", Flex: 1, Mute: true},
 				},
-				EmptyText: "No custom apps yet.",
+				EmptyText: "No apps yet.",
 				RowActions: []ui.RowAction{
 					{Type: "button", Label: "Open", Method: "GET", PostTo: "{slug}/", HideIf: "disabled"},
 					{Type: "button", Label: "Enable", Method: "POST", PostTo: "_app/enable?slug={slug}", OnlyIf: "disabled",
@@ -668,7 +668,7 @@ func (T *CustomApps) ListGrantableApps() []GrantableApp {
 		}
 		out = append(out, GrantableApp{
 			Path: T.WebPath() + "/" + slug,
-			Name: name + " (custom app)",
+			Name: name + " (My Apps)",
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })

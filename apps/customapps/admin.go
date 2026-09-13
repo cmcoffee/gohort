@@ -69,7 +69,7 @@ func (T *CustomApps) adminSections(r *http.Request) []AdminSectionEntry {
 	if len(rows) == 0 {
 		// An empty rail reads as a broken tab. Say what is true instead.
 		return []AdminSectionEntry{{Section: ui.Section{
-			Title: "Custom apps",
+			Title: "Authored apps",
 			Group: customAppsAdminGroup,
 			Body: ui.EmptyState{
 				Icon:  "🧩",
@@ -186,9 +186,9 @@ func (T *CustomApps) registerAdminControls() {
 				SaveKey:       "users",
 				NameField:     "name",
 				Intro: "Narrows this ONE app. Leave every chip off and it stays open to everyone who can " +
-					"reach custom apps at all; turning any on restricts it to those people regardless of what " +
+					"reach My Apps at all; turning any on restricts it to those people regardless of what " +
 					"they have been granted. This is ANDed with the app grant in Users — that one says whether " +
-					"somebody uses custom apps, this one says who gets into this app. The owner always has access.",
+					"somebody uses My Apps, this one says who gets into this app. The owner always has access.",
 				EmptyText: "This deployment has no other users to grant.",
 			}
 		},

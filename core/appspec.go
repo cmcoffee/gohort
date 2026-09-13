@@ -94,7 +94,7 @@ type AppSpec struct {
 	// section.
 	Actions []AppAction `json:"actions,omitempty"`
 	// Disabled blocks the app from serving (the host 403s every sub-route) until
-	// the owner enables it from the Custom Apps index. It exists as the bundle-
+	// the owner enables it from the My Apps index. It exists as the bundle-
 	// import review gate: a spec can carry sandboxed data-source/action scripts,
 	// so an imported app lands disabled and nothing it brought can run before
 	// the owner has looked. A local mute, not part of the app's shape — export

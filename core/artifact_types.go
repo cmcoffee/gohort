@@ -1018,7 +1018,7 @@ func customAppRecipeDeps(spec AppSpec, owner string) []ArtifactSel {
 
 // ImportArtifact reconstitutes a custom app under owner, DISABLED — the spec
 // can carry sandboxed scripts, so nothing runs until the owner reviews and
-// enables it from the Custom Apps index. A same-slug app already in owner's
+// enables it from the My Apps index. A same-slug app already in owner's
 // store skips, never clobbered. Records don't travel, so the imported app
 // starts empty.
 func (customAppArtifact) ImportArtifact(_ Database, recipe json.RawMessage, owner string) (string, string, error) {
