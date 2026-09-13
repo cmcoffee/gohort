@@ -1037,6 +1037,14 @@ func (customAppArtifact) ImportArtifact(_ Database, recipe json.RawMessage, owne
 	if appSpecStore(owner) == nil {
 		return slug, "", Error("app spec store not initialized")
 	}
+	// Schema first, before the slug check: a recipe this install cannot read
+	// is refused whether or not the slug is free. Refusing beats landing a
+	// spec whose sections would render empty and read as the author's bug.
+	upgraded, ok := upgradeAppSpec(spec)
+	if !ok {
+		return slug, "", fmt.Errorf("this app was authored for a newer gohort (app schema %d; this install reads schema %d) — upgrade gohort before importing it", spec.SchemaVersion(), appSpecSchema)
+	}
+	spec = upgraded
 	if _, exists := LoadAppSpec(owner, slug); exists {
 		return slug, "an app with this slug already exists", nil
 	}

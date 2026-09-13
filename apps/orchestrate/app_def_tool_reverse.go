@@ -61,6 +61,8 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 		"agent_id":    spec.AgentID,
 		"revision":    spec.Updated,
 		"change_note": spec.ChangeNote,
+		"notes":       spec.Notes,
+		"schema":      spec.SchemaVersion(),
 		// What a later author most needs and could not know: whether the
 		// revision serving now has ever passed verify.
 		"status": spec.VerifyStatus(),

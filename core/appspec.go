@@ -26,6 +26,21 @@ import (
 // AppSpecTable is the per-user kvlite table holding AppSpecs, keyed by slug.
 const AppSpecTable = "app_specs"
 
+// appSpecSchema is the spec's wire schema, stamped on every save and carried
+// in exports. Bump it ONLY when a field's MEANING changes (a rename, a value
+// that reads differently), never for an added field — unknown fields already
+// decode away and a missing one reads as its zero value, so additions cost an
+// importer nothing. What an importer cannot do is read a schema it has never
+// seen: a recipe stamped higher than this refuses to land, rather than landing
+// with sections it would render empty. 0 on a stored spec means "written
+// before the stamp existed" and reads as 1. Read through SchemaVersion.
+const appSpecSchema = 1
+
+// appNotesCap bounds the notes field (runes). It is deliberately small: notes
+// are rewritten as a whole, and a cap is what keeps them a summary someone
+// reads before editing rather than a log nobody does. Read through NotesCap.
+const appNotesCap = 3000
+
 // AppSpec is one data-driven app. Page holds the pageConfig JSON (from
 // ui.Page.ConfigJSON) served verbatim — no Go Component round-trip. RecordKey is
 // the primary-key field of the per-app record store. AgentID optionally binds an
@@ -110,6 +125,14 @@ type AppSpec struct {
 	// undoing it. Cleared by any edit that gives no note: a note that outlives
 	// the revision it described would describe the wrong one.
 	ChangeNote string `json:"change_note,omitempty"`
+	// Notes is the author's standing account of the app, for whoever revises it
+	// next: what it is for, the decisions made and why, and what the owner asked
+	// for that is not done. Rewritten as a whole, never appended, bounded by
+	// AppNotesCap. ChangeNote is the per-revision half of this; Notes is the
+	// per-app half. Part of the app's shape — it travels with an export.
+	Notes string `json:"notes,omitempty"`
+	// Schema is the wire schema the spec was last saved under (appSpecSchema).
+	Schema int `json:"schema,omitempty"`
 	// Verify is the last verify outcome, pinned to the revision it ran against.
 	// Verify used to print "if you updated after this, this report is about the
 	// OLD revision" and trust the author to remember; nothing stored the answer,
@@ -347,6 +370,7 @@ func SaveAppSpecAs(s AppSpec, reason string) AppSpec {
 		s.Created = now
 	}
 	s.Updated = now
+	s.Schema = appSpecSchema
 	db.Set(AppSpecTable, s.Slug, s)
 	for _, fn := range appSpecSavedHooks {
 		fn(s)
@@ -379,4 +403,45 @@ func DeleteAppSpec(owner, slug string) {
 	for _, fn := range appSpecDeletedHooks {
 		fn(owner, slug)
 	}
+}
+
+// SchemaVersion reads the stamp with its pre-stamp default.
+func (s AppSpec) SchemaVersion() int {
+	if s.Schema <= 0 {
+		return 1
+	}
+	return s.Schema
+}
+
+// upgradeAppSpec brings a spec written under an earlier schema up to
+// appSpecSchema, one step per version. Every step is a pure rewrite of the
+// record; nothing here touches storage. It is the import path's seam for a
+// meaning change and today has nothing to do, because no meaning has changed
+// yet — the point of having it now is that the first change lands in a switch
+// arm rather than as a scattered "if the field is empty, assume" in readers.
+// A spec from a NEWER schema is returned untouched with ok=false; the caller
+// refuses it.
+func upgradeAppSpec(s AppSpec) (AppSpec, bool) {
+	from := s.SchemaVersion()
+	if from > appSpecSchema {
+		return s, false
+	}
+	for v := from; v < appSpecSchema; v++ {
+		switch v {
+		// case 1: s = upgradeAppSpecV1toV2(s)
+		}
+	}
+	s.Schema = appSpecSchema
+	return s, true
+}
+
+// NotesCap is the bound on Notes, in runes, for a caller composing a refusal.
+func (AppSpec) NotesCap() int { return appNotesCap }
+
+// NotesOver reports by how many runes Notes exceeds the cap; 0 when it fits.
+func (s AppSpec) NotesOver() int {
+	if n := len([]rune(s.Notes)); n > appNotesCap {
+		return n - appNotesCap
+	}
+	return 0
 }

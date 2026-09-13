@@ -53,6 +53,16 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	if d := strings.TrimSpace(stringArg(args, "description")); d != "" {
 		spec.Desc = d
 	}
+	// notes: the standing account for the next author. Present-only, so an
+	// update without it keeps what is there; present and empty clears. The cap
+	// is refused up front with the overshoot, the way update_notes does, rather
+	// than truncated — a summary cut mid-sentence is worse than none.
+	if _, ok := args["notes"]; ok {
+		spec.Notes = strings.TrimSpace(stringArg(args, "notes"))
+		if over := spec.NotesOver(); over > 0 {
+			return "", fmt.Errorf("notes is %d characters over the %d-character cap — it is a standing SUMMARY (purpose, decisions and why, open items), not a log; trim it and resend", over, spec.NotesCap())
+		}
+	}
 	if rk := strings.TrimSpace(stringArg(args, "record_key")); rk != "" {
 		spec.RecordKey = rk
 	}

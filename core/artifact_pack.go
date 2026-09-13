@@ -53,9 +53,15 @@ type PortableArtifact struct {
 // ArtifactBundle is the unified export/import envelope. A one-item Artifacts
 // slice is an individual export; many items is a bundle. Same shape either way.
 type ArtifactBundle struct {
-	Bundle     string             `json:"bundle"`
-	ExportedAt time.Time          `json:"exported_at"`
-	Artifacts  []PortableArtifact `json:"artifacts"`
+	Bundle     string    `json:"bundle"`
+	ExportedAt time.Time `json:"exported_at"`
+	// GohortVersion is the version of the install that wrote the bundle. It
+	// changes nothing on import by itself — recipes carry their own schema
+	// stamps where meaning can drift — but it is the one fact a reader needs
+	// when a recipe degrades: "authored on 0.6.4xx" turns a mystery into a
+	// diff. Empty on bundles written before it existed.
+	GohortVersion string             `json:"gohort_version,omitempty"`
+	Artifacts     []PortableArtifact `json:"artifacts"`
 }
 
 // ArtifactSel names one artifact to export. Owner scopes per-user types (tools);
@@ -194,7 +200,7 @@ func ExportArtifactBundleShallow(db Database, sels []ArtifactSel) (ArtifactBundl
 // selection strictly, and walks the transitive dependency closure only when
 // includeDeps is set.
 func exportArtifactBundle(db Database, sels []ArtifactSel, includeDeps bool) (ArtifactBundle, error) {
-	bundle := ArtifactBundle{Bundle: ArtifactBundleFormat, ExportedAt: time.Now()}
+	bundle := ArtifactBundle{Bundle: ArtifactBundleFormat, ExportedAt: time.Now(), GohortVersion: AppVersion}
 	seen := map[string]bool{}
 	selKey := func(s ArtifactSel) string {
 		return strings.TrimSpace(s.Type) + "\x00" + strings.TrimSpace(s.Name) + "\x00" + strings.TrimSpace(s.Owner)
@@ -381,11 +387,14 @@ type ArtifactImportOutcome struct {
 // aggregates every outcome's warnings (each already artifact-qualified) for a
 // flat top-level display.
 type ArtifactImportResult struct {
-	Bundle   string                  `json:"bundle"`
-	Imported int                     `json:"imported"`
-	Skipped  int                     `json:"skipped"`
-	Outcomes []ArtifactImportOutcome `json:"outcomes"`
-	Warnings []string                `json:"warnings,omitempty"`
+	Bundle string `json:"bundle"`
+	// GohortVersion echoes the bundle's stamp so a report can say where the
+	// recipes came from next to what happened to them.
+	GohortVersion string                  `json:"gohort_version,omitempty"`
+	Imported      int                     `json:"imported"`
+	Skipped       int                     `json:"skipped"`
+	Outcomes      []ArtifactImportOutcome `json:"outcomes"`
+	Warnings      []string                `json:"warnings,omitempty"`
 }
 
 // Summary renders a one-glance human summary of an import: the counts, then any
@@ -397,6 +406,9 @@ func (r ArtifactImportResult) Summary() string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Imported %d, skipped %d.", r.Imported, r.Skipped)
+	if v := strings.TrimSpace(r.GohortVersion); v != "" && v != AppVersion {
+		fmt.Fprintf(&b, " Bundle exported by gohort %s (this install is %s).", v, AppVersion)
+	}
 	for _, w := range r.Warnings {
 		b.WriteString("\nWarning: ")
 		b.WriteString(w)
@@ -437,6 +449,7 @@ func ImportArtifactBundle(db Database, data []byte, owner string) (ArtifactImpor
 		return res, err
 	}
 	res.Bundle = bundle.Bundle
+	res.GohortVersion = bundle.GohortVersion
 	if len(bundle.Artifacts) == 0 {
 		return res, Error("no artifacts in bundle")
 	}
