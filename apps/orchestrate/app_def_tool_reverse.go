@@ -14,14 +14,15 @@ func (t *chatTurn) appDefList() (string, error) {
 		return "No apps yet. Author one with app_def(action=\"create\", name=…, sections=[…]).", nil
 	}
 	type row struct {
-		Slug string `json:"slug"`
-		Name string `json:"name"`
-		Desc string `json:"desc,omitempty"`
-		URL  string `json:"url"`
+		Slug     string `json:"slug"`
+		Name     string `json:"name"`
+		Desc     string `json:"desc,omitempty"`
+		URL      string `json:"url"`
+		Verified string `json:"verified"`
 	}
 	out := make([]row, len(specs))
 	for i, s := range specs {
-		out[i] = row{Slug: s.Slug, Name: s.Name, Desc: s.Desc, URL: "/apps/" + s.Slug + "/"}
+		out[i] = row{Slug: s.Slug, Name: s.Name, Desc: s.Desc, URL: "/apps/" + s.Slug + "/", Verified: appVerifyWord(s)}
 	}
 	b, _ := json.Marshal(out)
 	return string(b), nil
@@ -33,12 +34,36 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 	if !ok {
 		return "", errors.New("no matching app — check the slug (app_def action=list)")
 	}
+	// One script's body, on request. Bodies are omitted from the full view for
+	// size; an author about to patch one needs the exact current text.
+	if want := strings.TrimSpace(stringArg(args, "script")); want != "" {
+		ref, err := pickAppScriptQualified(spec, want)
+		if err != nil {
+			return "", err
+		}
+		lang, body := ref.body(spec)
+		one := map[string]any{"kind": ref.kind, "language": lang, "script": body, "summary": appScriptSummary(lang, body)}
+		if ref.kind == "data" {
+			one["name"] = spec.DataSources[ref.idx].Name
+			one["capabilities"] = spec.DataSources[ref.idx].Capabilities
+		} else {
+			one["name"] = spec.Actions[ref.idx].Name
+			one["capabilities"] = spec.Actions[ref.idx].Capabilities
+		}
+		b, _ := json.Marshal(one)
+		return string(b), nil
+	}
 	out := map[string]any{
-		"slug":       spec.Slug,
-		"name":       spec.Name,
-		"desc":       spec.Desc,
-		"record_key": spec.RecordKey,
-		"agent_id":   spec.AgentID,
+		"slug":        spec.Slug,
+		"name":        spec.Name,
+		"desc":        spec.Desc,
+		"record_key":  spec.RecordKey,
+		"agent_id":    spec.AgentID,
+		"revision":    spec.Updated,
+		"change_note": spec.ChangeNote,
+		// What a later author most needs and could not know: whether the
+		// revision serving now has ever passed verify.
+		"status": spec.VerifyStatus(),
 		// Echoed like agent_id so an author reading the app back can see what a
 		// pipeline section is bound to — a get that omits a binding invites an
 		// update that silently drops it.
@@ -78,14 +103,15 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 	if len(spec.DataSources) > 0 {
 		ds := make([]map[string]any, len(spec.DataSources))
 		for i, d := range spec.DataSources {
-			ds[i] = map[string]any{"name": d.Name, "language": d.Language, "capabilities": d.Capabilities}
+			ds[i] = map[string]any{"name": d.Name, "language": d.Language, "capabilities": d.Capabilities, "script": appScriptSummary(d.Language, d.Script)}
 		}
 		out["data_sources"] = ds
+		out["scripts_note"] = "Script bodies are omitted here; get with script=<name> returns one. Edit a script in place with patch (find/replace) or replace_function, both with script=<name> — never re-send the whole data_sources/actions array to change one line."
 	}
 	if len(spec.Actions) > 0 {
 		acts := make([]map[string]any, len(spec.Actions))
 		for i, a := range spec.Actions {
-			m := map[string]any{"name": a.Name, "label": a.Label, "capabilities": a.Capabilities}
+			m := map[string]any{"name": a.Name, "label": a.Label, "capabilities": a.Capabilities, "script": appScriptSummary(a.Language, a.Script)}
 			if a.Confirm != "" {
 				m["confirm"] = a.Confirm
 			}
@@ -205,4 +231,18 @@ func authoringSectionsFromPage(page json.RawMessage) ([]map[string]any, bool) {
 		out = append(out, sec)
 	}
 	return out, exact
+}
+
+// appVerifyWord is the listing's one-word verify standing.
+func appVerifyWord(spec AppSpec) string {
+	switch v := spec.Verify; {
+	case v == nil:
+		return "never"
+	case !v.Current(spec):
+		return "stale"
+	case v.Pass:
+		return "pass"
+	default:
+		return "fail"
+	}
 }

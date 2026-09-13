@@ -296,11 +296,20 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 
 	b.WriteString("\n" + t.appInventoryLine(spec) + "\n")
 
+	// Pin the verdict to the revision it checked. Before this the report's
+	// own caveat ("if you updated after this…") was the only record, and it
+	// lived in a tool result the next session never sees.
+	summary := "PASS"
+	if failures > 0 {
+		summary = fmt.Sprintf("FAIL — %d problem(s)", failures)
+	}
+	spec.RecordVerify(failures == 0, summary)
 	if failures > 0 {
 		fmt.Fprintf(&b, "\nVERDICT: FAIL — %d problem(s) above. Fix with app_def action=update and run verify again. Do NOT tell the user the app is ready.", failures)
 	} else {
 		b.WriteString("\nVERDICT: PASS — scripts run clean and the page renders in a real browser with no JS errors or failed fetches. Safe to tell the user it's ready.")
 	}
+	b.WriteString(" (Recorded against revision " + spec.Updated + "; any later edit makes it stale.)")
 	return b.String(), nil
 }
 

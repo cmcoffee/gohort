@@ -35,6 +35,10 @@ func (t *chatTurn) appDefPatchHTML(args map[string]any) (string, error) {
 	if !ok {
 		return "", errors.New("no matching app — check the slug (app_def action=list)")
 	}
+	// A named script is the other edit surface (app_patch_script.go).
+	if strings.TrimSpace(stringArg(args, "script")) != "" {
+		return t.appDefPatchScript(args, spec)
+	}
 	find := stringArg(args, "find")
 	if strings.TrimSpace(find) == "" {
 		// An author reaching for patch_html with only a replacement in hand is
@@ -69,7 +73,7 @@ func (t *chatTurn) appDefPatchHTML(args map[string]any) (string, error) {
 		return "", err
 	}
 	summary := fmt.Sprintf("Patched html section %%d of %%q (revision %%s) — replaced %d chars with %d.", len(find), len(replace))
-	return t.saveHTMLSectionEdit(spec, sections, idx, prior, patched, summary, "patch", "patch_html")
+	return t.saveHTMLSectionEdit(spec, sections, idx, prior, patched, summary, "patch", "patch_html", stringArg(args, "note"))
 }
 
 // saveHTMLSectionEdit is the write path every partial html edit shares —
@@ -83,7 +87,7 @@ func (t *chatTurn) appDefPatchHTML(args map[string]any) (string, error) {
 // that for a canvas app it sees very little, because nothing runs until the
 // player clicks, which is exactly why the static check has to stand in front
 // of it rather than behind it.
-func (t *chatTurn) saveHTMLSectionEdit(spec AppSpec, sections []map[string]any, idx int, prior, next, summary, verb, reason string) (string, error) {
+func (t *chatTurn) saveHTMLSectionEdit(spec AppSpec, sections []map[string]any, idx int, prior, next, summary, verb, reason, note string) (string, error) {
 	sections[idx]["html"] = next
 
 	if problems, checked := htmlScriptSyntaxProblems(t.sandboxCallerCtx(), next); checked && len(problems) > 0 {
@@ -111,6 +115,7 @@ func (t *chatTurn) saveHTMLSectionEdit(spec AppSpec, sections []map[string]any, 
 	if src, err := json.Marshal(raw); err == nil {
 		spec.Sections = src
 	}
+	spec.ChangeNote = strings.TrimSpace(note)
 	saved := SaveAppSpecAs(spec, reason)
 
 	// Now the accurate check, against the revision that was just written. On

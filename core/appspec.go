@@ -19,6 +19,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -101,6 +102,87 @@ type AppSpec struct {
 	PublicToken string `json:"public_token,omitempty"`
 	Created     string `json:"created"`
 	Updated     string `json:"updated"`
+	// ChangeNote is the author's one-line reason for the edit that PRODUCED this
+	// revision ("added a city filter", "fixed the empty-array bug"). It travels
+	// into history with the spec, so the revision listing reads as intent rather
+	// than as a column of verbs, and a later author — a different session, a
+	// different agent — can tell a deliberate choice from an accident before
+	// undoing it. Cleared by any edit that gives no note: a note that outlives
+	// the revision it described would describe the wrong one.
+	ChangeNote string `json:"change_note,omitempty"`
+	// Verify is the last verify outcome, pinned to the revision it ran against.
+	// Verify used to print "if you updated after this, this report is about the
+	// OLD revision" and trust the author to remember; nothing stored the answer,
+	// so a get could not say whether the app serving now had ever passed, and an
+	// author who batched an update and a verify shipped the unverified one.
+	// Deployment-local — a browser load on one host says nothing about another —
+	// so export and import both clear it.
+	Verify *AppVerifyState `json:"verify,omitempty"`
+}
+
+// AppVerifyState records one verify run. Against is the Updated stamp of the
+// spec it checked — the same value the tool results call "revision" — so a
+// reader compares it with the spec's current Updated to know whether the
+// verdict still describes what is serving.
+type AppVerifyState struct {
+	At      string `json:"at"`
+	Against string `json:"against"`
+	Pass    bool   `json:"pass"`
+	// Summary is the verdict line, short enough to quote in a listing.
+	Summary string `json:"summary,omitempty"`
+}
+
+// Current reports whether the verdict describes the spec as it is now.
+func (v *AppVerifyState) Current(spec AppSpec) bool {
+	return v != nil && v.Against != "" && v.Against == spec.Updated
+}
+
+// VerifyStatus renders the spec's verify standing in one clause, for a tool
+// result or a listing: never verified, verified against an earlier revision,
+// or a current PASS/FAIL. The phrasing names the action to take, since the
+// point of storing the state is that the author no longer has to remember.
+func (s AppSpec) VerifyStatus() string {
+	v := s.Verify
+	switch {
+	case v == nil:
+		return "never verified — run app_def(action=\"verify\") before telling the user it is ready"
+	case !v.Current(s):
+		verdict := "FAIL"
+		if v.Pass {
+			verdict = "PASS"
+		}
+		return "last verify (" + verdict + ", " + v.At + ") was against an EARLIER revision (" + v.Against + "); the revision serving now (" + s.Updated + ") is unverified — run verify again"
+	case v.Pass:
+		return "verified PASS at " + v.At + " against this revision"
+	default:
+		return "verified FAIL at " + v.At + " against this revision: " + v.Summary
+	}
+}
+
+// RecordVerify stores a verify outcome for THIS revision (Against = the
+// spec's Updated stamp) WITHOUT touching Updated or history. It has to bypass
+// SaveAppSpecAs: that stamps Updated on every write, and a verdict pinned to
+// a stamp that the act of storing it just changed would be stale the moment
+// it landed. The saved hooks are skipped too — a verdict changes nothing a
+// schedule reconciles against. The receiver is read for its identity and its
+// revision only; the stored row is what gets the verdict.
+func (s AppSpec) RecordVerify(pass bool, summary string) bool {
+	db := appSpecStore(s.Owner)
+	if db == nil {
+		return false
+	}
+	var stored AppSpec
+	if !db.Get(AppSpecTable, s.Slug, &stored) {
+		return false
+	}
+	stored.Verify = &AppVerifyState{
+		At:      time.Now().UTC().Format(time.RFC3339),
+		Against: s.Updated,
+		Pass:    pass,
+		Summary: strings.TrimSpace(summary),
+	}
+	db.Set(AppSpecTable, s.Slug, stored)
+	return true
 }
 
 // AppDataSource is a script-backed data endpoint for a custom app: a sandboxed

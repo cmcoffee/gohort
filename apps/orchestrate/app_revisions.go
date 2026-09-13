@@ -31,22 +31,33 @@ func (t *chatTurn) appDefRevisions(args map[string]any) (string, error) {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Revisions of %q, newest first. Restore one with app_def(action=\"revert\", id=%q, to=<the # id>).\n\n", spec.Name, spec.Slug)
-	fmt.Fprintf(&b, "  NOW  %s  %s  (serving)\n", spec.Updated, appRevisionShape(spec))
+	now := fmt.Sprintf("  NOW  %s  %s  (serving)", spec.Updated, appRevisionShape(spec))
+	if n := strings.TrimSpace(spec.ChangeNote); n != "" {
+		now += "  " + strconv.Quote(n)
+	}
+	b.WriteString(now + "\n")
 	for _, r := range revs {
 		prior, ok := LoadAppRevision(t.user, spec.Slug, strconv.Itoa(r.Seq))
 		shape := "unreadable"
+		note := ""
 		if ok {
 			shape = appRevisionShape(prior)
+			note = strings.TrimSpace(prior.ChangeNote)
 		}
 		line := fmt.Sprintf("  #%-3d %s  %s", r.Seq, r.Stamp, shape)
 		if age := AppRevisionAge(r.Stamp); age != "" {
 			line += "  " + age
+		}
+		// The version's own note first (why it was made), then what replaced it.
+		if note != "" {
+			line += "  " + strconv.Quote(note)
 		}
 		if r.Reason != "" {
 			line += "  — replaced by " + r.Reason
 		}
 		b.WriteString(line + "\n")
 	}
+	b.WriteString("\nStatus now: " + spec.VerifyStatus() + ".\n")
 	b.WriteString("\nA version that is much larger than the one serving now is the signal to look at: it means an edit removed a lot of code. Compare with app_def(action=\"get\") before reverting if you're unsure.")
 	return b.String(), nil
 }
@@ -87,6 +98,13 @@ func (t *chatTurn) appDefRevert(args map[string]any) (string, error) {
 	restored.Shared = current.Shared
 	restored.PublicToken = current.PublicToken
 	restored.Created = current.Created
+	// A verdict belongs to the revision it checked; the restored document
+	// carries the note of THIS edit, not the one it was written with.
+	restored.Verify = nil
+	restored.ChangeNote = strings.TrimSpace(stringArg(args, "note"))
+	if restored.ChangeNote == "" {
+		restored.ChangeNote = fmt.Sprintf("reverted to #%d", target.Seq)
+	}
 
 	// The version being replaced goes into history like any other edit, so a
 	// revert is itself revertible — an author who reverts to the wrong one is

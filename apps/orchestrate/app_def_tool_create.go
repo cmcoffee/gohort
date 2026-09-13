@@ -185,9 +185,12 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 			reason = "update (confirmed rewrite)"
 		}
 	}
+	// The note describes THIS revision; one given with an earlier edit must
+	// not be carried onto a revision it says nothing about.
+	spec.ChangeNote = strings.TrimSpace(stringArg(args, "note"))
 	saved := SaveAppSpecAs(spec, reason)
-	msg := fmt.Sprintf("%s app %q at /apps/%s/ (revision %s) — open it in the dashboard under Custom Apps. Records save to the app's own store; the table lists them. Revise with app_def(action=\"update\", id=%q, …).",
-		verb, saved.Name, saved.Slug, saved.Updated, saved.Slug)
+	msg := fmt.Sprintf("%s app %q at /apps/%s/ (revision %s) — open it in the dashboard under Custom Apps. Records save to the app's own store; the table lists them. Revise with app_def(action=\"update\", id=%q, …). Status: %s.",
+		verb, saved.Name, saved.Slug, saved.Updated, saved.Slug, saved.VerifyStatus())
 
 	msg += "\n\n" + t.appInventoryLine(saved)
 

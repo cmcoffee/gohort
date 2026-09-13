@@ -34,6 +34,9 @@ func (t *chatTurn) appDefReplaceFunction(args map[string]any) (string, error) {
 	if !ok {
 		return "", errors.New("no matching app — check the slug (app_def action=list)")
 	}
+	if strings.TrimSpace(stringArg(args, "script")) != "" {
+		return t.appDefReplaceScriptFunction(args, spec)
+	}
 	fn := strings.TrimSpace(stringArg(args, "function"))
 	if fn == "" {
 		return "", errors.New("function is required — the NAME of the function to replace, e.g. function=\"drawBird\". Read the app's html with app_def(action=\"get\") if you're not sure what it defines")
@@ -70,7 +73,7 @@ func (t *chatTurn) appDefReplaceFunction(args map[string]any) (string, error) {
 
 	next := prior[:start] + strings.TrimRight(replace, "\n") + prior[end:]
 	summary := fmt.Sprintf("Replaced function %s in html section %%d of %%q (revision %%s) — %d chars became %d.", fn, end-start, len(replace))
-	return t.saveHTMLSectionEdit(spec, sections, idx, prior, next, summary, "replacement", "replace_function "+fn)
+	return t.saveHTMLSectionEdit(spec, sections, idx, prior, next, summary, "replacement", "replace_function "+fn, stringArg(args, "note"))
 }
 
 // definesFunction reports whether a fragment of JavaScript defines the named

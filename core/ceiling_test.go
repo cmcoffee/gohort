@@ -166,7 +166,15 @@ const (
 	// the attempt history both scheduling surfaces store. Re-baselining is the
 	// point of typing the number by hand — a band that stays full stops meaning
 	// anything, exactly like a ceiling that is never lowered.
-	coreExportCeiling = 2168
+	//
+	// Raised 2168 -> 2169 for AppVerifyState, ONE type: the stored verdict of an
+	// app's last verify, a field on AppSpec, which is declared here and is the
+	// portable recipe — an outbound TYPE edge, so it cannot leave with its
+	// owner. The count was at 2193, the top of the band, when it arrived. What
+	// did NOT get exported is the reader and the writer: VerifyStatus and
+	// RecordVerify are methods on AppSpec, which the count excludes because a
+	// method never lands in a dot-importer's namespace.
+	coreExportCeiling = 2169
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a
