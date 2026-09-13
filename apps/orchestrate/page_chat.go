@@ -417,6 +417,45 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							RowActions: []ui.OrchestratorRowAction{
 								{Label: "Details", Method: "GET", URL: "api/console/run-detail", ShowResult: true, OnlyIf: "_run"},
 							}},
+						// The same three panes as "This agent", asked about everyone —
+						// and named the same, because they ARE the same view. The
+						// heading is what differs, which is the one thing that
+						// differs about them; qualifying the labels as well said it
+						// twice and made the pair read as two features.
+						// Their handlers have always answered fleet-wide when given
+						// no agent — the standing filter's own comment calls that
+						// "unscoped view: everything" — but the menu stamped the
+						// selected agent onto every request, so nothing could ask.
+						// Each row keeps the full control it has on the per-agent
+						// pane, which is what makes the inventory actionable rather
+						// than a report.
+						//
+						// This is what replaced Decommission. That button deleted
+						// every monitor, standing agent and grant the owner had, in
+						// one irreversible click, showing no list of what it was
+						// about to destroy — and it missed recurring tasks, so the
+						// clean slate it promised left a third of the standing work
+						// still firing. Everything it did is here, per row, in front
+						// of the thing it acts on.
+						{Label: "Enabled agents", Group: "Your fleet", Scope: "fleet", Source: "api/console/agents", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
+							{Label: "Run now", Method: "POST", URL: "api/console/agents/run", HideIf: "_broken", Confirm: "Run this agent's mission once right now? This is a one-off test and does not change its schedule."},
+							{Label: "Pause", Method: "POST", URL: "api/console/agents/pause", HideIf: "_paused"},
+							{Label: "Resume", Method: "POST", URL: "api/console/agents/resume", OnlyIf: "_paused"},
+							{Label: "Relink", Method: "POST", URL: "api/console/agents/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live target", OnlyIf: "_relinkable"},
+							{Label: "Delete", Method: "DELETE", URL: "api/console/agents/delete", Variant: "danger", Confirm: "Delete this standing agent and cancel its schedule?"},
+						}},
+						{Label: "Event monitors", Group: "Your fleet", Scope: "fleet", Source: "api/console/monitors", RowActions: []ui.OrchestratorRowAction{
+							{Label: "Pause", Method: "POST", URL: "api/console/monitors/pause", HideIf: "_paused"},
+							{Label: "Resume", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_paused"},
+							{Label: "Relink", Method: "POST", URL: "api/console/monitors/relink", PickerSource: "api/console/agent-options?with_default=1", PickerTitle: "Relink (Default agent, or pick a specific one)", OnlyIf: "_relinkable"},
+							{Label: "Delete", Method: "DELETE", URL: "api/console/monitors/delete", Variant: "danger", Confirm: "Delete this event monitor?"},
+						}},
+						{Label: "Recurring tasks", Group: "Your fleet", Scope: "fleet", Source: "api/console/recurring", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
+							{Label: "Run now", Method: "POST", URL: "api/console/recurring/run", HideIf: "_broken", Confirm: "Run this recurring task's prompt once right now? This is a one-off test — it does not change the schedule or count against the fire cap."},
+							{Label: "Relink", Method: "POST", URL: "api/console/recurring/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live agent", OnlyIf: "_relinkable"},
+							{Label: "Resume", Method: "POST", URL: "api/console/recurring/resume", OnlyIf: "_broken", Confirm: "Put this parked task back on its schedule? A stalled objective gets a fresh attempt allowance; what it already tried is kept."},
+							{Label: "Delete", Method: "DELETE", URL: "api/console/recurring/delete", Variant: "danger", Confirm: "Delete this recurring task and cancel its schedule?"},
+						}},
 						// The durable record behind the live view: every scheduled,
 						// standing, monitor and dispatched run this user owns, newest
 						// first, long after the activity registry has forgotten it.
@@ -453,41 +492,6 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// on its own.
 						{Label: "Broken tools", Group: "Your fleet", Scope: "fleet", Source: "api/console/broken-tools", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
 							{Label: "Forget", Method: "POST", URL: "api/console/broken-tools/forget", Confirm: "Forget this action's failure tally? It starts counting again from zero; if the definition is still wrong it will be back here after five more failures."},
-						}},
-						// The same three panes as "This agent", asked about everyone.
-						// Their handlers have always answered fleet-wide when given
-						// no agent — the standing filter's own comment calls that
-						// "unscoped view: everything" — but the menu stamped the
-						// selected agent onto every request, so nothing could ask.
-						// Each row keeps the full control it has on the per-agent
-						// pane, which is what makes the inventory actionable rather
-						// than a report.
-						//
-						// This is what replaced Decommission. That button deleted
-						// every monitor, standing agent and grant the owner had, in
-						// one irreversible click, showing no list of what it was
-						// about to destroy — and it missed recurring tasks, so the
-						// clean slate it promised left a third of the standing work
-						// still firing. Everything it did is here, per row, in front
-						// of the thing it acts on.
-						{Label: "All enabled agents", Group: "Your fleet", Scope: "fleet", Source: "api/console/agents", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
-							{Label: "Run now", Method: "POST", URL: "api/console/agents/run", HideIf: "_broken", Confirm: "Run this agent's mission once right now? This is a one-off test and does not change its schedule."},
-							{Label: "Pause", Method: "POST", URL: "api/console/agents/pause", HideIf: "_paused"},
-							{Label: "Resume", Method: "POST", URL: "api/console/agents/resume", OnlyIf: "_paused"},
-							{Label: "Relink", Method: "POST", URL: "api/console/agents/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live target", OnlyIf: "_relinkable"},
-							{Label: "Delete", Method: "DELETE", URL: "api/console/agents/delete", Variant: "danger", Confirm: "Delete this standing agent and cancel its schedule?"},
-						}},
-						{Label: "All event monitors", Group: "Your fleet", Scope: "fleet", Source: "api/console/monitors", RowActions: []ui.OrchestratorRowAction{
-							{Label: "Pause", Method: "POST", URL: "api/console/monitors/pause", HideIf: "_paused"},
-							{Label: "Resume", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_paused"},
-							{Label: "Relink", Method: "POST", URL: "api/console/monitors/relink", PickerSource: "api/console/agent-options?with_default=1", PickerTitle: "Relink (Default agent, or pick a specific one)", OnlyIf: "_relinkable"},
-							{Label: "Delete", Method: "DELETE", URL: "api/console/monitors/delete", Variant: "danger", Confirm: "Delete this event monitor?"},
-						}},
-						{Label: "All recurring tasks", Group: "Your fleet", Scope: "fleet", Source: "api/console/recurring", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
-							{Label: "Run now", Method: "POST", URL: "api/console/recurring/run", HideIf: "_broken", Confirm: "Run this recurring task's prompt once right now? This is a one-off test — it does not change the schedule or count against the fire cap."},
-							{Label: "Relink", Method: "POST", URL: "api/console/recurring/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live agent", OnlyIf: "_relinkable"},
-							{Label: "Resume", Method: "POST", URL: "api/console/recurring/resume", OnlyIf: "_broken", Confirm: "Put this parked task back on its schedule? A stalled objective gets a fresh attempt allowance; what it already tried is kept."},
-							{Label: "Delete", Method: "DELETE", URL: "api/console/recurring/delete", Variant: "danger", Confirm: "Delete this recurring task and cancel its schedule?"},
 						}},
 					},
 					// core/ui is domain-agnostic: it reads the opt-in agent set
