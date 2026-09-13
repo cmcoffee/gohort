@@ -10,6 +10,7 @@
 package orchestrate
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -92,12 +93,47 @@ func (t *chatTurn) beginDispatchDiag(agentID, sessionID string) {
 		", which needs a conversation to hold its position; a dispatched turn has none, so this one ran on the agent's persona alone")
 }
 
+// diagParentKey carries the CONVERSATION a dispatched turn descends from —
+// the trail a person can actually open.
+//
+// A dispatched sub-agent files its breadcrumbs under its own sub-session, and
+// the chat page cannot open a sub-session (runOwnerDestination says why), so
+// every guardrail halt, denied tool and machine_not_on_dispatch on a delegated
+// run was written and never readable. The live turn stamps its own
+// (agent, session) on its context before any tool runs; a dispatch inherits
+// the context, and turnDiag on a turn with no *session of its own MIRRORS
+// each breadcrumb into that conversation's trail, tagged with the sub-agent's
+// name. Only the live turn stamps — a sub-turn never re-stamps with its own
+// sub-session — so any depth of nesting lands in the one thread the owner
+// is looking at.
+type diagParentKey struct{}
+
+type diagParent struct{ agentID, sessionID string }
+
+// withDiagParent names the conversation later breadcrumbs mirror into.
+func withDiagParent(ctx context.Context, agentID, sessionID string) context.Context {
+	if ctx == nil || strings.TrimSpace(agentID) == "" || strings.TrimSpace(sessionID) == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, diagParentKey{}, diagParent{agentID: agentID, sessionID: sessionID})
+}
+
+// diagParentFrom reads the stamp, or ok=false at the top of a conversation.
+func diagParentFrom(ctx context.Context) (agentID, sessionID string, ok bool) {
+	if ctx == nil {
+		return "", "", false
+	}
+	p, ok := ctx.Value(diagParentKey{}).(diagParent)
+	return p.agentID, p.sessionID, ok
+}
+
 // turnDiag is appendSessionDiag bound to a chatTurn — the convenient form
 // for guards firing inside a live turn. Nil-safe on every field.
 func (t *chatTurn) turnDiag(kind, detail string) {
 	if t == nil {
 		return
 	}
+	defer t.mirrorDiagToParent(kind, detail)
 	// A live turn writes to its own session. A BACKGROUND turn (scheduled fire,
 	// monitor wake, dispatched sub-agent) has no *session at all — it was built
 	// for the run, and the session record lives with the caller. Those turns run
@@ -127,6 +163,38 @@ func (t *chatTurn) turnDiag(kind, detail string) {
 		db = t.udb
 	}
 	appendSessionDiag(db, agentID, sessionID, kind, detail)
+}
+
+// mirrorDiagToParent copies a dispatched turn's breadcrumb into the
+// conversation it descends from (see diagParentKey), tagged with this agent's
+// name so the reader knows which child left it. A live turn — one with its
+// own *session — is its own conversation and mirrors nothing, and a stamp
+// that names this very trail (a dispatch that happens to file under the
+// parent's ids) is not written twice.
+func (t *chatTurn) mirrorDiagToParent(kind, detail string) {
+	if t == nil || t.session != nil {
+		return
+	}
+	pAgent, pSession, ok := diagParentFrom(t.ctx)
+	if !ok {
+		return
+	}
+	ownAgent, ownSession := t.agent.ID, t.diagSessionID
+	if t.diagAgentID != "" {
+		ownAgent = t.diagAgentID
+	}
+	if pAgent == ownAgent && pSession == ownSession {
+		return
+	}
+	db := t.ownerDB
+	if db == nil {
+		db = t.udb
+	}
+	name := strings.TrimSpace(t.agent.Name)
+	if name == "" {
+		name = t.agent.ID
+	}
+	appendSessionDiag(db, pAgent, pSession, kind, "↳ "+name+": "+detail)
 }
 
 // handleSessionDiag serves the trail: GET /api/session-diag?agent=&session=

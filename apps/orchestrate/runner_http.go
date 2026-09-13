@@ -510,6 +510,9 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 	// overlap. Silent unless something in the cached prefix moves between
 	// calls — see core/prompt_prefix_watch.go.
 	ctx = WithPromptTurn(ctx, "agent="+agent.ID+" session="+sess.ID)
+	// This conversation is where a dispatched sub-agent's breadcrumbs are
+	// mirrored (session_diag.go, diagParentKey): the trail a person can open.
+	ctx = withDiagParent(ctx, agent.ID, sess.ID)
 
 	// A PUBLISHED agent can be chatted by someone who is not its author. The
 	// record, and the custom-tool pool its AllowedTools names, live in the

@@ -185,7 +185,9 @@ type consoleActivityRow struct {
 //
 // Only a ROOT run qualifies: a dispatched sub-agent's session id names a
 // sub-session, not a thread the chat page can open, and the thread it belongs
-// to is its parent's, which is already listed. A root run with a session id
+// to is its parent's, which is already listed. (The sub-agent's diagnostics
+// are mirrored into that parent thread's trail, tagged with its name — see
+// session_diag.go, diagParentKey — so nothing is lost by not linking here.) A root run with a session id
 // — a chat turn, a scheduled or standing fire waking a thread, a channel
 // turn — opens that thread, where the panel's resume probe finds the run.
 func runOwnerDestination(prefix string, s RunSnapshot) string {
