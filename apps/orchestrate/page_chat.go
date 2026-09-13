@@ -345,6 +345,12 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// fifth failure in whichever thread tripped it. The badge is the
 						// count of broken actions. Forget clears one tally after the
 						// definition is fixed; a success clears it on its own.
+						// What each agent costs: every run banks its own scoped usage
+						// against the agent it ran (agent_spend.go), priced at read time
+						// with the configured rates and in tokens always. The first
+						// per-agent cost view; before it the only per-agent cost fact an
+						// owner saw was the daily-cap breadcrumb.
+						{Label: "Spend", Source: "api/console/spend", Layout: "cards"},
 						{Label: "Broken tools", Source: "api/console/broken-tools", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
 							{Label: "Forget", Method: "POST", URL: "api/console/broken-tools/forget", Confirm: "Forget this action's failure tally? It starts counting again from zero; if the definition is still wrong it will be back here after five more failures."},
 						}},

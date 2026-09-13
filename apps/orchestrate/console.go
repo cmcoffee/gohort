@@ -139,6 +139,8 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// Tool health: actions that have failed repeatedly and never once worked.
 	T.HandleFunc("/api/console/broken-tools", g(T.handleConsoleBrokenTools))
 	T.HandleFunc("/api/console/broken-tools/forget", gw(T.handleConsoleBrokenToolForget))
+	// Per-agent spend: each agent's LLM usage, banked per run (agent_spend.go).
+	T.HandleFunc("/api/console/spend", g(T.handleConsoleSpend))
 	T.HandleFunc("/api/console/monitors", g(T.handleConsoleMonitors))
 	T.HandleFunc("/api/console/monitors/delete", gw(T.handleConsoleMonitorDelete))
 	T.HandleFunc("/api/console/monitors/pause", gw(T.handleConsoleMonitorPause))

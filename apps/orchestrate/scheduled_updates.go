@@ -614,6 +614,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// matched against the live tree.
 	ctx, reportUsage := WithSubUsage(ctx, "scheduled "+agent.Name+" "+liveRun.ID)
 	defer reportUsage()
+	defer bankScopedSpend(ctx, spendOwner(agent, p.Username), agent) // a fire bills to the agent it ran (agent_spend.go)
 	subSess.Ctx = ctx
 	// Safety net only — Complete is idempotent (first call sticks), and the
 	// explicit call right after the loop below lands first with the real

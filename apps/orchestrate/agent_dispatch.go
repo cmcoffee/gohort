@@ -615,6 +615,7 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	// shadows the tracker above it.
 	ctx, reportUsage := WithSubUsage(ctx, "dispatch "+target.Name+" "+liveRun.ID)
 	defer reportUsage()
+	defer bankScopedSpend(ctx, spendOwner(target, agentOwner), target) // the same tracker, banked per agent (agent_spend.go)
 	// Hand the turn's context to the session. Two things depend on it and both
 	// were silently off: a tool can only DETACH when it can find the run that
 	// owns it, which it reads off this context (the log said "image stayed
@@ -1387,6 +1388,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// delegation are told apart in the log.
 	ctx, reportUsage := WithSubUsage(ctx, liveKind+" "+target.Name+" "+liveRun.ID)
 	defer reportUsage()
+	defer bankScopedSpend(ctx, spendOwner(target, agentOwner), target)
 	// Hand the turn's context to the session. Two things depend on it and both
 	// were silently off: a tool can only DETACH when it can find the run that
 	// owns it, which it reads off this context (the log said "image stayed
