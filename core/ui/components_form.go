@@ -74,6 +74,13 @@ type FormPanel struct {
 	// to the button. Use for connectivity / credential checks (SMTP,
 	// embedding endpoint, search API, image-gen API) so operators can
 	// validate before saving.
+	//
+	// While the request is in flight the button reads Cancel and the result
+	// counts elapsed seconds; clicking it aborts the request, so a wrong host
+	// or a dead port never means waiting out the server's timeout. The abort
+	// reaches the server as a closed request: a handler that derives its
+	// context from r.Context() drops its upstream call too, one that uses
+	// Background keeps going alone. Write test handlers the first way.
 	TestURL string `json:"test_url,omitempty"`
 	// TestLabel — button text for the Test affordance. Defaults to
 	// "Test connectivity" when TestURL is set and this is empty.

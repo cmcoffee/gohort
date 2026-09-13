@@ -3125,16 +3125,41 @@
           [cfg.test_label || 'Test connectivity']);
         var testResult = el('span', {class: 'ui-form-test-result',
           style: 'font-size:0.78rem;color:var(--text-mute)'});
+        // While a test is in flight the button IS the cancel: a wrong host or
+        // a dead port used to mean staring at "Testing…" until the server's
+        // timeout gave up, with nothing to click. Aborting the request also
+        // cancels the server side wherever the handler derives its context
+        // from the request, so an upstream call is dropped, not orphaned.
+        var inflight = null;   // AbortController for the running test
+        var ticker = null;     // elapsed-seconds readout
+        var originalLabel = cfg.test_label || 'Test connectivity';
+        function settle() {
+          if (ticker) { clearInterval(ticker); ticker = null; }
+          inflight = null;
+          testBtn.textContent = originalLabel;
+          testBtn.classList.remove('danger');
+        }
         testBtn.addEventListener('click', function() {
-          testBtn.disabled = true;
-          var originalLabel = cfg.test_label || 'Test connectivity';
-          testBtn.textContent = 'Testing…';
+          if (inflight) {
+            inflight.abort();
+            return;
+          }
+          var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+          inflight = ctl || {abort: function() {}};
+          testBtn.textContent = 'Cancel';
+          testBtn.classList.add('danger');
           testResult.style.color = 'var(--text-mute)';
-          testResult.textContent = '';
+          testResult.textContent = 'Testing…';
+          var startedAt = Date.now();
+          ticker = setInterval(function() {
+            var secs = Math.round((Date.now() - startedAt) / 1000);
+            if (secs >= 2) testResult.textContent = 'Testing… ' + secs + 's';
+          }, 1000);
           fetchJSON(cfg.test_url, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body: JSON.stringify(current),
+            signal: ctl ? ctl.signal : undefined,
           }).then(function(resp) {
             if (resp && resp.ok) {
               testResult.style.color = 'var(--accent)';
@@ -3144,12 +3169,14 @@
               testResult.textContent = '✗ ' + ((resp && resp.error) || 'Failed');
             }
           }).catch(function(err) {
+            if (err && err.name === 'AbortError') {
+              testResult.style.color = 'var(--text-mute)';
+              testResult.textContent = 'Cancelled after ' + Math.round((Date.now() - startedAt) / 1000) + 's — nothing was saved.';
+              return;
+            }
             testResult.style.color = 'var(--danger,#ff7b72)';
             testResult.textContent = '✗ ' + (err && err.message || 'Test failed');
-          }).then(function() {
-            testBtn.disabled = false;
-            testBtn.textContent = originalLabel;
-          });
+          }).then(settle);
         });
         testRow.appendChild(testBtn);
         testRow.appendChild(testResult);
