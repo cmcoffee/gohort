@@ -438,6 +438,64 @@ func (T *OrchestrateApp) LookupExposedAgent(slug string) (AgentRecord, string, b
 	return AgentRecord{}, "", false
 }
 
+// lookupReachableAgentByID finds a published or peer-shared agent by record
+// id, searching every author's store — the id-keyed twin of
+// LookupExposedAgent. The owner comes back so the caller can run the per-user
+// reachability gate.
+func (T *OrchestrateApp) lookupReachableAgentByID(agentID string) (AgentRecord, string, bool) {
+	if T.DB == nil || agentID == "" || AuthDB == nil {
+		return AgentRecord{}, "", false
+	}
+	authDB := AuthDB()
+	if authDB == nil {
+		return AgentRecord{}, "", false
+	}
+	for _, u := range AuthListUsers(authDB) {
+		udb := UserDB(T.DB, u.Username)
+		for _, a := range listAgents(udb, u.Username) {
+			if a.ID == agentID && reachableAgent(a) {
+				return a, u.Username, true
+			}
+		}
+	}
+	return AgentRecord{}, "", false
+}
+
+// memoryAgent resolves the agent whose memory a handler is about to serve for
+// user, whose store is udb. Two shapes:
+//
+//   - The agent is user's own, or a seed (whose per-user shadow loadAgent's
+//     fallback supplies): the record is in udb. The ordinary console case and
+//     the servitor per-scope case, where user is a synthetic scope and the
+//     agent a hidden template.
+//   - The agent is someone else's, published or peer-shared, and user is a
+//     visitor chatting it on /agents/. The record lives in the AUTHOR's store
+//     and nothing ever copies it into the visitor's, so loadAgent(udb) fails —
+//     yet every turn the visitor takes writes facts, notes, graph and findings
+//     into udb under this agent's id (handleSend: "memory stays with whoever
+//     is typing"). That memory shaped the visitor's replies and was readable by
+//     nobody: the author's pane reads the author's store, and the visitor's
+//     pane 404'd here. The fallback resolves the record from the author's
+//     store, gated by the same AgentReachableBy that admits the visitor to the
+//     chat, and the handler then reads DATA from udb exactly as before — so
+//     the visitor sees and prunes their own scope, never the author's.
+//
+// The fallback is only for the request's own user: a scope user is never the
+// session identity, so a scope lookup that misses stays a miss.
+func (T *OrchestrateApp) memoryAgent(r *http.Request, udb Database, user, agentID string) (AgentRecord, bool) {
+	if a, ok := loadAgent(udb, agentID); ok && (a.Owner == user || a.Owner == seedOwner) {
+		return a, true
+	}
+	if r == nil || AuthCurrentUser(r) != user {
+		return AgentRecord{}, false
+	}
+	a, owner, ok := T.lookupReachableAgentByID(agentID)
+	if !ok || !T.AgentReachableBy(r, ExposedSlug(a), owner, a.AllowedUsers) {
+		return AgentRecord{}, false
+	}
+	return a, true
+}
+
 // PublicHandleSend dispatches a /api/send for an exposed agent. The
 // caller (apps/agents) has already resolved the slug + checked
 // Exposed=true; we just bypass the admin gate that wraps the

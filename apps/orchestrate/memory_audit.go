@@ -450,8 +450,8 @@ func (T *OrchestrateApp) handleAgentMemoryAudit(w http.ResponseWriter, r *http.R
 		http.NotFound(w, r)
 		return
 	}
-	a, ok := loadAgent(udb, agentID)
-	if !ok || (a.Owner != user && a.Owner != seedOwner) {
+	a, ok := T.memoryAgent(r, udb, user, agentID)
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}

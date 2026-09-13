@@ -53,7 +53,7 @@ func (T *OrchestrateApp) handleAgentMemorySearch(w http.ResponseWriter, r *http.
 		http.Error(w, "no user store", http.StatusInternalServerError)
 		return
 	}
-	rec, ok := loadAgent(udb, agentID)
+	rec, ok := T.memoryAgent(r, udb, user, agentID)
 	if !ok {
 		http.Error(w, "agent not found", http.StatusNotFound)
 		return

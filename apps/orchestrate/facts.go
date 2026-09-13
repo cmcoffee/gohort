@@ -354,8 +354,8 @@ func (T *OrchestrateApp) handleAgentFacts(w http.ResponseWriter, r *http.Request
 		http.NotFound(w, r)
 		return
 	}
-	a, ok := loadAgent(udb, agentID)
-	if !ok || (a.Owner != user && a.Owner != seedOwner) {
+	a, ok := T.memoryAgent(r, udb, user, agentID)
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}

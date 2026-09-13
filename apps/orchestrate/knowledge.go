@@ -564,8 +564,8 @@ func (T *OrchestrateApp) handleAgentKnowledgeUpload(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
-	a, found := loadAgent(udb, agentID)
-	if !found || (a.Owner != user && a.Owner != seedOwner) {
+	_, found := T.memoryAgent(r, udb, user, agentID)
+	if !found {
 		http.NotFound(w, r)
 		return
 	}
