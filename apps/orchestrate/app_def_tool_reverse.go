@@ -86,7 +86,8 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 	// the author either gave up or re-wrote the app blind.
 	switch {
 	case len(spec.Sections) > 0:
-		out["sections"] = json.RawMessage(spec.Sections)
+		out["sections"] = json.RawMessage(ensureSectionIDsJSON(spec.Sections))
+		out["sections_note"] = "Each section carries a stable `id`. To change one, use update_section / add_section / remove_section with that id; update replaces the WHOLE array."
 	default:
 		// Authored before sections were stored. Reconstruct from the rendered
 		// page: exact where the authoring fields ARE the body's fields (an html

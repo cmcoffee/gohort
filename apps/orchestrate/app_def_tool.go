@@ -41,7 +41,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 			Name:        "app_def",
 			Description: "Author and manage gohort APPS — real in-dashboard surfaces (NOT standalone HTML files) served at /apps/<slug>/. Two ways to build one, and BOTH are in scope. (1) Declarative sections (form/table/display/chart/chat/workbench): the framework renders them and gives you a per-app record store for free, no hand-written HTML/CSS/JS — best for anything data-shaped. (2) An `html` section: a full HTML/CSS/JS canvas where inline <script> RUNS, for anything the typed sections can't express — a GAME, canvas animation, a simulation, a custom visualization, a bespoke widget.\n\nYou CAN build an interactive or graphical app. If the user asks for a game or an animation, write it as an html section with a <canvas> and a requestAnimationFrame loop — do NOT tell them it is out of scope, needs a game engine, or is beyond this tool. It is not.\n\nReach for this whenever the user asks for \"an app\", \"a game\", \"a page where I can…\", \"a tool to track/manage X\", or any persistent surface inside gohort — never a standalone downloadable HTML file. Actions: create · update · list · get · delete. Call action=\"help\" for every section field and the good defaults.",
 			Parameters: map[string]ToolParam{
-				"action": {Type: "string", Description: "One of: create | update | patch_html | replace_function | revisions | revert | test | verify | list | get | delete | help. Every save keeps the version it replaced: if an edit turns out to have broken or deleted something, use revert (see revisions) — never try to reconstruct the app from memory, which is how the damage happens in the first place. To change PART of an html app OR OF A SCRIPT (pass script=<data source or action name>), edit in place instead of re-sending the whole document through update — re-typing a long document is how working code gets silently rewritten around the fix. Rewriting a whole FUNCTION is replace_function (name it, hand over the new one; you never reproduce the old text). Anything smaller — a constant, a one-line bug, a couple of lines — is patch_html (exact find/replace). After authoring an app with script-backed data_sources or actions, run test to EXECUTE each script and see its real output/errors. Then run verify as the FINAL gate: it re-runs the scripts AND loads the app's page in a real headless browser (JavaScript executed, as the user), reporting console errors, failed fetches, and whether sections rendered — do not tell the user the app is ready until verify passes. The verdict is STORED against the revision it checked: get/list show whether the revision serving now has passed, is unverified, or was only verified as an earlier revision — you do not have to remember. Pass note=\"why\" on every edit. Pass sample=[{...}] to either action to exercise the full form→data-source→output chain with example form data even before any records exist."},
+				"action": {Type: "string", Description: "One of: create | update | patch_html | replace_function | revisions | revert | test | verify | list | get | delete | help. To change ONE section, use update_section / add_section / remove_section with its id (get lists them) rather than re-sending the whole sections array. Every save keeps the version it replaced: if an edit turns out to have broken or deleted something, use revert (see revisions) — never try to reconstruct the app from memory, which is how the damage happens in the first place. To change PART of an html app OR OF A SCRIPT (pass script=<data source or action name>), edit in place instead of re-sending the whole document through update — re-typing a long document is how working code gets silently rewritten around the fix. Rewriting a whole FUNCTION is replace_function (name it, hand over the new one; you never reproduce the old text). Anything smaller — a constant, a one-line bug, a couple of lines — is patch_html (exact find/replace). After authoring an app with script-backed data_sources or actions, run test to EXECUTE each script and see its real output/errors. Then run verify as the FINAL gate: it re-runs the scripts AND loads the app's page in a real headless browser (JavaScript executed, as the user), reporting console errors, failed fetches, and whether sections rendered — do not tell the user the app is ready until verify passes. The verdict is STORED against the revision it checked: get/list show whether the revision serving now has passed, is unverified, or was only verified as an earlier revision — you do not have to remember. Pass note=\"why\" on every edit. Pass sample=[{...}] to either action to exercise the full form→data-source→output chain with example form data even before any records exist."},
 				"find": {
 					Type:        "string",
 					Description: "(patch_html) The EXACT text to replace, copied verbatim from the app's current html (read it with action=\"get\"), whitespace included. It must match EXACTLY ONCE — include the surrounding lines until it is unique. Zero matches or several are both refused rather than guessed at, so a patch can never land somewhere you didn't mean.",
@@ -56,7 +56,19 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 				},
 				"section": {
 					Type:        "number",
-					Description: "(patch_html/replace_function) Which html section to edit, 1-based among the app's html sections. Omit when the app has only one (the usual case, e.g. a game). Ignored when `script` is set.",
+					Description: "(patch_html/replace_function) Which html section to edit, 1-based among the app's html sections; or pass section_id instead. Omit when the app has only one (the usual case, e.g. a game). Ignored when `script` is set.",
+				},
+				"section_id": {
+					Type:        "string",
+					Description: "(update_section/remove_section/patch_html/replace_function) The id of the section to edit or remove, e.g. \"html-game\". Every stored section carries one — get lists them. Stable across edits; an author-supplied id on a section is kept.",
+				},
+				"section_def": {
+					Type:        "object",
+					Description: "(update_section/add_section) The section OBJECT — {kind, title, fields…}, the same shape one entry of `sections` takes. For update_section the id is kept whatever this carries.",
+				},
+				"after": {
+					Type:        "string",
+					Description: "(add_section) The id of the section to insert after; omit to append at the end. \"start\" inserts first.",
 				},
 				"script": {
 					Type:        "string",
@@ -120,6 +132,12 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 				return t.appDefList()
 			case "get":
 				return t.appDefGet(args)
+			case "update_section":
+				return t.appDefUpdateSection(args)
+			case "add_section":
+				return t.appDefAddSection(args)
+			case "remove_section":
+				return t.appDefRemoveSection(args)
 			case "patch_html", "patch":
 				return t.appDefPatchHTML(args)
 			case "replace_function", "patch_function":
@@ -137,7 +155,7 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 			case "help", "":
 				return appDefHelpText, nil
 			default:
-				return "", fmt.Errorf("unknown action %q — use create | update | patch_html | replace_function | revisions | revert | test | verify | list | get | delete | help", action)
+				return "", fmt.Errorf("unknown action %q — use create | update | update_section | add_section | remove_section | patch_html | replace_function | revisions | revert | test | verify | list | get | delete | help", action)
 			}
 		},
 	}
@@ -145,9 +163,10 @@ func (t *chatTurn) appDefToolDef() AgentToolDef {
 
 const appDefHelpText = `app_def actions:
 - create {name, slug?, description?, notes?, record_key?, sections:[…]} — author an app, served at /apps/<slug>/. Write notes (purpose, decisions and why, open items) for the next author. Data-shaped or fully interactive (a game, an animation) — both are in scope; see the html section kind.
+- update_section {id(slug), section_id, section_def:{…}, note?} — replace ONE section by id, everything else untouched. add_section {id(slug), section_def:{…}, after?, note?} — insert one. remove_section {id(slug), section_id, note?} — drop one. All three go through the same guards as update (a dropped functional section, a stranded record field, a shrunken html document are refused the same way), so prefer them to update whenever the change is one section — re-sending the whole array is how sections get silently lost.
 - update {id(slug), …, sections:[…]} — revise an app in place. REPLACES the page with what you send, so an html app means re-sending the whole document AND a sections array means the WHOLE set — a section you leave out is a section you delete. Dropping a FIELD that stored records still carry is REFUSED by name (keep it as a table column, migrate, or confirm_rewrite:true if the values are disposable). Dropping the one that runs the app (pipeline / chat / workbench) is REFUSED for that reason: the page still renders and verify still passes without it, so the loss is invisible everywhere else. Call action="get" first; it returns the sections in the shape update accepts. An update that shrinks an html app sharply, or that drops functions the rest of the code still calls, is REFUSED (pass confirm_rewrite:true if you really are re-authoring from scratch) — that shape is a half-finished rewrite, and it deletes working code while still parsing and loading clean.
-- replace_function {id(slug), function, replace, section?|script?, note?} — swap ONE named function in an html section, or (script=<name>) one Python def / bash function in a data source or action. Name it, hand over the whole new function, and the server finds the old one: you never reproduce a line of it, so this cannot fail on whitespace and does not need the current document in front of you. THE action for "rewrite drawBird" / "fix the collision function" / "make the car look different".
-- patch_html {id(slug), find, replace, section?|script?, note?} — change PART of an html section — or of a data source / action when script=<name> is passed — by exact find/replace. For edits smaller than a function (a constant, a one-line bug): find must match EXACTLY ONCE (zero or several are refused, never guessed), and everything outside the match is left untouched. Both in-place edits are parsed, checked for calls to code they would delete, and loaded in a real browser BEFORE they are kept — an edit that breaks any of those is rolled back and the previous revision keeps serving.
+- replace_function {id(slug), function, replace, section?|section_id?|script?, note?} — swap ONE named function in an html section, or (script=<name>) one Python def / bash function in a data source or action. Name it, hand over the whole new function, and the server finds the old one: you never reproduce a line of it, so this cannot fail on whitespace and does not need the current document in front of you. THE action for "rewrite drawBird" / "fix the collision function" / "make the car look different".
+- patch_html {id(slug), find, replace, section?|section_id?|script?, note?} — change PART of an html section — or of a data source / action when script=<name> is passed — by exact find/replace. For edits smaller than a function (a constant, a one-line bug): find must match EXACTLY ONCE (zero or several are refused, never guessed), and everything outside the match is left untouched. Both in-place edits are parsed, checked for calls to code they would delete, and loaded in a real browser BEFORE they are kept — an edit that breaks any of those is rolled back and the previous revision keeps serving.
 - revisions {id(slug)} — the last few versions of the app, newest first, each shown as its SIZE and FUNCTION COUNT next to the one serving now. A version much larger than the current one is an edit that removed code.
 - revert {id(slug), to?} — restore a kept revision (stamp, or its position in the listing; omit for the most recent). The version it replaces is kept too, so a revert is undoable. Reach for this the moment an edit turns out to have deleted something, instead of reconstructing the app from memory — reconstructing from memory is what deletes things.
 - list — your apps: [{slug, name, desc, verified: pass|fail|stale|never}].

@@ -53,7 +53,7 @@ func (t *chatTurn) appDefReplaceFunction(args map[string]any) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	idx, err := pickHTMLSection(sections, args["section"])
+	idx, err := pickHTMLSection(sections, htmlSectionTarget(args))
 	if err != nil {
 		return "", err
 	}

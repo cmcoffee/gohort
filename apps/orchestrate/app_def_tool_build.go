@@ -106,7 +106,7 @@ func buildAppPage(spec AppSpec, raw any) (ui.Page, error) {
 // mirrors: if a kind learns a field, it belongs in both places, and the cost of
 // forgetting is one spurious note, never a refused save.
 var sectionKeys = map[string][]string{
-	"":          {"kind", "title", "subtitle", "group", "collapsed"}, // every kind
+	"":          {"id", "kind", "title", "subtitle", "group", "collapsed"}, // every kind; id = the stable handle update_section uses
 	"form":      {"fields", "submit_label", "modal"},
 	"table":     {"columns", "empty_text", "editable", "edit_fields", "deletable", "auto_refresh_ms", "source_script"},
 	"display":   {"pairs", "source_script"},

@@ -134,6 +134,10 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	// Build the Page from the declarative sections. On update with no sections
 	// passed, keep the existing page.
 	if raw, ok := args["sections"]; ok && raw != nil {
+		// Every section gets a stable id (app_sections.go) before anything
+		// reads the array, so the stored authoring form always carries them.
+		raw = ensureSectionIDs(raw)
+		args["sections"] = raw
 		// Refuse an update that reads as a half-finished rewrite BEFORE it can
 		// be stored. Everything downstream — the parser, the browser load —
 		// passes a document that deleted its own game loop, so this is the
@@ -207,6 +211,11 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		verb, reason = "Updated", "update"
 		if boolArg(args, "confirm_rewrite") {
 			reason = "update (confirmed rewrite)"
+		}
+		// A section-level action composes a full update and names itself here,
+		// so history says "update_section form-entry" rather than "update".
+		if r := strings.TrimSpace(stringArg(args, "_reason")); r != "" {
+			reason = r
 		}
 	}
 	// The note describes THIS revision; one given with an earlier edit must

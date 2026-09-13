@@ -63,7 +63,7 @@ func (t *chatTurn) appDefPatchHTML(args map[string]any) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	idx, err := pickHTMLSection(sections, args["section"])
+	idx, err := pickHTMLSection(sections, htmlSectionTarget(args))
 	if err != nil {
 		return "", err
 	}
@@ -189,7 +189,17 @@ func pickHTMLSection(sections []map[string]any, sectionArg any) (int, error) {
 	case int:
 		n = v
 	case string:
-		fmt.Sscanf(strings.TrimSpace(v), "%d", &n)
+		// A section id ("html-game") names it directly; a numeral is the
+		// ordinal as before.
+		if _, err := fmt.Sscanf(strings.TrimSpace(v), "%d", &n); err != nil {
+			if i := findSectionByID(sections, v); i >= 0 {
+				if strings.EqualFold(strings.TrimSpace(mapStr(sections[i], "kind")), "html") {
+					return i, nil
+				}
+				return 0, fmt.Errorf("section %q is a %s section, not html — patch_html/replace_function edit html; use update_section for it", strings.TrimSpace(v), mapStr(sections[i], "kind"))
+			}
+			return 0, fmt.Errorf("no section with id %q — app_def action=get lists each section's id", strings.TrimSpace(v))
+		}
 	}
 	if n < 1 || n > len(htmlIdx) {
 		return 0, fmt.Errorf("section %d is out of range — this app has %d html section(s)", n, len(htmlIdx))
