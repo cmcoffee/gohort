@@ -160,7 +160,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 		},
 		{
 			Title:    "Pending promotions",
-			Subtitle: "Users' bottom-up requests to publish their own resources deployment-wide. Approve a tool request to Share it to the global catalog (each user then opts in from their Extensions page); Deny to dismiss. Credential and agent promotion arrive with their approve paths.",
+			Subtitle: "Users' bottom-up requests to publish their own resources deployment-wide. Approve a tool request to Share it to the global catalog (each user then opts in from their Extensions page). Approve an app request to share it with every signed-in user — each gets their own copy of the app, and its scripts run with the owner's credentials, which is why an admin sees it first. Deny to dismiss. Credential and agent promotion arrive with their approve paths.",
 			Body: ui.Table{
 				Source: "api/promotions",
 				RowKey: "id",

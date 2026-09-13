@@ -3,6 +3,7 @@ package core
 import (
 	"testing"
 
+	"github.com/cmcoffee/gohort/core/promotion"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -67,5 +68,55 @@ func TestPromotionRequests(t *testing.T) {
 	}
 	if !PendingPromotion(db, "alice", "tool", "weather") {
 		t.Fatal("a re-request after approval must re-open as pending")
+	}
+}
+
+// TestApprovePromotionRunsTheKindsApprover covers the approve seam: a kind
+// with no approver is refused and stays pending; an approver that fails
+// leaves the row pending; a successful one marks the row approved with the
+// decider, and the approver saw the request's owner and name.
+func TestApprovePromotionRunsTheKindsApprover(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	if err := CreatePromotionRequest(db, "alice", "widget", "spinner", ""); err != nil {
+		t.Fatal(err)
+	}
+	id := PromotionRequestKey("widget", "alice", "spinner")
+
+	if err := promotion.Approve(db, id, "root"); err == nil {
+		t.Fatal("a kind with no approver must be refused")
+	}
+	if !PendingPromotion(db, "alice", "widget", "spinner") {
+		t.Fatal("a refused approval must leave the request pending")
+	}
+
+	fail := true
+	var got []string
+	promotion.RegisterApprover("widget", func(owner, name string) error {
+		got = append(got, owner+"/"+name)
+		if fail {
+			return Error("no")
+		}
+		return nil
+	})
+	if err := promotion.Approve(db, id, "root"); err == nil {
+		t.Fatal("a failing approver must surface its error")
+	}
+	if !PendingPromotion(db, "alice", "widget", "spinner") {
+		t.Fatal("a failed side effect must leave the request pending")
+	}
+
+	fail = false
+	if err := promotion.Approve(db, id, "root"); err != nil {
+		t.Fatal(err)
+	}
+	req, _ := GetPromotionRequest(db, id)
+	if req.State != PromotionApprovedState || req.DecidedBy != "root" {
+		t.Fatalf("approved row = %+v", req)
+	}
+	if len(got) != 2 || got[1] != "alice/spinner" {
+		t.Fatalf("approver calls = %v", got)
+	}
+	if err := promotion.Approve(db, "widget:nobody:x", "root"); err == nil {
+		t.Fatal("an unknown request id must error")
 	}
 }

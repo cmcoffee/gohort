@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/promotion"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
@@ -1427,4 +1428,17 @@ func ToolClaimNote(sess *ToolSession, rawURL string) string {
 		claims = append(claims, claim)
 	}
 	return textutil.ClaimNote(host, claims)
+}
+
+// The tool kind's approve side effect: Share it to the deployment-wide
+// catalog. Registered here, next to the primitive it calls, so the admin
+// queue approves a tool the same way it approves every other kind — through
+// the registry — and needs no per-kind switch of its own.
+func init() {
+	promotion.RegisterApprover("tool", func(owner, name string) error {
+		if AuthDB == nil {
+			return errString("auth store not initialized")
+		}
+		return SetPersistentTempToolShared(AuthDB(), owner, name, true)
+	})
 }

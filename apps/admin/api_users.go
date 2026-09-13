@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/promotion"
 )
 
 // registerUsersRoutes wires the users API under the admin sub-mux.
@@ -292,8 +293,9 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 
 	// API: promotion requests — the bottom-up publish queue. Users request that
 	// their own resource be published deployment-wide; the admin approves (runs the
-	// kind-specific side effect) or denies. Today only tool promotion is wired:
-	// approve = Share the tool to the global catalog.
+	// kind-specific side effect) or denies. Approve runs the kind's registered
+	// approver: a tool is Shared to the global catalog, an app is shared to
+	// every signed-in user.
 	sub.HandleFunc("/api/promotions", func(w http.ResponseWriter, r *http.Request) {
 		if !a.requireAdmin(w, r) {
 			return
@@ -309,26 +311,18 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 				http.Error(w, "missing id", http.StatusBadRequest)
 				return
 			}
-			req, ok := GetPromotionRequest(a.db, id)
-			if !ok {
+			if _, ok := GetPromotionRequest(a.db, id); !ok {
 				http.NotFound(w, r)
 				return
 			}
 			switch action {
 			case "approve":
-				// Kind-specific side effect BEFORE marking approved, so a failure
-				// leaves the request pending (re-approvable).
-				switch req.Kind {
-				case "tool":
-					if err := SetPersistentTempToolShared(a.db, req.Owner, req.Name, true); err != nil {
-						http.Error(w, err.Error(), http.StatusBadRequest)
-						return
-					}
-				default:
-					http.Error(w, "approving "+req.Kind+" promotions is not supported yet", http.StatusBadRequest)
-					return
-				}
-				if err := SetPromotionRequestState(a.db, id, PromotionApprovedState, AuthCurrentUser(r)); err != nil {
+				// The kind's registered side effect runs BEFORE the row is
+				// marked approved, so a failure leaves the request pending
+				// (re-approvable). Each kind registers its own approver (a
+				// tool in core, an app in customapps); a kind without one
+				// is refused here.
+				if err := promotion.Approve(a.db, id, AuthCurrentUser(r)); err != nil {
 					http.Error(w, err.Error(), http.StatusBadRequest)
 					return
 				}

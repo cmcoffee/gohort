@@ -39,6 +39,7 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/appadmin"
+	"github.com/cmcoffee/gohort/core/promotion"
 	"github.com/cmcoffee/gohort/core/ui"
 
 	"github.com/cmcoffee/gohort/apps/orchestrate"
@@ -119,6 +120,9 @@ func (T *CustomApps) Routes() {
 	// because these rows are records people write while the server runs.
 	T.registerAdminControls()
 	RegisterAdminSectionSource(T.adminSections)
+	// Approving an "app" publish request is the same act as the owner's
+	// Share toggle would have been: share it to every signed-in user.
+	promotion.RegisterApprover("app", T.approvePublish)
 }
 
 // route parses "/<slug>/<rest>" off the (prefix-stripped) sub-mux and
@@ -489,6 +493,8 @@ const shareModalScript = `<script>
   var rec = ctx.record || {};
   var slug = rec.slug;
   function truthy(v){ return v === '1' || v === 1 || v === true; }
+  var shareHelp = 'Every signed-in user gets their own copy. Your data-source and action scripts run with your credentials for them.';
+  var requestedHelp = 'Publish requested — an administrator reviews it before it goes live. ' + shareHelp;
   function makeToggle(label, help, checked, onChange) {
     var wrap = document.createElement('label');
     wrap.style.cssText = 'display:block;cursor:pointer';
@@ -500,6 +506,7 @@ const shareModalScript = `<script>
     h.style.cssText = 'font-size:0.78rem;color:var(--text-mute);margin:0.25rem 0 0 1.6rem;line-height:1.4';
     h.textContent = help;
     wrap.appendChild(top); wrap.appendChild(h);
+    wrap.help = h;
     cb.addEventListener('change', function(){ onChange(cb.checked, cb); });
     return wrap;
   }
@@ -523,12 +530,20 @@ const shareModalScript = `<script>
     title: 'Share "' + (rec.name || slug) + '"',
     width: '520px',
     mount: function(body) {
-      body.appendChild(makeToggle(
+      var share = makeToggle(
         'Share with signed-in users',
-        'Every signed-in user gets their own copy. Your data-source and action scripts run with your credentials for them.',
+        truthy(rec.requested) ? requestedHelp : shareHelp,
         truthy(rec.shared),
-        function(on, cb){ post('_app/share?slug=' + encodeURIComponent(slug) + '&on=' + on, cb); }
-      ));
+        function(on, cb){
+          post('_app/share?slug=' + encodeURIComponent(slug) + '&on=' + on, cb, function(d){
+            // A non-admin's share is a REQUEST: the app is not shared yet, so
+            // the box stays clear and the help says who it is waiting on.
+            if (d.requested) { cb.checked = false; share.help.textContent = requestedHelp; }
+            else if (!d.shared) { share.help.textContent = shareHelp; }
+          });
+        }
+      );
+      body.appendChild(share);
       var linkRow = document.createElement('div');
       linkRow.style.cssText = 'margin:0.4rem 0 0 1.6rem;gap:0.4rem;align-items:center';
       linkRow.style.display = truthy(rec.public) ? 'flex' : 'none';
@@ -688,6 +703,9 @@ func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owne
 		if s.Shared {
 			row["shared"] = "1"
 			status = "shared to users"
+		} else if publishRequested(owner, s.Slug) {
+			row["requested"] = "1"
+			status = "publish requested"
 		}
 		if s.PublicToken != "" {
 			row["public"] = "1"
@@ -1308,16 +1326,71 @@ func (T *CustomApps) handleShareApp(w http.ResponseWriter, r *http.Request, user
 		return
 	}
 	on := r.URL.Query().Get("on") != "false" // default: turn sharing ON
-	if on {
-		if owner, shared := LookupSharedOwner(T.DB, sharedAppsIndex, slug); shared && owner != user {
-			http.Error(w, "another user already shares an app at this slug — rename yours to share it", http.StatusConflict)
+	if on && !spec.Shared && !requestIsAdmin(r) {
+		// Sharing runs the owner's scripts, with the owner's credentials, for
+		// everyone who opens the app — so it is published the way a tool is:
+		// the owner asks, an administrator approves (the Pending promotions
+		// queue on the Administrator page), and the approver does the share.
+		// An admin owner, or a deployment with nobody to ask, shares directly.
+		var body struct {
+			Note string `json:"note"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body) // note is optional
+		if err := CreatePromotionRequest(AuthDB(), user, "app", slug, body.Note); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "shared": false, "requested": true})
+		return
+	}
+	if err := T.setShared(user, slug, on); err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true, "shared": on})
+}
+
+// requestIsAdmin decides who may share an app directly. A var so a test can
+// stand in a non-admin without building a whole auth session.
+var requestIsAdmin = RequestIsAdmin
+
+// setShared flips per-user-copy sharing on an app the owner holds: the spec's
+// flag and the global shared-slug index move together, because the index is
+// what discovery reads and the flag is what the owner's list reads. Turning
+// on is refused when another user already shares an app at this slug — the
+// index has one owner per slug.
+func (T *CustomApps) setShared(owner, slug string, on bool) error {
+	spec, ok := loadSpec(owner, slug)
+	if !ok {
+		return Error("no app " + slug + " for " + owner)
+	}
+	if on {
+		if other, shared := LookupSharedOwner(T.DB, sharedAppsIndex, slug); shared && other != owner {
+			return Error("another user already shares an app at this slug — rename yours to share it")
 		}
 	}
 	spec.Shared = on
 	SaveAppSpec(spec)
-	SetSharedOwner(T.DB, sharedAppsIndex, slug, user, on)
-	writeJSON(w, map[string]any{"ok": true, "shared": on})
+	SetSharedOwner(T.DB, sharedAppsIndex, slug, owner, on)
+	return nil
+}
+
+// approvePublish is the "app" kind's promotion approver: an administrator
+// granting a publish request shares the app to every signed-in user. Same
+// primitive as the owner's direct share, so a slug conflict refuses here too
+// and the request stays pending for the owner to rename and re-ask.
+func (T *CustomApps) approvePublish(owner, slug string) error {
+	return T.setShared(owner, slug, true)
+}
+
+// publishRequested reports whether the owner has asked to share this app and
+// is still waiting on an administrator. Tools keep their request in the auth
+// store, so apps do too — one queue for the admin to work.
+func publishRequested(owner, slug string) bool {
+	if AuthDB == nil {
+		return false
+	}
+	return PendingPromotion(AuthDB(), owner, "app", slug)
 }
 
 // handlePublishApp mints or revokes the anonymous capability URL for an app the

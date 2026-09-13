@@ -3,6 +3,7 @@ package customapps
 import (
 	"encoding/json"
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/promotion"
 	"github.com/cmcoffee/snugforge/kvlite"
 	"net/http"
 	"net/http/httptest"
@@ -414,5 +415,95 @@ func TestDataSourceCacheIsBounded(t *testing.T) {
 	dsCacheMu.Unlock()
 	if size > maxDSCacheEntries {
 		t.Errorf("cache stayed above its cap: %d > %d", size, maxDSCacheEntries)
+	}
+}
+
+// TestShareIsAPublishRequestForNonAdmins covers the publish gate. A non-admin
+// owner's Share becomes a pending promotion request and the app stays
+// unshared; the index row says so; an administrator approving the request
+// (through the registered "app" approver) is what shares it; the owner can
+// still un-share directly; and an admin owner never has to ask.
+func TestShareIsAPublishRequestForNonAdmins(t *testing.T) {
+	T := sharingTestApp(t)
+	auth := &DBase{Store: kvlite.MemStore()}
+	savedAuth, savedAdmin := AuthDB, requestIsAdmin
+	AuthDB = func() Database { return auth }
+	requestIsAdmin = func(*http.Request) bool { return false }
+	t.Cleanup(func() { AuthDB, requestIsAdmin = savedAuth, savedAdmin })
+	promotion.RegisterApprover("app", T.approvePublish)
+
+	SaveAppSpec(AppSpec{Slug: "tally", Name: "Tally", Owner: "alice"})
+
+	share := func(on string, body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/apps/_app/share?slug=tally&on="+on, strings.NewReader(body))
+		T.handleShareApp(w, r, "alice")
+		return w
+	}
+
+	// Share from a non-admin = a request, not a share.
+	w := share("true", `{"note":"the team wants it"}`)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"requested":true`) {
+		t.Fatalf("non-admin share: %d %s", w.Code, w.Body.String())
+	}
+	if s, _ := loadSpec("alice", "tally"); s.Shared {
+		t.Fatal("the app must not be shared until an admin approves")
+	}
+	if _, shared := LookupSharedOwner(T.DB, sharedAppsIndex, "tally"); shared {
+		t.Fatal("the shared-slug index must not list a merely requested app")
+	}
+	reqs := ListPromotionRequests(auth, true)
+	if len(reqs) != 1 || reqs[0].Kind != "app" || reqs[0].Owner != "alice" || reqs[0].Name != "tally" || reqs[0].Note != "the team wants it" {
+		t.Fatalf("pending queue = %+v", reqs)
+	}
+
+	// The owner's list carries the state so the modal can say who it waits on.
+	w = httptest.NewRecorder()
+	T.handleAppsList(w, httptest.NewRequest(http.MethodGet, "/apps/_apps", nil), "alice")
+	if !strings.Contains(w.Body.String(), `"requested":"1"`) || !strings.Contains(w.Body.String(), `"status":"publish requested"`) {
+		t.Fatalf("row must show the request: %s", w.Body.String())
+	}
+
+	// A conflicting slug refuses the approval and leaves the request pending.
+	SaveAppSpec(AppSpec{Slug: "tally", Name: "Bob Tally", Owner: "bob", Shared: true})
+	SetSharedOwner(T.DB, sharedAppsIndex, "tally", "bob", true)
+	id := PromotionRequestKey("app", "alice", "tally")
+	if err := promotion.Approve(auth, id, "root"); err == nil {
+		t.Fatal("approval must refuse a slug another user already shares")
+	}
+	if !PendingPromotion(auth, "alice", "app", "tally") {
+		t.Fatal("a refused approval must leave the request pending")
+	}
+	SetSharedOwner(T.DB, sharedAppsIndex, "tally", "bob", false)
+
+	// Admin approval is what shares it.
+	if err := promotion.Approve(auth, id, "root"); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := loadSpec("alice", "tally"); !s.Shared {
+		t.Fatal("approval must share the app")
+	}
+	if owner, shared := LookupSharedOwner(T.DB, sharedAppsIndex, "tally"); !shared || owner != "alice" {
+		t.Fatalf("index after approval = %q %v", owner, shared)
+	}
+	if PendingPromotion(auth, "alice", "app", "tally") {
+		t.Fatal("an approved request is no longer pending")
+	}
+
+	// The owner un-shares directly — revoking your own share needs no one.
+	if w = share("false", ""); w.Code != http.StatusOK {
+		t.Fatalf("un-share: %d %s", w.Code, w.Body.String())
+	}
+	if s, _ := loadSpec("alice", "tally"); s.Shared {
+		t.Fatal("un-share must be immediate")
+	}
+
+	// An admin owner shares directly, no request filed.
+	requestIsAdmin = func(*http.Request) bool { return true }
+	if w = share("true", ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"shared":true`) {
+		t.Fatalf("admin share: %d %s", w.Code, w.Body.String())
+	}
+	if n := len(ListPromotionRequests(auth, true)); n != 0 {
+		t.Fatalf("an admin's share must not queue a request; pending = %d", n)
 	}
 }

@@ -15,6 +15,7 @@ package promotion
 import (
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -117,4 +118,52 @@ func SetPromotionRequestState(db Store, id, state, decidedBy string) error {
 func PendingPromotion(db Store, owner, kind, name string) bool {
 	req, ok := GetPromotionRequest(db, RequestKey(kind, owner, name))
 	return ok && req.State == PromotionPendingState
+}
+
+// --- approval: the kind-specific side effect ---------------------------------
+
+// Approver performs what "approved" MEANS for one kind: it publishes the
+// resource (owner, name) deployment-wide — Share the tool, share the app to
+// every signed-in user, and so on. The package that owns the kind registers
+// it; this package only knows that approval has a side effect and that the
+// side effect runs BEFORE the row is marked approved, so a failure leaves the
+// request pending and re-approvable.
+type Approver func(owner, name string) error
+
+var (
+	approversMu sync.RWMutex
+	approvers   = map[string]Approver{}
+)
+
+// RegisterApprover installs the approve side effect for a kind. Called once
+// per kind at startup by the package that owns the resource; a later
+// registration for the same kind replaces the earlier one.
+func RegisterApprover(kind string, fn Approver) {
+	kind = strings.TrimSpace(kind)
+	if kind == "" || fn == nil {
+		return
+	}
+	approversMu.Lock()
+	defer approversMu.Unlock()
+	approvers[kind] = fn
+}
+
+// Approve grants a pending request: it runs the kind's registered side effect
+// and then records the decision. A kind with no approver is refused and the
+// row stays pending; so does a side effect that fails.
+func Approve(db Store, id, decidedBy string) error {
+	req, ok := GetPromotionRequest(db, id)
+	if !ok {
+		return errString("no promotion request " + id)
+	}
+	approversMu.RLock()
+	fn := approvers[req.Kind]
+	approversMu.RUnlock()
+	if fn == nil {
+		return errString("approving " + req.Kind + " promotions is not supported yet")
+	}
+	if err := fn(req.Owner, req.Name); err != nil {
+		return err
+	}
+	return SetPromotionRequestState(db, id, PromotionApprovedState, decidedBy)
 }
