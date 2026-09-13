@@ -23,7 +23,14 @@
     var itemKey   = cfg.item_key   || 'id';
     var itemLabel = cfg.item_label || 'title';
     var bodyField = cfg.body_field || 'content';
+    var editField = cfg.edit_field || 'markdown';
     var selectedId = null;
+    // Direct editing (edit_url): the last record fetched for the viewer, so the
+    // Edit toggle can open a textarea over its source without a second fetch,
+    // and whether that textarea is open right now (refreshes hold off).
+    var lastRec = null, lastRecId = null;
+    var editing = false;
+    var editBtn = null, editorTA = null, editorSave = null;
 
     var root = el('div', {class: 'ui-wb'});
 
@@ -58,9 +65,20 @@
     // Optional per-document action toolbar (export / history / audit). Buttons
     // act on the selected record; disabled until one is selected.
     var actionBar = null;
-    if (cfg.viewer_actions && cfg.viewer_actions.length) {
+    if ((cfg.viewer_actions && cfg.viewer_actions.length) || cfg.edit_url) {
       actionBar = el('div', {class: 'ui-wb-actions'});
-      cfg.viewer_actions.forEach(function(a) {
+      // The Edit toggle leads the bar: it changes what the rest of the bar acts
+      // on (the source, not the rendering), so it should be the first thing read.
+      if (cfg.edit_url) {
+        editBtn = el('button', {class: 'ui-wb-action-btn ui-wb-edit-btn', text: cfg.edit_label || 'Edit'});
+        editBtn.disabled = true;
+        editBtn.addEventListener('click', function() {
+          if (editing) { closeEditor(); renderRecord(lastRec); return; }
+          openEditor();
+        });
+        actionBar.appendChild(editBtn);
+      }
+      (cfg.viewer_actions || []).forEach(function(a) {
         if (a.kind === 'menu') {
           actionBar.appendChild(buildActionMenu(a));
           return;
@@ -135,6 +153,9 @@
 
     function showEmpty() {
       setActionsEnabled(false);
+      closeEditor();
+      lastRec = null; lastRecId = null;
+      if (editBtn) editBtn.disabled = true;
       viewerBody.innerHTML = '';
       var e = el('div', {class: 'ui-empty'});
       if (cfg.empty_icon)  e.appendChild(el('div', {class: 'ui-empty-icon',  text: cfg.empty_icon}));
@@ -158,6 +179,90 @@
         if (!scopes[s]) continue;
         var btns = scopes[s].querySelectorAll('.ui-wb-action-btn');
         for (var i = 0; i < btns.length; i++) btns[i].disabled = !on;
+      }
+      // The Edit toggle follows the RECORD, not the selection: only a record
+      // that carries its editable source can be edited here.
+      if (editBtn) editBtn.disabled = !(on && lastRec && typeof lastRec[editField] === 'string');
+    }
+
+    // --- direct editing (edit_url) ------------------------------------------
+    // openEditor swaps the rendered document for a textarea over the record's
+    // source field. Save posts the text back and re-renders; Cancel (or the
+    // toggle) drops the draft. Ctrl/Cmd+S saves, Escape cancels.
+    function openEditor() {
+      if (!cfg.edit_url || !lastRec || typeof lastRec[editField] !== 'string') return;
+      editing = true;
+      if (editBtn) { editBtn.textContent = 'Cancel'; editBtn.classList.add('active'); }
+      viewerBody.innerHTML = '';
+      var wrap = el('div', {class: 'ui-wb-edit'});
+      var ta = el('textarea', {class: 'ui-wb-edit-ta', spellcheck: 'true'});
+      ta.value = lastRec[editField];
+      var row = el('div', {class: 'ui-wb-edit-actions'});
+      var save = el('button', {class: 'ui-row-btn primary', text: 'Save'});
+      var cancel = el('button', {class: 'ui-row-btn', text: 'Cancel'});
+      var status = el('span', {class: 'ui-wb-edit-status'});
+      row.appendChild(save); row.appendChild(cancel); row.appendChild(status);
+      wrap.appendChild(ta); wrap.appendChild(row);
+      viewerBody.appendChild(wrap);
+      editorTA = ta;
+      ta.focus();
+      function doSave() {
+        if (!selectedId) return;
+        save.disabled = true; status.textContent = 'Saving…';
+        var url = cfg.edit_url.replace('{id}', encodeURIComponent(selectedId));
+        var body = {id: selectedId};
+        body[editField] = ta.value;
+        fetch(url, {method: 'POST', credentials: 'same-origin', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})
+          .then(function(r) { if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); }); })
+          .then(function() {
+            closeEditor();
+            if (cfg.refresh_on && cfg.refresh_on.length && window.uiInvalidate) window.uiInvalidate(cfg.refresh_on);
+            loadList();
+            loadViewer(selectedId);
+          })
+          .catch(function(err) {
+            save.disabled = false; status.textContent = '';
+            showToast('Save failed: ' + (err && err.message || err));
+          });
+      }
+      editorSave = doSave;
+      save.addEventListener('click', doSave);
+      cancel.addEventListener('click', function() { closeEditor(); renderRecord(lastRec); });
+      ta.addEventListener('keydown', function(ev) {
+        if ((ev.ctrlKey || ev.metaKey) && (ev.key === 's' || ev.key === 'S')) { ev.preventDefault(); doSave(); }
+        else if (ev.key === 'Escape') { ev.preventDefault(); closeEditor(); renderRecord(lastRec); }
+      });
+    }
+    function closeEditor() {
+      editing = false;
+      editorTA = null; editorSave = null;
+      if (editBtn) { editBtn.textContent = cfg.edit_label || 'Edit'; editBtn.classList.remove('active'); }
+    }
+
+    // renderRecord paints a fetched record into the viewer: title, then the
+    // body as trusted server HTML or as markdown, or the empty-document hint.
+    function renderRecord(rec) {
+      if (!rec) { showEmpty(); return; }
+      viewerBody.innerHTML = '';
+      if (cfg.viewer_title_field && rec[cfg.viewer_title_field]) {
+        viewerBody.appendChild(el('h2', {class: 'ui-wb-viewer-title', text: rec[cfg.viewer_title_field]}));
+      }
+      var bodyVal = (rec[bodyField] || '').trim();
+      if (bodyVal) {
+        var md = el('div', {class: 'ui-wb-md'});
+        viewerBody.appendChild(md);
+        // body_is_html: trusted server-rendered document HTML (ToC + sections);
+        // otherwise render the field as markdown.
+        if (cfg.body_is_html) { md.innerHTML = bodyVal; }
+        else { uiRenderMarkdown(md, bodyVal); }
+      } else {
+        // Empty doc — guide the user to the ACTUAL commit path (the chat reply's
+        // "Add to document" button), not "ask the assistant" (which led people to
+        // a separate agent tool that writes elsewhere).
+        var hint = el('div', {class: 'ui-wb-md-empty'});
+        hint.appendChild(el('div', {text: 'This is empty.'}));
+        hint.appendChild(el('div', {text: 'Ask the assistant on the right for a section, then click "Add to document" under its reply to drop it in here.'}));
+        viewerBody.appendChild(hint);
       }
     }
 
@@ -379,27 +484,14 @@
       var url = cfg.record_url.replace('{id}', encodeURIComponent(id));
       fetchJSON(url).then(function(rec) {
         if (selectedId !== id) return; // a newer click won
-        viewerBody.innerHTML = '';
-        if (cfg.viewer_title_field && rec[cfg.viewer_title_field]) {
-          viewerBody.appendChild(el('h2', {class: 'ui-wb-viewer-title', text: rec[cfg.viewer_title_field]}));
-        }
-        var bodyVal = (rec[bodyField] || '').trim();
-        if (bodyVal) {
-          var md = el('div', {class: 'ui-wb-md'});
-          viewerBody.appendChild(md);
-          // body_is_html: trusted server-rendered document HTML (ToC + sections);
-          // otherwise render the field as markdown.
-          if (cfg.body_is_html) { md.innerHTML = bodyVal; }
-          else { uiRenderMarkdown(md, bodyVal); }
-        } else {
-          // Empty doc — guide the user to the ACTUAL commit path (the chat reply's
-          // "Add to document" button), not "ask the assistant" (which led people to
-          // a separate agent tool that writes elsewhere).
-          var hint = el('div', {class: 'ui-wb-md-empty'});
-          hint.appendChild(el('div', {text: 'This is empty.'}));
-          hint.appendChild(el('div', {text: 'Ask the assistant on the right for a section, then click "Add to document" under its reply to drop it in here.'}));
-          viewerBody.appendChild(hint);
-        }
+        var switched = lastRecId !== id;
+        lastRec = rec; lastRecId = id;
+        if (editBtn) editBtn.disabled = !(rec && typeof rec[editField] === 'string');
+        // A refresh of the record being edited (a co-author write, a round
+        // ending) must not replace the textarea; switching records does.
+        if (editing && !switched) return;
+        if (editing) closeEditor();
+        renderRecord(rec);
       }).catch(function() {});
     }
 
@@ -504,6 +596,14 @@
     window.addEventListener('ui-chat-round-done', function() {
       if (selectedId) loadViewer(selectedId);
     });
+
+    // A small handle on the root: select a record, and reach the open editor,
+    // without going through synthetic DOM events. What the panel's own tests
+    // drive, and what an app needs if it ever grows a toolbar button that has
+    // to open or save the editor itself.
+    root.loadViewer = loadViewer;
+    root.editorTextarea = function() { return editing ? editorTA : null; };
+    root.editorSave = function() { if (editing && editorSave) editorSave(); };
 
     showEmpty();
     loadList();

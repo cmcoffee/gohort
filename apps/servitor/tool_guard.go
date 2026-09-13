@@ -58,7 +58,7 @@ var servitorWorkerToolAllowList = map[string]bool{
 	"watch_condition":    true, // local: watcher setup against the same appliance
 	"list_watches":       true, // local: watcher state
 	"save_to_codewriter": true, // local: gohort CodeWriter DB write
-	"save_to_techwriter": true, // local: gohort TechWriter DB write
+	"save_to_scribe":     true, // local: gohort Scribe DB write
 	"record_finding":     true, // local: queues a finding in the Guides inbox (via core FindingTarget)
 	"push_to_guide":      true, // local: gohort Guides DB write (via core DocumentTarget)
 	"list_guides":        true, // local: gohort Guides read

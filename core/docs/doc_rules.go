@@ -44,6 +44,16 @@ func LoadDocRules(udb Store, namespace string) string {
 	return strings.TrimSpace(rules)
 }
 
+// SaveDocRules stores the user's rules for a namespace — the same write the
+// rules editor's POST performs, exposed so an app can carry rules over from a
+// namespace it retired.
+func SaveDocRules(udb Store, namespace, rules string) {
+	if udb == nil {
+		return
+	}
+	udb.Set(DocRulesTable(namespace), docRulesKey, strings.TrimSpace(rules))
+}
+
 // FormatDocRules renders saved rules as a system-prompt section. Returns
 // "" when there are none, so callers can concatenate unconditionally.
 func FormatDocRules(rules string) string {

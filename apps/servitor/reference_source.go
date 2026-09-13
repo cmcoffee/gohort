@@ -10,7 +10,7 @@ import (
 )
 
 // servitorSource exposes each appliance servitor knows about as a generic
-// reference source (core.ReferenceSource), so writer apps — techwriter today,
+// reference source (core.ReferenceSource), so writer apps — scribe today,
 // others later — can ground a draft in the facts and knowledge docs servitor
 // gathered about a system, without importing servitor. Registered once from
 // RegisterRoutes. It holds the *Servitor so it can reuse the same share-aware

@@ -16,13 +16,13 @@ func (T *Servitor) handleSaveDestinations(w http.ResponseWriter, r *http.Request
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]bool{
-		"techwriter": SaveArticleFunc != nil,
+		"scribe":     SaveArticleFunc != nil,
 		"codewriter": SaveSnippetFunc != nil,
 		"guide":      HasDocumentTarget("guide"),
 	})
 }
 
-// handleSaveArticle saves the given assistant response to TechWriter as-is.
+// handleSaveArticle saves the given assistant response to Scribe as an article, as-is.
 // Subject is derived from the first heading/line; body is the verbatim text.
 func (T *Servitor) handleSaveArticle(w http.ResponseWriter, r *http.Request) {
 	userID, _, ok := RequireUser(w, r, T.DB)
@@ -34,7 +34,7 @@ func (T *Servitor) handleSaveArticle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if SaveArticleFunc == nil {
-		http.Error(w, "TechWriter not available", http.StatusServiceUnavailable)
+		http.Error(w, "Scribe not available", http.StatusServiceUnavailable)
 		return
 	}
 	var req struct {

@@ -333,7 +333,7 @@ func (m *menu) Select(input [][]string) (err error) {
 				show_help = true
 			}
 
-			set_agent_db(x.agent, get_agentstore(strings.Split(x.name, ":")[0], wantsPrivateDB(x.agent)))
+			set_agent_db(x.agent, get_agentstore(AppStoreName(x.agent), wantsPrivateDB(x.agent)))
 			set_agent_llm(x.agent)
 			set_agent_flags(x.agent, *x.flags)
 
@@ -467,7 +467,7 @@ func execAgent(entry *menu_elem, args []string) (string, error) {
 	flags := &FlagSet{EFlagSet: NewFlagSet(cmdName, ReturnErrorOnly)}
 	flags.FlagArgs = args
 	set_agent_flags(agent, *flags)
-	set_agent_db(agent, get_agentstore(cmdName, wantsPrivateDB(agent)))
+	set_agent_db(agent, get_agentstore(AppStoreName(agent), wantsPrivateDB(agent)))
 	set_agent_llm(agent)
 	set_agent_report(agent, NewTaskReport(cmdName, "chat", flags))
 

@@ -7,7 +7,7 @@
 //
 // Same discipline as its two siblings: a destination binds its own credential +
 // configuration at registration, resolves everything per user in its own
-// subsystem, and the producing app (guides today; techwriter later) only ever
+// subsystem, and the producing app (scribe today) only ever
 // talks to this registry. A writer app never learns what Confluence is.
 //
 // The registry is also the SAFETY boundary for agent-driven publishing. A

@@ -186,7 +186,7 @@ type probeRun struct {
 	watch_condition_tool    AgentToolDef
 	list_watches_tool       AgentToolDef
 	save_to_codewriter_tool AgentToolDef
-	save_to_techwriter_tool AgentToolDef
+	save_to_scribe_tool     AgentToolDef
 	list_guides_tool        AgentToolDef
 	record_finding_tool     AgentToolDef
 	push_to_guide_tool      AgentToolDef
@@ -1409,10 +1409,10 @@ func (pr *probeRun) reportTools() {
 		NeedsConfirm: false,
 	}
 
-	pr.save_to_techwriter_tool = AgentToolDef{
+	pr.save_to_scribe_tool = AgentToolDef{
 		Tool: Tool{
-			Name:        "save_to_techwriter",
-			Description: "Save a report, runbook, findings summary, or any prose document to the user's TechWriter library in gohort. This is a local save action — do NOT run anything on the appliance or search for TechWriter on the remote system. Use this when the user asks to document findings, save a report, or create a runbook from the session results.",
+			Name:        "save_to_scribe",
+			Description: "Save a report, runbook, findings summary, or any prose document as a new article in the user's Scribe library in gohort. This is a local save action — do NOT run anything on the appliance or search for Scribe on the remote system. Use this when the user asks to document findings, save a report, or create a runbook from the session results.",
 			Parameters: map[string]ToolParam{
 				"subject": {Type: "string", Description: "Title or subject of the document (e.g. 'Disk usage report – web01', 'MySQL slow query runbook')."},
 				"body":    {Type: "string", Description: "Full document body in markdown."},
@@ -1421,7 +1421,7 @@ func (pr *probeRun) reportTools() {
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			if SaveArticleFunc == nil {
-				return "", fmt.Errorf("TechWriter is not available")
+				return "", fmt.Errorf("Scribe is not available")
 			}
 			subject, _ := args["subject"].(string)
 			body, _ := args["body"].(string)
@@ -1432,7 +1432,7 @@ func (pr *probeRun) reportTools() {
 			if err != nil {
 				return "", fmt.Errorf("save failed: %w", err)
 			}
-			return fmt.Sprintf("Saved to TechWriter as %q (id: %s).", subject, id), nil
+			return fmt.Sprintf("Saved to Scribe as the article %q (id: %s).", subject, id), nil
 		},
 		NeedsConfirm: false,
 	}
@@ -1440,7 +1440,7 @@ func (pr *probeRun) reportTools() {
 	// list_guides / push_to_guide — the user asked to "add what I look up to a
 	// guide". These write into the user's Guides via the generic core
 	// DocumentTarget seam (guides registers itself; servitor never imports it),
-	// same local-write posture as save_to_techwriter. Content lands as a new
+	// same local-write posture as save_to_scribe. Content lands as a new
 	// section the user can polish in the Guides app; it's a revision like any edit.
 	pr.list_guides_tool = AgentToolDef{
 		Tool: Tool{
@@ -1588,7 +1588,7 @@ func (pr *probeRun) assembleToolkit() {
 		// scope-based, so they carry over unchanged.
 		pr.workerTools = append(repoCodeTools(pr.ownerUser, pr.appliance.ID),
 			pr.note_lesson_tool, pr.record_technique_tool, pr.record_discovery_tool, pr.store_fact_tool, pr.link_entities_tool, pr.store_rule_tool, pr.search_facts_tool,
-			pr.save_to_codewriter_tool, pr.save_to_techwriter_tool, pr.record_finding_tool, pr.push_to_guide_tool, pr.list_guides_tool,
+			pr.save_to_codewriter_tool, pr.save_to_scribe_tool, pr.record_finding_tool, pr.push_to_guide_tool, pr.list_guides_tool,
 		)
 	} else if pr.appliance.Type == "toolset" {
 		// The bound tools ARE the target. Resolved in the owner's context, with
@@ -1600,7 +1600,7 @@ func (pr *probeRun) assembleToolkit() {
 		pr.resolvedTools = resolveToolset(pr.ctx, pr.ownerUser, pr.userID, pr.appliance)
 		pr.workerTools = append(pr.resolvedTools.Defs,
 			pr.note_lesson_tool, pr.record_technique_tool, pr.record_discovery_tool, pr.store_fact_tool, pr.link_entities_tool, pr.store_rule_tool, pr.search_facts_tool,
-			pr.save_to_codewriter_tool, pr.save_to_techwriter_tool, pr.record_finding_tool, pr.push_to_guide_tool, pr.list_guides_tool,
+			pr.save_to_codewriter_tool, pr.save_to_scribe_tool, pr.record_finding_tool, pr.push_to_guide_tool, pr.list_guides_tool,
 		)
 		for _, w := range pr.resolvedTools.Withheld {
 			// Surfaced, not logged. An investigation that quietly got quieter
@@ -1612,20 +1612,20 @@ func (pr *probeRun) assembleToolkit() {
 		// there is no host here, only files somebody uploaded.
 		pr.workerTools = append(BundleTools(pr.ctx, pr.ownerUser, pr.appliance.ID),
 			pr.note_lesson_tool, pr.record_technique_tool, pr.record_discovery_tool, pr.store_fact_tool, pr.link_entities_tool, pr.store_rule_tool, pr.search_facts_tool,
-			pr.save_to_codewriter_tool, pr.save_to_techwriter_tool, pr.record_finding_tool, pr.push_to_guide_tool, pr.list_guides_tool,
+			pr.save_to_codewriter_tool, pr.save_to_scribe_tool, pr.record_finding_tool, pr.push_to_guide_tool, pr.list_guides_tool,
 		)
 	} else if pr.appliance.Type == "command" {
 		pr.workerTools = []AgentToolDef{
 			pr.newRunTool(), pr.read_log_tool, pr.search_logs_tool,
 			pr.note_lesson_tool, pr.record_technique_tool, pr.record_discovery_tool, pr.store_fact_tool, pr.link_entities_tool, pr.store_rule_tool, pr.search_facts_tool,
-			pr.count_lines_tool, pr.read_range_tool, pr.save_to_codewriter_tool, pr.save_to_techwriter_tool, pr.record_finding_tool, pr.push_to_guide_tool, pr.list_guides_tool,
+			pr.count_lines_tool, pr.read_range_tool, pr.save_to_codewriter_tool, pr.save_to_scribe_tool, pr.record_finding_tool, pr.push_to_guide_tool, pr.list_guides_tool,
 		}
 	} else {
 		pr.workerTools = []AgentToolDef{
 			pr.newRunTool(), pr.read_log_tool, pr.search_logs_tool,
 			pr.note_lesson_tool, pr.record_technique_tool, pr.record_discovery_tool, pr.store_fact_tool, pr.link_entities_tool, pr.store_rule_tool, pr.search_facts_tool,
 			pr.count_lines_tool, pr.read_range_tool,
-			pr.watch_condition_tool, pr.list_watches_tool, pr.save_to_codewriter_tool, pr.save_to_techwriter_tool, pr.record_finding_tool, pr.push_to_guide_tool, pr.list_guides_tool,
+			pr.watch_condition_tool, pr.list_watches_tool, pr.save_to_codewriter_tool, pr.save_to_scribe_tool, pr.record_finding_tool, pr.push_to_guide_tool, pr.list_guides_tool,
 		}
 		// run_pty is the one tool that needs the ssh.Client itself rather than
 		// an exec function, so it is the one tool the peer transport cannot

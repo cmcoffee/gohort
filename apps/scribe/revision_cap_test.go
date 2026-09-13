@@ -1,4 +1,4 @@
-package guides
+package scribe
 
 import (
 	"testing"
@@ -30,7 +30,7 @@ func TestRevisionCapResolvesToItsDefault(t *testing.T) {
 	}
 	// Every knob claiming an app must name a path an app actually serves, or it
 	// shows up under nothing. core warns at boot; this fails at build time.
-	if spec.App != (&Guides{}).WebPath() {
-		t.Errorf("App claim %q does not match the app's WebPath %q", spec.App, (&Guides{}).WebPath())
+	if spec.App != (&Scribe{}).WebPath() {
+		t.Errorf("App claim %q does not match the app's WebPath %q", spec.App, (&Scribe{}).WebPath())
 	}
 }

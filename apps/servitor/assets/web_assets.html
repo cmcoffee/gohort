@@ -1647,7 +1647,7 @@
         });
     });
 
-    // Per-reply save buttons: assistant replies get TechWriter /
+    // Per-reply save buttons: assistant replies get Scribe /
     // CodeWriter buttons depending on which destinations are
     // available. The destinations probe happens once per page.
     var saveDestinations = null;
@@ -1675,8 +1675,8 @@
         var row = document.createElement('div');
         row.className = 'ui-servitor-save-row';
 
-        // The per-reply TechWriter / CodeWriter buttons were removed: the
-        // agent's own save_to_techwriter / save_to_codewriter tools cover
+        // The per-reply Scribe / CodeWriter buttons were removed: the
+        // agent's own save_to_scribe / save_to_codewriter tools cover
         // the same handoff, and they can name and shape the record
         // instead of dumping a raw reply into it. The api/save_article
         // and api/save_snippet endpoints remain for any caller that

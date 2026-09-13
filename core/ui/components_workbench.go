@@ -39,6 +39,20 @@ type WorkbenchPanel struct {
 	EmptyIcon        string `json:"empty_icon,omitempty"`
 	EmptyTitle       string `json:"empty_title,omitempty"`
 	EmptyHint        string `json:"empty_hint,omitempty"`
+	// EditURL turns on direct editing of the open record: the viewer toolbar
+	// gains an Edit toggle that swaps the rendered document for a textarea over
+	// the record's EditField — the markdown SOURCE, which for a BodyIsHTML app
+	// is a different field from the rendered BodyField. Save POSTs
+	// {id, <EditField>: text} to EditURL ({id} substituted) and re-fetches the
+	// record; Cancel discards. The toggle stays disabled for a record whose
+	// EditField is absent (not a string), so an app can offer direct editing
+	// for some kinds of document and leave others to their own controls. The
+	// viewer holds off its refresh while the textarea is open, so a co-author
+	// write landing mid-edit cannot wipe what is being typed; the next Save
+	// wins, and History keeps the rest.
+	EditURL   string `json:"edit_url,omitempty"`
+	EditField string `json:"edit_field,omitempty"` // default "markdown"
+	EditLabel string `json:"edit_label,omitempty"` // toggle text (default "Edit")
 	// ViewerActions render as a button row above the document — actions on the
 	// SELECTED record (export, history, audit, …). Generic: any workbench can add
 	// per-document actions without core knowing what they do.

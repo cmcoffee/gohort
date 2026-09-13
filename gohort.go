@@ -197,7 +197,7 @@ func main() {
 	var shared_llm, shared_lead_llm LLM
 	var shared_prompt_tools bool
 	SetupWebAgentFunc = func(agent Agent) {
-		set_agent_db(agent, get_agentstore(agent.Name(), wantsPrivateDB(agent)))
+		set_agent_db(agent, get_agentstore(AppStoreName(agent), wantsPrivateDB(agent)))
 		if shared_llm == nil {
 			set_agent_llm(agent)
 			T := agent.Get()

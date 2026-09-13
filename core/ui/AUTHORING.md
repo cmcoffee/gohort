@@ -586,7 +586,7 @@ The shared runtime stays domain-agnostic. If you find yourself wanting to add an
 Apps that only make sense in the dashboard (most of them) should NOT implement `core.CLIApp`. Without that marker, they're hidden from `gohort --help` and from CLI dispatch, with a friendly "use serve" hint if anyone tries.
 
 ### Private (no-lead) apps
-For apps handling sensitive data (techwriter article bodies, servitor SSH probes, phantom messages) call `T.Private()` in `Init()`. Sets `NoLead` on the AppCore — any reference to `T.LeadChat()` / `T.LeadLLM` silently routes to the worker instead. Combine with `Private: true` on registered route stages so the admin UI can't accidentally route the app to a remote LLM.
+For apps handling sensitive data (servitor SSH probes, phantom messages) call `T.Private()` in `Init()`. Sets `NoLead` on the AppCore — any reference to `T.LeadChat()` / `T.LeadLLM` silently routes to the worker instead. Combine with `Private: true` on registered route stages so the admin UI can't accidentally route the app to a remote LLM.
 
 ### Email-shaped usernames
 gohort usernames ARE email addresses. `AuthCurrentUser(r)` returns the username and that's a valid email recipient. Use this instead of asking the user for their email on every form.

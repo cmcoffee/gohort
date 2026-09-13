@@ -1,4 +1,4 @@
-// MCP controls for Guides: tools exposed on gohort's inbound MCP server (/mcp/)
+// MCP controls for Scribe: tools exposed on gohort's inbound MCP server (/mcp/)
 // so an external MCP client (e.g. Claude Desktop) can drive a user's guides —
 // list, read, create, and add sections — over the bridge-key auth. Each handler
 // is scoped to the bridge-key owner and operates on that user's guide store via
@@ -6,7 +6,7 @@
 // there is exactly one storage path. This is the canonical example of an app
 // registering against the core.RegisterMCPTool seam — the MCP server itself
 // knows nothing about guides.
-package guides
+package scribe
 
 import (
 	"context"
@@ -19,13 +19,13 @@ import (
 func registerGuidesMCPTools() {
 	RegisterMCPTool(MCPToolSpec{
 		Name:        "guides_list",
-		Description: "List the user's guides (id, title, subtitle, section count), newest first. Use the returned id with guides_read / guides_add_section.",
+		Description: "List the user's Scribe documents (id, title, subtitle, and whether each is a guide with sections or a single-body article), newest first. Use the returned id with guides_read / guides_add_section.",
 		InputSchema: map[string]any{"type": "object"},
 		Handler:     guidesMCPList,
 	})
 	RegisterMCPTool(MCPToolSpec{
 		Name:        "guides_read",
-		Description: "Read a guide as Markdown (title, subtitle, and every section in order). Pass the guide id from guides_list.",
+		Description: "Read a document as Markdown (a guide: title, subtitle and every section in order; an article: title and body). Pass the id from guides_list.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -50,7 +50,7 @@ func registerGuidesMCPTools() {
 	})
 	RegisterMCPTool(MCPToolSpec{
 		Name:        "guides_add_section",
-		Description: "Append a section to a guide. The markdown is the section BODY (don't repeat the title in it); use sub-headings (### …), lists, and fenced code blocks for structure.",
+		Description: "Append a section to a GUIDE. The markdown is the section BODY (don't repeat the title in it); use sub-headings (### …), lists, and fenced code blocks for structure. Articles have no sections and are refused.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -65,15 +65,14 @@ func registerGuidesMCPTools() {
 }
 
 // guidesUserDB resolves the calling owner's guide store — the SAME store the
-// guides web UI reads/writes. Guides live in the guides app's own bucket
-// (RootDB.Bucket("guides"), which is what the framework assigns as the app's
-// T.DB via get_agentstore(Name())), NOT RootDB itself — reading RootDB directly
-// finds no guides. Empty owner / unwired DB ⇒ nil (guarded by callers).
+// Scribe web UI reads/writes. Documents live in the app's own bucket (the
+// StoreName bucket the framework assigns as the app's T.DB), NOT RootDB
+// itself — reading RootDB directly finds no guides. Empty owner / unwired DB ⇒ nil (guarded by callers).
 func guidesUserDB(owner string) Database {
 	if RootDB == nil || owner == "" {
 		return nil
 	}
-	return UserDB(RootDB.Bucket("guides"), owner)
+	return UserDB(RootDB.Bucket((Scribe{}).StoreName()), owner)
 }
 
 func guidesMCPList(_ context.Context, owner string, _ map[string]any) (string, error) {
@@ -83,7 +82,7 @@ func guidesMCPList(_ context.Context, owner string, _ map[string]any) (string, e
 	}
 	guides := listGuides(udb)
 	if len(guides) == 0 {
-		return "You have no guides yet. Create one with guides_create.", nil
+		return "You have no documents yet. Create one with guides_create.", nil
 	}
 	var b strings.Builder
 	for _, g := range guides {
@@ -91,7 +90,13 @@ func guidesMCPList(_ context.Context, owner string, _ map[string]any) (string, e
 		if g.Subtitle != "" {
 			fmt.Fprintf(&b, " (%s)", g.Subtitle)
 		}
-		fmt.Fprintf(&b, " — %d section(s)\n", len(g.Sections))
+		if g.isArticle() {
+			// Said plainly, because the write tool behaves differently here:
+			// an article is one body, so guides_add_section refuses it.
+			fmt.Fprintf(&b, " — article, %d word(s)\n", len(strings.Fields(g.body())))
+			continue
+		}
+		fmt.Fprintf(&b, " — guide, %d section(s)\n", len(g.Sections))
 	}
 	return strings.TrimRight(b.String(), "\n"), nil
 }
@@ -107,7 +112,7 @@ func guidesMCPRead(_ context.Context, owner string, args map[string]any) (string
 	}
 	g, ok := loadGuide(udb, id)
 	if !ok {
-		return "", fmt.Errorf("no guide with id %q (use guides_list)", id)
+		return "", fmt.Errorf("no document with id %q (use guides_list)", id)
 	}
 	return renderGuideMarkdown(g), nil
 }
@@ -134,6 +139,9 @@ func guidesMCPAddSection(_ context.Context, owner string, args map[string]any) (
 	g, ok := loadGuide(udb, gid)
 	if !ok {
 		return "", fmt.Errorf("no guide with id %q (use guides_list)", gid)
+	}
+	if g.isArticle() {
+		return "", fmt.Errorf("%q is an article — one body, not sections. Edit it in Scribe, or create a guide with guides_create and add sections to that", g.Title)
 	}
 	title := strings.TrimSpace(mcpStr(args, "title"))
 	if title == "" {

@@ -1,7 +1,7 @@
 // gohort shared web UI utilities.
 //
 // Loaded by every app's RenderPage. Provides:
-//   - Access-control hook (hides Push-to-TechWriter buttons unless caller IP allowed)
+//   - Access-control hook (hides push-to-writer buttons unless caller IP allowed)
 //   - Live session ribbon polling (shared across apps via /api/live)
 //   - Small DOM helpers exposed on window.webui
 //
@@ -15,12 +15,12 @@
 
   // ---------- access control ----------
   // Hide buttons with the .push-to-techwriter class unless the caller's
-  // IP is in the TechWriter allowlist. Uses a CSS rule (rather than
+  // IP is in the Scribe allowlist. Uses a CSS rule (rather than
   // querying buttons) so dynamically inserted buttons are also hidden.
   webui.checkAccess = function() {
     return fetch(location.origin + '/api' + '/access').then(function(r){return r.json()}).then(function(a){
       webui.access = a || {};
-      if (!webui.access.techwriter) {
+      if (!webui.access.scribe) {
         var s = document.createElement('style');
         s.textContent = '.push-to-techwriter { display: none !important; }';
         document.head.appendChild(s);

@@ -1,4 +1,4 @@
-package guides
+package scribe
 
 import (
 	"context"
@@ -44,7 +44,7 @@ func TestCoauthorToolsRootAttachedSourcesOnTheTurn(t *testing.T) {
 	})
 	udb.Set(activeTable, "current", "g1")
 
-	T := &Guides{AppCore: AppCore{DB: root}}
+	T := &Scribe{AppCore: AppCore{DB: root}}
 	orch := &orchestrate.OrchestrateApp{AppCore: AppCore{DB: root}}
 
 	ctx, cancel := context.WithCancel(context.Background())

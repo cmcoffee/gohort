@@ -9,7 +9,7 @@
 //
 // Republish is the deterministic escape: when a guide already has a publish
 // record, updating that exact page needs no conversation and doesn't get one.
-package guides
+package scribe
 
 import (
 	"fmt"
@@ -46,7 +46,7 @@ func publishDoc(g Guide) docs.PublishDoc {
 // Publishing requires EDIT rights, not just view. Pushing someone's document
 // into a team wiki under their deployment's branding is a bigger act than
 // reading it, so a view-only reader of a shared guide can't do it.
-func (T *Guides) openPublishDocument(r *http.Request, udb Database, user string) (publish.Document, bool) {
+func (T *Scribe) openPublishDocument(r *http.Request, udb Database, user string) (publish.Document, bool) {
 	id := activeGuideID(udb)
 	if id == "" {
 		return publish.Document{}, false
@@ -78,7 +78,7 @@ func (T *Guides) openPublishDocument(r *http.Request, udb Database, user string)
 
 // handlePublishChat dispatches the Publish modal's chat to the Publisher agent
 // with this guide's publish tools injected.
-func (T *Guides) handlePublishChat(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handlePublishChat(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	orch := findOrchestrate()
 	if orch == nil {
 		http.Error(w, "orchestrate not initialized", http.StatusServiceUnavailable)
@@ -107,7 +107,7 @@ func (T *Guides) handlePublishChat(w http.ResponseWriter, r *http.Request, udb D
 // handlePublishState feeds the Publish modal's header: whether this deployment
 // publishes anywhere at all, whether the caller may publish THIS guide, and
 // where it has already gone. GET ?id=
-func (T *Guides) handlePublishState(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handlePublishState(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	g, _, _, canEdit, found := T.resolve(r, udb, user, id)
 	if !found {
@@ -140,7 +140,7 @@ func (T *Guides) handlePublishState(w http.ResponseWriter, r *http.Request, udb 
 // handleRepublish updates an already-published copy with no conversation: the
 // guide has a record saying exactly which page it is, so re-publishing it is a
 // deterministic write. POST ?id=&kind=
-func (T *Guides) handleRepublish(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handleRepublish(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "POST required", http.StatusMethodNotAllowed)
 		return

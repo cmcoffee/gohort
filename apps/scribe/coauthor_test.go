@@ -1,4 +1,4 @@
-package guides
+package scribe
 
 import (
 	"strings"

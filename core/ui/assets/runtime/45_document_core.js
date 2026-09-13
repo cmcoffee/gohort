@@ -266,6 +266,9 @@
       },
     });
   }
+  // Exported so an app can offer the same Rules editor from its own toolbar
+  // (a workbench list action, a client action) without a second modal.
+  window.uiOpenRulesPanel = openRulesPanel;
 
   // openTemplatePicker shows the document-skeleton picker: the user's
   // saved templates above the host's built-in ones, with a save-current

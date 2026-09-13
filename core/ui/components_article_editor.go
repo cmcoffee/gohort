@@ -21,8 +21,8 @@ type ArticleEditor struct {
 	DeleteURL string `json:"delete_url"` // template with {id}
 	ChatURL   string `json:"chat_url"`
 
-	// Field name mapping — defaults match the schema used by the
-	// existing techwriter ArticleRecord. Override only when wiring a
+	// Field name mapping — the defaults are the capitalized record shape
+	// this component was first written against. Override when wiring a
 	// different storage shape.
 	IDField      string `json:"id_field,omitempty"`      // default "ID"
 	SubjectField string `json:"subject_field,omitempty"` // default "Subject"

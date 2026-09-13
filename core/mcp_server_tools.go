@@ -18,7 +18,7 @@ type MCPToolHandler func(ctx context.Context, owner string, args map[string]any)
 // records — not just talk to agents. This is the registry seam that keeps the
 // MCP server domain-agnostic: it knows nothing about guides/notes/etc., it just
 // aggregates whatever apps register. An app calls RegisterMCPTool from its
-// init() or Routes(); see apps/guides/mcp.go for the canonical example.
+// init() or Routes(); see apps/scribe/mcp.go for the canonical example.
 type MCPToolSpec struct {
 	Name        string         // unique, snake_case, app-namespaced (e.g. "guides_list")
 	Description string         // shown to the MCP client; say what it does + when to use it

@@ -1,7 +1,7 @@
-// Guide export + standalone preview. A guide exports to PDF (via core's markdown
-// PDF renderer), a self-contained HTML document (shareable / printable, styled
-// inline so it stands alone), or raw markdown.
-package guides
+// Document export + standalone preview. A guide or article exports to PDF (via
+// core's markdown PDF renderer), a self-contained HTML document (shareable /
+// printable, styled inline so it stands alone), or raw markdown.
+package scribe
 
 import (
 	"fmt"
@@ -16,7 +16,7 @@ import (
 //   - pdf:  attachment download (core MarkdownToPDFBytes).
 //   - html: inline (a preview that opens in the browser) — a self-contained doc.
 //   - md:   attachment download of the assembled markdown.
-func (T *Guides) handleExport(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handleExport(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	format := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
 	g, _, _, _, found := T.resolve(r, udb, user, id)
@@ -40,8 +40,12 @@ func (T *Guides) handleExport(w http.ResponseWriter, r *http.Request, udb Databa
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.md"`, name))
 		_, _ = w.Write([]byte(renderGuideMarkdown(g)))
 	case "html", "":
-		// Inline preview — opens in a browser tab, prints/saves cleanly.
+		// Inline preview — opens in a browser tab, prints/saves cleanly. With
+		// download=1 it comes down as a file instead (the page is the same).
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if r.URL.Query().Get("download") != "" {
+			w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.html"`, name))
+		}
 		brand, siteName := docBranding()
 		_, _ = w.Write([]byte(renderGuideStandaloneHTML(g, brand, siteName)))
 	default:
@@ -112,10 +116,15 @@ func renderGuideStandaloneHTML(g Guide, brand, siteName string) string {
 // from renderGuideHTML so the standalone export can wrap the content in its own
 // .guide-doc div (with brand header + footer) without nesting two.
 func extractDocInner(html string) string {
-	const open = `<article class="guide-doc">`
+	const open = `<article class="guide-doc"`
 	const close = `</article>`
 	if i := strings.Index(html, open); i >= 0 {
 		html = html[i+len(open):]
+		// Past the rest of the opening tag (an article carries a second class
+		// and a data attribute there).
+		if j := strings.Index(html, ">"); j >= 0 {
+			html = html[j+1:]
+		}
 		if j := strings.LastIndex(html, close); j >= 0 {
 			html = html[:j]
 		}
@@ -163,6 +172,8 @@ body { margin: 0; background: #f6f7f9; color: #1f2328; font: 16px/1.65 -apple-sy
 .guide-doc-head h1 { font-size: 2.1rem; line-height: 1.2; margin: 0 0 0.3rem; color: #0b1320; }
 .guide-doc-sub { font-size: 1.05rem; color: #59636e; margin: 0 0 1.6rem; }
 .guide-doc-empty { color: #59636e; font-style: italic; }
+.guide-doc-image { display: block; width: 100%; max-height: 320px; object-fit: cover; border-radius: 8px; margin: 0 0 1.5rem; }
+.guide-article-body h2 { font-size: 1.5rem; color: #0b1320; border-bottom: 1px solid #d6dae0; padding-bottom: 0.3rem; margin: 1.6rem 0 0.9rem; }
 .guide-toc { background: #f0f2f5; border: 1px solid #d6dae0; border-radius: 10px; padding: 1rem 1.2rem; margin: 0 0 2.4rem; }
 .guide-toc-title { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: #59636e; margin-bottom: 0.5rem; }
 .guide-toc ol { margin: 0; padding-left: 1.4rem; }

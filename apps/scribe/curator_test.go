@@ -1,4 +1,4 @@
-package guides
+package scribe
 
 import (
 	"path/filepath"
@@ -31,7 +31,7 @@ func mkFinding(topic, content, confidence string) DocFinding {
 // to overwrite documented text and a guess is not.
 func TestSubmitFindingNormalizes(t *testing.T) {
 	udb := testStore(t)
-	g := &guideTarget{app: &Guides{}}
+	g := &guideTarget{app: &Scribe{}}
 	_ = g
 
 	f := mkFinding("nginx tls", "cert renews via certbot", "")

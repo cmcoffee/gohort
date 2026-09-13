@@ -8,7 +8,7 @@
 // you find out by reading them". It is treated accordingly: every outcome is
 // recorded, including the ones that changed nothing, and a placement carries the
 // revision that preceded it so a disagreement costs one click.
-package guides
+package scribe
 
 import (
 	"sort"

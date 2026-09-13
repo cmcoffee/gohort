@@ -132,8 +132,8 @@ func SaveGhostConfig(cfg GhostConfig) bool {
 // to the user's CodeWriter library without importing the codewriter package.
 var SaveSnippetFunc func(userID, name, lang, code string) (id string, err error)
 
-// SaveArticleFunc is set by the TechWriter app so other apps can save documents
-// to the user's TechWriter library without importing the techwriter package.
+// SaveArticleFunc is set by the Scribe app so other apps can save documents
+// (as articles) to the user's Scribe library without importing that package.
 var SaveArticleFunc func(userID, subject, body string) (id string, err error)
 
 // RunAgentFunc is set by the application to enable agent-to-agent delegation.

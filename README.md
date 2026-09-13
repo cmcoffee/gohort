@@ -201,7 +201,7 @@ Add `WebPath()` / `WebName()` / `WebDesc()` / `Routes()` and it gets a web dashb
 | `bridges` | Messaging transport — wire iMessage / Telegram / … to a channel agent, with a wake-rule gatekeeper |
 | `servitor` | SSH system investigator + git-repo Q&A, plan-driven, with an xterm pane; systems are shareable |
 | `guides` | Living multi-section guide documents co-authored with an AI Guide Author; source-grounded, exportable, shareable |
-| `techwriter` · `codewriter` | Documentation and script/query co-editors |
+| `scribe` · `codewriter` | Articles and living guides with an AI co-author; script/query co-editor |
 | `mcpserver` | Expose gohort agents to an external MCP client (e.g. Claude Desktop) |
 | `customapps` | Host for Builder-authored apps (the My Apps tile) at `/apps/<slug>/` — declarative sections (form, table, chart, chat, workbench, pipeline, or a raw HTML canvas), a per-app record store, sandboxed data/action scripts, schedules, and per-user sharing or an anonymous link |
 | `hello` | Minimal scaffold for a new app |

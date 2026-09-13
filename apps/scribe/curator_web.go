@@ -6,7 +6,7 @@
 // EVERY outcome (including the discards and holds that changed nothing, the ones
 // that reveal a miscalibrated curator) and carry the superseded text inline
 // rather than making a reader go diff two revisions to find out what was lost.
-package guides
+package scribe
 
 import (
 	"encoding/json"
@@ -18,7 +18,7 @@ import (
 
 // handleCuratorRuns GETs the digest list: recent runs, newest first, with their
 // entries and the pending queue depth.
-func (T *Guides) handleCuratorRuns(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handleCuratorRuns(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -103,7 +103,7 @@ func undoAvailability(appDB, udb Database, user string, e CuratorEntry) (bool, s
 
 // handleCuratorUndo POSTs {run_id, finding_id} and restores the guide to the
 // revision that preceded that entry's write.
-func (T *Guides) handleCuratorUndo(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handleCuratorUndo(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	if !IsStateChangingMethod(r.Method) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -130,7 +130,7 @@ func (T *Guides) handleCuratorUndo(w http.ResponseWriter, r *http.Request, udb D
 // handleCuratorRunNow drains this user's queue immediately. The two automatic
 // firings are both delayed by design, so without this there is no way to watch
 // the curator handle a batch you just produced.
-func (T *Guides) handleCuratorRunNow(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handleCuratorRunNow(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	if !IsStateChangingMethod(r.Method) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -151,7 +151,7 @@ func (T *Guides) handleCuratorRunNow(w http.ResponseWriter, r *http.Request, udb
 // decided. Distinct from the digest: the digest says what the curator DID, and a
 // user wondering why their guide has not changed is asking what it has not done
 // yet.
-func (T *Guides) handlePendingFindings(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handlePendingFindings(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return

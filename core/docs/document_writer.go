@@ -1,5 +1,5 @@
 // Document targets — the WRITE-side mirror of ReferenceSource (which is read/
-// pull). A writer app (guides today; techwriter / wikis later) registers itself
+// pull). A writer app (scribe today; wikis later) registers itself
 // as a target that OTHER apps can push content INTO — e.g. servitor pushing an
 // investigation finding into a user's guide as a new section — WITHOUT the
 // producer importing the writer. The producer only ever talks to this registry.

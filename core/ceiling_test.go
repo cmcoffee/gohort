@@ -181,7 +181,14 @@ const (
 	// the band the same way. Everything that reads or writes a value (the
 	// page, the coercion, the scope rule) stays in apps/customapps; PerUser is
 	// a method, which the count excludes.
-	coreExportCeiling = 2170
+	//
+	// Raised 2170 -> 2171 for AppStoreName, ONE func: the resolver of the
+	// name an app's store is keyed by, which main (gohort.go, menu.go) calls
+	// where it used to call Name() and so cannot be unexported. The interface
+	// an app satisfies to override it stays unexported — an app only needs the
+	// method — and the writer that motivated it (a doc-rules save) went to
+	// core/docs, where the app imports it directly.
+	coreExportCeiling = 2171
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

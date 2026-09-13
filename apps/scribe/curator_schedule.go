@@ -9,7 +9,7 @@
 // So: whichever comes first, a THRESHOLD (enough findings have piled up that
 // there is a batch worth reasoning over) or an INTERVAL (a few findings should
 // not sit unfiled forever because the threshold never gets reached).
-package guides
+package scribe
 
 import (
 	"context"
@@ -26,14 +26,14 @@ const (
 
 func init() {
 	RegisterTunable(TunableSpec{
-		App: "/guides",
+		App: "/scribe",
 		Key: tuneCuratorThreshold, Category: "Limits",
 		Label: "Guide curator batch threshold",
 		Help:  "Run the Guide Curator once this many findings are waiting for a user. 0 disables threshold firing, leaving only the interval.",
 		Kind:  KindInt, Default: 5, Min: 0, Max: 100,
 	})
 	RegisterTunable(TunableSpec{
-		App: "/guides",
+		App: "/scribe",
 		Key: tuneCuratorInterval, Category: "Limits",
 		Label: "Guide curator interval (minutes)",
 		Help:  "Run the Guide Curator for any user with waiting findings at least this often, even if the threshold was never reached. 0 disables interval firing.",
@@ -71,7 +71,7 @@ var lastCuratorRun sync.Map // user -> time.Time
 
 // maybeRunCurator fires a run if this user has crossed the threshold. Called
 // after a finding is submitted; returns without blocking the submitter.
-func (T *Guides) maybeRunCurator(user string) {
+func (T *Scribe) maybeRunCurator(user string) {
 	n := curatorThreshold()
 	if n <= 0 {
 		return
@@ -85,7 +85,7 @@ func (T *Guides) maybeRunCurator(user string) {
 
 // runCuratorGuarded runs the curator for one user under that user's lock, and
 // swallows the "nothing pending" case so callers can fire freely.
-func (T *Guides) runCuratorGuarded(ctx context.Context, user, why string) {
+func (T *Scribe) runCuratorGuarded(ctx context.Context, user, why string) {
 	mu := curatorLock(user)
 	if !mu.TryLock() {
 		return // a run is already in flight for this user; it will see the queue
@@ -105,7 +105,7 @@ func (T *Guides) runCuratorGuarded(ctx context.Context, user, why string) {
 }
 
 // startCuratorLoop begins the interval sweep. Called once from Routes.
-func (T *Guides) startCuratorLoop() {
+func (T *Scribe) startCuratorLoop() {
 	go func() {
 		// A short initial delay so a restart does not run the curator before
 		// the rest of the app (orchestrate, the agent registry) is up.
@@ -127,7 +127,7 @@ func (T *Guides) startCuratorLoop() {
 
 // sweepCurator runs the curator for every user whose queue has waited longer
 // than the interval.
-func (T *Guides) sweepCurator(ctx context.Context) {
+func (T *Scribe) sweepCurator(ctx context.Context) {
 	every := curatorInterval()
 	if every <= 0 || T.DB == nil {
 		return
@@ -157,7 +157,7 @@ func runCuratorForEveryone(ctx context.Context) int {
 	if !ok {
 		return 0
 	}
-	g, ok := app.(*Guides)
+	g, ok := app.(*Scribe)
 	if !ok || g.DB == nil {
 		return 0
 	}
@@ -178,7 +178,7 @@ func runCuratorForEveryone(ctx context.Context) int {
 
 // pendingKeys is the cheap queue-depth probe used by the sweep and the
 // maintenance runner.
-func (T *Guides) pendingKeys(user string) []string {
+func (T *Scribe) pendingKeys(user string) []string {
 	udb := UserDB(T.DB, user)
 	if udb == nil {
 		return nil
@@ -193,7 +193,7 @@ func (T *Guides) pendingKeys(user string) []string {
 //
 // Routine runs are still in the digest list — this is about what interrupts
 // someone, not about what is recorded.
-func (T *Guides) notifyDigest(user string, run CuratorRun) {
+func (T *Scribe) notifyDigest(user string, run CuratorRun) {
 	counts := run.Counts()
 	created, flagged := counts[OutcomeCreated], counts[OutcomeContradiction]
 	if created == 0 && flagged == 0 {
@@ -208,5 +208,5 @@ func (T *Guides) notifyDigest(user string, run CuratorRun) {
 	default:
 		msg = "The Guide Curator flagged " + itoa(flagged) + " contradiction(s) between new findings and your guides."
 	}
-	NotifyUser(user, "Guides", msg)
+	NotifyUser(user, "Scribe", msg)
 }

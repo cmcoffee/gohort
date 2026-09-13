@@ -1,7 +1,7 @@
-// Guides HTTP surface: the workbench page, the guide/section data endpoints, and
-// the chat bridge (with the add_section / edit_section co-author tools injected
-// into the bound Guide Author agent's run).
-package guides
+// Scribe HTTP surface: the workbench page, the document/section data endpoints,
+// and the chat bridge (with the section / article co-author tools injected into
+// the bound Guide Author agent's run).
+package scribe
 
 import (
 	"bytes"
@@ -20,7 +20,7 @@ import (
 // tools know which document to write into.
 const activeTable = "guides_active"
 
-func (T *Guides) route(w http.ResponseWriter, r *http.Request) {
+func (T *Scribe) route(w http.ResponseWriter, r *http.Request) {
 	user, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
@@ -29,7 +29,7 @@ func (T *Guides) route(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case path == "":
 		if !strings.HasSuffix(r.URL.Path, "/") {
-			http.Redirect(w, r, "/guides/", http.StatusFound)
+			http.Redirect(w, r, T.WebPath()+"/", http.StatusFound)
 			return
 		}
 		T.servePage(w, r)
@@ -41,6 +41,17 @@ func (T *Guides) route(w http.ResponseWriter, r *http.Request) {
 		T.handleNew(w, r, udb, user)
 	case path == "settings":
 		T.handleSettings(w, r, udb, user)
+	// Article-only surfaces: the whole body edited at once (the viewer's Edit
+	// toggle), the header image, and importing a page exported earlier.
+	case path == "body":
+		T.handleBody(w, r, udb, user)
+	case path == "image":
+		T.handleImage(w, r, udb, user)
+	case path == "import":
+		T.handleImport(w, r, udb, user)
+	// House-style rules, per user, appended to every Guide Author turn.
+	case path == "rules":
+		HandleDocRules(w, r, T.DB, rulesNamespace)
 	case path == "revision":
 		T.handleRevisionPreview(w, r, udb, user)
 	case path == "revisions":
@@ -119,7 +130,7 @@ func (T *Guides) route(w http.ResponseWriter, r *http.Request) {
 // delete / manage knowledge: owner or admin) and canEdit (change content: a
 // manager, OR anyone when the guide is shared for edit). ownerUDB is the store all
 // content ops must use. When found is false the handler should 404.
-func (T *Guides) resolve(r *http.Request, reqUDB Database, user, id string) (g Guide, ownerUDB Database, canManage, canEdit, found bool) {
+func (T *Scribe) resolve(r *http.Request, reqUDB Database, user, id string) (g Guide, ownerUDB Database, canManage, canEdit, found bool) {
 	g, owner, oudb, ok := resolveGuide(T.DB, reqUDB, user, id)
 	if !ok {
 		return Guide{}, nil, false, false, false
@@ -130,10 +141,11 @@ func (T *Guides) resolve(r *http.Request, reqUDB Database, user, id string) (g G
 
 // handleList feeds the workbench's left list: [{id, title, shared, own}]. It
 // unions the user's own guides with guides others have shared read-only.
-func (T *Guides) handleList(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handleList(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	type row struct {
 		ID     string `json:"id"`
 		Title  string `json:"title"`
+		Kind   string `json:"kind,omitempty"`
 		Shared bool   `json:"shared,omitempty"` // shared by SOMEONE ELSE (read-only to this user)
 		Own    bool   `json:"own"`
 	}
@@ -141,7 +153,7 @@ func (T *Guides) handleList(w http.ResponseWriter, r *http.Request, udb Database
 	seen := map[string]bool{}
 	for _, g := range listGuides(udb) {
 		seen[g.ID] = true
-		out = append(out, row{ID: g.ID, Title: firstNonEmpty(g.Title, "Untitled guide"), Own: true})
+		out = append(out, row{ID: g.ID, Title: listLabel(g, ""), Kind: g.Kind, Own: true})
 	}
 	// Guides shared by other users: resolve each from its owner's store, skipping
 	// any the user already owns.
@@ -155,7 +167,7 @@ func (T *Guides) handleList(w http.ResponseWriter, r *http.Request, udb Database
 				if g.sharedForEdit() {
 					suffix = " · shared (editable)"
 				}
-				out = append(out, row{ID: g.ID, Title: firstNonEmpty(g.Title, "Untitled guide") + suffix, Shared: true})
+				out = append(out, row{ID: g.ID, Title: listLabel(g, suffix), Kind: g.Kind, Shared: true})
 			}
 		}
 	}
@@ -165,7 +177,7 @@ func (T *Guides) handleList(w http.ResponseWriter, r *http.Request, udb Database
 // handleGuide GETs one guide rendered for the viewer ({id, title, html, own,
 // shared}) or DELETEs it. Shared guides resolve to the owner's store; the inline
 // edit controls only render for a user who can manage the guide.
-func (T *Guides) handleGuide(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handleGuide(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	g, ownerUDB, canManage, canEdit, found := T.resolve(r, udb, user, id)
 	if !found {
@@ -174,13 +186,21 @@ func (T *Guides) handleGuide(w http.ResponseWriter, r *http.Request, udb Databas
 	}
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, map[string]any{
-			"id": g.ID, "title": g.Title, "html": renderGuideHTML(g, canEdit),
+		rec := map[string]any{
+			"id": g.ID, "title": g.Title, "kind": g.Kind, "html": renderGuideHTML(g, canEdit),
 			"own": canManage, "can_edit": canEdit, "shared": g.Shared,
-		})
+			"image_url": g.ImageURL,
+		}
+		// The editable source rides only for an article the requester may
+		// edit: its presence is what enables the viewer's Edit toggle (see
+		// ui.WorkbenchPanel.EditURL). A guide is edited section by section.
+		if g.isArticle() && canEdit {
+			rec["markdown"] = g.body()
+		}
+		writeJSON(w, rec)
 	case http.MethodDelete:
 		if !canManage {
-			http.Error(w, "only the owner can delete this guide", http.StatusForbidden)
+			http.Error(w, "only the owner can delete this "+g.kindNoun(), http.StatusForbidden)
 			return
 		}
 		deleteGuide(ownerUDB, user, id)
@@ -193,7 +213,7 @@ func (T *Guides) handleGuide(w http.ResponseWriter, r *http.Request, udb Databas
 
 // handleNew creates a guide from the workbench's New modal (a title field). The
 // creator is stamped as Owner; new guides are private until shared.
-func (T *Guides) handleNew(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handleNew(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -201,14 +221,176 @@ func (T *Guides) handleNew(w http.ResponseWriter, r *http.Request, udb Database,
 	var body struct {
 		Title    string `json:"title"`
 		Subtitle string `json:"subtitle"`
+		Kind     string `json:"kind"`     // "" | "guide" | "article"
+		Template string `json:"template"` // article only: a MarkdownDocTemplates name for the starting body
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
+	if strings.TrimSpace(body.Kind) == KindArticle {
+		g := newArticle(user, body.Title, templateBody(body.Template))
+		g.Subtitle = strings.TrimSpace(body.Subtitle)
+		g = saveGuideRev(udb, g, "Created article")
+		writeJSON(w, map[string]string{"id": g.ID, "title": g.Title})
+		return
+	}
 	g := saveGuideRev(udb, Guide{
 		ID:       newID(),
 		Title:    firstNonEmpty(strings.TrimSpace(body.Title), "Untitled guide"),
 		Subtitle: strings.TrimSpace(body.Subtitle),
 		Owner:    user,
 	}, "Created guide")
+	writeJSON(w, map[string]string{"id": g.ID, "title": g.Title})
+}
+
+// templateBody returns the starting body for a named shared document template
+// (core MarkdownDocTemplates), or "" for an unknown / blank name.
+func templateBody(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	for _, t := range MarkdownDocTemplates {
+		if strings.EqualFold(t.Name, name) {
+			return t.Body
+		}
+	}
+	return ""
+}
+
+// listLabel is a document's row label in the workbench list: its title, an
+// article marker so the two kinds read apart at a glance, then any sharing
+// suffix.
+func listLabel(g Guide, suffix string) string {
+	label := firstNonEmpty(g.Title, "Untitled "+g.kindNoun())
+	if g.isArticle() {
+		label += " · article"
+	}
+	return label + suffix
+}
+
+// handleBody is the viewer's direct-edit save for an article: POST ?id= with
+// {markdown} replaces the whole body as one revision. Guides are edited a
+// section at a time (handleSection); this refuses them so a stale client cannot
+// flatten one.
+func (T *Scribe) handleBody(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	g, ownerUDB, _, canEdit, found := T.resolve(r, udb, user, id)
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	if !canEdit {
+		http.Error(w, "you don't have edit access to this article", http.StatusForbidden)
+		return
+	}
+	if !g.isArticle() {
+		http.Error(w, "a guide is edited section by section", http.StatusBadRequest)
+		return
+	}
+	var body struct {
+		Markdown string `json:"markdown"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	g.setBody(body.Markdown)
+	saveGuideRev(ownerUDB, g, "Edited article")
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// handleImage manages an article's header image. GET ?id= → {image_url,
+// can_generate}. POST ?id= with {url} sets one the user supplies; with
+// {generate: true} generates one from the title through the deployment's image
+// profile and stores it (a remote URL, or a data URL when the generator writes
+// a local file). DELETE ?id= removes it. Each change is a revision.
+func (T *Scribe) handleImage(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	g, ownerUDB, _, canEdit, found := T.resolve(r, udb, user, id)
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, map[string]any{
+			"image_url":    g.ImageURL,
+			"can_edit":     canEdit && g.isArticle(),
+			"can_generate": ImageProfileAvailable("blog") || ImageGenerationAvailable(),
+		})
+		return
+	case http.MethodPost, http.MethodDelete:
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !canEdit {
+		http.Error(w, "you don't have edit access to this article", http.StatusForbidden)
+		return
+	}
+	if !g.isArticle() {
+		http.Error(w, "only an article has a header image", http.StatusBadRequest)
+		return
+	}
+	if r.Method == http.MethodDelete {
+		g.ImageURL = ""
+		saveGuideRev(ownerUDB, g, "Removed header image")
+		writeJSON(w, map[string]bool{"ok": true})
+		return
+	}
+	var body struct {
+		URL      string `json:"url"`
+		Generate bool   `json:"generate"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	url := strings.TrimSpace(body.URL)
+	if body.Generate {
+		if !ImageProfileAvailable("blog") && !ImageGenerationAvailable() {
+			http.Error(w, "image generation is not configured on this deployment", http.StatusServiceUnavailable)
+			return
+		}
+		generated, err := generateHeaderImage(r.Context(), g.Title)
+		if err != nil {
+			http.Error(w, "image generation failed: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		url = generated
+	}
+	if url == "" {
+		http.Error(w, "url required", http.StatusBadRequest)
+		return
+	}
+	g.ImageURL = url
+	saveGuideRev(ownerUDB, g, "Set header image")
+	writeJSON(w, map[string]string{"image_url": url})
+}
+
+// handleImport creates an article from an HTML page exported earlier (Scribe's
+// own, or TechWriter's): the title comes from <title> / <h1>, the body is the
+// page body converted back to markdown. POST multipart with a "file" field →
+// {id, title}.
+func (T *Scribe) handleImport(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, "file required", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+	raw, err := io.ReadAll(io.LimitReader(file, importMaxBytes))
+	if err != nil {
+		http.Error(w, "could not read the file", http.StatusBadRequest)
+		return
+	}
+	title, body := articleFromHTML(string(raw))
+	g := newArticle(user, title, body)
+	g = saveGuideRev(udb, g, "Imported from HTML")
 	writeJSON(w, map[string]string{"id": g.ID, "title": g.Title})
 }
 
@@ -235,7 +417,7 @@ func shareModeOf(g Guide) string {
 // POST ?id=<id> with {title, subtitle, private, shared, mode} updates them
 // (owner/admin only). Metadata, so it saves without a content revision; sharing
 // changes also sync the app-wide shared index.
-func (T *Guides) handleSettings(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handleSettings(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	g, ownerUDB, canManage, _, found := T.resolve(r, udb, user, id)
 	if !found {
@@ -251,7 +433,7 @@ func (T *Guides) handleSettings(w http.ResponseWriter, r *http.Request, udb Data
 		})
 	case http.MethodPost:
 		if !canManage {
-			http.Error(w, "only the owner can change this guide's settings", http.StatusForbidden)
+			http.Error(w, "only the owner can change this "+g.kindNoun()+"'s settings", http.StatusForbidden)
 			return
 		}
 		var body struct {
@@ -265,7 +447,7 @@ func (T *Guides) handleSettings(w http.ResponseWriter, r *http.Request, udb Data
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		g.Title = firstNonEmpty(strings.TrimSpace(body.Title), "Untitled guide")
+		g.Title = firstNonEmpty(strings.TrimSpace(body.Title), "Untitled "+g.kindNoun())
 		g.Subtitle = strings.TrimSpace(body.Subtitle)
 		g.Private = body.Private
 		g.Shared = body.Shared
@@ -284,7 +466,7 @@ func (T *Guides) handleSettings(w http.ResponseWriter, r *http.Request, udb Data
 }
 
 // handleRevisions lists a guide's revision history (newest first): {id, at, note}.
-func (T *Guides) handleRevisions(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handleRevisions(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	_, ownerUDB, _, _, found := T.resolve(r, udb, user, id)
 	if !found {
@@ -310,7 +492,7 @@ func (T *Guides) handleRevisions(w http.ResponseWriter, r *http.Request, udb Dat
 // a bad way to ask that question — it would discard everything written since
 // just to find out what a paragraph used to say. Read access, not edit: anyone
 // who can see the guide can read its past.
-func (T *Guides) handleRevisionPreview(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handleRevisionPreview(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	cur, ownerUDB, _, _, found := T.resolve(r, udb, user, id)
 	if !found {
@@ -334,7 +516,7 @@ func (T *Guides) handleRevisionPreview(w http.ResponseWriter, r *http.Request, u
 
 // handleRestore makes a revision's snapshot the current guide (recording the
 // restore itself as a new revision, so it's undoable too). Owner/admin only.
-func (T *Guides) handleRestore(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handleRestore(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -392,7 +574,7 @@ type reportResp struct {
 // the prior version). The DOCUMENT is never auto-mutated — that's the whole point
 // of a review-and-apply refresh over a blind regenerate. Owner/editor only, since
 // they're the ones who can act on the report. Synchronous (an agent loop).
-func (T *Guides) handleAudit(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handleAudit(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -498,7 +680,7 @@ func (T *Guides) handleAudit(w http.ResponseWriter, r *http.Request, udb Databas
 // audit modal) and dispatches the Guide Author to APPLY those recommendations as
 // revisions — the mutating counterpart to the read-only audit. Owner/editor only.
 // Grounds edits in the guide's linked sources; honors Private (no-internet).
-func (T *Guides) handleApplyAudit(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handleApplyAudit(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -553,7 +735,7 @@ Rules: "order" MUST be a permutation of the given numbers — every number exact
 // it DOES mutate, saving a recoverable revision, and returns a summary. A cheap
 // JSON-mode worker call decides the order (no web research needed). Owner/editor
 // only. No-op (no revision) when there are <2 sections or the order is unchanged.
-func (T *Guides) handleReorganize(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handleReorganize(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -562,6 +744,12 @@ func (T *Guides) handleReorganize(w http.ResponseWriter, r *http.Request, udb Da
 	g, owner, ownerUDB, ok := resolveGuide(T.DB, udb, user, id)
 	if !ok {
 		http.NotFound(w, r)
+		return
+	}
+	if g.isArticle() {
+		// One body has no sections to reorder. Say so rather than run a pass
+		// that would rewrite the article to no purpose.
+		writeJSON(w, reportResp{Report: "_An article is one body, so there is nothing to reorganize. Ask the Guide Author to restructure it instead._"})
 		return
 	}
 	if !(CanManageShared(user, owner, RequestIsAdmin(r)) || g.sharedForEdit()) {
@@ -651,7 +839,7 @@ func guideExcerpt(md string, n int) string {
 // applying edits as revisions. Owner/editor only — it changes the document. The
 // DOCUMENT is never touched for a guide with no linked sources (nothing to update
 // from) or no sections. Returns a markdown summary of what changed.
-func (T *Guides) handleUpdateFromSources(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handleUpdateFromSources(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -705,7 +893,7 @@ func sectionIdx(g Guide, sid string) int {
 
 // handleSection GET (raw fields for the edit form) / POST (save title+markdown) /
 // DELETE (remove) one section. ?guide=&section=.
-func (T *Guides) handleSection(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handleSection(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	gid := strings.TrimSpace(r.URL.Query().Get("guide"))
 	sid := strings.TrimSpace(r.URL.Query().Get("section"))
 	g, ownerUDB, _, canEdit, found := T.resolve(r, udb, user, gid)
@@ -751,7 +939,7 @@ func (T *Guides) handleSection(w http.ResponseWriter, r *http.Request, udb Datab
 }
 
 // handleSectionMove reorders a section one step up/down. POST ?guide=&section=&dir=up|down.
-func (T *Guides) handleSectionMove(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handleSectionMove(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -791,7 +979,7 @@ func (T *Guides) handleSectionMove(w http.ResponseWriter, r *http.Request, udb D
 }
 
 // handleSectionAdd appends a new section. POST ?guide= with {title, markdown}.
-func (T *Guides) handleSectionAdd(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handleSectionAdd(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -823,7 +1011,7 @@ func (T *Guides) handleSectionAdd(w http.ResponseWriter, r *http.Request, udb Da
 // already attached to this guide. POST ?guide=<id> with {collections:[ids]}
 // stores the attachment on the guide. Collections live in the shared
 // collections home (CollectionsDB()), so guides never reaches into orchestrate.
-func (T *Guides) handleCollections(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handleCollections(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	gid := strings.TrimSpace(r.URL.Query().Get("guide"))
 	switch r.Method {
 	case http.MethodGet:
@@ -875,7 +1063,7 @@ func (T *Guides) handleCollections(w http.ResponseWriter, r *http.Request, udb D
 // ?guide=<id> takes {references:[id]} and splits each composite id back into the
 // stored {kind,item_id}. The registry is per-user + access-gated, so the user
 // only ever sees their own sources.
-func (T *Guides) handleReferences(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handleReferences(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	gid := strings.TrimSpace(r.URL.Query().Get("guide"))
 	switch r.Method {
 	case http.MethodGet:
@@ -936,7 +1124,7 @@ func (T *Guides) handleReferences(w http.ResponseWriter, r *http.Request, udb Da
 	}
 }
 
-func (T *Guides) handleSetActive(w http.ResponseWriter, r *http.Request, udb Database) {
+func (T *Scribe) handleSetActive(w http.ResponseWriter, r *http.Request, udb Database) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -960,7 +1148,7 @@ func activeGuideID(udb Database) string {
 // handleChatSend dispatches the chat to the bound Guide Author agent with the
 // co-author tools injected, so add_section / edit_section write into this app's
 // guide store (the same store the viewer renders).
-func (T *Guides) handleChatSend(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+func (T *Scribe) handleChatSend(w http.ResponseWriter, r *http.Request, udb Database, user string) {
 	orch := findOrchestrate()
 	if orch == nil {
 		http.Error(w, "orchestrate not initialized", http.StatusServiceUnavailable)
@@ -987,10 +1175,21 @@ func (T *Guides) handleChatSend(w http.ResponseWriter, r *http.Request, udb Data
 	// on every path below, reader and editor alike.
 	agent.DispatchMode, agent.AllowedDispatchTargets = guideDispatchPolicy(Guide{})
 
+	// House-style rules ride every turn, after the agent's own prompt so they
+	// sit closest to the conversation and weigh heaviest.
+	agent.OrchestratorPrompt += DocRulesSection(udb, rulesNamespace)
+
 	var tools []AgentToolDef
 	if g, _, _, canEdit, found := T.resolve(r, udb, user, activeGuideID(udb)); found {
 		agent.DispatchMode, agent.AllowedDispatchTargets = guideDispatchPolicy(g)
 		all := T.coauthorTools(r.Context(), udb, orch, user, canEdit)
+		if g.isArticle() {
+			// An article is one body: the section kit makes no sense over it.
+			// Swap in the article kit and tell the agent how articles are
+			// written here (the house conventions TechWriter's users relied on).
+			all = T.articleTools(udb, user, all)
+			agent.OrchestratorPrompt += articleModePrompt
+		}
 		if canEdit {
 			tools = all
 		} else {
@@ -1015,6 +1214,14 @@ func (T *Guides) handleChatSend(w http.ResponseWriter, r *http.Request, udb Data
 	stampAppContext(r, activeGuideID(udb))
 	orch.PublicHandleSendWithAppTools(w, r, agent, tools)
 }
+
+// rulesNamespace keys the per-user house-style rules (core/docs DocRules).
+// TechWriter's rules are carried into it by the migration.
+const rulesNamespace = "scribe"
+
+// importMaxBytes bounds an imported HTML page. A page exported from here is a
+// few hundred KB at most; anything past this is not an article.
+const importMaxBytes = 2 << 20
 
 // stampAppContext writes the open guide's id into the send body as app_context,
 // so the session orchestrate creates records which document the conversation was
@@ -1101,6 +1308,7 @@ func guideDispatchPolicy(g Guide) (mode string, targets []string) {
 // the owner's corpus) is withheld.
 var readOnlyGuideToolNames = map[string]bool{
 	"list_sections":          true,
+	"read_article":           true,
 	"search_knowledge":       true,
 	"list_reference_sources": true,
 	"pull_reference":         true,
@@ -1152,7 +1360,7 @@ func withoutToolNames(names []string, drop ...string) []string {
 }
 
 // dispatchChat forwards cancel / session routes to orchestrate's PublicHandle*.
-func (T *Guides) dispatchChat(w http.ResponseWriter, r *http.Request, kind, sid string) {
+func (T *Scribe) dispatchChat(w http.ResponseWriter, r *http.Request, kind, sid string) {
 	orch := findOrchestrate()
 	if orch == nil {
 		http.Error(w, "orchestrate not initialized", http.StatusServiceUnavailable)

@@ -13,10 +13,10 @@ What shipped, and where it differs from the design below:
 
 - `core/docs/findings.go` — the `FindingTarget` seam, an optional interface on
   a `DocumentTarget`, mirroring `ReferencingDocumentTarget`.
-  `apps/guides/findings.go` — the inbox and the digest.
-  `apps/guides/curator.go` — the agent and its decision kit.
-  `apps/guides/curator_schedule.go` — threshold + interval firing.
-  `apps/guides/curator_web.go` / `curator_ui.go` — the digest surface.
+  `apps/scribe/findings.go` — the inbox and the digest.
+  `apps/scribe/curator.go` — the agent and its decision kit.
+  `apps/scribe/curator_schedule.go` — threshold + interval firing.
+  `apps/scribe/curator_web.go` / `curator_ui.go` — the digest surface.
 - **`push_to_guide` was NOT removed.** Slice 5 retires the direct paths and is
   out of scope; servitor gained `record_finding` alongside it. The old tool
   stays for the case it is actually right for — the user named a destination in
@@ -71,22 +71,22 @@ authority.
 **The cross-app write seam.** `core/docs/document_writer.go` is a
 `DocumentTarget` registry: a writer app registers under a stable kind and other
 apps push sections into it without importing it. Guides registers as kind
-`"guide"` (`apps/guides/push_target.go:17`). The producer never sees the
+`"guide"` (`apps/scribe/push_target.go:17`). The producer never sees the
 target's database.
 
 **The read seam, in the other direction.** `core/sources` is the mirror:
 servitor exposes each appliance as a `ReferenceSource` of kind `"system"`
 (`apps/servitor/reference_source.go:22`), a guide attaches selections
-(`Guide.References`, `apps/guides/data.go:46`), and the Guide Author pulls them
-with `pull_reference` (`apps/guides/coauthor.go:452`).
+(`Guide.References`, `apps/scribe/data.go:46`), and the Guide Author pulls them
+with `pull_reference` (`apps/scribe/coauthor.go:452`).
 
 **The Guide Author agent** (`app-guides-author`) with real co-author tools that
 write into the open guide's section list: `list_sections`, `add_section`,
-`edit_section`, `draft_section` (`apps/guides/coauthor.go`).
+`edit_section`, `draft_section` (`apps/scribe/coauthor.go`).
 
 **And a partial middleman already.** `guideTarget.Append` does NOT blind-append
 into an existing guide — it hands the content to the Guide Author via
-`runIncorporate` (`apps/guides/coauthor.go:810`), whose prompt says to merge into
+`runIncorporate` (`apps/scribe/coauthor.go:810`), whose prompt says to merge into
 an existing section or add a fitting one, in the guide's voice, without
 duplicating.
 
@@ -102,7 +102,7 @@ The agent is a formatter, not an editor.
    servitor worker picks both, mid-probe.
 2. **The new-guide path skips the agent entirely.** With an empty `docID`,
    `Append` creates the guide and drops the content in as its first section, no
-   author involved (`apps/guides/push_target.go:76`).
+   author involved (`apps/scribe/push_target.go:76`).
 3. **One synchronous agent run per push, each with `FreshSession`.** A burst of
    findings is a burst of full agent runs, none of which can see the others. Any
    dedup *within* a batch is structurally impossible.

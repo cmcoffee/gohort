@@ -15,7 +15,7 @@
 // The curator writes on its own authority and reports afterwards; see
 // docs/guides-curator.md for why, and findings.go for the digest that makes that
 // safe.
-package guides
+package scribe
 
 import (
 	"context"
@@ -50,7 +50,7 @@ const minFindingsForNewGuide = 3
 func init() {
 	appagents.RegisterAppAgent(appagents.AppAgentSpec{
 		ID:          curatorAgentID,
-		OwningApp:   "Guides",
+		OwningApp:   "Scribe",
 		Name:        "Guide Curator",
 		Description: "Decides what reported findings become documentation — which guide they belong in, what they replace, and what is not worth keeping.",
 		// No research surface. The curator's job is editorial judgment over
@@ -79,7 +79,7 @@ func init() {
 
 // curatorDecision is one tool call's outcome, collected during a run.
 type curatorSession struct {
-	app     *Guides
+	app     *Scribe
 	orch    *orchestrate.OrchestrateApp
 	user    string
 	udb     Database
@@ -268,12 +268,17 @@ func (cs *curatorSession) listGuides() string {
 // editableGuides returns the user's own guides plus those shared WITH EDIT by
 // others. View-shared guides are excluded: the curator would be able to read
 // them and not write, which produces placements that fail after the decision has
-// already been made.
+// already been made. Articles are excluded too — the curator files findings as
+// SECTIONS, and an article has one body, so a placement there would either fail
+// or quietly turn the article into something it is not.
 func (cs *curatorSession) editableGuides() []Guide {
 	var out []Guide
 	seen := map[string]bool{}
 	for _, g := range listGuides(cs.udb) {
 		seen[g.ID] = true
+		if g.isArticle() {
+			continue
+		}
 		out = append(out, g)
 	}
 	for id, owner := range ListSharedOwners(cs.app.DB, sharedGuidesIndex) {
@@ -281,7 +286,7 @@ func (cs *curatorSession) editableGuides() []Guide {
 			continue
 		}
 		if oudb := UserDB(cs.app.DB, owner); oudb != nil {
-			if g, ok := loadGuide(oudb, id); ok && g.sharedForEdit() {
+			if g, ok := loadGuide(oudb, id); ok && g.sharedForEdit() && !g.isArticle() {
 				out = append(out, g)
 			}
 		}
@@ -465,7 +470,7 @@ func (cs *curatorSession) hold(findingID, reason string) (string, error) {
 // RunCurator drains one user's finding queue and returns the digest. Safe to
 // call with an empty queue (returns a zero run and no error), so a scheduler can
 // call it unconditionally.
-func (T *Guides) RunCurator(ctx context.Context, user string) (CuratorRun, error) {
+func (T *Scribe) RunCurator(ctx context.Context, user string) (CuratorRun, error) {
 	udb := UserDB(T.DB, user)
 	if udb == nil {
 		return CuratorRun{}, errNoStore
@@ -566,7 +571,7 @@ func curatorBatchPrompt(pending []DocFinding) string {
 // than merge into it (which is what runIncorporate does). Separate prompt, same
 // tools: the curator decides which of the two it wants and the Author writes
 // either one.
-func (T *Guides) runSupersede(ctx context.Context, udb Database, orch *orchestrate.OrchestrateApp, user, guideID, sectionTitle, content string, private bool) (string, error) {
+func (T *Scribe) runSupersede(ctx context.Context, udb Database, orch *orchestrate.OrchestrateApp, user, guideID, sectionTitle, content string, private bool) (string, error) {
 	udb.Set(activeTable, "current", guideID)
 	prompt := "A newer finding REPLACES what one section of this guide currently says.\n\n" +
 		"1. Call list_sections, then read the section titled \"" + sectionTitle + "\".\n" +

@@ -992,6 +992,19 @@ select:-webkit-autofill {
 }
 @keyframes ui-spin { to { transform: rotate(360deg); } }
 .ui-wb-working { display: flex; align-items: center; gap: 0.5rem; color: var(--text); font-size: 0.95rem; padding: 0.2rem 0 0.9rem; }
+/* Direct editing (WorkbenchPanel.EditURL): the textarea takes the viewer's
+ * full height; the action row sits beneath it. */
+.ui-wb-edit { display: flex; flex-direction: column; gap: 0.6rem; height: 100%; min-height: 0; }
+.ui-wb-edit-ta {
+  flex: 1 1 auto; min-height: 50vh; width: 100%; box-sizing: border-box; resize: vertical;
+  padding: 0.8rem 0.95rem; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg-0); color: var(--text); font: 0.92rem/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  tab-size: 2;
+}
+.ui-wb-edit-ta:focus { outline: none; border-color: var(--accent); }
+.ui-wb-edit-actions { display: flex; align-items: center; gap: 0.5rem; flex: 0 0 auto; }
+.ui-wb-edit-status { color: var(--text-mute); font-size: 0.85rem; }
+.ui-wb-edit-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .ui-wb-working-actions { text-align: right; }
 
 /* --- Footer --- */

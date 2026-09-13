@@ -3,7 +3,7 @@
 // "add an introduction" appears in the document. Built as closures over this
 // app's guide store and injected into the agent's run via
 // PublicHandleSendWithAppTools — orchestrate runs them, ignorant of guide storage.
-package guides
+package scribe
 
 import (
 	"context"
@@ -31,7 +31,7 @@ import (
 // its own sub-run (servitor's investigate_<system>) has nothing to die with
 // unless the caller supplies it. Rooted on context.Background() instead, a Stop
 // stopped the chat and left the investigation running against the live machine.
-func (T *Guides) coauthorTools(ctx context.Context, udb Database, orch *orchestrate.OrchestrateApp, user string, canEdit bool) []AgentToolDef {
+func (T *Scribe) coauthorTools(ctx context.Context, udb Database, orch *orchestrate.OrchestrateApp, user string, canEdit bool) []AgentToolDef {
 	// openGuide resolves the active guide for this turn, fresh each call. The active
 	// marker is per-user (udb), but a SHARED guide lives in its owner's store — so
 	// resolve returns the owner's UserDB + owner username, and every content op runs
@@ -733,7 +733,7 @@ func gatherLinkedSourceSnapshot(ctx context.Context, ownerUser string, g Guide) 
 // edit_section/add_section as a revision (roll back via History). Runs in a
 // dedicated hidden sub-session so the automated pass doesn't clutter the user's
 // visible guide chat. Synchronous (an agent loop; tens of seconds).
-func (T *Guides) runUpdateFromSources(ctx context.Context, udb Database, orch *orchestrate.OrchestrateApp, user, guideID string, private bool) (string, error) {
+func (T *Scribe) runUpdateFromSources(ctx context.Context, udb Database, orch *orchestrate.OrchestrateApp, user, guideID string, private bool) (string, error) {
 	// Point the co-author tools at this guide (they resolve the active guide, then
 	// its owner's store) for the duration of the run.
 	udb.Set(activeTable, "current", guideID)
@@ -773,7 +773,7 @@ func (T *Guides) runUpdateFromSources(ctx context.Context, udb Database, orch *o
 // edit_section/add_section as a revision (roll back via History). Every claim is
 // re-grounded in the guide's linked sources before writing, so the apply can't
 // launder an audit hallucination into the document. Honors Private (no-internet).
-func (T *Guides) runApplyAudit(ctx context.Context, udb Database, orch *orchestrate.OrchestrateApp, user, guideID, findings string, private bool) (string, error) {
+func (T *Scribe) runApplyAudit(ctx context.Context, udb Database, orch *orchestrate.OrchestrateApp, user, guideID, findings string, private bool) (string, error) {
 	udb.Set(activeTable, "current", guideID)
 	groundClause := ", using search_knowledge / pull_reference (and web research where the finding is about currency) to confirm specifics before you write"
 	if private {
@@ -812,7 +812,7 @@ func (T *Guides) runApplyAudit(ctx context.Context, udb Database, orch *orchestr
 // guide's voice — rather than blind-appending a raw block. Used by the
 // document-target push path (servitor's ↗ Guide button + push_to_guide tool) so
 // pushed content lands coherently. Honors the guide's Private (no-internet) flag.
-func (T *Guides) runIncorporate(ctx context.Context, udb Database, orch *orchestrate.OrchestrateApp, user, guideID, suggestedTitle, content string, private bool) (string, error) {
+func (T *Scribe) runIncorporate(ctx context.Context, udb Database, orch *orchestrate.OrchestrateApp, user, guideID, suggestedTitle, content string, private bool) (string, error) {
 	udb.Set(activeTable, "current", guideID)
 	prompt := "A new finding has been pushed to this guide. Incorporate it CORRECTLY into the document — do NOT just paste it in as a raw block.\n\n" +
 		"1. Call list_sections to see the current structure.\n" +

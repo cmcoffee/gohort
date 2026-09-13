@@ -9,7 +9,7 @@
 // renders inline, because "what did this replace" is the question a reader is
 // actually asking and sending them to the revision history to answer it is how
 // this stops being read.
-package guides
+package scribe
 
 // guideCuratorCSS styles the digest list. Small enough to inline; uses the
 // framework's theme tokens so it follows light/dark without its own palette.

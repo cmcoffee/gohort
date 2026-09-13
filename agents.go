@@ -15,10 +15,10 @@ import (
 	_ "github.com/cmcoffee/gohort/apps/customapps"
 	_ "github.com/cmcoffee/gohort/apps/filestore"
 	_ "github.com/cmcoffee/gohort/apps/gateways"
-	_ "github.com/cmcoffee/gohort/apps/guides"
 	_ "github.com/cmcoffee/gohort/apps/knowledge"
 	_ "github.com/cmcoffee/gohort/apps/mcpserver"
 	_ "github.com/cmcoffee/gohort/apps/monitor"
+	_ "github.com/cmcoffee/gohort/apps/scribe"
 	// OpenAI-compatible /v1 for external clients (a voice platform's custom-LLM
 	// setting, an OpenAI SDK). NOTE: /v1/ is a public path — it bypasses cookie
 	// auth and is guarded only by a personal access token, with no rate limit
@@ -39,7 +39,6 @@ import (
 	// servitor's full investigation shell (streaming plan-driven Map, probe/worker
 	// split, scoped memory, toolbar). No longer linked into the binary.
 	_ "github.com/cmcoffee/gohort/apps/servitor"
-	_ "github.com/cmcoffee/gohort/apps/techwriter"
 )
 
 // loadAgents drains the core agent registry and registers agents and apps with the command menu.

@@ -1,52 +1,71 @@
-// The Guides workbench page: guide list (left) | rendered HTML document with a
-// table of contents (center) | Guide Author chat (right). Built from the core/ui
-// WorkbenchPanel primitive; the document styling rides in via ExtraHeadHTML so a
-// guide reads like a formatted document.
-package guides
+// The Scribe workbench page: document list (left) | rendered HTML document
+// (center: a guide with its table of contents, or an article with its header
+// image) | Guide Author chat (right). Built from the core/ui WorkbenchPanel
+// primitive; the document styling rides in via the page head so a document
+// reads like a formatted page.
+package scribe
 
 import (
 	"net/http"
 
+	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
-func (T *Guides) servePage(w http.ResponseWriter, r *http.Request) {
+func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 	wb := ui.WorkbenchPanel{
 		// Left — guide list + New.
 		ListURL:   "guides",
 		ItemKey:   "id",
 		ItemLabel: "title",
-		ListTitle: "Guides",
-		ListEmpty: "No guides yet — create one.",
+		ListTitle: "Documents",
+		ListEmpty: "Nothing yet — create a guide or an article.",
 		DeleteURL: "guide?id={id}",
 		NewButton: ui.ModalButton{
 			Label: "New",
-			Title: "New guide",
+			Title: "New document",
 			Body: ui.FormPanel{
 				PostURL:     "new",
-				SubmitLabel: "Create guide",
+				SubmitLabel: "Create",
 				Fields: []ui.FormField{
+					{Field: "kind", Label: "Kind", Type: "select", Options: []ui.SelectOption{
+						{Value: "guide", Label: "Guide", Help: "Many sections with a table of contents. The Guide Author adds and edits sections; you edit any section in place."},
+						{Value: "article", Label: "Article", Help: "One body under a title, with an optional header image. Type into it directly, or have the Guide Author write it. Starts private."},
+					}},
 					{Field: "title", Label: "Title", Type: "text", Placeholder: "e.g. Getting Started with Kubernetes"},
 					{Field: "subtitle", Label: "Subtitle", Type: "text", Placeholder: "Optional one-line description"},
+					{Field: "template", Label: "Start from", Type: "select", Options: templateOptions(),
+						Help: "Articles only: a starting skeleton for a document people write repeatedly."},
 				},
 				Invalidate: []string{"guides"},
 			},
 		},
-		// Edit the selected guide's settings — sits in the list header, left of New.
+		// Record-scoped and library-scoped actions in the list header, left of
+		// New: the open document's settings, the house-style rules the Guide
+		// Author writes under, and importing a page exported earlier.
 		ListActions: []ui.WorkbenchAction{
-			{Label: "Edit", Kind: "client", URL: "guides_settings"},
+			{Label: "Settings", Kind: "client", URL: "guides_settings"},
+			{Label: "Rules", Kind: "client", URL: "scribe_rules"},
+			{Label: "Import", Kind: "client", URL: "scribe_import"},
 		},
-		// Center — the rendered document (server HTML: title + ToC + sections).
+		// Center — the rendered document (server HTML: title + ToC + sections,
+		// or title + image + body).
 		RecordURL:  "guide?id={id}",
 		BodyField:  "html",
 		BodyIsHTML: true,
+		// Direct editing: an article's whole body in a textarea. The record
+		// carries "markdown" only for an article the user may edit, which is what
+		// enables the toggle; guides keep their per-section controls.
+		EditURL:    "body?id={id}",
+		EditField:  "markdown",
 		EmptyIcon:  "📖",
-		EmptyTitle: "No guide selected",
-		EmptyHint:  "Pick a guide on the left, or create one. Then ask the assistant to draft sections.",
+		EmptyTitle: "Nothing selected",
+		EmptyHint:  "Pick a document on the left, or create one. Then ask the assistant to draft it, or write it yourself.",
 		// Per-document toolbar: preview/export, revision history, freshness audit.
 		ViewerActions: []ui.WorkbenchAction{
 			{Label: "Export", Kind: "menu", Children: []ui.WorkbenchAction{
 				{Label: "Preview (HTML)", Kind: "download", URL: "export?id={id}&format=html"},
+				{Label: "HTML file", Kind: "download", URL: "export?id={id}&format=html&download=1"},
 				{Label: "PDF", Kind: "download", URL: "export?id={id}&format=pdf"},
 				{Label: "Markdown", Kind: "download", URL: "export?id={id}&format=md"},
 			}},
@@ -56,6 +75,7 @@ func (T *Guides) servePage(w http.ResponseWriter, r *http.Request) {
 			{Label: "History", Kind: "history", URL: "revisions?id={id}",
 				PreviewURL: "revision?id={id}&rev={rev}", RestoreURL: "restore?id={id}&rev={rev}"},
 			{Label: "Publish", Kind: "client", URL: "guides_publish"},
+			{Label: "Image", Kind: "client", URL: "scribe_image"},
 			{Label: "Sources", Kind: "client", URL: "guides_sources"},
 			{Label: "Curator", Kind: "client", URL: "guides_curator"},
 			{Label: "Knowledge", Kind: "client", URL: "guides_knowledge"},
@@ -95,13 +115,13 @@ func (T *Guides) servePage(w http.ResponseWriter, r *http.Request) {
 			InjectURL:    "chat/inject",
 			Markdown:     true,
 			LockActivity: true,
-			EmptyText:    "Ask me to draft or revise a section — e.g. \"Add an introduction\" or \"Expand the setup section.\"",
+			EmptyText:    "Ask me to draft or revise — e.g. \"Add an introduction\", \"Expand the setup section\", or \"Rewrite this as a runbook.\"",
 			Placeholder:  "Ask the Guide Author…",
 		},
 	}
 
 	page := ui.Page{
-		Title:     "Guides",
+		Title:     "Scribe",
 		ShowTitle: true,
 		BackURL:   "/",
 		MaxWidth:  "100%",
@@ -119,16 +139,120 @@ func (T *Guides) servePage(w http.ResponseWriter, r *http.Request) {
 			CSS(guideSettingsCSS).
 			CSS(guideCuratorCSS).
 			CSS(guidePublishCSS).
+			CSS(scribeArticleCSS).
 			JS(guideModalElJS).
 			JS(guideSectionCode).
 			ClientAction("guides_knowledge", guideKnowledgeAction).
 			ClientAction("guides_sources", guideSourcesAction).
 			ClientAction("guides_settings", guideSettingsAction).
 			ClientAction("guides_curator", guideCuratorAction).
-			ClientAction("guides_publish", guidePublishAction),
+			ClientAction("guides_publish", guidePublishAction).
+			ClientAction("scribe_rules", scribeRulesAction).
+			ClientAction("scribe_import", scribeImportAction).
+			ClientAction("scribe_image", scribeImageAction),
 	}
 	page.ServeHTTP(w, r)
 }
+
+// templateOptions lists the shared document skeletons for the New modal's
+// "Start from" select, with a blank first so the default is an empty body.
+func templateOptions() []ui.SelectOption {
+	out := []ui.SelectOption{{Value: "", Label: "Blank"}}
+	for _, t := range MarkdownDocTemplates {
+		out = append(out, ui.SelectOption{Value: t.Name, Label: t.Name, Help: t.Description})
+	}
+	return out
+}
+
+// scribeRulesAction opens the shared core/ui Rules editor over this app's
+// per-user rules endpoint. The rules are appended to every Guide Author turn.
+const scribeRulesAction = `function(ctx){
+      if (!window.uiOpenRulesPanel) return;
+      window.uiOpenRulesPanel({url: 'rules', noun: 'document the Guide Author writes'});
+}`
+
+// scribeImportAction brings an exported HTML page back in as a new article:
+// pick a file, POST it, refresh the list.
+const scribeImportAction = `function(ctx){
+      var input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.html,.htm,text/html';
+      input.addEventListener('change', function(){
+        var f = input.files && input.files[0];
+        if (!f) return;
+        var fd = new FormData();
+        fd.append('file', f);
+        fetch('import', {method:'POST', credentials:'same-origin', body: fd})
+          .then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error(t || ('HTTP ' + r.status)); }); return r.json(); })
+          .then(function(d){
+            if (window.uiInvalidate) window.uiInvalidate('guides');
+            window.uiAlert('Imported "' + ((d && d.title) || 'article') + '". It is in the list on the left.');
+          })
+          .catch(function(err){ window.uiAlert('Import failed: ' + (err && err.message || err)); });
+      });
+      input.click();
+}`
+
+// scribeImageAction manages an article's header image in a modal: show the
+// current one, generate one from the title, paste a URL, or remove it.
+const scribeImageAction = `function(ctx){
+      var gid = ctx.recordId;
+      if (!gid || !window.uiOpenSimpleModal) return;
+      var qp = 'id=' + encodeURIComponent(gid);
+      fetch('image?' + qp, {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(d){
+        window.uiOpenSimpleModal({title:'Header image', width:'560px', mount: function(body, dlg){
+          if (!d || !d.can_edit){
+            body.appendChild(el('p', {class:'guide-kn-intro', text:'Only an article you can edit has a header image.'}));
+            return;
+          }
+          var preview = el('div', {class:'scribe-img-preview'});
+          function showPreview(url){
+            preview.innerHTML = '';
+            if (url) { var img = el('img'); img.src = url; preview.appendChild(img); }
+            else preview.appendChild(el('span', {class:'guide-pub-mute', text:'No header image yet.'}));
+          }
+          showPreview(d.image_url);
+          body.appendChild(preview);
+          var status = el('div', {class:'guide-kn-intro'});
+          var row = el('div', {class:'guide-edit-actions scribe-img-actions'});
+          var gen = el('button', {class:'ui-row-btn primary', text:'Generate from title'});
+          if (!d.can_generate) { gen.disabled = true; gen.title = 'Image generation is not configured on this deployment'; }
+          var urlIn = el('input', {type:'text', placeholder:'…or paste an image URL'});
+          var use = el('button', {class:'ui-row-btn', text:'Use URL'});
+          var rm = el('button', {class:'ui-row-btn', text:'Remove'});
+          function post(payload, label){
+            status.textContent = label;
+            gen.disabled = true; use.disabled = true; rm.disabled = true;
+            return fetch('image?' + qp, {method:'POST', credentials:'same-origin', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)})
+              .then(function(r){ return r.text().then(function(t){ if (!r.ok) throw new Error(t || ('HTTP ' + r.status)); return JSON.parse(t); }); })
+              .then(function(res){ status.textContent = ''; showPreview(res.image_url); ctx.refresh(); })
+              .catch(function(err){ status.textContent = ''; window.uiAlert('Could not set the image: ' + (err && err.message || err)); })
+              .then(function(){ gen.disabled = !d.can_generate; use.disabled = false; rm.disabled = false; });
+          }
+          gen.addEventListener('click', function(){ post({generate: true}, 'Generating…'); });
+          use.addEventListener('click', function(){ if (urlIn.value.trim()) post({url: urlIn.value.trim()}, 'Saving…'); });
+          rm.addEventListener('click', function(){
+            fetch('image?' + qp, {method:'DELETE', credentials:'same-origin'}).then(function(){ showPreview(''); ctx.refresh(); });
+          });
+          row.appendChild(gen); row.appendChild(rm);
+          body.appendChild(row);
+          body.appendChild(el('div', {class:'scribe-img-url'}, [urlIn, use]));
+          body.appendChild(status);
+        }});
+      });
+}`
+
+// scribeArticleCSS styles the article view (header image, body measure) and the
+// image modal. Scoped under .guide-doc / .scribe-img-* so nothing leaks.
+const scribeArticleCSS = `.guide-doc-image { display: block; width: 100%; max-height: 320px; object-fit: cover; border-radius: 10px; margin: 0 0 1.4rem; }
+.guide-article-body > :first-child { margin-top: 0; }
+.guide-article-body h2 { font-size: 1.4rem; color: var(--text-hi); border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; margin: 1.6rem 0 0.8rem; }
+.guide-article-body h3 { font-size: 1.12rem; color: var(--text-hi); margin: 1.3rem 0 0.5rem; }
+.scribe-img-preview { min-height: 4rem; display: flex; align-items: center; justify-content: center; background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 0.8rem; overflow: hidden; }
+.scribe-img-preview img { width: 100%; max-height: 220px; object-fit: cover; display: block; }
+.scribe-img-actions { display: flex; gap: 0.5rem; margin-bottom: 0.6rem; }
+.scribe-img-url { display: flex; gap: 0.5rem; }
+.scribe-img-url input { flex: 1; padding: 0.45rem 0.6rem; background: var(--bg-0); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }`
 
 // guideDocCSS styles the rendered guide so it reads like a formatted document:
 // a centered measure, a contents block, numbered section headings. Scoped under
@@ -389,9 +513,9 @@ const guideSettingsAction = `function(ctx){
       var qp = 'id=' + encodeURIComponent(gid);
       fetch('settings?' + qp, {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(d){
         var canManage = !!(d && d.can_manage);
-        window.uiOpenSimpleModal({title:'Edit guide', width:'520px', mount: function(body, dlg){
+        window.uiOpenSimpleModal({title:'Edit ' + ((d && d.kind === 'article') ? 'article' : 'guide'), width:'520px', mount: function(body, dlg){
           if (!canManage){
-            body.appendChild(el('p', {class:'guide-kn-intro', text:'Only the guide owner can change these settings.'}));
+            body.appendChild(el('p', {class:'guide-kn-intro', text:'Only the owner can change these settings.'}));
             return;
           }
           var tf = fieldText('Title', (d && d.title) || '');
@@ -400,7 +524,7 @@ const guideSettingsAction = `function(ctx){
           // Private (no internet).
           var pcb = el('input', {type:'checkbox'}); if (d && d.private) pcb.checked = true;
           body.appendChild(el('label', {class:'guide-share-row'}, [pcb,
-            el('span', {text: "Private — no internet access. The assistant answers and edits only from this guide's attached knowledge; web search and research are disabled."})]));
+            el('span', {text: "Private — no internet access. The assistant answers and edits only from this document's attached knowledge; web search and research are disabled, and every model call stays on the local worker."})]));
           // Sharing.
           body.appendChild(el('div', {class:'guide-set-head', text:'Sharing'}));
           var scb = el('input', {type:'checkbox'}); if (d && d.shared) scb.checked = true;

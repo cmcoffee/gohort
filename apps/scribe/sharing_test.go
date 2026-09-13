@@ -1,4 +1,4 @@
-package guides
+package scribe
 
 import (
 	"context"
@@ -139,7 +139,7 @@ func TestResolveGuideSharing(t *testing.T) {
 	}
 }
 
-// canEdit mirrors the composition in (*Guides).resolve: a manager, or anyone when
+// canEdit mirrors the composition in (*Scribe).resolve: a manager, or anyone when
 // the guide is shared for edit.
 func canEdit(g Guide, reqUser, owner string, isAdmin bool) bool {
 	return CanManageShared(reqUser, owner, isAdmin) || g.sharedForEdit()
@@ -188,9 +188,16 @@ func TestReadOnlyNamesExistInTheCoauthorBuilder(t *testing.T) {
 	root := &DBase{Store: kvlite.MemStore()}
 	udb := UserDB(root, "u")
 	orch := &orchestrate.OrchestrateApp{AppCore: AppCore{DB: root}}
-	T := &Guides{}
+	T := &Scribe{}
 	built := map[string]bool{}
-	for _, td := range T.coauthorTools(context.Background(), udb, orch, "u", true) {
+	// Both kits: a reader of a shared guide gets the guide subset, a reader of a
+	// shared article the article subset (read_article stands in for
+	// list_sections there).
+	guideKit := T.coauthorTools(context.Background(), udb, orch, "u", true)
+	for _, td := range guideKit {
+		built[td.Tool.Name] = true
+	}
+	for _, td := range T.articleTools(udb, "u", guideKit) {
 		built[td.Tool.Name] = true
 	}
 	if len(built) == 0 {

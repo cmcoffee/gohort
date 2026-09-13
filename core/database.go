@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -156,6 +157,30 @@ func OpenCache() Database {
 // AppSpec.PrivateDB) and reach their file through OpenCustomAppDB. Both resolve
 // through OpenAppDB, whose concrete secure-open is injected by main at startup
 // (main owns the data dir + the hardware padlock; core does not).
+
+// storeNameApp is satisfied by an app whose data is keyed by a name other
+// than its own: it declares `StoreName() string`. An app renamed after it
+// shipped keeps the bucket it was born with by returning the old name there,
+// so the rename never strands what users already wrote: the tile, the path,
+// and the package move, the data does not. Unexported on purpose — an app
+// only needs the method, and every exported symbol here lands in the
+// namespace of every dot-importer.
+type storeNameApp interface {
+	StoreName() string
+}
+
+// AppStoreName returns the name an app's store is keyed by: StoreName() when
+// the app declares one, else its Name(). The framework consults this wherever
+// it would otherwise use Name() to find the app's store (the shared bucket, or
+// the private file for a PrivateDBApp).
+func AppStoreName(a Agent) string {
+	if s, ok := a.(storeNameApp); ok {
+		if n := strings.TrimSpace(s.StoreName()); n != "" {
+			return n
+		}
+	}
+	return a.Name()
+}
 
 // PrivateDBApp is implemented by an app that wants its own dedicated kvlite
 // database file rather than a bucket of the shared global DB.
