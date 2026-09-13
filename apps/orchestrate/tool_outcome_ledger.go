@@ -164,6 +164,31 @@ func brokenToolActions(db Database, user string) []toolOutcomeRecord {
 	return out
 }
 
+// forgetToolOutcome drops one action's tally, for the owner who has fixed
+// the definition and wants the count to start over rather than wait for a
+// success to retire it. Reports whether anything was there to forget.
+func forgetToolOutcome(db Database, user, key string) bool {
+	if db == nil || strings.TrimSpace(user) == "" || strings.TrimSpace(key) == "" {
+		return false
+	}
+	outcomeMu.Lock()
+	defer outcomeMu.Unlock()
+	all := loadToolOutcomes(db, user)
+	kept := all[:0]
+	found := false
+	for _, e := range all {
+		if e.key() == key {
+			found = true
+			continue
+		}
+		kept = append(kept, e)
+	}
+	if found {
+		db.Set(toolOutcomeTable, user, kept)
+	}
+	return found
+}
+
 // loadToolOutcomes reads a user's whole tally. One row holding the slice, same
 // shape and for the same reasons as the verify ledger.
 func loadToolOutcomes(db Database, user string) []toolOutcomeRecord {

@@ -339,6 +339,15 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// block already happened; the only action is to go and look
 						// at the rule.
 						{Label: "Guardrail blocks", Source: "api/console/guardrail-blocks", Layout: "cards"},
+						// Tool actions that have failed repeatedly and never once
+						// succeeded — the standing tally the outcome ledger keeps per
+						// action, which until now surfaced as ONE breadcrumb on the
+						// fifth failure in whichever thread tripped it. The badge is the
+						// count of broken actions. Forget clears one tally after the
+						// definition is fixed; a success clears it on its own.
+						{Label: "Broken tools", Source: "api/console/broken-tools", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
+							{Label: "Forget", Method: "POST", URL: "api/console/broken-tools/forget", Confirm: "Forget this action's failure tally? It starts counting again from zero; if the definition is still wrong it will be back here after five more failures."},
+						}},
 						{Label: "Event monitors", Source: "api/console/monitors", RowActions: []ui.OrchestratorRowAction{
 							// Test = run the check once now. Only scheduled kinds
 							// (poll / http_poll / watch) have a check to run — a
