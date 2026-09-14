@@ -454,15 +454,25 @@ select:-webkit-autofill {
 /* The chat takes a SHARE of a wide screen, not a fixed slice of it.
  *
  * At a flat 380px the viewer was the only column that grew, so every pixel past
- * about 1400px went to the document — which does not use it. Prose stops
- * getting more readable somewhere around 80 characters a line and starts
- * getting less; past that the extra width is margin. The chat, meanwhile, is
- * where the work happens on this page and was the column that needed room.
+ * about 1400px went to the document — which does not use it, now that the
+ * document is set to a reading measure below. That cap is what makes this safe:
+ * the text has a floor it cannot be squeezed under, so width handed to the chat
+ * comes out of margin rather than out of the words.
  *
- * clamp keeps the old width as the floor, so nothing below ~1460px moves at
- * all, and stops at 620px so the document is never the narrow one. 26vw puts
- * the chat near 500px on a 1920 monitor and at the cap on a 2560. */
-.ui-wb-chat   { flex: 0 0 clamp(380px, 26vw, 620px); }
+ * The curve is written as a line rather than a plain percentage so the low end
+ * can be held still. A bare NNvw either grows too slowly to matter at 1920 or
+ * starts eating the document at 1440, and 1440 is where the layout was already
+ * right. calc(54vw - 398px) is pinned to hit the 380px floor at 1440 — nothing
+ * at or below a laptop moves at all — and climbs at about half of each further
+ * pixel from there: ~640px of chat on a 1920 monitor, the 820px cap at 2256.
+ *
+ * The cap is where a chat column stops being better for being wider; past it
+ * the text in the chat has the same measure problem the document had. On a
+ * monitor wide enough to reach it there is margin left over on both sides of
+ * the document, and no chat width fixes that — the answer there is to stop the
+ * whole workbench spreading (a max-width on .ui-wb), not to keep inflating one
+ * column. */
+.ui-wb-chat   { flex: 0 0 clamp(380px, calc(54vw - 398px), 820px); }
 /* Mobile-only ✕ in the list header (closes the drawer). */
 .ui-wb-close { display: none; }
 /* Tablet: soften the fixed side-column widths so the viewer keeps room.
