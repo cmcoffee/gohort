@@ -2097,7 +2097,7 @@ select:-webkit-autofill {
   .ui-chat-input-area { padding: 0.5rem; padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px)); }
 }
 .ui-chat-side-h {
-  display: flex; align-items: center; gap: 0.4rem;
+  display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
   padding: 0.5rem 0.7rem;
   font-size: 0.8rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em;
   border-bottom: 1px solid var(--border);
@@ -5053,13 +5053,28 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   display: flex; flex-direction: column; overflow: hidden;
   transition: opacity 0.18s ease;
 }
+/* The list header carries the pane's label, its collapse control, + New, and
+ * whatever list-scoped actions the app declared (list_actions) — in a pane that
+ * is narrow on purpose. It must never clip: the pane is overflow:hidden, so a
+ * button pushed past the edge is not scrolled to, it is gone, and an action you
+ * cannot see is one you do not have. Three declared actions was enough to lose
+ * the last one and the close button with it.
+ *
+ * Two things keep it whole. The label may SHRINK — "flex: 1" alone will not go
+ * below its own content width, which is what pushed the buttons out; min-width
+ * 0 plus an ellipsis lets it give up room first. And the row may WRAP, so any
+ * number of actions falls to a second line instead of off the edge. */
 .ui-tw-side-h {
-  display: flex; align-items: center; gap: 0.4rem;
+  display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
   padding: 0.5rem 0.7rem;
   font-size: 0.8rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em;
   border-bottom: 1px solid var(--border);
 }
-.ui-tw-side-h > span:first-child { flex: 1; }
+.ui-tw-side-h > span:first-child {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ui-tw-side-h > button, .ui-tw-side-h > .ui-side-menu-wrap { flex: 0 0 auto; }
 .ui-tw-collapse {
   background: transparent; color: var(--text-mute);
   border: 1px solid var(--border); border-radius: 6px;
