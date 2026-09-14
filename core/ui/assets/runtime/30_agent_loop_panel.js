@@ -1495,6 +1495,19 @@
         class: 'ui-row-btn', title: 'Open a past session',
         onclick: function(){ openSessionPicker(); },
       }, [cfg.list_title || 'Sessions']));
+      // Starting a fresh conversation is not "a past session", and it was only
+      // reachable THROUGH the list of them: open the picker, find New, click,
+      // and the dialog you opened to browse closes again without your having
+      // browsed anything. Two clicks and a detour for the commoner of the two
+      // things this control is used for.
+      //
+      // Only in modal mode. A panel with a rail already has its New button in
+      // the rail header, and a second one in the toolbar would be two controls
+      // doing one job.
+      actionsBar.appendChild(el('button', {
+        class: 'ui-row-btn', title: 'Start a new session',
+        onclick: function(){ closeSessionPicker(); openSession(null); },
+      }, [cfg.new_label || 'New']));
     }
     (function() {
       var groupOrder = [], groupMap = {};

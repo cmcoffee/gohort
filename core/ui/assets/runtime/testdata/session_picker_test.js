@@ -75,4 +75,21 @@ check('a forced rail state is not written to the shared preference key',
 check('both forcing layouts mark the state as forced',
   (src.match(/sideForced = true;/g) || []).length >= 2);
 
+// Starting a fresh conversation is not "a past session", and going through the
+// list of them to reach it means opening a dialog to browse, not browsing, and
+// closing it again — two clicks and a detour for the commoner of the two things
+// this control is used for.
+check('New sits beside the picker button, not inside it',
+  /class: 'ui-row-btn', title: 'Start a new session',[\s\S]{0,120}?cfg\.new_label \|\| 'New'/.test(src));
+
+// Clicking New while the picker happens to be open should leave the reader
+// looking at the new session, not at a dialog over it.
+check('New closes the picker if it is open',
+  /onclick: function\(\)\{ closeSessionPicker\(\); openSession\(null\); \}/.test(src));
+
+// A panel with a rail already has New in the rail header; two controls doing
+// one job is how a toolbar stops being readable.
+check('the pair is modal-mode only',
+  /if \(listPosModal\) \{\s*\n\s*actionsBar\.appendChild/.test(src));
+
 process.exit(fail ? 1 : 0);
