@@ -48,7 +48,7 @@ func TestCoauthorToolsRootAttachedSourcesOnTheTurn(t *testing.T) {
 	orch := &orchestrate.OrchestrateApp{AppCore: AppCore{DB: root}}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	tools := T.coauthorTools(ctx, udb, orch, "u", true)
+	tools := T.coauthorTools(coauthorScope{Ctx: ctx, UDB: udb, Orch: orch, User: "u", CanEdit: true})
 
 	var minted bool
 	for _, td := range tools {

@@ -40,19 +40,15 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 				Invalidate: []string{"guides"},
 			},
 		},
-		// LIBRARY-scoped actions only: the house-style rules the Guide Author
-		// writes under, and importing a page exported earlier. Both act on the
-		// collection rather than on whatever is open, which is what earns them a
-		// place beside the list.
+		// Import brings an exported page back in as a new document — it CREATES
+		// one, which is why it sits beside the other control that creates one
+		// rather than in the bar that acts on whatever is open.
 		//
-		// Settings used to sit here too and does not belong: it edits the OPEN
-		// document's name, privacy and sharing, which is what every control in
-		// the viewer bar does. Three text buttons plus New never fit a 200px
-		// column anyway — the last of them was clipped off the edge, in a column
-		// where only the list below scrolls.
+		// Library-scoped, so it does not grey out with nothing selected. That
+		// gating made it unclickable on an empty library, which is precisely the
+		// library you would be importing into.
 		ListActions: []ui.WorkbenchAction{
-			{Label: "Rules", Kind: "client", URL: "scribe_rules"},
-			{Label: "Import", Kind: "client", URL: "scribe_import"},
+			{Label: "Import", Kind: "client", URL: "scribe_import", Scope: "library"},
 		},
 		// Center — the rendered document (server HTML: title + ToC + sections,
 		// or title + image + body).
@@ -84,6 +80,12 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 			// of what acts on it, rather than in the list header where it read as
 			// a control over the library.
 			{Label: "Settings", Kind: "client", URL: "guides_settings"},
+			// The house style the Guide Author writes under. It is tuned while
+			// you read what the agent just produced, so it belongs where you are
+			// when that happens. Library-scoped: it is about every document, not
+			// the open one, so it stays usable with nothing selected even though
+			// it sits among controls that do not.
+			{Label: "Rules", Kind: "client", URL: "scribe_rules", Scope: "library"},
 			{Label: "Publish", Kind: "client", URL: "guides_publish"},
 			{Label: "Image", Kind: "client", URL: "scribe_image"},
 			{Label: "Sources", Kind: "client", URL: "guides_sources"},
@@ -109,7 +111,13 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 			// here and has nothing to give a list. Sessions opens the list,
 			// picking one cuts straight to it, and the column is back to being a
 			// conversation.
-			ListURL:      "chat/sessions",
+			// {scope} is the document the workbench has open, read at request
+			// time. It used to be scoped by a server-side "current" the client
+			// POSTed on selection, which is one slot per user: a second tab
+			// overwrote it, and the POST is fire-and-forget, so a list fetched
+			// just after a switch answered about the PREVIOUS document — which
+			// is a Past sessions that is sometimes right and sometimes empty.
+			ListURL:      "chat/sessions?guide={scope}",
 			LoadURL:      "chat/sessions/{id}",
 			DeleteURL:    "chat/sessions/{id}",
 			ListTitle:    "Past sessions",
@@ -125,8 +133,10 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 			// No MarkAllReadURL: these sessions carry no unread state, and the
 			// affordance only shows when something is actually unread.
 			BulkSelect: true,
-			SendURL:    "chat/send",
-			CancelURL:  "chat/cancel",
+			// Carries the open document too: the turn's tools edit THAT guide,
+			// and the session is filed under it for Past sessions to find.
+			SendURL:   "chat/send?guide={scope}",
+			CancelURL: "chat/cancel",
 			// Where a mid-flight message goes. A guide is written over a long
 			// turn — the author reads a section as it lands and thinks of one
 			// more thing — so this is the panel most likely to be typed into
@@ -640,7 +650,10 @@ const guidePublishAction = `function(ctx){
           body.appendChild(host);
           window.uiMountComponent({
             type: 'agent_loop_panel',
-            send_url: 'publish/chat/send',
+            // Names the guide being published. This panel is mounted inside a
+            // modal, not inside the workbench, so {scope} has no host to read —
+            // the id the modal was opened for is carried directly instead.
+            send_url: 'publish/chat/send?guide=' + encodeURIComponent(gid),
             cancel_url: 'chat/cancel',
             markdown: true,
             lock_activity: true,

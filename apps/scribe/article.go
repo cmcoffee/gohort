@@ -33,7 +33,7 @@ const articleModePrompt = "\n\nARTICLE MODE — the open document is an ARTICLE 
 // shared tools stay defined in one place. udb + user resolve the open document
 // exactly as the section tools do: the active marker is per-user, the document
 // may live in another owner's store when shared.
-func (T *Scribe) articleTools(udb Database, user string, guideKit []AgentToolDef) []AgentToolDef {
+func (T *Scribe) articleTools(udb Database, user, pinned string, guideKit []AgentToolDef) []AgentToolDef {
 	sectionTools := map[string]bool{
 		"add_section": true, "edit_section": true, "draft_section": true, "list_sections": true,
 		"delete_section": true, "rename_section": true, "move_section": true,
@@ -46,7 +46,7 @@ func (T *Scribe) articleTools(udb Database, user string, guideKit []AgentToolDef
 		out = append(out, t)
 	}
 	openGuide := func() (Guide, Database, string, bool) {
-		id := activeGuideID(udb)
+		id := pinnedOrActiveGuide(udb, pinned)
 		if id == "" {
 			return Guide{}, nil, "", false
 		}

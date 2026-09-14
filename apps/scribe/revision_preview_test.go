@@ -64,7 +64,9 @@ func TestGuideAuthorSessionsAreReachable(t *testing.T) {
 	// match the name and value and let gofmt put the spaces where it likes.
 	page := readSource(t, "page.go")
 	for _, want := range [][2]string{
-		{"ListURL", `"chat/sessions"`},
+		// The list carries the open document as a query param; the route behind
+		// it is still chat/sessions.
+		{"ListURL", `"chat/sessions?guide={scope}"`},
 		{"LoadURL", `"chat/sessions/{id}"`},
 		{"DeleteURL", `"chat/sessions/{id}"`},
 	} {

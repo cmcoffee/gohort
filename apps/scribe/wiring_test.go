@@ -6,6 +6,7 @@ package scribe
 
 import (
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -125,11 +126,30 @@ func TestSettingsSitsWithTheDocumentItEdits(t *testing.T) {
 	if !strings.Contains(viewer, `"Settings"`) {
 		t.Error("Settings left the list header without arriving in the viewer bar")
 	}
-	// And the library-scoped pair stays with the list, for the same reason.
-	for _, lbl := range []string{`"Rules"`, `"Import"`} {
-		if !strings.Contains(list, lbl) {
-			t.Errorf("%s acts on the library and belongs beside the list", lbl)
+	// Import CREATES a document, so it sits beside the other control that
+	// creates one rather than in the bar that acts on whatever is open.
+	if !strings.Contains(list, `"Import"`) {
+		t.Error("Import creates a document and belongs beside + New")
+	}
+}
+
+// What an action is ABOUT decides when it is usable, separately from where it
+// sits. Both bars gated everything in them on a selection, which made the two
+// actions that matter most on an empty library — import into it, set the rules
+// it is written under — the two that could not be clicked.
+func TestLibraryActionsDoNotFollowTheSelection(t *testing.T) {
+	page := read(t, "page.go")
+	for _, lbl := range []string{"Rules", "Import"} {
+		re := regexp.MustCompile(`\{Label: "` + lbl + `"[^}]*Scope: "library"`)
+		if !re.MatchString(page) {
+			t.Errorf("%s is about the library, so it must be library-scoped or it greys out with nothing selected", lbl)
 		}
+	}
+	// Rules moved to the viewer bar and must still not be gated there — the
+	// whole point of the scope is that placement and gating are separate.
+	viewer := between(t, page, "ViewerActions: []ui.WorkbenchAction{", "\n\t\t},")
+	if !strings.Contains(viewer, `"Rules"`) {
+		t.Error("Rules is tuned while reading what the agent wrote; it belongs in the viewer bar")
 	}
 }
 
@@ -145,4 +165,64 @@ func between(t *testing.T, s, start, end string) string {
 		t.Fatalf("could not find %q after %q", end, start)
 	}
 	return rest[:j]
+}
+
+// Which document a turn is about comes from the REQUEST, on every path that has
+// one. The stored marker is one slot per user, written fire-and-forget when a
+// document is opened, so a send that beats that write edits — and files its
+// session under — the document the author just left.
+func TestTheOpenDocumentTravelsWithTheRequest(t *testing.T) {
+	page := read(t, "page.go")
+	for _, want := range []string{`"chat/sessions?guide={scope}"`, `"chat/send?guide={scope}"`} {
+		if !strings.Contains(page, want) {
+			t.Errorf("%s must carry the open document; without it the server falls back to a remembered one", want)
+		}
+	}
+	web := read(t, "web.go")
+	// The send path resolves ONCE and uses that answer for the tools and for
+	// the session stamp — two reads could disagree with each other.
+	if strings.Count(web, "guideID := requestGuideID(r, udb)") != 1 {
+		t.Error("handleChatSend should resolve the open document exactly once per turn")
+	}
+	if !strings.Contains(web, "stampAppContext(r, guideID)") {
+		t.Error("the session is still filed under the remembered document, so Past sessions can be right and still show the wrong thing")
+	}
+	// And no request-driven path may reach past it to the marker directly.
+	for _, stale := range []string{
+		"T.resolve(r, udb, user, activeGuideID(udb))",
+		"stampAppContext(r, activeGuideID(udb))",
+		"PublicHandleSessionListFor(w, r, agent.ID, activeGuideID(udb))",
+	} {
+		if strings.Contains(web, stale) {
+			t.Errorf("a request-driven path reads the stored marker directly: %s", stale)
+		}
+	}
+}
+
+// The Publisher's send is the other send path, and the one with the worst
+// failure: it pushes a document into a team wiki under the deployment's
+// branding, so a stale answer publishes the WRONG document to a real place for
+// other people. Its panel is mounted in a modal rather than in the workbench,
+// so it carries the id directly rather than through {scope}.
+func TestThePublisherIsToldWhichDocument(t *testing.T) {
+	page := read(t, "page.go")
+	if !strings.Contains(page, "'publish/chat/send?guide=' + encodeURIComponent(gid)") {
+		t.Error("the Publisher's send names no document, so it falls back to whichever one the server remembers")
+	}
+	pub := read(t, "publish.go")
+	if strings.Contains(pub, "id := activeGuideID(udb)") {
+		t.Error("openPublishDocument reads the remembered document rather than the one the request names")
+	}
+	if !strings.Contains(pub, "id := requestGuideID(r, udb)") {
+		t.Error("openPublishDocument should resolve through requestGuideID")
+	}
+}
+
+// Background work legitimately uses the marker — it set the marker itself and
+// has no request to read. The empty Guide is that case, said out loud.
+func TestBackgroundToolBuildsFallBackToTheMarker(t *testing.T) {
+	cur := read(t, "curator.go")
+	if !strings.Contains(cur, "coauthorScope{Ctx: ctx, UDB: udb, Orch: orch, User: user, CanEdit: true}") {
+		t.Error("the curator's tool build should pin no guide — it runs against the marker it set")
+	}
 }

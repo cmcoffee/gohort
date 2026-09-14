@@ -47,7 +47,10 @@ func publishDoc(g Guide) docs.PublishDoc {
 // into a team wiki under their deployment's branding is a bigger act than
 // reading it, so a view-only reader of a shared guide can't do it.
 func (T *Scribe) openPublishDocument(r *http.Request, udb Database, user string) (publish.Document, bool) {
-	id := activeGuideID(udb)
+	// From the request. The Publisher pushes a document into a team wiki under
+	// the deployment's branding, so a stale answer here does not show the wrong
+	// list — it publishes the wrong document, to a real place, for other people.
+	id := requestGuideID(r, udb)
 	if id == "" {
 		return publish.Document{}, false
 	}

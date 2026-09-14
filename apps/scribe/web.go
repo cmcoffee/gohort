@@ -1137,6 +1137,28 @@ func (T *Scribe) handleSetActive(w http.ResponseWriter, r *http.Request, udb Dat
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// pinnedOrActiveGuide answers WHICH document a piece of work is about.
+//
+// A pinned id wins: it came from the request that is happening now. The stored
+// marker is the fallback, and is correct only where nothing else can say — a
+// background run that set the marker itself. It is one slot per user, written
+// by the page fire-and-forget when a document is opened, so for anything driven
+// by a request it can be a document ago: a second tab overwrites it, and a send
+// that arrives before the write lands is about the document you just left.
+func pinnedOrActiveGuide(udb Database, pinned string) string {
+	if id := strings.TrimSpace(pinned); id != "" {
+		return id
+	}
+	return activeGuideID(udb)
+}
+
+// requestGuideID is pinnedOrActiveGuide for an HTTP request: the page names the
+// open document on the URL (?guide=, from the {scope} token), and the stored
+// marker covers a caller that names none.
+func requestGuideID(r *http.Request, udb Database) string {
+	return pinnedOrActiveGuide(udb, r.URL.Query().Get("guide"))
+}
+
 func activeGuideID(udb Database) string {
 	var id string
 	udb.Get(activeTable, "current", &id)
@@ -1179,15 +1201,23 @@ func (T *Scribe) handleChatSend(w http.ResponseWriter, r *http.Request, udb Data
 	// sit closest to the conversation and weigh heaviest.
 	agent.OrchestratorPrompt += DocRulesSection(udb, rulesNamespace)
 
+	// One answer for the whole turn: which document this send is about. Read
+	// from the request rather than the stored marker, so a send that arrives
+	// right after a switch edits — and is filed under — the document the author
+	// is actually looking at.
+	guideID := requestGuideID(r, udb)
+
 	var tools []AgentToolDef
-	if g, _, _, canEdit, found := T.resolve(r, udb, user, activeGuideID(udb)); found {
+	if g, _, _, canEdit, found := T.resolve(r, udb, user, guideID); found {
 		agent.DispatchMode, agent.AllowedDispatchTargets = guideDispatchPolicy(g)
-		all := T.coauthorTools(r.Context(), udb, orch, user, canEdit)
+		all := T.coauthorTools(coauthorScope{
+			Ctx: r.Context(), UDB: udb, Orch: orch, User: user, CanEdit: canEdit, Guide: guideID,
+		})
 		if g.isArticle() {
 			// An article is one body: the section kit makes no sense over it.
 			// Swap in the article kit and tell the agent how articles are
 			// written here (the house conventions TechWriter's users relied on).
-			all = T.articleTools(udb, user, all)
+			all = T.articleTools(udb, user, guideID, all)
 			agent.OrchestratorPrompt += articleModePrompt
 		}
 		if canEdit {
@@ -1211,7 +1241,11 @@ func (T *Scribe) handleChatSend(w http.ResponseWriter, r *http.Request, udb Data
 			tools = FilterToolsByCaps(tools, []Capability{CapRead, CapWrite})
 		}
 	}
-	stampAppContext(r, activeGuideID(udb))
+	// The stamp files the session under the document it is about, which is what
+	// the Past sessions list reads back. Latched, it filed a conversation under
+	// the previous document — so the list could be correct and still show the
+	// wrong thing.
+	stampAppContext(r, guideID)
 	orch.PublicHandleSendWithAppTools(w, r, agent, tools)
 }
 
@@ -1383,7 +1417,13 @@ func (T *Scribe) dispatchChat(w http.ResponseWriter, r *http.Request, kind, sid 
 		// ever had with the Guide Author is close to useless once the app has
 		// been used for a while: the sessions about THIS document are buried
 		// under the ones about the others.
-		orch.PublicHandleSessionListFor(w, r, agent.ID, activeGuideID(udb))
+		//
+		// The id comes from the REQUEST. It used to come from the stored
+		// "current" guide, which the page POSTs on selection — one slot per
+		// user, written fire-and-forget, so the list could be fetched before
+		// the write landed and answer about the document you just left. The
+		// stored value stays as the fallback for a caller that sends nothing.
+		orch.PublicHandleSessionListFor(w, r, agent.ID, requestGuideID(r, udb))
 	case "session-one":
 		orch.PublicHandleSessionOne(w, r, agent.ID, sid)
 	default:
