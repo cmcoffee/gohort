@@ -1015,7 +1015,28 @@ select:-webkit-autofill {
 .ui-wb-edit-actions { display: flex; align-items: center; gap: 0.5rem; flex: 0 0 auto; }
 .ui-wb-edit-status { color: var(--text-mute); font-size: 0.85rem; }
 .ui-wb-edit-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
-.ui-wb-working-actions { text-align: right; }
+.ui-wb-working-actions { text-align: right; display: flex; gap: 0.4rem; justify-content: flex-end; }
+
+/* Compose chooser — how a toolbar macro asks what the user wants before it
+ * sends. Rows are tap-sized because this is reachable on a phone, where the
+ * modal is the whole screen. */
+.ui-wb-compose-opts { display: flex; flex-direction: column; gap: 0.2rem; }
+.ui-wb-compose-opt {
+  display: flex; align-items: flex-start; gap: 0.55rem;
+  padding: 0.6rem 0.5rem; border: 1px solid transparent; border-radius: 6px;
+  cursor: pointer; min-height: var(--tap);
+}
+.ui-wb-compose-opt:hover { background: var(--bg-2, rgba(127,127,127,0.12)); }
+.ui-wb-compose-opt input { margin-top: 0.15rem; flex: 0 0 auto; }
+.ui-wb-compose-opt-t { font-weight: 600; }
+.ui-wb-compose-opt-h { font-size: 0.8rem; color: var(--text-mute, #999); margin-top: 0.1rem; }
+.ui-wb-compose-box {
+  width: 100%; margin-top: 0.5rem; padding: 0.5rem;
+  font: inherit; color: var(--text, inherit);
+  background: var(--bg-0, transparent);
+  border: 1px solid var(--border, rgba(127,127,127,0.35)); border-radius: 6px;
+  resize: vertical; box-sizing: border-box;
+}
 
 /* --- Footer --- */
 .ui-footer { margin-top: 1rem; text-align: center; }

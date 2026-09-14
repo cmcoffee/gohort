@@ -99,16 +99,29 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 			// list_sections and move_section, so it can do the same work in the
 			// conversation, where the instruction is visible and amendable.
 			//
-			// The text below is the old system prompt's rules said as a request.
-			// One Enter is the behavior this button always had; everything else
-			// ("only the setup section", "reverse it, it reads backwards") is
-			// the behavior it never had.
+			// The first option's text is the old system prompt's rules said as a
+			// request, so one click is the behavior this button always had. The
+			// second is the behavior it never had ("move troubleshooting up
+			// front"), and it costs one more click rather than taxing every use.
+			//
+			// It SENDS. Seeding the composer and stopping was tried first and got
+			// the common case backwards: it made the reader confirm the default
+			// every single time to buy an edit they rarely want.
 			//
 			// No {id}: the chat already carries the open document (SendURL's
 			// guide={scope}), so "this guide" resolves server-side.
-			{Label: "Reorganize", Kind: "compose", Compose: "Reorganize this guide into the clearest reading order for someone new to the topic: " +
-				"overview and prerequisites first, then setup and steps in sequence, then advanced and reference material, " +
-				"with troubleshooting or FAQ last. Only change the order; don't rewrite any section's content."},
+			{Label: "Reorganize", Kind: "compose", ComposeTitle: "Reorganize this document", ComposeOptions: []ui.ComposeOption{
+				{Label: "Into the clearest reading order", Help: "Overview and prerequisites first, steps in sequence, reference and troubleshooting last.",
+					Text: "Reorganize this guide into the clearest reading order for someone new to the topic: " +
+						"overview and prerequisites first, then setup and steps in sequence, then advanced and reference material, " +
+						"with troubleshooting or FAQ last. Only change the order; don't rewrite any section's content."},
+				{Label: "Something else", Input: true, Placeholder: "e.g. move troubleshooting up front — that's what people open this for",
+					Help: "Say how you want it ordered.",
+					// Seeded with the rule the default enforces, so the common
+					// edit ("…but keep X first") is a change to one clause rather
+					// than a blank page.
+					Text: "Reorganize this guide. Only change the order; don't rewrite any section's content. "},
+			}},
 			// Same conversion, and a safer one than it looks. This already
 			// dispatched the Guide Author with the co-author kit — the agent the
 			// chat column runs — just in an isolated guide-update session the
@@ -125,12 +138,22 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 			// thread's context instead of starting fresh. Usually an improvement
 			// (the author has just been discussing the guide); start a new
 			// session when it isn't.
-			{Label: "Update from sources", Kind: "compose", Compose: "Update this guide so its sections reflect its LINKED SOURCES — the attached knowledge collections and reference sources — as they stand right now.\n\n" +
-				"1. Call list_sections to see the current structure.\n" +
-				"2. For the guide's subject and each section, use search_knowledge and pull_reference to gather what the linked sources CURRENTLY say.\n" +
-				"3. Where a section is outdated or contradicted by the sources, call edit_section to revise it — grounded strictly in the sources, carrying any citations. Where the sources cover something important the guide is missing, add_section for it.\n" +
-				"4. Leave sections that already match their sources unchanged — don't rewrite for the sake of it. Work ONLY from the guide's linked sources here; do not use web research.\n\n" +
-				"When done, reply with a short bulleted summary of exactly which sections you changed or added and why. If nothing needed changing, say so plainly."},
+			//
+			// The second option is the one this button could never do at all: the
+			// old endpoint swept every section or nothing, and "only the Install
+			// section" meant not using it.
+			{Label: "Update from sources", Kind: "compose", ComposeTitle: "Update from linked sources", ComposeOptions: []ui.ComposeOption{
+				{Label: "Every section", Help: "Check each section against the linked sources and revise what has drifted.",
+					Text: "Update this guide so its sections reflect its LINKED SOURCES — the attached knowledge collections and reference sources — as they stand right now.\n\n" +
+						"1. Call list_sections to see the current structure.\n" +
+						"2. For the guide's subject and each section, use search_knowledge and pull_reference to gather what the linked sources CURRENTLY say.\n" +
+						"3. Where a section is outdated or contradicted by the sources, call edit_section to revise it — grounded strictly in the sources, carrying any citations. Where the sources cover something important the guide is missing, add_section for it.\n" +
+						"4. Leave sections that already match their sources unchanged — don't rewrite for the sake of it. Work ONLY from the guide's linked sources here; do not use web research.\n\n" +
+						"When done, reply with a short bulleted summary of exactly which sections you changed or added and why. If nothing needed changing, say so plainly."},
+				{Label: "Something else", Input: true, Placeholder: "e.g. only the Install section — the rest is still right",
+					Help: "Say which sections, or what to look for.",
+					Text: "Update this guide from its LINKED SOURCES only — the attached knowledge collections and reference sources, not web research. Use search_knowledge and pull_reference to check, and edit_section to revise. "},
+			}},
 		},
 		// The agent writes sections via its tools; re-render the open guide when a
 		// chat round finishes.

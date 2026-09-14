@@ -151,12 +151,47 @@ type WorkbenchAction struct {
 	// is no composer to seed and the button reports that rather than failing
 	// quietly.
 	Compose string `json:"compose,omitempty"`
+	// ComposeOptions turn a compose action into a short CHOOSER: a modal listing
+	// the ways this control is usually used, and a send.
+	//
+	// It exists because seeding alone got the common case wrong. The default is
+	// what the user wants nearly every time, and making them read it and press
+	// Enter taxes every single use to buy an edit they rarely need. A chooser
+	// pays the opposite way round: the default is one click, and the escape
+	// hatch — an option with Input set — is right there for the time they want
+	// something else, which is more discoverable than a pre-filled box they have
+	// to notice is editable.
+	//
+	// The chosen text is sent, not left sitting in the composer. Asking someone
+	// what they want and then making them confirm the same intent again is the
+	// friction this replaces, not a safety step.
+	//
+	// Empty = seed the composer with Compose and stop, which is right for a
+	// control with exactly one sensible instruction and nothing to choose
+	// between.
+	ComposeOptions []ComposeOption `json:"compose_options,omitempty"`
+	// ComposeTitle heads the chooser. Defaults to the action's Label.
+	ComposeTitle string `json:"compose_title,omitempty"`
 	// Children, when Kind == "menu", are the sub-actions shown in a dropdown when
 	// the button is clicked — e.g. an "Export" button grouping HTML / PDF /
 	// Markdown downloads so related actions don't crowd the toolbar. Each child is
 	// a normal WorkbenchAction dispatched by its own Kind (download / client /
 	// report / …). Ignored for non-menu kinds.
 	Children []WorkbenchAction `json:"children,omitempty"`
+}
+
+// ComposeOption is one row in a compose action's chooser.
+//
+// Text is the message that option sends. Input makes the row a free-text one
+// instead: the user types the message, with Text as the starting value, so
+// "like the default but…" costs an edit rather than a retype. An Input row with
+// no Text is an empty box — the plain "something else" escape.
+type ComposeOption struct {
+	Label       string `json:"label"`
+	Help        string `json:"help,omitempty"` // one line under the label
+	Text        string `json:"text,omitempty"`
+	Input       bool   `json:"input,omitempty"`
+	Placeholder string `json:"placeholder,omitempty"`
 }
 
 func (WorkbenchPanel) componentType() string { return "workbench_panel" }

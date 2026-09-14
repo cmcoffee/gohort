@@ -1956,9 +1956,11 @@
     // it first. It also teaches, because the user SEES what the button was
     // going to say.
     //
-    // Does not send. A macro the user can't stop is the thing being replaced,
-    // and "filled in but unsent" is a state they can walk away from — which is
-    // the point, not an oversight.
+    // opts.send dispatches it immediately. Left to the CALLER because the two
+    // cases are genuinely different: a control that already asked the user what
+    // they wanted has no reason to make them confirm the same intent twice,
+    // while one that seeded a default unprompted should let them look at it
+    // first. Seeding without sending is the default, so a caller has to mean it.
     //
     // opts.append keeps what is already typed and adds to it, for a second
     // control pressed on top of a half-written message. Default replaces,
@@ -2000,6 +2002,9 @@
       // default the user is meant to amend.
       var end = inputArea.value.length;
       try { inputArea.setSelectionRange(end, end); } catch (_) {}
+      // After the cursor work, so a send that fails visibly leaves the composer
+      // in the state the user would want to retry from.
+      if (opts.send) sendMessage();
       return true;
     };
 

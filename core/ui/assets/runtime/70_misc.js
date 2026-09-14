@@ -325,6 +325,85 @@
       }
       doViewerAction(a, btn);
     }
+    // openComposeChooser asks how the user wants this done, then sends it.
+    //
+    // The shape is deliberately small: a list of ways this control gets used,
+    // the first one preselected, and a Send. One click for the usual case, one
+    // more for the unusual one. A free-text row (option.input) reveals a box
+    // seeded with that option's text, so "like the default but…" is an edit
+    // rather than a retype — and it is visibly there, which a pre-filled
+    // composer never manages to say about itself.
+    //
+    // core/ui knows nothing about what any option MEANS; the app declares the
+    // rows and the text each one sends.
+    function openComposeChooser(a, fill) {
+      var opts = a.compose_options || [];
+      var picked = 0;
+      var rows = [], box = null;
+      function syncBox() {
+        var o = opts[picked] || {};
+        if (!box) return;
+        box.style.display = o.input ? '' : 'none';
+        if (o.input) {
+          box.placeholder = o.placeholder || 'Describe what you want…';
+          // Seed once per selection rather than on every keystroke, or an edit
+          // would be wiped by the radio it belongs to.
+          if (box.dataset.seededFor !== String(picked)) {
+            box.value = fill(o.text) || '';
+            box.dataset.seededFor = String(picked);
+          }
+        }
+      }
+      window.uiOpenSimpleModal({
+        title: a.compose_title || a.label || 'Choose',
+        width: '460px',
+        mount: function(body, dlg) {
+          var list = el('div', {class: 'ui-wb-compose-opts'});
+          opts.forEach(function(o, i) {
+            var radio = el('input', {type: 'radio', name: 'ui-compose-opt', value: String(i)});
+            if (i === 0) radio.checked = true;
+            radio.addEventListener('change', function() {
+              if (!radio.checked) return;
+              picked = i;
+              syncBox();
+              if ((opts[picked] || {}).input && box) box.focus();
+            });
+            var label = el('label', {class: 'ui-wb-compose-opt'}, [
+              radio,
+              el('div', {}, [
+                el('div', {class: 'ui-wb-compose-opt-t', text: o.label || ('Option ' + (i + 1))}),
+                o.help ? el('div', {class: 'ui-wb-compose-opt-h', text: o.help}) : el('span', {}),
+              ]),
+            ]);
+            rows.push(radio);
+            list.appendChild(label);
+          });
+          body.appendChild(list);
+          box = el('textarea', {class: 'ui-wb-compose-box', rows: '4', style: 'display:none'});
+          // Enter sends, matching the composer this feeds. Shift+Enter is a
+          // newline, for the same reason it is there.
+          box.addEventListener('keydown', function(ev) {
+            if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); go(); }
+          });
+          body.appendChild(box);
+          syncBox();
+          function go() {
+            var o = opts[picked] || {};
+            var msg = o.input ? (box.value || '').trim() : fill(o.text);
+            if (!msg) { box.focus(); return; }
+            try { dlg.close(); dlg.remove(); } catch (e) {}
+            window.uiComposeMessage(msg, {send: true});
+          }
+          var send = el('button', {class: 'ui-wb-action-btn', text: a.label || 'Send'});
+          send.addEventListener('click', go);
+          var cancel = el('button', {class: 'ui-row-btn', text: 'Cancel', onclick: function() {
+            try { dlg.close(); dlg.remove(); } catch (e) {}
+          }});
+          body.appendChild(el('div', {class: 'ui-wb-working-actions'}, [cancel, send]));
+        },
+      });
+    }
+
     function doViewerAction(a, btn) {
       var url = (a.url || '').replace('{id}', encodeURIComponent(selectedId));
       if (a.kind === 'client') {
@@ -349,12 +428,19 @@
       // workbench with no chat column has no composer, and saying so is better
       // than a button that looks like it worked.
       if (a.kind === 'compose') {
-        var msg = (a.compose || '').replace('{id}', selectedId || '');
         if (typeof window.uiComposeMessage !== 'function') {
           showToast('No conversation on this page to write into.');
           return;
         }
-        if (!window.uiComposeMessage(msg)) showToast('Nothing to compose for: ' + a.label);
+        var fill = function(t) { return (t || '').replace('{id}', selectedId || ''); };
+        // With options declared this is a chooser: pick how you want it done and
+        // it goes. Without them it seeds the composer and stops — right when
+        // there is exactly one sensible instruction and nothing to choose.
+        if (a.compose_options && a.compose_options.length) {
+          openComposeChooser(a, fill);
+          return;
+        }
+        if (!window.uiComposeMessage(fill(a.compose))) showToast('Nothing to compose for: ' + a.label);
         return;
       }
       if (a.kind === 'report') {

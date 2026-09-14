@@ -18,11 +18,18 @@ function check(label, cond) {
 check('the panel publishes the seam',
   /window\.uiComposeMessage = function\(text, opts\)/.test(panel));
 
-// The whole difference from a "report" action. If this ever calls sendMessage,
-// the feature is gone and the button is a macro again.
 var seam = panel.slice(panel.indexOf('window.uiComposeMessage'), panel.indexOf('uiRegisterMessageReplayHook'));
-check('seeding does not send',
-  seam.indexOf('sendMessage(') === -1);
+
+// Sending is the CALLER's call. A chooser already asked what the user wanted
+// and has no business asking twice; a control that seeded a default unprompted
+// should let them look at it first.
+check('seeding does not send by default',
+  /if \(opts\.send\) sendMessage\(\);/.test(seam));
+
+// After the cursor work, so a send that fails visibly leaves the composer in
+// the state the user would retry from.
+check('the send comes last',
+  seam.indexOf('setSelectionRange(end, end)') < seam.indexOf('if (opts.send)'));
 
 check('the composer is focused and grown like a paste',
   /inputArea\.dispatchEvent\(new Event\('input'\)\);/.test(seam) && /inputArea\.focus\(\);/.test(seam));
@@ -46,7 +53,13 @@ check('a page with no conversation says so',
 // {id} goes into prose here, not a query string — encodeURIComponent would put
 // %20 in the middle of a sentence.
 check('the id is substituted raw, not URL-encoded',
-  /a\.compose \|\| ''\)\.replace\('\{id\}', selectedId \|\| ''\)/.test(wb));
+  /var fill = function\(t\) \{ return \(t \|\| ''\)\.replace\('\{id\}', selectedId \|\| ''\); \};/.test(wb));
+
+// Every text that reaches the composer goes through the same substitution —
+// the default option, a free-text row's seed, and the no-options path alike.
+check('option text is substituted too',
+  /msg = o\.input \? \(box\.value \|\| ''\)\.trim\(\) : fill\(o\.text\)/.test(wb) &&
+  /box\.value = fill\(o\.text\) \|\| '';/.test(wb));
 
 // --- a report's apply step ---------------------------------------------
 //
@@ -81,5 +94,36 @@ check('the marker is built in exactly one place',
 
 check('the paste handler uses the shared builder',
   /var marker = makePasteMarker\(text\);/.test(panel));
+
+// --- the chooser --------------------------------------------------------
+//
+// Seeding alone taxed every use of a macro to buy an edit that is wanted
+// rarely. With options the default is one click and the escape hatch is a
+// visible row rather than a pre-filled box you have to notice is editable.
+
+check('options turn the action into a chooser',
+  /if \(a\.compose_options && a\.compose_options\.length\) \{/.test(wb));
+
+check('no options still seeds and stops',
+  /if \(!window\.uiComposeMessage\(fill\(a\.compose\)\)\)/.test(wb));
+
+check('the chosen option is sent, not parked in the composer',
+  /window\.uiComposeMessage\(msg, \{send: true\}\)/.test(wb));
+
+// A free-text row seeded from its own text: "like the default but…" should be
+// an edit, not a retype.
+check('a free-text row is seeded once per selection',
+  /if \(box\.dataset\.seededFor !== String\(picked\)\)/.test(wb));
+
+// Re-seeding on every sync would wipe what the user just typed.
+check('re-selecting the same row does not wipe the edit',
+  /box\.dataset\.seededFor = String\(picked\);/.test(wb));
+
+check('Enter sends, matching the composer it feeds',
+  /if \(ev\.key === 'Enter' && !ev\.shiftKey\) \{ ev\.preventDefault\(\); go\(\); \}/.test(wb));
+
+// An empty free-text box is a mistake, not an instruction.
+check('an empty box does not send',
+  /if \(!msg\) \{ box\.focus\(\); return; \}/.test(wb));
 
 process.exit(fail ? 1 : 0);
