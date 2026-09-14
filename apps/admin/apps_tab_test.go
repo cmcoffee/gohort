@@ -2,6 +2,9 @@ package admin
 
 import (
 	"net/http"
+	"net/http/httptest"
+	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -174,3 +177,143 @@ func (f fakeWebApp) Desc() string                                     { return "
 func (f fakeWebApp) SystemPrompt() string                             { return "" }
 func (f fakeWebApp) Init() error                                      { return nil }
 func (f fakeWebApp) Main() error                                      { return nil }
+
+// Every URL a section declares has to be one this app actually serves.
+//
+// The Apps tab shipped sections whose source nothing could answer, and the
+// reason it survived is that nothing checked: the declaration and the route are
+// written in different files, by hand, and a section with a dead source looks
+// exactly like a working one until it is opened. This walks the section
+// builders, collects every URL they name, and asks the app's own mux whether it
+// would route each one — so a new section with a typo'd or unregistered source
+// fails here rather than in front of an administrator.
+//
+// The mux is the source of truth on purpose. Comparing against a hand-kept list
+// of routes would just be the same duplication one level down.
+func TestEveryAdminSectionSourceIsRoutable(t *testing.T) {
+	// Its own app, not the one another test registers. Depending on a sibling
+	// test to populate the registry means `go test -run` on this test alone
+	// builds zero per-app sections and the check passes having examined
+	// nothing — which it did, silently, on the first attempt.
+	RegisterApp(fakeWebApp{path: "/routabilitytest"})
+	a := &AdminApp{}
+	mux := http.NewServeMux()
+	a.RegisterRoutes(mux, "/admin")
+
+	var secs []ui.Section
+	secs = append(secs, a.appsTabSections()...)
+	secs = append(secs, a.extensionsSections()...)
+	secs = append(secs, a.skillsSections()...)
+	secs = append(secs, a.capabilitiesSections()...)
+	secs = append(secs, a.governanceSections()...)
+	secs = append(secs, a.costSections()...)
+	secs = append(secs, a.credentialsSections()...)
+	secs = append(secs, a.sourceHooksSections()...)
+	secs = append(secs, peerSharingSections()...)
+	secs = append(secs, buildTunableSections()...)
+	if len(secs) == 0 {
+		t.Fatal("no sections built — this test would pass vacuously")
+	}
+
+	checked := 0
+	for _, sec := range secs {
+		for _, raw := range sectionURLs(sec) {
+			// A templated segment stands for a row id; any non-empty value
+			// routes the same way, so substitute something harmless.
+			u := templateRe.ReplaceAllString(raw, "x")
+			if i := strings.IndexByte(u, '?'); i >= 0 {
+				u = u[:i]
+			}
+			if u == "" || strings.HasPrefix(u, "http") || strings.HasPrefix(u, "/") {
+				continue // absolute or cross-app; not this mux's to answer
+			}
+			// Issue the request rather than asking the mux to match it. The
+			// app mounts a catch-all at its root, so EVERY path under /admin/
+			// "matches" a pattern and a lookup-only check passes on a typo —
+			// which is how the first version of this test passed against a
+			// deliberately broken source.
+			//
+			// What separates a real route from a dead one is the answer: the
+			// catch-all 404s anything it does not recognise, while a registered
+			// handler reaches its admin gate and refuses (401/403/redirect).
+			// Anything that is not a 404 means something is there to answer.
+			req := httptest.NewRequest("GET", "/admin/"+u, nil)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code == http.StatusNotFound {
+				t.Errorf("section %q declares %q, which this app does not route — it renders a 404",
+					sec.Title, raw)
+			}
+			checked++
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no section URLs found — the extractor below has drifted from the ui types")
+	}
+	t.Logf("checked %d declared section URLs across %d sections", checked, len(secs))
+}
+
+var templateRe = regexp.MustCompile(`\{[^}]*\}`)
+
+// sectionURLs pulls every URL a section names, whatever shape its body is.
+//
+// Reflection rather than a type switch per ui body type: this test exists to
+// catch a section nobody thought about, and a type switch only sees the bodies
+// somebody remembered to add. Any string field whose name ends in URL, or is
+// Source/PostTo, counts — the same convention core/ui already uses.
+func sectionURLs(sec ui.Section) []string {
+	var out []string
+	var walk func(v reflect.Value)
+	seen := map[uintptr]bool{}
+	walk = func(v reflect.Value) {
+		switch v.Kind() {
+		case reflect.Ptr, reflect.Interface:
+			if v.IsNil() {
+				return
+			}
+			if v.Kind() == reflect.Ptr {
+				if seen[v.Pointer()] {
+					return
+				}
+				seen[v.Pointer()] = true
+			}
+			walk(v.Elem())
+		case reflect.Slice, reflect.Array:
+			for i := 0; i < v.Len(); i++ {
+				walk(v.Index(i))
+			}
+		case reflect.Struct:
+			// A control with Method/Kind "client" names a BROWSER handler, not a
+			// path — core/ui dispatches it to uiRegisterClientAction. Its URL
+			// field holds an action name that no mux will ever route, and
+			// treating it as a path reports fifteen working buttons as broken.
+			client := false
+			for i := 0; i < v.NumField(); i++ {
+				if n := v.Type().Field(i).Name; n == "Method" || n == "Kind" {
+					if f := v.Field(i); f.Kind() == reflect.String && f.String() == "client" {
+						client = true
+					}
+				}
+			}
+			for i := 0; i < v.NumField(); i++ {
+				f := v.Type().Field(i)
+				if f.PkgPath != "" {
+					continue // unexported
+				}
+				fv := v.Field(i)
+				if fv.Kind() == reflect.String {
+					n := f.Name
+					if !client && (strings.HasSuffix(n, "URL") || n == "Source" || n == "PostTo") {
+						if s := fv.String(); s != "" {
+							out = append(out, s)
+						}
+					}
+					continue
+				}
+				walk(fv)
+			}
+		}
+	}
+	walk(reflect.ValueOf(sec))
+	return out
+}
