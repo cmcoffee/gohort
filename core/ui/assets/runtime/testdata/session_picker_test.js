@@ -47,4 +47,32 @@ check('the grid is forced to one column',
 check('the handle is cleared on close, so the button works twice',
   /sessionModal\.close = function\(\) \{ closed\(\); sessionModal = null; \};/.test(src));
 
+// The rail is MOUNTED IN THE DIALOG, so every control in its header is on
+// screen there. Two of them steer a rail column that a modal panel does not
+// have, and neither is hidden by the stylesheet at phone width — the collapse
+// hamburger has no mobile rule at all, and the × is mobile-ONLY.
+check('no collapse hamburger — there is no rail column to collapse',
+  /var collapseBtn = listPosModal \? null :/.test(src));
+
+check('the header survives having no left extras',
+  /var leftExtras = collapseBtn \? \[collapseBtn\] : \[\];/.test(src));
+
+check('the mobile × closes the picker, not a drawer that was never mounted',
+  /if \(listPosModal\) closeSessionPicker\(\); else closeDrawer\(\);/.test(src));
+
+// The header is built long before the picker; deciding this at the top is what
+// lets all three places agree.
+check('the mode is resolved before the rail header is built',
+  src.indexOf("var listPosModal = hasList && cfg.list_position === 'modal';") <
+  src.indexOf("side = el('div', {class: 'ui-chat-side'});"));
+
+// A layout-forced rail state is not a user preference, and agent.sideCollapsed
+// is one key shared by every agent-loop panel on the origin — so a modal panel
+// forcing collapsed was teaching all of them to start collapsed.
+check('a forced rail state is not written to the shared preference key',
+  /if \(sideForced\) return;\s*\n\s*try \{ localStorage\.setItem\('agent\.sideCollapsed'/.test(src));
+
+check('both forcing layouts mark the state as forced',
+  (src.match(/sideForced = true;/g) || []).length >= 2);
+
 process.exit(fail ? 1 : 0);

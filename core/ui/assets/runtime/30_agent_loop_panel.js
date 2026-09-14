@@ -8,6 +8,14 @@
     // delete URLs get a single-column panel (no sidebar).
     var hasList = !!(cfg.list_url && cfg.load_url && cfg.delete_url);
 
+    // Whether the list lives in a modal instead of a rail column. Resolved with
+    // hasList, at the top, because three things built far apart all have to
+    // agree about it: the rail HEADER (built first, and it must not offer to
+    // collapse a column that does not exist), the expand tab, and the picker
+    // itself. Each of those used to decide for itself, and the header never
+    // got the message.
+    var listPosModal = hasList && cfg.list_position === 'modal';
+
     // renderDetailValue draws one JSON value for a show_result modal, generically:
     // an object as labelled fields, an array of objects as one sub-card each,
     // a long or multi-line string as preformatted text, anything else inline.
@@ -176,7 +184,17 @@
       side = el('div', {class: 'ui-chat-side'});
       // Collapse button — desktop. Hamburger icon sits next to
       // the New button. Mobile uses the drawer mechanism (×).
-      var collapseBtn = el('button', {
+      //
+      // Withheld from a modal-position panel. There, this same rail is mounted
+      // inside the picker dialog, and "Hide Past sessions" is an offer to
+      // collapse a rail COLUMN the layout does not have: the click toggled
+      // .side-collapsed on a wrap that is already permanently collapsed, so it
+      // did nothing, and the button sat in the dialog header looking like a
+      // strip of a second, stuck rail. Worse on a phone, where the only rule
+      // that has ever hidden this control is desktop-only (min-width: 901px,
+      // and scoped to list-top at that), so it showed at full prominence in a
+      // dialog that is the whole screen.
+      var collapseBtn = listPosModal ? null : el('button', {
         class: 'ui-agent-collapse',
         title: 'Hide ' + (cfg.list_title || 'list'),
         onclick: function(){ toggleSideCollapse(); },
@@ -186,7 +204,7 @@
       // header reads just "⋯ · + New". The menu is built whenever at least one
       // secondary action exists; each app opts into its members (mark_all_read_url
       // / bulk_select).
-      var leftExtras = [collapseBtn];
+      var leftExtras = collapseBtn ? [collapseBtn] : [];
       var moreMenu = el('div', {class: 'ui-side-menu', style: 'display:none'});
       var moreAnchor = null; // set below, once the toggle exists
       function closeMoreMenu() { if (moreAnchor) moreAnchor.close(); else moreMenu.style.display = 'none'; }
@@ -243,7 +261,14 @@
         className: 'ui-chat-side-h',
         newTitle: cfg.new_label || 'New',
         onNew:    function(){ openSession(null); },
-        onClose:  function(){ closeDrawer(); },
+        // The × is a mobile-only control (.ui-chat-side-close is display:none
+        // above the breakpoint), and what it should dismiss depends on where
+        // this rail is mounted. In a modal-position panel it is inside the
+        // picker dialog, where closeDrawer() has nothing to act on — the
+        // backdrop is never appended in that mode — so it read as a second
+        // dead control beside the collapse hamburger. Close what the reader is
+        // actually looking at.
+        onClose:  function(){ if (listPosModal) closeSessionPicker(); else closeDrawer(); },
         // Alternate new-session modes (cfg.new_variants) — each opens a
         // fresh session and arms its extras onto the FIRST send, so the
         // server stamps the choice at session creation (e.g. incognito).
@@ -1057,8 +1082,15 @@
     // desktop. Sits pinned against the conversation pane's left edge
     // so the user can always pull the list back. Hamburger icon for
     // symmetry with the in-rail collapse button.
+    //
+    // Not built for a modal-position panel. That panel is permanently
+    // side-collapsed (there is no rail column), and .side-collapsed shows this
+    // tab — so it rendered as a second collapsed rail pinned beside whatever
+    // the page already had, and clicking it pulled the session list INTO the
+    // grid, which is the exact layout list_position:"modal" exists to avoid.
+    // The Sessions button in the action bar is this panel's affordance.
     var expandTab = null;
-    if (hasList) {
+    if (hasList && !listPosModal) {
       expandTab = el('button', {
         class: 'ui-agent-expand', title: 'Show ' + (cfg.list_title || 'list'),
         onclick: function(){ toggleSideCollapse(); },
@@ -1073,9 +1105,18 @@
       var stored = localStorage.getItem('agent.sideCollapsed');
       if (stored === '0') sideCollapsed = false;
     } catch (_) {}
+    // sideForced: this panel's rail state is decided by its LAYOUT, not by the
+    // user — a modal-position panel is always collapsed, a top-position one
+    // always open. Such a state must not be written to the shared preference
+    // key: it is one key for every agent-loop panel on the origin, so opening
+    // a modal panel taught every other panel to start collapsed (and a
+    // top-position one taught them all to start open). A layout fact is not a
+    // preference and has no business outliving the panel that has it.
+    var sideForced = false;
     function applySideCollapse() {
       if (!hasList) return;
       wrap.classList.toggle('side-collapsed', sideCollapsed);
+      if (sideForced) return;
       try { localStorage.setItem('agent.sideCollapsed', sideCollapsed ? '1' : '0'); } catch (_) {}
     }
     function toggleSideCollapse() {
@@ -1137,7 +1178,6 @@
     // column on its page (a workbench chat), a collapsed rail is the worst of
     // both — it still costs the hamburger, the expand tab, and a mental model,
     // to reach a list you wanted for two seconds.
-    var listPosModal = hasList && cfg.list_position === 'modal';
     var sessionModal = null;
     function openSessionPicker() {
       if (sessionModal) return;
@@ -1159,6 +1199,7 @@
 
     if (listPosModal) {
       sideCollapsed = true; // the grid has no rail column to hold open
+      sideForced = true;
       applySideCollapse();
     }
 
@@ -1167,6 +1208,7 @@
       wrap.classList.add('ui-agent-list-top');
       // Force rail expanded, ignore any stored collapse preference.
       sideCollapsed = false;
+      sideForced = true;
       applySideCollapse();
     }
 
