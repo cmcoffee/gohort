@@ -2304,6 +2304,26 @@
       }, 120);
     });
 
+    // keepPendingInterjectionsLast holds a queued note at the BOTTOM of the
+    // conversation until the agent actually picks it up.
+    //
+    // A note written mid-turn has not been delivered yet — the runner drains
+    // the queue between rounds, so whatever the agent is writing when you press
+    // send was decided without it. Letting that output land underneath the note
+    // says the opposite: it reads as a reply to something the agent had not yet
+    // read. Keeping the note last says what is true — it is waiting — and the
+    // moment it IS delivered the app marks it .consumed, this stops moving it,
+    // and everything the agent says next appears below it, which is then
+    // exactly right.
+    //
+    // querySelectorAll returns a static list, so re-appending while iterating
+    // is safe and keeps several pending notes in the order they were written.
+    function keepPendingInterjectionsLast() {
+      if (!convoLog) return;
+      var pending = convoLog.querySelectorAll('.ui-agent-interjection:not(.consumed)');
+      for (var i = 0; i < pending.length; i++) convoLog.appendChild(pending[i]);
+    }
+
     function addMessage(role, id, text, senderOverride) {
       clearEmpty();
       var classes = 'ui-agent-msg ui-agent-msg-' + (role || 'system');
@@ -2353,6 +2373,7 @@
         convoLog.appendChild(thinkingEl); // move-to-end (no clone, same node)
       }
       convoLog.appendChild(bubble);
+      keepPendingInterjectionsLast();
       // A new user message means the user just sent — force-scroll
       // so their own message lands in view + reset the stick-to-
       // bottom state. New assistant bubbles obey the user's stick
@@ -3494,6 +3515,7 @@
       var target = d.pane === 'activity' ? activityLog : convoLog;
       target.appendChild(built.wrap);
       if (target === convoLog) {
+        keepPendingInterjectionsLast();
         scrollConvo(false);
       } else {
         target.scrollTop = target.scrollHeight;
@@ -3787,6 +3809,7 @@
             if (thinkingEl && thinkingEl.parentNode === convoLog) {
               convoLog.appendChild(thinkingEl);
             }
+            keepPendingInterjectionsLast();
             scrollConvo(false);
           }
           break;
@@ -3821,6 +3844,7 @@
           errBody.textContent = 'Could not complete this turn — ' + (ev.text || 'unknown error');
           errBubble.appendChild(errBody);
           convoLog.appendChild(errBubble);
+          keepPendingInterjectionsLast();
           scrollConvo(true);
           setStatus('');
           enableInput();
@@ -3932,40 +3956,19 @@
           noteBubble.bubble.classList.add('ui-agent-interjection');
           noteBubble.bubble.dataset.sessionId = activeSessionId;
           noteBubble.bubble.dataset.injectUrl = cfg.inject_url;
-          // addMessage appended the note at the very bottom — but an
-          // in-flight assistant bubble (a lazy/empty tool-call bubble,
-          // or one mid-stream) may be sitting just above it. When that
-          // bubble later fills, the response materializes ABOVE the
-          // interjection, which reads as "my message landed above the
-          // answer." Move the note ABOVE the CURRENT (last) in-flight
-          // assistant bubble so the response fills in below it.
+          // The note STAYS at the bottom from here — keepPendingInterjectionsLast
+          // re-appends it under anything that arrives while it is still queued,
+          // and stops the moment the agent drains it (.consumed).
           //
-          // Iterate from the BOTTOM so we find the most recent in-
-          // flight bubble — older turns occasionally leave a stale
-          // ui-agent-msg-empty / ui-agent-msg-streaming class on
-          // their assistant bubble (lazy-materialized tool-call
-          // bubbles whose class transition didn't fully settle),
-          // and a top-down search would anchor on THAT ancient
-          // bubble, yanking the note all the way back near the
-          // original user turn instead of leaving it next to the
-          // current turn. Reverse iteration finds the in-flight
-          // bubble closest to the note, which is always the right one.
-          var nb = noteBubble.bubble;
-          var anchor = null;
-          var kids = convoLog.children;
-          for (var ci = kids.length - 1; ci >= 0; ci--) {
-            var k = kids[ci];
-            if (k === nb) continue;
-            if (k.classList && k.classList.contains('ui-agent-msg-assistant') &&
-                (k.classList.contains('ui-agent-msg-empty') ||
-                 k.classList.contains('ui-agent-msg-streaming'))) {
-              anchor = k;
-              break;
-            }
-          }
-          if (anchor && anchor !== nb) {
-            convoLog.insertBefore(nb, anchor);
-          }
+          // It used to be moved straight up above the in-flight assistant
+          // bubble, on the reasoning that a reply filling in underneath reads as
+          // "my message landed above the answer". That reasoning had the
+          // delivery backwards: the runner drains between ROUNDS, so the text
+          // being written when you press send was decided without your note, and
+          // putting the note above it claims it was answered. Waiting is the
+          // truthful position, and once the note is actually picked up,
+          // everything after it genuinely does come after it.
+          keepPendingInterjectionsLast();
         }
         inputArea.value = '';
         // Match the normal-send path: reset the inline style.height
