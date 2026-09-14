@@ -479,14 +479,19 @@
               // Optional follow-up action the report handler returned (d.apply).
               // Two shapes, and which one an app picks is a real decision:
               //
-              //   ap.compose — hand the instruction AND the findings to the chat
-              //     composer and stop. The author sees what is about to be asked,
-              //     can cut a finding they disagree with, and sends when ready.
-              //     Right when the apply is a judgement call over a report that
-              //     was deliberately read-only: a review step whose apply happens
-              //     invisibly is not really a review step.
+              //   ap.compose — send the instruction AND the findings to the chat,
+              //     where the work is visible as it happens and the author can
+              //     stop or redirect it mid-turn. Right when the apply is a
+              //     judgement call.
               //   ap.url — POST the report back to an endpoint, replace the modal
               //     with the returned summary. Right when the apply is mechanical.
+              //
+              // The compose shape SENDS. It reads like the seed-and-stop the
+              // toolbar macros use, but the situation is not the same: THIS
+              // modal is the review. The findings are on screen directly above
+              // the button, so the author has already read what they are
+              // agreeing to, and parking a copy in the composer asks them to
+              // agree to it twice.
               //
               // The report markdown rides along either way (as {report} in the
               // POST body, as the composed message's body block), so neither
@@ -501,16 +506,16 @@
                     showToast('No conversation on this page to write into.');
                     return;
                   }
+                  // Close FIRST: the send scrolls the conversation and starts a
+                  // turn, and a report modal still sitting over it hides the work
+                  // the click just started.
+                  try { dlg.close(); dlg.remove(); } catch (e) {}
                   // compose_body over the raw report: an app whose report came
                   // from outside itself sends the FENCED form, so what the agent
                   // receives is marked as material to evaluate rather than as
                   // something the author asked for.
                   window.uiComposeMessage(ap.compose.replace('{id}', selectedId || ''),
-                    {body: ap.compose_body || (d && d.report) || ''});
-                  // Close the report: the findings are in the composer now, and
-                  // leaving a modal over the composer hides the thing the click
-                  // just filled in.
-                  try { dlg.close(); dlg.remove(); } catch (e) {}
+                    {body: ap.compose_body || (d && d.report) || '', send: true});
                 });
                 cFooter.appendChild(cBtn);
                 body.appendChild(cFooter);

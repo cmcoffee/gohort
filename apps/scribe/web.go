@@ -681,13 +681,17 @@ func (T *Scribe) handleAudit(w http.ResponseWriter, r *http.Request, udb Databas
 	// Offer a one-click apply: the report is read-only, but the author shouldn't
 	// have to hand-carry each finding into the chat.
 	//
-	// It SEEDS the composer rather than posting. This report is the read-only
-	// half of a deliberate review-and-apply split, and an apply that fires
-	// invisibly on one click is the blind regenerate the split exists to avoid —
-	// the author never saw which findings they were agreeing to. Seeded, the
-	// instruction is on screen with the findings attached, a finding they don't
-	// buy can be cut before sending, and one Enter is still the whole of the old
-	// behavior.
+	// It goes to the CHAT rather than to an endpoint. This report is the
+	// read-only half of a deliberate review-and-apply split, and the apply used
+	// to happen where nobody could see it: a POST, a spinner, and a summary of
+	// what had already been done to the document. Through the conversation the
+	// work is visible as it lands, and the author can stop or redirect it
+	// mid-turn — which is more control than a confirm dialog ever gave them.
+	//
+	// The review is THIS report, which is on screen when the button is pressed.
+	// That is why the apply sends rather than parking a copy in the composer:
+	// the findings have already been read, and asking for agreement twice is
+	// friction, not diligence.
 	//
 	// The instruction is runApplyAudit's, and the findings go over FENCED. They
 	// were partly synthesized from web research, so an instruction-shaped

@@ -67,8 +67,19 @@ check('option text is substituted too',
 // read-only report exists to avoid. The compose shape puts the instruction AND
 // the findings in front of the author first.
 
-check('a report can hand its apply to the composer',
+check('a report can hand its apply to the chat',
   /if \(ap && ap\.compose\) \{/.test(wb));
+
+// The report modal IS the review — the findings are above the button. Parking a
+// copy in the composer would ask the author to agree to the same thing twice.
+check('the apply sends',
+  /\{body: ap\.compose_body \|\| \(d && d\.report\) \|\| '', send: true\}/.test(wb));
+
+// The send starts a turn and scrolls the conversation; a report still sitting
+// over it hides the work the click just started.
+var applyBlock = wb.slice(wb.indexOf('if (ap && ap.compose)'), wb.indexOf('} else if (ap && ap.url)'));
+check('the report closes before the send, not after',
+  applyBlock.indexOf('dlg.remove()') < applyBlock.indexOf('window.uiComposeMessage(ap.compose'));
 
 check('the POST shape still works for a mechanical apply',
   /\} else if \(ap && ap\.url\) \{/.test(wb));
@@ -78,8 +89,7 @@ check('the POST shape still works for a mechanical apply',
 check('the fenced body wins over the raw report',
   /body: ap\.compose_body \|\| \(d && d\.report\) \|\| ''/.test(wb));
 
-// The modal sits over the composer it just filled.
-check('the report closes once its findings are in the composer',
+check('the report modal has a handle to close itself with',
   /mount: function\(body, dlg\) \{/.test(wb.slice(wb.indexOf("width: '720px'") - 80)));
 
 // --- carrying a payload without burying the instruction -----------------
