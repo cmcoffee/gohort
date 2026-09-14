@@ -1581,16 +1581,21 @@
         }
       });
     }
-    if ((cfg.actions || []).length === 0) actionsBar.style.display = 'none';
     // Drop the nav dropdowns into the topbar actions (built earlier in the
     // rail block, where the nav machinery was in scope), in declaration order.
-    // They travel with actionsBar to wherever the layout places it. Force the
-    // bar visible since the controls alone justify it even when the app
-    // declared no other actions.
-    if (navMenus.length) {
-      actionsBar.style.display = '';
-      navMenus.forEach(function(m) { actionsBar.appendChild(m.control); });
-    }
+    // They travel with actionsBar to wherever the layout places it.
+    navMenus.forEach(function(m) { actionsBar.appendChild(m.control); });
+    // Show the bar if anything is IN it, rather than asking whether the app
+    // declared actions. Several things land here that cfg.actions knows nothing
+    // about — the Sessions button a list_position:"modal" panel needs, the nav
+    // dropdowns — so counting declarations hides a bar with controls in it.
+    //
+    // That was not theoretical: the old rule hid the bar whenever cfg.actions
+    // was empty, and what kept it visible was an unconditional force-show from a
+    // control that happened to always exist. The moment that control became
+    // conditional, a panel whose only topbar control was Sessions lost its way
+    // back to past conversations, and nothing about the change said it would.
+    actionsBar.style.display = actionsBar.childNodes.length ? '' : 'none';
     // Topbar nav controls hang off the SPAN, not the action row, so they run
     // the full height of both rows and sit at the far right — visibly a
     // different kind of thing from the app's own per-agent actions.

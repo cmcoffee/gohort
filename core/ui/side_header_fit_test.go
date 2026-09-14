@@ -33,7 +33,7 @@ func sideHeaderRule(t *testing.T, selector string) string {
 // Both side headers are built by the same renderSideHeader and both can be
 // handed rightExtras, so both need the room.
 func TestSideHeadersWrapRatherThanClip(t *testing.T) {
-	for _, sel := range []string{".ui-tw-side-h", ".ui-chat-side-h"} {
+	for _, sel := range []string{".ui-tw-side-h", ".ui-chat-side-h", ".ui-wb-head", ".ui-wb-head-actions"} {
 		if !strings.Contains(sideHeaderRule(t, sel), "flex-wrap: wrap") {
 			t.Errorf("%s does not wrap, so enough list actions push the last one out of a pane that cannot scroll", sel)
 		}

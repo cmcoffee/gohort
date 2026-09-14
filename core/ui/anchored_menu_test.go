@@ -116,3 +116,22 @@ func TestTheStylesheetDoesNotPlaceTheSideMenu(t *testing.T) {
 		t.Error("the right-edge override is back; it fights the inline left and stretches the menu edge to edge")
 	}
 }
+
+// A topbar that holds controls must be visible, and whether it holds any is a
+// question about its contents, not about what the app declared.
+//
+// Several things land in that bar which cfg.actions knows nothing about — the
+// Sessions button a list_position:"modal" panel needs, the nav dropdowns. The
+// rule used to be "hide it when cfg.actions is empty", and what kept such a bar
+// on screen was an unconditional force-show from a control that happened to
+// always exist. When that control became conditional, a panel whose only topbar
+// control was Sessions lost its way back to past conversations.
+func TestTheActionBarShowsWhenItHasContents(t *testing.T) {
+	src := readRuntimeFile(t, "30_agent_loop_panel.js")
+	if !strings.Contains(src, "actionsBar.style.display = actionsBar.childNodes.length ? '' : 'none'") {
+		t.Error("the action bar's visibility is not decided by what is in it")
+	}
+	if strings.Contains(src, "if ((cfg.actions || []).length === 0) actionsBar.style.display = 'none'") {
+		t.Error("the declaration count is back; it hides a bar that still holds the Sessions button")
+	}
+}
