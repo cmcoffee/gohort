@@ -443,6 +443,25 @@ select:-webkit-autofill {
   height: calc(100vh - 90px);
   height: calc(var(--ui-vh, 100dvh) - var(--ui-chrome-h, 90px));
   min-height: 420px;
+  /* Stop spreading once the columns have what they want, and centre what is
+   * left over.
+   *
+   * The number is not chosen, it is added up: the list at 240, the chat at its
+   * 820 cap, and a viewer holding the 42rem reading measure with a modest
+   * margin — 1889px. Past that every column is already at the width it stops
+   * improving at, so the only thing more screen buys is a wider gap in the
+   * middle of the document. On a 3440 that gap was 800px a side while the text
+   * sat in a 672px ribbon: a workspace pulled apart rather than laid out.
+   *
+   * As outer margin instead, the whole thing reads as one workspace on a large
+   * desk, which is what a desktop app does on an ultrawide. Nothing below
+   * ~1932px is affected — at 1920 the columns still add up to less than this.
+   *
+   * A property, so an app whose viewer genuinely wants the width (a wide table,
+   * a canvas) opts out in its page head: .ui-wb { --wb-max: none; } */
+  --wb-max: 1900px;
+  max-width: var(--wb-max);
+  margin-inline: auto;
 }
 .ui-wb-col {
   display: flex; flex-direction: column; min-width: 0; min-height: 0;
