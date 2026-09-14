@@ -135,3 +135,37 @@ func TestTheActionBarShowsWhenItHasContents(t *testing.T) {
 		t.Error("the declaration count is back; it hides a bar that still holds the Sessions button")
 	}
 }
+
+// {scope} lets a panel mounted inside a host component ask its endpoints about
+// the host's OPEN record, read at request time.
+//
+// The alternative the workbench shipped with was a server-side "current",
+// POSTed fire-and-forget when a record was selected. That is one slot per user:
+// a second tab overwrites it, and a list fetched just after a switch can land
+// before the write does and answer about the record you just left — a list that
+// is sometimes right, sometimes stale, and sometimes empty.
+func TestScopeTokenIsReadFromTheHostAtRequestTime(t *testing.T) {
+	panel := readRuntimeFile(t, "30_agent_loop_panel.js")
+	if !strings.Contains(panel, "function panelScope()") {
+		t.Fatal("the {scope} reader is gone")
+	}
+	if !strings.Contains(panel, `wrap.closest('[data-ui-scope]')`) {
+		t.Error("the scope must come from the enclosing host, not from panel-local state")
+	}
+	// Substituted inside substituteExtras, so every URL that already goes
+	// through it (list, load, delete, status, send) gets the token for free.
+	i := strings.Index(panel, "function substituteExtras(url)")
+	if i < 0 {
+		t.Fatal("substituteExtras is gone")
+	}
+	if !strings.Contains(panel[i:i+900], "{scope}") {
+		t.Error("{scope} is not substituted where every other URL token is")
+	}
+
+	// And the host has to set it on every selection, including clearing it
+	// when nothing is selected — a stale attribute is the same bug in a new place.
+	wb := readRuntimeFile(t, "70_misc.js")
+	if strings.Count(wb, "data-ui-scope") < 2 {
+		t.Error("the workbench must set the scope when a record opens AND clear it when the selection goes away")
+	}
+}

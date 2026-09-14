@@ -52,3 +52,23 @@ func TestTheListLabelCanGiveUpRoom(t *testing.T) {
 		t.Error("a shrunk label must ellipsize rather than spill")
 	}
 }
+
+// An action's SCOPE decides when it is usable; where it sits is a separate
+// question. Both workbench bars used to disable everything in them whenever no
+// record was selected, which made the actions that matter most on an EMPTY
+// collection — import into it, set the rules it is written under — the two that
+// could not be clicked.
+func TestLibraryActionsAreNotGatedOnASelection(t *testing.T) {
+	src := readRuntimeFile(t, "70_misc.js")
+	if !strings.Contains(src, "if (a.scope === 'library') b.setAttribute('data-ui-lib-action', '1');") {
+		t.Error("a library-scoped action is still built disabled like a record one")
+	}
+	// Both build sites — the list header and the viewer bar — or a library
+	// action is ungated in one bar and dead in the other.
+	if n := strings.Count(src, "a.scope === 'library'"); n != 2 {
+		t.Errorf("the scope is honoured at %d of the 2 action build sites", n)
+	}
+	if !strings.Contains(src, "if (btns[i].hasAttribute('data-ui-lib-action')) continue;") {
+		t.Error("the selection toggle still greys out library actions")
+	}
+}

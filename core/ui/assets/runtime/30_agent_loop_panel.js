@@ -2112,12 +2112,29 @@
     });
     if ((cfg.modes || []).length > 0) modesRow.style.display = '';
 
+    // panelScope reads the nearest enclosing [data-ui-scope] — a host component
+    // saying which of its records this panel is currently for. Empty when the
+    // panel stands alone, or when the host has nothing selected.
+    function panelScope() {
+      try {
+        var host = wrap && wrap.closest && wrap.closest('[data-ui-scope]');
+        return (host && host.getAttribute('data-ui-scope')) || '';
+      } catch (e) { return ''; }
+    }
     function substituteExtras(url) {
       if (!url) return url;
       Object.keys(extraInputs).forEach(function(k) {
         var v = extraInputs[k].value || '';
         url = url.replace('{' + k + '}', encodeURIComponent(v));
       });
+      // {scope} asks the question about the host's OPEN record, read at request
+      // time rather than latched on the server when it was opened. A server-side
+      // "current" is one slot per user: a second tab overwrites it, and a fetch
+      // that lands out of order scopes the answer to the previous record — which
+      // looks like a list that is sometimes right and sometimes empty.
+      if (url.indexOf('{scope}') >= 0) {
+        url = url.split('{scope}').join(encodeURIComponent(panelScope()));
+      }
       return url;
     }
 
@@ -4098,7 +4115,11 @@
       pendingMessageExtras = {};
 
       activeStream = new AbortController();
-      var resp = fetch(cfg.send_url, {
+      // Through substituteExtras like every other URL, so a send can name the
+      // host's open record ({scope}). The server would otherwise have to
+      // remember which one it was, and a remembered answer is a document behind
+      // whenever the send beats the page's own notification of the switch.
+      var resp = fetch(substituteExtras(cfg.send_url), {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify(body),

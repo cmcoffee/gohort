@@ -107,9 +107,21 @@ type WorkbenchPanel struct {
 //     ({recordId, button, action, refresh}) so an app can mount its own toolbar
 //     behavior (open a picker, copy, print, …) without core/ui knowing it.
 type WorkbenchAction struct {
-	Label      string `json:"label"`
-	URL        string `json:"url"`
-	Kind       string `json:"kind"`
+	Label string `json:"label"`
+	URL   string `json:"url"`
+	Kind  string `json:"kind"`
+	// Scope says what the action is ABOUT. The default ("" or "record") is the
+	// open record, so the button follows the selection and greys out when there
+	// is none. "library" is about the collection itself — it stays enabled with
+	// nothing selected, because a selection was never a precondition for it.
+	//
+	// Both bars used to gate everything in them on a selection, which made the
+	// two actions that matter most on an EMPTY library — import something into
+	// it, set the rules it is written under — the two that could not be clicked.
+	// Scope also decouples where an action SITS from when it is usable, so a
+	// library action can live in the viewer bar beside the record ones without
+	// inheriting their gating.
+	Scope      string `json:"scope,omitempty"`
 	RestoreURL string `json:"restore_url,omitempty"`
 	// PreviewURL — "history" only. GET ({id}/{rev} substituted) → {title?, html?,
 	// markdown?}; rendered read-only in a modal. html is server-built and trusted

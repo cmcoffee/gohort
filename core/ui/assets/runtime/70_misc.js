@@ -45,7 +45,12 @@
       cfg.list_actions.forEach(function(a) {
         if (a.kind === 'menu') { headActions.appendChild(buildActionMenu(a)); return; }
         var b = el('button', {class: 'ui-wb-action-btn', text: a.label});
-        b.disabled = true;
+        // A LIBRARY action is about the collection, not about whichever record
+        // is open, so a selection is not a precondition for it — and gating it
+        // on one makes the two that matter most on an EMPTY library (import
+        // something, set the house rules) the two you cannot click.
+        if (a.scope === 'library') b.setAttribute('data-ui-lib-action', '1');
+        else b.disabled = true;
         b.addEventListener('click', function() { runViewerAction(a, b); });
         headActions.appendChild(b);
       });
@@ -84,7 +89,12 @@
           return;
         }
         var b = el('button', {class: 'ui-wb-action-btn', text: a.label});
-        b.disabled = true;
+        // A LIBRARY action is about the collection, not about whichever record
+        // is open, so a selection is not a precondition for it — and gating it
+        // on one makes the two that matter most on an EMPTY library (import
+        // something, set the house rules) the two you cannot click.
+        if (a.scope === 'library') b.setAttribute('data-ui-lib-action', '1');
+        else b.disabled = true;
         b.addEventListener('click', function() { runViewerAction(a, b); });
         actionBar.appendChild(b);
       });
@@ -178,7 +188,11 @@
       for (var s = 0; s < scopes.length; s++) {
         if (!scopes[s]) continue;
         var btns = scopes[s].querySelectorAll('.ui-wb-action-btn');
-        for (var i = 0; i < btns.length; i++) btns[i].disabled = !on;
+        for (var i = 0; i < btns.length; i++) {
+          // Library actions sit in these bars but do not follow the selection.
+          if (btns[i].hasAttribute('data-ui-lib-action')) continue;
+          btns[i].disabled = !on;
+        }
       }
       // The Edit toggle follows the RECORD, not the selection: only a record
       // that carries its editable source can be edited here.
@@ -467,6 +481,12 @@
 
     function loadViewer(id) {
       selectedId = id;
+      // Expose the open record as this subtree's scope, so a panel mounted
+      // inside the workbench can ask its own endpoints about THIS record
+      // ({scope} in its URLs) instead of the server having to remember which
+      // one was opened last. A latched answer is wrong the moment there are two
+      // tabs, and stale the moment a fetch lands out of order.
+      root.setAttribute('data-ui-scope', id || '');
       highlight();
       setActionsEnabled(true);
       // Tell the server which document is open, so the chat agent's co-author
@@ -506,7 +526,7 @@
         if (!ok) return;
         var url = delURL.replace('{id}', encodeURIComponent(id));
         fetch(url, {method: 'DELETE'}).then(function() {
-          if (selectedId === id) { selectedId = null; showEmpty(); }
+          if (selectedId === id) { selectedId = null; root.setAttribute('data-ui-scope', ''); showEmpty(); }
           loadList();
         }).catch(function() {});
       });
