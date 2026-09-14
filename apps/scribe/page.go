@@ -40,11 +40,17 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 				Invalidate: []string{"guides"},
 			},
 		},
-		// Record-scoped and library-scoped actions in the list header, left of
-		// New: the open document's settings, the house-style rules the Guide
-		// Author writes under, and importing a page exported earlier.
+		// LIBRARY-scoped actions only: the house-style rules the Guide Author
+		// writes under, and importing a page exported earlier. Both act on the
+		// collection rather than on whatever is open, which is what earns them a
+		// place beside the list.
+		//
+		// Settings used to sit here too and does not belong: it edits the OPEN
+		// document's name, privacy and sharing, which is what every control in
+		// the viewer bar does. Three text buttons plus New never fit a 200px
+		// column anyway — the last of them was clipped off the edge, in a column
+		// where only the list below scrolls.
 		ListActions: []ui.WorkbenchAction{
-			{Label: "Settings", Kind: "client", URL: "guides_settings"},
 			{Label: "Rules", Kind: "client", URL: "scribe_rules"},
 			{Label: "Import", Kind: "client", URL: "scribe_import"},
 		},
@@ -74,6 +80,10 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 			// hunted for at the far end of the toolbar.
 			{Label: "History", Kind: "history", URL: "revisions?id={id}",
 				PreviewURL: "revision?id={id}&rev={rev}", RestoreURL: "restore?id={id}&rev={rev}"},
+			// The open document's own name, privacy and sharing — beside the rest
+			// of what acts on it, rather than in the list header where it read as
+			// a control over the library.
+			{Label: "Settings", Kind: "client", URL: "guides_settings"},
 			{Label: "Publish", Kind: "client", URL: "guides_publish"},
 			{Label: "Image", Kind: "client", URL: "scribe_image"},
 			{Label: "Sources", Kind: "client", URL: "guides_sources"},

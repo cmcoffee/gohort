@@ -110,3 +110,39 @@ func TestPastSessionsCanBeClearedInBulk(t *testing.T) {
 		t.Error("bulk delete fires at DeleteURL; without it Select mode is a gesture with no effect")
 	}
 }
+
+// Each header holds controls of its own scope. Settings edits the OPEN
+// document's name, privacy and sharing, so it belongs with the viewer bar
+// beside Publish and Image — not in the list header, where it read as a
+// control over the library and helped overflow a 200px column.
+func TestSettingsSitsWithTheDocumentItEdits(t *testing.T) {
+	page := read(t, "page.go")
+	list := between(t, page, "ListActions: []ui.WorkbenchAction{", "\n\t\t},")
+	viewer := between(t, page, "ViewerActions: []ui.WorkbenchAction{", "\n\t\t},")
+	if strings.Contains(list, `"Settings"`) {
+		t.Error("Settings is back in the list header; it acts on the open document, not the library")
+	}
+	if !strings.Contains(viewer, `"Settings"`) {
+		t.Error("Settings left the list header without arriving in the viewer bar")
+	}
+	// And the library-scoped pair stays with the list, for the same reason.
+	for _, lbl := range []string{`"Rules"`, `"Import"`} {
+		if !strings.Contains(list, lbl) {
+			t.Errorf("%s acts on the library and belongs beside the list", lbl)
+		}
+	}
+}
+
+func between(t *testing.T, s, start, end string) string {
+	t.Helper()
+	i := strings.Index(s, start)
+	if i < 0 {
+		t.Fatalf("%q not found in page.go", start)
+	}
+	rest := s[i+len(start):]
+	j := strings.Index(rest, end)
+	if j < 0 {
+		t.Fatalf("could not find %q after %q", end, start)
+	}
+	return rest[:j]
+}
