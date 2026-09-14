@@ -118,6 +118,10 @@ type planRun struct {
 	// substring of a larger earlier block. Dropping a reply is far worse than
 	// an occasional double.
 	//
+	// lastFinalizedText is written by EVERY branch that puts a bubble on
+	// screen, including the lead-in finalize; lastFinalizedID only by the
+	// ones that finalize an answer, since it also places the stats footer.
+	//
 	// holdStream: agents with an OUTPUT guardrail (pre_output/periodic) must
 	// not paint tokens live — a blocked reply would flash on screen before
 	// the verdict exists. Buffer silently and paint the whole bubble at round
@@ -1256,6 +1260,18 @@ func (pr *planRun) onStepHandler(info StepInfo) {
 		}
 		pr.paintHeldBubble(id, cleaned) // held stream: paint the (now-cleared) lead-in
 		t.sse.Send(map[string]any{"kind": "message_done", "id": id})
+		// This bubble is now on screen, so the post-loop dispatch has to know
+		// about it. It did not, and that is the word-for-word double the user
+		// sees live and never after a reload: a model that wrote its whole
+		// answer in a tool round, a final round that came back empty (which
+		// leaves lastFinalizedText alone), and a captured reply carrying the
+		// same text into emitCapturedAsBubble with nothing to compare against.
+		// The saved transcript weighed the bubble against the final reply and
+		// kept one; only the screen showed two.
+		//
+		// Text only, not lastFinalizedID: that one places the turn's stats
+		// footer, which belongs on the answer, not on the sentence before it.
+		pr.lastFinalizedText = cleaned
 		t.captureMidTurnBubble(cleaned)
 		pr.streamMsgID = ""
 		t.setCurrentMsgID("")
@@ -1449,14 +1465,15 @@ func (pr *planRun) emitCapturedAsBubble(text string) {
 	if trimmed == "" {
 		return
 	}
-	// Suppress when the captured reply is a near-duplicate of the
-	// LAST shown bubble — the stream-then-respond_directly /
-	// stream-draft-then-revised-conclusion case. Near-duplicate
-	// catches the "same analysis, different ending" pattern that
-	// exact-match missed; it's still narrow enough not to drop a
-	// short reply that coincidentally shares an opener with a
-	// longer earlier block (LCP/short ratio < 0.6 keeps it).
-	if last := strings.TrimSpace(pr.lastFinalizedText); last != "" && isNearDuplicate(trimmed, last) {
+	// Suppress when the captured reply repeats the LAST shown bubble
+	// without adding to it — the stream-then-respond_directly /
+	// stream-draft-then-revised-conclusion case. This catches the "same
+	// analysis, different ending" pattern that exact-match missed, and the
+	// new-tail half of the test is what keeps a long reply that merely
+	// OPENS with a shown lead-in from being swallowed. It is the same
+	// predicate appendMidTurnBubbles uses, so the bubbles on screen and the
+	// bubbles in the reloaded transcript are decided the same way.
+	if last := strings.TrimSpace(pr.lastFinalizedText); last != "" && repeatsWithoutAdding(trimmed, last) {
 		Debug("[orchestrate.orch] captured reply (%d ch) is a near-duplicate of last shown bubble (%d ch) — suppressing", len(trimmed), len(last))
 		return
 	}

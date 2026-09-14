@@ -136,9 +136,11 @@ func (t *chatTurn) drainMidTurnBubbles() []ChatMessage {
 // remaining bubble into the session's transcript in the order it was
 // emitted.
 //
-// "Near-duplicate" here means substantial shared LEADING content — the
-// orchestrator draft + synthesis "same analysis, revised conclusion"
-// pattern. See isNearDuplicate for the threshold.
+// "Near-duplicate" here means substantial shared LEADING content AND no
+// substantial new tail — the orchestrator draft + synthesis "same analysis,
+// revised conclusion" pattern. See repeatsWithoutAdding for the threshold. A
+// bubble the final reply merely OPENS with (a lead-in sentence) is kept, so
+// what reloads matches what the live path showed.
 // Returns any ToolCalls from dropped near-duplicate bubbles so the
 // caller can merge them into the final reply's ToolCalls — otherwise
 // short turns (one round of tool calls, then a final reply with the
@@ -155,7 +157,7 @@ func appendMidTurnBubbles(sess *ChatSession, bubbles []ChatMessage, finalReply s
 	if final := strings.TrimSpace(finalReply); final != "" {
 		kept := bubbles[:0]
 		for _, b := range bubbles {
-			if isNearDuplicate(b.Content, final) {
+			if repeatsWithoutAdding(b.Content, final) {
 				if len(b.ToolCalls) > 0 {
 					orphanedCalls = append(orphanedCalls, b.ToolCalls...)
 				}
@@ -237,14 +239,47 @@ func isNearDuplicate(a, b string) bool {
 	if len(nb) < minLen {
 		minLen = len(nb)
 	}
-	lcp := 0
-	for lcp < minLen && na[lcp] == nb[lcp] {
-		lcp++
-	}
+	lcp := commonPrefixLen(na, nb)
 	if lcp == 0 {
 		return false
 	}
 	return float64(lcp)/float64(minLen) >= 0.6
+}
+
+// commonPrefixLen is the shared leading run of two already-normalized
+// strings, in bytes.
+func commonPrefixLen(a, b string) int {
+	n := len(a)
+	if len(b) < n {
+		n = len(b)
+	}
+	i := 0
+	for i < n && a[i] == b[i] {
+		i++
+	}
+	return i
+}
+
+// repeatsWithoutAdding reports whether `text` says what `shown` already said
+// and not much else. It is isNearDuplicate plus the question that predicate
+// cannot answer on its own: WHICH of the two is the fuller account.
+//
+// The prefix ratio is measured against the SHORTER string, so a one-sentence
+// lead-in that a long answer happens to open with scores a perfect 1.0 —
+// "Let me pull the numbers." against "Let me pull the numbers. Revenue rose
+// in every region…". Treating that as a duplicate suppresses whichever side
+// the caller was about to keep, and on the live path that is the answer: the
+// user is left looking at a sentence of preamble with the reply only in the
+// saved transcript. Requiring the new tail to be no longer than the repeated
+// prefix keeps the case the dedup exists for — the same analysis coming back
+// with a rewritten ending — and lets a reply that genuinely says more through.
+func repeatsWithoutAdding(text, shown string) bool {
+	if !isNearDuplicate(text, shown) {
+		return false
+	}
+	nt := normalizeForDedup(text)
+	lcp := commonPrefixLen(nt, normalizeForDedup(shown))
+	return len(nt)-lcp <= lcp
 }
 
 // normalizeForDedup lowercases, trims, and collapses runs of whitespace
