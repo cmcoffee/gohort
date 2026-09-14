@@ -92,8 +92,45 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 			{Label: "Curator", Kind: "client", URL: "guides_curator"},
 			{Label: "Knowledge", Kind: "client", URL: "guides_knowledge"},
 			{Label: "Audit", Kind: "report", URL: "audit?id={id}", Spinner: "Auditing…", Invalidate: []string{"guides"}},
-			{Label: "Reorganize", Kind: "report", URL: "reorganize?id={id}", Spinner: "Reorganizing…", Invalidate: []string{"guides"}},
-			{Label: "Update from sources", Kind: "report", URL: "update-sources?id={id}", Spinner: "Updating…", Invalidate: []string{"guides"}},
+			// A macro, and now shaped like one. This was a "report" action: it
+			// POSTed a fixed system prompt to a one-shot JSON-mode call, spun,
+			// and reordered the sections — a prompt the user could not read,
+			// could not adjust, and could not learn from. The Guide Author has
+			// list_sections and move_section, so it can do the same work in the
+			// conversation, where the instruction is visible and amendable.
+			//
+			// The text below is the old system prompt's rules said as a request.
+			// One Enter is the behavior this button always had; everything else
+			// ("only the setup section", "reverse it, it reads backwards") is
+			// the behavior it never had.
+			//
+			// No {id}: the chat already carries the open document (SendURL's
+			// guide={scope}), so "this guide" resolves server-side.
+			{Label: "Reorganize", Kind: "compose", Compose: "Reorganize this guide into the clearest reading order for someone new to the topic: " +
+				"overview and prerequisites first, then setup and steps in sequence, then advanced and reference material, " +
+				"with troubleshooting or FAQ last. Only change the order; don't rewrite any section's content."},
+			// Same conversion, and a safer one than it looks. This already
+			// dispatched the Guide Author with the co-author kit — the agent the
+			// chat column runs — just in an isolated guide-update session the
+			// author never saw. The prompt below IS that dispatch's prompt.
+			//
+			// Its Private guard does not come with it, and does not need to.
+			// The old runner blocked the network and dropped "research";
+			// handleChatSend sets ForcePrivate, strips web_search and fetch_url,
+			// drops research, AND filters attached source tools down to
+			// read/write caps. A Private guide is MORE contained through the
+			// conversation than it was through the button.
+			//
+			// What genuinely changes is the session: the run now carries the
+			// thread's context instead of starting fresh. Usually an improvement
+			// (the author has just been discussing the guide); start a new
+			// session when it isn't.
+			{Label: "Update from sources", Kind: "compose", Compose: "Update this guide so its sections reflect its LINKED SOURCES — the attached knowledge collections and reference sources — as they stand right now.\n\n" +
+				"1. Call list_sections to see the current structure.\n" +
+				"2. For the guide's subject and each section, use search_knowledge and pull_reference to gather what the linked sources CURRENTLY say.\n" +
+				"3. Where a section is outdated or contradicted by the sources, call edit_section to revise it — grounded strictly in the sources, carrying any citations. Where the sources cover something important the guide is missing, add_section for it.\n" +
+				"4. Leave sections that already match their sources unchanged — don't rewrite for the sake of it. Work ONLY from the guide's linked sources here; do not use web research.\n\n" +
+				"When done, reply with a short bulleted summary of exactly which sections you changed or added and why. If nothing needed changing, say so plainly."},
 		},
 		// The agent writes sections via its tools; re-render the open guide when a
 		// chat round finishes.

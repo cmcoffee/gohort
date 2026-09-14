@@ -134,6 +134,23 @@ type WorkbenchAction struct {
 	// LLM pass that rewrites sections), the sources to uiInvalidate after it
 	// finishes so the viewer/list refresh. Empty = show the report only.
 	Invalidate []string `json:"invalidate,omitempty"`
+	// Compose — Kind == "compose" only. The message this button puts in the
+	// chat composer, for a control that is really a macro: a fixed prompt with
+	// a label on it.
+	//
+	// It seeds, it does NOT send. A "report" action POSTs a prompt the user
+	// cannot read, cannot adjust and cannot learn from; this one hands them the
+	// same default with the cursor after it, so one Enter is the old behavior
+	// and any edit is the behavior it never had. What the button was going to
+	// say stops being invisible.
+	//
+	// {id} is substituted with the open record's id, the same as URL — a prompt
+	// usually has to name what it is about.
+	//
+	// Needs a chat column on the page (WorkbenchPanel.Chat). Without one there
+	// is no composer to seed and the button reports that rather than failing
+	// quietly.
+	Compose string `json:"compose,omitempty"`
 	// Children, when Kind == "menu", are the sub-actions shown in a dropdown when
 	// the button is clicked — e.g. an "Export" button grouping HTML / PDF /
 	// Markdown downloads so related actions don't crowd the toolbar. Each child is

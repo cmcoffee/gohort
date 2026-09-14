@@ -1814,6 +1814,16 @@
     var pasteSnippetThreshold = 500;
     var pasteMap = {};        // {n: full-text-content}
     var pasteCounter = 0;     // monotonic; marker uses this number
+    // makePasteMarker stashes a block of text and returns the placeholder that
+    // stands for it in the composer. sendMessage expands these back by an exact
+    // regex before the send, so the format lives in ONE place: a second hand-
+    // built marker elsewhere would read as literal text and silently deliver the
+    // placeholder instead of the content.
+    function makePasteMarker(text) {
+      var n = ++pasteCounter;
+      pasteMap[n] = text;
+      return '[Pasted text #' + n + ' — ' + text.split('\n').length + ' lines / ' + text.length + ' chars]';
+    }
     inputArea.addEventListener('paste', function(ev) {
       var clip = ev.clipboardData || window.clipboardData;
       if (!clip) return;
@@ -1849,10 +1859,7 @@
       var text = clip.getData('text/plain') || '';
       if (text.length < pasteSnippetThreshold) return; // small paste — normal
       ev.preventDefault();
-      var n = ++pasteCounter;
-      var lines = text.split('\n').length;
-      var marker = '[Pasted text #' + n + ' — ' + lines + ' lines / ' + text.length + ' chars]';
-      pasteMap[n] = text;
+      var marker = makePasteMarker(text);
       // Insert at the cursor position, replacing any selection. Mirrors
       // standard textarea-paste semantics so existing typed text
       // around the cursor is preserved.
@@ -1937,6 +1944,63 @@
     window.uiSetPendingMessageExtras = function(obj) {
       if (!obj || typeof obj !== 'object') return;
       Object.keys(obj).forEach(function(k) { pendingMessageExtras[k] = obj[k]; });
+    };
+
+    // uiComposeMessage puts text in the composer and hands the user the cursor.
+    //
+    // The seam behind a button that is really a macro. A toolbar control that
+    // POSTs a fixed prompt and spins is a prompt the user cannot read, cannot
+    // adjust, and cannot learn from — it does one thing and never says what.
+    // Seeding the composer instead keeps the one-click path (the default text
+    // is already there, Enter sends it) and opens the one it never had: edit
+    // it first. It also teaches, because the user SEES what the button was
+    // going to say.
+    //
+    // Does not send. A macro the user can't stop is the thing being replaced,
+    // and "filled in but unsent" is a state they can walk away from — which is
+    // the point, not an oversight.
+    //
+    // opts.append keeps what is already typed and adds to it, for a second
+    // control pressed on top of a half-written message. Default replaces,
+    // because the usual case is an empty composer and a fresh intent.
+    //
+    // opts.body is a BLOCK the message carries but the reader does not need to
+    // scroll through — an audit's findings, a log, a diff. Over the paste
+    // threshold it becomes the same "[Pasted text #N …]" placeholder a large
+    // paste gets: the composer stays a readable instruction with one line
+    // standing for the payload, and sendMessage expands it before the send.
+    // Without this, handing a control its own findings meant either dropping
+    // them (and asking the agent to re-derive what was already computed) or
+    // filling the composer with three thousand words nobody can edit around.
+    window.uiComposeMessage = function(text, opts) {
+      text = (text == null) ? '' : String(text);
+      opts = opts || {};
+      var body = (opts.body == null) ? '' : String(opts.body);
+      if (body.trim()) {
+        // Short enough to read stays visible: a placeholder over four lines of
+        // text hides something the author would rather just see.
+        text += (text ? '\n\n' : '') +
+          (body.length >= pasteSnippetThreshold ? makePasteMarker(body) : body);
+      }
+      if (!text) return false;
+      if (opts.append && inputArea.value.trim()) {
+        inputArea.value = inputArea.value.replace(/\s*$/, '') + '\n\n' + text;
+      } else {
+        inputArea.value = text;
+      }
+      // The composer is the one thing on the page that must not be off-screen
+      // when it fills: an action fired from a toolbar three columns away leaves
+      // no other sign that anything happened.
+      try { inputArea.scrollIntoView({block: 'nearest'}); } catch (_) {}
+      // Autosize and anything else listening, the same way a paste does.
+      inputArea.dispatchEvent(new Event('input'));
+      inputArea.focus();
+      // Cursor at the END, not selecting the text. A selection means the next
+      // keystroke destroys what was seeded, which is exactly wrong for a
+      // default the user is meant to amend.
+      var end = inputArea.value.length;
+      try { inputArea.setSelectionRange(end, end); } catch (_) {}
+      return true;
     };
 
     // uiRegisterMessageReplayHook lets apps decorate replayed bubbles

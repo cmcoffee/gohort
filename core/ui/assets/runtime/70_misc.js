@@ -344,6 +344,19 @@
         window.open(url, '_blank');
         return;
       }
+      // A macro: put the prompt in the chat composer and give the user the
+      // cursor. The panel in the chat column publishes uiComposeMessage; a
+      // workbench with no chat column has no composer, and saying so is better
+      // than a button that looks like it worked.
+      if (a.kind === 'compose') {
+        var msg = (a.compose || '').replace('{id}', selectedId || '');
+        if (typeof window.uiComposeMessage !== 'function') {
+          showToast('No conversation on this page to write into.');
+          return;
+        }
+        if (!window.uiComposeMessage(msg)) showToast('Nothing to compose for: ' + a.label);
+        return;
+      }
       if (a.kind === 'report') {
         var orig = btn.textContent;
         btn.disabled = true; btn.textContent = a.spinner || 'Working…';
@@ -373,19 +386,49 @@
           .then(function(d) {
             restore(); closeWork();
             if (a.invalidate && a.invalidate.length && window.uiInvalidate) window.uiInvalidate(a.invalidate);
-            window.uiOpenSimpleModal({title: a.label, width: '720px', mount: function(body) {
+            window.uiOpenSimpleModal({title: a.label, width: '720px', mount: function(body, dlg) {
               var md = el('div', {class: 'ui-wb-md'});
               body.appendChild(md);
               uiRenderMarkdown(md, (d && d.report) || '_(no report)_');
-              // Optional follow-up action the report handler returned (d.apply):
-              // a button that POSTs the report BACK to an endpoint so a read-only
-              // report (e.g. an audit) can offer a one-click "apply" without
-              // re-deriving the findings. The report markdown rides in the body as
-              // {report}. On success we invalidate + replace the modal contents
-              // with the returned summary. Kept generic — core/ui never knows what
-              // "apply" means for a given app.
+              // Optional follow-up action the report handler returned (d.apply).
+              // Two shapes, and which one an app picks is a real decision:
+              //
+              //   ap.compose — hand the instruction AND the findings to the chat
+              //     composer and stop. The author sees what is about to be asked,
+              //     can cut a finding they disagree with, and sends when ready.
+              //     Right when the apply is a judgement call over a report that
+              //     was deliberately read-only: a review step whose apply happens
+              //     invisibly is not really a review step.
+              //   ap.url — POST the report back to an endpoint, replace the modal
+              //     with the returned summary. Right when the apply is mechanical.
+              //
+              // The report markdown rides along either way (as {report} in the
+              // POST body, as the composed message's body block), so neither
+              // shape makes the agent re-derive findings already computed. Kept
+              // generic — core/ui never knows what "apply" means for an app.
               var ap = d && d.apply;
-              if (ap && ap.url) {
+              if (ap && ap.compose) {
+                var cFooter = el('div', {class: 'ui-wb-working-actions'});
+                var cBtn = el('button', {class: 'ui-wb-action-btn', text: ap.label || 'Apply'});
+                cBtn.addEventListener('click', function() {
+                  if (typeof window.uiComposeMessage !== 'function') {
+                    showToast('No conversation on this page to write into.');
+                    return;
+                  }
+                  // compose_body over the raw report: an app whose report came
+                  // from outside itself sends the FENCED form, so what the agent
+                  // receives is marked as material to evaluate rather than as
+                  // something the author asked for.
+                  window.uiComposeMessage(ap.compose.replace('{id}', selectedId || ''),
+                    {body: ap.compose_body || (d && d.report) || ''});
+                  // Close the report: the findings are in the composer now, and
+                  // leaving a modal over the composer hides the thing the click
+                  // just filled in.
+                  try { dlg.close(); dlg.remove(); } catch (e) {}
+                });
+                cFooter.appendChild(cBtn);
+                body.appendChild(cFooter);
+              } else if (ap && ap.url) {
                 var footer = el('div', {class: 'ui-wb-working-actions'});
                 var applyBtn = el('button', {class: 'ui-wb-action-btn', text: ap.label || 'Apply'});
                 applyBtn.addEventListener('click', function() {
