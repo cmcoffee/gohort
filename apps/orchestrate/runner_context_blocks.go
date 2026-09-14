@@ -623,12 +623,19 @@ func (t *chatTurn) drainNotes() []injectionNote {
 	for i, n := range taken {
 		ids[i] = n.ID
 	}
-	// Tell the client to mark these interjection bubbles as consumed
-	// (servitor's pattern — the framework runtime already tags the
-	// bubbles with data-note-id on submit).
+	// Tell the client to mark these interjection bubbles as consumed. The
+	// framework runtime tags each bubble with data-note-id on submit and
+	// renders ui_notes_consumed itself (35_ask_cards.js).
+	//
+	// It was "orchestrate_notes_consumed" — an app-prefixed type, which meant
+	// it only did anything on a page that had registered the matching renderer.
+	// This app had one, in its own page head. Every app EMBEDDING this chat
+	// (scribe runs its whole conversation through PublicHandleSendWithAppTools)
+	// got the event and had nothing to receive it, so no note it drained was
+	// ever marked read. A framework signal wants the framework's name.
 	t.sse.Send(map[string]any{
 		"kind": "block",
-		"type": "orchestrate_notes_consumed",
+		"type": "ui_notes_consumed",
 		"ids":  ids,
 	})
 	return taken

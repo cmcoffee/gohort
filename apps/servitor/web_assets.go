@@ -7,7 +7,7 @@
 //  2. JS registering block renderers for the four servitor event
 //     kinds that the chat_bridge.go translator routes through
 //     kind: "block": servitor_intent, servitor_plan,
-//     servitor_notes_consumed. The framework calls
+//     servitor_draft. The framework calls
 //     window.UIBlockRenderers[<type>] with the event data and
 //     expects a {wrap, body, onDone?} object back.
 //  3. JS registering client actions for the chat toolbar

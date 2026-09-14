@@ -210,9 +210,9 @@
   display: flex; gap: 0.3rem; margin-top: 0.3rem;
   justify-content: flex-end;
 }
-/* Once the orchestrator drains the note (notes_consumed handler adds
- * .consumed), the edit/delete affordances disappear — the note is
- * locked-in history. */
+/* Once the orchestrator drains the note the framework marks it .consumed
+ * (ui_notes_consumed, core/ui), and the edit/delete affordances disappear —
+ * the note is locked-in history. */
 .ui-agent-interjection.consumed .ui-servitor-interject-actions { display: none; }
 
 .ui-servitor-save-row {
@@ -452,22 +452,6 @@
     // pane as consumed (solid styling) so the user sees their
     // note has been picked up. Also emit a quiet status row in
     // the activity pane for tracebility.
-    window.uiRegisterBlockRenderer('servitor_notes_consumed', function(d) {
-      var ids = d.ids || [];
-      ids.forEach(function(noteID) {
-        var bubble = document.querySelector(
-          '.ui-agent-interjection[data-note-id="' +
-          (window.CSS && CSS.escape ? CSS.escape(noteID) : noteID) +
-          '"]'
-        );
-        if (bubble) bubble.classList.add('consumed');
-      });
-      var n = ids.length;
-      var wrap = el('div', {class: 'ui-agent-act ui-agent-act-status'},
-        [n + ' note' + (n === 1 ? '' : 's') + ' picked up by agent']);
-      return {wrap: wrap, body: null, pane: 'activity'};
-    });
-
     // --- Toolbar client actions -------------------------------------
     // Each action opens a simple modal that hits the existing
     // legacy endpoint. v1 of the port keeps the modal HTML inline;

@@ -174,3 +174,47 @@
       return {wrap: wrap, body: null};
     });
   }
+
+  // ui_notes_consumed — the framework's "the agent picked up your notes" signal.
+  //
+  // A note written mid-turn waits at the bottom of the conversation until the
+  // runner drains the queue between rounds. The bubble carries data-note-id from
+  // the moment the inject POST returns; this is what says those ids have been
+  // read, so the note settles into ordinary history instead of going on looking
+  // pending forever.
+  //
+  // Generic and here, rather than one copy per app, because the note queue is a
+  // framework feature: the panel owns the composer, the bubble, the data-note-id
+  // and the inject contract. Two apps had each written their own near-identical
+  // renderer under their own block type, and each lived in that app's page head
+  // — so an app that EMBEDS another app's chat received the server event with
+  // nothing registered to hear it, and no note it drained was ever marked read.
+  // Two copies of one behaviour, and the surface between them got neither.
+  //
+  // Same registration shape as the ask cards above: at IIFE time, guarded, so an
+  // app that wants a richer version still wins.
+  if (!window.UIBlockRenderers.ui_notes_consumed) {
+    window.uiRegisterBlockRenderer('ui_notes_consumed', function(d) {
+      var ids = d.ids || [];
+      ids.forEach(function(noteID) {
+        // CSS.escape because a note id is server-issued and need not be a bare
+        // identifier; an unescaped one would either match nothing or throw.
+        var sel = '.ui-agent-interjection[data-note-id="' +
+          (window.CSS && CSS.escape ? CSS.escape(noteID) : noteID) + '"]';
+        var bubble = document.querySelector(sel);
+        if (!bubble) return;
+        bubble.classList.add('consumed');
+        // A note cannot be both read and unread. Clearing the undelivered mark
+        // matters on a re-attach, where the panel may have given up on a note
+        // the server had in fact drained.
+        bubble.classList.remove('ui-agent-interjection-undelivered');
+        var note = bubble.querySelector('.ui-agent-interjection-note');
+        if (note) note.remove();
+      });
+      var n = ids.length;
+      if (!n) return null;
+      var wrap = el('div', {class: 'ui-agent-act ui-agent-act-status'},
+        [n + ' note' + (n === 1 ? '' : 's') + ' picked up by agent']);
+      return {wrap: wrap, body: null, pane: 'activity'};
+    });
+  }

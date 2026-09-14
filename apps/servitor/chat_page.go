@@ -4,7 +4,7 @@
 //
 // runSession emits probeEvents into a per-session queue; chat_bridge.go
 // translates each event into the shape AgentLoopPanel understands.
-// App-specific block renderers (intent, plan, notes_consumed, draft)
+// App-specific block renderers (intent, plan, draft)
 // live in web_assets.go.
 
 package servitor

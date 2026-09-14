@@ -250,6 +250,11 @@
   display: flex; gap: 0.3rem;
   margin-top: 0.3rem;
 }
+/* Once the agent has drained the note the framework marks it .consumed, and
+ * editing or deleting it would 410 — the queue no longer holds it. Hidden by
+ * CSS off the framework's state class rather than removed by an app renderer,
+ * which is what this used to need a whole block renderer to do. */
+.ui-agent-interjection.consumed .ui-orch-interject-actions { display: none; }
 .ui-orch-interject-btn {
   background: var(--bg-1); border: 1px solid var(--border);
   color: var(--text-mute);
@@ -1617,29 +1622,12 @@
     // --- Interjection notes: consumed marker + per-bubble actions --
     // The runtime tags interjection bubbles with .ui-agent-interjection
     // and data-{session-id,note-id,inject-url} when the user submits
-    // mid-flight notes. We register a block renderer for the server-
-    // emitted notes_consumed event (mark bubbles delivered) plus a
-    // MutationObserver that decorates new interjection bubbles with
-    // Edit and Delete buttons (servitor's pattern).
-
-    window.uiRegisterBlockRenderer('orchestrate_notes_consumed', function(d) {
-      var ids = d.ids || [];
-      ids.forEach(function(noteID) {
-        var sel = '.ui-agent-interjection[data-note-id="' +
-          (window.CSS && CSS.escape ? CSS.escape(noteID) : noteID) + '"]';
-        var bubble = document.querySelector(sel);
-        if (!bubble) return;
-        bubble.classList.add('consumed');
-        // Drained notes can no longer be edited / deleted; drop
-        // the affordances so the user doesn't see actions that
-        // would 410.
-        var actions = bubble.querySelector('.ui-orch-interject-actions');
-        if (actions) actions.remove();
-      });
-      // notes_consumed isn't a renderable block — return null so
-      // addBlock doesn't try to attach a DOM node to the convo log.
-      return {wrap: null, body: null};
-    });
+    // mid-flight notes. Marking a drained note delivered is the framework's
+    // job now (ui_notes_consumed, core/ui) — this app had its own copy of that
+    // renderer, which is exactly why an app EMBEDDING this chat got the server
+    // event and nothing to receive it: the renderer lived in this page's head.
+    // What stays here is app-specific: a MutationObserver decorating new
+    // interjection bubbles with Edit and Delete.
 
     function decorateInterjection(bubble) {
       if (!bubble || bubble.querySelector('.ui-orch-interject-actions')) return;

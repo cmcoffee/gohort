@@ -39,7 +39,7 @@ import (
 //	confirm_technique → confirm with save/skip buttons
 //	intent            → block{type:servitor_intent}
 //	plan_set/step     → block{type:servitor_plan}
-//	notes_consumed    → block{type:servitor_notes_consumed} (drops the
+//	notes_consumed    → block{type:ui_notes_consumed} (the framework's; drops the
 //	                    edit/delete affordances on consumed notes)
 //	draft             → block{type:servitor_draft}
 func translateProbeEvent(ev probeEvent) map[string]any {
@@ -150,8 +150,13 @@ func translateProbeEvent(ev probeEvent) map[string]any {
 			"plan": ev.Plan,
 		}
 	case "notes_consumed":
+		// The framework's type, not a servitor one. Marking a drained note is
+		// generic — the panel owns the bubble and its data-note-id — and
+		// servitor's copy of that renderer is what the framework now does for
+		// every app. Servitor's own interjection styling still keys off the
+		// .consumed class the framework adds.
 		return map[string]any{
-			"kind": "block", "type": "servitor_notes_consumed",
+			"kind": "block", "type": "ui_notes_consumed",
 			"ids": ev.IDs,
 		}
 	case "draft":
