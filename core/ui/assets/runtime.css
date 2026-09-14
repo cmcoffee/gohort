@@ -583,9 +583,45 @@ select:-webkit-autofill {
 .ui-wb-hist-note { font-size: 0.85rem; color: var(--text); }
 .ui-wb-hist-at { font-size: 0.72rem; color: var(--text-mute); }
 .ui-wb-hist-empty { color: var(--text-mute); font-style: italic; padding: 0.6rem 0; }
-.ui-wb-viewer-body { flex: 1 1 0; overflow-y: auto; padding: 1.4rem 1.6rem; }
+.ui-wb-viewer-body {
+  flex: 1 1 0; overflow-y: auto; padding: 1.4rem 1.6rem;
+  /* Reading measure. Prose stops getting more readable somewhere past 80
+   * characters a line and starts getting less — the eye loses its place on the
+   * return sweep — so a document on a wide monitor was being handed width it
+   * could not use. Centred rather than left-aligned: a capped block pinned left
+   * leaves one lopsided margin, which reads as the column being broken rather
+   * than as the text being set.
+   *
+   * A max-width, so it does nothing until there is room to spare. Nothing
+   * changes on a laptop or in a narrow column.
+   *
+   * rem, not ch, even though ch is the unit a measure is naturally thought in.
+   * An unregistered custom property resolves where it is USED, so 78ch would
+   * compute against the body's 0.92rem for the prose and against the title's
+   * 1.35rem for the heading — two different widths, both centred, and the
+   * heading stepping out past the text it belongs to. One rem value is the
+   * same number for both.
+   *
+   * 42rem, not the textbook ~36rem/78ch, because of what this viewer actually
+   * holds: technical documents with code blocks and tables. At 36rem ordinary
+   * code lines start scrolling sideways, and a horizontal scrollbar on a
+   * snippet is a worse read than a slightly long paragraph. ~90 characters at
+   * the body size is still well inside the range where the return sweep works.
+   *
+   * An app that wants it different overrides one property in its page head:
+   *   .ui-wb-viewer-body { --wb-measure: 48rem; } */
+  --wb-measure: 42rem;
+}
 .ui-wb-viewer-title { margin: 0 0 1rem; font-size: 1.35rem; color: var(--text-hi); }
+/* Title and body share the measure so they sit on the same left edge — capping
+ * only the prose would step the heading out past it. */
+.ui-wb-viewer-title, .ui-wb-md { max-width: var(--wb-measure); margin-inline: auto; }
 .ui-wb-md { font-size: 0.92rem; line-height: 1.6; color: var(--text); }
+/* A table or a code block inside the measure can still be wider than it — they
+ * are read by scanning, not by line, so they are not what the cap is for. They
+ * scroll within it rather than pushing the column wider, which is what an
+ * unhandled wide table does to a flex layout. */
+.ui-wb-md table, .ui-wb-md pre { display: block; max-width: 100%; overflow-x: auto; }
 .ui-wb-md h1, .ui-wb-md h2 { margin: 1.4rem 0 0.6rem; color: var(--text-hi); border-bottom: 1px solid var(--border); padding-bottom: 0.25rem; }
 .ui-wb-md h3, .ui-wb-md h4 { margin: 1.1rem 0 0.4rem; color: var(--text-hi); }
 .ui-wb-md h1:first-child, .ui-wb-md h2:first-child { margin-top: 0; }
