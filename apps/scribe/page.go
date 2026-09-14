@@ -105,8 +105,18 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 			ListTitle:    "Past sessions",
 			NewLabel:     "New session",
 			ListPosition: "modal",
-			SendURL:      "chat/send",
-			CancelURL:    "chat/cancel",
+			// The "⋯" in the list header is built only for a panel that opts
+			// into something to put in it, so without this Scribe had no
+			// overflow at all where every other chat column has one — and
+			// clearing out a year of drafting conversations meant deleting them
+			// one at a time. Bulk delete rides DeleteURL, which is declared
+			// directly above, so this is the whole wiring.
+			//
+			// No MarkAllReadURL: these sessions carry no unread state, and the
+			// affordance only shows when something is actually unread.
+			BulkSelect: true,
+			SendURL:    "chat/send",
+			CancelURL:  "chat/cancel",
 			// Where a mid-flight message goes. A guide is written over a long
 			// turn — the author reads a section as it lands and thinks of one
 			// more thing — so this is the panel most likely to be typed into
@@ -347,6 +357,13 @@ const guideSectionCtrlCSS = `<style>
   border-radius: 6px; padding: 0.45rem 0.6rem; font: inherit; font-size: 0.9rem;
 }
 .guide-edit-field textarea { min-height: 16rem; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; }
+/* The section editor is where the writing actually happens, so its body field
+   takes the whole modal rather than a fixed 16rem box with the rest of the
+   dialog empty beneath it. The modal card is already a flex column capped at
+   88vh, and its body flexes, so growing means opting in here — min-height is
+   kept as the floor for a short viewport, where the body scrolls instead. */
+.guide-edit-field.guide-edit-grow { flex: 1 1 auto; min-height: 0; margin-bottom: 0; }
+.guide-edit-field.guide-edit-grow textarea { flex: 1 1 auto; min-height: min(24rem, 40vh); }
 .guide-edit-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.4rem; }
 /* Touch devices have no hover, so the hover-revealed section controls would be
    unreachable — keep them visible there, and drop them out of the heading overlap
@@ -390,15 +407,16 @@ const guideSectionCode = `(function(){
     var inp = el('input', {type:'text', value: value||''});
     return {wrap: el('div', {class:'guide-edit-field'}, [el('label', {text: label}), inp]), input: inp};
   }
-  function fieldArea(label, value){
+  function fieldArea(label, value, grow){
     var ta = el('textarea'); ta.value = value || '';
-    return {wrap: el('div', {class:'guide-edit-field'}, [el('label', {text: label}), ta]), input: ta};
+    var cls = 'guide-edit-field' + (grow ? ' guide-edit-grow' : '');
+    return {wrap: el('div', {class:cls}, [el('label', {text: label}), ta]), input: ta};
   }
   function openEditor(title, t0, m0, onSave){
     if (!window.uiOpenSimpleModal) return;
-    window.uiOpenSimpleModal({title: title, width:'680px', mount: function(body, dlg){
+    window.uiOpenSimpleModal({title: title, width:'min(1100px, 94vw)', mount: function(body, dlg){
       var tf = fieldText('Section title', t0);
-      var mf = fieldArea('Body (markdown)', m0);
+      var mf = fieldArea('Body (markdown)', m0, true);
       body.appendChild(tf.wrap); body.appendChild(mf.wrap);
       var save = el('button', {class:'ui-row-btn primary', text:'Save'});
       var actions = el('div', {class:'guide-edit-actions'}, [save]);

@@ -93,3 +93,20 @@ func TestSectionWritesRefuseArticles(t *testing.T) {
 		}
 	}
 }
+
+// The "⋯" in a sessions list header is built only for a panel that declares
+// something to put in it. Scribe declared neither, so the column that holds a
+// year of drafting conversations had no overflow where every other chat column
+// has one, and clearing old sessions meant one at a time.
+//
+// Bulk delete rides DeleteURL. Asserting both together is the point: opting in
+// without the endpoint gives a Select mode whose delete goes nowhere.
+func TestPastSessionsCanBeClearedInBulk(t *testing.T) {
+	page := read(t, "page.go")
+	if !strings.Contains(page, "BulkSelect:") {
+		t.Error("the sessions list has no Select mode, so its header builds no overflow menu at all")
+	}
+	if !strings.Contains(page, `DeleteURL:    "chat/sessions/{id}"`) {
+		t.Error("bulk delete fires at DeleteURL; without it Select mode is a gesture with no effect")
+	}
+}
