@@ -149,11 +149,13 @@
     if (cfg.height) { wrap.style.height = cfg.height; wrap.style.minHeight = '0'; }
 
     // --- Optional list sidebar -------------------------------------------
-    var side = null, sideList = null, sideSearch = null, drawer = null, navEl = null, sideHdrEl = null, orchView = null, lastSessionTitle = '';
-    // Channel/fleet "Manage ▾" control — built in the rail block (where the nav
-    // machinery is in scope), shown in the topbar actions for fleet agents.
-    var manageControl = null, manageBtn = null, manageDot = null, pinnedEl = null, navTopbarEl = null;
-    // Only one top-bar dropdown (Manage ▾ / the grouped toolbar menus) is open
+    var side = null, sideList = null, sideSearch = null, drawer = null, sideHdrEl = null, orchView = null, lastSessionTitle = '';
+    // Nav dropdowns — built in the rail block (where the nav machinery is in
+    // scope), shown in the topbar actions for fleet agents. One per distinct
+    // item.menu, in the order their first item appears; navMenus holds them in
+    // that order and navMenuByName indexes them by label.
+    var navMenus = [], navMenuByName = {}, pinnedEl = null, navTopbarEl = null;
+    // Only one top-bar dropdown (a nav menu / the grouped toolbar menus) is open
     // at a time. openTopbarMenu holds the close-fn of whatever is currently
     // open; opening another closes it first. Each menu registers its own
     // closer on open and clears it on close.
@@ -343,6 +345,28 @@
         // the cards and the table cannot drift on what a button does.
         function fireRowAction(a, row) {
           if (a.picker_source) { openRowPicker(a, row); return; }
+          // A NAVIGATION rather than a call: open another nav view, optionally
+          // already narrowed. It exists because a summary figure had no way to
+          // reach the list it counts — the number and the rows behind it lived
+          // in different menus with nothing joining them, so "2 failed" was a
+          // dead end. The target is named "<Menu>/<Label>" because a Source can
+          // appear in two menus (the same view asked about one agent and about
+          // everyone) and picking the wrong one answers the wrong question.
+          if (a.view) {
+            var want = String(a.view);
+            var found = -1;
+            (cfg.orchestrator_nav || []).forEach(function(it, k) {
+              if (found >= 0) return;
+              if (((it.menu || DEFAULT_NAV_MENU) + '/' + (it.label || '')) === want) found = k;
+            });
+            if (found < 0) { console.error('nav view not found: ' + want); return; }
+            // {agent} resolves to the agent in view, so a per-agent summary can
+            // hand its own scope to a view that is otherwise fleet-wide.
+            var q = String(a.query || '').replace(/\{agent\}/g, encodeURIComponent(window.GOHORT_AGENT_ID || ''));
+            closeNavMenus();
+            selectOrchNav(found, q, a.note);
+            return;
+          }
           var rowURL = a.url + '?id=' + encodeURIComponent(row._id) + '&agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '');
           if (a.show_result) {
             fetch(rowURL, {method: a.method || 'GET'})
@@ -511,10 +535,17 @@
       // A fleet-scoped item (scope:"fleet") is asked about everything the user
       // owns, so it must NOT carry an agent: a handler that answers fleet-wide
       // when given none can otherwise never be reached from this menu.
-      function orchSourceURL(src, item) {
+      // extra is a query string a NAVIGATION carried in — a view opened
+      // already narrowed (the failures behind a count, say) rather than whole.
+      // It rides the source for that open only; the nav item itself is
+      // unchanged, so reaching the same view from its own button still asks the
+      // unnarrowed question.
+      function orchSourceURL(src, item, extra) {
         if (!src) return src;
-        if (item && item.scope === 'fleet') return src;
-        return src + (src.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '');
+        var url = src;
+        if (extra) url += (url.indexOf('?') >= 0 ? '&' : '?') + extra;
+        if (item && item.scope === 'fleet') return url;
+        return url + (url.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '');
       }
       // openHomeThread lands on the agent's home thread — a pinned session in
       // the normal list, not a nav row (channel model: the home thread is just
@@ -530,7 +561,48 @@
       function clearOrchViewTimer() {
         if (orchViewTimer) { clearInterval(orchViewTimer); orchViewTimer = null; }
       }
-      function selectOrchNav(idx) {
+      // paintNarrowNote marks a view that was entered NARROWED and gives the
+      // way back out. Without it a filtered pane is indistinguishable from the
+      // whole one — same title, same rows, fewer of them — so the reader either
+      // trusts a partial list as complete or cannot get back to the rest.
+      //
+      // Prepended AFTER the rows are drawn, because the render clears the pane
+      // and returns early on an empty result: a narrowing that matched nothing
+      // is exactly when the way back matters most.
+      //
+      // note is the app's own wording. When it gives none, the query itself is
+      // shown — "status: failed" — which is raw but never absent, and a marker
+      // that can go missing is the bug this fixes.
+      function paintNarrowNote(idx, item, extraQuery, note) {
+        if (!orchView || !extraQuery) return;
+        var text = String(note || '').trim();
+        if (!text) {
+          var parts = [];
+          String(extraQuery).split('&').forEach(function(pair) {
+            var eq = pair.indexOf('=');
+            if (eq <= 0) return;
+            var k = decodeURIComponent(pair.slice(0, eq));
+            // The agent stamp is scope, not a filter the reader chose; it rides
+            // every per-agent source already and naming it here reads as a
+            // narrowing that was never applied.
+            if (k === 'agent') return;
+            parts.push(k + ': ' + decodeURIComponent(pair.slice(eq + 1)));
+          });
+          text = parts.length ? ('Filtered — ' + parts.join(', ')) : 'Filtered';
+        }
+        var back = el('button', {type: 'button', class: 'ui-row-btn',
+          style: 'padding:0.15rem 0.55rem;font-size:0.74rem;flex:0 0 auto',
+          onclick: function() { selectOrchNav(idx); }}, ['Show all']);
+        var bar = el('div', {style: 'display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;' +
+          'margin:0 0 0.5rem;padding:0.35rem 0.6rem;border:1px solid var(--accent, #4a9eff);' +
+          'border-radius:6px;background:rgba(88,166,255,0.08)'}, [
+            el('span', {style: 'flex:1 1 auto;min-width:0;font-size:0.78rem;color:var(--text, inherit)'}, [text]),
+            back,
+          ]);
+        if (orchView.firstChild) orchView.insertBefore(bar, orchView.firstChild);
+        else orchView.appendChild(bar);
+      }
+      function selectOrchNav(idx, extraQuery, note) {
         var item = (cfg.orchestrator_nav || [])[idx] || {};
         clearOrchViewTimer();
         // Action items are buttons (clear / decommission): POST to the URL
@@ -590,9 +662,9 @@
           // instead of leaving the stale session title.
           if (drawer && drawer.mobileTitle) drawer.mobileTitle.textContent = item.label || '';
           orchView.textContent = 'Loading…';
-          var reload = function() { selectOrchNav(idx); };
-          fetch(orchSourceURL(item.source, item)).then(function(r) { return r.ok ? r.json() : []; })
-            .then(function(rows) { renderOrchTable(rows, item, reload); })
+          var reload = function() { selectOrchNav(idx, extraQuery, note); };
+          fetch(orchSourceURL(item.source, item, extraQuery)).then(function(r) { return r.ok ? r.json() : []; })
+            .then(function(rows) { renderOrchTable(rows, item, reload); paintNarrowNote(idx, item, extraQuery, note); })
             .catch(function(err) { orchView.textContent = 'Failed to load: ' + err.message; });
           // Live views: silently re-fetch + re-render on the configured
           // interval while this view stays open. No "Loading…" flash; a
@@ -604,8 +676,8 @@
                 clearOrchViewTimer();
                 return;
               }
-              fetch(orchSourceURL(item.source, item)).then(function(r) { return r.ok ? r.json() : null; })
-                .then(function(rows) { if (rows) renderOrchTable(rows, item, reload); })
+              fetch(orchSourceURL(item.source, item, extraQuery)).then(function(r) { return r.ok ? r.json() : null; })
+                .then(function(rows) { if (rows) { renderOrchTable(rows, item, reload); paintNarrowNote(idx, item, extraQuery, note); } })
                 .catch(function() {});
             }, item.auto_refresh_ms);
           }
@@ -629,10 +701,11 @@
       // refreshChannelBadges fetches each management view's row count and
       // shows it as a badge on that row (hidden when zero). core/ui stays
       // agnostic: any nav item with a source gets a count badge.
-      // updateManageDot lights the dot on the Manage button when ANY management
-      // view currently shows a nonzero count — the at-a-glance "you have pending
-      // items" signal the old rail-box badges gave, now that the per-view badges
-      // live inside a closed dropdown.
+      // updateNavMenuDots lights the dot on a menu's button when ANY view
+      // inside THAT menu currently shows a nonzero count — the at-a-glance "you
+      // have pending items" signal the old rail-box badges gave, now that the
+      // per-view badges live inside a closed dropdown. Per menu, not global: a
+      // dot on every button at once says nothing about where to look.
       // Selection on a topbar control is an OUTLINE, and it has to come off
       // when the user goes somewhere else — opening a session, switching
       // agents. Nothing else clears it: the session-open reset below predates
@@ -642,20 +715,20 @@
           if (item.topbar && orchBtns[i]) orchBtns[i].style.outline = '';
         });
       }
-      function updateManageDot() {
-        if (!manageDot) return;
-        // Pinned items live in the rail, not the Manage menu — exclude them so
-        // the Manage dot reflects only what's actually inside the dropdown.
-        var any = (cfg.orchestrator_nav || []).some(function(item, i) {
-          if (item.pinned) return false;
-          var b = orchBadges[i];
-          return b && b.style.display !== 'none' && b.textContent && b.textContent !== '0';
+      function updateNavMenuDots() {
+        navMenus.forEach(function(m) {
+          // Only the indices that actually render in THIS menu. Pinned and
+          // topbar items live elsewhere and were never added to m.items.
+          var any = m.items.some(function(i) {
+            var b = orchBadges[i];
+            return b && b.style.display !== 'none' && b.textContent && b.textContent !== '0';
+          });
+          m.dot.style.display = any ? '' : 'none';
         });
-        manageDot.style.display = any ? '' : 'none';
       }
       // onlyAllAgents: the current agent isn't opted into the alt nav, so only
       // the always-on pinned rows are on screen — don't fetch counts for the
-      // Manage views that aren't rendered.
+      // menu views that aren't rendered.
       function refreshChannelBadges(onlyAllAgents) {
         (cfg.orchestrator_nav || []).forEach(function(item, i) {
           var badge = orchBadges[i];
@@ -679,29 +752,68 @@
               // says the queue is non-empty, and a persistent fill is
               // indistinguishable from "selected" — which is what the outline
               // means here.
-              updateManageDot();
+              updateNavMenuDots();
             })
             .catch(function() {});
         });
       }
-      // Channel/fleet management is a "Manage ▾" dropdown in the topbar — NOT a
-      // box in the session rail (channel model: the rail is threads only). navEl
-      // is the absolutely-positioned dropdown panel; each item is a management
-      // view (Enabled agents / Event monitors / Authorizations) with a live
-      // count badge, or a channel-wide action (Clear / Decommission).
-      navEl = el('div', {class: 'ui-channel-menu', style: 'display:none;position:absolute;right:0;top:calc(100% + 4px);z-index:40;min-width:210px;flex-direction:column;gap:0.1rem;padding:0.35rem;border:1px solid var(--border, rgba(127,127,127,0.3));border-radius:6px;background:var(--bg-1, #1b1b2b);box-shadow:0 6px 24px rgba(0,0,0,0.35)'});
-      function closeManageMenu() { if (navEl) navEl.style.display = 'none'; clearOpenTopbarMenu(closeManageMenu); }
+      // Channel/fleet management lives in topbar dropdowns — NOT in a box in
+      // the session rail (channel model: the rail is threads only). Each menu's
+      // panel is absolutely positioned under its own button; each item is a
+      // management view (Enabled agents / Event monitors) with a live count
+      // badge, or a channel-wide action (Compact / Clear).
+      //
+      // An item names its menu; the menus are built on demand in the order
+      // those names first appear, so a host app decides both the buttons and
+      // their order purely by how it declares its nav. Nothing here knows what
+      // any of them are called.
+      var DEFAULT_NAV_MENU = 'Manage';
+      function navMenuFor(item) {
+        var name = (item && item.menu) || DEFAULT_NAV_MENU;
+        if (navMenuByName[name]) return navMenuByName[name];
+        var panel = el('div', {class: 'ui-channel-menu', style: 'display:none;position:absolute;right:0;top:calc(100% + 4px);z-index:40;min-width:210px;flex-direction:column;gap:0.1rem;padding:0.35rem;border:1px solid var(--border, rgba(127,127,127,0.3));border-radius:6px;background:var(--bg-1, #1b1b2b);box-shadow:0 6px 24px rgba(0,0,0,0.35)'});
+        var m = {name: name, panel: panel, items: [], lastGroup: null, btn: null, dot: null, control: null};
+        m.close = function() { panel.style.display = 'none'; clearOpenTopbarMenu(m.close); };
+        var dot = el('span', {class: 'ui-unread-dot', title: 'Pending items',
+          style: 'display:none;width:7px;height:7px;border-radius:50%;background:var(--accent, #4a9eff);margin-left:0.35rem;flex:0 0 auto'}, ['']);
+        var btn = el('button', {type: 'button', class: 'ui-row-btn', title: name,
+          onclick: function(ev) {
+            ev.stopPropagation();
+            var open = panel.style.display === 'none' || !panel.style.display;
+            if (open) {
+              setOpenTopbarMenu(m.close); // close any open toolbar menu first
+              panel.style.display = 'flex';
+              refreshChannelBadges();
+            } else {
+              m.close();
+            }
+          }}, [name + ' ▾']);
+        btn.appendChild(dot);
+        m.btn = btn;
+        m.dot = dot;
+        m.control = el('div', {style: 'position:relative;display:none'}, [btn, panel]);
+        // Close on any outside click. One listener per menu, each testing only
+        // its own control, so a click inside one menu closes the others via
+        // their own listeners rather than through shared bookkeeping.
+        document.addEventListener('click', function(ev) {
+          if (panel.style.display && panel.style.display !== 'none' &&
+              !m.control.contains(ev.target)) m.close();
+        });
+        navMenus.push(m);
+        navMenuByName[name] = m;
+        return m;
+      }
+      function closeNavMenus() { navMenus.forEach(function(m) { m.close(); }); }
       // Pinned items (action queues like Permissions) get a prominent row ABOVE
       // the session list; everything else lives in the Manage dropdown. One pass
       // keeps orchBtns/orchBadges index-aligned with cfg.orchestrator_nav.
       pinnedEl = el('div', {class: 'ui-channel-pinned', style: 'display:none;flex-direction:column;gap:0.2rem;padding:0.45rem 0.5rem;border-bottom:1px solid var(--border, rgba(127,127,127,0.3))'});
-      // The "Manage ▾" dropdown only earns its place when there's at least one
-      // NON-pinned nav item to put in it (a management view or a channel action).
-      // An alt-nav agent with no such items (e.g. a published dashboard agent that
-      // carries the Cortex hero thread but no management surface) shows no empty
-      // Manage button — applyOrchMode gates manageControl on this.
-      var hasManageMenu = (cfg.orchestrator_nav || []).some(function(it){ return !it.pinned && !it.topbar; });
-      var lastNavGroup = null; // heading drawn most recently in the dropdown
+      // A dropdown only earns its place when there's at least one NON-pinned
+      // nav item to put in it (a management view or a channel action). An
+      // alt-nav agent with no such items (e.g. a published dashboard agent that
+      // carries the Cortex hero thread but no management surface) gets no empty
+      // buttons — navMenus simply stays empty, since a menu is only created
+      // when an item asks for one.
       // Pinned rows flagged all_agents render for every agent, not just the
       // alt-nav ones — their queue belongs to the USER, so gating it on which
       // agent is selected would hide pending work (and strand it completely
@@ -760,12 +872,23 @@
             onclick: function() { selectOrchNav(i); }}, pkids);
           pinnedEl.appendChild(b);
         } else {
-          // A new Group value draws its heading once, before this row. The
-          // menu then reads as what it is: things that act on the open agent,
-          // and things that report on the whole fleet.
-          if (item.group && item.group !== lastNavGroup) {
-            lastNavGroup = item.group;
-            navEl.appendChild(el('div', {style: 'padding:0.45rem 0.6rem 0.2rem;font-size:0.66rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-mute, #999)'}, [item.group]));
+          var menu = navMenuFor(item);
+          // A new Group value draws its heading once, before this row —
+          // tracked PER MENU, so the same group name may subdivide two
+          // different menus without the second one silently skipping it.
+          //
+          // Drawn as a RULE across the panel with the name sitting on it, not
+          // as one more full-width row: in a column of buttons, a bare line of
+          // text at the same width reads as another button that happens not to
+          // respond. The divider is what says "a different kind of thing starts
+          // here". A heading that opens the menu needs no rule above it.
+          if (item.group && item.group !== menu.lastGroup) {
+            var firstInMenu = menu.panel.childNodes.length === 0;
+            menu.lastGroup = item.group;
+            menu.panel.appendChild(el('div', {style: 'margin:' + (firstInMenu ? '0' : '0.45rem') + ' 0.35rem 0.15rem;' +
+              (firstInMenu ? '' : 'border-top:1px solid var(--border, rgba(127,127,127,0.3));') +
+              'padding:' + (firstInMenu ? '0.2rem' : '0.5rem') + ' 0.25rem 0.1rem;' +
+              'font-size:0.62rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-mute, #999)'}, [item.group]));
           }
           var label = el('span', {style: 'flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'}, [item.label || ('View ' + (i + 1))]);
           var kids = [label];
@@ -780,45 +903,21 @@
           }
           b = el('button', {type: 'button', class: 'ui-channel-row',
             style: 'display:flex;align-items:center;gap:0.4rem;text-align:left;padding:0.45rem 0.6rem;border:none;border-radius:4px;cursor:pointer;font:inherit;color:var(--text, inherit);background:transparent;width:100%',
-            onclick: function() { closeManageMenu(); selectOrchNav(i); }}, kids);
-          navEl.appendChild(b);
+            onclick: function() { menu.close(); selectOrchNav(i); }}, kids);
+          menu.panel.appendChild(b);
+          menu.items.push(i);
         }
         orchBtns.push(b);
         orchBadges.push(badge);
       });
       // Pinned rows sit at the very top of the rail, above the session header.
       if (sideHdrEl && pinnedEl.childNodes.length) side.insertBefore(pinnedEl, sideHdrEl);
-      // The toggle. Wrapped (position:relative) so the dropdown anchors to it.
-      // Hidden by default; applyOrchMode reveals it for fleet agents. A small
-      // dot lights when any management view has pending items (the signal the
-      // old rail-box badges carried).
-      manageBtn = el('button', {type: 'button', class: 'ui-row-btn', title: 'Channel & fleet management',
-        onclick: function(ev) {
-          ev.stopPropagation();
-          var open = navEl.style.display === 'none' || !navEl.style.display;
-          if (open) {
-            setOpenTopbarMenu(closeManageMenu); // close any open toolbar menu first
-            navEl.style.display = 'flex';
-            refreshChannelBadges();
-          } else {
-            closeManageMenu();
-          }
-        }}, ['Manage ▾']);
-      manageDot = el('span', {class: 'ui-unread-dot', title: 'Pending items',
-        style: 'display:none;width:7px;height:7px;border-radius:50%;background:var(--accent, #4a9eff);margin-left:0.35rem;flex:0 0 auto'}, ['']);
-      manageBtn.appendChild(manageDot);
-      manageControl = el('div', {style: 'position:relative;display:none'}, [manageBtn, navEl]);
-      // Close on any outside click.
-      document.addEventListener('click', function(ev) {
-        if (navEl && navEl.style.display && navEl.style.display !== 'none' &&
-            manageControl && !manageControl.contains(ev.target)) closeManageMenu();
-      });
       var lastOrchAgent; // last agent applyOrchMode saw — tells a real switch from the double-fire on initial load
       function applyOrchMode(agentId) {
         var isOrch = isAltNavAgent(agentId);
-        // Fleet agents get the "Manage ▾" control in the topbar; the rail is
-        // threads only. Non-fleet agents hide it (and any open overlay/menu).
-        if (manageControl) manageControl.style.display = (isOrch && hasManageMenu) ? '' : 'none';
+        // Fleet agents get the nav dropdowns in the topbar; the rail is
+        // threads only. Non-fleet agents hide them (and any open overlay/menu).
+        navMenus.forEach(function(m) { m.control.style.display = isOrch ? '' : 'none'; });
         if (pinnedEl) pinnedEl.style.display = (isOrch || hasAllAgentPinned) ? '' : 'none';
         // Off the alt nav, only the all_agents entries survive — in the pinned
         // strip and in the topbar alike.
@@ -839,7 +938,7 @@
         // Hide the Channel hero immediately for non-fleet agents; loadSessions
         // re-shows + fills it for fleet agents from the home thread.
         if (!isOrch && primaryEl) primaryEl.style.display = 'none';
-        closeManageMenu();
+        closeNavMenus();
         if (!isOrch && orchView) orchView.style.display = 'none';
         clearTopbarNavSelection();
         if (isOrch) {
@@ -1476,13 +1575,14 @@
       });
     }
     if ((cfg.actions || []).length === 0) actionsBar.style.display = 'none';
-    // Drop the "Manage ▾" fleet control into the topbar actions (built earlier
-    // in the rail block, where the nav machinery was in scope). Travels with
-    // actionsBar to wherever the layout places it. Force the bar visible since
-    // the control alone justifies it even when the app declared no other actions.
-    if (manageControl) {
+    // Drop the nav dropdowns into the topbar actions (built earlier in the
+    // rail block, where the nav machinery was in scope), in declaration order.
+    // They travel with actionsBar to wherever the layout places it. Force the
+    // bar visible since the controls alone justify it even when the app
+    // declared no other actions.
+    if (navMenus.length) {
       actionsBar.style.display = '';
-      actionsBar.appendChild(manageControl);
+      navMenus.forEach(function(m) { actionsBar.appendChild(m.control); });
     }
     // Topbar nav controls hang off the SPAN, not the action row, so they run
     // the full height of both rows and sit at the far right — visibly a

@@ -44,13 +44,31 @@ func consoleRunTask(rec RunRecord) string {
 // handleConsoleRuns returns the run-ledger feed (owner-scoped, status-level)
 // shaped for the Runs cards pane, newest first.
 func (T *OrchestrateApp) handleConsoleRuns(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
+	user, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
 	loc := UserLocation(user)
+	// Narrowing arrives from a summary figure that linked here — a count of
+	// failures handing over the scope it counted. The pane's own button sends
+	// neither, so opening it directly still lists everything.
+	//
+	// An agent's runs are gathered through agentRuns rather than a ledger
+	// filter: a run is filed under the thing that FIRED it, so asking for the
+	// agent alone misses everything its schedules, monitors and recurring tasks
+	// did on its behalf — which is most of what a failure count is counting.
+	status := RunStatus(strings.TrimSpace(r.URL.Query().Get("status")))
+	runs := []RunRecord{}
+	if agentID := strings.TrimSpace(r.URL.Query().Get("agent")); agentID != "" {
+		runs = agentRuns(user, udb, agentID, agentDisplayName(udb, user, agentID))
+	} else {
+		runs = ListRuns(RootDB, user, RunFilter{Limit: 100})
+	}
 	rows := []consoleRunRow{}
-	for _, rec := range ListRuns(RootDB, user, RunFilter{Limit: 100}) {
+	for _, rec := range runs {
+		if status != "" && rec.Status != status {
+			continue
+		}
 		rows = append(rows, consoleRunRow{
 			Agent:   consoleRunAgent(rec),
 			Task:    consoleRunTask(rec),

@@ -469,13 +469,21 @@ type OrchestratorNavItem struct {
 	// It is how one source renders as several titled lists — a summary view —
 	// without the menu growing an entry per list.
 	Layout string `json:"layout,omitempty"`
-	// Group names the heading this item sits under in the "Manage ▾" dropdown.
-	// Items keep their declared order; each new group value draws its heading
-	// once. Empty means no heading.
+	// Menu names the topbar dropdown this item appears in. Menus are built in
+	// the order their first item appears and labelled with this exact string,
+	// so the label is the panel's own name rather than a wrapper around it.
+	// Empty puts the item in the default menu ("Manage").
 	//
-	// It exists because a menu that mixes what acts on the OPEN thing with
-	// what reports on ALL of them reads as neither: every entry looks scoped
-	// to whatever is selected, so the fleet-wide ones quietly mislead.
+	// Group was the first answer to the same problem and is the weaker one: a
+	// heading inside one dropdown still requires opening a menu named
+	// something else to reach it, and a menu in one agent's topbar makes
+	// everything under it read as that agent's whatever the heading says. When
+	// a group is a noun the user already thinks in, it should be the button.
+	Menu string `json:"menu,omitempty"`
+	// Group names the heading this item sits under, WITHIN its menu. Items
+	// keep their declared order; each new group value draws its heading once.
+	// Empty means no heading. Use it for a subdivision inside a menu that is
+	// already correctly named — reach for Menu first.
 	Group string `json:"group,omitempty"`
 	// Scope decides what the item's Source is asked about. The default ("" or
 	// "agent") appends the selected agent, which is what a per-agent view
@@ -539,6 +547,28 @@ type OrchestratorRowAction struct {
 	// run's step trace, a request's payload) without the list carrying it.
 	// Field order follows the reply, so the server decides what reads first.
 	ShowResult bool `json:"show_result,omitempty"`
+	// View makes this action NAVIGATE to another nav view instead of calling an
+	// endpoint. Name the target "<Menu>/<Label>" ("Fleet/Runs") — by menu and
+	// label rather than by Source, because the same Source legitimately appears
+	// in two menus (one view asked about one thing and about everything) and
+	// landing on the wrong one answers the wrong question.
+	//
+	// It exists so a summary figure can reach the list it counts. Without it a
+	// count and its rows sit in different menus with nothing joining them, and
+	// the number becomes a dead end: the reader is told two of something failed
+	// and left to go and find them.
+	View string `json:"view,omitempty"`
+	// Query is appended to the target view's Source for that open only, so a
+	// view can be entered already narrowed without changing what its own button
+	// asks. "{agent}" resolves to the agent in view, which is how a per-agent
+	// summary hands its scope to a view that is otherwise fleet-wide.
+	Query string `json:"query,omitempty"`
+	// Note is the line shown above a view entered through Query, saying in the
+	// app's own words what was narrowed. The marker itself is not optional — a
+	// filtered pane is otherwise indistinguishable from the whole one, so when
+	// this is empty the query is rendered instead ("status: failed"). Set it to
+	// say something a reader recognises.
+	Note string `json:"note,omitempty"`
 }
 
 // AgentTerminal configures the optional bottom-right terminal pane

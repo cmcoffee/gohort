@@ -43,6 +43,11 @@ type overviewCard struct {
 	Section string `json:"_section"`
 	Run     bool   `json:"_run,omitempty"`
 	ID      string `json:"_id,omitempty"`
+	// Failed marks the glance card whose pill counts failures, so the action
+	// that opens the list of them shows on that card and nowhere else. The
+	// count is over a week and the Needs attention list below is capped, so
+	// without a way through, a bad week says "9 failed" and shows three.
+	Failed bool `json:"_failed,omitempty"`
 }
 
 // Section headings. Named once so the two panes agree on what a section is
@@ -76,13 +81,7 @@ func (T *OrchestrateApp) handleConsoleOverview(w http.ResponseWriter, r *http.Re
 	}
 	loc := UserLocation(user)
 	now := time.Now()
-	name := agentID
-	for _, a := range listAgents(udb, user) {
-		if a.ID == agentID {
-			name = chFirst(a.Name, a.ID)
-			break
-		}
-	}
+	name := agentDisplayName(udb, user, agentID)
 
 	runs := agentRuns(user, udb, agentID, name)
 	standing, monitors, recurring := agentStandingWork(user, agentID)
@@ -97,6 +96,7 @@ func (T *OrchestrateApp) handleConsoleOverview(w http.ResponseWriter, r *http.Re
 		Status:  runHealthStatus(runs, now),
 		Detail:  lastRunLabel(runs, loc),
 		Section: secGlance,
+		Failed:  hasRecentFailure(runs, now),
 	})
 	if spend := agentSpendFor(user, agentID, now, loc); spend != nil {
 		cards = append(cards, overviewCard{
@@ -206,6 +206,7 @@ func (T *OrchestrateApp) handleConsoleFleet(w http.ResponseWriter, r *http.Reque
 		Status:  runHealthStatus(runs, now),
 		Detail:  lastRunLabel(runs, loc),
 		Section: secGlance,
+		Failed:  hasRecentFailure(runs, now),
 	})
 	if total := fleetSpendLabel(spend); total != "" {
 		cards = append(cards, overviewCard{
@@ -303,6 +304,18 @@ func (T *OrchestrateApp) handleConsoleFleet(w http.ResponseWriter, r *http.Reque
 }
 
 // --- gathering ---------------------------------------------------------------
+
+// agentDisplayName is the agent's own name, falling back to its id. Used
+// wherever a run has to be gathered for one agent, since agentRuns matches
+// legacy records by display label.
+func agentDisplayName(udb Database, user, agentID string) string {
+	for _, a := range listAgents(udb, user) {
+		if a.ID == agentID {
+			return chFirst(a.Name, a.ID)
+		}
+	}
+	return agentID
+}
 
 // agentRuns returns the runs that belong to one agent: its own, plus the ones
 // its schedules, monitors and recurring tasks produced. A run is filed under
@@ -460,6 +473,18 @@ func runCountLabel(runs []RunRecord, now time.Time) string {
 		return "No runs this week"
 	}
 	return fmt.Sprintf("%d run(s) in 24h · %d in 7 days", today, seven)
+}
+
+// hasRecentFailure reports whether the pill above is counting anything, which
+// is the same question as whether there is a list worth opening.
+func hasRecentFailure(runs []RunRecord, now time.Time) bool {
+	week := now.AddDate(0, 0, -7)
+	for _, rec := range runs {
+		if rec.Status == RunFailed && rec.Started.After(week) {
+			return true
+		}
+	}
+	return false
 }
 
 // runHealthStatus renders as the card's pill: whether the recent week holds
