@@ -449,7 +449,14 @@ type OrchestratorNavItem struct {
 	// rather than agent-scoped — an approvals queue that any agent can add to,
 	// say. Gating such a queue on the alt-nav opt-in hides work the user still
 	// has to act on, and can strand it entirely when no agent qualifies.
-	// Only meaningful with Pinned; the "Manage ▾" dropdown stays alt-nav only.
+	//
+	// Honored wherever an item can render: a pinned row, a topbar control, and
+	// a menu entry alike. A menu whose items are ALL gated disappears with
+	// them, so a dropdown never opens onto an empty panel; a group heading
+	// whose rows are all hidden goes too, since it then labels nothing.
+	// Menu placement used to ignore this flag — the dropdown was shown or
+	// hidden wholesale on the alt-nav opt-in, so a per-item exemption inside
+	// one could never be reached.
 	AllAgents bool `json:"all_agents,omitempty"`
 	// BadgeField names a hidden row field; the count badge then reflects only
 	// rows where that field is truthy (e.g. "_pending" counts just the pending

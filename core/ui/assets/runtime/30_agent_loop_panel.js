@@ -734,13 +734,15 @@
         });
       }
       // onlyAllAgents: the current agent isn't opted into the alt nav, so only
-      // the always-on pinned rows are on screen — don't fetch counts for the
-      // menu views that aren't rendered.
+      // the always-on entries are on screen — don't fetch counts for the views
+      // that aren't rendered. Keyed on the flag alone, not on placement: a menu
+      // entry marked all_agents renders off the alt nav too, and testing for a
+      // pinned/topbar placement left its badge permanently empty.
       function refreshChannelBadges(onlyAllAgents) {
         (cfg.orchestrator_nav || []).forEach(function(item, i) {
           var badge = orchBadges[i];
           if (!item.source || !badge) return;
-          if (onlyAllAgents && !((item.pinned || item.topbar) && item.all_agents)) return;
+          if (onlyAllAgents && !item.all_agents) return;
           fetch(orchSourceURL(item.source, item)).then(function(r) { return r.ok ? r.json() : []; })
             .then(function(rows) {
               // BadgeField counts only matching rows (e.g. _pending on a page
@@ -779,7 +781,7 @@
         var name = (item && item.menu) || DEFAULT_NAV_MENU;
         if (navMenuByName[name]) return navMenuByName[name];
         var panel = el('div', {class: 'ui-channel-menu', style: 'display:none;position:absolute;right:0;top:calc(100% + 4px);z-index:40;min-width:210px;flex-direction:column;gap:0.1rem;padding:0.35rem;border:1px solid var(--border, rgba(127,127,127,0.3));border-radius:6px;background:var(--bg-1, #1b1b2b);box-shadow:0 6px 24px rgba(0,0,0,0.35)'});
-        var m = {name: name, panel: panel, items: [], lastGroup: null, btn: null, dot: null, control: null};
+        var m = {name: name, panel: panel, items: [], hdrs: [], lastGroup: null, btn: null, dot: null, control: null};
         m.close = function() { panel.style.display = 'none'; clearOpenTopbarMenu(m.close); };
         var dot = el('span', {class: 'ui-unread-dot', title: 'Pending items',
           style: 'display:none;width:7px;height:7px;border-radius:50%;background:var(--accent, #4a9eff);margin-left:0.35rem;flex:0 0 auto'}, ['']);
@@ -826,6 +828,10 @@
       // agent is selected would hide pending work (and strand it completely
       // when the user has no alt-nav agent at all).
       var hasAllAgentPinned = (cfg.orchestrator_nav || []).some(function(it){ return (it.pinned || it.topbar) && it.all_agents; });
+      // The same question without the placement filter: is ANYTHING on screen
+      // for a non-alt-nav agent? Menu entries count now that they honor the
+      // flag, and badge refresh keys off this rather than the pinned-only form.
+      var hasAllAgentNav = (cfg.orchestrator_nav || []).some(function(it){ return it.all_agents; });
       // Topbar-placed items: a queue whose data spans agents doesn't belong in
       // the agent's own rail. Compact button + count pill, right-aligned in the
       // action row (see the append below).
@@ -892,10 +898,15 @@
           if (item.group && item.group !== menu.lastGroup) {
             var firstInMenu = menu.panel.childNodes.length === 0;
             menu.lastGroup = item.group;
-            menu.panel.appendChild(el('div', {style: 'margin:' + (firstInMenu ? '0' : '0.45rem') + ' 0.35rem 0.15rem;' +
+            // Kept so applyOrchMode can hide the heading when every row it
+            // labels is hidden — a bare group name over nothing reads as a
+            // broken menu.
+            var ghdr = el('div', {style: 'margin:' + (firstInMenu ? '0' : '0.45rem') + ' 0.35rem 0.15rem;' +
               (firstInMenu ? '' : 'border-top:1px solid var(--border, rgba(127,127,127,0.3));') +
               'padding:' + (firstInMenu ? '0.2rem' : '0.5rem') + ' 0.25rem 0.1rem;' +
-              'font-size:0.62rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-mute, #999)'}, [item.group]));
+              'font-size:0.62rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-mute, #999)'}, [item.group]);
+            menu.panel.appendChild(ghdr);
+            menu.hdrs.push({group: item.group, el: ghdr});
           }
           var label = el('span', {style: 'flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'}, [item.label || ('View ' + (i + 1))]);
           var kids = [label];
@@ -922,26 +933,43 @@
       var lastOrchAgent; // last agent applyOrchMode saw — tells a real switch from the double-fire on initial load
       function applyOrchMode(agentId) {
         var isOrch = isAltNavAgent(agentId);
-        // Fleet agents get the nav dropdowns in the topbar; the rail is
-        // threads only. Non-fleet agents hide them (and any open overlay/menu).
-        navMenus.forEach(function(m) { m.control.style.display = isOrch ? '' : 'none'; });
         if (pinnedEl) pinnedEl.style.display = (isOrch || hasAllAgentPinned) ? '' : 'none';
         // Off the alt nav, only the all_agents entries survive — in the pinned
-        // strip and in the topbar alike.
+        // strip, in the topbar, and inside a menu alike. One rule, applied
+        // wherever an item renders: the flag says the item's DATA does not
+        // belong to the selected agent, and where it was PLACED cannot change
+        // whether that is true.
         var anyTopbar = false;
+        var navOn = function(i) {
+          var item = (cfg.orchestrator_nav || [])[i] || {};
+          return isOrch || !!item.all_agents;
+        };
         (cfg.orchestrator_nav || []).forEach(function(item, i) {
           if (!orchBtns[i]) return;
-          var on = isOrch || item.all_agents;
+          var on = navOn(i);
           if (item.topbar) {
             orchBtns[i].style.display = on ? 'inline-flex' : 'none';
             if (on) anyTopbar = true;
             return;
           }
-          if (!item.pinned) return;
           orchBtns[i].style.display = on ? 'flex' : 'none';
         });
+        // A menu follows its contents. Shown when it still holds something,
+        // hidden when everything in it is gated away — so a dropdown never
+        // opens onto an empty panel, and the Cortex actions take the whole
+        // menu with them only when nothing else is left in it.
+        navMenus.forEach(function(m) {
+          m.control.style.display = m.items.some(navOn) ? '' : 'none';
+          (m.hdrs || []).forEach(function(h) {
+            var live = m.items.some(function(i) {
+              var item = (cfg.orchestrator_nav || [])[i] || {};
+              return (item.group || '') === h.group && navOn(i);
+            });
+            h.el.style.display = live ? '' : 'none';
+          });
+        });
         if (navTopbarEl) navTopbarEl.style.display = anyTopbar ? 'flex' : 'none';
-        if (!isOrch && (hasAllAgentPinned || anyTopbar)) refreshChannelBadges(true);
+        if (!isOrch && hasAllAgentNav) refreshChannelBadges(true);
         // Hide the Channel hero immediately for non-fleet agents; loadSessions
         // re-shows + fills it for fleet agents from the home thread.
         if (!isOrch && primaryEl) primaryEl.style.display = 'none';

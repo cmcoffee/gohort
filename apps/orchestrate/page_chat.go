@@ -304,7 +304,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// helper the detailed pane below uses, so the summary and
 						// the list it summarizes cannot disagree. Details opens the
 						// same run record the Runs pane opens.
-						{Label: "Overview", Menu: "Manage", Source: "api/console/overview", Layout: "cards",
+						{Label: "Overview", Menu: "Manage", AllAgents: true, Source: "api/console/overview", Layout: "cards",
 							RowActions: []ui.OrchestratorRowAction{
 								{Label: "Details", Method: "GET", URL: "api/console/run-detail", ShowResult: true, OnlyIf: "_run"},
 								// The failure count was a dead end: it counts a week
@@ -318,7 +318,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// Cards layout so each agent's mission (the standing brief it
 						// runs with — "what it's told to do") renders as a detail line
 						// under the name, alongside its schedule / status / next run.
-						{Label: "Enabled agents", Menu: "Manage", Source: "api/console/agents", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
+						{Label: "Enabled agents", Menu: "Manage", AllAgents: true, Source: "api/console/agents", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
 							// Run now is hidden on a broken row — there's no live agent
 							// to run. Resume stays visible as the gated recovery button
 							// (its handler refuses while the dependency is still gone).
@@ -338,7 +338,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							{Label: "Move to…", Method: "POST", URL: "api/console/agents/move", PickerSource: "api/console/surface-options", PickerTitle: "Where the per-run report lands (cortex / session / background)"},
 							{Label: "Delete", Method: "DELETE", URL: "api/console/agents/delete", Variant: "danger", Confirm: "Delete this standing agent and cancel its schedule?"},
 						}},
-						{Label: "Event monitors", Menu: "Manage", Source: "api/console/monitors", RowActions: []ui.OrchestratorRowAction{
+						{Label: "Event monitors", Menu: "Manage", AllAgents: true, Source: "api/console/monitors", RowActions: []ui.OrchestratorRowAction{
 							// Test = run the check once now. Only scheduled kinds
 							// (poll / http_poll / watch) have a check to run — a
 							// webhook is push-only, so gate on _schedulable; and not on
@@ -354,7 +354,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// count, and next run alongside the name — the status-card
 						// sibling of Enabled agents / Event monitors. Recurring tasks
 						// have no pause concept, so Delete is the only row action.
-						{Label: "Recurring tasks", Menu: "Manage", Source: "api/console/recurring", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
+						{Label: "Recurring tasks", Menu: "Manage", AllAgents: true, Source: "api/console/recurring", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
 							// Run now is hidden on a parked task: a parked payload
 							// short-circuits at the top of the fire, so the button
 							// would do nothing. Parked rows get Relink (the agent is
@@ -426,7 +426,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// What every agent is doing on the owner's behalf, in one
 						// read: how much has run, what it cost, what is standing, and
 						// what has stopped and is waiting on a person.
-						{Label: "Overview", Menu: "Fleet", Scope: "fleet", Source: "api/console/fleet", Layout: "cards",
+						{Label: "Overview", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/fleet", Layout: "cards",
 							RowActions: []ui.OrchestratorRowAction{
 								{Label: "Details", Method: "GET", URL: "api/console/run-detail", ShowResult: true, OnlyIf: "_run"},
 								// No {agent}: this figure counts the fleet, so the list
@@ -453,20 +453,20 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// clean slate it promised left a third of the standing work
 						// still firing. Everything it did is here, per row, in front
 						// of the thing it acts on.
-						{Label: "Enabled agents", Menu: "Fleet", Scope: "fleet", Source: "api/console/agents", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
+						{Label: "Enabled agents", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/agents", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
 							{Label: "Run now", Method: "POST", URL: "api/console/agents/run", HideIf: "_broken", Confirm: "Run this agent's mission once right now? This is a one-off test and does not change its schedule."},
 							{Label: "Pause", Method: "POST", URL: "api/console/agents/pause", HideIf: "_paused"},
 							{Label: "Resume", Method: "POST", URL: "api/console/agents/resume", OnlyIf: "_paused"},
 							{Label: "Relink", Method: "POST", URL: "api/console/agents/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live target", OnlyIf: "_relinkable"},
 							{Label: "Delete", Method: "DELETE", URL: "api/console/agents/delete", Variant: "danger", Confirm: "Delete this standing agent and cancel its schedule?"},
 						}},
-						{Label: "Event monitors", Menu: "Fleet", Scope: "fleet", Source: "api/console/monitors", RowActions: []ui.OrchestratorRowAction{
+						{Label: "Event monitors", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/monitors", RowActions: []ui.OrchestratorRowAction{
 							{Label: "Pause", Method: "POST", URL: "api/console/monitors/pause", HideIf: "_paused"},
 							{Label: "Resume", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_paused"},
 							{Label: "Relink", Method: "POST", URL: "api/console/monitors/relink", PickerSource: "api/console/agent-options?with_default=1", PickerTitle: "Relink (Default agent, or pick a specific one)", OnlyIf: "_relinkable"},
 							{Label: "Delete", Method: "DELETE", URL: "api/console/monitors/delete", Variant: "danger", Confirm: "Delete this event monitor?"},
 						}},
-						{Label: "Recurring tasks", Menu: "Fleet", Scope: "fleet", Source: "api/console/recurring", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
+						{Label: "Recurring tasks", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/recurring", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
 							{Label: "Run now", Method: "POST", URL: "api/console/recurring/run", HideIf: "_broken", Confirm: "Run this recurring task's prompt once right now? This is a one-off test — it does not change the schedule or count against the fire cap."},
 							{Label: "Relink", Method: "POST", URL: "api/console/recurring/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live agent", OnlyIf: "_relinkable"},
 							{Label: "Resume", Method: "POST", URL: "api/console/recurring/resume", OnlyIf: "_broken", Confirm: "Put this parked task back on its schedule? A stalled objective gets a fresh attempt allowance; what it already tried is kept."},
@@ -480,14 +480,14 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// digest — which until now only the Operator agent could read
 						// (list_runs / inspect_run), so "what did my 3am run actually
 						// do" meant asking an agent.
-						{Label: "Runs", Menu: "Fleet", Scope: "fleet", Source: "api/console/runs", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
+						{Label: "Runs", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/runs", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
 							{Label: "Details", Method: "GET", URL: "api/console/run-detail", ShowResult: true},
 						}},
 						// What each agent costs: every run banks its own scoped usage
 						// against the agent it ran (agent_spend.go), priced at read time
 						// with the configured rates and in tokens always. One row per
 						// agent, so this is a fleet view however it is opened.
-						{Label: "Spend", Menu: "Fleet", Scope: "fleet", Source: "api/console/spend", Layout: "cards"},
+						{Label: "Spend", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/spend", Layout: "cards"},
 						// What the enforced rules have actually STOPPED, across every
 						// agent. The per-agent log lives in the Rules modal, which is
 						// the right place while editing one agent's rules and the
@@ -499,14 +499,14 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// Fleet-scoped on purpose. This handler answers fleet-wide
 						// only when given no agent, and the menu appended one to
 						// every request, so until now it could never actually do so.
-						{Label: "Guardrail blocks", Menu: "Fleet", Scope: "fleet", Source: "api/console/guardrail-blocks", Layout: "cards"},
+						{Label: "Guardrail blocks", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/guardrail-blocks", Layout: "cards"},
 						// Tool actions that have failed repeatedly and never once
 						// succeeded — the standing tally the outcome ledger keeps per
 						// action, which until now surfaced as ONE breadcrumb on the
 						// fifth failure in whichever thread tripped it. Forget clears
 						// one tally after the definition is fixed; a success clears it
 						// on its own.
-						{Label: "Broken tools", Menu: "Fleet", Scope: "fleet", Source: "api/console/broken-tools", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
+						{Label: "Broken tools", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/broken-tools", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
 							{Label: "Forget", Method: "POST", URL: "api/console/broken-tools/forget", Confirm: "Forget this action's failure tally? It starts counting again from zero; if the definition is still wrong it will be back here after five more failures."},
 						}},
 					},
