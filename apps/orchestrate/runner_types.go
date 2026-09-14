@@ -194,6 +194,16 @@ type chatTurn struct {
 	// taintBlocks counts actions stopped by that check, so the diagnostic can
 	// say whether the tightening did anything.
 	taintBlocks int
+	// scanDetections counts injection-scan detections on this turn, including
+	// the ones that never taint it.
+	//
+	// Separate from scanTaint on purpose. Taint is recorded only when
+	// scanTightens(agent) — an owner who disabled the tightening still gets the
+	// detection, the banner and the audit entry, and a run that read hostile
+	// instructions is worth flagging to them whether or not the follow-up check
+	// was armed. Reading scanTaint here would make the flag disappear for
+	// exactly the agents whose owner turned the enforcement off.
+	scanDetections int
 
 	// machine is the phase this turn is running under, if the agent has a
 	// machine (machine.go). Lives on the turn because change_phase can

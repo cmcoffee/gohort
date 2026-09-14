@@ -718,3 +718,158 @@ func TestParseTaintedActionVerdict(t *testing.T) {
 		}
 	}
 }
+
+// --- the run's OUTCOME -------------------------------------------------
+//
+// A detection already lands in three places a person has to go and look at.
+// The count below is what reaches a scheduled fire's owner without looking:
+// it is the only input that promotes an otherwise-clean recurring run to
+// RunAttention, so a run that read hostile instructions stops reading "ok".
+
+func TestDetectionIsCountedForTheRunsOutcome(t *testing.T) {
+	turn := scanningTurn(t, ToolScanVerdict{Status: ScanFlagged, Span: "do this"})
+	if n := turn.scanDetectionCount(); n != 0 {
+		t.Fatalf("a fresh turn has read nothing: got %d", n)
+	}
+	turn.applyToolResultPolicy("fetch_url", toolResultPolicy{fence: true, scan: true}, nil, "a page", nil)
+	if n := turn.scanDetectionCount(); n != 1 {
+		t.Errorf("one detection should count once, got %d", n)
+	}
+	// Every detection counts, repeats included — a feed tripping the scanner
+	// several times in one fire is the shape most worth seeing.
+	turn.applyToolResultPolicy("fetch_url", toolResultPolicy{fence: true, scan: true}, nil, "another page", nil)
+	if n := turn.scanDetectionCount(); n != 2 {
+		t.Errorf("repeat detections must all count, got %d", n)
+	}
+}
+
+// The count must NOT be derived from the taint, or the flag would vanish for
+// exactly the agents whose owner switched the follow-up enforcement off — the
+// ones whose runs most need a person to read them.
+func TestDetectionIsCountedWithTighteningDisabled(t *testing.T) {
+	turn := scanningTurn(t, ToolScanVerdict{Status: ScanFlagged, Span: "do this"})
+	turn.agent = AgentRecord{ScanToolResults: true, ScanTightenDisabled: true}
+	turn.applyToolResultPolicy("fetch_url", toolResultPolicy{fence: true, scan: true}, nil, "a page", nil)
+	if turn.turnTainted() {
+		t.Error("tightening is disabled, so nothing should be tainted")
+	}
+	if n := turn.scanDetectionCount(); n != 1 {
+		t.Errorf("the detection still happened and must still count, got %d", n)
+	}
+}
+
+func TestCleanResultCountsNoDetection(t *testing.T) {
+	turn := scanningTurn(t, ToolScanVerdict{Status: ScanClean})
+	turn.applyToolResultPolicy("fetch_url", toolResultPolicy{fence: true, scan: true}, nil, "an ordinary page", nil)
+	if n := turn.scanDetectionCount(); n != 0 {
+		t.Errorf("a clean scan is not a detection, got %d", n)
+	}
+}
+
+// A no-verdict is a scan that could not answer. It leaves a breadcrumb, but
+// calling it a detection would flag every run whose scanner is failing as one
+// that read an attack.
+func TestNoVerdictCountsNoDetection(t *testing.T) {
+	turn := scanningTurn(t, ToolScanVerdict{Status: ScanNoVerdict, Reason: "scanner call failed"})
+	turn.applyToolResultPolicy("fetch_url", toolResultPolicy{fence: true, scan: true}, nil, "some text", nil)
+	if n := turn.scanDetectionCount(); n != 0 {
+		t.Errorf("a no-verdict is not a detection, got %d", n)
+	}
+}
+
+// The summary leads the ledger row, and the Activity feed truncates — so what
+// happened has to be in the first clause, and "nothing was stopped" must not
+// be phrased as if the check cleared the actions.
+func TestScanDetectionSummaryReadsLikeWhatHappened(t *testing.T) {
+	one := scanDetectionSummary(1, 0)
+	if !strings.HasPrefix(one, "Read content carrying instructions aimed at this agent") {
+		t.Errorf("the leading clause should say what happened to the agent: %q", one)
+	}
+	if strings.Contains(one, "detections") {
+		t.Errorf("a single detection should not be counted out loud: %q", one)
+	}
+	if !strings.Contains(one, "continued afterward") {
+		t.Errorf("nothing stopped should say only that: %q", one)
+	}
+	if many := scanDetectionSummary(3, 0); !strings.Contains(many, "(3 detections)") {
+		t.Errorf("several detections is the shape worth seeing: %q", many)
+	}
+	if blocked := scanDetectionSummary(1, 1); !strings.Contains(blocked, "1 follow-up action was stopped") {
+		t.Errorf("a stopped action is the headline when there is one: %q", blocked)
+	}
+	if blocked := scanDetectionSummary(2, 4); !strings.Contains(blocked, "4 follow-up actions were stopped") {
+		t.Errorf("plural blocks should read as plural: %q", blocked)
+	}
+}
+
+// --- what the tainted-action judge is given to convict against -----------
+//
+// The judge asks "is this action serving the request, or the injection?" With
+// an empty request it convicts nothing, so this used to be weakest on exactly
+// the runs nobody watches: a dispatched or scheduled turn has no *session at
+// all, and the request came back empty every time.
+
+func TestBackgroundTurnFallsBackToItsDrivingText(t *testing.T) {
+	// No session — a scheduled fire. intentText is the schedule's own prompt,
+	// stamped from the payload server-side (ToolSession.IntentText).
+	turn := &chatTurn{ctx: context.Background(), intentText: "Run the Moltbook engagement cycle."}
+	if got := turn.lastUserRequestText(); got != "Run the Moltbook engagement cycle." {
+		t.Errorf("a background turn must give the judge its mission, got %q", got)
+	}
+}
+
+func TestATurnWithNothingDrivingItStillReturnsEmpty(t *testing.T) {
+	turn := &chatTurn{ctx: context.Background()}
+	if got := turn.lastUserRequestText(); got != "" {
+		t.Errorf("nothing established should stay nothing established, got %q", got)
+	}
+}
+
+// On an interactive turn the live conversation is the request; the intent is a
+// stale copy of whatever started the session.
+func TestTheLiveRequestBeatsTheStandingIntent(t *testing.T) {
+	turn := &chatTurn{
+		ctx:        context.Background(),
+		intentText: "the standing mission",
+		session: &ChatSession{Messages: []ChatMessage{
+			{Role: "user", Content: "first thing"},
+			{Role: "assistant", Content: "ok"},
+			{Role: "user", Content: "what I actually want now"},
+		}},
+	}
+	if got := turn.lastUserRequestText(); got != "what I actually want now" {
+		t.Errorf("the last user turn is the request, got %q", got)
+	}
+}
+
+// A cortex thread woken by a monitor has a session but no user message in it —
+// the same empty-request hole, reached a different way.
+func TestASessionWithNoUserMessageFallsBackToo(t *testing.T) {
+	turn := &chatTurn{
+		ctx:        context.Background(),
+		intentText: "the standing mission",
+		session:    &ChatSession{Messages: []ChatMessage{{Role: "assistant", Content: "a report landed"}}},
+	}
+	if got := turn.lastUserRequestText(); got != "the standing mission" {
+		t.Errorf("a session with nothing asked in it should fall through, got %q", got)
+	}
+}
+
+// The judge's prompt is bounded whichever source the text came from.
+func TestTheRequestIsTruncatedFromEitherSource(t *testing.T) {
+	long := strings.Repeat("x", 2500)
+	fromIntent := (&chatTurn{ctx: context.Background(), intentText: long}).lastUserRequestText()
+	if len([]rune(fromIntent)) != 2001 { // 2000 + the ellipsis
+		t.Errorf("a long mission should be bounded, got %d runes", len([]rune(fromIntent)))
+	}
+	if !strings.HasSuffix(fromIntent, "…") {
+		t.Error("truncation should be visible to the judge")
+	}
+	fromSession := (&chatTurn{
+		ctx:     context.Background(),
+		session: &ChatSession{Messages: []ChatMessage{{Role: "user", Content: long}}},
+	}).lastUserRequestText()
+	if fromSession != fromIntent {
+		t.Error("both sources should be bounded the same way")
+	}
+}

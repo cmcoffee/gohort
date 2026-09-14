@@ -97,7 +97,8 @@ func registerStandingRunner(app *OrchestrateApp) {
 		// 5am with the tab closed, so its record is the only place this can be
 		// read afterwards.
 		ctx, promptDigest := WithPromptDigest(ctx)
-		out, hitRoundCap, toolTrace, err := app.runAgentSyncConfirm(ctx, sa.Owner, sa.Owner, sa.AgentID, mission, gate.confirm, sa.DispatchedBy...)
+		run, err := app.runAgentSyncConfirm(ctx, sa.Owner, sa.Owner, sa.AgentID, mission, gate.confirm, sa.DispatchedBy...)
+		out, hitRoundCap, toolTrace := run.Text, run.HitRoundCap, run.Trace
 		if err != nil {
 			liveRun.Complete(RunStatusFailed)
 		} else {
@@ -144,6 +145,37 @@ func registerStandingRunner(app *OrchestrateApp) {
 			}
 			appendSessionDiag(UserDB(app.DB, sa.Owner), reportAgent, reportSession, "round-cap",
 				"Scheduled run \""+sa.Name+"\" hit its worker-round limit before finishing — the last action may not have run.")
+		}
+		// Something this run READ carried instructions aimed at the agent.
+		//
+		// Its own condition, not another arm of the chain above: the two before
+		// it are alternatives (a gated tool explains why the work stopped, and
+		// so does the round cap), while this is orthogonal to both — a run can
+		// be gated AND have read an injection, and the chain would report only
+		// the first. Applied after them so it reads FIRST, because a truncated
+		// or gated run announces itself in the summary and this does not.
+		//
+		// The detection's own ⚠ breadcrumb lands on the turn's trail, and a
+		// turn-free run's trail is the synthetic "external-dispatch:<user>:
+		// <agent>" session nobody navigates to. So this mirrors the round-cap
+		// path and writes to the REPORT session — where the owner already looks
+		// for what their schedules did.
+		if run.Detections > 0 {
+			res.Status = RunAttention
+			res.Summary = scanDetectionSummary(run.Detections, run.TaintBlocks) + " " + res.Summary
+			reportAgent := strings.TrimSpace(sa.ReportAgentID)
+			if reportAgent == "" {
+				reportAgent = sa.AgentID
+			}
+			reportSession := strings.TrimSpace(sa.ReportSessionID)
+			if reportSession == "" {
+				reportSession = cortexSessionID(reportAgent)
+			}
+			appendSessionDiag(UserDB(app.DB, sa.Owner), reportAgent, reportSession, "tool-scan-detected",
+				"Scheduled run \""+sa.Name+"\" read content carrying instructions aimed at this agent. "+
+					"It was marked as hostile and kept, not dropped, so the agent could report it — read what the run did.")
+			Log("[orchestrate/standing] agent=%s schedule=%q INJECTION DETECTED x%d (%d follow-up action(s) stopped) — run flagged for attention",
+				sa.AgentID, sa.Name, run.Detections, run.TaintBlocks)
 		}
 		// Objective check (docs/loop-objectives.md). A standing agent with an
 		// `until` is asking for a state of the world, so the fire that reaches
@@ -344,14 +376,14 @@ func runStandingPipeline(ctx context.Context, app *OrchestrateApp, sa StandingAg
 	dispatch := func(c context.Context, agentID, stageInput string) (string, error) {
 		// Same auto-approving confirm RunAgentSync uses — this is the identical
 		// dispatch, just one that keeps the trace instead of discarding it.
-		text, _, trace, err := app.runAgentSyncConfirm(c, sa.Owner, sa.Owner, agentID, stageInput,
+		stage, err := app.runAgentSyncConfirm(c, sa.Owner, sa.Owner, agentID, stageInput,
 			func(string, string) bool { return true })
-		if len(trace) > 0 {
+		if len(stage.Trace) > 0 {
 			traceMu.Lock()
-			stageTrace = append(stageTrace, trace...)
+			stageTrace = append(stageTrace, stage.Trace...)
 			traceMu.Unlock()
 		}
-		return text, err
+		return stage.Text, err
 	}
 	out, _, err := app.RunPipelineDefHooks(ctx, def, input, PipelineHooks{
 		Dispatch: dispatch,

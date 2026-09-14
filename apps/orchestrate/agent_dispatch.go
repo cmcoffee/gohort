@@ -509,40 +509,61 @@ func (T *OrchestrateApp) RunAgentSync(ctx context.Context, agentOwner, runtimeUs
 	// human behind it) initiated the dispatch. Standing/autonomous runs must
 	// NOT auto-approve; they call runAgentSyncConfirm with a deny-by-default
 	// confirm so high-consequence tools route through approval instead.
-	text, _, _, err := T.runAgentSyncConfirm(ctx, agentOwner, runtimeUser, agentKey, message,
+	res, err := T.runAgentSyncConfirm(ctx, agentOwner, runtimeUser, agentKey, message,
 		func(string, string) bool { return true }, via...)
-	return text, err
+	return res.Text, err
 }
 
-// runAgentSyncConfirm returns (text, hitRoundCap, toolTrace, error) — hitRoundCap
-// tells the caller the run stopped because it exhausted its worker rounds (so a
-// standing run can flag itself incomplete rather than reporting a truncated
-// result as ok).
-// The []PersistedToolCall return is the run's tool trace. A caller that records
-// the run to the ledger needs it: without it the record says what the agent
-// said and nothing about what it did, which is the difference between a log and
-// a receipt. Computed here regardless (the commitment ledger reads it), so
-// handing it back costs nothing.
-func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, runtimeUser, agentKey, message string, confirm func(string, string) bool, via ...string) (string, bool, []PersistedToolCall, error) {
+// syncRunResult is what one turn-free run reports back to whoever asked for it.
+//
+// A struct rather than a return tuple, which this had grown to four of and was
+// about to grow a fifth. Every caller that records a run to the ledger needs a
+// DIFFERENT subset of these, and a positional list makes each new fact a change
+// to every call site whether or not it cares — which is how the scan counts
+// ended up reaching the recurring path and not this one.
+type syncRunResult struct {
+	// Text is the agent's reply, trimmed.
+	Text string
+	// HitRoundCap says the run stopped because it exhausted its worker rounds,
+	// so a caller can flag itself incomplete rather than reporting a truncated
+	// result as ok.
+	HitRoundCap bool
+	// Trace is the run's tool trace. A caller that records the run to the
+	// ledger needs it: without it the record says what the agent said and
+	// nothing about what it did, which is the difference between a log and a
+	// receipt. Computed here regardless (the commitment ledger reads it), so
+	// handing it back costs nothing.
+	Trace []PersistedToolCall
+	// Detections counts injection-scan hits during the run, and TaintBlocks
+	// the follow-up actions the tainted-action check stopped. A turn-free run
+	// has nobody watching it, so its ledger row is the only place these reach
+	// an owner unprompted.
+	Detections  int
+	TaintBlocks int
+}
+
+// runAgentSyncConfirm runs one agent turn with no conversation around it and
+// reports what happened; see syncRunResult for what comes back.
+func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, runtimeUser, agentKey, message string, confirm func(string, string) bool, via ...string) (syncRunResult, error) {
 	if T == nil || T.LLM == nil {
-		return "", false, nil, errors.New("orchestrate runtime not initialized")
+		return syncRunResult{}, errors.New("orchestrate runtime not initialized")
 	}
 	if agentOwner == "" {
-		return "", false, nil, errors.New("agentOwner is required")
+		return syncRunResult{}, errors.New("agentOwner is required")
 	}
 	if runtimeUser == "" {
 		runtimeUser = agentOwner
 	}
 	if strings.TrimSpace(message) == "" {
-		return "", false, nil, errors.New("message is required")
+		return syncRunResult{}, errors.New("message is required")
 	}
 	ownerDB := UserDB(T.DB, agentOwner)
 	if ownerDB == nil {
-		return "", false, nil, fmt.Errorf("no per-user db for agentOwner %q", agentOwner)
+		return syncRunResult{}, fmt.Errorf("no per-user db for agentOwner %q", agentOwner)
 	}
 	target, ok := findAgentByNameOrID(ownerDB, agentOwner, agentKey)
 	if !ok {
-		return "", false, nil, fmt.Errorf("agent %q not found in agentOwner %q store", agentKey, agentOwner)
+		return syncRunResult{}, fmt.Errorf("agent %q not found in agentOwner %q store", agentKey, agentOwner)
 	}
 	// Standing fire / monitor wake / external dispatch to a retiring archetype
 	// seed → materialize the owner's own copy and run that.
@@ -551,7 +572,7 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	if runtimeUser != agentOwner {
 		runtimeDB = UserDB(T.DB, runtimeUser)
 		if runtimeDB == nil {
-			return "", false, nil, fmt.Errorf("no per-user db for runtimeUser %q", runtimeUser)
+			return syncRunResult{}, fmt.Errorf("no per-user db for runtimeUser %q", runtimeUser)
 		}
 		// Layered rules (enabler #2): a scoped INSTANCE adds its own rules over the
 		// template's base. Modifying the local target copy means the standard prompt
@@ -846,12 +867,18 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	// reaching here — a genuine setup failure).
 	liveRun.Complete(runOutcomeStatus(runErr, resp != nil))
 	if runErr != nil {
-		return "", false, toolTrace, runErr
+		return syncRunResult{Trace: toolTrace}, runErr
 	}
 	if resp == nil {
-		return "", false, toolTrace, errors.New("agent returned no response")
+		return syncRunResult{Trace: toolTrace}, errors.New("agent returned no response")
 	}
-	return strings.TrimSpace(resp.Content), resp.HitRoundCap, toolTrace, nil
+	return syncRunResult{
+		Text:        strings.TrimSpace(resp.Content),
+		HitRoundCap: resp.HitRoundCap,
+		Trace:       toolTrace,
+		Detections:  subTurn.scanDetectionCount(),
+		TaintBlocks: subTurn.taintBlockCount(),
+	}, nil
 }
 
 // RunAgentSyncContinuing is RunAgentSync's continuation variant —

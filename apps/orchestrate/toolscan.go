@@ -304,6 +304,14 @@ func (t *chatTurn) recordScanDetection(agentID, tool string, v ToolScanVerdict) 
 	if agentID == "" {
 		agentID = t.agent.ID
 	}
+	// Counted for the run's OUTCOME, before anything that can be switched off.
+	// The three existing breadcrumbs (audit entry, ⚠ trail, server log) are all
+	// places somebody has to go and look; a scheduled fire's row in the ledger
+	// is the one surface an owner sees without going anywhere, and until this it
+	// said "ok" for a run that read hostile instructions and acted afterward.
+	t.scanMu.Lock()
+	t.scanDetections++
+	t.scanMu.Unlock()
 	db := t.ownerDB
 	if db == nil {
 		db = t.udb
@@ -655,6 +663,59 @@ func (t *chatTurn) taintTurn(v ToolScanVerdict) {
 	}
 }
 
+// scanDetectionSummary is the sentence a run's ledger row leads with when the
+// scan fired during it.
+//
+// FIRST in the summary, not appended: the Activity feed truncates, and this is
+// the thing to know about the run before anything the run itself produced.
+// It says what happened to the agent (it read hostile instructions) and what
+// the follow-up check did about it, because "detected, and nothing was
+// stopped" and "detected, and two actions were stopped" call for very
+// different amounts of reading.
+func scanDetectionSummary(detections, blocked int) string {
+	head := "Read content carrying instructions aimed at this agent"
+	if detections > 1 {
+		head += fmt.Sprintf(" (%d detections)", detections)
+	}
+	switch {
+	case blocked == 1:
+		return head + "; 1 follow-up action was stopped."
+	case blocked > 1:
+		return head + fmt.Sprintf("; %d follow-up actions were stopped.", blocked)
+	}
+	// Nothing stopped covers two very different cases and cannot tell them
+	// apart from here: the follow-up check ran and cleared everything, or it
+	// never got the chance (tightening disabled, no judge, a scheduled fire
+	// whose empty user request gives the judge nothing to convict against).
+	// The turn's ⚠ trail distinguishes them; this line stays honest by
+	// claiming only what is certain.
+	return head + "; it continued afterward."
+}
+
+// scanDetectionCount reports how many injection-scan detections landed on this
+// turn — including any that did not taint it, which is why it is not derived
+// from scanTaint. Zero for a turn that read nothing hostile.
+func (t *chatTurn) scanDetectionCount() int {
+	if t == nil {
+		return 0
+	}
+	t.scanMu.Lock()
+	defer t.scanMu.Unlock()
+	return t.scanDetections
+}
+
+// taintBlockCount reports how many follow-up actions the tainted-action check
+// stopped on this turn. Zero when nothing was stopped, and also when the check
+// never ran — scanDetectionCount is what says a detection happened.
+func (t *chatTurn) taintBlockCount() int {
+	if t == nil {
+		return 0
+	}
+	t.scanMu.Lock()
+	defer t.scanMu.Unlock()
+	return t.taintBlocks
+}
+
 // turnTainted reports whether a detection has landed in this turn.
 func (t *chatTurn) turnTainted() bool {
 	if t == nil {
@@ -789,30 +850,58 @@ func (t *chatTurn) checkTaintedAction(ctx context.Context, candidate string) Gua
 	}
 }
 
-// lastUserRequestText is what the user actually asked for, as the tainted-action
-// judge needs it: the most recent user turn in this session.
+// lastUserRequestText is what was actually asked for, as the tainted-action
+// judge needs it: the most recent user turn in this session, and failing that
+// the text this turn was built to serve.
 //
-// The LAST one, not a window. The judge's question is "is this action serving
-// the request or the injection", and a window would hand it several requests to
-// choose from — which is a way for a steered agent's action to look like it
-// matches something, somewhere. Empty when there is no session (a scheduled
-// fire), and the judge treats an empty request the same way it treats an empty
-// action: nothing established, nothing convicted.
+// The LAST user turn, not a window. The judge's question is "is this action
+// serving the request or the injection", and a window would hand it several
+// requests to choose from — which is a way for a steered agent's action to look
+// like it matches something, somewhere.
+//
+// The FALLBACK is the whole point on a background turn. A dispatched or
+// scheduled turn has no *session at all (see buildDispatchTurnExtrasWithOwner —
+// it never sets one), so this used to return empty for every one of them, and
+// the judge treats an empty request the way it treats an empty action: nothing
+// established, nothing convicted. The check that exists to stop a steered agent
+// was therefore weakest on the runs nobody is watching — a 4am fire could read
+// injected instructions and act on them with the judge asked to compare the
+// action against nothing at all.
+//
+// ToolSession.IntentText is already the right text and is already stamped: "the
+// turn's driving text — the user message, standing mission, or dispatch brief
+// this session was built to serve". A recurring fire puts its schedule's prompt
+// there, a dispatch puts the brief. It is authored by the OWNER and set
+// server-side from the payload, never by the agent or by anything it read,
+// which is what makes it safe to convict against.
+//
+// Session first, because on an interactive turn the last user message is the
+// request and the intent is a stale copy of an earlier one. The fallback also
+// catches a session that holds no user message yet (a cortex thread woken by a
+// monitor), which had the same empty-request problem for the same reason.
 func (t *chatTurn) lastUserRequestText() string {
-	if t == nil || t.session == nil {
+	if t == nil {
 		return ""
 	}
-	for i := len(t.session.Messages) - 1; i >= 0; i-- {
-		if t.session.Messages[i].Role != "user" {
-			continue
-		}
-		if txt := strings.TrimSpace(t.session.Messages[i].Content); txt != "" {
-			const max = 2000
-			if len(txt) > max {
-				txt = txt[:max] + "…"
+	if t.session != nil {
+		for i := len(t.session.Messages) - 1; i >= 0; i-- {
+			if t.session.Messages[i].Role != "user" {
+				continue
 			}
-			return txt
+			if txt := strings.TrimSpace(t.session.Messages[i].Content); txt != "" {
+				return truncateRequestText(txt)
+			}
 		}
 	}
-	return ""
+	return truncateRequestText(strings.TrimSpace(t.intentText))
+}
+
+// truncateRequestText bounds what goes into the judge's prompt. A schedule's
+// prompt can be long, and the judge needs what was asked for, not all of it.
+func truncateRequestText(txt string) string {
+	const max = 2000
+	if len(txt) > max {
+		return txt[:max] + "…"
+	}
+	return txt
 }

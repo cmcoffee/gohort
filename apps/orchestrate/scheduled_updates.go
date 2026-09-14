@@ -298,6 +298,65 @@ func handleOrchestrateScheduledUpdate(ctx context.Context, raw json.RawMessage) 
 	}
 }
 
+// scheduledOutcome is what a completed fire knows about how it went; resolve()
+// turns that into the row its owner reads.
+//
+// A struct and a method rather than a run of inline if-statements, because this
+// decision is the only surface a scheduled fire has. Nobody is watching a 4am
+// run, so whatever this returns IS the report — and it was three lines of
+// inline mutation reachable only by running a whole fire, which is how it
+// stayed wrong without anything catching it: a run that read injected
+// instructions and acted on them afterward recorded "ok", because the inputs
+// were a stalled objective and the round cap and nothing else.
+type scheduledOutcome struct {
+	reply       string
+	objLine     string // where an objective stands, when the task has one
+	objStalled  bool
+	hitCap      bool
+	softCap     int
+	detections  int // injection-scan hits during the fire
+	taintBlocks int // follow-up actions the tainted-action check stopped
+}
+
+// resolve returns the run's status and the summary that goes with it.
+//
+// The summary is built OUTWARD — each condition prefixes what is already there,
+// so the most urgent thing ends up first. Ordering is the whole design here,
+// because the Activity feed truncates: a row whose opening clause is the
+// agent's own cheerful account of its work is a row that says nothing.
+//
+// Every condition resolves to Attention, never Failed. These are runs that DID
+// their work and want a person to look at them; RunFailed means the run
+// errored, and mixing the two puts a working task in the bucket for broken ones.
+func (o scheduledOutcome) resolve() (RunStatus, string) {
+	status, summary := RunOK, standingSummary(o.reply)
+	if o.objLine != "" {
+		summary = strings.ToUpper(o.objLine[:1]) + o.objLine[1:] + ". " + summary
+		if o.objStalled {
+			status = RunAttention
+		}
+	}
+	if o.hitCap {
+		status = RunAttention
+		summary = fmt.Sprintf("hit round cap (%d rounds) — cycle may be incomplete. %s", o.softCap, summary)
+	}
+	// Applied last, so it reads first. Something this fire READ carried
+	// instructions aimed at the agent, and flagged-and-delivered is the default
+	// action — the turn carried on, and the work may well be fine. That is
+	// exactly why it outranks a round cap: a truncated cycle announces itself in
+	// the output, and this does not.
+	//
+	// A detection already lands in three places (the agent's Guardrail blocks,
+	// the turn's ⚠ trail, the server log), and each is somewhere you go only
+	// once you already suspect something. This row is the one that arrives
+	// without being asked for.
+	if o.detections > 0 {
+		status = RunAttention
+		summary = scanDetectionSummary(o.detections, o.taintBlocks) + " " + summary
+	}
+	return status, summary
+}
+
 // fireOrchestrateUpdate runs one recurring fire: load the session, assemble the
 // full agent toolkit, run the loop, append the reply to the thread, and record
 // the run in the ledger. When reArm is true (the scheduler-driven chain) it
@@ -1010,19 +1069,22 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// be SENT there — appending it to the stored session is what the recurring
 	// path wants and leaves the person who asked with nothing.
 	deliverWakeToChannel(p, subSess, reply, toolTrace)
-	status, summary := RunOK, standingSummary(reply)
-	if objLine != "" {
-		// Prefixed rather than appended: the Activity feed truncates, and where
-		// the goal stands is the first thing to know about an objective's run.
-		summary = strings.ToUpper(objLine[:1]) + objLine[1:] + ". " + summary
-		if objStalled {
-			status = RunAttention
-		}
+	outcome := scheduledOutcome{
+		reply:       reply,
+		objLine:     objLine,
+		objStalled:  objStalled,
+		hitCap:      hitCap,
+		softCap:     softCap,
+		detections:  subTurn.scanDetectionCount(),
+		taintBlocks: subTurn.taintBlockCount(),
 	}
+	status, summary := outcome.resolve()
 	if hitCap {
-		status = RunAttention
-		summary = fmt.Sprintf("hit round cap (%d rounds) — cycle may be incomplete. %s", softCap, summary)
 		Log("[orchestrate/scheduled] agent=%s session=%s fire %d HIT ROUND CAP (%d) — likely incomplete", agentLabel, p.SessionID, p.FireCount+1, softCap)
+	}
+	if outcome.detections > 0 {
+		Log("[orchestrate/scheduled] agent=%s session=%s fire %d INJECTION DETECTED x%d (%d follow-up action(s) stopped) — run flagged for attention",
+			agentLabel, p.SessionID, p.FireCount+1, outcome.detections, outcome.taintBlocks)
 	}
 	record(status, summary, reply, "")
 	Log("[orchestrate/scheduled] agent=%s session=%s posted fire %d (%d chars)",
