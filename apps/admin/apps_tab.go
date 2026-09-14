@@ -192,6 +192,25 @@ func isListableApp(path string) bool {
 	return false
 }
 
+// findListedApp resolves the app a section on this tab is about.
+//
+// A named function so the thing that BUILDS the sections and the thing that
+// ANSWERS them can be checked against each other. They disagreed: sections came
+// from AllWebApps and the lookup read the direct-registration registry, which
+// holds the admin panel and nothing else — and the admin panel is the one app
+// listableApps excludes. Every section on the tab rendered a 404 under a
+// correct heading, on every deployment.
+//
+// Nil when nothing serves that path, which is the caller's 404.
+func findListedApp(path string) WebApp {
+	for _, wa := range AllWebApps() {
+		if wa.WebPath() == path {
+			return wa
+		}
+	}
+	return nil
+}
+
 // handleAppSummary answers one app's row.
 //
 // Live rather than baked into the section, so the access line is true when it
@@ -202,13 +221,7 @@ func (a *AdminApp) handleAppSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	path := strings.TrimSpace(r.URL.Query().Get("path"))
-	var app WebApp
-	for _, wa := range RegisteredWebApps() {
-		if wa.WebPath() == path {
-			app = wa
-			break
-		}
-	}
+	app := findListedApp(path)
 	if app == nil {
 		http.NotFound(w, r)
 		return

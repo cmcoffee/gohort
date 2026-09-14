@@ -444,21 +444,17 @@ func (a *AdminApp) handleListApps(w http.ResponseWriter, r *http.Request) {
 		return false
 	}
 	var apps []appInfo
-	for _, wa := range RegisteredWebApps() {
+	// AllWebApps rather than the same three-registry walk written out again. It
+	// was correct in reach — this is where the pattern came from — but it dedups
+	// nothing, so an app arriving as both a WebApp and an App was listed twice.
+	// One function answering "what runs here" is also what keeps this list from
+	// disagreeing with the dashboard and the Apps tab, which is how the tab came
+	// to render sections for apps its own lookup could not find.
+	for _, wa := range AllWebApps() {
 		if wa.WebPath() == "/admin" || isHidden(wa) {
 			continue
 		}
 		apps = append(apps, appInfo{Path: wa.WebPath(), Name: wa.WebName()})
-	}
-	for _, ag := range RegisteredApps() {
-		if wa, ok := ag.(WebApp); ok && wa.WebPath() != "/admin" && !isHidden(wa) {
-			apps = append(apps, appInfo{Path: wa.WebPath(), Name: wa.WebName()})
-		}
-	}
-	for _, ag := range RegisteredAgents() {
-		if wa, ok := ag.(WebApp); ok && wa.WebPath() != "/admin" && !isHidden(wa) {
-			apps = append(apps, appInfo{Path: wa.WebPath(), Name: wa.WebName()})
-		}
 	}
 	// Dynamic grantable apps — surfaces (like orchestrate) that
 	// produce one logical "app" per record (e.g. each exposed agent

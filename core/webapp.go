@@ -168,11 +168,11 @@ func RegisterWebApp(app WebApp) {
 // that implements the interface.
 //
 // Three registries, because an app may arrive as any of the three, and only
-// the admin panel uses RegisterWebApp directly. Anything that reads
-// RegisteredWebApps() alone therefore sees exactly one app and believes that
-// is the deployment — which is what the Apps-tab switchboard did: it listed
-// every app it could find, excluded the admin panel as undisablable, and
-// rendered an empty table under a heading promising one row per app.
+// the admin panel uses RegisterWebApp directly. Anything that reads that one
+// registry alone therefore sees exactly one app and believes that is the
+// deployment — which is what the Apps-tab switchboard did: it listed every app
+// it could find, excluded the admin panel as undisablable, and rendered an
+// empty table under a heading promising one row per app.
 //
 // So the dashboard and the switchboard now ask the same question of the same
 // function. A list of what runs here should not be able to disagree with the
@@ -186,7 +186,7 @@ func AllWebApps() []WebApp {
 			out = append(out, wa)
 		}
 	}
-	for _, wa := range RegisteredWebApps() {
+	for _, wa := range registeredWebAppsOnly() {
 		add(wa)
 	}
 	for _, a := range RegisteredApps() {
@@ -217,7 +217,13 @@ func AllWebApps() []WebApp {
 // ceiling — a symbol nobody outside needs should not spend one of the seats.
 func reportUnknownAppClaims() {
 	known := map[string]bool{}
-	for _, wa := range RegisteredWebApps() {
+	// AllWebApps, for the reason stated on it: RegisteredWebApps sees only the
+	// admin panel here. Built from that, this warned about EVERY claim on the
+	// deployment — a boot-time wall of "no registered app serves it" naming
+	// apps that were serving fine — which is worse than the silence it was
+	// meant to break, because a warning that is always wrong is one nobody
+	// reads when it is finally right.
+	for _, wa := range AllWebApps() {
 		known[wa.WebPath()] = true
 	}
 	warn := func(kind, name, claim string) {
@@ -288,8 +294,21 @@ func mountLegacyRedirects(mux *http.ServeMux) {
 	}
 }
 
-// RegisteredWebApps returns all registered web apps.
-func RegisteredWebApps() []WebApp {
+// registeredWebAppsOnly returns what called RegisterWebApp directly — which on
+// a normal deployment is the admin panel and nothing else.
+//
+// Unexported, and deliberately named for what it actually holds rather than for
+// what it sounds like it holds. As RegisteredWebApps it read as "the apps", and
+// three separate readers took it that way: the Apps-tab switchboard rendered an
+// empty table, the per-app sections each 404'd, and the boot check warned that
+// every claim on the deployment named an app nothing served. Each was found on
+// its own, months apart, because the name promised the whole registry and the
+// function answered with a third of it.
+//
+// AllWebApps is the answer to "what runs here". This is its first source and
+// has no other caller; keeping it private means a fourth reader cannot make the
+// same mistake, and core gets an export seat back.
+func registeredWebAppsOnly() []WebApp {
 	webAppMu.Lock()
 	defer webAppMu.Unlock()
 	return registeredWebApps

@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 
@@ -104,3 +105,72 @@ func sectionTitles(secs []ui.Section) []string {
 	}
 	return out
 }
+
+// Every app this tab lists must be one the summary lookup can resolve.
+//
+// It could resolve NONE of them. The sections are built from AllWebApps and the
+// lookup read the direct-registration registry, which holds the admin panel and
+// nothing else — and the admin panel is the one app the sections exclude. So
+// the tab rendered a correct heading and a correct subtitle over a 404, once
+// per app, on every deployment.
+//
+// This drives the lookup itself rather than comparing the section list against
+// the registry it was built from. The first version of this test did the
+// latter, and passed against a lookup hardcoded to find nothing — it pinned the
+// half that was already right.
+func TestEveryListedAppCanBeResolved(t *testing.T) {
+	// Registered as an App implementing WebApp — how every real app arrives,
+	// and the shape the broken lookup could not see. Without it this binary has
+	// no apps and the check passes by having nothing to check.
+	RegisterApp(fakeWebApp{path: "/sectionsourcetest"})
+	rows := listableApps()
+	if len(rows) == 0 {
+		t.Fatal("no apps listed — this test would pass vacuously")
+	}
+	for _, rw := range rows {
+		if findListedApp(rw.path) == nil {
+			t.Errorf("the tab lists %q (%s) but the summary lookup cannot resolve it — that row renders a 404",
+				rw.name, rw.path)
+		}
+	}
+}
+
+// A path nothing serves still has to come back nil, or the 404 the handler owes
+// the caller never happens.
+func TestAnUnservedPathResolvesToNothing(t *testing.T) {
+	if findListedApp("/nothing-serves-this") != nil {
+		t.Error("an unserved path must not resolve")
+	}
+}
+
+// The subtitle on each section is the path its source asks about. If those ever
+// drift the page shows one app's heading over another app's answer, which is
+// worse than the 404 was: it looks right.
+func TestASectionAsksAboutTheAppItNames(t *testing.T) {
+	a := &AdminApp{}
+	for _, sec := range a.appsTabSections() {
+		dp, ok := sec.Body.(ui.DisplayPanel)
+		if !ok {
+			continue
+		}
+		if want := "api/app-summary?path=" + sec.Subtitle; dp.Source != want {
+			t.Errorf("section %q sources %q, want %q", sec.Title, dp.Source, want)
+		}
+	}
+}
+
+// fakeWebApp is the shape an ordinary app arrives in: registered as an App that
+// happens to implement WebApp. That is every app on this deployment except the
+// admin panel — and precisely the shape the broken lookup could not see.
+type fakeWebApp struct{ path string }
+
+func (f fakeWebApp) WebPath() string                                  { return f.path }
+func (f fakeWebApp) WebName() string                                  { return "Fake " + f.path }
+func (f fakeWebApp) WebDesc() string                                  { return "a test app" }
+func (f fakeWebApp) RegisterRoutes(mux *http.ServeMux, prefix string) {}
+func (f fakeWebApp) Get() *AppCore                                    { return &AppCore{} }
+func (f fakeWebApp) Name() string                                     { return "fake" + strings.ReplaceAll(f.path, "/", "") }
+func (f fakeWebApp) Desc() string                                     { return "a test app" }
+func (f fakeWebApp) SystemPrompt() string                             { return "" }
+func (f fakeWebApp) Init() error                                      { return nil }
+func (f fakeWebApp) Main() error                                      { return nil }
