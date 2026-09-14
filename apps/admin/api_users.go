@@ -500,16 +500,6 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 		}
 	})
 
-	// API: current user identity.
-	sub.HandleFunc("/api/whoami", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		username := AuthCurrentUser(r)
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"username": username})
-	})
-
 }
 
 func (a *AdminApp) handleAddUser(w http.ResponseWriter, r *http.Request) {

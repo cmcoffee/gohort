@@ -171,38 +171,6 @@ func (a *AdminApp) registerGroupsRoutes(sub *http.ServeMux) {
 		_ = json.NewEncoder(w).Encode(g)
 	})
 
-	// Per-field LLM suggest for the Tool Groups editor. Same
-	// {field, hint, record} → {value} shape as the agent-editor's
-	// suggest. Builds a prompt that includes the group's name and
-	// member tool descriptions so the LLM can synthesize a description
-	// the agent's catalog will actually find useful.
-	sub.HandleFunc("/api/tool-groups/suggest", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		a.handleToolGroupSuggest(w, r)
-	})
-
-	// Auto-create: admin picks members, LLM proposes name +
-	// description, server saves. The minimal-friction path — most
-	// of the time the LLM names a bundle better than the admin
-	// would anyway, since the LLM is the one who'll have to call
-	// the group later. Admin can rename via the per-row editor.
-	sub.HandleFunc("/api/tool-groups/auto-create", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		a.handleToolGroupAutoCreate(w, r)
-	})
-
 	// Tool registry — every tool name + description the member-picker
 	// should be able to offer. Merges two sources:
 	//

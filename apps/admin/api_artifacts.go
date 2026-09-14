@@ -12,72 +12,11 @@ import (
 
 // registerArtifactsRoutes wires the artifacts API under the admin sub-mux.
 func (a *AdminApp) registerArtifactsRoutes(sub *http.ServeMux) {
-	// Connector export — download a portable, secret-free JSON pack. ?name=<n>
-	// exports one connector; omit name to export ALL as one bundle. Auth
-	// references (credential names) travel; secrets never do. Content-Disposition
-	// makes the browser download it.
-	sub.HandleFunc("/api/connectors/export", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		name := strings.TrimSpace(r.URL.Query().Get("name"))
-		var names []string
-		if name != "" {
-			names = []string{name}
-		}
-		pack, err := ExportConnectorPack(RootDB, names...)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		filename := "connectors.connector.json"
-		if name != "" {
-			filename = name + ".connector.json"
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(pack)
-	})
-
-	// Connector import — accept a pack (the JSON produced by export) and
-	// reconstitute its connectors as new DRAFTS owned by the admin. Governance
-	// re-applies: remote_mcp / desktop_* land unapproved; an existing name is
-	// skipped, never overwritten. Returns the import summary as JSON.
-	sub.HandleFunc("/api/connectors/import", func(w http.ResponseWriter, r *http.Request) {
-		if !a.requireAdmin(w, r) {
-			return
-		}
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		// Accept either a raw pack body or {"pack":"<json string>"} from a form.
-		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-		if err != nil {
-			http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
-			return
-		}
-		data := bytes.TrimSpace(body)
-		var wrap struct {
-			Pack string `json:"pack"`
-		}
-		if json.Unmarshal(data, &wrap) == nil && strings.TrimSpace(wrap.Pack) != "" {
-			data = []byte(strings.TrimSpace(wrap.Pack))
-		}
-		res, err := ImportConnectorPack(RootDB, data, AuthCurrentUser(r))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(res)
-	})
+	// The connector-only /api/connectors/export and /api/connectors/import used
+	// to live here. The unified artifact bundle below carries connectors along
+	// with every other registered type, and nothing has pointed at the
+	// type-specific pair since — no section, no script, no client. The pack
+	// functions they called are still used by the orchestrate connector tool.
 
 	// Artifact export — the UNIFIED, cross-type download. Builds a
 	// gohort.bundle/v1 carrying any registered artifact (connector, tool, …).
