@@ -3932,6 +3932,21 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   border-right-color: var(--danger);
   opacity: 0.5;
 }
+/* Queued, and the turn ended before the agent read it — cancelled, finished or
+ * failed. Distinct from the dim "still waiting" state above, which it otherwise
+ * looks exactly like, and from -failed, which means the note never reached the
+ * server at all. This one DID queue; nobody got to it. */
+.ui-agent-msg-user.ui-agent-interjection-undelivered .ui-agent-msg-body {
+  border-right-color: var(--warning, #d98c34);
+  opacity: 0.6;
+}
+.ui-agent-interjection-note {
+  margin-top: 0.35rem;
+  font-size: 0.75rem;
+  font-style: normal;
+  line-height: 1.35;
+  color: var(--warning, #d98c34);
+}
 /* Assistant bubble — the focal point of the chat. Card sits one
  * tier above the canvas (bg-1) so it visually rises off the page;
  * text is pure white (--text-hi) so the LLM's reply reads as

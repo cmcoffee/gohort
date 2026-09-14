@@ -2484,11 +2484,17 @@
     // and everything the agent says next appears below it, which is then
     // exactly right.
     //
+    // A note marked undelivered is settled too, and stops moving for the same
+    // reason: "waiting" is over either way. Without excluding it, a cancelled
+    // note would go on being dragged to the bottom of every later turn, which
+    // says it is still pending — the one thing it is now known not to be.
+    //
     // querySelectorAll returns a static list, so re-appending while iterating
     // is safe and keeps several pending notes in the order they were written.
     function keepPendingInterjectionsLast() {
       if (!convoLog) return;
-      var pending = convoLog.querySelectorAll('.ui-agent-interjection:not(.consumed)');
+      var pending = convoLog.querySelectorAll(
+        '.ui-agent-interjection:not(.consumed):not(.ui-agent-interjection-undelivered)');
       for (var i = 0; i < pending.length; i++) convoLog.appendChild(pending[i]);
     }
 
@@ -3982,6 +3988,11 @@
           }
           break;
         case 'done':
+          // A note that arrived after the last drain point is still sitting
+          // here, and the turn is over. Not hooked into enableInput, which also
+          // fires on session OPEN — marking there would condemn a note belonging
+          // to a run that is still going.
+          markUndeliveredInterjections('The agent finished before reading this. It stays in the conversation and goes with your next message.');
           enableInput();
           setStatus('');
           // A turn can move whatever the app's status pill reports.
@@ -4012,6 +4023,7 @@
           errBody.textContent = 'Could not complete this turn — ' + (ev.text || 'unknown error');
           errBubble.appendChild(errBody);
           convoLog.appendChild(errBubble);
+          markUndeliveredInterjections('The turn failed before the agent read this. It stays in the conversation and goes with your next message.');
           keepPendingInterjectionsLast();
           scrollConvo(true);
           setStatus('');
@@ -4070,6 +4082,32 @@
       showThinking();
       startHeartbeat();
     }
+    // markUndeliveredInterjections says so when a queued note was never read.
+    //
+    // A note waits at the bottom until the runner drains it BETWEEN ROUNDS. If
+    // the turn stops first — cancelled, or simply finished before the next
+    // drain point — the agent never saw it, and until now nothing said so: the
+    // bubble sat there in the dim "queued" style, which is also how it looks
+    // while it is still waiting, and which on reload becomes an ordinary user
+    // message indistinguishable from one that was answered.
+    //
+    // It is NOT deleted. The server keeps a leftover note by appending it to
+    // the session (runner_http.go), so the text is still there and still goes
+    // to the agent with the next message — dropping the bubble would claim the
+    // opposite. The honest thing is to say which of the two happened.
+    function markUndeliveredInterjections(why) {
+      if (!convoLog) return;
+      var pending = convoLog.querySelectorAll('.ui-agent-interjection:not(.consumed):not(.ui-agent-interjection-undelivered)');
+      for (var i = 0; i < pending.length; i++) {
+        var b = pending[i];
+        b.classList.add('ui-agent-interjection-undelivered');
+        var body = b.querySelector('.ui-agent-msg-body') || b;
+        var note = el('div', {class: 'ui-agent-interjection-note', text: why});
+        body.appendChild(note);
+      }
+      return pending.length;
+    }
+
     function enableInput() {
       sendBtn.disabled = false;
       sendBtn.style.display = '';
@@ -4362,6 +4400,10 @@
         activeEventSource.close();
         activeEventSource = null;
       }
+      // Say it before the request goes out: the agent has already stopped
+      // reading by the time the user's finger leaves the button, and a note
+      // still styled as "waiting" is claiming something that is over.
+      markUndeliveredInterjections('The agent was stopped before reading this. It stays in the conversation and goes with your next message.');
       if (activeSessionId && cfg.cancel_url) {
         fetchJSON(cfg.cancel_url + '?id=' + encodeURIComponent(activeSessionId),
           {method: 'POST'}).then(enableInput, enableInput);

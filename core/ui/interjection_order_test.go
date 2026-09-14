@@ -45,10 +45,16 @@ var convoLog = {
     this.children.push(n);
   },
   querySelectorAll: function(sel) {
-    if (sel !== '.ui-agent-interjection:not(.consumed)') throw new Error('unexpected selector: ' + sel);
+    // Both settled states are excluded: .consumed (the agent read it) and
+    // -undelivered (the turn ended without reading it). Either way it has
+    // stopped waiting, and a note that has stopped waiting must stop being
+    // dragged to the bottom.
+    var want = '.ui-agent-interjection:not(.consumed):not(.ui-agent-interjection-undelivered)';
+    if (sel !== want) throw new Error('unexpected selector: ' + sel);
     return this.children.filter(function(n) {
       return n.classes.indexOf('ui-agent-interjection') >= 0 &&
-             n.classes.indexOf('consumed') < 0;
+             n.classes.indexOf('consumed') < 0 &&
+             n.classes.indexOf('ui-agent-interjection-undelivered') < 0;
     });
   }
 };
