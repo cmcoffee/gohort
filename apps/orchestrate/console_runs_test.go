@@ -50,7 +50,10 @@ func TestConsoleRunsPaneAndDetail(t *testing.T) {
 		t.Fatalf("rows = %+v, want only the owner's run", rows)
 	}
 	row := rows[0]
-	if row.ID != rec.ID || row.Status != "ok" || row.Run != "digest → Nightly digest" || row.Summary != "3 changes found." {
+	// Agent first, schedule second: this feed spans every agent, so the row
+	// answers "whose" before "what fired it". The Details modal still shows
+	// the two combined, because there the record is already the subject.
+	if row.ID != rec.ID || row.Status != "ok" || row.Agent != "Nightly digest" || row.Task != "digest" || row.Summary != "3 changes found." {
 		t.Fatalf("row = %+v", row)
 	}
 	if row.When == "" || row.Brief == "" {

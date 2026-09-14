@@ -27,6 +27,14 @@ import (
 // not keys, in field order: Title is the bold headline, Status renders as a
 // pill, and the rest are muted detail. "_section" groups cards under a
 // heading; "_run" marks the rows a Details button applies to.
+//
+// WHAT GOES IN Title DEPENDS ON THE PANE, and the rule is the same one the
+// fleet-wide panes follow: in a fleet view the AGENT leads, because the list
+// is drawn from every agent the owner has and the first question about any row
+// in it is whose. The specific thing — the rule that blocked, the schedule
+// that stopped — follows on the detail line. In the per-agent view the agent
+// is already known, so naming it on every row says nothing, and the specific
+// thing leads instead.
 type overviewCard struct {
 	Title   string `json:"title"`
 	Status  string `json:"Status,omitempty"`
@@ -188,6 +196,7 @@ func (T *OrchestrateApp) handleConsoleFleet(w http.ResponseWriter, r *http.Reque
 	runs := ListRuns(RootDB, user, RunFilter{Limit: overviewRunLimit})
 	spend := agentSpendRows(user, now, loc)
 	broken := brokenToolActions(toolOutcomeStore(), user)
+	names := agentNames(udb, user)
 
 	cards := []overviewCard{}
 
@@ -233,8 +242,9 @@ func (T *OrchestrateApp) handleConsoleFleet(w http.ResponseWriter, r *http.Reque
 
 	for _, rec := range topRuns(runs, 8) {
 		cards = append(cards, overviewCard{
-			Title: consoleRunTitle(rec), Status: string(rec.Status),
-			Detail: consoleRunWhen(rec, loc), Extra: truncateObs(firstNonEmpty(rec.Summary, rec.Err), 140),
+			Title: consoleRunAgent(rec), Status: string(rec.Status),
+			Detail:  joinDetail(consoleRunTask(rec), consoleRunWhen(rec, loc)),
+			Extra:   truncateObs(firstNonEmpty(rec.Summary, rec.Err), 140),
 			Section: secRuns, Run: true, ID: rec.ID,
 		})
 	}
@@ -257,8 +267,15 @@ func (T *OrchestrateApp) handleConsoleFleet(w http.ResponseWriter, r *http.Reque
 		if lbl == "" {
 			continue
 		}
+		// The agent leads where there is one. A schedule that runs a pipeline
+		// or a machine has no agent at all, so there the schedule's own name
+		// is the most specific thing it has and it leads instead.
+		title, detail := sa.Name, StandingScheduleLabel(sa)
+		if who := names[chFirst(sa.AgentID, sa.ReportAgentID)]; who != "" {
+			title, detail = who, joinDetail(sa.Name, StandingScheduleLabel(sa))
+		}
 		cards = append(cards, overviewCard{
-			Title: sa.Name, Status: lbl, Detail: StandingScheduleLabel(sa),
+			Title: title, Status: lbl, Detail: detail,
 			Extra: truncateObs(sa.Mission, 120), Section: secAttention,
 		})
 	}
@@ -273,8 +290,8 @@ func (T *OrchestrateApp) handleConsoleFleet(w http.ResponseWriter, r *http.Reque
 	// without claiming the top of the list.
 	for _, e := range fleetGuardrailBlocks(udb, user, 4) {
 		cards = append(cards, overviewCard{
-			Title: guardrailRowTitle(e.block.Rule), Status: "blocked",
-			Detail: chFirst(e.agent.Name, e.agent.ID) + " · " + guardrailRowWhere(e.block),
+			Title: chFirst(e.agent.Name, e.agent.ID), Status: "blocked",
+			Detail: joinDetail(guardrailRowTitle(e.block.Rule), guardrailRowWhere(e.block)),
 			Extra:  truncateObs(e.block.Reason, 140), Section: secAttention,
 		})
 	}
@@ -375,6 +392,28 @@ func agentSpendFor(user, agentID string, now time.Time, loc *time.Location) *age
 		}
 	}
 	return nil
+}
+
+// agentNames maps agent id to the name a person would recognise, for the fleet
+// pane's rows that lead with whose they are.
+func agentNames(udb Database, user string) map[string]string {
+	out := map[string]string{}
+	for _, a := range listAgents(udb, user) {
+		out[a.ID] = chFirst(a.Name, a.ID)
+	}
+	return out
+}
+
+// joinDetail joins the parts of a detail line, skipping the empty ones so a
+// row missing one does not render a stray separator.
+func joinDetail(parts ...string) string {
+	var kept []string
+	for _, p := range parts {
+		if strings.TrimSpace(p) != "" {
+			kept = append(kept, p)
+		}
+	}
+	return strings.Join(kept, " · ")
 }
 
 // --- labels ------------------------------------------------------------------

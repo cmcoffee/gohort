@@ -22,13 +22,16 @@ import (
 )
 
 // consoleGuardrailRow is one block, flattened for the card layout.
+//
+// Field order IS display order, and it changes with scope. Across the fleet
+// the agent leads: the reader is looking at a list drawn from every agent they
+// own, and the first question about any row in it is whose. Scoped to one
+// agent the name is omitted entirely rather than demoted — it is the agent
+// whose pane this is, so printing it on every row says nothing — and the rule
+// leads instead, which is what distinguishes one row from the next there.
 type consoleGuardrailRow struct {
-	// Name is the card title: the rule, because that is what the reader is
-	// scanning for. The agent goes on the detail line — a rule blocking on the
-	// wrong agent is visible either way, and a list titled by agent buries the
-	// one rule doing all the work among its siblings.
-	Name   string `json:"name"`
-	Agent  string `json:"agent"`
+	Agent  string `json:"agent,omitempty"`  // first across the fleet; absent when scoped
+	Name   string `json:"name"`             // the rule
 	Where  string `json:"where,omitempty"`  // hook + surface + contact
 	Reason string `json:"reason,omitempty"` // what the check objected to
 	At     string `json:"at"`               // RFC3339; the console renders it
@@ -77,14 +80,18 @@ func (T *OrchestrateApp) handleConsoleGuardrails(w http.ResponseWriter, r *http.
 
 	rows := []consoleGuardrailRow{}
 	for _, e := range all {
-		rows = append(rows, consoleGuardrailRow{
+		row := consoleGuardrailRow{
 			Name:   guardrailRowTitle(e.block.Rule),
-			Agent:  chFirst(e.agent.Name, e.agent.ID),
 			Where:  guardrailRowWhere(e.block),
 			Reason: e.block.Reason,
 			At:     e.block.At.Format(time.RFC3339),
 			ID:     e.agent.ID,
-		})
+		}
+		// Only when the reader does not already know it.
+		if only == "" {
+			row.Agent = chFirst(e.agent.Name, e.agent.ID)
+		}
+		rows = append(rows, row)
 	}
 	writeJSON(w, rows)
 }

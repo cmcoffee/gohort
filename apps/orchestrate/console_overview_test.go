@@ -296,3 +296,70 @@ func TestFailedRunsWindowAndCap(t *testing.T) {
 		t.Error("the cap is not applied")
 	}
 }
+
+// In a fleet view the agent leads. The list is drawn from every agent the
+// owner has, so the first question about any row in it is whose — and the
+// renderer bolds whichever field marshals first, which makes field ORDER the
+// whole of the answer.
+func TestFleetRowsLeadWithTheAgent(t *testing.T) {
+	// A run in the fleet feed: agent first, the schedule that fired it second.
+	raw, err := json.Marshal(consoleRunRow{
+		Agent: "Support bot", Task: "nightly digest", Status: "ok", When: "Jan 2 15:04", ID: "r1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(raw), `{"agent":"Support bot","task":"nightly digest"`) {
+		t.Errorf("a fleet run must lead with the agent, then what fired it:\n%s", raw)
+	}
+
+	// A guardrail block across the fleet: agent first, then the rule.
+	fleet, _ := json.Marshal(consoleGuardrailRow{
+		Agent: "Support bot", Name: "never email customers", Where: "pre-send", At: "t", ID: "a1",
+	})
+	if !strings.HasPrefix(string(fleet), `{"agent":"Support bot","name":"never email customers"`) {
+		t.Errorf("a fleet guardrail row must lead with the agent:\n%s", fleet)
+	}
+
+	// Scoped to one agent, the name is absent rather than demoted: printing it
+	// on every row of that agent's own pane says nothing, and an empty leading
+	// field would leave the card with no bold title at all.
+	scoped, _ := json.Marshal(consoleGuardrailRow{
+		Name: "never email customers", Where: "pre-send", At: "t", ID: "a1",
+	})
+	if strings.Contains(string(scoped), `"agent"`) {
+		t.Errorf("a scoped guardrail row should omit the agent entirely:\n%s", scoped)
+	}
+	if !strings.HasPrefix(string(scoped), `{"name":`) {
+		t.Errorf("with no agent, the rule must lead:\n%s", scoped)
+	}
+}
+
+// joinDetail builds the line that follows the headline. A row missing one of
+// its parts must not render a stray separator.
+func TestJoinDetailSkipsEmptyParts(t *testing.T) {
+	if got := joinDetail("nightly digest", "Jan 2 15:04"); got != "nightly digest · Jan 2 15:04" {
+		t.Errorf("joinDetail = %q", got)
+	}
+	if got := joinDetail("", "Jan 2 15:04"); got != "Jan 2 15:04" {
+		t.Errorf("a missing first part should leave no separator, got %q", got)
+	}
+	if got := joinDetail("  ", ""); got != "" {
+		t.Errorf("all-empty should render nothing, got %q", got)
+	}
+}
+
+// consoleRunTask answers "what fired this", and only when that is something
+// other than the agent itself — otherwise the fleet card would print the same
+// name twice, once bold and once muted.
+func TestConsoleRunTaskOmitsTheAgentsOwnName(t *testing.T) {
+	if got := consoleRunTask(RunRecord{Agent: "Support bot", Task: "nightly digest"}); got != "nightly digest" {
+		t.Errorf("task = %q", got)
+	}
+	if got := consoleRunTask(RunRecord{Agent: "Support bot", Task: "Support bot"}); got != "" {
+		t.Errorf("a task named after its own agent should not repeat it, got %q", got)
+	}
+	if got := consoleRunTask(RunRecord{Agent: "Support bot"}); got != "" {
+		t.Errorf("no task means no second line, got %q", got)
+	}
+}

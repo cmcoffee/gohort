@@ -14,14 +14,31 @@ import (
 // (never Raw / Steps — those are GetRun-only and travel in the Details modal).
 // Field order is display order: the first field is the card title, Status the
 // pill, the rest muted detail. _id is the Details row action's target.
+//
+// The agent leads. This pane draws from every agent the owner has, and the
+// first question about any row in a list like that is whose it is; the
+// schedule that fired it answers the second, on its own line.
 type consoleRunRow struct {
-	Run     string `json:"run"`
+	Agent   string `json:"agent"`
+	Task    string `json:"task,omitempty"`
 	Status  string `json:"Status"`
 	When    string `json:"when"`
 	Trigger string `json:"trigger,omitempty"`
 	Brief   string `json:"brief,omitempty"`
 	Summary string `json:"summary,omitempty"`
 	ID      string `json:"_id"`
+}
+
+// consoleRunAgent / consoleRunTask split a run's identity in two, for the
+// fleet feed where the agent leads and the schedule that fired it follows.
+// Together they carry what consoleRunTitle packs into one string.
+func consoleRunAgent(rec RunRecord) string { return rec.Agent }
+
+func consoleRunTask(rec RunRecord) string {
+	if task := strings.TrimSpace(rec.Task); task != "" && task != rec.Agent {
+		return task
+	}
+	return ""
 }
 
 // handleConsoleRuns returns the run-ledger feed (owner-scoped, status-level)
@@ -35,7 +52,8 @@ func (T *OrchestrateApp) handleConsoleRuns(w http.ResponseWriter, r *http.Reques
 	rows := []consoleRunRow{}
 	for _, rec := range ListRuns(RootDB, user, RunFilter{Limit: 100}) {
 		rows = append(rows, consoleRunRow{
-			Run:     consoleRunTitle(rec),
+			Agent:   consoleRunAgent(rec),
+			Task:    consoleRunTask(rec),
 			Status:  string(rec.Status),
 			When:    consoleRunWhen(rec, loc),
 			Trigger: rec.Trigger,
