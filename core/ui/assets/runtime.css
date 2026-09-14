@@ -2110,11 +2110,18 @@ select:-webkit-autofill {
   flex: 1; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-/* "⋯" overflow menu for secondary sidebar actions. */
+/* "⋯" overflow menu for secondary sidebar actions.
+ *
+ * PLACEMENT BELONGS TO uiAnchorMenu, not to this rule. The menu is appended to
+ * <body> and positioned fixed from its toggle's rect, because the rail it opens
+ * from is overflow:hidden, is a transformed drawer on a phone, and sits inside a
+ * scrolling dialog when list_position is "modal" — nested, it opened and had
+ * nowhere to be. So: no top/left/right/z-index here. Setting one would fight the
+ * inline value, and an offset that wins on one axis while the helper wins on the
+ * other stretches the menu across the viewport. */
 .ui-side-menu-wrap { position: relative; flex: 0 0 auto; display: inline-flex; }
 .ui-side-menu {
-  position: absolute; top: 100%; left: 0; z-index: 20; min-width: 150px;
-  margin-top: 0.25rem; padding: 0.25rem;
+  min-width: 150px; padding: 0.25rem;
   background: var(--bg-1, #1b1b2b); border: 1px solid var(--border);
   border-radius: 6px; box-shadow: 0 4px 14px rgba(0,0,0,0.3);
 }
@@ -2143,7 +2150,8 @@ select:-webkit-autofill {
   border-top-left-radius: 0; border-bottom-left-radius: 0;
   border-left: 0; padding-left: 0.35rem; padding-right: 0.35rem;
 }
-.ui-chat-new-wrap .ui-side-menu { left: auto; right: 0; }
+/* The new-session variants menu hangs off the caret's right edge — expressed as
+ * uiAnchorMenu's align option at the call site, since placement is the helper's. */
 
 /* Secondary sidebar button — same shape as .ui-chat-new but neutral
    color so it doesn't compete with the primary "New" action. Used

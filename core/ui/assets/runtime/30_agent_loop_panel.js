@@ -188,7 +188,8 @@
       // / bulk_select).
       var leftExtras = [collapseBtn];
       var moreMenu = el('div', {class: 'ui-side-menu', style: 'display:none'});
-      function closeMoreMenu() { moreMenu.style.display = 'none'; }
+      var moreAnchor = null; // set below, once the toggle exists
+      function closeMoreMenu() { if (moreAnchor) moreAnchor.close(); else moreMenu.style.display = 'none'; }
       var moreItemCount = 0;
       if (cfg.mark_all_read_url) {
         moreMenu.appendChild(el('button', {class: 'ui-side-menu-item', onclick: function() {
@@ -225,11 +226,17 @@
         var moreBtn = el('button', {class: 'ui-chat-side-btn', title: 'More actions',
           onclick: function(ev) {
             ev.stopPropagation();
-            moreMenu.style.display = (moreMenu.style.display === 'none') ? 'block' : 'none';
+            moreAnchor.toggle();
           }}, ['⋯']);
-        // Any click outside the menu closes it.
+        // Anchored to the body rather than nested in the rail: the rail is
+        // overflow:hidden, is a transformed drawer on a phone, and is inside a
+        // scrolling dialog when list_position is "modal" — nested, the menu
+        // opened and had nowhere to be, which reads as a dead button.
+        moreAnchor = window.uiAnchorMenu(moreBtn, moreMenu);
+        // Any click outside the menu closes it. The toggle stops propagation,
+        // so its own click never reaches this.
         document.addEventListener('click', closeMoreMenu);
-        leftExtras.push(el('div', {class: 'ui-side-menu-wrap'}, [moreBtn, moreMenu]));
+        leftExtras.push(el('div', {class: 'ui-side-menu-wrap'}, [moreBtn]));
       }
       var sideHdrBuilt = renderSideHeader({
         label:    cfg.list_title || 'Sessions',

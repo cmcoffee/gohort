@@ -537,6 +537,57 @@
     if (modalDepth > 0) modalDepth--;
   };
 
+  // window.uiAnchorMenu — a dropdown that has to escape the pane it opens from.
+  //
+  // A menu positioned absolutely inside a sidebar is at the mercy of every
+  // ancestor between it and the page: the rail is overflow:hidden, on a phone it
+  // is a transformed full-screen drawer, and a list_position:"modal" panel puts
+  // the whole rail inside a dialog body that scrolls. Any one of those clips or
+  // traps it, and the symptom is a button that does nothing — the menu opened,
+  // it just has nowhere to be.
+  //
+  // Fixed positioning from the toggle's own rect takes every ancestor out of the
+  // question. Same answer the toolbar group menus already use; this is that,
+  // shared, so the next menu does not rediscover it.
+  //
+  // z-index sits above the modal stack (1000 + depth*10) and below toasts
+  // (9000), because a menu opened from inside a dialog must be over it, and
+  // nothing a menu does should bury a message about what just happened.
+  //
+  // opts.align "right" hangs the menu off the toggle's right edge; anything
+  // else hangs it off the left. Either way it is pulled back on screen rather
+  // than allowed off the edge on a narrow one.
+  window.uiAnchorMenu = function(toggle, menu, opts) {
+    opts = opts || {};
+    var shown = opts.display || 'block';
+    document.body.appendChild(menu);
+    menu.style.position = 'fixed';
+    menu.style.zIndex = '8000';
+    menu.style.display = 'none';
+    function place() {
+      var r = toggle.getBoundingClientRect();
+      menu.style.top = Math.round(r.bottom + 4) + 'px';
+      // Measured while displayed, so the width is the real one.
+      var w = menu.offsetWidth;
+      var left = (opts.align === 'right') ? (r.right - w) : r.left;
+      var maxLeft = window.innerWidth - w - 4;
+      if (left > maxLeft) left = maxLeft;
+      if (left < 4) left = 4;
+      menu.style.left = Math.round(left) + 'px';
+    }
+    var api = {
+      isOpen: function() { return menu.style.display && menu.style.display !== 'none'; },
+      close: function() { menu.style.display = 'none'; },
+      open: function() { menu.style.display = shown; place(); },
+      toggle: function() { if (api.isOpen()) api.close(); else api.open(); },
+    };
+    // A fixed menu does not travel with what it is anchored to, so anything
+    // that moves the toggle underneath it leaves it pointing at nothing.
+    window.addEventListener('resize', function() { if (api.isOpen()) api.close(); });
+    window.addEventListener('scroll', function() { if (api.isOpen()) api.close(); }, true);
+    return api;
+  };
+
   window.uiOpenModal = function(opts) {
     opts = opts || {};
     var overlay = document.createElement('div');
@@ -1145,11 +1196,16 @@
         class: 'ui-chat-new ui-chat-new-caret', title: 'New session options',
         onclick: function(ev) {
           ev.stopPropagation();
-          nvMenu.style.display = (nvMenu.style.display === 'none') ? 'block' : 'none';
+          nvAnchor.toggle();
         },
       }, ['▾']);
-      document.addEventListener('click', function() { nvMenu.style.display = 'none'; });
-      children.push(el('div', {class: 'ui-side-menu-wrap ui-chat-new-wrap'}, [sideNew, nvCaret, nvMenu]));
+      // Right-aligned to the caret, and anchored to the body for the same
+      // reason as the "⋯" beside it: nested in the rail it is clipped by
+      // overflow:hidden, by the mobile drawer's transform, and by the dialog
+      // that hosts the rail when list_position is "modal".
+      var nvAnchor = window.uiAnchorMenu(nvCaret, nvMenu, {align: 'right'});
+      document.addEventListener('click', function() { nvAnchor.close(); });
+      children.push(el('div', {class: 'ui-side-menu-wrap ui-chat-new-wrap'}, [sideNew, nvCaret]));
     } else {
       children.push(sideNew);
     }
