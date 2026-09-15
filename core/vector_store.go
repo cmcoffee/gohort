@@ -1278,16 +1278,42 @@ func SearchChunksKeywordByPredicate(db Database, allow func(c EmbeddedChunk) boo
 	if totalW <= 0 {
 		return nil
 	}
+	// idfMax is the weight a term appearing in exactly ONE allowed chunk
+	// carries: the most discriminating any matched term can be here.
+	//
+	// It exists because coverage alone is a RATIO, and a ratio cannot tell a
+	// precise query from a vague one. A single-term query matches 100% of its
+	// own weight whatever that term is, so "firewall" against a corpus where
+	// nine chunks in ten say "firewall" scored 0.85 — a perfect match, on the
+	// least informative word available, for every one of them. That is the
+	// shape of "search returns everything": not a ranking failure, a scale
+	// that reports agreement with the query instead of evidence about the
+	// corpus.
+	//
+	// Specificity is the second factor: how rare the matched terms actually
+	// are, measured against that ceiling and independent of what else the
+	// query contained. A rare identifier keeps the full score; a ubiquitous
+	// word is discounted toward zero no matter how completely it matched.
+	idfMax := math.Log(1 + float64(allowed)/2)
 	all := make([]SearchHit, 0, len(cands))
 	for _, cd := range cands {
 		var w float64
+		matchedN := 0
 		for j, m := range cd.matched {
 			if m {
 				w += idf[j]
+				matchedN++
+			}
+		}
+		spec := 1.0
+		if matchedN > 0 && idfMax > 0 {
+			spec = (w / float64(matchedN)) / idfMax
+			if spec > 1 {
+				spec = 1
 			}
 		}
 		c := &chunks[cd.idx]
-		s := float32(0.85 * w / totalW)
+		s := float32(0.85 * (w / totalW) * spec)
 		all = append(all, SearchHit{
 			ID: c.ID, Source: c.Source, ReportID: c.ReportID, Title: c.Title,
 			Section: c.Section, Text: c.Text, Score: s,

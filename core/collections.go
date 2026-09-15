@@ -236,6 +236,43 @@ func (T *AppCore) SearchCollections(ctx context.Context, user string, collection
 	return searchCollectionsWith(ctx, T.collEnv(), user, collectionIDs, query, k)
 }
 
+// collectionSearchMinScore is the relevance floor for a knowledge passage to
+// be worth showing. Matches factSearchMinScore, for the same reason and with
+// the same meaning: "related enough to be worth reading", not "identical".
+//
+// It exists because the ranking primitives do not filter. The vector half
+// drops only a non-positive cosine and the keyword half keeps any chunk
+// containing any query term, so both hand back their top k whatever the scores
+// are — and a collection with k passages or fewer therefore returned ALL of
+// them for EVERY query, which reads as a search that does not search.
+//
+// SearchChunksKeywordByPredicate was already scaled around this number (its
+// comment says so: matched terms must carry ~41% of the query's IDF mass to
+// clear 0.35). The scale was built for a floor nobody applied.
+//
+// On the vector half 0.35 is a COSINE, and what counts as unrelated moves with
+// the embedding model. factstore has used this value against the same backend
+// for long enough to be the best available starting point, but it is the knob
+// to turn if recall goes thin after a model change — not the ranking.
+const collectionSearchMinScore = 0.35
+
+// aboveFloor drops hits under collectionSearchMinScore.
+//
+// Applied AFTER the top-k truncation, which loses nothing: hits arrive sorted
+// by descending score, so a passage below the floor can never have displaced
+// one above it. Returning fewer than k — or none — is the point. "Nothing in
+// the linked collections is relevant to this" is an answer, and the callers
+// already say it in those words.
+func aboveFloor(hits []SearchHit) []SearchHit {
+	out := hits[:0:0]
+	for _, h := range hits {
+		if h.Score >= collectionSearchMinScore {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
 func searchCollectionsWith(ctx context.Context, env collectionsEnv, user string, collectionIDs []string, query string, k int) []SearchHit {
 	if env.Base == nil || strings.TrimSpace(query) == "" || k <= 0 || len(collectionIDs) == 0 {
 		return nil
@@ -294,13 +331,13 @@ func searchCollectionsWith(ctx context.Context, env collectionsEnv, user string,
 		for s := range rootSources {
 			allSources[s] = true
 		}
-		return search(env.VectorDB, allSources)
+		return aboveFloor(search(env.VectorDB, allSources))
 	}
 	hits := search(env.Base, baseSources)
 	if len(rootSources) > 0 && env.Deployment != nil {
 		hits = MergeHitsByScore(hits, search(env.Deployment, rootSources), k)
 	}
-	return hits
+	return aboveFloor(hits)
 }
 
 // FetchCollectionDoc assembles the full text of one document (by its
