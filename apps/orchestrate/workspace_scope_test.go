@@ -14,7 +14,7 @@ import (
 // resolved to nothing and the model re-downloaded the whole file.
 func TestWakeFindsWhatTheAgentJustWrote(t *testing.T) {
 	SetWorkspacesDir(t.TempDir())
-	const owner, agentID, name = "cmcoffee@gmail.com", "b625cc9f", "video-dl1sliq5gdw0.mp4"
+	const owner, agentID, name = "owner@example.test", "b625cc9f", "video-dl1sliq5gdw0.mp4"
 
 	agentDir, err := EnsureAgentWorkspaceDir(owner, agentID)
 	if err != nil {
@@ -39,7 +39,7 @@ func TestWakeFindsWhatTheAgentJustWrote(t *testing.T) {
 // dropped in their own workspace is still reachable from a fire.
 func TestFireStillReadsTheUserRoot(t *testing.T) {
 	SetWorkspacesDir(t.TempDir())
-	const owner, agentID = "cmcoffee@gmail.com", "b625cc9f"
+	const owner, agentID = "owner@example.test", "b625cc9f"
 
 	root, err := EnsureWorkspaceDir(owner)
 	if err != nil {
@@ -70,11 +70,11 @@ func TestFireStillReadsTheUserRoot(t *testing.T) {
 // and no fallback to itself.
 func TestNoAgentKeepsTheRoot(t *testing.T) {
 	SetWorkspacesDir(t.TempDir())
-	root, err := EnsureWorkspaceDir("cmcoffee@gmail.com")
+	root, err := EnsureWorkspaceDir("owner@example.test")
 	if err != nil {
 		t.Fatalf("root: %v", err)
 	}
-	dir, fallback := agentTurnWorkspace("cmcoffee@gmail.com", "")
+	dir, fallback := agentTurnWorkspace("owner@example.test", "")
 	if dir != root || fallback != "" {
 		t.Fatalf("no-agent turn: dir=%q fallback=%q, want %q and empty", dir, fallback, root)
 	}
@@ -89,7 +89,7 @@ func TestNoAgentKeepsTheRoot(t *testing.T) {
 // delegator's OWN directory shares it with the one agent that needs it.
 func TestDelegateRunsWhereItsDelegatorRuns(t *testing.T) {
 	SetWorkspacesDir(t.TempDir())
-	const owner, parentID = "cmcoffee@gmail.com", "parent-agent"
+	const owner, parentID = "owner@example.test", "parent-agent"
 
 	parent := &chatTurn{user: owner, agent: AgentRecord{ID: parentID}}
 	dir, _, fallback := parent.turnWorkspace()
@@ -130,7 +130,7 @@ func TestDelegateRunsWhereItsDelegatorRuns(t *testing.T) {
 // itself needs a live store and is covered where that store is available.)
 func TestATurnWithNoManagedWorkspaceReportsNone(t *testing.T) {
 	SetWorkspacesDir(t.TempDir())
-	const owner = "cmcoffee@gmail.com"
+	const owner = "owner@example.test"
 
 	plain := &chatTurn{user: owner, agent: AgentRecord{ID: "parent-agent"}}
 	agentDir, wsID, _ := plain.turnWorkspace()

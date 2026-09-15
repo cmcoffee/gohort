@@ -19,14 +19,14 @@ func mappedCommandFixture(t *testing.T) (*FileStoreApp, Store) {
 	t.Helper()
 	app, st, _ := scopeFixture(t)
 	if _, err := SaveStoreCommand(app.DB, StoreCommand{
-		Slug: st.Slug, Name: "weka", Label: "weka", Command: "/opt/bin/weka",
+		Slug: st.Slug, Name: "cap", Label: "cap", Command: "/opt/bin/cap",
 	}); err != nil {
 		t.Fatalf("register command: %v", err)
 	}
-	_, err := SaveCommandTools(app.DB, st.Slug, "weka", "Reads a diagnostic bundle.", []TempToolAction{{
-		Name:            "syshealth",
+	_, err := SaveCommandTools(app.DB, st.Slug, "cap", "Reads a diagnostic bundle.", []TempToolAction{{
+		Name:            "report",
 		Description:     "Disk, memory, CPU, load.",
-		CommandTemplate: "/opt/bin/weka syshealth",
+		CommandTemplate: "/opt/bin/cap report",
 		WorkDir:         "folder",
 		Params: map[string]ToolParam{
 			"folder": {Type: "string", PathScope: "files:" + st.Slug},
@@ -55,7 +55,7 @@ func realAdmin(t *testing.T, r *http.Request) *http.Request {
 
 func mappingPayload(t *testing.T, app *FileStoreApp, st Store) map[string]any {
 	t.Helper()
-	r := httptest.NewRequest("GET", "/api/commands/mapping?id="+st.Slug+"/weka", nil)
+	r := httptest.NewRequest("GET", "/api/commands/mapping?id="+st.Slug+"/cap", nil)
 	w := httptest.NewRecorder()
 	app.handleCommandMapping(w, realAdmin(t, r))
 	if w.Code != http.StatusOK {
@@ -77,7 +77,7 @@ func TestMappingOverviewReportsWhatAnAgentWouldRun(t *testing.T) {
 		t.Fatalf("want one action, got %v", out["actions"])
 	}
 	a, _ := acts[0].(map[string]any)
-	if a["command"] != "/opt/bin/weka syshealth" {
+	if a["command"] != "/opt/bin/cap report" {
 		t.Errorf("the command line is the thing being checked: %v", a["command"])
 	}
 	// Where it runs, and which parameter carries the folder. Both are
@@ -107,7 +107,7 @@ func TestMappingOverviewNamesTheApprovalState(t *testing.T) {
 		t.Errorf("not-live should not read as ok: %v", out["state_status"])
 	}
 
-	if _, err := SetCommandApproved(app.DB, st.Slug, "weka", true); err != nil {
+	if _, err := SetCommandApproved(app.DB, st.Slug, "cap", true); err != nil {
 		t.Fatal(err)
 	}
 	out = mappingPayload(t, app, st)
@@ -145,20 +145,20 @@ func TestMappingOverviewOnAnUnmappedCommand(t *testing.T) {
 func TestSavingAMappingPinsFolderParamsToTheStore(t *testing.T) {
 	app, st, _ := scopeFixture(t)
 	if _, err := SaveStoreCommand(app.DB, StoreCommand{
-		Slug: st.Slug, Name: "weka", Label: "weka", Command: "/opt/bin/weka",
+		Slug: st.Slug, Name: "cap", Label: "cap", Command: "/opt/bin/cap",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// Saved DIRECTLY, not through the mapping handler — the path that used to
 	// store an unpinned parameter.
-	if _, err := SaveCommandTools(app.DB, st.Slug, "weka", "Reads a bundle.", []TempToolAction{{
-		Name: "syshealth", Description: "d", CommandTemplate: "/opt/bin/weka syshealth",
+	if _, err := SaveCommandTools(app.DB, st.Slug, "cap", "Reads a bundle.", []TempToolAction{{
+		Name: "report", Description: "d", CommandTemplate: "/opt/bin/cap report",
 		WorkDir: "folder",
 		Params:  map[string]ToolParam{"folder": {Type: "string"}},
 	}}); err != nil {
 		t.Fatalf("save: %v", err)
 	}
-	back, ok := LoadStoreCommand(app.DB, st.Slug, "weka")
+	back, ok := LoadStoreCommand(app.DB, st.Slug, "cap")
 	if !ok {
 		t.Fatal("not reloaded")
 	}
@@ -175,12 +175,12 @@ func TestSavingAMappingPinsFolderParamsToTheStore(t *testing.T) {
 func TestSavingAMappingRefusesAWorkDirWithNoParameter(t *testing.T) {
 	app, st, _ := scopeFixture(t)
 	if _, err := SaveStoreCommand(app.DB, StoreCommand{
-		Slug: st.Slug, Name: "weka", Label: "weka", Command: "/opt/bin/weka",
+		Slug: st.Slug, Name: "cap", Label: "cap", Command: "/opt/bin/cap",
 	}); err != nil {
 		t.Fatal(err)
 	}
-	_, err := SaveCommandTools(app.DB, st.Slug, "weka", "Reads a bundle.", []TempToolAction{{
-		Name: "syshealth", Description: "d", CommandTemplate: "/opt/bin/weka syshealth",
+	_, err := SaveCommandTools(app.DB, st.Slug, "cap", "Reads a bundle.", []TempToolAction{{
+		Name: "report", Description: "d", CommandTemplate: "/opt/bin/cap report",
 		WorkDir: "nope",
 		Params:  map[string]ToolParam{"folder": {Type: "string"}},
 	}})

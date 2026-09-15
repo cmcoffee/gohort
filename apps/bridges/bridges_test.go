@@ -14,7 +14,7 @@ import (
 // derive-on-read would otherwise harvest it as a bogus participant on reload).
 func TestSyncMembersExcludesConversationAliases(t *testing.T) {
 	const chatID = "acct;-;+15551234567"
-	const email = "alice@icloud.com"
+	const email = "alice@example.test"
 
 	t.Run("aliased sender is not harvested", func(t *testing.T) {
 		T := &Bridges{AppCore{DB: OpenCache()}}

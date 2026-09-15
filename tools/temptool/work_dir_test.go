@@ -15,9 +15,9 @@ import (
 
 func scopedFolderTool() *TempTool {
 	return &TempTool{
-		Name:            "weka",
+		Name:            "cap",
 		Mode:            TempToolModeShell,
-		CommandTemplate: "/opt/bin/weka syshealth",
+		CommandTemplate: "/opt/bin/cap report",
 		WorkDir:         "folder",
 		Params: map[string]ToolParam{
 			"folder": {Type: "string", PathScope: "files:bundles"},
@@ -84,7 +84,7 @@ func TestWorkDirNamingNoParameterIsRefused(t *testing.T) {
 
 // A declared work_dir with no folder is REFUSED, never run in the workspace.
 //
-// This is the live failure that prompted it: weka ran in the agent's
+// This is the live failure that prompted it: the tool ran in the agent's
 // workspace and reported "no matching nodes found in .../workspaces/...",
 // so the reader chased a path nobody had chosen instead of the missing
 // argument that put it there. A silent fallback turns a missing argument into
@@ -123,7 +123,7 @@ func TestNoWorkDirIsUntouched(t *testing.T) {
 func TestShellActionKeepsItsRequiredList(t *testing.T) {
 	act := TempToolAction{
 		Name:            "syshealth",
-		CommandTemplate: "/opt/bin/weka syshealth",
+		CommandTemplate: "/opt/bin/cap report",
 		WorkDir:         "folder",
 		Params:          map[string]ToolParam{"folder": {Type: "string", PathScope: "files:b"}},
 		Required:        []string{"folder"},
@@ -150,7 +150,7 @@ func TestApiActionStillNarrowsItsRequiredList(t *testing.T) {
 
 // A path-scoped parameter travels as a REACH, never as a read promise.
 //
-// The live failure: weka mapped exactly as its CLI reads — weka -l {logs} —
+// The live failure: a capture tool mapped exactly as its CLI reads — cap -l {logs} —
 // was refused at dispatch because the scope on {logs} was taken for a promise
 // that reads were confined to that folder. Nobody had promised that; the scope
 // proves the model did not name ~/.ssh, and the command then has to be able to

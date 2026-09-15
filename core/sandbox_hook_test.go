@@ -115,7 +115,7 @@ func TestHookSocketFitsUnderADeepWorkspace(t *testing.T) {
 	// The real path from the failure, rebuilt: a per-agent workspace is
 	// <root>/.agents/<email>/<uuid>/, which is 92 characters before the socket
 	// name has even started.
-	deep := "/opt/gohort/data/workspaces/.agents/cmcoffee@gmail.com/45dbd021-4c1d-494b-a2ab-6416c355cbd8"
+	deep := "/opt/gohort/data/workspaces/.agents/owner@example.test/45dbd021-4c1d-494b-a2ab-6416c355cbd8"
 	old := filepath.Join(deep, ".gohort_hook_084099fb5aee06bf.sock")
 	if len(old) <= maxUnixSocketPath {
 		t.Fatalf("the path that failed is %d bytes — this test has lost its subject", len(old))
@@ -169,7 +169,7 @@ func TestHookSocketNameIsUnique(t *testing.T) {
 // that led to it.
 func TestHookActuallyListensUnderADeepWorkspace(t *testing.T) {
 	deep := filepath.Join(t.TempDir(),
-		".agents", "cmcoffee@gmail.com", "45dbd021-4c1d-494b-a2ab-6416c355cbd8")
+		".agents", "owner@example.test", "45dbd021-4c1d-494b-a2ab-6416c355cbd8")
 	h, err := NewSandboxHook(deep, []string{"log"}, &ToolSession{})
 	if err != nil {
 		t.Fatalf("a hook under a deep workspace must still listen: %v", err)

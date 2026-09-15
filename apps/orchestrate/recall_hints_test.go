@@ -171,7 +171,7 @@ func TestASearchThatFoundDocumentsMintsTheKnowledgeTools(t *testing.T) {
 // corpus is reachable and must never be read as proof that one is not.
 func TestTheHintSignalNeverWithholdsTheKnowledgeTools(t *testing.T) {
 	turn, _ := machineTurnFixture(t, residentMachine())
-	turn.agent.AttachedCollections = []string{"c-kiteworks"}
+	turn.agent.AttachedCollections = []string{"c-acme"}
 	turn.hintedKnowledge = 0 // hints off, or a query too short to run one
 
 	if got := corpusNames(turn); !strings.Contains(got, "recall") {

@@ -15,7 +15,7 @@ import "testing"
 // same turn that survey listed thirty-eight, every lookup failing, and Builder
 // telling the user their agent must have been deleted.
 func TestSeedAgentsUseTheCallersOwnStore(t *testing.T) {
-	const user = "cmcoffee@gmail.com"
+	const user = "owner@example.test"
 
 	shouldRedirect := func(owner string) bool {
 		return owner != "" && owner != user && owner != seedOwner

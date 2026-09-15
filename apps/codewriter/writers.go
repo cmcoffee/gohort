@@ -45,7 +45,7 @@ const writerTable = "codewriter_writers"
 // get it back.
 //
 // It exists because those controls reset to their defaults on reload. Without
-// it, "Kiteworks SQL queries" meant re-picking the same handful of settings at
+// it, "Acme SQL queries" meant re-picking the same handful of settings at
 // the start of every session, and the cost of not bothering was a turn answered
 // without the material it needed — silently, since nothing in a reply says
 // which sources were attached.

@@ -19,7 +19,7 @@ func TestAgentEchoJSONHidesOwnerOnlyState(t *testing.T) {
 		Name:                "TechGuru",
 		Description:         "expert",
 		AllowedTools:        []string{"web_search"},
-		Triggers:            []string{"kiteworks"},
+		Triggers:            []string{"acme"},
 		DisabledCredentials: []string{"gitlab"},
 		DisabledPipelines:   []string{"p1"},
 		GuardrailFailClosed: true,

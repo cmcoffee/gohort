@@ -585,7 +585,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// does not promise the command reads that path and nothing else, and the
 	// sandbox refused every path-scoped run on a backend that could not
 	// guarantee the promise nobody made. On this deployment that was all of
-	// them: a correctly mapped command (weka -l {logs}) was refused for being
+	// them: a correctly mapped command (cap -l {logs}) was refused for being
 	// correctly mapped, and the agent fell back to reading the folder through
 	// the filestore tools, which reach the same directory server-side with no
 	// sandbox in the way at all.

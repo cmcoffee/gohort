@@ -22,7 +22,7 @@ func TestCwdFallsBackToTheWorkspace(t *testing.T) {
 // reason the cwd resolves: --chdir at an unbound path exits with "Can't
 // chdir" before the command runs.
 func TestWorkDirOutsideTheWorkspaceIsBoundAndChdirred(t *testing.T) {
-	args := []string{"--bind", "/ws", "/ws", "--chdir", "/ws", "--", "sh", "-c", "weka syshealth"}
+	args := []string{"--bind", "/ws", "/ws", "--chdir", "/ws", "--", "sh", "-c", "cap report"}
 	got := withWorkDir(args, "/dumps/DIAG", "/ws")
 
 	sep := strings.Index(strings.Join(got, "\x00"), "\x00--\x00")
@@ -49,7 +49,7 @@ func TestWorkDirOutsideTheWorkspaceIsBoundAndChdirred(t *testing.T) {
 	if strings.Contains(flags, "--bind /dumps") {
 		t.Error("WorkDir must not be writable")
 	}
-	if !strings.HasSuffix(flags, "-- sh -c weka syshealth") {
+	if !strings.HasSuffix(flags, "-- sh -c cap report") {
 		t.Errorf("the command was disturbed: %v", got)
 	}
 }
@@ -140,7 +140,7 @@ func TestReachIsNotRefusedWhereReadOnlyIs(t *testing.T) {
 // refusal upstream differs.
 func TestReachIsBoundUnderBubblewrap(t *testing.T) {
 	c := bwrapSandbox{path: "/usr/bin/bwrap"}.build(t.Context(), sandboxRun{
-		Kind: sandboxShellRun, Command: "weka -l /srv/bundle syshealth",
+		Kind: sandboxShellRun, Command: "cap -l /srv/bundle report",
 		WorkspaceDir: "/ws", Reach: []string{"/srv/bundle"},
 	})
 	argv := strings.Join(c.Args, " ")

@@ -2221,6 +2221,17 @@ select:-webkit-autofill {
   .ui-chat-thread { padding: 0.6rem 0.7rem; }
   .ui-chat-input-area { padding: 0.5rem; padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px)); }
 }
+/* Empty session list. Centred and muted so it reads as the ABSENCE of rows
+ * rather than as a row: it had no rule at all, so "(none)" rendered in the
+ * same weight and colour as a real session title and sat left-aligned where
+ * a title would be. */
+.ui-chat-side-empty {
+  padding: 1.1rem 0.7rem;
+  text-align: center;
+  color: var(--text-mute);
+  font-size: 0.82rem;
+  font-style: italic;
+}
 .ui-chat-side-h {
   display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;
   padding: 0.5rem 0.7rem;

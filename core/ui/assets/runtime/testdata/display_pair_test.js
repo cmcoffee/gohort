@@ -50,8 +50,8 @@ function textOf(n) {
 var wrap = mkNode();
 uiDisplayPair(wrap, {
   actions: [
-    { name: 'syshealth', command: '/opt/bin/weka syshealth', runs_in: 'folder' },
-    { name: 'sar', command: '/opt/bin/weka sar', runs_in: 'folder' },
+    { name: 'report', command: '/opt/bin/cap report', runs_in: 'folder' },
+    { name: 'disk', command: '/opt/bin/cap disk', runs_in: 'folder' },
   ],
 }, { label: 'Actions', field: 'actions', items: [
   { field: 'name', mono: true },
@@ -60,8 +60,8 @@ uiDisplayPair(wrap, {
 ]});
 var txt = textOf(wrap).replace(/\s+/g, ' ');
 ok(txt.indexOf('[object Object]') < 0, 'array pair must not stringify objects: ' + txt);
-ok(txt.indexOf('syshealth') >= 0, 'sub-pair value missing: ' + txt);
-ok(txt.indexOf('/opt/bin/weka syshealth') >= 0, 'block sub-pair missing: ' + txt);
+ok(txt.indexOf('report') >= 0, 'sub-pair value missing: ' + txt);
+ok(txt.indexOf('/opt/bin/cap report') >= 0, 'block sub-pair missing: ' + txt);
 ok(txt.indexOf('in: folder') >= 0, 'labelled sub-pair missing: ' + txt);
 
 // 2. An empty array says so rather than rendering nothing.

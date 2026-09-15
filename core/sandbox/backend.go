@@ -112,7 +112,7 @@ type sandboxRun struct {
 	// Separate from WorkspaceDir because those were one field and they are two
 	// questions. WorkspaceDir answers "what may this command WRITE"; the cwd
 	// answers "where does it BEGIN". Conflating them meant a tool that must run
-	// at the base of a folder it only reads — weka against a diagnostic bundle
+	// at the base of a folder it only reads — a capture tool against a bundle
 	// is the case that surfaced it — could be pointed there only by making the
 	// whole bundle tree writable. Two facts, two fields.
 	//

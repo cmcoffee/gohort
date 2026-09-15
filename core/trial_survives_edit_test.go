@@ -21,7 +21,7 @@ import (
 // catalog. Nothing failed; it simply was not offered.
 func TestConfirmationSurvivesABuilderEdit(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
-	const user = "cmcoffee@gmail.com"
+	const user = "owner@example.test"
 
 	// A confirmed tool: the user vouched for it, so Trial is false.
 	confirmed := TempTool{Name: "moltbook", Description: "post to moltbook"}

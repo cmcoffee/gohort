@@ -1116,13 +1116,13 @@ func TestNoMachineNeverNarrows(t *testing.T) {
 func TestPhaseNarrowingDoesNotRevokeAttachments(t *testing.T) {
 	catalog := append(scopeCatalog(),
 		AgentToolDef{Tool: Tool{Name: "search_support_bundles"}},
-		AgentToolDef{Tool: Tool{Name: "investigate_kiteworks"}})
-	attached := map[string]bool{"search_support_bundles": true, "investigate_kiteworks": true}
+		AgentToolDef{Tool: Tool{Name: "investigate_acme"}})
+	attached := map[string]bool{"search_support_bundles": true, "investigate_acme": true}
 
 	m := turnMachine{on: true, phase: MachinePhase{Name: "investigate", Tools: []string{"web_search"}}}
 	out, dropped, _, _ := m.narrowCatalog(catalog, attached)
 
-	for _, n := range []string{"search_support_bundles", "investigate_kiteworks"} {
+	for _, n := range []string{"search_support_bundles", "investigate_acme"} {
 		if !hasScopeName(out, n) {
 			t.Errorf("the phase revoked %q, which attaching the source is what granted", n)
 		}
@@ -1147,8 +1147,8 @@ func TestPhaseNarrowingDoesNotRevokeAttachments(t *testing.T) {
 func TestAPhaseThatNamesAnAttachmentGovernsThemAll(t *testing.T) {
 	catalog := append(scopeCatalog(),
 		AgentToolDef{Tool: Tool{Name: "search_support_bundles"}},
-		AgentToolDef{Tool: Tool{Name: "investigate_kiteworks"}})
-	attached := map[string]bool{"search_support_bundles": true, "investigate_kiteworks": true}
+		AgentToolDef{Tool: Tool{Name: "investigate_acme"}})
+	attached := map[string]bool{"search_support_bundles": true, "investigate_acme": true}
 
 	m := turnMachine{on: true, phase: MachinePhase{Name: "scan", Tools: []string{"search_support_bundles"}}}
 	out, _, _, fellBack := m.narrowCatalog(catalog, attached)
@@ -1159,7 +1159,7 @@ func TestAPhaseThatNamesAnAttachmentGovernsThemAll(t *testing.T) {
 	if !hasScopeName(out, "search_support_bundles") {
 		t.Fatal("the attachment the phase named is missing")
 	}
-	if hasScopeName(out, "investigate_kiteworks") {
+	if hasScopeName(out, "investigate_acme") {
 		t.Error("naming one attachment must be able to mean 'that one, not the others'")
 	}
 }
@@ -1732,7 +1732,7 @@ func TestReachAllIsSayableWithoutAnEmptyEnumValue(t *testing.T) {
 // therefore runs no machine.
 func TestATransientStepCanReachTheAgentsCorpus(t *testing.T) {
 	turn, _ := machineTurnFixture(t, residentMachine())
-	turn.agent.AttachedCollections = []string{"c-kiteworks"}
+	turn.agent.AttachedCollections = []string{"c-acme"}
 
 	var names []string
 	for _, td := range turn.machineCatalog(MachinePhase{Name: "assess",
@@ -1772,7 +1772,7 @@ func TestAStepWithNoCorpusIsNotGivenKnowledgeTools(t *testing.T) {
 // to be in the pool before a list can keep it.
 func TestANamedKnowledgeToolSurvivesAStepsNarrowing(t *testing.T) {
 	turn, _ := machineTurnFixture(t, residentMachine())
-	turn.agent.AttachedCollections = []string{"c-kiteworks"}
+	turn.agent.AttachedCollections = []string{"c-acme"}
 
 	ph := MachinePhase{Name: "assess", Prompt: "search first",
 		Tools: []string{"recall"}}

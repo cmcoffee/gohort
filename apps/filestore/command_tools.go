@@ -240,7 +240,7 @@ func firstLine(s string) string {
 //
 //	GET /filestore/api/commands/mapping?id=<slug>/<name>
 //
-// The row already says THAT a command is mapped ("weka_bundles · 3 actions ·
+// The row already says THAT a command is mapped ("cap_bundles · 3 actions ·
 // off") and cannot say what it was mapped AS. Deciding whether to re-map means
 // knowing what an agent would actually run — the command line, which parameter
 // carries the folder, whether it runs inside that folder — and until this

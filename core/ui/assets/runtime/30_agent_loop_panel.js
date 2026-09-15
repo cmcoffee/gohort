@@ -5129,7 +5129,11 @@
             renderBulkBar([], sideList, bulkState, bulkSelected,
               function(s){ return s[idF]; }, loadSessions, function(){});
           }
-          sideList.appendChild(el('div', {class: 'ui-chat-side-empty'}, ['(none)']));
+          // An empty state, not a value. "(none)" reads as a session named
+          // none sitting in the list; it is styled inert so it reads as the
+          // list being empty. Wording stays generic — this list holds chat
+          // sessions on every surface that mounts the panel.
+          sideList.appendChild(el('div', {class: 'ui-chat-side-empty'}, ['No previous sessions']));
           return;
         }
         // Drop ids from bulkSelected that no longer exist in the

@@ -29,3 +29,10 @@ fuzz
 # Start from go.work.example.
 go.work
 go.work.sum
+
+# Deployment-specific names the scrub gate forbids — a customer, an employer's
+# product, an internal tool. NOT committed, and that is the point: a denylist in
+# a public repo publishes the very words it exists to keep out. Each developer
+# keeps their own; scrub_test.go skips that check when the file is absent and
+# still runs the structural ones.
+.scrub-denylist

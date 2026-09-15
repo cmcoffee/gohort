@@ -332,7 +332,7 @@ func TestTheEvalCatalogCarriesTheFrameworkTools(t *testing.T) {
 	agent := AgentRecord{
 		ID: "a1", Name: "Support bot", Owner: "u",
 		AllowedTools:        []string{"web_search"},
-		AttachedCollections: []string{"c-kiteworks"},
+		AttachedCollections: []string{"c-acme"},
 	}
 	var names []string
 	for _, td := range app.evalAgentCatalog(db, agent) {

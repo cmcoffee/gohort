@@ -13,7 +13,7 @@ import (
 )
 
 func TestToolStepHidesToolLimitsWhenNothingIsStored(t *testing.T) {
-	if phaseShowsTools(MachinePhase{Name: "search", Tool: "search_kiteworks_knowledge"}) {
+	if phaseShowsTools(MachinePhase{Name: "search", Tool: "search_acme_knowledge"}) {
 		t.Error("a tool step with nothing stored must not offer controls that do nothing")
 	}
 }
@@ -33,7 +33,7 @@ func TestToolStepKeepsStoredLimitsVisible(t *testing.T) {
 
 func TestKeptLimitsSayTheyAreNotInEffect(t *testing.T) {
 	fields := phaseToolFields(MachinePhase{
-		Name: "a", Tool: "search_kiteworks_knowledge", Reach: ReachNone,
+		Name: "a", Tool: "search_acme_knowledge", Reach: ReachNone,
 	}, editorCatalog{})
 	var head, help string
 	for _, f := range fields {
@@ -45,7 +45,7 @@ func TestKeptLimitsSayTheyAreNotInEffect(t *testing.T) {
 	if !strings.Contains(head, "Kept, not applied") {
 		t.Errorf("first header should say the panel is inert, got %q", head)
 	}
-	if !strings.Contains(help, "search_kiteworks_knowledge") {
+	if !strings.Contains(help, "search_acme_knowledge") {
 		t.Errorf("should name the tool the step calls: %q", help)
 	}
 	if !strings.Contains(help, "clear the tool above") {

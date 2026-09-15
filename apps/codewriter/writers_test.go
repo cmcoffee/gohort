@@ -59,7 +59,7 @@ func TestSourceBlockSurvivesAnUnnamedWriter(t *testing.T) {
 // that resets on refresh — that reset is the whole reason it exists.
 func TestAModeCarriesThePanelSettings(t *testing.T) {
 	wr := WriterRecord{
-		Name:        "Kiteworks SQL queries",
+		Name:        "Acme SQL queries",
 		Lang:        "sql",
 		Sources:     ReferenceSelections{{Kind: "agent", ItemID: "kw"}},
 		Collections: []string{"c1", "c2"},
