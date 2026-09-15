@@ -22,16 +22,27 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
-// TunableConflictDetection gates the finding conflict rail. Off by default: it
-// costs one worker round-trip per finding save that has a related-but-not-
-// duplicate neighbor.
+// TunableConflictDetection gates the finding conflict rail.
+//
+// ON by default, which it was not at first. The cost is smaller than the
+// original note implied: the vector search it needs is one the save ALREADY
+// performs for dedup, and the worker call happens only when that search turns
+// up a neighbour inside the conflict band — related enough to contradict,
+// not close enough to be a duplicate. Most saves have no such neighbour and
+// spend nothing.
+//
+// What it protects is the one layer with no supersession of its own. Facts
+// supersede on write and single-valued graph edges replace; findings just
+// accumulate, so a superseded one sits beside its replacement and recall
+// returns both, with nothing marking which is current. An agent that keeps
+// findings about the same systems over months is exactly where that bites.
 const TunableConflictDetection = "tune_conflict_detection"
 
 func init() {
 	RegisterTunable(TunableSpec{App: "/orchestrate", Key: TunableConflictDetection, Category: "Memory",
-		Label: "Finding conflict detection (0 = off)",
-		Help:  "When saving a finding, run a worker-LLM check for an existing finding it contradicts and surface the conflict in the tool result. Never auto-deletes — the user decides. Costs one worker call per save that has a related neighbor. Findings only for now; facts already supersede and graph edges use replace.",
-		Kind:  KindBool, Default: 0, Min: 0, Max: 1})
+		Label: "Finding conflict detection",
+		Help:  "When saving a finding, check for an existing finding it contradicts and surface the conflict in the tool result. Never auto-deletes — you decide whether to keep, forget or reconcile. Costs one worker call only on a save whose dedup search already found a related-but-not-duplicate neighbour; most saves spend nothing. Findings only: facts already supersede and graph edges replace. Turn it off for an agent whose findings are independent of each other.",
+		Kind:  KindBool, Default: 1, Min: 0, Max: 1})
 }
 
 func conflictDetectionEnabled() bool { return TuneBool(TunableConflictDetection) }

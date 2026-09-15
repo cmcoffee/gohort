@@ -68,3 +68,32 @@ func TestDetectFindingConflictGateOff(t *testing.T) {
 		t.Fatalf("gate off must return no note even with a band candidate, got %q", got)
 	}
 }
+
+// The rail is ON by default. It shipped off, on a cost estimate that read the
+// worker call as per-save; it is per-save-that-already-found-a-neighbour, and
+// the search it needs is one dedup performs anyway.
+//
+// Pinned because a default is a one-character edit and the failure is silent:
+// findings would go back to accumulating beside the ones they supersede, with
+// recall returning both and nothing marking which is current.
+func TestConflictDetectionIsOnByDefault(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()} // nothing stored → spec default applies
+	SetTunablesDB(db)
+	defer SetTunablesDB(nil)
+
+	if !conflictDetectionEnabled() {
+		t.Error("a deployment that has never touched this knob should have the rail on")
+	}
+}
+
+// And an operator who turns it off still gets that.
+func TestConflictDetectionCanStillBeTurnedOff(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	db.Set(WebTable, TunableConflictDetection, float64(0))
+	SetTunablesDB(db)
+	defer SetTunablesDB(nil)
+
+	if conflictDetectionEnabled() {
+		t.Error("an explicit 0 must win over the default")
+	}
+}
