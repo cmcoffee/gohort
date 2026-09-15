@@ -332,3 +332,33 @@ func TestSeedCopyCoversEverySliceField(t *testing.T) {
 		}
 	}
 }
+
+// A seed may not ask for a budget the editor refuses to accept.
+//
+// Builder shipped asking for 45 worker rounds while the editor's field carried
+// Max: 20 — not stale help text but an ENFORCED bound, so the value the
+// framework chose for its own authoring agent could not be typed into the form
+// that sets it. Nothing failed, because the number lived in three hand-written
+// copies (the form, the authoring tool's parameter, the suggest text) and no
+// test related any of them to what the seeds actually declare.
+//
+// This is that relation. It fails when a seed outgrows the bound OR when the
+// bound is lowered under a seed, which are the two directions the drift can go.
+func TestSeedBudgetsFitWhatTheEditorOffers(t *testing.T) {
+	for _, rec := range builtinAgents() {
+		if rec.MaxWorkerRounds == 0 {
+			continue // unset: the default applies, and the default is in range
+		}
+		if rec.MaxWorkerRounds < minWorkerRounds {
+			t.Errorf("seed %s asks for %d worker rounds, below the floor of %d — it would be silently raised",
+				rec.ID, rec.MaxWorkerRounds, minWorkerRounds)
+		}
+		if rec.MaxWorkerRounds > maxWorkerRoundsCeiling {
+			t.Errorf("seed %s asks for %d worker rounds, above the %d the editor offers — the framework's own value could not be set by hand",
+				rec.ID, rec.MaxWorkerRounds, maxWorkerRoundsCeiling)
+		}
+		if rec.MaxPlanSteps > 0 && rec.MaxPlanSteps > 12 {
+			t.Errorf("seed %s asks for %d plan steps, above the 12 the editor offers", rec.ID, rec.MaxPlanSteps)
+		}
+	}
+}

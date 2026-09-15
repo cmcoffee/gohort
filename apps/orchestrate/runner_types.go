@@ -30,6 +30,21 @@ const (
 	defaultMaxPlanSteps    = 5
 	defaultMaxWorkerRounds = 15 // 15 rounds + the 5 wrap-up grace rounds (grace only arms at MaxRounds >= 10)
 	minWorkerRounds        = 6  // floor: a too-low per-agent cap starves multi-step tasks (fetch → send) and forces a mid-action wrap-up; the cap is a MAXIMUM, so this never forces extra rounds on a snappy agent
+	// maxWorkerRoundsCeiling is the highest per-agent round cap the editor
+	// and the authoring tools OFFER. Not enforced at run time —
+	// resolveMaxWorkerRounds floors a too-low value and has no upper clamp —
+	// so this is a guard against a typo costing a fortune, not a limit the
+	// runtime believes in.
+	//
+	// It exists as a constant because the number was written out by hand in
+	// three places (the editor's Max, the authoring tool's parameter
+	// description, the suggest text) and every one of them said 20 while
+	// Builder's own seed asked for 45. The editor's copy was not merely
+	// stale, it was ENFORCED: the value the framework ships for its own
+	// authoring agent could not be typed into the form that sets it. Three
+	// hand-written copies of a bound is three chances to be wrong and no
+	// mechanism to notice.
+	maxWorkerRoundsCeiling = 60
 	// buildPlanRoundsPerStep is how many execution rounds each build-plan
 	// step grants once Builder calls present_build_plan. A step is
 	// typically draft script → test → fix → verify → mark_step_done, so

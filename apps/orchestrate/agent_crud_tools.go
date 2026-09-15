@@ -729,7 +729,7 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 			Items:       &ToolParam{Type: "string"},
 		},
 		"max_plan_steps":           {Type: "integer", Description: fmt.Sprintf("Optional 1-12. Default %d.", defaultMaxPlanSteps)},
-		"max_worker_rounds":        {Type: "integer", Description: fmt.Sprintf("Optional 1-20. Default %d.", defaultMaxWorkerRounds)},
+		"max_worker_rounds":        {Type: "integer", Description: fmt.Sprintf("Optional 1-%d. Default %d. Anything under %d is raised to %d.", maxWorkerRoundsCeiling, defaultMaxWorkerRounds, minWorkerRounds, minWorkerRounds)},
 		"think_budget":             {Type: "integer", Description: "Max thinking tokens per LLM call; applies only when thinking is on. 0 (default) = deployment default (4096). The admin global budget is a hard ceiling, so this can only LOWER it."},
 		"action_quotas":            {Type: "array", Description: "How often one action may run in a rolling 24 hours, as \"action = number\" entries (\"moltbook/create_post = 6\"). Names a grouped tool's action or a whole tool. Enforced by the framework — the call is refused when the allowance is spent — so do NOT also write the limit into the prompt and ask the agent to count for itself. Only successful calls count. Omit for no limit.", Items: &ToolParam{Type: "string"}},
 		"daily_spend_usd":          {Type: "number", Description: "What this agent may cost in a rolling 24 hours, in US dollars. 0 (default) = no limit. Crossing it drops the rest of the running turn to the local worker model and declines the next turn until the window frees up. Does nothing where no cost rates are configured."},

@@ -81,7 +81,7 @@ func fieldGuidance(field string) string {
 	case "max_plan_steps":
 		return fmt.Sprintf("Integer 1-12. How many steps the orchestrator may commit to per turn. Default %d. Pick 7-10 for deep-research or thorough agents, 1-2 for snappy lookup agents.", defaultMaxPlanSteps)
 	case "max_worker_rounds":
-		return fmt.Sprintf("Integer 1-20. How many LLM call + tool-execution cycles the worker may run per step. Default %d. Raise when the worker chains many tool calls (18+), lower for single-tool answers (3).", defaultMaxWorkerRounds)
+		return fmt.Sprintf("Integer 1-%d. How many LLM call + tool-execution cycles the worker may run per step. Default %d; anything under %d is raised to %d. Raise when the worker chains many tool calls (18+), or has to survey something before it can write anything down (30+); lower for single-tool answers (6).", maxWorkerRoundsCeiling, defaultMaxWorkerRounds, minWorkerRounds, minWorkerRounds)
 	}
 	return ""
 }
