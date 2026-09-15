@@ -107,10 +107,15 @@ func TestSeedSettingsUnchanged(t *testing.T) {
 	}
 
 	builder := get("seed-builder")
+	// No memory names here. store_fact / forget_fact / list_facts sat in this
+	// list and could never match: they are frameworkInfrastructureTools, which
+	// are hidden from every picker and so absent from the pool AllowedTools
+	// intersects against. The tools themselves are gone with the legacy
+	// surface, and the memory trio an agent does get (remember / recall /
+	// forget) is appended by the catalog rather than allowlisted.
 	wantTools := []string{
 		"ask_user", "ask_user_form", "plan_set",
 		"web_search", "fetch_url", "browse_page", "workspace",
-		"store_fact", "forget_fact", "list_facts",
 		"stay_silent", "keep_going",
 	}
 	if !reflect.DeepEqual(builder.AllowedTools, wantTools) {

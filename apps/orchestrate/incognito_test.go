@@ -101,9 +101,10 @@ func TestIncognitoRefusesDurableMemoryWrites(t *testing.T) {
 		t.Error("incognito wrote a relationship into the durable graph")
 	}
 
-	// forget_fact is destructive AND blind here — the index refers to a facts
-	// block this prompt does not carry.
-	_, err = clean.forgetFactToolDef().Handler(context.Background(), map[string]any{"index": 1, "quote": "Rex"})
+	// forget is destructive AND blind here — the bare-number id refers to a
+	// facts block this prompt does not carry. (Was forget_fact before the
+	// unified surface; same guard, the verb that exists now.)
+	_, err = clean.forgetToolDef().Handler(context.Background(), map[string]any{"id": "1", "quote": "Rex"})
 	if err == nil {
 		t.Error("incognito deleted a stored fact by an index it could not see")
 	}

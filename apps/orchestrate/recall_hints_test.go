@@ -227,7 +227,10 @@ func TestOnlyCorpusToolDefsMintsTheKnowledgePair(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
-		for _, ctor := range []string{"searchKnowledgeToolDef()", "fetchKnowledgeDocToolDef()"} {
+		// searchKnowledgeToolDef is gone with the legacy surface; the fetch
+		// def survives because recall(id="doc:…") uses its handler, so it is
+		// still worth guarding against a second caller building it directly.
+		for _, ctor := range []string{"fetchKnowledgeDocToolDef()"} {
 			if strings.Contains(string(body), ctor) {
 				t.Errorf("%s builds the knowledge pair directly (%s). Call corpusToolDefs instead, "+
 					"or the empty-corpus gate and the memory-mode split drift again.", name, ctor)

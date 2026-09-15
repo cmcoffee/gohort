@@ -12,13 +12,11 @@
 package orchestrate
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -36,38 +34,6 @@ func factsNamespace(agentID string) string {
 // "Saved notes" / "Shortcuts"), not a generic label that isn't there.
 func (t *chatTurn) factsBlockName() string {
 	return strings.TrimPrefix(memoryModeCopy(t.agent.MemoryMode).Header, "## ")
-}
-
-// storeFactToolDef lets the model record a discrete note it's
-// learned. Dedup is automatic — same or similar notes get folded
-// into the existing entry rather than accumulating.
-func (t *chatTurn) storeFactToolDef() AgentToolDef {
-	desc := "Record a SHORT note (Explicit Memory) that needs to be ACCOUNTED FOR EVERY TIME a new question is raised — instructions, preferences, durable user/context facts. Pre-injected into your system prompt on every future turn; the LLM sees them automatically without having to search.\n\n**Use store_fact when**: the note shapes how you should respond to ANY future question (user preferences, recurring constraints, identity facts, project context). Right examples: \"user prefers metric units\", \"all responses go to a vegetarian audience\", \"production API needs JWT in X-Auth header\".\n\n**Use memory(save) instead when**: the finding is complicated reference material you MIGHT need to recall later for specific questions — API specs, website navigation steps, recipes, configuration details. Those are pull-only via memory(search), not always-in-prompt. If you're tempted to dump research findings into store_fact, use memory(save) instead.\n\nThe framework dedupes automatically (same wording OR semantically similar = skipped). Quantity here costs prompt tokens forever (these inject on every turn), so keep total around a screen's worth.\n\nDistinct from `knowledge_search` (read-only over user-uploaded files) and `memory(search)` (your own prior memory(save) findings, pull-only)."
-	if suffix := memoryModeCopy(t.agent.MemoryMode).StoreToolSuffix; suffix != "" {
-		desc = desc + "\n\n" + suffix
-	}
-	return AgentToolDef{
-		Tool: Tool{
-			Name:        "store_fact",
-			Description: desc,
-			Parameters: map[string]ToolParam{
-				"note": {
-					Type:        "string",
-					Description: "The fact, as a concise self-contained sentence. Include enough context that the note makes sense out of context months later. Examples: \"User prefers Korean for casual chat, English for technical questions.\" / \"Current project is named Atlas; deadline mid-June.\" / \"Time zone is America/Los_Angeles.\"",
-				},
-				"domain": {
-					Type:        "string",
-					Enum:        []string{"self", "world"},
-					Description: "Whether the person telling you this SETTLES it. \"self\" = about them — a preference, their name, their goals, how they want you to work; they are the authority and there is nothing to check it against. \"world\" = true or false independently of who said it — a server, a library, a version, a price, how some system behaves; being told it is not the same as having checked it, and recall marks these so a passing remark is not quoted back later as established fact. When a note is both, ask what it ASSERTS: \"prefers the API to return JSON\" is a preference (self); \"the API returns JSON\" is a claim about the API (world).",
-				},
-			},
-			Required: []string{"note"},
-			Caps:     []Capability{CapWrite},
-		},
-		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			return t.storeFactNote(stringArg(args, "note"), claimDomainArg(args))
-		},
-	}
 }
 
 // storeFactNote is the shared write path for the Explicit Memory (always-
@@ -153,97 +119,6 @@ func (t *chatTurn) storeFactNote(note string, domain ClaimDomain) (string, error
 		msg += fmt.Sprintf(" Superseded %d now-stale fact(s): %s.", len(dropped), strings.Join(dropped, ", "))
 	}
 	return msg, nil
-}
-
-// forgetFactToolDef removes one fact by its 1-based index in the
-// rendered list. The LLM reads its numbered notes in the system
-// prompt's always-in-prompt facts block and references the matching index
-// here, plus a verbatim quote from the note — the index alone can go
-// stale mid-turn (a store_fact can trigger supersession or a sweep
-// that shifts the list), and a stale index deletes the wrong note.
-func (t *chatTurn) forgetFactToolDef() AgentToolDef {
-	return AgentToolDef{
-		Tool: Tool{
-			Name:        "forget_fact",
-			Description: fmt.Sprintf("Delete a previously-stored fact by its index in the %q block in your system prompt. Use when a stored fact is OBSOLETE (no longer applies — user moved jobs, project changed names, preference flipped). Index is 1-based and matches the number you see in the prompt. ALWAYS also pass quote — a distinctive phrase copied verbatim from that note — so the right note is deleted even if the list shifted since you read it.", t.factsBlockName()),
-			Parameters: map[string]ToolParam{
-				"index": {
-					Type:        "integer",
-					Description: fmt.Sprintf("1-based index of the note to delete, matching the number prefix in your %q block.", t.factsBlockName()),
-				},
-				"quote": {
-					Type:        "string",
-					Description: "A distinctive phrase copied verbatim from the note you're deleting. Protects against the numbered list having shifted since you read it — on a mismatch, nothing is deleted.",
-				},
-			},
-			Required: []string{"index"},
-			Caps:     []Capability{CapWrite},
-		},
-		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			// Refused in a clean room, and this one is not symmetry for its own
-			// sake. The index is documented as "matching the number prefix in
-			// your facts block" — and an incognito prompt has no facts block,
-			// so the number would be aimed at a list this turn was never shown.
-			// A blind index into somebody's durable memory, on the destructive
-			// tool, is the worst of the three to leave open.
-			if t.incognitoSession() {
-				return "", t.refuseDurableMemoryInCleanRoom("not deleted", "your prompt carries no facts block, so an index here points into a list this session cannot see")
-			}
-			idx := intFromArgs(args, "index")
-			if idx < 1 {
-				return "", errors.New("index is required and must be >= 1")
-			}
-			quote := strings.TrimSpace(stringArg(args, "quote"))
-			removed, reason, ok := ForgetMemoryFactByIndexQuoted(t.udb, factsNamespace(t.agent.ID), idx, quote)
-			if !ok {
-				return "", fmt.Errorf("nothing deleted: %s", reason)
-			}
-			return fmt.Sprintf("Forgot: %q.", removed.Note), nil
-		},
-	}
-}
-
-// searchFactsToolDef finds stored notes by semantic relevance to a query,
-// falling back to substring, and lists all notes when the query is empty. It
-// subsumes the old list_facts (empty query == full list) and adds the semantic
-// search that RenderMemoryFactsBlock's always-in-prompt view can't offer once
-// the note count grows past a screenful.
-func (t *chatTurn) searchFactsToolDef() AgentToolDef {
-	return AgentToolDef{
-		Tool: Tool{
-			Name:        "search_facts",
-			Description: fmt.Sprintf("Search your stored Explicit Memory notes by meaning (\"what's the deploy header?\" finds \"production API needs JWT in X-Auth header\"), or omit the query to list every note. Returns numbered notes (1-based) matching the %q block order for the full-list case. The always-in-prompt %q block already shows recent notes; reach for this when that block has grown large and you want to pinpoint a specific note (e.g. before forget_fact) rather than re-reading the whole block.", t.factsBlockName(), t.factsBlockName()),
-			Parameters: map[string]ToolParam{
-				"query": {Type: "string", Description: "What to look for, in natural language. Omit or leave empty to list all stored notes."},
-			},
-			Caps: []Capability{CapRead},
-		},
-		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			query := strings.TrimSpace(stringArg(args, "query"))
-			facts := SearchMemoryFacts(t.udb, factsNamespace(t.agent.ID), query)
-			if len(facts) == 0 {
-				if query == "" {
-					return "(no facts stored yet)", nil
-				}
-				// No live match — check the history set so a hole gets a record
-				// ("you had X; it was dropped on <date>") instead of the model
-				// falling back to a stale prior with no signal it once knew this.
-				if hole := explainRetiredHole(t.udb, factsNamespace(t.agent.ID), query); hole != "" {
-					return hole, nil
-				}
-				return fmt.Sprintf("(no stored facts match %q)", query), nil
-			}
-			var b strings.Builder
-			// Explicit → graph nudge: list the graph once, then flag any fact that
-			// names a known entity with a recall_about pointer. Empty graph → no cost.
-			ents := ListGraphEntities(t.udb, factsNamespace(t.agent.ID))
-			now := time.Now()
-			for i, f := range facts {
-				fmt.Fprintf(&b, "%d. %s%s%s\n", i+1, f.Note, factEntityNudge(ents, f.Note), FactStalenessNote(f, now))
-			}
-			return b.String(), nil
-		},
-	}
 }
 
 // explainRetiredHole builds a recall message for a query that matched no LIVE

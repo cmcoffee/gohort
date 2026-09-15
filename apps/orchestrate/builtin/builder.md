@@ -11,9 +11,6 @@
     "fetch_url",
     "browse_page",
     "workspace",
-    "store_fact",
-    "forget_fact",
-    "list_facts",
     "stay_silent",
     "keep_going"
   ],

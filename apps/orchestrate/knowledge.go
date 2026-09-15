@@ -1146,58 +1146,6 @@ const memorySaveDedupThreshold = 0.90
 
 // --- Tools the LLM can call directly --------------------------------------
 
-// memoryToolDef builds the grouped tool for Reference Memory.
-// One LLM-facing entry (memory) with an action discriminator
-// covers save / search / forget / help — same shape phantom's
-// knowledge tool uses. Earlier revisions exposed three separate
-// tools (memory_save / memory_search / memory_forget); they all
-// operated on the same conceptual store and shared most params, so
-// the grouped form reads cleaner in the catalog and the action
-// keyword carries the semantic load.
-//
-// Closure-bound to the chatTurn so it picks up (user, agent_id)
-// without an extra ToolSession round-trip. Writes go to Reference
-// Memory only — the Knowledge layer (uploaded files) is admin-
-// managed read-only; Explicit Memory (always-in-prompt) is the
-// store_fact tool's job.
-func (t *chatTurn) memoryToolDef() AgentToolDef {
-	return AgentToolDef{
-		Tool: Tool{
-			Name:        "memory",
-			Description: "Reference Memory for THIS agent — your own vector-searchable scratchpad of findings worth recalling later. Pull-only: nothing auto-injects. Siblings: `knowledge_search` (uploaded files, authoritative) and `store_fact` (short notes pre-injected every turn).\n\n**save** — persist COMPLICATED REFERENCE MATERIAL you may need later (API specs, config recipes, working approaches), a paragraph at most, self-contained. Use store_fact instead when the note shapes how you answer ANY future question. Never re-save what you retrieved this turn.\n**search** — semantic search over saved findings. Your own derived material, so verify against knowledge_search when accuracy matters.\n**forget** — pass `id` from a prior search to drop ONE entry (the safe path), or `query` for bulk cleanup (a loose query nukes more than you meant). `id` wins if both are given. Derived chunks only.\n**help** — return the full spec.\n\nFindings are namespaced by `topic`: reuse a slug from the \"Known topics\" block when one fits, else mint a snake_case one.",
-			Parameters: map[string]ToolParam{
-				"action":  {Type: "string", Description: "Which operation: save | search | forget | help."},
-				"topic":   {Type: "string", Description: "Snake_case topic slug. (save) reuse one from the \"Known topics\" block or mint a new one; omit for `general`. (search, forget) scope query to one bucket; omit to span all."},
-				"subject": {Type: "string", Description: "(save) Short heading for THIS specific finding. Example: \"Acme API rotates session tokens every 24h\". Optional; defaults to the topic slug."},
-				"content": {Type: "string", Description: "(save) The finding itself — several sentences to a paragraph. Self-contained: include enough context that it'll make sense without seeing this conversation."},
-				"query":   {Type: "string", Description: "(search, forget) Natural-language search query. The user's current question often works well, possibly trimmed to the gist. (forget) Be specific — a loose query wipes more than you intended."},
-				"k":       {Type: "number", Description: "(search default 5, cap 20; forget default 3, cap 10) Max hits to return / delete."},
-				"id":      {Type: "string", Description: "(forget) The mem_id from a memory(action=\"search\") hit. Deletes exactly that chunk; preferred when you know which entry to drop."},
-			},
-			Required: []string{"action"},
-			// CapWrite covers save + forget; search reads, but the
-			// combined tool needs the broader cap so privacy filters
-			// don't strip it from agents allowed to write.
-			Caps: []Capability{CapWrite},
-		},
-		Handler: func(ctx context.Context, args map[string]any) (string, error) {
-			action := strings.TrimSpace(stringArg(args, "action"))
-			switch action {
-			case "", "help":
-				return memoryHelpText(), nil
-			case "save":
-				return t.memorySave(args)
-			case "search":
-				return t.memorySearch(args)
-			case "forget":
-				return t.memoryForget(args)
-			default:
-				return "", fmt.Errorf("unknown action %q. valid: save, search, forget, help", action)
-			}
-		},
-	}
-}
-
 // memoryHelpText returns the same spec the description carries.
 // Kept as a separate function so the help action returns plain
 // markdown without re-quoting the description body.
@@ -1315,17 +1263,7 @@ func normalizeFindingText(s string) string {
 	return strings.Join(strings.Fields(strings.ToLower(s)), " ")
 }
 
-// searchKnowledgeToolDef builds the read-side tool over the
-// Knowledge layer — read-only authoritative content the user/admin
-// uploaded (PDFs, shared KB, collections, skill self-training).
-// The LLM never writes to Knowledge; it only reads. Derived chunks
-// from memory_save / synthesis ingest live in Reference Memory and
-// have their own memory_search tool. Closure-bound to the chatTurn.
-func (t *chatTurn) searchKnowledgeToolDef() AgentToolDef {
-	return t.knowledgeToolDefScoped(t.skillsActive)
-}
-
-// knowledgeToolDefScoped is searchKnowledgeToolDef parameterized by which
+// knowledgeToolDefScoped builds a knowledge-search tool parameterized by which
 // skills' AttachedCollections widen the search scope. The main turn passes
 // t.skillsActive (empty now that skills aren't in-context); a use_expert
 // worker passes []SkillRecord{expert} so the expert can search its OWN
