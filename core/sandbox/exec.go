@@ -254,6 +254,12 @@ type ShellRun struct {
 	// keep that promise (scopedRunRefusal), so leave it empty unless the caller
 	// is a path-scoped tool. It is NOT how to make WorkDir readable.
 	ReadOnly []string
+	// Reach are host paths the command must be able to OPEN. No promise about
+	// anything else, so it is honored on every backend and refused on none.
+	// This is what a path-scoped parameter wants: the scope proves the value,
+	// and the command then has to be able to read what it was handed. See
+	// sandboxRun.Reach for why that is not the same as ReadOnly.
+	Reach []string
 	// HookCapabilities are the hook capabilities to expose to the command, and
 	// HookSession the opaque session the broker resolves credentials against.
 	// Both empty means no hook, and the command's gohort.fetch raises HookError.
@@ -377,7 +383,7 @@ func buildSandboxedShellCmd(ctx context.Context, spec ShellRun) (SandboxedCmd, e
 	c := buildRun(ctx, sb, sandboxRun{
 		Kind: sandboxShellRun, Command: command, WorkspaceDir: workspaceDir,
 		Env: extraEnv, AllowNetwork: allowNetwork, ReadOnly: readOnly,
-		WorkDir: spec.WorkDir,
+		Reach: spec.Reach, WorkDir: spec.WorkDir,
 	})
 	env := sandboxEnv(sb.remapsPaths())
 	// Append extras AFTER sandboxEnv so a tool arg "PATH" (rare but
@@ -968,14 +974,13 @@ func withReadOnlyBinds(args []string, readOnly []string, workspaceDir string) []
 }
 
 // ScopesReads reports whether this host's sandbox can confine reads to a named
-// set of paths — i.e. whether a path-scoped run is possible here at all.
+// set of paths.
 //
-// Exported so a caller can answer for itself BEFORE dispatching, and say
-// something its own reader can act on. The refusal this package raises is
-// correct and generic, and generic is exactly its limit: it knows a PATH was
-// refused and cannot know which of the tool's parameters produced it, or that
-// the caller has a way to declare the folder as a working directory instead.
-// A tool layer that can say both turns "refused" into "change this field".
+// Exported for an operator surface that has to say so, and for a caller
+// deciding whether a ReadOnly promise is worth making here. It is NOT the
+// question a path-scoped tool asks: a scope validates the value it was handed,
+// and the command then needs that path reachable — ShellRun.Reach, which no
+// backend refuses. See sandboxRun.Reach.
 func ScopesReads() bool { return activeSandbox().scopesReads() }
 
 // RunSandboxedShellScoped is RunSandboxedShellWithEnv plus read-only

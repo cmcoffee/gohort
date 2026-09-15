@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -209,49 +207,6 @@ func dispatchTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (str
 // dispatchTempToolUncached is the per-mode dispatch core that
 // dispatchTempTool wraps with cache lookup/store. Required-arg
 // validation and key canonicalization have already happened above.
-// scopedReadRefusal explains a refused path-scoped run in the caller's own
-// terms: which PARAMETER carries the path, and what to change.
-//
-// The sandbox's version of this names the path and stops, because a path is
-// all it has. Every question the reader actually has — which of my parameters
-// is that, and what do I do about it — lives up here, and the answer for a
-// command that merely needs to run inside the folder is one field.
-func scopedReadRefusal(tt *TempTool, args map[string]any, scoped []string) error {
-	// Which parameter produced each path. Sorted for a stable message.
-	names := make([]string, 0, len(tt.Params))
-	for name := range tt.Params {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	var carriers []string
-	for _, name := range names {
-		p := tt.Params[name]
-		if strings.TrimSpace(p.PathScope) == "" {
-			continue
-		}
-		raw, ok := lookupArgCI(args, name)
-		if !ok {
-			continue
-		}
-		val := fmt.Sprint(raw)
-		if !slices.Contains(scoped, val) {
-			continue
-		}
-		carriers = append(carriers, strconv.Quote(name)+" (scoped to "+p.PathScope+", resolved to "+val+")")
-	}
-	who := "a scoped parameter"
-	if len(carriers) > 0 {
-		who = "parameter " + strings.Join(carriers, ", ")
-	}
-	return Error("nothing ran. " + who + " promises reads are confined to that path, and this host's " +
-		"sandbox cannot keep that promise: it confines writes and network but allows reads " +
-		"filesystem-wide, so the scope narrows nothing and running would apply a check that does not " +
-		"hold. If this command only needs to RUN INSIDE that folder rather than read it and nothing " +
-		"else, set work_dir on the action to the parameter carrying it and take the folder off the " +
-		"command line — a working directory asks only that one directory be reachable, which every " +
-		"backend can do, and is refused nowhere.")
-}
-
 // splitWorkDir pulls the tool's working directory out of the resolved args and
 // out of the scoped-path list, returning both.
 //
@@ -425,15 +380,6 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 		Log("[temptool] %q refused: %v", tt.Name, werr)
 		return "", fmt.Errorf("%s: %w", tt.Name, werr)
 	}
-	// A scoped read this host cannot keep is refused either way — the sandbox
-	// raises it as a backstop. Saying it HERE is the difference between a
-	// message about a path and a message about a field somebody can change:
-	// this layer knows which parameter produced the path, and that the action
-	// could carry the folder as a working directory instead.
-	if len(scopedPaths) > 0 && !sandbox.ScopesReads() {
-		return "", fmt.Errorf("%s: %s", tt.Name, scopedReadRefusal(tt, args, scopedPaths))
-	}
-
 	cmdTemplate := strings.ReplaceAll(tt.CommandTemplate, "{workspace_dir}", shellQuote(workspaceDir))
 	cmd, err := substitute(cmdTemplate, tt.Params, args)
 	if err != nil {
@@ -632,9 +578,24 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// RunSandboxedShellScoped REFUSES when the host has no sandbox rather
 	// than running with the daemon's own view of the filesystem, where
 	// "this path only" would not apply.
+	// scopedPaths travel as Reach, NOT ReadOnly.
+	//
+	// A path scope proves a caller-supplied name landed inside a registered
+	// root — validation, so the model cannot point this tool at ~/.ssh. It
+	// does not promise the command reads that path and nothing else, and the
+	// sandbox refused every path-scoped run on a backend that could not
+	// guarantee the promise nobody made. On this deployment that was all of
+	// them: a correctly mapped command (weka -l {logs}) was refused for being
+	// correctly mapped, and the agent fell back to reading the folder through
+	// the filestore tools, which reach the same directory server-side with no
+	// sandbox in the way at all.
+	//
+	// The value is still scope-checked, the command line is still the
+	// author's, and under bubblewrap the binding still exposes only what was
+	// named. What is gone is a refusal that protected none of that.
 	res := sandbox.RunSandboxedShellIn(ctx, sandbox.ShellRun{
 		Command: cmd, WorkspaceDir: workspaceDir, WorkDir: workDir,
-		Env: envArgs, ReadOnly: scopedPaths,
+		Env: envArgs, Reach: scopedPaths,
 	})
 	Debug("[temptool] %q sandbox exit: dur=%s err=%v timedOut=%v outBytes=%d",
 		tt.Name, time.Since(tExec), res.Err, res.TimedOut, len(res.Output))

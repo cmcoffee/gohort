@@ -154,12 +154,18 @@ func (c containerSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 	if p := run.Env["GOHORT_HOOK_PATH"]; p != "" && !withinDir(p, run.WorkspaceDir) {
 		args = append(args, mount(p, p, "")...)
 	}
-	for _, p := range run.ReadOnly {
-		p = strings.TrimSpace(p)
-		if p == "" || withinDir(p, run.WorkspaceDir) {
-			continue
+	// ReadOnly and Reach mount identically — a container has to be told about
+	// a path either way. What differs is upstream: a ReadOnly path is a
+	// promise the caller is refused for making where it cannot be kept, and a
+	// Reach path is a need honored everywhere. See sandboxRun.Reach.
+	for _, list := range [][]string{run.ReadOnly, run.Reach} {
+		for _, p := range list {
+			p = strings.TrimSpace(p)
+			if p == "" || withinDir(p, run.WorkspaceDir) {
+				continue
+			}
+			args = append(args, mount(p, p, "ro")...)
 		}
-		args = append(args, mount(p, p, "ro")...)
 	}
 
 	// Environment. A container does NOT inherit the parent's env, so unlike the

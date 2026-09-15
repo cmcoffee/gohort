@@ -81,6 +81,30 @@ type sandboxRun struct {
 	// before it starts (scopedRunRefusal) rather than running with the field
 	// quietly ignored.
 	ReadOnly []string
+	// Reach are host paths the command must be able to OPEN, at the same path
+	// they have outside. No promise about anything else.
+	//
+	// The distinction from ReadOnly is the one WorkDir already draws, widened
+	// from one directory to a list, and it is a distinction the tree needed
+	// rather than a nuance. core/path_scope.go says what a scope is for:
+	// "turning a caller-supplied name into a path that is proved to be
+	// somewhere it is allowed to be" — VALIDATION, so a model cannot point a
+	// tool at ~/.ssh. The sandbox read the same field as "reads are confined
+	// to this path and nothing else" and refused every path-scoped run on a
+	// backend that could not guarantee that, which is every macOS deployment.
+	// Nobody had promised the second thing.
+	//
+	// Refusing also protected nothing there: the command line is written by
+	// the tool's author, the model supplies only the parameter VALUE, and that
+	// value is still scope-checked before it arrives. Under bubblewrap the
+	// confinement survives anyway, as a side effect of binding only what was
+	// named.
+	//
+	// So: ReadOnly is the promise, and is refused where it cannot be kept.
+	// Reach is the need, and is honored everywhere — bound read-only under
+	// bubblewrap and the container, nothing to do under Seatbelt, where reads
+	// are open by construction.
+	Reach []string
 	// WorkDir is the directory the command STARTS IN, when that is not the
 	// workspace. Empty means the workspace, which is what every caller wanted
 	// until one did not.
@@ -163,6 +187,10 @@ func (b bwrapSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 	default:
 		args = bwrapArgvWithEnv(run.WorkspaceDir, run.Command, run.Env, run.AllowNetwork)
 		args = withReadOnlyBinds(args, run.ReadOnly, run.WorkspaceDir)
+		// Same bind, different promise — see sandboxRun.Reach. The argv is
+		// identical because what a mount namespace has to do is identical;
+		// only the refusal upstream differs.
+		args = withReadOnlyBinds(args, run.Reach, run.WorkspaceDir)
 		args = withWorkDir(args, run.WorkDir, run.WorkspaceDir)
 	}
 	return exec.CommandContext(ctx, b.path, args...)
@@ -384,8 +412,17 @@ type SandboxStatus struct {
 	// cannot confine AND will not run shell tools unconfined, so every shell
 	// tool on it is currently refused. Distinct from !Confined, which since
 	// the default flipped no longer tells you whether anything still runs.
-	Refusing bool   `json:"refusing"`
-	Advice   string `json:"advice"` // what to do about it, or "" when confined
+	Refusing bool `json:"refusing"`
+	// ScopesReads reports whether this backend can confine READS to a named
+	// set of paths.
+	//
+	// Reported because "confined: true" reads as a complete answer and is not
+	// one. Seatbelt confines writes and network and allows reads
+	// filesystem-wide, so a panel showing only Confined said the same thing
+	// about a host where a path-scoped promise holds and one where it cannot
+	// — and the difference was discoverable only by having a run refused.
+	ScopesReads bool   `json:"scopes_reads"`
+	Advice      string `json:"advice"` // what to do about it, or "" when confined
 	// Limits is what a confined command may CONSUME, which is a separate
 	// question from what it may reach and was unanswerable until limits.go.
 	// Reported alongside the backend because "confined: true" reads as a
@@ -413,6 +450,7 @@ func GetSandboxStatus() SandboxStatus {
 		Required: sandboxRequired(context.Background()),
 	}
 	st.Refusing = !st.Confined && st.Required
+	st.ScopesReads = sb.scopesReads()
 	st.Limits = resourceLimits()
 	st.LimitSummary = st.Limits.Summary()
 	if !st.Confined {

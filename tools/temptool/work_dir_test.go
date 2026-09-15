@@ -6,6 +6,7 @@ package temptool
 // scope a read.
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -147,52 +148,30 @@ func TestApiActionStillNarrowsItsRequiredList(t *testing.T) {
 	}
 }
 
-// A refused path-scoped run has to name the FIELD, not just the path.
+// A path-scoped parameter travels as a REACH, never as a read promise.
 //
-// The sandbox's own refusal named "/Users/.../DIAG_DUMPS/kiteworks-au-h1" and
-// stopped, because a path is all that layer has. The reader's questions —
-// which of my parameters is that, and what do I change — are answerable only
-// here, and for a command that merely needs to run inside the folder the
-// answer is one field.
-func TestScopedReadRefusalNamesTheParameterAndTheFix(t *testing.T) {
-	tt := &TempTool{
-		Name: "weka", Mode: TempToolModeShell,
-		CommandTemplate: "/opt/bin/weka syshealth {folder}",
-		Params: map[string]ToolParam{
-			"folder":  {Type: "string", PathScope: "files:diag-dumps"},
-			"verbose": {Type: "string"},
-		},
+// The live failure: weka mapped exactly as its CLI reads — weka -l {logs} —
+// was refused at dispatch because the scope on {logs} was taken for a promise
+// that reads were confined to that folder. Nobody had promised that; the scope
+// proves the model did not name ~/.ssh, and the command then has to be able to
+// open what it was handed. The agent fell back to reading the same folder
+// through the filestore tools, which have no sandbox in the way at all.
+func TestScopedParamsTravelAsReachNotAPromise(t *testing.T) {
+	src, err := os.ReadFile("dispatch.go")
+	if err != nil {
+		t.Fatal(err)
 	}
-	args := map[string]any{
-		"folder":  "/Users/x/Downloads/DIAG_DUMPS/kiteworks-au-h1",
-		"verbose": "1",
+	body := string(src)
+	i := strings.Index(body, "res := sandbox.RunSandboxedShellIn(")
+	if i < 0 {
+		t.Fatal("the shell dispatch call has moved")
 	}
-	err := scopedReadRefusal(tt, args, []string{"/Users/x/Downloads/DIAG_DUMPS/kiteworks-au-h1"})
-	msg := err.Error()
-
-	if !strings.Contains(msg, `"folder"`) {
-		t.Errorf("the refusal must name the parameter carrying the path: %s", msg)
+	call := body[i:min(i+400, len(body))]
+	if !strings.Contains(call, "Reach: scopedPaths") {
+		t.Error("scoped paths must travel as Reach — as ReadOnly they are a promise " +
+			"no Seatbelt host can keep, and every path-scoped tool is refused there")
 	}
-	if !strings.Contains(msg, "files:diag-dumps") {
-		t.Errorf("it should say which scope the parameter declares: %s", msg)
-	}
-	if !strings.Contains(msg, "work_dir") {
-		t.Errorf("it must name the field that resolves this: %s", msg)
-	}
-	if !strings.Contains(msg, "Nothing ran") && !strings.Contains(msg, "nothing ran") {
-		t.Errorf("it must be clear the command did not run: %s", msg)
-	}
-	// A parameter with no scope is not implicated.
-	if strings.Contains(msg, "verbose") {
-		t.Errorf("an unscoped parameter should not be named: %s", msg)
-	}
-}
-
-// With nothing identifiable it still says what to change rather than nothing.
-func TestScopedReadRefusalWithoutAKnownCarrier(t *testing.T) {
-	tt := &TempTool{Name: "x", Mode: TempToolModeShell, CommandTemplate: "true"}
-	msg := scopedReadRefusal(tt, map[string]any{}, []string{"/srv/corpus"}).Error()
-	if !strings.Contains(msg, "scoped parameter") || !strings.Contains(msg, "work_dir") {
-		t.Errorf("it should still be actionable: %s", msg)
+	if strings.Contains(call, "ReadOnly: scopedPaths") {
+		t.Error("scoped paths must not claim read confinement")
 	}
 }

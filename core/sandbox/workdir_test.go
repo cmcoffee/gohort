@@ -115,3 +115,56 @@ func TestSeatbeltRefusesAScopedReadButNotAWorkDir(t *testing.T) {
 		t.Errorf("a run carrying only a WorkDir must not be refused: %v", err)
 	}
 }
+
+// Reach and ReadOnly bind identically and are refused differently. That is the
+// whole point of there being two fields.
+//
+// A path scope validates the value a model supplied; it never promised the
+// command reads that path and nothing else. Treating it as the promise refused
+// every path-scoped run on Seatbelt — a correctly mapped command refused for
+// being correctly mapped, while the same folder stayed readable through every
+// other door in the process.
+func TestReachIsNotRefusedWhereReadOnlyIs(t *testing.T) {
+	if err := scopedRunRefusal(seatbeltSandbox{}, []string{"/srv/bundle"}); err == nil {
+		t.Error("a ReadOnly promise must still be refused where reads cannot be scoped")
+	}
+	// Reach never reaches that guard: it is not a promise, so there is nothing
+	// to refuse. A run carrying only Reach has an empty ReadOnly.
+	if err := scopedRunRefusal(seatbeltSandbox{}, nil); err != nil {
+		t.Errorf("a run carrying only Reach must not be refused: %v", err)
+	}
+}
+
+// Under a mount namespace an unbound path does not exist, so Reach has to
+// produce the same bind ReadOnly does — the argv is identical, only the
+// refusal upstream differs.
+func TestReachIsBoundUnderBubblewrap(t *testing.T) {
+	c := bwrapSandbox{path: "/usr/bin/bwrap"}.build(t.Context(), sandboxRun{
+		Kind: sandboxShellRun, Command: "weka -l /srv/bundle syshealth",
+		WorkspaceDir: "/ws", Reach: []string{"/srv/bundle"},
+	})
+	argv := strings.Join(c.Args, " ")
+	if !strings.Contains(argv, "--ro-bind-try /srv/bundle /srv/bundle") {
+		t.Errorf("a Reach path must be bound to exist inside the namespace: %v", c.Args)
+	}
+	if strings.Contains(argv, "--bind /srv/bundle") {
+		t.Error("Reach must not be writable")
+	}
+}
+
+// Seatbelt needs no bind: reads are filesystem-wide by construction, which is
+// exactly why the promise could not be kept there and the need can.
+func TestReachNeedsNothingUnderSeatbelt(t *testing.T) {
+	c := seatbeltSandbox{path: "/usr/bin/sandbox-exec"}.build(t.Context(), sandboxRun{
+		Kind: sandboxShellRun, Command: "true", WorkspaceDir: "/ws",
+		Reach: []string{"/srv/bundle"},
+	})
+	if c == nil {
+		t.Fatal("seatbelt should build a command for a Reach run, not refuse it")
+	}
+	// And the profile still does not make it WRITABLE.
+	profile := seatbeltProfile(seatbeltSpec{Workspace: "/ws"})
+	if strings.Contains(profile, "/srv/bundle") {
+		t.Error("Reach must not appear in the writable set")
+	}
+}
