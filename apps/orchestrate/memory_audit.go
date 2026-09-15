@@ -272,20 +272,16 @@ func blankCode(text string) string {
 	})
 }
 
-// maxParenCallFindings caps the dead-tool findings one text may produce
-// through the paren heuristic alone.
-//
-// A note that mentions a renamed tool mentions one or two. A page of code
-// mentions dozens, and past a handful the density IS the evidence that this is
-// code rather than prose about tools — including code with no fence around it
-// to strip. The orphan and verb paths are not capped: both name something known
-// to be gone, or read as a sentence.
-const maxParenCallFindings = 3
-
 func deadToolFindings(layer, text string, known, orphaned map[string]bool) []MemoryFinding {
+	// A chunk that IS source code says nothing about tools, whatever names it
+	// contains. Checked before anything else because the alternative is
+	// judging each identifier inside it one at a time, which is how a stored
+	// helper became a page of findings about tools nobody ever had.
+	if looksLikeCode(text) {
+		return nil
+	}
 	var out []MemoryFinding
 	seen := map[string]bool{}
-	var parenCalls []MemoryFinding
 	text = blankCode(text)
 	for _, loc := range toolIdent.FindAllStringIndex(text, -1) {
 		name := text[loc[0]:loc[1]]
@@ -303,42 +299,62 @@ func deadToolFindings(layer, text string, known, orphaned map[string]bool) []Mem
 		case known[name] || isRegisteredToolName(name):
 			// Resolves to something callable — nothing to say.
 		case looksLikeACall(text, loc[0], loc[1]):
-			f := MemoryFinding{
+			out = append(out, MemoryFinding{
 				Layer: layer, Kind: "dead_tool",
 				Detail: fmt.Sprintf("Talks about calling %q, but no tool of that name exists — not in your pool, not shared, not orphaned. It was probably renamed or deleted.", name),
 				Quote:  quoteAround(text, loc[0]),
-			}
-			// Held back rather than emitted: whether this is a finding depends
-			// on how many others the same text produces.
-			if identifierCall(text, loc[1]) {
-				parenCalls = append(parenCalls, f)
-				continue
-			}
-			out = append(out, f)
+			})
 		}
-	}
-	// Under the cap these read as prose about tools; over it, as source code.
-	if len(parenCalls) <= maxParenCallFindings {
-		out = append(out, parenCalls...)
 	}
 	return out
 }
 
-// identifierCall reports whether this match was taken for a call ONLY because
-// a paren follows it — the reading that a function in stored code satisfies
-// and a sentence about a tool usually does not.
-func identifierCall(text string, end int) bool {
-	return end < len(text) && text[end] == '('
+// codeLine matches a line that is doing something only source code does:
+// closing or opening a block, ending a statement, declaring, importing, or
+// assigning a call to a name.
+var codeLine = regexp.MustCompile(`(?m)^\s*(def |func |class |import |from \w+ import|return |if .*:$|for .*:$|[}{]\s*$)|[;{]\s*$|^\s*[a-z_][a-z0-9_]*\s*=\s*[a-z_][a-z0-9_]*\(`)
+
+// looksLikeCode reports whether a chunk is source rather than prose about it.
+//
+// Two lines of evidence, because one is too easy to trip: a chunk must have at
+// least two code-shaped LINES, or be mostly lines that are. A sentence quoting
+// one call ("we used parse_config(path) here") has one, and stays prose.
+//
+// Deliberately cheap and structural. The alternative — asking a model whether a
+// chunk is code — costs a call per chunk on a sweep that already reads hundreds.
+func looksLikeCode(text string) bool {
+	m := codeLine.FindAllStringIndex(text, -1)
+	if len(m) >= 2 {
+		return true
+	}
+	lines := 0
+	for _, l := range strings.Split(text, "\n") {
+		if strings.TrimSpace(l) != "" {
+			lines++
+		}
+	}
+	return lines > 0 && len(m) == 1 && lines <= 2
 }
 
 // looksLikeACall reports whether the identifier at [start,end) is being used as
 // an invocation rather than mentioned in passing — "call foo_bar", "foo_bar(",
 // "run foo_bar with". Without this every snake_case word in a sentence would
 // be audited as a missing tool.
+// A trailing "(" is NOT enough on its own, and used to be.
+//
+// It is what a FUNCTION CALL looks like, and Reference Memory is full of stored
+// code. The first attempt at this stripped fenced blocks and capped how many
+// paren-matches one text could produce, which works on a whole document and not
+// on what the sweep actually reads: Reference Memory is scanned CHUNK BY CHUNK,
+// so a finding's fence and its code body land in different chunks and the cap
+// counts per chunk, where two or three calls sail under it.
+//
+// So the evidence has to be the SENTENCE, not the punctuation. Prose about a
+// tool says "call X" or "run X"; a line of source almost never does. What this
+// gives up is a bare get_top_stories(category=all) in a note with no verb —
+// covered separately by parkedCallRE, which matches the "pending task:" shape
+// that case actually arrives in.
 func looksLikeACall(text string, start, end int) bool {
-	if end < len(text) && text[end] == '(' {
-		return true
-	}
 	from := start - 24
 	if from < 0 {
 		from = 0
