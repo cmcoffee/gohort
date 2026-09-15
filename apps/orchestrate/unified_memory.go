@@ -745,6 +745,20 @@ func (t *chatTurn) forgetToolDef() AgentToolDef {
 			Caps: []Capability{CapWrite},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			// A clean-room session may not DELETE durable memory, for the
+			// same reason it may not write it — and more so: a write it
+			// should not have made can be removed afterwards, and a note it
+			// should not have deleted is gone.
+			//
+			// remember inherits this from storeFactNote, which refuses on the
+			// save path. forget reaches the stores directly, so it had no
+			// guard at all: the legacy forget_fact carried one, and with the
+			// legacy surface removed there was no guarded path left. Found by
+			// pointing an incognito test at the verb that replaced it.
+			if t.incognitoSession() {
+				return "", t.refuseDurableMemoryInCleanRoom("nothing deleted",
+					"a deletion would outlive the conversation that asked for it, and cannot be undone")
+			}
 			id := strings.TrimSpace(stringArg(args, "id"))
 			if id == "" {
 				// Query-mode: bulk finding delete, same engine as the legacy
