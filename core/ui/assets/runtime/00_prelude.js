@@ -1119,6 +1119,83 @@
     }
     return cur;
   }
+  // uiDisplayPair renders ONE DisplayPair into wrap, reading its value out of
+  // data by dotted or flat path.
+  //
+  // One function because DisplayPair is one type and was being rendered by
+  // two: record_view implemented items + block and ignored status_field,
+  // display_panel implemented status_field and ignored items + block. Both
+  // spellings are documented on the Go struct, so whichever component an
+  // author reached for, some fields they had written silently did nothing —
+  // an array pair in a display_panel came out as the string "[object
+  // Object]". A field that is serialized, documented, and never read is the
+  // shape this codebase keeps paying for; the fix is one renderer, not a
+  // third subset.
+  function uiDisplayPair(wrap, data, p) {
+    // A LIST pair: the field is an array. Objects render from p.items
+    // sub-pairs; scalars from a single sub-pair with an empty field.
+    // Nothing here knows what the list holds.
+    if (p.items && p.items.length) {
+      var arr = lookup(data, p.field);
+      var rowL = el('div', {class: 'ui-display-row ui-display-row-block'}, [
+        el('span', {class: 'ui-display-label'}, [p.label]),
+      ]);
+      if (Array.isArray(arr) && arr.length) {
+        var list = el('div', {class: 'ui-display-list'});
+        arr.forEach(function(item) {
+          var itemEl = el('div', {class: 'ui-display-list-item'});
+          p.items.forEach(function(sp) {
+            var raw = sp.field ? lookup(item, sp.field) : item;
+            if (raw == null || raw === '') return;
+            var sub = el('div', {class: 'ui-display-list-field'});
+            if (sp.label) sub.appendChild(el('span', {class: 'ui-display-list-key'}, [sp.label + ': ']));
+            // Sub-pairs honour block too: a command template or a script body
+            // inside a list item is the case that needs it most, and it was
+            // the one place a <pre> was never reachable.
+            if (sp.block) {
+              var subPre = el('pre', {class: 'ui-display-value-block'});
+              subPre.textContent = String(fmt(raw, sp.format));
+              sub.appendChild(subPre);
+            } else {
+              sub.appendChild(el('span', {class: 'ui-display-list-val' + (sp.mono ? ' mono' : '')}, [fmt(raw, sp.format)]));
+            }
+            itemEl.appendChild(sub);
+          });
+          list.appendChild(itemEl);
+        });
+        rowL.appendChild(list);
+      } else {
+        rowL.appendChild(el('span', {class: 'ui-display-value mute'}, ['\u2014']));
+      }
+      wrap.appendChild(rowL);
+      return;
+    }
+
+    var value = fmt(lookup(data, p.field), p.format);
+
+    // A BLOCK pair: multi-line content on its own row, under the label.
+    if (p.block) {
+      var rowB = el('div', {class: 'ui-display-row ui-display-row-block'}, [
+        el('span', {class: 'ui-display-label'}, [p.label]),
+      ]);
+      var pre = el('pre', {class: 'ui-display-value-block'});
+      pre.textContent = (value == null || value === '') ? '' : String(value);
+      rowB.appendChild(pre);
+      wrap.appendChild(rowB);
+      return;
+    }
+
+    // Severity comes from the payload, never from here: only the server knows
+    // whether false is good news.
+    var cls = 'ui-display-value' + (p.mono ? ' mono' : '');
+    var sev = p.status_field ? String(lookup(data, p.status_field) || '') : '';
+    if (sev === 'ok' || sev === 'warn' || sev === 'bad') cls += ' ' + sev;
+    wrap.appendChild(el('div', {class: 'ui-display-row'}, [
+      el('span', {class: 'ui-display-label'}, [p.label]),
+      el('span', {class: cls}, [value]),
+    ]));
+  }
+
   function showToast(msg) {
     var t = el('div', {class: 'ui-toast'}, [msg]);
     // ABOVE every modal layer. Dialogs start at 1000 and climb by 10 as

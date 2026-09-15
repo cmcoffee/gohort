@@ -3493,18 +3493,7 @@
       fetchJSON(cfg.source).then(function(d) {
         wrap.innerHTML = '';
         var data = d || {};
-        (cfg.pairs || []).forEach(function(p) {
-          // Severity comes from the payload, never from this component: only
-          // the server knows whether false is good news here.
-          var sev = p.status_field ? String(data[p.status_field] || '') : '';
-          var cls = 'ui-display-value' + (p.mono ? ' mono' : '');
-          if (sev === 'ok' || sev === 'warn' || sev === 'bad') cls += ' ' + sev;
-          var row = el('div', {class: 'ui-display-row'}, [
-            el('span', {class: 'ui-display-label'}, [p.label]),
-            el('span', {class: cls}, [fmt(data[p.field], p.format)]),
-          ]);
-          wrap.appendChild(row);
-        });
+        (cfg.pairs || []).forEach(function(p) { uiDisplayPair(wrap, data, p); });
         // Action row — panel-level buttons rendered below the pairs.
         // Same URL templating + method + confirm semantics as toolbar
         // actions elsewhere; substituteRefs already resolved any row
@@ -4746,58 +4735,7 @@
     var wrap = el('div', {class: 'ui-display'});
     function render(rec) {
       wrap.innerHTML = '';
-      (cfg.pairs || []).forEach(function(p) {
-        // List pairs render an array field as a readable list. For an
-        // array of objects each element is rendered from p.items
-        // sub-pairs; for scalars, a single sub-pair with empty field
-        // shows each value. Generic — nothing here knows what the list
-        // holds (toolbox actions, pipeline steps, an allowlist).
-        if (p.items && p.items.length) {
-          var arr = lookup(rec, p.field);
-          var rowL = el('div', {class: 'ui-display-row ui-display-row-block'}, [
-            el('span', {class: 'ui-display-label'}, [p.label]),
-          ]);
-          if (Array.isArray(arr) && arr.length) {
-            var list = el('div', {class: 'ui-display-list'});
-            arr.forEach(function(item) {
-              var itemEl = el('div', {class: 'ui-display-list-item'});
-              p.items.forEach(function(sp) {
-                var raw = sp.field ? lookup(item, sp.field) : item;
-                if (raw == null || raw === '') return;
-                var sub = el('div', {class: 'ui-display-list-field'});
-                if (sp.label) sub.appendChild(el('span', {class: 'ui-display-list-key'}, [sp.label + ': ']));
-                sub.appendChild(el('span', {class: 'ui-display-list-val' + (sp.mono ? ' mono' : '')}, [fmt(raw, sp.format)]));
-                itemEl.appendChild(sub);
-              });
-              list.appendChild(itemEl);
-            });
-            rowL.appendChild(list);
-          } else {
-            rowL.appendChild(el('span', {class: 'ui-display-value mute'}, ['—']));
-          }
-          wrap.appendChild(rowL);
-          return;
-        }
-        var value = fmt(lookup(rec, p.field), p.format);
-        // Block-style pairs (multi-line content: script bodies,
-        // pipeline dumps, long command templates) render as a <pre>
-        // block on their own row below the label, with mono font +
-        // wrap on overflow. Inline pairs stay as a single-row span.
-        if (p.block) {
-          var rowB = el('div', {class: 'ui-display-row ui-display-row-block'}, [
-            el('span', {class: 'ui-display-label'}, [p.label]),
-          ]);
-          var pre = el('pre', {class: 'ui-display-value-block'});
-          pre.textContent = (value == null || value === '') ? '' : String(value);
-          rowB.appendChild(pre);
-          wrap.appendChild(rowB);
-          return;
-        }
-        wrap.appendChild(el('div', {class: 'ui-display-row'}, [
-          el('span', {class: 'ui-display-label'}, [p.label]),
-          el('span', {class: 'ui-display-value' + (p.mono ? ' mono' : '')}, [value]),
-        ]));
-      });
+      (cfg.pairs || []).forEach(function(p) { uiDisplayPair(wrap, rec, p); });
     }
     if (cfg.source) {
       fetchJSON(cfg.source).then(render).catch(function(err){ wrap.textContent = 'Failed: ' + err.message; });

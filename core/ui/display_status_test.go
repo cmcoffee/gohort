@@ -29,16 +29,22 @@ func TestStatusFieldSurvivesSerialization(t *testing.T) {
 // holding "ok'; drop table" or an attacker-chosen class name must not become a
 // class name. Only three values do anything.
 func TestTheRendererOnlyHonorsKnownSeverities(t *testing.T) {
-	src, err := os.ReadFile("assets/runtime/10_basics.js")
+	// Looks in the PRELUDE, at uiDisplayPair: display_panel and record_view
+	// rendered DisplayPair two different ways — one honoured status_field and
+	// ignored items, the other the reverse — so the loop now lives once and
+	// both call it. Pinned to the function rather than to a byte window after
+	// a component name, which is what made this assertion go stale when the
+	// code it guards moved without changing.
+	src, err := os.ReadFile("assets/runtime/00_prelude.js")
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := string(src)
-	i := strings.Index(body, "components.display_panel =")
+	i := strings.Index(body, "function uiDisplayPair(")
 	if i < 0 {
-		t.Fatal("display_panel has moved")
+		t.Fatal("uiDisplayPair has moved — severity is no longer rendered where this test looks")
 	}
-	block := body[i:min(i+1600, len(body))]
+	block := body[i:min(i+3000, len(body))]
 	if !strings.Contains(block, `if (sev === 'ok' || sev === 'warn' || sev === 'bad') cls += ' ' + sev;`) {
 		t.Error("the renderer no longer restricts severity to the three known values — " +
 			"a payload field would become an arbitrary CSS class")
