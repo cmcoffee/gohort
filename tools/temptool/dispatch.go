@@ -11,6 +11,9 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	// Imported directly rather than through a core alias: a shell run needs a
+	// working directory, and core is at its export ceiling.
+	"github.com/cmcoffee/gohort/core/sandbox"
 )
 
 // DispatchTempToolDirect dispatches a TempTool directly without
@@ -204,6 +207,45 @@ func dispatchTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (str
 // dispatchTempToolUncached is the per-mode dispatch core that
 // dispatchTempTool wraps with cache lookup/store. Required-arg
 // validation and key canonicalization have already happened above.
+// splitWorkDir pulls the tool's working directory out of the resolved args and
+// out of the scoped-path list, returning both.
+//
+// Empty WorkDir leaves everything untouched, which is every tool that does not
+// declare one.
+//
+// The parameter must declare a PathScope. Without one nothing resolves the
+// model's value to an absolute path, so the cwd would be whatever string it
+// typed — a folder NAME from a listing, interpreted against the workspace,
+// which is the failure this field was added to end. Refusing here says so at
+// authoring time instead of leaving every call to fail somewhere else.
+func splitWorkDir(tt *TempTool, args map[string]any, scoped []string) (string, []string, error) {
+	name := strings.TrimSpace(tt.WorkDir)
+	if name == "" {
+		return "", scoped, nil
+	}
+	p, ok := tt.Params[name]
+	if !ok {
+		return "", nil, fmt.Errorf("work_dir names %q, which this tool does not declare as a parameter", name)
+	}
+	if strings.TrimSpace(p.PathScope) == "" {
+		return "", nil, fmt.Errorf("work_dir parameter %q declares no path_scope, so nothing resolves it to a real directory — give it one naming the registered root the folder lives in", name)
+	}
+	raw, present := lookupArgCI(args, name)
+	if !present || strings.TrimSpace(fmt.Sprint(raw)) == "" {
+		// Not supplied on this call. The command still runs, in the workspace,
+		// which is what it would have done before the field existed.
+		return "", scoped, nil
+	}
+	dir := fmt.Sprint(raw)
+	out := scoped[:0:0]
+	for _, p := range scoped {
+		if p != dir {
+			out = append(out, p)
+		}
+	}
+	return dir, out, nil
+}
+
 func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]any) (string, error) {
 	// Secured-credential binding enforcement for the credential-dispatching modes
 	// (api / toolbox dispatch through tt.Credential). Only APPROVED tools may reach
@@ -314,6 +356,23 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 		return "", fmt.Errorf("%s: %w", tt.Name, serr)
 	}
 	args = scopedArgs
+	// The working directory, when this tool declares one. Its parameter was
+	// resolved by ResolveScopedArgs above, so what comes back is an absolute
+	// path already proved inside a registered root.
+	//
+	// It is then REMOVED from scopedPaths, and that is the point of the field
+	// rather than an oversight. A scoped path is a promise that reads are
+	// confined to it, which RunSandboxedShellScoped refuses to pretend to keep
+	// on a backend that cannot scope a read — Seatbelt cannot, so leaving the
+	// working directory in that list would refuse every mapped command on
+	// macOS. A cwd needs the folder REACHABLE, not everything else
+	// unreachable, and ShellRun.WorkDir carries exactly that much: bubblewrap
+	// binds it read-only so the chdir resolves, Seatbelt needs nothing.
+	workDir, scopedPaths, werr := splitWorkDir(tt, args, scopedPaths)
+	if werr != nil {
+		Log("[temptool] %q refused: %v", tt.Name, werr)
+		return "", fmt.Errorf("%s: %w", tt.Name, werr)
+	}
 	cmdTemplate := strings.ReplaceAll(tt.CommandTemplate, "{workspace_dir}", shellQuote(workspaceDir))
 	cmd, err := substitute(cmdTemplate, tt.Params, args)
 	if err != nil {
@@ -512,7 +571,10 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// RunSandboxedShellScoped REFUSES when the host has no sandbox rather
 	// than running with the daemon's own view of the filesystem, where
 	// "this path only" would not apply.
-	res := RunSandboxedShellScoped(ctx, cmd, workspaceDir, envArgs, scopedPaths)
+	res := sandbox.RunSandboxedShellIn(ctx, sandbox.ShellRun{
+		Command: cmd, WorkspaceDir: workspaceDir, WorkDir: workDir,
+		Env: envArgs, ReadOnly: scopedPaths,
+	})
 	Debug("[temptool] %q sandbox exit: dur=%s err=%v timedOut=%v outBytes=%d",
 		tt.Name, time.Since(tExec), res.Err, res.TimedOut, len(res.Output))
 	output := strings.TrimSpace(res.Output)

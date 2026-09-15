@@ -98,3 +98,20 @@ func TestWorkDirDoesNotTripTheScopedReadRefusal(t *testing.T) {
 		t.Errorf("a run with no ReadOnly should pass on seatbelt, got %v", err)
 	}
 }
+
+// The two halves of the distinction this field exists to draw, against the
+// backend that forced it: Seatbelt confines writes and network but cannot
+// scope a read.
+//
+// A scoped READ is a promise Seatbelt cannot keep, so it refuses. A WorkDir
+// promises nothing about what else is readable, so it must not. Routing the
+// working directory through ReadOnly — the shorter edit — would have refused
+// every mapped command on macOS, which is where the case came from.
+func TestSeatbeltRefusesAScopedReadButNotAWorkDir(t *testing.T) {
+	if err := scopedRunRefusal(seatbeltSandbox{}, []string{"/srv/corpus"}); err == nil {
+		t.Error("a scoped read must be refused where reads cannot be scoped")
+	}
+	if err := scopedRunRefusal(seatbeltSandbox{}, nil); err != nil {
+		t.Errorf("a run carrying only a WorkDir must not be refused: %v", err)
+	}
+}

@@ -84,6 +84,7 @@ func dispatchToolboxModeTempTool(sess *ToolSession, tt *TempTool, args map[strin
 			Required:        act.Required,
 			Mode:            TempToolModeShell,
 			CommandTemplate: act.CommandTemplate,
+			WorkDir:         act.WorkDir,
 			// The parent's recipe and workspace posture travel with the action:
 			// a toolbox that packages a binary has one deployment, not one per
 			// verb, and an action that ran somewhere else would not find it.

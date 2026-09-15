@@ -292,6 +292,16 @@ func (r ShellRun) withHookPath(hookPath string) ShellRun {
 // its job, not an obstacle to route around by raising it. A caller that needs a
 // working directory imports core/sandbox and says so.
 func RunSandboxedShellIn(ctx context.Context, spec ShellRun) SandboxedShellResult {
+	// The scoped-read refusal lives HERE, not only in RunSandboxedShellScoped.
+	// It guards a property of the ReadOnly FIELD — that reads are confined to
+	// those paths — so it has to run wherever that field can be set. Leaving it
+	// on the positional helper alone meant a caller who reached for the struct
+	// (to pass a WorkDir, say) silently got an unconfined run with the promise
+	// still in the record: exactly the failure the guard exists to prevent,
+	// reached by the newer of two doors.
+	if err := scopedRunRefusal(activeSandbox(), spec.ReadOnly); err != nil {
+		return SandboxedShellResult{Err: err}
+	}
 	if len(spec.HookCapabilities) == 0 || spec.WorkspaceDir == "" {
 		return runSandboxedShellWithBinds(ctx, spec.withHookPath(""))
 	}
@@ -973,10 +983,7 @@ func withReadOnlyBinds(args []string, readOnly []string, workspaceDir string) []
 // "Cannot scope a read" and "does not confine" are not the same condition,
 // which is what this used to test for. See scopedRunRefusal.
 func RunSandboxedShellScoped(ctx context.Context, command, workspaceDir string, extraEnv map[string]string, readOnly []string) SandboxedShellResult {
-	if err := scopedRunRefusal(activeSandbox(), readOnly); err != nil {
-		return SandboxedShellResult{Err: err}
-	}
-	return runSandboxedShellWithBinds(ctx, ShellRun{Command: command, WorkspaceDir: workspaceDir, Env: extraEnv, ReadOnly: readOnly})
+	return RunSandboxedShellIn(ctx, ShellRun{Command: command, WorkspaceDir: workspaceDir, Env: extraEnv, ReadOnly: readOnly})
 }
 
 // scopedRunRefusal is the decision, separated from the run so it can be

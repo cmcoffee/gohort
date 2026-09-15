@@ -47,8 +47,25 @@ type TempToolAction struct {
 	// same sandbox, same workspace. A second execution semantic living inside
 	// the toolbox is the thing to avoid — that is where drift starts.
 	CommandTemplate string `json:"command_template,omitempty"`
-	Method          string `json:"method,omitempty"`
-	BodyTemplate    string `json:"body_template,omitempty"`
+	// WorkDir names a PARAMETER whose resolved path the command RUNS IN,
+	// for a binary that reads its inputs relative to the working directory
+	// rather than from an argument.
+	//
+	// A parameter name and not a path: the folder is chosen per call, and the
+	// value has to survive the same path-scope check as any other path the
+	// model supplies. The parameter it names must declare a PathScope, so what
+	// lands here is an absolute path that was proved inside a registered root.
+	//
+	// It is NOT a read promise, and that distinction is the reason this is its
+	// own field rather than a second use of the scoped-path list. A scoped
+	// parameter promises reads are confined to it, which the dispatcher can
+	// only honor on a backend whose sandbox scopes reads — Seatbelt's does not,
+	// so a scoped path there refuses the run outright. A working directory
+	// needs the folder REACHABLE, not everything else unreachable, so it is
+	// carried separately and works on every backend.
+	WorkDir      string `json:"work_dir,omitempty"`
+	Method       string `json:"method,omitempty"`
+	BodyTemplate string `json:"body_template,omitempty"`
 	// ContentType drives raw (non-JSON) body substitution for THIS action, the
 	// same way TempTool.ContentType does for a single api tool. Empty = JSON
 	// (placeholders JSON-encoded + validated); a non-JSON value like
@@ -149,6 +166,9 @@ type TempTool struct {
 	// placeholders are substituted with the args at dispatch time
 	// (quoting/encoding rules depend on Mode).
 	CommandTemplate string `json:"command_template"`
+	// WorkDir names a PARAMETER whose resolved path the command runs in.
+	// Shell mode only; see TempToolAction.WorkDir for the whole argument.
+	WorkDir string `json:"work_dir,omitempty"`
 	// Mode picks the execution backend. Empty defaults to shell for
 	// backward-compatibility with TempTool records written before this
 	// field existed.

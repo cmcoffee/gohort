@@ -104,7 +104,9 @@ func (T *FileStoreApp) mappingTools(ctx context.Context, st Store, cmd StoreComm
 				Parameters: map[string]ToolParam{
 					"description": {Type: "string", Description: "What this binary is for, in a sentence. It is what an agent reads before opening the bundle."},
 					"actions": {Type: "string", Description: "JSON array of actions: [{\"name\":\"unpack\",\"description\":\"...\",\"command_template\":\"/opt/bin/cap unpack {folder}\",\"params\":{\"folder\":{\"type\":\"string\",\"description\":\"...\"}},\"required\":[\"folder\"]}]. " +
-						"Every {placeholder} in a command_template must be declared in that action's params."},
+						"Every {placeholder} in a command_template must be declared in that action's params. " +
+						"A parameter that takes a FOLDER from this store must declare \"path_scope\":\"files\" — that is what turns the folder name into a real path when the tool runs; without it the command receives the bare name and finds nothing. " +
+						"If the binary must RUN INSIDE the folder rather than take it as an argument — it resolves its inputs relative to the working directory — also add \"work_dir\":\"folder\" naming that parameter, and leave the folder out of the command line."},
 				},
 				Required: []string{"description", "actions"},
 				Caps:     []Capability{CapWrite},
@@ -149,13 +151,37 @@ func (T *FileStoreApp) proposeTools(st Store, cmd StoreCommand, args map[string]
 	if err := json.Unmarshal([]byte(raw), &acts); err != nil {
 		return "", Error("actions must be a JSON array of {name, description, command_template, params}: " + err.Error())
 	}
-	for _, a := range acts {
+	scope := "files:" + st.Slug
+	for i, a := range acts {
 		// A placeholder with no parameter behind it produces an action that
 		// fails the first time it is called, and nobody finds out until then.
 		for _, ph := range templatePlaceholders(a.CommandTemplate) {
 			if _, ok := a.Params[ph]; !ok {
 				return "", Error("action " + a.Name + " uses {" + ph + "} but declares no parameter called " + ph +
 					" — declare it, or take it out of the command")
+			}
+		}
+		// A folder parameter is PINNED to this store, whatever the mapping
+		// said. The agent declares which parameters are folders, because only
+		// it knows what the binary takes; it does not get to choose which
+		// store they come from, because that is the admin's decision and it
+		// was made when the command was registered. Overwriting rather than
+		// validating: a rejected value would be a round trip to reach the one
+		// answer that was ever going to be allowed.
+		//
+		// Without this a folder parameter resolved to nothing at all — the
+		// model passed the folder NAME it saw in a listing, the command ran in
+		// the workspace, and nothing there had that name.
+		if a.WorkDir != "" {
+			if _, ok := a.Params[a.WorkDir]; !ok {
+				return "", Error("action " + a.Name + " sets work_dir to " + a.WorkDir +
+					" but declares no parameter called " + a.WorkDir + " — name the parameter the folder arrives in")
+			}
+		}
+		for name, p := range a.Params {
+			if name == a.WorkDir || strings.TrimSpace(p.PathScope) != "" {
+				p.PathScope = scope
+				acts[i].Params[name] = p
 			}
 		}
 	}
