@@ -121,6 +121,24 @@ func maybeExtractGraph(db Database, namespace, text string, chat FactChatFunc) {
 	}()
 }
 
+// turnExtractText labels one live turn's two halves for the extractor, the same
+// way foldExtractText labels a folded span — so the judge reads one shape
+// whether a relationship is caught on the turn or later when it folds.
+//
+// A nil or empty reply degrades to the user's text alone, which is exactly what
+// this path passed before.
+func turnExtractText(userSaid string, resp *Response) string {
+	userSaid = strings.TrimSpace(userSaid)
+	reply := ""
+	if resp != nil {
+		reply = strings.TrimSpace(resp.Content)
+	}
+	if reply == "" {
+		return userSaid
+	}
+	return labelledExtractInput(userSaid, reply)
+}
+
 // extractGraphFromFold fires a background extraction over a batch of messages
 // folding out of the live window. Unlike the per-turn trigger it has NO cooldown:
 // a fold is the batch boundary, so extracting it is what GUARANTEES no turn's
@@ -138,7 +156,7 @@ func extractGraphFromFold(db Database, namespace string, folded []Message, chat 
 	if namespace == "" {
 		return
 	}
-	text := foldUserText(folded)
+	text := foldExtractText(folded)
 	if len(text) < graphExtractMinChars {
 		return
 	}
@@ -152,30 +170,88 @@ func extractGraphFromFold(db Database, namespace string, folded []Message, chat 
 	}()
 }
 
-// foldUserText joins the USER messages of a folded batch — the source of stated
-// relationships — into one extraction input, capped at foldExtractMaxChars.
-func foldUserText(folded []Message) string {
-	var b strings.Builder
+// foldExtractText joins a folded batch into one extraction input: the USER
+// messages first, then the ASSISTANT ones, each side labelled.
+//
+// Assistant text is included because reading only the user's half was reading
+// the wrong half. In an assistant that investigates — a troubleshooter, a
+// researcher — the user contributes a question and the ENTITIES AND
+// RELATIONSHIPS ARE IN THE ANSWER: "node-7 runs the batch service", "that
+// template wrote the broken path". The graph stayed empty while the
+// conversation was full
+// of exactly what it exists to hold, and the tunable read as not working when
+// it was working on nothing.
+//
+// TOOL messages stay out. They are raw capture — log lines, JSON, file dumps —
+// where a triple is as likely to come from example output as from a fact about
+// this deployment, and they are the bulk of the volume. The assistant's reading
+// of a tool result is what belongs here, and that arrives as assistant text.
+//
+// LABELLED, because who said it decides whether it is a fact. The judge is told
+// to take the user's statements as given and to require the assistant to have
+// ASSERTED something rather than wondered about it; without the labels it cannot
+// tell a finding from a hypothesis, and a graph full of the assistant's guesses
+// is worse than an empty one.
+//
+// The USER SIDE GOES FIRST and the assistant side takes what budget is left.
+// One assistant turn can run longer than every user message in a fold combined,
+// so appending in message order would let a single answer push the whole
+// conversation out of the window. The half that gets truncated is the verbose,
+// lower-signal one.
+func foldExtractText(folded []Message) string {
+	var user, asst strings.Builder
 	for _, m := range folded {
-		if m.Role != "user" {
+		t := strings.TrimSpace(m.Content)
+		if t == "" {
 			continue
 		}
-		if t := strings.TrimSpace(m.Content); t != "" {
-			b.WriteString(t)
-			b.WriteByte('\n')
+		switch m.Role {
+		case "user":
+			user.WriteString(t)
+			user.WriteByte('\n')
+		case "assistant":
+			asst.WriteString(t)
+			asst.WriteByte('\n')
 		}
 	}
-	s := strings.TrimSpace(b.String())
-	if len(s) > foldExtractMaxChars {
-		// Cut on a rune boundary — a byte slice can split a UTF-8 sequence
-		// and hand the worker prompt an invalid trailing byte.
-		cut := foldExtractMaxChars
-		for cut > 0 && !utf8.RuneStart(s[cut]) {
-			cut--
-		}
-		s = s[:cut]
+	u := strings.TrimSpace(user.String())
+	a := strings.TrimSpace(asst.String())
+	return labelledExtractInput(u, a)
+}
+
+// labelledExtractInput assembles the two halves under their labels, within one
+// budget.
+//
+// The budget covers the ASSEMBLED string, labels included — it exists so the
+// worker prompt cannot blow up, and a cap that measures only the content is a
+// cap the labels walk straight past.
+func labelledExtractInput(user, assistant string) string {
+	const userLabel, asstLabel = "USER SAID:\n", "\nASSISTANT SAID:\n"
+	var b strings.Builder
+	if user != "" {
+		b.WriteString(userLabel)
+		b.WriteString(truncateRunes(user, foldExtractMaxChars-b.Len()))
+		b.WriteByte('\n')
 	}
-	return s
+	// Only worth a section if what survives could state a relationship at all;
+	// graphExtractMinChars is the same floor the callers use to skip a pass.
+	if room := foldExtractMaxChars - b.Len() - len(asstLabel); assistant != "" && room > graphExtractMinChars {
+		b.WriteString(asstLabel)
+		b.WriteString(truncateRunes(assistant, room))
+	}
+	return strings.TrimSpace(b.String())
+}
+
+// truncateRunes cuts s to at most n bytes on a rune boundary — a byte slice can
+// split a UTF-8 sequence and hand the worker prompt an invalid trailing byte.
+func truncateRunes(s string, n int) string {
+	if len(s) <= n || n <= 0 {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // graphTriple is one extracted subject-relation-object relationship.
@@ -242,13 +318,15 @@ Rules:
 - Only NAMED entities — specific people, organizations, places, projects, or named things. Skip generic nouns ("a dog", "the meeting") unless they carry a proper name.
 - relation is a short lowercase verb phrase ("works at", "owns", "lives in", "married to", "manages").
 - subject_kind / object_kind is one of: person, org, project, place, thing.
+- The text may be labelled "USER SAID" and "ASSISTANT SAID". Take what the USER states as given. From the ASSISTANT take only what it ASSERTS as established — skip anything hedged, proposed or asked about ("might be", "could indicate", "let me check whether", "if X then Y", "I suspect"). A hypothesis it was still testing is not a fact about the world.
+- Skip anything the assistant is quoting as an EXAMPLE, or describing as what it would do rather than what is.
 - If the text states no such relationship, reply with an empty array.
 
 TEXT:
 %s
 
 Reply with ONLY a JSON array of objects, each {"subject","subject_kind","relation","object","object_kind"}. Reply [] if none.`, text)},
-	}, WithSystemPrompt("You extract explicit relationships between named entities as subject-relation-object triples for a knowledge graph. Be conservative: never infer, named entities only. Reply with ONLY a JSON array."),
+	}, WithSystemPrompt("You extract explicit relationships between named entities as subject-relation-object triples for a knowledge graph. Be conservative: never infer, named entities only, and never promote a speaker's speculation to a fact. Reply with ONLY a JSON array."),
 		WithThink(false),
 		WithMaxTokens(512))
 	if err != nil || resp == nil {

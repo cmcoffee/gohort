@@ -1728,9 +1728,14 @@ func (pr *planRun) runLoop() {
 		t.turnClosed = true
 	}
 	// Off-hot-path graph population: after a clean turn, best-effort extract the
-	// entity relationships the user stated into the graph. Single-flight +
-	// cooldown + own goroutine (never blocks the turn, self-throttles on the
-	// shared GPU); gated off by default.
+	// entity relationships THIS TURN stated into the graph — both halves of it.
+	// Single-flight + cooldown + own goroutine (never blocks the turn,
+	// self-throttles on the shared GPU); gated off by default.
+	//
+	// The reply is included for the reason foldExtractText spells out: in an
+	// assistant that investigates, the user asks and the ANSWER carries the
+	// entities. Passing only what the user said fed the extractor the half of
+	// the conversation least likely to contain a relationship.
 	if pr.loopErr == nil {
 		// Close the books on what this turn said it would do. A turn that called
 		// a tool retires whatever was outstanding; one that ended on a fresh
@@ -1738,7 +1743,8 @@ func (pr *planRun) runLoop() {
 		if pr.resp != nil {
 			recordTurnCommitment(t.udb, t.chatSessionID(), pr.resp.Content, len(t.persistedToolCalls()) > 0)
 		}
-		maybeExtractGraph(t.udb, factsNamespace(t.agent.ID), pr.userSaid, t.app.WorkerChat)
+		maybeExtractGraph(t.udb, factsNamespace(t.agent.ID),
+			turnExtractText(pr.userSaid, pr.resp), t.app.WorkerChat)
 	}
 	{
 		respLen := 0

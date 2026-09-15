@@ -67,8 +67,8 @@ func TestExtractGraphFromText(t *testing.T) {
 }
 
 // TestFoldUserText: the fold extraction input is the USER turns of the batch
-// only (relationships are stated there), joined and capped.
-func TestFoldUserText(t *testing.T) {
+// both sides, each labelled, whitespace-only messages skipped, and capped.
+func TestFoldExtractTextShape(t *testing.T) {
 	folded := []Message{
 		{Role: "user", Content: "Craig owns a dog named Hansel."},
 		{Role: "assistant", Content: "Noted — Hansel the dog."},
@@ -76,19 +76,30 @@ func TestFoldUserText(t *testing.T) {
 		{Role: "assistant", Content: "Got it."},
 		{Role: "user", Content: "   "}, // whitespace-only → skipped
 	}
-	got := foldUserText(folded)
-	want := "Craig owns a dog named Hansel.\nCraig works at Acme."
+	got := foldExtractText(folded)
+	want := "USER SAID:\nCraig owns a dog named Hansel.\nCraig works at Acme.\n\nASSISTANT SAID:\nNoted — Hansel the dog.\nGot it."
 	if got != want {
-		t.Fatalf("foldUserText = %q, want %q", got, want)
+		t.Fatalf("foldExtractText =\n%q\nwant\n%q", got, want)
 	}
-	if foldUserText(nil) != "" {
+	if foldExtractText(nil) != "" {
 		t.Fatal("empty batch should yield empty string")
 	}
 
-	// Cap: a very long user turn is truncated to the max.
+	// Cap: a very long user turn is truncated to the max, and leaves no room
+	// for the assistant half.
 	big := strings.Repeat("x", foldExtractMaxChars+500)
-	if n := len(foldUserText([]Message{{Role: "user", Content: big}})); n != foldExtractMaxChars {
-		t.Fatalf("expected fold text capped at %d, got %d", foldExtractMaxChars, n)
+	got = foldExtractText([]Message{{Role: "user", Content: big}})
+	if !strings.HasPrefix(got, "USER SAID:\n") {
+		t.Fatalf("expected the user label, got %.20q", got)
+	}
+	// The budget covers the ASSEMBLED string, labels included — it exists so
+	// the worker prompt cannot blow up, and a cap measuring only the content
+	// is one the labels walk straight past.
+	if len(got) > foldExtractMaxChars {
+		t.Fatalf("assembled input outgrew its budget: %d > %d", len(got), foldExtractMaxChars)
+	}
+	if len(got) < foldExtractMaxChars-64 {
+		t.Fatalf("the user half should fill the budget, got %d", len(got))
 	}
 }
 
@@ -127,7 +138,7 @@ func TestMaybeExtractGraphShortCircuits(t *testing.T) {
 // worker prompt an invalid trailing byte.
 func TestFoldUserTextRuneSafe(t *testing.T) {
 	long := "a" + strings.Repeat("€", 4000) // 3-byte rune, misaligned by the leading ascii byte
-	out := foldUserText([]Message{{Role: "user", Content: long}})
+	out := foldExtractText([]Message{{Role: "user", Content: long}})
 	if len(out) > foldExtractMaxChars {
 		t.Fatalf("cap not applied: %d bytes", len(out))
 	}
