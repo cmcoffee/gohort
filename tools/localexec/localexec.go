@@ -42,7 +42,7 @@ type RunLocalTool struct{}
 func (t *RunLocalTool) Name() string { return "run_local" }
 
 func (t *RunLocalTool) Desc() string {
-	return "Run a shell command in your workspace sandbox. When bubblewrap is available the command runs in an isolated mount namespace where only the workspace is writable and only a minimal read-only set of system dirs is visible — commands cannot reach any user files, configs, or secrets outside the workspace. Network is allowed. Each call requires explicit user approval. Output is capped at 10,000 characters; the command is killed after 90 seconds."
+	return "Run a shell command in your workspace sandbox. Whenever this host has a sandbox, the workspace is the only writable path and credentials (.ssh, .aws, .gnupg, .kube, keychains) are unreadable. What else is visible differs: bubblewrap builds a mount namespace where nothing outside the workspace exists at all, while the macOS backend confines writes and network and leaves other reads open — so do not rely on a read outside the workspace either succeeding or failing. Network is allowed. Each call requires explicit user approval. Output is capped at 10,000 characters; the command is killed after 90 seconds."
 }
 
 func (t *RunLocalTool) Caps() []Capability {

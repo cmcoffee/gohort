@@ -92,7 +92,7 @@ func (T *FileStoreApp) mappingTools(ctx context.Context, st Store, cmd StoreComm
 				Caps: []Capability{CapExecute},
 			},
 			Handler: func(ctx context.Context, args map[string]any) (string, error) {
-				return T.probeCommand(ctx, cmd, stringArg(args, "args"))
+				return T.probeCommand(ctx, st.Path, cmd, stringArg(args, "args"))
 			},
 		},
 		{
@@ -121,8 +121,11 @@ func (T *FileStoreApp) mappingTools(ctx context.Context, st Store, cmd StoreComm
 // Constrained to that ONE binary: an admin registered it against this folder,
 // and the agent is choosing flags, never an executable. That is the whole reason
 // this can exist without the approval machinery a free-form shell tool needs.
-func (T *FileStoreApp) probeCommand(ctx context.Context, cmd StoreCommand, argLine string) (string, error) {
-	out, err := runRegisteredCommand(ctx, cmd.Command, strings.Fields(argLine)...)
+func (T *FileStoreApp) probeCommand(ctx context.Context, root string, cmd StoreCommand, argLine string) (string, error) {
+	// The store root, so the probe sees what the real run will see. An agent
+	// choosing flags against a binary that resolves anything relatively would
+	// otherwise be reading one directory here and writing about another.
+	out, err := runRegisteredCommand(ctx, root, cmd.Command, strings.Fields(argLine)...)
 	out = strings.TrimSpace(out)
 	if err != nil {
 		// The output comes back WITH the failure, not instead of it. Handing an

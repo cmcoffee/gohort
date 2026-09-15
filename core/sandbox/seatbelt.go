@@ -179,7 +179,13 @@ func (s seatbeltSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 	}
 	c := exec.CommandContext(ctx, s.path, argv...)
 	if run.Kind == sandboxShellRun {
-		c.Dir = run.WorkspaceDir
+		// run.cwd(), not run.WorkspaceDir: a caller may start the command in a
+		// directory it only reads. Nothing has to be added to the profile for
+		// that — reads are allowed filesystem-wide by construction (see
+		// scopesReads), so the directory is already reachable. What it does NOT
+		// get is write access: the writable set above is seatbeltWritePaths plus
+		// the workspace, and a WorkDir outside both stays read-only.
+		c.Dir = run.cwd()
 	} else {
 		c.Dir = "/tmp"
 	}

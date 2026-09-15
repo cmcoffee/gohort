@@ -231,10 +231,24 @@ func DeleteStoreCommand(db Database, slug, name string) {
 // Combined stdout+stderr because the output belongs to a tool this code
 // does not own, on a stream it should not assume: capturing only stdout
 // is how a challenge printed to stderr becomes "it printed nothing".
-func runRegisteredCommand(ctx context.Context, bin string, args ...string) (string, error) {
+//
+// dir is the folder the command RUNS IN, and it is not the same fact as the
+// folder handed to it in argv. It used to be only the latter, so a registered
+// binary inherited the daemon's own working directory: anything it wrote
+// relatively landed in the install tree, and anything that resolves its inputs
+// from the cwd — an extractor pointed at "." , a tool that expects to be run at
+// the base of a bundle — saw the wrong directory or nothing at all. Both
+// callers already hold the resolved root; passing it in argv and not to the
+// process was the gap.
+//
+// Empty means the process's own directory, for a caller that genuinely has no
+// folder to name. Nothing passes empty today.
+func runRegisteredCommand(ctx context.Context, dir, bin string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, bin, args...).CombinedOutput()
+	c := exec.CommandContext(ctx, bin, args...)
+	c.Dir = dir
+	out, err := c.CombinedOutput()
 	text := strings.TrimSpace(string(out))
 	if ctx.Err() == context.DeadlineExceeded {
 		return text, Error("the command did not finish within " + commandTimeout.String() +
@@ -312,7 +326,7 @@ func (T *FileStoreApp) handleCommand(w http.ResponseWriter, r *http.Request) {
 	if input != "" {
 		args = append(args, input)
 	}
-	out, err := runRegisteredCommand(r.Context(), act.Command, args...)
+	out, err := runRegisteredCommand(r.Context(), dir, act.Command, args...)
 	if err != nil {
 		Log("[filestore.command] %s: %s on %s/%s failed: %v", user, act.Name, st.Name, dir, err)
 		// The tool's own words first: "exit status 1" tells a person

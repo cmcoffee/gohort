@@ -81,6 +81,34 @@ type sandboxRun struct {
 	// before it starts (scopedRunRefusal) rather than running with the field
 	// quietly ignored.
 	ReadOnly []string
+	// WorkDir is the directory the command STARTS IN, when that is not the
+	// workspace. Empty means the workspace, which is what every caller wanted
+	// until one did not.
+	//
+	// Separate from WorkspaceDir because those were one field and they are two
+	// questions. WorkspaceDir answers "what may this command WRITE"; the cwd
+	// answers "where does it BEGIN". Conflating them meant a tool that must run
+	// at the base of a folder it only reads — weka against a diagnostic bundle
+	// is the case that surfaced it — could be pointed there only by making the
+	// whole bundle tree writable. Two facts, two fields.
+	//
+	// It grants NO WRITE ACCESS. A command started here still writes only where
+	// WorkspaceDir (and the backend's fixed temp paths) allow, so a tool that
+	// needs to write beside its input wants the folder as its workspace, not as
+	// its WorkDir. Under bubblewrap the directory is bound READ-ONLY so it
+	// exists to chdir into at all; under Seatbelt reads are filesystem-wide
+	// already and nothing needs binding; the none backend just sets it.
+	WorkDir string
+}
+
+// cwd is the directory the command starts in: WorkDir when set, else the
+// workspace. One place, because four backends each deciding it is four chances
+// for three of them to agree and the fourth to quietly ignore the field.
+func (r sandboxRun) cwd() string {
+	if strings.TrimSpace(r.WorkDir) != "" {
+		return r.WorkDir
+	}
+	return r.WorkspaceDir
 }
 
 // sandboxBackend is one OS confinement mechanism.
@@ -135,6 +163,7 @@ func (b bwrapSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 	default:
 		args = bwrapArgvWithEnv(run.WorkspaceDir, run.Command, run.Env, run.AllowNetwork)
 		args = withReadOnlyBinds(args, run.ReadOnly, run.WorkspaceDir)
+		args = withWorkDir(args, run.WorkDir, run.WorkspaceDir)
 	}
 	return exec.CommandContext(ctx, b.path, args...)
 }
@@ -165,7 +194,7 @@ func (noSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 		return c
 	default:
 		c := exec.CommandContext(ctx, "sh", "-c", run.Command)
-		c.Dir = run.WorkspaceDir
+		c.Dir = run.cwd()
 		return c
 	}
 }

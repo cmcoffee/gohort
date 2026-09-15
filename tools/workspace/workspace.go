@@ -24,10 +24,15 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	// Imported directly rather than through a core alias: the shell run needs a
+	// working directory, and two more symbols in core put it over
+	// TestCoreStaysUnderItsCeiling.
+	"github.com/cmcoffee/gohort/core/sandbox"
 	"github.com/cmcoffee/gohort/tools/files"
 )
 
@@ -235,10 +240,12 @@ func init() {
 	})
 
 	gt.AddAction("run", &GroupedToolAction{
-		Description: "Run a shell command inside the active workspace via bwrap. The workspace is the only writable path; reads outside silently fail. Auto-mints a workspace if none is active. 90s timeout, output capped at 10KB. NOTE: each call requires user confirmation — use sparingly. YOUR TOOLS ARE NOT REACHABLE FROM THIS SHELL: a tool is not on PATH and not an importable Python module, so `<tool_name> ...`, `python -m <tool_name>` and `from tools import <tool_name>` all just fail. Call the tool directly by name instead — and if its schema isn't loaded yet, load_tool(names=[\"<tool_name>\"]) first. (The one exception is the fetch family — fetch_url / fetch_via / browse_page work here as commands and as `from gohort import ...`.) For just CHECKING whether a binary exists (e.g. `command -v ffmpeg`), call workspace(action=\"probe\", name=\"ffmpeg\") instead — no-confirmation, validated-input, purpose-built for that check.",
+		Description: "Run a shell command inside the active workspace, confined by whichever sandbox this host has. The workspace is the only writable path it allows. What is READABLE outside it is NOT the same everywhere — bubblewrap hides it, the macOS backend does not — so never rely on a read outside the workspace either succeeding or failing. Auto-mints a workspace if none is active. 90s timeout, output capped at 10KB. NOTE: each call requires user confirmation — use sparingly. YOUR TOOLS ARE NOT REACHABLE FROM THIS SHELL: a tool is not on PATH and not an importable Python module, so `<tool_name> ...`, `python -m <tool_name>` and `from tools import <tool_name>` all just fail. Call the tool directly by name instead — and if its schema isn't loaded yet, load_tool(names=[\"<tool_name>\"]) first. (The one exception is the fetch family — fetch_url / fetch_via / browse_page work here as commands and as `from gohort import ...`.) For just CHECKING whether a binary exists (e.g. `command -v ffmpeg`), call workspace(action=\"probe\", name=\"ffmpeg\") instead — no-confirmation, validated-input, purpose-built for that check.",
 		Params: map[string]ToolParam{
-			"command": {Type: "string", Description: "Shell command to execute. Standard sh -c semantics — pipes, redirects, quoting work normally."},
-			"env":     {Type: "object", Description: "Optional {\"KEY\":\"value\"} map of environment variables exposed to the command — reachable as $KEY in shell or os.environ.get(\"KEY\") in Python. Use to feed a debug script the same inputs a registered shell tool would receive as params."},
+			"command":  {Type: "string", Description: "Shell command to execute. Standard sh -c semantics — pipes, redirects, quoting work normally."},
+			"env":      {Type: "object", Description: "Optional {\"KEY\":\"value\"} map of environment variables exposed to the command — reachable as $KEY in shell or os.environ.get(\"KEY\") in Python. Use to feed a debug script the same inputs a registered shell tool would receive as params."},
+			"cwd_root": {Type: "string", Description: "Optional registered root to start the command in, as \"kind:name\" (e.g. \"files:support-bundles\"). Use when a binary must RUN AT the base of a folder it reads — it resolves its own inputs relative to the working directory. The folder stays READ-ONLY: the workspace is still the only writable path, so write output there. Omit to start in the workspace, which is almost always right. If you do not know what is registered, pass any value and the refusal lists them."},
+			"cwd":      {Type: "string", Description: "Folder inside cwd_root to start in, relative to that root. Required whenever cwd_root is set — the root itself cannot be the working directory, so a binary that must run at the base of a tree needs that tree registered as a folder inside a parent root."},
 		},
 		Required:     []string{"command"},
 		Caps:         []Capability{CapExecute, CapRead, CapWrite, CapNetwork},
@@ -527,6 +534,67 @@ func handleRm(args map[string]any, sess *ToolSession) (string, error) {
 	return fmt.Sprintf("Deleted %s.", filepath.Base(rel)), nil
 }
 
+// resolveRunCwd turns the cwd_root / cwd pair into an absolute directory the
+// command may start in, or "" when the caller named none.
+//
+// The refusal LISTS the registered roots rather than saying the one supplied is
+// wrong. A model that guessed cannot discover the right answer from "unknown
+// root", and the roots are a short, per-user list that this package can read
+// directly — so the cheapest fix for a wrong guess is to print the choices at
+// the moment the guess fails.
+func resolveRunCwd(args map[string]any, sess *ToolSession) (string, error) {
+	ref := strings.TrimSpace(StringArg(args, "cwd_root"))
+	rel := strings.TrimSpace(StringArg(args, "cwd"))
+	if ref == "" {
+		// A cwd without a root is the mistake worth naming: silently starting in
+		// the workspace would look like the folder was empty.
+		if rel != "" {
+			return "", fmt.Errorf("cwd needs cwd_root to say which registered root it is relative to. Nothing ran.%s", knownRootsSuffix(sess))
+		}
+		return "", nil
+	}
+	if rel == "" {
+		// No default, and specifically NOT ".". A scope resolver proves a value
+		// lands STRICTLY BELOW its root — "." cleans to the root itself and is
+		// refused as resolving outside the store, so a default here would turn
+		// "I did not name a folder" into a containment error about a path the
+		// caller never typed. Asking for the folder is the honest version.
+		//
+		// It also means the root ITSELF cannot be the working directory through
+		// this parameter. When a binary must run at the base of a tree, register
+		// that tree's PARENT as the root so the tree is a folder inside it.
+		return "", fmt.Errorf("cwd_root %q names a root, not a folder to start in — pass cwd as well. "+
+			"The root itself cannot be the working directory: register its parent as the root if a "+
+			"binary must run at the base of that tree. Nothing ran.%s", ref, knownRootsSuffix(sess))
+	}
+	user, agentID := "", ""
+	if sess != nil {
+		user, agentID = sess.Username, sess.AgentID
+	}
+	abs, err := ResolvePathScope(user, agentID, ref, rel)
+	if err != nil {
+		return "", fmt.Errorf("%w%s", err, knownRootsSuffix(sess))
+	}
+	return abs, nil
+}
+
+// knownRootsSuffix names what IS registered, or says plainly that nothing is.
+func knownRootsSuffix(sess *ToolSession) string {
+	user := ""
+	if sess != nil {
+		user = sess.Username
+	}
+	roots := PathScopeRoots(user)
+	if len(roots) == 0 {
+		return " No roots are registered in this deployment, so cwd_root cannot be used here; omit it and the command runs in the workspace."
+	}
+	refs := make([]string, 0, len(roots))
+	for _, r := range roots {
+		refs = append(refs, strconv.Quote(r.Ref))
+	}
+	return " Registered roots: " + strings.Join(refs, ", ") + "."
+}
+
 func handleRun(args map[string]any, sess *ToolSession) (string, error) {
 	if _, err := EnsureSessionWorkspace(sess); err != nil {
 		return "", fmt.Errorf("run: %w", err)
@@ -547,6 +615,22 @@ func handleRun(args map[string]any, sess *ToolSession) (string, error) {
 			extraEnv[strings.TrimSpace(k)] = fmt.Sprint(v)
 		}
 	}
+	// Optional working directory. It is a SCOPED reference, never a free path:
+	// under bubblewrap the sandbox bind-mounts the directory to make it
+	// reachable at all, so a cwd the model could name outright would be a read
+	// escape from the workspace — the exact hole the workspace exists to close.
+	// Resolving through the registered roots means the folder was put there by
+	// an admin and proved to be inside one, traversal and symlinks included.
+	//
+	// Under Seatbelt this buys no extra reading (that backend allows reads
+	// filesystem-wide already, see scopesReads) and the gate still applies,
+	// because a check that holds on one backend and not the other is a check
+	// nobody can reason about.
+	workDir, err := resolveRunCwd(args, sess)
+	if err != nil {
+		return "", err
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
 	defer cancel()
 	// Run with the iterate-and-test hook attached so `from gohort
@@ -558,8 +642,17 @@ func handleRun(args map[string]any, sess *ToolSession) (string, error) {
 	// browse_page — the common probe surface. secret:* and fetch_via:*
 	// stay explicit so a tool that needs credentials still has to
 	// declare them in its tool record.
-	res := RunSandboxedShellWithHookEnv(ctx, cmd, sess.WorkspaceDir, sess,
-		[]string{"fetch", "log", "browse_page"}, extraEnv)
+	res := sandbox.RunSandboxedShellIn(ctx, sandbox.ShellRun{
+		Command:      cmd,
+		WorkspaceDir: sess.WorkspaceDir,
+		WorkDir:      workDir,
+		Env:          extraEnv,
+		// fetch / log / browse_page — the common probe surface. secret:* and
+		// fetch_via:* stay explicit so a tool that needs credentials still has
+		// to declare them in its tool record.
+		HookCapabilities: []string{"fetch", "log", "browse_page"},
+		HookSession:      sess,
+	})
 	output := strings.TrimSpace(res.Output)
 	if len(output) > runMaxOutput {
 		totalLines := strings.Count(output, "\n") + 1

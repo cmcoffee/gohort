@@ -155,34 +155,10 @@ func RunSandboxedShellWithHook(ctx context.Context, command, workspaceDir string
 // caller key. Used by workspace(action="run", env={...}) so a manual debug run
 // can pass variables — the same way a registered shell tool receives its params.
 func RunSandboxedShellWithHookEnv(ctx context.Context, command, workspaceDir string, sess any, capabilities []string, extraEnv map[string]string) SandboxedShellResult {
-	merge := func(hookPath string) map[string]string {
-		env := map[string]string{}
-		for k, v := range extraEnv {
-			env[k] = v
-		}
-		if hookPath != "" {
-			env["GOHORT_HOOK_PATH"] = hookPath // hook path is authoritative
-		}
-		return env
-	}
-	if len(capabilities) == 0 || workspaceDir == "" {
-		if len(extraEnv) == 0 {
-			return RunSandboxedShell(ctx, command, workspaceDir)
-		}
-		return RunSandboxedShellWithEnv(ctx, command, workspaceDir, merge(""))
-	}
-	hook, err := newHook(workspaceDir, capabilities, sess)
-	if err != nil || hook == nil {
-		if err != nil {
-			nfo.Log("[sandbox] hook init failed for iterate-and-test run (%v) — running without hook; gohort.fetch in this script will raise HookError", err)
-		}
-		if len(extraEnv) == 0 {
-			return RunSandboxedShell(ctx, command, workspaceDir)
-		}
-		return RunSandboxedShellWithEnv(ctx, command, workspaceDir, merge(""))
-	}
-	defer hook.Close()
-	return RunSandboxedShellWithEnv(ctx, command, workspaceDir, merge(hook.Path()))
+	return RunSandboxedShellIn(ctx, ShellRun{
+		Command: command, WorkspaceDir: workspaceDir, Env: extraEnv,
+		HookCapabilities: capabilities, HookSession: sess,
+	})
 }
 
 // RunSandboxedShellWithEnv is the env-extended variant: extraEnv maps
@@ -204,7 +180,7 @@ func RunSandboxedShellWithHookEnv(ctx context.Context, command, workspaceDir str
 // from the command silently fail. Missing connector = network allowed
 // (back-compat for callers not yet plumbing one through).
 func RunSandboxedShellWithEnv(ctx context.Context, command, workspaceDir string, extraEnv map[string]string) SandboxedShellResult {
-	return runSandboxedShellWithBinds(ctx, command, workspaceDir, extraEnv, nil)
+	return runSandboxedShellWithBinds(ctx, ShellRun{Command: command, WorkspaceDir: workspaceDir, Env: extraEnv})
 }
 
 // SandboxedCmd is a confined command that has been BUILT but not started.
@@ -256,6 +232,80 @@ func buildRun(ctx context.Context, sb sandboxBackend, run sandboxRun) *exec.Cmd 
 	return sb.build(ctx, run)
 }
 
+// ShellRun describes one confined shell run.
+//
+// A struct because the positional helpers had reached five parameters and the
+// next one would have been a sixth string among strings, where a caller
+// swapping two of them compiles cleanly and runs in the wrong directory. The
+// helpers above stay as they are: they cover every existing caller, and this is
+// for the one that needs a field they do not offer.
+type ShellRun struct {
+	// Command is the shell command to run.
+	Command string
+	// WorkspaceDir is the single WRITABLE directory, and the default cwd.
+	WorkspaceDir string
+	// WorkDir is where the command starts, when that is not the workspace.
+	// It confers no write access — see sandboxRun.WorkDir for the whole story.
+	WorkDir string
+	// Env are extras merged into the sandbox environment.
+	Env map[string]string
+	// ReadOnly are host paths to expose read-only, and a PROMISE that reads are
+	// confined to them. Setting it is refused outright on a backend that cannot
+	// keep that promise (scopedRunRefusal), so leave it empty unless the caller
+	// is a path-scoped tool. It is NOT how to make WorkDir readable.
+	ReadOnly []string
+	// HookCapabilities are the hook capabilities to expose to the command, and
+	// HookSession the opaque session the broker resolves credentials against.
+	// Both empty means no hook, and the command's gohort.fetch raises HookError.
+	HookCapabilities []string
+	HookSession      any
+}
+
+// withHookPath returns a copy whose Env carries the hook path, which always
+// wins over a colliding caller key.
+//
+// A copy rather than a mutation: the caller's map belongs to the caller, and a
+// run that writes GOHORT_HOOK_PATH into it would hand the next run a stale
+// socket that no longer exists.
+func (r ShellRun) withHookPath(hookPath string) ShellRun {
+	env := make(map[string]string, len(r.Env)+1)
+	for k, v := range r.Env {
+		env[k] = v
+	}
+	if hookPath != "" {
+		env["GOHORT_HOOK_PATH"] = hookPath
+	}
+	r.Env = env
+	return r
+}
+
+// RunSandboxedShellIn runs a confined shell command described by a ShellRun.
+//
+// The entry point for a command that must START somewhere specific: a tool that
+// resolves paths relative to its own working directory, pointed at a folder it
+// reads and does not own. RunSandboxedShellWithEnv remains the right call when
+// the workspace is the working directory, which is almost always.
+//
+// NOT aliased into core. The alias block there is the reason core exports 2100+
+// symbols into the namespace of every file that dot-imports it, and two more
+// put TestCoreStaysUnderItsCeiling over the line — which is the ceiling doing
+// its job, not an obstacle to route around by raising it. A caller that needs a
+// working directory imports core/sandbox and says so.
+func RunSandboxedShellIn(ctx context.Context, spec ShellRun) SandboxedShellResult {
+	if len(spec.HookCapabilities) == 0 || spec.WorkspaceDir == "" {
+		return runSandboxedShellWithBinds(ctx, spec.withHookPath(""))
+	}
+	hook, err := newHook(spec.WorkspaceDir, spec.HookCapabilities, spec.HookSession)
+	if err != nil || hook == nil {
+		if err != nil {
+			nfo.Log("[sandbox] hook init failed for iterate-and-test run (%v) — running without hook; gohort.fetch in this script will raise HookError", err)
+		}
+		return runSandboxedShellWithBinds(ctx, spec.withHookPath(""))
+	}
+	defer hook.Close()
+	return runSandboxedShellWithBinds(ctx, spec.withHookPath(hook.Path()))
+}
+
 // buildSandboxedShellCmd assembles one shell run: the PYTHONPATH the helper
 // package needs, the fail-closed policy gate, the backend's argv, and the
 // scrubbed environment. It does not start anything.
@@ -269,7 +319,8 @@ func buildRun(ctx context.Context, sb sandboxBackend, run sandboxRun) *exec.Cmd 
 // one-shot command, reached by a caller that had simply never been told. A
 // second copy of this logic is a second copy of that hole, so both shapes call
 // here.
-func buildSandboxedShellCmd(ctx context.Context, command, workspaceDir string, extraEnv map[string]string, readOnly []string) (SandboxedCmd, error) {
+func buildSandboxedShellCmd(ctx context.Context, spec ShellRun) (SandboxedCmd, error) {
+	command, workspaceDir, extraEnv, readOnly := spec.Command, spec.WorkspaceDir, spec.Env, spec.ReadOnly
 	sb := activeSandbox()
 	allowNetwork := netgate.NetworkAllowedFromContext(ctx)
 
@@ -316,6 +367,7 @@ func buildSandboxedShellCmd(ctx context.Context, command, workspaceDir string, e
 	c := buildRun(ctx, sb, sandboxRun{
 		Kind: sandboxShellRun, Command: command, WorkspaceDir: workspaceDir,
 		Env: extraEnv, AllowNetwork: allowNetwork, ReadOnly: readOnly,
+		WorkDir: spec.WorkDir,
 	})
 	env := sandboxEnv(sb.remapsPaths())
 	// Append extras AFTER sandboxEnv so a tool arg "PATH" (rare but
@@ -343,14 +395,14 @@ func buildSandboxedShellCmd(ctx context.Context, command, workspaceDir string, e
 // about a path (RunSandboxedShellScoped), and a long-lived shell outlives the
 // resolution that proved it.
 func NewSandboxedShellCmd(ctx context.Context, command, workspaceDir string, extraEnv map[string]string) (SandboxedCmd, error) {
-	return buildSandboxedShellCmd(ctx, command, workspaceDir, extraEnv, nil)
+	return buildSandboxedShellCmd(ctx, ShellRun{Command: command, WorkspaceDir: workspaceDir, Env: extraEnv})
 }
 
 // runSandboxedShellWithBinds is the body both one-shot variants share. readOnly
 // is empty for every caller that does not use a path scope, which is all of
 // them but one.
-func runSandboxedShellWithBinds(ctx context.Context, command, workspaceDir string, extraEnv map[string]string, readOnly []string) SandboxedShellResult {
-	built, err := buildSandboxedShellCmd(ctx, command, workspaceDir, extraEnv, readOnly)
+func runSandboxedShellWithBinds(ctx context.Context, spec ShellRun) SandboxedShellResult {
+	built, err := buildSandboxedShellCmd(ctx, spec)
 	if err != nil {
 		return SandboxedShellResult{Err: err}
 	}
@@ -824,16 +876,70 @@ func sandboxEnv(remaps bool) []string {
 // script reporting "no such file" instead of bwrap refusing to start,
 // which is the difference between an error a model can act on and one it
 // cannot see past.
-func withReadOnlyBinds(args []string, readOnly []string, workspaceDir string) []string {
-	if len(readOnly) == 0 {
+// withWorkDir repoints the sandbox's --chdir at workDir, binding it read-only
+// first when it sits outside the workspace.
+//
+// Two steps rather than one because bubblewrap builds a MOUNT NAMESPACE: a
+// --chdir at a path that was never bound does not land in an unreadable
+// directory, it lands in one that does not exist, and bwrap exits with
+// "Can't chdir" before the command runs. So the bind is not a permission the
+// cwd needs, it is the reason the cwd resolves at all.
+//
+// The bind is --ro-bind-try and read-only on purpose. WorkDir is documented as
+// granting no write access (see sandboxRun.WorkDir), and -try so a folder that
+// has gone away since the caller resolved it fails as the command not finding
+// its input rather than as bwrap refusing to start — the same reason the
+// read-only binds next door use it.
+//
+// Deliberately NOT routed through run.ReadOnly, which would have been the
+// shorter edit. That field is a PROMISE that reads are confined to it, and
+// scopedRunRefusal refuses the whole run on any backend whose scopesReads() is
+// false. Seatbelt's is false, so borrowing the field would have turned "start
+// here" into "refuse on macOS" — the one platform the case came from.
+func withWorkDir(args []string, workDir, workspaceDir string) []string {
+	workDir = strings.TrimSpace(workDir)
+	if workDir == "" {
 		return args
 	}
+	if !withinDir(workDir, workspaceDir) {
+		args = insertBeforeSeparator(args, []string{"--ro-bind-try", workDir, workDir})
+	}
+	// Rewrite the existing --chdir rather than appending a second one: bwrap
+	// takes the last, so a duplicate would work by accident today and break the
+	// first time the argv order changed.
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--" {
+			break
+		}
+		if args[i] == "--chdir" {
+			args[i+1] = workDir
+			return args
+		}
+	}
+	return insertBeforeSeparator(args, []string{"--chdir", workDir})
+}
+
+// insertBeforeSeparator splices flags in ahead of bwrap's "--", which is where
+// its own options stop and the command begins. Anything appended past it would
+// be read as arguments to the command instead.
+func insertBeforeSeparator(args []string, add []string) []string {
 	sepIdx := len(args)
 	for i, a := range args {
 		if a == "--" {
 			sepIdx = i
 			break
 		}
+	}
+	out := make([]string, 0, len(args)+len(add))
+	out = append(out, args[:sepIdx]...)
+	out = append(out, add...)
+	out = append(out, args[sepIdx:]...)
+	return out
+}
+
+func withReadOnlyBinds(args []string, readOnly []string, workspaceDir string) []string {
+	if len(readOnly) == 0 {
+		return args
 	}
 	binds := make([]string, 0, len(readOnly)*3)
 	seen := map[string]bool{}
@@ -848,11 +954,7 @@ func withReadOnlyBinds(args []string, readOnly []string, workspaceDir string) []
 	if len(binds) == 0 {
 		return args
 	}
-	out := make([]string, 0, len(args)+len(binds))
-	out = append(out, args[:sepIdx]...)
-	out = append(out, binds...)
-	out = append(out, args[sepIdx:]...)
-	return out
+	return insertBeforeSeparator(args, binds)
 }
 
 // RunSandboxedShellScoped is RunSandboxedShellWithEnv plus read-only
@@ -874,7 +976,7 @@ func RunSandboxedShellScoped(ctx context.Context, command, workspaceDir string, 
 	if err := scopedRunRefusal(activeSandbox(), readOnly); err != nil {
 		return SandboxedShellResult{Err: err}
 	}
-	return runSandboxedShellWithBinds(ctx, command, workspaceDir, extraEnv, readOnly)
+	return runSandboxedShellWithBinds(ctx, ShellRun{Command: command, WorkspaceDir: workspaceDir, Env: extraEnv, ReadOnly: readOnly})
 }
 
 // scopedRunRefusal is the decision, separated from the run so it can be

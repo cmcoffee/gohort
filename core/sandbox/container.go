@@ -127,7 +127,18 @@ func (c containerSandbox) build(ctx context.Context, run sandboxRun) *exec.Cmd {
 	// come from the image, which is the entire point.
 	if run.Kind == sandboxShellRun && run.WorkspaceDir != "" {
 		args = append(args, mount(run.WorkspaceDir, run.WorkspaceDir, "rw")...)
-		args = append(args, "--workdir", run.WorkspaceDir)
+		// A WorkDir outside the workspace needs its own mount for the same
+		// reason bubblewrap needs a bind: --workdir at a path the container
+		// cannot see fails to start, rather than starting somewhere useless.
+		// Read-only, because WorkDir grants no write access anywhere.
+		if wd := run.cwd(); wd != run.WorkspaceDir {
+			if !withinDir(wd, run.WorkspaceDir) {
+				args = append(args, mount(wd, wd, "ro")...)
+			}
+			args = append(args, "--workdir", wd)
+		} else {
+			args = append(args, "--workdir", run.WorkspaceDir)
+		}
 	} else {
 		args = append(args, "--workdir", "/tmp")
 	}
