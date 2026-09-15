@@ -425,7 +425,7 @@ func TestAMetConditionStopsTheMonitor(t *testing.T) {
 	SaveEventMonitor(db, m)
 
 	T := &OrchestrateApp{AppCore: AppCore{LLM: &stubLLM{reply: `{"verdict":"MET","reason":"the PR shows state merged"}`}}}
-	T.settleMonitorObjective(context.Background(), m, "PR #12: state changed open → merged")
+	T.settleMonitorObjective(context.Background(), m, "PR #12: state changed open → merged", nil)
 
 	cur, ok := GetEventMonitor(db, "craig", "pr-12")
 	if !ok {
@@ -453,7 +453,7 @@ func TestAnUnmetConditionLeavesTheMonitorWatching(t *testing.T) {
 	SaveEventMonitor(db, m)
 
 	T := &OrchestrateApp{AppCore: AppCore{LLM: &stubLLM{reply: `{"verdict":"NOT_YET","reason":"the PR is still open with one review pending"}`}}}
-	T.settleMonitorObjective(context.Background(), m, "PR #12: a new review comment")
+	T.settleMonitorObjective(context.Background(), m, "PR #12: a new review comment", nil)
 
 	cur, _ := GetEventMonitor(db, "craig", "pr-12")
 	if cur.Paused {
@@ -467,7 +467,7 @@ func TestAnUnmetConditionLeavesTheMonitorWatching(t *testing.T) {
 	// Failing open here would retire a monitor whose condition never happened,
 	// which is the one outcome nobody would notice.
 	unreadable := &OrchestrateApp{AppCore: AppCore{LLM: &stubLLM{reply: `I think so?`}}}
-	unreadable.settleMonitorObjective(context.Background(), m, "PR #12: another comment")
+	unreadable.settleMonitorObjective(context.Background(), m, "PR #12: another comment", nil)
 	cur, _ = GetEventMonitor(db, "craig", "pr-12")
 	if cur.Paused {
 		t.Error("an unreadable verdict stopped the monitor")
@@ -487,7 +487,7 @@ func TestAMonitorWithNoConditionIsNeverJudged(t *testing.T) {
 	// An LLM whose every answer is MET: if it is consulted at all, the monitor
 	// stops and this test fails.
 	T := &OrchestrateApp{AppCore: AppCore{LLM: &stubLLM{reply: `{"verdict":"MET","reason":"sure"}`}}}
-	T.settleMonitorObjective(context.Background(), m, "the roster changed")
+	T.settleMonitorObjective(context.Background(), m, "the roster changed", nil)
 
 	cur, _ := GetEventMonitor(db, "craig", "roster")
 	if cur.Paused || len(cur.Attempts) != 0 {

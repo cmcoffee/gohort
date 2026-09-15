@@ -147,6 +147,36 @@ func UpdateScheduledTaskPayload(id string, payload any) bool {
 	return true
 }
 
+// RescheduleTaskAt moves a STILL-QUEUED task to a new time, returning false
+// when the task no longer exists (already fired or unscheduled). Callers must
+// NOT re-create the task on false, for the reason UpdateScheduledTaskPayload
+// gives: re-adding an entry that already fired is how a recurring chain
+// duplicates.
+//
+// Sibling of UpdateScheduledTaskPayload, one step on. That one exists because
+// the pre-arm pattern arms the next occurrence BEFORE a long fire, so whatever
+// the fire learns about the next occurrence arrives after the entry exists.
+// This is the same problem for the other half of the entry: what the fire
+// learns about WHEN the next one should run (docs/objective-pacing.md).
+//
+// Atomic with fireDueTasks' dequeue under schedDBMu, and wakes the loop so a
+// task moved EARLIER is not left waiting behind the old sleep target.
+func RescheduleTaskAt(id string, runAt time.Time) bool {
+	schedDBMu.Lock()
+	defer schedDBMu.Unlock()
+	if schedDB == nil {
+		return false
+	}
+	var task ScheduledTask
+	if !schedDB.Get(schedulerTable, id, &task) {
+		return false
+	}
+	task.RunAt = runAt.UTC().Format(time.RFC3339)
+	schedDB.Set(schedulerTable, id, task)
+	wakeScheduler()
+	return true
+}
+
 // ListScheduledTasks returns all pending tasks matching the given kind.
 // If kind is empty, returns all tasks.
 func ListScheduledTasks(kind string) []ScheduledTask {

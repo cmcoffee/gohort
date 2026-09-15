@@ -22,6 +22,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/pacing"
 	"strconv"
 )
 
@@ -100,7 +101,14 @@ func registerStandingRunner(app *OrchestrateApp) {
 		// 5am with the tab closed, so its record is the only place this can be
 		// read afterwards.
 		ctx, promptDigest := WithPromptDigest(ctx)
-		run, err := app.runAgentSyncConfirm(ctx, sa.Owner, sa.Owner, sa.AgentID, mission, gate.confirm, sa.DispatchedBy...)
+		// The one lever this fire has over its own schedule: an objective that
+		// cannot finish because it is WAITING may say when to try again
+		// (docs/objective-pacing.md). Run-scoped, so it is passed to the run
+		// rather than hung on the agent, which has no next fire to move when it
+		// is dispatched from a conversation.
+		pacingAsk := &pacing.Ask{}
+		run, err := app.runAgentSyncAppTools(ctx, sa.Owner, sa.Owner, sa.AgentID, mission, gate.confirm,
+			standingPacingTool(sa, pacingAsk), sa.DispatchedBy...)
 		out, hitRoundCap, toolTrace := run.Text, run.HitRoundCap, run.Trace
 		if err != nil {
 			liveRun.Complete(RunStatusFailed)
@@ -112,12 +120,29 @@ func registerStandingRunner(app *OrchestrateApp) {
 		// question you open a failed run to answer.
 		steps := runStepsFromToolCalls(toolTrace)
 		if err != nil {
+			// A schedule that cannot work should not keep trying at full speed.
+			// Re-read first: this run may have taken minutes, and a pause or an
+			// edit during it is the owner's word (failure_backoff.go).
+			backoff := ""
+			if cur, ok := GetStandingAgent(RootDB, sa.Owner, sa.Name); ok {
+				backoff = noteStandingFailure(&cur)
+				SaveStandingAgent(RootDB, cur)
+			}
 			return StandingRunResult{
 				Status:  RunFailed,
-				Summary: "Run failed: " + err.Error(),
+				Summary: "Run failed: " + err.Error() + backoff,
 				Err:     err.Error(),
 				Steps:   steps,
 				Prompt:  promptDigest(),
+			}
+		}
+		// This run worked, so whatever was failing is not failing now. Written
+		// only when there is something to clear, so a healthy schedule costs no
+		// extra write per run.
+		if sa.ConsecutiveFailures > 0 {
+			if cur, ok := GetStandingAgent(RootDB, sa.Owner, sa.Name); ok && cur.ConsecutiveFailures > 0 {
+				cur.ConsecutiveFailures = 0
+				SaveStandingAgent(RootDB, cur)
 			}
 		}
 
@@ -215,6 +240,17 @@ func registerStandingRunner(app *OrchestrateApp) {
 			if !verdict.Met {
 				cur.UnmetCount = attempt
 			}
+			// Pacing, before the record is written: every arm of the switch
+			// below saves `cur`, and the deferred re-arm reads what it saved.
+			// Only while the schedule continues — a met objective pauses and a
+			// stalled one is marked broken, and an attempt does not get to
+			// defer its way out of a bound it has already reached.
+			pacedLine := ""
+			if !stop {
+				pacedLine = applyStandingPacing(&cur, pacingAsk)
+			} else if _, _, asked := pacingAsk.Get(); asked {
+				Log("[orchestrate/pacing] standing %s/%s asked to move its next attempt, but the objective %s — the ask was dropped", sa.Owner, sa.Name, line)
+			}
 			switch {
 			case stalled:
 				SaveStandingAgent(RootDB, cur)
@@ -240,7 +276,14 @@ func registerStandingRunner(app *OrchestrateApp) {
 			default:
 				SaveStandingAgent(RootDB, cur)
 			}
-			res.Summary = strings.ToUpper(line[:1]) + line[1:] + ". " + res.Summary
+			// The verdict leads the summary, and the pacing follows it: a fire
+			// that moved its own next run has to account for it where the owner
+			// is already reading, the same way the recurring card carries it.
+			lead := sentence(line)
+			if pacedLine != "" {
+				lead += sentence(pacedLine)
+			}
+			res.Summary = lead + res.Summary
 			if stalled {
 				res.Status = RunAttention
 			}

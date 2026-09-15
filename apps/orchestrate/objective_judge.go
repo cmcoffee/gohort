@@ -19,6 +19,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/pacing"
 )
 
 // objectiveEvidence is what the check reasons over: the goal, the attempt's
@@ -193,7 +194,7 @@ func (T *OrchestrateApp) judgeMonitorObjective(ctx context.Context, until, obser
 // state label and the attempts block read a monitor the same way they read the
 // other two scheduling surfaces.
 func monitorObjective(m EventMonitor) objectiveRun {
-	return objectiveRun{Until: m.Until, Attempts: m.Attempts, Username: m.Owner}
+	return objectiveRun{Until: m.Until, Attempts: m.Attempts, Username: m.Owner, PacedWhy: m.NextAttemptWhy}
 }
 
 // settleMonitorObjective judges a monitor's stopping condition against the
@@ -202,7 +203,7 @@ func monitorObjective(m EventMonitor) objectiveRun {
 //
 // Judged whether or not the alert reached anybody: the condition is about the
 // world, not about delivery, and the ledger already carries a row for each.
-func (T *OrchestrateApp) settleMonitorObjective(ctx context.Context, m EventMonitor, observed string) {
+func (T *OrchestrateApp) settleMonitorObjective(ctx context.Context, m EventMonitor, observed string, ask *pacing.Ask) {
 	until := strings.TrimSpace(m.Until)
 	if until == "" {
 		return
@@ -217,8 +218,18 @@ func (T *OrchestrateApp) settleMonitorObjective(ctx context.Context, m EventMoni
 		return
 	}
 	cur.Attempts = appendObjectiveAttempt(cur.Attempts, judged && v.Met, reason)
+	// Pacing (docs/objective-pacing.md), before the save: the woken agent may
+	// have asked to be left alone until later. Not when the goal is met — the
+	// monitor is stopping, and moving a check it will never make would leave a
+	// reason on a stopped record for nobody.
+	met := judged && v.Met
+	if !met {
+		applyMonitorPacing(&cur, ask)
+	} else if _, _, asked := ask.Get(); asked {
+		Log("[orchestrate/pacing] monitor %s/%s asked to move its next check, but the goal is met — the ask was dropped", m.Owner, m.Name)
+	}
 	SaveEventMonitor(RootDB, cur)
-	if judged && v.Met {
+	if met {
 		StopEventMonitor(RootDB, m.Owner, m.Name, MonitorStopMet,
 			"Stopped: the condition it was watching for is met — "+reason+" Nothing is broken; resume it to watch again.")
 	}
@@ -294,14 +305,22 @@ func objectiveStateLabel(o objectiveRun) string {
 	if strings.TrimSpace(o.Until) == "" {
 		return ""
 	}
-	if len(o.Attempts) == 0 {
-		return "objective — no attempts yet"
+	label := "objective — no attempts yet"
+	if n := len(o.Attempts); n > 0 {
+		last := o.Attempts[n-1]
+		switch {
+		case last.Met:
+			label = "objective — met: " + truncateObs(last.Reason, 160)
+		default:
+			label = fmt.Sprintf("objective — not yet (%d attempt(s)): %s", n, truncateObs(last.Reason, 160))
+		}
 	}
-	last := o.Attempts[len(o.Attempts)-1]
-	if last.Met {
-		return "objective — met: " + truncateObs(last.Reason, 160)
+	// The Next run cell already shows WHEN. This is the half it cannot carry:
+	// that the time was chosen by the last attempt, and what it is waiting for.
+	if w := strings.TrimSpace(o.PacedWhy); w != "" {
+		label += " · waiting: " + truncateObs(w, 120)
 	}
-	return fmt.Sprintf("objective — not yet (%d attempt(s)): %s", len(o.Attempts), truncateObs(last.Reason, 160))
+	return label
 }
 
 // brokenListReason surfaces a parked task's reason in the recurring tool's
@@ -326,14 +345,18 @@ type objectiveRun struct {
 	Until    string
 	Attempts []ObjectiveAttempt
 	Username string // whose local clock the attempt timestamps are shown in
+	// PacedWhy is why the NEXT attempt is when it is, when an earlier one moved
+	// it (docs/objective-pacing.md). Empty on the surfaces that do not carry
+	// pacing yet, which is the same as "nobody moved it".
+	PacedWhy string
 }
 
 func (p orchUpdatePayload) objective() objectiveRun {
-	return objectiveRun{Until: p.Until, Attempts: p.Attempts, Username: p.Username}
+	return objectiveRun{Until: p.Until, Attempts: p.Attempts, Username: p.Username, PacedWhy: p.NextAttemptWhy}
 }
 
 func standingObjective(sa StandingAgent) objectiveRun {
-	return objectiveRun{Until: sa.Until, Attempts: sa.Attempts, Username: sa.Owner}
+	return objectiveRun{Until: sa.Until, Attempts: sa.Attempts, Username: sa.Owner, PacedWhy: sa.NextAttemptWhy}
 }
 
 // objectiveAttemptsKept bounds the history carried on the payload. Twelve is
@@ -392,7 +415,15 @@ func objectiveAttemptsBlock(o objectiveRun) string {
 		if a.Met {
 			verdict = "met"
 		}
-		fmt.Fprintf(&b, " %d. %s — %s: %s\n", i+1, when, verdict, truncateObs(a.Reason, 200))
+		// An attempt that moved the next one says so. Without this the model
+		// reads a gap in the timestamps and cannot tell a slow schedule from a
+		// deliberate wait it asked for itself, which is exactly the thing it
+		// needs to know before deciding whether to wait again.
+		paced := ""
+		if ts, err := time.Parse(time.RFC3339, a.NextAt); err == nil {
+			paced = " (asked to resume " + ts.In(loc).Format("2006-01-02 15:04") + ")"
+		}
+		fmt.Fprintf(&b, " %d. %s — %s: %s%s\n", i+1, when, verdict, truncateObs(a.Reason, 200), paced)
 	}
 	b.WriteString("Do not repeat an attempt that already failed for the same reason.]")
 	return b.String()
@@ -404,6 +435,13 @@ func objectiveToolLabels(trace []PersistedToolCall) ([]string, int) {
 	labels := make([]string, 0, len(trace))
 	failed := 0
 	for _, tc := range trace {
+		// Moving a clock is not progress toward a goal. The checker's whole
+		// rule is that the ACTIONS are the evidence, so an attempt that ran
+		// nothing but set_next_attempt has to read as one that ran nothing —
+		// otherwise pacing would make every attempt look busier than it was.
+		if tc.Name == pacing.ToolName {
+			continue
+		}
 		label := tc.Name
 		if act, ok := tc.Args["action"].(string); ok && strings.TrimSpace(act) != "" {
 			label += "/" + strings.TrimSpace(act)

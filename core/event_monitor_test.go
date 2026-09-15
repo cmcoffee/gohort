@@ -998,3 +998,75 @@ func TestAThresholdThatNeverRecoversSaysSoToo(t *testing.T) {
 		t.Error("nothing in the ledger says the monitor can no longer fire")
 	}
 }
+
+// A monitor's next check does not exist while the current one runs: the re-arm
+// is deferred and re-reads the record. So a wake that asked to be left alone
+// until later just writes the time down, and arming has to honour it — for that
+// one check, and then back to the cadence (docs/objective-pacing.md).
+func TestScheduleEventMonitorHonoursAPacedCheck(t *testing.T) {
+	withSchedulerDB(t)
+	db := memDB(t)
+	paced := time.Now().Add(4 * time.Hour).Truncate(time.Second)
+
+	m := EventMonitor{
+		Owner: "craig", Name: "pr-12", Kind: EventKindWatch, IntervalSeconds: 900,
+		Until:          "the PR is merged",
+		NextAttemptAt:  paced,
+		NextAttemptWhy: "the review is booked for this afternoon",
+	}
+	SaveEventMonitor(db, m)
+	if err := ScheduleEventMonitor(db, m); err != nil {
+		t.Fatalf("ScheduleEventMonitor: %v", err)
+	}
+
+	got, ok := GetEventMonitor(db, "craig", "pr-12")
+	if !ok {
+		t.Fatal("the monitor vanished")
+	}
+	if !got.NextCheck.Equal(paced) {
+		t.Fatalf("armed for %s, but the wake asked for %s", got.NextCheck, paced)
+	}
+	if !got.NextAttemptAt.IsZero() {
+		t.Error("the ask was not consumed, so it would move every future check too")
+	}
+	if got.NextAttemptWhy == "" {
+		t.Error("the reason must outlive the ask by one check — it explains the check now armed")
+	}
+
+	// The arming after that is back on the cadence, and the reason goes with
+	// the check it explained.
+	if err := ScheduleEventMonitor(db, got); err != nil {
+		t.Fatalf("second arm: %v", err)
+	}
+	got2, _ := GetEventMonitor(db, "craig", "pr-12")
+	if got2.NextCheck.Equal(paced) {
+		t.Error("the second arm reused the paced time; pacing moves ONE check")
+	}
+	if got2.NextAttemptWhy != "" {
+		t.Error("a stale reason would claim the cadence's own time was chosen by a wake")
+	}
+}
+
+// Pacing only ever pushes a check LATER. An ask sooner than the cadence is
+// asking for nothing, and must never become a way to poll something faster
+// than its owner set it to.
+func TestAPacedCheckCannotOutrunTheCadence(t *testing.T) {
+	withSchedulerDB(t)
+	db := memDB(t)
+	m := EventMonitor{
+		Owner: "craig", Name: "fast", Kind: EventKindWatch, IntervalSeconds: 3600,
+		NextAttemptAt:  time.Now().Add(2 * time.Minute),
+		NextAttemptWhy: "check back shortly",
+	}
+	SaveEventMonitor(db, m)
+	if err := ScheduleEventMonitor(db, m); err != nil {
+		t.Fatalf("ScheduleEventMonitor: %v", err)
+	}
+	got, _ := GetEventMonitor(db, "craig", "fast")
+	if d := time.Until(got.NextCheck); d < 59*time.Minute {
+		t.Fatalf("armed %s out, which is sooner than the monitor's own hourly cadence", d)
+	}
+	if !got.NextAttemptAt.IsZero() || got.NextAttemptWhy != "" {
+		t.Error("the ignored ask must be cleared, not reconsidered on every arm")
+	}
+}

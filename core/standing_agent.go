@@ -143,6 +143,24 @@ type StandingAgent struct {
 	MaxAttempts int                `json:"max_attempts,omitempty"`
 	UnmetCount  int                `json:"unmet_count,omitempty"`
 	Attempts    []ObjectiveAttempt `json:"attempts,omitempty"`
+
+	// Pacing (docs/objective-pacing.md): when an attempt could not finish
+	// because it was WAITING on something, it may say when the next one should
+	// happen. Consumed by ScheduleStandingAgent, which is where the next fire
+	// is armed.
+	//
+	// Unlike the recurring path there is nothing to MOVE here: a standing
+	// agent's successor does not exist while the fire runs (the re-arm is
+	// deferred and re-reads this record afterwards), so the ask only has to be
+	// written down where the re-arm will find it.
+	NextAttemptAt  time.Time `json:"next_attempt_at,omitempty"`
+	NextAttemptWhy string    `json:"next_attempt_why,omitempty"`
+
+	// ConsecutiveFailures counts runs that errored back to back, and backs the
+	// next one off (apps/orchestrate/failure_backoff.go). Named the way
+	// EventMonitor already names the same idea. Reset by the first run that
+	// works. The app owns the policy; this is only where the count lives.
+	ConsecutiveFailures int `json:"consecutive_failures,omitempty"`
 }
 
 // StandingRunResult is what a registered runner reports for one run.
@@ -513,6 +531,22 @@ func ScheduleStandingAgent(db Database, sa StandingAgent) error {
 	next, err := nextStandingRun(sa, time.Now().In(UserLocation(sa.Owner)))
 	if err != nil {
 		return err
+	}
+	// An attempt that asked to come back later wins over the cadence, for this
+	// occurrence only. Computed after nextStandingRun rather than instead of it
+	// so a schedule that is broken still errors here, where it is reported,
+	// rather than silently running on pacing alone.
+	//
+	// The ask is CONSUMED (cleared) as it is honoured, and the reason outlives
+	// it by exactly one occurrence: it explains the run now being armed, and is
+	// cleared by the arming after that. A reason that stayed would read as a
+	// standing preference, which is what pacing is not.
+	if !sa.NextAttemptAt.IsZero() && sa.NextAttemptAt.After(time.Now()) {
+		next = sa.NextAttemptAt
+		sa.NextAttemptAt = time.Time{}
+	} else {
+		sa.NextAttemptAt = time.Time{}
+		sa.NextAttemptWhy = ""
 	}
 	id, err := ScheduleTask(standingRunKind, standingRunPayload{
 		Owner: sa.Owner, Name: sa.Name, Trigger: "schedule",

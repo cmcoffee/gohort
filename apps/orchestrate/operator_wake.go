@@ -23,6 +23,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/pacing"
 	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
@@ -140,6 +141,12 @@ func registerOperatorWake(app *OrchestrateApp) {
 			}
 		}
 
+		// The wake turn's one lever over the monitor's own schedule, read after
+		// the turn by settleMonitorObjective. Declared here because the turn that
+		// may fill it and the code that reads it are on opposite sides of the
+		// delivery fan-out below.
+		pacingAsk := &pacing.Ask{}
+
 		// Resolve where the fire SURFACES for the agent (Surface: session / cortex /
 		// background). The trace card AND the channel wake both land here; the home
 		// (wakeSession) is left intact so a switch back to "session" always works.
@@ -219,6 +226,13 @@ func registerOperatorWake(app *OrchestrateApp) {
 			}
 			msg := fmt.Sprintf("[EVENT — monitor %q fired]\n%s%s\n\nReact in this thread: report it, delegate any needed work (delegation routes through the authorization queue), or just note it.",
 				monitorName, summary, brief)
+			// A monitor carrying a goal lets the woken agent say when the next
+			// CHECK is worth making — "still in review, don't look again until
+			// tomorrow" (docs/objective-pacing.md). This turn is the only place
+			// in a monitor's cycle where anything can ask: the check itself is a
+			// poll with no turn in it. A monitor delivering by text or direct
+			// alone therefore never paces, which is correct — nothing ran that
+			// could have an opinion.
 			// Stored as a monitor CARD, not as the owner's message. The
 			// direct path above has always recorded one; this path handed the
 			// same event to the agent as a user turn, so the owner's cortex
@@ -232,6 +246,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 				SubSessionID: wakeTarget, Message: msg,
 				InputReportFrom: monitorName, InputReportKind: cortexKindMonitor,
 				InputCardText: EventCardFromContext(ctx),
+				AppTools:      monitorPacingTool(m, pacingAsk),
 			}); err != nil {
 				Log("[operator.wake] %s/%s: %v", owner, monitorName, err)
 				return delivered, "the wake turn failed: " + err.Error()
@@ -241,7 +256,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 		// A monitor with a stopping condition is judged on what it just saw,
 		// and stops itself when the condition is met. Only a monitor that was
 		// given one pays for this — it is one worker-tier call per fire.
-		app.settleMonitorObjective(ctx, m, summary)
+		app.settleMonitorObjective(ctx, m, summary, pacingAsk)
 		if !delivered {
 			return false, "no notify destination accepted the event"
 		}

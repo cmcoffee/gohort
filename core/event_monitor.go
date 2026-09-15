@@ -201,6 +201,17 @@ type EventMonitor struct {
 	// wherever it was set.
 	Attempts []ObjectiveAttempt `json:"attempts,omitempty"`
 
+	// Pacing (docs/objective-pacing.md): the agent this monitor woke may say
+	// when the next CHECK should happen — "still in review, don't look again
+	// until tomorrow". Consumed by ScheduleEventMonitor, which is where the
+	// next poll is armed, the same way a standing agent's is.
+	//
+	// It moves one check. The cadence is untouched, and so is everything that
+	// bounds the monitor: a paced check still counts a fire when it delivers,
+	// so MaxFires is not something an agent can defer its way past.
+	NextAttemptAt  time.Time `json:"next_attempt_at,omitempty"`
+	NextAttemptWhy string    `json:"next_attempt_why,omitempty"`
+
 	Paused bool `json:"paused"`
 	// StopReason says WHY this monitor is at rest, which Paused alone cannot.
 	// Four things stop a monitor and only two of them are anybody's problem:
@@ -829,6 +840,21 @@ func ScheduleEventMonitor(db Database, m EventMonitor) error {
 		UnscheduleTask(m.SchedulerID)
 	}
 	next := nextPoll(m, time.Now())
+	// A wake that asked to be left alone until later wins over the cadence, for
+	// this check only. The ask is CONSUMED as it is honoured and the reason
+	// outlives it by exactly one check — it explains the check now armed, and
+	// the arming after that clears it.
+	//
+	// Only ever LATER than the cadence would have been: nextPoll is the floor,
+	// so a paced check cannot be used to poll something faster than its owner
+	// set it to.
+	if !m.NextAttemptAt.IsZero() && m.NextAttemptAt.After(next) {
+		next = m.NextAttemptAt
+		m.NextAttemptAt = time.Time{}
+	} else {
+		m.NextAttemptAt = time.Time{}
+		m.NextAttemptWhy = ""
+	}
 	id, err := ScheduleTask(eventPollKind, eventPollPayload{Owner: m.Owner, Name: m.Name}, next)
 	if err != nil {
 		return err

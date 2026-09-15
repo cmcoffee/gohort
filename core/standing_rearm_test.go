@@ -76,3 +76,77 @@ func TestRearmStrandedStandingAgents(t *testing.T) {
 		t.Fatalf("second sweep should revive nothing, got %d", again)
 	}
 }
+
+// A standing agent's next occurrence does not exist while its fire runs: the
+// re-arm is deferred and re-reads the record. So an attempt that asks to come
+// back later just writes the time down, and arming has to honour it — for that
+// one occurrence, and then go back to the cadence (docs/objective-pacing.md).
+func TestScheduleStandingAgentHonoursAPacedAttempt(t *testing.T) {
+	withSchedulerDB(t)
+	db := &DBase{Store: kvlite.MemStore()}
+	paced := time.Now().Add(5 * time.Hour).Truncate(time.Second)
+
+	sa := StandingAgent{
+		Owner: "u", Name: "release-notes", IntervalSeconds: 3600,
+		Until:          "the notes are published",
+		NextAttemptAt:  paced,
+		NextAttemptWhy: "the build is still running",
+	}
+	if err := ScheduleStandingAgent(db, sa); err != nil {
+		t.Fatalf("ScheduleStandingAgent: %v", err)
+	}
+
+	got, ok := GetStandingAgent(db, "u", "release-notes")
+	if !ok {
+		t.Fatal("the record vanished")
+	}
+	if !got.NextRun.Equal(paced) {
+		t.Fatalf("armed for %s, but the attempt asked for %s", got.NextRun, paced)
+	}
+	if !got.NextAttemptAt.IsZero() {
+		t.Error("the ask was not consumed, so it would move every future occurrence too")
+	}
+	if got.NextAttemptWhy != "the build is still running" {
+		t.Error("the reason must outlive the ask by one occurrence — it explains the run now armed")
+	}
+
+	// The arming AFTER that one is back on the cadence, and the reason goes
+	// with the occurrence it explained.
+	if err := ScheduleStandingAgent(db, got); err != nil {
+		t.Fatalf("second arm: %v", err)
+	}
+	got2, _ := GetStandingAgent(db, "u", "release-notes")
+	if got2.NextRun.Equal(paced) {
+		t.Error("the second arm reused the paced time; pacing moves ONE occurrence")
+	}
+	if diff := got2.NextRun.Sub(time.Now()); diff > 61*time.Minute || diff < 59*time.Minute {
+		t.Errorf("second arm is %s out, wanted the hourly cadence", diff)
+	}
+	if got2.NextAttemptWhy != "" {
+		t.Error("a stale reason would claim the cadence's own time was chosen by an attempt")
+	}
+}
+
+// A time that has already passed is not a schedule. It can happen when a fire
+// outlives the wait it asked for, and the answer is the cadence, not a fire in
+// the past.
+func TestAPacedTimeInThePastIsIgnored(t *testing.T) {
+	withSchedulerDB(t)
+	db := &DBase{Store: kvlite.MemStore()}
+
+	sa := StandingAgent{
+		Owner: "u", Name: "stale", IntervalSeconds: 600,
+		NextAttemptAt:  time.Now().Add(-2 * time.Hour),
+		NextAttemptWhy: "waiting on something that already happened",
+	}
+	if err := ScheduleStandingAgent(db, sa); err != nil {
+		t.Fatalf("ScheduleStandingAgent: %v", err)
+	}
+	got, _ := GetStandingAgent(db, "u", "stale")
+	if !got.NextRun.After(time.Now()) {
+		t.Fatalf("armed in the past: %s", got.NextRun)
+	}
+	if !got.NextAttemptAt.IsZero() || got.NextAttemptWhy != "" {
+		t.Error("a stale ask must be cleared, not left to be reconsidered every arm")
+	}
+}

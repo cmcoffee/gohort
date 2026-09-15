@@ -35,6 +35,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/pacing"
 )
 
 const OrchestrateScheduledUpdateKind = "orchestrate.scheduled_update"
@@ -161,6 +162,20 @@ type orchUpdatePayload struct {
 	// who fixed what a stall named gets a fresh allowance instead of one fire
 	// that stalls again immediately. See objectiveAttemptNumber.
 	AttemptsBase int `json:"attempts_base,omitempty"`
+	// Pacing (docs/objective-pacing.md): what the PREVIOUS attempt asked for
+	// when it moved this occurrence, so the console can say why the next run is
+	// when it is instead of showing a time nobody chose.
+	//
+	// Written onto the armed successor by the fire that paced it, and cleared
+	// when that successor arms its own. A reason that outlived the occurrence it
+	// belongs to would read as a standing preference, which is exactly what
+	// pacing is not: it moves one attempt, never the cadence.
+	NextAttemptAt  string `json:"next_attempt_at,omitempty"`
+	NextAttemptWhy string `json:"next_attempt_why,omitempty"`
+	// ConsecutiveFailures counts fires that errored back to back, and backs the
+	// next one off (see failure_backoff.go). Named the way EventMonitor already
+	// names the same idea. Reset by the first fire that works.
+	ConsecutiveFailures int `json:"consecutive_failures,omitempty"`
 	// RemainingToday holds the random pattern's still-pending fire times for the
 	// current day (RFC3339), so the plan survives restarts and each fire just
 	// pops the next. Empty for fixed, or when a fresh day needs planning.
@@ -598,6 +613,14 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	}
 	extraTools, availableBlock, customToolPrompt, subTurn := app.buildDispatchTurnExtrasWithOwner(ctx, agent, p.Username, udb, subSess, p.Username, udb)
 	tools = append(tools, extraTools...)
+	// The one lever an attempt has over its own schedule: an objective that
+	// cannot finish because it is WAITING on something may say when to try
+	// again (docs/objective-pacing.md). Mounted by the fire rather than by the
+	// `recurring` tool group on purpose — a Fleet agent is never given that
+	// group, and scoping objectives to it is the mistake v0.6.621 already paid
+	// for. The ask is read after the loop, in the objective block below.
+	pacingAsk := &pacing.Ask{}
+	tools = append(tools, pacingTool(p, pacingAsk, reArm)...)
 
 	// Full dispatch persona: gated prompt + facts + available blocks +
 	// customToolPrompt (so the LLM SEES the names of its lazily-loaded custom
@@ -847,9 +870,12 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// preamble exits below just return — nothing to reschedule.
 	if runErr != nil {
 		Log("[orchestrate/scheduled] agent=%s session=%s fire %d FAILED: %v", agentLabel, p.SessionID, p.FireCount+1, runErr)
-		record(RunFailed, "Recurring fire errored before it could post.", "", runErr.Error())
+		// A schedule that cannot work should not keep trying at full speed. The
+		// successor is already armed, so this moves it (failure_backoff.go).
+		backoff := noteRecurringFailure(p, &armed, armedID, reArm)
+		record(RunFailed, "Recurring fire errored before it could post."+backoff, "", runErr.Error())
 		appendSessionDiag(udb, p.AgentID, p.SessionID, "recurring-fire-failed",
-			fmt.Sprintf("Recurring task %q fire %d errored before it could post: %v", recurringName(p), p.FireCount+1, runErr))
+			fmt.Sprintf("Recurring task %q fire %d errored before it could post: %v.%s", recurringName(p), p.FireCount+1, runErr, backoff))
 		return nil
 	}
 	// A guardrail that stopped this fire is the single most useful thing the
@@ -914,6 +940,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// alone, which is that path's whole contract; it is also how an owner retries
 	// a stalled objective after fixing what the reason named.
 	objLine, objStopped, objStalled := "", false, false
+	pacedLine := ""
 	if objective := strings.TrimSpace(p.Until); objective != "" {
 		labels, failed := objectiveToolLabels(toolTrace)
 		attempt := objectiveAttemptNumber(p)
@@ -962,6 +989,15 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		}
 		appendSessionDiag(udb, p.AgentID, p.SessionID, kind,
 			fmt.Sprintf("Recurring task %q, attempt %d: %s (goal: %s)", recurringName(p), attempt, objLine, truncateObs(objective, 200)))
+		// Pacing, last: it moves the successor the stand-down above may just
+		// have cancelled. A met objective has nothing left to move, and a
+		// stalled one is parked and must stay parked — an attempt does not get
+		// to defer its way out of a bound it has already reached.
+		if reArm && !objStopped {
+			pacedLine = applyPacing(p, &armed, armedID, pacingAsk)
+		} else if _, _, asked := pacingAsk.Get(); asked {
+			Log("[orchestrate/pacing] task %q asked to move its next attempt, but the objective %s — the ask was dropped", recurringName(p), objLine)
+		}
 	}
 
 	// Round-budget exhaustion: the loop reached its soft cap and had to be forced
@@ -1004,6 +1040,11 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// thread sees where the goal stands without opening Activity.
 	if objLine != "" {
 		detail += " · " + objLine
+	}
+	// A fire that moved its own successor accounts for it where the owner is
+	// already reading, rather than leaving a next-run time nobody chose.
+	if pacedLine != "" {
+		detail += " · " + pacedLine
 	}
 	// FINAL fire: the pre-arm declined to schedule a successor, so this task
 	// stops here. Say so on the card. Retirement used to be a single log line
@@ -1103,6 +1144,11 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		// outlived its own gap), skip the renewal — never re-create a consumed
 		// task, that's how chains duplicate.
 		armed.LastActive = time.Now().UTC().Format(time.RFC3339)
+		// This fire worked, so whatever was failing is not failing now. Clearing
+		// it here (rather than on every path that does not fail) means an empty
+		// or suppressed fire leaves the streak where it was, which is the honest
+		// reading: neither of those proves the thing is fixed.
+		armed.ConsecutiveFailures = 0
 		if !UpdateScheduledTaskPayload(armedID, armed) {
 			Log("[orchestrate/scheduled] session=%s: armed next fire already consumed — idle-clock renewal skipped", p.SessionID)
 		}
@@ -1123,6 +1169,10 @@ func preArmNextFire(p orchUpdatePayload) (string, orchUpdatePayload, bool, strin
 	}
 	armed := p
 	armed.FireCount++
+	// A pacing reason belongs to the occurrence it moved. Clear it here so the
+	// next one starts unpaced and the console never attributes this fire's time
+	// to an attempt two fires ago.
+	armed.NextAttemptAt, armed.NextAttemptWhy = "", ""
 	if armed.FireCount >= armed.effectiveMaxFires() {
 		Log("[orchestrate/scheduled] task %q (session=%s) retiring: this fire reaches the fire cap %d (recurring task auto-cancelled after it)", recurringName(p), p.SessionID, armed.effectiveMaxFires())
 		return "", p, false, fmt.Sprintf("reached its %d-fire cap (max_fires)", armed.effectiveMaxFires())

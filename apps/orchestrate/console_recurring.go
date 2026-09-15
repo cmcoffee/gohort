@@ -92,9 +92,16 @@ func (T *OrchestrateApp) handleSchedules(w http.ResponseWriter, r *http.Request)
 			}
 		}
 		id := url.QueryEscape(sa.Name)
+		detail := what + " · " + StandingScheduleLabel(sa) + surfaceSuffix(sa.Surface) + standingRoleSuffix(udb, sa, agentID)
+		// The next run is not on the cadence when an attempt moved it. Say what
+		// it is waiting for, or the row reads as a schedule that quietly drifted
+		// (docs/objective-pacing.md).
+		if w := strings.TrimSpace(sa.NextAttemptWhy); w != "" {
+			detail += " · waiting: " + truncateObs(w, 120)
+		}
 		rows = append(rows, map[string]any{
 			"name":           sa.Name,
-			"detail":         what + " · " + StandingScheduleLabel(sa) + surfaceSuffix(sa.Surface) + standingRoleSuffix(udb, sa, agentID),
+			"detail":         detail,
 			"paused":         sa.Paused,
 			"pause_url":      "api/console/agents/pause?id=" + id,
 			"resume_url":     "api/console/agents/resume?id=" + id,
@@ -182,6 +189,15 @@ func (T *OrchestrateApp) handleConsoleRecurring(w http.ResponseWriter, r *http.R
 		// below: a parked task's reason is the more urgent thing to read, and
 		// for a stalled objective it already names the goal's last verdict.
 		row.State = objectiveStateLabel(rt.Payload.objective())
+		// A task with no objective has no state line, but it can still have a
+		// next run that is not on its cadence — an attempt that asked to wait, or
+		// a backoff after repeated failures. Either way the row says why, because
+		// the alternative is a time nobody chose and nothing explains.
+		if row.State == "" {
+			if w := strings.TrimSpace(rt.Payload.NextAttemptWhy); w != "" {
+				row.State = "waiting: " + truncateObs(w, 120)
+			}
+		}
 		if rt.Payload.Broken {
 			row.Broken = true
 			row.State = parkedStateLabel(recurringParkCause(rt.Payload), rt.Payload.BrokenReason)

@@ -545,6 +545,21 @@ type syncRunResult struct {
 // runAgentSyncConfirm runs one agent turn with no conversation around it and
 // reports what happened; see syncRunResult for what comes back.
 func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, runtimeUser, agentKey, message string, confirm func(string, string) bool, via ...string) (syncRunResult, error) {
+	return T.runAgentSyncAppTools(ctx, agentOwner, runtimeUser, agentKey, message, confirm, nil, via...)
+}
+
+// runAgentSyncAppTools is the same run with tools the CALLER supplies for this
+// run only. Same idea and same name as AgentSyncRun.AppTools, which the
+// continuing path already had; this path takes its arguments positionally, so
+// it gets a parameter instead of a field.
+//
+// It exists for work that has a lever nothing else does: a standing fire that
+// carries an objective may move its own next run (docs/objective-pacing.md),
+// and that tool belongs to the fire, not to the agent — the same agent
+// dispatched from a conversation has no next run to move. Passing it in beats
+// the alternatives of a flag on the agent record (wrong owner) or a context
+// value (invisible at the call site).
+func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, runtimeUser, agentKey, message string, confirm func(string, string) bool, appTools []AgentToolDef, via ...string) (syncRunResult, error) {
 	if T == nil || T.LLM == nil {
 		return syncRunResult{}, errors.New("orchestrate runtime not initialized")
 	}
@@ -758,6 +773,15 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	// a guard nobody can account for after the fact.
 	subTurn.beginDispatchDiag(target.ID, subSessID)
 	tools = append(tools, extraTools...)
+	// Caller-injected per-run tools, the positional twin of AgentSyncRun.AppTools
+	// on the continuing path. After the whole catalog so the caller's name wins a
+	// collision with the agent's own, and mirrored onto subTurn so custom-tool
+	// resolution (lazyToolFallback) sees them. Still passes through the privacy
+	// filter below, like everything else.
+	if len(appTools) > 0 {
+		tools = append(tools, appTools...)
+		subTurn.appTools = append(subTurn.appTools, appTools...)
+	}
 	// ForcePrivate enforcement — drop network tools + attach blocked
 	// connector. Done AFTER tools are fully assembled (allowlist +
 	// dispatch extras) so the filter sees everything that would have

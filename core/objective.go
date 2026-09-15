@@ -25,4 +25,13 @@ type ObjectiveAttempt struct {
 	At     string `json:"at"`               // RFC3339 UTC
 	Met    bool   `json:"met,omitempty"`    // recorded for completeness; a met objective stops
 	Reason string `json:"reason,omitempty"` // the checker's one line
+	// NextAt is set when this attempt MOVED the next one (core/pacing). The
+	// distinction it carries is the whole point: without it the next fire reads
+	// that it waited, and cannot tell that the wait was chosen and why.
+	NextAt string `json:"next_at,omitempty"` // RFC3339 UTC
 }
+
+// The other half of an objective, the ASK for when the next attempt should
+// happen, lives in core/pacing: it is a tool and a bit of state that only the
+// surfaces mounting it need, and core's namespace lands in every file that
+// dot-imports it. See docs/objective-pacing.md.
