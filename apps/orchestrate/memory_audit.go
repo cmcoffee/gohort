@@ -251,9 +251,42 @@ func kindRank(kind string) int {
 // ORPHAN pool is known to be gone, while a name matching no tool anywhere is
 // only worth mentioning when the text is plainly talking about calling it —
 // otherwise every snake_case phrase in ordinary prose becomes a finding.
+// fencedCode matches a ``` block, lazily, so the shortest run wins and an
+// unclosed fence takes the rest of the text rather than swallowing the file.
+var fencedCode = regexp.MustCompile("(?s)```.*?(```|$)")
+
+// blankCode replaces fenced code with spaces of the same length.
+//
+// Same length so every offset after it still points where it did: the findings
+// carry Quote (quoteAround) and a shortened copy would move every quote after
+// the first block onto the wrong line.
+//
+// Code is excluded because snake_case with a paren after it is what a FUNCTION
+// CALL looks like, and toolIdent plus looksLikeACall cannot tell one from a
+// tool mention. A memory holding a Python helper reported every function in it
+// as a tool that no longer exists — a findings list built on "precision over
+// recall" turning into the thing its own header warns about.
+func blankCode(text string) string {
+	return fencedCode.ReplaceAllStringFunc(text, func(m string) string {
+		return strings.Repeat(" ", len(m))
+	})
+}
+
+// maxParenCallFindings caps the dead-tool findings one text may produce
+// through the paren heuristic alone.
+//
+// A note that mentions a renamed tool mentions one or two. A page of code
+// mentions dozens, and past a handful the density IS the evidence that this is
+// code rather than prose about tools — including code with no fence around it
+// to strip. The orphan and verb paths are not capped: both name something known
+// to be gone, or read as a sentence.
+const maxParenCallFindings = 3
+
 func deadToolFindings(layer, text string, known, orphaned map[string]bool) []MemoryFinding {
 	var out []MemoryFinding
 	seen := map[string]bool{}
+	var parenCalls []MemoryFinding
+	text = blankCode(text)
 	for _, loc := range toolIdent.FindAllStringIndex(text, -1) {
 		name := text[loc[0]:loc[1]]
 		if seen[name] {
@@ -270,14 +303,32 @@ func deadToolFindings(layer, text string, known, orphaned map[string]bool) []Mem
 		case known[name] || isRegisteredToolName(name):
 			// Resolves to something callable — nothing to say.
 		case looksLikeACall(text, loc[0], loc[1]):
-			out = append(out, MemoryFinding{
+			f := MemoryFinding{
 				Layer: layer, Kind: "dead_tool",
 				Detail: fmt.Sprintf("Talks about calling %q, but no tool of that name exists — not in your pool, not shared, not orphaned. It was probably renamed or deleted.", name),
 				Quote:  quoteAround(text, loc[0]),
-			})
+			}
+			// Held back rather than emitted: whether this is a finding depends
+			// on how many others the same text produces.
+			if identifierCall(text, loc[1]) {
+				parenCalls = append(parenCalls, f)
+				continue
+			}
+			out = append(out, f)
 		}
 	}
+	// Under the cap these read as prose about tools; over it, as source code.
+	if len(parenCalls) <= maxParenCallFindings {
+		out = append(out, parenCalls...)
+	}
 	return out
+}
+
+// identifierCall reports whether this match was taken for a call ONLY because
+// a paren follows it — the reading that a function in stored code satisfies
+// and a sentence about a tool usually does not.
+func identifierCall(text string, end int) bool {
+	return end < len(text) && text[end] == '('
 }
 
 // looksLikeACall reports whether the identifier at [start,end) is being used as
