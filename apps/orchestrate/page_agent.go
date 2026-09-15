@@ -127,6 +127,11 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	agentLocked := false
+	// The access picture, composed while the record is in hand (agent_access.go).
+	// Rendered as a section below rather than as another field: the owner grants
+	// these things one editor control at a time and has never been shown what
+	// they add up to.
+	accessSummary, accessEmpty := "", ""
 	// Dispatch policy to surface first in the editor's select. Ordering the
 	// effective mode first means a legacy record (no stored dispatch_mode) seeds
 	// that value on save instead of the form's first-option fallback silently
@@ -150,6 +155,8 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			agentLocked = rec.Locked
 			leadModelLocked = agentForcesPrivate(rec) && !AllLLMsPrivate()
 			dispatchModeFirst = effectiveDispatchMode(rec)
+			accessSummary = agentAccessSummary(rec, agentReach(udb, user, rec))
+			accessEmpty = agentToolsEmptyText(rec)
 			if rec.OwnedBy != "" {
 				subAgent = true
 				if parent, pok := loadAgent(udb, rec.OwnedBy); pok {
@@ -484,6 +491,43 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				Body:     targetPicker,
 			})
 		}
+	}
+
+	// What this agent can do, and what it can reach — the two halves of the
+	// question an owner asks after granting things one control at a time. Read
+	// from the record, so an agent that has never run still answers.
+	if id != "" {
+		sections = append(sections,
+			ui.Section{
+				Title:    "What this agent can do",
+				Subtitle: accessSummary + " " + accessCaveat,
+				Body: ui.Table{
+					Source:    "../api/agent-access?id=" + id,
+					RowKey:    "name",
+					EmptyText: accessEmpty,
+					Columns: []ui.Col{
+						{Field: "name", Label: "Tool"},
+						{Field: "detail", Label: "What it does", Mute: true},
+						{Field: "policy", Label: "Unattended", Type: "badge"},
+					},
+				},
+			},
+			ui.Section{
+				Title: "What it can hand work to",
+				Subtitle: "Delegation reaches past this agent's own tools: whatever it hands work to runs with ITS catalog. " +
+					"Only targets that add something are listed; a recipe appears when one of its steps runs an agent.",
+				Body: ui.Table{
+					Source:    "../api/agent-access?id=" + id + "&view=reach",
+					RowKey:    "name",
+					EmptyText: "Nothing. This agent cannot hand work to anything that would widen it.",
+					Columns: []ui.Col{
+						{Field: "name", Label: "Target"},
+						{Field: "kind", Label: "Kind", Mute: true},
+						{Field: "adds", Label: "What it adds", Mute: true},
+					},
+				},
+			},
+		)
 	}
 
 	// Credentials this agent may use — tier-2 per-agent scoping, relocated here
