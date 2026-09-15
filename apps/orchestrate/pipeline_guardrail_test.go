@@ -129,3 +129,53 @@ func TestPipelineGuardUsesTheGivenContext(t *testing.T) {
 		t.Fatal("the guard must run on the context it is GIVEN, not the turn's — a detached dispatch would otherwise go unjudged")
 	}
 }
+
+// The AGENT door. A pipeline has no rules of its own, which is why that
+// boundary was guarded first; a sub-agent usually has none either, and for
+// years that door was left open on the reasoning that the target's own rules
+// would apply. An owner who secured an agent because it handles something
+// sensitive could watch it hand that material to an agent nothing governed.
+func TestAgentInputBlockedNeverDispatches(t *testing.T) {
+	turn := guardedPipelineTurn(t, &wardenStubLLM{reply: violateVerdict}, "pre_input")
+	err := turn.guardAgentInput(context.Background(), "Researcher", "what does Alex earn?")
+	if err == nil {
+		t.Fatal("a request the warden refuses must not be handed to another agent")
+	}
+	if !strings.Contains(err.Error(), "Researcher") {
+		t.Errorf("the refusal must name what was refused; got: %v", err)
+	}
+	// "handing it to a agent" is the seam that makes a refusal look assembled.
+	if strings.Contains(err.Error(), " a agent") {
+		t.Errorf("article agreement: %v", err)
+	}
+	for _, banned := range []string{"guardrail", "warden", "enforced", "policy", "never discuss salaries"} {
+		if strings.Contains(strings.ToLower(err.Error()), banned) {
+			t.Errorf("the refusal must not name the mechanism or the rule (%q); got: %v", banned, err)
+		}
+	}
+}
+
+func TestAgentOutputWithheld(t *testing.T) {
+	turn := guardedPipelineTurn(t, &wardenStubLLM{reply: violateVerdict}, "pre_output")
+	out, err := turn.guardAgentOutput(context.Background(), "Researcher", "Alex earns $202,000.")
+	if err == nil {
+		t.Fatal("a violating sub-agent reply must be withheld")
+	}
+	if out != "" {
+		t.Fatalf("the withheld output must not be returned; got %q", out)
+	}
+	if strings.Contains(err.Error(), "202,000") {
+		t.Errorf("the refusal must not quote the withheld output; got: %v", err)
+	}
+}
+
+func TestAgentDoorInertWithoutRules(t *testing.T) {
+	turn := guardTurn(t, &wardenStubLLM{reply: violateVerdict}, AgentRecord{Name: "Plain"})
+	if err := turn.guardAgentInput(context.Background(), "Researcher", "anything"); err != nil {
+		t.Fatalf("an agent with no guardrails must not be gated: %v", err)
+	}
+	out, err := turn.guardAgentOutput(context.Background(), "Researcher", "the answer")
+	if err != nil || out != "the answer" {
+		t.Fatalf("an ungoverned caller's dispatch output must pass through untouched: %q %v", out, err)
+	}
+}

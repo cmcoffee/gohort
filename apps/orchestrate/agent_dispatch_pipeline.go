@@ -368,6 +368,13 @@ func (t *chatTurn) agentsRunPipelineAction(args map[string]any) (string, error) 
 
 	// Live activity, same as the agent path and the schedule path: without it
 	// a multi-minute run is invisible until it finishes.
+	// A narrowed caller running a recipe that hands work to other AGENTS needs
+	// the owner's say-so, for the same reason the agent door does: those agents
+	// run with their own catalogs and do not pass the agent gate on the way in
+	// (dispatch_escalation.go).
+	if err := t.confirmRecipeEdge("pipeline", def.ID, def.Name, pipelineReach(def)); err != nil {
+		return "", err
+	}
 	// Cancellable: the ctx it hands back is what the run uses below, so Stop
 	// and Cancel reach this pipeline instead of reporting success at nothing.
 	ctx, liveRun := t.app.runsRegistry().CreateCancellable(t.ctx, t.user, "", "")
@@ -418,6 +425,12 @@ func (t *chatTurn) runDetachedPipeline(d *ToolSession, def PipelineDef, msg stri
 	ctx := d.Context()
 	if err := t.guardPipelineInput(ctx, def, msg); err != nil {
 		return "", err
+	}
+	// Checked, never asked: the Preflight ran this question while the turn was
+	// live. Reaching here unapproved means the standing grant was revoked in
+	// between.
+	if !t.recipeEdgeApproved(def.ID, def.Name, pipelineReach(def)) {
+		return "", fmt.Errorf("agents(run, pipeline=%q) was not run — this agent is not approved to run a pipeline that hands work to other agents", def.Name)
 	}
 	ctx, liveRun := t.app.runsRegistry().CreateCancellable(ctx, t.user, "", "")
 	liveRun.Describe("pipeline", pipelineRunLabel(t, def), truncateObs(msg, 100))

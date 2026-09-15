@@ -950,6 +950,23 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		return "", errors.New(block)
 	}
 
+	// The warden at the AGENT door (pipeline_guardrail.go). After the free
+	// checks above, because this one is a model call and a dispatch the cap
+	// already refused should not pay for it.
+	if err := t.guardAgentInput(t.ctx, target.Name, msg); err != nil {
+		return "", err
+	}
+	// A narrowed agent delegating to one that is not needs the owner's say-so
+	// (dispatch_escalation.go). After the warden: if the caller's own rules
+	// refuse the request outright there is nothing to authorize.
+	if err := t.confirmDispatchEdge(target); err != nil {
+		return "", err
+	}
+	// And the delegator's rules ride into the run, so a target with none of its
+	// own is not a way around the caller's (delegated_guardrails.go). A copy: this is
+	// the record for THIS delegation and is never written back.
+	target = inheritDelegatorGuardrails(t.agent, target)
+
 	parentSessID := ""
 	if t.session != nil {
 		parentSessID = t.session.ID
@@ -1265,6 +1282,13 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		return "", errors.New("agents(run): target returned no response")
 	}
 	cleanReply := strings.TrimSpace(resp.Content)
+	// What the sub-agent produced, judged by the caller's rules before it lands
+	// in the caller's context. The input check can be asked around; this one
+	// reads what actually came back.
+	cleanReply, gErr := t.guardAgentOutput(t.ctx, target.Name, cleanReply)
+	if gErr != nil {
+		return "", gErr
+	}
 	// Feed the request into the target's cortex (cortex agents only — a no-op
 	// otherwise) so a dispatched cortex/channel agent is AWARE another agent
 	// asked it to do something. The dispatch ran in the throwaway
@@ -1340,15 +1364,28 @@ func (t *chatTurn) agentsDispatchPolicy(allowRun bool) DetachPolicy {
 				return err
 			}
 			if strings.TrimSpace(stringArg(args, "pipeline")) != "" {
-				_, _, err := t.pipelineDispatchGate(args)
-				return err
+				def, _, err := t.pipelineDispatchGate(args)
+				if err != nil {
+					return err
+				}
+				return t.confirmRecipeEdge("pipeline", def.ID, def.Name, pipelineReach(def))
 			}
 			if strings.TrimSpace(stringArg(args, "machine")) != "" {
-				_, _, err := t.machineDispatchGate(args)
+				def, _, err := t.machineDispatchGate(args)
+				if err != nil {
+					return err
+				}
+				return t.confirmRecipeEdge("machine", def.ID, def.Name, machineReach(def))
+			}
+			target, _, err := t.agentsRunGate(args)
+			if err != nil {
 				return err
 			}
-			_, _, err := t.agentsRunGate(args)
-			return err
+			// Asked HERE rather than in the detached run: an approval needs a
+			// person, and by the time the handoff runs the turn that could
+			// have shown them a card is over. Answering it now also means the
+			// detached path finds the grant already in place.
+			return t.confirmDispatchEdge(target)
 		},
 		Detached: func(args map[string]any, d *ToolSession) (string, error) {
 			if strings.TrimSpace(stringArg(args, "pipeline")) != "" {
@@ -1369,6 +1406,19 @@ func (t *chatTurn) agentsDispatchPolicy(allowRun bool) DetachPolicy {
 			if err != nil {
 				return "", err
 			}
+			// Checked, never asked: there is no one here to answer. The
+			// Preflight above ran while the turn was live and either obtained
+			// the approval or refused the handoff, so reaching here without one
+			// means the standing grant was revoked in between.
+			if !t.dispatchEdgeApproved(target) {
+				return "", fmt.Errorf("agents(run): %q was not run — this agent is not approved to delegate to it", target.Name)
+			}
+			// Same two guards as the inline path, on the DETACHED session's
+			// context: t.ctx died with the turn that handed this off, and a
+			// warden call on a dead context reports that it could not run.
+			if gerr := t.guardAgentInput(d.Context(), target.Name, msg); gerr != nil {
+				return "", gerr
+			}
 			// The STANDALONE dispatch entry, not this turn's inline path.
 			//
 			// agentsRunAction builds its sub-agent against the live chatTurn —
@@ -1384,8 +1434,17 @@ func (t *chatTurn) agentsDispatchPolicy(allowRun bool) DetachPolicy {
 				// Where a picture the sub-agent makes has to come home to.
 				DeliverySessionID: d.DeliverySession(),
 				Message:           msg,
+				// This path loads the target itself, so the delegator is named
+				// rather than merged here — same helper either way.
+				DelegatorAgentID: t.agent.ID,
 			})
 			out := res.Text
+			if rerr == nil {
+				var gerr error
+				if out, gerr = t.guardAgentOutput(d.Context(), target.Name, out); gerr != nil {
+					return "", gerr
+				}
+			}
 			// Fenced exactly as the inline path fences it. A sub-agent's answer
 			// is outside content whichever way it arrives, and a detached one
 			// lands in a wake note that does no fencing of its own.

@@ -981,6 +981,13 @@ type AgentSyncRun struct {
 	DeliverySessionID string
 	Message           string
 	FreshSession      bool
+	// DelegatorAgentID names the agent that handed this run over, when one did.
+	// Its rules ride into the run (inheritDelegatorGuardrails): a restriction the
+	// owner wrote on the delegator is not something the delegate should be able
+	// to step around by having none of its own. Empty for a run with no
+	// delegator — a schedule, a channel inbound, a monitor wake — where there is
+	// nobody's policy to inherit.
+	DelegatorAgentID string
 	// Kind labels this run in the live-activity ribbon / "Active now" pane
 	// ("channel" for an inbound channel/iMessage turn, else it defaults to
 	// "dispatch"). Cosmetic only — how the run is described, not how it runs.
@@ -1393,6 +1400,14 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		// Layered rules (enabler #2): instance overlay over the template's base —
 		// see the matching block in runAgentSyncConfirm.
 		target.Rules = mergeScopeRules(target.Rules, listScopeRules(runtimeDB, target.ID))
+	}
+	// A delegated run carries its delegator's rules as well as its own. Read
+	// from the OWNER's store, where both records live, and applied to the local
+	// copy only — see delegated_guardrails.go.
+	if id := strings.TrimSpace(run.DelegatorAgentID); id != "" && id != target.ID {
+		if from, ok := loadAgent(ownerDB, id); ok {
+			target = inheritDelegatorGuardrails(from, target)
+		}
 	}
 	if subSessionID == "" {
 		subSessionID = "external-dispatch:" + runtimeUser + ":" + target.ID

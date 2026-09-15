@@ -308,6 +308,11 @@ func (t *chatTurn) agentsRunMachineAction(args map[string]any) (string, error) {
 		return "", err
 	}
 
+	// Same question at the machine door — a phase that names an agent reaches
+	// exactly as far as a pipeline's agent stage does (dispatch_escalation.go).
+	if err := t.confirmRecipeEdge("machine", def.ID, def.Name, machineReach(def)); err != nil {
+		return "", err
+	}
 	// Cancellable: the ctx it hands back is what the walk runs under, so Stop
 	// and Cancel reach this machine instead of reporting success at nothing.
 	ctx, liveRun := t.app.runsRegistry().CreateCancellable(t.ctx, t.user, "", "")
@@ -360,6 +365,10 @@ func (t *chatTurn) runDetachedMachine(d *ToolSession, def MachineDef, msg string
 	ctx := d.Context()
 	if err := t.guardMachineInput(ctx, def, msg); err != nil {
 		return "", err
+	}
+	// Checked, never asked — see runDetachedPipeline.
+	if !t.recipeEdgeApproved(def.ID, def.Name, machineReach(def)) {
+		return "", fmt.Errorf("agents(run, machine=%q) was not run — this agent is not approved to run a machine that hands work to other agents", def.Name)
 	}
 	ctx, liveRun := t.app.runsRegistry().CreateCancellable(ctx, t.user, "", "")
 	liveRun.Describe("machine", machineRunLabel(t, def), truncateObs(msg, 100))

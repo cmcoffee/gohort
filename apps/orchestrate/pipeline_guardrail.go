@@ -29,10 +29,20 @@
 // caller is who reads the output, so both ends are judged with the rules of the
 // agent standing on either side of the boundary. This is the same answer the
 // legacy pipeline-mode tool already gives for its stages (pipeline_tools.go:
-// "a stage runs under the CALLING agent's rules"), for the same reason. Where a
-// distinct agent with its own record does the work — an `agent` stage, which
-// dispatches through RunAgentSync — that agent's rules apply instead, and this
-// boundary is not the place that decides it.
+// "a stage runs under the CALLING agent's rules"), for the same reason.
+//
+// The AGENT door takes the same guards now, and the reasoning that kept it out
+// was wrong in one specific way. It said: where a distinct agent with its own
+// record does the work, that agent's rules apply instead. True, and useless
+// when the target has none — which is the ordinary case for a sub-agent, since
+// Builder authors them without rules and enforceSubAgentPosture sets posture
+// rather than policy. So an owner who secured an agent because it handles
+// something sensitive could watch it hand that material to an agent nothing
+// governed, and their own rules never saw the handoff. A door whose guard is
+// "the other side will handle it" is not a guard.
+//
+// The target's own rules still apply, and now so do the delegator's: see
+// delegated_guardrails.go for the half that rides INTO the run.
 //
 // WHICH hooks. pre_input on the message going in, pre_output on the synthesis
 // coming back. Not per stage: a stage's text is an intermediate nobody reads,
@@ -83,6 +93,31 @@ func (t *chatTurn) guardedRunContext(ctx context.Context) context.Context {
 	return WithStageGuardrails(ctx, t.stageGuardrails(ctx))
 }
 
+// guardAgentInput is the same guard at the AGENT door: the message about to be
+// handed to another agent, judged by the rules of the one handing it over.
+func (t *chatTurn) guardAgentInput(ctx context.Context, name, msg string) error {
+	return t.guardDispatchInput(ctx, "agent", name, msg)
+}
+
+// guardAgentOutput is the same guard on what that agent hands back.
+func (t *chatTurn) guardAgentOutput(ctx context.Context, name, out string) (string, error) {
+	return t.guardDispatchOutput(ctx, "agent", name, out)
+}
+
+// articleFor keeps the refusal readable across the three door kinds. "a agent"
+// is the kind of seam that makes a framework message look machine-assembled,
+// which is the last thing a refusal should look like.
+func articleFor(kind string) string {
+	if kind == "" {
+		return "a"
+	}
+	switch kind[0] {
+	case 'a', 'e', 'i', 'o', 'u':
+		return "an"
+	}
+	return "a"
+}
+
 // guardPipelineInput judges the message about to be handed to a pipeline.
 // A non-nil return is the refusal; the pipeline must not run.
 //
@@ -129,7 +164,7 @@ func (t *chatTurn) guardDispatchInput(ctx context.Context, kind, name, msg strin
 		// checking system invites it to reason about the system, which is both
 		// slow and the last thing that should surface in a reply.
 		return errors.New("agents(run, " + kind + "=" + strconv.Quote(name) +
-			") did not run — a constraint on you covers this request, and handing it to a " + kind + " does not put it outside that constraint. " +
+			") did not run — a constraint on you covers this request, and handing it to " + articleFor(kind) + " " + kind + " does not put it outside that constraint. " +
 			"Do not route it through another target. Answer within it, or say plainly that you can't.")
 	}
 	return nil
