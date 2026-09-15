@@ -957,7 +957,13 @@ func phaseToolFields(p MachinePhase, cat editorCatalog) []ui.FormField {
 	case len(p.Tools) > 0:
 		label += " — " + strconv.Itoa(len(p.Tools)) + " named"
 	}
-	return []ui.FormField{
+	// Reached only with something stored (see phaseShowsTools), so this says
+	// what is kept and that it is doing nothing, rather than hiding it.
+	inert := strings.TrimSpace(p.Tool) != ""
+	if inert {
+		label += " — NOT IN EFFECT: this step calls " + p.Tool + " directly"
+	}
+	fields := []ui.FormField{
 		ui.FormField{Type: "header", Label: label, Collapsed: true},
 		// The primary control, and the only part of this panel that stays
 		// true when the machine is run by a different agent or carried to
@@ -1004,6 +1010,19 @@ func phaseToolFields(p MachinePhase, cat editorCatalog) []ui.FormField {
 			Placeholder: "(no tools to offer)",
 			Help:        "Subtracted last, after everything above. Ticking one here keeps the step current with the agent's catalog while holding back just this tool — which is what you want when a step should do its ordinary work but must not, say, search the public web. The workflow controls cannot be denied."},
 	}
+	if !inert {
+		return fields
+	}
+	// A note ABOVE the controls, not buried in one help string: an author who
+	// opens this drawer is looking at three live-looking selects, and the fact
+	// that none of them does anything has to arrive before they start choosing.
+	return append([]ui.FormField{
+		ui.FormField{Type: "header", Label: "Kept, not applied",
+			Help: "This step calls " + p.Tool + " directly, so it has no model and nothing below applies: " +
+				"it reaches exactly that one tool whatever these say. They are kept because they would take " +
+				"effect again the moment the tool is cleared and the step runs on a model. To make this step " +
+				"CHOOSE a tool, or read a result and judge it, clear the tool above."},
+	}, fields...)
 }
 
 // denyHeaderLabel titles the deny section, carrying its count when it has one,
@@ -1040,6 +1059,23 @@ func nameNarrowingLabel(p MachinePhase) string {
 // "it names tools AND delegates, keep one" and one of the two ways to keep
 // one is behind a control nothing can open.
 func phaseShowsTools(p MachinePhase) bool {
+	// A TOOL step has no model, so nothing in this panel can apply to it:
+	// runToolPhase builds its own pool holding exactly the one tool the author
+	// named, whatever the reach says. machine_try.go has said so for as long as
+	// rehearsal has existed ("a tool step reaches exactly one thing, whatever
+	// the reach says — there is no model to give a catalog to"); the editor
+	// went on offering three choices about what a model may reach, next to a
+	// control that says "No model, no tokens". An author reading both at once
+	// is being told a step with no model decides something.
+	//
+	// Hidden when there is nothing stored. KEPT when there is — a leftover
+	// reach or tool list from before this became a tool step is a setting that
+	// would come back the moment the tool is cleared, and this panel exists
+	// because a restriction you cannot see is worse than one you can. It says
+	// it is not in effect instead of pretending it is.
+	if strings.TrimSpace(p.Tool) != "" {
+		return len(p.Tools) > 0 || strings.TrimSpace(p.Reach) != ""
+	}
 	return len(p.Tools) > 0 || strings.TrimSpace(p.Agent) == ""
 }
 
