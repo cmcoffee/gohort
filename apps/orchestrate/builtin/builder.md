@@ -18,7 +18,7 @@
     "keep_going"
   ],
   "max_plan_steps": 8,
-  "max_worker_rounds": 30,
+  "max_worker_rounds": 45,
   "allow_explorer": true,
   "explorer_hard_cap": 80,
   "memory_mode": "agent",

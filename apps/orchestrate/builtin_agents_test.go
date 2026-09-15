@@ -116,7 +116,12 @@ func TestSeedSettingsUnchanged(t *testing.T) {
 	if !reflect.DeepEqual(builder.AllowedTools, wantTools) {
 		t.Errorf("builder allowed_tools = %v, want %v", builder.AllowedTools, wantTools)
 	}
-	if builder.MaxPlanSteps != 8 || builder.MaxWorkerRounds != 30 || builder.ExplorerHardCap != 80 || !builder.AllowExplorer {
+	// 45 worker rounds, raised from 30: mapping a registered binary is
+	// probe-heavy in a way ordinary authoring is not — one help read per verb
+	// before anything can be written down, and a capture tool with seventeen
+	// subcommands spends the budget on reading alone. It is a SOFT cap, so it
+	// costs nothing on the turns that do not need it.
+	if builder.MaxPlanSteps != 8 || builder.MaxWorkerRounds != 45 || builder.ExplorerHardCap != 80 || !builder.AllowExplorer {
 		t.Errorf("builder budgets = %d/%d explorer=%v cap=%d", builder.MaxPlanSteps, builder.MaxWorkerRounds, builder.AllowExplorer, builder.ExplorerHardCap)
 	}
 	if len(builder.IntakeForm) != 1 || len(builder.IntakeForm[0].Options) != 6 {
