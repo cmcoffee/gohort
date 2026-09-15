@@ -30,6 +30,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 
@@ -70,6 +71,39 @@ func SaveCommandTools(db Database, slug, name, desc string, acts []TempToolActio
 			return cmd, Error("action " + a.Name + " declares a url_template; a mapped command is local, not an HTTP call")
 		}
 		acts[i].Name = strings.TrimSpace(a.Name)
+
+		// work_dir names a parameter, so a name with nothing behind it is an
+		// action that fails on its first call and nowhere sooner.
+		if a.WorkDir != "" {
+			if _, ok := a.Params[a.WorkDir]; !ok {
+				return cmd, Error("action " + a.Name + " sets work_dir to " + a.WorkDir +
+					" but declares no parameter called " + a.WorkDir + " — name the parameter the folder arrives in")
+			}
+			// Required by construction. An action that declares where it runs
+			// cannot run without being told which folder, so leaving that to
+			// the mapping to remember is leaving it to be forgotten — and a
+			// forgotten one is refused at dispatch, one layer further from
+			// whoever could fix it.
+			if !slices.Contains(a.Required, a.WorkDir) {
+				acts[i].Required = append(append([]string{}, a.Required...), a.WorkDir)
+			}
+		}
+		// Folder parameters are PINNED to this command's store, here rather
+		// than in the mapping handler that used to do it.
+		//
+		// The caller declares WHICH parameters are folders, because only it
+		// knows what the binary takes. It does not choose which store they come
+		// from: an admin decided that when the command was registered. Doing it
+		// at the write means every path that persists a mapping gets it — the
+		// check that lives in one caller is the check a second caller silently
+		// does without, and an unpinned folder parameter does not fail, it
+		// resolves nothing and the command runs somewhere else entirely.
+		for name, p := range a.Params {
+			if name == a.WorkDir || strings.TrimSpace(p.PathScope) != "" {
+				p.PathScope = "files:" + cmd.Slug
+				acts[i].Params[name] = p
+			}
+		}
 	}
 	cmd.Tools = acts
 	cmd.ToolDesc = strings.TrimSpace(desc)

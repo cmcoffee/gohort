@@ -6,6 +6,7 @@ package temptool
 // scope a read.
 
 import (
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -80,19 +81,24 @@ func TestWorkDirNamingNoParameterIsRefused(t *testing.T) {
 	}
 }
 
-// Not supplied on this call: the command still runs, in the workspace, exactly
-// as it did before the field existed.
-func TestWorkDirOmittedOnACallIsNotAnError(t *testing.T) {
+// A declared work_dir with no folder is REFUSED, never run in the workspace.
+//
+// This is the live failure that prompted it: weka ran in the agent's
+// workspace and reported "no matching nodes found in .../workspaces/...",
+// so the reader chased a path nobody had chosen instead of the missing
+// argument that put it there. A silent fallback turns a missing argument into
+// a wrong answer somewhere else.
+func TestWorkDirOmittedOnACallIsRefused(t *testing.T) {
 	tt := scopedFolderTool()
-	dir, scoped, err := splitWorkDir(tt, map[string]any{}, []string{"/srv/x"})
-	if err != nil {
-		t.Fatalf("unexpected: %v", err)
+	_, _, err := splitWorkDir(tt, map[string]any{}, []string{"/srv/x"})
+	if err == nil {
+		t.Fatal("a declared work_dir with no folder must be refused")
 	}
-	if dir != "" {
-		t.Errorf("want no cwd, got %q", dir)
+	if !strings.Contains(err.Error(), "folder") {
+		t.Errorf("the refusal should name the missing parameter, got: %v", err)
 	}
-	if len(scoped) != 1 {
-		t.Errorf("other scoped paths should be untouched: %v", scoped)
+	if !strings.Contains(err.Error(), "Nothing ran") {
+		t.Errorf("it must be clear the command did not run: %v", err)
 	}
 }
 
@@ -102,5 +108,41 @@ func TestNoWorkDirIsUntouched(t *testing.T) {
 	dir, scoped, err := splitWorkDir(tt, map[string]any{}, []string{"/srv/x"})
 	if err != nil || dir != "" || len(scoped) != 1 {
 		t.Fatalf("unchanged path: dir=%q scoped=%v err=%v", dir, scoped, err)
+	}
+}
+
+// liveRequired builds the schema the MODEL reads. It used to narrow a
+// required list down to the URL PATH placeholders — a question a command line
+// cannot answer — so every shell action reported all of its parameters
+// optional while the dispatcher went on enforcing the stored list.
+//
+// A work_dir parameter is the worst case: deliberately absent from the
+// command line, so narrowing against the command's own placeholders would
+// drop it too.
+func TestShellActionKeepsItsRequiredList(t *testing.T) {
+	act := TempToolAction{
+		Name:            "syshealth",
+		CommandTemplate: "/opt/bin/weka syshealth",
+		WorkDir:         "folder",
+		Params:          map[string]ToolParam{"folder": {Type: "string", PathScope: "files:b"}},
+		Required:        []string{"folder"},
+	}
+	got := liveRequired(act)
+	if len(got) != 1 || got[0] != "folder" {
+		t.Errorf("the model must be told the folder is required, got %v", got)
+	}
+}
+
+// The api narrowing it exists for still works.
+func TestApiActionStillNarrowsItsRequiredList(t *testing.T) {
+	act := TempToolAction{
+		Name:        "get",
+		URLTemplate: "https://x/{id}",
+		Params:      map[string]ToolParam{"id": {Type: "string"}, "verbose": {Type: "string"}},
+		Required:    []string{"id", "verbose"},
+	}
+	got := liveRequired(act)
+	if len(got) != 1 || got[0] != "id" {
+		t.Errorf("only the path placeholder is really required, got %v", got)
 	}
 }

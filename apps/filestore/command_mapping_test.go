@@ -137,3 +137,54 @@ func TestMappingOverviewOnAnUnmappedCommand(t *testing.T) {
 		t.Errorf("want a plain answer, got %v", out["state"])
 	}
 }
+
+// A folder parameter without a scope resolves NOTHING: the model passes the
+// folder name it read off a listing, and the command runs in the workspace
+// where no such name exists. That was the live bug, and it is why the pin
+// belongs at the write rather than in the one handler that happened to do it.
+func TestSavingAMappingPinsFolderParamsToTheStore(t *testing.T) {
+	app, st, _ := scopeFixture(t)
+	if _, err := SaveStoreCommand(app.DB, StoreCommand{
+		Slug: st.Slug, Name: "weka", Label: "weka", Command: "/opt/bin/weka",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Saved DIRECTLY, not through the mapping handler — the path that used to
+	// store an unpinned parameter.
+	if _, err := SaveCommandTools(app.DB, st.Slug, "weka", "Reads a bundle.", []TempToolAction{{
+		Name: "syshealth", Description: "d", CommandTemplate: "/opt/bin/weka syshealth",
+		WorkDir: "folder",
+		Params:  map[string]ToolParam{"folder": {Type: "string"}},
+	}}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	back, ok := LoadStoreCommand(app.DB, st.Slug, "weka")
+	if !ok {
+		t.Fatal("not reloaded")
+	}
+	if got := back.Tools[0].Params["folder"].PathScope; got != "files:"+st.Slug {
+		t.Errorf("the work_dir parameter must be pinned to this store, got %q", got)
+	}
+	// And it survives to what dispatch actually reads.
+	if got := back.asTempTool().Actions[0].WorkDir; got != "folder" {
+		t.Errorf("work_dir must reach the dispatched tool, got %q", got)
+	}
+}
+
+// A work_dir naming nothing is caught at the write, not at the first call.
+func TestSavingAMappingRefusesAWorkDirWithNoParameter(t *testing.T) {
+	app, st, _ := scopeFixture(t)
+	if _, err := SaveStoreCommand(app.DB, StoreCommand{
+		Slug: st.Slug, Name: "weka", Label: "weka", Command: "/opt/bin/weka",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := SaveCommandTools(app.DB, st.Slug, "weka", "Reads a bundle.", []TempToolAction{{
+		Name: "syshealth", Description: "d", CommandTemplate: "/opt/bin/weka syshealth",
+		WorkDir: "nope",
+		Params:  map[string]ToolParam{"folder": {Type: "string"}},
+	}})
+	if err == nil {
+		t.Fatal("a work_dir naming no parameter must be refused")
+	}
+}

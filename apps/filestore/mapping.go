@@ -151,8 +151,7 @@ func (T *FileStoreApp) proposeTools(st Store, cmd StoreCommand, args map[string]
 	if err := json.Unmarshal([]byte(raw), &acts); err != nil {
 		return "", Error("actions must be a JSON array of {name, description, command_template, params}: " + err.Error())
 	}
-	scope := "files:" + st.Slug
-	for i, a := range acts {
+	for _, a := range acts {
 		// A placeholder with no parameter behind it produces an action that
 		// fails the first time it is called, and nobody finds out until then.
 		for _, ph := range templatePlaceholders(a.CommandTemplate) {
@@ -161,29 +160,8 @@ func (T *FileStoreApp) proposeTools(st Store, cmd StoreCommand, args map[string]
 					" — declare it, or take it out of the command")
 			}
 		}
-		// A folder parameter is PINNED to this store, whatever the mapping
-		// said. The agent declares which parameters are folders, because only
-		// it knows what the binary takes; it does not get to choose which
-		// store they come from, because that is the admin's decision and it
-		// was made when the command was registered. Overwriting rather than
-		// validating: a rejected value would be a round trip to reach the one
-		// answer that was ever going to be allowed.
-		//
-		// Without this a folder parameter resolved to nothing at all — the
-		// model passed the folder NAME it saw in a listing, the command ran in
-		// the workspace, and nothing there had that name.
-		if a.WorkDir != "" {
-			if _, ok := a.Params[a.WorkDir]; !ok {
-				return "", Error("action " + a.Name + " sets work_dir to " + a.WorkDir +
-					" but declares no parameter called " + a.WorkDir + " — name the parameter the folder arrives in")
-			}
-		}
-		for name, p := range a.Params {
-			if name == a.WorkDir || strings.TrimSpace(p.PathScope) != "" {
-				p.PathScope = scope
-				acts[i].Params[name] = p
-			}
-		}
+		// Folder pinning and the work_dir check live in SaveCommandTools,
+		// below — at the write, so a second caller cannot skip them.
 	}
 	saved, err := SaveCommandTools(T.DB, st.Slug, cmd.Name, stringArg(args, "description"), acts)
 	if err != nil {

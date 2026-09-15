@@ -476,6 +476,24 @@ func defaultRequiredParams(urlTpl string, params map[string]ToolParam) []string 
 // alone, so this only touches definitions that could not have been deliberate:
 // an author who wants a cursor mandatory can still say so, and gets it.
 func liveRequired(act TempToolAction) []string {
+	// A SHELL action keeps the author's list, untouched.
+	//
+	// Everything below asks which parameters are URL PATH placeholders, which
+	// is a question a command line has no answer to: defaultRequiredParams
+	// reads act.URLTemplate, a shell action's is empty, so the narrowing found
+	// zero and reported EVERY parameter optional. The model was then told it
+	// could omit the argument the command cannot run without, while the
+	// dispatcher went on enforcing the stored list — help says optional,
+	// dispatch demands it, which is the loop prune_required_test.go was
+	// written about, running the other way.
+	//
+	// Worse for a work_dir parameter, which is deliberately absent from the
+	// command line: narrowing against the command's own placeholders would
+	// drop it too. The author said what is required; nothing here knows
+	// better.
+	if strings.TrimSpace(act.CommandTemplate) != "" && strings.TrimSpace(act.URLTemplate) == "" {
+		return act.Required
+	}
 	if len(act.Required) == 0 || len(act.Required) != len(act.Params) {
 		return act.Required // explicit, partial, or nothing to do
 	}

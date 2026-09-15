@@ -232,9 +232,16 @@ func splitWorkDir(tt *TempTool, args map[string]any, scoped []string) (string, [
 	}
 	raw, present := lookupArgCI(args, name)
 	if !present || strings.TrimSpace(fmt.Sprint(raw)) == "" {
-		// Not supplied on this call. The command still runs, in the workspace,
-		// which is what it would have done before the field existed.
-		return "", scoped, nil
+		// REFUSE, rather than fall back to the workspace.
+		//
+		// The fallback was the first version of this and it was wrong in the
+		// worst available way: a tool that declares where it must run, run
+		// somewhere else without a word. The binary then reports its own
+		// confusion about the workspace — "no matching nodes found in
+		// .../workspaces/..." — and the reader chases a path nobody chose
+		// instead of the missing argument that put it there. A command with a
+		// declared working directory and no folder has nothing to do.
+		return "", nil, fmt.Errorf("this command runs inside a folder and none was given: pass %q. Nothing ran", name)
 	}
 	dir := fmt.Sprint(raw)
 	out := scoped[:0:0]
