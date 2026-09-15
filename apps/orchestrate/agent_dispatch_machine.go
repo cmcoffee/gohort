@@ -308,12 +308,14 @@ func (t *chatTurn) agentsRunMachineAction(args map[string]any) (string, error) {
 		return "", err
 	}
 
-	liveRun := t.app.runsRegistry().Create(t.user, "", "", nil).
-		Describe("machine", machineRunLabel(t, def), truncateObs(msg, 100)).
+	// Cancellable: the ctx it hands back is what the walk runs under, so Stop
+	// and Cancel reach this machine instead of reporting success at nothing.
+	ctx, liveRun := t.app.runsRegistry().CreateCancellable(t.ctx, t.user, "", "")
+	liveRun.Describe("machine", machineRunLabel(t, def), truncateObs(msg, 100)).
 		Parent(parentRunFromCtx(t.ctx))
 	defer liveRun.Complete(RunStatusFailed) // safety net; the explicit calls below win
 
-	ctx := withDispatchedMachine(t.ctx, def.ID)
+	ctx = withDispatchedMachine(ctx, def.ID)
 	ctx = withParentRun(ctx, liveRun.ID)
 	// The caller's rules travel INTO the run, so a step's tool calls are judged
 	// the way the caller's own would be. A machine's steps reach them through
@@ -359,8 +361,8 @@ func (t *chatTurn) runDetachedMachine(d *ToolSession, def MachineDef, msg string
 	if err := t.guardMachineInput(ctx, def, msg); err != nil {
 		return "", err
 	}
-	liveRun := t.app.runsRegistry().Create(t.user, "", "", nil).
-		Describe("machine", machineRunLabel(t, def), truncateObs(msg, 100))
+	ctx, liveRun := t.app.runsRegistry().CreateCancellable(ctx, t.user, "", "")
+	liveRun.Describe("machine", machineRunLabel(t, def), truncateObs(msg, 100))
 	defer liveRun.Complete(RunStatusFailed)
 
 	ctx = withDispatchedMachine(ctx, def.ID)

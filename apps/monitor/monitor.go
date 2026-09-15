@@ -61,6 +61,40 @@ func (T *MonitorApp) Routes() {
 	})
 }
 
+// monitorAgentsTable is the live agent-activity table. Split out of the page so
+// its row action can be asserted on: the Cancel button's gate is a contract
+// with the activity endpoint, and getting it wrong is invisible (a button that
+// appears, posts, reports success, and stops nothing).
+func monitorAgentsTable(source string) ui.Table {
+	return ui.Table{
+		Source:        source,
+		RowKey:        "_id",
+		AutoRefreshMS: 3000,
+		EmptyText:     "No agent activity right now.",
+		Columns: []ui.Col{
+			{Field: "agent", Label: "Agent", Flex: 2},
+			{Field: "surface", Label: "Via", Flex: 1, Mute: true},
+			{Field: "activity", Label: "Status", Flex: 3, Mute: true},
+			{Field: "brief", Label: "Doing", Flex: 3, Mute: true},
+		},
+		// The kill switch for a runaway run, on the only rows that HAVE one:
+		// _cancellable marks a turn that is both in flight and running under a
+		// context the endpoint can reach. It used to read _running, which is not
+		// the same thing — most running rows had no cancel func behind them, so
+		// the button appeared, the POST answered success, and the work carried
+		// on. It lives here because
+		// this is where a person watching work happen already is. It used to
+		// live in orchestrate's Manage menu, on a pane that read this same
+		// endpoint at this same interval — a second copy of this table, whose
+		// one distinction was the button. The copy is gone; the button stayed.
+		RowActions: []ui.RowAction{
+			{Type: "button", Label: "Cancel", OnlyIf: "_cancellable", Compact: true,
+				PostTo:  "/orchestrate/api/console/activity/cancel?id={_id}",
+				Confirm: "Cancel this in-flight run? The agent stops mid-turn; anything it already did stays done."},
+		},
+	}
+}
+
 func (T *MonitorApp) handlePage(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := RequireUser(w, r, T.DB); !ok {
 		return
@@ -78,29 +112,7 @@ func (T *MonitorApp) handlePage(w http.ResponseWriter, r *http.Request) {
 	if focus != "" {
 		agentSource += "?run=" + url.QueryEscape(focus)
 	}
-	agents := ui.Table{
-		Source:        agentSource,
-		RowKey:        "_id",
-		AutoRefreshMS: 3000,
-		EmptyText:     "No agent activity right now.",
-		Columns: []ui.Col{
-			{Field: "agent", Label: "Agent", Flex: 2},
-			{Field: "surface", Label: "Via", Flex: 1, Mute: true},
-			{Field: "activity", Label: "Status", Flex: 3, Mute: true},
-			{Field: "brief", Label: "Doing", Flex: 3, Mute: true},
-		},
-		// The kill switch for a runaway run, on the only row that can have
-		// one: _running marks a turn still in flight. It lives here because
-		// this is where a person watching work happen already is. It used to
-		// live in orchestrate's Manage menu, on a pane that read this same
-		// endpoint at this same interval — a second copy of this table, whose
-		// one distinction was the button. The copy is gone; the button stayed.
-		RowActions: []ui.RowAction{
-			{Type: "button", Label: "Cancel", OnlyIf: "_running", Compact: true,
-				PostTo:  "/orchestrate/api/console/activity/cancel?id={_id}",
-				Confirm: "Cancel this in-flight run? The agent stops mid-turn; anything it already did stays done."},
-		},
-	}
+	agents := monitorAgentsTable(agentSource)
 	// Everything running now — the same instantaneous feed the live pill shows:
 	// apps and pipelines alongside active agent turns.
 	live := ui.Table{

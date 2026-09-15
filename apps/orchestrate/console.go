@@ -95,6 +95,15 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 				if label == "" {
 					label = name
 				}
+				// And a way to STOP it — but only on work that HAS one. A run
+				// created with no cancel func cannot be stopped, and offering
+				// the control anyway is how "I pressed Stop and it kept going"
+				// happens. LiveEntry.CancelURL was built for exactly this
+				// distinction: empty means it cannot be stopped from here.
+				cancelURL := ""
+				if s.Cancellable {
+					cancelURL = "/orchestrate/api/runs/" + url.PathEscape(s.ID) + "/cancel"
+				}
 				out = append(out, LiveEntry{
 					ID: s.ID, Label: runIndentPrefix(s.Depth) + label, App: name, Status: status,
 					Background: background[s.ID],
@@ -104,14 +113,9 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 					// conversation — the chat page reattaches to the run in
 					// flight and puts Cancel on it — which is what "take me to
 					// it" means to the person who was in that thread.
-					URL:      "/monitor?run=" + url.QueryEscape(s.ID),
-					OwnerURL: runOwnerDestination(T.WebPrefix(), s),
-					// And a way to STOP it. The endpoint has existed all along,
-					// ownership-checked, with a live cancel func behind it —
-					// nothing ever called it, so a fifteen-minute render or a
-					// four-piece set the user had changed their mind about had
-					// no off switch but waiting.
-					CancelURL: "/orchestrate/api/runs/" + url.PathEscape(s.ID) + "/cancel",
+					URL:       "/monitor?run=" + url.QueryEscape(s.ID),
+					OwnerURL:  runOwnerDestination(T.WebPrefix(), s),
+					CancelURL: cancelURL,
 					Order:     100 + i, // after in-view app tasks (default 0), preserving tree order
 					// The label is truncateObs(the user's message) —
 					// /api/live masks it for every viewer but this owner.

@@ -85,8 +85,11 @@ func registerStandingRunner(app *OrchestrateApp) {
 				display = rec.Name
 			}
 		}
-		liveRun := app.runsRegistry().Create(sa.Owner, sa.AgentID, "", nil).
-			Describe("standing", display, truncateObs(mission, 100))
+		// Cancellable: the returned ctx is what the fire runs under, so Stop on
+		// the live pill and Cancel on the Monitor row reach THIS work. Both
+		// offered the button before and neither could do anything.
+		ctx, liveRun := app.runsRegistry().CreateCancellable(ctx, sa.Owner, sa.AgentID, "")
+		liveRun.Describe("standing", display, truncateObs(mission, 100))
 		defer liveRun.Complete(RunStatusFailed) // safety net; explicit calls below win (idempotent)
 
 		// Standing agents run as their owner (no separate runtime user).
@@ -361,8 +364,8 @@ func runStandingPipeline(ctx context.Context, app *OrchestrateApp, sa StandingAg
 	// Live-activity registration, same as the agent path: a fire has no
 	// HTTP client, so without this it is invisible while running and only
 	// its finished RunRecord ever surfaces.
-	liveRun := app.runsRegistry().Create(sa.Owner, "", "", nil).
-		Describe("standing", display, truncateObs(input, 100))
+	ctx, liveRun := app.runsRegistry().CreateCancellable(ctx, sa.Owner, "", "")
+	liveRun.Describe("standing", display, truncateObs(input, 100))
 	defer liveRun.Complete(RunStatusFailed) // safety net; the explicit calls below win
 
 	// A pipeline makes no tool calls of its own — its agent stages do, and
@@ -470,8 +473,8 @@ func runStandingMachine(ctx context.Context, app *OrchestrateApp, sa StandingAge
 	if display == "" {
 		display = def.Name
 	}
-	liveRun := app.runsRegistry().Create(sa.Owner, "", "", nil).
-		Describe("standing", display, truncateObs(input, 100))
+	ctx, liveRun := app.runsRegistry().CreateCancellable(ctx, sa.Owner, "", "")
+	liveRun.Describe("standing", display, truncateObs(input, 100))
 	defer liveRun.Complete(RunStatusFailed) // safety net; the explicit calls below win
 
 	// The owner's pool, narrowed per step by each step's own Tools list.

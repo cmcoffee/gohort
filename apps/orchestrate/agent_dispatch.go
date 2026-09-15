@@ -623,8 +623,19 @@ func (T *OrchestrateApp) runAgentSyncConfirm(ctx context.Context, agentOwner, ru
 	// dispatch the sub-agent makes in turn captures this ID and nests one level
 	// deeper. defer marks Failed; the success path marks Completed first
 	// (idempotent — first call wins).
-	liveRun := T.runsRegistry().Create(runtimeUser, target.ID, subSessID, nil).
-		Describe("dispatch", target.Name, truncateObs(message, 100)).
+	//
+	// Cancellable, and registered under NO session id. Both halves matter.
+	// The ctx it hands back is what the run uses, so Stop and Cancel reach this
+	// dispatch. And subSessID is synthetic — "external-dispatch:<user>:<agent>",
+	// identical for every concurrent dispatch to the same agent — while the
+	// registry cancels the previous run on a session when a new one claims it.
+	// That rule is right for a conversation, where a fresh send replaces the
+	// turn before it, and wrong here: with a real cancel behind it, a pipeline
+	// fanning six branches at one agent would have each branch kill the last.
+	// Nothing looks a dispatch up by that id (BySession serves the chat panel's
+	// reconnect), so it is not registered under one.
+	ctx, liveRun := T.runsRegistry().CreateCancellable(ctx, runtimeUser, target.ID, "")
+	liveRun.Describe("dispatch", target.Name, truncateObs(message, 100)).
 		Parent(parentRunFromCtx(ctx))
 	defer liveRun.Complete(RunStatusFailed)
 	ctx = withParentRun(ctx, liveRun.ID)
@@ -1405,8 +1416,13 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	if liveKind == "" {
 		liveKind = "dispatch"
 	}
-	liveRun := T.runsRegistry().Create(runtimeUser, target.ID, subSessionID, nil).
-		Describe(liveKind, target.Name, truncateObs(message, 100)).
+	// Cancellable: the ctx it hands back is what the turn runs under. The
+	// session id stays, unlike the sync path above — here it is a real thread
+	// (a channel room, a monitor wake into a cortex thread), where "a new run
+	// replaces the one before it" is the correct rule and already applied to
+	// the chat turns that share it.
+	ctx, liveRun := T.runsRegistry().CreateCancellable(ctx, runtimeUser, target.ID, subSessionID)
+	liveRun.Describe(liveKind, target.Name, truncateObs(message, 100)).
 		Parent(parentRunFromCtx(ctx))
 	defer liveRun.Complete(RunStatusFailed)
 	ctx = withParentRun(ctx, liveRun.ID)

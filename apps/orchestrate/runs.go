@@ -204,6 +204,11 @@ type RunSnapshot struct {
 	EndedAt   time.Time
 	ParentID  string // "" for a top-level turn
 	Depth     int    // levels below a top-level turn (set by tree ordering, not stored)
+	// Cancellable is whether Cancel would do anything. Surfaces offer the
+	// button on this rather than on "is it running", because those were not the
+	// same thing and the gap was invisible: the button appeared on every
+	// running row, the endpoint answered success, and the work carried on.
+	Cancellable bool
 }
 
 // Snapshot returns the activity view of this run.
@@ -215,6 +220,7 @@ func (r *Run) Snapshot() RunSnapshot {
 		Kind: r.kind, AgentName: r.agentName, Label: r.label,
 		Status: r.status, Round: r.round, LastTool: r.lastTool,
 		StartedAt: r.startedAt, EndedAt: r.endedAt, ParentID: r.parentID,
+		Cancellable: r.cancel != nil,
 	}
 }
 
@@ -321,13 +327,30 @@ func (r *Run) Unsubscribe(s Subscription) {
 // Cancel triggers the agent loop's cancel context. The loop will
 // shortly see ctx.Done() and emit a final cancellation-related
 // event, then Complete will fire. Idempotent.
-func (r *Run) Cancel() {
+//
+// Reports whether there was anything to cancel. A run created with no cancel
+// func cannot be stopped, and the difference is the whole reason this returns
+// something: every Cancel button in the product called this, ignored it, and
+// told the user it had worked. A run that cannot be stopped should not be
+// offering the button in the first place (see Cancellable), and an endpoint
+// that gets here anyway should say so rather than answer 204.
+func (r *Run) Cancel() bool {
 	r.mu.Lock()
 	cancel := r.cancel
 	r.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	if cancel == nil {
+		return false
 	}
+	cancel()
+	return true
+}
+
+// Cancellable reports whether this run has a cancel func behind it, so a
+// surface can offer the button only where it does something.
+func (r *Run) Cancellable() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cancel != nil
 }
 
 // Complete marks the run finished and closes every subscriber.
@@ -365,6 +388,24 @@ func NewRunRegistry() *RunRegistry {
 		runs:   make(map[string]*Run),
 		bySess: make(map[string]*Run),
 	}
+}
+
+// CreateCancellable starts a run that can actually be stopped: it derives a
+// cancellable context from the caller's and hands both back, so the work below
+// runs under the context the Cancel button reaches.
+//
+// Use this, not Create-with-nil, for anything that runs long enough to appear
+// in a live surface. Eleven of the twelve run-creation sites passed nil, which
+// meant the scheduled fires, standing fires, dispatches, pipelines and machines
+// — everything a person would actually want to stop — all had a Cancel button
+// wired to nothing.
+//
+// The returned context MUST be the one the work uses. Shadowing the caller's
+// (ctx, run := ...CreateCancellable(ctx, …)) is the point: a derived context
+// nobody passes on is the same no-op with more steps.
+func (rr *RunRegistry) CreateCancellable(ctx context.Context, userID, agentID, sessionID string) (context.Context, *Run) {
+	ctx, cancel := context.WithCancel(ctx)
+	return ctx, rr.Create(userID, agentID, sessionID, cancel)
 }
 
 // Create starts a new Run, registers it under both its ID and its

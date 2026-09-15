@@ -368,12 +368,14 @@ func (t *chatTurn) agentsRunPipelineAction(args map[string]any) (string, error) 
 
 	// Live activity, same as the agent path and the schedule path: without it
 	// a multi-minute run is invisible until it finishes.
-	liveRun := t.app.runsRegistry().Create(t.user, "", "", nil).
-		Describe("pipeline", pipelineRunLabel(t, def), truncateObs(msg, 100)).
+	// Cancellable: the ctx it hands back is what the run uses below, so Stop
+	// and Cancel reach this pipeline instead of reporting success at nothing.
+	ctx, liveRun := t.app.runsRegistry().CreateCancellable(t.ctx, t.user, "", "")
+	liveRun.Describe("pipeline", pipelineRunLabel(t, def), truncateObs(msg, 100)).
 		Parent(parentRunFromCtx(t.ctx))
 	defer liveRun.Complete(RunStatusFailed) // safety net; the explicit calls below win
 
-	ctx := withDispatchedPipeline(t.ctx, def.ID)
+	ctx = withDispatchedPipeline(ctx, def.ID)
 	ctx = withParentRun(ctx, liveRun.ID)
 	// The caller's rules travel INTO the run, so a worker stage's tool calls
 	// are judged the way the caller's own would be. Withheld output is a
@@ -417,8 +419,8 @@ func (t *chatTurn) runDetachedPipeline(d *ToolSession, def PipelineDef, msg stri
 	if err := t.guardPipelineInput(ctx, def, msg); err != nil {
 		return "", err
 	}
-	liveRun := t.app.runsRegistry().Create(t.user, "", "", nil).
-		Describe("pipeline", pipelineRunLabel(t, def), truncateObs(msg, 100))
+	ctx, liveRun := t.app.runsRegistry().CreateCancellable(ctx, t.user, "", "")
+	liveRun.Describe("pipeline", pipelineRunLabel(t, def), truncateObs(msg, 100))
 	defer liveRun.Complete(RunStatusFailed)
 
 	ctx = withDispatchedPipeline(ctx, def.ID)

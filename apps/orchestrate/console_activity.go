@@ -214,6 +214,10 @@ type consoleActivityRow struct {
 	Surface  string `json:"surface"`
 	ID       string `json:"_id"`
 	Running  bool   `json:"_running,omitempty"`
+	// Cancellable gates the Cancel action. Distinct from Running, because they
+	// were silently different: every running row offered the button and most of
+	// them had nothing behind it.
+	Cancellable bool `json:"_cancellable,omitempty"`
 }
 
 // runOwnerDestination is the conversation a run's owner rejoins from the live
@@ -281,12 +285,13 @@ func (T *OrchestrateApp) handleConsoleActivity(w http.ResponseWriter, r *http.Re
 			surface += " · background"
 		}
 		rows = append(rows, consoleActivityRow{
-			Agent:    runIndentPrefix(s.Depth) + name,
-			Activity: activity,
-			Brief:    s.Label,
-			Surface:  surface,
-			ID:       s.ID,
-			Running:  s.Status == RunStatusRunning,
+			Agent:       runIndentPrefix(s.Depth) + name,
+			Activity:    activity,
+			Brief:       s.Label,
+			Surface:     surface,
+			ID:          s.ID,
+			Running:     s.Status == RunStatusRunning,
+			Cancellable: s.Status == RunStatusRunning && s.Cancellable,
 		})
 	}
 	writeJSON(w, rows)
@@ -305,7 +310,14 @@ func (T *OrchestrateApp) handleConsoleActivityCancel(w http.ResponseWriter, r *h
 		http.Error(w, "run not found", http.StatusNotFound)
 		return
 	}
-	run.Cancel()
+	// A run with no cancel func behind it cannot be stopped, and saying so is
+	// the point: this answered 204 either way, so the button reported success
+	// on work that carried right on. Rows now offer Cancel only where it does
+	// something (_cancellable), and this is the backstop for a stale row.
+	if !run.Cancel() {
+		http.Error(w, "this run cannot be cancelled — it is not running under a stoppable context", http.StatusConflict)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

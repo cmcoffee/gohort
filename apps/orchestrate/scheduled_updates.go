@@ -647,8 +647,13 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// attached, so without this it was invisible while running — the "Active
 	// now" surface only knew about interactive turns. No SSE ring is tailed;
 	// the run exists for its snapshot (status / round / last tool).
-	liveRun := app.runsRegistry().Create(p.Username, agent.ID, "", nil).
-		Describe("scheduled", agent.Name, truncateObs(p.Prompt, 100))
+	//
+	// Cancellable: the returned ctx is what the fire runs under, so the Cancel
+	// button on the Monitor row and the Stop on the live pill reach THIS work.
+	// Both offered it before and neither could do anything, because the run was
+	// created with no cancel func.
+	ctx, liveRun := app.runsRegistry().CreateCancellable(ctx, p.Username, agent.ID, "")
+	liveRun.Describe("scheduled", agent.Name, truncateObs(p.Prompt, 100))
 	// Tag the context with this run, and give the session the tagged context.
 	//
 	// Without it, nothing started from a wake or a scheduled fire could detach.

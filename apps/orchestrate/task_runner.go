@@ -72,7 +72,7 @@ func (T *OrchestrateApp) installTaskRunner() {
 		// registry keys by user and agent, and this run deliberately carries no
 		// session id — so without this nothing could answer the only question
 		// the agent actually has: what did I start in HERE, and can I stop it.
-		RegisterBackgroundJob(sessionID, TaskRun{ID: run.ID, Label: label}, run.Cancel)
+		RegisterBackgroundJob(sessionID, TaskRun{ID: run.ID, Label: label}, func() { run.Cancel() })
 
 		// The task outlives the turn that spawned it, so its spend is its
 		// own — it cannot ride the turn's line, which has usually already
