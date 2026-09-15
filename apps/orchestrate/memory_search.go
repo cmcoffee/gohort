@@ -129,7 +129,7 @@ func (T *OrchestrateApp) memSearchGrep(user string, udb Database, rec AgentRecor
 			if !VectorDB.Get(EmbeddedChunks, key, &c) {
 				continue
 			}
-			if !strings.HasPrefix(c.Source, prefix) || seen[c.ReportID] {
+			if !sourceInScope(c.Source, prefix) || seen[c.ReportID] {
 				continue
 			}
 			if !match(c.Text, c.Title, c.Section) {
@@ -311,7 +311,7 @@ func (T *OrchestrateApp) memSearchDelete(w http.ResponseWriter, r *http.Request,
 			prefix := agentKnowledgePrefix(user, rec.ID)
 			for _, key := range VectorDB.Keys(EmbeddedChunks) {
 				var c EmbeddedChunk
-				if VectorDB.Get(EmbeddedChunks, key, &c) && c.ReportID == ref && strings.HasPrefix(c.Source, prefix) {
+				if VectorDB.Get(EmbeddedChunks, key, &c) && c.ReportID == ref && sourceInScope(c.Source, prefix) {
 					VectorDB.Unset(EmbeddedChunks, key)
 					ok = true
 				}

@@ -208,7 +208,7 @@ func (T *OrchestrateApp) handleAgentKnowledgeAutoInferredWipe(w http.ResponseWri
 	}
 	prefix := agentKnowledgePrefix(user, agentID)
 	scope := func(c EmbeddedChunk) bool {
-		if !strings.HasPrefix(c.Source, prefix) {
+		if !sourceInScope(c.Source, prefix) {
 			return false
 		}
 		// Only auto-inferred reportIDs. Uploads + (defensive) shared
@@ -342,7 +342,7 @@ func (T *OrchestrateApp) handleAgentInferredList(w http.ResponseWriter, r *http.
 		if !VectorDB.Get(EmbeddedChunks, key, &c) {
 			continue
 		}
-		if !strings.HasPrefix(c.Source, prefix) && c.Source != prefix {
+		if !sourceInScope(c.Source, prefix) {
 			continue
 		}
 		if chunkProvenance(c.Source, c.ReportID) != "derived" {
@@ -393,7 +393,7 @@ func (T *OrchestrateApp) handleAgentInferredDelete(w http.ResponseWriter, r *htt
 		}
 		// Scope checks — defend against deleting curated content via
 		// a misrouted chunk id.
-		if !strings.HasPrefix(c.Source, prefix) && c.Source != prefix {
+		if !sourceInScope(c.Source, prefix) {
 			http.Error(w, "chunk not owned by this agent", http.StatusForbidden)
 			return
 		}
@@ -525,6 +525,23 @@ func stripChunkPartSuffix(section string) string {
 // chunk this (user, agent) pair has ingested. Used by the per-agent
 // "wipe knowledge" affordance to scope deletion without touching
 // other agents or users.
+// sourceInScope reports whether a chunk belongs to the corpus named by prefix.
+//
+// The prefix is "orchestrate:<user>:<agentID>", and a chunk is either exactly
+// that or that plus ":<topic>". Written once because the ten places that
+// checked it by hand mostly used a bare strings.HasPrefix, which also matches a
+// DIFFERENT corpus whose name merely starts the same way — agent "app-guides"
+// would have swept in everything belonging to "app-guides-author".
+//
+// Nothing leaked: user agent IDs are UUIDs, which cannot be proper prefixes of
+// each other, and no two hand-written seed ids stand in that relation today. So
+// the boundary held by accident of naming rather than by the check, and one
+// hand-written id added next to an existing one would have opened it with
+// nothing failing. A predicate can be got right once.
+func sourceInScope(source, prefix string) bool {
+	return source == prefix || strings.HasPrefix(source, prefix+":")
+}
+
 func agentKnowledgePrefix(user, agentID string) string {
 	return "orchestrate:" + user + ":" + agentID
 }
@@ -667,7 +684,7 @@ func (T *OrchestrateApp) handleAgentKnowledgeSources(w http.ResponseWriter, r *h
 		if !VectorDB.Get(EmbeddedChunks, key, &c) {
 			continue
 		}
-		if !strings.HasPrefix(c.Source, prefix) {
+		if !sourceInScope(c.Source, prefix) {
 			continue
 		}
 		// Skip derived chunks — they appear in the modal's separate
@@ -738,7 +755,7 @@ func (T *OrchestrateApp) handleAgentKnowledgeSourceDelete(w http.ResponseWriter,
 		if c.ReportID != reportID {
 			continue
 		}
-		if !strings.HasPrefix(c.Source, prefix) {
+		if !sourceInScope(c.Source, prefix) {
 			continue // other agent's chunk with same ID — refuse cross-scope delete
 		}
 		VectorDB.Unset(EmbeddedChunks, key)
@@ -769,7 +786,7 @@ func countAgentKnowledgeChunks(appDB Database, user, agentID string) int {
 		return 0
 	}
 	prefix := agentKnowledgePrefix(user, agentID)
-	return len(ChunksWhere(appDB, func(c EmbeddedChunk) bool { return strings.HasPrefix(c.Source, prefix) }))
+	return len(ChunksWhere(appDB, func(c EmbeddedChunk) bool { return sourceInScope(c.Source, prefix) }))
 }
 
 // ingestAgentKnowledge persists a free-form note under the agent's

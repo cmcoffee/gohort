@@ -193,7 +193,7 @@ func auditReferenceMemory(user, agentID string, orphaned, retired map[string]boo
 		if !VectorDB.Get(EmbeddedChunks, key, &c) {
 			continue
 		}
-		if !strings.HasPrefix(c.Source, prefix) && c.Source != prefix {
+		if !sourceInScope(c.Source, prefix) {
 			continue
 		}
 		if chunkProvenance(c.Source, c.ReportID) != "derived" {

@@ -585,7 +585,7 @@ func dropAgentSideData(db Database, owner, agentID string) {
 		// topic-suffixed variant. Both forms share the prefix. Also
 		// wipe the admin-curated agent-shared bucket — when the agent
 		// itself is deleted, its shared KB has nowhere to live.
-		if c.Source == prefix || strings.HasPrefix(c.Source, prefix+":") || c.Source == sharedPrefix {
+		if sourceInScope(c.Source, prefix) || c.Source == sharedPrefix {
 			authDB.Unset(EmbeddedChunks, k)
 			removed++
 		}

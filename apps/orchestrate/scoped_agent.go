@@ -295,7 +295,7 @@ func (T *OrchestrateApp) WipeScopedMemory(scope AgentScope) error {
 			if !VectorDB.Get(EmbeddedChunks, key, &c) {
 				continue
 			}
-			if strings.HasPrefix(c.Source, prefix) && strings.HasPrefix(c.ReportID, "orch-know-") {
+			if sourceInScope(c.Source, prefix) && strings.HasPrefix(c.ReportID, "orch-know-") {
 				VectorDB.Unset(EmbeddedChunks, key)
 			}
 		}
