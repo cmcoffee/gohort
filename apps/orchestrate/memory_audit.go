@@ -55,10 +55,6 @@ type MemoryFinding struct {
 	Quote  string `json:"quote"`  // the offending text, trimmed
 }
 
-// toolIdent matches a snake_case identifier — the shape every tool name takes
-// (verb_noun, never a bare word), which keeps ordinary prose out of the scan.
-var toolIdent = regexp.MustCompile(`\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b`)
-
 // parkedCallRE matches a note that records an invocation to make later. The
 // shape is wrong on its own terms — a note cannot call a tool — so this fires
 // whether or not the named tool still exists.
@@ -70,19 +66,26 @@ func (T *OrchestrateApp) auditAgentMemory(udb Database, user, agentID string, ag
 	if udb == nil {
 		return nil
 	}
-	known, orphaned := T.knownToolNames(udb, user)
-	// The dead-tool scan reads every snake_case identifier as a tool name and
-	// checks it against THIS USER's pool. That premise holds for an agent's own
-	// memory and collapses for an app agent working a per-system scope, where
-	// the memory describes a machine: service names, config keys, package
-	// names, unit files and paths are all snake_case, and servitor's notes are
-	// full of "run systemctl_status" and "check max_connections". Every one of
-	// those was reported as a tool that no longer exists — an audit confidently
-	// flagging correctly-recorded system facts as broken references.
+	current, orphaned := T.knownToolNames(udb, user)
+	for n := range orphaned {
+		current[n] = true // uncarried is still a name that exists
+	}
+	retired := observeToolNames(udb, user, current)
+
+	// The app-agent exemption is GONE, and the registry is why.
 	//
-	// The other findings still apply: a parked call is wrong on its own terms
-	// and stale notes are stale whatever they describe.
-	scanTools := !isAppAgent(agentID)
+	// The scan used to read every snake_case identifier as a tool name and
+	// check it against this user's pool, which collapsed for an app agent
+	// working a per-system scope: service names, config keys, package names and
+	// unit files are all snake_case, so servitor's "run systemctl_status" and
+	// "check max_connections" were reported as tools that no longer exist. The
+	// fix at the time was to skip those agents entirely, which also skipped
+	// every real finding in their memory.
+	//
+	// A registry cannot make that mistake — systemctl_status was never a tool,
+	// so it is not in the set and is never looked at. The exemption was a
+	// workaround for a problem that no longer exists, and keeping it would go
+	// on costing the findings it was never meant to suppress.
 	var out []MemoryFinding
 
 	ns := factsNamespace(agentID)
@@ -96,9 +99,7 @@ func (T *OrchestrateApp) auditAgentMemory(udb Database, user, agentID string, ag
 				Quote:  firstMatchingLine(notes, parkedCallRE),
 			})
 		}
-		if scanTools {
-			out = append(out, deadToolFindings("Working notes", notes, known, orphaned)...)
-		}
+		out = append(out, deadToolFindings("Working notes", notes, orphaned, retired)...)
 		// Only stored notes have an age; a seed has never been rewritten and
 		// saying so would be a complaint about configuration, not memory.
 		if !stored.UpdatedAt.IsZero() && time.Since(stored.UpdatedAt) > staleNotesAfter {
@@ -112,9 +113,7 @@ func (T *OrchestrateApp) auditAgentMemory(udb Database, user, agentID string, ag
 	}
 
 	for _, f := range ListMemoryFacts(udb, ns) {
-		if scanTools {
-			out = append(out, deadToolFindings("Saved facts", f.Note, known, orphaned)...)
-		}
+		out = append(out, deadToolFindings("Saved facts", f.Note, orphaned, retired)...)
 		if parkedCallRE.MatchString(f.Note) {
 			out = append(out, MemoryFinding{
 				Layer: "Saved facts", Kind: "parked_call",
@@ -124,14 +123,13 @@ func (T *OrchestrateApp) auditAgentMemory(udb Database, user, agentID string, ag
 		}
 	}
 
-	// Both of these exist only to run the dead-tool scan, so on a per-system
-	// scope they are skipped outright rather than called and filtered — which
-	// also spares the Reference Memory sweep, the most expensive part of the
-	// audit, on the scopes where it could never say anything true.
-	if scanTools {
-		out = append(out, auditGraphMemory(udb, ns, known, orphaned)...)
-		out = append(out, auditReferenceMemory(user, agentID, known, orphaned)...)
-	}
+	// Run on every scope now. These were skipped for app agents because the
+	// dead-tool scan could say nothing true there; with a registry it can, and
+	// the Reference Memory sweep is cheap when the retired set is empty —
+	// mentionsName is a substring walk per retired name, and a scope that has
+	// retired nothing does no work at all.
+	out = append(out, auditGraphMemory(udb, ns, orphaned, retired)...)
+	out = append(out, auditReferenceMemory(user, agentID, orphaned, retired)...)
 
 	// Orphan findings first — those name something known to be gone, where the
 	// others are judgements about shape.
@@ -147,7 +145,7 @@ func (T *OrchestrateApp) auditAgentMemory(udb Database, user, agentID string, ag
 // get_top_stories"); the attribute KEY is skipped, because key names are
 // snake_case by convention and auditing them would flag every entity in the
 // graph.
-func auditGraphMemory(udb Database, ns string, known, orphaned map[string]bool) []MemoryFinding {
+func auditGraphMemory(udb Database, ns string, orphaned, retired map[string]bool) []MemoryFinding {
 	var out []MemoryFinding
 	for _, e := range ListGraphEntities(udb, ns) {
 		parts := make([]string, 0, len(e.Attrs)+1+len(e.Aliases))
@@ -156,7 +154,7 @@ func auditGraphMemory(udb Database, ns string, known, orphaned map[string]bool) 
 		for _, v := range e.Attrs {
 			parts = append(parts, v)
 		}
-		for _, f := range deadToolFindings("Graph Memory", strings.Join(parts, "\n"), known, orphaned) {
+		for _, f := range deadToolFindings("Graph Memory", strings.Join(parts, "\n"), orphaned, retired) {
 			// Name the entity: "Graph Memory" alone doesn't tell you which of
 			// thirty nodes to open.
 			f.Detail = fmt.Sprintf("Entity %q — %s", e.Name, f.Detail)
@@ -174,7 +172,7 @@ func auditGraphMemory(udb Database, ns string, known, orphaned map[string]bool) 
 // appear in dozens of saved findings, and thirty rows saying the same thing is
 // how a findings list stops being read; one row saying "referenced in 30
 // entries" is the same information and remains actionable.
-func auditReferenceMemory(user, agentID string, known, orphaned map[string]bool) []MemoryFinding {
+func auditReferenceMemory(user, agentID string, orphaned, retired map[string]bool) []MemoryFinding {
 	if VectorDB == nil {
 		return nil
 	}
@@ -202,7 +200,7 @@ func auditReferenceMemory(user, agentID string, known, orphaned map[string]bool)
 			continue
 		}
 		scanned++
-		for _, f := range deadToolFindings("Reference Memory", c.Text, known, orphaned) {
+		for _, f := range deadToolFindings("Reference Memory", c.Text, orphaned, retired) {
 			h, seen := byTool[f.Detail]
 			if !seen {
 				h = &hit{example: f.Quote, detail: f.Detail}
@@ -227,14 +225,6 @@ func auditReferenceMemory(user, agentID string, known, orphaned map[string]bool)
 	return out
 }
 
-// isRegisteredToolName reports whether a name is a built-in chat tool. Asked
-// per candidate rather than by listing the catalog: the catalog builder needs
-// live app state, and this only ever needs a membership test.
-func isRegisteredToolName(name string) bool {
-	_, ok := FindChatTool(name)
-	return ok
-}
-
 func kindRank(kind string) int {
 	switch kind {
 	case "dead_tool":
@@ -251,123 +241,49 @@ func kindRank(kind string) int {
 // ORPHAN pool is known to be gone, while a name matching no tool anywhere is
 // only worth mentioning when the text is plainly talking about calling it —
 // otherwise every snake_case phrase in ordinary prose becomes a finding.
-// fencedCode matches a ``` block, lazily, so the shortest run wins and an
-// unclosed fence takes the rest of the text rather than swallowing the file.
-var fencedCode = regexp.MustCompile("(?s)```.*?(```|$)")
 
-// blankCode replaces fenced code with spaces of the same length.
+// deadToolFindings reports names in text that WERE tools and no longer are.
 //
-// Same length so every offset after it still points where it did: the findings
-// carry Quote (quoteAround) and a shortened copy would move every quote after
-// the first block onto the wrong line.
+// A lookup, not a judgement. The previous version inferred from the surrounding
+// sentence whether a name was being used as a tool, and every false positive
+// came from that step — a memory describing code says "the handler calls
+// parse_config" in the same words a memory about a tool does. Nothing in the
+// text distinguishes them, so nothing in the text is consulted: a name is
+// reported when the registry says it was a tool, and otherwise never.
 //
-// Code is excluded because snake_case with a paren after it is what a FUNCTION
-// CALL looks like, and toolIdent plus looksLikeACall cannot tell one from a
-// tool mention. A memory holding a Python helper reported every function in it
-// as a tool that no longer exists — a findings list built on "precision over
-// recall" turning into the thing its own header warns about.
-func blankCode(text string) string {
-	return fencedCode.ReplaceAllStringFunc(text, func(m string) string {
-		return strings.Repeat(" ", len(m))
-	})
-}
-
-func deadToolFindings(layer, text string, known, orphaned map[string]bool) []MemoryFinding {
-	// A chunk that IS source code says nothing about tools, whatever names it
-	// contains. Checked before anything else because the alternative is
-	// judging each identifier inside it one at a time, which is how a stored
-	// helper became a page of findings about tools nobody ever had.
-	if looksLikeCode(text) {
-		return nil
-	}
+// That trades recall for precision deliberately. A tool retired before the
+// registry saw it is invisible here. The pane's premise is precision over
+// recall, and a list nobody trusts is one nobody reads.
+func deadToolFindings(layer, text string, orphaned, retired map[string]bool) []MemoryFinding {
 	var out []MemoryFinding
-	seen := map[string]bool{}
-	text = blankCode(text)
-	for _, loc := range toolIdent.FindAllStringIndex(text, -1) {
-		name := text[loc[0]:loc[1]]
-		if seen[name] {
-			continue
-		}
-		seen[name] = true
-		switch {
-		case orphaned[name]:
+	for name := range orphaned {
+		if at, ok := mentionsName(text, name); ok {
 			out = append(out, MemoryFinding{
 				Layer: layer, Kind: "dead_tool",
 				Detail: fmt.Sprintf("References %q, which is in Orphaned Tools — its last carrying agent was deleted, so no agent can call it. Re-home the tool, or drop the reference.", name),
-				Quote:  quoteAround(text, loc[0]),
+				Quote:  quoteAround(text, at),
 			})
-		case known[name] || isRegisteredToolName(name):
-			// Resolves to something callable — nothing to say.
-		case looksLikeACall(text, loc[0], loc[1]):
+		}
+	}
+	for name := range retired {
+		if at, ok := mentionsName(text, name); ok {
 			out = append(out, MemoryFinding{
 				Layer: layer, Kind: "dead_tool",
-				Detail: fmt.Sprintf("Talks about calling %q, but no tool of that name exists — not in your pool, not shared, not orphaned. It was probably renamed or deleted.", name),
-				Quote:  quoteAround(text, loc[0]),
+				Detail: fmt.Sprintf("Names %q, which was a tool and is not any more — renamed or removed. Anything relying on it is describing a call that cannot be made.", name),
+				Quote:  quoteAround(text, at),
 			})
 		}
 	}
+	// Map iteration order is random and these land in a rendered list, so a
+	// reader would see them reshuffle between opens of the same pane.
+	sort.Slice(out, func(i, j int) bool { return out[i].Detail < out[j].Detail })
 	return out
-}
-
-// codeLine matches a line that is doing something only source code does:
-// closing or opening a block, ending a statement, declaring, importing, or
-// assigning a call to a name.
-var codeLine = regexp.MustCompile(`(?m)^\s*(def |func |class |import |from \w+ import|return |if .*:$|for .*:$|[}{]\s*$)|[;{]\s*$|^\s*[a-z_][a-z0-9_]*\s*=\s*[a-z_][a-z0-9_]*\(`)
-
-// looksLikeCode reports whether a chunk is source rather than prose about it.
-//
-// Two lines of evidence, because one is too easy to trip: a chunk must have at
-// least two code-shaped LINES, or be mostly lines that are. A sentence quoting
-// one call ("we used parse_config(path) here") has one, and stays prose.
-//
-// Deliberately cheap and structural. The alternative — asking a model whether a
-// chunk is code — costs a call per chunk on a sweep that already reads hundreds.
-func looksLikeCode(text string) bool {
-	m := codeLine.FindAllStringIndex(text, -1)
-	if len(m) >= 2 {
-		return true
-	}
-	lines := 0
-	for _, l := range strings.Split(text, "\n") {
-		if strings.TrimSpace(l) != "" {
-			lines++
-		}
-	}
-	return lines > 0 && len(m) == 1 && lines <= 2
 }
 
 // looksLikeACall reports whether the identifier at [start,end) is being used as
 // an invocation rather than mentioned in passing — "call foo_bar", "foo_bar(",
 // "run foo_bar with". Without this every snake_case word in a sentence would
 // be audited as a missing tool.
-// A trailing "(" is NOT enough on its own, and used to be.
-//
-// It is what a FUNCTION CALL looks like, and Reference Memory is full of stored
-// code. The first attempt at this stripped fenced blocks and capped how many
-// paren-matches one text could produce, which works on a whole document and not
-// on what the sweep actually reads: Reference Memory is scanned CHUNK BY CHUNK,
-// so a finding's fence and its code body land in different chunks and the cap
-// counts per chunk, where two or three calls sail under it.
-//
-// So the evidence has to be the SENTENCE, not the punctuation. Prose about a
-// tool says "call X" or "run X"; a line of source almost never does. What this
-// gives up is a bare get_top_stories(category=all) in a note with no verb —
-// covered separately by parkedCallRE, which matches the "pending task:" shape
-// that case actually arrives in.
-func looksLikeACall(text string, start, end int) bool {
-	from := start - 24
-	if from < 0 {
-		from = 0
-	}
-	before := strings.ToLower(strings.TrimSpace(text[from:start]))
-	for _, verb := range []string{"call", "calling", "run", "running", "use", "using", "invoke", "via", "task:", "tool"} {
-		if strings.HasSuffix(before, verb) || strings.HasSuffix(before, verb+" the") {
-			return true
-		}
-	}
-	return false
-}
-
 // knownToolNames returns every name that resolves to a real tool for this user,
 // and separately the orphan pool — a name in the second set is known dead
 // rather than merely unrecognized.
@@ -386,6 +302,9 @@ func (T *OrchestrateApp) knownToolNames(udb Database, user string) (known, orpha
 	return known, orphaned
 }
 
+// firstMatchingLine returns the first line of text matching re, trimmed for a
+// finding's Quote — so a finding shows the offending sentence rather than the
+// whole note.
 func firstMatchingLine(text string, re *regexp.Regexp) string {
 	for _, line := range strings.Split(text, "\n") {
 		if re.MatchString(line) {

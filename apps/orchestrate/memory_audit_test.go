@@ -115,17 +115,21 @@ func TestOrdinaryProseIsNotAudited(t *testing.T) {
 	}
 }
 
-// Call-shaped usage of a name that resolves nowhere IS worth surfacing.
-func TestACallToANonexistentToolIsFlagged(t *testing.T) {
+// THE COST OF THE REGISTRY, as a test so it is a decision and not a surprise.
+//
+// "call fetch_sales_totals every morning" names something that resolves
+// nowhere, and is no longer reported. The rule used to infer from the call
+// shape that this was a tool; that inference is what read every function in
+// stored code as a missing tool, and it cannot be narrowed without also
+// narrowing the true positives. A name is reported now only if the registry
+// saw it BE a tool — so a tool retired before the registry existed, or one
+// that never existed at all, is invisible here.
+func TestACallToANameTheRegistryNeverSawIsNotFlagged(t *testing.T) {
 	app, udb, rec, user := auditFixture(t)
 	SaveOperatingNotes(udb, factsNamespace(rec.ID), "to refresh the dashboard, call fetch_sales_totals every morning")
 
-	found := auditOf(t, app, udb, rec, user)
-	if len(found) != 1 || found[0].Kind != "dead_tool" {
-		t.Fatalf("want one dead_tool finding, got %v", kinds(found))
-	}
-	if !strings.Contains(found[0].Detail, "fetch_sales_totals") {
-		t.Errorf("the finding must name the tool: %s", found[0].Detail)
+	if found := auditOf(t, app, udb, rec, user); len(found) != 0 {
+		t.Errorf("a name the registry never saw must not be reported: %+v", found)
 	}
 }
 
@@ -466,8 +470,12 @@ func TestSystemScopedMemoryIsNotAuditedForToolNames(t *testing.T) {
 // finding the feature exists for.
 func TestAnOrdinaryAgentIsStillAuditedForToolNames(t *testing.T) {
 	app, udb, rec, user := auditFixture(t)
+	// A RETIRED name, not an invented one: the audit reports what the registry
+	// knows was a tool, so a made-up name proves nothing about whether this
+	// agent is being scanned at all. store_fact went with the unified memory
+	// surface and is declared retired.
 	SaveOperatingNotes(udb, factsNamespace(rec.ID),
-		"Remember to call fetch_quarterly_report() each Monday.")
+		"Remember to call store_fact each Monday.")
 
 	var sawDead bool
 	for _, f := range auditOf(t, app, udb, rec, user) {
