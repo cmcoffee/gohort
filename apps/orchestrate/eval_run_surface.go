@@ -41,8 +41,15 @@ func (T *OrchestrateApp) evalRunSurface(user string, suite EvalSuite) RunSurface
 		User:    user,
 		OwnerID: evalRunOwnerID(suite.ID),
 		Live: RunLiveInfo{
-			App:       "Evals: " + suite.Name,
-			URL:       "/orchestrate/evals/" + suite.ID + "/?session={id}",
+			App: "Evals: " + suite.Name,
+			// The SUITE page, which is /eval?id=<suite>, not /evals/<suite>/.
+			// That second shape is not a route: it fell into the /evals/ subtree
+			// and served the suite LIST, whose data URLs are relative to the
+			// page — so they resolved one level deeper, hit the same subtree,
+			// came back as HTML, and the table rendered "No suites yet" while
+			// the dashboard card was counting the very suite that had just run.
+			// ?session= is the panel's DeepLinkParam, so the run opens.
+			URL:       "/orchestrate/eval?id=" + suite.ID + "&session={id}",
 			CancelURL: "/orchestrate/api/evals/" + suite.ID + "/cancel?id={id}",
 		},
 		Work: func(ctx context.Context, input string, vars map[string]string, sink PipelineSink) (string, error) {

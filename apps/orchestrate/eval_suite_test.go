@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/gob"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -662,5 +664,63 @@ func TestStubbingOffSurvivesASaveAndReload(t *testing.T) {
 	// And the string wins when both are present — the fold is one-way.
 	if (EvalSuite{StubMode: "off", Stub: &yes}).Stubbed() {
 		t.Error("the legacy field overrode the current one")
+	}
+}
+
+// The Evals surface disagreed with itself: the dashboard card counted a suite
+// and said it was failing, while the page that lists suites said there were
+// none. Same data, two readers, and the page was the one that was wrong.
+//
+// The chain: an eval run's live entry pointed at /orchestrate/evals/<suite>/,
+// which is not a route — it fell into the /evals/ SUBTREE and served the suite
+// LIST page. That page's table Source is relative ("api/eval-suites"), so on
+// that deeper URL it fetched /orchestrate/evals/<suite>/api/eval-suites, which
+// landed in the same subtree and came back as HTML. A table handed HTML renders
+// its empty state, so the page reported no suites while the card counted one.
+func TestTheEvalRunLinkPointsAtARouteThatExists(t *testing.T) {
+	T := &OrchestrateApp{}
+	surface := T.evalRunSurface("craig", EvalSuite{ID: "suite-1", Name: "Debate quality"})
+
+	url := surface.Live.URL
+	if strings.HasPrefix(url, "/orchestrate/evals/") {
+		t.Fatalf("the live entry points into the /evals/ subtree (%q), which serves the suite LIST, not a suite", url)
+	}
+	if !strings.HasPrefix(url, "/orchestrate/eval?") {
+		t.Fatalf("the suite page is /orchestrate/eval?id=<suite>; the live entry says %q", url)
+	}
+	for _, want := range []string{"id=suite-1", "session={id}"} {
+		if !strings.Contains(url, want) {
+			t.Errorf("the live URL is missing %q: %s", want, url)
+		}
+	}
+}
+
+// A page whose data sources are relative to it may only be served at the URL
+// they were written for. Anything deeper is a 404 now, because a page that
+// renders with every fetch broken says "nothing here" in a voice that sounds
+// exactly like the truth.
+func TestTheEvalsPageOnlyServesItsOwnURL(t *testing.T) {
+	T := &OrchestrateApp{}
+	cases := []struct {
+		path string
+		want int
+	}{
+		{"/evals/suite-1/", http.StatusNotFound},
+		{"/evals/api/eval-suites", http.StatusNotFound},
+		{"/evals/", http.StatusFound}, // a bookmark still lands, one redirect later
+	}
+	for _, c := range cases {
+		w := httptest.NewRecorder()
+		T.handleEvalsPage(w, httptest.NewRequest("GET", c.path, nil))
+		if w.Code != c.want {
+			t.Errorf("%s answered %d, want %d", c.path, w.Code, c.want)
+		}
+	}
+	// The real page still needs a user; unauthenticated it is a 401, not a 404,
+	// which is how we know the path check let it through.
+	w := httptest.NewRecorder()
+	T.handleEvalsPage(w, httptest.NewRequest("GET", "/evals", nil))
+	if w.Code == http.StatusNotFound {
+		t.Error("the canonical path was refused by the routing guard")
 	}
 }

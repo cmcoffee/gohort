@@ -21,6 +21,22 @@ import (
 
 // handleEvalsPage lists the owner's suites.
 func (T *OrchestrateApp) handleEvalsPage(w http.ResponseWriter, r *http.Request) {
+	// This page's data sources are RELATIVE to it, so it may only be served at
+	// the URL they were written for. /evals/ is registered as a subtree, which
+	// means any deeper path landed here and rendered a page whose every fetch
+	// resolved one level too deep — answered by this same handler, as HTML, so
+	// the table read it as "no records" and said so. A 404 is the honest answer
+	// for a path that is not a page, and the trailing slash redirects rather
+	// than breaking a bookmark.
+	switch r.URL.Path {
+	case "/evals":
+	case "/evals/":
+		http.Redirect(w, r, T.WebPrefix()+"/evals", http.StatusFound)
+		return
+	default:
+		http.NotFound(w, r)
+		return
+	}
 	user, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
