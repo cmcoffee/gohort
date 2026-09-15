@@ -306,13 +306,23 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 					{Value: "agent", Label: "Agent — generalized lessons only"},
 					{Value: "chatbot", Label: "Chatbot — lessons + user personalization"},
 				},
-				Help: "Shapes what store_fact stores. Agent (default): generalized lessons only — specifics go to memory_save (Inferred). Chatbot: same + user personalization + conversation notes."},
+				Help: "Shapes what the agent pins with remember (pin=true). Agent (default): generalized lessons only — specifics go to remember (pin=false), which is searchable rather than always in prompt. Chatbot: same + user personalization + conversation notes."},
 			ui.FormField{Field: "disable_explicit", Type: "toggle", Label: "Disable Explicit Memory",
-				Help: "Strips store_fact tools + pre-injected facts block. For impersonal / stateless agents."},
+				Help: "Strips the pinned-notes half of remember / forget and the pre-injected facts block. For impersonal / stateless agents."},
 			ui.FormField{Field: "disable_inferred", Type: "toggle", Label: "Disable Reference Memory",
-				Help: "Strips memory_save / memory_search / memory_forget from the catalog and excludes derived chunks from recall. For agents that should answer from authoritative sources only. Per-turn Clean toggle = same, scoped to one turn."},
+				Help: "Strips the searchable half of remember / recall / forget and excludes derived chunks from recall. For agents that should answer from authoritative sources only. Per-turn Clean toggle = same, scoped to one turn."},
+			// The Memory PANE has always had a Working-notes editor and has always
+			// told a disabled one to "enable them in the agent editor" — which
+			// had no such control, so the instruction pointed at a door that did
+			// not exist. The only writers were Builder's authoring tools.
+			//
+			// Reads as an ENABLE among two DISABLEs, which is worth a wince and
+			// not worth flipping a stored field's polarity over: the label says
+			// what the switch is, and the help says what ON does.
+			ui.FormField{Field: "enable_notes", Type: "toggle", Label: "Working notes (running-state scratchpad)",
+				Help: "ON gives the agent one bounded, rewritable block of CURRENT state, always in prompt, plus the update_notes tool to rewrite it. Different from the memory above: facts accumulate, notes get replaced wholesale as the work moves. For long-running project or conversational agents; most task agents have no running state worth carrying. Edit the text itself under Configure → Memory."},
 			ui.FormField{Field: "recall_hints", Type: "toggle", Label: "Recall hints",
-				Help: "Each turn, surface a short scored list of knowledge you already have that looks relevant to the message — pointers (title + relevance), not the content. The agent pulls one with knowledge_search only if it fits, so it stops missing material it should look up. Best for agents with a real corpus (attached collections / uploaded docs). Thresholds are deployment tunables."},
+				Help: "Each turn, surface a short scored list of knowledge you already have that looks relevant to the message — pointers (title + relevance), not the content. The agent pulls one with recall only if it fits, so it stops missing material it should look up. Best for agents with a real corpus (attached collections / uploaded docs). Thresholds are deployment tunables."},
 			// (disable_skills toggle removed — redundant: skills only fire when a
 			// skill is ATTACHED (AllowedSkills), so "no skills" = attach none; the
 			// per-turn Clean toggle covers ad-hoc suppression. Field kept for the
