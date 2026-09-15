@@ -65,3 +65,28 @@ console.log('OK');
 		t.Fatalf("the record extractor does not hold:\n%s", out)
 	}
 }
+
+// A Table row is the surface behind every framework list, including the
+// live-activity ones, and it is the same flex line that was crushing the
+// hand-rolled live rows elsewhere: fixed-width neighbours, one long text
+// field, no room. It does not crush, and these are the three rules that
+// are the reason. A Col.Flex lands as an inline `flex: N` (grow N, basis 0),
+// so without min-width:0 a cell would refuse to shrink past its longest word
+// and shove the row wider than the card holding it.
+func TestTableCellsTruncateRatherThanCrush(t *testing.T) {
+	cell := cssRule(t, ".ui-table-cell")
+	for _, want := range []string{"min-width: 0", "white-space: nowrap", "text-overflow: ellipsis"} {
+		if !strings.Contains(cell, want) {
+			t.Errorf(".ui-table-cell lost %q — a crowded column starts wrapping inside the row instead of truncating", want)
+		}
+	}
+	if !strings.Contains(cssRule(t, ".ui-row-cells"), "min-width: 0") {
+		t.Error(".ui-row-cells must shrink, or the cells inside it never get the chance to")
+	}
+	// Below 800px the row stacks and each cell gets the full width, so there
+	// wrapping is right — but it has to break long words, not overflow.
+	narrow := cssRule(t, ".ui-row-cells > .ui-table-cell")
+	if !strings.Contains(narrow, "white-space: normal") || !strings.Contains(narrow, "word-break: break-word") {
+		t.Error("the stacked phone layout must wrap and break words, not clip them")
+	}
+}

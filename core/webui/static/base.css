@@ -156,13 +156,24 @@ input:focus, textarea:focus, select:focus {
   animation: pulse 2s infinite;
 }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+/* A row may become two lines. The ribbon is a fixed 360px box, so once the
+   badges have taken their words there is very little left for the topic; a
+   label with no flex rules of its own shrinks to its longest word and wraps
+   one word per line, and a topic with no spaces in it walks straight out
+   through the ribbon's border. The label needs a floor it can fall below
+   only by taking the next line whole. */
 #webui-live-ribbon .item {
-  display: flex; gap: 0.4rem; align-items: center;
+  display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap;
   padding: 0.3rem 0; color: var(--text);
   text-decoration: none;
 }
 #webui-live-ribbon .item:hover { color: var(--text-hi); }
+#webui-live-ribbon .item .label {
+  flex: 1 1 7rem; min-width: 0;
+  overflow-wrap: anywhere; line-height: 1.35;
+}
 #webui-live-ribbon .badge {
+  flex: 0 0 auto; white-space: nowrap;
   font-size: 0.65rem;
   padding: 0.1rem 0.35rem;
   border-radius: 3px;

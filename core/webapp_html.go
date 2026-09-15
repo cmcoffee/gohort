@@ -39,12 +39,19 @@ const liveRibbonCSS = `
   display: inline-block; animation: pulse 2s infinite;
 }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+/* Mirrors base.css — see there for why the label carries a flex floor
+   instead of taking whatever the badges leave over. */
 #webui-live-ribbon .item {
-  display: flex; gap: 0.4rem; align-items: center;
+  display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap;
   padding: 0.3rem 0; color: var(--text); text-decoration: none;
 }
 #webui-live-ribbon .item:hover { color: var(--text-hi); }
+#webui-live-ribbon .item .label {
+  flex: 1 1 7rem; min-width: 0;
+  overflow-wrap: anywhere; line-height: 1.35;
+}
 #webui-live-ribbon .badge {
+  flex: 0 0 auto; white-space: nowrap;
   font-size: 0.65rem; padding: 0.1rem 0.35rem; border-radius: 3px;
   background: var(--bg-2); color: var(--text-mute);
 }

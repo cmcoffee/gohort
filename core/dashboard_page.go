@@ -186,21 +186,43 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
   }
   #live-panel h3 { color: #8b949e; font-size: 0.9rem; margin-bottom: 0.75rem; cursor: pointer; }
   #live-panel h3:hover { color: #c9d1d9; }
+  /* A row is a flex LINE THAT MAY BECOME TWO, and every part of that is load
+     bearing. In the 320px rail (and on a handset) an app badge, a state badge
+     and a status string are all the width there is; the label was flex:1 —
+     basis 0, shrink 1, min-width auto — so it took only what was left over,
+     which was sometimes a few pixels. A track that narrow wraps the topic one
+     character per line: text stacked on itself, a row far taller than the
+     badges beside it, and the tail spilling past the card's own border.
+     The three rules that stop it: the badges never shrink below their words,
+     the label carries a real minimum so it wraps DOWN to its own full-width
+     line instead of being squeezed onto this one, and a long unbroken string
+     breaks anywhere rather than running out of the box. */
   .live-item {
-    display: flex; align-items: center; gap: 0.75rem;
+    display: flex; align-items: center; flex-wrap: wrap;
+    gap: 0.35rem 0.75rem;
     padding: 0.6rem 0.8rem; background: #161b22; border: 1px solid #21262d;
     border-radius: 6px; margin-bottom: 0.4rem; cursor: pointer;
     text-decoration: none; color: #c9d1d9; font-size: 0.85rem;
   }
   .live-item:hover { border-color: #30363d; }
   .live-badge {
+    flex: 0 0 auto;
     font-size: 0.7rem; padding: 0.15rem 0.4rem; border-radius: 4px;
     font-weight: 600; white-space: nowrap;
   }
   .live-badge.running { background: var(--success); color: #fff; }
   .live-badge.queued { background: var(--warning); color: #fff; }
-  .live-label { flex: 1; }
-  .live-status { color: #8b949e; font-size: 0.8rem; }
+  .live-label {
+    /* 7rem is the floor: below that the topic is not worth reading, so the
+       label takes the next line whole instead of sharing this one. */
+    flex: 1 1 7rem; min-width: 0;
+    overflow-wrap: anywhere; line-height: 1.35;
+  }
+  .live-status {
+    flex: 0 1 auto; min-width: 0; margin-left: auto; text-align: right;
+    color: #8b949e; font-size: 0.8rem;
+    overflow-wrap: anywhere; line-height: 1.35;
+  }
   .auth-bar {
     position: fixed; top: 12px; right: 12px; z-index: 9999;
     display: flex; align-items: center; gap: 0.6rem;
@@ -309,6 +331,14 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
   <div id="live-panel"><h3><a href="/monitor" style="color:inherit;text-decoration:none">Live Sessions &rarr;</a></h3><div id="live-list"></div></div>
 <script>
 var liveHidden = false;
+// Every field below is user content (a topic someone typed, an app name) and
+// lands in innerHTML. Escaped here so a "<" renders as a "<" instead of
+// opening a tag and taking the rest of the row with it.
+function esc(v) {
+  return String(v == null ? '' : v).replace(/[&<>"]/g, function(c) {
+    return c === '&' ? '&amp;' : c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&quot;';
+  });
+}
 function toggleLive() {
   liveHidden = !liveHidden;
   document.getElementById('live-list').style.display = liveHidden ? 'none' : 'block';
@@ -334,12 +364,13 @@ function refreshLive() {
     for (var i = 0; i < items.length; i++) {
       var it = items[i];
       var badge = it.queued ? '<span class="live-badge queued">Queued</span>' : '<span class="live-badge running">Running</span>';
-      var app = it.app ? '<span class="live-badge" style="background:#30363d;color:#8b949e">' + it.app + '</span>' : '';
+      var app = it.app ? '<span class="live-badge" style="background:#30363d;color:#8b949e">' + esc(it.app) + '</span>' : '';
+      var label = it.topic || it.label || 'Untitled';
       // Every live item opens the central Monitor page (the expanded view).
-      html += '<a class="live-item" href="/monitor">';
+      html += '<a class="live-item" href="/monitor" title="' + esc(label) + '">';
       html += app + badge;
-      html += '<span class="live-label">' + (it.topic || it.label || 'Untitled') + '</span>';
-      if (it.status) html += '<span class="live-status">' + it.status + '</span>';
+      html += '<span class="live-label">' + esc(label) + '</span>';
+      if (it.status) html += '<span class="live-status">' + esc(it.status) + '</span>';
       html += '</a>';
     }
     list.innerHTML = html;

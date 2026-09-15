@@ -214,7 +214,13 @@ select:-webkit-autofill {
 }
 .ui-live-menu {
   position: absolute; right: 0; top: calc(100% + 6px); z-index: 50;
-  min-width: 320px; max-width: 480px;
+  /* Both ends capped against the viewport. The menu hangs from the pill at the
+     right edge of the header, so width it cannot fit grows LEFTWARD, off the
+     side of the screen — and a 320px floor is already wider than a 320px phone
+     has left once the header's own padding is taken. There is no scrolling to
+     something that overflows that way. */
+  min-width: min(320px, calc(100vw - 24px));
+  max-width: min(480px, calc(100vw - 24px));
   background: var(--bg-1); border: 1px solid var(--border);
   border-radius: 8px; box-shadow: 0 4px 14px rgba(0,0,0,0.35);
   padding: 0.3rem; max-height: 60vh; overflow-y: auto;
@@ -223,8 +229,16 @@ select:-webkit-autofill {
   font-size: 0.82rem; color: var(--text-mute);
   padding: 0.5rem 0.6rem; text-align: center;
 }
+/* The row is one line where there is room for one and two where there is not.
+   Everything on it but the label declares flex-shrink: 0 — app, state, status,
+   Stop — which leaves the label as the only thing that can give, and a basis of
+   0 means it gives all the way down: in a menu narrowed to a phone it rendered
+   at zero width, so the one field that says WHICH session this is disappeared
+   while the badges beside it scrolled sideways. A floor plus wrap puts it on
+   the next line whole instead. */
 .ui-live-item {
-  display: flex; align-items: center; gap: 0.5rem;
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: 0.3rem 0.5rem;
   padding: 0.5rem 0.6rem; border-radius: 6px;
   text-decoration: none; color: var(--text);
   font-size: 0.85rem;
@@ -262,7 +276,9 @@ select:-webkit-autofill {
    care about, so it must not compete with the label for the first glance. */
 .ui-live-status {
   font-size: 0.7rem; color: var(--text-mute);
-  flex-shrink: 0; margin-left: auto; padding-left: 0.5rem;
+  /* Shrinkable, unlike the badges: it already ellipsizes, so giving up width
+     costs it a few characters where refusing to costs the label all of them. */
+  flex: 0 1 auto; min-width: 0; margin-left: auto; padding-left: 0.5rem;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%;
 }
 /* Stop control on a live row. Only rendered when the entry declares a cancel
@@ -280,7 +296,9 @@ select:-webkit-autofill {
 .ui-live-stop:hover:not(:disabled) { color: var(--danger, #dc2626); border-color: var(--danger, #dc2626); }
 .ui-live-stop:disabled { opacity: 0.6; cursor: default; }
 .ui-live-label {
-  flex: 1; min-width: 0;
+  /* 7rem is the floor — the same one the dashboard rail and the legacy ribbon
+     use. Below it the label is not worth reading, so it takes the next line. */
+  flex: 1 1 7rem; min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .ui-page-title {
