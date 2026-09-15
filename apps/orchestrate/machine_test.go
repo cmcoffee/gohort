@@ -1740,7 +1740,10 @@ func TestATransientStepCanReachTheAgentsCorpus(t *testing.T) {
 		names = append(names, td.Tool.Name)
 	}
 	joined := strings.Join(names, " ")
-	for _, want := range []string{"knowledge_search", "fetch_knowledge_doc"} {
+	// recall fronts the corpus now, and recall(id="doc:…") is the drill-down
+	// the separate fetch tool used to be. The property is the same one: a step
+	// told to search must hold the tool that searches.
+	for _, want := range []string{"recall"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("a step told to search the corpus must be built holding %q; pool had %v", want, names)
 		}
@@ -1754,8 +1757,12 @@ func TestAStepWithNoCorpusIsNotGivenKnowledgeTools(t *testing.T) {
 	turn.agent.AttachedCollections = nil
 	turn.agent.IngestAttachments = false
 
+	// Every layer recall spans goes off, not just the corpus — otherwise the
+	// agent can still recall its own findings and the trio is correct to appear.
+	turn.agent.DisableInferred = true
+	turn.agent.DisableExplicit = true
 	for _, td := range turn.machineCatalog(MachinePhase{Name: "assess", Prompt: "decide"}) {
-		if td.Tool.Name == "knowledge_search" {
+		if td.Tool.Name == "recall" {
 			t.Error("an agent with nothing retrievable should not be handed a tool that searches it")
 		}
 	}
@@ -1768,10 +1775,10 @@ func TestANamedKnowledgeToolSurvivesAStepsNarrowing(t *testing.T) {
 	turn.agent.AttachedCollections = []string{"c-kiteworks"}
 
 	ph := MachinePhase{Name: "assess", Prompt: "search first",
-		Tools: []string{"knowledge_search"}}
+		Tools: []string{"recall"}}
 	pool := turn.machineCatalog(ph)
 	narrowed := PhaseTools(ph, pool)
-	if len(narrowed) != 1 || narrowed[0].Tool.Name != "knowledge_search" {
+	if len(narrowed) != 1 || narrowed[0].Tool.Name != "recall" {
 		t.Errorf("a step naming the corpus tool should reach exactly it, got %+v", narrowed)
 	}
 }

@@ -146,13 +146,20 @@ func TestASearchThatFoundDocumentsMintsTheKnowledgeTools(t *testing.T) {
 	turn, _ := machineTurnFixture(t, residentMachine())
 	turn.agent.AttachedCollections = nil
 	turn.agent.IngestAttachments = false
+	// The memory layers go off too: recall spans them as well as the corpus,
+	// so an agent that can still recall its own findings is not the "nothing
+	// retrievable" case this test is about.
+	turn.agent.DisableInferred = true
+	turn.agent.DisableExplicit = true
 	if got := corpusNames(turn); got != "" {
 		t.Fatalf("fixture should start with nothing retrievable, got %q", got)
 	}
 
 	turn.hintedKnowledge = 3 // the recall search found three curated documents
 	got := corpusNames(turn)
-	for _, want := range []string{"knowledge_search", "fetch_knowledge_doc"} {
+	// recall fronts knowledge search now; the property is unchanged — a turn
+	// whose search found documents must carry the tool that reads them.
+	for _, want := range []string{"recall"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("a turn whose search found documents must carry %q; got %q", want, got)
 		}
@@ -167,7 +174,7 @@ func TestTheHintSignalNeverWithholdsTheKnowledgeTools(t *testing.T) {
 	turn.agent.AttachedCollections = []string{"c-kiteworks"}
 	turn.hintedKnowledge = 0 // hints off, or a query too short to run one
 
-	if got := corpusNames(turn); !strings.Contains(got, "knowledge_search") {
+	if got := corpusNames(turn); !strings.Contains(got, "recall") {
 		t.Errorf("a configured corpus stands on its own without a hint; got %q", got)
 	}
 }
@@ -177,6 +184,8 @@ func TestTheHintSignalNeverWithholdsTheKnowledgeTools(t *testing.T) {
 // doc_ids the handler must then refuse.
 func TestNoCorpusByEitherRouteStillWithholdsTheKnowledgeTools(t *testing.T) {
 	turn, _ := machineTurnFixture(t, residentMachine())
+	turn.agent.DisableInferred = true
+	turn.agent.DisableExplicit = true
 	turn.agent.AttachedCollections = nil
 	turn.agent.IngestAttachments = false
 	turn.hintedKnowledge = 0

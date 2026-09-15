@@ -18,10 +18,13 @@
 // ATTRIBUTE (pin, and the [tag] on every recall hit), not as a tool the model
 // has to choose between.
 //
-// Gated behind the tune_unified_memory knob (0 = legacy 8-tool surface, the
-// default; 1 = this 3-verb surface) so the two can be A/B'd without a code
-// change. The graph tools (link_entities / recall_about / forget_graph) are
-// NOT part of this collapse and stay wired in both modes.
+// This is THE memory surface. It shipped behind tune_unified_memory so the two
+// could be A/B'd, the legacy eight won nothing, and a knob nobody should turn
+// is a branch every reader has to hold in their head — so the flag and the
+// second surface are gone. The graph tools (link_entities / recall_about /
+// forget_graph) were never part of the collapse and are untouched: a
+// relationship between named entities is a different question from a passage
+// about a topic.
 
 package orchestrate
 
@@ -38,26 +41,6 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
-// TunableUnifiedMemory toggles the collapsed remember/recall/forget surface.
-const TunableUnifiedMemory = "tune_unified_memory"
-
-func init() {
-	RegisterTunable(TunableSpec{
-		App:      "/orchestrate",
-		Key:      TunableUnifiedMemory,
-		Category: "Memory",
-		Label:    "Unified memory tools (remember/recall/forget)",
-		Help:     "Off = legacy eight memory tools (store_fact, memory, knowledge_search, …). On = the collapsed three-verb surface. Restart not required; applies to new turns.",
-		Kind:     KindBool,
-		Default:  0,
-		Min:      0,
-		Max:      1,
-	})
-}
-
-// unifiedMemoryEnabled reports whether the collapsed surface is in force.
-func unifiedMemoryEnabled() bool { return TuneBool(TunableUnifiedMemory) }
-
 // --- mode-aware tool-name phrases -----------------------------------------
 //
 // Prose in the seed prompts and a few shared handler messages names the memory
@@ -70,59 +53,35 @@ func unifiedMemoryEnabled() bool { return TuneBool(TunableUnifiedMemory) }
 // splice INTO, not to these double-quoted returns.
 
 func memPinPhrase() string { // save a short, always-in-prompt note
-	if unifiedMemoryEnabled() {
-		return "remember (pin=true)"
-	}
-	return "store_fact"
+	return "remember (pin=true)"
 }
 
 func memFindingSavePhrase() string { // save a pull-only finding
-	if unifiedMemoryEnabled() {
-		return "remember (pin=false)"
-	}
-	return "memory(save)"
+	return "remember (pin=false)"
 }
 
 func memRecallPhrase() string { // search your own saved findings
-	if unifiedMemoryEnabled() {
-		return "recall"
-	}
-	return "memory(search)"
+	return "recall"
 }
 
 func memKnowledgePhrase() string { // search the curated knowledge corpus
-	if unifiedMemoryEnabled() {
-		return "recall"
-	}
-	return "knowledge_search"
+	return "recall"
 }
 
 func memHistoryPhrase() string { // search folded-away conversation history
-	if unifiedMemoryEnabled() {
-		return "recall"
-	}
-	return "recall_history and expand_history"
+	return "recall"
 }
 
 func memForgetPhrase() string { // drop a stored always-in-prompt note by index
-	if unifiedMemoryEnabled() {
-		return "forget"
-	}
-	return "forget_fact"
+	return "forget"
 }
 
 func memLessonsLogPhrase() string { // the trio backing the per-user lessons log
-	if unifiedMemoryEnabled() {
-		return "remember (pin=true) / forget / recall"
-	}
-	return "store_fact / forget_fact / search_facts"
+	return "remember (pin=true) / forget / recall"
 }
 
 func memRefMemToolsClause() string { // how the Reference-Memory layer is reached
-	if unifiedMemoryEnabled() {
-		return "the `remember` and `recall` tools"
-	}
-	return "the `memory` tool: action=\"save\"|\"search\"|\"forget\""
+	return "the `remember` and `recall` tools"
 }
 
 // --- mode-aware prompt rewrite --------------------------------------------
@@ -169,9 +128,6 @@ var unifiedMemToolReplacements = map[string]string{
 // assembled prompt for their unified-surface equivalents when the collapsed
 // surface is live. No-op under the legacy surface.
 func rewriteMemoryToolNames(s string) string {
-	if !unifiedMemoryEnabled() {
-		return s
-	}
 	return legacyMemToolRE.ReplaceAllStringFunc(s, func(m string) string {
 		if r, ok := unifiedMemToolReplacements[m]; ok {
 			return r

@@ -152,38 +152,32 @@ func (t *chatTurn) dispatchListNamesARunnable() bool {
 // catalog already applied, and for its stated reason: a knowledge tool over an
 // empty corpus invites doc_ids the handler must then refuse.
 func (t *chatTurn) corpusToolDefs() []AgentToolDef {
-	if unifiedMemoryEnabled() {
-		// recall fronts knowledge search under the collapsed surface, and
-		// recall(id="doc:…") is the drill-down.
-		if !t.hasAnyMemoryLayer() {
-			t.noteToolWithheld("the unified memory tools",
-				"the collapsed surface is on and this agent has no memory layer to reach")
-			return nil
-		}
+	// recall fronts knowledge search, and recall(id="doc:…") is the drill-down.
+	if t.hasAnyMemoryLayer() {
 		return t.unifiedMemoryTools()
 	}
-	if !t.agentHasRetrievableContent() {
-		// The predicate INFERS from configuration what a search can answer
-		// outright, and the recall nudge has usually already run that search
-		// this turn. When it came back with documents, that is proof and it
-		// outranks the inference.
-		//
-		// Withholding the tools over the disagreement is the worst of the two
-		// readings, because the same turn is about to show the model those
-		// documents: renderRecallHints prints their titles and names
-		// fetch_knowledge_doc(doc_id=…) as the way to read them. A door is
-		// advertised and the handle removed, and the agent reports, accurately
-		// and repeatedly, that the tool is not in its tool set.
-		if n := t.knowledgeHitsThisTurn(); n > 0 {
-			Log("[orchestrate.orch] agent=%s knowledge tools minted over a negative config check: the recall search found %d curated hit(s) this turn", t.agent.ID, n)
-			t.turnDiag("corpus-config-disagrees", fmt.Sprintf(
-				"This agent's configuration says it has no knowledge corpus, but the recall search found %d document(s) in one this turn, so the knowledge tools were provided anyway. Until the collection is attached to the agent itself (or marked deployment-scope), the tools appear only on turns whose question happens to match something, which reads from inside the turn as a tool that comes and goes.", n))
-			return []AgentToolDef{t.searchKnowledgeToolDef(), t.fetchKnowledgeDocToolDef()}
-		}
-		t.noteToolWithheld("knowledge_search and fetch_knowledge_doc", corpusWithheldWhy)
-		return nil
+	// The predicate above INFERS from configuration what a search can answer
+	// outright, and the recall nudge has usually already run that search this
+	// turn. When it came back with documents, that is proof and it outranks the
+	// inference.
+	//
+	// Withholding over the disagreement is the worse of the two readings,
+	// because the same turn is about to show the model those documents:
+	// renderRecallHints prints their titles and names the way to read them. A
+	// door is advertised and the handle removed, and the agent reports,
+	// accurately and repeatedly, that the tool is not in its tool set.
+	//
+	// This lived only in the legacy branch. The collapsed surface never had it,
+	// so removing the legacy surface would have made a fixed bug permanent
+	// instead of retiring it.
+	if n := t.knowledgeHitsThisTurn(); n > 0 {
+		Log("[orchestrate.orch] agent=%s memory tools minted over a negative config check: the recall search found %d curated hit(s) this turn", t.agent.ID, n)
+		t.turnDiag("corpus-config-disagrees", fmt.Sprintf(
+			"This agent's configuration says it has no knowledge corpus, but the recall search found %d document(s) in one this turn, so the memory tools were provided anyway. Until the collection is attached to the agent itself (or marked deployment-scope), the tools appear only on turns whose question happens to match something, which reads from inside the turn as a tool that comes and goes.", n))
+		return t.unifiedMemoryTools()
 	}
-	return []AgentToolDef{t.searchKnowledgeToolDef(), t.fetchKnowledgeDocToolDef()}
+	t.noteToolWithheld("remember, recall and forget", corpusWithheldWhy)
+	return nil
 }
 
 // corpusWithheldWhy names every input agentHasRetrievableContent consults. All
@@ -240,25 +234,16 @@ func (t *chatTurn) frameworkConversationalTools(sess *ToolSession) []AgentToolDe
 	}
 	out = append(out, t.loadToolToolDef(sess)) // gateway for the agent's lazy custom tools
 	out = append(out, t.skillToolDefs()...)    // read_skill / skill_knowledge_*; nil when skills off
-	if unifiedMemoryEnabled() {
-		// Collapsed surface: remember / recall / forget replace the six
-		// memory + knowledge tools (knowledge_search + fetch were skipped near
-		// the top of this function). Graph tools aren't part of the collapse
-		// and stay gated by explicitOff.
-		if t.hasAnyMemoryLayer() {
-			out = append(out, t.unifiedMemoryTools()...)
-		}
-		if !t.explicitOff() {
-			out = append(out, t.linkEntitiesToolDef(), t.recallAboutToolDef(), t.forgetGraphToolDef())
-		}
-	} else {
-		if !t.inferredOff() {
-			out = append(out, t.memoryToolDef()) // Reference Memory (memory_save / search / forget)
-		}
-		if !t.explicitOff() {
-			// Explicit (store_fact / forget_fact) + Graph (link_entities / recall_about).
-			out = append(out, t.storeFactToolDef(), t.forgetFactToolDef(), t.searchFactsToolDef(), t.linkEntitiesToolDef(), t.recallAboutToolDef(), t.forgetGraphToolDef())
-		}
+	// remember / recall / forget replace the six memory + knowledge tools
+	// (knowledge_search + fetch were skipped near the top of this function).
+	// The GRAPH tools are not part of the collapse — a relationship between
+	// named entities is a different question from a passage about a topic —
+	// so they stay their own trio, gated by explicitOff.
+	if t.hasAnyMemoryLayer() {
+		out = append(out, t.unifiedMemoryTools()...)
+	}
+	if !t.explicitOff() {
+		out = append(out, t.linkEntitiesToolDef(), t.recallAboutToolDef(), t.forgetGraphToolDef())
 	}
 	// Working notes (rewritable running-state block) — its own opt-in layer,
 	// independent of the Explicit/Reference memory toggles.

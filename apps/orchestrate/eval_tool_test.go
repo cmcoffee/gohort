@@ -339,7 +339,9 @@ func TestTheEvalCatalogCarriesTheFrameworkTools(t *testing.T) {
 		names = append(names, td.Tool.Name)
 	}
 	joined := strings.Join(names, " ")
-	if !strings.Contains(joined, "knowledge_search") {
+	// recall reads the corpus now. Same property: an agent is graded holding
+	// the tool it would actually answer with.
+	if !strings.Contains(joined, "recall") {
 		t.Errorf("an agent with a corpus must be graded holding the tool that reads it; got %v", names)
 	}
 	// And no name twice: a tool arriving by two routes is still one tool, and a

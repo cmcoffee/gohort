@@ -132,19 +132,8 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	// (dispatch_to_worker temporarily unmounted on the worker step
 	// too — same reason as the orchestrator catalog: discoverability
 	// problem, not a wiring problem.)
-	if unifiedMemoryEnabled() {
-		if !t.explicitOff() {
-			tools = append(tools, t.linkEntitiesToolDef(), t.recallAboutToolDef(), t.forgetGraphToolDef())
-		}
-	} else {
-		if !t.inferredOff() {
-			tools = append(tools, t.memoryToolDef())
-			toolNames = append(toolNames, "memory")
-		}
-		if !t.explicitOff() {
-			tools = append(tools, t.storeFactToolDef(), t.forgetFactToolDef(), t.searchFactsToolDef(),
-				t.linkEntitiesToolDef(), t.recallAboutToolDef(), t.forgetGraphToolDef())
-		}
+	if !t.explicitOff() {
+		tools = append(tools, t.linkEntitiesToolDef(), t.recallAboutToolDef(), t.forgetGraphToolDef())
 	}
 	// Working notes (rewritable running-state block) — its own opt-in layer,
 	// independent of the Explicit/Reference memory toggles.

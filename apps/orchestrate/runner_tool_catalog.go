@@ -294,12 +294,8 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// no way to schedule it, so it stopped half-done or handed off.
 	if (t.agent.Fleet || agentCanAuthor(t.agent)) && forOrchestrator && ownerRun {
 		om := operatorManagementTools(sess, t.agent.ID)
-		// History drill-in is its own pair (recall_history / expand_history) in
-		// legacy mode; the unified `recall` tool already spans folded-away
-		// history, so drop the pair to avoid two tools that search the past.
-		if !unifiedMemoryEnabled() {
-			om = append(om, operatorHistoryTools(sess, t.agent.ID)...)
-		}
+		// No standalone history pair: `recall` spans folded-away history, and
+		// two tools that search the past is the choice the collapse removed.
 		tools = append(tools, om...)
 		for _, td := range om {
 			toolNames = append(toolNames, td.Tool.Name)

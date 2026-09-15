@@ -721,11 +721,7 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	// build can wire its tool into a schedule/monitor (create_event_monitor).
 	if target.Fleet || agentCanAuthor(target) {
 		tools = append(tools, operatorManagementTools(subSess, target.ID)...)
-		// Unified recall spans folded-away history; skip the standalone
-		// recall_history / expand_history pair when it's active.
-		if !unifiedMemoryEnabled() {
-			tools = append(tools, operatorHistoryTools(subSess, target.ID)...)
-		}
+		// No standalone history pair: `recall` spans folded-away history.
 		tools, _ = dropToolsByName(tools, nil, "recurring")
 	}
 	// Channel-scoped chat tools — any agent that has channels gets list_chats /
@@ -1525,11 +1521,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// tools. Authors also get these so a delegated build can schedule/monitor.
 	if target.Fleet || agentCanAuthor(target) {
 		tools = append(tools, operatorManagementTools(subSess, target.ID)...)
-		// Unified recall spans folded-away history; skip the standalone
-		// recall_history / expand_history pair when it's active.
-		if !unifiedMemoryEnabled() {
-			tools = append(tools, operatorHistoryTools(subSess, target.ID)...)
-		}
+		// No standalone history pair: `recall` spans folded-away history.
 		tools, _ = dropToolsByName(tools, nil, "recurring")
 	}
 	// Channel-scoped chat tools — any agent that has channels gets list_chats /

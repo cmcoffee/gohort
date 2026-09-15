@@ -538,11 +538,7 @@ func (t *chatTurn) renderKnownTopicsBlock() string {
 	}
 	var b strings.Builder
 	b.WriteString("\n\n## Known topics\n\n")
-	saveVerb := "memory(save)"
-	if unifiedMemoryEnabled() {
-		saveVerb = "remember (findings)"
-	}
-	fmt.Fprintf(&b, "Snake_case slugs already used for %s in this agent's bucket. Reuse one when the current finding fits — picking a fresh slug for material that belongs alongside existing entries makes retrieval split across buckets that should be one. Mint a new slug only when the subject genuinely doesn't fit.\n\n", saveVerb)
+	fmt.Fprintf(&b, "Snake_case slugs already used for remember (findings) in this agent's bucket. Reuse one when the current finding fits — picking a fresh slug for material that belongs alongside existing entries makes retrieval split across buckets that should be one. Mint a new slug only when the subject genuinely doesn't fit.\n\n")
 	for _, name := range topics {
 		b.WriteString("- ")
 		b.WriteString(name)
