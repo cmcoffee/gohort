@@ -967,6 +967,17 @@ func withReadOnlyBinds(args []string, readOnly []string, workspaceDir string) []
 	return insertBeforeSeparator(args, binds)
 }
 
+// ScopesReads reports whether this host's sandbox can confine reads to a named
+// set of paths — i.e. whether a path-scoped run is possible here at all.
+//
+// Exported so a caller can answer for itself BEFORE dispatching, and say
+// something its own reader can act on. The refusal this package raises is
+// correct and generic, and generic is exactly its limit: it knows a PATH was
+// refused and cannot know which of the tool's parameters produced it, or that
+// the caller has a way to declare the folder as a working directory instead.
+// A tool layer that can say both turns "refused" into "change this field".
+func ScopesReads() bool { return activeSandbox().scopesReads() }
+
 // RunSandboxedShellScoped is RunSandboxedShellWithEnv plus read-only
 // access to paths a scope check has already proved.
 //
@@ -1024,6 +1035,9 @@ func scopedRunRefusal(sb sandboxBackend, readOnly []string) error {
 		" sandbox on this host cannot restrict reads to it: it confines writes and network, but its " +
 		"policy allows reads filesystem-wide, so the path_scope narrows nothing. Refusing rather " +
 		"than running a check that does not apply — the path would be readable and so would " +
-		"everything around it. Run this tool on a Linux host with bubblewrap, or drop the " +
-		"path_scope from the tool's parameter and accept that it is unconstrained.")
+		"everything around it. If the command only needs to RUN IN that folder rather than read it " +
+		"and nothing else, carry it as a working directory instead: that asks the sandbox to make one " +
+		"directory reachable, which is a promise every backend can keep, and it is refused nowhere. " +
+		"Otherwise run this tool on a Linux host with bubblewrap, or drop the path_scope from the " +
+		"tool's parameter and accept that it is unconstrained.")
 }

@@ -146,3 +146,53 @@ func TestApiActionStillNarrowsItsRequiredList(t *testing.T) {
 		t.Errorf("only the path placeholder is really required, got %v", got)
 	}
 }
+
+// A refused path-scoped run has to name the FIELD, not just the path.
+//
+// The sandbox's own refusal named "/Users/.../DIAG_DUMPS/kiteworks-au-h1" and
+// stopped, because a path is all that layer has. The reader's questions —
+// which of my parameters is that, and what do I change — are answerable only
+// here, and for a command that merely needs to run inside the folder the
+// answer is one field.
+func TestScopedReadRefusalNamesTheParameterAndTheFix(t *testing.T) {
+	tt := &TempTool{
+		Name: "weka", Mode: TempToolModeShell,
+		CommandTemplate: "/opt/bin/weka syshealth {folder}",
+		Params: map[string]ToolParam{
+			"folder":  {Type: "string", PathScope: "files:diag-dumps"},
+			"verbose": {Type: "string"},
+		},
+	}
+	args := map[string]any{
+		"folder":  "/Users/x/Downloads/DIAG_DUMPS/kiteworks-au-h1",
+		"verbose": "1",
+	}
+	err := scopedReadRefusal(tt, args, []string{"/Users/x/Downloads/DIAG_DUMPS/kiteworks-au-h1"})
+	msg := err.Error()
+
+	if !strings.Contains(msg, `"folder"`) {
+		t.Errorf("the refusal must name the parameter carrying the path: %s", msg)
+	}
+	if !strings.Contains(msg, "files:diag-dumps") {
+		t.Errorf("it should say which scope the parameter declares: %s", msg)
+	}
+	if !strings.Contains(msg, "work_dir") {
+		t.Errorf("it must name the field that resolves this: %s", msg)
+	}
+	if !strings.Contains(msg, "Nothing ran") && !strings.Contains(msg, "nothing ran") {
+		t.Errorf("it must be clear the command did not run: %s", msg)
+	}
+	// A parameter with no scope is not implicated.
+	if strings.Contains(msg, "verbose") {
+		t.Errorf("an unscoped parameter should not be named: %s", msg)
+	}
+}
+
+// With nothing identifiable it still says what to change rather than nothing.
+func TestScopedReadRefusalWithoutAKnownCarrier(t *testing.T) {
+	tt := &TempTool{Name: "x", Mode: TempToolModeShell, CommandTemplate: "true"}
+	msg := scopedReadRefusal(tt, map[string]any{}, []string{"/srv/corpus"}).Error()
+	if !strings.Contains(msg, "scoped parameter") || !strings.Contains(msg, "work_dir") {
+		t.Errorf("it should still be actionable: %s", msg)
+	}
+}
