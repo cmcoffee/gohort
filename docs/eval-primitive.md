@@ -1,6 +1,18 @@
 # Evals — a suite you can attach to anything, with results that survive
 
-Status: **design / target** (not built).
+Status: **built** (v0.6.765). The rollout at the end of this document shipped in
+full, plus one step it did not plan: the suite is reachable as a TOOL, so an
+agent that edits another agent can measure whether the edit helped.
+
+Code: `apps/orchestrate/eval_suite.go` (records, storage, validation),
+`eval_run_surface.go` (the run + its history), `eval_page.go` (the list and the
+per-suite page), `eval_tool.go` (the agent-facing half). Tests:
+`eval_suite_test.go`, `eval_tool_test.go`.
+
+**Read the next section as HISTORY.** "What exists, and what is actually wrong
+with it" describes the state before any of this, when cases lived on
+`AgentRecord` and results went to an HTTP response and nowhere else. It is kept
+because the argument for the shape is in it, not because it is current.
 
 gohort authors itself. Builder writes agents, tools, pipelines and apps; a
 prompt gets edited, a stage gets a tier, a tool description gets rewritten.
@@ -174,13 +186,23 @@ somebody.
 
 ## Rollout
 
-1. `EvalSuite` + `EvalRun` records and storage. Nothing runs them yet.
-2. The runner generalized: lift `RunAgentEvals` to take a target rather than an
-   `AgentRecord`, agent kind first, behaviour identical.
-3. Mount as a `RunSurface`, with the pass rate promoted via `session_meta`.
-4. Pipeline targets, including stage-field assertions.
-5. Tool and machine targets.
-6. "Create a suite from this agent's evals" — the migration, offered where the
-   field is edited.
+All six shipped, in this order:
+
+1. `EvalSuite` + `EvalRun` records and storage — 93327f8
+2. The runner generalized to take a target rather than an `AgentRecord` — 906eac2
+3. Mounted as a `RunSurface`, pass rate promoted via `session_meta` — 906eac2,
+   with the list and per-suite pages in 9d5f2ca
+4. Pipeline targets, including stage-field assertions — 5620df7
+5. Tool and machine targets — c8c0394
+6. "Create a suite from this agent's evals", as a COPY that leaves the agent's
+   own field alone — b029afa
+
+Then two the plan did not have. `f3c6b57` made the suite an agent-facing tool,
+on the argument that an agent able to edit another agent and unable to measure
+the result will always find something to improve and never learn that last
+week's edit made things worse. `d91c91a` fixed the schema trap underneath it: a
+`*bool` cannot hold false through gob, so "stubbing off" saved nothing and the
+suite silently re-armed it on the next load — `StubMode` is a string for that
+reason, and unset still reads as ON.
 
 Bump `version.txt` on every commit (no trailing newline).
