@@ -245,7 +245,7 @@ func init() {
 			"command":  {Type: "string", Description: "Shell command to execute. Standard sh -c semantics — pipes, redirects, quoting work normally."},
 			"env":      {Type: "object", Description: "Optional {\"KEY\":\"value\"} map of environment variables exposed to the command — reachable as $KEY in shell or os.environ.get(\"KEY\") in Python. Use to feed a debug script the same inputs a registered shell tool would receive as params."},
 			"cwd_root": {Type: "string", Description: "Optional registered root to start the command in, as \"kind:name\" (e.g. \"files:support-bundles\"). Use when a binary must RUN AT the base of a folder it reads — it resolves its own inputs relative to the working directory. The folder stays READ-ONLY: the workspace is still the only writable path, so write output there. Omit to start in the workspace, which is almost always right. If you do not know what is registered, pass any value and the refusal lists them."},
-			"cwd":      {Type: "string", Description: "Folder inside cwd_root to start in, relative to that root. Required whenever cwd_root is set — the root itself cannot be the working directory, so a binary that must run at the base of a tree needs that tree registered as a folder inside a parent root."},
+			"cwd":      {Type: "string", Description: "Folder inside cwd_root to start in, relative to that root. Omit, or pass \".\", to start at the base of the root itself."},
 		},
 		Required:     []string{"command"},
 		Caps:         []Capability{CapExecute, CapRead, CapWrite, CapNetwork},
@@ -554,18 +554,11 @@ func resolveRunCwd(args map[string]any, sess *ToolSession) (string, error) {
 		return "", nil
 	}
 	if rel == "" {
-		// No default, and specifically NOT ".". A scope resolver proves a value
-		// lands STRICTLY BELOW its root — "." cleans to the root itself and is
-		// refused as resolving outside the store, so a default here would turn
-		// "I did not name a folder" into a containment error about a path the
-		// caller never typed. Asking for the folder is the honest version.
-		//
-		// It also means the root ITSELF cannot be the working directory through
-		// this parameter. When a binary must run at the base of a tree, register
-		// that tree's PARENT as the root so the tree is a folder inside it.
-		return "", fmt.Errorf("cwd_root %q names a root, not a folder to start in — pass cwd as well. "+
-			"The root itself cannot be the working directory: register its parent as the root if a "+
-			"binary must run at the base of that tree. Nothing ran.%s", ref, knownRootsSuffix(sess))
+		// The root itself, which a scope names as ".". Defaulting rather than
+		// refusing because "start in this root" is the ordinary request for a
+		// binary that runs at the base of a tree, and making it type the spelling
+		// would be ceremony over a value with one sensible meaning.
+		rel = "."
 	}
 	user, agentID := "", ""
 	if sess != nil {

@@ -113,8 +113,22 @@ func (T *FileStoreApp) resolveScope(user, storeSlug, value string) (string, erro
 	if !ok || !st.AllowsUser(user) {
 		return "", Error("there is no file store called " + storeSlug + " you can reach")
 	}
-	if strings.TrimSpace(value) == "" {
-		return "", Error("name a folder in " + st.Name)
+	// The store ITSELF, by an explicit spelling. A binary that must run at
+	// the base of a tree needs to name that tree, and requiring its parent
+	// to be registered instead made the answer to "point this at my bundle
+	// folder" be "re-register it one level up".
+	//
+	// An ALLOWLIST of spellings rather than an equality-tolerant check in
+	// resolveUnder, which is where this looks like it belongs and is not.
+	// ".." and "../" also clean to the root, so relaxing the comparison
+	// would turn every traversal attempt that lands back at the root into a
+	// success. Nothing escapes either way, but a caller probing with ".."
+	// should be told no rather than handed the store — and the strictness
+	// resolveUnder documents stays exactly as it was for every other value.
+	if rootSpelling(value) {
+		// SubRoot's own empty case: EvalSymlinks on the store path, so a
+		// symlinked root resolves the same way a subfolder would.
+		return SubRoot(st.Path, "")
 	}
 	dir, err := SubRoot(st.Path, value)
 	if err != nil {
@@ -139,6 +153,19 @@ func (T *FileStoreApp) scopeRoots(user string) []PathScopeRoot {
 	return out
 }
 
+// rootSpelling reports whether value names the store root itself.
+//
+// The exact forms a caller writes for "here", and nothing else. Notably NOT
+// ".." — it cleans to the root too, and accepting it would make a traversal
+// probe read as success.
+func rootSpelling(value string) bool {
+	switch strings.TrimSpace(value) {
+	case "", ".", "/", "./":
+		return true
+	}
+	return false
+}
+
 // listScope names the folders currently in a store, so a tool
 // description can say what the valid values are right now.
 func (T *FileStoreApp) listScope(user, storeSlug string) []string {
@@ -150,7 +177,10 @@ func (T *FileStoreApp) listScope(user, storeSlug string) []string {
 	if err != nil {
 		return nil
 	}
-	out := make([]string, 0, len(folders))
+	// "." first: the root is a valid value now, and a lister that omits it
+	// leaves the one folder a caller cannot discover by looking.
+	out := make([]string, 0, len(folders)+1)
+	out = append(out, ".")
 	for _, f := range folders {
 		out = append(out, f.Name)
 	}

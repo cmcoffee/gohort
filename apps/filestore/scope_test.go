@@ -58,7 +58,13 @@ func TestScopeRefusesWhatQuotingWouldHaveAllowed(t *testing.T) {
 
 	// Each of these is a perfectly well-formed single argument that
 	// shell-quoting would pass through untouched.
-	for _, bad := range []string{"../", "..", "../../etc", "/etc", "nope", ""} {
+	//
+	// "" is NOT in this list any more: an empty value names the store root,
+	// which is a legitimate working directory for a binary that runs at the
+	// base of a tree (see scope_root_test.go). ".." and "../" clean to the
+	// root as well and stay refused — that is why rootSpelling is an
+	// allowlist rather than a loosened comparison in resolveUnder.
+	for _, bad := range []string{"../", "..", "../../etc", "/etc", "nope"} {
 		if _, err := app.resolveScope("u", st.Slug, bad); err == nil {
 			t.Errorf("%q was accepted", bad)
 		}
@@ -74,9 +80,10 @@ func TestScopeRefusesWhatQuotingWouldHaveAllowed(t *testing.T) {
 func TestScopeListsWhatIsValidNow(t *testing.T) {
 	app, st, root := scopeFixture(t)
 
+	// Both folders, plus "." for the root the scope now accepts.
 	got := app.listScope("u", st.Slug)
-	if len(got) != 2 {
-		t.Fatalf("expected both folders, got %v", got)
+	if len(got) != 3 {
+		t.Fatalf("expected both folders and the root, got %v", got)
 	}
 	// The late-binding property: a folder that appears after the tool was
 	// authored is immediately valid, which is the case an enum cannot
@@ -84,7 +91,7 @@ func TestScopeListsWhatIsValidNow(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "scan-2026-08-14"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if got := app.listScope("u", st.Slug); len(got) != 3 {
+	if got := app.listScope("u", st.Slug); len(got) != 4 {
 		t.Errorf("a new folder should be valid without re-authoring, got %v", got)
 	}
 	if _, err := app.resolveScope("u", st.Slug, "scan-2026-08-14"); err != nil {

@@ -45,25 +45,18 @@ func TestRunCwdResolvesThroughARegisteredRoot(t *testing.T) {
 	}
 }
 
-// A root with no folder is refused, and NOT defaulted to ".".
-//
-// A scope resolver proves a value lands strictly below its root, so "." cleans
-// to the root and comes back as "resolves outside the store" — a containment
-// error about a path the caller never typed. The refusal has to say what is
-// actually missing.
-func TestRunCwdRefusesARootWithNoFolder(t *testing.T) {
+// A root with no folder means the root itself — the ordinary request for a
+// binary that runs at the base of a tree.
+func TestRunCwdWithNoFolderMeansTheRoot(t *testing.T) {
 	registerTestRoot(t, "testfiles", "bundles", "/srv/bundles")
 	sess := &ToolSession{Username: "alice"}
 
-	_, err := resolveRunCwd(map[string]any{"cwd_root": "testfiles:bundles"}, sess)
-	if err == nil {
-		t.Fatal("a root with no folder should be refused")
+	got, err := resolveRunCwd(map[string]any{"cwd_root": "testfiles:bundles"}, sess)
+	if err != nil {
+		t.Fatalf("an omitted cwd should mean the root: %v", err)
 	}
-	if !strings.Contains(err.Error(), "pass cwd as well") {
-		t.Errorf("the refusal should name the missing parameter, got: %v", err)
-	}
-	if strings.Contains(err.Error(), "outside") {
-		t.Errorf("it must not surface as a containment error: %v", err)
+	if got != "/srv/bundles" {
+		t.Errorf("want the root, got %q", got)
 	}
 }
 
