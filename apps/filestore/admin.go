@@ -98,6 +98,35 @@ func (T *FileStoreApp) adminSection() ui.Section {
 								// the composite slug/name the row already
 								// carries, and no store row defines it. Enforced
 								// by TestInnerRowKeysAreNotShadowedByTheStoreRow.
+								// Read before rewrite. The row can only say
+								// THAT something is mapped; this says what an
+								// agent would actually run, which is the
+								// question "do I need to re-map this?" is
+								// really asking. Absolute URL, not relative:
+								// this panel opens inside a table on whatever
+								// page mounted it, and a relative source would
+								// resolve against THAT page.
+								ui.Expand("Mapping", ui.DisplayPanel{
+									Source: "/filestore/api/commands/mapping?id={id}",
+									Pairs: []ui.DisplayPair{
+										{Label: "Tool name", Field: "tool_name", Mono: true},
+										{Label: "State", Field: "state", StatusField: "state_status"},
+										{Label: "What it is for", Field: "tool_desc"},
+										{Label: "Binary", Field: "binary", Mono: true},
+										// One entry per action: what an agent
+										// calls, the line it runs, where it
+										// runs, and which parameter carries
+										// the folder.
+										{Label: "Actions", Field: "actions", Items: []ui.DisplayPair{
+											{Field: "name", Mono: true},
+											{Label: "runs", Field: "command", Mono: true, Block: true},
+											{Label: "in", Field: "runs_in", Mono: true},
+											{Label: "takes", Field: "params", Mono: true},
+											{Label: "desc", Field: "description"},
+											{Label: "disabled", Field: "disabled"},
+										}},
+									},
+								}),
 								ui.Expand("Map", ui.AgentLoopPanel{
 									SendURL:      "/filestore/api/map/chat/send?id={id}",
 									Markdown:     true,
@@ -251,6 +280,7 @@ func (T *FileStoreApp) Routes() {
 	T.HandleFunc("/api/commands", T.handleCommands)
 	T.HandleFunc("/api/map/chat/send", T.handleMapChat)
 	T.HandleFunc("/api/commands/approve", T.handleCommandApprove)
+	T.HandleFunc("/api/commands/mapping", T.handleCommandMapping)
 	T.HandleFunc("/api/folders", T.handleFolders)
 }
 

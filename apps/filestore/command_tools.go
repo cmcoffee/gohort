@@ -30,6 +30,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -201,6 +202,92 @@ func firstLine(s string) string {
 
 // handleCommandApprove flips the agent gate: POST ?id=<slug>/<name> with
 // {"approved": true|false}.
+// handleCommandMapping serves what a mapping produced, for reading.
+//
+//	GET /filestore/api/commands/mapping?id=<slug>/<name>
+//
+// The row already says THAT a command is mapped ("weka_bundles · 3 actions ·
+// off") and cannot say what it was mapped AS. Deciding whether to re-map means
+// knowing what an agent would actually run — the command line, which parameter
+// carries the folder, whether it runs inside that folder — and until this
+// existed the only way to see any of it was to reopen the mapping conversation
+// and ask, which costs a model call to read data already on the record.
+//
+// Read-only and derived: every field here is a field of the StoreCommand, so
+// there is nothing to keep in sync and no second place a mapping can be
+// changed.
+func (T *FileStoreApp) handleCommandMapping(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	if !adminOnly(w, r) {
+		return
+	}
+	slug, name, _ := strings.Cut(strings.TrimSpace(r.URL.Query().Get("id")), "/")
+	cmd, ok := LoadStoreCommand(T.DB, slug, RefToolSlug(name))
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	acts := make([]map[string]any, 0, len(cmd.Tools))
+	for _, a := range cmd.Tools {
+		// Parameters as one readable line each rather than a nested object:
+		// this is a panel someone skims to answer "is that right?", and the
+		// thing they are checking is which parameter carries the folder.
+		params := make([]string, 0, len(a.Params))
+		for pn := range a.Params {
+			params = append(params, pn)
+		}
+		sort.Strings(params)
+		for i, pn := range params {
+			p := a.Params[pn]
+			line := pn
+			if p.Type != "" {
+				line += " (" + p.Type + ")"
+			}
+			// The scope is the field that decides whether a folder name
+			// becomes a real path, and it is invisible everywhere else.
+			if sc := strings.TrimSpace(p.PathScope); sc != "" {
+				line += " → " + sc
+			}
+			if pn == a.WorkDir {
+				line += "  [runs here]"
+			}
+			params[i] = line
+		}
+		runsIn := a.WorkDir
+		if runsIn == "" {
+			runsIn = "the workspace"
+		}
+		// Joined here rather than sent as a list: these entries are already
+		// elements of the actions array, and a list inside a list element is a
+		// nesting depth this panel is not documented to render. One line per
+		// action is also what someone skimming for the folder parameter wants.
+		takes := strings.Join(params, ", ")
+		if takes == "" {
+			takes = "no parameters"
+		}
+		acts = append(acts, map[string]any{
+			"name": a.Name, "description": a.Description,
+			"command": a.CommandTemplate, "runs_in": runsIn,
+			"params": takes, "disabled": a.Disabled,
+		})
+	}
+	state := "Mapped, but switched off for agents"
+	status := "warn"
+	switch {
+	case !cmd.Mapped():
+		state, status = "Not mapped yet", "warn"
+	case cmd.Approved:
+		state, status = "Live — agents that reach this folder can call it", "ok"
+	}
+	writeJSON(w, map[string]any{
+		"tool_name": cmd.ToolName(), "tool_desc": cmd.ToolDesc,
+		"binary": cmd.Command, "state": state, "state_status": status,
+		"actions": acts,
+	})
+}
+
 func (T *FileStoreApp) handleCommandApprove(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := RequireUser(w, r, T.DB); !ok {
 		return
