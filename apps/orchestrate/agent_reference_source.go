@@ -132,7 +132,23 @@ func (s agentReferenceSource) ItemTools(user, itemID string) []AgentToolDef {
 			// Bounded: somebody is waiting on a draft. An agent that wanders off
 			// investigating for minutes has failed this caller even if it
 			// eventually replies.
-			ctx, cancel := context.WithTimeout(context.Background(), agentConsultTimeout)
+			//
+			// Derived from the CALLER'S ctx, not Background. The bound is the
+			// same; what the old form also threw away was everything else the
+			// context carried.
+			//
+			// The network connector, first. A surface running in Private mode
+			// hands its restriction down the context, and a consultation rooted
+			// on Background asks NetworkAllowedFromContext a question it can
+			// only answer permissively — so the caller's posture stopped at the
+			// tool boundary and the consulted agent reached out anyway, on
+			// behalf of a turn that was not allowed to.
+			//
+			// And cancellation. Stopping the drafting turn left the
+			// consultation running with nobody waiting on it, which is the
+			// failure ReferenceItemToolsWithSession exists to prevent and this
+			// handler quietly reintroduced.
+			ctx, cancel := context.WithTimeout(ctx, agentConsultTimeout)
 			defer cancel()
 			out := s.Fetch(ctx, user, itemID, q)
 			if strings.TrimSpace(out) == "" {
