@@ -228,6 +228,25 @@ func embeddingFormFields() []ui.FormField {
 		ui.FormField{Field: "api_key", Label: "API Key", Type: "password",
 			Help:     "Optional bearer token. Set for OpenAI hosted / authenticated proxies; leave blank for local Ollama, llama.cpp, or vLLM.",
 			ShowWhen: local},
+		// The prefixes belong to the MODEL, not to where it runs, so they stay
+		// visible when a peer is doing the embedding.
+		ui.FormField{Field: "query_prefix", Label: "Query prefix", Type: "text",
+			Placeholder: "search_query: ",
+			Help:        "Prepended to every search query before embedding. Asymmetric retrieval models need it: e5 uses \"query: \", nomic-embed \"search_query: \", bge \"Represent this sentence for searching relevant passages: \". Leave blank for symmetric models. Included verbatim, trailing space and all. Safe to change at any time.",
+			ShowWhen:    "enabled",
+			Presets: []ui.FieldPreset{
+				{Label: "e5", Value: "query: ", Hint: "intfloat/e5 family"},
+				{Label: "nomic", Value: "search_query: ", Hint: "nomic-embed-text"},
+				{Label: "bge", Value: "Represent this sentence for searching relevant passages: ", Hint: "BAAI/bge v1.5 family"},
+			}},
+		ui.FormField{Field: "doc_prefix", Label: "Document prefix", Type: "text",
+			Placeholder: "search_document: ",
+			Help:        "Prepended to every chunk, fact and tool description before embedding. e5 uses \"passage: \", nomic-embed \"search_document: \"; bge and Qwen3-Embedding use none. Changing it changes the embedding space: stored vectors stop matching until their documents are re-ingested.",
+			ShowWhen:    "enabled",
+			Presets: []ui.FieldPreset{
+				{Label: "e5", Value: "passage: ", Hint: "intfloat/e5 family"},
+				{Label: "nomic", Value: "search_document: ", Hint: "nomic-embed-text"},
+			}},
 	)
 }
 

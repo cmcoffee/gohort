@@ -114,7 +114,7 @@ func ensureToolIndex(ctx context.Context) {
 		// Embed the description. Failure for one tool doesn't fail
 		// the whole index — it just can't surface from classifier
 		// hits this run.
-		vec, err := Embed(ctx, t.Name()+": "+desc)
+		vec, err := embedDocument(ctx, t.Name()+": "+desc) // stored; the user message is the query
 		if err != nil || len(vec) == 0 {
 			Log("[tool_index] embed failed for %q: %v", t.Name(), err)
 			skippedEmbed++

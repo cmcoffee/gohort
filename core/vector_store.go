@@ -535,7 +535,7 @@ func ingestReport(ctx context.Context, db Database, source, reportID, title, rep
 				Section:  sect,
 				Text:     p.Text,
 				Vector:   p.Vector,
-				Model:    cfg.Model,
+				Model:    cfg.spaceStamp(),
 				Date:     now,
 				Kind:     kind,
 				Ord:      ord,
@@ -614,7 +614,7 @@ func IngestPagedReport(ctx context.Context, db Database, source, reportID, repor
 					Section:  sect,
 					Text:     p.Text,
 					Vector:   p.Vector,
-					Model:    cfg.Model,
+					Model:    cfg.spaceStamp(),
 					Date:     now,
 					Locator:  locator,
 					Ord:      ord,
@@ -684,7 +684,7 @@ func embedWithSplitFallbackDepth(ctx context.Context, cfg EmbeddingConfig, secti
 		return []embedPiece{{Text: text}}
 	}
 	prompt := section + "\n\n" + text
-	v, err := Embed(ctx, prompt)
+	v, err := embedDocumentWith(ctx, cfg, prompt)
 	if err == nil {
 		return []embedPiece{{Text: text, Vector: v}}
 	}
@@ -1111,11 +1111,11 @@ func chunkVectorComparable(c *EmbeddedChunk, query []float32, model string) bool
 	return c.Model == "" || model == "" || c.Model == model
 }
 
-// currentEmbedModel is the embedding model name a scan compares chunk
-// stamps against — the resolved config's, so a peer-served embedder
-// reports the model the peer advertises.
+// currentEmbedModel is the space stamp a scan compares chunk stamps against
+// (EmbeddingConfig.spaceStamp of the resolved config, so a peer-served
+// embedder reports the model the peer advertises, plus any document prefix).
 func currentEmbedModel() string {
-	return GetEmbeddingConfig().Model
+	return GetEmbeddingConfig().spaceStamp()
 }
 
 // SearchChunks returns the top-K chunks by cosine similarity to the

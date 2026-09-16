@@ -295,7 +295,7 @@ func HandlePeerManifest(w http.ResponseWriter, r *http.Request) {
 		// Report the dimension by embedding a trivial string. A peer sizing its
 		// vector store should not have to discover this by storing one and
 		// finding out.
-		if vec, err := Embed(r.Context(), "dimension probe"); err == nil {
+		if vec, err := embedRaw(r.Context(), cfg, "dimension probe"); err == nil {
 			info.Dim = len(vec)
 		}
 		m.Embeddings = info
@@ -428,8 +428,10 @@ func HandlePeerEmbeddings(w http.ResponseWriter, r *http.Request) {
 	ctx := WithEmbedCaller(r.Context(), "peer:"+k.Label)
 
 	started := time.Now()
+	// Raw: the calling instance applied its own query/document prefixes
+	// before sending, and marking the text again would corrupt it.
 	for i, text := range inputs {
-		vec, err := Embed(ctx, text)
+		vec, err := embedRaw(ctx, cfg, text)
 		if err != nil {
 			peerDeny(w, http.StatusBadGateway, "embed failed: "+err.Error())
 			return

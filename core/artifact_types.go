@@ -736,7 +736,7 @@ func ingestImportedCollectionChunks(id, name string, chunks []PortableChunk) {
 		}
 		var vec []float32
 		if cfg.Enabled {
-			if v, err := EmbedWith(context.Background(), cfg, embedHeader(pc.Title, pc.Section)+"\n\n"+text); err == nil {
+			if v, err := embedDocumentWith(context.Background(), cfg, embedHeader(pc.Title, pc.Section)+"\n\n"+text); err == nil {
 				vec = v
 			}
 		}
@@ -757,7 +757,7 @@ func ingestImportedCollectionChunks(id, name string, chunks []PortableChunk) {
 			Section:  pc.Section,
 			Text:     text,
 			Vector:   vec,
-			Model:    cfg.Model,
+			Model:    cfg.spaceStamp(),
 			Date:     date,
 			Locator:  pc.Locator,
 			Kind:     pc.Kind,

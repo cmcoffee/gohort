@@ -388,7 +388,10 @@ func StoreMemoryFactP(db Database, namespace, note string, p FactWritePolicy) Fa
 	if cfg := GetEmbeddingConfig(); cfg.Enabled {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if v, err := Embed(ctx, note); err == nil && len(v) > 0 {
+		// The document side: this vector is stored on the new fact and
+		// searched against later, and here it is compared with other
+		// facts' stored vectors, so it has to be made the same way.
+		if v, err := embedDocument(ctx, note); err == nil && len(v) > 0 {
 			newVec = v // cached on the new fact below
 			for _, f := range existing {
 				existVec := factVector(ctx, db, f) // cached, backfilled if legacy
@@ -579,7 +582,7 @@ func factVector(ctx context.Context, db Database, f MemoryFact) []float32 {
 		// across spaces; fall through and re-embed in the current one.
 		Debug("[factstore] re-embedding fact %s: cached vector is from %q, current space is %q", f.ID, f.VectorModel, ver)
 	}
-	vec, err := Embed(ctx, f.Note)
+	vec, err := embedDocument(ctx, f.Note)
 	if err != nil || len(vec) == 0 {
 		return nil
 	}

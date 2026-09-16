@@ -34,6 +34,36 @@ type EmbeddingConfig struct {
 	// Blank means local, which is what every config stored before peers existed
 	// says.
 	Provider string `json:"provider,omitempty"`
+	// QueryPrefix and DocPrefix are prepended to the text on the query side
+	// and the document side respectively. Many retrieval embedders are
+	// ASYMMETRIC: trained so that a question and the passage that answers it
+	// land near each other only when each is marked for what it is — e5 wants
+	// "query: " / "passage: ", nomic-embed wants "search_query: " /
+	// "search_document: ", bge and Qwen3-Embedding want an instruction on the
+	// query side only. Without the marks such a model still returns vectors,
+	// just worse ones, and nothing reports it. Empty (the default, and every
+	// config stored before these existed) sends the text as is, which is
+	// right for symmetric models. Prepended verbatim: a trailing space or
+	// newline is the operator's to include.
+	//
+	// DocPrefix is part of the embedding SPACE (see EmbedVersion and
+	// spaceStamp): changing it means every stored vector was made a different
+	// way, and they stop being comparable until re-embedded. QueryPrefix is
+	// applied at query time only and can change freely.
+	QueryPrefix string `json:"query_prefix,omitempty"`
+	DocPrefix   string `json:"doc_prefix,omitempty"`
+}
+
+// spaceStamp names the space a vector embedded under cfg lives in, as it is
+// stamped on chunk rows (EmbeddedChunk.Model) and compared by
+// chunkVectorComparable: the model, plus the document prefix when one is
+// set, since a prefix changes what the model was given. Deployments with no
+// prefix keep the bare model name, so their existing rows still match.
+func (cfg EmbeddingConfig) spaceStamp() string {
+	if p := cfg.DocPrefix; p != "" {
+		return cfg.Model + "+doc:" + p
+	}
+	return cfg.Model
 }
 
 var (
@@ -52,7 +82,11 @@ var (
 // (or set Model informationally) when swapping embedders there.
 func EmbedVersion() string {
 	cfg := GetEmbeddingConfig()
-	return strings.TrimSpace(cfg.Model) + "@" + strings.TrimSpace(cfg.Endpoint)
+	v := strings.TrimSpace(cfg.Model) + "@" + strings.TrimSpace(cfg.Endpoint)
+	if cfg.DocPrefix != "" {
+		v += "+doc:" + cfg.DocPrefix // a different way of making the vector is a different space
+	}
+	return v
 }
 
 // SetEmbeddingConfig installs the process-wide embedding config. Called
@@ -128,9 +162,25 @@ func embedOutcome(err error, resp *http.Response) string {
 	return "ok"
 }
 
-// Embed embeds text using the globally-configured embedding backend.
+// Embed embeds a QUERY — a search string, a user message, a note being
+// matched against stored ones — using the globally-configured embedding
+// backend, with the config's query prefix applied. Text that will be STORED
+// and searched against (a chunk, a fact's note, a tool description) goes
+// through embedDocument instead, so that an asymmetric model sees each side
+// marked for what it is.
 func Embed(ctx context.Context, text string) ([]float32, error) {
 	return EmbedWith(ctx, GetEmbeddingConfig(), text)
+}
+
+// embedDocument is the document side of Embed: for text that is stored and
+// later searched against. Applies the config's document prefix.
+func embedDocument(ctx context.Context, text string) ([]float32, error) {
+	return embedDocumentWith(ctx, GetEmbeddingConfig(), text)
+}
+
+// embedDocumentWith is embedDocument against an explicit config.
+func embedDocumentWith(ctx context.Context, cfg EmbeddingConfig, text string) ([]float32, error) {
+	return embedRaw(ctx, cfg, cfg.DocPrefix+text)
 }
 
 // embedCallerKey carries who an embed is on behalf of, for fair queueing.
@@ -161,10 +211,19 @@ func embedCaller(ctx context.Context) string {
 	return embedCallerLocal
 }
 
-// EmbedWith embeds text using an explicitly-provided embedding config, so a
-// caller (an SDK consumer, an injected AppCore) can supply its own backend
-// without touching the process-global config. SDK Phase 1.
+// EmbedWith is Embed (the QUERY side) against an explicitly-provided
+// embedding config, so a caller (an SDK consumer, an injected AppCore) can
+// supply its own backend without touching the process-global config. SDK
+// Phase 1.
 func EmbedWith(ctx context.Context, cfg EmbeddingConfig, text string) ([]float32, error) {
+	return embedRaw(ctx, cfg, cfg.QueryPrefix+text)
+}
+
+// embedRaw sends text to the embedder exactly as given — no prefix. The one
+// path for the two callers that must not mark the text: the peer-serve
+// endpoint, which embeds on behalf of another instance that has already
+// applied its own prefixes, and the dimension probe.
+func embedRaw(ctx context.Context, cfg EmbeddingConfig, text string) ([]float32, error) {
 	if !cfg.Enabled {
 		return nil, fmt.Errorf("embeddings disabled")
 	}
