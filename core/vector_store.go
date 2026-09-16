@@ -1372,19 +1372,83 @@ func SearchChunksKeywordByPredicate(db Database, allow func(c EmbeddedChunk) boo
 // without giving up semantic recall. Falls back to keyword-only when no
 // embedding is available (vec empty). queryText is the raw query (keyword
 // extraction); vec is its embedding.
+//
+// The result is diversified by document (diversifyHits): each half is asked
+// for a wider pool than k so that a second relevant document has a chance to
+// be in it at all — with a pool of exactly k, one long document's chunks fill
+// the pool and there is nothing to diversify with.
 func HybridSearchByPredicate(db Database, allow func(c EmbeddedChunk) bool, queryText string, vec []float32, k int) []SearchHit {
 	if db == nil || allow == nil || k <= 0 {
 		return nil
 	}
+	perDoc := recallPerDocMax()
+	pool := k
+	if perDoc > 0 {
+		pool = k * diversifyPoolFactor
+	}
+	var hits []SearchHit
 	if len(vec) == 0 {
-		return SearchChunksKeywordByPredicate(db, allow, queryText, k)
+		hits = SearchChunksKeywordByPredicate(db, allow, queryText, pool)
+	} else {
+		hits = MergeHitsByScore(
+			SearchChunksByPredicate(db, allow, vec, pool),
+			SearchChunksKeywordByPredicate(db, allow, queryText, pool),
+			pool)
 	}
-	vHits := SearchChunksByPredicate(db, allow, vec, k)
-	kHits := SearchChunksKeywordByPredicate(db, allow, queryText, k)
-	if len(kHits) == 0 {
-		return vHits
+	return diversifyHits(hits, perDoc, k)
+}
+
+// diversifyPoolFactor is how many times k the candidate pool is when
+// diversifying. The primitives sort every scored candidate before slicing,
+// so a wider slice costs nothing; four is enough that a second document with
+// one strong passage is in the pool behind a first document's top dozen.
+const diversifyPoolFactor = 4
+
+// diversifyHits re-ranks score-sorted hits so that no document holds more
+// than perDoc of the leading slots while another document still has a
+// passage worth reading, then truncates to k.
+//
+// It exists because top-k by score is top-k by CHUNK, and a long document
+// that matches a query matches it in several places: six slots, six passages
+// from the one guide, and the other guide that answered the question in a
+// single paragraph was never shown. Diversity here is a matter of ORDER, not
+// exclusion — a document's extra passages are demoted behind other documents'
+// first ones and then fill whatever slots remain, so a corpus of one document
+// still returns k passages from it.
+//
+// A passage from a new document is promoted ahead of a demoted extra only
+// when it clears collectionSearchMinScore. The callers apply that floor (or
+// their own) AFTER this, and a below-floor passage promoted into the top-k
+// would be dropped there, costing the slot the demoted extra would have kept
+// — so a passage that is not worth reading is never promoted over one that
+// is. perDoc <= 0 disables the re-rank. Hits with no ReportID belong to no
+// document and are never capped.
+func diversifyHits(hits []SearchHit, perDoc, k int) []SearchHit {
+	if k <= 0 {
+		return nil
 	}
-	return MergeHitsByScore(vHits, kHits, k)
+	if perDoc <= 0 || len(hits) <= 1 {
+		if len(hits) > k {
+			hits = hits[:k]
+		}
+		return hits
+	}
+	seen := make(map[string]int, len(hits))
+	lead := make([]SearchHit, 0, k)
+	var extras []SearchHit
+	for _, h := range hits {
+		if h.ReportID == "" || (seen[h.ReportID] < perDoc && h.Score >= collectionSearchMinScore) {
+			seen[h.ReportID]++
+			lead = append(lead, h)
+			continue
+		}
+		extras = append(extras, h)
+	}
+	out := append(lead, extras...)
+	if len(out) > k {
+		out = out[:k]
+	}
+	return out
 }
 
 // MergeHitsByScore unions two hit lists, dedups by chunk ID keeping the

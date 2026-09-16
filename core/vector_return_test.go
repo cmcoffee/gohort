@@ -203,3 +203,92 @@ func TestHitFormatCarriesEverythingTheStoreStamps(t *testing.T) {
 		t.Fatal("empty input must render empty")
 	}
 }
+
+// A long document's extra passages are demoted behind another document's
+// first one, and then fill the slots that remain.
+func TestDiversifyPromotesASecondDocument(t *testing.T) {
+	hits := []SearchHit{
+		{ID: "a1", ReportID: "A", Score: 0.90},
+		{ID: "a2", ReportID: "A", Score: 0.85},
+		{ID: "a3", ReportID: "A", Score: 0.80},
+		{ID: "a4", ReportID: "A", Score: 0.75},
+		{ID: "b1", ReportID: "B", Score: 0.50},
+		{ID: "a5", ReportID: "A", Score: 0.70},
+	}
+	got := diversifyHits(hits, 2, 4)
+	want := "a1 a2 b1 a3"
+	if ids(got) != want {
+		t.Fatalf("got %q, want %q", ids(got), want)
+	}
+}
+
+// A corpus of one document still returns k passages from it — diversity
+// changes order, never the count.
+func TestDiversifyKeepsASingleDocumentWhole(t *testing.T) {
+	var hits []SearchHit
+	for i := 0; i < 8; i++ {
+		hits = append(hits, SearchHit{ID: string(rune('a' + i)), ReportID: "A", Score: float32(0.9) - float32(i)*0.05})
+	}
+	got := diversifyHits(hits, 2, 5)
+	if ids(got) != "a b c d e" {
+		t.Fatalf("got %q", ids(got))
+	}
+}
+
+// A passage not worth reading is never promoted over one that is: the
+// callers' floor would drop it and the slot with it.
+func TestDiversifyDoesNotPromoteBelowTheFloor(t *testing.T) {
+	hits := []SearchHit{
+		{ID: "a1", ReportID: "A", Score: 0.90},
+		{ID: "a2", ReportID: "A", Score: 0.85},
+		{ID: "a3", ReportID: "A", Score: 0.80},
+		{ID: "b1", ReportID: "B", Score: 0.20},
+	}
+	if got := ids(diversifyHits(hits, 2, 3)); got != "a1 a2 a3" {
+		t.Fatalf("got %q", got)
+	}
+	// Off means plain truncation.
+	if got := ids(diversifyHits(hits, 0, 3)); got != "a1 a2 a3" {
+		t.Fatalf("perDoc=0: got %q", got)
+	}
+	// Hits with no document are never capped.
+	loose := []SearchHit{{ID: "x", Score: 0.9}, {ID: "y", Score: 0.8}, {ID: "z", Score: 0.7}}
+	if got := ids(diversifyHits(loose, 1, 3)); got != "x y z" {
+		t.Fatalf("no ReportID: got %q", got)
+	}
+}
+
+// End to end through the keyword half: a guide with six matching passages
+// and a second document with one — k=3 must show the second document.
+func TestHybridSearchShowsTheSecondDocument(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	for i := 0; i < 6; i++ {
+		id := "a" + string(rune('0'+i))
+		db.Set(EmbeddedChunks, id, EmbeddedChunk{ID: id, Source: "collection:t", ReportID: "guide",
+			Section: "## Part", Text: "OPNsense failover configuration step " + strings.Repeat("detail ", i)})
+	}
+	db.Set(EmbeddedChunks, "b0", EmbeddedChunk{ID: "b0", Source: "collection:t", ReportID: "note",
+		Section: "## Note", Text: "OPNsense failover configuration summary"})
+	if got := recallPerDocMax(); got != 2 {
+		t.Fatalf("default per-doc cap should be 2, got %d", got)
+	}
+	hits := HybridSearchByPredicate(db, func(EmbeddedChunk) bool { return true }, "opnsense failover configuration", nil, 3)
+	if len(hits) != 3 {
+		t.Fatalf("expected 3 hits, got %d", len(hits))
+	}
+	docs := map[string]bool{}
+	for _, h := range hits {
+		docs[h.ReportID] = true
+	}
+	if !docs["note"] {
+		t.Fatalf("the second document must be in the top 3, got %q", ids(hits))
+	}
+}
+
+func ids(hits []SearchHit) string {
+	var out []string
+	for _, h := range hits {
+		out = append(out, h.ID)
+	}
+	return strings.Join(out, " ")
+}

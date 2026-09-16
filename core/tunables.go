@@ -255,6 +255,8 @@ func init() {
 		Help: "Largest k an agent may request per search.", Kind: KindInt, Default: 20, Min: 1, Max: 200})
 	RegisterTunable(TunableSpec{Key: TunableReferenceK, Category: "Retrieval", Label: "Reference-memory recall k",
 		Help: "Default passages for memory_search (reference memory).", Kind: KindInt, Default: 5, Min: 1, Max: 100})
+	RegisterTunable(TunableSpec{Key: tunableRecallPerDoc, Category: "Retrieval", Label: "Recall passages per document (0 = off)",
+		Help: "How many passages one document may hold in a search result before passages from OTHER documents are ranked ahead of its remaining ones. Nothing is dropped: the extras fill whatever slots the other documents leave. Stops one long document filling every slot when a second relevant document exists.", Kind: KindInt, Default: 2, Min: 0, Max: 20})
 	RegisterTunable(TunableSpec{Key: TunableRecallMinScore, Category: "Retrieval", Label: "Recall min score (0 = off)",
 		Help: "Cosine floor below which a recall hit is dropped. 0 keeps every top-k hit; raise to trade recall for precision.", Kind: KindFloat, Default: 0, Min: 0, Max: 1, Decimals: 2})
 	RegisterTunable(TunableSpec{Key: TunableRecencyWeight, Category: "Retrieval", Label: "Recency weight (0 = off)",
@@ -290,6 +292,12 @@ func ReferenceRecallK() int   { return TuneInt(TunableReferenceK) }
 func RecallMinScore() float64 { return TuneFloat(TunableRecallMinScore) }
 func ChunkChars() int         { return TuneInt(TunableChunkChars) }
 func LLMMaxRetries() int      { return TuneInt(TunableLLMMaxRetries) }
+
+// tunableRecallPerDoc is the per-document cap hybrid search diversifies by
+// (see diversifyHits). Unexported: only the search primitive reads it.
+const tunableRecallPerDoc = "tune_recall_per_doc"
+
+func recallPerDocMax() int { return TuneInt(tunableRecallPerDoc) }
 
 func RecallHintThreshold() float64   { return TuneFloat(TunableRecallHintThreshold) }
 func RecallHintMax() int             { return TuneInt(TunableRecallHintMax) }
