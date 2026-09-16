@@ -188,7 +188,16 @@ const (
 	// an app satisfies to override it stays unexported — an app only needs the
 	// method — and the writer that motivated it (a doc-rules save) went to
 	// core/docs, where the app imports it directly.
-	coreExportCeiling = 2171
+	//
+	// Raised 2171 -> 2172 for SortChunksForAssembly, ONE func: document order
+	// for a chunk set, which is a property of the store (the Ord stamp and the
+	// legacy fallback both live with EmbeddedChunk) and which two fetch
+	// surfaces — FetchCollectionDoc here and fetch_knowledge_doc in
+	// orchestrate — must agree on, or the same document reads differently
+	// depending on which tool asked. It arrived at the top of the band. What
+	// did NOT get exported is the part-suffix parser it sorts by, nor the
+	// embed header; the store is the only writer of both.
+	coreExportCeiling = 2172
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

@@ -527,6 +527,7 @@ type PortableChunk struct {
 	Date     string `json:"date,omitempty"`
 	Locator  string `json:"locator,omitempty"`
 	Kind     string `json:"kind,omitempty"`
+	Ord      int    `json:"ord,omitempty"` // document order (EmbeddedChunk.Ord); 0 on exports of pre-stamp rows
 }
 
 // collectionArtifact makes a Document Collection portable — the first
@@ -650,6 +651,7 @@ func (collectionArtifact) ExportArtifact(_ Database, name, owner string) (json.R
 			Date:     ch.Date,
 			Locator:  ch.Locator,
 			Kind:     ch.Kind,
+			Ord:      ch.Ord,
 		})
 	}
 	return json.Marshal(pc)
@@ -734,7 +736,7 @@ func ingestImportedCollectionChunks(id, name string, chunks []PortableChunk) {
 		}
 		var vec []float32
 		if cfg.Enabled {
-			if v, err := EmbedWith(context.Background(), cfg, text); err == nil {
+			if v, err := EmbedWith(context.Background(), cfg, embedHeader(pc.Title, pc.Section)+"\n\n"+text); err == nil {
 				vec = v
 			}
 		}
@@ -759,6 +761,7 @@ func ingestImportedCollectionChunks(id, name string, chunks []PortableChunk) {
 			Date:     date,
 			Locator:  pc.Locator,
 			Kind:     pc.Kind,
+			Ord:      pc.Ord,
 		}
 		db.Set(EmbeddedChunks, row.ID, row)
 	}

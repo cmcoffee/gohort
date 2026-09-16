@@ -24,6 +24,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -405,11 +406,86 @@ func FetchCollectionDoc(base Database, user string, collectionIDs []string, docI
 	return AssembleChunkDoc(chunks, maxChars)
 }
 
+// SortChunksForAssembly puts one document's chunks back into document order.
+//
+// Chunks stamped with Ord (every ingest since the field existed) sort by it,
+// which is the order the ingest produced them. Rows from before the stamp
+// have nothing that records their order, so they get the best available
+// approximation: section heading, then the numeric "(part N)" / "(part N/M)"
+// suffixes compared as numbers, then ID. That still puts sections in
+// alphabetical rather than document order — unrecoverable for those rows —
+// but it stops "(part 10)" landing before "(part 2)", which is what made a
+// long unstructured upload read as scrambled paragraphs. One legacy chunk in
+// the set switches the whole set to the fallback, since an Ord of 0 has no
+// position to compare against.
+func SortChunksForAssembly(chunks []EmbeddedChunk) {
+	stamped := true
+	for i := range chunks {
+		if chunks[i].Ord <= 0 {
+			stamped = false
+			break
+		}
+	}
+	if stamped {
+		sort.Slice(chunks, func(i, j int) bool {
+			if chunks[i].Ord != chunks[j].Ord {
+				return chunks[i].Ord < chunks[j].Ord
+			}
+			return chunks[i].ID < chunks[j].ID
+		})
+		return
+	}
+	sort.Slice(chunks, func(i, j int) bool {
+		bi, pi := chunkPartOrder(chunks[i].Section)
+		bj, pj := chunkPartOrder(chunks[j].Section)
+		if bi != bj {
+			return bi < bj
+		}
+		for n := 0; n < len(pi) && n < len(pj); n++ {
+			if pi[n] != pj[n] {
+				return pi[n] < pj[n]
+			}
+		}
+		if len(pi) != len(pj) {
+			return len(pi) < len(pj)
+		}
+		return chunks[i].ID < chunks[j].ID
+	})
+}
+
+// chunkPartOrder splits a section heading into its base name and the
+// sequence of part numbers the chunker appended, outermost first: "Guide
+// (part 2) (part 1/3)" → ("Guide", [2, 1]). A trailing "(part …)" that is not
+// digits (or digits "/" digits) is left on the base name. Headings with no
+// suffix return a nil sequence, which sorts before any suffixed sibling.
+func chunkPartOrder(section string) (string, []int) {
+	s := strings.TrimSpace(strings.TrimPrefix(section, "## "))
+	var parts []int
+	for {
+		idx := strings.LastIndex(s, " (part ")
+		if idx < 0 || !strings.HasSuffix(s, ")") {
+			break
+		}
+		inner := s[idx+len(" (part ") : len(s)-1]
+		if slash := strings.IndexByte(inner, '/'); slash >= 0 {
+			inner = inner[:slash]
+		}
+		n, err := strconv.Atoi(inner)
+		if err != nil {
+			break
+		}
+		parts = append([]int{n}, parts...)
+		s = strings.TrimSpace(s[:idx])
+	}
+	return s, parts
+}
+
 // AssembleChunkDoc reconstructs a readable document from its embedded
-// chunks: ordered by section, titled (prefers the stamped Title, else the
-// first section heading), section headers de-duplicated, non-authoritative
-// Kind tags inlined, and truncated to maxChars (default 10000) at a
-// paragraph boundary. Returns "" for no chunks.
+// chunks: in document order (see SortChunksForAssembly), titled (prefers
+// the stamped Title, else the first section heading), section headers
+// de-duplicated, non-authoritative Kind tags inlined, and truncated to
+// maxChars (default 10000) at a paragraph boundary. Returns "" for no
+// chunks.
 func AssembleChunkDoc(chunks []EmbeddedChunk, maxChars int) string {
 	if len(chunks) == 0 {
 		return ""
@@ -417,12 +493,7 @@ func AssembleChunkDoc(chunks []EmbeddedChunk, maxChars int) string {
 	if maxChars <= 0 {
 		maxChars = 10000
 	}
-	sort.Slice(chunks, func(i, j int) bool {
-		if chunks[i].Section != chunks[j].Section {
-			return chunks[i].Section < chunks[j].Section
-		}
-		return chunks[i].ID < chunks[j].ID
-	})
+	SortChunksForAssembly(chunks)
 	docName := strings.TrimSpace(chunks[0].Title)
 	if docName == "" {
 		docName = strings.TrimSpace(strings.TrimPrefix(chunks[0].Section, "## "))

@@ -207,6 +207,14 @@ type EmbeddedChunk struct {
 	// Knowledge agents are taught to cite these differently
 	// ("one commenter noted…" vs "the doc says…").
 	Kind string `json:"kind,omitempty"`
+	// Ord is the chunk's 1-based position within its parent document, in the
+	// order the ingest produced it. It exists because nothing else records
+	// that order: IDs are random UUIDs, every chunk of a report shares one
+	// Date, and section headings sort alphabetically — so a reassembled
+	// document read Background, Conclusion, Overview, and a long unstructured
+	// upload read part 1, 10, 11, 2. Zero on rows ingested before the field
+	// existed; SortChunksForAssembly falls back to a natural sort for those.
+	Ord int `json:"ord,omitempty"`
 	// MemoryProvenance is reserved: the vector layer has no retirement pass yet, so
 	// these fields sit unset. Embedded now so a future chunk-staleness or
 	// supersession pass inherits the same vocabulary as the fact store. Zero value
@@ -474,14 +482,14 @@ func IngestReportTitled(ctx context.Context, db Database, source, reportID, titl
 	}
 	cfg := GetEmbeddingConfig()
 	now := time.Now().Format(time.RFC3339)
-	var embedded, empty, split int
+	var embedded, empty, split, ord int
 	for _, c := range chunks {
 		// embedWithSplitFallback handles the case where a single chunk,
 		// even after the chunker's defensive cap, still exceeds the
 		// embedder's per-call token limit. The fallback recursively
 		// halves the text until each piece embeds successfully OR
 		// returns empty for pieces that fail for other reasons.
-		pieces := embedWithSplitFallback(ctx, cfg, c.Section, c.Text)
+		pieces := embedWithSplitFallback(ctx, cfg, embedHeader(title, c.Section), c.Text)
 		for i, p := range pieces {
 			if len(p.Vector) > 0 {
 				embedded++
@@ -495,6 +503,7 @@ func IngestReportTitled(ctx context.Context, db Database, source, reportID, titl
 				sect = fmt.Sprintf("%s (part %d/%d)", c.Section, i+1, len(pieces))
 				split++
 			}
+			ord++
 			row := EmbeddedChunk{
 				ID:       UUIDv4(),
 				Source:   source,
@@ -506,6 +515,7 @@ func IngestReportTitled(ctx context.Context, db Database, source, reportID, titl
 				Model:    cfg.Model,
 				Date:     now,
 				Kind:     kind,
+				Ord:      ord,
 			}
 			db.Set(EmbeddedChunks, row.ID, row)
 		}
@@ -547,7 +557,7 @@ func IngestPagedReport(ctx context.Context, db Database, source, reportID, repor
 	pages := strings.Split(report, "\f")
 	cfg := GetEmbeddingConfig()
 	now := time.Now().Format(time.RFC3339)
-	var totalChunks, embedded, empty, split int
+	var totalChunks, embedded, empty, split, ord int
 	for i, pageText := range pages {
 		pageText = strings.TrimSpace(pageText)
 		if pageText == "" {
@@ -573,6 +583,7 @@ func IngestPagedReport(ctx context.Context, db Database, source, reportID, repor
 					sect = fmt.Sprintf("%s (part %d/%d)", c.Section, j+1, len(pieces))
 					split++
 				}
+				ord++
 				row := EmbeddedChunk{
 					ID:       UUIDv4(),
 					Source:   source,
@@ -583,6 +594,7 @@ func IngestPagedReport(ctx context.Context, db Database, source, reportID, repor
 					Model:    cfg.Model,
 					Date:     now,
 					Locator:  locator,
+					Ord:      ord,
 				}
 				db.Set(EmbeddedChunks, row.ID, row)
 			}
@@ -604,15 +616,31 @@ type embedPiece struct {
 	Vector []float32
 }
 
+// embedHeader is the context line prefixed to a chunk's text when it is
+// embedded: the parent document's title and the section heading. The title
+// is there because a chunk's own words rarely name the document they belong
+// to — the "Overview" section of a firewall guide need not say "firewall" —
+// and without it a query about the document lands on nothing. Empty title
+// leaves the header as the bare section, so pre-Title ingests embed as they
+// always did.
+func embedHeader(title, section string) string {
+	title = strings.TrimSpace(title)
+	if title == "" || strings.EqualFold(title, strings.TrimSpace(section)) {
+		return section
+	}
+	return title + "\n" + section
+}
+
 // embedWithSplitFallback embeds a chunk's text, falling back to
 // recursive half-splitting when the embedder rejects the input as too
 // large. Returns one piece per successful (or final-failed) embed call.
 // On non-size errors (network, decode, server outage) the function
 // stops splitting and returns a single piece with an empty vector so
 // the row still lands in the index with its raw text (recoverable via
-// re-embed later).
-func embedWithSplitFallback(ctx context.Context, cfg EmbeddingConfig, section, text string) []embedPiece {
-	return embedWithSplitFallbackDepth(ctx, cfg, section, text, 0)
+// re-embed later). header is the context prefix (see embedHeader) —
+// it rides on every piece but is never stored as chunk text.
+func embedWithSplitFallback(ctx context.Context, cfg EmbeddingConfig, header, text string) []embedPiece {
+	return embedWithSplitFallbackDepth(ctx, cfg, header, text, 0)
 }
 
 // embedWithSplitFallbackDepth is the recursive worker with an explicit
@@ -1161,7 +1189,7 @@ func SearchChunksSubstringByPredicate(db Database, allow func(c EmbeddedChunk) b
 		if !allow(*c) {
 			continue
 		}
-		if !strings.Contains(strings.ToLower(c.Section+"\n"+c.Text), q) {
+		if !strings.Contains(strings.ToLower(lexicalText(c)), q) {
 			continue
 		}
 		out = append(out, SearchHit{
@@ -1181,6 +1209,16 @@ func SearchChunksSubstringByPredicate(db Database, allow func(c EmbeddedChunk) b
 		}
 	}
 	return out
+}
+
+// lexicalText is the text a chunk exposes to the keyword and substring
+// scans: the parent document's title, the section heading, and the body.
+// The title is included for the same reason embedHeader includes it — the
+// name of a document is the one thing its chunks are least likely to
+// repeat, and a query that names the document ("the OPNsense guide")
+// matched nothing while the scan looked only at section and body.
+func lexicalText(c *EmbeddedChunk) string {
+	return c.Title + "\n" + c.Section + "\n" + c.Text
 }
 
 // keywordTerms tokenizes a query into distinct content terms for lexical
@@ -1239,7 +1277,7 @@ func SearchChunksKeywordByPredicate(db Database, allow func(c EmbeddedChunk) boo
 			continue
 		}
 		allowed++
-		lt := strings.ToLower(c.Section + "\n" + c.Text)
+		lt := strings.ToLower(lexicalText(c))
 		var matched []bool
 		any := false
 		for j, t := range terms {
@@ -1349,10 +1387,17 @@ func HybridSearchByPredicate(db Database, allow func(c EmbeddedChunk) bool, quer
 	return MergeHitsByScore(vHits, kHits, k)
 }
 
-// MergeHitsByScore unions two hit lists, dedups by chunk ID, sorts by
-// descending score, and caps at k. Used to fold a second-store search
-// pass (e.g. deployment-scoped chunks in RootDB) into the primary
-// result set. Fast-paths when either side is empty.
+// MergeHitsByScore unions two hit lists, dedups by chunk ID keeping the
+// HIGHER score, sorts by descending score, and caps at k. Used to fuse the
+// vector and keyword halves of a hybrid search, and to fold a second-store
+// pass into the primary result set. Fast-paths when either side is empty.
+//
+// Keeping the higher score is the whole point of hybrid recall: a chunk is
+// in both lists exactly when both signals found it, and the merge used to
+// keep whichever copy came first — the vector one. A chunk with cosine 0.30
+// and a keyword score of 0.80 (the exact identifier the keyword half exists
+// to catch) came out at 0.30 and was then dropped by the 0.35 relevance
+// floor, so the strongest kind of match was the one that vanished.
 func MergeHitsByScore(a, b []SearchHit, k int) []SearchHit {
 	if k <= 0 {
 		return nil
@@ -1370,12 +1415,15 @@ func MergeHitsByScore(a, b []SearchHit, k int) []SearchHit {
 		return a
 	}
 	merged := make([]SearchHit, 0, len(a)+len(b))
-	seen := make(map[string]bool, len(a)+len(b))
+	at := make(map[string]int, len(a)+len(b)) // chunk ID → index in merged
 	for _, h := range append(append([]SearchHit{}, a...), b...) {
-		if seen[h.ID] {
+		if i, ok := at[h.ID]; ok {
+			if h.Score > merged[i].Score {
+				merged[i] = h
+			}
 			continue
 		}
-		seen[h.ID] = true
+		at[h.ID] = len(merged)
 		merged = append(merged, h)
 	}
 	sort.Slice(merged, func(i, j int) bool { return merged[i].Score > merged[j].Score })
@@ -1451,7 +1499,7 @@ func SearchChunksSubstringInSources(db Database, allowed map[string]bool, query 
 		if !allowed[c.Source] {
 			continue
 		}
-		if !strings.Contains(strings.ToLower(c.Section+"\n"+c.Text), q) {
+		if !strings.Contains(strings.ToLower(lexicalText(c)), q) {
 			continue
 		}
 		out = append(out, SearchHit{
@@ -1547,7 +1595,7 @@ func SearchChunksSubstring(db Database, query string, k int) []SearchHit {
 	var out []SearchHit
 	for i := range chunks {
 		c := &chunks[i]
-		if !strings.Contains(strings.ToLower(c.Section+"\n"+c.Text), q) {
+		if !strings.Contains(strings.ToLower(lexicalText(c)), q) {
 			continue
 		}
 		out = append(out, SearchHit{

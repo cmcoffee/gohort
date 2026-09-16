@@ -1516,18 +1516,19 @@ func (t *chatTurn) fetchKnowledgeDocScoped(scopeSkills []SkillRecord) AgentToolD
 			if len(chunks) == 0 {
 				return fmt.Sprintf("No document found with doc_id=%q in your accessible knowledge corpus. The doc_id either doesn't exist, has been deleted, or belongs to a corpus you can't access. If you got the doc_id from a recent %s call and the document was deleted between turns, re-run the search.", docID, memKnowledgePhrase()), nil
 			}
-			// Order by Section (alphabetical groups same-section parts
-			// together; (part 1)/(part 2) suffixes preserve order
-			// within a section), then ID for stable tiebreak. Not perfect
-			// for docs whose section order was meaningful, but better
-			// than DB-key order (which is effectively random for UUIDs).
-			sort.Slice(chunks, func(i, j int) bool {
-				if chunks[i].Section != chunks[j].Section {
-					return chunks[i].Section < chunks[j].Section
-				}
-				return chunks[i].ID < chunks[j].ID
-			})
-			docName := chunkDocName(chunks[0].Section)
+			// Document order (Ord stamp, natural-sort fallback for legacy
+			// rows) — the same ordering AssembleChunkDoc uses, so a fetch
+			// here and a FetchCollectionDoc elsewhere read the same way.
+			SortChunksForAssembly(chunks)
+			// Name the document by its stamped Title, as knowledge_search
+			// does. The fallback reads the FIRST section's heading, which
+			// is the upload's "## <name>" line now that chunks are in
+			// order — under the old alphabetical sort it was whichever
+			// heading sorted first, so a fetch opened with "# Background".
+			docName := strings.TrimSpace(chunks[0].Title)
+			if docName == "" {
+				docName = chunkDocName(chunks[0].Section)
+			}
 			if docName == "" {
 				docName = "(unnamed document)"
 			}

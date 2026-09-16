@@ -77,7 +77,7 @@ func ReembedUnvectoredChunks(ctx context.Context, db Database) int {
 		// Same prompt shape as ingest (embedWithSplitFallbackDepth), so a
 		// repaired row lands in the same space as one embedded first time.
 		ectx, cancel := context.WithTimeout(ctx, reembedChunkTimeout)
-		v, err := Embed(ectx, c.Section+"\n\n"+c.Text)
+		v, err := Embed(ectx, embedHeader(c.Title, c.Section)+"\n\n"+c.Text)
 		cancel()
 		if err != nil || len(v) == 0 {
 			failed++
