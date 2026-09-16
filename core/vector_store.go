@@ -255,9 +255,10 @@ type SearchHit struct {
 // SplitReportIntoChunks splits a synthesized report's body at `## section`
 // boundaries. The opening (everything before the first `##`) becomes
 // one chunk labeled "Overview"; every subsequent `## Header` becomes a
-// chunk labeled with that header. The "## Sources" section at the end
-// is dropped — it's a bibliography, not semantic content. Empty or
-// all-whitespace sections are skipped.
+// chunk labeled with that header. The "## Sources" section is dropped —
+// in a synthesized report it's a bibliography, not semantic content.
+// Empty or all-whitespace sections are skipped. Documents ingested as
+// written go through splitReport with the drop off; see there.
 //
 // Oversized sections (> the chunk-size limit) are sub-split at paragraph
 // boundaries — a single overlong section can't blow past the
@@ -265,6 +266,18 @@ type SearchHit struct {
 // " (part N)" suffix so the retrieval payload still attributes the
 // content to its parent heading.
 func SplitReportIntoChunks(report string) []struct{ Section, Text string } {
+	return splitReport(report, true)
+}
+
+// splitReport is the chunker behind SplitReportIntoChunks, with the
+// bibliography drop as a choice. dropBibliography is for a synthesized
+// REPORT (research, debate, a dispatched agent's delivery), whose trailing
+// "## Sources" is a list of links the pipeline wrote and nobody searches
+// for. A DOCUMENT ingested as written — an upload, a fetched page, a saved
+// finding — keeps every section, because a section a user titled "Sources"
+// is content: a guide's list of data sources, a chapter on sourcing. The
+// drop used to apply to both, and an upload lost that section silently.
+func splitReport(report string, dropBibliography bool) []struct{ Section, Text string } {
 	report = strings.TrimSpace(report)
 	if report == "" {
 		return nil
@@ -280,8 +293,8 @@ func SplitReportIntoChunks(report string) []struct{ Section, Text string } {
 		if section == "" {
 			section = "Overview"
 		}
-		// Drop the bibliography — not semantic content to search over.
-		if strings.EqualFold(section, "Sources") {
+		// Drop a report's bibliography — not semantic content to search over.
+		if dropBibliography && strings.EqualFold(section, "Sources") {
 			curBuf.Reset()
 			return
 		}
@@ -382,9 +395,11 @@ func splitOnParagraphsCap(text string, cap int) []string {
 	return out
 }
 
-// IngestReport chunks the given report, embeds each chunk, and stores
-// the results in the vector store tagged with the given source label
-// (app-provided origin tag — the app decides what string to pass).
+// IngestReport chunks the given DOCUMENT as written, embeds each chunk, and
+// stores the results in the vector store tagged with the given source label
+// (app-provided origin tag — the app decides what string to pass). Every
+// section is kept, a "## Sources" one included; a synthesized report whose
+// Sources is a bibliography goes through IngestReportTitled, which drops it.
 // Any existing chunks for that reportID are replaced. Silent no-op when embeddings are disabled or the DB is
 // nil. Errors from individual chunk embeddings are logged and skipped
 // — a partial ingestion beats a failed one. Embeddings always run on
@@ -401,7 +416,7 @@ func IngestReport(ctx context.Context, db Database, source, reportID, report str
 // ("one commenter noted…" vs "the doc says…"). Pass kind="" for
 // default authoritative (equivalent to IngestReport).
 func IngestReportTagged(ctx context.Context, db Database, source, reportID, report, kind string) {
-	IngestReportTitled(ctx, db, source, reportID, "", report, kind)
+	ingestReport(ctx, db, source, reportID, "", report, kind, false)
 }
 
 // BackfillChunkTitles stamps Title onto pre-existing chunks of the
@@ -446,13 +461,15 @@ func BackfillChunkTitles(db Database, kind string, resolve func(reportID string)
 	return updated
 }
 
-// IngestReportTitled is IngestReportTagged plus a document Title — the
-// human-meaningful name of the parent record (e.g. a debate topic or a
+// IngestReportTitled ingests a synthesized REPORT — a debate verdict, a
+// research synthesis, a dispatched agent's delivery — with a document Title,
+// the human-meaningful name of the parent record (the debate topic, the
 // research question) stamped onto every chunk. Without it, browsers and
 // recall can only show a chunk's section heading ("Verdict", "Executive
 // Summary"), which is meaningless without knowing what document it came
-// from. Pass title="" for sources that have no distinct document name
-// (equivalent to IngestReportTagged).
+// from. Being a report, its trailing "## Sources" bibliography is dropped
+// (see splitReport); a document ingested as written goes through
+// IngestReport / IngestReportTagged / IngestPagedReport instead.
 //
 // Returns the number of chunk rows stored (0 = nothing indexed). Rows are
 // stored even when their embedding fails — an unvectored chunk still serves
@@ -460,6 +477,12 @@ func BackfillChunkTitles(db Database, kind string, resolve func(reportID string)
 // embedder was down. Callers that must not lose the content (the compaction
 // archive) treat 0-for-non-empty-input as a failure.
 func IngestReportTitled(ctx context.Context, db Database, source, reportID, title, report, kind string) int {
+	return ingestReport(ctx, db, source, reportID, title, report, kind, true)
+}
+
+// ingestReport is the one ingest behind the public entry points; isReport
+// selects the bibliography drop (see splitReport).
+func ingestReport(ctx context.Context, db Database, source, reportID, title, report, kind string, isReport bool) int {
 	if db == nil || reportID == "" {
 		return 0
 	}
@@ -475,7 +498,7 @@ func IngestReportTitled(ctx context.Context, db Database, source, reportID, titl
 	// resynth should replace, not duplicate.
 	DeleteReportChunks(db, reportID)
 
-	chunks := SplitReportIntoChunks(report)
+	chunks := splitReport(report, isReport)
 	if len(chunks) == 0 {
 		Debug("[vector] no chunks extracted for %s/%s", source, reportID)
 		return 0
@@ -565,7 +588,7 @@ func IngestPagedReport(ctx context.Context, db Database, source, reportID, repor
 		}
 		pageNum := i + 1
 		locator := fmt.Sprintf("page %d", pageNum)
-		chunks := SplitReportIntoChunks(pageText)
+		chunks := splitReport(pageText, false) // a document, as written
 		if len(chunks) == 0 {
 			continue
 		}

@@ -346,3 +346,38 @@ func TestKeywordSearchFindsATwoLetterIdentifier(t *testing.T) {
 		}
 	}
 }
+
+// A section a user titled "Sources" is content in an uploaded document and
+// a bibliography in a synthesized report. The document paths keep it; the
+// report path drops it.
+func TestSourcesSectionSurvivesADocumentIngest(t *testing.T) {
+	prev := GetEmbeddingConfig()
+	defer SetEmbeddingConfig(prev)
+	SetEmbeddingConfig(EmbeddingConfig{})
+	db := &DBase{Store: kvlite.MemStore()}
+	doc := "## Data guide\n\nHow the warehouse is fed.\n\n## Sources\n\nThe CRM export and the billing feed, nightly.\n"
+	sections := func(reportID string) string {
+		chunks := ChunksWhere(db, func(c EmbeddedChunk) bool { return c.ReportID == reportID })
+		SortChunksForAssembly(chunks)
+		var out []string
+		for _, c := range chunks {
+			out = append(out, c.Section)
+		}
+		return strings.Join(out, " | ")
+	}
+	IngestReport(context.Background(), db, "collection:t", "upload", doc)
+	if got := sections("upload"); got != "Data guide | Sources" {
+		t.Fatalf("upload must keep its Sources section, got %q", got)
+	}
+	IngestPagedReport(context.Background(), db, "collection:t", "pdf", doc)
+	if got := sections("pdf"); got != "Data guide | Sources" {
+		t.Fatalf("PDF upload must keep its Sources section, got %q", got)
+	}
+	IngestReportTitled(context.Background(), db, "collection:t", "report", "Data guide", doc, "research")
+	if got := sections("report"); got != "Data guide" {
+		t.Fatalf("a synthesized report must drop its bibliography, got %q", got)
+	}
+	if err := IngestRecallSpan(context.Background(), db, "history:x", "span", "chat", "## Sources\n\nsee the two links above\n", ""); err != nil {
+		t.Fatalf("a transcript span that is only a Sources heading must still archive: %v", err)
+	}
+}

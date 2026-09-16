@@ -45,7 +45,11 @@ func IngestRecallSpan(ctx context.Context, db Database, source, reportID, title,
 	if strings.TrimSpace(body) == "" {
 		return nil
 	}
-	if rows := IngestReportTitled(ctx, db, source, reportID, title, body, kind); rows == 0 {
+	// The document path, not the report one: a transcript span is archived
+	// as written, and a reply that happened to carry a "## Sources" heading
+	// would otherwise lose it — or, if that was the whole span, archive
+	// nothing and read as a failed ingest.
+	if rows := ingestReport(ctx, db, source, reportID, title, body, kind, false); rows == 0 {
 		return fmt.Errorf("recall span %s: no chunks stored", reportID)
 	}
 	return nil
