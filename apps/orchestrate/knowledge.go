@@ -1343,59 +1343,24 @@ func (t *chatTurn) knowledgeToolDefScoped(scopeSkills []SkillRecord) AgentToolDe
 				}
 				return "No matching curated content. The Knowledge layer (uploads, shared KB, collections) has nothing on that — try " + memRecallPhrase() + " for the agent's own derived findings, or proceed without prior context.", nil
 			}
-			// Mirror web_search's shape: "N. Title\n   URL\n   Snippet"
-			// blocks separated by blank lines. Plain text, no markdown
-			// ornament — the chat surface renders it the same way it
-			// renders web_search results, no escape-sequence noise.
-			// Score is dropped (the LLM trusts the ranking the way it
-			// trusts web_search's ordering); provenance only surfaces
-			// when "derived" (uploaded/shared is the expected default).
-			var b strings.Builder
-			for i, h := range hits {
-				if i > 0 {
-					b.WriteString("\n\n")
-				}
-				// Prefer the stamped document Title (the debate topic /
-				// research question) — it tells the LLM what the hit is
-				// ABOUT. Fall back to the section-derived name for legacy
-				// chunks with no Title.
-				docName := strings.TrimSpace(h.Title)
-				if docName == "" {
-					docName = chunkDocName(h.Section)
-				}
-				if docName == "" {
-					docName = "(unnamed document)"
-				}
-				section := strings.TrimSpace(strings.TrimPrefix(h.Section, "## "))
-				// Line 1: "N. <source_doc> — <section> (locator) [kind]"
-				fmt.Fprintf(&b, "%d. %s", i+1, docName)
-				if section != "" && section != docName {
-					fmt.Fprintf(&b, " — %s", section)
-				}
-				if h.Locator != "" {
-					fmt.Fprintf(&b, " (%s)", h.Locator)
-				}
-				if h.Kind != "" {
-					fmt.Fprintf(&b, " [%s]", h.Kind)
-				}
-				if chunkProvenance(h.Source, h.ReportID) == "derived" {
-					b.WriteString(" [derived]")
-				}
-				b.WriteString("\n")
-				// Line 2: doc_id (web_search's URL slot), plus the section to
-				// pass back. Spelled out because the excerpt is a 300-char
-				// preview and the follow-up fetch reads a long document from
-				// the TOP unless told where to go — on a large reference that
-				// means the section a hit came from is unreachable while the
-				// hit itself looks like a success.
-				fmt.Fprintf(&b, "   doc_id: %s\n", h.ReportID)
-				if section != "" && section != docName {
-					fmt.Fprintf(&b, "   section: %s\n", stripChunkPartSuffix(section))
-				}
-				// Line 3: excerpt.
-				fmt.Fprintf(&b, "   %s", knowledgeSearchExcerpt(h.Text))
-			}
-			return b.String(), nil
+			// The shared hit shape (core.HitFormat), the same one every app's
+			// collection search renders. Excerpted, because this list is a
+			// preview pane: the follow-up fetch_knowledge_doc reads the body,
+			// which is why doc_id and section are printed — the fetch reads
+			// a long document from the TOP unless told where to go. Score is
+			// dropped (the LLM trusts the ranking the way it trusts
+			// web_search's ordering); provenance only surfaces when
+			// "derived" (uploaded/shared is the expected default).
+			return HitFormat{
+				Excerpt: knowledgeSearchExcerptMaxChars,
+				DocIDs:  true,
+				Tag: func(h SearchHit) string {
+					if chunkProvenance(h.Source, h.ReportID) == "derived" {
+						return "derived"
+					}
+					return ""
+				},
+			}.Render(hits), nil
 		},
 	}
 }

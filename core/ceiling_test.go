@@ -197,7 +197,14 @@ const (
 	// depending on which tool asked. It arrived at the top of the band. What
 	// did NOT get exported is the part-suffix parser it sorts by, nor the
 	// embed header; the store is the only writer of both.
-	coreExportCeiling = 2172
+	//
+	// Raised 2172 -> 2173 for HitFormat, ONE type: how a search hit reads to
+	// a model. Seven render loops in four apps had each dropped a different
+	// subset of what the store stamps on a hit (page locator, comment
+	// provenance, title), so the shape belongs next to SearchHit, and a
+	// struct with a Render method costs one name where a function and its
+	// options would cost two. The excerpt cut stays unexported.
+	coreExportCeiling = 2173
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

@@ -400,17 +400,11 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			if len(hits) == 0 {
 				return fmt.Sprintf("No matches for %q in the attached collections.", query), nil
 			}
-			var b strings.Builder
-			fmt.Fprintf(&b, "Passages from the attached collections relevant to %q (use what fits, cite the source labels):\n", query)
-			for _, h := range hits {
-				label := strings.TrimSpace(h.Section)
-				if label == "" {
-					label = h.Source
-				}
-				b.WriteString("\n--- " + label + " ---\n")
-				b.WriteString(strings.TrimSpace(h.Text) + "\n")
-			}
-			return strings.TrimRight(b.String(), "\n"), nil
+			// The shared hit shape (core.HitFormat) — whole passages with
+			// title, section, page and provenance, so a citation can name
+			// the page. No doc ids: the guide has no fetch tool.
+			return fmt.Sprintf("Passages from the attached collections relevant to %q (use what fits, cite the source labels):\n\n%s",
+				query, HitFormat{}.Render(hits)), nil
 		},
 	}
 
@@ -625,13 +619,8 @@ func gatherGroundingFor(ctx context.Context, ownerUser string, g Guide, query st
 		hits := SearchCollections(ctx, CollectionsDB(), ownerUser, g.Collections, query, 6)
 		if len(hits) > 0 {
 			b.WriteString("#### From this guide's knowledge collections\n\n")
-			for _, h := range hits {
-				label := strings.TrimSpace(h.Section)
-				if label == "" {
-					label = h.Source
-				}
-				fmt.Fprintf(&b, "--- %s ---\n%s\n\n", label, strings.TrimSpace(h.Text))
-			}
+			b.WriteString(HitFormat{}.Render(hits))
+			b.WriteString("\n\n")
 		}
 	}
 	// Sources: each attached reference, focused on the topic. A Private guide must
@@ -666,7 +655,7 @@ func gatherLinkedSourceSnapshot(ctx context.Context, ownerUser string, g Guide) 
 
 	if len(g.Collections) > 0 {
 		seen := map[string]bool{}
-		var hits []string
+		var hits []SearchHit
 		for _, s := range g.sorted() {
 			q := strings.TrimSpace(s.Title)
 			if q == "" {
@@ -678,11 +667,7 @@ func gatherLinkedSourceSnapshot(ctx context.Context, ownerUser string, g Guide) 
 					continue
 				}
 				seen[txt] = true
-				label := strings.TrimSpace(h.Section)
-				if label == "" {
-					label = h.Source
-				}
-				hits = append(hits, "--- "+label+" ---\n"+txt)
+				hits = append(hits, h)
 				if len(hits) >= maxCollectionHits {
 					break
 				}
@@ -693,7 +678,7 @@ func gatherLinkedSourceSnapshot(ctx context.Context, ownerUser string, g Guide) 
 		}
 		if len(hits) > 0 {
 			b.WriteString("#### Knowledge-collection material\n\n")
-			b.WriteString(strings.Join(hits, "\n\n"))
+			b.WriteString(HitFormat{}.Render(hits))
 			b.WriteString("\n\n")
 		}
 	}

@@ -156,3 +156,50 @@ func TestEmbedHeaderCarriesTheTitleOnce(t *testing.T) {
 		t.Fatalf("title equal to section must not repeat, got %q", got)
 	}
 }
+
+// One hit shape for every app: the title, section, page locator and
+// provenance kind all reach the model, and the doc_id line appears only
+// for a caller that has a fetch tool to pass it to.
+func TestHitFormatCarriesEverythingTheStoreStamps(t *testing.T) {
+	hits := []SearchHit{
+		{ReportID: "r1", Title: "OPNsense guide", Section: "## Rules (part 2)", Text: "first para\nsecond para", Locator: "page 12", Kind: "user_comment"},
+		{ReportID: "r2", Section: "## Bread", Text: strings.Repeat("word ", 100)},
+	}
+	full := HitFormat{}.Render(hits)
+	for _, want := range []string{
+		"1. OPNsense guide — Rules (page 12) [user_comment]\n   first para\n   second para",
+		"\n\n2. Bread\n   word word",
+	} {
+		if !strings.Contains(full, want) {
+			t.Fatalf("missing %q in:\n%s", want, full)
+		}
+	}
+	if strings.Contains(full, "doc_id") {
+		t.Fatalf("no doc_id line without DocIDs:\n%s", full)
+	}
+
+	pane := HitFormat{Excerpt: 40, DocIDs: true, Tag: func(h SearchHit) string {
+		if h.ReportID == "r2" {
+			return "derived"
+		}
+		return ""
+	}}.Render(hits)
+	for _, want := range []string{
+		"1. OPNsense guide — Rules (page 12) [user_comment]\n   doc_id: r1\n   section: Rules\n   first para",
+		"2. Bread [derived]\n   doc_id: r2\n   word word",
+	} {
+		if !strings.Contains(pane, want) {
+			t.Fatalf("missing %q in:\n%s", want, pane)
+		}
+	}
+	if !strings.HasSuffix(pane, "…") || strings.Count(pane, "word") > 10 {
+		t.Fatalf("excerpt must cut at the cap with an ellipsis:\n%s", pane)
+	}
+	// A title-less, section-only hit does not repeat itself as its own section.
+	if strings.Contains(pane, "section: Bread") {
+		t.Fatalf("section line must be omitted when it is the document name:\n%s", pane)
+	}
+	if (HitFormat{}).Render(nil) != "" {
+		t.Fatal("empty input must render empty")
+	}
+}

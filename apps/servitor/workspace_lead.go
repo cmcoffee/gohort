@@ -485,16 +485,7 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 				if len(hits) == 0 {
 					return fmt.Sprintf("No passages in the linked collections matched %q.", query), nil
 				}
-				var b strings.Builder
-				fmt.Fprintf(&b, "%d passage(s) from linked knowledge for %q:\n\n", len(hits), query)
-				for i, h := range hits {
-					label := strings.TrimSpace(h.Title)
-					if label == "" {
-						label = h.Source
-					}
-					fmt.Fprintf(&b, "%d. [%s] %s\n\n", i+1, label, strings.TrimSpace(h.Text))
-				}
-				return b.String(), nil
+				return fmt.Sprintf("%d passage(s) from linked knowledge for %q:\n\n%s", len(hits), query, HitFormat{}.Render(hits)), nil
 			},
 			NeedsConfirm: false,
 		})

@@ -150,13 +150,8 @@ func (s servitorSource) fetchFocused(ctx context.Context, udb Database, owner st
 	}
 	if len(hits) > 0 {
 		b.WriteString("\n#### Relevant knowledge\n")
-		for i, h := range hits {
-			label := strings.TrimSpace(h.Title)
-			if label == "" {
-				label = h.Source
-			}
-			fmt.Fprintf(&b, "%d. [%s] %s\n\n", i+1, label, strings.TrimSpace(h.Text))
-		}
+		b.WriteString(HitFormat{}.Render(hits))
+		b.WriteString("\n")
 	}
 	for _, doc := range matchedDocs {
 		fmt.Fprintf(&b, "\n#### %s\n%s\n", doc, strings.TrimSpace(docs[doc]))

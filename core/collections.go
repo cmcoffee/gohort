@@ -480,6 +480,89 @@ func chunkPartOrder(section string) (string, []int) {
 	return s, parts
 }
 
+// HitFormat renders search hits as the text a model reads. One shape for
+// every app, because the chunk store stamps a Title, a Locator (the PDF
+// page), a Kind (comment thread versus article body) and a document id on
+// each hit, and every app that hand-rolled its own loop dropped most of
+// them: a page citation and the "one commenter noted" framing were
+// recorded at ingest and never reached the model that was asked to cite.
+//
+// Per hit:
+//
+//	N. <title> — <section> (<locator>) [<kind>] [<tag>]
+//	   doc_id: <report id>          (DocIDs only)
+//	   section: <section>           (DocIDs only, when it differs from the title)
+//	   <text, continuation lines indented>
+//
+// Excerpt caps each hit's text at that many characters, cut at a word
+// boundary with an ellipsis; 0 renders the whole chunk. A caller that also
+// offers a fetch-by-id tool sets DocIDs so the model can read further; one
+// that does not should leave it off, since a doc_id with nothing to pass it
+// to is an invitation to call a tool that is not there. Tag adds one more
+// bracketed marker per hit (an app's provenance label, say); nil adds none.
+type HitFormat struct {
+	Excerpt int
+	DocIDs  bool
+	Tag     func(SearchHit) string
+}
+
+// Render formats hits in rank order. Empty input renders as "".
+func (f HitFormat) Render(hits []SearchHit) string {
+	var b strings.Builder
+	for i, h := range hits {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		docName := strings.TrimSpace(h.Title)
+		section, _ := chunkPartOrder(h.Section)
+		if docName == "" {
+			docName = section
+		}
+		if docName == "" {
+			docName = "(unnamed document)"
+		}
+		fmt.Fprintf(&b, "%d. %s", i+1, docName)
+		if section != "" && section != docName {
+			fmt.Fprintf(&b, " — %s", section)
+		}
+		if h.Locator != "" {
+			fmt.Fprintf(&b, " (%s)", h.Locator)
+		}
+		if h.Kind != "" {
+			fmt.Fprintf(&b, " [%s]", h.Kind)
+		}
+		if f.Tag != nil {
+			if tag := strings.TrimSpace(f.Tag(h)); tag != "" {
+				fmt.Fprintf(&b, " [%s]", tag)
+			}
+		}
+		b.WriteString("\n")
+		if f.DocIDs {
+			fmt.Fprintf(&b, "   doc_id: %s\n", h.ReportID)
+			if section != "" && section != docName {
+				fmt.Fprintf(&b, "   section: %s\n", section)
+			}
+		}
+		b.WriteString("   ")
+		b.WriteString(strings.ReplaceAll(excerptText(h.Text, f.Excerpt), "\n", "\n   "))
+	}
+	return b.String()
+}
+
+// excerptText trims text to max characters at a word boundary, with an
+// ellipsis; max <= 0 or text already within it returns the trimmed text.
+func excerptText(text string, max int) string {
+	text = strings.TrimSpace(text)
+	if max <= 0 || len(text) <= max {
+		return text
+	}
+	cut := text[:max]
+	if idx := strings.LastIndex(cut, " "); idx > max/2 {
+		cut = cut[:idx]
+	}
+	return strings.TrimRight(cut, " \t\n") + "…"
+}
+
 // AssembleChunkDoc reconstructs a readable document from its embedded
 // chunks: in document order (see SortChunksForAssembly), titled (prefers
 // the stamped Title, else the first section heading), section headers

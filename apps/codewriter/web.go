@@ -380,20 +380,11 @@ func formatCollectionRefs(hits []SearchHit) string {
 	if len(hits) == 0 {
 		return ""
 	}
-	var b strings.Builder
-	b.WriteString("\n\nReference material from your attached collections (grounding — use what's relevant, ignore the rest):\n")
-	for _, h := range hits {
-		label := strings.TrimSpace(h.Section)
-		if label == "" {
-			label = h.Source
-		}
-		b.WriteString("\n--- ")
-		b.WriteString(label)
-		b.WriteString(" ---\n")
-		b.WriteString(strings.TrimSpace(h.Text))
-		b.WriteString("\n")
-	}
-	return b.String()
+	// The shared hit shape (core.HitFormat): title, section, page locator
+	// and provenance kind on every passage. Whole chunks, no doc ids — the
+	// chat has no fetch tool to pass one to.
+	return "\n\nReference material from your attached collections (grounding — use what's relevant, ignore the rest):\n\n" +
+		HitFormat{}.Render(hits) + "\n"
 }
 
 // handleCollectionsList returns the collections visible to the current

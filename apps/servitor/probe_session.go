@@ -1271,15 +1271,7 @@ func (pr *probeRun) readTools() {
 			if len(hits) == 0 {
 				return "No matching passages in the linked knowledge.", nil
 			}
-			var b strings.Builder
-			for i, h := range hits {
-				label := strings.TrimSpace(h.Title)
-				if label == "" {
-					label = h.Source
-				}
-				fmt.Fprintf(&b, "%d. [%s] %s\n\n", i+1, label, strings.TrimSpace(h.Text))
-			}
-			return strings.TrimSpace(b.String()), nil
+			return HitFormat{}.Render(hits), nil
 		},
 		NeedsConfirm: false,
 	}
