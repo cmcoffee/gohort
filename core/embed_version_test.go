@@ -59,13 +59,13 @@ func TestChunkVectorComparable(t *testing.T) {
 		{"legacy empty model", EmbeddedChunk{Vector: []float32{1, 2, 3}}, true},
 	}
 	for _, c := range cases {
-		if got := chunkVectorComparable(&c.chunk, q); got != c.want {
+		if got := chunkVectorComparable(&c.chunk, q, currentEmbedModel()); got != c.want {
 			t.Errorf("%s: got %v want %v", c.name, got, c.want)
 		}
 	}
 	// No configured model name (llama.cpp style): everything dimension-valid passes.
 	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Endpoint: "http://x"})
-	if !chunkVectorComparable(&EmbeddedChunk{Vector: []float32{1, 2, 3}, Model: "whatever"}, q) {
+	if !chunkVectorComparable(&EmbeddedChunk{Vector: []float32{1, 2, 3}, Model: "whatever"}, q, currentEmbedModel()) {
 		t.Error("empty current model must grandfather stamped chunks")
 	}
 }

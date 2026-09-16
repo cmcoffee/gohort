@@ -1087,13 +1087,6 @@ func ChunksWhere(db Database, keep func(c EmbeddedChunk) bool) []EmbeddedChunk {
 	return out
 }
 
-// SearchChunks returns the top-K chunks by cosine similarity to the
-// query vector. Backed by an in-process cache (chunkCache) so each
-// query is a slice scan, not a kvlite re-deserialize. Skips chunks
-// whose dimension doesn't match the query (embedding model mismatch).
-//
-// Scale notes: comfortable to ~50k chunks with the cache; consider a
-// real ANN index (HNSW via coder/hnsw, chromem-go) above that.
 // chunkVectorComparable reports whether a chunk's cached vector may be
 // cosine-compared against a query embedded in the CURRENT space: dimensions
 // must match, and a chunk stamped with a DIFFERENT embedding model is skipped
@@ -1102,23 +1095,43 @@ func ChunksWhere(db Database, keep func(c EmbeddedChunk) bool) []EmbeddedChunk {
 // Chunks with an empty Model (single-model backends, legacy rows) and
 // deployments with no configured model name are grandfathered — a
 // same-endpoint model swap there is undetectable, see EmbedVersion.
-func chunkVectorComparable(c *EmbeddedChunk, query []float32) bool {
+//
+// model is the current embedding model, read ONCE by the caller through
+// currentEmbedModel before its scan. This function used to read it itself,
+// which put a config read — a lock, a peer-registry lookup and the
+// once-warnings around it — inside a loop that runs once per chunk in the
+// store, on every query, for a value that cannot change mid-scan.
+func chunkVectorComparable(c *EmbeddedChunk, query []float32, model string) bool {
 	if len(c.Vector) != len(query) {
 		return false
 	}
-	cur := GetEmbeddingConfig().Model
-	return c.Model == "" || cur == "" || c.Model == cur
+	return c.Model == "" || model == "" || c.Model == model
 }
 
+// currentEmbedModel is the embedding model name a scan compares chunk
+// stamps against — the resolved config's, so a peer-served embedder
+// reports the model the peer advertises.
+func currentEmbedModel() string {
+	return GetEmbeddingConfig().Model
+}
+
+// SearchChunks returns the top-K chunks by cosine similarity to the
+// query vector. Backed by an in-process cache (chunkCache) so each
+// query is a slice scan, not a kvlite re-deserialize. Skips chunks
+// whose dimension doesn't match the query (embedding model mismatch).
+//
+// Scale notes: comfortable to ~50k chunks with the cache; consider a
+// real ANN index (HNSW via coder/hnsw, chromem-go) above that.
 func SearchChunks(db Database, query []float32, k int) []SearchHit {
 	if db == nil || len(query) == 0 || k <= 0 {
 		return nil
 	}
 	chunks := snapshotChunks(db)
+	model := currentEmbedModel()
 	var all []SearchHit
 	for i := range chunks {
 		c := &chunks[i]
-		if !chunkVectorComparable(c, query) {
+		if !chunkVectorComparable(c, query, model) {
 			continue
 		}
 		s := Cosine(query, c.Vector)
@@ -1161,13 +1174,14 @@ func SearchChunksByPredicate(db Database, allow func(c EmbeddedChunk) bool, quer
 		return nil
 	}
 	chunks := snapshotChunks(db)
+	model := currentEmbedModel()
 	var all []SearchHit
 	for i := range chunks {
 		c := &chunks[i]
 		if !allow(*c) {
 			continue
 		}
-		if !chunkVectorComparable(c, query) {
+		if !chunkVectorComparable(c, query, model) {
 			continue
 		}
 		s := Cosine(query, c.Vector)
@@ -1596,13 +1610,14 @@ func SearchChunksInSources(db Database, allowed map[string]bool, query []float32
 		return nil
 	}
 	chunks := snapshotChunks(db)
+	model := currentEmbedModel()
 	var all []SearchHit
 	for i := range chunks {
 		c := &chunks[i]
 		if !allowed[c.Source] {
 			continue
 		}
-		if !chunkVectorComparable(c, query) {
+		if !chunkVectorComparable(c, query, model) {
 			continue
 		}
 		s := Cosine(query, c.Vector)
@@ -1679,13 +1694,14 @@ func SearchChunksBySource(db Database, sourcePrefix string, query []float32, k i
 		return nil
 	}
 	chunks := snapshotChunks(db)
+	model := currentEmbedModel()
 	var all []SearchHit
 	for i := range chunks {
 		c := &chunks[i]
 		if sourcePrefix != "" && !strings.HasPrefix(c.Source, sourcePrefix) {
 			continue
 		}
-		if !chunkVectorComparable(c, query) {
+		if !chunkVectorComparable(c, query, model) {
 			continue
 		}
 		s := Cosine(query, c.Vector)
