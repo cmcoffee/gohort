@@ -674,9 +674,20 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	// Clone so the force-adds below never mutate the stored agent's AllowedTools.
 	toolNames := append([]string(nil), target.AllowedTools...)
 	if len(toolNames) == 0 {
-		for _, td := range RegisteredChatTools() {
-			toolNames = append(toolNames, td.Name())
-		}
+		// The SAME default pool the interactive turn uses.
+		//
+		// This read RegisteredChatTools() — the raw registry, with no filtering
+		// at all — while resolveWorkerTools fills the identical case from
+		// availableWorkerToolNames(), which is that registry minus BlockedTools
+		// and minus the framework / infrastructure / superseded sets. So an
+		// agent with no allowlist got a WIDER catalog by being dispatched than
+		// by being talked to, and the wider one was the permissive reading of a
+		// field the owner never set.
+		//
+		// Small blast radius today — BlockedTools holds one name — and that is
+		// the argument for fixing it now rather than after the second entry
+		// lands and the two paths disagree about something that matters.
+		toolNames = append(toolNames, availableWorkerToolNames()...)
 	} else if !isNoToolsSentinel(toolNames) {
 		// A curated allowlist still gets the always-on tools the interactive
 		// turn force-includes (runner.go): workspace (the delivery primitive
@@ -1478,9 +1489,20 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// Clone so the force-adds below never mutate the stored agent's AllowedTools.
 	toolNames := append([]string(nil), target.AllowedTools...)
 	if len(toolNames) == 0 {
-		for _, td := range RegisteredChatTools() {
-			toolNames = append(toolNames, td.Name())
-		}
+		// The SAME default pool the interactive turn uses.
+		//
+		// This read RegisteredChatTools() — the raw registry, with no filtering
+		// at all — while resolveWorkerTools fills the identical case from
+		// availableWorkerToolNames(), which is that registry minus BlockedTools
+		// and minus the framework / infrastructure / superseded sets. So an
+		// agent with no allowlist got a WIDER catalog by being dispatched than
+		// by being talked to, and the wider one was the permissive reading of a
+		// field the owner never set.
+		//
+		// Small blast radius today — BlockedTools holds one name — and that is
+		// the argument for fixing it now rather than after the second entry
+		// lands and the two paths disagree about something that matters.
+		toolNames = append(toolNames, availableWorkerToolNames()...)
 	} else if !isNoToolsSentinel(toolNames) {
 		// A curated allowlist still gets the always-on tools the interactive
 		// turn force-includes (runner.go): workspace (the delivery primitive
