@@ -119,7 +119,13 @@ const (
 	// each keep an attempt history, and the type they keep it in cannot live in
 	// either of their files. It is the record only; the judging and the outcome
 	// rules stay with the runner in apps/orchestrate.
-	coreFileCeiling = 200
+	//
+	// 200 -> 201 (v0.6.806): core/paged_output.go, for paged tool output —
+	// the offset window every capped reply hands the agent, and the store a
+	// command's spilled output waits in. Two tools in two apps (orchestrate's
+	// document fetch, servitor's run_command) page the same way, and the
+	// text they page is the one thing they have in common.
+	coreFileCeiling = 201
 
 	// coreExportCeiling is the number of exported top-level symbols — funcs,
 	// types, vars, consts. Methods are excluded because they are not what
@@ -217,7 +223,18 @@ const (
 	// never invalidated the read cache, so the store needs to own the
 	// delete the way it already owns the read (ChunksWhere). The report and
 	// source-prefix deletes now go through it too.
-	coreExportCeiling = 2175
+	//
+	// Raised 2175 -> 2176 for WindowText, ONE func: the offset window a paged
+	// tool reply is cut with. orchestrate's fetch_knowledge_doc and servitor's
+	// run_command both page through it, so it cannot be unexported.
+	//
+	// Raised 2176 -> 2178 for SpillOutput and PageOutput, the two halves of
+	// paging a command's captured output: the first keeps a capture that
+	// spilled the reply cap and writes the offset note, the second serves a
+	// later window by id. Both are called from servitor's exec helpers and
+	// run_command tools, so neither can be unexported; the store, its
+	// bounds and the note are all private.
+	coreExportCeiling = 2178
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

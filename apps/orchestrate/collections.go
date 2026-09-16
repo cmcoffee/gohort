@@ -271,7 +271,7 @@ func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Requ
 		reportID := strings.TrimPrefix(action, "sources/")
 		T.handleCollectionSourceDelete(w, r, c, reportID)
 	case action == "search":
-		T.handleCollectionSearch(w, r, c)
+		T.handleCollectionSearch(w, r, user, c)
 	case action == "autofill":
 		T.handleCollectionAutofill(w, r, c)
 	case action == "research":
@@ -581,10 +581,15 @@ func (T *OrchestrateApp) handleCollectionSourceDelete(w http.ResponseWriter, r *
 	_ = json.NewEncoder(w).Encode(map[string]int{"removed": removed})
 }
 
-// handleCollectionSearch runs a vector-similarity search over the
-// collection's chunks. Returns ranked hits with section + text preview
-// so a user can verify what's indexed without going through an agent.
-func (T *OrchestrateApp) handleCollectionSearch(w http.ResponseWriter, r *http.Request, c Collection) {
+// handleCollectionSearch is the Knowledge page's test search over one
+// collection: THE retrieval primitive (SearchCollections — hybrid vector +
+// keyword, per-document diversification, the relevance floor), so what a
+// user sees while verifying a collection is what an agent searching it
+// gets. It used to be vector-only with a substring fallback and no floor,
+// which showed the user a different result set from the one their agents
+// were working with. Hits carry the title, page locator and provenance
+// kind so the page can label them the way a tool reply does.
+func (T *OrchestrateApp) handleCollectionSearch(w http.ResponseWriter, r *http.Request, user string, c Collection) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -600,21 +605,13 @@ func (T *OrchestrateApp) handleCollectionSearch(w http.ResponseWriter, r *http.R
 			k = n
 		}
 	}
-	cfg := GetEmbeddingConfig()
-	var hits []SearchHit
-	chunkDB := T.collectionDB(c)
-	if cfg.Enabled {
-		vec, err := Embed(r.Context(), q)
-		if err == nil {
-			hits = SearchChunksBySource(chunkDB, collectionSource(c.ID), vec, k)
-		}
-	}
-	// Fallback: simple substring scan if embeddings unavailable.
-	if len(hits) == 0 {
-		hits = substringHitsBySource(chunkDB, collectionSource(c.ID), q, k)
-	}
+	hits := SearchCollections(r.Context(), CollectionsDB(), user, []string{c.ID}, q, k)
 	type hitOut struct {
+		Title   string  `json:"title,omitempty"`
 		Section string  `json:"section"`
+		DocID   string  `json:"doc_id,omitempty"`
+		Locator string  `json:"locator,omitempty"`
+		Kind    string  `json:"kind,omitempty"`
 		Text    string  `json:"text"`
 		Score   float64 `json:"score,omitempty"`
 	}
@@ -624,17 +621,10 @@ func (T *OrchestrateApp) handleCollectionSearch(w http.ResponseWriter, r *http.R
 		if len(text) > 600 {
 			text = text[:600] + "…"
 		}
-		out = append(out, hitOut{Section: h.Section, Text: text, Score: float64(h.Score)})
+		out = append(out, hitOut{Title: h.Title, Section: h.Section, DocID: h.ReportID, Locator: h.Locator, Kind: h.Kind, Text: text, Score: float64(h.Score)})
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"hits": out})
-}
-
-// substringHitsBySource is the embedding-disabled fallback for
-// handleCollectionSearch: the core substring scan, scoped to one source
-// prefix. Up to k hits, in store order.
-func substringHitsBySource(db Database, sourcePrefix, query string, k int) []SearchHit {
-	return SearchChunksSubstringByPredicate(db, func(x EmbeddedChunk) bool { return strings.HasPrefix(x.Source, sourcePrefix) }, query, k)
 }
 
 // --- helpers --------------------------------------------------------------

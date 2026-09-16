@@ -214,16 +214,16 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 	run_tool := AgentToolDef{
 		Tool: Tool{
 			Name:        "run_command",
-			Description: "Execute a shell command and return combined stdout+stderr. Output is capped at 10,000 characters.",
-			Parameters: map[string]ToolParam{
-				"command": {Type: "string", Description: "Shell command to run."},
-			},
-			Required: []string{"command"},
+			Description: runCommandDescription,
+			Parameters:  runCommandParams(),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			if paged, ok, err := pageCommandOutput(args); ok {
+				return paged, err
+			}
 			cmd, _ := args["command"].(string)
 			if cmd == "" {
-				return "", fmt.Errorf("command is required")
+				return "", fmt.Errorf("command is required (or output_id to read on from a truncated result)")
 			}
 			key := baseKey(cmd)
 			cmdMu.Lock()

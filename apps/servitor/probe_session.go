@@ -510,16 +510,18 @@ func (pr *probeRun) newRunTool() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "run_command",
-			Description: "Execute a shell command on the remote Linux system via SSH and return combined stdout+stderr. Output is capped at 10,000 characters.",
-			Parameters: map[string]ToolParam{
-				"command": {Type: "string", Description: "The shell command to run on the remote host."},
-			},
-			Required: []string{"command"},
+			Description: runCommandDescription,
+			Parameters:  runCommandParams(),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			// A paging call reads a kept capture: no exec, no loop count, no
+			// gate — nothing runs.
+			if paged, ok, err := pageCommandOutput(args); ok {
+				return paged, err
+			}
 			cmd, _ := args["command"].(string)
 			if cmd == "" {
-				return "", fmt.Errorf("command is required")
+				return "", fmt.Errorf("command is required (or output_id to read on from a truncated result)")
 			}
 			pr.cmdMu.Lock()
 			pr.cmdCount[cmd]++
@@ -705,10 +707,8 @@ func (pr *probeRun) newRunPtyTool() AgentToolDef {
 			}
 			stdinPipe.Close()
 
-			result := stripANSI(outBuf.String())
-			if len(result) > max_output {
-				result = result[:max_output] + fmt.Sprintf("\n... [truncated — %d chars total]", len(result))
-			}
+			// Kept in full on spill; run_command pages it by output_id.
+			result := SpillOutput(stripANSI(outBuf.String()), max_output, "run_command")
 			if result != "" {
 				emit(pr.id, probeEvent{Kind: "output", Text: result})
 			}

@@ -1038,9 +1038,11 @@ Every entry must have "service", "path", and "desc". This list is stored for fut
 ────────────────────────────────────────────────────────────
 LARGE OUTPUT STRATEGY
 ────────────────────────────────────────────────────────────
-Command output is capped at 10,000 characters. When truncated, the message gives total line count
-and a ready-made sed command for the next page.
-• Filter first: pipe through | grep KEYWORD or | awk to narrow before reading.
+Command output is capped at 10,000 characters per reply. When truncated, the message names an
+output_id and the offset to pass back: call run_command again with output_id and offset (and no
+command) to read the next window from memory — the command is NOT re-run.
+• Filter first: pipe through | grep KEYWORD or | awk to narrow before reading; page only when you
+  need the whole thing.
 • For files: use count_lines to check size, then read_range to page in chunks of ≤300 lines.
 • For user/group lists: wc -l first, then awk -F: '$3>=1000' to get human accounts only.`
 }
@@ -1279,19 +1281,9 @@ func execOverSSH(ctx context.Context, conn *ssh.Client, cmd string) (string, err
 		out, runErr = reap()
 	}
 
-	result := strings.TrimSpace(string(out))
-	if len(result) > max_output {
-		totalLines := strings.Count(result, "\n") + 1
-		truncated := result[:max_output]
-		shownLines := strings.Count(truncated, "\n") + 1
-		result = truncated + fmt.Sprintf(
-			"\n... [TRUNCATED: showing lines 1–%d of %d total (%d chars). "+
-				"Strategies: (1) re-run with `| grep KEYWORD` to filter; "+
-				"(2) re-run with `| sed -n '%d,%dp'` for the next 100 lines; "+
-				"(3) if this is a file, use count_lines then read_range for clean pagination.]",
-			shownLines, totalLines, len(result), shownLines+1, shownLines+100,
-		)
-	}
+	// Over the cap, the full capture is kept and the note carries an
+	// output_id: run_command pages it by offset, no second exec needed.
+	result := SpillOutput(strings.TrimSpace(string(out)), max_output, "run_command")
 	if timedOut {
 		notice := fmt.Sprintf("\n[TIMED OUT after %s — command killed. If this command does not terminate on its own (e.g. `tail -f`, `journalctl -f`, `top`, `watch`), use a bounded variant: `tail -n N`, `journalctl --since=...`, `top -bn1`, etc.]", command_timeout())
 		if result == "" {
@@ -1372,18 +1364,7 @@ func (T *Servitor) exec_local_ctx(ctx context.Context, cmd, workDir string, envV
 	// returns after this grace instead of hanging the probe session.
 	c.WaitDelay = 10 * time.Second
 	out, err := c.CombinedOutput()
-	result := strings.TrimSpace(string(out))
-	if len(result) > max_output {
-		totalLines := strings.Count(result, "\n") + 1
-		truncated := result[:max_output]
-		shownLines := strings.Count(truncated, "\n") + 1
-		result = truncated + fmt.Sprintf(
-			"\n... [TRUNCATED: showing lines 1–%d of %d total (%d chars). "+
-				"Strategies: (1) re-run with `| grep KEYWORD` to filter; "+
-				"(2) re-run with `| sed -n '%d,%dp'` for the next 100 lines.]",
-			shownLines, totalLines, len(result), shownLines+1, shownLines+100,
-		)
-	}
+	result := SpillOutput(strings.TrimSpace(string(out)), max_output, "run_command")
 	// Distinguish timeout from caller cancellation from a normal nonzero exit.
 	if errors.Is(runCtx.Err(), context.DeadlineExceeded) && !errors.Is(ctx.Err(), context.Canceled) {
 		notice := fmt.Sprintf("\n[TIMED OUT after %s — command killed. If this command does not terminate on its own, use a bounded variant.]", command_timeout())
@@ -1470,16 +1451,16 @@ func (T *Servitor) Main() error {
 	run_tool := AgentToolDef{
 		Tool: Tool{
 			Name:        "run_command",
-			Description: "Execute a shell command on the remote Linux system via SSH and return combined stdout+stderr. Output is capped at 10,000 characters.",
-			Parameters: map[string]ToolParam{
-				"command": {Type: "string", Description: "The shell command to run on the remote host."},
-			},
-			Required: []string{"command"},
+			Description: runCommandDescription,
+			Parameters:  runCommandParams(),
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			if paged, ok, err := pageCommandOutput(args); ok {
+				return paged, err
+			}
 			cmd, _ := args["command"].(string)
 			if cmd == "" {
-				return "", fmt.Errorf("command is required")
+				return "", fmt.Errorf("command is required (or output_id to read on from a truncated result)")
 			}
 			cat, reason := classify_command_scoped(cmd, scratch)
 			if cat != RiskNone && !T.cmd_allowed(cat) {
@@ -1540,4 +1521,40 @@ func (T *Servitor) Main() error {
 	}
 
 	return nil
+}
+
+// runCommandDescription and runCommandParams are shared by every run_command
+// the app hands out (the CLI probe here, the web probe session), so paging
+// reads the same everywhere.
+const runCommandDescription = "Execute a shell command on the remote Linux system via SSH and return combined stdout+stderr. Output is capped at 10,000 characters per reply; a truncated reply ends with an output_id and the offset to pass back. To read the rest, call again with output_id and offset and NO command — the capture is served from memory, the command is not re-run."
+
+func runCommandParams() map[string]ToolParam {
+	return map[string]ToolParam{
+		"command":   {Type: "string", Description: "The shell command to run on the remote host. Omit when paging with output_id."},
+		"output_id": {Type: "string", Description: "Paging only: the output_id from a truncated reply. Returns the next window of that capture without running anything."},
+		"offset":    {Type: "number", Description: "Paging only: character offset to read from — the value the truncated reply told you to pass."},
+		"max_chars": {Type: "number", Description: "Paging only: window size (default 10000, ceiling 30000). Larger is fine once you know you want the rest."},
+	}
+}
+
+// pageCommandOutput serves a run_command call that carries an output_id.
+// ok is false when the call is an ordinary command.
+func pageCommandOutput(args map[string]any) (string, bool, error) {
+	id, _ := args["output_id"].(string)
+	if strings.TrimSpace(id) == "" {
+		return "", false, nil
+	}
+	offset := 0
+	if v, ok := args["offset"].(float64); ok && v > 0 {
+		offset = int(v)
+	}
+	max := max_output
+	if v, ok := args["max_chars"].(float64); ok && v > 0 {
+		max = int(v)
+		if max > 3*max_output {
+			max = 3 * max_output
+		}
+	}
+	out, err := PageOutput(id, offset, max, "run_command")
+	return out, true, err
 }

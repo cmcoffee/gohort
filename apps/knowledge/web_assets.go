@@ -929,8 +929,14 @@ const documentsDetailAssets = `<style>
         }
         hits.forEach(function(h) {
           var card = document.createElement('div'); card.className = 'docs-hit';
+          // Same label shape as a tool reply: title — section (locator) [kind].
           var sec = document.createElement('div'); sec.className = 'docs-hit-section';
-          sec.textContent = (h.section || '').replace(/^#+\s*/, '');
+          var section = (h.section || '').replace(/^#+\s*/, '');
+          var label = h.title || section;
+          if (h.title && section && section !== h.title) label += ' — ' + section;
+          if (h.locator) label += ' (' + h.locator + ')';
+          if (h.kind) label += ' [' + h.kind + ']';
+          sec.textContent = label;
           card.appendChild(sec);
           var txt = document.createElement('div'); txt.className = 'docs-hit-text';
           txt.textContent = h.text || '';

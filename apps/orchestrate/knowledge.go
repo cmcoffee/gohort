@@ -1325,7 +1325,7 @@ func (t *chatTurn) fetchKnowledgeDocScoped(scopeSkills []SkillRecord) AgentToolD
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "fetch_knowledge_doc",
-			Description: "Read the body of a document by doc_id (from a knowledge_search hit). Returns the doc text with section headers, capped at max_chars (default 10000, ceiling 30000). Pass section to jump straight to one part of a long document instead of reading from the top — on a large reference the cap otherwise never reaches past the first few sections. Gated to your accessible corpus.",
+			Description: "Read the body of a document by doc_id (from a knowledge_search hit). Returns the doc text with section headers, capped at max_chars (default 10000, ceiling 30000). A truncated reply ends with the offset to pass back — call again with that offset to read the next window, as many times as it takes. Pass section to jump straight to one part of a long document instead of paging from the top. Gated to your accessible corpus.",
 			Parameters: map[string]ToolParam{
 				"doc_id": {
 					Type:        "string",
@@ -1339,6 +1339,10 @@ func (t *chatTurn) fetchKnowledgeDocScoped(scopeSkills []SkillRecord) AgentToolD
 					Type:        "number",
 					Description: "Optional. Max characters returned (default 10000, ceiling 30000).",
 				},
+				"offset": {
+					Type:        "number",
+					Description: "Optional. Character offset to start reading from — the value a previous truncated reply told you to pass. 0 (default) reads from the top. Counted within the section when section is also given.",
+				},
 			},
 			Required: []string{"doc_id"},
 			Caps:     []Capability{CapRead},
@@ -1350,6 +1354,10 @@ func (t *chatTurn) fetchKnowledgeDocScoped(scopeSkills []SkillRecord) AgentToolD
 			}
 			t.noteRecallHintPull(docID) // recall telemetry: pull acted on a hinted doc?
 			wantSection := strings.TrimSpace(stringArg(args, "section"))
+			offset := 0
+			if v, ok := args["offset"].(float64); ok && v > 0 {
+				offset = int(v)
+			}
 			maxChars := fetchKnowledgeDocDefaultMax
 			if v, ok := args["max_chars"].(float64); ok && v > 0 {
 				maxChars = int(v)
@@ -1451,28 +1459,25 @@ func (t *chatTurn) fetchKnowledgeDocScoped(scopeSkills []SkillRecord) AgentToolD
 				b.WriteString("\n\n")
 			}
 			out := strings.TrimSpace(b.String())
-			if len(out) > maxChars {
-				truncated := out[:maxChars]
-				// Cut at a paragraph boundary when possible so the
-				// truncation doesn't land mid-sentence.
-				if idx := strings.LastIndex(truncated, "\n\n"); idx > maxChars/2 {
-					truncated = truncated[:idx]
-				}
-				note := fmt.Sprintf("\n\n[…truncated; this document is %d chars and you have read the first %d.",
-					len(out), len(truncated))
-				// The old advice — raise max_chars, or search harder — is useless
-				// on a document bigger than the ceiling: both return the same
-				// opening slice. Name the sections instead, because that is the
-				// one parameter that can actually reach the rest.
-				if wantSection == "" && len(headings) > 1 {
-					note += fmt.Sprintf(" Reading from the top will not reach the rest. Call again with section=\"…\" to jump to one of these %d sections:\n%s",
-						len(headings), headingList(headings))
-				} else {
-					note += fmt.Sprintf(" Pass max_chars=%d to fetch more.", fetchKnowledgeDocCap)
-				}
-				out = truncated + note + "]"
+			total := len(out)
+			if offset >= total && total > 0 {
+				return fmt.Sprintf("offset %d is past the end of %q (%d chars). The document has been read in full; start again with offset=0 if you need it.", offset, docName, total), nil
 			}
-			return out, nil
+			window, end := WindowText(out, offset, maxChars)
+			if end >= total {
+				return window, nil
+			}
+			// Truncated. The offset is the one parameter that always reaches
+			// the rest, so it is always named; the section list is offered as
+			// the faster route when reading from the top of a structured
+			// document, since the part wanted is usually one heading away.
+			note := fmt.Sprintf("\n\n[…truncated; this document is %d chars and you have read %d to %d. Call again with offset=%d to continue.",
+				total, offset, end, end)
+			if offset == 0 && wantSection == "" && len(headings) > 1 {
+				note += fmt.Sprintf(" Or jump straight to a part with section=\"…\" — the %d sections are:\n%s",
+					len(headings), headingList(headings))
+			}
+			return window + note + "]", nil
 		},
 	}
 }
