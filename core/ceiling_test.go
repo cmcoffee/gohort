@@ -228,12 +228,13 @@ const (
 	// tool reply is cut with. orchestrate's fetch_knowledge_doc and servitor's
 	// run_command both page through it, so it cannot be unexported.
 	//
-	// Raised 2176 -> 2178 for SpillOutput and PageOutput, the two halves of
+	// Raised 2176 -> 2178 for SpillOutput and OutputPage, the two halves of
 	// paging a command's captured output: the first keeps a capture that
-	// spilled the reply cap and writes the offset note, the second serves a
-	// later window by id. Both are called from servitor's exec helpers and
-	// run_command tools, so neither can be unexported; the store, its
-	// bounds and the note are all private.
+	// spilled the reply cap and writes the offset note, the second (a type,
+	// read by offset or searched by pattern) serves a later look by id.
+	// Both are called from servitor's exec helpers and run_command tools,
+	// so neither can be unexported; the store, its bounds and the notes are
+	// all private.
 	coreExportCeiling = 2178
 
 	// coreExportSlack is a small band on the export count only. A file here

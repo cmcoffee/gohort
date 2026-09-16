@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -87,7 +88,7 @@ func TestSpilledOutputPagesWithoutRerunning(t *testing.T) {
 	offset := nextOffset(first)
 	pages := 1
 	for {
-		page, err := PageOutput(id, offset, 2000, "run_command")
+		page, err := OutputPage{ID: id, Offset: offset, Max: 2000, Tool: "run_command"}.Read()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -105,10 +106,10 @@ func TestSpilledOutputPagesWithoutRerunning(t *testing.T) {
 	if pages < 5 {
 		t.Fatalf("expected several pages, got %d", pages)
 	}
-	if _, err := PageOutput("nope", 0, 100, "run_command"); err == nil {
+	if _, err := (OutputPage{ID: "nope", Max: 100, Tool: "run_command"}).Read(); err == nil {
 		t.Fatal("an unknown id must be an error the agent can act on")
 	}
-	if msg, err := PageOutput(id, len(full)+5, 100, "run_command"); err != nil || !strings.Contains(msg, "past the end") {
+	if msg, err := (OutputPage{ID: id, Offset: len(full) + 5, Max: 100, Tool: "run_command"}).Read(); err != nil || !strings.Contains(msg, "past the end") {
 		t.Fatalf("past the end: %q %v", msg, err)
 	}
 }
@@ -119,11 +120,11 @@ func TestSpilledOutputExpires(t *testing.T) {
 	defer func() { spilledNow = func() time.Time { return base } }()
 	reply := SpillOutput(strings.Repeat("y\n", 3000), 100, "run_command")
 	id := between(reply, "output_id=\"", "\"")
-	if _, err := PageOutput(id, 100, 100, "run_command"); err != nil {
+	if _, err := (OutputPage{ID: id, Offset: 100, Max: 100, Tool: "run_command"}).Read(); err != nil {
 		t.Fatalf("fresh capture must page: %v", err)
 	}
 	spilledNow = func() time.Time { return base.Add(spilledOutputTTL + time.Minute) }
-	if _, err := PageOutput(id, 100, 100, "run_command"); err == nil {
+	if _, err := (OutputPage{ID: id, Offset: 100, Max: 100, Tool: "run_command"}).Read(); err == nil {
 		t.Fatal("an expired capture must not page")
 	}
 }
@@ -143,6 +144,74 @@ func between(s, a, b string) string {
 func nextOffset(reply string) int {
 	n := 0
 	for _, c := range between(reply, "offset=", ")") {
+		if c < '0' || c > '9' {
+			break
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n
+}
+
+// Searching a kept capture returns the matching lines with their line number
+// and the offset their line starts at — and that offset, read back, lands on
+// the line. Context lines ride under a hit; a regex that does not compile is
+// a substring; the match list pages like anything else.
+func TestSpilledOutputCanBeSearched(t *testing.T) {
+	var b strings.Builder
+	for i := 1; i <= 400; i++ {
+		if i%97 == 0 {
+			fmt.Fprintf(&b, "ERROR [unit-%d] failed to start\n", i)
+		} else {
+			fmt.Fprintf(&b, "line %d ok\n", i)
+		}
+	}
+	full := strings.TrimSpace(b.String())
+	reply := SpillOutput(full, 500, "run_command")
+	id := between(reply, "output_id=\"", "\"")
+	if !strings.Contains(reply, "grep=") {
+		t.Fatalf("the truncation note must offer grep:\n%s", reply[len(reply)-300:])
+	}
+
+	out, err := OutputPage{ID: id, Tool: "run_command", Grep: "error", Context: 1}.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out, "4 of 400 lines match") {
+		t.Fatalf("header: %q", out[:60])
+	}
+	if !strings.Contains(out, "L97 @") || !strings.Contains(out, "   L96: line 96 ok") || !strings.Contains(out, "   L98: line 98 ok") {
+		t.Fatalf("hits carry line numbers and context:\n%s", out)
+	}
+	if strings.Count(out, "\n--\n") != 3 {
+		t.Fatalf("non-adjacent groups are separated:\n%s", out)
+	}
+	// The @offset on a hit reads back to that very line.
+	off := nextNumber(between(out, "L97 @", ":"))
+	around, err := OutputPage{ID: id, Offset: off, Max: 40, Tool: "run_command"}.Read()
+	if err != nil || !strings.HasPrefix(around, "ERROR [unit-97]") {
+		t.Fatalf("offset from a hit must land on it: %q %v", around, err)
+	}
+	// A pattern that is not a valid regex still works as a substring.
+	if out, _ := (OutputPage{ID: id, Tool: "run_command", Grep: "[unit-194]"}).Read(); !strings.Contains(out, "1 of 400 lines match") {
+		t.Fatalf("bracketed substring: %q", out[:80])
+	}
+	// A regex works as one.
+	if out, _ := (OutputPage{ID: id, Tool: "run_command", Grep: "unit-(97|291)"}).Read(); !strings.HasPrefix(out, "2 of 400") {
+		t.Fatalf("regex: %q", out[:80])
+	}
+	if out, _ := (OutputPage{ID: id, Tool: "run_command", Grep: "nothing here"}).Read(); !strings.HasPrefix(out, "no line") {
+		t.Fatalf("no match: %q", out)
+	}
+	// A wide match list pages by offset with a trailer that keeps the grep.
+	wide, _ := (OutputPage{ID: id, Max: 300, Tool: "run_command", Grep: "ok"}).Read()
+	if !strings.Contains(wide, "TRUNCATED match list") || !strings.Contains(wide, "grep=\"ok\"") {
+		t.Fatalf("match list must page:\n%s", wide)
+	}
+}
+
+func nextNumber(s string) int {
+	n := 0
+	for _, c := range strings.TrimSpace(s) {
 		if c < '0' || c > '9' {
 			break
 		}

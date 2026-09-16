@@ -17,6 +17,7 @@ package core
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -155,34 +156,125 @@ func SpillOutput(text string, max int, tool string) string {
 	return window + spillNote(tool, id, 0, end, len(kept), kept) + clipped
 }
 
-// PageOutput returns the window of a kept capture starting at offset, with
-// the same note SpillOutput writes when more remains. An unknown id is an
-// error the agent can act on: the capture expired, or was made by another
-// instance (a peer's exec keeps its own store).
-func PageOutput(id string, offset, max int, tool string) (string, error) {
-	text, ok := lookupSpilled(strings.TrimSpace(id))
+// OutputPage is one read of a kept capture: a window by offset, or — with
+// Grep set — the lines matching a pattern, each with its line number and
+// the character offset its line starts at, so the agent can follow a hit
+// with an Offset read of what surrounds it. Neither runs anything.
+//
+// Grep exists because the agent's alternative was to run the command again
+// through a pipe, or to save the spill to the workspace and grep that by
+// hand — both of which were observed, and both of which are this call.
+type OutputPage struct {
+	ID      string // output_id from a truncated reply
+	Offset  int    // character offset to read from (into the capture, or into the match list when Grep is set)
+	Max     int    // window size; <= 0 means everything
+	Tool    string // the tool name the trailer tells the agent to call
+	Grep    string // when set, return matching lines instead of a window
+	Context int    // lines of context around each match
+}
+
+// Read serves the page. An unknown id is an error the agent can act on: the
+// capture expired, or was made by another instance (a peer's exec keeps its
+// own store).
+func (p OutputPage) Read() (string, error) {
+	text, ok := lookupSpilled(strings.TrimSpace(p.ID))
 	if !ok {
-		return "", fmt.Errorf("output_id %q is unknown here — the capture has expired (kept %s), or was made by another instance; re-run the command", id, spilledOutputTTL)
+		return "", fmt.Errorf("output_id %q is unknown here — the capture has expired (kept %s), or was made by another instance; re-run the command", p.ID, spilledOutputTTL)
 	}
-	if offset >= len(text) {
-		return fmt.Sprintf("offset %d is past the end of this output (%d chars); it has been read in full.", offset, len(text)), nil
+	if strings.TrimSpace(p.Grep) != "" {
+		return p.search(text)
 	}
-	window, end := WindowText(text, offset, max)
+	if p.Offset >= len(text) {
+		return fmt.Sprintf("offset %d is past the end of this output (%d chars); it has been read in full.", p.Offset, len(text)), nil
+	}
+	window, end := WindowText(text, p.Offset, p.Max)
 	if end >= len(text) {
-		return window + fmt.Sprintf("\n... [end of output: chars %d–%d of %d]", offset, end, len(text)), nil
+		return window + fmt.Sprintf("\n... [end of output: chars %d–%d of %d]", p.Offset, end, len(text)), nil
 	}
-	return window + spillNote(tool, id, offset, end, len(text), text), nil
+	return window + spillNote(p.Tool, p.ID, p.Offset, end, len(text), text), nil
+}
+
+// search renders the matching lines. The pattern is a case-insensitive
+// regular expression when it compiles as one and a plain substring
+// otherwise, so a bracket in a log line is not a syntax error. Each match
+// is "L<line> @<offset>: <text>", context lines are indented under it, and
+// groups that are not adjacent are separated. The report is itself
+// windowed by Offset and Max, with a trailer that names both the way to
+// read on through the matches and the way to read around one.
+func (p OutputPage) search(text string) (string, error) {
+	pattern := strings.TrimSpace(p.Grep)
+	match := func(s string) bool { return strings.Contains(strings.ToLower(s), strings.ToLower(pattern)) }
+	if re, err := regexp.Compile("(?i)" + pattern); err == nil {
+		match = re.MatchString
+	}
+	lines := strings.Split(text, "\n")
+	starts := make([]int, len(lines)) // character offset each line begins at
+	for i := 1; i < len(lines); i++ {
+		starts[i] = starts[i-1] + len(lines[i-1]) + 1
+	}
+	var hits []int
+	for i, l := range lines {
+		if match(l) {
+			hits = append(hits, i)
+		}
+	}
+	if len(hits) == 0 {
+		return fmt.Sprintf("no line of this output (%d lines) matches %q.", len(lines), pattern), nil
+	}
+	ctx := p.Context
+	if ctx < 0 {
+		ctx = 0
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d of %d lines match %q:\n", len(hits), len(lines), pattern)
+	last := -1 // last line index rendered
+	for _, h := range hits {
+		from, to := h-ctx, h+ctx
+		if from < 0 {
+			from = 0
+		}
+		if to > len(lines)-1 {
+			to = len(lines) - 1
+		}
+		if from <= last {
+			from = last + 1
+		} else if last >= 0 {
+			b.WriteString("--\n")
+		}
+		for i := from; i <= to; i++ {
+			if i == h {
+				fmt.Fprintf(&b, "L%d @%d: %s\n", i+1, starts[i], lines[i])
+			} else {
+				fmt.Fprintf(&b, "   L%d: %s\n", i+1, lines[i])
+			}
+		}
+		if to > last {
+			last = to
+		}
+	}
+	report := strings.TrimRight(b.String(), "\n")
+	if p.Offset >= len(report) && p.Offset > 0 {
+		return fmt.Sprintf("offset %d is past the end of the match list (%d chars); every match has been read.", p.Offset, len(report)), nil
+	}
+	window, end := WindowText(report, p.Offset, p.Max)
+	trailer := fmt.Sprintf("\n... [To read around a match: %s(output_id=%q, offset=<the @offset on its line>).]", p.Tool, p.ID)
+	if end < len(report) {
+		trailer = fmt.Sprintf("\n... [TRUNCATED match list: chars %d–%d of %d. More matches: %s(output_id=%q, grep=%q, offset=%d). "+
+			"To read around a match: %s(output_id=%q, offset=<the @offset on its line>).]",
+			p.Offset, end, len(report), p.Tool, p.ID, pattern, end, p.Tool, p.ID)
+	}
+	return window + trailer, nil
 }
 
 // spillNote is the truncation trailer: where the window sat, how to read on
-// without re-running, and the one narrowing move that is usually better than
-// reading on.
+// without re-running, and how to search the whole capture instead, which is
+// usually the better move.
 func spillNote(tool, id string, offset, end, total int, text string) string {
 	shownFrom := strings.Count(text[:offset], "\n") + 1
 	shownTo := strings.Count(text[:end], "\n") + 1
 	lines := strings.Count(text, "\n") + 1
 	return fmt.Sprintf("\n... [TRUNCATED: showing chars %d–%d of %d (lines %d–%d of %d). "+
 		"Read on WITHOUT re-running: %s(output_id=%q, offset=%d). "+
-		"Or narrow it: re-run with `| grep KEYWORD`.]",
-		offset, end, total, shownFrom, shownTo, lines, tool, id, end)
+		"Or search the whole capture: %s(output_id=%q, grep=\"PATTERN\") — no re-run, no workspace file needed.]",
+		offset, end, total, shownFrom, shownTo, lines, tool, id, end, tool, id)
 }

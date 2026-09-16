@@ -1039,10 +1039,13 @@ Every entry must have "service", "path", and "desc". This list is stored for fut
 LARGE OUTPUT STRATEGY
 ────────────────────────────────────────────────────────────
 Command output is capped at 10,000 characters per reply. When truncated, the message names an
-output_id and the offset to pass back: call run_command again with output_id and offset (and no
-command) to read the next window from memory — the command is NOT re-run.
-• Filter first: pipe through | grep KEYWORD or | awk to narrow before reading; page only when you
-  need the whole thing.
+output_id. Call run_command again with output_id (and no command) to work with the FULL capture
+from memory — the command is NOT re-run:
+• grep="PATTERN" returns every matching line with its line number and @offset; add context=N
+  for surrounding lines. Do this instead of re-running through | grep or saving the output to
+  a file to grep.
+• offset=N reads the next window, or the lines around a grep hit (pass its @offset).
+• Filter at the source when you can (| grep, | awk) so the reply fits in one go.
 • For files: use count_lines to check size, then read_range to page in chunks of ≤300 lines.
 • For user/group lists: wc -l first, then awk -F: '$3>=1000' to get human accounts only.`
 }
@@ -1526,7 +1529,7 @@ func (T *Servitor) Main() error {
 // runCommandDescription and runCommandParams are shared by every run_command
 // the app hands out (the CLI probe here, the web probe session), so paging
 // reads the same everywhere.
-const runCommandDescription = "Execute a shell command on the remote Linux system via SSH and return combined stdout+stderr. Output is capped at 10,000 characters per reply; a truncated reply ends with an output_id and the offset to pass back. To read the rest, call again with output_id and offset and NO command — the capture is served from memory, the command is not re-run."
+const runCommandDescription = "Execute a shell command on the remote Linux system via SSH and return combined stdout+stderr. Output is capped at 10,000 characters per reply; a truncated reply ends with an output_id. Call again with output_id and NO command to work with the full capture from memory — the command is not re-run: offset reads the next window; grep returns every matching line with its line number and @offset, and offset then reads around a hit. Do this instead of re-running through a pipe or saving the output to a file to grep."
 
 func runCommandParams() map[string]ToolParam {
 	return map[string]ToolParam{
@@ -1534,6 +1537,8 @@ func runCommandParams() map[string]ToolParam {
 		"output_id": {Type: "string", Description: "Paging only: the output_id from a truncated reply. Returns the next window of that capture without running anything."},
 		"offset":    {Type: "number", Description: "Paging only: character offset to read from — the value the truncated reply told you to pass."},
 		"max_chars": {Type: "number", Description: "Paging only: window size (default 10000, ceiling 30000). Larger is fine once you know you want the rest."},
+		"grep":      {Type: "string", Description: "With output_id: return only the lines of the capture matching this pattern (case-insensitive; a regular expression when it compiles as one, else a substring), each as \"L<line> @<offset>: text\". Then read around a hit with offset=<that @offset>."},
+		"context":   {Type: "number", Description: "With grep: lines of context to show before and after each match (default 0)."},
 	}
 }
 
@@ -1555,6 +1560,11 @@ func pageCommandOutput(args map[string]any) (string, bool, error) {
 			max = 3 * max_output
 		}
 	}
-	out, err := PageOutput(id, offset, max, "run_command")
+	grep, _ := args["grep"].(string)
+	context := 0
+	if v, ok := args["context"].(float64); ok && v > 0 {
+		context = int(v)
+	}
+	out, err := OutputPage{ID: id, Offset: offset, Max: max, Tool: "run_command", Grep: grep, Context: context}.Read()
 	return out, true, err
 }
