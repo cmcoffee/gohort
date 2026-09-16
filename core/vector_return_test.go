@@ -292,3 +292,57 @@ func ids(hits []SearchHit) string {
 	}
 	return strings.Join(out, " ")
 }
+
+// Two-letter identifiers are query terms; short terms match whole words
+// only; longer terms keep substring matching; short fillers stay out.
+func TestKeywordTermsKeepShortIdentifiers(t *testing.T) {
+	got := strings.Join(keywordTerms("Is it safe to shrink an LVM volume in Go on S3 vs a VM?"), " ")
+	if got != "safe shrink lvm volume go s3 vm" {
+		t.Fatalf("terms = %q", got)
+	}
+	if terms := keywordTerms("c r"); len(terms) != 0 {
+		t.Fatalf("single letters must be dropped, got %v", terms)
+	}
+}
+
+func TestShortTermsMatchWholeWordsOnly(t *testing.T) {
+	cases := []struct {
+		text, term string
+		want       bool
+	}{
+		{"written in go, not rust", "go", true},
+		{"a good idea from long ago", "go", false},
+		{"upload to the s3 bucket", "s3", true},
+		{"the cat sat.", "cat", true},
+		{"filed under a category", "cat", false},
+		{"kubernetes (k8s) networking", "k8s", true},
+		{"my_go_module", "go", false},
+		{"both firewalls failed", "firewall", true}, // >3 chars: substring
+		{"go", "go", true},
+		{"não go", "go", true},
+	}
+	for _, c := range cases {
+		if got := termMatches(c.text, c.term); got != c.want {
+			t.Errorf("termMatches(%q, %q) = %v, want %v", c.text, c.term, got, c.want)
+		}
+	}
+}
+
+// End to end: a query naming a two-letter identifier finds the chunk that
+// has it as a word and not the one that merely contains the letters.
+func TestKeywordSearchFindsATwoLetterIdentifier(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	db.Set(EmbeddedChunks, "go", EmbeddedChunk{ID: "go", Source: "collection:t", ReportID: "r1",
+		Section: "## Toolchain", Text: "The service is written in Go and built with make."})
+	db.Set(EmbeddedChunks, "ago", EmbeddedChunk{ID: "ago", Source: "collection:t", ReportID: "r2",
+		Section: "## History", Text: "Long ago the good old gopher logo was chosen."})
+	hits := SearchChunksKeywordByPredicate(db, func(EmbeddedChunk) bool { return true }, "go service", 5)
+	if len(hits) == 0 || hits[0].ID != "go" {
+		t.Fatalf("expected the Go chunk first, got %q", ids(hits))
+	}
+	for _, h := range hits {
+		if h.ID == "ago" {
+			t.Fatalf("\"go\" must not match inside \"ago\"/\"good\"/\"gopher\": %q", ids(hits))
+		}
+	}
+}

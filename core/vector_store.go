@@ -1221,9 +1221,38 @@ func lexicalText(c *EmbeddedChunk) string {
 	return c.Title + "\n" + c.Section + "\n" + c.Text
 }
 
+// keywordMinChars is the shortest query token the keyword half keeps. Two,
+// not three: the identifiers this half exists to catch are often two
+// characters — Go, S3, an IP, a VM, a DB — and a three-character floor
+// dropped exactly those from a query about them, leaving the embedding to
+// find "go" on its own, which it does not. Single characters stay out: "c"
+// and "r" are languages, but one letter matches too much of any text.
+const keywordMinChars = 2
+
+// keywordWholeWordMax is the longest term matched as a whole word rather
+// than a substring. Short terms are substrings of too many longer words —
+// "go" is in "good" and "ago", "ram" in "program", "cat" in "category" —
+// so up to this length a term must stand on its own between non-word
+// characters. Longer terms keep substring matching, which doubles as cheap
+// prefix stemming ("firewall" finds "firewalls"). The cost is that "sql"
+// no longer finds "mysql"; a reader who means that can say it.
+const keywordWholeWordMax = 3
+
+// keywordShortStopwords are the function words admitting two-letter tokens
+// lets through. The shared sourcehooks.Stopwords list is short on purpose —
+// it normalizes cache keys, where dropping a real word is worse than keeping
+// a filler — and every two-letter word it lacks was previously excluded by
+// the length floor. This list keeps that exclusion for the fillers only.
+var keywordShortStopwords = map[string]bool{
+	"am": true, "be": true, "do": true, "he": true, "if": true, "it": true,
+	"me": true, "my": true, "no": true, "so": true, "up": true, "us": true,
+	"we": true, "vs": true,
+}
+
 // keywordTerms tokenizes a query into distinct content terms for lexical
-// matching: lowercased, split on non-alphanumerics, stopwords + very short
-// tokens dropped, deduped. Empty when the query is all stopwords/punctuation.
+// matching: lowercased, split on non-alphanumerics, stopwords + single
+// characters dropped, deduped. Empty when the query is all stopwords/
+// punctuation.
 func keywordTerms(query string) []string {
 	fields := strings.FieldsFunc(strings.ToLower(query), func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
@@ -1231,13 +1260,45 @@ func keywordTerms(query string) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, f := range fields {
-		if len(f) < 3 || sourcehooks.Stopwords[f] || seen[f] {
+		if len(f) < keywordMinChars || sourcehooks.Stopwords[f] || keywordShortStopwords[f] || seen[f] {
 			continue
 		}
 		seen[f] = true
 		out = append(out, f)
 	}
 	return out
+}
+
+// termMatches reports whether lowercased chunk text contains the query
+// term: as a whole word when the term is short (see keywordWholeWordMax),
+// as a substring otherwise.
+func termMatches(lt, term string) bool {
+	if len(term) > keywordWholeWordMax {
+		return strings.Contains(lt, term)
+	}
+	return containsWholeWord(lt, term)
+}
+
+// containsWholeWord reports whether s contains w with a non-word character
+// (or the text's edge) on BOTH sides. Distinct from containsWord in
+// machine_def.go, which checks only the leading edge — enough for an
+// advisory that should err toward firing, wrong here, where "go" at the
+// start of "good" is exactly the match to refuse. A byte outside ASCII
+// counts as a word character, since it is a piece of a letter.
+func containsWholeWord(s, w string) bool {
+	joins := func(b byte) bool { return isWordByte(b) || b >= 0x80 }
+	for start := 0; ; {
+		i := strings.Index(s[start:], w)
+		if i < 0 {
+			return false
+		}
+		i += start
+		end := i + len(w)
+		if (i == 0 || !joins(s[i-1])) && (end == len(s) || !joins(s[end])) {
+			return true
+		}
+		start = i + 1
+	}
 }
 
 // SearchChunksKeywordByPredicate ranks chunks by LEXICAL overlap with the query
@@ -1281,7 +1342,7 @@ func SearchChunksKeywordByPredicate(db Database, allow func(c EmbeddedChunk) boo
 		var matched []bool
 		any := false
 		for j, t := range terms {
-			if strings.Contains(lt, t) {
+			if termMatches(lt, t) {
 				if matched == nil {
 					matched = make([]bool, len(terms))
 				}
