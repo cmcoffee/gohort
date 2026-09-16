@@ -575,21 +575,13 @@ func dropAgentSideData(db Database, owner, agentID string) {
 	// still wiped on agent delete to clean up any stranded chunks
 	// from before the move to attached collections.
 	sharedPrefix := "agent-shared:" + agentID
-	removed := 0
-	for _, k := range authDB.Keys(EmbeddedChunks) {
-		var c EmbeddedChunk
-		if !authDB.Get(EmbeddedChunks, k, &c) {
-			continue
-		}
-		// Match either the bare per-(user, agent) source OR any
-		// topic-suffixed variant. Both forms share the prefix. Also
-		// wipe the admin-curated agent-shared bucket — when the agent
-		// itself is deleted, its shared KB has nowhere to live.
-		if sourceInScope(c.Source, prefix) || c.Source == sharedPrefix {
-			authDB.Unset(EmbeddedChunks, k)
-			removed++
-		}
-	}
+	// Match either the bare per-(user, agent) source OR any
+	// topic-suffixed variant. Both forms share the prefix. Also
+	// wipe the admin-curated agent-shared bucket — when the agent
+	// itself is deleted, its shared KB has nowhere to live.
+	removed := DeleteChunksWhere(authDB, func(x EmbeddedChunk) bool {
+		return sourceInScope(x.Source, prefix) || x.Source == sharedPrefix
+	})
 	if removed > 0 {
 		Log("[orchestrate.agents] dropped %d knowledge chunk(s) for deleted agent %s/%s", removed, owner, agentID)
 	}

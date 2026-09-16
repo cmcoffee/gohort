@@ -381,3 +381,26 @@ func TestSourcesSectionSurvivesADocumentIngest(t *testing.T) {
 		t.Fatalf("a transcript span that is only a Sources heading must still archive: %v", err)
 	}
 }
+
+// A delete through the store invalidates the read cache, so the next search
+// cannot return the row. The hand-rolled deletes this replaced did not.
+func TestDeleteChunksWhereIsVisibleToTheNextSearch(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	for _, id := range []string{"keep", "drop"} {
+		db.Set(EmbeddedChunks, id, EmbeddedChunk{ID: id, Source: "collection:t", ReportID: id, Section: "## S", Text: "opnsense " + id})
+	}
+	all := func(EmbeddedChunk) bool { return true }
+	if n := len(SearchChunksKeywordByPredicate(db, all, "opnsense", 5)); n != 2 {
+		t.Fatalf("warm-up: expected 2 hits, got %d", n)
+	}
+	if n := DeleteChunksWhere(db, func(c EmbeddedChunk) bool { return c.ReportID == "drop" }); n != 1 {
+		t.Fatalf("expected 1 removed, got %d", n)
+	}
+	hits := SearchChunksKeywordByPredicate(db, all, "opnsense", 5)
+	if len(hits) != 1 || hits[0].ID != "keep" {
+		t.Fatalf("deleted chunk still served from the cache: %q", ids(hits))
+	}
+	if n := DeleteChunksWhere(db, func(c EmbeddedChunk) bool { return false }); n != 0 {
+		t.Fatalf("nothing matched, got %d", n)
+	}
+}

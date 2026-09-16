@@ -290,16 +290,9 @@ func (T *OrchestrateApp) WipeScopedMemory(scope AgentScope) error {
 	// Reference Memory: derived chunks (orch-know-*) under this scope's corpus.
 	if VectorDB != nil {
 		prefix := agentKnowledgePrefix(scope.ScopeUser, scope.AgentID)
-		for _, key := range VectorDB.Keys(EmbeddedChunks) {
-			var c EmbeddedChunk
-			if !VectorDB.Get(EmbeddedChunks, key, &c) {
-				continue
-			}
-			if sourceInScope(c.Source, prefix) && strings.HasPrefix(c.ReportID, "orch-know-") {
-				VectorDB.Unset(EmbeddedChunks, key)
-			}
-		}
-		invalidateChunkCacheIfPossible()
+		DeleteChunksWhere(VectorDB, func(x EmbeddedChunk) bool {
+			return sourceInScope(x.Source, prefix) && strings.HasPrefix(x.ReportID, "orch-know-")
+		})
 	}
 	return nil
 }

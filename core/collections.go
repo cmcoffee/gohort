@@ -387,18 +387,7 @@ func FetchCollectionDoc(base Database, user string, collectionIDs []string, docI
 		if db == nil || len(sources) == 0 {
 			return nil
 		}
-		var out []EmbeddedChunk
-		for _, key := range db.Keys(EmbeddedChunks) {
-			var c EmbeddedChunk
-			if !db.Get(EmbeddedChunks, key, &c) {
-				continue
-			}
-			if c.ReportID != docID || !sources[c.Source] {
-				continue
-			}
-			out = append(out, c)
-		}
-		return out
+		return ChunksWhere(db, func(c EmbeddedChunk) bool { return c.ReportID == docID && sources[c.Source] })
 	}
 	// Chunks live in the dedicated VectorDB (see SearchCollections); read the
 	// union there, falling back to the legacy split stores only pre-VectorDB.

@@ -185,19 +185,11 @@ func auditReferenceMemory(user, agentID string, orphaned, retired map[string]boo
 	byTool := map[string]*hit{}
 	var order []string
 	scanned := 0
-	for _, key := range VectorDB.Keys(EmbeddedChunks) {
+	for _, c := range ChunksWhere(VectorDB, func(x EmbeddedChunk) bool {
+		return sourceInScope(x.Source, prefix) && chunkProvenance(x.Source, x.ReportID) == "derived"
+	}) {
 		if scanned >= maxAuditChunkScan {
 			break
-		}
-		var c EmbeddedChunk
-		if !VectorDB.Get(EmbeddedChunks, key, &c) {
-			continue
-		}
-		if !sourceInScope(c.Source, prefix) {
-			continue
-		}
-		if chunkProvenance(c.Source, c.ReportID) != "derived" {
-			continue
 		}
 		scanned++
 		for _, f := range deadToolFindings("Reference Memory", c.Text, orphaned, retired) {

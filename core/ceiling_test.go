@@ -210,7 +210,14 @@ const (
 	// retrieval surfaces had each kept a private copy of. orchestrate prints
 	// it in tool replies and filters by it, so it cannot be unexported; the
 	// filter helper that uses it stays unexported on both sides.
-	coreExportCeiling = 2174
+	//
+	// Raised 2174 -> 2175 for DeleteChunksWhere, ONE func: the one delete for
+	// the chunk store, by any rule. Eight hand-rolled kvlite walks in
+	// orchestrate and admin each deleted their own way, and four of them
+	// never invalidated the read cache, so the store needs to own the
+	// delete the way it already owns the read (ChunksWhere). The report and
+	// source-prefix deletes now go through it too.
+	coreExportCeiling = 2175
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

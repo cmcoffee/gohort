@@ -188,11 +188,7 @@ func (a *AdminApp) handleVectorStatsByKind(w http.ResponseWriter, r *http.Reques
 	}
 	agg := map[string]*kindAgg{}
 	if db != nil {
-		for _, k := range db.Keys(EmbeddedChunks) {
-			var c EmbeddedChunk
-			if !db.Get(EmbeddedChunks, k, &c) {
-				continue
-			}
+		for _, c := range ChunksWhere(db, func(EmbeddedChunk) bool { return true }) {
 			src := c.Source
 			if src == "" {
 				src = "(unspecified)"

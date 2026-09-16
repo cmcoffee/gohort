@@ -110,17 +110,10 @@ func (T *OrchestrateApp) handleCollections(w http.ResponseWriter, r *http.Reques
 		// countChunks walks one DB and credits stats for any collection
 		// chunk whose ID is in the statsByID map.
 		countChunks := func(d Database) {
-			for _, key := range d.Keys(EmbeddedChunks) {
-				var ch EmbeddedChunk
-				if !d.Get(EmbeddedChunks, key, &ch) {
-					continue
-				}
-				// Source format: collection:<id> (exact, no suffixes
-				// today — collection chunks don't carry topic dims).
-				const prefix = "collection:"
-				if !strings.HasPrefix(ch.Source, prefix) {
-					continue
-				}
+			// Source format: collection:<id> (exact, no suffixes
+			// today — collection chunks don't carry topic dims).
+			const prefix = "collection:"
+			for _, ch := range ChunksWhere(d, func(x EmbeddedChunk) bool { return strings.HasPrefix(x.Source, prefix) }) {
 				id := strings.TrimPrefix(ch.Source, prefix)
 				s, ok := statsByID[id]
 				if !ok {
@@ -388,15 +381,7 @@ func (T *OrchestrateApp) handleCollectionAudit(w http.ResponseWriter, r *http.Re
 	}
 	docs := map[string]*doc{}
 	prefix := collectionSource(c.ID)
-	chunkDB := T.collectionDB(c)
-	for _, key := range chunkDB.Keys(EmbeddedChunks) {
-		var ch EmbeddedChunk
-		if !chunkDB.Get(EmbeddedChunks, key, &ch) {
-			continue
-		}
-		if !strings.HasPrefix(ch.Source, prefix) {
-			continue
-		}
+	for _, ch := range ChunksWhere(T.collectionDB(c), func(x EmbeddedChunk) bool { return strings.HasPrefix(x.Source, prefix) }) {
 		d, ok := docs[ch.ReportID]
 		if !ok {
 			d = &doc{reportID: ch.ReportID}
@@ -543,15 +528,7 @@ func (T *OrchestrateApp) handleCollectionSources(w http.ResponseWriter, r *http.
 		latest string
 	}
 	groups := map[string]*group{}
-	chunkDB := T.collectionDB(c)
-	for _, key := range chunkDB.Keys(EmbeddedChunks) {
-		var ch EmbeddedChunk
-		if !chunkDB.Get(EmbeddedChunks, key, &ch) {
-			continue
-		}
-		if !strings.HasPrefix(ch.Source, prefix) {
-			continue
-		}
+	for _, ch := range ChunksWhere(T.collectionDB(c), func(x EmbeddedChunk) bool { return strings.HasPrefix(x.Source, prefix) }) {
 		g, ok := groups[ch.ReportID]
 		if !ok {
 			g = &group{id: ch.ReportID, name: ch.Section}
@@ -597,22 +574,9 @@ func (T *OrchestrateApp) handleCollectionSourceDelete(w http.ResponseWriter, r *
 		return
 	}
 	prefix := collectionSource(c.ID)
-	removed := 0
-	chunkDB := T.collectionDB(c)
-	for _, key := range chunkDB.Keys(EmbeddedChunks) {
-		var ch EmbeddedChunk
-		if !chunkDB.Get(EmbeddedChunks, key, &ch) {
-			continue
-		}
-		if ch.ReportID != reportID {
-			continue
-		}
-		if !strings.HasPrefix(ch.Source, prefix) {
-			continue
-		}
-		chunkDB.Unset(EmbeddedChunks, key)
-		removed++
-	}
+	removed := DeleteChunksWhere(T.collectionDB(c), func(x EmbeddedChunk) bool {
+		return x.ReportID == reportID && strings.HasPrefix(x.Source, prefix)
+	})
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]int{"removed": removed})
 }
@@ -667,32 +631,10 @@ func (T *OrchestrateApp) handleCollectionSearch(w http.ResponseWriter, r *http.R
 }
 
 // substringHitsBySource is the embedding-disabled fallback for
-// handleCollectionSearch. Returns up to k chunks whose text contains
-// the query (case-insensitive), in arbitrary order.
+// handleCollectionSearch: the core substring scan, scoped to one source
+// prefix. Up to k hits, in store order.
 func substringHitsBySource(db Database, sourcePrefix, query string, k int) []SearchHit {
-	q := strings.ToLower(query)
-	var out []SearchHit
-	for _, key := range db.Keys(EmbeddedChunks) {
-		var ch EmbeddedChunk
-		if !db.Get(EmbeddedChunks, key, &ch) {
-			continue
-		}
-		if !strings.HasPrefix(ch.Source, sourcePrefix) {
-			continue
-		}
-		if strings.Contains(strings.ToLower(ch.Section+"\n"+ch.Text), q) {
-			out = append(out, SearchHit{
-				Section: ch.Section,
-				Text:    ch.Text,
-				Source:  ch.Source,
-				Score:   0,
-			})
-			if len(out) >= k {
-				return out
-			}
-		}
-	}
-	return out
+	return SearchChunksSubstringByPredicate(db, func(x EmbeddedChunk) bool { return strings.HasPrefix(x.Source, sourcePrefix) }, query, k)
 }
 
 // --- helpers --------------------------------------------------------------
@@ -704,14 +646,7 @@ func collectionStats(db Database, id string) (docs, chunks int) {
 	}
 	prefix := collectionSource(id)
 	seenReports := map[string]bool{}
-	for _, key := range db.Keys(EmbeddedChunks) {
-		var ch EmbeddedChunk
-		if !db.Get(EmbeddedChunks, key, &ch) {
-			continue
-		}
-		if !strings.HasPrefix(ch.Source, prefix) {
-			continue
-		}
+	for _, ch := range ChunksWhere(db, func(x EmbeddedChunk) bool { return strings.HasPrefix(x.Source, prefix) }) {
 		chunks++
 		if !seenReports[ch.ReportID] {
 			seenReports[ch.ReportID] = true
@@ -1192,15 +1127,8 @@ func (T *OrchestrateApp) handleCollectionSuggestDescription(w http.ResponseWrite
 	// informed by what's already in the collection. Cap at a handful
 	// so the prompt stays terse.
 	var titles []string
-	chunkDB := T.collectionDB(c)
-	for _, key := range chunkDB.Keys(EmbeddedChunks) {
-		var ch EmbeddedChunk
-		if !chunkDB.Get(EmbeddedChunks, key, &ch) {
-			continue
-		}
-		if !strings.HasPrefix(ch.Source, collectionSource(c.ID)) {
-			continue
-		}
+	colPrefix := collectionSource(c.ID)
+	for _, ch := range ChunksWhere(T.collectionDB(c), func(x EmbeddedChunk) bool { return strings.HasPrefix(x.Source, colPrefix) }) {
 		t := strings.TrimSpace(strings.TrimPrefix(ch.Section, "## "))
 		if t == "" {
 			continue

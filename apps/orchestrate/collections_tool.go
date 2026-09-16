@@ -52,15 +52,8 @@ func collectionsListTool() ChatTool {
 				statsByID[c.ID] = &stats{}
 				seenReports[c.ID] = map[string]bool{}
 			}
-			for _, k := range VectorDB.Keys(EmbeddedChunks) {
-				var ch EmbeddedChunk
-				if !VectorDB.Get(EmbeddedChunks, k, &ch) {
-					continue
-				}
-				const prefix = "collection:"
-				if !strings.HasPrefix(ch.Source, prefix) {
-					continue
-				}
+			const prefix = "collection:"
+			for _, ch := range ChunksWhere(VectorDB, func(x EmbeddedChunk) bool { return strings.HasPrefix(x.Source, prefix) }) {
 				id := strings.TrimPrefix(ch.Source, prefix)
 				s, ok := statsByID[id]
 				if !ok {
@@ -208,11 +201,7 @@ func collectionsListTool() ChatTool {
 				chunks int
 			}
 			groups := map[string]*group{}
-			for _, key := range VectorDB.Keys(EmbeddedChunks) {
-				var ch EmbeddedChunk
-				if !VectorDB.Get(EmbeddedChunks, key, &ch) || !strings.HasPrefix(ch.Source, prefix) {
-					continue
-				}
+			for _, ch := range ChunksWhere(VectorDB, func(x EmbeddedChunk) bool { return strings.HasPrefix(x.Source, prefix) }) {
 				g, ok := groups[ch.ReportID]
 				if !ok {
 					g = &group{}
@@ -260,18 +249,9 @@ func collectionsListTool() ChatTool {
 				return "", fmt.Errorf("collection %q not found", id)
 			}
 			prefix := collectionSource(id)
-			removed := 0
-			for _, key := range VectorDB.Keys(EmbeddedChunks) {
-				var ch EmbeddedChunk
-				if !VectorDB.Get(EmbeddedChunks, key, &ch) {
-					continue
-				}
-				if ch.ReportID != docID || !strings.HasPrefix(ch.Source, prefix) {
-					continue
-				}
-				VectorDB.Unset(EmbeddedChunks, key)
-				removed++
-			}
+			removed := DeleteChunksWhere(VectorDB, func(x EmbeddedChunk) bool {
+				return x.ReportID == docID && strings.HasPrefix(x.Source, prefix)
+			})
 			if removed == 0 {
 				return fmt.Sprintf("No document %q found in that collection (already removed?).", docID), nil
 			}

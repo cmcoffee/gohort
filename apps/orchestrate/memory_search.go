@@ -124,15 +124,8 @@ func (T *OrchestrateApp) memSearchGrep(user string, udb Database, rec AgentRecor
 		prefix := agentKnowledgePrefix(user, rec.ID)
 		seen := map[string]bool{}
 		nFind, nKnow := 0, 0
-		for _, key := range VectorDB.Keys(EmbeddedChunks) {
-			var c EmbeddedChunk
-			if !VectorDB.Get(EmbeddedChunks, key, &c) {
-				continue
-			}
-			if !sourceInScope(c.Source, prefix) || seen[c.ReportID] {
-				continue
-			}
-			if !match(c.Text, c.Title, c.Section) {
+		for _, c := range ChunksWhere(VectorDB, func(x EmbeddedChunk) bool { return sourceInScope(x.Source, prefix) }) {
+			if seen[c.ReportID] || !match(c.Text, c.Title, c.Section) {
 				continue
 			}
 			seen[c.ReportID] = true
@@ -309,13 +302,9 @@ func (T *OrchestrateApp) memSearchDelete(w http.ResponseWriter, r *http.Request,
 		// handleAgentKnowledgeSourceDelete's sweep.
 		if VectorDB != nil {
 			prefix := agentKnowledgePrefix(user, rec.ID)
-			for _, key := range VectorDB.Keys(EmbeddedChunks) {
-				var c EmbeddedChunk
-				if VectorDB.Get(EmbeddedChunks, key, &c) && c.ReportID == ref && sourceInScope(c.Source, prefix) {
-					VectorDB.Unset(EmbeddedChunks, key)
-					ok = true
-				}
-			}
+			ok = DeleteChunksWhere(VectorDB, func(x EmbeddedChunk) bool {
+				return x.ReportID == ref && sourceInScope(x.Source, prefix)
+			}) > 0
 		}
 	case "cortex":
 		ok = tombstoneCortexObservation(udb, rec.ID, ref)

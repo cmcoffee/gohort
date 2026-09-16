@@ -805,6 +805,38 @@ func DeleteChunksByIDs(db Database, ids []string) {
 	invalidateChunkCacheFor(db)
 }
 
+// DeleteChunksWhere removes every chunk keep accepts and invalidates the
+// read cache when anything went. Returns the number removed. THE way to
+// delete chunks by any rule — a report, a source prefix, a scope, one id.
+//
+// It reads the cached snapshot rather than walking kvlite, so a delete costs
+// a slice scan plus one Unset per victim instead of a Keys walk and a gob
+// decode per row in the store (brutal on NFS, and every hand-rolled delete
+// paid it). And it invalidates, which is the part the hand-rolled ones got
+// wrong: four of them Unset rows and never told the cache, and the helper
+// they called instead was a no-op whose comment assumed a TTL this cache
+// does not have. A deleted chunk kept surfacing in search until some
+// unrelated ingest happened to invalidate.
+//
+// Rows are addressed by their ID, which every writer uses as the kvlite key.
+func DeleteChunksWhere(db Database, keep func(c EmbeddedChunk) bool) int {
+	if db == nil || keep == nil {
+		return 0
+	}
+	removed := 0
+	for _, c := range snapshotChunks(db) { // read-only; owned by the cache
+		if !keep(c) {
+			continue
+		}
+		db.Unset(EmbeddedChunks, c.ID)
+		removed++
+	}
+	if removed > 0 {
+		invalidateChunkCacheFor(db)
+	}
+	return removed
+}
+
 // DeleteReportChunks removes every chunk belonging to the given report.
 // Called on re-ingestion (before re-insert) and on record deletion
 // (cleanup). Silent no-op on nil DB.
@@ -812,17 +844,7 @@ func DeleteReportChunks(db Database, reportID string) {
 	if db == nil || reportID == "" {
 		return
 	}
-	removed := false
-	for _, key := range db.Keys(EmbeddedChunks) {
-		var c EmbeddedChunk
-		if db.Get(EmbeddedChunks, key, &c) && c.ReportID == reportID {
-			db.Unset(EmbeddedChunks, key)
-			removed = true
-		}
-	}
-	if removed {
-		invalidateChunkCacheFor(db)
-	}
+	DeleteChunksWhere(db, func(c EmbeddedChunk) bool { return c.ReportID == reportID })
 }
 
 // WipeVectorStore deletes every chunk in the EmbeddedChunks table.
@@ -855,22 +877,7 @@ func WipeChunksBySourcePrefix(db Database, prefix string) int {
 	if db == nil || prefix == "" {
 		return 0
 	}
-	removed := 0
-	for _, key := range db.Keys(EmbeddedChunks) {
-		var c EmbeddedChunk
-		if !db.Get(EmbeddedChunks, key, &c) {
-			continue
-		}
-		if !strings.HasPrefix(c.Source, prefix) {
-			continue
-		}
-		db.Unset(EmbeddedChunks, key)
-		removed++
-	}
-	if removed > 0 {
-		invalidateChunkCacheFor(db)
-	}
-	return removed
+	return DeleteChunksWhere(db, func(c EmbeddedChunk) bool { return strings.HasPrefix(c.Source, prefix) })
 }
 
 // --- one-shot migration of legacy chunk stores into VectorDB ---
@@ -987,11 +994,7 @@ func VectorStats(db Database) VectorIndexStats {
 	if db == nil {
 		return stats
 	}
-	for _, key := range db.Keys(EmbeddedChunks) {
-		var c EmbeddedChunk
-		if !db.Get(EmbeddedChunks, key, &c) {
-			continue
-		}
+	for _, c := range snapshotChunks(db) {
 		stats.Total++
 		src := c.Source
 		if src == "" {

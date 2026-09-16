@@ -217,31 +217,11 @@ func (T *OrchestrateApp) handleAgentKnowledgeAutoInferredWipe(w http.ResponseWri
 	}
 	switch r.Method {
 	case http.MethodGet:
-		n := 0
-		for _, key := range VectorDB.Keys(EmbeddedChunks) {
-			var c EmbeddedChunk
-			if !VectorDB.Get(EmbeddedChunks, key, &c) {
-				continue
-			}
-			if scope(c) {
-				n++
-			}
-		}
+		n := len(ChunksWhere(VectorDB, scope))
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]int{"chunks": n})
 	case http.MethodDelete:
-		removed := 0
-		for _, key := range VectorDB.Keys(EmbeddedChunks) {
-			var c EmbeddedChunk
-			if !VectorDB.Get(EmbeddedChunks, key, &c) {
-				continue
-			}
-			if scope(c) {
-				VectorDB.Unset(EmbeddedChunks, key)
-				removed++
-			}
-		}
-		invalidateChunkCacheIfPossible()
+		removed := DeleteChunksWhere(VectorDB, scope)
 		Log("[orchestrate.knowledge] user=%q wiped %d auto-inferred chunk(s) for agent=%s (uploads preserved)",
 			user, removed, agentID)
 		w.Header().Set("Content-Type", "application/json")
@@ -337,17 +317,9 @@ func (T *OrchestrateApp) handleAgentInferredList(w http.ResponseWriter, r *http.
 		SourceDoc string `json:"source_doc,omitempty"`
 	}
 	items := make([]row, 0, 32)
-	for _, key := range VectorDB.Keys(EmbeddedChunks) {
-		var c EmbeddedChunk
-		if !VectorDB.Get(EmbeddedChunks, key, &c) {
-			continue
-		}
-		if !sourceInScope(c.Source, prefix) {
-			continue
-		}
-		if chunkProvenance(c.Source, c.ReportID) != "derived" {
-			continue
-		}
+	for _, c := range ChunksWhere(VectorDB, func(x EmbeddedChunk) bool {
+		return sourceInScope(x.Source, prefix) && chunkProvenance(x.Source, x.ReportID) == "derived"
+	}) {
 		items = append(items, row{
 			ID:        c.ID,
 			Topic:     c.Section,
@@ -382,34 +354,23 @@ func (T *OrchestrateApp) handleAgentInferredDelete(w http.ResponseWriter, r *htt
 		return
 	}
 	prefix := agentKnowledgePrefix(user, agentID)
-	found := false
-	for _, key := range VectorDB.Keys(EmbeddedChunks) {
-		var c EmbeddedChunk
-		if !VectorDB.Get(EmbeddedChunks, key, &c) {
-			continue
-		}
-		if c.ID != chunkID {
-			continue
-		}
-		// Scope checks — defend against deleting curated content via
-		// a misrouted chunk id.
-		if !sourceInScope(c.Source, prefix) {
-			http.Error(w, "chunk not owned by this agent", http.StatusForbidden)
-			return
-		}
-		if chunkProvenance(c.Source, c.ReportID) != "derived" {
-			http.Error(w, "chunk is not a derived Reference Memory entry", http.StatusForbidden)
-			return
-		}
-		VectorDB.Unset(EmbeddedChunks, key)
-		found = true
-		break
-	}
-	if !found {
+	match := ChunksWhere(VectorDB, func(x EmbeddedChunk) bool { return x.ID == chunkID })
+	if len(match) == 0 {
 		http.NotFound(w, r)
 		return
 	}
-	invalidateChunkCacheIfPossible()
+	c := match[0]
+	// Scope checks — defend against deleting curated content via
+	// a misrouted chunk id.
+	if !sourceInScope(c.Source, prefix) {
+		http.Error(w, "chunk not owned by this agent", http.StatusForbidden)
+		return
+	}
+	if chunkProvenance(c.Source, c.ReportID) != "derived" {
+		http.Error(w, "chunk is not a derived Reference Memory entry", http.StatusForbidden)
+		return
+	}
+	DeleteChunksByIDs(VectorDB, []string{c.ID})
 	Log("[orchestrate.memory] user=%q deleted Reference Memory chunk %q for agent=%s", user, chunkID, agentID)
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -419,19 +380,6 @@ func (T *OrchestrateApp) handleAgentInferredDelete(w http.ResponseWriter, r *htt
 // of chunks should reach for the corpus-wide wipe in the Knowledge
 // modal instead.
 const maxInferredList = 200
-
-// invalidateChunkCacheIfPossible best-effort cache invalidation
-// after a wipe. Core's invalidateChunkCache is private — we call it
-// transitively via WipeChunksBySourcePrefix for the nuclear wipe but
-// the targeted wipe above bypasses that, so the cache could go
-// stale. Use the public no-op for now; if/when search results look
-// stale right after auto-inferred wipes, expose Core.InvalidateChunkCache.
-func invalidateChunkCacheIfPossible() {
-	// Intentional no-op — chunk cache will refresh on TTL expiry.
-	// Read-after-write inconsistency window is short and the impact
-	// is minor (one stale search). Promote to a real invalidation
-	// when it actually bites.
-}
 
 // chunkProvenance classifies a chunk by its source + reportID into
 // one of three buckets the user (and the LLM via search results)
@@ -679,19 +627,11 @@ func (T *OrchestrateApp) handleAgentKnowledgeSources(w http.ResponseWriter, r *h
 		latest string
 	}
 	groups := map[string]*group{}
-	for _, key := range VectorDB.Keys(EmbeddedChunks) {
-		var c EmbeddedChunk
-		if !VectorDB.Get(EmbeddedChunks, key, &c) {
-			continue
-		}
-		if !sourceInScope(c.Source, prefix) {
-			continue
-		}
-		// Skip derived chunks — they appear in the modal's separate
-		// "Auto-inferred knowledge" section, not under "Your documents."
-		if !strings.HasPrefix(c.ReportID, "orch-upload-") {
-			continue
-		}
+	// Uploads only — derived chunks appear in the modal's separate
+	// "Auto-inferred knowledge" section, not under "Your documents."
+	for _, c := range ChunksWhere(VectorDB, func(x EmbeddedChunk) bool {
+		return sourceInScope(x.Source, prefix) && strings.HasPrefix(x.ReportID, "orch-upload-")
+	}) {
 		g, ok := groups[c.ReportID]
 		if !ok {
 			g = &group{id: c.ReportID, name: c.Section}
@@ -746,21 +686,11 @@ func (T *OrchestrateApp) handleAgentKnowledgeSourceDelete(w http.ResponseWriter,
 		return
 	}
 	prefix := agentKnowledgePrefix(user, agentID)
-	removed := 0
-	for _, key := range VectorDB.Keys(EmbeddedChunks) {
-		var c EmbeddedChunk
-		if !VectorDB.Get(EmbeddedChunks, key, &c) {
-			continue
-		}
-		if c.ReportID != reportID {
-			continue
-		}
-		if !sourceInScope(c.Source, prefix) {
-			continue // other agent's chunk with same ID — refuse cross-scope delete
-		}
-		VectorDB.Unset(EmbeddedChunks, key)
-		removed++
-	}
+	// Scoped to this agent's corpus — another agent's chunk under the same
+	// report ID is refused, never a cross-scope delete.
+	removed := DeleteChunksWhere(VectorDB, func(x EmbeddedChunk) bool {
+		return x.ReportID == reportID && sourceInScope(x.Source, prefix)
+	})
 	Log("[orchestrate.knowledge] user=%q agent=%s removed %d chunk(s) for source=%s",
 		user, agentID, removed, reportID)
 	w.Header().Set("Content-Type", "application/json")
