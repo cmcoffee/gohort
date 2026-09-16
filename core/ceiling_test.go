@@ -204,7 +204,13 @@ const (
 	// provenance, title), so the shape belongs next to SearchHit, and a
 	// struct with a Render method costs one name where a function and its
 	// options would cost two. The excerpt cut stays unexported.
-	coreExportCeiling = 2173
+	//
+	// Raised 2173 -> 2174 for RelevanceFloor, ONE const: the score below which
+	// a retrieved item is not worth showing, which three packages' worth of
+	// retrieval surfaces had each kept a private copy of. orchestrate prints
+	// it in tool replies and filters by it, so it cannot be unexported; the
+	// filter helper that uses it stays unexported on both sides.
+	coreExportCeiling = 2174
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

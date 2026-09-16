@@ -1501,7 +1501,7 @@ const diversifyPoolFactor = 4
 // still returns k passages from it.
 //
 // A passage from a new document is promoted ahead of a demoted extra only
-// when it clears collectionSearchMinScore. The callers apply that floor (or
+// when it clears RelevanceFloor. The callers apply that floor (or
 // their own) AFTER this, and a below-floor passage promoted into the top-k
 // would be dropped there, costing the slot the demoted extra would have kept
 // — so a passage that is not worth reading is never promoted over one that
@@ -1521,7 +1521,7 @@ func diversifyHits(hits []SearchHit, perDoc, k int) []SearchHit {
 	lead := make([]SearchHit, 0, k)
 	var extras []SearchHit
 	for _, h := range hits {
-		if h.ReportID == "" || (seen[h.ReportID] < perDoc && h.Score >= collectionSearchMinScore) {
+		if h.ReportID == "" || (seen[h.ReportID] < perDoc && h.Score >= RelevanceFloor) {
 			seen[h.ReportID]++
 			lead = append(lead, h)
 			continue

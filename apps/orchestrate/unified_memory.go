@@ -395,7 +395,7 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 		hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID, topic, query, qVec, perLayer*2, t.skillsActive, t.agent.AttachedCollections, scope)
 		var findings, knowledge []SearchHit
 		for _, h := range hits {
-			if h.Score < manualSearchMinScore {
+			if h.Score < RelevanceFloor {
 				continue
 			}
 			if chunkProvenance(h.Source, h.ReportID) == "derived" {
@@ -438,7 +438,7 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 		hh := SearchRecallVec(t.udb, source, query, qVec, perLayer)
 		var b strings.Builder
 		for _, h := range hh {
-			if h.Score < manualSearchMinScore {
+			if h.Score < RelevanceFloor {
 				continue
 			}
 			label := h.Title

@@ -1066,7 +1066,7 @@ func SearchRetiredFacts(db Database, namespace, query string, k int) []MemoryFac
 				if len(f.Vector) != len(qVec) || (f.VectorModel != "" && f.VectorModel != ver) {
 					continue
 				}
-				if s := Cosine(qVec, f.Vector); s >= factSearchMinScore {
+				if s := Cosine(qVec, f.Vector); s >= RelevanceFloor {
 					ranked = append(ranked, scored{f, s})
 				}
 			}
@@ -1285,11 +1285,6 @@ func ListMemoryFacts(db Database, namespace string) []MemoryFact {
 	return out
 }
 
-// factSearchMinScore is the cosine floor for a fact to count as a semantic
-// match in SearchMemoryFacts. Well below the dedup threshold (0.90, "same
-// fact") — recall wants "related enough to be worth showing," not "identical."
-const factSearchMinScore = 0.35
-
 // factSearchTopK caps how many semantic matches SearchMemoryFacts returns —
 // enough for the LLM to find the relevant one without dumping the namespace.
 const factSearchTopK = 8
@@ -1345,7 +1340,7 @@ func SearchMemoryFactsVec(db Database, namespace, query string, qVec []float32) 
 				// Floor on the RAW semantic score (recency must not drop a
 				// relevant hit below the floor), but rank on the recency-adjusted
 				// score so a fresher fact outranks an equally-relevant stale one.
-				if s := Cosine(qVec, fVec); s >= factSearchMinScore {
+				if s := Cosine(qVec, fVec); s >= RelevanceFloor {
 					ranked = append(ranked, scored{f, s * float32(f.RecencyMultiplier(now, strength))})
 				}
 			}

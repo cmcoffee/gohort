@@ -37,13 +37,7 @@ func (t *chatTurn) entityRelatedPassages(e GraphEntity) string {
 	// Relevance floor, like every other retrieval surface — this block says
 	// "Cite specifics ONLY from these", which makes an unfloored tangential
 	// hit not just noise but a licensed wrong citation.
-	floored := hits[:0]
-	for _, h := range hits {
-		if h.Score >= manualSearchMinScore {
-			floored = append(floored, h)
-		}
-	}
-	hits = floored
+	hits = aboveRelevanceFloor(hits)
 	if len(hits) == 0 {
 		return ""
 	}

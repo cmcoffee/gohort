@@ -1141,16 +1141,18 @@ func knowledgeSearchExcerpt(text string) string {
 	return strings.TrimRight(cut, " \t\n") + "…"
 }
 
-// manualSearchMinScore is the floor applied to knowledge_search and
-// memory_search calls. Vector search returns top-K regardless of
-// score, so weak matches (a chunk that shares surface terms but is
-// tangentially related) would otherwise leak into the response. Qwen-
-// class models treat anything the tool returns as trusted context and
-// incorporate it without sanity-checking the score — the concrete
-// failure was an LVM-shrink query pulling an Nvidia GPU article (low
-// score, shared "Linux"/"reduce" surface terms) which then got woven
-// into a downstream question to a tech-guru agent.
-const manualSearchMinScore = 0.35
+// aboveRelevanceFloor drops hits under core.RelevanceFloor — the one floor
+// every retrieval surface applies (see its comment for why the tools need
+// one at all). Callers that report how many were dropped compare lengths.
+func aboveRelevanceFloor(hits []SearchHit) []SearchHit {
+	kept := hits[:0:0]
+	for _, h := range hits {
+		if h.Score >= RelevanceFloor {
+			kept = append(kept, h)
+		}
+	}
+	return kept
+}
 
 // memorySaveDedupThreshold is the cosine floor above which a memory_save is
 // treated as a near-duplicate of an existing derived finding and skipped. Every
@@ -1328,18 +1330,11 @@ func (t *chatTurn) knowledgeToolDefScoped(scopeSkills []SkillRecord) AgentToolDe
 			defer cancel()
 			hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID, topic, query, t.embedQuery(ctx, query), k, scopeSkills, t.agent.AttachedCollections, ChunkScopeCuratedOnly)
 			rawHits := len(hits)
-			filtered := hits[:0]
-			for _, h := range hits {
-				if h.Score < manualSearchMinScore {
-					continue
-				}
-				filtered = append(filtered, h)
-			}
-			hits = filtered
+			hits = aboveRelevanceFloor(hits)
 			dropped := rawHits - len(hits)
 			if len(hits) == 0 {
 				if dropped > 0 {
-					return fmt.Sprintf("No strong matches. Vector search returned %d chunk(s) but ALL scored below the relevance floor (%.2f) — they would have pulled tangentially-related content (different topic, surface-word matches only) into your context. Do NOT speculate from absent results. Either rephrase the query, widen by passing topic=\"\", or proceed without prior context and acknowledge that the Knowledge layer didn't have a confident answer.", dropped, manualSearchMinScore), nil
+					return fmt.Sprintf("No strong matches. Vector search returned %d chunk(s) but ALL scored below the relevance floor (%.2f) — they would have pulled tangentially-related content (different topic, surface-word matches only) into your context. Do NOT speculate from absent results. Either rephrase the query, widen by passing topic=\"\", or proceed without prior context and acknowledge that the Knowledge layer didn't have a confident answer.", dropped, RelevanceFloor), nil
 				}
 				return "No matching curated content. The Knowledge layer (uploads, shared KB, collections) has nothing on that — try " + memRecallPhrase() + " for the agent's own derived findings, or proceed without prior context.", nil
 			}
@@ -1574,13 +1569,7 @@ func (t *chatTurn) memorySearch(args map[string]any) (string, error) {
 	defer cancel()
 	hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID, topic, query, t.embedQuery(ctx, query), k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
 	rawHits := len(hits)
-	filtered := hits[:0]
-	for _, h := range hits {
-		if h.Score < manualSearchMinScore {
-			continue
-		}
-		filtered = append(filtered, h)
-	}
+	filtered := aboveRelevanceFloor(hits)
 	// THE recency pass for findings — the same one unified recall's [finding]
 	// layer applies, and the only one anywhere (core vector search ranks on
 	// relevance alone; see the design note in core/vector_store.go). Findings
@@ -1590,7 +1579,7 @@ func (t *chatTurn) memorySearch(args map[string]any) (string, error) {
 	dropped := rawHits - len(hits)
 	if len(hits) == 0 {
 		if dropped > 0 {
-			return fmt.Sprintf("No strong matches. Vector search returned %d derived chunk(s) but ALL scored below the relevance floor (%.2f) — they would have been tangentially related. Do NOT speculate from absent results. Rephrase the query, widen by passing topic=\"\", or proceed without prior context.", dropped, manualSearchMinScore), nil
+			return fmt.Sprintf("No strong matches. Vector search returned %d derived chunk(s) but ALL scored below the relevance floor (%.2f) — they would have been tangentially related. Do NOT speculate from absent results. Rephrase the query, widen by passing topic=\"\", or proceed without prior context.", dropped, RelevanceFloor), nil
 		}
 		return "No matching derived recollections. The Memory layer is empty for this query — try knowledge_search for curated content, or proceed without prior context and call memory(action=\"save\") after you investigate.", nil
 	}
@@ -1703,14 +1692,7 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 	// loose forget query can't delete tangentially-related chunks it wouldn't
 	// even surface. Filtering here (not just checking len==0) keeps forget's
 	// precision aligned with search.
-	kept := hits[:0]
-	for _, h := range hits {
-		if h.Score < manualSearchMinScore {
-			continue
-		}
-		kept = append(kept, h)
-	}
-	hits = kept
+	hits = aboveRelevanceFloor(hits)
 	if len(hits) == 0 {
 		return "No matching derived chunks to forget — Reference Memory has nothing close enough to that query (above the relevance floor) under this agent.", nil
 	}

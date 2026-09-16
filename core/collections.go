@@ -237,27 +237,38 @@ func (T *AppCore) SearchCollections(ctx context.Context, user string, collection
 	return searchCollectionsWith(ctx, T.collEnv(), user, collectionIDs, query, k)
 }
 
-// collectionSearchMinScore is the relevance floor for a knowledge passage to
-// be worth showing. Matches factSearchMinScore, for the same reason and with
-// the same meaning: "related enough to be worth reading", not "identical".
+// RelevanceFloor is the score below which a retrieved item is not worth
+// showing: "related enough to be worth reading", not "identical". ONE number
+// for every retrieval surface — collection search, knowledge_search and
+// memory_search, the fact store, unified recall, the graph bridge — because
+// they all rank on the same cosine against the same embedding backend, and
+// three copies of it under three names (collectionSearchMinScore,
+// factSearchMinScore, manualSearchMinScore) were three places for the next
+// model change to be fixed in and two to be forgotten.
 //
 // It exists because the ranking primitives do not filter. The vector half
 // drops only a non-positive cosine and the keyword half keeps any chunk
 // containing any query term, so both hand back their top k whatever the scores
 // are — and a collection with k passages or fewer therefore returned ALL of
-// them for EVERY query, which reads as a search that does not search.
+// them for EVERY query, which reads as a search that does not search. The
+// concrete failure on the tool side was an LVM-shrink query pulling an Nvidia
+// GPU article (shared "Linux"/"reduce" surface terms) that a model then wove
+// into a downstream question as if it were on topic.
 //
-// SearchChunksKeywordByPredicate was already scaled around this number (its
-// comment says so: matched terms must carry ~41% of the query's IDF mass to
-// clear 0.35). The scale was built for a floor nobody applied.
+// SearchChunksKeywordByPredicate is scaled around this number (its comment
+// says so: matched terms must carry ~41% of the query's IDF mass to clear
+// 0.35), and diversifyHits promotes a passage only when it clears it.
 //
 // On the vector half 0.35 is a COSINE, and what counts as unrelated moves with
-// the embedding model. factstore has used this value against the same backend
-// for long enough to be the best available starting point, but it is the knob
-// to turn if recall goes thin after a model change — not the ranking.
-const collectionSearchMinScore = 0.35
+// the embedding model. It is the knob to turn if recall goes thin after a
+// model change — not the ranking. Well below the dedup threshold (0.90, "same
+// fact"). A code constant rather than a tunable on purpose: see the note at
+// the top of tunables.go on thresholds an operator cannot judge. The tunable
+// RecallMinScore is a SECOND, operator-set floor on top of this one, off by
+// default.
+const RelevanceFloor = 0.35
 
-// aboveFloor drops hits under collectionSearchMinScore.
+// aboveFloor drops hits under RelevanceFloor.
 //
 // Applied AFTER the top-k truncation, which loses nothing: hits arrive sorted
 // by descending score, so a passage below the floor can never have displaced
@@ -267,7 +278,7 @@ const collectionSearchMinScore = 0.35
 func aboveFloor(hits []SearchHit) []SearchHit {
 	out := hits[:0:0]
 	for _, h := range hits {
-		if h.Score >= collectionSearchMinScore {
+		if h.Score >= RelevanceFloor {
 			out = append(out, h)
 		}
 	}
