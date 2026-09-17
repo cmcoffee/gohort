@@ -14,6 +14,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -94,7 +95,7 @@ func reembedChunks(ctx context.Context, db Database, what string, want func(c Em
 	space := cfg.spaceStamp()
 
 	keys := db.Keys(EmbeddedChunks)
-	var scanned, candidates, fixed, failed, streak int
+	var scanned, candidates, fixed, failed, streak, split int
 	started := time.Now()
 	// This pass embeds one chunk at a time and a full store takes minutes, so
 	// it says where it is. Reported on a tick rather than per chunk: the
@@ -123,15 +124,20 @@ func reembedChunks(ctx context.Context, db Database, what string, want func(c Em
 		}
 		candidates++
 
-		// Same prompt shape as ingest (embedWithSplitFallbackDepth), so a
-		// repaired row lands in the same space as one embedded first time.
+		// The SAME embed path ingest uses, split fallback included. This used
+		// to call the embedder once, which meant a chunk too large for it
+		// could never be repaired — and such rows exist precisely because the
+		// embedder was unreachable at ingest (a non-size error bails without
+		// splitting, storing the whole text raw). Once it is back, it answers
+		// "too large" every time, so those rows sat in the missing-vector
+		// count forever and no amount of re-running moved them.
 		ectx, cancel := context.WithTimeout(ctx, reembedChunkTimeout)
-		v, err := embedDocumentWith(ectx, cfg, embedHeader(c.Title, c.Section)+"\n\n"+c.Text)
+		pieces := embedWithSplitFallback(ectx, cfg, embedHeader(c.Title, c.Section), c.Text)
 		cancel()
-		if err != nil || len(v) == 0 {
+		if len(pieces) == 0 || len(pieces[0].Vector) == 0 {
 			failed++
 			streak++
-			Debug("[vector-reembed] %s/%s section %q failed: %v", c.Source, c.ReportID, c.Section, err)
+			Debug("[vector-reembed] %s/%s section %q failed", c.Source, c.ReportID, c.Section)
 			if streak >= reembedFailStreak {
 				Log("[vector-reembed] stopping — %d consecutive failures (endpoint likely down: %s). Repaired %d before the streak; re-run once the embedder is back.",
 					streak, cfg.Endpoint, fixed)
@@ -140,10 +146,27 @@ func reembedChunks(ctx context.Context, db Database, what string, want func(c Em
 			continue
 		}
 		streak = 0
-		c.Vector = v
-		c.Model = space
-		db.Set(EmbeddedChunks, key, c)
-		fixed++
+		// One piece is the ordinary case and the row keeps its identity.
+		// Several means the text only embeds in halves, so the row becomes the
+		// rows ingest would have written: same parent, same position, each
+		// tagged "(part i/N)" — which SortChunksForAssembly orders within the
+		// position they share.
+		base := c.Section
+		for i, pc := range pieces {
+			row := c
+			row.Vector, row.Model, row.Text = pc.Vector, space, pc.Text
+			if len(pieces) > 1 {
+				row.Section = fmt.Sprintf("%s (part %d/%d)", base, i+1, len(pieces))
+			}
+			if i == 0 {
+				db.Set(EmbeddedChunks, key, row) // in place, keeping its ID
+			} else {
+				row.ID = UUIDv4()
+				db.Set(EmbeddedChunks, row.ID, row)
+				split++
+			}
+			fixed++
+		}
 	}
 
 	if fixed > 0 {
@@ -152,11 +175,24 @@ func reembedChunks(ctx context.Context, db Database, what string, want func(c Em
 		invalidateChunkCacheFor(db)
 	}
 	if candidates == 0 {
+		ReportMaintenanceOutcome(ctx, fmt.Sprintf("%d chunk(s) checked · none %s", scanned, what))
 		Log("[vector-reembed] scanned %d chunk(s); none %s", scanned, what)
 		return 0
 	}
-	Log("[vector-reembed] scanned %d chunk(s), %d %s: %d repaired, %d still failing, %.1fs",
-		scanned, candidates, what, fixed, failed, time.Since(started).Seconds())
+	// The pass's own last word. Without it the row's final reading is whichever
+	// two-second tick landed last, which can sit a few chunks short of the end
+	// and read as though the pass stopped early — it does not: the loop is
+	// sequential, each embed completes and its row is written before the next.
+	outcome := fmt.Sprintf("%d chunk(s) checked · %d re-embedded", scanned, fixed)
+	if split > 0 {
+		outcome += fmt.Sprintf(" · %d oversized split into parts", split)
+	}
+	if failed > 0 {
+		outcome += fmt.Sprintf(" · %d still failing", failed)
+	}
+	ReportMaintenanceOutcome(ctx, outcome+" · "+time.Since(started).Round(time.Second).String())
+	Log("[vector-reembed] scanned %d chunk(s), %d %s: %d repaired, %d split, %d still failing, %.1fs",
+		scanned, candidates, what, fixed, split, failed, time.Since(started).Seconds())
 	return fixed
 }
 
@@ -168,6 +204,25 @@ func vectorRepairDB() Database {
 		return VectorDB
 	}
 	return RootDB
+}
+
+// RemoveUnusableChunks deletes every chunk with no TEXT.
+//
+// Such a row can never be repaired (there is nothing to embed) and can never
+// be returned (nothing for keyword search to match, and a hit would carry an
+// empty body), so it sat in the counts forever looking like a gap the repair
+// pass was failing to close. It is not a gap; it is dead weight. Returns the
+// number removed.
+func RemoveUnusableChunks(ctx context.Context, db Database) int {
+	if db == nil {
+		return 0
+	}
+	removed := DeleteChunksWhere(db, func(c EmbeddedChunk) bool {
+		return strings.TrimSpace(c.Text) == ""
+	})
+	ReportMaintenanceOutcome(ctx, fmt.Sprintf("%d unusable chunk(s) removed", removed))
+	Log("[vector-reembed] removed %d chunk(s) with no text", removed)
+	return removed
 }
 
 func init() {
@@ -197,6 +252,17 @@ func init() {
 			"right. One embed call per chunk; stops early if the endpoint is down; safe to re-run.",
 		func(ctx context.Context) int {
 			return ReembedAllChunks(ctx, vectorRepairDB())
+		},
+	)
+	RegisterMaintenanceFunc("Vector index",
+		"vector_database_cleanup",
+		"Vector database cleanup (DELETES)",
+		"Removes rows the index cannot use: a chunk with no text. Nothing to embed, so Repair "+
+			"cannot fix it; nothing to match, so search cannot return it. They are dead weight that "+
+			"kept the counts above from reaching zero. Permanent, and safe — the documents they came "+
+			"from are untouched and can be re-ingested.",
+		func(ctx context.Context) int {
+			return RemoveUnusableChunks(ctx, vectorRepairDB())
 		},
 	)
 }

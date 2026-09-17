@@ -99,7 +99,7 @@ func (a *AdminApp) maintenanceSections() []ui.Section {
 		},
 		{
 			Title:    "Vector Index",
-			Subtitle: "Snapshot of the semantic-search index. Chunks are written automatically as records (research / debate / answer) are produced. A chunk whose embedding failed at ingest, or was embedded under a different model or document prefix, is still stored and still found by keyword but invisible to semantic search — the counts below say how many, and Repair below them fixes it.",
+			Subtitle: "Snapshot of the semantic-search index. Chunks are written automatically as records (research / debate / answer) are produced. A chunk whose embedding failed at ingest, or was embedded under a different model or document prefix, is still stored and still found by keyword but invisible to semantic search — the counts below say how many, and Repair below them fixes it. A chunk with no TEXT is counted apart: Repair cannot fix it (nothing to embed) and search cannot return it, so it is dead weight — remove it.",
 			Body: ui.Stack{Children: []ui.Component{
 				ui.DisplayPanel{
 					Source: "api/vector-stats",
@@ -116,6 +116,10 @@ func (a *AdminApp) maintenanceSections() []ui.Section {
 						// search skips them until the stale pass runs.
 						{Label: "In another embedding space", Field: "stale"},
 						{Label: "Stale vectors by source", Field: "stale_by_source_text"},
+						// Rows with no text: not a gap the repair can close,
+						// which is why they never left the counts.
+						{Label: "Unusable (no text)", Field: "unusable"},
+						{Label: "Unusable by source", Field: "unusable_by_source_text"},
 					},
 				},
 				// Per-kind breakdown (documents + chunks) — the legible view,

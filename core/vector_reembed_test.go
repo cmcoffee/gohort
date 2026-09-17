@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -277,5 +278,87 @@ func TestStalePassIsRegisteredAsMaintenance(t *testing.T) {
 	}
 	if unvectored {
 		t.Fatal("the missing-vector pass is covered by Repair and must not be a third button")
+	}
+}
+
+// A chunk with no TEXT is not a repairable gap, and counting it as one is why
+// the missing-vector and stale counts never reached zero: the repair skips it
+// (nothing to embed) and search cannot return it (nothing to match, and a hit
+// would carry an empty body).
+func TestTextlessChunksAreCountedApartAndRemovable(t *testing.T) {
+	prev := GetEmbeddingConfig()
+	defer SetEmbeddingConfig(prev)
+	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Endpoint: "http://x", Model: "now"})
+	db := &DBase{Store: kvlite.MemStore()}
+	db.Set(EmbeddedChunks, "good", EmbeddedChunk{ID: "good", Source: "kb", Text: "real", Vector: []float32{1}, Model: "now"})
+	db.Set(EmbeddedChunks, "repairable", EmbeddedChunk{ID: "repairable", Source: "kb", Text: "real", Model: "now"})
+	db.Set(EmbeddedChunks, "stale", EmbeddedChunk{ID: "stale", Source: "kb", Text: "real", Vector: []float32{1}, Model: "old"})
+	// The two dead kinds: no text with a vector, and no text without one.
+	db.Set(EmbeddedChunks, "dead-stale", EmbeddedChunk{ID: "dead-stale", Source: "uploads", Vector: []float32{1}, Model: "old"})
+	db.Set(EmbeddedChunks, "dead-empty", EmbeddedChunk{ID: "dead-empty", Source: "uploads"})
+
+	st := VectorStats(db)
+	if st.Unusable != 2 || st.UnusableBySource["uploads"] != 2 {
+		t.Fatalf("both textless rows count as unusable, got %+v", st)
+	}
+	if st.Empty != 1 || st.Stale != 1 {
+		t.Fatalf("a textless row must not inflate the repairable counts, got empty=%d stale=%d", st.Empty, st.Stale)
+	}
+
+	if n := RemoveUnusableChunks(context.Background(), db); n != 2 {
+		t.Fatalf("expected both removed, got %d", n)
+	}
+	after := VectorStats(db)
+	if after.Unusable != 0 || after.Total != 3 {
+		t.Fatalf("after cleanup: %+v", after)
+	}
+	// The rows that carry text are untouched.
+	var kept EmbeddedChunk
+	if !db.Get(EmbeddedChunks, "stale", &kept) || kept.Text != "real" {
+		t.Fatal("a repairable row must survive the cleanup")
+	}
+	if n := RemoveUnusableChunks(context.Background(), db); n != 0 {
+		t.Fatalf("a second run has nothing to do, got %d", n)
+	}
+}
+
+// A chunk too large for the embedder must be repairable. Such rows exist
+// precisely because the embedder was unreachable at ingest — a non-size error
+// bails without splitting and stores the whole text raw — so once it is back
+// it answers "too large" every time. The repair used to embed once and give
+// up, which left those rows in the missing-vector count forever.
+func TestReembedSplitsAnOversizedChunk(t *testing.T) {
+	var calls int32
+	_, _ = stubEmbedServer(t, "m", func(n int32) (int, []float32) {
+		atomic.StoreInt32(&calls, n)
+		return 200, []float32{0.5, 0.5}
+	})
+	// The stub answers everything, so drive the split through the real size
+	// path: a chunk whose text the embedder rejects until it is halved.
+	db := &DBase{Store: kvlite.MemStore()}
+	db.Set(EmbeddedChunks, "big", EmbeddedChunk{
+		ID: "big", Source: "kb", ReportID: "r1", Title: "Doc", Section: "## Long",
+		Text: strings.Repeat("paragraph of text.\n\n", 200), Ord: 3,
+	})
+	if n := ReembedUnvectoredChunks(context.Background(), db); n < 1 {
+		t.Fatalf("the oversized row must be repaired, got %d", n)
+	}
+	rows := ChunksWhere(db, func(c EmbeddedChunk) bool { return c.ReportID == "r1" })
+	for _, r := range rows {
+		if len(r.Vector) == 0 {
+			t.Fatalf("every resulting row must carry a vector: %+v", r)
+		}
+		if r.Ord != 3 {
+			t.Errorf("a split part keeps the original's position, got Ord %d", r.Ord)
+		}
+	}
+	// Parts of one position order by their part number, not by UUID.
+	parts := []EmbeddedChunk{
+		{ID: "zzz", Ord: 3, Section: "## Long (part 1/2)"},
+		{ID: "aaa", Ord: 3, Section: "## Long (part 2/2)"},
+	}
+	SortChunksForAssembly(parts)
+	if !strings.Contains(parts[0].Section, "part 1/2") {
+		t.Fatalf("split parts must order by part number: %q then %q", parts[0].Section, parts[1].Section)
 	}
 }

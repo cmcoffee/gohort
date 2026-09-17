@@ -208,15 +208,21 @@ func (a *AdminApp) handleVectorStats(w http.ResponseWriter, r *http.Request) {
 	if staleText == "" {
 		staleText = "none — every vector is in the current space"
 	}
+	unusableText := stats.UnusableBySourceText
+	if unusableText == "" {
+		unusableText = "none"
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"total":                stats.Total,
-		"embedded":             stats.Embedded,
-		"empty":                stats.Empty,
-		"stale":                stats.Stale,
-		"by_source_text":       byText,
-		"empty_by_source_text": emptyText,
-		"stale_by_source_text": staleText,
+		"total":                   stats.Total,
+		"embedded":                stats.Embedded,
+		"empty":                   stats.Empty,
+		"stale":                   stats.Stale,
+		"unusable":                stats.Unusable,
+		"by_source_text":          byText,
+		"empty_by_source_text":    emptyText,
+		"stale_by_source_text":    staleText,
+		"unusable_by_source_text": unusableText,
 	})
 }
 

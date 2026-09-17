@@ -1003,6 +1003,15 @@ type VectorIndexStats struct {
 	Stale             int            `json:"stale"`
 	StaleBySource     map[string]int `json:"stale_by_source"`
 	StaleBySourceText string         `json:"stale_by_source_text"`
+	// Unusable counts chunks with no TEXT. They are not a repairable gap and
+	// counting them as one is why "missing vectors" never reached zero: the
+	// re-embed pass skips them (there is nothing to embed) and search cannot
+	// return them (no text to match, and a hit would carry an empty body).
+	// Dead weight, separated from Empty so Empty means "the repair can fix
+	// this" and this means "delete it".
+	Unusable             int            `json:"unusable"`
+	UnusableBySource     map[string]int `json:"unusable_by_source"`
+	UnusableBySourceText string         `json:"unusable_by_source_text"`
 }
 
 // VectorStats walks the EmbeddedChunks table once and summarizes how
@@ -1010,7 +1019,8 @@ type VectorIndexStats struct {
 // empty (because embed was down at ingest time), and the breakdown per
 // source. Intended for admin-panel visibility — not hot-path.
 func VectorStats(db Database) VectorIndexStats {
-	stats := VectorIndexStats{BySource: map[string]int{}, EmptyBySource: map[string]int{}, StaleBySource: map[string]int{}}
+	stats := VectorIndexStats{BySource: map[string]int{}, EmptyBySource: map[string]int{},
+		StaleBySource: map[string]int{}, UnusableBySource: map[string]int{}}
 	if db == nil {
 		return stats
 	}
@@ -1021,13 +1031,19 @@ func VectorStats(db Database) VectorIndexStats {
 		if src == "" {
 			src = "(unspecified)"
 		}
-		if len(c.Vector) > 0 {
+		switch {
+		case strings.TrimSpace(c.Text) == "":
+			// No text: nothing to embed and nothing to return. Counted apart
+			// from Empty, which is the repairable kind.
+			stats.Unusable++
+			stats.UnusableBySource[src]++
+		case len(c.Vector) > 0:
 			stats.Embedded++
 			if space != "" && c.Model != space {
 				stats.Stale++
 				stats.StaleBySource[src]++
 			}
-		} else {
+		default:
 			stats.Empty++
 			stats.EmptyBySource[src]++
 		}
@@ -1036,6 +1052,7 @@ func VectorStats(db Database) VectorIndexStats {
 	stats.BySourceText = formatSourceCounts(stats.BySource)
 	stats.EmptyBySourceText = formatSourceCounts(stats.EmptyBySource)
 	stats.StaleBySourceText = formatSourceCounts(stats.StaleBySource)
+	stats.UnusableBySourceText = formatSourceCounts(stats.UnusableBySource)
 	return stats
 }
 
@@ -1109,9 +1126,10 @@ func ListMaintenanceFuncs() []struct{ Group, Key, Label, Desc string } {
 type maintenanceKeyCtx struct{}
 
 var maintenanceProgress struct {
-	mu   sync.Mutex
-	at   map[string]string
-	done map[string]maintenanceOutcome
+	mu     sync.Mutex
+	at     map[string]string
+	spoken map[string]string // a pass's own final words, if it said any
+	done   map[string]maintenanceOutcome
 }
 
 // maintenanceOutcome is how a finished pass ended, kept for a while after it
@@ -1152,6 +1170,24 @@ func MaintenanceProgress(key string) string {
 	return maintenanceProgress.at[key]
 }
 
+// ReportMaintenanceOutcome lets a pass say how it ended in its own words,
+// which the generic "N record(s) changed" cannot: a re-embed that checked
+// 8,400 chunks, repaired 340 and left 12 still failing has three numbers that
+// matter and one of them is not the return value. Optional — a pass that says
+// nothing gets the generic line.
+func ReportMaintenanceOutcome(ctx context.Context, line string) {
+	key, _ := ctx.Value(maintenanceKeyCtx{}).(string)
+	if key == "" {
+		return
+	}
+	maintenanceProgress.mu.Lock()
+	defer maintenanceProgress.mu.Unlock()
+	if maintenanceProgress.spoken == nil {
+		maintenanceProgress.spoken = map[string]string{}
+	}
+	maintenanceProgress.spoken[key] = line
+}
+
 // MaintenanceOutcome returns how the pass last ENDED, within
 // maintenanceOutcomeTTL of it ending, or "" when there is nothing recent to
 // report. Read by a page that arrives after a run it did not start.
@@ -1174,11 +1210,16 @@ func finishMaintenanceProgress(key string, count int) {
 	if maintenanceProgress.done == nil {
 		maintenanceProgress.done = map[string]maintenanceOutcome{}
 	}
+	line := maintenanceProgress.spoken[key]
+	if line == "" {
+		line = fmt.Sprintf("%d record(s) changed", count)
+	}
 	maintenanceProgress.done[key] = maintenanceOutcome{
-		line: fmt.Sprintf("finished — %d record(s) changed", count),
+		line: "finished — " + line,
 		at:   time.Now(),
 	}
 	delete(maintenanceProgress.at, key)
+	delete(maintenanceProgress.spoken, key)
 }
 
 // RunMaintenanceFunc runs the maintenance function matching key. Returns -1 if

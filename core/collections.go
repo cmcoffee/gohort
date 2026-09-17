@@ -431,6 +431,20 @@ func SortChunksForAssembly(chunks []EmbeddedChunk) {
 			if chunks[i].Ord != chunks[j].Ord {
 				return chunks[i].Ord < chunks[j].Ord
 			}
+			// Same position: the repair pass splits an oversized row into
+			// parts that all inherit its Ord, so the part number orders them.
+			// Falling straight to ID would scramble them, since an ID is a
+			// UUID and carries no order at all.
+			_, pi := chunkPartOrder(chunks[i].Section)
+			_, pj := chunkPartOrder(chunks[j].Section)
+			for n := 0; n < len(pi) && n < len(pj); n++ {
+				if pi[n] != pj[n] {
+					return pi[n] < pj[n]
+				}
+			}
+			if len(pi) != len(pj) {
+				return len(pi) < len(pj)
+			}
 			return chunks[i].ID < chunks[j].ID
 		})
 		return
