@@ -502,13 +502,68 @@ func liveRequired(act TempToolAction) []string {
 			return act.Required // doesn't match the shape the old default produced
 		}
 	}
-	repaired := defaultRequiredParams(act.URLTemplate, act.Params)
+	repaired := liveRepairedRequired(act)
 	if len(repaired) == len(act.Required) {
-		return act.Required // every param really is a path placeholder
+		return act.Required // every param really is load-bearing
 	}
 	Debug("[temptool] action %q: required %v was every declared param — narrowed to the %d the URL actually needs (%v); the rest are now optional",
 		act.Name, act.Required, len(repaired), repaired)
 	return repaired
+}
+
+// liveRepairedRequired is the narrowed list: the params this action genuinely
+// cannot run without.
+//
+// A URL PATH placeholder is one — substitution has nothing to put there. So is
+// a param the BODY template spells, and leaving that out was the defect this
+// function exists to correct.
+//
+// The old narrowing asked only which params the URL needs, on the stated
+// ground that required "now means the URL can't be built without it". For a
+// GET that is the whole story. For a POST it is exactly half of it: the body
+// is where a write action carries what it is writing, and calling that
+// optional says the content of a comment is a detail the caller may omit.
+//
+// It broke both ways at once, which is why it stayed hidden. The schema
+// advertised the content field as optional, so the model left it out; the
+// dispatcher went on enforcing the author's stored list and refused the call
+// with `missing required arg "content"` — an error the model cannot act on,
+// because the schema it was reading says that argument is optional. Observed
+// as a standing agent failing the same write dozens of times a day. And had
+// the two sides been reconciled the other way, substituteJSON would have
+// dropped the absent optional field and posted an empty body instead, turning
+// a loud failure into a silent one.
+//
+// Reads are left alone: a GET's body is rarely load-bearing, and the "_"
+// dummy-placeholder pattern that satisfies an API demanding some query arg
+// must not be promoted to required.
+func liveRepairedRequired(act TempToolAction) []string {
+	repaired := defaultRequiredParams(act.URLTemplate, act.Params)
+	switch strings.ToUpper(strings.TrimSpace(act.Method)) {
+	case "POST", "PUT", "PATCH":
+	default:
+		return repaired
+	}
+	body := strings.TrimSpace(act.BodyTemplate)
+	if body == "" {
+		return repaired
+	}
+	have := make(map[string]bool, len(repaired))
+	for _, r := range repaired {
+		have[r] = true
+	}
+	// The author's own ordering is not meaningful here (the list being
+	// repaired named every param), so sort for a stable result: this list
+	// reaches a tool schema, and a schema that reshuffles between restarts
+	// invalidates a prompt cache for nothing.
+	var extra []string
+	for name := range act.Params {
+		if !have[name] && templateReferences(body, name) {
+			extra = append(extra, name)
+		}
+	}
+	sort.Strings(extra)
+	return append(repaired, extra...)
 }
 
 // writeBodyParams returns the params a write action has to carry in its BODY:

@@ -92,6 +92,10 @@ func dispatchToolboxModeTempTool(sess *ToolSession, tt *TempTool, args map[strin
 			WorkspaceFiles: tt.WorkspaceFiles,
 			StatePath:      tt.StatePath,
 		}
+		// liveRequired leaves a shell action's list untouched, so this is the
+		// author's list either way — routed through the one function so a
+		// later change to the rule reaches dispatch as well as the schema.
+		shellAct.Required = liveRequired(*act)
 		for _, r := range shellAct.Required {
 			v, ok := lookupArgCI(inner, r)
 			if !ok || v == nil {
@@ -106,10 +110,20 @@ func dispatchToolboxModeTempTool(sess *ToolSession, tt *TempTool, args map[strin
 	}
 
 	synthetic := TempTool{
-		Name:            tt.Name + "." + act.Name,
-		Description:     act.Description,
-		Params:          act.Params,
-		Required:        act.Required,
+		Name:        tt.Name + "." + act.Name,
+		Description: act.Description,
+		Params:      act.Params,
+		// The SAME list the schema advertises (agent_tool_defs.go), not the
+		// author's stored one. Two readings of "required" is the loop this
+		// package keeps rediscovering: help says a param is optional, dispatch
+		// demands it, and the model cannot fix from its side an error about an
+		// argument its schema told it to omit.
+		//
+		// It also feeds substituteJSON, which drops an absent OPTIONAL body
+		// field and errors on an absent required one — so the two sides
+		// disagreeing here is the difference between a clear refusal and a
+		// write that silently posts without its content.
+		Required:        liveRequired(*act),
 		Mode:            TempToolModeAPI,
 		CommandTemplate: act.URLTemplate,
 		Credential:      tt.Credential,
