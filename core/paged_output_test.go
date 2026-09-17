@@ -240,3 +240,155 @@ func TestSuppliedTextCanBeSearchedAndPaged(t *testing.T) {
 		t.Fatalf("paging a supplied text must name the doc, not an output_id:\n%s", around)
 	}
 }
+
+// spillAndID runs a text through SpillOutput and returns the reply plus the
+// id the trailer printed, which is the only way an agent learns the handle.
+func spillAndID(t *testing.T, text string, max int) (reply, id string) {
+	t.Helper()
+	reply = SpillOutput(text, max, "read_output")
+	const marker = `output_id="`
+	i := strings.Index(reply, marker)
+	if i < 0 {
+		t.Fatalf("spilled reply names no output_id:\n%s", reply)
+	}
+	rest := reply[i+len(marker):]
+	j := strings.Index(rest, `"`)
+	if j < 0 {
+		t.Fatalf("output_id is unterminated in:\n%s", reply)
+	}
+	return reply, rest[:j]
+}
+
+func TestReleaseOutputsFromHistory(t *testing.T) {
+	full := strings.Repeat("a line of output that goes on\n", 800)
+	reply, id := spillAndID(t, full, 2000)
+
+	// A second page of the same capture, as read_output would have returned
+	// it — releasing has to find every copy, not only the first.
+	page, err := OutputPage{ID: id, Offset: 1500, Max: 1000, Tool: "read_output"}.Read()
+	if err != nil {
+		t.Fatalf("reading page 2: %v", err)
+	}
+
+	history := []Message{
+		{Role: "user", Content: "look at the log"},
+		{Role: "assistant", Content: "", ToolCalls: []ToolCall{{ID: "1", Name: "run_command"}}},
+		{Role: "user", ToolResults: []ToolResult{{ID: "1", Content: reply}}},
+		{Role: "user", ToolResults: []ToolResult{{ID: "2", Content: page}, {ID: "3", Content: "something else entirely"}}},
+	}
+	before := len(reply) + len(page)
+
+	n, reclaimed := ReleaseOutputsFromHistory(history, []string{id})
+	if n != 2 {
+		t.Fatalf("released %d results, want both copies of the capture", n)
+	}
+	if reclaimed <= 0 || reclaimed >= before {
+		t.Fatalf("reclaimed %d chars, want more than 0 and less than the %d released", reclaimed, before)
+	}
+	for _, m := range history {
+		for _, r := range m.ToolResults {
+			if r.ID == "3" {
+				if r.Content != "something else entirely" {
+					t.Fatalf("an unrelated result was rewritten: %q", r.Content)
+				}
+				continue
+			}
+			if !strings.HasPrefix(r.Content, releasedMarker) {
+				t.Fatalf("result %s was not released:\n%s", r.ID, r.Content)
+			}
+			// The stub must name the handle. Without it the agent has
+			// dropped something it can no longer reach.
+			if !strings.Contains(r.Content, id) {
+				t.Fatalf("stub for %s does not name the id:\n%s", r.ID, r.Content)
+			}
+			if !strings.Contains(r.Content, "read_output") {
+				t.Fatalf("stub for %s does not say how to read it back:\n%s", r.ID, r.Content)
+			}
+		}
+	}
+
+	// The capture survives the release — that is the whole claim.
+	back, err := OutputPage{ID: id, Offset: 0, Max: 500, Tool: "read_output"}.Read()
+	if err != nil {
+		t.Fatalf("capture was lost by releasing it: %v", err)
+	}
+	if !strings.Contains(back, "a line of output") {
+		t.Fatalf("read-back does not hold the original text:\n%s", back)
+	}
+
+	// Releasing again finds nothing new: a stub is not a second reclaim.
+	if n2, r2 := ReleaseOutputsFromHistory(history, []string{id}); n2 != 0 || r2 != 0 {
+		t.Fatalf("re-release claimed %d results / %d chars, want 0 / 0", n2, r2)
+	}
+}
+
+// The prompt-tool path appends a result as plain text rather than as a
+// ToolResult. Both shapes are tool results and both must release.
+func TestReleaseOutputsFromHistoryPromptToolShape(t *testing.T) {
+	full := strings.Repeat("noisy output\n", 900)
+	reply, id := spillAndID(t, full, 1500)
+	history := []Message{
+		{Role: "user", Content: "Tool result from run_command:\n" + reply},
+		// A user turn that merely quotes the id is not a tool result and
+		// must be left exactly as the person wrote it.
+		{Role: "user", Content: `what was in output_id="` + id + `"?`},
+	}
+	n, _ := ReleaseOutputsFromHistory(history, []string{id})
+	if n != 1 {
+		t.Fatalf("released %d, want 1", n)
+	}
+	if !strings.Contains(history[0].Content, releasedMarker) {
+		t.Fatalf("plain-text result not released:\n%s", history[0].Content)
+	}
+	if !strings.HasPrefix(history[0].Content, toolResultTextPrefix) {
+		t.Fatalf("released result lost its tool-result framing:\n%s", history[0].Content)
+	}
+	if !strings.HasPrefix(history[1].Content, "what was in") {
+		t.Fatalf("a user turn was rewritten: %q", history[1].Content)
+	}
+}
+
+func TestReleaseIDsFromArgs(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+		want []string
+	}{
+		{"one", map[string]any{"output_id": "abc"}, []string{"abc"}},
+		{"comma separated", map[string]any{"output_id": "abc, def"}, []string{"abc", "def"}},
+		{"json array", map[string]any{"output_id": []any{"abc", "def"}}, []string{"abc", "def"}},
+		{"quoted", map[string]any{"output_id": `"abc"`}, []string{"abc"}},
+		{"repeated", map[string]any{"output_id": "abc abc"}, []string{"abc"}},
+		{"missing", map[string]any{}, nil},
+	} {
+		got := ReleaseIDsFromArgs(tc.args)
+		if len(got) != len(tc.want) {
+			t.Fatalf("%s: got %v, want %v", tc.name, got, tc.want)
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Fatalf("%s: got %v, want %v", tc.name, got, tc.want)
+			}
+		}
+	}
+}
+
+// Reading a capture to its end offers the release; reading a document the
+// caller supplied has nothing to offer, because there is no capture.
+func TestReleaseHintOnlyForKeptCaptures(t *testing.T) {
+	_, id := spillAndID(t, strings.Repeat("x\n", 2000), 1200)
+	end, err := OutputPage{ID: id, Offset: 0, Max: 0, Tool: "read_output"}.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(end, ReleaseOutputToolName) {
+		t.Fatalf("end of a capture does not offer the release:\n%s", end[len(end)-300:])
+	}
+	doc, err := OutputPage{Text: "a short document", Ref: `doc_id="d1"`, Tool: "fetch_knowledge_doc"}.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(doc, ReleaseOutputToolName) {
+		t.Fatalf("a supplied document offered a release it cannot honor:\n%s", doc)
+	}
+}

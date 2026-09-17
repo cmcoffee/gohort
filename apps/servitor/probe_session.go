@@ -1909,9 +1909,9 @@ func (pr *probeRun) mapProbeTool() probeAction {
 				pr.m.probeLoopSignalCount++
 				emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Worker loop signal received (%d/%d)", pr.m.probeLoopSignalCount, probeLoopSignalLimit)})
 			}
-			if len(result) > 12000 {
-				result = result[:12000] + "\n… [truncated]"
-			}
+			// Kept, not cut: the rest is read with read_output rather than
+			// by asking the worker to do the whole investigation again.
+			result = SpillOutput(result, 12000, "read_output")
 			emit(pr.id, probeEvent{Kind: "output", Text: result})
 			return result, nil
 		},
@@ -2051,6 +2051,11 @@ func (pr *probeRun) mapInvestigate() probeAction {
 		pr.m.revise_plan_tool, pr.m.report_gaps_tool,
 		pr.m.probe_tool, pr.store_fact_tool, pr.link_entities_tool, pr.record_discovery_tool, pr.record_technique_tool, pr.note_lesson_tool,
 	}
+	// A worker's findings are kept and paged when they overflow (probe_tool
+	// spills), so the investigator needs the way back to the rest of them —
+	// and the way to let go of a set it has finished reading, on a loop with
+	// a 75-round budget where that room is worth having.
+	pr.m.investigatorTools = append(pr.m.investigatorTools, OutputPagingToolDefs()...)
 	assertOnlyAllowedTools("servitor.investigator", pr.m.investigatorTools, servitorOrchestratorToolAllowList)
 	// Per-step pacing reset — the soft-pacing windows
 	// (midpoint nudge, wrap-up warning, failure streak)
@@ -2414,9 +2419,7 @@ func (pr *probeRun) chatProbeTool() probeAction {
 				pr.c.lastProbeResult = result
 				pr.c.allProbeResults = append(pr.c.allProbeResults, result)
 			}
-			if len(result) > 14000 {
-				result = result[:14000] + "\n… [truncated]"
-			}
+			result = SpillOutput(result, 14000, "read_output")
 			emit(pr.id, probeEvent{Kind: "status", Text: "Worker complete — reviewing findings."})
 			return result, nil
 		},

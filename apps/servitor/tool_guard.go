@@ -87,6 +87,8 @@ var servitorOrchestratorToolAllowList = map[string]bool{
 	"mark_step_blocked":     true, // local: session plan state
 	"revise_plan":           true, // local: session plan state
 	"report_gaps":           true, // local: session plan state
+	"read_output":           true, // local: re-reads a capture this process already holds in memory
+	"release_output":        true, // local: drops a capture this conversation is done with
 }
 
 // servitorWorkspaceToolAllowList is the set for the WORKSPACE coordinator — the
@@ -106,6 +108,8 @@ var servitorWorkspaceToolAllowList = map[string]bool{
 	"mark_step_blocked":     true, // local: session plan state
 	"revise_plan":           true, // local: session plan state
 	"report_gaps":           true, // local: session plan state
+	"read_output":           true, // local: re-reads a capture this process already holds in memory
+	"release_output":        true, // local: drops a capture this conversation is done with
 }
 
 // assertOnlyAllowedTools panics if any tool in tools has a name not

@@ -1782,3 +1782,43 @@ func TestANamedKnowledgeToolSurvivesAStepsNarrowing(t *testing.T) {
 		t.Errorf("a step naming the corpus tool should reach exactly it, got %+v", narrowed)
 	}
 }
+
+// A step's Tools list is a statement about REACH. Finishing a result the step
+// already received reaches nothing, so a phase that names one tool must still
+// be able to read the rest of that tool's truncated reply — and to let go of
+// it. Without this a step's own capped result ends in a trailer naming a tool
+// the step cannot call.
+func TestAStepKeepsTheWayBackToItsOwnTruncatedResults(t *testing.T) {
+	pool := []AgentToolDef{
+		{Tool: Tool{Name: "run_command"}},
+		{Tool: Tool{Name: "send_email"}},
+		{Tool: Tool{Name: "read_output"}},
+		{Tool: Tool{Name: "release_output"}},
+	}
+	narrowed := PhaseTools(MachinePhase{Tools: []string{"run_command"}}, pool)
+	var names []string
+	for _, td := range narrowed {
+		names = append(names, td.Tool.Name)
+	}
+	joined := strings.Join(names, " ")
+	for _, want := range []string{"run_command", "read_output", "release_output"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("a narrowed step lost %q; kept %v", want, names)
+		}
+	}
+	if strings.Contains(joined, "send_email") {
+		t.Errorf("the narrowing let an unnamed reach tool through: %v", names)
+	}
+}
+
+// The resident path and the transient path narrow a phase's tools through
+// different code (narrowCatalog here, PhaseTools in core), and each keeps its
+// own exemption list. They must agree about the paging pair, or a step behaves
+// one way as a resident phase and another as a transient one.
+func TestBothNarrowingPathsExemptTheSamePagingTools(t *testing.T) {
+	for name := range PagingToolNames {
+		if !machineControlTools[name] {
+			t.Errorf("core exempts %q from phase narrowing but machineControlTools does not", name)
+		}
+	}
+}

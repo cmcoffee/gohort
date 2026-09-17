@@ -244,11 +244,10 @@ func buildDispatchWorker(sess *ToolSession, workerLLM LLM, workerToolNames []str
 				return "(worker produced no text output)", nil
 			}
 			// Cap worker output so a runaway worker doesn't blow the
-			// orchestrator's context budget.
-			if len(out) > 12000 {
-				out = out[:12000] + "\n… [truncated]"
-			}
-			return out, nil
+			// orchestrator's context budget — but KEEP the rest, reachable
+			// with read_output. Cutting it left the orchestrator knowing
+			// something was missing with no way to read it.
+			return SpillOutput(out, 12000, "read_output"), nil
 		},
 	}
 }

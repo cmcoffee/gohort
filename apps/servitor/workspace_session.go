@@ -64,6 +64,9 @@ func (T *Servitor) runWorkspaceSession(ctx context.Context, id, userID string, w
 	// with a checklist would cost more than it explains.
 	plan := buildPlanTools(id, false)
 	tools := append(T.workspaceLeadTools(ctx, id, userID, ws, members), plan.All()...)
+	// A member's report is kept and paged when it overflows, so the coordinator
+	// needs the way back to the rest of it rather than a note saying it was cut.
+	tools = append(tools, OutputPagingToolDefs()...)
 	assertOnlyAllowedTools("servitor.workspace", tools, servitorWorkspaceToolAllowList)
 
 	leadPrompt := buildWorkspaceLeadPrompt(ws, scouts, missing, len(ws.Collections) > 0)

@@ -792,6 +792,13 @@ var machineControlTools = map[string]bool{
 	"respond_directly": true,
 	"stay_silent":      true,
 	"keep_going":       true,
+	// Finishing a result the step already received, and letting go of one it
+	// is done with. Neither reaches anything — the data has arrived — so a
+	// phase's statement about reach has nothing to say about them, and a step
+	// whose tool returned a truncated reply must still be able to read the
+	// rest of it.
+	"read_output":    true,
+	"release_output": true,
 }
 
 // Told to the shared registry so machine-definition validation can refuse a

@@ -387,3 +387,80 @@ func TestACancelledCallNeverStarts(t *testing.T) {
 		t.Errorf("a nil context should run, got out=%q err=%v", out, err)
 	}
 }
+
+// TestReleaseOutputTakesTheResultOutOfTheConversation is the claim the whole
+// feature rests on: when the model says it is finished with a capture, the
+// text leaves the conversation and the handle stays.
+//
+// The loop acts on the tool NAME, so the tool here is a stand-in for the real
+// release_output (which lives in tools/, and cannot be imported from core).
+// That is the contract being tested — a loop that never heard of that package
+// still honors the call.
+func TestReleaseOutputTakesTheResultOutOfTheConversation(t *testing.T) {
+	var spilledID string
+	big := AgentToolDef{
+		Tool: Tool{Name: "run_command", Description: "runs a command"},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			out := SpillOutput(strings.Repeat("a line of log output\n", 900), 1500, "read_output")
+			const marker = `output_id="`
+			rest := out[strings.Index(out, marker)+len(marker):]
+			spilledID = rest[:strings.Index(rest, `"`)]
+			return out, nil
+		},
+	}
+	release := AgentToolDef{
+		Tool: Tool{Name: ReleaseOutputToolName, Description: "lets go of a capture"},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			return "Released.", nil
+		},
+	}
+
+	app, _ := withTierStubs(t, "test.release", func(n int) []ToolCall {
+		switch n {
+		case 1:
+			return []ToolCall{{ID: "c1", Name: "run_command", Args: map[string]any{}}}
+		case 2:
+			return []ToolCall{{ID: "c2", Name: ReleaseOutputToolName, Args: map[string]any{"output_id": spilledID}}}
+		}
+		return nil
+	})
+
+	_, history, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		SystemPrompt: "test",
+		Tools:        []AgentToolDef{big, release},
+		MaxRounds:    5,
+		RouteKey:     "test.release",
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if spilledID == "" {
+		t.Fatal("the command tool never ran")
+	}
+
+	var found bool
+	for _, m := range history {
+		for _, r := range m.ToolResults {
+			if r.ID != "c1" {
+				continue
+			}
+			found = true
+			if strings.Contains(r.Content, "a line of log output") {
+				t.Fatalf("the released result is still carrying its text (%d chars)", len(r.Content))
+			}
+			if !strings.Contains(r.Content, spilledID) {
+				t.Fatalf("the stub does not name the handle:\n%s", r.Content)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("the command's result is not in the returned history")
+	}
+
+	// Reversible: the capture is still there to be read back.
+	if back, err := (OutputPage{ID: spilledID, Max: 200, Tool: "read_output"}).Read(); err != nil {
+		t.Fatalf("the capture did not survive the release: %v", err)
+	} else if !strings.Contains(back, "a line of log output") {
+		t.Fatalf("read-back lost the text:\n%s", back)
+	}
+}

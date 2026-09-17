@@ -358,10 +358,10 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 			return fmt.Sprintf("Tool %q (mode=%s) %s on agent %q. Verification call with test_args FAILED: %v. Re-call add_tool with the same name to fix the template (re-state every field — partial updates aren't supported). Once it returns a sensible result you're done.", tt.Name, mode, verb, target.Name, dispatchErr), nil
 		}
 		RecordToolVerification(sess, tt.Name, true, "")
-		trimmed := strings.TrimSpace(out)
-		if len(trimmed) > 1200 {
-			trimmed = trimmed[:1200] + "\n... [truncated]"
-		}
+		// A verification call's body is a preview — the point is that it
+		// worked — but an author checking WHAT came back should not have to
+		// run the tool again, so the rest is kept and paged.
+		trimmed := SpillOutput(strings.TrimSpace(out), 1200, "read_output")
 		return fmt.Sprintf("Tool %q (mode=%s) %s on agent %q. Verification call with test_args succeeded:\n\n%s\n\nIf the result looks right, you're done — END THE TURN with a one-line summary. If the shape is off, re-call add_tool with the same name and a corrected template.", tt.Name, mode, verb, target.Name, trimmed), nil
 	}
 

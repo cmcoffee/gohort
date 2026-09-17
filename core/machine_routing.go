@@ -66,7 +66,50 @@ func PhaseTools(ph MachinePhase, catalog []AgentToolDef) []AgentToolDef {
 	}
 	// Deny goes LAST, after the reach and after the name list, so it is the
 	// final word however permissive the stages above were.
-	return applyPhaseDeny(ph, resolveStageTools(ph.Tools, catalog))
+	return keepPagingTools(applyPhaseDeny(ph, resolveStageTools(ph.Tools, catalog)), catalog)
+}
+
+// PagingToolNames finish a result the caller ALREADY has: read_output reads
+// the rest of a reply that was too big to return whole, release_output lets
+// go of one the caller is done with. Neither reaches anything — the data
+// arrived when the tool that produced it ran.
+//
+// So they are not reach, and a control that narrows reach has nothing to say
+// about them. Every capped reply ends in a trailer naming read_output, and a
+// step handed that trailer without the tool is shown the way to the rest of
+// its own result and finds no such tool, which is the shape that produces a
+// second guess instead of a second call.
+var PagingToolNames = map[string]bool{
+	"read_output":         true,
+	ReleaseOutputToolName: true,
+}
+
+// keepPagingTools puts back any paging tool the narrowing took out, in
+// CATALOG order, so the payload the model sees stays byte-stable across
+// turns and the prompt cache stays warm. A catalog that never held them is
+// unchanged: this restores, it never invents.
+func keepPagingTools(narrowed, catalog []AgentToolDef) []AgentToolDef {
+	missing := false
+	have := make(map[string]bool, len(narrowed))
+	for _, td := range narrowed {
+		have[td.Tool.Name] = true
+	}
+	for _, td := range catalog {
+		if PagingToolNames[td.Tool.Name] && !have[td.Tool.Name] {
+			missing = true
+			break
+		}
+	}
+	if !missing {
+		return narrowed
+	}
+	out := make([]AgentToolDef, 0, len(narrowed)+len(PagingToolNames))
+	for _, td := range catalog {
+		if have[td.Tool.Name] || PagingToolNames[td.Tool.Name] {
+			out = append(out, td)
+		}
+	}
+	return out
 }
 
 // phaseDenied reports whether a phase's Deny list names this tool.

@@ -569,8 +569,9 @@ func firstLine(s string) string {
 // capText truncates tool output, saying so, so a verbose member cannot crowd
 // the lead's context out.
 func capText(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "\n… [truncated]"
+	// Overflow is KEPT and paged with read_output. It used to be cut with a
+	// bare marker, which told the lead something was missing and gave it no
+	// way to get it — the only move left was to run the member investigation
+	// again for the part it did not see.
+	return SpillOutput(s, max, "read_output")
 }

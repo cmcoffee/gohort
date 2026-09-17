@@ -624,10 +624,10 @@ func (t *chatTurn) agentsRunToolAction(args map[string]any) (string, error) {
 	if err != nil {
 		return fmt.Sprintf("Ran %q on agent %q — FAILED: %v. The tool's own definition (params / url_template / body_template / credential) is the thing to fix; edit it with tool_def(action=\"update\", name=%q, ...) for a toolbox, or add_tool for a single shell/api tool, then run_tool again.", toolName, target.Name, err, toolName), nil
 	}
-	trimmed := strings.TrimSpace(out)
-	if len(trimmed) > 2000 {
-		trimmed = trimmed[:2000] + "\n... [truncated]"
-	}
+	// The rest is kept and paged with read_output. This is a real result the
+	// caller asked for, not a preview, so cutting it left the answer half
+	// delivered with no way to the other half.
+	trimmed := SpillOutput(strings.TrimSpace(out), 2000, "read_output")
 	return fmt.Sprintf("Ran %q on agent %q — result:\n\n%s", toolName, target.Name, trimmed), nil
 }
 

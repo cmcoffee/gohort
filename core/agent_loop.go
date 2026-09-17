@@ -1970,6 +1970,15 @@ func (lr *loopRun) recordResponse() loopAction {
 
 		// Send result back as a plain user message.
 		lr.history = append(lr.history, Message{Role: "user", Content: resultText})
+		// Same release hook as the native path below — a model driven through
+		// prompt-shaped tool calls gets the same say over what it carries.
+		if toolErr == nil && tc.Name == ReleaseOutputToolName {
+			if ids := ReleaseIDsFromArgs(tc.Args); len(ids) > 0 {
+				if n, chars := ReleaseOutputsFromHistory(lr.history, ids); n > 0 {
+					Debug("[agent_loop] release_output: %d id(s) — %d result(s) released, %d chars out of the conversation", len(ids), n, chars)
+				}
+			}
+		}
 		lr.prevHadToolCalls = true
 
 		if lr.cfg.OnStep != nil {
@@ -3531,7 +3540,43 @@ func (lr *loopRun) dispatchTools() loopAction {
 	// turn is legal and the model reads them as commentary on what it just
 	// saw rather than as an interruption of the tool exchange.
 	lr.history = append(lr.history, lr.rs.pendingCorrections...)
+	// A result the model has finished with. Done here, once the round's
+	// results are in, so a capture read and released in the same response is
+	// covered along with everything read in earlier rounds.
+	lr.releaseSpentOutputs()
 	return actNone
+}
+
+// releaseSpentOutputs acts on this round's release_output calls: every copy
+// of the named capture in the conversation becomes a one-line note holding
+// the handle, and the capture itself is left alone. This is the one place
+// the agent gets a say in what it carries — compaction decides by size and
+// age, and cannot know which of two large results is still being worked
+// from.
+//
+// Driven by the tool NAME, the way stay_silent is, for the same reason: a
+// tool is handed its arguments and its session, never the history it is
+// part of, and a name-driven hook works in every loop the framework runs
+// rather than only the ones an app remembered to wire.
+func (lr *loopRun) releaseSpentOutputs() {
+	var ids []string
+	for _, w := range lr.rs.work {
+		if w.tc.Name != ReleaseOutputToolName {
+			continue
+		}
+		// A refused call released nothing — the id was a typo or the
+		// capture had expired, and the tool said so.
+		if w.index >= len(lr.rs.results) || lr.rs.results[w.index].IsError {
+			continue
+		}
+		ids = append(ids, ReleaseIDsFromArgs(w.tc.Args)...)
+	}
+	if len(ids) == 0 {
+		return
+	}
+	if n, chars := ReleaseOutputsFromHistory(lr.history, ids); n > 0 {
+		Debug("[agent_loop] release_output: %d id(s) — %d result(s) released, %d chars out of the conversation", len(ids), n, chars)
+	}
 }
 
 func (lr *loopRun) settleToolRound() loopAction {

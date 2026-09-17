@@ -213,7 +213,12 @@ func (t *chatTurn) frameworkConversationalTools(sess *ToolSession) []AgentToolDe
 	// doc_ids the handler must refuse. Skipped under the unified surface:
 	// recall fronts knowledge search, and recall(id="doc:…") the drill-down.
 	out = append(out, t.corpusToolDefs()...)
-	for _, n := range []string{"find_tools", "send_status", "stay_silent", "keep_going"} {
+	// read_output / release_output are round-shape plumbing, not reach: every
+	// capped reply names read_output in its trailer, so an agent without it is
+	// shown the way to the rest of a result and finds no such tool — the exact
+	// shape that produces improvisation instead of a second call. release_output
+	// is its other half, and costs nothing to carry.
+	for _, n := range []string{"find_tools", "send_status", "stay_silent", "keep_going", "read_output", "release_output"} {
 		if ct, ok := LookupChatTool(n); ok {
 			out = append(out, ChatToolToAgentToolDefWithSession(ct, sess))
 		}

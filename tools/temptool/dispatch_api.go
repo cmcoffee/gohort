@@ -211,7 +211,10 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 			// meant to avoid.
 			rawBody := strings.TrimSpace(body)
 			if len(rawBody) > maxOutput {
-				rawBody = rawBody[:maxOutput] + "\n... [truncated]"
+				// The rest of the response body is kept and paged with
+				// read_output; a truncated API response with no route is the
+				// case where the agent cannot even see the field it needed.
+				rawBody = SpillOutput(rawBody, maxOutput, "read_output")
 			}
 			header := statusLine
 			if header == "" {
