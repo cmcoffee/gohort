@@ -97,6 +97,13 @@ func ExtractDocument(ctx context.Context, doc DocumentAttachment) (string, error
 			// like it worked and retrieve like it did not.
 			nfo.Log("[document_extract] %q looks like an OpenAPI spec but did not render (%v) — ingesting as plain JSON", doc.Name, err)
 		}
+		// Any other JSON is flattened to sections and "path: value" lines
+		// (see json_flatten.go); raw JSON has nothing to chunk at and
+		// embeds as noise. Invalid JSON with a .json name is kept as text
+		// rather than refused — the user chose to upload it.
+		if md, err := JSONToMarkdown(doc.Data); err == nil {
+			return md, nil
+		}
 		return string(doc.Data), nil
 	case ext == ".yaml" || ext == ".yml" || mime == "application/x-yaml" || mime == "text/yaml":
 		// Accepted as text. YAML specs are common and this build has no YAML

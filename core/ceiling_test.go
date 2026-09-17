@@ -235,7 +235,12 @@ const (
 	// Both are called from servitor's exec helpers and run_command tools,
 	// so neither can be unexported; the store, its bounds and the notes are
 	// all private.
-	coreExportCeiling = 2178
+	//
+	// Raised 2178 -> 2179 for IngestDocument, ONE func: the document-side
+	// ingest with a Title. Uploads, pastes and fetched pages all needed it
+	// (IngestReport stamps no title; IngestReportTitled is the report side
+	// and drops a Sources section), and it is called from orchestrate.
+	coreExportCeiling = 2179
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

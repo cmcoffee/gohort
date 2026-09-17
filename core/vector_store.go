@@ -461,6 +461,17 @@ func BackfillChunkTitles(db Database, kind string, resolve func(reportID string)
 	return updated
 }
 
+// IngestDocument ingests a DOCUMENT as written — an upload, a pasted note, a
+// fetched page — with its human name stamped as the Title on every chunk, so
+// a hit is labelled by what the document is rather than by its first
+// heading. Every section is kept, a "## Sources" one included. The reportID
+// is the document's handle: ingesting again under the same one REPLACES it,
+// which is what lets a pasted note be updated in place. Returns the number
+// of chunk rows stored.
+func IngestDocument(ctx context.Context, db Database, source, reportID, title, body string) int {
+	return ingestReport(ctx, db, source, reportID, title, body, "", false)
+}
+
 // IngestReportTitled ingests a synthesized REPORT — a debate verdict, a
 // research synthesis, a dispatched agent's delivery — with a document Title,
 // the human-meaningful name of the parent record (the debate topic, the

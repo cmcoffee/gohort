@@ -32,6 +32,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/media"
 )
 
 // (Collection data layer moved to core/collections.go — Collection
@@ -265,6 +266,8 @@ func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Requ
 		}
 	case action == "upload":
 		T.handleCollectionUpload(w, r, user, c)
+	case action == "paste":
+		T.handleCollectionPaste(w, r, user, c)
 	case action == "sources":
 		T.handleCollectionSources(w, r, c)
 	case strings.HasPrefix(action, "sources/"):
@@ -494,7 +497,7 @@ func (T *OrchestrateApp) handleCollectionUpload(w http.ResponseWriter, r *http.R
 	reportID := fmt.Sprintf("collection-%s-%d", c.ID, time.Now().UnixNano())
 	doc := "## " + name + "\n\n" + text
 	chunkDB := T.collectionDB(c)
-	IngestReport(r.Context(), chunkDB, collectionSource(c.ID), reportID, doc)
+	IngestDocument(r.Context(), chunkDB, collectionSource(c.ID), reportID, name, doc)
 	// Bump the collection's updated timestamp so the list reorders.
 	if udb, ok := requireUDB(w, r, T.DB); ok {
 		fresh, found := loadCollection(udb, user, c.ID)
@@ -511,6 +514,115 @@ func (T *OrchestrateApp) handleCollectionUpload(w http.ResponseWriter, r *http.R
 		"name":   name,
 		"chunks": chunks,
 	})
+}
+
+// handleCollectionPaste adds pasted text to the collection as one document.
+//
+//	POST /api/collections/{id}/paste  {title, text}
+//	→ {id, name, chunks, format, replaced}
+//
+// The paste box is how a user puts their OWN material in — a runbook, a
+// meeting note, a config dump — without saving a file first. See
+// pasteIntoCollection for the format rule and the replace-by-title rule.
+func (T *OrchestrateApp) handleCollectionPaste(w http.ResponseWriter, r *http.Request, user string, c Collection) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Title string `json:"title"`
+		Text  string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	res, err := pasteIntoCollection(r.Context(), T.collectionDB(c), c, body.Title, body.Text)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if udb, ok := requireUDB(w, r, T.DB); ok {
+		if fresh, found := loadCollection(udb, user, c.ID); found {
+			saveCollection(udb, fresh) // bump Updated so the list reorders
+		}
+	}
+	Log("[orchestrate.collections] user=%q pasted %q (%s) into %q (%d chars → %d chunks, replaced=%v)",
+		user, res.Name, res.Format, c.Name, len(body.Text), res.Chunks, res.Replaced)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(res)
+}
+
+// pasteResult is what a paste reports back, to the page and to the Builder
+// tool alike.
+type pasteResult struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Chunks   int    `json:"chunks"`
+	Format   string `json:"format"`   // "json" or "markdown"
+	Replaced bool   `json:"replaced"` // an earlier paste under this title was replaced
+}
+
+// pasteMinChars is the shortest paste worth indexing — a title alone, or a
+// one-liner, is not a document.
+const pasteMinChars = 20
+
+// pasteIntoCollection ingests pasted text as one document of c.
+//
+// Format is detected, not declared: text that parses as a JSON object or
+// array is flattened to sections and "path: value" lines (see
+// media/json_flatten.go), anything else is taken as markdown, which is also
+// what plain prose is. The title is the document's handle — its reportID is
+// derived from it — so pasting again under the same title replaces the
+// document instead of adding a second copy. That is what makes a collection
+// a place to keep a note that changes, rather than a pile of its versions.
+func pasteIntoCollection(ctx context.Context, chunkDB Database, c Collection, title, text string) (pasteResult, error) {
+	title = strings.TrimSpace(title)
+	text = strings.TrimSpace(text)
+	if title == "" {
+		return pasteResult{}, fmt.Errorf("title is required — it names the document and is how a later paste replaces it")
+	}
+	if len(text) < pasteMinChars {
+		return pasteResult{}, fmt.Errorf("text too short (%d chars) — minimum is %d", len(text), pasteMinChars)
+	}
+	format := "markdown"
+	if media.LooksLikeJSON([]byte(text)) {
+		md, err := ExtractDocument(ctx, DocumentAttachment{Name: title + ".json", MimeType: "application/json", Data: []byte(text)})
+		if err != nil {
+			return pasteResult{}, fmt.Errorf("could not process the JSON: %w", err)
+		}
+		text = md
+		format = "json"
+	}
+	reportID := "paste-" + c.ID + "-" + slugForReportID(title)
+	replaced := countReportChunks(chunkDB, reportID) > 0
+	chunks := IngestDocument(ctx, chunkDB, collectionSource(c.ID), reportID, title, "## "+title+"\n\n"+text)
+	return pasteResult{ID: reportID, Name: title, Chunks: chunks, Format: format, Replaced: replaced}, nil
+}
+
+// slugForReportID makes a title safe and stable as a report id component:
+// lowercased, runs of anything but letters and digits collapsed to one
+// hyphen, capped, never empty.
+func slugForReportID(title string) string {
+	var b strings.Builder
+	dash := false
+	for _, r := range strings.ToLower(title) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			dash = false
+		} else if !dash && b.Len() > 0 {
+			b.WriteByte('-')
+			dash = true
+		}
+		if b.Len() >= 60 {
+			break
+		}
+	}
+	s := strings.Trim(b.String(), "-")
+	if s == "" {
+		return "untitled"
+	}
+	return s
 }
 
 // handleCollectionSources lists documents in the collection, grouped

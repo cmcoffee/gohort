@@ -26,7 +26,7 @@ import (
 
 func collectionsListTool() ChatTool {
 	gt := NewGroupedTool("collections",
-		"Manage the user's Document Collections so you can wire them into agents (attached_collections=[...]). Actions: list, get, create (mint an empty collection), update (patch name/description), docs (list ingested documents), add_url (ingest one URL into the corpus), remove_doc (drop one document). Use add_url to pull a known authoritative source (a statute's full-text page) into a collection, and remove_doc to prune noise; for bulk topic-based filling, the Knowledge surface's Auto-fill is still the better path.")
+		"Manage the user's Document Collections so you can wire them into agents (attached_collections=[...]). Actions: list, get, create (mint an empty collection), update (patch name/description), docs (list ingested documents), add_url (ingest one URL into the corpus), add_text (ingest text you have — markdown or JSON — as one titled document; same title replaces), remove_doc (drop one document). Use add_url to pull a known authoritative source (a statute's full-text page) into a collection, add_text to save material the user gave you or you drafted WITH the user's say-so, and remove_doc to prune noise; for bulk topic-based filling, the Knowledge surface's Auto-fill is still the better path.")
 
 	gt.AddAction("list", &GroupedToolAction{
 		Description: "List every collection the user owns. Returns [{id, name, description, documents, chunks}] sorted by most-recently-updated. Use this when the user names a collection by display name and you need its ID to pass to attached_collections, or when surveying what corpus material exists for a new agent.",
@@ -260,6 +260,43 @@ func collectionsListTool() ChatTool {
 		},
 	})
 
+	gt.AddAction("add_text", &GroupedToolAction{
+		Description: "Ingest text as ONE titled document in a collection — markdown (or plain prose) as written, or a JSON object/array, which is flattened to sections and path: value lines. Pasting again under the same title REPLACES that document, so a runbook or note can be kept current. A curated write: do it when the user asks or agrees, not on your own initiative.",
+		Params: map[string]ToolParam{
+			"id":    {Type: "string", Description: "Collection ID."},
+			"title": {Type: "string", Description: "Document title — the handle a later add_text with the same title replaces."},
+			"text":  {Type: "string", Description: "The document: markdown, plain text, or a JSON object/array."},
+		},
+		Required: []string{"id", "title", "text"},
+		Caps:     []Capability{CapWrite},
+		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
+			if sess == nil || sess.DB == nil || sess.Username == "" {
+				return "", errors.New("collections: requires authenticated session")
+			}
+			id := strings.TrimSpace(stringArg(args, "id"))
+			if id == "" {
+				return "", errors.New("id is required for action=add_text")
+			}
+			c, ok := loadCollection(sess.DB, sess.Username, id)
+			if !ok {
+				return "", fmt.Errorf("collection %q not found", id)
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			res, err := pasteIntoCollection(ctx, VectorDB, c, stringArg(args, "title"), stringArg(args, "text"))
+			if err != nil {
+				return "", err
+			}
+			saveCollection(sess.DB, c)
+			Log("[orchestrate.collections] user=%q add_text %q (%s) into collection %q (%d chunks, replaced=%v)", sess.Username, res.Name, res.Format, c.ID, res.Chunks, res.Replaced)
+			verb := "Added"
+			if res.Replaced {
+				verb = "Replaced"
+			}
+			return fmt.Sprintf("%s document %q (%s, %d chunks) in the collection; doc_id %s.", verb, res.Name, res.Format, res.Chunks, res.ID), nil
+		},
+	})
+
 	gt.AddAction("add_url", &GroupedToolAction{
 		Description: "Ingest ONE specific URL into a collection — fetches the page, extracts its text, and adds it to the corpus. Use to pull in a known authoritative source (a statute's full-text page, an official doc). JS-heavy pages extract poorly; prefer direct text / PDF / clean HTML URLs. No-op if the URL is already ingested.",
 		Params: map[string]ToolParam{
@@ -296,7 +333,7 @@ func collectionsListTool() ChatTool {
 				return "", gerr
 			}
 			reportID := fmt.Sprintf("manual-%s-%d", c.ID, time.Now().UnixNano())
-			IngestReport(ctx, VectorDB, collectionSource(c.ID), reportID, "## "+name+"\n\n"+text)
+			IngestDocument(ctx, VectorDB, collectionSource(c.ID), reportID, name, "## "+name+"\n\n"+text)
 			chunks := countReportChunks(VectorDB, reportID)
 			c.IngestedURLs = append(c.IngestedURLs, url)
 			saveCollection(sess.DB, c)

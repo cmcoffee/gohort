@@ -225,6 +225,11 @@ const documentsDetailBody = `
       <button id="docs-upload" class="ui-row-btn primary" disabled>Upload</button>
       <span id="docs-upload-status"></span>
     </div>
+    <div class="docs-upload-row" style="margin-top:0.6rem;align-items:center;gap:0.5rem">
+      <button id="docs-paste" class="ui-row-btn" title="Add a note, runbook, config or JSON you have on the clipboard as one document">Paste text…</button>
+      <span class="docs-section-help" style="margin:0">Markdown, plain text, or a JSON object. Pasting again under the same title replaces the document.</span>
+      <span id="docs-paste-status"></span>
+    </div>
   </div>
 
   <div class="docs-section">
@@ -783,6 +788,68 @@ const documentsDetailAssets = `<style>
       });
     };
     reader.readAsDataURL(f);
+  });
+
+  // Paste: the user's own material, in through THE modal. Format is
+  // detected server-side (JSON is flattened, anything else is markdown);
+  // the title is the document's handle, so the same title replaces.
+  $('#docs-paste').addEventListener('click', function() {
+    var form = document.createElement('div');
+    form.className = 'docs-modal-form';
+    var lblT = document.createElement('label'); lblT.textContent = 'Title'; form.appendChild(lblT);
+    var inpT = document.createElement('input'); inpT.type = 'text'; inpT.placeholder = 'e.g. Backup runbook'; form.appendChild(inpT);
+    var lblX = document.createElement('label'); lblX.textContent = 'Text'; form.appendChild(lblX);
+    var inpX = document.createElement('textarea');
+    inpX.placeholder = 'Paste markdown, plain text, or a JSON object / array. Headings (## …) become sections; JSON keys become sections with path: value lines.';
+    inpX.style.minHeight = '16rem';
+    form.appendChild(inpX);
+    var hint = document.createElement('div');
+    hint.style.cssText = 'font-size:0.74rem;color:var(--text-mute);margin-top:0.3rem';
+    form.appendChild(hint);
+    function describe() {
+      var v = inpX.value.trim();
+      if (!v) { hint.textContent = ''; return; }
+      var isJSON = false;
+      if (v[0] === '{' || v[0] === '[') { try { JSON.parse(v); isJSON = true; } catch (e) {} }
+      hint.textContent = v.length.toLocaleString() + ' chars \u2014 will be added as ' + (isJSON ? 'JSON (flattened to sections)' : 'markdown / text');
+    }
+    inpX.addEventListener('input', describe);
+    var modal = window.uiOpenModal({
+      title: 'Paste into this collection',
+      subtitle: 'One document, named by its title. Paste again under the same title to replace it.',
+      actions: [
+        {label: 'Cancel'},
+        {label: 'Add to collection', primary: true, onClick: function(m, btn) {
+          var title = inpT.value.trim(), text = inpX.value.trim();
+          if (!title) { window.uiAlert('Title required \u2014 it names the document.'); return; }
+          if (text.length < 20) { window.uiAlert('Paste more than a line or two.'); return; }
+          btn.disabled = true;
+          var orig = btn.textContent;
+          btn.textContent = 'Indexing\u2026';
+          fetch(api('/api/collections/' + encodeURIComponent(cid) + '/paste'), {
+            method: 'POST', credentials: 'same-origin',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({title: title, text: text}),
+          }).then(function(r) {
+            if (!r.ok) return r.text().then(function(t){ throw new Error(t); });
+            return r.json();
+          }).then(function(out) {
+            modal.close();
+            var st = $('#docs-paste-status');
+            st.style.color = 'var(--accent,#56d364)';
+            st.textContent = (out.replaced ? 'Replaced ' : 'Added ') + JSON.stringify(out.name) + ' (' + out.format + ', ' + (out.chunks || 0) + ' chunks)';
+            setTimeout(function(){ st.textContent = ''; }, 4000);
+            loadSources(); loadDetail();
+          }).catch(function(err) {
+            btn.disabled = false;
+            btn.textContent = orig;
+            window.uiAlert('Paste failed: ' + (err && err.message || err));
+          });
+        }},
+      ],
+    });
+    modal.body.appendChild(form);
+    setTimeout(function(){ inpT.focus(); }, 0);
   });
 
   $('#docs-autofill').addEventListener('click', async function() {

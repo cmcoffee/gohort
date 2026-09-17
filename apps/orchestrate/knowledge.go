@@ -582,7 +582,7 @@ func (T *OrchestrateApp) handleAgentKnowledgeUpload(w http.ResponseWriter, r *ht
 	if isPDFUpload(body.MimeType, name) {
 		IngestPagedReport(r.Context(), VectorDB, knowledgeSource(user, agentID, "attachments"), reportID, doc)
 	} else {
-		IngestReport(r.Context(), VectorDB, knowledgeSource(user, agentID, "attachments"), reportID, doc)
+		IngestDocument(r.Context(), VectorDB, knowledgeSource(user, agentID, "attachments"), reportID, name, doc)
 	}
 	// recordAgentTopic writes per-agent METADATA (topic list); stays on T.DB.
 	recordAgentTopic(T.DB, user, agentID, "attachments")
