@@ -1286,7 +1286,7 @@ func execOverSSH(ctx context.Context, conn *ssh.Client, cmd string) (string, err
 
 	// Over the cap, the full capture is kept and the note carries an
 	// output_id: run_command pages it by offset, no second exec needed.
-	result := SpillOutput(strings.TrimSpace(string(out)), max_output, "run_command")
+	result := spillCapture(ctx, strings.TrimSpace(string(out)))
 	if timedOut {
 		notice := fmt.Sprintf("\n[TIMED OUT after %s — command killed. If this command does not terminate on its own (e.g. `tail -f`, `journalctl -f`, `top`, `watch`), use a bounded variant: `tail -n N`, `journalctl --since=...`, `top -bn1`, etc.]", command_timeout())
 		if result == "" {
@@ -1367,7 +1367,7 @@ func (T *Servitor) exec_local_ctx(ctx context.Context, cmd, workDir string, envV
 	// returns after this grace instead of hanging the probe session.
 	c.WaitDelay = 10 * time.Second
 	out, err := c.CombinedOutput()
-	result := SpillOutput(strings.TrimSpace(string(out)), max_output, "run_command")
+	result := spillCapture(ctx, strings.TrimSpace(string(out)))
 	// Distinguish timeout from caller cancellation from a normal nonzero exit.
 	if errors.Is(runCtx.Err(), context.DeadlineExceeded) && !errors.Is(ctx.Err(), context.Canceled) {
 		notice := fmt.Sprintf("\n[TIMED OUT after %s — command killed. If this command does not terminate on its own, use a bounded variant.]", command_timeout())
@@ -1524,6 +1524,91 @@ func (T *Servitor) Main() error {
 	}
 
 	return nil
+}
+
+// --- where a capture is kept ------------------------------------------------
+//
+// A command's output over the reply cap is kept for paging (core.SpillOutput)
+// in the store of the instance whose agent will page it. For a local
+// appliance that is this instance. For a command run on behalf of a PEER it
+// is the peer: the agent asking is over there, and an output_id minted here
+// is unknown to it. So an exec run for a peer returns its capture WHOLE
+// (bounded), and the calling instance spills it in its own store. Nothing is
+// added to the peer protocol: the text travels instead of a handle.
+
+// rawCaptureKey marks a context whose exec returns the capture whole.
+type rawCaptureKey struct{}
+
+// withRawCapture marks ctx for an exec run on behalf of a peer.
+func withRawCapture(ctx context.Context) context.Context {
+	return context.WithValue(ctx, rawCaptureKey{}, true)
+}
+
+func rawCapture(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	v, _ := ctx.Value(rawCaptureKey{}).(bool)
+	return v
+}
+
+// peerCaptureMax bounds a whole capture sent to a peer — the same per-capture
+// bound the spill store keeps, so nothing is sent that could not be kept.
+const peerCaptureMax = 2 << 20
+
+// spillCapture caps an exec's output for its reply: spilled and paged here,
+// or, for a peer's exec, returned whole under peerCaptureMax with a clip
+// notice the caller will keep visible (see splitExecTrailer).
+func spillCapture(ctx context.Context, text string) string {
+	if !rawCapture(ctx) {
+		return SpillOutput(text, max_output, "run_command")
+	}
+	if len(text) <= peerCaptureMax {
+		return text
+	}
+	w, _ := WindowText(text, 0, peerCaptureMax)
+	return w + fmt.Sprintf("\n[capture clipped at %d of %d chars by the executing instance — narrow the command to see the rest]", len(w), len(text))
+}
+
+// execTrailerPrefixes are the bracketed notices the exec paths append to a
+// capture: what happened to the command, on its own final line(s).
+var execTrailerPrefixes = []string{"TIMED OUT", "CANCELLED", "exit code", "signal:", "COMMAND DID NOT", "capture clipped"}
+
+// splitExecTrailer peels the exec notices off the end of a capture, so a
+// caller that spills the body can put them AFTER the spill note where the
+// agent sees them. Spilled whole, a "[TIMED OUT …]" or "[exit code 3]" sat
+// at the tail of a 2 MB capture, past the first window, and the agent read
+// a truncated success. Only lines that begin with a known notice are
+// peeled; a command whose own output ends in a bracketed line keeps it.
+func splitExecTrailer(text string) (body, trailer string) {
+	body = text
+	for i := 0; i < 4; i++ {
+		nl := strings.LastIndex(body, "\n[")
+		if nl < 0 || !strings.HasSuffix(body, "]") {
+			break
+		}
+		line := body[nl+2:]
+		known := false
+		for _, p := range execTrailerPrefixes {
+			if strings.HasPrefix(line, p) {
+				known = true
+				break
+			}
+		}
+		if !known {
+			break
+		}
+		trailer = body[nl:] + trailer
+		body = body[:nl]
+	}
+	return body, trailer
+}
+
+// spillPeerCapture spills a capture that arrived whole from a peer into THIS
+// instance's store, keeping the peer's exec notices visible after the note.
+func spillPeerCapture(text string) string {
+	body, trailer := splitExecTrailer(text)
+	return SpillOutput(body, max_output, "run_command") + trailer
 }
 
 // runCommandDescription and runCommandParams are shared by every run_command

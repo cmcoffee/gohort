@@ -122,7 +122,11 @@ func peerExecFor(ctx context.Context, a Appliance) func(string) (string, error) 
 		if !ok {
 			return "", fmt.Errorf("peer %q is not registered on this instance — add it under Peers, or delete this system", a.PeerName)
 		}
-		return PeerExec(ctx, peer, a.RemoteID, cmd)
+		// The peer returns the capture whole (see spillCapture); it is
+		// spilled HERE, so the output_id the agent gets back is one this
+		// instance can page and grep.
+		out, err := PeerExec(ctx, peer, a.RemoteID, cmd)
+		return spillPeerCapture(out), err
 	}
 }
 
@@ -526,6 +530,10 @@ func (T *Servitor) registerPeerExec() {
 		}
 		exec := &Servitor{}
 		exec.AppCore = T.AppCore
+		// Whole capture back to the caller: the agent that will page it is
+		// on the calling instance, and a spill kept here would hand it an
+		// output_id this instance alone could serve.
+		ctx = withRawCapture(ctx)
 		if a.Type == "command" {
 			return exec.exec_local_ctx(ctx, command, a.WorkDir, a.EnvVars)
 		}
