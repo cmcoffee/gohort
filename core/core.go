@@ -830,6 +830,16 @@ func MigrateAppPathGrants(db Database, from, to string) int {
 		}
 	}
 
+	// The deployment-wide OFF switch is keyed by path too, and it is the one
+	// record where losing the rename fails OPEN: an app an admin had switched
+	// off would come back on under its new path, silently. Rewritten here
+	// rather than in a second migration, because "this app moved" is one fact.
+	if next, changed := rewrite(DisabledApps(db)); changed {
+		db.Set(WebTable, disabledAppsKey, next)
+		moved++
+		Log("[migrate] disabled-apps switch moved %s -> %s", from, to)
+	}
+
 	db.Set(appPathMigrationTable, marker, true)
 	if moved > 0 {
 		Log("[migrate] %s -> %s: %d record(s) rewritten", from, to, moved)

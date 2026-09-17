@@ -279,8 +279,8 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 	page := ui.Page{
 		Title:     def.Name,
 		ShowTitle: true,
-		BackURL:   "/gateways",
-		Nav:       HubNav("/gateways"),
+		BackURL:   "/extensions",
+		Nav:       HubNav("/extensions"),
 		// The tables and the prompt boxes are the content. A machine with
 		// four phases does not fit a dialog, which is why this is a page.
 		MaxWidth: "100%",
@@ -520,8 +520,8 @@ func (T *OrchestrateApp) serveSharedMachinePage(w http.ResponseWriter, r *http.R
 	page := ui.Page{
 		Title:      def.Name,
 		ShowTitle:  true,
-		BackURL:    "/gateways",
-		Nav:        HubNav("/gateways"),
+		BackURL:    "/extensions",
+		Nav:        HubNav("/extensions"),
 		MaxWidth:   "100%",
 		SectionNav: true,
 		Sticky:     machineMapCard(def),
@@ -628,8 +628,8 @@ func (T *OrchestrateApp) serveMachineDescribePage(w http.ResponseWriter, r *http
 	page := ui.Page{
 		Title:     "Describe a machine",
 		ShowTitle: true,
-		BackURL:   "/gateways",
-		Nav:       HubNav("/gateways"),
+		BackURL:   "/extensions",
+		Nav:       HubNav("/extensions"),
 		Sections: []ui.Section{{
 			Title: "What should it do?",
 			Wide:  true,
@@ -664,7 +664,7 @@ func (T *OrchestrateApp) serveMachineDescribePage(w http.ResponseWriter, r *http
 			}, {
 				Label:  "Back to the list",
 				Title:  "Extensions, where your machines are kept",
-				URL:    "/gateways",
+				URL:    "/extensions",
 				Method: "GET",
 			}}},
 		}},

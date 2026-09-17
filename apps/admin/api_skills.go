@@ -11,7 +11,6 @@ import (
 
 // registerSkillsRoutes wires the skills API under the admin sub-mux.
 func (a *AdminApp) registerSkillsRoutes(sub *http.ServeMux) {
-	sub.HandleFunc("/skill-playbook", a.handleSkillPlaybookPage)
 	// Skills: conditional prompt addendums that auto-activate based
 	// on the user's message. GET lists all the admin's skills; POST
 	// upserts (id empty = create, present = update) — Builder
@@ -114,8 +113,7 @@ func (a *AdminApp) registerSkillsRoutes(sub *http.ServeMux) {
 				Updated             string   `json:"updated"`
 				// Playbook is the rule count as a label, and PlaybookURL the
 				// visual editor for it; the column links one to the other.
-				Playbook    string `json:"playbook"`
-				PlaybookURL string `json:"playbook_url"`
+				Playbook string `json:"playbook"`
 			}
 			out := make([]wire, 0, len(skills))
 			for _, s := range skills {
@@ -131,9 +129,8 @@ func (a *AdminApp) registerSkillsRoutes(sub *http.ServeMux) {
 					Triggers:    s.Triggers, AllowedTools: s.AllowedTools,
 					AttachedCollections: s.AttachedCollections,
 					Instructions:        s.Instructions, Disabled: s.Disabled,
-					Updated:     s.Updated.Format("2006-01-02 15:04:05"),
-					Playbook:    pb,
-					PlaybookURL: "skill-playbook?id=" + s.ID,
+					Updated:  s.Updated.Format("2006-01-02 15:04:05"),
+					Playbook: pb,
 				})
 			}
 			json.NewEncoder(w).Encode(out)
@@ -239,12 +236,6 @@ func (a *AdminApp) registerSkillsRoutes(sub *http.ServeMux) {
 		}
 		id := strings.TrimPrefix(r.URL.Path, "/api/skills/")
 		id = strings.Trim(id, "/")
-		// /api/skills/{id}/playbook/... is the visual editor's door: one
-		// rule per form, merged on save (see skill_playbook_editor.go).
-		if sid, rest, ok := strings.Cut(id, "/playbook/"); ok {
-			a.handleSkillPlaybookRule(w, r, username, sid, rest)
-			return
-		}
 		if id == "" || strings.Contains(id, "/") {
 			http.NotFound(w, r)
 			return

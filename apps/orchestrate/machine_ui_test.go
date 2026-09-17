@@ -787,7 +787,7 @@ func TestTheMachinesListCarriesInAndOut(t *testing.T) {
 	_, _, user := newTestOrchestrate(t)
 	// The access gate is not what this test is about.
 	adminAuth(t, user)
-	sec, ok := machinesExtensionSection(asUser(httptest.NewRequest("GET", "/gateways", nil), user), user)
+	sec, ok := machinesExtensionSection(asUser(httptest.NewRequest("GET", "/extensions", nil), user), user)
 	if !ok {
 		t.Fatal("the section did not build")
 	}

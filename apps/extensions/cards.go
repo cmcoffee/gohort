@@ -1,13 +1,13 @@
-package gateways
+package extensions
 
-// connectionsHTML is the one Gateways surface that stays a hand-rolled Card: the
+// connectionsHTML is the one Extensions surface that stays a hand-rolled Card: the
 // per-user OAuth/MCP connect flow (consent popups, per-provider key entry) is
 // genuinely custom behavior the declarative table primitives don't express. The
 // credentials / tools / global-tools sections use ui.Table + FormPanel instead.
 //
 // Its OAuth/MCP consent + callback endpoints stay registered on /account for
 // redirect-URI stability, so this card calls them by ABSOLUTE path even though it
-// renders under /gateways.
+// renders under /extensions.
 const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div>
 <style>
 .acct-conns { display: flex; flex-direction: column; gap: 0.6rem; }

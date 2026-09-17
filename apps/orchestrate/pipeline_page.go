@@ -164,8 +164,8 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 	page := ui.Page{
 		Title:     def.Name,
 		ShowTitle: true,
-		BackURL:   "/gateways",
-		Nav:       HubNav("/gateways"),
+		BackURL:   "/extensions",
+		Nav:       HubNav("/extensions"),
 		MaxWidth:  "100%",
 		// One section at a time, with the stages as the rail: a pipeline
 		// IS a list of stages, so the page's index should be that list.
@@ -380,8 +380,8 @@ func (T *OrchestrateApp) servePipelineDescribePage(w http.ResponseWriter, r *htt
 	page := ui.Page{
 		Title:     "Describe a pipeline",
 		ShowTitle: true,
-		BackURL:   "/gateways",
-		Nav:       HubNav("/gateways"),
+		BackURL:   "/extensions",
+		Nav:       HubNav("/extensions"),
 		Sections: []ui.Section{{
 			Title: "What should it do?",
 			Wide:  true,
@@ -411,7 +411,7 @@ func (T *OrchestrateApp) servePipelineDescribePage(w http.ResponseWriter, r *htt
 			}, {
 				Label:  "Back to the list",
 				Title:  "Extensions, where your pipelines are kept",
-				URL:    "/gateways",
+				URL:    "/extensions",
 				Method: "GET",
 			}}},
 		}},

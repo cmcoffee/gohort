@@ -1,4 +1,4 @@
-// Package gateways is the per-user "capability plane" — the surfaces through
+// Package extensions is the per-user "capability plane" — the surfaces through
 // which a user's agents reach outward: their own API credentials, the tools
 // they've had built, the global-tool catalog they opt into, and (rendered here,
 // served from /account for OAuth redirect-URI stability) their identity
@@ -6,8 +6,8 @@
 // credential/tool management: everything here is scoped to the calling user.
 //
 // Reached as its own dashboard tile. Account keeps identity + preferences
-// (password, timezone, inbound API keys); Gateways owns outward reach.
-package gateways
+// (password, timezone, inbound API keys); Extensions owns outward reach.
+package extensions
 
 import (
 	"encoding/json"
@@ -20,37 +20,56 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
-func init() { RegisterApp(new(Gateways)) }
+func init() { RegisterApp(new(Extensions)) }
 
-type Gateways struct {
+type Extensions struct {
 	AppCore
 }
 
-func (T Gateways) Name() string         { return "gateways" }
-func (T Gateways) SystemPrompt() string { return "" }
-func (T Gateways) Desc() string {
+func (T Extensions) Name() string         { return "extensions" }
+func (T Extensions) SystemPrompt() string { return "" }
+
+// StoreName keeps the app on the data bucket it was born with. Extensions was
+// gateways; every credential, tool grant and skill anyone has saved lives under
+// that name, and a bucket cannot be renamed in place, so the app follows the
+// data rather than the other way round. See core.AppStoreName and the same
+// choice in Scribe.
+func (T Extensions) StoreName() string { return "gateways" }
+func (T Extensions) Desc() string {
 	return "Apps: the capabilities your agents draw on — credentials, tools, skills, connections."
 }
-func (T *Gateways) Init() error { return T.Flags.Parse() }
-func (T *Gateways) Main() error {
+func (T *Extensions) Init() error { return T.Flags.Parse() }
+func (T *Extensions) Main() error {
 	Log("gateways is a dashboard-only app. Start with: gohort serve")
 	return nil
 }
 
-// WebPath stays /gateways (the URL slug) so existing links/bookmarks keep
-// working; the user-facing NAME is "Extensions", matching the admin group.
-func (T *Gateways) WebPath() string { return "/gateways" }
-func (T *Gateways) WebName() string { return "Extensions" }
-func (T *Gateways) WebDesc() string {
+// The app is called what it has always been called on screen. The package,
+// the path and the tab now agree with it; only the data bucket still says
+// gateways, because a bucket cannot be renamed (see StoreName).
+func (T *Extensions) WebPath() string { return "/extensions" }
+func (T *Extensions) WebName() string { return "Extensions" }
+func (T *Extensions) WebDesc() string {
 	return "Credentials, tools, skills, and connections your agents draw on to do their work."
 }
 
 // HubTab puts Extensions on the shared top-nav tab row alongside Agents, Bridges,
 // and Knowledge — it's the per-user capability surface those agents draw on, so
 // it belongs in the same hub. Ordered after the others.
-func (T *Gateways) HubTab() (string, int) { return "Extensions", 40 }
+func (T *Extensions) HubTab() (string, int) { return "Extensions", 40 }
 
-func (T *Gateways) Routes() {
+// legacyGatewaysPath is where this app lived until it was renamed. Links,
+// bookmarks and stored per-user grants still name it, so the old prefix
+// redirects here and the grants that named it move over once.
+const legacyGatewaysPath = "/extensions"
+
+func (T *Extensions) Routes() {
+	RegisterLegacyMount(legacyGatewaysPath, T.WebPath())
+	if AuthDB != nil {
+		if adb := AuthDB(); adb != nil {
+			MigrateAppPathGrants(adb, legacyGatewaysPath, T.WebPath())
+		}
+	}
 	T.HandleFunc("/api/credentials", T.handleCredentials)
 	T.HandleFunc("/api/tools", T.handleUserTools)
 	T.HandleFunc("/api/tool-access", T.handleUserToolAccess)
@@ -58,6 +77,8 @@ func (T *Gateways) Routes() {
 	T.HandleFunc("/api/promotions", T.handlePromotions)
 	T.HandleFunc("/api/global-tools", T.handleGlobalTools)
 	T.HandleFunc("/api/skills", T.handleUserSkills)
+	T.HandleFunc("/api/skill-playbook", T.handleSkillPlaybookRule)
+	T.HandleFunc("/skill-playbook", T.handleSkillPlaybookPage)
 	T.HandleFunc("/", T.servePage)
 }
 
@@ -73,7 +94,7 @@ func writeJSON(w http.ResponseWriter, v any) {
 // live in the user's namespace and never appear on the admin page. Only the
 // simple key-based types are offered here; OAuth2 stays admin-managed. Secrets
 // are never returned — GET reports has_secret only.
-func (T *Gateways) handleCredentials(w http.ResponseWriter, r *http.Request) {
+func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
@@ -216,7 +237,7 @@ func (T *Gateways) handleCredentials(w http.ResponseWriter, r *http.Request) {
 // break-glass "this tool misbehaves, drop it" control). Authoring stays in chat —
 // a tool is a script or API definition, not a hand-filled form — so this surface
 // is view + delete, not create.
-func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
+func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
@@ -769,7 +790,7 @@ func (T *Gateways) handleUserTools(w http.ResponseWriter, r *http.Request) {
 // optional knowledge, not a hand-filled form — so this surface is view + toggle +
 // delete, mirroring "Extensions › Tools". GET lists; POST ?action=enable|disable mutes/unmutes
 // without a full round-trip; DELETE removes one.
-func (T *Gateways) handleUserSkills(w http.ResponseWriter, r *http.Request) {
+func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
@@ -806,6 +827,10 @@ func (T *Gateways) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 			Triggers    int    `json:"triggers"`
 			Disabled    bool   `json:"disabled"`
 			Updated     string `json:"updated,omitempty"`
+			// Playbook is the rule count as a label and PlaybookURL the editor
+			// for it, so the column links one to the other.
+			Playbook    string `json:"playbook"`
+			PlaybookURL string `json:"playbook_url"`
 		}
 		rows := []row{}
 		for _, s := range LoadSkills(AuthDB(), user) {
@@ -813,9 +838,16 @@ func (T *Gateways) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 			if !s.Updated.IsZero() {
 				updated = s.Updated.Format("2006-01-02")
 			}
+			pb := "add"
+			if n := len(s.Playbook); n == 1 {
+				pb = "1 rule"
+			} else if n > 1 {
+				pb = fmt.Sprintf("%d rules", n)
+			}
 			rows = append(rows, row{
 				ID: s.ID, Name: s.Name, Description: s.Description,
 				Triggers: len(s.Triggers), Disabled: s.Disabled, Updated: updated,
+				Playbook: pb, PlaybookURL: "skill-playbook?id=" + s.ID,
 			})
 		}
 		writeJSON(w, rows)
@@ -909,13 +941,12 @@ func (T *Gateways) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-
 // handlePromotions lets a user request that one of their OWN resources be
 // published deployment-wide (bottom-up escalation — an admin approves it on the
 // Administrator page). Today only tool promotion is wired: the request asks the
 // admin to Share the tool to the global catalog. POST ?kind=tool&name=<tool>
 // with an optional JSON {note}; owner is the session user, who must own the tool.
-func (T *Gateways) handlePromotions(w http.ResponseWriter, r *http.Request) {
+func (T *Extensions) handlePromotions(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
@@ -963,7 +994,7 @@ func (T *Gateways) handlePromotions(w http.ResponseWriter, r *http.Request) {
 // with an adopted flag; POST {name, adopt} adds/removes one from the user's
 // adoption list. Enforcement (which shared tools actually load) lives in the
 // runner + operator-wake tool-load paths.
-func (T *Gateways) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
+func (T *Extensions) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
@@ -1093,7 +1124,7 @@ func splitSkillTriggers(s string) []string {
 	return out
 }
 
-func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
+func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
@@ -1412,7 +1443,7 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 		},
 		{
 			Title:    "Skills",
-			Subtitle: "Behavior packs your agents draw on — instructions the assistant applies when a skill's triggers or description match the turn. Author or edit one right here (name, triggers, instructions), or ask Builder in Agents for skills that ship code or grant tools. Disable to mute a skill without losing it; delete to retire it.",
+			Subtitle: "Behavior packs your agents draw on — instructions the assistant applies when a skill's triggers or description match the turn. Author or edit one right here (name, triggers, instructions), or ask Builder in Agents for skills that ship code or grant tools. The Playbook column opens a skill's conditional rules: \"establish Y first; if yes do Z, if no do U\", which the framework runs and settles before the assistant answers. Disable to mute a skill without losing it; delete to retire it.",
 			Body: ui.Stack{Children: []ui.Component{
 				ui.Table{
 					Source: "api/skills",
@@ -1421,6 +1452,9 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 						{Field: "name", Flex: 1},
 						{Field: "description", Mute: true, Flex: 2},
 						{Field: "triggers", Label: "Triggers", Mute: true},
+						// Conditional rules the framework runs for this skill —
+						// "establish Y; if yes Z, if no U". Opens the editor.
+						{Field: "playbook", Label: "Playbook", Link: "playbook_url", Mute: true},
 						{Field: "disabled", Label: "Status", Type: "dot", Badges: []ui.BadgeMapping{
 							{Value: true, Label: "Disabled", Color: "danger"},
 							{Value: false, Label: "Active", Color: "success"},
@@ -1520,7 +1554,7 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 		Title:     "Extensions",
 		ShowTitle: true,
 		BackURL:   "/",
-		Nav:       HubNav("/gateways"), // shared hub tabs, Extensions active
+		Nav:       HubNav("/extensions"), // shared hub tabs, Extensions active
 		// Full width. Extensions › Tools is the widest table in the product — name,
 		// category, mode, agents, last-used and eight status badges — and at
 		// 1200px the name column ellipsizes while badges wrap, which is most of
@@ -1563,7 +1597,7 @@ func (T *Gateways) servePage(w http.ResponseWriter, r *http.Request) {
 // one more place a tool can be switched on, not a separate concept.
 const scopeAllAgents = "global"
 
-func (T *Gateways) handleUserToolAccess(w http.ResponseWriter, r *http.Request) {
+func (T *Extensions) handleUserToolAccess(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
@@ -2067,7 +2101,7 @@ func userToolCategories(user string) map[string][]string {
 // category, tools dropped from it have their claim cleared. A tool holds one
 // category, so moving it here moves it out of wherever it was — which is the
 // behavior the picker's checkboxes imply, and the reason this is a set.
-func (T *Gateways) handleUserToolCategories(w http.ResponseWriter, r *http.Request) {
+func (T *Extensions) handleUserToolCategories(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return

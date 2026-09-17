@@ -14,7 +14,7 @@ import (
 	_ "github.com/cmcoffee/gohort/apps/codewriter"
 	_ "github.com/cmcoffee/gohort/apps/customapps"
 	_ "github.com/cmcoffee/gohort/apps/filestore"
-	_ "github.com/cmcoffee/gohort/apps/gateways"
+	_ "github.com/cmcoffee/gohort/apps/extensions"
 	_ "github.com/cmcoffee/gohort/apps/knowledge"
 	_ "github.com/cmcoffee/gohort/apps/mcpserver"
 	_ "github.com/cmcoffee/gohort/apps/monitor"

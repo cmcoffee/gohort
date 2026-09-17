@@ -1,4 +1,4 @@
-package admin
+package extensions
 
 import (
 	"strings"
@@ -73,11 +73,36 @@ func TestPlaybookPageShape(t *testing.T) {
 		t.Fatalf("an unfinished rule's subtitle is its checklist: %q", page.Sections[1].Subtitle)
 	}
 	fp, ok := page.Sections[1].Body.(ui.FormPanel)
-	if !ok || fp.PostURL != "api/skills/s1/playbook/1" {
+	if !ok || fp.PostURL != "api/skill-playbook?id=s1&rule=1" {
 		t.Fatalf("each rule posts to its own endpoint: %+v", page.Sections[1].Body)
 	}
 	add, ok := page.Sections[2].Body.(ui.FormPanel)
-	if !ok || add.PostURL != "api/skills/s1/playbook/add" || add.RedirectURL != "skill-playbook?id=s1" {
+	if !ok || add.PostURL != "api/skill-playbook?id=s1&rule=add" || add.RedirectURL != "skill-playbook?id=s1" {
 		t.Fatalf("the add form appends and reloads: %+v", add)
+	}
+	// The page belongs to the Extensions app, not admin: a user edits their
+	// own skills there.
+	if page.BackURL != "/extensions" {
+		t.Fatalf("the editor sits under Extensions, got %q", page.BackURL)
+	}
+}
+
+// The app is named what it has always been called on screen, and its data
+// bucket still is not — a bucket cannot be renamed in place, so the app
+// follows the data. Renaming Name() without pinning StoreName would silently
+// empty every user's credentials, tools and skills.
+func TestExtensionsKeepsItsDataBucket(t *testing.T) {
+	app := Extensions{}
+	if app.Name() != "extensions" {
+		t.Errorf("the app is called extensions, got %q", app.Name())
+	}
+	if app.StoreName() != "gateways" {
+		t.Fatalf("the data bucket must stay %q, got %q", "gateways", app.StoreName())
+	}
+	if got := (&Extensions{}).WebPath(); got != "/extensions" {
+		t.Errorf("path = %q", got)
+	}
+	if got := (&Extensions{}).WebName(); got != "Extensions" {
+		t.Errorf("display name = %q", got)
 	}
 }

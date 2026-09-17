@@ -1,4 +1,4 @@
-package gateways
+package extensions
 
 import (
 	"os"
@@ -17,7 +17,7 @@ import (
 // caught it. The list of flag pills and the list of intercepted targets are
 // written in two places and neither can see the other disagree.
 func TestEveryFlagPillIsInterceptedBeforeTheProvider(t *testing.T) {
-	src, err := os.ReadFile("gateways.go")
+	src, err := os.ReadFile("extensions.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestEveryFlagPillIsInterceptedBeforeTheProvider(t *testing.T) {
 // other says it belongs to whatever binds it. Holding both would leave the
 // selector describing a state no filter produces.
 func TestTheTwoFlagsAreMutuallyExclusive(t *testing.T) {
-	src, err := os.ReadFile("gateways.go")
+	src, err := os.ReadFile("extensions.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestTheTwoFlagsAreMutuallyExclusive(t *testing.T) {
 // first, so it can then be taken away from all of them, is the opposite of the
 // intent.
 func TestAnOrphanIsAdoptedRatherThanRefused(t *testing.T) {
-	src, err := os.ReadFile("gateways.go")
+	src, err := os.ReadFile("extensions.go")
 	if err != nil {
 		t.Fatal(err)
 	}

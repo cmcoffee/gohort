@@ -353,7 +353,7 @@ func TestYouCanStartAndFinishWithoutLeavingThePage(t *testing.T) {
 	// Admin, so the section's access gate admits — the gate is not what
 	// this test is about.
 	adminAuth(t, user)
-	sec, ok := machinesExtensionSection(asUser(httptest.NewRequest("GET", "/gateways", nil), user), user)
+	sec, ok := machinesExtensionSection(asUser(httptest.NewRequest("GET", "/extensions", nil), user), user)
 	if !ok {
 		t.Fatal("the section did not build for a user who can reach the app")
 	}

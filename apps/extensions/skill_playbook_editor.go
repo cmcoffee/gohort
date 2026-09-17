@@ -13,15 +13,20 @@
 //
 // A rule is saved half-built on purpose. Storage stores; the checklist under
 // each rule says what is still missing, and the resolver skips a rule with
-// problems so an unfinished one never runs. The JSON textarea on the skill
-// form stays: it is what the Builder writes and what an export carries.
+// problems so an unfinished one never runs. The JSON textarea on the admin
+// skill form stays: it is what the Builder writes and what an export carries.
+//
+// It lives HERE, not in admin, because a skill is the calling user's own
+// record — admin edits everyone's, this edits yours, and a user with no admin
+// rights could otherwise only author a playbook by asking Builder.
 
-package admin
+package extensions
 
 import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -29,15 +34,17 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
-// handleSkillPlaybookPage serves /skill-playbook?id=<skill>.
-func (a *AdminApp) handleSkillPlaybookPage(w http.ResponseWriter, r *http.Request) {
-	if !a.requireAdmin(w, r) {
+// handleSkillPlaybookPage serves /extensions/skill-playbook?id=<skill>.
+func (T *Extensions) handleSkillPlaybookPage(w http.ResponseWriter, r *http.Request) {
+	username, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
 		return
 	}
-	username := AuthCurrentUser(r)
-	id := strings.TrimSpace(r.URL.Query().Get("id"))
-	skill, ok := findSkill(a.db, username, id)
-	if !ok {
+	// Scoped to the caller's own pool by the lookup itself: a skill id that
+	// is not theirs is not found, which is the same answer as one that does
+	// not exist and tells a prober nothing either way.
+	skill, found := findSkill(AuthDB(), username, strings.TrimSpace(r.URL.Query().Get("id")))
+	if !found {
 		http.NotFound(w, r)
 		return
 	}
@@ -57,7 +64,7 @@ func findSkill(db Database, username, id string) (SkillRecord, bool) {
 // then a section that adds one. Split from the handler so the wiring is
 // assertable without a server.
 func skillPlaybookPage(skill SkillRecord) ui.Page {
-	base := "api/skills/" + skill.ID + "/playbook/"
+	base := "api/skill-playbook?id=" + url.QueryEscape(skill.ID) + "&rule="
 	var sections []ui.Section
 	for i, rule := range skill.Playbook {
 		probs := rule.Problems("rule "+strconv.Itoa(i+1), 1)
@@ -79,7 +86,7 @@ func skillPlaybookPage(skill SkillRecord) ui.Page {
 			PostURL:        base + "add",
 			Method:         "POST",
 			SubmitLabel:    "Add rule",
-			RedirectURL:    "skill-playbook?id=" + skill.ID,
+			RedirectURL:    "skill-playbook?id=" + url.QueryEscape(skill.ID),
 			RedirectTarget: "_self",
 			Fields: []ui.FormField{
 				{Field: "fact", Type: "text", Label: "What must be established first?", Placeholder: "queue_draining",
@@ -94,7 +101,8 @@ func skillPlaybookPage(skill SkillRecord) ui.Page {
 	return ui.Page{
 		Title:      skill.Name + " — playbook",
 		ShowTitle:  true,
-		BackURL:    ".",
+		BackURL:    "/extensions",
+		Nav:        HubNav("/extensions"),
 		SectionNav: true,
 		MaxWidth:   "900px",
 		Sections:   sections,
@@ -335,13 +343,18 @@ func mergeRuleForm(rule PlaybookRule, body map[string]any) PlaybookRule {
 
 // handleSkillPlaybookRule serves one rule's form: GET reads it, POST merges
 // and saves; "new" reads an empty form and "add" appends a rule.
-func (a *AdminApp) handleSkillPlaybookRule(w http.ResponseWriter, r *http.Request, username, skillID, rest string) {
-	skill, ok := findSkill(a.db, username, skillID)
+func (T *Extensions) handleSkillPlaybookRule(w http.ResponseWriter, r *http.Request) {
+	username, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
+		return
+	}
+	skillID := strings.TrimSpace(r.URL.Query().Get("id"))
+	rest := strings.Trim(strings.TrimSpace(r.URL.Query().Get("rule")), "/")
+	skill, found := findSkill(AuthDB(), username, skillID)
+	if !found {
 		http.NotFound(w, r)
 		return
 	}
-	rest = strings.Trim(rest, "/")
 	w.Header().Set("Content-Type", "application/json")
 	switch {
 	case rest == "new" && r.Method == http.MethodGet:
@@ -354,7 +367,7 @@ func (a *AdminApp) handleSkillPlaybookRule(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		skill.Playbook = append(skill.Playbook, mergeRuleForm(PlaybookRule{}, body))
-		if _, err := SaveSkill(a.db, username, skill); err != nil {
+		if _, err := SaveSkill(AuthDB(), username, skill); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -380,7 +393,7 @@ func (a *AdminApp) handleSkillPlaybookRule(w http.ResponseWriter, r *http.Reques
 		} else {
 			skill.Playbook[n] = mergeRuleForm(skill.Playbook[n], body)
 		}
-		saved, err := SaveSkill(a.db, username, skill)
+		saved, err := SaveSkill(AuthDB(), username, skill)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

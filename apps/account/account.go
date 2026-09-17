@@ -118,17 +118,17 @@ func (T *Account) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if e := r.URL.Query().Get("error"); e != "" {
-		http.Redirect(w, r, "/gateways/?oauth=denied", http.StatusFound)
+		http.Redirect(w, r, "/extensions/?oauth=denied", http.StatusFound)
 		return
 	}
 	state := r.URL.Query().Get("state")
 	code := r.URL.Query().Get("code")
 	if _, _, err := Secure().OAuthCallback(r.Context(), state, code); err != nil {
 		Log("[account] oauth callback failed: %v", err)
-		http.Redirect(w, r, "/gateways/?oauth=failed", http.StatusFound)
+		http.Redirect(w, r, "/extensions/?oauth=failed", http.StatusFound)
 		return
 	}
-	http.Redirect(w, r, "/gateways/?oauth=connected", http.StatusFound)
+	http.Redirect(w, r, "/extensions/?oauth=connected", http.StatusFound)
 }
 
 // handleMCPConnect begins the per-user OAuth consent for a hosted MCP server
