@@ -33,15 +33,46 @@ const reembedFailStreak = 5
 // the breaker can trip while the operator is still watching.
 const reembedChunkTimeout = 20 * time.Second
 
-// ReembedUnvectoredChunks walks the chunk store and re-embeds every row that
-// has text but no vector, writing the vector and the CURRENT model name back
-// in place. Returns the number of rows repaired.
+// ReembedUnvectoredChunks re-embeds every row that has text but no vector.
+// Returns the number of rows repaired.
+func ReembedUnvectoredChunks(ctx context.Context, db Database) int {
+	return reembedChunks(ctx, db, "missing a vector", func(c EmbeddedChunk, _ string) bool {
+		return len(c.Vector) == 0
+	})
+}
+
+// ReembedStaleChunks re-embeds every row whose vector is not in the CURRENT
+// embedding space — stamped with a different model, a different document
+// prefix, or (legacy rows) no stamp at all — plus any row with no vector.
+// This is the pass to run after changing the embedding model or setting a
+// document prefix: until it runs, those rows are skipped by semantic search
+// (chunkVectorComparable) or, for the unstamped ones, compared across spaces.
+func ReembedStaleChunks(ctx context.Context, db Database) int {
+	return reembedChunks(ctx, db, "outside the current embedding space", func(c EmbeddedChunk, space string) bool {
+		return len(c.Vector) == 0 || c.Model != space
+	})
+}
+
+// ReembedAllChunks re-embeds every row that has text, current or not. The
+// pass for a change the stamp cannot see: the same model name served by a
+// different endpoint or build, which is a different space with the same name.
+func ReembedAllChunks(ctx context.Context, db Database) int {
+	return reembedChunks(ctx, db, "in the store", func(EmbeddedChunk, string) bool { return true })
+}
+
+// reembedChunks walks the chunk store and re-embeds every row with text that
+// want accepts, writing the vector and the CURRENT space stamp back in place.
+// what names the selection in the log. Returns the number of rows repaired.
 //
 // Rewriting Model matters as much as writing Vector: chunkVectorComparable
-// gates a chunk on c.Model matching the configured model, so a row repaired
-// under a new model while still carrying the old model string would score as
-// though it were never fixed.
-func ReembedUnvectoredChunks(ctx context.Context, db Database) int {
+// gates a chunk on c.Model matching the configured space, so a row repaired
+// under a new model while still carrying the old stamp would score as though
+// it were never fixed.
+//
+// Walks kvlite by key rather than the cache snapshot on purpose: a row
+// re-ingested while the pass runs is re-read fresh, where a snapshot would
+// write its pre-ingest text back over the new one.
+func reembedChunks(ctx context.Context, db Database, what string, want func(c EmbeddedChunk, space string) bool) int {
 	if db == nil {
 		return 0
 	}
@@ -54,6 +85,7 @@ func ReembedUnvectoredChunks(ctx context.Context, db Database) int {
 		Log("[vector-reembed] no embedding endpoint configured — nothing to do")
 		return 0
 	}
+	space := cfg.spaceStamp()
 
 	keys := db.Keys(EmbeddedChunks)
 	var scanned, candidates, fixed, failed, streak int
@@ -69,7 +101,7 @@ func ReembedUnvectoredChunks(ctx context.Context, db Database) int {
 			continue
 		}
 		scanned++
-		if len(c.Vector) > 0 || c.Text == "" {
+		if c.Text == "" || !want(c, space) {
 			continue
 		}
 		candidates++
@@ -92,7 +124,7 @@ func ReembedUnvectoredChunks(ctx context.Context, db Database) int {
 		}
 		streak = 0
 		c.Vector = v
-		c.Model = cfg.spaceStamp()
+		c.Model = space
 		db.Set(EmbeddedChunks, key, c)
 		fixed++
 	}
@@ -103,11 +135,11 @@ func ReembedUnvectoredChunks(ctx context.Context, db Database) int {
 		invalidateChunkCacheFor(db)
 	}
 	if candidates == 0 {
-		Log("[vector-reembed] scanned %d chunk(s); none are missing a vector", scanned)
+		Log("[vector-reembed] scanned %d chunk(s); none %s", scanned, what)
 		return 0
 	}
-	Log("[vector-reembed] scanned %d chunk(s), %d missing a vector: %d repaired, %d still failing, %.1fs",
-		scanned, candidates, fixed, failed, time.Since(started).Seconds())
+	Log("[vector-reembed] scanned %d chunk(s), %d %s: %d repaired, %d still failing, %.1fs",
+		scanned, candidates, what, fixed, failed, time.Since(started).Seconds())
 	return fixed
 }
 
@@ -132,6 +164,30 @@ func init() {
 			"Stops early if the endpoint is still down; safe to re-run.",
 		func(ctx context.Context) int {
 			return ReembedUnvectoredChunks(ctx, vectorRepairDB())
+		},
+	)
+	RegisterMaintenanceFunc(
+		"reembed_stale_chunks",
+		"Re-embed chunks outside the current embedding space",
+		"Repairs the \"In another embedding space\" count above. Re-embeds every chunk whose "+
+			"vector was made under a different model or document prefix (or has no stamp), plus any "+
+			"missing a vector — the rows semantic search skips after you change the embedding model "+
+			"or set a document prefix. Rewrites each with the CURRENT space. One embed call per chunk, "+
+			"so a large store takes a while; stops early if the endpoint is down; safe to re-run, "+
+			"and a second run finds nothing to do.",
+		func(ctx context.Context) int {
+			return ReembedStaleChunks(ctx, vectorRepairDB())
+		},
+	)
+	RegisterMaintenanceFunc(
+		"reembed_all_chunks",
+		"Re-embed EVERY chunk",
+		"Re-embeds every indexed chunk, current or not. For a change the stamp cannot see — the "+
+			"same model name now served by a different endpoint, build or quantization, which is a "+
+			"different space with the same name. Otherwise prefer the stale pass, which skips what is "+
+			"already right. One embed call per chunk; stops early if the endpoint is down; safe to re-run.",
+		func(ctx context.Context) int {
+			return ReembedAllChunks(ctx, vectorRepairDB())
 		},
 	)
 }

@@ -994,6 +994,15 @@ type VectorIndexStats struct {
 	// import worth re-running. Rendered the same way, for the same reason.
 	EmptyBySource     map[string]int `json:"empty_by_source"`
 	EmptyBySourceText string         `json:"empty_by_source_text"`
+	// Stale counts chunks that HAVE a vector but not in the current
+	// embedding space: stamped with another model or document prefix, or
+	// not stamped at all. Semantic search skips the stamped ones and
+	// compares the unstamped ones across spaces; the stale re-embed pass
+	// is the repair. Zero when no model name is configured, since then
+	// there is no space to be outside of.
+	Stale             int            `json:"stale"`
+	StaleBySource     map[string]int `json:"stale_by_source"`
+	StaleBySourceText string         `json:"stale_by_source_text"`
 }
 
 // VectorStats walks the EmbeddedChunks table once and summarizes how
@@ -1001,10 +1010,11 @@ type VectorIndexStats struct {
 // empty (because embed was down at ingest time), and the breakdown per
 // source. Intended for admin-panel visibility — not hot-path.
 func VectorStats(db Database) VectorIndexStats {
-	stats := VectorIndexStats{BySource: map[string]int{}, EmptyBySource: map[string]int{}}
+	stats := VectorIndexStats{BySource: map[string]int{}, EmptyBySource: map[string]int{}, StaleBySource: map[string]int{}}
 	if db == nil {
 		return stats
 	}
+	space := currentEmbedModel()
 	for _, c := range snapshotChunks(db) {
 		stats.Total++
 		src := c.Source
@@ -1013,6 +1023,10 @@ func VectorStats(db Database) VectorIndexStats {
 		}
 		if len(c.Vector) > 0 {
 			stats.Embedded++
+			if space != "" && c.Model != space {
+				stats.Stale++
+				stats.StaleBySource[src]++
+			}
 		} else {
 			stats.Empty++
 			stats.EmptyBySource[src]++
@@ -1021,6 +1035,7 @@ func VectorStats(db Database) VectorIndexStats {
 	}
 	stats.BySourceText = formatSourceCounts(stats.BySource)
 	stats.EmptyBySourceText = formatSourceCounts(stats.EmptyBySource)
+	stats.StaleBySourceText = formatSourceCounts(stats.StaleBySource)
 	return stats
 }
 

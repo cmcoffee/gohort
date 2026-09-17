@@ -240,7 +240,13 @@ const (
 	// ingest with a Title. Uploads, pastes and fetched pages all needed it
 	// (IngestReport stamps no title; IngestReportTitled is the report side
 	// and drops a Sources section), and it is called from orchestrate.
-	coreExportCeiling = 2179
+	//
+	// Raised 2179 -> 2181 for ReembedStaleChunks and ReembedAllChunks, the
+	// two selections the re-embed walker gained beside the existing
+	// missing-vector one. Registered as maintenance functions from this
+	// package, so they could be unexported — but the existing pass is
+	// exported and tested by name, and three passes read as one set.
+	coreExportCeiling = 2181
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

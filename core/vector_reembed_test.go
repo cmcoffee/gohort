@@ -194,3 +194,84 @@ func TestVectorStatsReportsEmptyBySource(t *testing.T) {
 		t.Errorf("unexpected bucket in %v", stats.EmptyBySource)
 	}
 }
+
+// After a model or document-prefix change, the stale pass re-embeds exactly
+// the rows outside the current space — stamped otherwise, unstamped, or
+// vectorless — and leaves rows already in it alone.
+func TestReembedStaleTouchesOnlyRowsOutsideTheSpace(t *testing.T) {
+	_, calls := stubEmbedServer(t, "new-model", func(int32) (int, []float32) {
+		return 200, []float32{0.5, 0.5}
+	})
+	db := &DBase{Store: kvlite.MemStore()}
+	rows := map[string]EmbeddedChunk{
+		"current":  {ID: "current", Source: "kb", ReportID: "r1", Section: "## A", Text: "in the space", Vector: []float32{1, 0}, Model: "new-model"},
+		"old":      {ID: "old", Source: "kb", ReportID: "r2", Section: "## B", Text: "other model", Vector: []float32{1, 0}, Model: "old-model"},
+		"unstamp":  {ID: "unstamp", Source: "uploads", ReportID: "r3", Section: "## C", Text: "legacy row", Vector: []float32{1, 0}},
+		"empty":    {ID: "empty", Source: "uploads", ReportID: "r4", Section: "## D", Text: "embed failed at ingest", Model: "new-model"},
+		"textless": {ID: "textless", Source: "kb", ReportID: "r5", Section: "## E", Model: "old-model"},
+	}
+	for id, c := range rows {
+		db.Set(EmbeddedChunks, id, c)
+	}
+	stats := VectorStats(db)
+	if stats.Stale != 2 || stats.StaleBySource["kb"] != 1 || stats.StaleBySource["uploads"] != 1 {
+		t.Fatalf("stats must count the stamped-otherwise and unstamped vectors as stale, got %+v", stats)
+	}
+
+	fixed := ReembedStaleChunks(context.Background(), db)
+	if fixed != 3 || *calls != 3 {
+		t.Fatalf("expected old, unstamp and empty repaired (3), got fixed=%d calls=%d", fixed, *calls)
+	}
+	for _, id := range []string{"old", "unstamp", "empty"} {
+		var c EmbeddedChunk
+		db.Get(EmbeddedChunks, id, &c)
+		if c.Model != "new-model" || len(c.Vector) != 2 || c.Vector[0] != 0.5 {
+			t.Errorf("%s not brought into the space: %+v", id, c)
+		}
+	}
+	var kept EmbeddedChunk
+	db.Get(EmbeddedChunks, "current", &kept)
+	if kept.Vector[0] != 1 {
+		t.Errorf("a row already in the space must not be re-embedded: %+v", kept)
+	}
+	if VectorStats(db).Stale != 0 {
+		t.Errorf("nothing should be stale after the pass")
+	}
+	// A second run finds nothing to do.
+	if again := ReembedStaleChunks(context.Background(), db); again != 0 || *calls != 3 {
+		t.Errorf("second run must be a no-op, repaired %d with %d calls", again, *calls)
+	}
+	// The forced pass re-embeds the current row too.
+	if all := ReembedAllChunks(context.Background(), db); all != 4 {
+		t.Errorf("all-pass must re-embed every row with text, got %d", all)
+	}
+}
+
+// A document prefix is part of the space, so setting one makes every vector
+// stale until the pass runs — the case that motivated the pass.
+func TestDocPrefixChangeMakesVectorsStale(t *testing.T) {
+	prev := GetEmbeddingConfig()
+	defer SetEmbeddingConfig(prev)
+	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Endpoint: "http://x", Model: "m"})
+	db := &DBase{Store: kvlite.MemStore()}
+	db.Set(EmbeddedChunks, "c", EmbeddedChunk{ID: "c", Source: "kb", Text: "t", Vector: []float32{1}, Model: "m"})
+	if VectorStats(db).Stale != 0 {
+		t.Fatal("stamped with the current model, not stale")
+	}
+	SetEmbeddingConfig(EmbeddingConfig{Enabled: true, Endpoint: "http://x", Model: "m", DocPrefix: "passage: "})
+	invalidateChunkCacheFor(db)
+	if VectorStats(db).Stale != 1 {
+		t.Fatal("a document prefix moves the space; the row must read as stale")
+	}
+}
+
+func TestStalePassIsRegisteredAsMaintenance(t *testing.T) {
+	var stale, all bool
+	for _, f := range ListMaintenanceFuncs() {
+		stale = stale || f.Key == "reembed_stale_chunks"
+		all = all || f.Key == "reembed_all_chunks"
+	}
+	if !stale || !all {
+		t.Fatalf("both passes must be on the maintenance list (stale=%v all=%v)", stale, all)
+	}
+}

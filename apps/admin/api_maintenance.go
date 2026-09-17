@@ -163,13 +163,19 @@ func (a *AdminApp) handleVectorStats(w http.ResponseWriter, r *http.Request) {
 	if emptyText == "" {
 		emptyText = "none — every chunk has a vector"
 	}
+	staleText := stats.StaleBySourceText
+	if staleText == "" {
+		staleText = "none — every vector is in the current space"
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"total":                stats.Total,
 		"embedded":             stats.Embedded,
 		"empty":                stats.Empty,
+		"stale":                stats.Stale,
 		"by_source_text":       byText,
 		"empty_by_source_text": emptyText,
+		"stale_by_source_text": staleText,
 	})
 }
 

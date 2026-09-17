@@ -87,7 +87,7 @@ func (a *AdminApp) maintenanceSections() []ui.Section {
 		},
 		{
 			Title:    "Vector Index",
-			Subtitle: "Snapshot of the semantic-search index. Chunks are written automatically as records (research / debate / answer) are produced. A chunk whose embedding failed at ingest is still stored and still found by keyword, but is invisible to semantic search until it is re-embedded — run \"Re-embed chunks missing a vector\" under Maintenance to repair those.",
+			Subtitle: "Snapshot of the semantic-search index. Chunks are written automatically as records (research / debate / answer) are produced. A chunk whose embedding failed at ingest is still stored and still found by keyword, but is invisible to semantic search until it is re-embedded — run \"Re-embed chunks missing a vector\" under Maintenance to repair those. A chunk embedded under a different model or document prefix is skipped by semantic search the same way — after changing either, run \"Re-embed chunks outside the current embedding space\".",
 			Body: ui.Stack{Children: []ui.Component{
 				ui.DisplayPanel{
 					Source: "api/vector-stats",
@@ -99,6 +99,11 @@ func (a *AdminApp) maintenanceSections() []ui.Section {
 						// outage happened; this says what it cost, and which
 						// imports to re-run for anything the repair can't reach.
 						{Label: "Missing vectors by source", Field: "empty_by_source_text"},
+						// Vectors that exist but were made in another space: a
+						// model or document-prefix change since ingest. Semantic
+						// search skips them until the stale pass runs.
+						{Label: "In another embedding space", Field: "stale"},
+						{Label: "Stale vectors by source", Field: "stale_by_source_text"},
 					},
 				},
 				// Per-kind breakdown (documents + chunks) — the legible view,
