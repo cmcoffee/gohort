@@ -169,3 +169,29 @@ func TestScopeTokenIsReadFromTheHostAtRequestTime(t *testing.T) {
 		t.Error("the workbench must set the scope when a record opens AND clear it when the selection goes away")
 	}
 }
+
+// A server-posted card's provenance reaches its entry, and the export names
+// the card by the kind and label the server stamped. Every such card used to
+// export as "Scheduled: automated fire": the export read report_from off the
+// entry, and nothing ever wrote it there.
+func TestReportCardsExportByKind(t *testing.T) {
+	src := readRuntimeFile(t, "30_agent_loop_panel.js")
+	if !strings.Contains(src, "m.report_kind = meta.report_kind || '';") {
+		t.Error("setMessageMeta must keep the card's kind on the entry")
+	}
+	if strings.Count(src, "report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail") < 4 {
+		t.Error("every render path must pass the report fields through to the entry")
+	}
+	// The kinds are the app's vocabulary: shown as sent, never a table here.
+	if !strings.Contains(src, "return kind.charAt(0).toUpperCase() + kind.slice(1) + ': ' + (label || 'unlabelled');") {
+		t.Error("the export must name the card by the kind the server stamped")
+	}
+	if !strings.Contains(src, "if (!kind) return 'Scheduled: ' + (label || 'automated fire');") {
+		t.Error("a card with no kind is the original case and keeps its line")
+	}
+	// A card that records what came in and what was done splits at the
+	// action lines: what came in is the request, the actions are the round.
+	if !strings.Contains(src, "var cut = cardText.indexOf('\\n↳ ');") || !strings.Contains(src, "if (splitCard && next === splitCard.bubble) txt = splitCard.tail;") {
+		t.Error("a card with action lines must split into what came in and what was done")
+	}
+}

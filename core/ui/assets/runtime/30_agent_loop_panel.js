@@ -2626,6 +2626,15 @@
           elapsed_ms:       meta.usage.elapsed_ms,
         });
       }
+      // A server-posted card's provenance rides on the entry so the export
+      // can say what the card IS. It used to be read there and never written
+      // here, so every such card, whatever its kind, exported as
+      // "Scheduled: automated fire".
+      if (meta.report_from !== undefined) {
+        m.report_from = meta.report_from || '';
+        m.report_kind = meta.report_kind || '';
+        m.report_detail = meta.report_detail || '';
+      }
     }
 
     // formatTimestamp renders a Date.now()-shaped value as a short
@@ -2832,10 +2841,20 @@
     // CARD (a scheduled fire) has no preceding user bubble — the request is the
     // card's own report label/brief — so when none is found we start from the
     // card itself and use its report heading as the request rather than bailing.
+    // reportRequestLine names a server-posted card's origin for the export:
+    // the kind the server stamped, then its label ("who, via what"). The
+    // kinds are the app's vocabulary and are shown as sent, not translated
+    // here; a card with no kind is the original case, a scheduled fire.
+    function reportRequestLine(kind, label) {
+      if (!kind) return 'Scheduled: ' + (label || 'automated fire');
+      return kind.charAt(0).toUpperCase() + kind.slice(1) + ': ' + (label || 'unlabelled');
+    }
+
     function copySubSession(bubble, btn) {
       var lines = [];
       var startBubble = bubble;
       var userBubble = bubble;
+      var splitCard = null; // a card whose body carries "↳" action lines: they are the round
       while (userBubble && !userBubble.classList.contains('ui-agent-msg-user')) {
         userBubble = userBubble.previousElementSibling;
       }
@@ -2847,11 +2866,28 @@
         lines.push('## Request', '', userText.trim(), '');
         startBubble = userBubble;
       } else {
-        // Report card (fire / monitor wake): the request is the card's label.
+        // Server-posted card: the request is what the card IS — its kind and
+        // label as the server stamped them.
         var entry = msgEntryForBubble(bubble);
         var label = (entry && (entry.report_from || entry.reportFrom)) || '';
         var detail = (entry && (entry.report_detail || entry.reportDetail)) || '';
-        lines.push('## Request', '', ('Scheduled: ' + (label || 'automated fire') + (detail ? ' — ' + detail : '')).trim(), '');
+        var kind = (entry && (entry.report_kind || entry.reportKind)) || '';
+        var head = reportRequestLine(kind, label);
+        // A card whose body ends in "↳ …" lines records what came in and,
+        // under it, what the agent did about it. What came in is the request;
+        // the "↳" lines are the round. A card with no such lines is a reply
+        // in its own right and stays the round it always was.
+        var cardBody = bubble.querySelector(':scope > .ui-agent-msg-body');
+        var cardText = (entry && entry.rawText) || (cardBody ? (cardBody.innerText || cardBody.textContent || '') : '');
+        var cut = cardText.indexOf('\n↳ ');
+        if (cut >= 0) {
+          splitCard = {bubble: bubble, tail: cardText.slice(cut + 1).trim()};
+          var said = cardText.slice(0, cut).trim();
+          if (said) head += ':\n\n' + said;
+        } else if (detail) {
+          head += ' — ' + detail;
+        }
+        lines.push('## Request', '', head.trim(), '');
         startBubble = bubble.previousElementSibling || bubble; // include from just before this card
       }
       // Walk forward from the request through assistant bubbles
@@ -2896,6 +2932,7 @@
         if (next.classList.contains('ui-agent-msg-assistant')) {
           var body = next.querySelector(':scope > .ui-agent-msg-body');
           var txt = body ? (body.innerText || body.textContent || '').trim() : '';
+          if (splitCard && next === splitCard.bubble) txt = splitCard.tail;
           var tools = next.tools || [];
           if (!txt && !tools.length) {
             // Empty bubble (opened mid-stream / settled without content) —
@@ -4873,7 +4910,7 @@
       var mid = m.id || ('m-' + Math.random().toString(36).slice(2));
       addMessage(m.role || 'assistant', mid, m.content || m.text || '', m.sender);
       if (cfg.markdown && m.role === 'assistant') finalizeMessage(mid);
-      if (m.created || m.usage) setMessageMeta(mid, {created: m.created, usage: m.usage});
+      if (m.created || m.usage || m.report_from) setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail});
     }
 
     function stopChannelPolling() {
@@ -4965,7 +5002,7 @@
       var mid = (m && m.id) || ('obs-' + Math.random().toString(36).slice(2));
       addMessage(m.role || 'assistant', mid, m.content || m.text || '', m.sender);
       if (cfg.markdown && (m.role === 'assistant')) finalizeMessage(mid);
-      if (m.created || m.usage) setMessageMeta(mid, {created: m.created, usage: m.usage});
+      if (m.created || m.usage || m.report_from) setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail});
       applyPersistedToolCalls(mid, m);
       if (messageReplayHooks.length) {
         var entry = msgEls[mid], bubble = entry && entry.bubble;
@@ -5597,7 +5634,7 @@
                 addMessage(m.role || 'assistant', mid, m.content || m.text || '');
                 if (cfg.markdown && (m.role === 'assistant')) finalizeMessage(mid);
                 if (m.created || m.usage) {
-                  setMessageMeta(mid, {created: m.created, usage: m.usage});
+                  setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail});
                 }
                 // Replay persisted tool calls (same shape as the
                 // SESSION-mode branch below — see that comment for
@@ -5790,7 +5827,7 @@
             }
             if (cfg.markdown && (m.role === 'assistant')) finalizeMessage(mid);
             if (m.created || m.usage) {
-              setMessageMeta(mid, {created: m.created, usage: m.usage});
+              setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail});
             }
             // Replay persisted tool calls onto this bubble's host.
             applyPersistedToolCalls(mid, m);
