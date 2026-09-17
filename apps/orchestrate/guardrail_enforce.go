@@ -266,6 +266,10 @@ func (t *chatTurn) guardrailCheckHookCtx(ctx context.Context) func(hookPoint, ca
 		// repeatedly is the shape most worth seeing, and the per-thread trail
 		// above can only be found by someone who already knows which thread.
 		t.recordGuardrailBlock(rule, hookPoint, reason)
+		// And ask, once per pair, whether this rule refuses the tool outright —
+		// the answer is what keeps the catalog from offering it again next
+		// turn. Off the critical path; see guardrail_tool_scope.go.
+		t.learnGuardrailToolScope(rule, hookPoint, candidate)
 		if t.guardrailBlocks >= guardBlockEscalateAt {
 			t.notifyOwnerGuardrail(rule, t.guardrailBlockTotal)
 			// The returned text still goes back as the blocked result, but it is

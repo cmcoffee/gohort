@@ -297,7 +297,9 @@ func (t *chatTurn) dispatchExtraTools(sess *ToolSession, poolUser string, poolDB
 	t.loadAgentTempTools(sess, poolUser, poolDB)
 	direct, ctp := t.setupCustomTools(sess)
 	extraTools = append(extraTools, direct...)
-	return extraTools, ctp
+	// A dispatched agent is bound by its own rules exactly as it is on its own
+	// chat surface, so its catalog loses the same tools here.
+	return t.applyGuardrailToolWithholding(extraTools), ctp
 }
 
 // setupCustomTools resolves the agent's custom (temp) tools the SAME way on the

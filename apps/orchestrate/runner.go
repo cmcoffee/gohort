@@ -1013,6 +1013,11 @@ func (pr *planRun) catalogAssemble() error {
 			Log("[orchestrate.orch] private mode dropped %d network-capable dynamic tool(s): %v", len(dropped), dropped)
 		}
 	}
+	// And the tools this agent's own rules make unusable. Here rather than
+	// upstream for the same reason the Private backstop is here: the per-turn
+	// defs above never pass through the registry, and they are the ones most
+	// likely to collide with a rule. See guardrail_tool_scope.go.
+	pr.allTools = t.applyGuardrailToolWithholding(pr.allTools)
 	// Says "assembled", not "rewriting": the runtime group rewriter this line
 	// used to announce was retired, and the sentence outlived it. A stale verb
 	// on a line that also prints the catalog SIZE reads as a size-triggered

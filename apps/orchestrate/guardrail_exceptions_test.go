@@ -77,7 +77,7 @@ func TestExceptionTextReachesTheWarden(t *testing.T) {
 	if _, err := turn.app.runWarden(turn.ctx, agent, guardHookPreOutput, "hi", requesterIdentity{Owner: true}); err != nil {
 		t.Fatalf("runWarden: %v", err)
 	}
-	prompt := stub.lastMsg
+	prompt := stub.seen()
 	if !strings.Contains(prompt, "1. never send money") {
 		t.Errorf("rule missing from prompt:\n%s", prompt)
 	}
@@ -107,8 +107,8 @@ func TestNoExceptionsLeavesThePromptAlone(t *testing.T) {
 	if _, err := turn.app.runWarden(turn.ctx, agent, guardHookPreOutput, "hi", requesterIdentity{Owner: true}); err != nil {
 		t.Fatalf("runWarden: %v", err)
 	}
-	if strings.Contains(stub.lastMsg, "Except") {
-		t.Errorf("an agent with no exceptions should never see the word:\n%s", stub.lastMsg)
+	if strings.Contains(stub.seen(), "Except") {
+		t.Errorf("an agent with no exceptions should never see the word:\n%s", stub.seen())
 	}
 }
 
@@ -126,8 +126,8 @@ func TestDanglingLinkTightensTheRule(t *testing.T) {
 	if _, err := turn.app.runWarden(turn.ctx, agent, guardHookPreOutput, "hi", requesterIdentity{Owner: true}); err != nil {
 		t.Fatalf("runWarden: %v", err)
 	}
-	if strings.Contains(stub.lastMsg, "Except") || strings.Contains(stub.lastMsg, "deleted-one") {
-		t.Errorf("dangling link reached the warden:\n%s", stub.lastMsg)
+	if strings.Contains(stub.seen(), "Except") || strings.Contains(stub.seen(), "deleted-one") {
+		t.Errorf("dangling link reached the warden:\n%s", stub.seen())
 	}
 }
 
@@ -140,8 +140,8 @@ func TestExceptionTextIsSharedNotCopied(t *testing.T) {
 	if _, err := turn.app.runWarden(turn.ctx, agent, guardHookPreOutput, "hi", requesterIdentity{Owner: true}); err != nil {
 		t.Fatalf("runWarden: %v", err)
 	}
-	if n := strings.Count(stub.lastMsg, "the user has already confirmed this in the conversation"); n != 2 {
-		t.Errorf("expected the one authored wording under both rules, saw it %d times:\n%s", n, stub.lastMsg)
+	if n := strings.Count(stub.seen(), "the user has already confirmed this in the conversation"); n != 2 {
+		t.Errorf("expected the one authored wording under both rules, saw it %d times:\n%s", n, stub.seen())
 	}
 }
 

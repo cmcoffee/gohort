@@ -74,7 +74,7 @@ func TestWardenPromptSeparatesTrustFromSenderName(t *testing.T) {
 	if _, err := turn.app.runWarden(turn.ctx, turn.agent, guardHookPreOutput, "hello", turn.requester()); err != nil {
 		t.Fatalf("runWarden: %v", err)
 	}
-	msg := stub.lastMsg
+	msg := stub.seen()
 	if !strings.Contains(msg, "REQUESTER:") {
 		t.Fatalf("the warden must be told who is asking; prompt was:\n%s", msg)
 	}
@@ -103,8 +103,8 @@ func TestWardenPromptSaysOwnerWhenOwnerAsks(t *testing.T) {
 	if _, err := turn.app.runWarden(turn.ctx, turn.agent, guardHookPreOutput, "hello", turn.requester()); err != nil {
 		t.Fatalf("runWarden: %v", err)
 	}
-	if !strings.Contains(stub.lastMsg, "OWNER") {
-		t.Fatalf("an owner turn must say so; prompt was:\n%s", stub.lastMsg)
+	if !strings.Contains(stub.seen(), "OWNER") {
+		t.Fatalf("an owner turn must say so; prompt was:\n%s", stub.seen())
 	}
 }
 
@@ -137,8 +137,8 @@ func TestWardenPromptNamesTheOwnerAccount(t *testing.T) {
 		t.Fatalf("runWarden: %v", err)
 	}
 	for _, want := range []string{"account u", "wrote the guardrails"} {
-		if !strings.Contains(stub.lastMsg, want) {
-			t.Errorf("the warden prompt must contain %q so a person-scoped exception can resolve;\nprompt was:\n%s", want, stub.lastMsg)
+		if !strings.Contains(stub.seen(), want) {
+			t.Errorf("the warden prompt must contain %q so a person-scoped exception can resolve;\nprompt was:\n%s", want, stub.seen())
 		}
 	}
 }

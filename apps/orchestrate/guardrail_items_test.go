@@ -126,11 +126,11 @@ func TestPersonLinkNeverReachesTheWarden(t *testing.T) {
 	if _, err := turn.app.runWarden(turn.ctx, agent, guardHookPreOutput, "hi", requesterIdentity{}); err != nil {
 		t.Fatalf("runWarden: %v", err)
 	}
-	if strings.Contains(stub.lastMsg, "dana") {
-		t.Errorf("a person link leaked into the warden prompt:\n%s", stub.lastMsg)
+	if strings.Contains(stub.seen(), "dana") {
+		t.Errorf("a person link leaked into the warden prompt:\n%s", stub.seen())
 	}
-	if !strings.Contains(stub.lastMsg, "the user has already confirmed") {
-		t.Errorf("the condition should still render:\n%s", stub.lastMsg)
+	if !strings.Contains(stub.seen(), "the user has already confirmed") {
+		t.Errorf("the condition should still render:\n%s", stub.seen())
 	}
 }
 

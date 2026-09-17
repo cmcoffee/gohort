@@ -40,8 +40,23 @@ func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Re
 			"declines":    agent.GuardrailDeclines,
 			"disabled":    agent.GuardrailsDisabled,
 			"recent":      listGuardrailBlocks(udb, agent.ID, 25),
-			"authorized":  agent.AuthorizedIdentities,
-			"exceptions":  agent.GuardrailExceptions,
+			// Tools this agent's rules took away, and which rule took each one.
+			// Listed because a withheld capability is otherwise indistinguishable
+			// from one that broke: the agent stops being able to do something and
+			// has no way to say why. Entries whose rule no longer exists are not
+			// applied (guardrailWithheldTools resolves against the rules in force)
+			// and are filtered out here too, so the list shows what is actually
+			// happening rather than what once did.
+			"tool_scopes": liveGuardrailToolScopes(udb, agent),
+			// The vocabulary a rule may be bound to (#tool). Resolved live
+			// against what this agent can actually call, never stored, for the
+			// same reason scan_covers is: a list written down at save time is
+			// wrong the day the agent's kit changes. It is also exactly what
+			// the save-time validator accepts, so the picker cannot offer a
+			// name the save will refuse.
+			"tool_choices": guardrailToolChoices(agent),
+			"authorized":   agent.AuthorizedIdentities,
+			"exceptions":   agent.GuardrailExceptions,
 			// Scan scope rides this endpoint because it is owner-only and
 			// protected the same way — NOT because it is a rule. It is not one:
 			// it needs no authored guardrail and "disabled" above does not
@@ -93,6 +108,10 @@ func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Re
 			ScanAppeal  *bool     `json:"scan_appealable"`
 			ScanTighten *bool     `json:"scan_tighten"`
 			ScanTrusted *[]string `json:"scan_trusted_sources"`
+			// Forget every recorded rule↔tool reading, so a tool withheld on a
+			// reading the owner disagrees with comes back. Not a setting: if the
+			// reading was right, the next block re-establishes it.
+			ClearToolScopes bool `json:"clear_tool_scopes"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -104,6 +123,17 @@ func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Re
 			if validGuardHooks[strings.TrimSpace(h)] {
 				hooks = append(hooks, strings.TrimSpace(h))
 			}
+		}
+		if body.ClearToolScopes {
+			clearGuardrailToolScopes(udb, agent.ID)
+			Log("[orchestrate.guardrail] agent=%s rule/tool readings cleared by owner", agent.ID)
+		}
+		// Refused before anything is written. A rule bound to a tool this agent
+		// cannot call is judged nowhere, and storing it would leave a rule in
+		// the list that looks enforced and is not.
+		if err := validateGuardrailToolBindings(agent, body.Guardrails); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
 		}
 		agent.Guardrails = strings.TrimSpace(body.Guardrails)
 		agent.GuardrailHooks = hooks
@@ -157,6 +187,11 @@ func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Re
 			http.Error(w, "save failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
+		// A newly-bound rule names its tool, so the "does this forbid the tool
+		// outright" question can be asked NOW instead of the first time the
+		// agent walks into it. Off the request — the owner does not wait on it,
+		// and nothing they can see is wrong until the next catalog is built.
+		T.scopeBoundGuardrailRules(r.Context(), udb, agent)
 		// Stated at Log level, not Debug: an agent carrying rules that are not being
 		// enforced is the kind of state an owner forgets they left behind.
 		if agent.GuardrailsDisabled {

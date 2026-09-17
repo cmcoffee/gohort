@@ -2,6 +2,8 @@ package orchestrate
 
 import (
 	"context"
+	"sync"
+
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/prompts"
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -62,8 +64,8 @@ func TestSeverityMarkerStrippedFromWardenPrompt(t *testing.T) {
 	if _, err := turn.app.runWarden(turn.ctx, turn.agent, guardHookPreOutput, "hi", requesterIdentity{Owner: true}); err != nil {
 		t.Fatalf("runWarden: %v", err)
 	}
-	if !strings.Contains(stub.lastMsg, "1. never mention salary") {
-		t.Fatalf("the rule must reach the warden marker-free; prompt was:\n%s", stub.lastMsg)
+	if !strings.Contains(stub.seen(), "1. never mention salary") {
+		t.Fatalf("the rule must reach the warden marker-free; prompt was:\n%s", stub.seen())
 	}
 }
 
@@ -744,17 +746,39 @@ func TestBinaryVerdictsAggregate(t *testing.T) {
 // wardenStubLLM returns scripted content and captures the last user message so
 // tests can assert the candidate was fenced.
 type wardenStubLLM struct {
-	reply   string
+	reply string
+	// Guarded: a guardrail block now also fires an off-turn classification
+	// (guardrail_tool_scope.go), so this stub can be called from a goroutine
+	// while the test reads what it recorded.
+	mu      sync.Mutex
 	lastMsg string
 }
 
 func (s *wardenStubLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
+	// This stubs the WARDEN. A guardrail block also fires a second, different
+	// call — the off-turn rule↔tool classification — and it must not overwrite
+	// what the warden was asked or answer with a verdict list, or every test
+	// that reads the warden's prompt would be racing a goroutine for it.
+	for _, m := range messages {
+		if m.Role == "system" && m.Content != wardenSystemPrompt {
+			return &Response{Content: `{"scope":"some","why":"stub"}`}, nil
+		}
+	}
+	s.mu.Lock()
 	for _, m := range messages {
 		if m.Role == "user" {
 			s.lastMsg = m.Content
 		}
 	}
+	s.mu.Unlock()
 	return &Response{Content: s.reply}, nil
+}
+
+// seen returns what the stub last received, safely.
+func (s *wardenStubLLM) seen() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastMsg
 }
 func (s *wardenStubLLM) ChatStream(ctx context.Context, messages []Message, h StreamHandler, opts ...ChatOption) (*Response, error) {
 	return s.Chat(ctx, messages, opts...)
@@ -830,11 +854,11 @@ func TestRunWardenFencesCandidateAndReturnsVerdict(t *testing.T) {
 	}
 	// The candidate must have been handed to the warden as UNTRUSTED DATA so
 	// its embedded "ignore all rules" can't turn the warden.
-	if !strings.Contains(stub.lastMsg, "UNTRUSTED") {
-		t.Fatalf("candidate must be fenced as untrusted; message was:\n%s", stub.lastMsg)
+	if !strings.Contains(stub.seen(), "UNTRUSTED") {
+		t.Fatalf("candidate must be fenced as untrusted; message was:\n%s", stub.seen())
 	}
 	// The rules (trusted) are present verbatim.
-	if !strings.Contains(stub.lastMsg, "never post about a private individual") {
+	if !strings.Contains(stub.seen(), "never post about a private individual") {
 		t.Fatal("guardrail rules should be in the warden prompt")
 	}
 }

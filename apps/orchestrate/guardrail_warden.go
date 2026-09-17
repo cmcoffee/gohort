@@ -109,6 +109,14 @@ const (
 // Empty finding = ordinary check, byte-identical to what runWarden always sent.
 func (T *OrchestrateApp) runWardenWithFinding(ctx context.Context, agent AgentRecord, hookPoint, candidate string, req requesterIdentity, finding string, opts ...ChatOption) ([]guardrailVerdict, error) {
 	rules := rulesInPlayFor(enforcedGuardrailRules(agent), req)
+	// Narrowed to the rules that have anything to say about THIS check. A rule
+	// bound to a tool (guardrailToolMarker) is sent only when that tool is the
+	// one being judged, and never on a check with no tool call in it. Every
+	// enforced rule used to be sent on every consequential call, so an agent
+	// with a dozen rules paid for all twelve to judge one — and eleven of them
+	// were reading about a tool they could not have an opinion on, which is
+	// prompt weight AND an invitation to flag the wrong thing.
+	rules = rulesForTool(rules, wardenToolInPlay(hookPoint, candidate))
 	if len(rules) == 0 {
 		// Either nothing was authored, or every authored rule is exempt for this
 		// person. Both mean there is nothing to judge — and skipping the call
@@ -181,6 +189,27 @@ func (T *OrchestrateApp) runWardenWithFinding(ctx context.Context, agent AgentRe
 		return nil, fmt.Errorf("warden: empty response")
 	}
 	return parseWardenVerdicts(resp.Content), nil
+}
+
+// wardenToolInPlay names the tool this check is about, or "" when the check is
+// not about a tool call at all (pre_input, pre_output, periodic — those judge
+// a request or a reply).
+func wardenToolInPlay(hookPoint, candidate string) string {
+	if hookPoint != guardHookPreAction {
+		return ""
+	}
+	return guardrailCandidateTool(candidate)
+}
+
+// rulesForTool keeps the rules in play for a check about toolName.
+func rulesForTool(rules []guardrailRule, toolName string) []guardrailRule {
+	var out []guardrailRule
+	for _, r := range rules {
+		if ruleAppliesToTool(r, toolName) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // parseWardenVerdicts extracts the verdict list from the warden's reply,

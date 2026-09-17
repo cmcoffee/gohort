@@ -4806,7 +4806,7 @@
           // carve-out; "@name" links one of the owner's named exceptions, and a
           // rule may carry several.
           var G_BLOCK = 'block', G_RECOVER = 'recover', G_APPEAL = 'appeal';
-          var G_MARKER_RE = /^\s*(?:[?!~]|@[a-z0-9_-]*)\s*/i;
+          var G_MARKER_RE = /^\s*(?:[?!~]|@[a-z0-9_-]*|#[a-z0-9_]*)\s*/i;
           // Consume the whole leading RUN of markers. Reading only the first is
           // the bug that broke "~" when it shipped, and with "@name" links a
           // rule routinely carries three or four.
@@ -4839,9 +4839,17 @@
             return out;
           }
           function gBody(s) { return String(s || '').slice(gMarkers(s).length); }
-          function gCompose(body, mode, exempt, links) {
+          // The ONE tool this rule is about, or '' for a rule about conduct
+          // generally. A bare '#' names nothing and binds nothing — the safe
+          // reading, matching the server.
+          function gTool(s) {
+            var m = String(gMarkers(s) || '').match(/#([a-z0-9_]+)/i);
+            return m ? m[1].toLowerCase() : '';
+          }
+          function gCompose(body, mode, exempt, links, tool) {
             var pre = exempt ? '@' : '';
             (links || []).forEach(function(l) { pre += '@' + (l.off ? '-' : '') + l.name; });
+            if (tool) { pre += '#' + tool; }
             if (mode === G_RECOVER) { pre += '?'; }
             else if (mode === G_APPEAL) { pre += '~'; }
             return pre ? pre + ' ' + body : body;
@@ -4851,6 +4859,10 @@
           }
           // Declared up here, not beside its editor below, because renderG()
           // reads it while drawing each rule's link button.
+          // Filled by the guardrails fetch below. Empty until it lands, which
+          // only means a rule's picker offers just what it is already bound to
+          // for a moment — never that a binding is dropped.
+          var gToolChoices = [];
           var gexceptions = (agent.guardrail_exceptions || []).slice();
           // Legacy roster entries surface as person items, matching what the
           // server does on read — so an owner who typed a roster before items
@@ -4911,7 +4923,7 @@
             // reopened the whole dialog to refresh, which looked like a glitch
             // and lost your place in the list.
             function commit() {
-              grules[idx] = gCompose(gBody(grules[idx]), gMode(grules[idx]), builtin, chosen);
+              grules[idx] = gCompose(gBody(grules[idx]), gMode(grules[idx]), builtin, chosen, gTool(grules[idx]));
               renderG();
             }
             window.uiOpenModal({
@@ -5078,7 +5090,7 @@
               // Re-read the marker from the stored line on every keystroke rather
               // than closing over it: the toggle below rewrites grules[idx], and a
               // captured copy would put the stale severity back.
-              input.addEventListener('input', function() { grules[idx] = gCompose(input.value, gMode(grules[idx]), gExempt(grules[idx]), gLinks(grules[idx])); });
+              input.addEventListener('input', function() { grules[idx] = gCompose(input.value, gMode(grules[idx]), gExempt(grules[idx]), gLinks(grules[idx]), gTool(grules[idx])); });
               var term = document.createElement('button');
               term.type = 'button';
               term.className = 'ui-orch-list-del';
@@ -5087,7 +5099,7 @@
                 gModeStyle[gMode(text)];
               term.title = gModeTitle[gMode(text)];
               term.onclick = function() {
-                grules[idx] = gCompose(gBody(grules[idx]), gNextMode(gMode(grules[idx])), gExempt(grules[idx]), gLinks(grules[idx]));
+                grules[idx] = gCompose(gBody(grules[idx]), gNextMode(gMode(grules[idx])), gExempt(grules[idx]), gLinks(grules[idx]), gTool(grules[idx]));
                 renderG();
               };
               // Separate control, not a fourth position in the cycle: a rule can
@@ -5126,10 +5138,48 @@
                 exempt.style.cssText = 'width:auto;padding:0 0.45rem;font-size:0.75rem;font-weight:600;color:var(--text-mute);border-color:var(--accent,#6366f1);opacity:0.8';
               }
               exempt.onclick = function() { openExceptionPicker(idx); };
+              // Which tool this rule is about. A SELECT, never a text field: a
+              // mistyped carve-out name makes a rule stronger (it excepts
+              // nobody), but a mistyped tool name would bind the rule to
+              // nothing and stop it being judged anywhere — so the name can
+              // only ever be one the agent can actually call. The server
+              // refuses an unknown one on save for the same reason.
+              var boundTool = gTool(text);
+              var toolSel = document.createElement('select');
+              toolSel.className = 'ui-orch-list-del';
+              toolSel.style.cssText = 'width:auto;max-width:9rem;padding:0 0.35rem;font-size:0.7rem;' +
+                (boundTool ? 'color:var(--accent,#6366f1);border-color:var(--accent,#6366f1)' : 'color:var(--text-mute);opacity:0.6');
+              toolSel.title = boundTool
+                ? 'This rule is judged only when the agent uses ' + boundTool + ', and it is not judged against what the agent SAYS. If it forbids every use of that tool, the tool is taken out of the agent\'s catalog entirely.'
+                : 'Applies to everything this agent does. Pick a tool to judge this rule only when that tool is used — cheaper, and it stops the rule being applied to replies that merely mention the subject.';
+              var anyOpt = document.createElement('option');
+              anyOpt.value = ''; anyOpt.textContent = 'any action';
+              toolSel.appendChild(anyOpt);
+              // A binding whose tool the agent can no longer call is kept in
+              // the list and flagged, never silently dropped: the rule IS
+              // enforced nowhere, and that has to be visible rather than
+              // corrected behind the owner's back.
+              var choices = gToolChoices.slice();
+              if (boundTool && choices.indexOf(boundTool) < 0) { choices.unshift(boundTool); }
+              choices.forEach(function(n) {
+                var o = document.createElement('option');
+                o.value = n; o.textContent = n;
+                if (gToolChoices.indexOf(n) < 0) { o.textContent = n + ' (not available)'; }
+                toolSel.appendChild(o);
+              });
+              toolSel.value = boundTool;
+              if (boundTool && gToolChoices.length && gToolChoices.indexOf(boundTool) < 0) {
+                toolSel.style.cssText = 'width:auto;max-width:9rem;padding:0 0.35rem;font-size:0.7rem;color:var(--danger);border-color:var(--danger)';
+                toolSel.title = 'This rule is bound to ' + boundTool + ', which this agent cannot call — so the rule is enforced nowhere. Pick another tool, or "any action".';
+              }
+              toolSel.addEventListener('change', function() {
+                grules[idx] = gCompose(gBody(grules[idx]), gMode(grules[idx]), gExempt(grules[idx]), gLinks(grules[idx]), toolSel.value);
+                renderG();
+              });
               var del = document.createElement('button');
               del.className = 'ui-orch-list-del'; del.type = 'button'; del.textContent = '×';
               del.onclick = function() { grules.splice(idx, 1); renderG(); };
-              row.appendChild(input); row.appendChild(term); row.appendChild(exempt); row.appendChild(del);
+              row.appendChild(input); row.appendChild(toolSel); row.appendChild(term); row.appendChild(exempt); row.appendChild(del);
               gList.appendChild(row);
             });
             var addBtn = document.createElement('button');
@@ -5563,6 +5613,72 @@
           // belongs next to the guardrail, not in a separate console — and on a
           // channel this is the only place it can be reviewed at all, because
           // the conversation happened on somebody else's phone.
+          // Tools a rule took away. Its own section, above the block log,
+          // because it is not a log: it is the CURRENT state of what this
+          // agent can do, and the one place the answer to "why can it no
+          // longer do that" lives.
+          var scopeWrap = document.createElement('div');
+          scopeWrap.style.cssText = 'margin-top:0.7rem';
+          var scopeLbl = document.createElement('div');
+          scopeLbl.style.cssText = 'font-size:0.8rem;color:var(--text-mute);margin-bottom:0.25rem';
+          scopeLbl.textContent = 'Tools your rules removed:';
+          scopeWrap.appendChild(scopeLbl);
+          var scopeBody = document.createElement('div');
+          scopeWrap.appendChild(scopeBody);
+          gWrap.appendChild(scopeWrap);
+          // Set when the owner presses Restore; sent with the next Save.
+          var clearToolScopes = false;
+
+          function renderToolScopes(scopes) {
+            scopeBody.innerHTML = '';
+            scopes = scopes || [];
+            var withheld = scopes.filter(function(s) { return s && s.scope === 'all'; });
+            if (!withheld.length) {
+              var none = document.createElement('div');
+              none.className = 'ui-orch-modal-help';
+              none.textContent = 'None. When a rule stops a tool call, the framework asks once whether that rule forbids EVERY use of that tool. If it does, the tool stops being offered to this agent — so it does not keep reaching for something it can never use — and it is listed here.';
+              scopeBody.appendChild(none);
+              return;
+            }
+            scopeLbl.textContent = 'Tools your rules removed (' + withheld.length + '):';
+            var list = document.createElement('div');
+            list.style.cssText = 'display:flex;flex-direction:column;gap:0.35rem;max-height:10rem;overflow-y:auto';
+            withheld.forEach(function(s) {
+              var row = document.createElement('div');
+              row.style.cssText = 'font-size:0.78rem;line-height:1.4;padding:0.35rem 0.5rem;border:1px solid var(--border);border-radius:4px';
+              var name = document.createElement('div');
+              name.textContent = s.tool || '(tool)';
+              name.style.cssText = 'font-weight:600';
+              row.appendChild(name);
+              var sub = document.createElement('div');
+              sub.style.cssText = 'color:var(--text-mute);margin-top:0.1rem';
+              sub.textContent = 'removed by: ' + (s.rule || '(rule)') + (s.why ? ' — ' + s.why : '');
+              row.appendChild(sub);
+              list.appendChild(row);
+            });
+            scopeBody.appendChild(list);
+            var restore = document.createElement('button');
+            restore.type = 'button';
+            restore.className = 'ui-orch-btn';
+            restore.style.cssText = 'margin-top:0.35rem';
+            restore.textContent = 'Restore these tools';
+            restore.addEventListener('click', function() {
+              clearToolScopes = true;
+              renderToolScopes([]);
+              scopeBody.appendChild(Object.assign(document.createElement('div'), {
+                className: 'ui-orch-modal-help',
+                textContent: 'Will be restored when you Save. If a rule really does forbid every use of one, it will be removed again the next time this agent reaches for it — edit or delete the rule to change that for good.',
+              }));
+            });
+            scopeBody.appendChild(restore);
+            var help = document.createElement('div');
+            help.className = 'ui-orch-modal-help';
+            help.style.cssText = 'margin-top:0.3rem';
+            help.textContent = 'Editing or deleting the rule brings its tool back on its own. Turning enforcement off brings them all back.';
+            scopeBody.appendChild(help);
+          }
+          renderToolScopes([]);
+
           var recWrap = document.createElement('div');
           recWrap.style.cssText = 'margin-top:0.7rem';
           var recLbl = document.createElement('div');
@@ -5583,6 +5699,11 @@
               // that was already being fetched rather than costing a second one.
               scanCovers = (d && d.scan_covers) || [];
               renderCovers();
+              // Before the block log's early return below, or an agent with no
+              // blocks yet would never see this section at all.
+              renderToolScopes((d && d.tool_scopes) || []);
+              gToolChoices = (d && d.tool_choices) || [];
+              renderG(); // the rule rows can now offer the real tool list
               var recent = (d && d.recent) || [];
               recBody.innerHTML = '';
               if (!recent.length) {
@@ -5920,6 +6041,7 @@
               return fetch('api/agents/' + encodeURIComponent(id) + '/guardrails', {
                 method: 'POST', headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({guardrails: gclean.join('\n'), hooks: hooks, fail_closed: !!failCb.checked, declines: declines, disabled: !!guardrailsOff, exceptions: gexceptions,
+                  clear_tool_scopes: clearToolScopes,
                   // Scanning rides this save because it is owner-only and
                   // protected the same way — NOT because it is a rule. It is
                   // sent even when off and even with no rules written, which is

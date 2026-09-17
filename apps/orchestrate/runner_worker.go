@@ -219,6 +219,20 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 				cur.ID, len(dropped), dropped)
 		}
 	}
+	// A worker step runs as the same agent and is bound by the same rules, so
+	// it loses the same tools. Names kept in step: the log below is what gets
+	// read when a tool is missing, and a name list that disagrees with the
+	// catalog is worse than no list.
+	if withheld := t.guardrailWithheldTools(); len(withheld) > 0 {
+		tools = t.applyGuardrailToolWithholding(tools)
+		kept := toolNames[:0]
+		for _, n := range toolNames {
+			if _, gone := withheld[n]; !gone {
+				kept = append(kept, n)
+			}
+		}
+		toolNames = kept
+	}
 	Log("[orchestrate.tools] step %d resolved %d tools: %v",
 		cur.ID, len(tools), toolNames)
 
