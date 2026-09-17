@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -100,6 +101,15 @@ type SkillRecord struct {
 	// the skill is delivered (read_skill / skill_knowledge_search), never in
 	// unrelated turns. Empty by default; most skills carry no code.
 	Tools []TempTool `json:"tools,omitempty"`
+	// Playbook is the skill's conditional behaviour, declared: rules of the
+	// form "establish Y, then Z if it holds, U if not". A rule's fact is
+	// ESTABLISHED by the framework when the skill is consulted — a
+	// one-phase run with the skill's tools and a declared output — and only
+	// the arm that applies is handed to the model, so Y is settled before Z
+	// or U can start and the model never sees the branch it did not earn.
+	// Instructions carry the prose that does not branch; this carries what
+	// does. Validated on save (PlaybookProblems); empty for most skills.
+	Playbook []PlaybookRule `json:"playbook,omitempty"`
 	// Embedding is cached at save time so the classifier doesn't
 	// have to re-embed on every turn. Re-computed in SaveSkill from
 	// the current Description. Persisted with the record so reloads
@@ -107,6 +117,253 @@ type SkillRecord struct {
 	Embedding []float32 `json:"embedding,omitempty"`
 	Created   time.Time `json:"created"`
 	Updated   time.Time `json:"updated"`
+}
+
+// PlaybookRule is one conditional in a skill's playbook.
+//
+// The rule an author would otherwise write as a sentence — "when asked about
+// X, establish Y; if Y then Z, else U" — as data the framework can enforce.
+// When names the turns it applies to, matched like the skill's triggers;
+// empty means every time the skill is consulted. Fact is what to establish
+// and How is the instruction for establishing it; the framework runs that as
+// a step with the skill's tools and a declared output of Type: "bool" (the
+// default) or "choice" over Values. Then and Else are the arms of a bool;
+// Cases maps each value of a choice to its arm. An arm is prose the model is
+// then told to follow, or — through ThenRule, ElseRule and CaseRules —
+// another rule, which establishes its own fact first. Two levels deep at
+// most: beyond that it is a machine, and the author should write one.
+type PlaybookRule struct {
+	When      []string                 `json:"when,omitempty"`
+	Fact      string                   `json:"fact"`
+	How       string                   `json:"how"`
+	Type      string                   `json:"type,omitempty"`
+	Values    []string                 `json:"values,omitempty"`
+	Then      string                   `json:"then,omitempty"`
+	Else      string                   `json:"else,omitempty"`
+	Cases     map[string]string        `json:"cases,omitempty"`
+	ThenRule  *PlaybookRule            `json:"then_rule,omitempty"`
+	ElseRule  *PlaybookRule            `json:"else_rule,omitempty"`
+	CaseRules map[string]*PlaybookRule `json:"case_rules,omitempty"`
+}
+
+// playbookMaxDepth bounds nesting: a rule inside a rule is allowed, a rule
+// inside that is a machine wearing a playbook's clothes.
+const playbookMaxDepth = 2
+
+// The two fact types.
+const (
+	playbookBool   = "bool"
+	playbookChoice = "choice"
+)
+
+// playbookEstablishPhase is the name of the one phase a rule compiles to,
+// and the MachineState key its fact lands under.
+const playbookEstablishPhase = "establish"
+
+// kind normalizes Type: empty is bool.
+func (r PlaybookRule) kind() string {
+	if strings.TrimSpace(r.Type) == "" {
+		return playbookBool
+	}
+	return strings.ToLower(strings.TrimSpace(r.Type))
+}
+
+// Problems lists what is wrong with the rule, each prefixed with path so a
+// nested rule's problem says where it is. Empty when the rule is sound.
+func (r PlaybookRule) Problems(path string, depth int) []string {
+	var probs []string
+	at := func(msg string) { probs = append(probs, path+": "+msg) }
+	if depth > playbookMaxDepth {
+		at("nested more than " + strconv.Itoa(playbookMaxDepth) + " levels deep — past that it is a machine, and the author should write one")
+		return probs
+	}
+	fact := strings.TrimSpace(r.Fact)
+	switch {
+	case fact == "":
+		at("fact is required — the name of what the rule establishes")
+	case strings.ContainsAny(fact, " ."):
+		at("fact must be one word with no spaces or dots (it is a field name), got " + strconv.Quote(fact))
+	}
+	if strings.TrimSpace(r.How) == "" {
+		at("how is required — the instruction for establishing the fact")
+	}
+	armText := func(arm string) bool { return strings.TrimSpace(arm) != "" }
+	switch r.kind() {
+	case playbookBool:
+		if len(r.Values) > 0 || len(r.Cases) > 0 || len(r.CaseRules) > 0 {
+			at("values and cases belong to a choice rule; a bool rule has then and else")
+		}
+		if armText(r.Then) && r.ThenRule != nil {
+			at("then is both prose and a rule — an arm is one or the other")
+		}
+		if armText(r.Else) && r.ElseRule != nil {
+			at("else is both prose and a rule — an arm is one or the other")
+		}
+		if !armText(r.Then) && r.ThenRule == nil && !armText(r.Else) && r.ElseRule == nil {
+			at("a bool rule needs at least one arm: then, else, then_rule or else_rule")
+		}
+		if r.ThenRule != nil {
+			probs = append(probs, r.ThenRule.Problems(path+".then_rule", depth+1)...)
+		}
+		if r.ElseRule != nil {
+			probs = append(probs, r.ElseRule.Problems(path+".else_rule", depth+1)...)
+		}
+	case playbookChoice:
+		if len(r.Values) < 2 {
+			at("a choice rule needs at least two values")
+		}
+		if armText(r.Then) || armText(r.Else) || r.ThenRule != nil || r.ElseRule != nil {
+			at("then and else belong to a bool rule; a choice rule has cases")
+		}
+		seen := map[string]bool{}
+		for _, v := range r.Values {
+			v = strings.ToLower(strings.TrimSpace(v))
+			if v == "" || seen[v] {
+				at("values must be distinct and non-empty")
+				break
+			}
+			seen[v] = true
+		}
+		covered := 0
+		for _, v := range r.Values {
+			text, hasText := r.Cases[v]
+			rule, hasRule := r.CaseRules[v]
+			hasText = hasText && strings.TrimSpace(text) != ""
+			hasRule = hasRule && rule != nil
+			if hasText && hasRule {
+				at("case " + strconv.Quote(v) + " is both prose and a rule — an arm is one or the other")
+			}
+			if hasText || hasRule {
+				covered++
+			}
+			if hasRule {
+				probs = append(probs, rule.Problems(path+".case_rules."+v, depth+1)...)
+			}
+		}
+		if covered == 0 {
+			at("a choice rule needs an arm for at least one of its values (cases or case_rules)")
+		}
+		for v := range r.Cases {
+			if !seen[strings.ToLower(strings.TrimSpace(v))] {
+				at("cases names " + strconv.Quote(v) + ", which is not one of the values")
+			}
+		}
+	default:
+		at("type must be \"bool\" (the default) or \"choice\", got " + strconv.Quote(r.Type))
+	}
+	return probs
+}
+
+// PlaybookProblems validates every rule of the skill's playbook.
+func (s SkillRecord) PlaybookProblems() []string {
+	var probs []string
+	for i, r := range s.Playbook {
+		probs = append(probs, r.Problems("rule "+strconv.Itoa(i+1), 1)...)
+	}
+	return probs
+}
+
+// Machine compiles the rule's establishing step to a one-phase unattended
+// machine: the skill's tools, thinking on, and the fact as a declared,
+// required output. Running it through the ordinary machine host is what
+// makes the fact a decoded field rather than a claim in prose.
+func (r PlaybookRule) Machine(skill SkillRecord) MachineDef {
+	fact := strings.TrimSpace(r.Fact)
+	field := PipelineField{Name: fact, Required: true}
+	prompt := "Establish ONE thing and report it; do not answer the person's question here, and do not go past what is asked.\n\n" +
+		"What to establish: " + fact + "\n\nHow: " + strings.TrimSpace(r.How) + "\n\n"
+	switch r.kind() {
+	case playbookChoice:
+		field.Type = FieldString
+		field.Desc = "exactly one of: " + strings.Join(r.Values, ", ")
+		prompt += "Use the tools you have to check, then report " + fact + " as exactly one of: " + strings.Join(r.Values, ", ") + ". If what you find fits none of them, say which is closest and why in your text, and report the closest."
+	default:
+		field.Type = FieldBool
+		field.Desc = "true or false"
+		prompt += "Use the tools you have to check, then report " + fact + " as true or false. Report what the evidence shows, not what would be convenient; if you could not check, say so in your text and report false."
+	}
+	prompt += "\n\nThe person's message, for context:\n\n{input}"
+	return MachineDef{
+		Name:        skill.Name + " playbook: " + fact,
+		Description: "Establishes " + fact + " for the " + skill.Name + " skill.",
+		Start:       playbookEstablishPhase,
+		Unattended:  true,
+		Phases: []MachinePhase{{
+			Name:   playbookEstablishPhase,
+			Desc:   "Establishing " + fact,
+			Prompt: prompt,
+			Think:  "on",
+			Tools:  append([]string(nil), skill.AllowedTools...),
+			Output: []PipelineField{field},
+		}},
+	}
+}
+
+// Decide reads the established value and picks the arm. value is the
+// decoded field (a bool, or a string for either kind — a model that writes
+// "yes" has still answered). Returns the value as it will be shown, the arm's
+// prose, the nested rule if the arm is one, and ok=false when the value does
+// not decide anything (not a bool, not one of the values).
+func (r PlaybookRule) Decide(value any) (shown, arm string, next *PlaybookRule, ok bool) {
+	switch r.kind() {
+	case playbookChoice:
+		s := strings.ToLower(strings.TrimSpace(fmt.Sprint(value)))
+		for _, v := range r.Values {
+			if strings.EqualFold(strings.TrimSpace(v), s) {
+				return v, r.Cases[v], r.CaseRules[v], true
+			}
+		}
+		return s, "", nil, false
+	default:
+		var b bool
+		switch v := value.(type) {
+		case bool:
+			b = v
+		case string:
+			switch strings.ToLower(strings.TrimSpace(v)) {
+			case "true", "yes", "y":
+				b = true
+			case "false", "no", "n":
+				b = false
+			default:
+				return v, "", nil, false
+			}
+		default:
+			return fmt.Sprint(value), "", nil, false
+		}
+		if b {
+			return "true", r.Then, r.ThenRule, true
+		}
+		return "false", r.Else, r.ElseRule, true
+	}
+}
+
+// Fallback renders the rule as prose for when the fact could not be
+// established by the framework: the model is told to establish it itself,
+// and is given every arm with its condition. Less than enforcement, more
+// than silence.
+func (r PlaybookRule) Fallback() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Establish %s first: %s\n", strings.TrimSpace(r.Fact), strings.TrimSpace(r.How))
+	arm := func(label, text string, rule *PlaybookRule) {
+		if rule != nil {
+			fmt.Fprintf(&b, "- %s: then %s", label, rule.Fallback())
+			return
+		}
+		if strings.TrimSpace(text) != "" {
+			fmt.Fprintf(&b, "- %s: %s\n", label, strings.TrimSpace(text))
+		}
+	}
+	switch r.kind() {
+	case playbookChoice:
+		for _, v := range r.Values {
+			arm("if "+v, r.Cases[v], r.CaseRules[v])
+		}
+	default:
+		arm("if true", r.Then, r.ThenRule)
+		arm("if false", r.Else, r.ElseRule)
+	}
+	return b.String()
 }
 
 // LoadSkills returns every skill in the user's pool, ordered by
@@ -164,6 +421,9 @@ func SaveSkill(db Database, username string, s SkillRecord) (SkillRecord, error)
 	}
 	s.Owner = username
 	s.Updated = time.Now()
+	if probs := s.PlaybookProblems(); len(probs) > 0 {
+		return SkillRecord{}, errString("playbook: " + strings.Join(probs, "; "))
+	}
 	// Description-embedding removed. Was used by the cosine
 	// gatekeeper / fuzzy classifier that auto-fired skills; with
 	// activation now exclusively LLM-driven via activate_skill, the
@@ -289,9 +549,28 @@ func RenderAvailableSkills(skills []SkillRecord) string {
 			b.WriteString(trig)
 			b.WriteString(")")
 		}
+		if facts := s.playbookFacts(); len(facts) > 0 {
+			// A playbook skill is worth consulting EARLY: consulting it runs
+			// the checks and hands back only what applies, which is cheaper
+			// than working the same thing out by hand and then being told.
+			b.WriteString(" (playbook: consulting it establishes ")
+			b.WriteString(strings.Join(facts, ", "))
+			b.WriteString(" for you and tells you what follows — consult before working it out yourself)")
+		}
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// playbookFacts lists the top-level facts a skill's playbook establishes.
+func (s SkillRecord) playbookFacts() []string {
+	var out []string
+	for _, r := range s.Playbook {
+		if f := strings.TrimSpace(r.Fact); f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // SkillTriggersMatch reports whether a skill's Triggers match this turn: a
@@ -512,11 +791,17 @@ func AttachDeliveredSkillTools(sess *ToolSession, db Database, user string, deli
 // just wants the skill's approach (a PDF-handling method, an output
 // format). Marks the skill delivered so the search tool won't repeat the
 // instructions.
-func BuildReadSkillTool(db Database, owner string, allowed []string, delivered map[string]bool) AgentToolDef {
+//
+// playbook, when set, resolves a skill's playbook for this turn — runs each
+// rule's establishing step and renders only the arm that applies — and its
+// result is appended to the instructions. The app supplies it because
+// establishing a fact runs a step through the turn's machine host, which
+// core does not have; nil leaves playbooks unresolved.
+func BuildReadSkillTool(db Database, owner string, allowed []string, delivered map[string]bool, playbook func(SkillRecord) string) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "read_skill",
-			Description: "Pull a named skill's instructions/approach into this turn and apply them now. Use when you want the skill's METHOD itself (how to handle a PDF, an output format, a voice) — not to search its knowledge (that's skill_knowledge_search). One-shot: it returns the instructions; there's nothing to activate or turn off.",
+			Description: "Pull a named skill's instructions/approach into this turn and apply them now. Use when you want the skill's METHOD itself (how to handle a PDF, an output format, a voice) — not to search its knowledge (that's skill_knowledge_search). One-shot: it returns the instructions; there's nothing to activate or turn off. A skill with a playbook also ESTABLISHES its facts when read — the reply tells you what was found and what follows from it, so read it before working those out yourself.",
 			Parameters: map[string]ToolParam{
 				"skill": {Type: "string", Description: "Exact skill name from the 'Available skills' block (case-insensitive).", Enum: allowedSkillNames(db, owner, allowed)},
 			},
@@ -532,10 +817,18 @@ func BuildReadSkillTool(db Database, owner string, allowed []string, delivered m
 			if delivered != nil {
 				delivered[found.ID] = true
 			}
-			if body == "" {
+			resolved := ""
+			if playbook != nil && len(found.Playbook) > 0 {
+				resolved = strings.TrimSpace(playbook(*found))
+			}
+			if body == "" && resolved == "" {
 				return fmt.Sprintf("Skill %q has no instructions body — its value is its knowledge sources (use skill_knowledge_search).", found.Name), nil
 			}
-			return fmt.Sprintf("Skill %q — apply this approach for the REST of this turn, including your reply:\n\n%s", found.Name, body), nil
+			out := fmt.Sprintf("Skill %q — apply this approach for the REST of this turn, including your reply:\n\n%s", found.Name, body)
+			if resolved != "" {
+				out += "\n\n" + resolved
+			}
+			return out, nil
 		},
 	}
 }

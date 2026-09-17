@@ -330,6 +330,7 @@ func (pr *planRun) assemblePrompt() {
 	// turn re-prefilled ~16k instead of reusing the cached prefix). Keeping
 	// sys byte-stable lets turns 2+ reuse the prefix; the hints also belong
 	// next to the user message (highest salience) per their own design intent.
+	t.playbookMsg = pr.triggerMsg
 	pr.turnContext = t.renderTriggeredSkills()
 	// full instructions for skills already consulted
 	pr.turnContext += t.renderSkillTriggerHints(pr.triggerMsg)

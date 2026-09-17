@@ -2,6 +2,7 @@ package admin
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -155,8 +156,8 @@ func (a *AdminApp) registerSkillsRoutes(sub *http.ServeMux) {
 				w.WriteHeader(http.StatusNoContent)
 				return
 			}
-			var body SkillRecord
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			body, err := decodeSkillBody(r)
+			if err != nil {
 				http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
 				return
 			}
@@ -242,12 +243,22 @@ func (a *AdminApp) registerSkillsRoutes(sub *http.ServeMux) {
 					AttachedCollections []string `json:"attached_collections"`
 					Instructions        string   `json:"instructions"`
 					Disabled            bool     `json:"disabled"`
+					// The playbook travels as text: the editor is a textarea,
+					// and the save handler parses it back (decodeSkillBody).
+					PlaybookText string `json:"playbook_text"`
+				}
+				pb := ""
+				if len(s.Playbook) > 0 {
+					if raw, err := json.MarshalIndent(s.Playbook, "", "  "); err == nil {
+						pb = string(raw)
+					}
 				}
 				_ = json.NewEncoder(w).Encode(wire{
 					ID: s.ID, Name: s.Name, Description: s.Description,
 					Triggers: s.Triggers, AllowedTools: s.AllowedTools,
 					AttachedCollections: s.AttachedCollections,
 					Instructions:        s.Instructions, Disabled: s.Disabled,
+					PlaybookText: pb,
 				})
 				return
 			}
@@ -293,4 +304,40 @@ func (a *AdminApp) registerSkillsRoutes(sub *http.ServeMux) {
 		_ = json.NewEncoder(w).Encode(out)
 	})
 
+}
+
+// decodeSkillBody reads a skill from the request. The editor sends the
+// playbook as playbook_text, a JSON array in a textarea; an empty text clears
+// it, and a body with neither key (a chip picker posting an older record)
+// leaves the field to the record's own decoding.
+func decodeSkillBody(r *http.Request) (SkillRecord, error) {
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		return SkillRecord{}, err
+	}
+	if pt, ok := raw["playbook_text"]; ok {
+		var text string
+		if err := json.Unmarshal(pt, &text); err != nil {
+			return SkillRecord{}, err
+		}
+		delete(raw, "playbook_text")
+		if strings.TrimSpace(text) == "" {
+			delete(raw, "playbook")
+		} else {
+			var rules []PlaybookRule
+			if err := json.Unmarshal([]byte(text), &rules); err != nil {
+				return SkillRecord{}, fmt.Errorf("playbook is not a JSON array of rules: %w", err)
+			}
+			raw["playbook"] = json.RawMessage(text)
+		}
+	}
+	merged, err := json.Marshal(raw)
+	if err != nil {
+		return SkillRecord{}, err
+	}
+	var body SkillRecord
+	if err := json.Unmarshal(merged, &body); err != nil {
+		return SkillRecord{}, err
+	}
+	return body, nil
 }

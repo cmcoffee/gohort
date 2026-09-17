@@ -38,6 +38,12 @@ func (t *chatTurn) renderTriggeredSkills() string {
 			continue
 		}
 		b.WriteString(SkillPromptSection(s))
+		// A consulted skill's playbook rides with its instructions into
+		// every later round, resolved once (playbookBlock caches).
+		if block := t.playbookBlock(t.ctx, s); block != "" {
+			b.WriteString("\n\n")
+			b.WriteString(block)
+		}
 	}
 	return b.String()
 }
@@ -561,7 +567,9 @@ func (t *chatTurn) skillToolDefs() []AgentToolDef {
 	}
 	allowed := t.agent.AllowedSkills
 	return []AgentToolDef{
-		BuildReadSkillTool(t.udb, t.user, allowed, t.deliveredSkills),
+		BuildReadSkillTool(t.udb, t.user, allowed, t.deliveredSkills, func(s SkillRecord) string {
+			return t.playbookBlock(t.ctx, s)
+		}),
 		BuildSkillKnowledgeSearchTool(t.udb, t.user, allowed, t.deliveredSkills,
 			func(skill SkillRecord, query string) string {
 				res, _ := t.knowledgeToolDefScoped([]SkillRecord{skill}).Handler(t.ctx, map[string]any{"query": query})

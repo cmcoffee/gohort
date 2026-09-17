@@ -246,7 +246,14 @@ const (
 	// missing-vector one. Registered as maintenance functions from this
 	// package, so they could be unexported — but the existing pass is
 	// exported and tested by name, and three passes read as one set.
-	coreExportCeiling = 2181
+	//
+	// Raised 2181 -> 2182 for PlaybookRule, ONE type: a skill's declared
+	// conditional, a field on SkillRecord, which is declared here and is the
+	// portable recipe — an outbound TYPE edge, so it cannot leave with its
+	// user. Everything that validates, compiles and decides it is a method,
+	// which the count excludes; the resolver that runs it lives in
+	// orchestrate, where the machine host is.
+	coreExportCeiling = 2182
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

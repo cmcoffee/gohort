@@ -42,6 +42,8 @@ func (a *AdminApp) skillsSections() []ui.Section {
 										Help: "When ANY trigger matches the turn, the skill's instructions inject automatically (deterministic). A pattern with * or ? (e.g. *.pdf) matches attachment filenames; anything else is a case-insensitive substring of the message. Leave empty for a knowledge skill the LLM reaches for explicitly via skill_knowledge_search."},
 									{Field: "instructions", Type: "textarea", Label: "Instructions (markdown)", Rows: 10,
 										Help: "The skill's approach. Returned by read_skill, attached to the first skill_knowledge_search result, and injected when a trigger matches — the lens for applying the skill's knowledge."},
+									{Field: "playbook_text", Type: "textarea", Label: "Playbook (optional, JSON)", Rows: 8,
+										Help: "Conditional behaviour the framework ENFORCES: a JSON array of rules, each \"establish Y; if Y then Z, else U\". When the skill is consulted, each rule's fact is established by a step with the skill's tools, and the agent is handed only the arm that applies. Rule: {\"fact\": \"queue_draining\", \"how\": \"Read the consumer lag for the orders queue.\", \"then\": \"Look at the consumer.\", \"else\": \"Look at the broker.\"}. Optional: \"when\": [triggers]; \"type\": \"choice\" with \"values\" and \"cases\"; \"then_rule\" / \"else_rule\" to nest one level. Prose that does not branch belongs in Instructions."},
 								},
 							},
 							// Allowed tools — picker from the registered

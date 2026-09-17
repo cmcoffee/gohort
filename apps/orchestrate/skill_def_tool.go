@@ -59,6 +59,10 @@ func (skillDefImpl) Params() map[string]ToolParam {
 			Type:        "string",
 			Description: "(create / update) Markdown body that gets appended to the active agent's system prompt when this skill activates. Write it as additive guidance — \"when this kind of task comes up, also do X, Y, Z.\" The framework prepends an `## Skill: <name>` H2 header automatically.",
 		},
+		"playbook": {
+			Type:        "string",
+			Description: "(create / update) Optional. The skill's CONDITIONAL behaviour as a JSON array of rules, each \"establish Y; if Y then Z, else U\". When the skill is consulted the framework ESTABLISHES each rule's fact itself — a step with the skill's tools and a declared output — and hands the host agent only the arm that applies, so the condition is settled before either branch can start. Rule shape: {\"fact\": \"queue_draining\", \"how\": \"Read the consumer lag for the orders queue over the last five minutes.\", \"then\": \"Look at the consumer: its log, restart count, lag trend.\", \"else\": \"Look at the broker: connectivity from the consumer host, partition state, disk.\"}. Optional: \"when\": [triggers] to apply the rule only on matching turns; \"type\": \"choice\" with \"values\": [...] and \"cases\": {value: arm} for a many-way branch; \"then_rule\" / \"else_rule\" / \"case_rules\" to nest another rule (two levels max). Put prose that does not branch in instructions, not here. Pass \"[]\" to clear.",
+		},
 	}
 }
 
@@ -196,6 +200,10 @@ func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 	triggers := stringSliceFromArgs(args, "triggers")
 	allowedTools := stringSliceFromArgs(args, "allowed_tools")
 	attachedCollections := stringSliceFromArgs(args, "attached_collections")
+	playbook, hasPlaybook, err := playbookFromArgs(args)
+	if err != nil {
+		return "", err
+	}
 
 	// create_collection: mint a fresh empty collection for this skill and
 	// auto-link it, so authoring a skill + giving it a corpus is one step.
@@ -236,6 +244,10 @@ func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 		rec.ID = existing.ID
 		rec.Created = existing.Created
 		rec.Tools = existing.Tools // preserve already-bundled tools across an upsert
+		rec.Playbook = existing.Playbook
+	}
+	if hasPlaybook {
+		rec.Playbook = playbook
 	}
 	// Snapshot any allowed_tools that name a local session/persistent tool INTO
 	// the skill so it ships its own executable code (portable, self-contained).
@@ -355,8 +367,14 @@ func skillDefUpdate(args map[string]any, sess *ToolSession) (string, error) {
 		rec.AttachedCollections = stringSliceFromArgs(args, "attached_collections")
 		changed = append(changed, "attached_collections")
 	}
+	if playbook, has, err := playbookFromArgs(args); err != nil {
+		return "", err
+	} else if has {
+		rec.Playbook = playbook
+		changed = append(changed, "playbook")
+	}
 	if len(changed) == 0 {
-		return "", errors.New("nothing to update — pass at least one of description, instructions, triggers, allowed_tools, attached_collections")
+		return "", errors.New("nothing to update — pass at least one of description, instructions, triggers, allowed_tools, attached_collections, playbook")
 	}
 	saved, err := SaveSkill(sess.DB, sess.Username, rec)
 	if err != nil {
@@ -378,4 +396,32 @@ func skillDefDelete(args map[string]any, sess *ToolSession) (string, error) {
 		return "", fmt.Errorf("delete skill %q failed", name)
 	}
 	return fmt.Sprintf("Skill %q deleted.", name), nil
+}
+
+// playbookFromArgs reads the playbook argument: a JSON array of rules as a
+// string (the shape the tool declares), or an already-decoded array. has is
+// false when the argument was not passed; an empty array clears. The rules
+// are validated here so the error names the rule, not the save.
+func playbookFromArgs(args map[string]any) (rules []PlaybookRule, has bool, err error) {
+	raw, present := args["playbook"]
+	if !present {
+		return nil, false, nil
+	}
+	var data []byte
+	switch v := raw.(type) {
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return nil, true, nil
+		}
+		data = []byte(v)
+	default:
+		data, _ = json.Marshal(v)
+	}
+	if err := json.Unmarshal(data, &rules); err != nil {
+		return nil, true, fmt.Errorf("playbook must be a JSON array of rules: %w", err)
+	}
+	if probs := (SkillRecord{Playbook: rules}).PlaybookProblems(); len(probs) > 0 {
+		return nil, true, errors.New("playbook: " + strings.Join(probs, "; "))
+	}
+	return rules, true, nil
 }
