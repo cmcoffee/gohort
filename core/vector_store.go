@@ -1109,9 +1109,23 @@ func ListMaintenanceFuncs() []struct{ Group, Key, Label, Desc string } {
 type maintenanceKeyCtx struct{}
 
 var maintenanceProgress struct {
-	mu sync.Mutex
-	at map[string]string
+	mu   sync.Mutex
+	at   map[string]string
+	done map[string]maintenanceOutcome
 }
+
+// maintenanceOutcome is how a finished pass ended, kept for a while after it
+// stops. The run outlives the page that started it, so somebody who closed
+// the tab and came back would otherwise find no trace of what happened —
+// which reads as "it never ran" rather than "it finished".
+type maintenanceOutcome struct {
+	line string
+	at   time.Time
+}
+
+// maintenanceOutcomeTTL is how long a finished pass's last word is kept. Long
+// enough to come back to; short enough that it does not read as live.
+const maintenanceOutcomeTTL = 15 * time.Minute
 
 // ReportMaintenanceProgress records where the running pass has got to, as one
 // short line for a person to read ("1,200 of 8,400 chunks"). No-op outside a
@@ -1138,11 +1152,32 @@ func MaintenanceProgress(key string) string {
 	return maintenanceProgress.at[key]
 }
 
-// clearMaintenanceProgress drops a finished pass's line, so a later reader
-// sees "not running" rather than the last thing the previous run said.
-func clearMaintenanceProgress(key string) {
+// MaintenanceOutcome returns how the pass last ENDED, within
+// maintenanceOutcomeTTL of it ending, or "" when there is nothing recent to
+// report. Read by a page that arrives after a run it did not start.
+func MaintenanceOutcome(key string) string {
 	maintenanceProgress.mu.Lock()
 	defer maintenanceProgress.mu.Unlock()
+	o, ok := maintenanceProgress.done[key]
+	if !ok || time.Since(o.at) > maintenanceOutcomeTTL {
+		return ""
+	}
+	return o.line
+}
+
+// finishMaintenanceProgress moves the pass from running to finished: its
+// last line becomes the outcome, so a reader who arrives late sees how it
+// ended rather than nothing at all.
+func finishMaintenanceProgress(key string, count int) {
+	maintenanceProgress.mu.Lock()
+	defer maintenanceProgress.mu.Unlock()
+	if maintenanceProgress.done == nil {
+		maintenanceProgress.done = map[string]maintenanceOutcome{}
+	}
+	maintenanceProgress.done[key] = maintenanceOutcome{
+		line: fmt.Sprintf("finished — %d record(s) changed", count),
+		at:   time.Now(),
+	}
 	delete(maintenanceProgress.at, key)
 }
 
@@ -1154,8 +1189,9 @@ func RunMaintenanceFunc(ctx context.Context, key string) int {
 			// The key on the context is what lets a pass report progress
 			// without every pass's signature knowing about progress.
 			ctx = context.WithValue(ctx, maintenanceKeyCtx{}, key)
-			defer clearMaintenanceProgress(key)
-			return m.Run(ctx)
+			n := m.Run(ctx)
+			finishMaintenanceProgress(key, n)
+			return n
 		}
 	}
 	return -1

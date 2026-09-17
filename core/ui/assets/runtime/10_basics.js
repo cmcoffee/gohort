@@ -1333,6 +1333,31 @@
         return fieldWrap;
       }
 
+      // Link field: a button that goes somewhere, rendered inside the form
+      // and contributing nothing to the payload. For the case a readonly
+      // field handles badly — a related page the person may want to open
+      // from here — where printing the URL as text and letting them copy it
+      // is not an affordance. The destination is the field's value on the
+      // loaded record, so the server decides where it goes.
+      if (t === 'link') {
+        if (f.label) fieldWrap.appendChild(el('label', {class: 'ui-form-label'}, [f.label]));
+        var href = (f.field && current[f.field]) ? String(current[f.field]) : String(f.default || '');
+        if (href && /^(https?:)?\/\//.test(href) === false && href.charAt(0) !== '/') href = '';
+        if (href) {
+          // text_field lets the record supply what the link SAYS, so a link
+          // can be the content itself — a list of rules that is also the way
+          // to edit them — rather than a button parked beside it.
+          var linkText = (f.text_field && current[f.text_field] != null && String(current[f.text_field]) !== '')
+            ? String(current[f.text_field]) : (f.placeholder || f.label || 'Open');
+          var a = el('a', {class: 'ui-row-btn', href: href}, [linkText]);
+          a.style.cssText = 'display:inline-block;text-decoration:none';
+          if (f.target) a.setAttribute('target', f.target);
+          fieldWrap.appendChild(a);
+        }
+        if (f.help) fieldWrap.appendChild(el('div', {class: 'ui-form-help'}, [f.help]));
+        return fieldWrap;
+      }
+
       // Hidden field: contributes its default to the save payload but
       // renders no visible input. Use for context-derived values the
       // page knows up front (e.g. "this new record is owned by X")
@@ -4413,16 +4438,29 @@
           // one shared verb.
           var itemBtnText = item.button || btnText;
           var itemConfirm = item.confirm || cfg.confirm;
-          var btn = el('button', {class: 'ui-row-btn', onclick: async function() {
-            if (itemConfirm && !(await window.uiConfirm(itemConfirm))) return;
-            var url = substitute(cfg.post_to, item);
-            btn.disabled = true;
-            // A spinner, not an ellipsis: a run that takes minutes has to look
-            // alive, and a static "…" is indistinguishable from a hung one.
-            // When the list names a progress source, poll it — a pass that
-            // reports where it is says so here, beside the spinner.
+          var purl = cfg.progress_source ? substitute(cfg.progress_source, item) : '';
+          var btn;
+
+          // The running display, as a thing that can be STARTED rather than a
+          // consequence of clicking.
+          //
+          // A run outlives the page that started it, so the page can arrive to
+          // find one already going — after a reload, in a second tab, or on
+          // coming back from somewhere else. Both entrances need the same
+          // spinner, the same live count and the same ending, so this is one
+          // function that either the click or the arrival probe begins. The
+          // earlier version painted the spinner inline in the click handler,
+          // which is why a returning page showed an idle row while the pass
+          // was still running.
+          //
+          // A spinner, not an ellipsis: a run that takes minutes has to look
+          // alive, and a static "…" is indistinguishable from a hung one.
+          var running = null; // {stop} while a run is being shown here
+          function showRunning(sinceMs, onDone) {
+            if (running) return running;
             var frames = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏', fi = 0, note = '';
-            var started = Date.now();
+            var started = sinceMs || Date.now();
+            btn.disabled = true;
             function paint() {
               var secs = Math.round((Date.now() - started) / 1000);
               status.textContent = frames[fi % frames.length] + ' ' +
@@ -4432,21 +4470,33 @@
             paint();
             var spin = setInterval(paint, 120);
             var poll = null;
-            if (cfg.progress_source) {
-              var purl = substitute(cfg.progress_source, item);
+            if (purl) {
               poll = setInterval(function() {
                 fetchJSON(purl).then(function(p) {
-                  if (p && typeof p.progress === 'string') note = p.progress;
+                  if (!p) return;
+                  if (typeof p.progress === 'string' && p.progress) { note = p.progress; return; }
+                  // Progress gone and an outcome in its place: the pass ended,
+                  // and this page is watching rather than waiting on a POST, so
+                  // nothing else will tell it.
+                  if (p.outcome && onDone) onDone(p.outcome);
                 }).catch(function(){});
               }, 1500);
             }
-            function stop() {
+            running = {stop: function() {
               clearInterval(spin);
               if (poll) clearInterval(poll);
-            }
-            fetchJSON(url, {method: cfg.method || 'POST'}).then(function(r) {
-              stop();
+              running = null;
               btn.disabled = false;
+            }};
+            return running;
+          }
+
+          btn = el('button', {class: 'ui-row-btn', onclick: async function() {
+            if (itemConfirm && !(await window.uiConfirm(itemConfirm))) return;
+            var url = substitute(cfg.post_to, item);
+            var run = showRunning(Date.now(), null);
+            fetchJSON(url, {method: cfg.method || 'POST'}).then(function(r) {
+              run.stop();
               // Prefer an explicit {message}; else surface a {fixed}/{removed}
               // digit; else a bare "done".
               if (r && typeof r === 'object' && r.message) {
@@ -4464,12 +4514,29 @@
               if (cfg.invalidate) window.uiInvalidate(cfg.invalidate);
               if (cfg.reload_self) load();
             }).catch(function(err) {
-              stop();
-              btn.disabled = false;
+              run.stop();
               status.textContent = '';
               showToast('Failed: ' + err.message);
             });
           }}, [itemBtnText]);
+
+          // On arrival: is one already running, and how did the last one end?
+          // A page that did not start the run has no POST to wait on, so this
+          // is the only way it learns either.
+          if (purl) {
+            fetchJSON(purl).then(function(p) {
+              if (!p || running) return;
+              if (p.progress) {
+                showRunning(Date.now(), function(outcome) {
+                  if (running) running.stop();
+                  status.textContent = outcome;
+                });
+              } else if (p.outcome) {
+                status.textContent = p.outcome;
+              }
+            }).catch(function(){});
+          }
+
           var row = el('div', {class: 'ui-actionlist-row'}, [
             el('div', {class: 'ui-actionlist-text'}, [
               // Render the label only when present — items that label their

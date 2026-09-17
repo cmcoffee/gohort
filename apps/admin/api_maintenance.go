@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -36,9 +37,15 @@ func (a *AdminApp) registerMaintenanceRoutes(sub *http.ServeMux) {
 		if !a.requireAdmin(w, r) {
 			return
 		}
+		key := r.URL.Query().Get("key")
 		w.Header().Set("Content-Type", "application/json")
+		// Two fields, because they answer different questions: progress is
+		// where a RUNNING pass has got to, outcome is how the last one ended.
+		// A page that arrives after a run it did not start has only the
+		// second, and showing nothing there reads as "it never ran".
 		json.NewEncoder(w).Encode(map[string]string{
-			"progress": MaintenanceProgress(r.URL.Query().Get("key")),
+			"progress": MaintenanceProgress(key),
+			"outcome":  MaintenanceOutcome(key),
 		})
 	})
 
@@ -76,7 +83,13 @@ func (a *AdminApp) registerMaintenanceRoutes(sub *http.ServeMux) {
 			http.Error(w, "missing key", http.StatusBadRequest)
 			return
 		}
-		count := RunMaintenanceFunc(r.Context(), key)
+		// The run outlives the request. A request context dies the moment the
+		// browser does, and the passes check it every iteration — so closing
+		// the tab used to stop a re-embed wherever it had got to, silently,
+		// which is exactly what the progress spinner invites you to do.
+		// WithoutCancel keeps the request's values (deadlines and identity
+		// for anything downstream) and drops only its cancellation.
+		count := RunMaintenanceFunc(context.WithoutCancel(r.Context()), key)
 		if count < 0 {
 			http.Error(w, "unknown maintenance function", http.StatusNotFound)
 			return

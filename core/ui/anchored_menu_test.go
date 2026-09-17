@@ -207,15 +207,36 @@ func TestActionListSpinsAndShowsProgress(t *testing.T) {
 	for _, want := range []string{
 		"var frames = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'",
 		"var spin = setInterval(paint, 120);",
-		"if (cfg.progress_source) {",
-		"if (p && typeof p.progress === 'string') note = p.progress;",
+		"if (typeof p.progress === 'string' && p.progress) { note = p.progress; return; }",
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("missing %q", want)
 		}
 	}
 	// Both timers stop on either outcome, or the row spins forever.
-	if strings.Count(src, "stop();") < 2 {
+	if strings.Count(src, "run.stop();") < 2 {
 		t.Error("the spinner and the poll must be cleared on success AND failure")
+	}
+}
+
+// A maintenance run outlives the page that started it, so a page arriving
+// mid-run REJOINS it: same spinner, same live count, and it notices the end
+// even though it has no POST to wait on. The first version painted the
+// spinner inline in the click handler, so a returning page showed an idle
+// row while the pass was still going.
+func TestActionListRejoinsARunInProgress(t *testing.T) {
+	src := readRuntimeFile(t, "10_basics.js")
+	if !strings.Contains(src, "function showRunning(sinceMs, onDone) {") {
+		t.Fatal("the running display must be startable, not a consequence of clicking")
+	}
+	// Both entrances use it: the click, and the arrival probe.
+	if strings.Count(src, "showRunning(") < 3 {
+		t.Error("the click and the arrival probe must share one running display")
+	}
+	if !strings.Contains(src, "if (p.outcome && onDone) onDone(p.outcome);") {
+		t.Error("a watching page must notice the run ending; nothing else tells it")
+	}
+	if !strings.Contains(src, "if (!p || running) return;") {
+		t.Error("the arrival probe must not fight a run this page already started")
 	}
 }
