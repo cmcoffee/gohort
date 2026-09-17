@@ -1,6 +1,7 @@
 package extensions
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -164,5 +165,28 @@ func TestSkillFormEditsThePlaybook(t *testing.T) {
 	}
 	if !strings.Contains(playbookEditorLine(SkillRecord{}), "No rules yet") {
 		t.Fatal("an empty playbook says so")
+	}
+}
+
+// The row carries a Playbook button beside Edit, and it navigates rather than
+// posting. A GET button is the runtime's navigation button; anything else
+// would fire a request at a page. Read from the source, the way this package
+// already checks its own table wiring (tool_flag_pills_test.go).
+func TestSkillRowHasAPlaybookButton(t *testing.T) {
+	raw, err := os.ReadFile("extensions.go")
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	src := string(raw)
+	if !strings.Contains(src, `{Type: "button", Label: "Playbook", Method: "GET",`) {
+		t.Error("no Playbook button on the skill row, or it is not a navigation button")
+	}
+	if !strings.Contains(src, `PostTo: "/extensions/skill-playbook?id={id}"`) {
+		t.Error("the Playbook button must point at the editor, absolutely")
+	}
+	// The cell goes back to a plain count: one door, not a cell that is
+	// secretly also a link.
+	if strings.Contains(src, `{Field: "playbook", Label: "Playbook", Link:`) {
+		t.Error("the column should be a count now; the button is the door")
 	}
 }

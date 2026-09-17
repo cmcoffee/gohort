@@ -834,10 +834,10 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 			Triggers    int    `json:"triggers"`
 			Disabled    bool   `json:"disabled"`
 			Updated     string `json:"updated,omitempty"`
-			// Playbook is the rule count as a label and PlaybookURL the editor
-			// for it, so the column links one to the other.
-			Playbook    string `json:"playbook"`
-			PlaybookURL string `json:"playbook_url"`
+			// Playbook is the rule count, as a label. The row's Playbook
+			// button carries the editor's address itself, so the list has no
+			// URL to send.
+			Playbook string `json:"playbook"`
 		}
 		rows := []row{}
 		for _, s := range LoadSkills(AuthDB(), user) {
@@ -854,7 +854,7 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 			rows = append(rows, row{
 				ID: s.ID, Name: s.Name, Description: s.Description,
 				Triggers: len(s.Triggers), Disabled: s.Disabled, Updated: updated,
-				Playbook: pb, PlaybookURL: playbookEditorURL(s.ID),
+				Playbook: pb,
 			})
 		}
 		writeJSON(w, rows)
@@ -1516,9 +1516,10 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 						{Field: "name", Flex: 1},
 						{Field: "description", Mute: true, Flex: 2},
 						{Field: "triggers", Label: "Triggers", Mute: true},
-						// Conditional rules the framework runs for this skill —
-						// "establish Y; if yes Z, if no U". Opens the editor.
-						{Field: "playbook", Label: "Playbook", Link: "playbook_url", Mute: true},
+						// How many conditional rules this skill carries. The
+						// Playbook button on the row opens them; a cell that is
+						// secretly also a link is a second door to the same place.
+						{Field: "playbook", Label: "Playbook", Mute: true},
 						{Field: "disabled", Label: "Status", Type: "dot", Badges: []ui.BadgeMapping{
 							{Value: true, Label: "Disabled", Color: "danger"},
 							{Value: false, Label: "Active", Color: "success"},
@@ -1535,6 +1536,13 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 							Fields:      userSkillFormFields(),
 							Invalidate:  []string{"api/skills"},
 						}),
+						// Straight to the visual editor for this skill's rules.
+						// Method GET is a navigation button in the runtime: no
+						// POST, no JSON, just go. Absolute, because the hub
+						// links to /extensions with no trailing slash and a
+						// relative href would resolve against the site root.
+						{Type: "button", Label: "Playbook", Method: "GET",
+							PostTo: "/extensions/skill-playbook?id={id}"},
 						{Type: "button", Label: "Disable", Method: "POST",
 							PostTo:     "api/skills?action=disable&id={id}",
 							HideIf:     "disabled",
