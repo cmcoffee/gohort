@@ -138,7 +138,7 @@ scope, the verify gate, and approval — same as a hand-authored `tool_def`. See
   surfaces (admin "Add tool from template…" and the Builder `tool_template`) — no
   new wiring; the Detect button appears in the generic renderer. Governance
   unchanged (the toolbox goes through the tool approval flow).
-- **Stage B5 — NEXT (smaller).** (a) A user-facing tools/Gateways entry so a user
+- **Stage B5 — NEXT (smaller).** (a) A user-facing tools/Extensions entry so a user
   reaches tool templates without the Builder; (b) Configure-existing-tool using the
   `TempTool.Template` provenance (field exists; the edit flow isn't wired).
 - **Stage C — data declarations.** DB registry for declarations (strategy-by-name),

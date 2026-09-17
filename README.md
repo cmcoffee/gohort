@@ -237,6 +237,8 @@ On deck:
 - **[docs/agent-machines.md](docs/agent-machines.md)** — machines: the model, the editor, and the decisions behind both
 - **[docs/pipeline-surfaces.md](docs/pipeline-surfaces.md)** — the pipeline list, page and per-stage form, and where they deliberately differ from machines
 - **[docs/workflow-graph.md](docs/workflow-graph.md)** — one picture for both, and what a fanout, a branch and a loop are drawn as
+- **[docs/skill-playbooks.md](docs/skill-playbooks.md)** — declared conditional behavior on a skill: establish a fact, then act on what it turned out to be
+- **[docs/troubleshoot.md](docs/troubleshoot.md)** — the shipped troubleshooting machine, as a worked example of a decision tree
 
 ## License
 

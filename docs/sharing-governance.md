@@ -1,7 +1,8 @@
 # Sharing & Governance — namespacing phase 5
 
 Continues `tool-credential-namespacing.md`. Phases 1–4 built the two ownership
-planes (global vs user-owned) and the Gateways surface. This batch builds the
+planes (global vs user-owned) and the Extensions surface (named Extensions when this
+was written; renamed in v0.6.817). This batch builds the
 **access controls** that sit on top of them: who a shared resource reaches, how
 the admin governs the deployment without owning every resource, and how a
 user-owned resource is promoted into the global catalog.
@@ -82,7 +83,7 @@ Reused verbatim by Deliverable 1, Deliverable 3, and peer sharing.
 - **Admin API Credentials** (global creds): ACL editor in the existing edit
   Expand — replaces the tags field.
 - **Admin Global Tools**: ACL editor on each Shared tool.
-- **Gateways** (peer sharing): ACL editor on the user's own agents/creds — see
+- **Extensions** (peer sharing): ACL editor on the user's own agents/creds — see
   peer-sharing section.
 
 ### Enforcement (mostly already wired for creds)
@@ -162,7 +163,7 @@ published deployment-wide; the admin approves.
   `Create`/`List`(pending-only or all)/`Get`/`SetState`/`PendingPromotion`. Covered
   by `TestPromotionRequests`. (Named `promotion_requests.go` to stay clear of the
   unrelated sub-session `promotion.go` router.)
-- Owner side: Gateways "My tools" grows a "Request to publish" `ModalActionIf`
+- Owner side: Extensions "My tools" grows a "Request to publish" `ModalActionIf`
   (note textarea) shown only when the tool isn't shared and has none pending
   (`can_request`), plus a "Publish requested" badge. Endpoint
   `gateways/api/promotions`.
@@ -175,7 +176,7 @@ published deployment-wide; the admin approves.
 **Only tool promotion is offered today** — deliberately, because the other two
 aren't fulfillable yet:
 - **Credential:** the safety rule refuses promoting a static user secret, and
-  Gateways only lets users create static-secret creds — so a user-owned cred is
+  Extensions only lets users create static-secret creds — so a user-owned cred is
   always static and there's nothing valid to promote. Credential promotion waits
   for user-ownable per-user/hybrid creds.
 - **Agent:** a globally-runnable agent needs the recipient-run infra (step 5b), so
@@ -200,7 +201,7 @@ type PromotionRequest struct {
 }
 ```
 
-### Owner side (Gateways)
+### Owner side (Extensions)
 
 A **"Request to publish"** row action on the user's own creds/tools/agents →
 opens a `ModalButton` (note field) → POST creates a `pending` request. A pill on
@@ -272,7 +273,7 @@ namespace. No orchestrate-fleet change (that surface is admin-only; recipients u
 1. **Data + enforcement — SHIPPED.** `AllowedUsers` on `PersistentTempTool` +
    `AgentRecord`; `SharedToolAllowedUsers` + `CanAdoptGlobalTool` (permission, not
    existence — an unpublished name is harmless); `SetGlobalToolAdopted` refuses an
-   ACL-denied adopt but always permits un-adopt; the Gateways catalog GET hides
+   ACL-denied adopt but always permits un-adopt; the Extensions catalog GET hides
    tools the user can't adopt. Covered by `TestGlobalToolAdoptACL`.
 2. **ACL editor — SHIPPED (helper, not a new primitive).** `ui.ACLPicker` over the
    existing `ChipPicker`. No new component, no new JS.
@@ -294,7 +295,7 @@ namespace. No orchestrate-fleet change (that surface is admin-only; recipients u
    agents" governance section via `AdminListUserOwnedAgents`/`AdminRevokeAgentShare`
    hooks. Recipient-side fleet visibility + run (the payoff) is the deferred 5b.
 6. **Deliverable 3 — SHIPPED (tool).** Promotion queue (`core/promotion_requests.go`)
-   + Gateways request action + admin "Pending promotions" approve/deny.
+   + Extensions request action + admin "Pending promotions" approve/deny.
    `ui.ModalActionIf` added. Credential + agent promotion deferred (not fulfillable
    yet — see the Deliverable 3 section).
 
@@ -341,7 +342,8 @@ reads, no new metadata — and the cluster is ordered by `HubTab` order
 Today `serve_dashboard` renders a **flat** card grid (`dashApp` list;
 `featured` / `wide` / regular sizing only). But the hub tab row already knows the
 orchestrator family — every member implements `WebAppHubTab` (`HubTab() (label,
-order)`): Agents(10), Bridges(20), Knowledge(30), Gateways(40). The dashboard
+order)`): Agents(10), Bridges(20), Knowledge(30), Extensions(40, the app renamed
+from Extensions in v0.6.817). The dashboard
 should reflect that same grouping instead of scattering these among unrelated
 apps.
 

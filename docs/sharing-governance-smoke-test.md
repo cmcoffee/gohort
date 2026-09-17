@@ -19,14 +19,14 @@ things:
 - As `admin`, Admin → API Credentials → add an open credential `demo_api`
   (bearer, any base URL, a dummy secret).
 - As `alice`, ask the assistant in chat to build a simple tool for her (so her
-  Gateways "My tools" is non-empty). Call it `alice_tool`.
+  Extensions "My tools" is non-empty). Call it `alice_tool`.
 
 ---
 
 ## A. Dashboard clustering + Agents rename
 
 - [ ] The dashboard shows an **"Orchestrator"** cluster (a titled, bordered block)
-      containing **Agents, Bridges, Knowledge, Gateways** — not scattered among the
+      containing **Agents, Bridges, Knowledge, Extensions** — not scattered among the
       other app cards.
 - [ ] The **Agents** card is the full-width **lead** card *inside* that cluster
       (not a separate hero above it), and it reads **"Agents"** — the word
@@ -75,16 +75,18 @@ As `admin`, Admin → Global Tools:
 As `admin`, Admin page — three sections near API Credentials:
 
 - [ ] **User-owned credentials** — after alice creates a credential on her
-      Gateways page (section F), it appears here with owner `alice`, and
+      Extensions page (section F), it appears here with owner `alice`, and
       **Disable** / **Enable** / **Delete** work (disable = revoke without delete).
 - [ ] **Global-tool adoptions** — after a user adopts a shared tool (section F),
       one row per (tool, adopter) shows here, with **Remove**; a **⚠ tool
       unshared** badge appears if you later unshare a tool someone adopted.
 - [ ] **User-owned agents** — see section G/H.
 
-## F. Gateways (as a user) + tool promotion
+## F. Extensions (as a user) + tool promotion
 
-As `alice`, open **Gateways**:
+> The app is at `/extensions`; it was called Gateways until v0.6.817.
+
+As `alice`, open **Extensions**:
 
 - [ ] **My credentials** — create one (`alice_cred`). Confirm it then appears in
       the admin **User-owned credentials** governance section (E).
@@ -94,7 +96,7 @@ As `alice`, open **Gateways**:
 - [ ] Send a publish request. The row now shows a **"Publish requested"** badge
       and the request action is gone.
 - [ ] As `admin`, Admin → **Pending promotions**: alice's request is listed with
-      her note. **Approve** it → the tool becomes Shared; back on alice's Gateways
+      her note. **Approve** it → the tool becomes Shared; back on alice's Extensions
       "My tools", the "Publish requested" badge is **gone** (sharing fulfilled the
       request), and a "Shared" badge shows instead.
 - [ ] Regression check for the badge fix: take another of alice's tools, and as
