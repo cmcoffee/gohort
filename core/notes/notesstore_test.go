@@ -3,7 +3,6 @@ package notes
 import (
 	"strings"
 	"testing"
-
 )
 
 func notesTestDB() Store { return newMemStore() }
@@ -97,5 +96,27 @@ func TestRenderOperatingNotesBlock(t *testing.T) {
 	// Advisory framing is the self-corruption guardrail — must be present.
 	if !strings.Contains(block, "never override") {
 		t.Fatalf("block must carry advisory framing: %q", block)
+	}
+}
+
+// The boundary against the fact layer is ONE line, because a distinction that
+// needs a paragraph is one the reader re-derives every turn. Facts are what
+// stays true; notes are where you are. The block used to hedge this across
+// three sentences before it said anything useful.
+func TestTheNotesBlockStatesItsBoundaryInOneLine(t *testing.T) {
+	block := RenderOperatingNotesBlock(OperatingNotes{Text: "mid-draft on section 3"})
+	body := strings.TrimPrefix(block, "## Working notes\n\n")
+	first := strings.SplitN(body, "\n\n", 2)[0]
+
+	if !strings.Contains(first, "stays TRUE") || !strings.Contains(first, "RIGHT NOW") {
+		t.Fatalf("the opening must draw the line against saved facts:\n%s", first)
+	}
+	// It is the FIRST thing said, not the third.
+	if strings.Index(body, "stays TRUE") > strings.Index(body, "update_notes") {
+		t.Error("the boundary must come before the mechanics")
+	}
+	// One line: the definition and its guardrail, not a paragraph of hedging.
+	if n := strings.Count(first, ". "); n > 3 {
+		t.Errorf("the opening is %d sentences; it is meant to be one line plus its guardrail:\n%s", n+1, first)
 	}
 }

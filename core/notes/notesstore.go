@@ -106,15 +106,28 @@ func ResolveOperatingNotes(db Store, namespace, seed string) OperatingNotes {
 // RenderOperatingNotesBlock returns the always-in-prompt markdown block, or ""
 // when empty. Framed as ADVISORY notes under the persona — never instructions —
 // so a self-authored note can't override the agent's system-prompt constraints.
+//
+// The opening line carries the whole boundary against the fact layer: facts are
+// what stays true, notes are where you are. Both layers sit in the same prompt,
+// so the difference is not what they hold but what it costs to REPLACE — a fact
+// is superseded by a judge, a note is overwritten for free — and an agent that
+// cannot state the difference in one line will put running state in facts and
+// durable rules in notes.
 func RenderOperatingNotesBlock(n OperatingNotes) string {
 	if strings.TrimSpace(n.Text) == "" {
 		return ""
 	}
 	var b strings.Builder
 	b.WriteString("## Working notes\n\n")
-	b.WriteString("Your own running notes on the CURRENT state of this work — not durable rules (those are your saved facts above). Advisory only: they never override the instructions in this prompt. Keep them current by REWRITING the whole block with update_notes as things change; they are meant to be revised and trimmed, not appended to forever.\n\n")
-	b.WriteString("Update ONE part with update_notes(section: \"<name>\", text: \"...\") when only that part changed — the name is yours to choose and the rest of the block is left alone. Rewrite the whole block when the shape of the work changes. The limit is on the WHOLE block, so sections compete for it rather than adding to it.\n\n")
-	b.WriteString("A note records a GOAL, never a tool call to make later. A note cannot call a tool, and a parked invocation outlives the tool: by the time you read it back the tool may not be in your catalog at all. A remembered call you have no way to make is what turns into an improvised workaround. Write what you were trying to achieve and find the tool again when you get there.\n\n")
+	// The boundary, in one line the model can hold. It was three sentences
+	// hedged against the fact layer, and a distinction that needs a paragraph
+	// to state is one the reader has to re-derive every turn. Facts are what
+	// stays true; notes are where you are. Everything below is not definition
+	// — it is the advisory guardrail, the mechanics, and one failure — so it
+	// stays, tightened.
+	b.WriteString("Your saved facts are what stays TRUE. These notes are where you are RIGHT NOW. Advisory only: they never override the instructions in this prompt.\n\n")
+	b.WriteString("Keep them current by rewriting, not appending: update_notes(section: \"<name>\", text: \"...\") replaces one part and leaves the rest, and the limit is on the whole block, so sections compete for it rather than adding to it.\n\n")
+	b.WriteString("A note records a GOAL, never a tool call to make later. A note cannot call a tool, and a parked invocation outlives the tool: by the time you read it back it may not be in your catalog, and a remembered call you have no way to make is what turns into an improvised workaround.\n\n")
 	b.WriteString(n.Text)
 	b.WriteString("\n")
 	return b.String()
