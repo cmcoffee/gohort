@@ -50,6 +50,13 @@ type TurnClaimEvidence struct {
 	// four comments — and a reply claiming the posts is consistent with it.
 	// Observed on a scheduled fire: nine moltbook calls, every one a read,
 	// reported as three comments posted with invented ids and 201s.
+	//
+	// A failed call carries its outcome: `label [FAILED: <why>]`. Without it
+	// the only account of failure was ToolErrors, a cumulative count with
+	// nothing tying it to a call — so a turn that failed, retried and
+	// succeeded was indistinguishable from one that failed and gave up, and
+	// the truthful reply was the one that got retracted. See the comment at
+	// the append site in agent_loop.go for the live case.
 	ToolCalls []string
 	// PriorWork is work done FOR this turn before its loop began, which the
 	// loop therefore never sees: a machine step that searched, a delegated
@@ -247,6 +254,12 @@ func turnClaimWorthJudging(ev TurnClaimEvidence) bool {
 // producers get them covered by the no-tools and tool-error arms above.
 func turnRanProducer(calls []string) bool {
 	for _, c := range calls {
+		// A failed call carries " [FAILED: …]" after its label. Cut there
+		// first: tool labels never contain a space, so the first one ends the
+		// label whatever follows it.
+		if i := strings.IndexByte(c, ' '); i >= 0 {
+			c = c[:i]
+		}
 		// Entries are labels now ("image/edit"), so match the tool half. Left
 		// as an exact switch on the name rather than a prefix test: "video"
 		// must not be matched by a tool called "videoconference".

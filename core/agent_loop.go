@@ -117,6 +117,26 @@ func defaultConfirm(toolName string, argsSummary string) bool {
 // Only `action` is lifted, and only when it is a plain scalar. Everything else
 // stays in the Trace line: the point is to make the log scannable, not to leak
 // argument content into DEBUG, which MaskDebugOutput exists to prevent.
+// toolFailureNote condenses a tool error into the few words a judge needs to
+// tell one failure from another. Short on purpose: the list carries one of
+// these per failed call and the whole evidence block competes for the judge's
+// attention with the reply it is judging.
+func toolFailureNote(content string) string {
+	note := strings.TrimSpace(content)
+	note = strings.TrimPrefix(note, "Error: ")
+	if i := strings.IndexAny(note, "\n\r"); i >= 0 {
+		note = note[:i]
+	}
+	const max = 90
+	if len(note) > max {
+		note = strings.TrimSpace(note[:max]) + "…"
+	}
+	if note == "" {
+		note = "no detail"
+	}
+	return note
+}
+
 func toolCallLabel(tc ToolCall) string {
 	if tc.Args == nil {
 		return tc.Name
@@ -3754,10 +3774,22 @@ func (lr *loopRun) settleToolRound() loopAction {
 		// The LABEL, not the bare name: a grouped tool's read and its write
 		// share a name, and "moltbook ran nine times" is consistent with a
 		// reply claiming three posts. "moltbook/get_feed" is not.
-		lr.turnToolCalls = append(lr.turnToolCalls, toolCallLabel(w.tc))
+		//
+		// And the OUTCOME with it, because the alternative is a judge doing
+		// arithmetic it has no way to do. It used to get a flat list of labels
+		// plus a cumulative failure COUNT with nothing tying the two together,
+		// so a turn that failed a call, retried it and succeeded looked
+		// identical to one that failed and gave up: the count is a high-water
+		// mark no later success can clear. Observed on a scheduled fire —
+		// round 6 reply_to_comment failed on a missing arg, round 7 ran it
+		// again and returned 201, and the reply "All 3 actions returned HTTP
+		// 201" was retracted as a lie on the strength of errors=3.
+		label := toolCallLabel(w.tc)
 		if w.index < len(lr.rs.results) && lr.rs.results[w.index].IsError {
 			lr.lastToolError = lr.rs.results[w.index].Content
+			label += " [FAILED: " + toolFailureNote(lr.rs.results[w.index].Content) + "]"
 		}
+		lr.turnToolCalls = append(lr.turnToolCalls, label)
 	}
 
 	// stay_silent closes the turn. The "do not call any more tools"

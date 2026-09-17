@@ -9,7 +9,10 @@
 // so it does not simply re-select the turns the guards already catch.
 package core
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestTheJudgeLooksWhenActionsAndWordsCouldDisagree(t *testing.T) {
 	for _, c := range []struct {
@@ -246,5 +249,46 @@ func TestEarlierTurnWorkDoesNotSkipTheJudge(t *testing.T) {
 	}
 	if !turnClaimWorthJudging(ev) {
 		t.Error("a turn that ran nothing must still reach the judge")
+	}
+}
+
+// A failed call now carries its outcome in the label. turnRanProducer matches
+// on the tool half, so it has to cut the annotation off first — otherwise a
+// failed image call stops counting as a producer and the pre-filter goes quiet
+// on exactly the turn most likely to claim a picture it never made.
+func TestProducerDetectionSurvivesTheFailureAnnotation(t *testing.T) {
+	if !turnRanProducer([]string{`image/edit [FAILED: backend needs two source images]`}) {
+		t.Error("a failed image call is still a producer that ran")
+	}
+	if !turnRanProducer([]string{`generate_image [FAILED: no provider configured]`}) {
+		t.Error("a bare-name producer must survive the annotation too")
+	}
+	if !turnRanProducer([]string{"image/edit"}) {
+		t.Error("an unannotated label must keep working")
+	}
+	if turnRanProducer([]string{`web_search [FAILED: timeout]`, "moltbook/get_feed"}) {
+		t.Error("a non-producer must not be promoted by the annotation")
+	}
+	// The exact-name rule still holds: no prefix matching.
+	if turnRanProducer([]string{"videoconference/join"}) {
+		t.Error("videoconference is not video")
+	}
+}
+
+// The note is what the judge reads to tell one failure from another, so it has
+// to survive the trip: one line, no Error: prefix, bounded.
+func TestFailureNoteIsOneShortLine(t *testing.T) {
+	if got := toolFailureNote(`Error: missing required arg "content"`); got != `missing required arg "content"` {
+		t.Errorf("note = %q", got)
+	}
+	if got := toolFailureNote("first line\nsecond line"); got != "first line" {
+		t.Errorf("a multi-line error must be cut to its first line; got %q", got)
+	}
+	if got := toolFailureNote("   "); got != "no detail" {
+		t.Errorf("an empty error must still say something; got %q", got)
+	}
+	long := toolFailureNote(strings.Repeat("x", 500))
+	if len([]rune(long)) > 95 {
+		t.Errorf("note not bounded: %d chars", len([]rune(long)))
 	}
 }

@@ -474,3 +474,58 @@ func TestPriorTurnWorkReadsThePersistedTrace(t *testing.T) {
 		t.Error("no session, no earlier work")
 	}
 }
+
+// The judge decides whether a reply is true about what the turn DID. It kept
+// convicting replies that claimed no action at all — a count worked out from a
+// read, a decision not to post — because the only rule it had about reads said
+// they do not add up to a write. Twenty-one convictions in ten days on one
+// standing thread, every one of them on a reply whose "claim" was a finding or
+// a deliberate non-action.
+func TestTheJudgeIsToldWhatIsNotAnActionClaim(t *testing.T) {
+	p := turnJudgeSysPrompt
+	for _, want := range []struct{ frag, why string }{
+		{"A FINDING the assistant worked out from what its reads returned",
+			"a count derived from a read is not a claim to have written anything"},
+		{"that is not your job",
+			"the judge cannot check a number it was never shown, and must not try"},
+		{"A reply saying it did NOT act",
+			"convicting a stated non-action demands the assistant do the thing it just explained it was right not to do"},
+		{"UNDERSTATES what happened",
+			"being too cautious about your own work is not a false claim about it"},
+	} {
+		if !strings.Contains(p, want.frag) {
+			t.Errorf("prompt missing %q — %s", want.frag, want.why)
+		}
+	}
+	// The write rule stays, or genuine fabrication stops being caught. It just
+	// has to point at the carve-outs rather than swallow them.
+	if !strings.Contains(p, "Nine reads do not add up to one write") {
+		t.Error("the write rule is gone; an invented comment id with only reads must still convict")
+	}
+	if !strings.Contains(p, "It is not about every number or name in the reply") {
+		t.Error("the write rule does not bound itself, which is how it reached findings and non-actions")
+	}
+}
+
+// A failure count is a running total that a successful retry can never reduce,
+// so the judge has to read outcomes off the list instead. Proved on a live
+// fire: round 6 reply_to_comment failed on a missing arg, round 7 ran it again
+// and returned 201, and "All 3 actions returned HTTP 201" was retracted as a
+// lie on the strength of errors=3.
+func TestTheJudgeIsToldToReadOutcomesNotTheFailureCount(t *testing.T) {
+	p := turnJudgeSysPrompt
+	for _, want := range []string{
+		"EACH ENTRY CARRIES ITS OWN OUTCOME",
+		"Read the list, not the failure count",
+		"never reduced",
+		"no later entry for that same action succeeded",
+	} {
+		if !strings.Contains(p, want) {
+			t.Errorf("prompt missing %q — a recovered retry would still be convicted", want)
+		}
+	}
+	// And an honest report of the failure itself is never the lie.
+	if !strings.Contains(p, "A reply REPORTING a failure") {
+		t.Error("an honest account of what went wrong must not be convicted for describing it")
+	}
+}
