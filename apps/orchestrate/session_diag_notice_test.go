@@ -43,7 +43,7 @@ func TestDiagLevelReadsTheVerbInTheKind(t *testing.T) {
 		"guardrail-blocked", "guardrail-input-blocked", "guardrail-halted",
 		"guardrail-output-withheld", "tool-denied", "tool-scan-blocked",
 		"tool-scan-action-blocked", "machine-tier-denied", "machine_exit_refused",
-		"form-step-discarded", "provider-refusal", "lead-in-withheld",
+		"form-step-discarded", "provider-refusal",
 	}
 	for _, k := range blocked {
 		if diagLevel(k) != diagLevelBlocked {
@@ -55,6 +55,11 @@ func TestDiagLevelReadsTheVerbInTheKind(t *testing.T) {
 	for _, k := range []string{
 		"guardrail-no-verdict", "guardrail-error", "guardrail-appeal-honored",
 		"skill_playbook_fired", "machine_not_on_dispatch", "consulted", "tool-grant",
+		// Carries a blocking verb but is not a block: prose held on a bet
+		// about the final reply, restored by lead-in-restored when the bet
+		// loses. Shown as a card it read BLOCKED, in guardrail amber, twice in
+		// half a minute, for a rendering decision that may undo itself.
+		"lead-in-withheld",
 	} {
 		if diagLevel(k) != diagLevelNote {
 			t.Errorf("%q records a condition, not a block — it belongs in the trail only", k)
@@ -191,6 +196,32 @@ func TestOneStampNamesEveryCopyOfABreadcrumb(t *testing.T) {
 	}
 	if got := noticeFrames(t, buf.String()); len(got) != 1 || got[0]["id"] != own[0].ID {
 		t.Fatalf("live frame must carry that same id: %+v", got)
+	}
+}
+
+// The verb rule reads what a guard DID. It cannot see whether it STUCK, and a
+// kind that names its own reversal is the case where those differ.
+func TestAReversibleDecisionIsNotABlock(t *testing.T) {
+	if diagLevel("lead-in-withheld") != diagLevelNote {
+		t.Error("held prose that the framework restores on its own is not a block")
+	}
+	// Its sibling proves the pair is provisional, and is itself just a note.
+	if diagLevel("lead-in-restored") != diagLevelNote {
+		t.Error("a restoration is not a block either")
+	}
+	// The verb still works for the withholdings that stay withheld — the
+	// exclusion is one named kind, not a hole in the rule.
+	for _, k := range []string{"guardrail-output-withheld", "authoring_withheld"} {
+		if diagLevel(k) != diagLevelBlocked {
+			t.Errorf("%q withholds something for good and must still reach the conversation", k)
+		}
+	}
+	// Every excluded kind must be spelled exactly as its call site writes it,
+	// or the exclusion silently does nothing.
+	for k := range diagProvisionalKinds {
+		if k != strings.ToLower(strings.TrimSpace(k)) {
+			t.Errorf("%q will never match: the lookup folds case and trims first", k)
+		}
 	}
 }
 

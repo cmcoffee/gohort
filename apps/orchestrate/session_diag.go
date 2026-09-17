@@ -74,9 +74,33 @@ const (
 // list of blocking kinds would be wrong within a release.
 var diagBlockingVerbs = []string{"blocked", "denied", "withheld", "halted", "discarded", "refus"}
 
+// diagProvisionalKinds are breadcrumbs whose verb says something was stopped
+// when the framework may UNDO it inside the same turn.
+//
+// The verb rule reads what a guard DID, which is the right question for
+// something that stays done. It cannot see whether it stuck, and that is the
+// difference between the two kinds ending in "withheld": an output the warden
+// refused is gone, while a lead-in is held on a bet about how the final reply
+// will read and restored below it when the bet loses. One is a refusal; the
+// other is a rendering decision with an automatic undo, and the text is in the
+// model's history throughout either way.
+//
+// Told as a card it read "BLOCKED", in the same amber as a guardrail stopping
+// a tool call, twice inside half a minute, for something nobody has to act on
+// and that may reverse itself before they finish reading it. A kind with a
+// named sibling for its own reversal (lead-in-restored) is the clearest case
+// there is: it stays in the trail, where an explanation waits for whoever goes
+// looking.
+var diagProvisionalKinds = map[string]bool{
+	"lead-in-withheld": true,
+}
+
 // diagLevel reads a kind slug and says how loudly it should be told.
 func diagLevel(kind string) string {
 	k := strings.ToLower(strings.TrimSpace(kind))
+	if diagProvisionalKinds[k] {
+		return diagLevelNote
+	}
 	for _, verb := range diagBlockingVerbs {
 		if strings.Contains(k, verb) {
 			return diagLevelBlocked
