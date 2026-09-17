@@ -78,6 +78,8 @@ func (T *Extensions) Routes() {
 	T.HandleFunc("/api/promotions", T.handlePromotions)
 	T.HandleFunc("/api/global-tools", T.handleGlobalTools)
 	T.HandleFunc("/api/skills", T.handleUserSkills)
+	T.HandleFunc("/api/skill-tools", T.handleSkillToolOptions)
+	T.HandleFunc("/api/skill-collections", T.handleSkillCollectionOptions)
 	T.HandleFunc("/api/skill-playbook", T.handleSkillPlaybookRule)
 	T.HandleFunc("/skill-playbook", T.handleSkillPlaybookPage)
 	T.HandleFunc("/", T.servePage)
@@ -816,8 +818,14 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 						// place (what the admin form offers), and the address of
 						// the visual editor for anyone who would rather answer
 						// questions than write braces.
-						"playbook_text": playbookText(s),
-						"playbook_link": playbookEditorLine(s),
+						// Twice, deliberately: one copy is the read-only view,
+						// the other is what the textarea edits once Edit JSON
+						// is on. One field cannot be both without the form
+						// echoing its own display back into the payload.
+						"allowed_tools":        nonNilStrings(s.AllowedTools),
+						"attached_collections": nonNilStrings(s.AttachedCollections),
+						"playbook_text":        playbookText(s),
+						"playbook_url":         playbookEditorURL(s.ID),
 					})
 					return
 				}
@@ -834,10 +842,10 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 			Triggers    int    `json:"triggers"`
 			Disabled    bool   `json:"disabled"`
 			Updated     string `json:"updated,omitempty"`
-			// Playbook is the rule count, as a label. The row's Playbook
-			// button carries the editor's address itself, so the list has no
-			// URL to send.
-			Playbook string `json:"playbook"`
+			// The rule count, and the editor it links to: the count is the
+			// way in, rather than a separate control on every row.
+			Playbook    string `json:"playbook"`
+			PlaybookURL string `json:"playbook_url"`
 		}
 		rows := []row{}
 		for _, s := range LoadSkills(AuthDB(), user) {
@@ -845,16 +853,10 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 			if !s.Updated.IsZero() {
 				updated = s.Updated.Format("2006-01-02")
 			}
-			pb := "add"
-			if n := len(s.Playbook); n == 1 {
-				pb = "1 rule"
-			} else if n > 1 {
-				pb = fmt.Sprintf("%d rules", n)
-			}
 			rows = append(rows, row{
 				ID: s.ID, Name: s.Name, Description: s.Description,
 				Triggers: len(s.Triggers), Disabled: s.Disabled, Updated: updated,
-				Playbook: pb,
+				Playbook: playbookCount(s), PlaybookURL: playbookEditorURL(s.ID),
 			})
 		}
 		writeJSON(w, rows)
@@ -899,6 +901,11 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 			Triggers     string  `json:"triggers"`
 			Instructions string  `json:"instructions"`
 			PlaybookText *string `json:"playbook_text"`
+			// Pointers, so a form that did not carry a grant leaves it alone
+			// while one that carried an empty list clears it. The chip
+			// pickers post the whole record; the behaviour form posts neither.
+			AllowedTools        *[]string `json:"allowed_tools"`
+			AttachedCollections *[]string `json:"attached_collections"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -945,6 +952,12 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 		rec.Triggers = splitSkillTriggers(body.Triggers)
 		if body.PlaybookText != nil {
 			rec.Playbook = playbook // nil when the field came through blank — clears
+		}
+		if body.AllowedTools != nil {
+			rec.AllowedTools = *body.AllowedTools
+		}
+		if body.AttachedCollections != nil {
+			rec.AttachedCollections = *body.AttachedCollections
 		}
 		if _, err := SaveSkill(AuthDB(), user, rec); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1148,18 +1161,19 @@ func playbookText(s SkillRecord) string {
 	return string(raw)
 }
 
-// playbookEditorLine is the read-only line above the JSON: what the rules say
-// in words, and where to edit them by answering questions instead.
-func playbookEditorLine(s SkillRecord) string {
-	var b strings.Builder
-	for _, r := range s.Playbook {
-		b.WriteString("• " + r.Sentence() + "\n")
+// playbookCount is what the playbook link says: how many rules there are, or
+// an invitation when there are none. A count rather than the rules
+// themselves — the rules are long, and the place to read them in full is the
+// editor the link goes to.
+func playbookCount(s SkillRecord) string {
+	switch n := len(s.Playbook); n {
+	case 0:
+		return "add"
+	case 1:
+		return "1 rule"
+	default:
+		return fmt.Sprintf("%d rules", n)
 	}
-	if len(s.Playbook) == 0 {
-		b.WriteString("No rules yet.\n")
-	}
-	b.WriteString("\nPrefer questions to JSON? Open the editor: " + playbookEditorURL(s.ID))
-	return b.String()
 }
 
 func userSkillFormFields() []ui.FormField {
@@ -1168,10 +1182,18 @@ func userSkillFormFields() []ui.FormField {
 		{Field: "description", Label: "Description", Help: "One line — when this skill applies. The assistant reads it to decide relevance."},
 		{Field: "triggers", Label: "Triggers", Type: "textarea", Rows: 3, Placeholder: "contract\n*.pdf", Help: "Substring patterns (or *.ext for attachments), ONE PER LINE. Any match activates the skill. Leave blank to rely on the description."},
 		{Field: "instructions", Label: "Instructions", Type: "textarea", Rows: 12, Help: "Markdown appended to the assistant's prompt while the skill is active — the approach, voice, or method it should apply."},
-		{Field: "playbook_link", Label: "Playbook", Type: "readonly",
-			Help: "Conditional rules the framework runs and settles BEFORE the assistant answers — \"establish Y first; if yes do Z, if no do U\"."},
-		{Field: "playbook_text", Label: "Playbook rules (JSON)", Type: "textarea", Rows: 8,
-			Help: "A JSON array of rules. Each: {\"fact\": \"queue_draining\", \"how\": \"Read the consumer lag.\", \"then\": \"Look at the consumer.\", \"else\": \"Look at the broker.\"}. Optional: \"when\": [triggers] to apply the rule only on matching turns; \"type\": \"choice\" with \"values\" and \"cases\"; \"then_rule\" / \"else_rule\" to nest one level. Leave blank for none. The editor linked above writes the same thing by asking questions."},
+		// The rules as they stand, then the two ways to change them. Read-only
+		// until asked: the common visit is to look, and a textarea full of
+		// JSON invites an accidental edit to something the editor writes
+		// correctly.
+		// Reads exactly like Instructions above: a preview of the value with an
+		// Edit button that opens it in a modal. The extra button beside Edit is
+		// the other way to write the same rules — by answering questions
+		// instead of typing JSON.
+		{Field: "playbook_text", Label: "Playbook", Type: "textarea", Rows: 8,
+			Placeholder: "No rules yet — use Playbook Editor, or Edit to type them.",
+			Links:       []ui.FormFieldLink{{Label: "Playbook Editor", Field: "playbook_url", Target: "_blank"}},
+			Help:        "Conditional rules the framework runs and settles BEFORE the assistant answers — \"establish Y first; if yes do Z, if no do U\". A JSON array; each rule: {\"fact\": \"queue_draining\", \"how\": \"Read the consumer lag.\", \"then\": \"Look at the consumer.\", \"else\": \"Look at the broker.\"}. Optional: \"when\": [triggers]; \"type\": \"choice\" with \"values\" and \"cases\"; \"then_rule\" / \"else_rule\" to nest one level."},
 	}
 }
 
@@ -1507,7 +1529,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 		},
 		{
 			Title:    "Skills",
-			Subtitle: "Behavior packs your agents draw on — instructions the assistant applies when a skill's triggers or description match the turn. Author or edit one right here (name, triggers, instructions), or ask Builder in Agents for skills that ship code or grant tools. The Playbook column opens a skill's conditional rules: \"establish Y first; if yes do Z, if no do U\", which the framework runs and settles before the assistant answers. Disable to mute a skill without losing it; delete to retire it.",
+			Subtitle: "Behavior packs your agents draw on — instructions the assistant applies when a skill's triggers or description match the turn. Author or edit one right here — name, triggers, instructions, the tools it may call and the collections it may search — or ask Builder in Agents for skills that ship their own code. Open a skill to give it a playbook: conditional rules — \"establish Y first; if yes do Z, if no do U\" — that the framework runs and settles before the assistant answers. Disable to mute a skill without losing it; delete to retire it.",
 			Body: ui.Stack{Children: []ui.Component{
 				ui.Table{
 					Source: "api/skills",
@@ -1516,10 +1538,9 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 						{Field: "name", Flex: 1},
 						{Field: "description", Mute: true, Flex: 2},
 						{Field: "triggers", Label: "Triggers", Mute: true},
-						// How many conditional rules this skill carries. The
-						// Playbook button on the row opens them; a cell that is
-						// secretly also a link is a second door to the same place.
-						{Field: "playbook", Label: "Playbook", Mute: true},
+						// How many conditional rules this skill carries, and the
+						// way into them: the count is the link.
+						{Field: "playbook", Label: "Playbook", Link: "playbook_url", Mute: true},
 						{Field: "disabled", Label: "Status", Type: "dot", Badges: []ui.BadgeMapping{
 							{Value: true, Label: "Disabled", Color: "danger"},
 							{Value: false, Label: "Active", Color: "success"},
@@ -1529,20 +1550,42 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 						// Edit the skill's behavior fields. Source prefills; the id
 						// rides in the PostURL so the handler load-then-mutates
 						// (preserving any Builder-authored tools/grants).
-						ui.Expand("Edit", ui.FormPanel{
-							Source:      "api/skills?id={id}",
-							PostURL:     "api/skills?id={id}",
-							SubmitLabel: "Save skill",
-							Fields:      userSkillFormFields(),
-							Invalidate:  []string{"api/skills"},
-						}),
-						// Straight to the visual editor for this skill's rules.
-						// Method GET is a navigation button in the runtime: no
-						// POST, no JSON, just go. Absolute, because the hub
-						// links to /extensions with no trailing slash and a
-						// relative href would resolve against the site root.
-						{Type: "button", Label: "Playbook", Method: "GET",
-							PostTo: "/extensions/skill-playbook?id={id}"},
+						ui.Expand("Edit", ui.Stack{Children: []ui.Component{
+							ui.FormPanel{
+								Source:      "api/skills?id={id}",
+								PostURL:     "api/skills?id={id}",
+								SubmitLabel: "Save skill",
+								Fields:      userSkillFormFields(),
+								Invalidate:  []string{"api/skills"},
+							},
+							// The two grants, as pickers rather than typed
+							// names. Their own controls, posting the record
+							// back on each flip: a chip is a decision, and
+							// making it wait for a Save button underneath a
+							// long form is how it gets lost.
+							ui.Card{HTML: `<div style="font-size:0.78rem;color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Allowed tools</div><div style="font-size:0.75rem;color:var(--text-mute)">Tools the assistant may call while this skill is in use. None selected means it uses whatever the agent already has.</div>`},
+							ui.ChipPicker{
+								OptionsSource: "api/skill-tools",
+								RecordSource:  "api/skills?id={id}",
+								Field:         "allowed_tools",
+								PostTo:        "api/skills?id={id}",
+								Method:        "POST",
+								NameField:     "name",
+								LabelField:    "name",
+								DescField:     "description",
+							},
+							ui.Card{HTML: `<div style="font-size:0.78rem;color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Attached collections</div><div style="font-size:0.75rem;color:var(--text-mute)">Document collections this skill can search. They stay out of scope on turns the skill is not in use.</div>`},
+							ui.ChipPicker{
+								OptionsSource: "api/skill-collections",
+								RecordSource:  "api/skills?id={id}",
+								Field:         "attached_collections",
+								PostTo:        "api/skills?id={id}",
+								Method:        "POST",
+								NameField:     "id",
+								LabelField:    "name",
+								DescField:     "description",
+							},
+						}}),
 						{Type: "button", Label: "Disable", Method: "POST",
 							PostTo:     "api/skills?action=disable&id={id}",
 							HideIf:     "disabled",
@@ -2259,4 +2302,67 @@ func (T *Extensions) handleUserToolCategories(w http.ResponseWriter, r *http.Req
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// nonNilStrings keeps a chip picker from reading null as "unset": an empty
+// list is a real answer (no tools chosen), and JSON null is not.
+func nonNilStrings(v []string) []string {
+	if v == nil {
+		return []string{}
+	}
+	return v
+}
+
+// handleSkillToolOptions lists the tools a skill may be given: the registered
+// catalog minus the framework's own plumbing, plus the caller's OWN authored
+// tools. Scoped to the caller — this is their skill pool, not everyone's.
+func (T *Extensions) handleSkillToolOptions(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	type entry struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Source      string `json:"source"`
+	}
+	out, seen := []entry{}, map[string]bool{}
+	add := func(name, desc, source string) {
+		if name == "" || seen[name] {
+			return
+		}
+		seen[name] = true
+		out = append(out, entry{Name: name, Description: desc, Source: source})
+	}
+	for _, t := range RegisteredChatTools() {
+		// Framework tools are the round's own plumbing, never a capability a
+		// skill grants; offering them is offering a choice that does nothing.
+		if IsFrameworkTool(t) {
+			continue
+		}
+		add(t.Name(), t.Desc(), "builtin")
+	}
+	for _, t := range LoadPersistentTempTools(AuthDB(), user) {
+		add(t.Tool.Name, t.Tool.Description, "yours")
+	}
+	writeJSON(w, out)
+}
+
+// handleSkillCollectionOptions lists the document collections the caller can
+// attach to a skill: their own, plus any deployment-wide ones.
+func (T *Extensions) handleSkillCollectionOptions(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	type entry struct {
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	out := []entry{}
+	for _, c := range ListCollections(UserDB(CollectionsDB(), user), user) {
+		out = append(out, entry{ID: c.ID, Name: c.Name, Description: c.Description})
+	}
+	writeJSON(w, out)
 }

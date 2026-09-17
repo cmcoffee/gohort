@@ -11,6 +11,17 @@ import (
 //
 // Method defaults to POST. Use "PATCH" + only-the-changed-field saving
 // for endpoints that don't accept full-record overwrites.
+// FormFieldLink is one button beside a field's own controls. The destination
+// is Field's value on the loaded record (so the server decides it), or URL
+// when it is the same for every record; only absolute and root-relative
+// hrefs render. Target "_blank" opens a new tab.
+type FormFieldLink struct {
+	Label  string `json:"label"`
+	Field  string `json:"field,omitempty"`
+	URL    string `json:"url,omitempty"`
+	Target string `json:"target,omitempty"`
+}
+
 type FormPanel struct {
 	Source string `json:"source"`
 	Method string `json:"method,omitempty"`
@@ -217,6 +228,16 @@ func (f FormPanel) MarshalJSON() ([]byte, error) {
 //     current settings amount to — alongside the inputs that
 //     change it, without pretending it is editable. Line
 //     breaks in the value are preserved.
+//   - "link"     — a button that goes somewhere, rendering nothing into the
+//     save payload. The destination is the field's value on the
+//     loaded record (so the server decides it), or Default when
+//     the record carries none; only absolute and root-relative
+//     hrefs render. Placeholder is the button's text. Use for a
+//     related page a person may want to open from inside a form,
+//     where a readonly field printing the URL is not an
+//     affordance. Set TextField to let the record supply what
+//     the link says, so the button reports as well as goes.
+//     Set Target "_blank" to open a new tab.
 //   - "hidden"   — contributes Default to the save payload but renders
 //     nothing. Use for context-derived values the page
 //     knows up front (e.g. "owned_by = <parent_id>" on a
@@ -354,6 +375,18 @@ type FormField struct {
 	// "calendars"). A select would be wrong there: it forbids the new value
 	// that the field exists to allow.
 	Suggestions []string `json:"suggestions,omitempty"`
+	// Links renders extra buttons in the same row as a textarea's ✎ Edit
+	// button, styled as its siblings. For a value that has another place it
+	// can be edited: the button that edits it here, and the one that goes
+	// there, side by side rather than a sentence underneath.
+	Links []FormFieldLink `json:"links,omitempty"`
+	// TextField, on a Type=="link" field, names another field on the loaded
+	// record holding what the link SAYS, so the button can report as well as
+	// go — "3 rules" rather than a fixed "Open". Empty uses Placeholder.
+	TextField string `json:"text_field,omitempty"`
+	// Target, on a Type=="link" field, is the anchor's target attribute —
+	// "_blank" to open the destination in a new tab. Empty navigates in place.
+	Target string `json:"target,omitempty"`
 	// Collapsed, on a Type=="header" field, makes that header a collapsible
 	// group: the fields that follow it (until the next header) fold into a body
 	// that's hidden until the header is clicked. Declutters advanced settings

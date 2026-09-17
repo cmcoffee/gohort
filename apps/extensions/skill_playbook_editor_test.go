@@ -134,59 +134,85 @@ func TestPlaybookURLsAreAbsolute(t *testing.T) {
 	}
 }
 
-// The skill form edits the playbook in place, the way admin's does, and links
-// to the visual editor beside it.
+// The skill listing carries the rule count, and the count is the link into
+// the editor. Expanding a skill shows the rules as they stand, with two ways
+// to change them under it: the editor, and a JSON toggle.
 func TestSkillFormEditsThePlaybook(t *testing.T) {
-	var text, link *ui.FormField
-	for i, f := range userSkillFormFields() {
-		switch f.Field {
-		case "playbook_text":
-			text = &userSkillFormFields()[i]
-		case "playbook_link":
-			link = &userSkillFormFields()[i]
-		}
+	fields := userSkillFormFields()
+	byName := map[string]ui.FormField{}
+	for _, f := range fields {
+		byName[f.Field] = f
 	}
-	if text == nil || text.Type != "textarea" {
-		t.Fatal("the rules must be editable in the form, as a textarea")
+	// Reads like Instructions: a tall textarea, so the form renders a preview
+	// with an Edit button that opens it in a modal.
+	pb, ok := byName["playbook_text"]
+	if !ok || pb.Type != "textarea" || pb.Rows < 6 {
+		t.Fatalf("the playbook must read like Instructions — a tall textarea, got %+v", pb)
 	}
-	if link == nil || link.Type != "readonly" {
-		t.Fatal("the form must show what the rules say, and where to edit them by question")
+	if len(pb.Links) != 1 || pb.Links[0].Label != "Playbook Editor" || pb.Links[0].Field != "playbook_url" {
+		t.Fatalf("a Playbook Editor button must sit beside Edit, got %+v", pb.Links)
 	}
+	if pb.Links[0].Target != "_blank" {
+		t.Error("it opens a new tab so unsaved form state survives")
+	}
+	// The things that were only in admin before.
+	if _, ok := byName["edit_json"]; ok {
+		t.Error("the Edit JSON toggle is back; Edit opens the modal now")
+	}
+
 	s := SkillRecord{ID: "s1", Playbook: []PlaybookRule{{Fact: "queue_draining", How: "h", Then: "consumer", Else: "broker"}}}
 	if got := playbookText(s); !strings.Contains(got, `"fact": "queue_draining"`) {
-		t.Fatalf("the textarea carries the rules as JSON, got %q", got)
+		t.Fatalf("the field carries the rules as JSON, got %q", got)
 	}
-	if got := playbookText(SkillRecord{}); got != "" {
-		t.Fatalf("no rules opens blank, not %q", got)
-	}
-	line := playbookEditorLine(s)
-	if !strings.Contains(line, "establish queue_draining") || !strings.Contains(line, "/extensions/skill-playbook?id=s1") {
-		t.Fatalf("the line says what the rules are and where the editor is, got %q", line)
-	}
-	if !strings.Contains(playbookEditorLine(SkillRecord{}), "No rules yet") {
-		t.Fatal("an empty playbook says so")
+	for _, c := range []struct {
+		n    int
+		want string
+	}{{0, "add"}, {1, "1 rule"}, {3, "3 rules"}} {
+		if got := playbookCount(SkillRecord{Playbook: make([]PlaybookRule, c.n)}); got != c.want {
+			t.Errorf("%d rules reads %q, want %q", c.n, got, c.want)
+		}
 	}
 }
 
-// The row carries a Playbook button beside Edit, and it navigates rather than
-// posting. A GET button is the runtime's navigation button; anything else
-// would fire a request at a page. Read from the source, the way this package
-// already checks its own table wiring (tool_flag_pills_test.go).
-func TestSkillRowHasAPlaybookButton(t *testing.T) {
+// A user editing their OWN skills can grant them tools and collections. That
+// was admin-only, which left the surface that owns a user's skills unable to
+// say what they may reach.
+func TestSkillEditorGrantsToolsAndCollections(t *testing.T) {
 	raw, err := os.ReadFile("extensions.go")
 	if err != nil {
 		t.Fatalf("read: %v", err)
 	}
 	src := string(raw)
-	if !strings.Contains(src, `{Type: "button", Label: "Playbook", Method: "GET",`) {
-		t.Error("no Playbook button on the skill row, or it is not a navigation button")
+	for _, want := range []string{
+		`OptionsSource: "api/skill-tools"`,
+		`Field:         "allowed_tools"`,
+		`OptionsSource: "api/skill-collections"`,
+		`Field:         "attached_collections"`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("missing %q from the skill editor", want)
+		}
 	}
-	if !strings.Contains(src, `PostTo: "/extensions/skill-playbook?id={id}"`) {
-		t.Error("the Playbook button must point at the editor, absolutely")
+	// Both pointers on the save path, so a form that carried neither leaves
+	// them alone rather than clearing what the pickers set.
+	for _, want := range []string{
+		"AllowedTools        *[]string `json:\"allowed_tools\"`",
+		"AttachedCollections *[]string `json:\"attached_collections\"`",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("the grants must be optional on save: missing %s", want)
+		}
 	}
-	// The cell goes back to a plain count: one door, not a cell that is
-	// secretly also a link.
-	if strings.Contains(src, `{Field: "playbook", Label: "Playbook", Link:`) {
-		t.Error("the column should be a count now; the button is the door")
+}
+
+// The listing's rule count is a link, so the editor is one click from the
+// list rather than two.
+func TestSkillListingLinksTheRuleCount(t *testing.T) {
+	raw, err := os.ReadFile("extensions.go")
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !strings.Contains(string(raw), `{Field: "playbook", Label: "Playbook", Link: "playbook_url", Mute: true}`) {
+		t.Error("the rule-count column must link to the editor")
 	}
 }

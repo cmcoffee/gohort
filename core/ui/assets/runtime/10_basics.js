@@ -2664,7 +2664,11 @@
       // is precisely the destructive move per-section drafting exists to
       // avoid, and offering both invites the wrong one.
       var fieldSuggestable = f.suggest_url && fieldSetters[f.field] && t !== 'sections';
-      if (fieldSuggestable || expandEditBtn) {
+      var fieldLinks = (f.links || []).filter(function(l) {
+        var href = l && l.field ? current[l.field] : (l && l.url);
+        return href && (String(href).charAt(0) === '/' || /^https?:/.test(String(href)));
+      });
+      if (fieldSuggestable || expandEditBtn || fieldLinks.length) {
         var suggestRow = el('div', {class: 'ui-form-suggest-row'});
         if (fieldSuggestable) {
           // A field that suggests on arrival has already made its offer, so
@@ -2694,6 +2698,16 @@
           }
         }
         if (expandEditBtn) suggestRow.appendChild(expandEditBtn);
+        // Links sit in the same row as Edit, styled as its siblings: a value
+        // with another place it can be edited says so next to the button that
+        // edits it here, rather than in a sentence underneath.
+        fieldLinks.forEach(function(l) {
+          var href = String(l.field ? current[l.field] : l.url);
+          var a = el('a', {class: 'ui-form-suggest-btn', href: href}, [l.label || 'Open']);
+          a.style.textDecoration = 'none';
+          if (l.target) a.setAttribute('target', l.target);
+          suggestRow.appendChild(a);
+        });
         fieldWrap.appendChild(suggestRow);
       }
 
