@@ -86,21 +86,93 @@ func TestGuardrailBlocksAndForbidsReroute(t *testing.T) {
 	}
 }
 
-// TestGuardrailEscalatesOnRepeats pins the retry cap: after guardBlockEscalateAt
-// blocks in one turn, the hook halts with a STOP message instead of another
-// informative block (a compromised context can't probe indefinitely).
-func TestGuardrailEscalatesOnRepeats(t *testing.T) {
+// TestGuardrailEscalatesOnDistinctAttempts pins the retry cap: after
+// guardBlockEscalateAt ATTEMPTS in one turn, the hook halts with a STOP message
+// instead of another informative block (a compromised context can't probe
+// indefinitely). Three different tools aimed past the same rule is that probe.
+func TestGuardrailEscalatesOnDistinctAttempts(t *testing.T) {
 	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"r","status":"violate","reason":"x"}]}`}
 	turn := guardTurn(t, stub, AgentRecord{
 		Name: "X", Guardrails: "r", GuardrailHooks: []string{"pre_action"},
 	})
 	hook := turn.guardrailCheckHook()
+	routes := []string{"send_payment to=x", "bank_transfer to=x", "fetch_url url=payments"}
 	var lastMsg string
 	for i := 0; i < guardBlockEscalateAt; i++ {
-		lastMsg = hook(guardHookPreAction, "do the thing").Message
+		lastMsg = hook(guardHookPreAction, routes[i]).Message
 	}
 	if !strings.HasPrefix(lastMsg, "STOP") {
-		t.Fatalf("the %dth block should escalate to a STOP; got: %s", guardBlockEscalateAt, lastMsg)
+		t.Fatalf("the %dth distinct route past the rule should escalate to a STOP; got: %s", guardBlockEscalateAt, lastMsg)
+	}
+}
+
+// The opposite shape, and the reason the counter is distinct. An agent that
+// reaches for ONE thing it cannot do is stuck, not evading: ending its turn
+// costs the user the answer to everything else they asked and teaches the agent
+// nothing. It gets refused, every time, for as long as it keeps asking.
+func TestRepeatingOneRefusedCallNeverEndsTheTurn(t *testing.T) {
+	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"r","status":"violate","reason":"x"}]}`}
+	turn := guardTurn(t, stub, AgentRecord{
+		Name: "X", Guardrails: "r", GuardrailHooks: []string{"pre_action"},
+	})
+	hook := turn.guardrailCheckHook()
+	for i := 0; i < guardBlockEscalateAt*3; i++ {
+		dec := hook(guardHookPreAction, "agents action=run agent=Researcher")
+		if !dec.Blocked {
+			t.Fatalf("call %d was allowed through; a refused attempt stays refused", i+1)
+		}
+		if strings.HasPrefix(dec.Message, "STOP") {
+			t.Fatalf("repeat %d ended the turn; repeating one refused call is stuck, not evasive", i+1)
+		}
+	}
+	if turn.guardrailBlocks != 1 {
+		t.Errorf("distinct attempts = %d, want 1", turn.guardrailBlocks)
+	}
+	if turn.guardrailBlockTotal != guardBlockEscalateAt*3 {
+		t.Errorf("raw tally = %d, want %d — every refusal is still counted and logged", turn.guardrailBlockTotal, guardBlockEscalateAt*3)
+	}
+	// Different ARGS to the same tool are the same door, not a new route.
+	hook(guardHookPreAction, "agents action=run agent=SomeoneElse")
+	if turn.guardrailBlocks != 1 {
+		t.Errorf("same tool with different args counted as a new attempt (%d)", turn.guardrailBlocks)
+	}
+}
+
+// A reply the same rule refuses twice is one refused reply. The rewrite budget
+// (GuardrailDecision.Correctable) bounds how many times core re-drafts it;
+// escalation must not double as a second, hidden budget.
+func TestRedraftsOfOneReplyAreOneAttempt(t *testing.T) {
+	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"r","status":"violate","reason":"x"}]}`}
+	turn := guardTurn(t, stub, AgentRecord{
+		Name: "X", Guardrails: "r", GuardrailHooks: []string{"pre_output"},
+	})
+	hook := turn.guardrailCheckHook()
+	for _, draft := range []string{"here is the salary range", "the range is roughly", "about what you would expect"} {
+		if msg := hook(guardHookPreOutput, draft).Message; strings.HasPrefix(msg, "STOP") {
+			t.Fatalf("a re-draft ended the turn: %s", msg)
+		}
+	}
+	if turn.guardrailBlocks != 1 {
+		t.Errorf("distinct attempts = %d, want 1", turn.guardrailBlocks)
+	}
+}
+
+// The key itself, without the warden in the way.
+func TestGuardrailBlockKeySeparatesRoutesNotArguments(t *testing.T) {
+	a := guardrailBlockKey("r", guardHookPreAction, "send_payment to=x amount=1")
+	b := guardrailBlockKey("r", guardHookPreAction, "send_payment to=y amount=999")
+	if a != b {
+		t.Error("same tool, different args — one attempt")
+	}
+	if a == guardrailBlockKey("r", guardHookPreAction, "bank_transfer to=x") {
+		t.Error("a different tool is a different route past the rule")
+	}
+	if a == guardrailBlockKey("r2", guardHookPreAction, "send_payment to=x amount=1") {
+		t.Error("a different rule is a different attempt")
+	}
+	// Content hooks key on the hook alone: two drafts are not two routes.
+	if guardrailBlockKey("r", guardHookPreOutput, "draft one") != guardrailBlockKey("r", guardHookPreOutput, "draft two") {
+		t.Error("re-drafts must share a key")
 	}
 }
 
@@ -193,11 +265,11 @@ func TestPreInputJudgesFollowUpWithContext(t *testing.T) {
 		t.Fatalf("the directive must sit immediately before the request; got %+v", out)
 	}
 	// The warden must have SEEN the prior salary question, not just "Why?".
-	if !strings.Contains(stub.lastMsg, "How much does Alex make?") {
-		t.Fatalf("pre_input candidate must carry the conversation window; warden saw: %s", stub.lastMsg)
+	if !strings.Contains(stub.seen(), "How much does Alex make?") {
+		t.Fatalf("pre_input candidate must carry the conversation window; warden saw: %s", stub.seen())
 	}
-	if !strings.Contains(stub.lastMsg, "Why?") {
-		t.Fatalf("pre_input candidate must include the current request; warden saw: %s", stub.lastMsg)
+	if !strings.Contains(stub.seen(), "Why?") {
+		t.Fatalf("pre_input candidate must include the current request; warden saw: %s", stub.seen())
 	}
 }
 

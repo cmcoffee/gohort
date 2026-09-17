@@ -74,6 +74,69 @@ func (t *chatTurn) guardrailEnforcerCtx(ctx context.Context) guardrailEnforcemen
 	}
 }
 
+// taintedActionRule is the rule name the tainted-action check counts under.
+// It is not an owner-authored rule — there is no text to quote — but it shares
+// the escalation counter, so it needs a stable name in it.
+const taintedActionRule = "(tainted action)"
+
+// guardBlockEscalateAt counts ATTEMPTS, not blocks, and guardrailBlockKey is
+// what makes those two different things.
+//
+// The threshold exists to stop a context that keeps rewording its way toward a
+// prohibited end: three routes to the same forbidden place is a probe, and the
+// right answer is to end the turn. Counting raw blocks conflated that with its
+// opposite — an agent reaching for ONE thing it cannot do, over and over. That
+// agent is not evading anything; it is stuck, and ending its turn costs the
+// user their answer to the rest of what they asked while teaching the agent
+// nothing it could act on.
+//
+// So a repeat of an attempt already refused is refused again, logged again and
+// filed for review again, and does not advance the counter.
+//
+// What counts as ONE attempt:
+//
+//	pre_action  — this rule against this TOOL. Different args to the same tool
+//	              is the same agent trying the same door; a different tool is a
+//	              different route and counts separately, which is exactly the
+//	              case the threshold is for (send_payment → bank_transfer →
+//	              fetch_url against a payments API is three attempts).
+//	everything else — this rule at this hook. Two drafts of a reply the same
+//	              rule refuses are one refused reply, not an escalation; the
+//	              rewrite budget (GuardrailDecision.Correctable) already bounds
+//	              how many times core will try.
+func guardrailBlockKey(rule, hookPoint, candidate string) string {
+	if hookPoint != guardHookPreAction {
+		return rule + "\x00" + hookPoint
+	}
+	// The pre_action candidate is "<tool> <args…>" (core builds it that way),
+	// so the first field is the tool.
+	tool := strings.ToLower(strings.TrimSpace(candidate))
+	if i := strings.IndexAny(tool, " \t\n"); i > 0 {
+		tool = tool[:i]
+	}
+	return rule + "\x00" + hookPoint + "\x00" + tool
+}
+
+// countGuardrailBlock records one block and advances the escalation counter
+// only when it is an attempt not already refused this turn.
+func (t *chatTurn) countGuardrailBlock(rule, hookPoint, candidate string) {
+	if t == nil {
+		return
+	}
+	t.guardrailBlockTotal++
+	key := guardrailBlockKey(rule, hookPoint, candidate)
+	if t.guardrailBlockKeys[key] {
+		Debug("[orchestrate.guardrail] agent=%s repeat block (rule=%q hook=%s) — refused again, escalation counter unchanged at %d",
+			t.agent.ID, rule, hookPoint, t.guardrailBlocks)
+		return
+	}
+	if t.guardrailBlockKeys == nil {
+		t.guardrailBlockKeys = map[string]bool{}
+	}
+	t.guardrailBlockKeys[key] = true
+	t.guardrailBlocks++
+}
+
 func (t *chatTurn) guardrailCheckHook() func(hookPoint, candidate string) GuardrailDecision {
 	return t.guardrailCheckHookCtx(t.ctx)
 }
@@ -108,7 +171,10 @@ func (t *chatTurn) guardrailCheckHookCtx(ctx context.Context) func(hookPoint, ca
 		// steer it. It also runs for an agent with no rules at all.
 		if tightens && hookPoint == guardHookPreAction && t.turnTainted() {
 			if dec := t.checkTaintedAction(ctx, candidate); dec.Blocked {
-				t.guardrailBlocks++ // shares the turn's escalation counter
+				// Shares the turn's escalation counter, and its distinctness
+				// rule with it: a steered agent that reaches for the same tool
+				// twice has made one attempt, not two.
+				t.countGuardrailBlock(taintedActionRule, hookPoint, candidate)
 				return dec
 			}
 		}
@@ -192,16 +258,16 @@ func (t *chatTurn) guardrailCheckHookCtx(ctx context.Context) func(hookPoint, ca
 		// Counted on the TURN, not in this closure: the halt predicate and the
 		// check are separate hooks that must read one number, and a turn's
 		// escalation state belongs to the turn.
-		t.guardrailBlocks++
+		t.countGuardrailBlock(rule, hookPoint, candidate)
 		t.noteGuardrailRule(rule)
 		t.turnDiag("guardrail-blocked", fmt.Sprintf("Guardrail %q blocked a %s check%s: %s", rule, hookPoint, modeNote, reason))
-		Log("[orchestrate.guardrail] agent=%s blocked %s (rule=%q correctable=%v) block#%d", t.agent.ID, hookPoint, rule, correctable, t.guardrailBlocks)
+		Log("[orchestrate.guardrail] agent=%s blocked %s (rule=%q correctable=%v) block#%d of %d attempted", t.agent.ID, hookPoint, rule, correctable, t.guardrailBlocks, t.guardrailBlockTotal)
 		// File it for review. Every block, including repeats — a rule tripping
 		// repeatedly is the shape most worth seeing, and the per-thread trail
 		// above can only be found by someone who already knows which thread.
 		t.recordGuardrailBlock(rule, hookPoint, reason)
 		if t.guardrailBlocks >= guardBlockEscalateAt {
-			t.notifyOwnerGuardrail(rule, t.guardrailBlocks)
+			t.notifyOwnerGuardrail(rule, t.guardrailBlockTotal)
 			// The returned text still goes back as the blocked result, but it is
 			// no longer what stops the turn — GuardrailHalted does, and core ends
 			// the turn without asking this model for anything further. It used to
@@ -210,7 +276,7 @@ func (t *chatTurn) guardrailCheckHookCtx(ctx context.Context) func(hookPoint, ca
 			return GuardrailDecision{
 				Blocked:     true,
 				Correctable: correctable,
-				Message:     fmt.Sprintf("STOP — you have hit enforced guardrails %d times this turn. This turn is being terminated; the user's reply is being written by a separate check. Do NOT keep rephrasing or re-routing to slip the guardrail; the owner has been notified.", t.guardrailBlocks),
+				Message:     fmt.Sprintf("STOP — you have tried %d different ways past an enforced limit this turn. This turn is being terminated; the user's reply is being written by a separate check. Do NOT keep rephrasing or re-routing to slip the guardrail; the owner has been notified.", t.guardrailBlocks),
 			}
 		}
 		// A contestable rule adds one sentence inviting an appeal, and arms the

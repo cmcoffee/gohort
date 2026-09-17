@@ -160,11 +160,24 @@ type chatTurn struct {
 	// written by the tool and read by nobody.
 	turnClosed bool
 
-	// guardrailBlocks counts enforced-guardrail blocks across THIS turn, at any
-	// hook. Lives on the turn because the check hook and the halt predicate are
-	// separate callbacks that must agree on one count — escalation is a property
-	// of the turn, not of a single interception point.
+	// guardrailBlocks counts DISTINCT enforced-guardrail blocks across THIS
+	// turn, at any hook — one per (rule, attempt), however many times the agent
+	// repeats that attempt. Lives on the turn because the check hook and the
+	// halt predicate are separate callbacks that must agree on one count —
+	// escalation is a property of the turn, not of a single interception point.
+	//
+	// Distinct, because the threshold exists to catch a context REPHRASING to
+	// slip a guard, and repetition of one refused call is the opposite shape:
+	// an agent stuck on something it cannot do, which ending the turn does not
+	// help. See guardrailBlockKey.
 	guardrailBlocks int
+
+	// guardrailBlockKeys is the set behind that count, and guardrailBlockTotal
+	// the raw tally including repeats — what the owner notification and the
+	// server log report, since "blocked 9 times, 1 distinct" is the reading
+	// that says stuck rather than evasive.
+	guardrailBlockKeys  map[string]bool
+	guardrailBlockTotal int
 
 	// guardrailRulesHit names each DISTINCT rule that blocked something this
 	// turn, in order. The block path already logs the rule to the server log and
