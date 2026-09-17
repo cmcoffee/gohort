@@ -64,7 +64,10 @@ func findSkill(db Database, username, id string) (SkillRecord, bool) {
 // then a section that adds one. Split from the handler so the wiring is
 // assertable without a server.
 func skillPlaybookPage(skill SkillRecord) ui.Page {
-	base := "api/skill-playbook?id=" + url.QueryEscape(skill.ID) + "&rule="
+	// Absolute, for the same reason the column link is (see playbookEditorURL):
+	// this page is reached at /extensions/skill-playbook, and a relative
+	// endpoint would resolve against that path rather than the app root.
+	base := "/extensions/api/skill-playbook?id=" + url.QueryEscape(skill.ID) + "&rule="
 	var sections []ui.Section
 	for i, rule := range skill.Playbook {
 		probs := rule.Problems("rule "+strconv.Itoa(i+1), 1)
@@ -86,7 +89,7 @@ func skillPlaybookPage(skill SkillRecord) ui.Page {
 			PostURL:        base + "add",
 			Method:         "POST",
 			SubmitLabel:    "Add rule",
-			RedirectURL:    "skill-playbook?id=" + url.QueryEscape(skill.ID),
+			RedirectURL:    playbookEditorURL(skill.ID),
 			RedirectTarget: "_self",
 			Fields: []ui.FormField{
 				{Field: "fact", Type: "text", Label: "What must be established first?", Placeholder: "queue_draining",

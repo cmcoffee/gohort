@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -811,6 +812,12 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 						"description":  s.Description,
 						"triggers":     strings.Join(s.Triggers, "\n"),
 						"instructions": s.Instructions,
+						// Two doors, both here: the rules as JSON to edit in
+						// place (what the admin form offers), and the address of
+						// the visual editor for anyone who would rather answer
+						// questions than write braces.
+						"playbook_text": playbookText(s),
+						"playbook_link": playbookEditorLine(s),
 					})
 					return
 				}
@@ -847,7 +854,7 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 			rows = append(rows, row{
 				ID: s.ID, Name: s.Name, Description: s.Description,
 				Triggers: len(s.Triggers), Disabled: s.Disabled, Updated: updated,
-				Playbook: pb, PlaybookURL: "skill-playbook?id=" + s.ID,
+				Playbook: pb, PlaybookURL: playbookEditorURL(s.ID),
 			})
 		}
 		writeJSON(w, rows)
@@ -887,14 +894,30 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 		// those grants — a form-authored skill is pure behavior; anything that
 		// ships code or grants tools stays in Builder. Own namespace only.
 		var body struct {
-			Name         string `json:"name"`
-			Description  string `json:"description"`
-			Triggers     string `json:"triggers"`
-			Instructions string `json:"instructions"`
+			Name         string  `json:"name"`
+			Description  string  `json:"description"`
+			Triggers     string  `json:"triggers"`
+			Instructions string  `json:"instructions"`
+			PlaybookText *string `json:"playbook_text"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
+		}
+		// A POINTER, so a form that did not carry the field (the Add form, a
+		// chip picker) leaves the rules alone, while one that carried it empty
+		// clears them. Validated here rather than at the store: the error has
+		// to name the rule while the person still has it on screen.
+		var playbook []PlaybookRule
+		if body.PlaybookText != nil && strings.TrimSpace(*body.PlaybookText) != "" {
+			if err := json.Unmarshal([]byte(*body.PlaybookText), &playbook); err != nil {
+				http.Error(w, "playbook rules: not a JSON array — "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			if probs := (SkillRecord{Playbook: playbook}).PlaybookProblems(); len(probs) > 0 {
+				http.Error(w, "playbook rules: "+strings.Join(probs, "; "), http.StatusBadRequest)
+				return
+			}
 		}
 		name := strings.TrimSpace(body.Name)
 		if name == "" {
@@ -920,6 +943,9 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 		rec.Description = strings.TrimSpace(body.Description)
 		rec.Instructions = body.Instructions
 		rec.Triggers = splitSkillTriggers(body.Triggers)
+		if body.PlaybookText != nil {
+			rec.Playbook = playbook // nil when the field came through blank — clears
+		}
 		if _, err := SaveSkill(AuthDB(), user, rec); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
@@ -1102,12 +1128,50 @@ func credentialFormFields() []ui.FormField {
 // tools, tool grants (AllowedTools), and attached collections are NOT here:
 // those ship code or grant capability and stay Builder-authored. An edit
 // preserves them (the handler load-then-mutates).
+// playbookEditorURL is the editor's address, absolute. Relative would resolve
+// against whatever page is showing — and the hub links to /extensions with no
+// trailing slash, so a relative href lands at the site root instead.
+func playbookEditorURL(skillID string) string {
+	return "/extensions/skill-playbook?id=" + url.QueryEscape(skillID)
+}
+
+// playbookText is the skill's rules as the JSON the form edits. Empty for a
+// skill with none, so the textarea opens blank rather than showing "null".
+func playbookText(s SkillRecord) string {
+	if len(s.Playbook) == 0 {
+		return ""
+	}
+	raw, err := json.MarshalIndent(s.Playbook, "", "  ")
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+// playbookEditorLine is the read-only line above the JSON: what the rules say
+// in words, and where to edit them by answering questions instead.
+func playbookEditorLine(s SkillRecord) string {
+	var b strings.Builder
+	for _, r := range s.Playbook {
+		b.WriteString("• " + r.Sentence() + "\n")
+	}
+	if len(s.Playbook) == 0 {
+		b.WriteString("No rules yet.\n")
+	}
+	b.WriteString("\nPrefer questions to JSON? Open the editor: " + playbookEditorURL(s.ID))
+	return b.String()
+}
+
 func userSkillFormFields() []ui.FormField {
 	return []ui.FormField{
 		{Field: "name", Label: "Name", Placeholder: "Contract Reviewer", Help: "Shown to your agents; also the H2 header above the instructions when the skill is active."},
 		{Field: "description", Label: "Description", Help: "One line — when this skill applies. The assistant reads it to decide relevance."},
 		{Field: "triggers", Label: "Triggers", Type: "textarea", Rows: 3, Placeholder: "contract\n*.pdf", Help: "Substring patterns (or *.ext for attachments), ONE PER LINE. Any match activates the skill. Leave blank to rely on the description."},
 		{Field: "instructions", Label: "Instructions", Type: "textarea", Rows: 12, Help: "Markdown appended to the assistant's prompt while the skill is active — the approach, voice, or method it should apply."},
+		{Field: "playbook_link", Label: "Playbook", Type: "readonly",
+			Help: "Conditional rules the framework runs and settles BEFORE the assistant answers — \"establish Y first; if yes do Z, if no do U\"."},
+		{Field: "playbook_text", Label: "Playbook rules (JSON)", Type: "textarea", Rows: 8,
+			Help: "A JSON array of rules. Each: {\"fact\": \"queue_draining\", \"how\": \"Read the consumer lag.\", \"then\": \"Look at the consumer.\", \"else\": \"Look at the broker.\"}. Optional: \"when\": [triggers] to apply the rule only on matching turns; \"type\": \"choice\" with \"values\" and \"cases\"; \"then_rule\" / \"else_rule\" to nest one level. Leave blank for none. The editor linked above writes the same thing by asking questions."},
 	}
 }
 

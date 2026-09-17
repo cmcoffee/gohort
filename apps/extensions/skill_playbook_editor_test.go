@@ -73,11 +73,11 @@ func TestPlaybookPageShape(t *testing.T) {
 		t.Fatalf("an unfinished rule's subtitle is its checklist: %q", page.Sections[1].Subtitle)
 	}
 	fp, ok := page.Sections[1].Body.(ui.FormPanel)
-	if !ok || fp.PostURL != "api/skill-playbook?id=s1&rule=1" {
+	if !ok || fp.PostURL != "/extensions/api/skill-playbook?id=s1&rule=1" {
 		t.Fatalf("each rule posts to its own endpoint: %+v", page.Sections[1].Body)
 	}
 	add, ok := page.Sections[2].Body.(ui.FormPanel)
-	if !ok || add.PostURL != "api/skill-playbook?id=s1&rule=add" || add.RedirectURL != "skill-playbook?id=s1" {
+	if !ok || add.PostURL != "/extensions/api/skill-playbook?id=s1&rule=add" || add.RedirectURL != "/extensions/skill-playbook?id=s1" {
 		t.Fatalf("the add form appends and reloads: %+v", add)
 	}
 	// The page belongs to the Extensions app, not admin: a user edits their
@@ -104,5 +104,65 @@ func TestExtensionsKeepsItsDataBucket(t *testing.T) {
 	}
 	if got := (&Extensions{}).WebName(); got != "Extensions" {
 		t.Errorf("display name = %q", got)
+	}
+}
+
+// Every URL the editor hands the browser is absolute.
+//
+// The hub links to /extensions with NO trailing slash, so a relative href on
+// that page resolves against the site ROOT: "skill-playbook?id=x" became
+// /skill-playbook?id=x and went nowhere. The column link, the form endpoints
+// and the redirect are all absolute for that reason.
+func TestPlaybookURLsAreAbsolute(t *testing.T) {
+	if got := playbookEditorURL("s1"); got != "/extensions/skill-playbook?id=s1" {
+		t.Fatalf("column link = %q", got)
+	}
+	page := skillPlaybookPage(SkillRecord{ID: "s1", Name: "Orders", Playbook: []PlaybookRule{
+		{Fact: "q", How: "h", Then: "a", Else: "b"},
+	}})
+	for i, sec := range page.Sections {
+		fp, ok := sec.Body.(ui.FormPanel)
+		if !ok {
+			continue
+		}
+		for _, u := range []string{fp.Source, fp.PostURL, fp.RedirectURL} {
+			if u != "" && !strings.HasPrefix(u, "/extensions/") {
+				t.Errorf("section %d has a relative URL %q — it will resolve against the wrong page", i, u)
+			}
+		}
+	}
+}
+
+// The skill form edits the playbook in place, the way admin's does, and links
+// to the visual editor beside it.
+func TestSkillFormEditsThePlaybook(t *testing.T) {
+	var text, link *ui.FormField
+	for i, f := range userSkillFormFields() {
+		switch f.Field {
+		case "playbook_text":
+			text = &userSkillFormFields()[i]
+		case "playbook_link":
+			link = &userSkillFormFields()[i]
+		}
+	}
+	if text == nil || text.Type != "textarea" {
+		t.Fatal("the rules must be editable in the form, as a textarea")
+	}
+	if link == nil || link.Type != "readonly" {
+		t.Fatal("the form must show what the rules say, and where to edit them by question")
+	}
+	s := SkillRecord{ID: "s1", Playbook: []PlaybookRule{{Fact: "queue_draining", How: "h", Then: "consumer", Else: "broker"}}}
+	if got := playbookText(s); !strings.Contains(got, `"fact": "queue_draining"`) {
+		t.Fatalf("the textarea carries the rules as JSON, got %q", got)
+	}
+	if got := playbookText(SkillRecord{}); got != "" {
+		t.Fatalf("no rules opens blank, not %q", got)
+	}
+	line := playbookEditorLine(s)
+	if !strings.Contains(line, "establish queue_draining") || !strings.Contains(line, "/extensions/skill-playbook?id=s1") {
+		t.Fatalf("the line says what the rules are and where the editor is, got %q", line)
+	}
+	if !strings.Contains(playbookEditorLine(SkillRecord{}), "No rules yet") {
+		t.Fatal("an empty playbook says so")
 	}
 }
