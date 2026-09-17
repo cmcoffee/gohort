@@ -851,29 +851,35 @@ func (pr *planRun) catalogKnowTools() error {
 			t.appDefToolDef(),
 		)
 	}
-	pr.cat.knowTools = append(pr.cat.knowTools,
-		// agents (list / get / run) — single entry point for agent
-		// operations. Replaces the legacy trio (list_agents,
-		// get_agent, dispatch_to_agent) for new code. The legacy
-		// tools stay registered for backward compat with agent
-		// records that explicitly name them in AllowedTools.
-		//
-		// Builder gets the READ-ONLY variant (list / get only) —
-		// its job is authoring/composition, not delegation. With
-		// run enabled Builder reaches for Chat ("ask Chat about
-		// X") and Chat's authoring-intent routing sends control
-		// right back into Builder, an A→B→A cycle the chain guard
-		// catches only after the round-trip already happened.
-		// Builder's actual delegation surface is plan_set workers,
-		// which spawn with their own catalog (web_search /
-		// fetch_url for any specialist-knowledge sub-task).
-		// Builder gets run too — needed for smoke-testing the just-
-		// created agent. The self-dispatch guard (target.ID == t.agent.ID)
-		// and dispatchChain cycle detection in agentsRunAction prevent
-		// Builder→Builder and Builder→Chat→Builder loops; everything
-		// else is fair game.
-		t.agentsGroupedToolDef(true),
-	)
+	// Mounted only when this turn can reach something to dispatch to, or the
+	// agent authors and needs to READ the fleet — see agentsToolWanted. Same
+	// reasoning as enter_explorer_mode below: a long description in front of a
+	// handler that refuses is prefill cost and a wrong steer.
+	if t.agentsToolWanted() {
+		pr.cat.knowTools = append(pr.cat.knowTools,
+			// agents (list / get / run) — single entry point for agent
+			// operations. Replaces the legacy trio (list_agents,
+			// get_agent, dispatch_to_agent) for new code. The legacy
+			// tools stay registered for backward compat with agent
+			// records that explicitly name them in AllowedTools.
+			//
+			// Builder gets the READ-ONLY variant (list / get only) —
+			// its job is authoring/composition, not delegation. With
+			// run enabled Builder reaches for Chat ("ask Chat about
+			// X") and Chat's authoring-intent routing sends control
+			// right back into Builder, an A→B→A cycle the chain guard
+			// catches only after the round-trip already happened.
+			// Builder's actual delegation surface is plan_set workers,
+			// which spawn with their own catalog (web_search /
+			// fetch_url for any specialist-knowledge sub-task).
+			// Builder gets run too — needed for smoke-testing the just-
+			// created agent. The self-dispatch guard (target.ID == t.agent.ID)
+			// and dispatchChain cycle detection in agentsRunAction prevent
+			// Builder→Builder and Builder→Chat→Builder loops; everything
+			// else is fair game.
+			t.agentsGroupedToolDef(true),
+		)
+	}
 	// Explorer mode — LLM-triggered round-budget lift for API-mapping
 	// tasks. Mounted only when the agent can actually use it: for
 	// everyone else the ~450-word description was pure prefill cost in

@@ -151,7 +151,11 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 	// they smoke-test newly-created agents ("Step N (verify): worker
 	// dispatches to the new agent with a representative input"), and
 	// stripping run here breaks that pattern.
-	tools = append(tools, t.agentsGroupedToolDef(true))
+	// …when there is something to dispatch TO. A worker step that can reach
+	// nothing gets no delegation surface; see agentsToolWanted.
+	if t.agentsToolWanted() {
+		tools = append(tools, t.agentsGroupedToolDef(true))
+	}
 	if !t.agent.Fleet {
 		// Fleet agents schedule through create_standing_agent, not the generic
 		// per-session recurring scheduler — see runPlan's note.

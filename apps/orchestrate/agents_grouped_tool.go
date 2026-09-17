@@ -40,6 +40,23 @@ import (
 // authoring-intent routing sends control right back here). Builder
 // delegates execution via plan_set workers instead.
 func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
+	// REACH gate. The caller decides policy (Builder's read-only variant, a
+	// worker step's full surface); this decides whether the policy has
+	// anything to act on. A `run` action advertised to an agent that can
+	// reach nothing is an invitation the gate then refuses, round after
+	// round — the model reads "delegate work and get the result back",
+	// reaches for it, is told no, rephrases, and is told no again.
+	//
+	// This is the same rule dispatchablePipelines / dispatchableMachines
+	// already apply to the pipeline and machine params, and the same rule
+	// dispatchModeAfterSelfHeal exists to keep: a catalog that offers what
+	// the gate refuses is the drift worth preventing. It had just never been
+	// applied to the action that names the whole surface.
+	if allowRun && t.app != nil && !t.canDispatchAnything() {
+		Debug("[orchestrate] agents: run action withheld for agent=%q — nothing reachable (dispatch mode %q, 0 agents / 0 pipelines / 0 machines)",
+			t.agent.ID, effectiveDispatchMode(t.agent))
+		allowRun = false
+	}
 	desc := "Manage and call other agents in the fleet. Three actions: list (see what agents exist), get (read one agent's full record + set authoring focus), run (delegate work and get the result back — to a named agent for its judgement, to a named pipeline to run a saved multi-stage workflow, or to a named machine to run a saved step-by-step procedure). Single entry point for agent operations — pick the action that matches the intent."
 	if !allowRun {
 		desc = "Inspect other agents in the fleet. Two actions: list (see what agents exist), get (read one agent's full record + set authoring focus). This catalog variant is READ-ONLY — dispatch (run) is intentionally disabled for this agent because its job is authoring/composition, not delegation. If you need to delegate execution work, use plan_set with worker steps; if you need a specialist's domain knowledge during authoring, dispatch a plan_set worker with web_search / fetch_url."
@@ -271,6 +288,54 @@ func (t *chatTurn) agentsHandler(allowRun, allowRunTool bool) ToolHandlerFunc {
 			return "", fmt.Errorf("unknown action %q for agents tool. valid: %s", action, strings.Join(acts, ", "))
 		}
 	}
+}
+
+// canDispatchAnything reports whether this turn has ANY reachable dispatch
+// target: an agent in its fleet catalog, a saved pipeline, or a saved machine.
+//
+// All three already answer the question for their own surface — dispatchableFleet
+// applies the dispatch mode, the deleted-target self-heal, Builder's carve-out,
+// the Permissions pane's delegation blocks and sub-agent privacy; the other two
+// apply the mode and their own allow checks. So this asks them rather than
+// re-deriving any of it, and an agent whose reach changes changes here with it.
+//
+// False is the honest answer for "Allow none", for an agent whose allowlist
+// names only deleted targets, and for a fleet of one.
+func (t *chatTurn) canDispatchAnything() bool {
+	if t == nil {
+		return false
+	}
+	// A turn with no app is not a turn: it is an assembly made for the SCHEMA
+	// alone (the catalog picker, a test), with no fleet to read and nothing to
+	// dispatch into. Describing the full surface is the right answer there —
+	// the question "what can this tool do" is not the question "what can this
+	// turn reach".
+	if t.app == nil {
+		return true
+	}
+	return len(t.dispatchableFleet()) > 0 ||
+		len(t.dispatchablePipelines()) > 0 ||
+		len(t.dispatchableMachines()) > 0
+}
+
+// agentsToolWanted reports whether this turn should carry the `agents` tool at
+// all.
+//
+// Reach alone does not answer it, because the tool has a second job: list and
+// get READ the fleet, which is what an authoring agent needs in order to work
+// on it. So an authoring agent keeps the read-only variant with nothing
+// reachable, and an agent that can neither dispatch nor author gets no entry —
+// a catalog slot describing agent delegation, on a turn where delegation is
+// impossible, is prompt weight that only steers the model wrong.
+func (t *chatTurn) agentsToolWanted() bool {
+	if t == nil {
+		return false
+	}
+	if t.canDispatchAnything() || agentCanAuthor(t.agent) {
+		return true
+	}
+	Debug("[orchestrate] agents: tool withheld entirely for agent=%q — nothing reachable and not an authoring agent", t.agent.ID)
+	return false
 }
 
 // dispatchAuthority is a snapshot of one agent's dispatch policy, carried down

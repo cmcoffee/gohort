@@ -280,7 +280,7 @@ func (t *chatTurn) dispatchExtraTools(sess *ToolSession, poolUser string, poolDB
 	// agents grouped tool — sub-agents (OwnedBy set) are LEAVES (no dispatch
 	// surface → no depth cascades); top-level targets get the full surface;
 	// Builder targets stay read-only on dispatch.
-	if t.agent.OwnedBy == "" {
+	if t.agent.OwnedBy == "" && t.agentsToolWanted() {
 		extraTools = append(extraTools, t.agentsGroupedToolDef(!isBuilderAgent(t.agent.ID)))
 	}
 	extraTools = append(extraTools, t.buildAttachedPipelineToolDefs()...)
