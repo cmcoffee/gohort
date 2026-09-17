@@ -81,7 +81,12 @@ func (t *chatTurn) playbookBlock(ctx context.Context, skill SkillRecord) string 
 // and renders the outcomes as one block.
 func (pr playbookRunner) resolve(ctx context.Context, skill SkillRecord) string {
 	var b strings.Builder
-	for _, rule := range skill.Playbook {
+	for i, rule := range skill.Playbook {
+		// A rule the editor has not finished never runs: it would
+		// establish a fact with no arm to hand back, or none at all.
+		if probs := rule.Problems("rule "+fmt.Sprint(i+1), 1); len(probs) > 0 {
+			continue
+		}
 		if len(rule.When) > 0 && !TriggersMatch(rule.When, pr.msg, pr.docNames) {
 			continue
 		}

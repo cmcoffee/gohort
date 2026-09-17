@@ -366,6 +366,48 @@ func (r PlaybookRule) Fallback() string {
 	return b.String()
 }
 
+// Sentence reads the rule back as the sentence its author would have
+// written, so an editor can show that the fields mean what they think.
+func (r PlaybookRule) Sentence() string {
+	var b strings.Builder
+	if len(r.When) > 0 {
+		b.WriteString("When the message mentions " + strings.Join(r.When, " or ") + ", ")
+	} else {
+		b.WriteString("Whenever this skill is consulted, ")
+	}
+	fact := strings.TrimSpace(r.Fact)
+	if fact == "" {
+		fact = "(unnamed fact)"
+	}
+	b.WriteString("establish " + fact)
+	arm := func(label, text string, rule *PlaybookRule) {
+		switch {
+		case rule != nil:
+			b.WriteString("; " + label + ", " + lowerFirst(rule.Sentence()))
+		case strings.TrimSpace(text) != "":
+			b.WriteString("; " + label + ", " + strings.TrimRight(strings.TrimSpace(text), "."))
+		}
+	}
+	switch r.kind() {
+	case playbookChoice:
+		for _, v := range r.Values {
+			arm("if "+v, r.Cases[v], r.CaseRules[v])
+		}
+	default:
+		arm("if yes", r.Then, r.ThenRule)
+		arm("if no", r.Else, r.ElseRule)
+	}
+	b.WriteString(".")
+	return b.String()
+}
+
+func lowerFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToLower(s[:1]) + s[1:]
+}
+
 // LoadSkills returns every skill in the user's pool, ordered by
 // most-recently-updated first (a stable, human-meaningful order for
 // admin views). Empty username returns nil.
@@ -421,9 +463,11 @@ func SaveSkill(db Database, username string, s SkillRecord) (SkillRecord, error)
 	}
 	s.Owner = username
 	s.Updated = time.Now()
-	if probs := s.PlaybookProblems(); len(probs) > 0 {
-		return SkillRecord{}, errString("playbook: " + strings.Join(probs, "; "))
-	}
+	// The playbook is NOT validated here. Storage stores; the doors validate
+	// (the Builder tool, the admin save) and the visual editor saves a rule
+	// half-built on purpose — refusing to store the third field until the
+	// tenth exists is how an editor becomes a puzzle. The resolver skips a
+	// rule with problems, so a half-built one never runs.
 	// Description-embedding removed. Was used by the cosine
 	// gatekeeper / fuzzy classifier that auto-fired skills; with
 	// activation now exclusively LLM-driven via activate_skill, the

@@ -26,6 +26,9 @@ func (a *AdminApp) skillsSections() []ui.Section {
 							{Value: false, Label: "Active", Color: "success"},
 						},
 					},
+					// The visual editor for the skill's conditional rules; the
+					// JSON textarea below stays as the other door.
+					{Field: "playbook", Label: "Playbook", Link: "playbook_url", Mute: true},
 				},
 				RowActions: []ui.RowAction{
 					ui.Expand("Edit", ui.Stack{

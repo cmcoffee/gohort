@@ -43,6 +43,20 @@ func TestPlaybookHandsBackOnlyTheArmThatApplies(t *testing.T) {
 	}
 }
 
+// A half-built rule (no arm yet) is skipped, never run.
+func TestPlaybookSkipsAnUnfinishedRule(t *testing.T) {
+	skill := playbookSkill()
+	skill.Playbook = append(skill.Playbook, PlaybookRule{Fact: "half_built", How: "not yet"})
+	ran := 0
+	pr := playbookRunner{establish: func(context.Context, MachineDef, string) (map[string]any, string, error) {
+		ran++
+		return map[string]any{"queue_draining": true}, "", nil
+	}}
+	if out := pr.resolve(context.Background(), skill); ran != 1 || strings.Contains(out, "half_built") {
+		t.Fatalf("the unfinished rule must not run: ran=%d\n%s", ran, out)
+	}
+}
+
 // A nested rule establishes its own fact after the outer one, and a rule
 // whose When does not match the turn is skipped without running.
 func TestPlaybookNestsAndHonoursWhen(t *testing.T) {

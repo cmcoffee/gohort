@@ -45,9 +45,30 @@ func TestPlaybookProblems(t *testing.T) {
 	if p := (PlaybookRule{Fact: "f", How: "h", Then: "x", ThenRule: &PlaybookRule{Fact: "g", How: "h", Then: "y"}}).Problems("r", 1); len(p) != 1 || !strings.Contains(p[0], "both prose and a rule") {
 		t.Fatalf("an arm is prose or a rule: %v", p)
 	}
-	// SaveSkill refuses a broken playbook with the rule named.
-	if _, err := SaveSkill(memDB(t), "u", SkillRecord{Name: "s", Description: "d", Playbook: []PlaybookRule{bad}}); err == nil || !strings.Contains(err.Error(), "rule 1") {
-		t.Fatalf("save must refuse and name the rule: %v", err)
+	// Storage stores: a half-built rule saves (the editor's door), and the
+	// record-level check still names it for the doors that refuse.
+	if _, err := SaveSkill(memDB(t), "u", SkillRecord{Name: "s", Description: "d", Playbook: []PlaybookRule{bad}}); err != nil {
+		t.Fatalf("save must store a half-built rule: %v", err)
+	}
+	if p := (SkillRecord{Playbook: []PlaybookRule{bad}}).PlaybookProblems(); len(p) == 0 || !strings.HasPrefix(p[0], "rule 1:") {
+		t.Fatalf("record-level problems name the rule: %v", p)
+	}
+}
+
+// The sentence reads the fields back the way the author would say them.
+func TestPlaybookSentence(t *testing.T) {
+	r := boolRule()
+	if got := r.Sentence(); got != "Whenever this skill is consulted, establish queue_draining; if yes, Look at the consumer; if no, Look at the broker." {
+		t.Fatalf("got %q", got)
+	}
+	r.When = []string{"stuck order", "order status"}
+	r.Else, r.ElseRule = "", &PlaybookRule{Fact: "broker_up", How: "h", Then: "restart the consumer"}
+	if got := r.Sentence(); !strings.HasPrefix(got, "When the message mentions stuck order or order status, establish queue_draining; if yes, Look at the consumer; if no, whenever this skill is consulted, establish broker_up; if yes, restart the consumer.") {
+		t.Fatalf("got %q", got)
+	}
+	c := PlaybookRule{Fact: "state", How: "h", Type: "choice", Values: []string{"up", "down"}, Cases: map[string]string{"up": "fine", "down": "bad"}}
+	if got := c.Sentence(); got != "Whenever this skill is consulted, establish state; if up, fine; if down, bad." {
+		t.Fatalf("got %q", got)
 	}
 }
 
