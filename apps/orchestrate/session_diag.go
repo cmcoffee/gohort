@@ -26,10 +26,74 @@ const (
 )
 
 // SessionDiag is one guard decision recorded against a session.
+//
+// Level and ID are DERIVED (diagLevel, diagID) rather than stored: both are
+// readings of fields already in the record, so computing them on the way out
+// keeps one source of truth and gives every entry already in a store the same
+// reading as a new one.
 type SessionDiag struct {
 	At     time.Time `json:"at"`
 	Kind   string    `json:"kind"`
 	Detail string    `json:"detail"`
+	Level  string    `json:"level,omitempty"`
+	ID     string    `json:"id,omitempty"`
+}
+
+// diagID names one breadcrumb the same way from both directions.
+//
+// It exists because a blocking breadcrumb reaches an open page twice by two
+// honest routes: live on the run's event stream, and again from the trail
+// when that page loads the session. A reload lands mid-run with BOTH — the
+// run buffer replays from sequence zero — so without one identity the reader
+// gets the same block told twice, and it is the kind of double that vanishes
+// on the next reload and so never gets reported.
+//
+// Derived from the stamp, not stored: nanosecond time plus kind is unique per
+// trail in any real sense, and derived means an entry written before this
+// existed gets an id too.
+func diagID(at time.Time, kind string) string {
+	return at.UTC().Format(time.RFC3339Nano) + "|" + kind
+}
+
+// Levels a breadcrumb can carry. Only diagLevelBlocked reaches the
+// conversation as it happens; everything else waits in the trail.
+const (
+	diagLevelBlocked = "blocked"
+	diagLevelNote    = "note"
+)
+
+// diagBlockingVerbs are the words a guard uses when it STOPPED something —
+// a tool that did not run, a draft that was not served, a turn cut short.
+//
+// Read off the kind slug rather than declared per call site, and that is the
+// convention: name the kind for what the guard DID ("tool-denied",
+// "guardrail-output-withheld") and it surfaces on the card for free. A kind
+// naming a condition rather than an action ("guardrail-no-verdict",
+// "skill_playbook_fired") stays in the trail, which is where a note nobody
+// has to act on belongs. Sixty-eight call sites and counting: a hand-kept
+// list of blocking kinds would be wrong within a release.
+var diagBlockingVerbs = []string{"blocked", "denied", "withheld", "halted", "discarded", "refus"}
+
+// diagLevel reads a kind slug and says how loudly it should be told.
+func diagLevel(kind string) string {
+	k := strings.ToLower(strings.TrimSpace(kind))
+	for _, verb := range diagBlockingVerbs {
+		if strings.Contains(k, verb) {
+			return diagLevelBlocked
+		}
+	}
+	return diagLevelNote
+}
+
+// decorateSessionDiags fills in the derived display fields (Level, ID) on a
+// trail. Used on the way out of every handler that serves one, so the reader
+// and the live pane classify and identify by the same rules.
+func decorateSessionDiags(list []SessionDiag) []SessionDiag {
+	for i := range list {
+		list[i].Level = diagLevel(list[i].Kind)
+		list[i].ID = diagID(list[i].At, list[i].Kind)
+	}
+	return list
 }
 
 // appendSessionDiag records one guard decision. Stored in its own table
@@ -38,13 +102,21 @@ type SessionDiag struct {
 // would clobber the other. Bounded ring (last sessionDiagCap entries);
 // best-effort — a diagnostics write must never fail a real operation.
 func appendSessionDiag(udb Database, agentID, sessionID, kind, detail string) {
+	appendSessionDiagAt(udb, agentID, sessionID, kind, detail, time.Now())
+}
+
+// appendSessionDiagAt is appendSessionDiag with the stamp supplied. A turn
+// that also TELLS the open pane about a breadcrumb has to write both from one
+// clock reading, because the stamp is half of the entry's identity (diagID)
+// and two readings would be two entries as far as the page is concerned.
+func appendSessionDiagAt(udb Database, agentID, sessionID, kind, detail string, at time.Time) {
 	if udb == nil || strings.TrimSpace(agentID) == "" || strings.TrimSpace(sessionID) == "" {
 		return
 	}
 	key := agentID + ":" + sessionID
 	var list []SessionDiag
 	udb.Get(sessionDiagTable, key, &list)
-	list = append(list, SessionDiag{At: time.Now(), Kind: kind, Detail: detail})
+	list = append(list, SessionDiag{At: at, Kind: kind, Detail: detail})
 	if len(list) > sessionDiagCap {
 		list = list[len(list)-sessionDiagCap:]
 	}
@@ -127,13 +199,98 @@ func diagParentFrom(ctx context.Context) (agentID, sessionID string, ok bool) {
 	return p.agentID, p.sessionID, ok
 }
 
+// diagNoticeKey carries the OPEN CONVERSATION PANE a breadcrumb should also
+// be told to, live.
+//
+// Separate from diagParentKey on purpose, because they answer different
+// questions: the parent stamp says which trail a dispatched turn's breadcrumb
+// is filed under, and this one says which stream is being watched right now.
+// A background fire has the first and not the second; a turn whose reader
+// closed the tab has the first and a sink that writes only to the run buffer.
+//
+// The sub-turn needs the stamp for the same reason the trail does: a
+// delegated run builds its own chatTurn with a nil sse (agent_dispatch.go),
+// so a guardrail that stopped a sub-agent mid-delegation had nowhere live to
+// say so, and the pane showed the tool chip sitting there.
+type diagNoticeKey struct{}
+
+// withDiagNotices names the stream live breadcrumbs are mirrored to.
+func withDiagNotices(ctx context.Context, sink *sseWriter) context.Context {
+	if ctx == nil || sink == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, diagNoticeKey{}, sink)
+}
+
+// diagNoticeSinkFrom reads the stamp, or nil when nobody is watching.
+func diagNoticeSinkFrom(ctx context.Context) *sseWriter {
+	if ctx == nil {
+		return nil
+	}
+	sink, _ := ctx.Value(diagNoticeKey{}).(*sseWriter)
+	return sink
+}
+
+// emitDiagNotice tells the open conversation, as it happens, that a guard
+// stopped something.
+//
+// The trail alone was not enough. A block lands in the middle of a turn the
+// user is watching: a tool chip that never resolves, a reply that arrives
+// shorter than it should have, or nothing at all — and the only record of
+// why sat behind the ⚠ button, which a person has no reason to press unless
+// they already suspect a guard fired. So the breadcrumb is written where the
+// thing happened, in the conversation flow, at the moment it happened.
+//
+// Only diagLevelBlocked. Every guard leaves a breadcrumb (the house rule),
+// but most of them record a condition nobody has to act on, and a card per
+// condition would teach the reader to stop reading the cards.
+func (t *chatTurn) emitDiagNotice(kind, detail string, at time.Time) {
+	if t == nil || diagLevel(kind) != diagLevelBlocked {
+		return
+	}
+	// A live turn owns the pane. A dispatched sub-turn has no sse of its own
+	// and borrows the one it descends from, naming itself the way the trail
+	// mirror does — otherwise "blocked a pre_action check" in the middle of a
+	// delegation reads as the agent the user is talking to.
+	sink, prefix := t.sse, ""
+	if sink == nil {
+		if sink = diagNoticeSinkFrom(t.ctx); sink == nil {
+			return
+		}
+		name := strings.TrimSpace(t.agent.Name)
+		if name == "" {
+			name = t.agent.ID
+		}
+		prefix = "↳ " + name + ": "
+	}
+	sink.Send(map[string]any{
+		"kind":  "notice",
+		"level": diagLevelBlocked,
+		"type":  kind,
+		"text":  prefix + detail,
+		// The same name the trail will serve for this entry, so a page that
+		// receives it both ways shows it once. See diagID.
+		"id": diagID(at, kind),
+		"at": at.UTC().Format(time.RFC3339Nano),
+	})
+}
+
 // turnDiag is appendSessionDiag bound to a chatTurn — the convenient form
 // for guards firing inside a live turn. Nil-safe on every field.
 func (t *chatTurn) turnDiag(kind, detail string) {
 	if t == nil {
 		return
 	}
-	defer t.mirrorDiagToParent(kind, detail)
+	// ONE clock reading for all three destinations — the open pane, this
+	// turn's trail, and the parent's — because the stamp is half of what
+	// names the entry (diagID), and three readings would be three entries as
+	// far as the page is concerned.
+	at := time.Now()
+	// The pane hears about it first. A live notice is only worth anything
+	// while the reader is still looking at the turn it belongs to, and the
+	// store write is the one part of this that can be slow.
+	t.emitDiagNotice(kind, detail, at)
+	defer t.mirrorDiagToParent(kind, detail, at)
 	// A live turn writes to its own session. A BACKGROUND turn (scheduled fire,
 	// monitor wake, dispatched sub-agent) has no *session at all — it was built
 	// for the run, and the session record lives with the caller. Those turns run
@@ -162,7 +319,7 @@ func (t *chatTurn) turnDiag(kind, detail string) {
 	if db == nil {
 		db = t.udb
 	}
-	appendSessionDiag(db, agentID, sessionID, kind, detail)
+	appendSessionDiagAt(db, agentID, sessionID, kind, detail, at)
 }
 
 // mirrorDiagToParent copies a dispatched turn's breadcrumb into the
@@ -171,7 +328,7 @@ func (t *chatTurn) turnDiag(kind, detail string) {
 // own *session — is its own conversation and mirrors nothing, and a stamp
 // that names this very trail (a dispatch that happens to file under the
 // parent's ids) is not written twice.
-func (t *chatTurn) mirrorDiagToParent(kind, detail string) {
+func (t *chatTurn) mirrorDiagToParent(kind, detail string, at time.Time) {
 	if t == nil || t.session != nil {
 		return
 	}
@@ -194,7 +351,7 @@ func (t *chatTurn) mirrorDiagToParent(kind, detail string) {
 	if name == "" {
 		name = t.agent.ID
 	}
-	appendSessionDiag(db, pAgent, pSession, kind, "↳ "+name+": "+detail)
+	appendSessionDiagAt(db, pAgent, pSession, kind, "↳ "+name+": "+detail, at)
 }
 
 // handleSessionDiag serves the trail: GET /api/session-diag?agent=&session=
@@ -213,6 +370,7 @@ func (T *OrchestrateApp) handleSessionDiag(w http.ResponseWriter, r *http.Reques
 	}
 	var list []SessionDiag
 	udb.Get(sessionDiagTable, agent+":"+session, &list)
+	list = decorateSessionDiags(list)
 	// Newest first for display.
 	out := make([]SessionDiag, 0, len(list))
 	for i := len(list) - 1; i >= 0; i-- {
@@ -242,6 +400,7 @@ func (T *OrchestrateApp) PublicHandleSessionDiag(w http.ResponseWriter, r *http.
 	}
 	var list []SessionDiag
 	udb.Get(sessionDiagTable, agentID+":"+sessionID, &list)
+	list = decorateSessionDiags(list)
 	out := make([]SessionDiag, 0, len(list))
 	for i := len(list) - 1; i >= 0; i-- {
 		out = append(out, list[i])

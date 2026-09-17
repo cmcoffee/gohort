@@ -123,10 +123,19 @@ type AgentLoopPanel struct {
 	// toolbar shows a small ⚠ affordance; clicking it fetches this URL (the
 	// literal "{session}" placeholder substituted with the ACTIVE session id
 	// at click time; extra-field placeholders like {agent_id} substituted as
-	// usual) and lists the returned entries ([{at, kind, detail}], newest
-	// first) in a modal. The intent: framework decisions made on the user's
-	// behalf in THIS conversation — suppressed replies, discarded inputs,
-	// retries — which otherwise vanish into server logs. Empty = no affordance.
+	// usual) and lists the returned entries ([{at, kind, level, id, detail}],
+	// newest first) in a modal. The intent: framework decisions made on the
+	// user's behalf in THIS conversation — suppressed replies, discarded
+	// inputs, retries — which otherwise vanish into server logs. Empty = no
+	// affordance.
+	//
+	// Entries carrying level "blocked" are ALSO placed in the conversation
+	// flow, among the messages they happened between, because the trail is
+	// where you look once you already suspect a guard fired. The panel reads
+	// the same URL on session load for that, and shows one live {kind:
+	// "notice"} stream frame and its trail entry once, matching on id — so a
+	// server that streams notices must give a frame the same id the trail
+	// serves for it.
 	DiagnosticsURL string `json:"diagnostics_url,omitempty"`
 	// StatusURL — optional per-session status readout. When set, the toolbar
 	// shows a small pill whose text comes from this URL, refreshed when the

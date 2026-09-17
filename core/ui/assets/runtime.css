@@ -3959,6 +3959,46 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
   font-size: 0.86rem;
   white-space: pre-wrap;
 }
+/* Framework breadcrumb told in the conversation flow — a guard stopped
+ * something, said where it happened. Deliberately NOT message chrome: it is
+ * the framework speaking, not the agent, so it reads as an inset strip rather
+ * than a bubble, and the amber is the same warning the ⚠ trail button
+ * carries. Full width, because a blocked action is not a remark. */
+.ui-agent-notice {
+  align-self: stretch;
+  max-width: 100%;
+  border: 1px solid rgba(217, 119, 6, 0.35);
+  border-left: 3px solid var(--warning, #d97706);
+  background: rgba(217, 119, 6, 0.08);
+  border-radius: 8px;
+  padding: 0.45rem 0.6rem;
+  margin: 0.15rem 0;
+}
+.ui-agent-notice-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  line-height: 1.2;
+  margin-bottom: 0.2rem;
+}
+.ui-agent-notice-mark { color: var(--warning, #d97706); }
+.ui-agent-notice-label {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--warning, #d97706);
+}
+.ui-agent-notice-kind,
+.ui-agent-notice-when { color: var(--text-mute); }
+.ui-agent-notice-when { margin-left: auto; }
+.ui-agent-notice-body {
+  font-size: 0.84rem;
+  line-height: 1.45;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 .ui-agent-msg-status { align-self: flex-start; }
 .ui-agent-msg-status .ui-agent-msg-body {
   background: var(--bg-1);

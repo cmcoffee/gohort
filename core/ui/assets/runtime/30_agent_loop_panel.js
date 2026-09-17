@@ -138,6 +138,7 @@
     var msgEls = {};      // message id -> {bubble, body, role, rawText}
     var activityEls = {}; // activity id -> element
     var blockEls = {};    // app-block id -> {wrap, body}
+    var noticeIds = {};   // framework-breadcrumb id -> true (see addNotice)
     var pendingAttachments = []; // {name, dataURL} for next send
     var pendingMessageExtras = {}; // app-supplied fields to merge into the next send body (one-shot, cleared after send)
     var messageReplayHooks = []; // app-registered fn(bubble, msg) called after each replayed message
@@ -1427,7 +1428,7 @@
             // clearConvo() / clearActivity() — wipe a pane. Used by app-defined
             // Clear actions that mirror the legacy chat-header Clear button.
             clearConvo: function() {
-              msgEls = {}; blockEls = {};
+              msgEls = {}; blockEls = {}; noticeIds = {};
               convoLog.innerHTML = '';
               emptyMsg = el('div', {class: 'ui-agent-empty'},
                 [cfg.empty_text || 'Start typing below.']);
@@ -3603,6 +3604,98 @@
       }
     }
 
+    // buildNotice renders one framework breadcrumb as a conversation card —
+    // the record of something a guard STOPPED, placed where the stopping
+    // happened rather than only behind the ⚠ trail button. Generic: the
+    // server supplies a level, a kind slug and a sentence; nothing here knows
+    // what any particular guard is.
+    //
+    // textContent, never markdown, for the same reason the failure bubble uses
+    // it: the detail quotes whatever tripped the guard, and a blocked request
+    // must not get to style the notice that says it was blocked.
+    function buildNotice(ev) {
+      var level = ev.level || 'blocked';
+      var card = el('div', {class: 'ui-agent-notice ui-agent-notice-' + level});
+      var head = el('div', {class: 'ui-agent-notice-head'});
+      head.appendChild(el('span', {class: 'ui-agent-notice-mark'}, ['\u26a0']));
+      head.appendChild(el('span', {class: 'ui-agent-notice-label'}, [level === 'blocked' ? 'Blocked' : 'Note']));
+      if (ev.type) head.appendChild(el('span', {class: 'ui-agent-notice-kind'}, [ev.type]));
+      // The "when" only earns its place on a REPLAYED card: live, the reader
+      // watched it arrive.
+      if (ev.at) {
+        var when = '';
+        try { when = new Date(ev.at).toLocaleTimeString(); } catch (_) {}
+        if (when) head.appendChild(el('span', {class: 'ui-agent-notice-when'}, [when]));
+      }
+      card.appendChild(head);
+      var body = el('div', {class: 'ui-agent-notice-body'});
+      body.textContent = ev.text || '';
+      card.appendChild(body);
+      return card;
+    }
+
+    // addNotice places one live breadcrumb in the conversation flow. Not a
+    // message: no msgEls registration and no action bar, so it cannot disturb
+    // the streaming bubble's bookkeeping — same contract as status_note.
+    function addNotice(ev) {
+      if (!ev || !(ev.text || '').length) return;
+      // The server names each breadcrumb the same way live and in the trail
+      // (diagID), because a page that loads mid-run gets both: the run buffer
+      // replays from sequence zero AND the trail replay places the same entry
+      // among the messages. Shown once, wherever it arrived first.
+      if (ev.id) {
+        if (noticeIds[ev.id]) return;
+        noticeIds[ev.id] = true;
+      }
+      clearEmpty();
+      convoLog.appendChild(buildNotice(ev));
+      // The turn is still going, so the spinner stays BELOW what just landed.
+      if (thinkingEl && thinkingEl.parentNode === convoLog) {
+        convoLog.appendChild(thinkingEl);
+      }
+      keepPendingInterjectionsLast();
+      scrollConvo(false);
+    }
+
+    // replayNotices re-places the blocking breadcrumbs of a loaded session
+    // among its messages, so a reload shows the same picture of the turn that
+    // the reader saw live instead of a thread with an unexplained gap in it.
+    //
+    // anchors are [{at, node}] in render order, one per replayed message. A
+    // notice lands after the last message that predates it (at the very top
+    // when it predates them all); the anchor then advances to the card just
+    // inserted, so several notices from one turn keep their order.
+    function replayNotices(list, anchors) {
+      if (!Array.isArray(list) || !list.length) return;
+      // The endpoint serves newest first for the trail modal; in the flow they
+      // have to run the other way.
+      var entries = list.slice().reverse().filter(function(e) {
+        if (!e || e.level !== 'blocked' || !(e.detail || '').length) return false;
+        if (e.id && noticeIds[e.id]) return false; // already on screen, live
+        if (e.id) noticeIds[e.id] = true;
+        return true;
+      });
+      entries.forEach(function(e) {
+        var at = Date.parse(e.at || '');
+        var card = buildNotice({level: e.level, type: e.kind, text: e.detail, at: e.at});
+        var target = null;
+        if (!isNaN(at)) {
+          for (var i = 0; i < anchors.length; i++) {
+            if (isNaN(anchors[i].at) || anchors[i].at > at) break;
+            target = anchors[i];
+          }
+        }
+        if (target) {
+          convoLog.insertBefore(card, target.node.nextSibling);
+          target.node = card; // the next notice for this turn follows this one
+        } else if (anchors.length) {
+          convoLog.insertBefore(card, anchors[0].node);
+        } else {
+          convoLog.appendChild(card);
+        }
+      });
+    }
+
     function addConfirm(d) {
       var id = d.id || '';
       var card = el('div', {class: 'ui-agent-confirm', id: 'confirm-' + id});
@@ -4011,6 +4104,13 @@
         }
         case 'status':
           setStatus(ev.text || '');
+          break;
+        // A guard stopped something, mid-turn. It is also filed in the
+        // session trail (the ⚠ button), but the trail is where you look
+        // once you already suspect a guard fired — this is how you find
+        // out that one did.
+        case 'notice':
+          addNotice(ev);
           break;
         case 'status_note':
           // Persistent mid-turn status from send_status, rendered as a
@@ -5416,7 +5516,7 @@
     // the rebuild (re-rendering the same thread for "Show earlier"), so that a
     // press does not blank what the reader is looking at while it fetches.
     function clearConvoPanes() {
-      msgEls = {}; activityEls = {}; blockEls = {};
+      msgEls = {}; activityEls = {}; blockEls = {}; noticeIds = {};
       // Cleared with the rest of the per-thread state. A stale offset carried
       // into the next thread would misplace its truncate point.
       loadedMsgOffset = 0;
@@ -5613,7 +5713,7 @@
       if (cfg.list_is_context) {
         activeContextId = sid || '';
         if (cfg.deep_link_param) updateURLParam(cfg.deep_link_param, sid || '');
-        msgEls = {};
+        msgEls = {}; noticeIds = {};
         convoLog.innerHTML = '';
         if (!sid) {
           emptyMsg = el('div', {class: 'ui-agent-empty'},
@@ -5802,6 +5902,10 @@
             ]),
           ]));
         }
+        // Where a replayed breadcrumb goes (replayNotices). Collected during
+        // the pass below because that is the only place a message's bubble and
+        // its timestamp are both in hand.
+        var noticeAnchors = [];
         if (Array.isArray(msgs)) {
           msgs.forEach(function(m, idx) {
             var i = idx + msgOffset;
@@ -5828,6 +5932,9 @@
             if (cfg.markdown && (m.role === 'assistant')) finalizeMessage(mid);
             if (m.created || m.usage) {
               setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail});
+            }
+            if (msgEls[mid] && msgEls[mid].bubble) {
+              noticeAnchors.push({at: Date.parse(m.created || ''), node: msgEls[mid].bubble});
             }
             // Replay persisted tool calls onto this bubble's host.
             applyPersistedToolCalls(mid, m);
@@ -5870,6 +5977,22 @@
             byKey[key] = b;
           });
           keyOrder.forEach(function(k) { addBlock(byKey[k]); });
+        }
+        // The guards that stopped something in this thread, put back where
+        // they happened. Fetched rather than carried on the session record:
+        // the trail lives in its own table (it is written mid-turn, and the
+        // session save would race it), and the ⚠ button already reads it from
+        // this endpoint. Best-effort — a thread must still open when the trail
+        // does not answer.
+        if (cfg.diagnostics_url) {
+          var diagURL = substituteExtras(cfg.diagnostics_url).replace('{session}', encodeURIComponent(sid));
+          fetchJSON(diagURL).then(function(trail) {
+            // The reader may have moved on while this was in flight; those
+            // anchors are detached now and belong to a thread nobody is
+            // looking at.
+            if (activeSessionId !== sid) return;
+            replayNotices(trail, noticeAnchors);
+          }).catch(function() {});
         }
         if (cfg.deep_link_param) updateURLParam(cfg.deep_link_param, sid);
         // A re-open for "Load earlier" lands on the oldest message just

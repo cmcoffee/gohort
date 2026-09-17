@@ -517,6 +517,10 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 	// This conversation is where a dispatched sub-agent's breadcrumbs are
 	// mirrored (session_diag.go, diagParentKey): the trail a person can open.
 	ctx = withDiagParent(ctx, agent.ID, sess.ID)
+	// …and this is the pane those breadcrumbs are ALSO told to, live. A
+	// dispatched sub-turn builds its own chatTurn with no sse; the stamp is
+	// how a guard that stopped it reaches the conversation being watched.
+	ctx = withDiagNotices(ctx, sse)
 
 	// A PUBLISHED agent can be chatted by someone who is not its author. The
 	// record, and the custom-tool pool its AllowedTools names, live in the
