@@ -1,0 +1,153 @@
+{
+  "name": "Troubleshoot",
+  "description": "Take a symptom on a system to a verified fix or a clean escalation. Sorts the symptom into one of five domains (network, service, performance, storage, access), runs that domain's checks in a fixed order and stops at the first thing that is wrong, then proposes ONE fix and waits for approval before anything changes. The approved command is restated, run, and verified against the check named at intake; the outcome — fixed or handed off — is written down so the next occurrence starts from it. Every arm can send the conversation back to intake when the domain turns out to be wrong. Runs with whatever tools the agent already carries; narrow a domain step under \"How this step runs\" if it should not reach everything.",
+  "start": "intake",
+  "phases": [
+    {
+      "name": "intake",
+      "desc": "Sort the symptom into one domain, and say what fixed would look like.",
+      "think": "on",
+      "reach": "none",
+      "prompt": "Sort what they are describing into ONE domain, and nothing else.\n\nnetwork — cannot reach, cannot resolve, times out, unreachable from one place but not another.\nservice — a daemon or application is down, crashing, restarting, refusing connections it should accept, or returning errors it did not before.\nperformance — it works but slowly: high load, memory pressure, I/O wait, a queue that is growing.\nstorage — a disk or filesystem is full, read-only, missing, or a mount is not where it should be.\naccess — a login, key, permission, certificate, or policy is refusing someone who should get in.\n\nDo not investigate here. Do not read anything and do not guess at a cause. A symptom that fits two domains goes to the one closest to what they SAW: \"the app is down\" is service even if the cause turns out to be a full disk — the service step will find that and send it on.\n\nThen say, in one line, what WORKING would look like — the single check that will prove it fixed: a URL that answers, a unit that shows active, a command that returns in under a second, a login that succeeds. The verify step runs exactly that check later, so make it something a command can test.",
+      "choices": ["network", "service", "performance", "storage", "access"],
+      "next": "service",
+      "output": [
+        {"name": "system", "type": "string", "required": true, "desc": "the system or host in their terms"},
+        {"name": "symptom", "type": "string", "required": true, "desc": "what they saw, in one or two sentences"},
+        {"name": "working_means", "type": "string", "required": true, "desc": "the one check that will prove it fixed — something a command can test"}
+      ]
+    },
+    {
+      "name": "network",
+      "desc": "Reachability, DNS, listeners, firewall, interface — in that order.",
+      "think": "on",
+      "prompt": "Work the network checks IN ORDER and stop at the first one that is wrong. Do not skip ahead to a favourite theory.\n\n1. Reachability: can the host be reached at all — ping, a route to it, a traceroute that dies somewhere specific.\n2. Name resolution: does the name resolve, to the address it should, from where the failure is seen.\n3. Listeners: is anything listening on the port — ss or netstat on the target, a connect from the source.\n4. Firewall: is the port allowed — the host firewall, then anything between.\n5. Interface: link state, address, recent changes to either.\n\nRun the checks; do not reason about what they would probably show. The first check that fails is the finding — say what it showed and why that explains the symptom. If every check passes, the domain is wrong: say what you ruled out and choose intake.\n\nThen choose ONE exit. propose_fix when you can name a single command that would fix it and a way back if it does not. escalate when the fix needs access, a change window, or a decision you do not have. intake when this is not a network problem after all.\n\nSettled so far:\n\n{state:intake.system} — {state:intake.symptom}",
+      "choices": ["propose_fix", "escalate", "intake"],
+      "output": [
+        {"name": "finding", "type": "string", "required": true, "desc": "the first check that was wrong and what it showed"},
+        {"name": "evidence", "type": "list", "required": true, "desc": "each command run and the line of its output that mattered"},
+        {"name": "ruled_out", "type": "list", "desc": "checks that passed, so the next step does not repeat them"},
+        {"name": "fix_command", "type": "string", "desc": "the single command that would fix it — empty when none is safe to name"},
+        {"name": "rollback", "type": "string", "desc": "how to undo the fix if it makes things worse"}
+      ],
+      "accumulates": [{"name": "gathered", "from": "evidence"}]
+    },
+    {
+      "name": "service",
+      "desc": "Unit state, recent logs, config validity, dependencies, limits — in that order.",
+      "think": "on",
+      "prompt": "Work the service checks IN ORDER and stop at the first one that is wrong.\n\n1. Unit state: is it running, when did it last start, is it flapping — the service manager's status and its restart count.\n2. Recent logs: the last minutes of the service's own log. Read BACK from the first error to what preceded it; the first ERROR line is usually the symptom of something a few lines earlier.\n3. Config validity: the service's own config check, if it has one, or a syntax check of what it loads.\n4. Dependencies: what it needs to start — a database, a socket, a mount, another unit — and whether each is there.\n5. Limits: file descriptors, memory limit, disk space where it writes.\n\nRun the checks; do not reason about what they would probably show. The first failing check is the finding. If the cause lives in another domain — a full disk, a name that does not resolve — say so and choose intake with that domain named in the finding; do not fix it from here.\n\nThen choose ONE exit. propose_fix when you can name a single command that would fix it and a way back if it does not. escalate when the fix needs access, a change window, or a decision you do not have. intake when this is not a service problem after all.\n\nSettled so far:\n\n{state:intake.system} — {state:intake.symptom}",
+      "choices": ["propose_fix", "escalate", "intake"],
+      "output": [
+        {"name": "finding", "type": "string", "required": true, "desc": "the first check that was wrong and what it showed"},
+        {"name": "evidence", "type": "list", "required": true, "desc": "each command run and the line of its output that mattered"},
+        {"name": "ruled_out", "type": "list", "desc": "checks that passed, so the next step does not repeat them"},
+        {"name": "fix_command", "type": "string", "desc": "the single command that would fix it — empty when none is safe to name"},
+        {"name": "rollback", "type": "string", "desc": "how to undo the fix if it makes things worse"}
+      ],
+      "accumulates": [{"name": "gathered", "from": "evidence"}]
+    },
+    {
+      "name": "performance",
+      "desc": "Load, memory, I/O wait, top consumers, recent change — in that order.",
+      "think": "on",
+      "prompt": "Work the performance checks IN ORDER and stop at the first one that is wrong. Slow has a cause that shows up as a number; find the number.\n\n1. Load: load average against core count, and whether it is climbing or steady.\n2. Memory: free versus available, swap in use, anything being killed for memory.\n3. I/O wait: iowait in the CPU breakdown, and which device is saturated if it is.\n4. Top consumers: the processes at the top of CPU, memory, and I/O — is one of them unexpected, or one of them new.\n5. Recent change: what changed on the system in the window the slowness started — a deploy, a cron job, a data growth, a config edit.\n\nRun the checks; do not reason about what they would probably show. A number that is high is not yet a finding — the finding is WHAT is making it high, so keep going until a check names a process or a change. If nothing is out of range, say so plainly: the system may be fine and the slowness may be elsewhere, and that belongs in intake as a different symptom.\n\nThen choose ONE exit. propose_fix when you can name a single command that would fix it and a way back if it does not — killing a runaway, clearing a cache, reverting a setting. escalate when the fix is capacity, a code change, or a decision you do not have. intake when this is not a performance problem after all.\n\nSettled so far:\n\n{state:intake.system} — {state:intake.symptom}",
+      "choices": ["propose_fix", "escalate", "intake"],
+      "output": [
+        {"name": "finding", "type": "string", "required": true, "desc": "the first check that was wrong and what it showed"},
+        {"name": "evidence", "type": "list", "required": true, "desc": "each command run and the line of its output that mattered"},
+        {"name": "ruled_out", "type": "list", "desc": "checks that passed, so the next step does not repeat them"},
+        {"name": "fix_command", "type": "string", "desc": "the single command that would fix it — empty when none is safe to name"},
+        {"name": "rollback", "type": "string", "desc": "how to undo the fix if it makes things worse"}
+      ],
+      "accumulates": [{"name": "gathered", "from": "evidence"}]
+    },
+    {
+      "name": "storage",
+      "desc": "Space, inodes, mount state, device health, what is growing — in that order.",
+      "think": "on",
+      "prompt": "Work the storage checks IN ORDER and stop at the first one that is wrong.\n\n1. Space: usage per filesystem — which one is full or nearly, and whether the symptom's path is on it.\n2. Inodes: a filesystem can be full of files with space to spare; check inode usage on the same filesystems.\n3. Mount state: is it mounted, read-write, and where it should be — a read-only remount after an error looks like a full disk from the application's side.\n4. Device health: kernel messages and SMART or the array's status for the device underneath.\n5. What is growing: the largest directories and the newest large files on the full filesystem, so the fix targets the cause and not a symptom.\n\nRun the checks; do not reason about what they would probably show. The first failing check is the finding. Do not delete anything from here: name what is consuming the space and let the fix step propose it.\n\nThen choose ONE exit. propose_fix when you can name a single command that would fix it — removing a specific set of files, rotating a log, remounting — and a way back if it does not. escalate when it needs more disk, a device replacement, or a decision about whose data goes. intake when this is not a storage problem after all.\n\nSettled so far:\n\n{state:intake.system} — {state:intake.symptom}",
+      "choices": ["propose_fix", "escalate", "intake"],
+      "output": [
+        {"name": "finding", "type": "string", "required": true, "desc": "the first check that was wrong and what it showed"},
+        {"name": "evidence", "type": "list", "required": true, "desc": "each command run and the line of its output that mattered"},
+        {"name": "ruled_out", "type": "list", "desc": "checks that passed, so the next step does not repeat them"},
+        {"name": "fix_command", "type": "string", "desc": "the single command that would fix it — empty when none is safe to name"},
+        {"name": "rollback", "type": "string", "desc": "how to undo the fix if it makes things worse"}
+      ],
+      "accumulates": [{"name": "gathered", "from": "evidence"}]
+    },
+    {
+      "name": "access",
+      "desc": "Auth log, account state, permissions, policy, keys and certificates — in that order.",
+      "think": "on",
+      "prompt": "Work the access checks IN ORDER and stop at the first one that is wrong. Read what the system says about the refusal before theorizing about it.\n\n1. Auth log: the exact refusal for this user at this time — the auth log, the service's own access log, the reason it gives.\n2. Account state: does the account exist, is it locked, expired, or disabled, is the shell valid.\n3. Permissions: ownership and mode on what they are trying to reach, and on the path down to it.\n4. Policy: sudo rules, group membership, an allow-list or deny-list in the service's config, a PAM rule.\n5. Keys and certificates: the key or certificate being presented, its expiry, and whether the system has the matching side.\n\nRun the checks; do not reason about what they would probably show. The first failing check is the finding. Never widen a permission or a policy from here — name exactly what is refusing and why, and let the fix step propose the narrowest change.\n\nThen choose ONE exit. propose_fix when you can name a single command that would fix it — unlocking an account, correcting a mode on one path, renewing one certificate — and a way back if it does not. escalate when the change is a policy decision, touches more than this one user or path, or needs an approver. intake when this is not an access problem after all.\n\nSettled so far:\n\n{state:intake.system} — {state:intake.symptom}",
+      "choices": ["propose_fix", "escalate", "intake"],
+      "output": [
+        {"name": "finding", "type": "string", "required": true, "desc": "the first check that was wrong and what it showed"},
+        {"name": "evidence", "type": "list", "required": true, "desc": "each command run and the line of its output that mattered"},
+        {"name": "ruled_out", "type": "list", "desc": "checks that passed, so the next step does not repeat them"},
+        {"name": "fix_command", "type": "string", "desc": "the single command that would fix it — empty when none is safe to name"},
+        {"name": "rollback", "type": "string", "desc": "how to undo the fix if it makes things worse"}
+      ],
+      "accumulates": [{"name": "gathered", "from": "evidence"}]
+    },
+    {
+      "name": "propose_fix",
+      "desc": "State the fix, the evidence and the rollback, and wait for a yes.",
+      "resident": true,
+      "reach": "none",
+      "prompt": "Present the fix and wait. Do not run anything in this step; you have no tools here on purpose.\n\nSay, in this order: what was found and the evidence for it; the ONE command you propose to run and what it will change; how to undo it if it makes things worse; and the check that will prove it worked. Then ask for a yes.\n\nIf they say yes, the conversation moves on and the fix is run exactly as approved. If they want it changed, restate the changed command and ask again — what runs is the last thing they said yes to. If they would rather hand it off, or you realise the finding was wrong, move the conversation to escalate or back to intake and say why.\n\nWhat was found is below. Do not re-derive it and do not re-ask what they already told you.",
+      "guard": "the person has said yes to running the proposed fix as last stated",
+      "guard_to": "stage_fix",
+      "exits_to": ["escalate", "intake"]
+    },
+    {
+      "name": "stage_fix",
+      "desc": "Pin the approved command, exactly as approved.",
+      "reach": "none",
+      "think": "off",
+      "prompt": "Write down the command the person approved, exactly as it was last stated to them, and the check from intake that will prove it worked. Nothing else: no improvement, no second command, no flag they did not see. What runs next is what you write here.",
+      "next": "apply",
+      "output": [
+        {"name": "fix_command", "type": "string", "required": true, "desc": "the approved command, verbatim"},
+        {"name": "rollback", "type": "string", "desc": "the undo, as it was stated to the person"}
+      ]
+    },
+    {
+      "name": "apply",
+      "desc": "Run the approved command. No model in the loop.",
+      "tool": "run_command",
+      "args": {"command": "{state:stage_fix.fix_command}"},
+      "next": "verify"
+    },
+    {
+      "name": "verify",
+      "desc": "Run the check named at intake, and say whether it is fixed.",
+      "prompt": "Run the check that intake said would prove it fixed, and report what it showed. Nothing else counts as verification: not the fix command's exit code, not the absence of an error, not a service that says active while the original symptom persists.\n\nThe check:\n\n{state:intake.working_means}\n\nfixed is true only when that check passes. If it does not pass, say what it showed instead, and whether the rollback should be run; a fix that ran cleanly and changed nothing is the case this step exists for.",
+      "choices": ["resolved", "escalate"],
+      "output": [
+        {"name": "fixed", "type": "bool", "required": true},
+        {"name": "verification", "type": "string", "required": true, "desc": "the command run and what it showed"}
+      ]
+    },
+    {
+      "name": "resolved",
+      "desc": "Write it down so the next time starts here.",
+      "resident": true,
+      "prompt": "Summarize, in the order it will be read next time: the symptom as reported, the domain, the finding and its evidence, the command that fixed it, and how it was verified. Save that summary as a finding titled with the symptom, so a later search for the same symptom lands on it. Then tell the person it is fixed and what was done.\n\nIf they raise something new, it is a new symptom: move the conversation back to intake rather than diagnosing from here.",
+      "guard": "the person is describing a new or different symptom rather than following up on this one",
+      "guard_to": "intake",
+      "exits_to": ["intake"]
+    },
+    {
+      "name": "escalate",
+      "desc": "Hand it off with everything gathered, so nobody walks the same ground.",
+      "resident": true,
+      "prompt": "Write the handoff. In this order: the symptom as reported and the system; the domain and the finding, if there is one; every check that was run and what it showed, including the ones that came back clean — those are what stop the next person repeating them; what was tried, if a fix ran, and what verification showed; and what remains, as precisely as you can put it. Everything gathered is below.\n\nSave the handoff as a finding titled with the symptom. Then tell the person what it needs and who or what it needs it from. Do not soften an unresolved problem into a probable cause.\n\nIf they raise something new, it is a new symptom: move the conversation back to intake.",
+      "guard": "the person is describing a new or different symptom rather than following up on this one",
+      "guard_to": "intake",
+      "exits_to": ["intake"]
+    }
+  ]
+}
