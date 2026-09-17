@@ -250,7 +250,7 @@ func truncateMiddle(s string, max int) string {
 }
 
 func init() {
-	RegisterMaintenanceFunc(
+	RegisterMaintenanceFunc("Reports",
 		"survey_workspace_usage",
 		"Survey workspace usage",
 		"Read-only. Reports what is sitting in every per-user and per-agent workspace: "+

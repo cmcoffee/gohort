@@ -12,7 +12,7 @@ import (
 // triggered maintenance action (Admin → Maintenance) rather than an auto-
 // migration because it's irreversible — the operator runs it when ready.
 func init() {
-	RegisterMaintenanceFunc(
+	RegisterMaintenanceFunc("Housekeeping",
 		"purge_phantom_data",
 		"Purge phantom data",
 		"Delete all leftover data from the retired phantom app: its phantom_* tables "+

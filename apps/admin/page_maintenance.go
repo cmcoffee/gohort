@@ -1,10 +1,12 @@
 package admin
 
 import (
+	"net/url"
+
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
-// maintenanceSections is the maintenance part of the admin page: Scheduled Tasks, Maintenance, Migrations, Vector Index, Database Browser.
+// maintenanceSections is the maintenance part of the admin page: Scheduled Tasks, the maintenance groups, Migrations, Vector Index (with its repairs), Database Browser.
 func (a *AdminApp) maintenanceSections() []ui.Section {
 	return []ui.Section{
 		{
@@ -54,18 +56,28 @@ func (a *AdminApp) maintenanceSections() []ui.Section {
 				EmptyText:     "No tasks scheduled.",
 			},
 		},
+		// Maintenance buttons are laid out by the group each registrant
+		// declared, one section per group, the rarely-used ones closed. A
+		// flat list of fourteen "Run" buttons read as fourteen equal things
+		// when three were dangerous, two were reports, and most were for a
+		// day that had not come.
 		{
-			Title:    "Maintenance",
-			Subtitle: "One-shot operations that fix stale state or rebuild derived data. Each runs in the background and reports the number of records touched.",
-			Body: ui.ActionList{
-				Source:     "api/maintenance",
-				LabelField: "Label",
-				DescField:  "Desc",
-				PostTo:     "api/maintenance?key={Key}",
-				Method:     "POST",
-				ButtonText: "Run",
-				EmptyText:  "No maintenance functions registered.",
-			},
+			Title:     "Reclaim space",
+			Subtitle:  "Each dry run lists exactly what the delete beneath it would remove. Run the dry run first; deletes are permanent.",
+			Collapsed: true,
+			Body:      maintenanceList("Reclaim space", "Nothing to reclaim is registered."),
+		},
+		{
+			Title:     "Reports",
+			Subtitle:  "Read-only surveys of what is on disk and what tools depend on. Change nothing.",
+			Collapsed: true,
+			Body:      maintenanceList("Reports", "No reports registered."),
+		},
+		{
+			Title:     "Housekeeping",
+			Subtitle:  "One-shot operations that fix stale state or run a scheduled job now. Each runs in the background and reports the number of records touched.",
+			Collapsed: true,
+			Body:      maintenanceList("Housekeeping", "No housekeeping functions registered."),
 		},
 		{
 			Title:     "Migrations",
@@ -87,7 +99,7 @@ func (a *AdminApp) maintenanceSections() []ui.Section {
 		},
 		{
 			Title:    "Vector Index",
-			Subtitle: "Snapshot of the semantic-search index. Chunks are written automatically as records (research / debate / answer) are produced. A chunk whose embedding failed at ingest is still stored and still found by keyword, but is invisible to semantic search until it is re-embedded — run \"Re-embed chunks missing a vector\" under Maintenance to repair those. A chunk embedded under a different model or document prefix is skipped by semantic search the same way — after changing either, run \"Re-embed chunks outside the current embedding space\".",
+			Subtitle: "Snapshot of the semantic-search index. Chunks are written automatically as records (research / debate / answer) are produced. A chunk whose embedding failed at ingest, or was embedded under a different model or document prefix, is still stored and still found by keyword but invisible to semantic search — the counts below say how many, and Repair below them fixes it.",
 			Body: ui.Stack{Children: []ui.Component{
 				ui.DisplayPanel{
 					Source: "api/vector-stats",
@@ -118,14 +130,30 @@ func (a *AdminApp) maintenanceSections() []ui.Section {
 					},
 					EmptyText: "No chunks indexed yet.",
 				},
+				// The repairs sit under the counts they repair.
+				maintenanceList("Vector index", "No index repairs registered."),
 			}},
 		},
 		{
-			Title:     "Database Browser",
-			Subtitle:  "Read-only view of the server database. Click a table to list its keys, click a key to inspect the record.",
-			Collapsed: true,
-			Body:      databaseBrowserCard(),
+			// Open, not collapsed: the browser is what an operator comes to
+			// this page for, and a closed card hid it behind a caret.
+			Title:    "Database Browser",
+			Subtitle: "Read-only view of the server database. Click a table to list its keys, click a key to inspect the record.",
+			Body:     databaseBrowserCard(),
 		},
+	}
+}
+
+// maintenanceList is the Run-button list for one maintenance group.
+func maintenanceList(group, empty string) ui.ActionList {
+	return ui.ActionList{
+		Source:     "api/maintenance?group=" + url.QueryEscape(group),
+		LabelField: "Label",
+		DescField:  "Desc",
+		PostTo:     "api/maintenance?key={Key}",
+		Method:     "POST",
+		ButtonText: "Run",
+		EmptyText:  empty,
 	}
 }
 

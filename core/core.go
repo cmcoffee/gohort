@@ -1025,7 +1025,7 @@ func init() {
 	// this one, so a hook-based registration lands while the hook is still nil
 	// and the action never appears. core owns the registry, so core makes the
 	// call — same rule as the tunables above.
-	RegisterMaintenanceFunc(
+	RegisterMaintenanceFunc("Housekeeping",
 		"sweep_expired_caches",
 		"Sweep expired caches",
 		"Remove expired entries from the source-hook result cache and the "+

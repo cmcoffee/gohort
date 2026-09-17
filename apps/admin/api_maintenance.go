@@ -35,8 +35,23 @@ func (a *AdminApp) registerMaintenanceRoutes(sub *http.ServeMux) {
 			return
 		}
 		if r.Method == http.MethodGet {
+			// ?group= narrows the list to one admin section. A registrant
+			// that named no group, or one the page does not lay out, is
+			// shown under Housekeeping so no button can vanish.
+			want := r.URL.Query().Get("group")
+			all := ListMaintenanceFuncs()
+			out := all[:0:0]
+			for _, f := range all {
+				g := f.Group
+				if !maintenanceGroupKnown(g) {
+					g = maintenanceGroupOther
+				}
+				if want == "" || g == want {
+					out = append(out, f)
+				}
+			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(ListMaintenanceFuncs())
+			json.NewEncoder(w).Encode(out)
 			return
 		}
 		if r.Method != http.MethodPost {
@@ -365,4 +380,20 @@ func dbProbeRecord(store interface {
 	}
 	// Value exists but is a struct type — return a placeholder rather than crashing.
 	return map[string]string{"_type": "struct", "_note": "binary-encoded struct; map probe not supported"}, true
+}
+
+// maintenanceGroups are the admin sections maintenance buttons are laid out
+// under, in page order. A registrant names one of these (MaintenanceFunc.Group);
+// anything else is shown under the last.
+var maintenanceGroups = []string{"Vector index", "Reclaim space", "Reports", "Housekeeping"}
+
+const maintenanceGroupOther = "Housekeeping"
+
+func maintenanceGroupKnown(g string) bool {
+	for _, k := range maintenanceGroups {
+		if k == g {
+			return true
+		}
+	}
+	return false
 }

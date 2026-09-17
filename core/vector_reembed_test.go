@@ -159,14 +159,14 @@ func TestReembedNoopWhenDisabled(t *testing.T) {
 // while every other test here still passed.
 func TestReembedIsRegisteredAsMaintenance(t *testing.T) {
 	for _, f := range ListMaintenanceFuncs() {
-		if f.Key == "reembed_unvectored_chunks" {
-			if f.Label == "" || f.Desc == "" {
-				t.Errorf("maintenance entry needs a label and description, got %+v", f)
+		if f.Key == "reembed_stale_chunks" {
+			if f.Label == "" || f.Desc == "" || f.Group != "Vector index" {
+				t.Errorf("maintenance entry needs a label, description and the Vector index group, got %+v", f)
 			}
 			return
 		}
 	}
-	t.Fatal("reembed_unvectored_chunks is not registered — the admin panel has no way to run it")
+	t.Fatal("reembed_stale_chunks is not registered — the admin panel has no way to repair the index")
 }
 
 // The stats panel is the only place an operator learns this happened, so the
@@ -266,12 +266,16 @@ func TestDocPrefixChangeMakesVectorsStale(t *testing.T) {
 }
 
 func TestStalePassIsRegisteredAsMaintenance(t *testing.T) {
-	var stale, all bool
+	var stale, all, unvectored bool
 	for _, f := range ListMaintenanceFuncs() {
 		stale = stale || f.Key == "reembed_stale_chunks"
 		all = all || f.Key == "reembed_all_chunks"
+		unvectored = unvectored || f.Key == "reembed_unvectored_chunks"
 	}
 	if !stale || !all {
 		t.Fatalf("both passes must be on the maintenance list (stale=%v all=%v)", stale, all)
+	}
+	if unvectored {
+		t.Fatal("the missing-vector pass is covered by Repair and must not be a third button")
 	}
 }

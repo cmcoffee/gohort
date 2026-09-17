@@ -156,7 +156,7 @@ func FormatWorkspaceBoundTools(list []WorkspaceBoundTool) string {
 }
 
 func init() {
-	RegisterMaintenanceFunc(
+	RegisterMaintenanceFunc("Reports",
 		"survey_workspace_bound_tools",
 		"Survey workspace-bound tools",
 		"Read-only. Lists tools whose command_template runs a script from "+

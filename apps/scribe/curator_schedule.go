@@ -42,7 +42,7 @@ func init() {
 	// A manual trigger in the admin panel. Present because the two automatic
 	// firings are both delayed by design: without this there is no way to see
 	// what the curator does with a batch you just produced.
-	RegisterMaintenanceFunc("guides_curate", "Run the Guide Curator",
+	RegisterMaintenanceFunc("Housekeeping", "guides_curate", "Run the Guide Curator",
 		"Drain every user's pending guide findings now, instead of waiting for the batch threshold or interval.",
 		func(ctx context.Context) int { return runCuratorForEveryone(ctx) })
 }

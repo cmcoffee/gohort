@@ -154,38 +154,30 @@ func vectorRepairDB() Database {
 }
 
 func init() {
-	RegisterMaintenanceFunc(
-		"reembed_unvectored_chunks",
-		"Re-embed chunks missing a vector",
-		"Repairs the \"Empty (embed failed)\" count above. Re-embeds every indexed chunk "+
-			"that has text but no vector — the rows left behind when the embedding endpoint "+
-			"was unreachable at ingest time, which keyword search can still find but semantic "+
-			"search cannot see. Rewrites each repaired row with the CURRENT embedding model. "+
-			"Stops early if the endpoint is still down; safe to re-run.",
-		func(ctx context.Context) int {
-			return ReembedUnvectoredChunks(ctx, vectorRepairDB())
-		},
-	)
-	RegisterMaintenanceFunc(
+	// One button repairs both counts above: a chunk with no vector and a chunk
+	// whose vector is from another space are the same problem to the operator
+	// (semantic search cannot see it) and the same fix. The missing-vector
+	// pass remains callable for tests and tooling; it does not need a button.
+	RegisterMaintenanceFunc("Vector index",
 		"reembed_stale_chunks",
-		"Re-embed chunks outside the current embedding space",
-		"Repairs the \"In another embedding space\" count above. Re-embeds every chunk whose "+
-			"vector was made under a different model or document prefix (or has no stamp), plus any "+
-			"missing a vector — the rows semantic search skips after you change the embedding model "+
-			"or set a document prefix. Rewrites each with the CURRENT space. One embed call per chunk, "+
-			"so a large store takes a while; stops early if the endpoint is down; safe to re-run, "+
-			"and a second run finds nothing to do.",
+		"Repair the vector index",
+		"Re-embeds every chunk semantic search cannot see: the \"Empty (embed failed)\" rows "+
+			"left when the embedder was down at ingest, and the \"In another embedding space\" rows "+
+			"whose vector was made under a different model or document prefix (or has no stamp). "+
+			"Rewrites each with the CURRENT space. One embed call per chunk, so a large store takes "+
+			"a while; stops early if the endpoint is down; safe to re-run, and a second run finds "+
+			"nothing to do.",
 		func(ctx context.Context) int {
 			return ReembedStaleChunks(ctx, vectorRepairDB())
 		},
 	)
-	RegisterMaintenanceFunc(
+	RegisterMaintenanceFunc("Vector index",
 		"reembed_all_chunks",
 		"Re-embed EVERY chunk",
-		"Re-embeds every indexed chunk, current or not. For a change the stamp cannot see — the "+
-			"same model name now served by a different endpoint, build or quantization, which is a "+
-			"different space with the same name. Otherwise prefer the stale pass, which skips what is "+
-			"already right. One embed call per chunk; stops early if the endpoint is down; safe to re-run.",
+		"Re-embeds every indexed chunk, current or not. Only for a change the stamp cannot see — "+
+			"the same model name now served by a different endpoint, build or quantization, which is "+
+			"a different space with the same name. Otherwise use Repair, which skips what is already "+
+			"right. One embed call per chunk; stops early if the endpoint is down; safe to re-run.",
 		func(ctx context.Context) int {
 			return ReembedAllChunks(ctx, vectorRepairDB())
 		},

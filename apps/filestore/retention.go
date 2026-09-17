@@ -189,7 +189,7 @@ func ReapExpiredBundles(db Database) (int, int64) {
 // pair, matching the workspace reaper: same walk behind both, so the
 // list an admin reads is the list that gets removed.
 func registerRetentionMaintenance(app *FileStoreApp) {
-	RegisterMaintenanceFunc(
+	RegisterMaintenanceFunc("Reclaim space",
 		"list_expired_bundles",
 		"List expired file-store folders (dry run)",
 		"Shows which bundle folders are past their store's retention window. Deletes nothing. "+
@@ -205,7 +205,7 @@ func registerRetentionMaintenance(app *FileStoreApp) {
 			return len(list)
 		},
 	)
-	RegisterMaintenanceFunc(
+	RegisterMaintenanceFunc("Reclaim space",
 		"reap_expired_bundles",
 		"Delete expired file-store folders (DELETES)",
 		"Removes exactly what the dry run above lists: folders directly under a store root whose "+

@@ -442,7 +442,7 @@ func init() {
 		return nil
 	})
 
-	RegisterMaintenanceFunc(
+	RegisterMaintenanceFunc("Reclaim space",
 		"survey_reapable_images",
 		"Survey reclaimable images (dry run)",
 		"Read-only. Lists the recent-image ring entries, stored chat attachments, and orphaned "+
@@ -465,7 +465,7 @@ func init() {
 			return len(list)
 		},
 	)
-	RegisterMaintenanceFunc(
+	RegisterMaintenanceFunc("Reclaim space",
 		"reap_images",
 		"Reclaim old images (DELETES)",
 		"Removes exactly what the dry run above lists. Run the dry run first — it uses the same "+

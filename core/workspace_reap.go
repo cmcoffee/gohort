@@ -202,7 +202,7 @@ func FormatReapCandidates(list []ReapCandidate) string {
 }
 
 func init() {
-	RegisterMaintenanceFunc(
+	RegisterMaintenanceFunc("Reclaim space",
 		"survey_reapable_artifacts",
 		"Survey reclaimable artifacts (dry run)",
 		"Read-only. Lists the generated images and downloaded videos the framework "+
@@ -220,7 +220,7 @@ func init() {
 			return len(list)
 		},
 	)
-	RegisterMaintenanceFunc(
+	RegisterMaintenanceFunc("Reclaim space",
 		"reap_workspace_artifacts",
 		"Reclaim workspace artifacts (DELETES)",
 		"Removes exactly what the dry run above lists: framework-produced images and "+

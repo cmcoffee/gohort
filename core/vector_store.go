@@ -1062,6 +1062,13 @@ func formatSourceCounts(m map[string]int) string {
 // private package at init time. The admin UI can trigger any registered
 // function by key. Returns the number of records modified.
 type MaintenanceFunc struct {
+	// Group is the admin section the button appears under. Declared by the
+	// registrant, never inferred from the key: "Vector index" (repairs of
+	// the search index, shown beside its stats), "Reclaim space" (dry runs
+	// and the deletes that act on them), "Reports" (read-only surveys), or
+	// "Housekeeping" (everything else). An unknown group lands under
+	// Housekeeping rather than vanishing.
+	Group string
 	Key   string
 	Label string
 	Desc  string
@@ -1071,16 +1078,17 @@ type MaintenanceFunc struct {
 var maintenanceFuncs []MaintenanceFunc
 
 // RegisterMaintenanceFunc registers a named maintenance function for the
-// admin panel. Called from package init() functions.
-func RegisterMaintenanceFunc(key, label, desc string, fn func(ctx context.Context) int) {
-	maintenanceFuncs = append(maintenanceFuncs, MaintenanceFunc{Key: key, Label: label, Desc: desc, Run: fn})
+// admin panel, under the given group (see MaintenanceFunc.Group). Called
+// from package init() functions.
+func RegisterMaintenanceFunc(group, key, label, desc string, fn func(ctx context.Context) int) {
+	maintenanceFuncs = append(maintenanceFuncs, MaintenanceFunc{Group: group, Key: key, Label: label, Desc: desc, Run: fn})
 }
 
 // ListMaintenanceFuncs returns metadata for all registered maintenance funcs.
-func ListMaintenanceFuncs() []struct{ Key, Label, Desc string } {
-	out := make([]struct{ Key, Label, Desc string }, len(maintenanceFuncs))
+func ListMaintenanceFuncs() []struct{ Group, Key, Label, Desc string } {
+	out := make([]struct{ Group, Key, Label, Desc string }, len(maintenanceFuncs))
 	for i, m := range maintenanceFuncs {
-		out[i] = struct{ Key, Label, Desc string }{Key: m.Key, Label: m.Label, Desc: m.Desc}
+		out[i] = struct{ Group, Key, Label, Desc string }{Group: m.Group, Key: m.Key, Label: m.Label, Desc: m.Desc}
 	}
 	return out
 }
