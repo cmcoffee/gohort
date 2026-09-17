@@ -1093,11 +1093,68 @@ func ListMaintenanceFuncs() []struct{ Group, Key, Label, Desc string } {
 	return out
 }
 
+// --- progress on a long pass ------------------------------------------------
+//
+// A maintenance run answers with a count when it finishes, which is fine for
+// a sweep that takes a second and useless for one that embeds every chunk in
+// the store: the button sits there for minutes saying nothing, and an
+// operator cannot tell a slow pass from a hung one. A pass reports where it
+// is; the admin panel reads it while the run is in flight.
+//
+// Deliberately not a channel or a callback in the signature: thirteen
+// registered passes would all have to change to describe a feature two of
+// them need. The key rides on the context the runner already passes, and a
+// pass that says nothing simply has nothing to show.
+
+type maintenanceKeyCtx struct{}
+
+var maintenanceProgress struct {
+	mu sync.Mutex
+	at map[string]string
+}
+
+// ReportMaintenanceProgress records where the running pass has got to, as one
+// short line for a person to read ("1,200 of 8,400 chunks"). No-op outside a
+// maintenance run. Safe to call as often as the loop likes; only the latest
+// line is kept.
+func ReportMaintenanceProgress(ctx context.Context, line string) {
+	key, _ := ctx.Value(maintenanceKeyCtx{}).(string)
+	if key == "" {
+		return
+	}
+	maintenanceProgress.mu.Lock()
+	defer maintenanceProgress.mu.Unlock()
+	if maintenanceProgress.at == nil {
+		maintenanceProgress.at = map[string]string{}
+	}
+	maintenanceProgress.at[key] = line
+}
+
+// MaintenanceProgress returns the running pass's latest line, or "" when it
+// is not running or has said nothing yet.
+func MaintenanceProgress(key string) string {
+	maintenanceProgress.mu.Lock()
+	defer maintenanceProgress.mu.Unlock()
+	return maintenanceProgress.at[key]
+}
+
+// clearMaintenanceProgress drops a finished pass's line, so a later reader
+// sees "not running" rather than the last thing the previous run said.
+func clearMaintenanceProgress(key string) {
+	maintenanceProgress.mu.Lock()
+	defer maintenanceProgress.mu.Unlock()
+	delete(maintenanceProgress.at, key)
+}
+
 // RunMaintenanceFunc runs the maintenance function matching key. Returns -1 if
 // not found.
 func RunMaintenanceFunc(ctx context.Context, key string) int {
 	for _, m := range maintenanceFuncs {
 		if m.Key == key {
+			// The key on the context is what lets a pass report progress
+			// without every pass's signature knowing about progress.
+			ctx = context.WithValue(ctx, maintenanceKeyCtx{}, key)
+			defer clearMaintenanceProgress(key)
 			return m.Run(ctx)
 		}
 	}

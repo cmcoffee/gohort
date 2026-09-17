@@ -154,6 +154,9 @@ func maintenanceList(group, empty string) ui.ActionList {
 		Method:     "POST",
 		ButtonText: "Run",
 		EmptyText:  empty,
+		// A pass that walks the whole store takes minutes; this is where it
+		// says how far along it is (see core.ReportMaintenanceProgress).
+		ProgressSource: "api/maintenance/progress?key={Key}",
 	}
 }
 

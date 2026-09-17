@@ -4417,8 +4417,35 @@
             if (itemConfirm && !(await window.uiConfirm(itemConfirm))) return;
             var url = substitute(cfg.post_to, item);
             btn.disabled = true;
-            status.textContent = '…';
+            // A spinner, not an ellipsis: a run that takes minutes has to look
+            // alive, and a static "…" is indistinguishable from a hung one.
+            // When the list names a progress source, poll it — a pass that
+            // reports where it is says so here, beside the spinner.
+            var frames = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏', fi = 0, note = '';
+            var started = Date.now();
+            function paint() {
+              var secs = Math.round((Date.now() - started) / 1000);
+              status.textContent = frames[fi % frames.length] + ' ' +
+                (note || (secs >= 3 ? secs + 's' : 'working'));
+              fi++;
+            }
+            paint();
+            var spin = setInterval(paint, 120);
+            var poll = null;
+            if (cfg.progress_source) {
+              var purl = substitute(cfg.progress_source, item);
+              poll = setInterval(function() {
+                fetchJSON(purl).then(function(p) {
+                  if (p && typeof p.progress === 'string') note = p.progress;
+                }).catch(function(){});
+              }, 1500);
+            }
+            function stop() {
+              clearInterval(spin);
+              if (poll) clearInterval(poll);
+            }
             fetchJSON(url, {method: cfg.method || 'POST'}).then(function(r) {
+              stop();
               btn.disabled = false;
               // Prefer an explicit {message}; else surface a {fixed}/{removed}
               // digit; else a bare "done".
@@ -4437,6 +4464,7 @@
               if (cfg.invalidate) window.uiInvalidate(cfg.invalidate);
               if (cfg.reload_self) load();
             }).catch(function(err) {
+              stop();
               btn.disabled = false;
               status.textContent = '';
               showToast('Failed: ' + err.message);

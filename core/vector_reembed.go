@@ -13,6 +13,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -32,6 +33,11 @@ const reembedFailStreak = 5
 // walks an unbounded backlog, so a slow endpoint has to fail fast enough that
 // the breaker can trip while the operator is still watching.
 const reembedChunkTimeout = 20 * time.Second
+
+// reembedReportEvery is how often the pass says where it is. Often enough
+// that a watching operator sees movement, rare enough that the report is not
+// the work.
+const reembedReportEvery = 2 * time.Second
 
 // ReembedUnvectoredChunks re-embeds every row that has text but no vector.
 // Returns the number of rows repaired.
@@ -90,11 +96,22 @@ func reembedChunks(ctx context.Context, db Database, what string, want func(c Em
 	keys := db.Keys(EmbeddedChunks)
 	var scanned, candidates, fixed, failed, streak int
 	started := time.Now()
+	// This pass embeds one chunk at a time and a full store takes minutes, so
+	// it says where it is. Reported on a tick rather than per chunk: the
+	// admin panel reads the latest line, and writing one per row would be
+	// lock traffic nobody sees.
+	ReportMaintenanceProgress(ctx, fmt.Sprintf("starting — %d chunk(s) to check", len(keys)))
+	lastReport := time.Now()
 
 	for _, key := range keys {
 		if ctx.Err() != nil {
 			Log("[vector-reembed] cancelled after %d repaired", fixed)
 			break
+		}
+		if time.Since(lastReport) >= reembedReportEvery {
+			ReportMaintenanceProgress(ctx, fmt.Sprintf("%d of %d chunk(s) checked · %d re-embedded · %s elapsed",
+				scanned, len(keys), fixed, time.Since(started).Round(time.Second)))
+			lastReport = time.Now()
 		}
 		var c EmbeddedChunk
 		if !db.Get(EmbeddedChunks, key, &c) {

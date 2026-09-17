@@ -29,6 +29,19 @@ func (a *AdminApp) registerMaintenanceRoutes(sub *http.ServeMux) {
 		a.handleVectorStatsByKind(w, r)
 	})
 
+	// Where a running pass has got to. Polled by the action list while its
+	// POST is in flight, so a long pass shows movement rather than a button
+	// that has been disabled for four minutes.
+	sub.HandleFunc("/api/maintenance/progress", func(w http.ResponseWriter, r *http.Request) {
+		if !a.requireAdmin(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"progress": MaintenanceProgress(r.URL.Query().Get("key")),
+		})
+	})
+
 	// List registered maintenance functions (GET) or run one by key (POST ?key=<key>).
 	sub.HandleFunc("/api/maintenance", func(w http.ResponseWriter, r *http.Request) {
 		if !a.requireAdmin(w, r) {

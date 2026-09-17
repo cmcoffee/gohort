@@ -21,6 +21,12 @@ type ActionList struct {
 	Confirm    string `json:"confirm,omitempty"`
 	ButtonText string `json:"button_text,omitempty"` // default "Run"
 	EmptyText  string `json:"empty_text,omitempty"`
+	// ProgressSource is polled while an action is in flight, and whatever it
+	// returns as {"progress": "..."} is shown beside the spinner. For an
+	// action that takes minutes: the spinner says it is alive, this says how
+	// far along. Supports {field} substitution from the item, so one endpoint
+	// can answer for every row. Empty = spinner and elapsed seconds only.
+	ProgressSource string `json:"progress_source,omitempty"`
 
 	// Invalidate — data sources to refresh after a successful action.
 	// Matched against other components' Source so a sibling Table

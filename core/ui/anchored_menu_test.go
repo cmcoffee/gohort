@@ -195,3 +195,27 @@ func TestReportCardsExportByKind(t *testing.T) {
 		t.Error("a card with action lines must split into what came in and what was done")
 	}
 }
+
+// A maintenance pass can take minutes, so the row spins while it runs and
+// shows what the pass reports. A static "…" is indistinguishable from a hung
+// button, which is what it replaced.
+func TestActionListSpinsAndShowsProgress(t *testing.T) {
+	src := readRuntimeFile(t, "10_basics.js")
+	if strings.Contains(src, "status.textContent = '…';") {
+		t.Error("the ellipsis is back; a long run must look alive")
+	}
+	for _, want := range []string{
+		"var frames = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'",
+		"var spin = setInterval(paint, 120);",
+		"if (cfg.progress_source) {",
+		"if (p && typeof p.progress === 'string') note = p.progress;",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("missing %q", want)
+		}
+	}
+	// Both timers stop on either outcome, or the row spins forever.
+	if strings.Count(src, "stop();") < 2 {
+		t.Error("the spinner and the poll must be cleared on success AND failure")
+	}
+}
