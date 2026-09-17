@@ -1325,7 +1325,7 @@ func (t *chatTurn) fetchKnowledgeDocScoped(scopeSkills []SkillRecord) AgentToolD
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "fetch_knowledge_doc",
-			Description: "Read the body of a document by doc_id (from a knowledge_search hit). Returns the doc text with section headers, capped at max_chars (default 10000, ceiling 30000). A truncated reply ends with the offset to pass back — call again with that offset to read the next window, as many times as it takes. Pass section to jump straight to one part of a long document instead of paging from the top. Gated to your accessible corpus.",
+			Description: "Read the body of a document by doc_id (from a knowledge_search hit). Returns the doc text with section headers, capped at max_chars (default 10000, ceiling 30000). A truncated reply ends with the offset to pass back — call again with that offset to read the next window, as many times as it takes. Pass section to jump straight to one part of a long document instead of paging from the top. Pass grep to find lines in the document: each hit comes with its line number and @offset, and offset then reads around it — use this instead of paging through a long document looking for one thing. Gated to your accessible corpus.",
 			Parameters: map[string]ToolParam{
 				"doc_id": {
 					Type:        "string",
@@ -1341,7 +1341,15 @@ func (t *chatTurn) fetchKnowledgeDocScoped(scopeSkills []SkillRecord) AgentToolD
 				},
 				"offset": {
 					Type:        "number",
-					Description: "Optional. Character offset to start reading from — the value a previous truncated reply told you to pass. 0 (default) reads from the top. Counted within the section when section is also given.",
+					Description: "Optional. Character offset to start reading from — the value a previous truncated reply told you to pass, or the @offset on a grep hit. 0 (default) reads from the top. Counted within the section when section is also given.",
+				},
+				"grep": {
+					Type:        "string",
+					Description: "Optional. Return only the lines of the document matching this pattern (case-insensitive; a regular expression when it compiles as one, else a substring), each as \"L<line> @<offset>: text\". Combine with section to search one part. Then read around a hit with offset=<that @offset>.",
+				},
+				"context": {
+					Type:        "number",
+					Description: "Optional, with grep: lines of context before and after each match (default 0).",
 				},
 			},
 			Required: []string{"doc_id"},
@@ -1459,6 +1467,20 @@ func (t *chatTurn) fetchKnowledgeDocScoped(scopeSkills []SkillRecord) AgentToolD
 				b.WriteString("\n\n")
 			}
 			out := strings.TrimSpace(b.String())
+			// grep searches the assembled text (the whole document, or the
+			// section subset) and returns hits with the @offset that a
+			// follow-up read lands on. Same shape as run_command's grep.
+			if grep := strings.TrimSpace(stringArg(args, "grep")); grep != "" {
+				context := 0
+				if v, ok := args["context"].(float64); ok && v > 0 {
+					context = int(v)
+				}
+				ref := fmt.Sprintf("doc_id=%q", docID)
+				if wantSection != "" {
+					ref += fmt.Sprintf(", section=%q", wantSection)
+				}
+				return OutputPage{Text: out, Ref: ref, Offset: offset, Max: maxChars, Tool: "fetch_knowledge_doc", Grep: grep, Context: context}.Read()
+			}
 			total := len(out)
 			if offset >= total && total > 0 {
 				return fmt.Sprintf("offset %d is past the end of %q (%d chars). The document has been read in full; start again with offset=0 if you need it.", offset, docName, total), nil

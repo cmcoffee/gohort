@@ -153,33 +153,48 @@ func SpillOutput(text string, max int, tool string) string {
 	}
 	id := keepSpilled(kept)
 	window, end := WindowText(kept, 0, max)
-	return window + spillNote(tool, id, 0, end, len(kept), kept) + clipped
+	return window + spillNote(tool, fmt.Sprintf("output_id=%q", id), 0, end, len(kept), kept) + clipped
 }
 
-// OutputPage is one read of a kept capture: a window by offset, or — with
-// Grep set — the lines matching a pattern, each with its line number and
-// the character offset its line starts at, so the agent can follow a hit
-// with an Offset read of what surrounds it. Neither runs anything.
+// OutputPage is one read of a large text the agent is working through: a
+// window by offset, or — with Grep set — the lines matching a pattern, each
+// with its line number and the character offset its line starts at, so the
+// agent can follow a hit with an Offset read of what surrounds it. The text
+// is a kept command capture (ID) or supplied by the caller (Text, for a
+// document reassembled per call). Neither runs anything.
 //
 // Grep exists because the agent's alternative was to run the command again
 // through a pipe, or to save the spill to the workspace and grep that by
 // hand — both of which were observed, and both of which are this call.
 type OutputPage struct {
-	ID      string // output_id from a truncated reply
-	Offset  int    // character offset to read from (into the capture, or into the match list when Grep is set)
+	ID      string // output_id of a kept capture; ignored when Text is set
+	Text    string // the text itself, when the caller has it (a reassembled document)
+	Ref     string // how the trailer names the source to the agent, e.g. `doc_id="…"`; defaults to output_id=ID
+	Offset  int    // character offset to read from (into the text, or into the match list when Grep is set)
 	Max     int    // window size; <= 0 means everything
 	Tool    string // the tool name the trailer tells the agent to call
 	Grep    string // when set, return matching lines instead of a window
 	Context int    // lines of context around each match
 }
 
+// ref is the argument the trailer tells the agent to pass to reach this text.
+func (p OutputPage) ref() string {
+	if p.Ref != "" {
+		return p.Ref
+	}
+	return fmt.Sprintf("output_id=%q", p.ID)
+}
+
 // Read serves the page. An unknown id is an error the agent can act on: the
 // capture expired, or was made by another instance (a peer's exec keeps its
 // own store).
 func (p OutputPage) Read() (string, error) {
-	text, ok := lookupSpilled(strings.TrimSpace(p.ID))
-	if !ok {
-		return "", fmt.Errorf("output_id %q is unknown here — the capture has expired (kept %s), or was made by another instance; re-run the command", p.ID, spilledOutputTTL)
+	text := p.Text
+	if text == "" {
+		var ok bool
+		if text, ok = lookupSpilled(strings.TrimSpace(p.ID)); !ok {
+			return "", fmt.Errorf("output_id %q is unknown here — the capture has expired (kept %s), or was made by another instance; re-run the command", p.ID, spilledOutputTTL)
+		}
 	}
 	if strings.TrimSpace(p.Grep) != "" {
 		return p.search(text)
@@ -191,7 +206,7 @@ func (p OutputPage) Read() (string, error) {
 	if end >= len(text) {
 		return window + fmt.Sprintf("\n... [end of output: chars %d–%d of %d]", p.Offset, end, len(text)), nil
 	}
-	return window + spillNote(p.Tool, p.ID, p.Offset, end, len(text), text), nil
+	return window + spillNote(p.Tool, p.ref(), p.Offset, end, len(text), text), nil
 }
 
 // search renders the matching lines. The pattern is a case-insensitive
@@ -257,11 +272,12 @@ func (p OutputPage) search(text string) (string, error) {
 		return fmt.Sprintf("offset %d is past the end of the match list (%d chars); every match has been read.", p.Offset, len(report)), nil
 	}
 	window, end := WindowText(report, p.Offset, p.Max)
-	trailer := fmt.Sprintf("\n... [To read around a match: %s(output_id=%q, offset=<the @offset on its line>).]", p.Tool, p.ID)
+	ref := p.ref()
+	trailer := fmt.Sprintf("\n... [To read around a match: %s(%s, offset=<the @offset on its line>).]", p.Tool, ref)
 	if end < len(report) {
-		trailer = fmt.Sprintf("\n... [TRUNCATED match list: chars %d–%d of %d. More matches: %s(output_id=%q, grep=%q, offset=%d). "+
-			"To read around a match: %s(output_id=%q, offset=<the @offset on its line>).]",
-			p.Offset, end, len(report), p.Tool, p.ID, pattern, end, p.Tool, p.ID)
+		trailer = fmt.Sprintf("\n... [TRUNCATED match list: chars %d–%d of %d. More matches: %s(%s, grep=%q, offset=%d). "+
+			"To read around a match: %s(%s, offset=<the @offset on its line>).]",
+			p.Offset, end, len(report), p.Tool, ref, pattern, end, p.Tool, ref)
 	}
 	return window + trailer, nil
 }
@@ -269,12 +285,12 @@ func (p OutputPage) search(text string) (string, error) {
 // spillNote is the truncation trailer: where the window sat, how to read on
 // without re-running, and how to search the whole capture instead, which is
 // usually the better move.
-func spillNote(tool, id string, offset, end, total int, text string) string {
+func spillNote(tool, ref string, offset, end, total int, text string) string {
 	shownFrom := strings.Count(text[:offset], "\n") + 1
 	shownTo := strings.Count(text[:end], "\n") + 1
 	lines := strings.Count(text, "\n") + 1
 	return fmt.Sprintf("\n... [TRUNCATED: showing chars %d–%d of %d (lines %d–%d of %d). "+
-		"Read on WITHOUT re-running: %s(output_id=%q, offset=%d). "+
-		"Or search the whole capture: %s(output_id=%q, grep=\"PATTERN\") — no re-run, no workspace file needed.]",
-		offset, end, total, shownFrom, shownTo, lines, tool, id, end, tool, id)
+		"Read on WITHOUT re-running: %s(%s, offset=%d). "+
+		"Or search the whole capture: %s(%s, grep=\"PATTERN\") — no re-run, no workspace file needed.]",
+		offset, end, total, shownFrom, shownTo, lines, tool, ref, end, tool, ref)
 }

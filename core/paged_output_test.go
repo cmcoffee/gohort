@@ -219,3 +219,24 @@ func nextNumber(s string) int {
 	}
 	return n
 }
+
+// A caller with the text in hand (a reassembled document) searches it the
+// same way, and the trailer names the source the caller's way.
+func TestSuppliedTextCanBeSearchedAndPaged(t *testing.T) {
+	doc := "# Guide\n\n## Install\n\nrun the installer\n\n## Ports\n\nopen 8443 for the api\nopen 22 for ssh\n"
+	out, err := OutputPage{Text: doc, Ref: `doc_id="g1"`, Tool: "fetch_knowledge_doc", Grep: "open \\d+"}.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out, "2 of ") || !strings.Contains(out, `fetch_knowledge_doc(doc_id="g1", offset=<the @offset on its line>)`) {
+		t.Fatalf("supplied text must search and name the doc in the trailer:\n%s", out)
+	}
+	off := nextNumber(between(out, "@", ":"))
+	around, err := OutputPage{Text: doc, Ref: `doc_id="g1"`, Offset: off, Max: 30, Tool: "fetch_knowledge_doc"}.Read()
+	if err != nil || !strings.HasPrefix(around, "open 8443") {
+		t.Fatalf("offset from a hit must land on it: %q %v", around, err)
+	}
+	if !strings.Contains(around, `fetch_knowledge_doc(doc_id="g1", offset=`) {
+		t.Fatalf("paging a supplied text must name the doc, not an output_id:\n%s", around)
+	}
+}
