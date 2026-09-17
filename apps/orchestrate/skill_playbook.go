@@ -58,6 +58,60 @@ func (t *chatTurn) playbookRunner() playbookRunner {
 	}
 }
 
+// autoDeliverPlaybooks marks, before the first model round, every allowed
+// playbook skill whose triggers or rule Whens match this turn as delivered,
+// so its instructions and its resolved playbook go into the round's prompt
+// whether or not the model would have consulted it.
+//
+// Consultation is the model's call for an ordinary skill, and a hint is the
+// most a trigger match does for one — the instructions are prose, and prose
+// the model did not ask for is prose it argues with. A playbook is different:
+// it DOES something (establishes a fact with tools) and hands back only what
+// follows, and "when asked about X, establish Y" is a rule about the turn,
+// not a suggestion the model may decline. So a match fires it. Returns the
+// names delivered, for the diagnostic.
+func (t *chatTurn) autoDeliverPlaybooks(userMsg string) []string {
+	if t == nil || t.agent.DisableSkills || len(t.agent.AllowedSkills) == 0 {
+		return nil
+	}
+	allowed := make(map[string]bool, len(t.agent.AllowedSkills))
+	for _, id := range t.agent.AllowedSkills {
+		allowed[id] = true
+	}
+	var mine []SkillRecord
+	for _, s := range LoadSkills(t.udb, t.user) {
+		if allowed[s.ID] {
+			mine = append(mine, s)
+		}
+	}
+	fired := autoDeliverPlaybooksIn(t, mine, userMsg)
+	if len(fired) > 0 {
+		t.turnDiag("skill_playbook_fired", "the turn matched the playbook of "+strings.Join(fired, ", ")+
+			"; its facts are established before the model's first round, not on consult")
+	}
+	return fired
+}
+
+// autoDeliverPlaybooksIn is the rule itself, over a given set of skills, so
+// the decision is testable without a store or an agent record.
+func autoDeliverPlaybooksIn(t *chatTurn, skills []SkillRecord, userMsg string) []string {
+	if t == nil || strings.TrimSpace(userMsg) == "" {
+		return nil
+	}
+	var fired []string
+	for _, s := range skills {
+		if t.deliveredSkills[s.ID] || !s.PlaybookApplies(userMsg, t.docNames) {
+			continue
+		}
+		if t.deliveredSkills == nil {
+			t.deliveredSkills = map[string]bool{}
+		}
+		t.deliveredSkills[s.ID] = true
+		fired = append(fired, s.Name)
+	}
+	return fired
+}
+
 // playbookBlock resolves a skill's playbook for this turn, once.
 func (t *chatTurn) playbookBlock(ctx context.Context, skill SkillRecord) string {
 	if t == nil || len(skill.Playbook) == 0 {
@@ -119,7 +173,18 @@ func (pr playbookRunner) run(ctx context.Context, skill SkillRecord, rule Playbo
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "**Established:** %s = %s", fact, shown)
-	if ev := strings.TrimSpace(text); ev != "" {
+	// The evidence is the declared field when the step filled it — the line
+	// that decided the fact — and the step's text only as a last resort. The
+	// text used to be shown always, and for a step that reported nothing but
+	// its structured output it was the fact restated as JSON.
+	ev := strings.TrimSpace(fmt.Sprint(fields[PlaybookEvidenceField]))
+	if ev == "" || ev == "<nil>" {
+		ev = strings.TrimSpace(text)
+		if strings.HasPrefix(ev, "{") {
+			ev = "" // the structured output itself is not evidence
+		}
+	}
+	if ev != "" {
 		fmt.Fprintf(&b, " — %s", excerptLine(ev, 240))
 	}
 	b.WriteString("\n")

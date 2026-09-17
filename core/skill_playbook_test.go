@@ -85,8 +85,11 @@ func TestPlaybookRuleCompilesToAValidMachine(t *testing.T) {
 		t.Fatalf("one unattended establishing phase expected, got %+v", def)
 	}
 	ph := def.Phases[0]
-	if len(ph.Output) != 1 || ph.Output[0].Name != "queue_draining" || ph.Output[0].Type != FieldBool || !ph.Output[0].Required {
+	if len(ph.Output) != 2 || ph.Output[0].Name != "queue_draining" || ph.Output[0].Type != FieldBool || !ph.Output[0].Required {
 		t.Fatalf("the fact must be the required bool output, got %+v", ph.Output)
+	}
+	if ph.Output[1].Name != PlaybookEvidenceField || !ph.Output[1].Required {
+		t.Fatalf("the step must also report the evidence that decided it, got %+v", ph.Output[1])
 	}
 	if len(ph.Tools) != 1 || ph.Tools[0] != "run_command" {
 		t.Fatalf("the step carries the skill's tools, got %v", ph.Tools)
@@ -146,6 +149,28 @@ func TestPlaybookFallbackCarriesEveryArm(t *testing.T) {
 		if !strings.Contains(fb, want) {
 			t.Fatalf("missing %q in:\n%s", want, fb)
 		}
+	}
+}
+
+// A playbook fires on the framework's say-so when the skill's triggers or a
+// rule's When match the turn; a skill with neither waits to be consulted.
+func TestPlaybookApplies(t *testing.T) {
+	s := SkillRecord{Triggers: []string{"disk"}, Playbook: []PlaybookRule{boolRule()}}
+	if !s.PlaybookApplies("is this box low on disk?", nil) || s.PlaybookApplies("how are you", nil) {
+		t.Fatal("the skill's triggers decide")
+	}
+	s.Triggers = nil
+	s.Playbook[0].When = []string{"stuck order"}
+	if !s.PlaybookApplies("order 12 is a stuck order", nil) || s.PlaybookApplies("is this box low on disk?", nil) {
+		t.Fatal("a rule's when decides")
+	}
+	s.Playbook[0].When = nil
+	if s.PlaybookApplies("is this box low on disk?", nil) {
+		t.Fatal("no triggers and no when: the model consults, the framework does not fire")
+	}
+	s.Triggers, s.Disabled = []string{"disk"}, true
+	if s.PlaybookApplies("disk", nil) {
+		t.Fatal("a disabled skill never fires")
 	}
 }
 

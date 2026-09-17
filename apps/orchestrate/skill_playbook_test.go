@@ -27,16 +27,19 @@ func TestPlaybookHandsBackOnlyTheArmThatApplies(t *testing.T) {
 		if input != "is order 12 stuck?" {
 			t.Fatalf("the establishing step is given the user message, got %q", input)
 		}
-		return map[string]any{"queue_draining": false}, "lag is 40k and climbing", nil
+		return map[string]any{"queue_draining": false, "evidence": "lag is 40k and climbing"}, `{"queue_draining": false}`, nil
 	}}
 	out := pr.resolve(context.Background(), playbookSkill())
-	for _, want := range []string{"**Playbook** (Orders", "**Established:** queue_draining = false", "lag is 40k and climbing", "**So:** Look at the broker."} {
+	for _, want := range []string{"**Playbook** (Orders", "**Established:** queue_draining = false — lag is 40k and climbing", "**So:** Look at the broker."} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in:\n%s", want, out)
 		}
 	}
 	if strings.Contains(out, "Look at the consumer") {
 		t.Fatalf("the arm that does not apply must not be shown:\n%s", out)
+	}
+	if strings.Contains(out, `{"queue_draining"`) {
+		t.Fatalf("the structured output is not evidence:\n%s", out)
 	}
 	if len(ran) != 1 || ran[0] != "queue_draining" {
 		t.Fatalf("one establishing run, got %v", ran)
@@ -128,5 +131,40 @@ func TestPlaybookFromArgs(t *testing.T) {
 	}
 	if _, _, err := playbookFromArgs(map[string]any{"playbook": `{not json`}); err == nil {
 		t.Fatal("bad JSON is an error")
+	}
+}
+
+// A playbook skill whose triggers match is delivered BEFORE the first model
+// round, so the framework's check runs whether or not the model would have
+// consulted the skill. Without triggers it waits to be consulted, as any
+// other skill does.
+func TestAutoDeliverPlaybooksFiresOnAMatch(t *testing.T) {
+	withPlaybook := playbookSkill()
+	withPlaybook.Triggers = []string{"disk"}
+	plain := SkillRecord{ID: "s2", Name: "Prose", Triggers: []string{"disk"}}
+	noTrigger := playbookSkill()
+	noTrigger.ID, noTrigger.Name = "s3", "Quiet"
+
+	for _, c := range []struct {
+		name   string
+		skills []SkillRecord
+		msg    string
+		fired  []string
+	}{
+		{"trigger match fires the playbook", []SkillRecord{withPlaybook}, "is this box low on disk?", []string{"Orders"}},
+		{"no match, no fire", []SkillRecord{withPlaybook}, "how are you", nil},
+		{"a skill without a playbook is never auto-delivered", []SkillRecord{plain}, "disk", nil},
+		{"a playbook with no triggers waits to be consulted", []SkillRecord{noTrigger}, "disk", nil},
+	} {
+		turn := &chatTurn{deliveredSkills: map[string]bool{}}
+		got := autoDeliverPlaybooksIn(turn, c.skills, c.msg)
+		if strings.Join(got, ",") != strings.Join(c.fired, ",") {
+			t.Errorf("%s: fired %v, want %v", c.name, got, c.fired)
+		}
+		for _, s := range c.skills {
+			if turn.deliveredSkills[s.ID] != (len(got) > 0 && s.ID == c.skills[0].ID) {
+				t.Errorf("%s: delivered map disagrees with what fired", c.name)
+			}
+		}
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -51,6 +52,11 @@ func (skillDefImpl) Params() map[string]ToolParam {
 			Description: rewriteMemoryToolNames("(create / update) Optional collection IDs whose corpus becomes searchable via knowledge_search when this skill is active. Use to ship domain reference material with the skill — e.g. a Kubernetes skill carries the k8s reference + an instructions section about \"in k8s contexts, prefer X.\" Active path only: when the skill isn't in use this turn, its collections stay out of scope, so heavy reference docs don't leak into unrelated turns. Pass collection IDs from collections(action=list)."),
 			Items:       &ToolParam{Type: "string"},
 		},
+		"attach_to_agents": {
+			Type:        "array",
+			Description: "(create / update) Agent names or IDs to add this skill to, by appending it to each one's allowed_skills. A skill an agent does not allow is invisible to it — creating one without attaching it leaves it in the user's pool doing nothing. Same argument the machine and pipeline tools take.",
+			Items:       &ToolParam{Type: "string"},
+		},
 		"create_collection": {
 			Type:        "boolean",
 			Description: "(create) When true, mint a NEW empty knowledge collection named after the skill and auto-attach it (added to attached_collections). Use when the skill needs its own reference corpus and one doesn't exist yet — you get back the collection ID; tell the user to populate it via the Knowledge surface (upload docs or Auto-fill). To link an EXISTING collection instead, pass its ID in attached_collections and leave this off.",
@@ -61,7 +67,7 @@ func (skillDefImpl) Params() map[string]ToolParam {
 		},
 		"playbook": {
 			Type:        "string",
-			Description: "(create / update) Optional. The skill's CONDITIONAL behaviour as a JSON array of rules, each \"establish Y; if Y then Z, else U\". When the skill is consulted the framework ESTABLISHES each rule's fact itself — a step with the skill's tools and a declared output — and hands the host agent only the arm that applies, so the condition is settled before either branch can start. Rule shape: {\"fact\": \"queue_draining\", \"how\": \"Read the consumer lag for the orders queue over the last five minutes.\", \"then\": \"Look at the consumer: its log, restart count, lag trend.\", \"else\": \"Look at the broker: connectivity from the consumer host, partition state, disk.\"}. Optional: \"when\": [triggers] to apply the rule only on matching turns; \"type\": \"choice\" with \"values\": [...] and \"cases\": {value: arm} for a many-way branch; \"then_rule\" / \"else_rule\" / \"case_rules\" to nest another rule (two levels max). Put prose that does not branch in instructions, not here. Pass \"[]\" to clear.",
+			Description: "(create / update) Optional. The skill's CONDITIONAL behaviour as a JSON array of rules, each \"establish Y; if Y then Z, else U\". When the skill is consulted the framework ESTABLISHES each rule's fact itself — a step with the skill's tools and a declared output — and hands the host agent only the arm that applies, so the condition is settled before either branch can start. Rule shape: {\"fact\": \"queue_draining\", \"how\": \"Read the consumer lag for the orders queue over the last five minutes.\", \"then\": \"Look at the consumer: its log, restart count, lag trend.\", \"else\": \"Look at the broker: connectivity from the consumer host, partition state, disk.\"}. Optional: \"when\": [triggers] to apply the rule only on matching turns; \"type\": \"choice\" with \"values\": [...] and \"cases\": {value: arm} for a many-way branch; \"then_rule\" / \"else_rule\" / \"case_rules\" to nest another rule (two levels max). A playbook skill FIRES ON ITS OWN when the skill's triggers or a rule's when match the message — the facts are established before the agent's first round — so give a playbook skill triggers; without them it runs only when the agent chooses to consult the skill. Put prose that does not branch in instructions, not here. Pass \"[]\" to clear.",
 		},
 	}
 }
@@ -260,6 +266,7 @@ func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 	if hadPrior {
 		verb = "updated"
 	}
+	attached, unknown := attachSkillToAgents(sess, args["attach_to_agents"], saved.ID)
 	collNote := ""
 	if mintedCollection != "" {
 		collNote = fmt.Sprintf(" Created and linked an empty knowledge collection %q Knowledge (id=%s) — it has no documents yet, so tell the user to populate it via the Knowledge surface (upload docs or Auto-fill) before the skill's knowledge_search returns anything.", saved.Name, mintedCollection)
@@ -268,7 +275,79 @@ func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 	if copiedTools > 0 {
 		toolNote = fmt.Sprintf(" Bundled %d tool(s) INTO the skill — they ship with it and become callable whenever the skill is consulted.", copiedTools)
 	}
-	return fmt.Sprintf("Skill %q %s.%s Host agents activate it by reading its description in their skill list; a trigger match adds a \"likely relevant\" hint on matching turns.%s", saved.Name, verb, toolNote, collNote), nil
+	return fmt.Sprintf("Skill %q %s.%s%s %s%s", saved.Name, verb, toolNote,
+		attachNote(attached, unknown), activationNote(saved), collNote), nil
+}
+
+// attachNote says what attaching did, in the words the caller needs to hear:
+// a skill no agent allows is invisible, and the tool used to answer a create
+// with a sentence about how agents activate skills, which read as
+// confirmation that this one was attached to something. It was not.
+func attachNote(attached, unknown []string) string {
+	var b strings.Builder
+	switch {
+	case len(attached) > 0:
+		fmt.Fprintf(&b, " Attached to %s.", strings.Join(attached, ", "))
+	case len(unknown) == 0:
+		b.WriteString(" NOT attached to any agent, so no agent can see it — pass attach_to_agents, or add it to an agent's allowed_skills.")
+	}
+	if len(unknown) > 0 {
+		fmt.Fprintf(&b, " No agent found named: %s.", strings.Join(unknown, ", "))
+	}
+	return b.String()
+}
+
+// activationNote says how the skill comes into a turn — which differs once it
+// carries a playbook, because a playbook fires on a match rather than waiting
+// to be consulted.
+func activationNote(s SkillRecord) string {
+	if len(s.Playbook) > 0 {
+		if len(s.Triggers) > 0 {
+			return "It carries a playbook, so on a turn matching its triggers the framework establishes its facts BEFORE the agent's first round and hands the agent only the arm that applies."
+		}
+		return "It carries a playbook but NO triggers, so it fires only when the agent chooses to consult it — give it triggers if it should fire on its own."
+	}
+	return "Host agents activate it by reading its description in their skill list; a trigger match adds a \"likely relevant\" hint on matching turns."
+}
+
+// attachSkillToAgents appends the skill to each named agent's allowed_skills.
+func attachSkillToAgents(sess *ToolSession, raw any, skillID string) (attached, unknown []string) {
+	var names []string
+	switch v := raw.(type) {
+	case []any:
+		for _, n := range v {
+			names = append(names, fmt.Sprint(n))
+		}
+	case []string:
+		names = v
+	case string:
+		if strings.TrimSpace(v) != "" {
+			names = []string{v}
+		}
+	}
+	for _, key := range names {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		ag, ok := findAgentByNameOrID(sess.DB, sess.Username, key)
+		if !ok {
+			unknown = append(unknown, key)
+			continue
+		}
+		label := chFirst(ag.Name, ag.ID)
+		if slices.Contains(ag.AllowedSkills, skillID) {
+			attached = append(attached, label)
+			continue
+		}
+		ag.AllowedSkills = append(ag.AllowedSkills, skillID)
+		if _, err := saveAgent(sess.DB, ag); err != nil {
+			unknown = append(unknown, key+" (save failed: "+err.Error()+")")
+			continue
+		}
+		attached = append(attached, label)
+	}
+	return attached, unknown
 }
 
 // autoCopySessionToolsForSkill snapshots any tool named in the skill's
@@ -373,14 +452,18 @@ func skillDefUpdate(args map[string]any, sess *ToolSession) (string, error) {
 		rec.Playbook = playbook
 		changed = append(changed, "playbook")
 	}
-	if len(changed) == 0 {
-		return "", errors.New("nothing to update — pass at least one of description, instructions, triggers, allowed_tools, attached_collections, playbook")
+	attached, unknown := attachSkillToAgents(sess, args["attach_to_agents"], rec.ID)
+	if len(changed) == 0 && len(attached) == 0 && len(unknown) == 0 {
+		return "", errors.New("nothing to update — pass at least one of description, instructions, triggers, allowed_tools, attached_collections, playbook, attach_to_agents")
 	}
 	saved, err := SaveSkill(sess.DB, sess.Username, rec)
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("Skill %q updated (%s). All other fields preserved.", saved.Name, strings.Join(changed, ", ")), nil
+	if len(changed) == 0 {
+		return fmt.Sprintf("Skill %q unchanged.%s", saved.Name, attachNote(attached, unknown)), nil
+	}
+	return fmt.Sprintf("Skill %q updated (%s). All other fields preserved.%s", saved.Name, strings.Join(changed, ", "), attachNote(attached, unknown)), nil
 }
 
 func skillDefDelete(args map[string]any, sess *ToolSession) (string, error) {

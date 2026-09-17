@@ -331,6 +331,10 @@ func (pr *planRun) assemblePrompt() {
 	// sys byte-stable lets turns 2+ reuse the prefix; the hints also belong
 	// next to the user message (highest salience) per their own design intent.
 	t.playbookMsg = pr.triggerMsg
+	// A playbook skill the turn matches is delivered NOW, so its check runs
+	// and its arm is in the first round's prompt — renderTriggeredSkills
+	// below renders every delivered skill, this one included.
+	t.autoDeliverPlaybooks(pr.triggerMsg)
 	pr.turnContext = t.renderTriggeredSkills()
 	// full instructions for skills already consulted
 	pr.turnContext += t.renderSkillTriggerHints(pr.triggerMsg)

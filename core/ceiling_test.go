@@ -253,7 +253,14 @@ const (
 	// user. Everything that validates, compiles and decides it is a method,
 	// which the count excludes; the resolver that runs it lives in
 	// orchestrate, where the machine host is.
-	coreExportCeiling = 2182
+	// 2182 -> 2208 (v0.6.816). The +25 band was full again, so this
+	// re-baselines rather than spending the last of it; the deliberate
+	// addition here is ONE name, PlaybookEvidenceField, the output field an
+	// establishing step reports the line that decided its fact in — read by
+	// the resolver in orchestrate, so it cannot be unexported. What did NOT
+	// get exported is the firing rule: PlaybookApplies is a method on
+	// SkillRecord, which the count excludes.
+	coreExportCeiling = 2208
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

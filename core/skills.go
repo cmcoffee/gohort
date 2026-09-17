@@ -160,6 +160,13 @@ const (
 // and the MachineState key its fact lands under.
 const playbookEstablishPhase = "establish"
 
+// PlaybookEvidenceField is the second output the establishing step declares:
+// the line of what it saw that decided the fact. Shown beside the fact so
+// the model (and the person reading the export) sees WHY, and so an arm that
+// needs the number the check found — "give the free space" — has it without
+// running the check again.
+const PlaybookEvidenceField = "evidence"
+
 // kind normalizes Type: empty is bool.
 func (r PlaybookRule) kind() string {
 	if strings.TrimSpace(r.Type) == "" {
@@ -270,6 +277,8 @@ func (s SkillRecord) PlaybookProblems() []string {
 func (r PlaybookRule) Machine(skill SkillRecord) MachineDef {
 	fact := strings.TrimSpace(r.Fact)
 	field := PipelineField{Name: fact, Required: true}
+	evidence := PipelineField{Name: PlaybookEvidenceField, Type: FieldString, Required: true,
+		Desc: "the one line of what you saw that decided it — a command's output line, a number, a status — quoted, not described"}
 	prompt := "Establish ONE thing and report it; do not answer the person's question here, and do not go past what is asked.\n\n" +
 		"What to establish: " + fact + "\n\nHow: " + strings.TrimSpace(r.How) + "\n\n"
 	switch r.kind() {
@@ -282,6 +291,7 @@ func (r PlaybookRule) Machine(skill SkillRecord) MachineDef {
 		field.Desc = "true or false"
 		prompt += "Use the tools you have to check, then report " + fact + " as true or false. Report what the evidence shows, not what would be convenient; if you could not check, say so in your text and report false."
 	}
+	prompt += " Report as " + PlaybookEvidenceField + " the one line of output that decided it, quoted."
 	prompt += "\n\nThe person's message, for context:\n\n{input}"
 	return MachineDef{
 		Name:        skill.Name + " playbook: " + fact,
@@ -294,9 +304,29 @@ func (r PlaybookRule) Machine(skill SkillRecord) MachineDef {
 			Prompt: prompt,
 			Think:  "on",
 			Tools:  append([]string(nil), skill.AllowedTools...),
-			Output: []PipelineField{field},
+			Output: []PipelineField{field, evidence},
 		}},
 	}
+}
+
+// Applies reports whether the skill's playbook should fire on this turn
+// without waiting for the model to consult the skill: the skill's own
+// triggers match, or any rule's When does. Firing is the framework's call
+// here on purpose — "when asked about X, establish Y" is a rule about the
+// turn, and a rule the model may decline to look up is a suggestion.
+func (s SkillRecord) PlaybookApplies(message string, attachmentNames []string) bool {
+	if len(s.Playbook) == 0 || s.Disabled {
+		return false
+	}
+	if SkillTriggersMatch(s, message, attachmentNames) {
+		return true
+	}
+	for _, r := range s.Playbook {
+		if len(r.When) > 0 && TriggersMatch(r.When, message, attachmentNames) {
+			return true
+		}
+	}
+	return false
 }
 
 // Decide reads the established value and picks the arm. value is the
