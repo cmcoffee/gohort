@@ -453,3 +453,66 @@ func objectiveToolLabels(trace []PersistedToolCall) ([]string, int) {
 	}
 	return labels, failed
 }
+
+// --- one settlement for every surface that carries an objective -------------
+
+// objectiveFire is one fire's objective question, in the terms every scheduling
+// surface already has: what the goal is, what this attempt did and said, and
+// which attempt of the current allowance it was.
+//
+// The ATTEMPT NUMBER is supplied rather than derived, because the two surfaces
+// count it by opposite and equally correct means — a standing agent zeroes a
+// counter on resume (UnmetCount), a recurring task moves a base forward
+// (AttemptsBase) so the fire count and the history survive. Both exist to stop
+// a resumed objective stalling on its first fire. Choosing one here would
+// quietly change the other's behaviour, so the caller answers the one question
+// only it can.
+type objectiveFire struct {
+	Objective   string
+	Reply       string
+	Trace       []PersistedToolCall
+	Attempt     int
+	MaxAttempts int
+}
+
+// objectiveSettled is the answer, in the terms every surface acts on. What each
+// surface DOES with it stays its own: a standing agent pauses itself and writes
+// a stop cause, a recurring task cancels its pre-armed successor and parks it.
+// Those writes are genuinely different records and belong apart.
+type objectiveSettled struct {
+	Line    string // leads the run summary
+	Reason  string // for the park note, the diagnostic, the ledger
+	Met     bool
+	Stop    bool // met or stalled: stop firing
+	Stalled bool
+	Judged  bool
+}
+
+// settleObjective runs the judge and reads its verdict, which was the same six
+// lines on both surfaces: pull the labels and the failure count off the trace,
+// ask the judge, turn the verdict into an outcome, and name the reason.
+//
+// Lifted as the first slice of the scheduling unification (docs/scheduling-
+// unification.md). The JUDGE was already shared; this is the boilerplate around
+// it, which is the half that drifts — the two copies had already grown
+// different argument orders for the same call.
+func (T *OrchestrateApp) settleObjective(ctx context.Context, f objectiveFire) objectiveSettled {
+	labels, failed := objectiveToolLabels(f.Trace)
+	verdict, judged := T.judgeObjective(ctx, objectiveEvidence{
+		Objective:   f.Objective,
+		Reply:       f.Reply,
+		ToolCalls:   labels,
+		ToolErrors:  failed,
+		Attempt:     f.Attempt,
+		MaxAttempts: f.MaxAttempts,
+	})
+	line, stop, stalled := objectiveOutcome(verdict, judged, f.Attempt, f.MaxAttempts)
+	return objectiveSettled{
+		Line:    line,
+		Reason:  objectiveReason(verdict, judged),
+		Met:     verdict.Met,
+		Stop:    stop,
+		Stalled: stalled,
+		Judged:  judged,
+	}
+}

@@ -218,26 +218,24 @@ func registerStandingRunner(app *OrchestrateApp) {
 		// re-reads the record and skips a paused one, and MarkStandingAgentBroken
 		// pauses and unschedules — so writing the record here is enough.
 		if objective := strings.TrimSpace(sa.Until); objective != "" {
-			labels, failed := objectiveToolLabels(toolTrace)
+			// UnmetCount is attempts spent in the CURRENT allowance — Resume
+			// zeroes it — so the attempt number comes from here rather than
+			// from the settlement, which cannot know how this record counts.
 			attempt := sa.UnmetCount + 1
-			verdict, judged := app.judgeObjective(ctx, objectiveEvidence{
-				Objective:   objective,
-				Reply:       out,
-				ToolCalls:   labels,
-				ToolErrors:  failed,
-				Attempt:     attempt,
-				MaxAttempts: sa.MaxAttempts,
+			settled := app.settleObjective(ctx, objectiveFire{
+				Objective: objective, Reply: out, Trace: toolTrace,
+				Attempt: attempt, MaxAttempts: sa.MaxAttempts,
 			})
-			line, stop, stalled := objectiveOutcome(verdict, judged, attempt, sa.MaxAttempts)
-			reason := objectiveReason(verdict, judged)
+			line, stop, stalled := settled.Line, settled.Stop, settled.Stalled
+			reason := settled.Reason
 			// Re-read: this run may have taken minutes, and a pause or an edit
 			// during it is the owner's word, not ours to overwrite.
 			cur, ok := GetStandingAgent(RootDB, sa.Owner, sa.Name)
 			if !ok {
 				cur = sa
 			}
-			cur.Attempts = appendObjectiveAttempt(cur.Attempts, verdict.Met, reason)
-			if !verdict.Met {
+			cur.Attempts = appendObjectiveAttempt(cur.Attempts, settled.Met, reason)
+			if !settled.Met {
 				cur.UnmetCount = attempt
 			}
 			// Pacing, before the record is written: every arm of the switch

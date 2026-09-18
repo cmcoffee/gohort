@@ -1,6 +1,6 @@
 # Scheduling unification (stage 3): what to merge, and what turned out not to be the merge
 
-Status: **planned.** Stages 0–2 shipped in 0.4.15 (2026-06-11) and built
+Status: **slice 1 done; 2 next.** Stages 0–2 shipped in 0.4.15 (2026-06-11) and built
 `core.ScheduledTrigger` — the `{when, gate, action, target}` record — plus the `schedule` tool on
 phantom. Stage 3 was deferred with a one-line brief: *fold standing agents and recurring tasks onto
 ScheduledTrigger, migrate the console, absorb create_event_monitor, add a reconciler, retire the old
@@ -71,7 +71,7 @@ should stay different:
 
 Each slice ships on its own and none moves data while a schedule is armed.
 
-**Slice 1 — one objective state machine.** Lift the attempt/stall/stop state out of
+**Slice 1 — one objective state machine.** DONE (`settleObjective`). Lift the attempt/stall/stop state out of
 `standing_runner.go` and `scheduled_updates.go` into one implementation both call, alongside the
 judge that is already shared. Touches no storage. Worth doing for the leverage it gives slices 3 and
 4 rather than for a bug it fixes — see the note above; both implementations are currently correct.

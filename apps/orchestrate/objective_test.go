@@ -713,3 +713,87 @@ func TestAMonitorWhoseChecksFailIsNotAnUnlinkEither(t *testing.T) {
 		t.Errorf("a missing wake agent lost its repair: %q", lbl)
 	}
 }
+
+// Slice 1 of the scheduling unification (docs/scheduling-unification.md). The
+// six lines around the judge — pull the labels and the failure count off the
+// trace, ask, read the verdict, name the reason — were written once per
+// surface. They settle through one path now.
+//
+// What is deliberately NOT shared is the attempt NUMBER. A standing agent
+// zeroes a counter on resume (UnmetCount); a recurring task moves a base
+// forward (AttemptsBase) so the fire count and the history survive. Both exist
+// to stop a resumed objective stalling on its first fire, and picking one would
+// silently change the other's behaviour — so the caller supplies it.
+func TestSettleObjectiveReadsTheVerdictForEverySurface(t *testing.T) {
+	met := &OrchestrateApp{AppCore: AppCore{LLM: &stubLLM{reply: `{"verdict":"MET","reason":"the posts are up"}`}}}
+	got := met.settleObjective(context.Background(), objectiveFire{
+		Objective: "three posts are live", Reply: "posted all three", Attempt: 1, MaxAttempts: 3,
+	})
+	if !got.Met || !got.Stop || got.Stalled || !got.Judged {
+		t.Fatalf("a met objective stops and does not stall: %+v", got)
+	}
+	if !strings.Contains(got.Line, "objective met") || got.Reason == "" {
+		t.Errorf("the line leads the summary, the reason feeds the park note and the diag: %+v", got)
+	}
+
+	// Unmet with allowance left: keep firing.
+	unmet := &OrchestrateApp{AppCore: AppCore{LLM: &stubLLM{reply: `{"verdict":"NOT_YET","reason":"only one landed"}`}}}
+	got = unmet.settleObjective(context.Background(), objectiveFire{
+		Objective: "three posts are live", Reply: "posted one", Attempt: 1, MaxAttempts: 3,
+	})
+	if got.Met || got.Stop || got.Stalled {
+		t.Fatalf("an unmet objective with attempts left keeps firing: %+v", got)
+	}
+
+	// Unmet on the last attempt: stalled, which stops AND parks.
+	got = unmet.settleObjective(context.Background(), objectiveFire{
+		Objective: "three posts are live", Reply: "posted one", Attempt: 3, MaxAttempts: 3,
+	})
+	if !got.Stop || !got.Stalled || got.Met {
+		t.Fatalf("the last attempt of an unmet objective stalls: %+v", got)
+	}
+	if !strings.Contains(got.Line, "STALLED") {
+		t.Errorf("the line must say so: %q", got.Line)
+	}
+}
+
+// An unreadable verdict is not compliance. It costs an attempt like any other,
+// because an attempt nobody could judge is an attempt that showed nothing.
+func TestSettleObjectiveTreatsAnUnreadableVerdictAsUnmet(t *testing.T) {
+	app := &OrchestrateApp{AppCore: AppCore{LLM: &stubLLM{reply: `I think so?`}}}
+	got := app.settleObjective(context.Background(), objectiveFire{
+		Objective: "x", Reply: "y", Attempt: 2, MaxAttempts: 2,
+	})
+	if got.Met {
+		t.Error("an unreadable verdict must never read as met")
+	}
+	if !got.Stalled {
+		t.Error("and it still spends the attempt, so the last one stalls")
+	}
+	if got.Reason == "" {
+		t.Error("the owner is owed a reason even when the judge could not give one")
+	}
+}
+
+// The trace reaches the judge: a goal about posting is not met by nine reads,
+// and a failed call is evidence the attempt tried.
+func TestSettleObjectivePassesTheTraceThrough(t *testing.T) {
+	labels, failed := objectiveToolLabels([]PersistedToolCall{
+		{Name: "moltish/get_feed"},
+		{Name: "moltish/reply_to_post", Err: "missing required arg"},
+	})
+	if len(labels) != 2 || failed != 1 {
+		t.Fatalf("labels=%v failed=%d", labels, failed)
+	}
+	// And settleObjective is what hands that to the judge — same inputs, one
+	// call site instead of two.
+	app := &OrchestrateApp{AppCore: AppCore{LLM: &stubLLM{reply: `{"verdict":"NOT_YET","reason":"nothing posted"}`}}}
+	got := app.settleObjective(context.Background(), objectiveFire{
+		Objective: "post something", Reply: "done",
+		Trace:   []PersistedToolCall{{Name: "moltish/get_feed"}},
+		Attempt: 1, MaxAttempts: 2,
+	})
+	if got.Met || got.Reason == "" {
+		t.Errorf("reads-only must not satisfy a posting goal: %+v", got)
+	}
+}

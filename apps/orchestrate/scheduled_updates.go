@@ -942,22 +942,20 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	objLine, objStopped, objStalled := "", false, false
 	pacedLine := ""
 	if objective := strings.TrimSpace(p.Until); objective != "" {
-		labels, failed := objectiveToolLabels(toolTrace)
+		// AttemptsBase moves forward on Resume rather than resetting a counter,
+		// so the fire count and the history survive — which is why the attempt
+		// number is derived here and not inside the settlement.
 		attempt := objectiveAttemptNumber(p)
-		verdict, judged := app.judgeObjective(ctx, objectiveEvidence{
-			Objective:   objective,
-			Reply:       reply,
-			ToolCalls:   labels,
-			ToolErrors:  failed,
-			Attempt:     attempt,
-			MaxAttempts: p.MaxAttempts,
+		settled := app.settleObjective(ctx, objectiveFire{
+			Objective: objective, Reply: reply, Trace: toolTrace,
+			Attempt: attempt, MaxAttempts: p.MaxAttempts,
 		})
-		objLine, objStopped, objStalled = objectiveOutcome(verdict, judged, attempt, p.MaxAttempts)
+		objLine, objStopped, objStalled = settled.Line, settled.Stop, settled.Stalled
 		if reArm {
 			// Onto the SUCCESSOR's payload, which is what carries forward. Also
 			// recorded when the chain stops: a stalled objective is parked with
 			// its history, so a resume picks up knowing what was already tried.
-			armed.Attempts = appendObjectiveAttempt(armed.Attempts, verdict.Met, objectiveReason(verdict, judged))
+			armed.Attempts = appendObjectiveAttempt(armed.Attempts, settled.Met, settled.Reason)
 		}
 		if objStopped && reArm && armedID != "" {
 			// Stand the chain down. The successor was pre-armed BEFORE this fire
@@ -977,7 +975,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 			// carrying its reason and its history, not firing. A met objective
 			// is genuinely finished and retires like any capped task.
 			if objStalled {
-				parkRecurringStalled(armed, fmt.Sprintf("objective not met after %d attempt(s) — %s", attempt, objectiveReason(verdict, judged)))
+				parkRecurringStalled(armed, fmt.Sprintf("objective not met after %d attempt(s) — %s", attempt, settled.Reason))
 			}
 		}
 		kind := "objective-not-met"
