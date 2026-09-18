@@ -231,6 +231,13 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Revisions: the list, one version read-only, and the way back. Matched
+	// before the switch, which compares whole strings and would miss a tail.
+	if sub, isRev := revisionAction(action); isRev {
+		T.handlePipelineRevisions(w, r, user, def, defOwner, mine, sub)
+		return
+	}
+
 	switch action {
 	case "":
 		switch r.Method {

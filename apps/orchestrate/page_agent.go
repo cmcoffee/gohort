@@ -1110,10 +1110,17 @@ func splitAgentFormSections(id, source string, fields []ui.FormField, identitySu
 	// The identity fields lead the first group so the rail's first entry holds
 	// both, rather than spending an entry on two inputs.
 	first := append(append([]ui.FormField{}, lead...), groups[0].fields...)
+	identity := panel(first)
+	// History hangs off the FIRST section only. Every section here is its own
+	// FormPanel over the same record, so setting it on the shared panel builder
+	// would put the same button on each one — one control, repeated eight
+	// times, all opening the same list.
+	identity.HistoryURL = "../api/agents/" + url.PathEscape(id) + "/revisions"
+	identity.HistoryLabel = "Version history"
 	out := []ui.Section{{
 		Title:    "Agent",
 		Subtitle: identitySubtitle,
-		Body:     panel(first),
+		Body:     identity,
 	}}
 	for _, g := range groups[1:] {
 		out = append(out, ui.Section{

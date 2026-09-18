@@ -98,6 +98,11 @@ func metaPanel(def MachineDef, base string) ui.FormPanel {
 	return ui.FormPanel{
 		Source:  base + "/meta",
 		PostURL: base + "/meta",
+		// The last few edits, each readable without applying it. On the
+		// machine's own fields rather than on a step's, because history is a
+		// fact about the whole definition and one button is enough.
+		HistoryURL:   base + "/revisions",
+		HistoryLabel: "Version history",
 		Fields: []ui.FormField{
 			// The page is titled with this, and so is the browser tab.
 			// Renaming without a rebuild leaves both showing the old

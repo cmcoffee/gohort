@@ -283,6 +283,14 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Revisions: the list, one version read-only, and the way back. Matched
+	// before the switch for the same reason runs/... is — the tail carries a
+	// sub-action and the switch compares whole strings.
+	if sub, isRev := revisionAction(action); isRev {
+		T.handleMachineRevisions(w, r, user, def, defOwner, mine, sub)
+		return
+	}
+
 	switch action {
 	case "":
 		switch r.Method {

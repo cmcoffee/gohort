@@ -97,6 +97,36 @@ type FormPanel struct {
 	// "Test connectivity" when TestURL is set and this is empty.
 	TestLabel string `json:"test_label,omitempty"`
 
+	// HistoryURL — when set, renders a "History" button next to the form's
+	// other controls. Click GETs the URL and shows what comes back in the
+	// shared modal: the versions of this record that were kept, each with the
+	// buttons the SERVER named for it.
+	//
+	// The panel does not know what a version is, what makes two of them
+	// different, or what restoring one means. It renders entries and follows
+	// the urls they carry, which is what keeps this usable by any form over a
+	// versioned record rather than by one of them.
+	//
+	// The endpoint returns:
+	//
+	//	{"title": "Kept versions",
+	//	 "empty": "Nothing kept yet.",
+	//	 "entries": [{"title": "#3 · 2 hours ago",
+	//	              "detail": "edited instructions",
+	//	              "actions": [{"label": "Restore", "url": "...", "method": "post",
+	//	                           "confirm": "...", "variant": "danger"},
+	//	                          {"label": "Preview", "url": "...", "kind": "show"}]}]}
+	//
+	// An action with kind "show" GETs its url and expects {"title", "text"},
+	// which replaces the list until Back. Anything else calls its url by
+	// method and, on success, reloads the form: a restore that left the fields
+	// showing the version it replaced would be a restore nobody could see
+	// worked.
+	HistoryURL string `json:"history_url,omitempty"`
+
+	// HistoryLabel overrides the button's text. Defaults to "History".
+	HistoryLabel string `json:"history_label,omitempty"`
+
 	// ResetURL — when set, renders a "Revert to defaults" button. Click
 	// confirms, POSTs to this URL (the server clears the stored overrides so
 	// the fields fall back to their code/config defaults), then re-loads the

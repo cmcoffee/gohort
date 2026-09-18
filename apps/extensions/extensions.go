@@ -78,6 +78,7 @@ func (T *Extensions) Routes() {
 	T.HandleFunc("/api/promotions", T.handlePromotions)
 	T.HandleFunc("/api/global-tools", T.handleGlobalTools)
 	T.HandleFunc("/api/skills", T.handleUserSkills)
+	T.HandleFunc("/api/skills/", T.handleUserSkillOne)
 	T.HandleFunc("/api/skill-tools", T.handleSkillToolOptions)
 	T.HandleFunc("/api/skill-collections", T.handleSkillCollectionOptions)
 	T.HandleFunc("/api/skill-playbook", T.handleSkillPlaybookRule)
@@ -1557,6 +1558,11 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 								SubmitLabel: "Save skill",
 								Fields:      userSkillFormFields(),
 								Invalidate:  []string{"api/skills"},
+								// The last few edits, with a read-only preview
+								// of each. {id} is filled in when the row
+								// expands, the same as the urls above it.
+								HistoryURL:   "api/skills/{id}/revisions",
+								HistoryLabel: "Version history",
 							},
 							// The two grants, as pickers rather than typed
 							// names. Their own controls, posting the record

@@ -447,6 +447,11 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		T.handleAgentMemorySearch(w, r, user, id)
 		return
 	}
+	// Revisions: the list, one version read-only, and the way back.
+	if sub, isRev := revisionAction(action); isRev {
+		T.handleAgentRevisions(w, r, user, id, sub)
+		return
+	}
 	if action == "guardrails" {
 		T.handleAgentGuardrails(w, r, user, id)
 		return

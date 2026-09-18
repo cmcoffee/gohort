@@ -188,6 +188,11 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 					Source:  "/orchestrate/api/pipelines/" + url_(def.ID),
 					PostURL: "/orchestrate/api/pipelines/" + url_(def.ID),
 					Method:  "PUT",
+					// The last few edits, each readable without applying it.
+					// On the pipeline's own fields rather than on a stage's:
+					// history is a fact about the whole definition.
+					HistoryURL:   "/orchestrate/api/pipelines/" + url_(def.ID) + "/revisions",
+					HistoryLabel: "Version history",
 					Fields: []ui.FormField{
 						{Field: "name", Type: "text", Label: "Name"},
 						{Field: "description", Type: "textarea", Rows: 2, Label: "What it is for",
