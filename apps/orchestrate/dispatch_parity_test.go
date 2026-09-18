@@ -10,33 +10,25 @@ import (
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
-// capturingLLM records the system prompt of every call so a test can assert on
-// the prompt a path actually built rather than on the helper it was supposed
-// to call.
-type capturingLLM struct {
-	reply  string
-	system []string
-}
-
-func (c *capturingLLM) Chat(ctx context.Context, msgs []Message, opts ...ChatOption) (*Response, error) {
-	// The loop delivers the system prompt as a ChatOption, not as a message.
-	var cfg ChatConfig
-	for _, o := range opts {
-		o(&cfg)
-	}
-	if cfg.SystemPrompt != "" {
-		c.system = append(c.system, cfg.SystemPrompt)
-	}
-	for _, m := range msgs {
-		if m.Role == "system" {
-			c.system = append(c.system, m.Content)
+// systemPromptsSeen is every system prompt a model was handed, across calls.
+//
+// The loop delivers it as a ChatOption rather than as a message, and some paths
+// send it as a message instead, so both are collected — which is the whole
+// point of the assertion these tests make: the two dispatch routes must build
+// the SAME prompt however it travels.
+func systemPromptsSeen(f *FakeLLM) []string {
+	var out []string
+	for i := 0; i < f.Calls(); i++ {
+		if sp := f.Config(i).SystemPrompt; sp != "" {
+			out = append(out, sp)
+		}
+		for _, m := range f.Sent(i) {
+			if m.Role == "system" {
+				out = append(out, m.Content)
+			}
 		}
 	}
-	return &Response{Content: c.reply}, nil
-}
-
-func (c *capturingLLM) ChatStream(ctx context.Context, msgs []Message, h StreamHandler, opts ...ChatOption) (*Response, error) {
-	return c.Chat(ctx, msgs, opts...)
+	return out
 }
 
 // promptHeadings lists the `## ` section headings of a prompt, sorted, so two
@@ -65,7 +57,7 @@ func promptHeadings(prompt string) []string {
 func TestDispatchPathsRenderTheSameBlocks(t *testing.T) {
 	root := &DBase{Store: kvlite.MemStore()}
 	udb := UserDB(root, "u")
-	llm := &capturingLLM{reply: "done"}
+	llm := &FakeLLM{Turns: []FakeTurn{{Content: "done", Repeat: true}}}
 	app := &OrchestrateApp{AppCore: AppCore{DB: root, LLM: llm, LeadLLM: llm}}
 
 	caller, err := saveAgent(udb, AgentRecord{Name: "Caller", Owner: "u", DispatchMode: dispatchAll, OrchestratorPrompt: "caller persona"})
@@ -85,10 +77,10 @@ func TestDispatchPathsRenderTheSameBlocks(t *testing.T) {
 	if _, err := turn.agentsRunAction(map[string]any{"agent": target.Name, "message": "what do you know"}); err != nil {
 		t.Fatalf("inline dispatch: %v", err)
 	}
-	if len(llm.system) == 0 {
+	if len(systemPromptsSeen(llm)) == 0 {
 		t.Fatal("inline dispatch never reached the model with a system prompt")
 	}
-	inline := llm.system[0]
+	inline := systemPromptsSeen(llm)[0]
 
 	// What the channel/dispatch path would build for the same target.
 	subSess := &ToolSession{LLM: llm, LeadLLM: llm, Username: "u", DB: udb, AgentID: target.ID}

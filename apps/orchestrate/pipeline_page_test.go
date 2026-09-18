@@ -358,8 +358,8 @@ func TestThereAreThreeWaysToGetAPipeline(t *testing.T) {
 	// And the drafter refuses to store something that would not run,
 	// because every other pipeline door refuses too and a stored one
 	// that cannot run is a tool an agent will call and be failed by.
-	app.LLM = &stubLLM{reply: `{"name":"Broken","stages":[
-		{"name":"a","kind":"worker","prompt":"read {stage:nowhere.thing}"}]}`}
+	app.LLM = &FakeLLM{Turns: []FakeTurn{{Content: `{"name":"Broken","stages":[
+		{"name":"a","kind":"worker","prompt":"read {stage:nowhere.thing}"}]}`, Repeat: true}}}
 	r = httptest.NewRequest("POST", "/orchestrate/api/pipelines/draft",
 		strings.NewReader(`{"description":"anything"}`))
 	w = httptest.NewRecorder()
@@ -372,10 +372,10 @@ func TestThereAreThreeWaysToGetAPipeline(t *testing.T) {
 	}
 
 	// A good draft lands, with the id the redirect substitutes.
-	app.LLM = &stubLLM{reply: `{"name":"Research","description":"d","stages":[
+	app.LLM = &FakeLLM{Turns: []FakeTurn{{Content: `{"name":"Research","description":"d","stages":[
 		{"name":"plan","kind":"worker","prompt":"break it up",
 		 "output":[{"name":"queries","type":"list","desc":"q"}]},
-		{"name":"answer","kind":"worker","prompt":"answer {stage:plan.queries}"}]}`}
+		{"name":"answer","kind":"worker","prompt":"answer {stage:plan.queries}"}]}`, Repeat: true}}}
 	r = httptest.NewRequest("POST", "/orchestrate/api/pipelines/draft",
 		strings.NewReader(`{"description":"research things"}`))
 	w = httptest.NewRecorder()

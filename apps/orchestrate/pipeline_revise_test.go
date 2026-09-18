@@ -29,13 +29,13 @@ func TestAPipelineRevisionKeepsIdentityAndSaysWhatItChanged(t *testing.T) {
 	// A well-behaved revision: one stage added, everything else back
 	// exactly as it went in — including plan's model, which is the sort
 	// of setting a careless rewrite drops silently.
-	app.LLM = &stubLLM{reply: `{"name":"Research","stages":[
+	app.LLM = &FakeLLM{Turns: []FakeTurn{{Content: `{"name":"Research","stages":[
 		{"name":"plan","kind":"worker","prompt":"break it up","model":"lead",
 		 "output":[{"name":"queries","type":"list","desc":"q"}]},
 		{"name":"dig","kind":"fanout","fan_over":"plan.queries","prompt":"research {item}",
 		 "tools":["web_search"]},
 		{"name":"check","kind":"worker","prompt":"verify {stage:dig}"},
-		{"name":"answer","kind":"worker","prompt":"from {stage:dig}"}]}`}
+		{"name":"answer","kind":"worker","prompt":"from {stage:dig}"}]}`, Repeat: true}}}
 
 	w := reviseP(t, app, user, def.ID, `{"description":"add a stage that checks the sources"}`)
 	if w.Code != 200 {
@@ -73,8 +73,8 @@ func TestAPipelineRevisionKeepsIdentityAndSaysWhatItChanged(t *testing.T) {
 func TestAPipelineRevisionThatWouldNotRunChangesNothing(t *testing.T) {
 	app, udb, user, def := stageEditFixture(t)
 	// Both attempts come back referencing a stage that does not exist.
-	app.LLM = &stubLLM{reply: `{"name":"Research","stages":[
-		{"name":"plan","kind":"worker","prompt":"read {stage:nowhere.at_all}"}]}`}
+	app.LLM = &FakeLLM{Turns: []FakeTurn{{Content: `{"name":"Research","stages":[
+		{"name":"plan","kind":"worker","prompt":"read {stage:nowhere.at_all}"}]}`, Repeat: true}}}
 
 	w := reviseP(t, app, user, def.ID, `{"description":"break it"}`)
 	if w.Code == 200 {
@@ -93,11 +93,11 @@ func TestAPipelineRevisionThatWouldNotRunChangesNothing(t *testing.T) {
 // the part somebody actually wrote.
 func TestAPipelineRevisionCanBeTakenBack(t *testing.T) {
 	app, udb, user, def := stageEditFixture(t)
-	app.LLM = &stubLLM{reply: `{"name":"Research","stages":[
+	app.LLM = &FakeLLM{Turns: []FakeTurn{{Content: `{"name":"Research","stages":[
 		{"name":"plan","kind":"worker","prompt":"SOMETHING ELSE ENTIRELY",
 		 "output":[{"name":"queries","type":"list","desc":"q"}]},
 		{"name":"dig","kind":"fanout","fan_over":"plan.queries","prompt":"research {item}"},
-		{"name":"answer","kind":"worker","prompt":"from {stage:dig}"}]}`}
+		{"name":"answer","kind":"worker","prompt":"from {stage:dig}"}]}`, Repeat: true}}}
 
 	if w := reviseP(t, app, user, def.ID, `{"description":"change it"}`); w.Code != 200 {
 		t.Fatalf("revise: %d %s", w.Code, w.Body.String())
@@ -165,12 +165,12 @@ func TestAnExportedPipelineLeavesTheSnapshotBehind(t *testing.T) {
 // reply would have hidden it.
 func TestARevisionThatDropsASettingIsReported(t *testing.T) {
 	app, _, user, def := stageEditFixture(t)
-	app.LLM = &stubLLM{reply: `{"name":"Research","stages":[
+	app.LLM = &FakeLLM{Turns: []FakeTurn{{Content: `{"name":"Research","stages":[
 		{"name":"plan","kind":"worker","prompt":"break it up",
 		 "output":[{"name":"queries","type":"list","desc":"q"}]},
 		{"name":"dig","kind":"fanout","fan_over":"plan.queries","prompt":"research {item}",
 		 "tools":["web_search"]},
-		{"name":"answer","kind":"worker","prompt":"from {stage:dig}"}]}`}
+		{"name":"answer","kind":"worker","prompt":"from {stage:dig}"}]}`, Repeat: true}}}
 
 	w := reviseP(t, app, user, def.ID, `{"description":"tidy it up"}`)
 	if w.Code != 200 {

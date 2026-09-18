@@ -35,7 +35,7 @@ func TestConsultDiesWithTheCallingTurn(t *testing.T) {
 	// discriminate. With a stub that returns immediately the handler finishes
 	// fast either way, and the test passes just as happily against the bug it
 	// is named for.
-	s := agentReferenceSource{app: &OrchestrateApp{AppCore: AppCore{DB: db, LLM: blockUntilCancelled{}}}}
+	s := agentReferenceSource{app: &OrchestrateApp{AppCore: AppCore{DB: db, LLM: neverAnswers()}}}
 	defs := s.ItemTools("alice", saved.ID)
 	if len(defs) != 1 {
 		t.Fatalf("want one consult tool, got %d", len(defs))
@@ -56,17 +56,12 @@ func TestConsultDiesWithTheCallingTurn(t *testing.T) {
 	}
 }
 
-// blockUntilCancelled answers only when its context ends, so a consultation
-// that ignored the caller's context runs for agentConsultTimeout instead.
-type blockUntilCancelled struct{}
-
-func (blockUntilCancelled) Chat(ctx context.Context, _ []Message, _ ...ChatOption) (*Response, error) {
-	<-ctx.Done()
-	return nil, ctx.Err()
-}
-
-func (b blockUntilCancelled) ChatStream(ctx context.Context, m []Message, _ StreamHandler, o ...ChatOption) (*Response, error) {
-	return b.Chat(ctx, m, o...)
+// neverAnswers holds a call open until its context ends, so a consultation
+// that ignored the caller's context runs for agentConsultTimeout instead of
+// being cancelled with it. The channel is never closed: the only way out is
+// the context, which is the thing under test.
+func neverAnswers() *FakeLLM {
+	return &FakeLLM{Turns: []FakeTurn{{Wait: make(chan struct{}), Repeat: true}}}
 }
 
 // The source-level property, because the posture half cannot be observed

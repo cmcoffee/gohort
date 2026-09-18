@@ -348,7 +348,7 @@ func TestAMetMonitorGoalDropsThePacingAsk(t *testing.T) {
 		t.Fatalf("ask: %v", err)
 	}
 
-	T := &OrchestrateApp{AppCore: AppCore{LLM: &stubLLM{reply: `{"verdict":"MET","reason":"the PR shows state merged"}`}}}
+	T := &OrchestrateApp{AppCore: AppCore{LLM: &FakeLLM{Turns: []FakeTurn{{Content: `{"verdict":"MET","reason":"the PR shows state merged"}`, Repeat: true}}}}}
 	T.settleMonitorObjective(t.Context(), m, "PR #12: state changed open → merged", ask)
 
 	cur, _ := GetEventMonitor(db, "craig", "pr-12")

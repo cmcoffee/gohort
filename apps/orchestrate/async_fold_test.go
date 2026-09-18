@@ -1,7 +1,6 @@
 package orchestrate
 
 import (
-	"context"
 	"strings"
 	"testing"
 	"time"
@@ -9,23 +8,6 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
-
-// stubLLM satisfies core.LLM with a canned (optionally gated) response.
-type stubLLM struct {
-	reply string
-	gate  chan struct{} // when non-nil, Chat blocks until the gate closes
-}
-
-func (s *stubLLM) Chat(ctx context.Context, msgs []Message, opts ...ChatOption) (*Response, error) {
-	if s.gate != nil {
-		<-s.gate
-	}
-	return &Response{Content: s.reply}, nil
-}
-
-func (s *stubLLM) ChatStream(ctx context.Context, msgs []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
-	return s.Chat(ctx, msgs, opts...)
-}
 
 func seedFoldSession(t *testing.T, db Database, agentID, sessID string, n int) {
 	t.Helper()
@@ -48,7 +30,7 @@ func seedFoldSession(t *testing.T, db Database, agentID, sessID string, n int) {
 // memory with Source=observed.
 func TestFoldOperatorHistoryCycle(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
-	T := &OrchestrateApp{AppCore: AppCore{DB: db, LLM: &stubLLM{reply: "Running summary of the thread.\nFACTS: user prefers metric units"}}}
+	T := &OrchestrateApp{AppCore: AppCore{DB: db, LLM: &FakeLLM{Turns: []FakeTurn{{Content: "Running summary of the thread.\nFACTS: user prefers metric units", Repeat: true}}}}}
 	agent := AgentRecord{ID: "ag", Owner: "u", ContextDepth: 4}
 	seedFoldSession(t, db, "ag", "s1", 30)
 
@@ -75,7 +57,7 @@ func TestFoldOperatorHistoryCycle(t *testing.T) {
 // history) but seeds no facts.
 func TestFoldRespectsMemoryToggles(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
-	T := &OrchestrateApp{AppCore: AppCore{DB: db, LLM: &stubLLM{reply: "Summary.\nFACTS: something durable"}}}
+	T := &OrchestrateApp{AppCore: AppCore{DB: db, LLM: &FakeLLM{Turns: []FakeTurn{{Content: "Summary.\nFACTS: something durable", Repeat: true}}}}}
 	agent := AgentRecord{ID: "ag2", Owner: "u", DisableExplicit: true}
 	seedFoldSession(t, db, "ag2", "s1", 30)
 
@@ -96,7 +78,7 @@ func TestFoldRespectsMemoryToggles(t *testing.T) {
 func TestCompactOperatorHistoryDoesNotBlockOnFold(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
 	gate := make(chan struct{})
-	T := &OrchestrateApp{AppCore: AppCore{DB: db, LLM: &stubLLM{reply: "Summary.\nFACTS: none", gate: gate}}}
+	T := &OrchestrateApp{AppCore: AppCore{DB: db, LLM: &FakeLLM{Turns: []FakeTurn{{Content: "Summary.\nFACTS: none", Wait: gate, Repeat: true}}}}}
 	agent := AgentRecord{ID: "ag3", Owner: "u", ContextDepth: 4}
 	seedFoldSession(t, db, "ag3", "s1", 30)
 	sess, _ := loadChatSession(db, "ag3", "s1")

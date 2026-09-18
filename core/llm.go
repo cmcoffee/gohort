@@ -1862,14 +1862,6 @@ func (f *FakeLLM) answer(ctx context.Context, messages []Message, handler Stream
 			return nil, ctx.Err()
 		}
 	}
-	if turn.Err != nil {
-		// The response goes back WITH the error, because a real client's does:
-		// the prompt went out and the provider will bill it, so a failed call
-		// still carries the tokens it sent. Returning nil here would make the
-		// accounting paths untestable, which is how a deployment comes to
-		// under-report its worst days.
-		return &Response{InputTokens: turn.InputTokens, OutputTokens: turn.OutputTokens}, turn.Err
-	}
 	// Cancellation is checked after the call is recorded, so a test can still
 	// see that the call was made before the context went.
 	if err := ctx.Err(); err != nil {
@@ -1880,13 +1872,26 @@ func (f *FakeLLM) answer(ctx context.Context, messages []Message, handler Stream
 	if len(turn.Chunks) > 0 {
 		content = strings.Join(turn.Chunks, "")
 	}
+	// Chunks are delivered BEFORE a failure, because that is the order a real
+	// stream fails in: it emits, then dies on a deadline partway through. A
+	// fake that failed first could not produce the case retry logic actually
+	// turns on — whether anything already reached the caller — and that is the
+	// difference between a safe retry and a duplicated reply.
 	if handler != nil {
 		for _, c := range turn.Chunks {
 			handler(c)
 		}
-		if len(turn.Chunks) == 0 && content != "" {
+		if len(turn.Chunks) == 0 && content != "" && turn.Err == nil {
 			handler(content)
 		}
+	}
+	if turn.Err != nil {
+		// The response goes back WITH the error, because a real client's does:
+		// the prompt went out and the provider will bill it, so a failed call
+		// still carries the tokens it sent. Returning nil here would make the
+		// accounting paths untestable, which is how a deployment comes to
+		// under-report its worst days.
+		return &Response{InputTokens: turn.InputTokens, OutputTokens: turn.OutputTokens}, turn.Err
 	}
 	return &Response{
 		Content:      content,

@@ -225,3 +225,35 @@ func TestLoopPromptIsAssertable(t *testing.T) {
 		t.Errorf("the user's message did not reach the model:\n%s", fake.Prompt(0))
 	}
 }
+
+// A stream that emits and THEN dies is the shape retry logic turns on: whether
+// anything already reached the caller is the difference between a safe retry
+// and a duplicated reply. A fake that failed before streaming could not produce
+// that case at all.
+func TestFakeStreamsWhatItGotBeforeFailing(t *testing.T) {
+	f := &FakeLLM{Turns: []FakeTurn{{
+		Chunks: []string{"half a sen"},
+		Err:    context.DeadlineExceeded,
+	}}}
+	var got []string
+	_, err := f.ChatStream(context.Background(), nil, func(c string) { got = append(got, c) })
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(got) != 1 || got[0] != "half a sen" {
+		t.Errorf("the partial output did not reach the caller: %q", got)
+	}
+}
+
+// And a failure with nothing to stream delivers nothing, rather than handing
+// the caller a whole reply it never got.
+func TestFakeStreamsNothingWhenAFailedTurnHasNoChunks(t *testing.T) {
+	f := &FakeLLM{Turns: []FakeTurn{{Content: "never sent", Err: errors.New("dead")}}}
+	var got []string
+	if _, err := f.ChatStream(context.Background(), nil, func(c string) { got = append(got, c) }); err == nil {
+		t.Fatal("want the error")
+	}
+	if len(got) != 0 {
+		t.Errorf("a failed call streamed %q", got)
+	}
+}

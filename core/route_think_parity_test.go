@@ -5,22 +5,6 @@ import (
 	"testing"
 )
 
-// thinkCapture records the Think option each entry point resolved.
-type thinkCapture struct{ think *bool }
-
-func (c *thinkCapture) Chat(ctx context.Context, msgs []Message, opts ...ChatOption) (*Response, error) {
-	var cfg ChatConfig
-	for _, o := range opts {
-		o(&cfg)
-	}
-	c.think = cfg.Think
-	return &Response{Content: "ok"}, nil
-}
-
-func (c *thinkCapture) ChatStream(ctx context.Context, msgs []Message, h StreamHandler, opts ...ChatOption) (*Response, error) {
-	return c.Chat(ctx, msgs, opts...)
-}
-
 // One route key must resolve to the SAME thinking setting whichever entry point
 // the call arrives through. WorkerChat's fallback for a nil RouteThink is ON
 // ("worker tier: thinking on by default"); LeadChat's worker-redirect defaulted
@@ -38,21 +22,26 @@ func TestWorkerThinkingDefaultMatchesAcrossEntryPoints(t *testing.T) {
 	const key = "test.thinkparity"
 	RegisterRouteStage(RouteStage{Key: key, Label: "test", Default: "lead", Private: true})
 
-	worker := &thinkCapture{}
-	lead := &thinkCapture{}
+	worker := &FakeLLM{Turns: []FakeTurn{{Content: "ok", Repeat: true}}}
+	lead := &FakeLLM{Turns: []FakeTurn{{Content: "ok", Repeat: true}}}
 	app := &AppCore{LLM: worker, LeadLLM: lead}
 
 	if _, err := app.WorkerChat(context.Background(), []Message{{Role: "user", Content: "hi"}}, WithRouteKey(key)); err != nil {
 		t.Fatalf("WorkerChat: %v", err)
 	}
-	viaWorker := worker.think
-	worker.think = nil
-
-	// Routed to the worker by the lead entry point — the redirect branch.
+	// Routed to the worker by the lead entry point — the redirect branch. Both
+	// calls land on the SAME worker, so the two resolutions are its first and
+	// second call rather than something that has to be reset between them.
 	if _, err := app.LeadChat(context.Background(), []Message{{Role: "user", Content: "hi"}}, WithRouteKey(key)); err != nil {
 		t.Fatalf("LeadChat: %v", err)
 	}
-	viaLead := worker.think
+	if worker.Calls() != 2 {
+		t.Fatalf("the lead entry point did not redirect to the worker: %d call(s)", worker.Calls())
+	}
+	viaWorker, viaLead := worker.Config(0).Think, worker.Config(1).Think
+	if lead.Calls() != 0 {
+		t.Errorf("the lead model was asked %d time(s); this route redirects", lead.Calls())
+	}
 
 	if viaWorker == nil || viaLead == nil {
 		t.Fatalf("no Think resolved: worker=%v lead-redirect=%v", viaWorker, viaLead)

@@ -192,7 +192,7 @@ func TestTheChoicesAreWhatTheAgentCanActuallyCall(t *testing.T) {
 func TestABoundRuleIsScopedWhenItIsSavedNotWhenItIsHit(t *testing.T) {
 	root := &DBase{Store: kvlite.MemStore()}
 	app := &OrchestrateApp{}
-	app.LLM = &scopeStubLLM{reply: `{"scope":"all","why":"the tool only dispatches to other agents"}`}
+	app.LLM = &FakeLLM{Turns: []FakeTurn{{Content: `{"scope":"all","why":"the tool only dispatches to other agents"}`, Repeat: true}}}
 	app.DB = root
 	udb := UserDB(root, "u")
 	agent := AgentRecord{ID: "a1", Name: "Wren", Guardrails: "#agents never delegate to other agents",
@@ -213,7 +213,7 @@ func TestABoundRuleIsScopedWhenItIsSavedNotWhenItIsHit(t *testing.T) {
 	}
 	// And a rule the classifier reads as conditional leaves the tool alone,
 	// exactly as it does on the discovered path.
-	app.LLM = &scopeStubLLM{reply: `{"scope":"some","why":"only for recipients outside the company"}`}
+	app.LLM = &FakeLLM{Turns: []FakeTurn{{Content: `{"scope":"some","why":"only for recipients outside the company"}`, Repeat: true}}}
 	agent2 := AgentRecord{ID: "a2", Guardrails: "#send_email never email anyone outside the company"}
 	scopeAndRecordGuardrailTool(context.Background(), app, udb, "a2", "a2", "",
 		"never email anyone outside the company", "send_email", "send_email")
@@ -227,7 +227,7 @@ func TestABoundRuleIsScopedWhenItIsSavedNotWhenItIsHit(t *testing.T) {
 // every binding it already has.
 func TestSavingAgainDoesNotReAskAboutKnownBindings(t *testing.T) {
 	root := &DBase{Store: kvlite.MemStore()}
-	stub := &scopeStubLLM{reply: `{"scope":"all","why":"x"}`}
+	stub := &FakeLLM{Turns: []FakeTurn{{Content: `{"scope":"all","why":"x"}`, Repeat: true}}}
 	app := &OrchestrateApp{}
 	app.LLM = stub
 	app.DB = root
@@ -236,8 +236,8 @@ func TestSavingAgainDoesNotReAskAboutKnownBindings(t *testing.T) {
 	saveGuardrailToolScope(udb, "a1", GuardrailToolScope{Rule: "never delegate", Tool: "agents", Scope: guardrailScopeAll})
 
 	app.scopeBoundGuardrailRules(context.Background(), udb, agent)
-	if stub.calls != 0 {
-		t.Errorf("a binding already read must not be asked about again; calls=%d", stub.calls)
+	if stub.Calls() != 0 {
+		t.Errorf("a binding already read must not be asked about again; calls=%d", stub.Calls())
 	}
 }
 

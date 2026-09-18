@@ -67,14 +67,21 @@ func judgeWith(t *testing.T, reply string) (*OrchestrateApp, *FakeLLM) {
 	return &OrchestrateApp{AppCore: AppCore{LLM: stub}}, stub
 }
 
-// judgeLastMessage is what the judge was last asked about. The stub used to
-// keep this itself; the fake keeps every call, so the test reads it from there.
-func judgeLastMessage(stub *FakeLLM) string {
-	sent := stub.LastSent()
-	if len(sent) == 0 {
-		return ""
+// lastUserMessage is the last thing a model was asked, as the USER role — what
+// several of these tests assert on.
+//
+// The stubs this replaced each kept it themselves, scanning messages inside
+// Chat. Reading it off the recorded call instead puts the rule where the
+// assertion is: a test that cares which message it means can see that it means
+// the last user one.
+func lastUserMessage(stub *FakeLLM) string {
+	out := ""
+	for _, m := range stub.LastSent() {
+		if m.Role == "user" {
+			out = m.Content
+		}
 	}
-	return sent[len(sent)-1].Content
+	return out
 }
 
 var garageTurn = TurnClaimEvidence{
@@ -100,8 +107,8 @@ func TestTheJudgeIsGivenTheWholeTurn(t *testing.T) {
 		"FILES BEING DELIVERED WITH THIS REPLY: 0",
 		"wasting away in the garage", // and the words under judgement
 	} {
-		if !strings.Contains(judgeLastMessage(stub), want) {
-			t.Errorf("the judge was not told %q:\n%s", want, judgeLastMessage(stub))
+		if !strings.Contains(lastUserMessage(stub), want) {
+			t.Errorf("the judge was not told %q:\n%s", want, lastUserMessage(stub))
 		}
 	}
 }
@@ -210,17 +217,17 @@ func TestTheJudgeIsToldWhetherAJobStarted(t *testing.T) {
 	app.judgeTurnClaims(context.Background(), TurnClaimEvidence{
 		Reply: "I'll get that going and let you know when it's done.", Backgrounded: true,
 	})
-	if !strings.Contains(judgeLastMessage(stub), "BACKGROUND JOB WAS STARTED BY THIS TURN: yes") {
-		t.Errorf("the judge must be told a job started:\n%s", judgeLastMessage(stub))
+	if !strings.Contains(lastUserMessage(stub), "BACKGROUND JOB WAS STARTED BY THIS TURN: yes") {
+		t.Errorf("the judge must be told a job started:\n%s", lastUserMessage(stub))
 	}
-	if !strings.Contains(judgeLastMessage(stub), "IS TRUE") {
-		t.Errorf("and what that fact means for the claim:\n%s", judgeLastMessage(stub))
+	if !strings.Contains(lastUserMessage(stub), "IS TRUE") {
+		t.Errorf("and what that fact means for the claim:\n%s", lastUserMessage(stub))
 	}
 
 	app, stub = judgeWith(t, `{"verdict":"KEPT"}`)
 	app.judgeTurnClaims(context.Background(), TurnClaimEvidence{Reply: "Tokyo is raining."})
-	if !strings.Contains(judgeLastMessage(stub), "BACKGROUND JOB WAS STARTED BY THIS TURN: no") {
-		t.Errorf("and told plainly when one did not:\n%s", judgeLastMessage(stub))
+	if !strings.Contains(lastUserMessage(stub), "BACKGROUND JOB WAS STARTED BY THIS TURN: no") {
+		t.Errorf("and told plainly when one did not:\n%s", lastUserMessage(stub))
 	}
 }
 

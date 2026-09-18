@@ -818,7 +818,7 @@ func TestPhaseRunnerAnnouncesBeforeItRuns(t *testing.T) {
 	turn, _ := machineTurnFixture(t, residentMachine())
 	var buf bytes.Buffer
 	turn.sse = &sseWriter{live: &buf}
-	turn.app.LLM = &stubLLM{reply: "worked it out"}
+	turn.app.LLM = &FakeLLM{Turns: []FakeTurn{{Content: "worked it out", Repeat: true}}}
 
 	run := turn.phaseRunner()
 	if _, err := run(context.Background(),

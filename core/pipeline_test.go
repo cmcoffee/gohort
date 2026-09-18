@@ -1101,21 +1101,6 @@ func TestStageGuardrails_InertSetIsNotCarried(t *testing.T) {
 	}
 }
 
-// callThenAnswerLLM asks for a consequential tool on the first round and writes
-// a reply on the second — the ordinary shape of a worker stage that acts.
-type callThenAnswerLLM struct{ n int }
-
-func (s *callThenAnswerLLM) Chat(ctx context.Context, m []Message, o ...ChatOption) (*Response, error) {
-	s.n++
-	if s.n == 1 {
-		return &Response{ToolCalls: []ToolCall{{ID: "1", Name: "send_message", Args: map[string]any{"to": "customer@example.com"}}}}, nil
-	}
-	return &Response{Content: "done what I could"}, nil
-}
-func (s *callThenAnswerLLM) ChatStream(ctx context.Context, m []Message, h StreamHandler, o ...ChatOption) (*Response, error) {
-	return s.Chat(ctx, m, o...)
-}
-
 // TestWorkerStage_PreActionBlocksToolCall is the same guarantee one layer up:
 // the tool a worker stage's own model chooses to call is judged too. Blocking
 // it does NOT fail the stage — the loop hands the refusal back as the tool
@@ -1126,7 +1111,10 @@ func TestWorkerStage_PreActionBlocksToolCall(t *testing.T) {
 	}}
 	var ran bool
 	var hooks []string
-	app := &AppCore{LLM: &callThenAnswerLLM{}}
+	app := &AppCore{LLM: &FakeLLM{Turns: []FakeTurn{
+		{ToolCalls: []ToolCall{{ID: "1", Name: "send_message", Args: map[string]any{"to": "customer@example.com"}}}},
+		{Content: "done what I could", Repeat: true},
+	}}}
 	ctx := WithStageGuardrails(context.Background(), blockingGuards(&hooks))
 	out, err := app.executePipelineDef(ctx, def, "customer@example.com", nil, nil, confirmingTool(&ran))
 	if err != nil {
@@ -1157,7 +1145,10 @@ func TestWorkerStage_UngovernedStageCostsNothing(t *testing.T) {
 		{Name: "reach_out", Kind: StageWorker, Prompt: "contact {input}", Tools: []string{"send_message"}},
 	}}
 	var ran bool
-	app := &AppCore{LLM: &callThenAnswerLLM{}}
+	app := &AppCore{LLM: &FakeLLM{Turns: []FakeTurn{
+		{ToolCalls: []ToolCall{{ID: "1", Name: "send_message", Args: map[string]any{"to": "customer@example.com"}}}},
+		{Content: "done what I could", Repeat: true},
+	}}}
 	if _, err := app.executePipelineDef(context.Background(), def, "x", nil, nil, confirmingTool(&ran)); err != nil {
 		t.Fatalf("ungoverned stage failed: %v", err)
 	}

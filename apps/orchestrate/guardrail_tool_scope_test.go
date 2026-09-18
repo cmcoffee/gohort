@@ -17,21 +17,6 @@ import (
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
-// scopeStubLLM answers the rule↔tool classification and nothing else.
-type scopeStubLLM struct {
-	reply string
-	calls int
-}
-
-func (s *scopeStubLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
-	s.calls++
-	return &Response{Content: s.reply}, nil
-}
-
-func (s *scopeStubLLM) ChatStream(ctx context.Context, messages []Message, h StreamHandler, opts ...ChatOption) (*Response, error) {
-	return s.Chat(ctx, messages, opts...)
-}
-
 func scopeTurn(t *testing.T, llm LLM, agent AgentRecord) *chatTurn {
 	t.Helper()
 	root := &DBase{Store: kvlite.MemStore()}
@@ -61,7 +46,7 @@ func TestCandidateToolIsTheFirstField(t *testing.T) {
 // The whole point: a rule ABOUT a tool removes it; a rule about some of its
 // uses does not.
 func TestOnlyAnAbsoluteRuleTakesTheToolAway(t *testing.T) {
-	turn := scopeTurn(t, &scopeStubLLM{}, AgentRecord{
+	turn := scopeTurn(t, &FakeLLM{Turns: []FakeTurn{{Content: "", Repeat: true}}}, AgentRecord{
 		Name: "Wren", Guardrails: "never delegate to other agents\nnever email the CEO",
 		GuardrailHooks: []string{"pre_action"},
 	})
@@ -97,7 +82,7 @@ func TestOnlyAnAbsoluteRuleTakesTheToolAway(t *testing.T) {
 func TestAReadingDiesWithItsRule(t *testing.T) {
 	agent := AgentRecord{ID: "a1", Name: "Wren", Guardrails: "never delegate to other agents",
 		GuardrailHooks: []string{"pre_action"}}
-	turn := scopeTurn(t, &scopeStubLLM{}, agent)
+	turn := scopeTurn(t, &FakeLLM{Turns: []FakeTurn{{Content: "", Repeat: true}}}, agent)
 	saveGuardrailToolScope(turn.udb, "a1", GuardrailToolScope{
 		Rule: "never delegate to other agents", Tool: "agents", Scope: guardrailScopeAll, At: time.Now(),
 	})
@@ -127,7 +112,7 @@ func TestAReadingDiesWithItsRule(t *testing.T) {
 
 // Framework mechanics are not negotiable by a rule reading.
 func TestTheLoopsOwnToolsSurviveAnyReading(t *testing.T) {
-	turn := scopeTurn(t, &scopeStubLLM{}, AgentRecord{
+	turn := scopeTurn(t, &FakeLLM{Turns: []FakeTurn{{Content: "", Repeat: true}}}, AgentRecord{
 		Name: "Wren", Guardrails: "never run anything in the background", GuardrailHooks: []string{"pre_action"},
 	})
 	saveGuardrailToolScope(turn.udb, turn.agent.ID, GuardrailToolScope{
@@ -147,7 +132,7 @@ func TestAHedgedOrUnreadableAnswerNeverRemovesATool(t *testing.T) {
 		`{}`,
 	} {
 		app := &OrchestrateApp{}
-		app.LLM = &scopeStubLLM{reply: reply}
+		app.LLM = &FakeLLM{Turns: []FakeTurn{{Content: reply, Repeat: true}}}
 		scope, _, err := app.classifyGuardrailToolScope(context.Background(), "never email the CEO", "send_email", "send_email to=ceo")
 		if err != nil {
 			t.Fatalf("reply %q: %v", reply, err)
@@ -157,7 +142,7 @@ func TestAHedgedOrUnreadableAnswerNeverRemovesATool(t *testing.T) {
 		}
 	}
 	app := &OrchestrateApp{}
-	app.LLM = &scopeStubLLM{reply: `{"scope":"all","why":"the tool only delegates"}`}
+	app.LLM = &FakeLLM{Turns: []FakeTurn{{Content: `{"scope":"all","why":"the tool only delegates"}`, Repeat: true}}}
 	scope, why, err := app.classifyGuardrailToolScope(context.Background(), "never delegate", "agents", "agents action=run")
 	if err != nil || scope != guardrailScopeAll || why == "" {
 		t.Fatalf("an explicit all must be honored: scope=%q why=%q err=%v", scope, why, err)
@@ -167,7 +152,7 @@ func TestAHedgedOrUnreadableAnswerNeverRemovesATool(t *testing.T) {
 // An unparseable reply records nothing, so the tool stays and the next block
 // asks again. A reading is never invented from a failed call.
 func TestAFailedClassificationRecordsNothing(t *testing.T) {
-	turn := scopeTurn(t, &scopeStubLLM{reply: "the model wandered off"}, AgentRecord{
+	turn := scopeTurn(t, &FakeLLM{Turns: []FakeTurn{{Content: "the model wandered off", Repeat: true}}}, AgentRecord{
 		Name: "Wren", Guardrails: "never delegate", GuardrailHooks: []string{"pre_action"},
 	})
 	scopeAndRecordGuardrailTool(context.Background(), turn.app, turn.udb, "a1", "a1", "s1",
@@ -179,7 +164,7 @@ func TestAFailedClassificationRecordsNothing(t *testing.T) {
 
 // The reading is established once and says so where the owner can find it.
 func TestAWithheldToolLeavesOneBreadcrumb(t *testing.T) {
-	turn := scopeTurn(t, &scopeStubLLM{reply: `{"scope":"all","why":"the tool only dispatches to other agents"}`},
+	turn := scopeTurn(t, &FakeLLM{Turns: []FakeTurn{{Content: `{"scope":"all","why":"the tool only dispatches to other agents"}`, Repeat: true}}},
 		AgentRecord{Name: "Wren", Guardrails: "never delegate", GuardrailHooks: []string{"pre_action"}})
 	scopeAndRecordGuardrailTool(context.Background(), turn.app, turn.udb, "a1", "a1", "s1",
 		"never delegate", "agents", "agents action=run")
@@ -204,28 +189,28 @@ func TestAWithheldToolLeavesOneBreadcrumb(t *testing.T) {
 
 // Asked once per pair, ever.
 func TestThePairIsClassifiedOnlyOnce(t *testing.T) {
-	stub := &scopeStubLLM{reply: `{"scope":"all","why":"x"}`}
+	stub := &FakeLLM{Turns: []FakeTurn{{Content: `{"scope":"all","why":"x"}`, Repeat: true}}}
 	turn := scopeTurn(t, stub, AgentRecord{
 		Name: "Wren", Guardrails: "never delegate", GuardrailHooks: []string{"pre_action"},
 	})
 	turn.session = &ChatSession{ID: "s1", AgentID: "a1"}
 	scopeAndRecordGuardrailTool(context.Background(), turn.app, turn.udb, "a1", "a1", "s1",
 		"never delegate", "agents", "agents action=run")
-	if stub.calls != 1 {
-		t.Fatalf("first block should ask once; calls=%d", stub.calls)
+	if stub.Calls() != 1 {
+		t.Fatalf("first block should ask once; calls=%d", stub.Calls())
 	}
 	// The second block finds the reading already there and asks nothing. Via
 	// the turn-bound entry point, which is what does the looking.
 	turn.learnGuardrailToolScope("never delegate", guardHookPreAction, "agents action=run agent=Someone")
 	time.Sleep(50 * time.Millisecond) // it would have launched by now
-	if stub.calls != 1 {
-		t.Errorf("a pair already read must not be asked again; calls=%d", stub.calls)
+	if stub.Calls() != 1 {
+		t.Errorf("a pair already read must not be asked again; calls=%d", stub.Calls())
 	}
 }
 
 // Nothing to reason about, nothing asked.
 func TestNothingIsAskedWithoutARuleAndATool(t *testing.T) {
-	stub := &scopeStubLLM{reply: `{"scope":"all","why":"x"}`}
+	stub := &FakeLLM{Turns: []FakeTurn{{Content: `{"scope":"all","why":"x"}`, Repeat: true}}}
 	turn := scopeTurn(t, stub, AgentRecord{
 		Name: "Wren", Guardrails: "never delegate", GuardrailHooks: []string{"pre_action", "pre_output"},
 	})
@@ -236,8 +221,8 @@ func TestNothingIsAskedWithoutARuleAndATool(t *testing.T) {
 	// A tool the loop needs is never a candidate for removal, so never asked about.
 	turn.learnGuardrailToolScope("never delegate", guardHookPreAction, "background_work action=cancel")
 	time.Sleep(50 * time.Millisecond)
-	if stub.calls != 0 {
-		t.Errorf("classification fired with nothing to classify; calls=%d", stub.calls)
+	if stub.Calls() != 0 {
+		t.Errorf("classification fired with nothing to classify; calls=%d", stub.Calls())
 	}
 }
 
@@ -308,7 +293,7 @@ func TestTheGuardrailsPanelShowsAndRestoresWithheldTools(t *testing.T) {
 // per turn: they are in no registry, so there is no description to look up, and
 // they are the ones a rule about delegation or posting collides with.
 func TestTheRefusedCallReachesTheClassifier(t *testing.T) {
-	stub := &promptCapturingLLM{reply: `{"scope":"all","why":"x"}`}
+	stub := &FakeLLM{Turns: []FakeTurn{{Content: `{"scope":"all","why":"x"}`, Repeat: true}}}
 	app := &OrchestrateApp{}
 	app.LLM = stub
 	if _, _, err := app.classifyGuardrailToolScope(context.Background(),
@@ -316,31 +301,13 @@ func TestTheRefusedCallReachesTheClassifier(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"never delegate to other agents", "agents", "Researcher"} {
-		if !strings.Contains(stub.seen, want) {
-			t.Errorf("the classifier was not shown %q:\n%s", want, stub.seen)
+		if !strings.Contains(lastUserMessage(stub), want) {
+			t.Errorf("the classifier was not shown %q:\n%s", want, lastUserMessage(stub))
 		}
 	}
 	// The call is the model's text, so it is fenced; the rule and the tool are
 	// not, because they are the owner's and the framework's.
-	if !strings.Contains(stub.seen, "the call that was refused") {
+	if !strings.Contains(lastUserMessage(stub), "the call that was refused") {
 		t.Error("the refused call must be presented as untrusted data")
 	}
-}
-
-type promptCapturingLLM struct {
-	reply string
-	seen  string
-}
-
-func (s *promptCapturingLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
-	for _, m := range messages {
-		if m.Role == "user" {
-			s.seen = m.Content
-		}
-	}
-	return &Response{Content: s.reply}, nil
-}
-
-func (s *promptCapturingLLM) ChatStream(ctx context.Context, messages []Message, h StreamHandler, opts ...ChatOption) (*Response, error) {
-	return s.Chat(ctx, messages, opts...)
 }

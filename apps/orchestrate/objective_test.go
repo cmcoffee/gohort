@@ -116,7 +116,7 @@ func TestJudgeObjectiveOnlyPassesOnAClearMet(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			T := &OrchestrateApp{AppCore: AppCore{LLM: &stubLLM{reply: c.reply}}}
+			T := &OrchestrateApp{AppCore: AppCore{LLM: &FakeLLM{Turns: []FakeTurn{{Content: c.reply, Repeat: true}}}}}
 			v, judged := T.judgeObjective(context.Background(), ev)
 			if judged != c.wantJudged || v.Met != c.wantMet {
 				t.Errorf("judged=%v met=%v, want judged=%v met=%v", judged, v.Met, c.wantJudged, c.wantMet)
@@ -424,7 +424,7 @@ func TestAMetConditionStopsTheMonitor(t *testing.T) {
 	m := EventMonitor{Name: "pr-12", Owner: "craig", Kind: EventKindWatch, Until: "the PR is merged"}
 	SaveEventMonitor(db, m)
 
-	T := &OrchestrateApp{AppCore: AppCore{LLM: &stubLLM{reply: `{"verdict":"MET","reason":"the PR shows state merged"}`}}}
+	T := &OrchestrateApp{AppCore: AppCore{LLM: &FakeLLM{Turns: []FakeTurn{{Content: `{"verdict":"MET","reason":"the PR shows state merged"}`, Repeat: true}}}}}
 	T.settleMonitorObjective(context.Background(), m, "PR #12: state changed open → merged", nil)
 
 	cur, ok := GetEventMonitor(db, "craig", "pr-12")
@@ -452,7 +452,7 @@ func TestAnUnmetConditionLeavesTheMonitorWatching(t *testing.T) {
 	m := EventMonitor{Name: "pr-12", Owner: "craig", Kind: EventKindWatch, Until: "the PR is merged"}
 	SaveEventMonitor(db, m)
 
-	T := &OrchestrateApp{AppCore: AppCore{LLM: &stubLLM{reply: `{"verdict":"NOT_YET","reason":"the PR is still open with one review pending"}`}}}
+	T := &OrchestrateApp{AppCore: AppCore{LLM: &FakeLLM{Turns: []FakeTurn{{Content: `{"verdict":"NOT_YET","reason":"the PR is still open with one review pending"}`, Repeat: true}}}}}
 	T.settleMonitorObjective(context.Background(), m, "PR #12: a new review comment", nil)
 
 	cur, _ := GetEventMonitor(db, "craig", "pr-12")
@@ -466,7 +466,7 @@ func TestAnUnmetConditionLeavesTheMonitorWatching(t *testing.T) {
 	// A verdict nobody could read is NOT a pass — the monitor keeps watching.
 	// Failing open here would retire a monitor whose condition never happened,
 	// which is the one outcome nobody would notice.
-	unreadable := &OrchestrateApp{AppCore: AppCore{LLM: &stubLLM{reply: `I think so?`}}}
+	unreadable := &OrchestrateApp{AppCore: AppCore{LLM: &FakeLLM{Turns: []FakeTurn{{Content: `I think so?`, Repeat: true}}}}}
 	unreadable.settleMonitorObjective(context.Background(), m, "PR #12: another comment", nil)
 	cur, _ = GetEventMonitor(db, "craig", "pr-12")
 	if cur.Paused {
@@ -486,7 +486,7 @@ func TestAMonitorWithNoConditionIsNeverJudged(t *testing.T) {
 
 	// An LLM whose every answer is MET: if it is consulted at all, the monitor
 	// stops and this test fails.
-	T := &OrchestrateApp{AppCore: AppCore{LLM: &stubLLM{reply: `{"verdict":"MET","reason":"sure"}`}}}
+	T := &OrchestrateApp{AppCore: AppCore{LLM: &FakeLLM{Turns: []FakeTurn{{Content: `{"verdict":"MET","reason":"sure"}`, Repeat: true}}}}}
 	T.settleMonitorObjective(context.Background(), m, "the roster changed", nil)
 
 	cur, _ := GetEventMonitor(db, "craig", "roster")
@@ -725,7 +725,7 @@ func TestAMonitorWhoseChecksFailIsNotAnUnlinkEither(t *testing.T) {
 // to stop a resumed objective stalling on its first fire, and picking one would
 // silently change the other's behaviour — so the caller supplies it.
 func TestSettleObjectiveReadsTheVerdictForEverySurface(t *testing.T) {
-	met := &OrchestrateApp{AppCore: AppCore{LLM: &stubLLM{reply: `{"verdict":"MET","reason":"the posts are up"}`}}}
+	met := &OrchestrateApp{AppCore: AppCore{LLM: &FakeLLM{Turns: []FakeTurn{{Content: `{"verdict":"MET","reason":"the posts are up"}`, Repeat: true}}}}}
 	got := met.settleObjective(context.Background(), objectiveFire{
 		Objective: "three posts are live", Reply: "posted all three", Attempt: 1, MaxAttempts: 3,
 	})
@@ -737,7 +737,7 @@ func TestSettleObjectiveReadsTheVerdictForEverySurface(t *testing.T) {
 	}
 
 	// Unmet with allowance left: keep firing.
-	unmet := &OrchestrateApp{AppCore: AppCore{LLM: &stubLLM{reply: `{"verdict":"NOT_YET","reason":"only one landed"}`}}}
+	unmet := &OrchestrateApp{AppCore: AppCore{LLM: &FakeLLM{Turns: []FakeTurn{{Content: `{"verdict":"NOT_YET","reason":"only one landed"}`, Repeat: true}}}}}
 	got = unmet.settleObjective(context.Background(), objectiveFire{
 		Objective: "three posts are live", Reply: "posted one", Attempt: 1, MaxAttempts: 3,
 	})
@@ -760,7 +760,7 @@ func TestSettleObjectiveReadsTheVerdictForEverySurface(t *testing.T) {
 // An unreadable verdict is not compliance. It costs an attempt like any other,
 // because an attempt nobody could judge is an attempt that showed nothing.
 func TestSettleObjectiveTreatsAnUnreadableVerdictAsUnmet(t *testing.T) {
-	app := &OrchestrateApp{AppCore: AppCore{LLM: &stubLLM{reply: `I think so?`}}}
+	app := &OrchestrateApp{AppCore: AppCore{LLM: &FakeLLM{Turns: []FakeTurn{{Content: `I think so?`, Repeat: true}}}}}
 	got := app.settleObjective(context.Background(), objectiveFire{
 		Objective: "x", Reply: "y", Attempt: 2, MaxAttempts: 2,
 	})
@@ -787,7 +787,7 @@ func TestSettleObjectivePassesTheTraceThrough(t *testing.T) {
 	}
 	// And settleObjective is what hands that to the judge — same inputs, one
 	// call site instead of two.
-	app := &OrchestrateApp{AppCore: AppCore{LLM: &stubLLM{reply: `{"verdict":"NOT_YET","reason":"nothing posted"}`}}}
+	app := &OrchestrateApp{AppCore: AppCore{LLM: &FakeLLM{Turns: []FakeTurn{{Content: `{"verdict":"NOT_YET","reason":"nothing posted"}`, Repeat: true}}}}}
 	got := app.settleObjective(context.Background(), objectiveFire{
 		Objective: "post something", Reply: "done",
 		Trace:   []PersistedToolCall{{Name: "moltish/get_feed"}},

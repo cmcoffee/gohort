@@ -29,7 +29,7 @@ func reviseFixture(t *testing.T) (*OrchestrateApp, Database, string, MachineDef)
 func TestARevisionKeepsIdentityAndSaysWhatItChanged(t *testing.T) {
 	app, udb, user, def := reviseFixture(t)
 	// The model returns the machine with one step added.
-	app.LLM = &stubLLM{reply: `{
+	app.LLM = &FakeLLM{Turns: []FakeTurn{{Content: `{
 		"name": "Triage",
 		"start": "sort",
 		"phases": [
@@ -37,7 +37,7 @@ func TestARevisionKeepsIdentityAndSaysWhatItChanged(t *testing.T) {
 			 "choices": ["dig", "answer"], "next": "answer"},
 			{"name": "dig", "prompt": "look at the logs", "next": "answer"},
 			{"name": "answer", "prompt": "reply", "resident": true}
-		]}`}
+		]}`, Repeat: true}}}
 
 	r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/revise",
 		strings.NewReader(`{"description": "let sort choose between digging and answering"}`))
@@ -82,9 +82,9 @@ func TestARevisionKeepsIdentityAndSaysWhatItChanged(t *testing.T) {
 // people are right not to press.
 func TestARevisionCanBeTakenBack(t *testing.T) {
 	app, udb, user, def := reviseFixture(t)
-	app.LLM = &stubLLM{reply: `{"name": "Triage", "start": "sort", "phases": [
+	app.LLM = &FakeLLM{Turns: []FakeTurn{{Content: `{"name": "Triage", "start": "sort", "phases": [
 		{"name": "sort", "prompt": "SOMETHING ELSE ENTIRELY", "next": "answer"},
-		{"name": "answer", "prompt": "reply", "resident": true}]}`}
+		{"name": "answer", "prompt": "reply", "resident": true}]}`, Repeat: true}}}
 
 	r := httptest.NewRequest("POST", "/api/machines/"+def.ID+"/revise",
 		strings.NewReader(`{"description": "change it"}`))

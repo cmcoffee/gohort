@@ -19,7 +19,7 @@ func TestDraftMachineSavesAndReportsItsChecklist(t *testing.T) {
 	// A plausible model reply: prose around the JSON, and one problem
 	// left in it (verify names a think mode that does not exist) — the
 	// draft must survive both.
-	app.LLM = &stubLLM{reply: "Here is the machine:\n" + `{
+	app.LLM = &FakeLLM{Turns: []FakeTurn{{Content: "Here is the machine:\n" + `{
 		"name": "Log triage",
 		"description": "Sort observations from questions.",
 		"start": "triage",
@@ -30,7 +30,7 @@ func TestDraftMachineSavesAndReportsItsChecklist(t *testing.T) {
 			 "think": "sometimes",
 			 "output": [{"name": "finding", "type": "string", "desc": "what turned up"}]},
 			{"name": "answer", "desc": "Reply.", "prompt": "Answer plainly.", "resident": true}
-		]}`}
+		]}`, Repeat: true}}}
 
 	r := httptest.NewRequest("POST", "/orchestrate/api/machines/draft",
 		strings.NewReader(`{"description": "triage support questions and dig into log bundles"}`))
@@ -86,7 +86,7 @@ func TestTryPanelHoldsAConversationAndTheGuardFires(t *testing.T) {
 	// The stub answers every call with a guard-shaped verdict that says
 	// "this is a new problem, go back to triage". The transient step
 	// declares no output, so the same reply is just text there.
-	app.LLM = &stubLLM{reply: `{"stay": false, "why": "different problem", "to": "triage"}`}
+	app.LLM = &FakeLLM{Turns: []FakeTurn{{Content: `{"stay": false, "why": "different problem", "to": "triage"}`, Repeat: true}}}
 	def := SaveMachineDef(udb, MachineDef{
 		Owner: user, Name: "Guarded", Start: "triage",
 		Phases: []MachinePhase{
