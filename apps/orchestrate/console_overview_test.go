@@ -89,9 +89,11 @@ func TestNavMenusAreNamedAndScoped(t *testing.T) {
 	// read the same source or the shared label is a lie.
 	{
 		page := readFile(t, "page_chat.go")
-		pinned := strings.Contains(page, `{Label: "Scheduler", Pinned: true,`) &&
-			strings.Contains(page, `Pinned: true, AllAgents: true, Source: "api/console/scheduler"`)
-		if !pinned {
+		// Matched on the LINE rather than on an exact field order — the first
+		// version of this pinned the order and broke the day the item gained
+		// an icon, which told nobody anything about whether it was still
+		// pinned.
+		if !navLineHas(page, `{Label: "Scheduler"`, "Pinned: true", `Source: "api/console/scheduler"`) {
 			t.Error(`the per-agent Scheduler is not pinned on "api/console/scheduler"`)
 		}
 		if src := sourceOf(entryIn(t, entries, "Scheduler", "Fleet")); src != "api/console/scheduler" {
@@ -442,4 +444,26 @@ func TestConsoleRunTaskOmitsTheAgentsOwnName(t *testing.T) {
 	if got := consoleRunTask(RunRecord{Agent: "Support bot"}); got != "" {
 		t.Errorf("no task means no second line, got %q", got)
 	}
+}
+
+// navLineHas reports whether some line of src starting with lead contains every
+// one of want, in any order. Struct fields are not an ordered contract and a
+// test that treats them as one fails on formatting rather than on behaviour.
+func navLineHas(src, lead string, want ...string) bool {
+	for _, line := range strings.Split(src, "\n") {
+		if !strings.Contains(line, lead) {
+			continue
+		}
+		ok := true
+		for _, w := range want {
+			if !strings.Contains(line, w) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
 }

@@ -498,6 +498,12 @@ type OrchestratorNavItem struct {
 	// be or not, and a handler written to answer fleet-wide when given no
 	// agent can never actually do so through this menu.
 	Scope string `json:"scope,omitempty"`
+	// An item WITHOUT one falls back to a neutral dot, deliberately. The
+	// fallback used to be a shield, which asserts "this is about security" on
+	// anything an app forgot to label — and the only item ever to reach it was
+	// the Scheduler, where it was simply wrong. A dot says nothing, so a
+	// missing icon reads as unlabelled rather than as mislabelled.
+	//
 	// Icon is an optional leading glyph (emoji or short text) shown before the
 	// label on a Pinned rail row — so a pinned action queue reads as a distinct
 	// tier alongside the Channel hero, not as a bare list entry.

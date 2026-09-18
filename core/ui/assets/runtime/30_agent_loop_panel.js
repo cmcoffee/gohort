@@ -939,7 +939,7 @@
               // Glyph and count share the top line so the count reads as the
               // queue's depth; the label sits under it like a toolbar tile.
               el('div', {style: 'display:flex;align-items:center;gap:0.3rem'}, [
-                el('span', {style: 'color:' + tAccent + ';font-size:1.05rem'}, [item.icon || '🛡']),
+                el('span', {style: 'color:' + tAccent + ';font-size:1.05rem'}, [item.icon || '•']),
                 badge,
               ]),
               el('span', {style: 'font-size:0.72rem;opacity:0.85;white-space:nowrap'}, [item.label || ('View ' + (i + 1))]),
@@ -959,7 +959,7 @@
             pbody.push(el('div', {style: 'font-size:0.74rem;color:var(--text-mute, #999);margin-top:0.1rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'}, [item.subtitle]));
           }
           var pkids = [
-            el('span', {style: 'flex:0 0 1.1rem;text-align:center;font-size:0.95rem;color:' + pAccent}, [item.icon || '🛡']),
+            el('span', {style: 'flex:0 0 1.1rem;text-align:center;font-size:0.95rem;color:' + pAccent}, [item.icon || '•']),
             el('div', {style: 'flex:1;min-width:0'}, pbody),
           ];
           // Transparent border by default (reserves the space, no layout shift);

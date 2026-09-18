@@ -185,7 +185,7 @@ func TestRetiringTheRailKeptWhatItCouldDo(t *testing.T) {
 	}
 	// And the page they sit on is reachable in one click, not through a menu —
 	// which is what the rail was for and why it was missed.
-	if !strings.Contains(page, `{Label: "Scheduler", Pinned: true,`) {
+	if !navLineHas(page, `{Label: "Scheduler"`, "Pinned: true") {
 		t.Error("the Scheduler is back in a dropdown; it is the answer to \"what will this do on its own\" and earns a button")
 	}
 	// And the rail itself is gone, endpoint included.

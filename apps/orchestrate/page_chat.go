@@ -326,7 +326,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// The two creators ride along as VIEW actions rather than
 						// separate menu items, so the button that adds a schedule sits
 						// on the page that lists them.
-						{Label: "Scheduler", Pinned: true, AllAgents: true, Source: "api/console/scheduler", Layout: "cards",
+						{Label: "Scheduler", Icon: "⏰", Pinned: true, AllAgents: true, Source: "api/console/scheduler", Layout: "cards",
 							ViewActions: []ui.OrchestratorRowAction{
 								{Label: "New recurring task", Method: "client", URL: "orchestrate_new_recurring"},
 								{Label: "New machine run", Method: "client", URL: machineRunCreatorAction},
