@@ -894,3 +894,124 @@ func TestRoundCapExitStillAsksTheOutputGuardrail(t *testing.T) {
 		t.Errorf("a meta marker survived delivery: %q", resp.Content)
 	}
 }
+
+// The chain stops at the first guard that ends the round, and the output
+// guardrail used to be LAST in it — so a truncation recovery, a stall guard, a
+// judge or the injection drain decided whether the safety check ran at all.
+// Ordering is a bad place to keep a safety property: it is invisible at every
+// call site and one inserted guard undoes it.
+//
+// It lives on the exit funnel now, which cannot be reordered. This pins that a
+// reply leaving by a path that never reaches the chain is still judged.
+func TestEveryExitIsJudgedNotJustTheLastGuardInAList(t *testing.T) {
+	// A model that answers in words on the FIRST round: the loop takes a
+	// natural completion, which returns from inside the loop through exit().
+	app, _ := withTierStubs(t, "test.exitfunnel", func(int) []ToolCall { return nil })
+
+	var mu sync.Mutex
+	outputChecks := 0
+	resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		MaxRounds: 3,
+		RouteKey:  "test.exitfunnel",
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			if hook != GuardHookPreOutput {
+				return GuardrailDecision{}
+			}
+			mu.Lock()
+			outputChecks++
+			mu.Unlock()
+			return GuardrailDecision{Blocked: true, Message: "not that"}
+		},
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	mu.Lock()
+	n := outputChecks
+	mu.Unlock()
+	if n == 0 {
+		t.Fatal("a reply was returned without the output guardrail being asked")
+	}
+	// Asked ONCE. The final-round check and the funnel must not both pay for
+	// the same draft — a warden call per terminal reply is the expensive part.
+	if n > 1 {
+		t.Errorf("the same draft was judged %d times; the funnel should defer to the round's own check", n)
+	}
+	if resp == nil || strings.Contains(resp.Content, "done") {
+		t.Errorf("the blocked draft was released: %#v", resp)
+	}
+}
+
+// The exit the chain provably never reaches: a control tool (respond_directly,
+// ask_user) closes the turn, and because its call IS a tool call the final-round
+// chain — which only runs when there are none — is skipped wholesale.
+//
+// The funnel now covers any PROSE the model wrote alongside that call. What it
+// cannot cover is the reply carried in the tool's ARGUMENTS: core does not know
+// which argument holds a message (RoundAbortTools is a list of names and
+// nothing more), and the text is read and delivered by the app —
+// orchestrate's emitCapturedAsBubble. Judging that is orchestrate's to do, and
+// this test exists to record the boundary rather than to imply it is closed.
+func TestAControlToolExitCarriesNoProseToJudge(t *testing.T) {
+	app, _ := withTierStubs(t, "test.abortexit", func(n int) []ToolCall {
+		return []ToolCall{{ID: fmt.Sprint(n), Name: "respond_directly", Args: map[string]any{"text": "the forbidden thing"}}}
+	})
+	respond := AgentToolDef{
+		Tool:    Tool{Name: "respond_directly", Description: "answer now"},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) { return "ok", nil },
+	}
+
+	var mu sync.Mutex
+	asked := 0
+	resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		Tools:           []AgentToolDef{respond},
+		MaxRounds:       3,
+		RouteKey:        "test.abortexit",
+		RoundAbortTools: []string{"respond_directly"},
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			if hook == GuardHookPreOutput {
+				mu.Lock()
+				asked++
+				mu.Unlock()
+			}
+			return GuardrailDecision{}
+		},
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	// The response core returns carries no prose — which is WHY the funnel asks
+	// nothing here, and why the arg-borne reply is still the app's problem. If
+	// this ever starts carrying content, the funnel will judge it and the count
+	// below changes; that is the signal to revisit, not a failure.
+	if resp != nil && strings.TrimSpace(resp.Content) != "" {
+		mu.Lock()
+		n := asked
+		mu.Unlock()
+		if n == 0 {
+			t.Errorf("the control-tool exit now carries prose (%q) and it went unjudged", resp.Content)
+		}
+	}
+	// The argument text must not have become the reply CONTENT — that is the
+	// field every output check reads, and the tool-call record carrying it is
+	// not a delivery.
+	if resp != nil && strings.Contains(resp.Content, "the forbidden thing") {
+		t.Error("the control tool's argument text became the reply content and would bypass every output check")
+	}
+}
+
+// An ERROR exit has no reply to release, and asking a warden about a
+// context-exhaustion message spends a call to be told what nobody was going to
+// send anyway.
+func TestAnErrorExitIsNotJudged(t *testing.T) {
+	lr := &loopRun{cfg: AgentLoopConfig{
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			t.Errorf("an error exit must not be judged (hook=%s)", hook)
+			return GuardrailDecision{}
+		},
+	}}
+	lr.exit(&Response{Content: "half an answer"}, nil, fmt.Errorf("context exhausted"))
+	// And an empty reply is nothing to judge either.
+	lr.outputChecked = false
+	lr.exit(&Response{Content: "   "}, nil, nil)
+}

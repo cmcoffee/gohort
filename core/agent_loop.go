@@ -334,6 +334,7 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 rounds:
 	for lr.round = 1; lr.round <= lr.maxRounds+lr.graceRounds; lr.round++ {
 		lr.rs = roundState{}
+		lr.outputChecked = false
 		switch lr.runRound() {
 		case actContinue:
 			continue
@@ -515,7 +516,11 @@ type loopRun struct {
 	errShapeNudged             map[string]bool
 	toolFailShapes             map[string]map[string]bool
 	graceRounds                int
-	hardStop                   int
+	// outputChecked marks that THIS round already judged its terminal reply, so
+	// the exit funnel does not pay a second warden call for the same draft.
+	// Reset at the top of every round: a new draft is a new question.
+	outputChecked bool
+	hardStop      int
 	// truncatedLead holds the text of every reply that was cut off and then
 	// continued this turn, in order. See joinContinuation for who needs it.
 	truncatedLead       strings.Builder
@@ -597,9 +602,65 @@ type loopResult struct {
 }
 
 // exit records an early return and tells the driver to take it.
+// exit is the single in-loop door: every path that finishes a turn from inside
+// the loop comes through here, which is why the output guardrail is enforced
+// here rather than by keeping it last in a list of guards.
+//
+// It used to be the last entry in the final-round chain, and that chain stops
+// at the first guard which ends the round — so anything ahead of it (a
+// truncation recovery, a stall guard, a judge, the injection drain) decided
+// whether the guardrail ran at all. Ordering is a bad place to keep a safety
+// property: it is invisible at every call site and one inserted guard undoes
+// it. A funnel cannot be reordered.
+//
+// Only a clean finish is judged. An error exit has no reply to release, and
+// asking a warden about a context-exhaustion message spends a call to be told
+// what nobody was going to send anyway.
 func (lr *loopRun) exit(resp *Response, history []Message, err error) loopAction {
+	if err == nil {
+		lr.guardOutgoing(resp)
+	}
 	lr.ret = loopResult{resp, history, err}
 	return actReturn
+}
+
+// guardOutgoing runs the output guardrail on a reply about to be returned,
+// unless this round already ran it.
+//
+// Idempotent by design: the final-round check sets outputChecked, so the
+// ordinary path pays one warden call and this is a no-op — including on the
+// substitution path below, which exits through the same door and must not
+// re-judge its own decline.
+func (lr *loopRun) guardOutgoing(resp *Response) {
+	if lr.outputChecked || lr.cfg.GuardrailCheck == nil || resp == nil {
+		return
+	}
+	if strings.TrimSpace(resp.Content) == "" {
+		return
+	}
+	lr.outputChecked = true
+	dec := lr.cfg.GuardrailCheck(GuardHookPreOutput, resp.Content)
+	if !dec.Blocked {
+		return
+	}
+	Debug("[agent_loop] guardrail pre-output caught a reply leaving by a path the final-round chain never reached (correctable=%v)", dec.Correctable)
+	lr.substituteBlockedOutput(resp,
+		"A reply violating an enforced guardrail was about to be returned by a path that skips the final-round check. A neutral decline was substituted so nothing protected was released.")
+}
+
+// substituteBlockedOutput replaces a blocked draft in place with the decline.
+//
+// Shared by the two doors that have no rounds left to revise in — the funnel
+// above and the round-cap exit — so "blocked and nothing to do about it" reads
+// the same wherever it happens. Correctable is not honoured at either: there is
+// no round left to revise in, so the choice is release or decline.
+func (lr *loopRun) substituteBlockedOutput(resp *Response, diag string) {
+	lr.emitDiag("guardrail-output-substituted", diag)
+	fallback := guardrailRejectionReply(lr.cfg, "pre_output", lr.history)
+	lr.replaceBlockedDraft(fallback)
+	resp.Content = fallback + guardrailClosedNote
+	resp.Reasoning = ""
+	resp.ToolCalls = nil
 }
 
 func (lr *loopRun) filterCaps(in []AgentToolDef) []AgentToolDef {
@@ -1332,13 +1393,8 @@ func (lr *loopRun) roundCapOutputGuardrail() {
 		return
 	}
 	Debug("[agent_loop] guardrail pre-output on the round-cap exit (correctable=%v) — no rounds left to revise in, substituting the decline", dec.Correctable)
-	lr.emitDiag("guardrail-output-substituted",
+	lr.substituteBlockedOutput(lr.lastResp,
 		"The turn ran out of rounds and the reply it was about to send violated an enforced guardrail. A neutral decline was substituted so nothing protected was released.")
-	fallback := guardrailRejectionReply(lr.cfg, "pre_output", lr.history)
-	lr.replaceBlockedDraft(fallback)
-	lr.lastResp.Content = fallback + guardrailClosedNote
-	lr.lastResp.Reasoning = ""
-	lr.lastResp.ToolCalls = nil
 }
 
 func (lr *loopRun) roundHead() loopAction {
@@ -2820,6 +2876,8 @@ func (lr *loopRun) finalRoundOutputGuardrail() loopAction {
 	// neutral decline is substituted so a determined push can't leak on the
 	// attempt after the budget runs out (the old escape hatch).
 	if lr.cfg.GuardrailCheck != nil && strings.TrimSpace(lr.rs.resp.Content) != "" {
+		// Recorded so the exit funnel does not ask twice about the same draft.
+		lr.outputChecked = true
 		if dec := lr.cfg.GuardrailCheck(GuardHookPreOutput, lr.rs.resp.Content); dec.Blocked {
 			gmsg := dec.Message
 			// Halt overrides the correction budget: once the app has
