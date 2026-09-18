@@ -9,6 +9,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/prompts"
 	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
@@ -1213,7 +1214,7 @@ func (pr *planRun) onStepHandler(info StepInfo) {
 	// round close so what they're left looking at is clean
 	// narration, not raw XML.
 	raw := pr.streamedBuf.String()
-	cleaned := strings.TrimSpace(StripToolCallMarkup(raw))
+	cleaned := cleanBubbleText(raw)
 	if cleaned != strings.TrimSpace(raw) {
 		t.sse.Send(map[string]any{
 			"kind": "chunk_replace",
@@ -1340,7 +1341,7 @@ func (pr *planRun) settleRound() {
 		return
 	}
 	raw := pr.streamedBuf.String()
-	cleaned := strings.TrimSpace(StripToolCallMarkup(raw))
+	cleaned := cleanBubbleText(raw)
 	if cleaned == "" {
 		pr.streamedBuf.Reset()
 		return
@@ -1502,8 +1503,27 @@ func lastUserText(msgs []ChatMessage) string {
 // emitBubble is the raw send, with NO dedup. Split out because an ASK must
 // never be suppressed: see the ask_user path below.
 
+// cleanBubbleText is the live chat turn's text boundary: what a bubble shows,
+// what the near-duplicate check compares, and what gets persisted as the
+// assistant's words all come through here.
+//
+// Two strips, in order. StripToolCallMarkup removes tool-call XML a model typed
+// as prose. StripMetaTags then removes the framework's own reserved markers.
+// The second one used to be missing on this path entirely: channels, export,
+// the worker and the task runner all scrubbed, but the LIVE reply was scrubbed
+// only by the browser at render time, so the STORED transcript kept the markers
+// and every surface reading it back (copy, a bridge, a later export of the raw
+// row) got them verbatim.
+func cleanBubbleText(s string) string {
+	return strings.TrimSpace(StripMetaTags(StripToolCallMarkup(s)))
+}
+
 func (pr *planRun) emitBubble(text string) {
 	t := pr.t
+	// Scrubbed here rather than at each caller: a decline, a captured question
+	// and a captured reply all arrive by this door and none of them passes
+	// through cleanBubbleText on the way.
+	text = StripMetaTags(text)
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
 		return
@@ -1520,6 +1540,11 @@ func (pr *planRun) emitBubble(text string) {
 }
 
 func (pr *planRun) emitCapturedAsBubble(text string) {
+	// Scrubbed BEFORE the near-duplicate test below, not just inside
+	// emitBubble: lastFinalizedText is already scrubbed, and comparing a
+	// scrubbed bubble against an unscrubbed capture would decide the same two
+	// texts differently on screen and in the reloaded transcript.
+	text = StripMetaTags(text)
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
 		return
@@ -1827,6 +1852,20 @@ func (pr *planRun) runLoop() {
 }
 
 func (pr *planRun) finish() (steps []PlanStep, question, directReply string, err error) {
+	// The turn's last gate. Whatever a return path below hands back becomes the
+	// persisted assistant message, and there are seven of them (a decline, a
+	// bare question, a carded question, captured steps, a captured reply, the
+	// implicit respond_directly text, and the empty fallthrough). Named returns
+	// mean one defer covers them all, so a new return path added later cannot
+	// forget to scrub.
+	// Markers first, then the house-style enforcers, matching what every other
+	// persisting surface does to its saved copy. The dedupe that runs later
+	// (appendMidTurnBubbles weighs the drained bubbles against directReply)
+	// stays apples-to-apples because captureMidTurnBubble applies the same two.
+	defer func() {
+		question = prompts.ApplyRuleEnforcers(StripMetaTags(question))
+		directReply = prompts.ApplyRuleEnforcers(StripMetaTags(directReply))
+	}()
 	// Deferred so it sees what the turn actually ended up showing, including
 	// the bubbles the branches below emit.
 	defer func() { pr.restoreWithheldLeadIn(question, directReply) }()
@@ -1841,7 +1880,7 @@ func (pr *planRun) finish() (steps []PlanStep, question, directReply string, err
 	if finalID != "" {
 		t.sse.Send(map[string]any{"kind": "message_done", "id": finalID})
 		if pr.streamedBuf.Len() > 0 {
-			pr.lastFinalizedText = strings.TrimSpace(StripToolCallMarkup(pr.streamedBuf.String()))
+			pr.lastFinalizedText = cleanBubbleText(pr.streamedBuf.String())
 		}
 		pr.lastFinalizedID = finalID
 		// Persist the final round's narration too — same gap as the
@@ -1957,7 +1996,7 @@ func (pr *planRun) finish() (steps []PlanStep, question, directReply string, err
 		// its final round but didn't call any control tool. The
 		// per-round finalizer already finalized that bubble; we
 		// just need a clean copy for the persisted history.
-		clean := strings.TrimSpace(StripToolCallMarkup(pr.resp.Content))
+		clean := cleanBubbleText(pr.resp.Content)
 		// Emit unconditionally and let emitCapturedAsBubble's near-duplicate
 		// check decide whether to actually show it. The old guard ("nothing was
 		// finalized this turn") was too coarse: the forced-final-answer rescue

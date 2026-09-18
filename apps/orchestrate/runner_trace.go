@@ -7,6 +7,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/prompts"
 )
 
 // (The auto-classifier — activeSkillsForTurn + ActiveSkillsWithScores
@@ -62,7 +63,22 @@ func (t *chatTurn) recordToolCall(rec toolCallRecord) {
 // strings are dropped — the live UI doesn't materialize a bubble for
 // tool-only rounds, and we mirror that here.
 func (t *chatTurn) captureMidTurnBubble(text string) {
-	trimmed := strings.TrimSpace(text)
+	// The single door every narration bubble walks through on its way into the
+	// transcript, so the delivery scrub lives here rather than at each caller.
+	// Most callers already hand over cleanBubbleText output and the marker
+	// strip is a no-op for them; the restored lead-in does not, and a caller
+	// added later would not know it had to.
+	//
+	// ApplyRuleEnforcers on top, because this is a SAVED copy: the house-style
+	// rules (em-dash, filler "classic") are deterministic transforms that every
+	// other persisting surface already applies — channels, export, the
+	// synthesis path, the task runner. The live chat path applied none of them,
+	// so the same reply was styled one way through the plan path and another
+	// way direct, and the direct copy only looked right because the browser
+	// re-stripped em-dashes at render. Display is deliberately NOT enforced
+	// here: the client already does it, and a style-only chunk_replace would
+	// re-render a bubble mid-turn to no visible effect.
+	trimmed := strings.TrimSpace(prompts.ApplyRuleEnforcers(StripMetaTags(text)))
 	if trimmed == "" {
 		return
 	}
@@ -201,8 +217,9 @@ func persistIncompleteTurnTrace(sess *ChatSession, udb Database, turn *chatTurn,
 	// bubbles alone — no trailer noise.
 	if len(finalCalls) > 0 {
 		sess.Messages = append(sess.Messages, ChatMessage{
-			Role:      "assistant",
-			Content:   "_(This reply didn't finish — " + reason + " — but the tool actions this turn did run and are recorded above.)_",
+			Role: "assistant",
+			Content: prompts.ApplyRuleEnforcers(
+				"_(This reply didn't finish, " + reason + ", but the tool actions this turn did run and are recorded above.)_"),
 			Created:   time.Now(),
 			Usage:     turn.drainLastUsage(),
 			ToolCalls: finalCalls,

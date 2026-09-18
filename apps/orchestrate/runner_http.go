@@ -909,7 +909,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 			"kind": "activity",
 			"type": "error",
 			"id":   activityCheapID(),
-			"text": "Build plan still has pending steps but no authoring tool fired this turn — the reply may be describing work that didn't actually happen. Next turn will be re-prompted.",
+			"text": "Build plan still has pending steps but no authoring tool fired this turn, so the reply may be describing work that didn't actually happen. Next turn will be re-prompted.",
 		})
 	}
 	// The third quadrant: no build plan at all, nothing errored because nothing
@@ -922,7 +922,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 			"kind": "activity",
 			"type": "error",
 			"id":   activityCheapID(),
-			"text": "The reply promised to create or update a tool or agent but no authoring call fired this turn — nothing was saved. Next turn is re-prompted to actually make the call.",
+			"text": "The reply promised to create or update a tool or agent but no authoring call fired this turn, so nothing was saved. Next turn is re-prompted to actually make the call.",
 		})
 	}
 	// A fourth shape: the reply claims a tool is UNAVAILABLE when that tool
@@ -951,7 +951,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 			"kind": "activity",
 			"type": "error",
 			"id":   activityCheapID(),
-			"text": "Every authoring call this turn failed, but the reply claims it's done — the tool/agent was NOT saved. Next turn is re-prompted to actually fix it.",
+			"text": "Every authoring call this turn failed, but the reply claims it's done. The tool/agent was NOT saved, and the next turn is re-prompted to actually fix it.",
 		})
 	}
 	// The build closed out without ever running the gap check, so nothing
@@ -965,7 +965,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 			"kind": "activity",
 			"type": "error",
 			"id":   activityCheapID(),
-			"text": "The build plan was closed out without calling report_build_gaps — blocked steps and unverified tools went unchecked. Next turn is re-prompted to verify before claiming done.",
+			"text": "The build plan was closed out without calling report_build_gaps, so blocked steps and unverified tools went unchecked. Next turn is re-prompted to verify before claiming done.",
 		})
 	}
 

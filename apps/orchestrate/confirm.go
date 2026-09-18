@@ -320,7 +320,7 @@ func (t *chatTurn) escalateToolConfirm(req toolConfirmRequest) bool {
 		// said why. The user should never have to ask "what happened?".
 		t.turnDiag("tool-denied", fmt.Sprintf("Approval for %s (%s) timed out after %s — the call was denied. Re-ask to retry; the approval card must be answered within the window.", req.tool, req.because, toolConfirmTimeout))
 		t.sse.Send(map[string]any{"kind": "status_note",
-			"text": fmt.Sprintf("⏱ Approval for %s timed out after %s — the call was denied.", req.tool, toolConfirmTimeout)})
+			"text": fmt.Sprintf("⏱ Approval for %s timed out after %s, so the call was denied.", req.tool, toolConfirmTimeout)})
 		t.sendConfirmResolvedLabel(id, "deny", "Timed out")
 		return false
 	}

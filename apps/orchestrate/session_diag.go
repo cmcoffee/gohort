@@ -18,6 +18,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/prompts"
 )
 
 const (
@@ -305,6 +306,13 @@ func (t *chatTurn) turnDiag(kind, detail string) {
 	if t == nil {
 		return
 	}
+	// A diagnostic is text a PERSON reads, so it goes out through the same
+	// delivery scrub as a reply. Two reasons it belongs here rather than in
+	// each of the ~60 call sites: the framework writes these strings itself and
+	// wrote em-dashes into a dozen of them, and a detail routinely quotes the
+	// model (a refusal, a withheld output), which can carry a marker of its
+	// own. One funnel, so a diag added later cannot miss it.
+	detail = prompts.ApplyRuleEnforcers(StripMetaTags(detail))
 	// ONE clock reading for all three destinations — the open pane, this
 	// turn's trail, and the parent's — because the stamp is half of what
 	// names the entry (diagID), and three readings would be three entries as
