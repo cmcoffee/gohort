@@ -394,6 +394,15 @@ func main() {
 			global.db.Get(WebTable, "api_key", &key)
 			return key
 		}
+		// Off unless the operator has said otherwise. Stored as a string
+		// rather than a bool because gob omits a false bool, which would make
+		// "turned off" and "never set" indistinguishable on read — the same
+		// trap the framework's other on/off settings hit.
+		AuthAPIKeyAllowQuery = func() bool {
+			var v string
+			global.db.Get(WebTable, "api_key_allow_query", &v)
+			return v == "on"
+		}
 
 		WebBaseURL = func() string {
 			var url string

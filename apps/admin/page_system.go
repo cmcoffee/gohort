@@ -67,6 +67,8 @@ func (a *AdminApp) systemSections() []ui.Section {
 						Help:    "Deployment timezone for day boundaries (cost/usage), schedules, and displayed times. Blank uses the host zone. Applies on restart."},
 					{Field: "notify_from", Label: "Notification From", Type: "text",
 						Placeholder: "noreply@example.com"},
+					{Field: "api_key_allow_query", Label: "Accept the deployment API key in the URL", Type: "toggle",
+						Help: "Off (recommended): the key is accepted only as the X-Gohort-Key header. A credential in a URL reaches browser history, Referer headers on any outbound link, and the log of every proxy in between, and the key is a blanket authentication bypass. Turn this on only while an integration that cannot send a header is being moved, and expect a refused call to say exactly this."},
 					{Field: "session_days", Label: "Session idle lifetime (days)", Type: "number",
 						Min: 1, Max: 90, Help: "Default 7. How long a session survives WITHOUT use — it renews while someone is actively working, so this is the idle timeout, not a countdown from login."},
 					{Field: "session_absolute_days", Label: "Session maximum age (days)", Type: "number",

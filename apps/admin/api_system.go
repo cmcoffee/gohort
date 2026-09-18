@@ -187,7 +187,10 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 		ui_theme = "indigo"
 	}
 	w.Header().Set("Content-Type", "application/json")
+	var apiKeyAllowQuery string
+	a.db.Get(WebTable, "api_key_allow_query", &apiKeyAllowQuery)
 	resp := map[string]interface{}{
+		"api_key_allow_query":   apiKeyAllowQuery == "on",
 		"allow_signup":          allow_signup,
 		"session_days":          session_days,
 		"session_absolute_days": session_absolute_days,
@@ -241,6 +244,7 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 		DocBrand            *string   `json:"doc_brand,omitempty"`
 		SiteName            *string   `json:"site_name,omitempty"`
 		Timezone            *string   `json:"timezone,omitempty"`
+		APIKeyAllowQuery    *bool     `json:"api_key_allow_query,omitempty"`
 	}
 	// Read the body once: the static settings decode into the typed struct
 	// above, the tunables come off the same bytes as a generic map (validated
@@ -284,6 +288,20 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 	if req.ExternalURL != nil {
 		a.db.Set(WebTable, "external_url", *req.ExternalURL)
 		Log("[admin] user %q set external_url=%q", current, *req.ExternalURL)
+	}
+	if req.APIKeyAllowQuery != nil {
+		// Stored as "on"/"off" rather than a bool: gob omits a false bool, so
+		// a stored false and a value that was never set read the same, and for
+		// this setting those two must not be the same — unset has to mean off.
+		v := "off"
+		if *req.APIKeyAllowQuery {
+			v = "on"
+		}
+		a.db.Set(WebTable, "api_key_allow_query", v)
+		// Logged as the security decision it is, with who made it: turning
+		// this on puts a blanket auth bypass back into URLs, where it reaches
+		// browser history and every proxy log in between.
+		Log("[admin] user %q set api_key_allow_query=%s", current, v)
 	}
 	if req.NotifyFrom != nil {
 		a.db.Set(WebTable, "notify_from", *req.NotifyFrom)

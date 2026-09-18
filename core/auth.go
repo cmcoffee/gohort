@@ -44,6 +44,17 @@ var AuthSessionDays func() int
 // access (e.g. external API endpoints). Empty means disabled.
 var AuthAPIKey func() string
 
+// AuthAPIKeyAllowQuery reports whether the deployment key is still accepted in
+// the URL (?key=) as well as in its header. Nil or false means header only,
+// which is the default: a credential in a URL reaches browser history, Referer
+// headers on any outbound link, and the log of every proxy in between, and a
+// deployment that has to keep the old spelling working should have to say so.
+//
+// A func var rather than a tunable because this is read on EVERY request, and
+// because it belongs with AuthAPIKey above: the same setup menu that sets the
+// key decides how it may be presented.
+var AuthAPIKeyAllowQuery func() bool
+
 // AuthMaxAttempts returns the max failed login attempts before lockout.
 // Defaults to 5.
 var AuthMaxAttempts func() int
@@ -1192,6 +1203,16 @@ func isLoopbackHost(host string) bool {
 	return false
 }
 
+// deploymentKeyQueryAllowed reports whether the URL spelling is accepted.
+//
+// Unset reads as NO. A deployment that has never been configured, or one whose
+// setting failed to load, is the case where the safe answer matters most, and a
+// missing value resolving to "allowed" would make the control's absence the
+// permissive state.
+func deploymentKeyQueryAllowed() bool {
+	return AuthAPIKeyAllowQuery != nil && AuthAPIKeyAllowQuery()
+}
+
 // deploymentKeyHeader is the preferred way to present the deployment-wide API
 // key. See the bypass in AuthMiddleware for why the ?key= spelling is worse.
 const deploymentKeyHeader = "X-Gohort-Key"
@@ -1207,11 +1228,36 @@ var deploymentKeyWarnOnce sync.Once
 // does not become the leak it is complaining about.
 func warnDeploymentKeyInQuery(r *http.Request) {
 	deploymentKeyWarnOnce.Do(func() {
-		Warn("[auth] the deployment API key arrived in the URL (?key=) on %s — "+
+		Warn("[auth] the deployment API key arrived in the URL (?key=) on %s and was ACCEPTED because this deployment allows it — "+
 			"a credential in a URL reaches browser history, Referer headers, and every proxy log in between. "+
-			"Send it as the %s header instead; ?key= still works but will not always.",
+			"Send it as the %s header instead, then turn the URL form off.",
 			r.URL.Path, deploymentKeyHeader)
 	})
+}
+
+// refuseDeploymentKeyInQuery answers a caller still using ?key= when the URL
+// form is off.
+//
+// It says the whole answer: what was wrong, what to send instead, and the one
+// setting that puts it back. A blanket-auth bypass that stops working is going
+// to be met by somebody at an unfamiliar hour with a 401 and no idea why, and
+// the difference between a thirty-second fix and an outage is whether the
+// refusal explains itself. It never echoes the key.
+//
+// Logged EVERY time rather than once: unlike the warning above, this one is a
+// caller that is currently broken, and the operator needs to see it is still
+// happening rather than that it happened once since boot.
+func refuseDeploymentKeyInQuery(w http.ResponseWriter, r *http.Request) {
+	Warn("[auth] REFUSED a request presenting the deployment API key in the URL (?key=) on %s — "+
+		"this deployment accepts it only as the %s header. Set the deployment key's URL form back on if something still needs it.",
+		r.URL.Path, deploymentKeyHeader)
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	http.Error(w, "The deployment API key was presented in the URL (?key=), which this deployment does not accept.\n\n"+
+		"Send it as the "+deploymentKeyHeader+" header instead:\n"+
+		"    curl -H \""+deploymentKeyHeader+": <key>\" ...\n\n"+
+		"A credential in a URL reaches browser history, Referer headers on any outbound link, and the log of every proxy in between, "+
+		"which is why the URL form is off by default. An operator can turn it back on in the setup menu under the API key.",
+		http.StatusUnauthorized)
 }
 
 func AuthMiddleware(db Database, next http.Handler) http.Handler {
@@ -1280,6 +1326,15 @@ func AuthMiddleware(db Database, next http.Handler) http.Handler {
 				// leaks how much of a guess was right.
 				if presented != "" &&
 					subtle.ConstantTimeCompare([]byte(presented), []byte(configured)) == 1 {
+					// Checked AFTER the comparison, on purpose. Refusing the
+					// URL form before knowing whether the key was even right
+					// would tell an attacker which spelling to stop guessing
+					// at, and this way a wrong key in a URL is answered the
+					// same way a wrong key anywhere else is.
+					if fromQuery && !deploymentKeyQueryAllowed() {
+						refuseDeploymentKeyInQuery(w, r)
+						return
+					}
 					if fromQuery {
 						warnDeploymentKeyInQuery(r)
 					}
