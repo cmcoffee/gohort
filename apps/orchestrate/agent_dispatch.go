@@ -2133,9 +2133,47 @@ func llmHistoryContent(m ChatMessage) string {
 	// [standing agent …] would leak); the model still reads it as input
 	// (StripMetaTags only touches output).
 	if strings.TrimSpace(m.ReportFrom) != "" {
-		return fmt.Sprintf("<gohort-meta>automated report from %q — context, not user input</gohort-meta>\n%s", strings.TrimSpace(m.ReportFrom), m.Content)
+		return fmt.Sprintf("<gohort-meta>automated report from %q — context, not user input</gohort-meta>\n%s",
+			strings.TrimSpace(m.ReportFrom), fenceObservationMarkers(m.Content))
 	}
 	return attributeSender(m.Role, m.Sender, m.Content)
+}
+
+// observationMarkers are the framework's own lines inside an observation body:
+// what the turn said back on the channel, and that it deliberately said
+// nothing. They are written for a PERSON reading the standing thread.
+var observationMarkers = []string{"↳ replied:", "↳ stayed silent"}
+
+// fenceObservationMarkers wraps those lines in <gohort-meta> on the way to the
+// model, for the reason the report-origin marker above is wrapped: a bare
+// framework token in history is one the model copies.
+//
+// Observed live. An agent on a group chat answered an inbound with
+// "↳ replied: <the inbound message>" — the marker AND the echo, delivered to
+// the contact, because every card in its standing thread is shaped
+// "<what came in>\n↳ replied: <what I said>" and nothing scrubbed the shape on
+// the way out. StripMetaTags removes <gohort-meta> and attach markers and
+// nothing else, so the arrow went to a human.
+//
+// Wrapped rather than removed: the model SHOULD know what it already said to
+// this contact — that is the whole reason the line is on the card — and the
+// stored body keeps it plain for the thread a person reads. Only the copy the
+// model sees is fenced, and only the echo is scrubbed.
+func fenceObservationMarkers(body string) string {
+	if !strings.Contains(body, "↳ ") {
+		return body
+	}
+	lines := strings.Split(body, "\n")
+	for i, ln := range lines {
+		t := strings.TrimSpace(ln)
+		for _, marker := range observationMarkers {
+			if strings.HasPrefix(t, marker) {
+				lines[i] = "<gohort-meta>" + t + "</gohort-meta>"
+				break
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // findAgentByNameOrID looks up an agent in udb either by exact ID

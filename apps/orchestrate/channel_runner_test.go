@@ -122,3 +122,68 @@ func TestTheCortexCopyOfATraceIsBounded(t *testing.T) {
 		t.Error("no calls, no trace")
 	}
 }
+
+// Observed live on a group chat: an agent answered an inbound with
+//
+//	↳ replied: Craig Coffee · Group Chat (iMessage): lol
+//	Wiwee, if you win the lottery I get the money right ?
+//
+// — the framework's own marker, and the inbound echoed back, delivered to the
+// contact. Every card in that agent's standing thread is shaped "<what came
+// in>\n↳ replied: <what I said>", so the model had read that shape hundreds of
+// times; nothing scrubbed it on the way out, because StripMetaTags removes
+// <gohort-meta> and attach markers and nothing else.
+//
+// The report-origin marker on the very same card was already wrapped for
+// exactly this reason. These were not.
+func TestObservationMarkersAreFencedForTheModel(t *testing.T) {
+	card := ChatMessage{
+		Role:       "assistant",
+		ReportFrom: "Craig · Group Chat (iMessage)",
+		Content:    "if you win the lottery I get the money right ?\n↳ replied: not a chance",
+	}
+	got := llmHistoryContent(card)
+	if !strings.Contains(got, "<gohort-meta>↳ replied: not a chance</gohort-meta>") {
+		t.Errorf("the reply marker reaches the model bare, so an echo of it reaches the contact:\n%s", got)
+	}
+	// The model must still SEE what it said — that is why the line is there.
+	if !strings.Contains(got, "not a chance") {
+		t.Error("fencing must not hide what the agent already told this contact")
+	}
+	// And the inbound itself is untouched.
+	if !strings.Contains(got, "if you win the lottery I get the money right ?") {
+		t.Error("the inbound text must survive")
+	}
+	// An echo of the fenced line is scrubbed at delivery, which is the point.
+	if out := StripMetaTags("↳ replied: not a chance"); out != "↳ replied: not a chance" {
+		t.Error("precondition: a BARE marker is not scrubbed — that is the bug")
+	}
+	if out := StripMetaTags("<gohort-meta>↳ replied: not a chance</gohort-meta>"); strings.Contains(out, "↳") {
+		t.Errorf("a fenced marker must not survive delivery: %q", out)
+	}
+}
+
+func TestSilenceMarkerIsFencedToo(t *testing.T) {
+	got := llmHistoryContent(ChatMessage{
+		Role: "assistant", ReportFrom: "iPhone",
+		Content: "what's happening?\n↳ stayed silent (nothing sent to the channel)",
+	})
+	if !strings.Contains(got, "<gohort-meta>↳ stayed silent") {
+		t.Errorf("the silence marker is bare:\n%s", got)
+	}
+}
+
+// An ordinary turn carries no origin marker and must not be rewritten.
+func TestAnOrdinaryMessageIsNotFenced(t *testing.T) {
+	got := llmHistoryContent(ChatMessage{Role: "assistant", Content: "just a reply"})
+	if strings.Contains(got, "gohort-meta") {
+		t.Errorf("a plain message gained a marker: %q", got)
+	}
+	// A body with no markers at all is returned untouched, arrow or not.
+	if got := fenceObservationMarkers("no markers here"); got != "no markers here" {
+		t.Errorf("untouched body changed: %q", got)
+	}
+	if got := fenceObservationMarkers("↳ Researcher: a mirrored diag line"); strings.Contains(got, "gohort-meta") {
+		t.Errorf("only the observation markers are fenced, not every arrow: %q", got)
+	}
+}
