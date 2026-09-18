@@ -85,7 +85,7 @@ func TestPipelineGuardUnselectedHooks(t *testing.T) {
 // TestPipelineGuardFailsOpen pins the same policy the rest of the warden
 // carries: infrastructure trouble must not brick every pipeline dispatch.
 func TestPipelineGuardFailsOpen(t *testing.T) {
-	turn := guardedPipelineTurn(t, errWardenLLM{}, "pre_input", "pre_output")
+	turn := guardedPipelineTurn(t, wardenDown(), "pre_input", "pre_output")
 	def := PipelineDef{Name: "report"}
 	if err := turn.guardPipelineInput(context.Background(), def, "anything"); err != nil {
 		t.Fatalf("a warden infra error must fail OPEN at the input: %v", err)
@@ -95,26 +95,12 @@ func TestPipelineGuardFailsOpen(t *testing.T) {
 	}
 }
 
-// ctxWardenLLM answers only on a live context, so a test can tell WHICH
-// context a guard actually used rather than assuming it.
-type ctxWardenLLM struct{ reply string }
-
-func (s ctxWardenLLM) Chat(ctx context.Context, m []Message, o ...ChatOption) (*Response, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	return &Response{Content: s.reply}, nil
-}
-func (s ctxWardenLLM) ChatStream(ctx context.Context, m []Message, h StreamHandler, o ...ChatOption) (*Response, error) {
-	return s.Chat(ctx, m, o...)
-}
-
 // TestPipelineGuardUsesTheGivenContext pins the reason guardrailEnforcerCtx
 // exists: a handed-off dispatch runs after its turn's context is cancelled, and
 // building the check from that dead context would fail every call instead of
 // judging it — a guard that reports itself unable to run is not a guard.
 func TestPipelineGuardUsesTheGivenContext(t *testing.T) {
-	turn := guardedPipelineTurn(t, ctxWardenLLM{reply: violateVerdict}, "pre_output")
+	turn := guardedPipelineTurn(t, &FakeLLM{Turns: []FakeTurn{{Content: violateVerdict, Repeat: true}}}, "pre_output")
 	dead, cancel := context.WithCancel(context.Background())
 	cancel()
 	turn.ctx = dead // the turn that handed this work off has ended

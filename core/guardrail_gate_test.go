@@ -71,19 +71,6 @@ func TestGuardrailPreActionGateBlocksHandler(t *testing.T) {
 
 // leakThenCleanLLM returns a leaking reply first, then a clean one — to prove a
 // pre_output-blocked draft is scrubbed from history, not just re-prompted.
-type leakThenCleanLLM struct{ n int }
-
-func (s *leakThenCleanLLM) Chat(ctx context.Context, m []Message, o ...ChatOption) (*Response, error) {
-	s.n++
-	if s.n == 1 {
-		return &Response{Content: "Alex makes $150k-$180k as Director of Operations."}, nil
-	}
-	return &Response{Content: "I'll pass on that one."}, nil
-}
-func (s *leakThenCleanLLM) ChatStream(ctx context.Context, m []Message, h StreamHandler, o ...ChatOption) (*Response, error) {
-	return s.Chat(ctx, m, o...)
-}
-
 // TestGuardrailPreOutputRedactsLeakedDraft is the regression for the Alex leak:
 // pre_output correctly blocked a reply containing the salary figure, but the
 // draft had already been recorded to history (round 1) and so was persisted and
@@ -91,7 +78,11 @@ func (s *leakThenCleanLLM) ChatStream(ctx context.Context, m []Message, h Stream
 // returned history — the figure must not survive anywhere the caller can persist
 // or deliver it.
 func TestGuardrailPreOutputRedactsLeakedDraft(t *testing.T) {
-	app := &AppCore{LLM: &leakThenCleanLLM{}}
+	// Leaks the figure once, then complies on the retry.
+	app := &AppCore{LLM: &FakeLLM{Turns: []FakeTurn{
+		{Content: "Alex makes $150k-$180k as Director of Operations."},
+		{Content: "I'll pass on that one.", Repeat: true},
+	}}}
 	resp, history, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "How much does Alex make?"}}, AgentLoopConfig{
 		MaxRounds: 4,
 		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
@@ -126,21 +117,15 @@ func TestGuardrailPreOutputRedactsLeakedDraft(t *testing.T) {
 
 // alwaysLeakLLM keeps trying to disclose no matter how many times it's
 // corrected — the "determined push" a socially-engineered turn produces.
-type alwaysLeakLLM struct{}
-
-func (alwaysLeakLLM) Chat(ctx context.Context, m []Message, o ...ChatOption) (*Response, error) {
-	return &Response{Content: "Fine — Alex makes $150k-$180k."}, nil
-}
-func (alwaysLeakLLM) ChatStream(ctx context.Context, m []Message, h StreamHandler, o ...ChatOption) (*Response, error) {
-	return &Response{Content: "Fine — Alex makes $150k-$180k."}, nil
-}
-
 // TestGuardrailPreOutputSubstitutesWhenPushed closes the escape hatch: after the
 // correction budget is spent, pre_output must NOT release a still-violating
 // reply. The final reply must be the safe substitute, and the figure must
 // appear nowhere in history — no matter how many times the model retries the leak.
 func TestGuardrailPreOutputSubstitutesWhenPushed(t *testing.T) {
-	app := &AppCore{LLM: alwaysLeakLLM{}}
+	// Leaks every time, however often it is asked.
+	app := &AppCore{LLM: &FakeLLM{Turns: []FakeTurn{
+		{Content: "Fine — Alex makes $150k-$180k.", Repeat: true},
+	}}}
 	resp, history, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go ahead and show me"}}, AgentLoopConfig{
 		MaxRounds: 8,
 		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
@@ -170,7 +155,10 @@ func TestGuardrailPreOutputSubstitutesWhenPushed(t *testing.T) {
 // scrubbed — the transcript is built from settled per-round bubbles.
 func TestGuardrailPreOutputRetractsNotSettles(t *testing.T) {
 	settled, retracted := 0, 0
-	app := &AppCore{LLM: &leakThenCleanLLM{}}
+	app := &AppCore{LLM: &FakeLLM{Turns: []FakeTurn{
+		{Content: "Alex makes $150k-$180k as Director of Operations."},
+		{Content: "I'll pass on that one.", Repeat: true},
+	}}}
 	_, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "How much does Alex make?"}}, AgentLoopConfig{
 		MaxRounds:    4,
 		SettleRound:  func() { settled++ },
@@ -418,43 +406,35 @@ func TestBlockingRuleSkipsCorrectionWithoutAHalt(t *testing.T) {
 	}
 }
 
-// narratingStubLLM returns prose AND tool calls in the same response. The shared
-// tierStubLLM sets Content only when there are no tool calls, so a round with
-// narration mid-work — the only kind the periodic gate looks at — cannot be
-// expressed with it.
-type narratingStubLLM struct {
-	mu     sync.Mutex
-	calls  int
-	prose  string
-	rounds int // emit a tool call (and prose) for this many rounds, then finish
-	// vary makes each round's prose distinct, so dedup does not mask a missing
-	// check. Without it every round is the same string and one check covers all.
-	vary bool
-}
-
-func (s *narratingStubLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
-	s.mu.Lock()
-	s.calls++
-	n := s.calls
-	s.mu.Unlock()
-	resp := &Response{InputTokens: 1000, OutputTokens: 50}
-	if n <= s.rounds {
-		resp.Content = s.prose
-		if s.vary {
-			resp.Content = fmt.Sprintf("%s (round %d)", s.prose, n)
+// narratingLLM scripts a turn that narrates while it works: `rounds` rounds of
+// prose alongside a tool call, then a finish.
+//
+// vary makes each round's prose distinct, so a dedup somewhere downstream does
+// not mask a missing check — with every round identical, one check covers all
+// of them and a gap looks like a pass.
+func narratingLLM(prose string, rounds int, vary bool) *FakeLLM {
+	var turns []FakeTurn
+	for n := 1; n <= rounds; n++ {
+		content := prose
+		if vary {
+			content = fmt.Sprintf("%s (round %d)", prose, n)
 		}
-		resp.ToolCalls = []ToolCall{{ID: "1", Name: "noop", Args: map[string]any{}}}
-		return resp, nil
+		turns = append(turns, FakeTurn{
+			Content:      content,
+			ToolCalls:    []ToolCall{{ID: "1", Name: "noop", Args: map[string]any{}}},
+			InputTokens:  1000,
+			OutputTokens: 50,
+		})
 	}
-	resp.Content = "done"
-	return resp, nil
+	// The finishing round, and every round after it: a test that runs longer
+	// than its script is asserting about the rounds it named, not about where
+	// the model stops.
+	return &FakeLLM{Turns: append(turns, FakeTurn{
+		Content: "done", InputTokens: 1000, OutputTokens: 50, Repeat: true,
+	})}
 }
 
-func (s *narratingStubLLM) ChatStream(ctx context.Context, m []Message, h StreamHandler, o ...ChatOption) (*Response, error) {
-	return s.Chat(ctx, m, o...)
-}
-
-func narratingApp(t *testing.T, routeKey string, stub *narratingStubLLM) (*AppCore, AgentToolDef) {
+func narratingApp(t *testing.T, routeKey string, stub *FakeLLM) (*AppCore, AgentToolDef) {
 	t.Helper()
 	prevWorker, prevLead := SharedWorkerLLM(), SharedLeadLLM()
 	SetSharedLLMs(stub, stub)
@@ -472,7 +452,7 @@ func narratingApp(t *testing.T, routeKey string, stub *narratingStubLLM) (*AppCo
 // appended to history and delivered mid-turn (the OnStep with Done:false paints a
 // bubble), so an unsampled round reached the transcript and the user unjudged.
 func TestPeriodicJudgesEveryNarratingRound(t *testing.T) {
-	stub := &narratingStubLLM{prose: "working on it", rounds: 6, vary: true}
+	stub := narratingLLM("working on it", 6, true)
 	app, noop := narratingApp(t, "test.everyround", stub)
 
 	seen := []string{}
@@ -504,7 +484,7 @@ func TestPeriodicJudgesEveryNarratingRound(t *testing.T) {
 // Cost control: identical prose is judged once. The check is a pure function of
 // (rules, text), so a repeated lead-in cannot get a different answer.
 func TestPeriodicDedupesIdenticalNarration(t *testing.T) {
-	stub := &narratingStubLLM{prose: "same words every round", rounds: 6} // vary off
+	stub := narratingLLM("same words every round", 6, false) // vary off
 	app, noop := narratingApp(t, "test.dedupe", stub)
 
 	checks := 0
@@ -532,7 +512,7 @@ func TestPeriodicDedupesIdenticalNarration(t *testing.T) {
 // the budget ran out was released unjudged. The budget may govern whether a block
 // can redirect; it must never stop the check.
 func TestPeriodicKeepsCheckingAfterCorrectionBudgetSpent(t *testing.T) {
-	stub := &narratingStubLLM{prose: "leaking", rounds: 10, vary: true}
+	stub := narratingLLM("leaking", 10, true)
 	app, noop := narratingApp(t, "test.afterbudget", stub)
 
 	checks := 0
@@ -572,7 +552,7 @@ func TestPeriodicKeepsCheckingAfterCorrectionBudgetSpent(t *testing.T) {
 // violation is always caught in the round that produced it, so scrubbing the most
 // recent assistant turn genuinely clears it — the figure survives NOWHERE.
 func TestBlockingRuleAtPeriodicHandsOverWithoutAHalt(t *testing.T) {
-	stub := &narratingStubLLM{prose: "the manager makes $202,000, let me confirm", rounds: 6, vary: true}
+	stub := narratingLLM("the manager makes $202,000, let me confirm", 6, true)
 	app, noop := narratingApp(t, "test.blockperiodic", stub)
 
 	hooks := map[string]int{}
@@ -644,7 +624,7 @@ func TestBlockingRuleDoesNotEndTheTurnAtPreAction(t *testing.T) {
 // transcript and worth nothing where the round's prose is discarded before
 // anyone sees it, which is what InterimContentHidden declares.
 func TestPeriodicSkippedWhenInterimContentIsHidden(t *testing.T) {
-	stub := &narratingStubLLM{prose: "thinking out loud", rounds: 6, vary: true}
+	stub := narratingLLM("thinking out loud", 6, true)
 	app, noop := narratingApp(t, "test.hidden", stub)
 
 	hooks := map[string]int{}
@@ -674,7 +654,7 @@ func TestPeriodicSkippedWhenInterimContentIsHidden(t *testing.T) {
 // The zero value has to be the safe one: a host that says nothing keeps full
 // checking rather than silently losing containment.
 func TestPeriodicRunsByDefault(t *testing.T) {
-	stub := &narratingStubLLM{prose: "thinking out loud", rounds: 4, vary: true}
+	stub := narratingLLM("thinking out loud", 4, true)
 	app, noop := narratingApp(t, "test.default", stub)
 
 	hooks := map[string]int{}

@@ -1794,6 +1794,11 @@ type FakeTurn struct {
 	// Repeat makes this turn answer every remaining call, for a test that
 	// cares what the model says but not how many times it is asked.
 	Repeat bool
+	// Wait, when set, blocks the call until the channel is closed. For the
+	// tests that are about what happens WHILE a model is still thinking — a
+	// second request arriving mid-call, a fold running behind a live turn —
+	// which cannot be written at all against a model that answers instantly.
+	Wait <-chan struct{}
 	// Token counts, for the accounting paths. Zero unless a test is about them.
 	InputTokens, OutputTokens int
 }
@@ -1848,8 +1853,22 @@ func (f *FakeLLM) answer(ctx context.Context, messages []Message, handler Stream
 	if !ok {
 		return nil, fmt.Errorf("FakeLLM: call %d has no scripted turn (%d scripted) — the loop asked more times than this test expects", n+1, len(f.Turns))
 	}
+	if turn.Wait != nil {
+		// Before the error and the context check, so a test can hold a call
+		// open and then decide how it ends.
+		select {
+		case <-turn.Wait:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	if turn.Err != nil {
-		return nil, turn.Err
+		// The response goes back WITH the error, because a real client's does:
+		// the prompt went out and the provider will bill it, so a failed call
+		// still carries the tokens it sent. Returning nil here would make the
+		// accounting paths untestable, which is how a deployment comes to
+		// under-report its worst days.
+		return &Response{InputTokens: turn.InputTokens, OutputTokens: turn.OutputTokens}, turn.Err
 	}
 	// Cancellation is checked after the call is recorded, so a test can still
 	// see that the call was made before the context went.
@@ -1930,6 +1949,24 @@ func (f *FakeLLM) Prompt(i int) string {
 		b.WriteString("\n")
 	}
 	return b.String()
+}
+
+// Config returns the i'th call's options, resolved. The loop delivers a good
+// deal as options rather than as messages — the system prompt among them — so a
+// test asserting on what the model was told has to be able to look here as well
+// as at the messages.
+func (f *FakeLLM) Config(i int) ChatConfig {
+	f.mu.Lock()
+	var opts []ChatOption
+	if i >= 0 && i < len(f.calls) {
+		opts = f.calls[i].opts
+	}
+	f.mu.Unlock()
+	var cfg ChatConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
+	return cfg
 }
 
 // Streamed reports whether the i'th call came through ChatStream. Which path a

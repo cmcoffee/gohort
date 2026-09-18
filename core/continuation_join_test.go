@@ -8,34 +8,17 @@ import (
 
 // cutThenContinueLLM answers the first call with a reply cut at the output
 // limit and the second with the continuation the loop asks for.
-type cutThenContinueLLM struct {
-	n         int
-	sawNotice bool
-}
-
-func (s *cutThenContinueLLM) Chat(ctx context.Context, m []Message, o ...ChatOption) (*Response, error) {
-	s.n++
-	if s.n == 1 {
-		return &Response{Content: "The service listens on 8080 and its config", StopReason: "length"}, nil
-	}
-	for _, msg := range m {
-		if msg.Role == "user" && strings.Contains(msg.Content, "CUT OFF") {
-			s.sawNotice = true
-		}
-	}
-	return &Response{Content: "lives under /etc/app. Nothing else is bound.", StopReason: "stop"}, nil
-}
-func (s *cutThenContinueLLM) ChatStream(ctx context.Context, m []Message, h StreamHandler, o ...ChatOption) (*Response, error) {
-	return s.Chat(ctx, m, o...)
-}
-
 // A one-round call — a synthesis pass, a summary — whose only round is cut
 // off used to have no way to finish: the continuation was gated on rounds to
 // spare, and there were none. The fragment shipped as the report. Now the
 // continuation gets its own round, and a caller that never displayed the cut
 // part (no SettleRound) gets the whole reply back in one piece.
 func TestCutReplyIsContinuedAndJoinedForHeadlessCaller(t *testing.T) {
-	stub := &cutThenContinueLLM{}
+	// Cut mid-sentence, then finishing it on the continuation round.
+	stub := &FakeLLM{Turns: []FakeTurn{
+		{Content: "The service listens on 8080 and its config", StopReason: "length"},
+		{Content: "lives under /etc/app. Nothing else is bound.", StopReason: "stop", Repeat: true},
+	}}
 	app := &AppCore{LLM: stub, LeadLLM: stub}
 	resp, _, err := app.RunAgentLoop(context.Background(),
 		[]Message{{Role: "user", Content: "Summarize the findings."}},
@@ -43,8 +26,14 @@ func TestCutReplyIsContinuedAndJoinedForHeadlessCaller(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stub.n != 2 || !stub.sawNotice {
-		t.Fatalf("the cut reply must be continued once with the cut-off notice: calls=%d notice=%v", stub.n, stub.sawNotice)
+	if stub.Calls() != 2 {
+		t.Fatalf("the cut reply must be continued exactly once: calls=%d", stub.Calls())
+	}
+	// The continuation has to CARRY the notice, or the model is being asked to
+	// resume with no idea it was interrupted. Asserted here, on what the loop
+	// actually sent, rather than inside a stub where it was invisible.
+	if !strings.Contains(stub.Prompt(1), "CUT OFF") {
+		t.Fatalf("the continuation round did not tell the model it was cut off:\n%s", stub.Prompt(1))
 	}
 	want := "The service listens on 8080 and its config lives under /etc/app. Nothing else is bound."
 	if resp.Content != want {
@@ -59,7 +48,11 @@ func TestCutReplyIsContinuedAndJoinedForHeadlessCaller(t *testing.T) {
 // bubble; it gets the continuation alone, as before, or the partial renders
 // twice.
 func TestCutReplyContinuationAloneForCallerThatSettled(t *testing.T) {
-	stub := &cutThenContinueLLM{}
+	// Cut mid-sentence, then finishing it on the continuation round.
+	stub := &FakeLLM{Turns: []FakeTurn{
+		{Content: "The service listens on 8080 and its config", StopReason: "length"},
+		{Content: "lives under /etc/app. Nothing else is bound.", StopReason: "stop", Repeat: true},
+	}}
 	app := &AppCore{LLM: stub, LeadLLM: stub}
 	settled := 0
 	resp, _, err := app.RunAgentLoop(context.Background(),

@@ -367,20 +367,6 @@ func TestCostLedger(t *testing.T) {
 // cloud lead that is anything but — that does not shade the estimate, it
 // invents the entire bill.
 
-type countingLLM struct {
-	in, out int
-	calls   int
-}
-
-func (c *countingLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
-	c.calls++
-	return &Response{Content: "ok", InputTokens: c.in, OutputTokens: c.out}, nil
-}
-
-func (c *countingLLM) ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
-	return c.Chat(ctx, messages, opts...)
-}
-
 // usageDelta runs fn and reports what the PROCESS tracker recorded — the
 // counters AddWorker/AddLead feed, and the ones the tier split is read from.
 // UsageScope is session-scoped and would read zero here.
@@ -395,7 +381,7 @@ func TestWorkerOnlyDeploymentBillsEscalationsAsWorker(t *testing.T) {
 	prevW, prevL := SharedWorkerLLM(), SharedLeadLLM()
 	t.Cleanup(func() { SetSharedLLMs(prevW, prevL) })
 
-	worker := &countingLLM{in: 1000, out: 100}
+	worker := &FakeLLM{Turns: []FakeTurn{{Content: "ok", InputTokens: 1000, OutputTokens: 100, Repeat: true}}}
 	SetSharedLLMs(worker, nil) // no lead configured at all
 	app := &AppCore{LLM: worker}
 
@@ -405,8 +391,8 @@ func TestWorkerOnlyDeploymentBillsEscalationsAsWorker(t *testing.T) {
 		}
 	})
 
-	if worker.calls != 1 {
-		t.Fatalf("the worker ran %d times, want 1", worker.calls)
+	if worker.Calls() != 1 {
+		t.Fatalf("the worker ran %d times, want 1", worker.Calls())
 	}
 	if d.LeadInput != 0 || d.LeadOutput != 0 {
 		t.Errorf("a call served by the worker was billed as lead (in=%d out=%d) — with a free local worker and a paid cloud lead, that is an invented bill",
@@ -423,8 +409,8 @@ func TestADistinctLeadStillBillsAsLead(t *testing.T) {
 	prevW, prevL := SharedWorkerLLM(), SharedLeadLLM()
 	t.Cleanup(func() { SetSharedLLMs(prevW, prevL) })
 
-	worker := &countingLLM{in: 1000, out: 100}
-	lead := &countingLLM{in: 2000, out: 300}
+	worker := &FakeLLM{Turns: []FakeTurn{{Content: "ok", InputTokens: 1000, OutputTokens: 100, Repeat: true}}}
+	lead := &FakeLLM{Turns: []FakeTurn{{Content: "ok", InputTokens: 2000, OutputTokens: 300, Repeat: true}}}
 	SetSharedLLMs(worker, lead) // LeadIsDistinct() is now true
 	app := &AppCore{LLM: worker, LeadLLM: lead}
 
@@ -434,8 +420,8 @@ func TestADistinctLeadStillBillsAsLead(t *testing.T) {
 		}
 	})
 
-	if lead.calls != 1 || worker.calls != 0 {
-		t.Fatalf("lead ran %d, worker ran %d — want the lead to serve it", lead.calls, worker.calls)
+	if lead.Calls() != 1 || worker.Calls() != 0 {
+		t.Fatalf("lead ran %d, worker ran %d — want the lead to serve it", lead.Calls(), worker.Calls())
 	}
 	if d.LeadInput != 2000 || d.LeadOutput != 300 {
 		t.Errorf("lead tokens = in %d/out %d, want 2000/300", d.LeadInput, d.LeadOutput)
@@ -451,7 +437,7 @@ func TestTierOnTheResponseMatchesWhoServedIt(t *testing.T) {
 	prevW, prevL := SharedWorkerLLM(), SharedLeadLLM()
 	t.Cleanup(func() { SetSharedLLMs(prevW, prevL) })
 
-	worker := &countingLLM{in: 10, out: 5}
+	worker := &FakeLLM{Turns: []FakeTurn{{Content: "ok", InputTokens: 10, OutputTokens: 5, Repeat: true}}}
 	SetSharedLLMs(worker, nil)
 	app := &AppCore{LLM: worker}
 
@@ -470,7 +456,7 @@ func TestTierOnTheResponseMatchesWhoServedIt(t *testing.T) {
 func TestHasDistinctLeadDrivesTheAttribution(t *testing.T) {
 	prevW, prevL := SharedWorkerLLM(), SharedLeadLLM()
 	t.Cleanup(func() { SetSharedLLMs(prevW, prevL) })
-	worker := &countingLLM{in: 1, out: 1}
+	worker := &FakeLLM{Turns: []FakeTurn{{Content: "ok", InputTokens: 1, OutputTokens: 1, Repeat: true}}}
 
 	// No lead at all.
 	SetSharedLLMs(worker, nil)
@@ -483,7 +469,7 @@ func TestHasDistinctLeadDrivesTheAttribution(t *testing.T) {
 		t.Error("a lead that is not distinct must not count as one — its tokens cost worker rates")
 	}
 	// A real second model.
-	lead := &countingLLM{in: 2, out: 2}
+	lead := &FakeLLM{Turns: []FakeTurn{{Content: "ok", InputTokens: 2, OutputTokens: 2, Repeat: true}}}
 	SetSharedLLMs(worker, lead)
 	if !(&AppCore{LLM: worker, LeadLLM: lead}).HasDistinctLead() {
 		t.Error("a genuinely distinct lead is not being recognized")

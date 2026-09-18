@@ -10,16 +10,6 @@ import (
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
-// errWardenLLM returns an error from Chat, to exercise the fail-open path.
-type errWardenLLM struct{}
-
-func (errWardenLLM) Chat(ctx context.Context, m []Message, o ...ChatOption) (*Response, error) {
-	return nil, errors.New("warden LLM down")
-}
-func (errWardenLLM) ChatStream(ctx context.Context, m []Message, h StreamHandler, o ...ChatOption) (*Response, error) {
-	return nil, errors.New("warden LLM down")
-}
-
 func guardTurn(t *testing.T, llm LLM, agent AgentRecord) *chatTurn {
 	t.Helper()
 	root := &DBase{Store: kvlite.MemStore()}
@@ -179,7 +169,7 @@ func TestGuardrailBlockKeySeparatesRoutesNotArguments(t *testing.T) {
 // TestGuardrailFailsOpenOnWardenError pins the fail-open: if the warden LLM
 // errors, the action proceeds (not blocked) rather than bricking the turn.
 func TestGuardrailFailsOpenOnWardenError(t *testing.T) {
-	turn := guardTurn(t, errWardenLLM{}, AgentRecord{
+	turn := guardTurn(t, wardenDown(), AgentRecord{
 		Name: "X", Guardrails: "r", GuardrailHooks: []string{"pre_action"},
 	})
 	if turn.guardrailCheckHook()(guardHookPreAction, "do the thing").Blocked {
@@ -305,7 +295,7 @@ func TestPreInputComplyPassesThrough(t *testing.T) {
 // TestPreInputFailsOpen pins fail-open: a warden infra error must let the
 // request through (unchecked, loudly) rather than gagging the agent.
 func TestPreInputFailsOpen(t *testing.T) {
-	turn := guardTurn(t, errWardenLLM{}, AgentRecord{
+	turn := guardTurn(t, wardenDown(), AgentRecord{
 		Name: "X", Guardrails: "? never mention salary", GuardrailHooks: []string{"pre_input"},
 	})
 	in := []Message{{Role: "user", Content: "How much does Alex make?"}}
@@ -512,4 +502,11 @@ func TestAnAgentWithoutRulesAsksFreely(t *testing.T) {
 	if seen := (&wardenStubLLM{}).seen(); seen != "" {
 		t.Errorf("a warden was consulted for an agent with no rules: %q", seen)
 	}
+}
+
+// wardenDown is a warden whose model cannot be reached at all — the case a
+// fail-closed agent has to answer differently from a warden that ran and
+// allowed something.
+func wardenDown() *FakeLLM {
+	return &FakeLLM{Turns: []FakeTurn{{Err: errors.New("warden LLM down"), Repeat: true}}}
 }

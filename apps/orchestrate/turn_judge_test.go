@@ -61,28 +61,20 @@ func TestJudgeIsNotToldAboutAWaitThatWasNeverOffered(t *testing.T) {
 // asked for JSON returns prose, or an UNKEPT with nothing quoted, or a verdict
 // spelled differently — and each of those, read wrong, retracts a reply that
 // was fine.
-type judgeStubLLM struct {
-	reply   string
-	lastMsg string
-	calls   int
-}
-
-func (s *judgeStubLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
-	s.calls++
-	if len(messages) > 0 {
-		s.lastMsg = messages[len(messages)-1].Content
-	}
-	return &Response{Content: s.reply}, nil
-}
-
-func (s *judgeStubLLM) ChatStream(ctx context.Context, messages []Message, h StreamHandler, opts ...ChatOption) (*Response, error) {
-	return s.Chat(ctx, messages, opts...)
-}
-
-func judgeWith(t *testing.T, reply string) (*OrchestrateApp, *judgeStubLLM) {
+func judgeWith(t *testing.T, reply string) (*OrchestrateApp, *FakeLLM) {
 	t.Helper()
-	stub := &judgeStubLLM{reply: reply}
+	stub := &FakeLLM{Turns: []FakeTurn{{Content: reply, Repeat: true}}}
 	return &OrchestrateApp{AppCore: AppCore{LLM: stub}}, stub
+}
+
+// judgeLastMessage is what the judge was last asked about. The stub used to
+// keep this itself; the fake keeps every call, so the test reads it from there.
+func judgeLastMessage(stub *FakeLLM) string {
+	sent := stub.LastSent()
+	if len(sent) == 0 {
+		return ""
+	}
+	return sent[len(sent)-1].Content
 }
 
 var garageTurn = TurnClaimEvidence{
@@ -108,8 +100,8 @@ func TestTheJudgeIsGivenTheWholeTurn(t *testing.T) {
 		"FILES BEING DELIVERED WITH THIS REPLY: 0",
 		"wasting away in the garage", // and the words under judgement
 	} {
-		if !strings.Contains(stub.lastMsg, want) {
-			t.Errorf("the judge was not told %q:\n%s", want, stub.lastMsg)
+		if !strings.Contains(judgeLastMessage(stub), want) {
+			t.Errorf("the judge was not told %q:\n%s", want, judgeLastMessage(stub))
 		}
 	}
 }
@@ -218,17 +210,17 @@ func TestTheJudgeIsToldWhetherAJobStarted(t *testing.T) {
 	app.judgeTurnClaims(context.Background(), TurnClaimEvidence{
 		Reply: "I'll get that going and let you know when it's done.", Backgrounded: true,
 	})
-	if !strings.Contains(stub.lastMsg, "BACKGROUND JOB WAS STARTED BY THIS TURN: yes") {
-		t.Errorf("the judge must be told a job started:\n%s", stub.lastMsg)
+	if !strings.Contains(judgeLastMessage(stub), "BACKGROUND JOB WAS STARTED BY THIS TURN: yes") {
+		t.Errorf("the judge must be told a job started:\n%s", judgeLastMessage(stub))
 	}
-	if !strings.Contains(stub.lastMsg, "IS TRUE") {
-		t.Errorf("and what that fact means for the claim:\n%s", stub.lastMsg)
+	if !strings.Contains(judgeLastMessage(stub), "IS TRUE") {
+		t.Errorf("and what that fact means for the claim:\n%s", judgeLastMessage(stub))
 	}
 
 	app, stub = judgeWith(t, `{"verdict":"KEPT"}`)
 	app.judgeTurnClaims(context.Background(), TurnClaimEvidence{Reply: "Tokyo is raining."})
-	if !strings.Contains(stub.lastMsg, "BACKGROUND JOB WAS STARTED BY THIS TURN: no") {
-		t.Errorf("and told plainly when one did not:\n%s", stub.lastMsg)
+	if !strings.Contains(judgeLastMessage(stub), "BACKGROUND JOB WAS STARTED BY THIS TURN: no") {
+		t.Errorf("and told plainly when one did not:\n%s", judgeLastMessage(stub))
 	}
 }
 

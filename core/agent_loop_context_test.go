@@ -1,7 +1,6 @@
 package core
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -290,12 +289,12 @@ func TestSummarizationChunksOversizedHistory(t *testing.T) {
 	if !ok {
 		t.Fatal("summarization declined to run on history far past the window")
 	}
-	if stub.calls < 2 {
+	if stub.Calls() < 2 {
 		t.Errorf("history %dx larger than a fold budget was summarized in %d call(s) — it was not chunked",
-			len(msgs), stub.calls)
+			len(msgs), stub.Calls())
 	}
 	// Every fold input must itself fit, or chunking achieved nothing.
-	for _, n := range stub.inputTokens {
+	for _, n := range foldInputTokens(stub) {
 		if n > 262144 {
 			t.Errorf("a fold call was handed %d tokens, more than the window", n)
 		}
@@ -354,28 +353,26 @@ func TestElisionPreservesToolPairing(t *testing.T) {
 
 // --- stub -------------------------------------------------------------------
 
-type foldStub struct {
-	calls       int
-	inputTokens []int
-}
-
-func (f *foldStub) Chat(ctx context.Context, m []Message, o ...ChatOption) (*Response, error) {
-	f.calls++
-	n := 0
-	for _, msg := range m {
-		n += EstimateTokens(msg.Content)
-	}
-	f.inputTokens = append(f.inputTokens, n)
-	return &Response{Content: "notes about that span"}, nil
-}
-func (f *foldStub) ChatStream(ctx context.Context, m []Message, h StreamHandler, o ...ChatOption) (*Response, error) {
-	return f.Chat(ctx, m, o...)
-}
-
-func withFoldStub(t *testing.T) (*AppCore, *foldStub) {
+func withFoldStub(t *testing.T) (*AppCore, *FakeLLM) {
 	t.Helper()
-	stub := &foldStub{}
+	stub := &FakeLLM{Turns: []FakeTurn{{Content: "notes about that span", Repeat: true}}}
 	return &AppCore{LLM: stub}, stub
+}
+
+// foldInputTokens is what each fold call was handed, estimated the way the
+// budget does. It used to be computed inside the stub, where the test could
+// not see the rule it was being judged by; the fake records the messages, so
+// the sum belongs here with the assertion that reads it.
+func foldInputTokens(stub *FakeLLM) []int {
+	var out []int
+	for i := 0; i < stub.Calls(); i++ {
+		n := 0
+		for _, m := range stub.Sent(i) {
+			n += EstimateTokens(m.Content)
+		}
+		out = append(out, n)
+	}
+	return out
 }
 
 // --- recovering without a configured window ----------------------------------
@@ -525,7 +522,7 @@ func TestFoldRequestsStaySmall(t *testing.T) {
 	if _, ok := app.summarizeOldHistory(t.Context(), msgs, 262144, contextRecoveryKeepWhole); !ok {
 		t.Fatal("summarization declined")
 	}
-	for i, n := range stub.inputTokens {
+	for i, n := range foldInputTokens(stub) {
 		// A generous ceiling over the chunk budget: one oversized message is
 		// folded alone and may exceed it, but nothing should approach the
 		// quarter-window bite this replaced.
@@ -552,10 +549,10 @@ func TestFoldCallsAreBounded(t *testing.T) {
 	app.summarizeOldHistory(t.Context(), msgs, 262144, contextRecoveryKeepWhole)
 
 	// maxFoldCalls chunk folds, plus at most one fold-of-folds.
-	if stub.calls > maxFoldCalls+1 {
-		t.Fatalf("made %d fold calls; the cap is %d", stub.calls, maxFoldCalls)
+	if stub.Calls() > maxFoldCalls+1 {
+		t.Fatalf("made %d fold calls; the cap is %d", stub.Calls(), maxFoldCalls)
 	}
-	if stub.calls == 0 {
+	if stub.Calls() == 0 {
 		t.Fatal("made no fold calls at all")
 	}
 }

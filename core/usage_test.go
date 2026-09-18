@@ -31,7 +31,7 @@ func withSharedLLMs(t *testing.T, worker, lead LLM) {
 
 // The case the instrumentation exists for: no wrapper anywhere in sight.
 func TestADirectCallThroughTheHandleIsCounted(t *testing.T) {
-	worker := &countingLLM{in: 4200, out: 130}
+	worker := &FakeLLM{Turns: []FakeTurn{{Content: "ok", InputTokens: 4200, OutputTokens: 130, Repeat: true}}}
 	withSharedLLMs(t, worker, nil)
 
 	llm := ReloadableWorkerLLM()
@@ -49,7 +49,7 @@ func TestADirectCallThroughTheHandleIsCounted(t *testing.T) {
 
 // Both layers run on a normal wrapped call. Exactly one of them may count it.
 func TestTheHandleAndTheWrapperDoNotBothCount(t *testing.T) {
-	worker := &countingLLM{in: 1000, out: 100}
+	worker := &FakeLLM{Turns: []FakeTurn{{Content: "ok", InputTokens: 1000, OutputTokens: 100, Repeat: true}}}
 	withSharedLLMs(t, worker, nil)
 	app := &AppCore{LLM: ReloadableWorkerLLM()}
 
@@ -68,7 +68,7 @@ func TestTheHandleAndTheWrapperDoNotBothCount(t *testing.T) {
 // An AppCore holding a raw LLM (the SDK's entry point, a test's fake) never
 // touches a handle. The wrapper is its only recorder and must stay one.
 func TestARawLLMIsStillCountedByTheWrapper(t *testing.T) {
-	worker := &countingLLM{in: 77, out: 7}
+	worker := &FakeLLM{Turns: []FakeTurn{{Content: "ok", InputTokens: 77, OutputTokens: 7, Repeat: true}}}
 	withSharedLLMs(t, worker, nil)
 	app := &AppCore{LLM: worker} // raw, not reloadable
 
@@ -87,8 +87,8 @@ func TestARawLLMIsStillCountedByTheWrapper(t *testing.T) {
 // it cannot bill by its own name. Same invariant the tier-attribution tests
 // pin for LeadChat, now on the path that skips LeadChat entirely.
 func TestTheLeadHandleBillsLeadOnlyWhenALeadExists(t *testing.T) {
-	worker := &countingLLM{in: 1000, out: 100}
-	lead := &countingLLM{in: 2000, out: 300}
+	worker := &FakeLLM{Turns: []FakeTurn{{Content: "ok", InputTokens: 1000, OutputTokens: 100, Repeat: true}}}
+	lead := &FakeLLM{Turns: []FakeTurn{{Content: "ok", InputTokens: 2000, OutputTokens: 300, Repeat: true}}}
 
 	withSharedLLMs(t, worker, lead)
 	d := usageDelta(t, func() {
@@ -120,7 +120,7 @@ func TestTheLeadHandleBillsLeadOnlyWhenALeadExists(t *testing.T) {
 // has to reach that one too — otherwise a request whose whole cost is judges
 // and compaction reports as free.
 func TestADirectCallReachesTheRequestTracker(t *testing.T) {
-	worker := &countingLLM{in: 900, out: 90}
+	worker := &FakeLLM{Turns: []FakeTurn{{Content: "ok", InputTokens: 900, OutputTokens: 90, Repeat: true}}}
 	withSharedLLMs(t, worker, nil)
 
 	ctx, tracker := WithRequestUsage(context.Background())
@@ -133,22 +133,8 @@ func TestADirectCallReachesTheRequestTracker(t *testing.T) {
 	}
 }
 
-// haltingLLM answers with the prompt counted and then an error, the way a
-// stream that dies partway through does.
-type haltingLLM struct{ in int }
-
-func (f *haltingLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
-	return &Response{InputTokens: f.in}, errors.New("upstream hung up")
-}
-
-func (f *haltingLLM) ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
-	return f.Chat(ctx, messages, opts...)
-}
-
-// The prompt went out and the provider will bill it. Dropping it because the
-// call ended badly is how a deployment under-reports its worst days.
 func TestAFailedCallStillCountsThePromptItSent(t *testing.T) {
-	withSharedLLMs(t, &haltingLLM{in: 12_000}, nil)
+	withSharedLLMs(t, &FakeLLM{Turns: []FakeTurn{{Err: errors.New("upstream hung up"), InputTokens: 12_000, Repeat: true}}}, nil)
 
 	d := usageDelta(t, func() {
 		if _, err := ReloadableWorkerLLM().Chat(context.Background(), nil); err == nil {

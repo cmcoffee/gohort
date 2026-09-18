@@ -133,9 +133,15 @@ func TestFakeRecordsEachCallAsItWas(t *testing.T) {
 
 func TestFakeCanFail(t *testing.T) {
 	boom := errors.New("upstream is down")
-	f := &FakeLLM{Turns: []FakeTurn{{Err: boom}}}
-	if _, err := f.Chat(context.Background(), nil); !errors.Is(err, boom) {
+	f := &FakeLLM{Turns: []FakeTurn{{Err: boom, InputTokens: 12_000}}}
+	resp, err := f.Chat(context.Background(), nil)
+	if !errors.Is(err, boom) {
 		t.Fatalf("err = %v", err)
+	}
+	// The prompt went out and the provider will bill it, so a failed call
+	// still reports what it sent.
+	if resp == nil || resp.InputTokens != 12_000 {
+		t.Errorf("a failed call dropped the tokens it sent: %+v", resp)
 	}
 	// The failed call is still recorded: a test asserting on a retry needs to
 	// see that the first attempt happened.
