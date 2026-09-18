@@ -116,6 +116,7 @@ func addSchedulerActionFlags(m map[string]any, kind string) {
 	schedulable := schedFlag(m, "_schedulable")
 	switch kind {
 	case schedKindStanding:
+		m["_edit_standing"] = true
 		m["_run_standing"] = !broken // no live agent to run on a parked row
 		m["_pause_standing"] = !paused
 		m["_resume_standing"] = paused
@@ -126,6 +127,7 @@ func addSchedulerActionFlags(m map[string]any, kind string) {
 		// A parked payload short-circuits at the top of the fire, so Run now
 		// would do nothing; a parked task gets Relink or Resume instead. And
 		// there is no pause concept in the scheduler store.
+		m["_edit_recurring"] = true
 		m["_run_recurring"] = !broken
 		m["_relink_recurring"] = relinkable
 		m["_resume_recurring"] = broken
@@ -134,6 +136,9 @@ func addSchedulerActionFlags(m map[string]any, kind string) {
 		// Only poll / http_poll / watch have a check to run on demand — a
 		// webhook is push-only — and not on a broken one, which has no
 		// dependency left to check.
+		// Editing a monitor means editing its poll interval, which a webhook
+		// does not have — push-only monitors are not on a clock at all.
+		m["_edit_monitor"] = schedulable
 		m["_test_monitor"] = schedulable && !broken
 		m["_pause_monitor"] = !paused
 		m["_resume_monitor"] = paused

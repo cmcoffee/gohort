@@ -316,11 +316,6 @@
       // hidden when the app didn't opt in (no channels_url).
       var channelsEl = el('div', {class: 'ui-channels-rail', style: 'display:none'});
       side.insertBefore(channelsEl, sideHdrEl);
-      // schedulesEl — the Schedules rail SECTION: the agent's own event monitors
-      // + scheduled runs, listed above the session list. Filled by loadSchedules;
-      // hidden when the app didn't opt in (no schedules_url) or the agent has none.
-      var schedulesEl = el('div', {class: 'ui-channels-rail', style: 'display:none'});
-      side.insertBefore(schedulesEl, sideHdrEl);
       var orchBtns = [];
       var orchBadges = [];
       function renderOrchTable(rows, item, reload) {
@@ -378,6 +373,21 @@
         // the cards and the table cannot drift on what a button does.
         function fireRowAction(a, row) {
           if (a.picker_source) { openRowPicker(a, row); return; }
+          // A CLIENT action: hand the row to app-registered browser code
+          // (uiRegisterClientAction) instead of calling an endpoint. The
+          // toolbar has had this seam from the start and the schedule rail's
+          // row builder grew its own; row actions were the one surface that
+          // could not reach it, so an app with a per-row EDITOR had to keep a
+          // second list somewhere just to own the click.
+          //
+          // core/ui stays a renderer: it passes the row id, the row, and a way
+          // to re-render, and never learns what the action does.
+          if (String(a.method || '').toLowerCase() === 'client') {
+            var fn = window.UIClientActions && window.UIClientActions[a.url];
+            if (!fn) { console.error('client row action not registered: ' + a.url); return; }
+            fn({id: row._id, row: row, reload: reload});
+            return;
+          }
           // A NAVIGATION rather than a call: open another nav view, optionally
           // already narrowed. It exists because a summary figure had no way to
           // reach the list it counts — the number and the rows behind it lived
@@ -638,6 +648,18 @@
       function selectOrchNav(idx, extraQuery, note) {
         var item = (cfg.orchestrator_nav || [])[idx] || {};
         clearOrchViewTimer();
+        // A nav item that opens an app's own FORM rather than listing or
+        // posting: the client action owns the dialog and the endpoint. Same
+        // seam as a client row action, and it is here because a list view has
+        // no page-level button of its own — an app whose list you can act on
+        // per row still needed somewhere to put "new one of these".
+        if (String(item.action_method || '').toLowerCase() === 'client' && item.action_url) {
+            var cfn = window.UIClientActions && window.UIClientActions[item.action_url];
+            if (!cfn) { console.error('client nav action not registered: ' + item.action_url); return; }
+            closeNavMenus();
+            cfn({reload: function() { selectOrchNav(idx, extraQuery, note); }});
+            return;
+        }
         // Action items are buttons (clear / decommission): POST to the URL
         // for the current agent after an optional confirm, then refresh.
         if (item.action_url) {
@@ -4839,168 +4861,8 @@
       }).catch(function() { /* leave the section as-is on error */ });
     }
 
-    // loadSchedules — render a single "Scheduler" rail entry carrying the TOTAL
-    // count of the agent's schedulable/triggered entries (recurring tasks,
-    // scheduled agents, event monitors — from cfg.schedules_url). Clicking it
-    // opens a modal that lists every entry grouped by category. Stays generic:
-    // rows carry their own action URLs and a server-supplied category /
-    // category_label; core/ui never names a category itself. Hidden when none.
-    function loadSchedules() {
-      if (!cfg.schedules_url || !schedulesEl) return;
-      function renderSchedulerRow(list) {
-        if (!Array.isArray(list)) list = [];
-        schedulesEl.innerHTML = '';
-        // Always render the Scheduler entry when the app wired a
-        // schedules_url — it's the entry point for CREATING schedules, so
-        // it must stay reachable even with none yet (the modal shows an
-        // empty state). The count badge appears only when there's >= 1.
-        var kids = [
-          el('span', {style: 'flex:none'}, ['🕐']),
-          el('div', {style: 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'}, ['Scheduler'])
-        ];
-        // Two counts, because they answer different questions. The total says
-        // how much is scheduled; the amber one says how much of it is waiting
-        // on YOU. Before this the rail showed only the total, so a stopped
-        // schedule contributed the same 1 as a healthy one and nothing on the
-        // rail distinguished "you have six schedules" from "one of your six
-        // stopped and needs you".
-        //
-        // Attention is read off the rows' own state marks — a warn tone is the
-        // app saying this one needs a person. core/ui never decides which
-        // states those are.
-        var needing = list.filter(function(s) {
-          return s && s.state && s.state.tone === 'warn';
-        }).length;
-        if (needing) {
-          kids.push(el('span', {
-            class: 'ui-sched-attention',
-            title: needing + (needing === 1 ? ' schedule needs' : ' schedules need') + ' attention',
-            style: 'margin-left:auto;flex:none;background:var(--warning,#d98c34);color:#fff;border-radius:10px;padding:0 0.5em;font-size:0.72em;line-height:1.5;min-width:1.4em;text-align:center;font-weight:700'},
-            [String(needing)]));
-        }
-        if (list.length) {
-          kids.push(el('span', {
-            title: list.length + (list.length === 1 ? ' schedule' : ' schedules'),
-            style: (needing ? 'margin-left:0.3em;' : 'margin-left:auto;') + 'flex:none;background:var(--accent,#6366f1);color:#fff;border-radius:10px;padding:0 0.5em;font-size:0.72em;line-height:1.5;min-width:1.4em;text-align:center'},
-            [String(list.length)]));
-        }
-        var btn = el('div', {class: 'ui-chat-side-item ui-channels-item', style: 'cursor:pointer;display:flex;align-items:center;gap:0.4em', title: 'View all schedules'}, kids);
-        btn.addEventListener('click', openSchedulerModal);
-        schedulesEl.appendChild(btn);
-        schedulesEl.style.display = '';
-      }
-      // Render the row immediately (empty state), then refresh with the
-      // real list — so the entry is present even if the fetch is slow or
-      // fails, matching the "always visible" policy.
-      renderSchedulerRow([]);
-      fetchJSON(substituteExtras(cfg.schedules_url)).then(renderSchedulerRow).catch(function() { renderSchedulerRow([]); });
-    }
 
-    // buildScheduleRow — one schedule entry (name + detail + edit/pause/delete),
-    // used inside the Scheduler modal. `reload` re-renders after any action.
-    // Domain-agnostic: it only knows the row's own URLs and edit_action.
-    function buildScheduleRow(s, reload) {
-      var main = el('div', {style: 'flex:1;min-width:0;overflow:hidden'}, [
-        el('div', {style: 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis'}, [s.name || 'schedule']),
-        el('div', {style: 'font-size:0.75em;opacity:0.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis'},
-          [(s.paused ? 'paused · ' : '') + (s.detail || '')])
-      ]);
-      var row = el('div', {class: 'ui-chat-side-item ui-channels-item'}, [main]);
-      // Same optional state mark the channel rows take — a stopped schedule
-      // says WHY on its own row.
-      if (s.state && s.state.icon) {
-        row.appendChild(uiStateGlyph(s.state.icon, s.state.tone, s.state.title));
-      }
-      // Optional per-row edit: when the server tags a row with edit_action,
-      // clicking its body invokes that app-registered client action with the
-      // row id (+ a reload cb). core/ui doesn't know what the action does.
-      if (s.edit_action && window.UIClientActions && window.UIClientActions[s.edit_action]) {
-        main.style.cursor = 'pointer';
-        main.title = 'Edit';
-        main.addEventListener('click', function() {
-          window.UIClientActions[s.edit_action]({id: s.id, reload: reload});
-        });
-      }
-      var toggleUrl = s.paused ? s.resume_url : s.pause_url;
-      if (toggleUrl) {
-        row.appendChild(el('button', {class: 'ui-chat-side-ren', title: s.paused ? 'Resume' : 'Pause',
-          onclick: function(ev) {
-            ev.stopPropagation();
-            fetchJSON(substituteExtras(toggleUrl), {method: 'POST'})
-              .then(function() { reload(); })
-              .catch(function(err) { showToast('Failed: ' + (err && err.message || err)); });
-          }}, [s.paused ? '▶' : '⏸']));
-      }
-      if (s.delete_url) {
-        row.appendChild(el('button', {class: 'ui-chat-side-del', title: 'Delete schedule',
-          onclick: async function(ev) {
-            ev.stopPropagation();
-            if (!(await window.uiConfirm('Delete this schedule? It stops running.'))) return;
-            fetchJSON(substituteExtras(s.delete_url), {method: 'DELETE'})
-              .then(function() { reload(); })
-              .catch(function(err) { showToast('Delete failed: ' + (err && err.message || err)); });
-          }}, ['×']));
-      }
-      return row;
-    }
 
-    // openSchedulerModal — the unified Scheduler "page": every entry grouped
-    // under its category header, in the server's first-seen category order.
-    // Actions re-render the modal AND refresh the rail count via loadSchedules.
-    function openSchedulerModal() {
-      var modal = window.uiOpenModal({
-        title: 'Scheduler',
-        subtitle: 'Everything this agent runs on a timer or trigger.',
-        width: '560px'
-      });
-      function render() {
-        fetchJSON(substituteExtras(cfg.schedules_url)).then(function(list) {
-          if (!Array.isArray(list)) list = [];
-          modal.body.innerHTML = '';
-          loadSchedules(); // keep the rail badge in sync
-          // App-provided "+ New …" create buttons at the top (shown even in the
-          // empty state, since this modal is the create entry point). Each invokes
-          // an app-registered client action; core/ui never knows the schedule kind.
-          var creators = cfg.schedule_creators;
-          if (Array.isArray(creators) && creators.length) {
-            var bar = el('div', {style: 'display:flex;flex-wrap:wrap;gap:0.4rem;margin-bottom:0.7rem'});
-            creators.forEach(function(c) {
-              if (!c || !c.action) return;
-              var b = el('button', {style: 'padding:0.35em 0.7em;border:none;border-radius:6px;background:var(--accent,#6366f1);color:#fff;cursor:pointer;font-size:0.85em'}, ['＋ ' + (c.label || 'New')]);
-              b.addEventListener('click', function() {
-                var fn = window.UIClientActions && window.UIClientActions[c.action];
-                if (fn) fn({reload: render, sessionId: activeSessionId});
-              });
-              bar.appendChild(b);
-            });
-            modal.body.appendChild(bar);
-          }
-          if (!list.length) {
-            modal.body.appendChild(el('div', {style: 'opacity:0.6;padding:0.3rem'}, ['No schedules yet.']));
-            return;
-          }
-          var order = [], groups = {};
-          list.forEach(function(s) {
-            var cat = s.category || 'other';
-            if (!groups[cat]) { groups[cat] = {label: s.category_label || 'Other', rows: []}; order.push(cat); }
-            groups[cat].rows.push(s);
-          });
-          order.forEach(function(cat) {
-            var g = groups[cat];
-            var sect = el('div', {}, [
-              el('div', {class: 'ui-channels-h', style: 'margin-top:0'},
-                [el('span', {class: 'ui-channels-h-title'}, [g.label + ' (' + g.rows.length + ')'])])
-            ]);
-            g.rows.forEach(function(s) { sect.appendChild(buildScheduleRow(s, render)); });
-            modal.body.appendChild(sect);
-          });
-        }).catch(function() {
-          modal.body.innerHTML = '';
-          modal.body.appendChild(el('div', {style: 'opacity:0.6'}, ['Could not load schedules.']));
-        });
-      }
-      render();
-    }
 
     // appendChannelMessage — render one newly-arrived channel message (live
     // poll). Mirrors the replay's per-message render minus the edit/scrub/tool
@@ -5196,7 +5058,6 @@
     function loadSessions() {
       if (!hasList) return;
       loadChannels();
-      loadSchedules();
       var activeID = cfg.list_is_context ? activeContextId : activeSessionId;
       fetchJSON(substituteExtras(cfg.list_url)).then(function(items) {
         sideList.innerHTML = '';

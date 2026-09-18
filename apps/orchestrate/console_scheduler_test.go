@@ -9,6 +9,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	. "github.com/cmcoffee/gohort/core"
 )
 
 func flagsOf(row any, section, kind string) map[string]any {
@@ -141,5 +143,67 @@ func TestTheSingleViewsStillExist(t *testing.T) {
 		if !strings.Contains(body, `"`+route+`"`) {
 			t.Errorf("route %s is not registered", route)
 		}
+	}
+}
+
+// The rail carried three things the nav page did not, and retiring it had to
+// bring each across rather than drop it: editing a schedule's timing, creating
+// one, and saying what a schedule RUNS.
+func TestRetiringTheRailKeptWhatItCouldDo(t *testing.T) {
+	page := readFile(t, "page_chat.go")
+	// Editing. The modal that knows what a cron is lives in this app's JS, so
+	// the row action invokes it as a client action.
+	for _, action := range []string{"orchestrate_edit_standing", "orchestrate_edit_schedule", "orchestrate_edit_monitor"} {
+		if !strings.Contains(page, action) {
+			t.Errorf("no way to edit a schedule's timing any more: %s is unreachable", action)
+		}
+	}
+	if n := strings.Count(page, `Label: "Edit schedule"`); n != 6 {
+		t.Errorf("expected three kinds × two menus of Edit schedule, found %d", n)
+	}
+	// Creating. These were buttons at the top of the retired modal, and are
+	// now nav entries of their own. Checked end to end — the nav names the
+	// action and this app's JS registers it — because either half alone is a
+	// button that does nothing.
+	assets := readFile(t, "assets/web_assets.html")
+	for _, create := range []string{"orchestrate_new_recurring", machineRunCreatorAction} {
+		if !strings.Contains(assets, `uiRegisterClientAction('`+create+`'`) {
+			t.Errorf("%s is not registered, so the nav entry opens nothing", create)
+		}
+	}
+	for _, named := range []string{`ActionURL: "orchestrate_new_recurring"`, "ActionURL: machineRunCreatorAction"} {
+		if !strings.Contains(page, named) {
+			t.Errorf("no way to create a schedule from the UI any more: %s is not in the nav", named)
+		}
+	}
+	if n := strings.Count(page, `ActionMethod: "client"`); n < 2 {
+		t.Errorf("the create entries must invoke their form rather than POST: found %d", n)
+	}
+	// And the rail itself is gone, endpoint included.
+	if strings.Contains(page, "SchedulesURL") {
+		t.Error("the page still opts into the retired rail")
+	}
+	if strings.Contains(readFile(t, "console.go"), `"/api/schedules"`) {
+		t.Error("the rail's endpoint is still routed; a route nothing points at is a surface nobody maintains")
+	}
+}
+
+// Saying WHAT a schedule fires. A row reading "every 24h" is the same sentence
+// whether it runs an agent, a pipeline or a machine.
+func TestAScheduleSaysWhatItRuns(t *testing.T) {
+	if got := standingRunsLabel("alice", StandingAgent{Owner: "alice"}); got != "" {
+		t.Errorf("an agent running its own mission needs no extra label: %q", got)
+	}
+	// Ownership shows only when it is somebody else's — a schedule that breaks
+	// because a shared thing changed is otherwise a mystery with no thread to
+	// pull.
+	if got := sharedBySuffix("alice", "alice"); got != "" {
+		t.Errorf("your own thing is not shared with you: %q", got)
+	}
+	if got := sharedBySuffix("alice", "bob"); !strings.Contains(got, "bob") {
+		t.Errorf("a shared target must name its owner: %q", got)
+	}
+	if got := sharedBySuffix("alice", ""); got != "" {
+		t.Errorf("an unowned target names nobody: %q", got)
 	}
 }

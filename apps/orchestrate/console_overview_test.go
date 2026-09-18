@@ -32,6 +32,11 @@ func TestNavMenusAreNamedAndScoped(t *testing.T) {
 	want := []struct{ label, menu string }{
 		{"Overview", agentMenu},
 		{"Scheduler", agentMenu},
+		// Creating a schedule. These were buttons at the top of the Scheduler
+		// rail modal; the modal is gone and a list view has no page-level
+		// button, so they are entries beside the page they add to.
+		{"New recurring task", agentMenu},
+		{"New machine run", agentMenu},
 		{"Compact Cortex", agentMenu},
 		{"Clear Cortex", agentMenu},
 		{"Overview", "Fleet"},

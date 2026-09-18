@@ -160,10 +160,12 @@ func TestRelinkOffersAndAcceptsTheRightTargetKind(t *testing.T) {
 		t.Errorf("an agent is not a pipeline: %d %s", w.Code, w.Body.String())
 	}
 
-	// The schedules rail row says WHAT it runs.
-	r = httptest.NewRequest("GET", "/api/schedules", nil)
+	// The Scheduler row says WHAT it runs. Through the merged view, which is
+	// what the nav reads now that the rail is gone — the standing rows in it
+	// are the same ones the single view builds.
+	r = httptest.NewRequest("GET", "/api/console/scheduler", nil)
 	w = httptest.NewRecorder()
-	app.handleSchedules(w, asUser(r, user))
+	app.handleConsoleScheduler(w, asUser(r, user))
 	if !strings.Contains(w.Body.String(), "pipeline · Nightly") {
 		t.Errorf("the row should name the pipeline it fires:\n%s", w.Body.String())
 	}

@@ -23,7 +23,6 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/ui"
 )
 
 // handleConsoleMachineOptions lists the machines a schedule may fire: this
@@ -141,11 +140,11 @@ func (T *OrchestrateApp) handleConsoleMachineScheduleCreate(w http.ResponseWrite
 	})
 }
 
-// machineScheduleCreator is the rail's button for it, offered beside the
-// recurring-task one.
-func machineScheduleCreator() ui.ScheduleCreator {
-	return ui.ScheduleCreator{Label: "New machine run", Action: "orchestrate_new_machine_run"}
-}
+// machineRunCreatorAction names the client action that opens the "schedule a
+// machine run" form. Here rather than in the page literal so the action's name
+// sits with the handler it reaches; the LABEL stays a literal in the nav, which
+// is how the nav guard finds it.
+const machineRunCreatorAction = "orchestrate_new_machine_run"
 
 // buildMachineSchedule turns a form into the record, or says what is wrong
 // with it.

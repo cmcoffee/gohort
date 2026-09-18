@@ -78,14 +78,6 @@ import (
 // comes back armed, asking again about a call already allowed.
 // The runtime settles the matching card and ignores the frame if
 // the card is already settled, so emitting it is always safe.
-// ScheduleCreator is one "+ New …" button in the Scheduler modal: a label and
-// the name of a client action (window.uiRegisterClientAction) the app registers
-// to run the create flow. Kept generic so core/ui offers a create affordance
-// without knowing any schedule kind.
-type ScheduleCreator struct {
-	Label  string `json:"label"`
-	Action string `json:"action"`
-}
 
 type AgentLoopPanel struct {
 	// Left rail — drives a generic list of named records. There
@@ -165,26 +157,6 @@ type AgentLoopPanel struct {
 	// means. An app that wants to surface a workflow phase, a connection state,
 	// or a review stage serves this shape and names it in its own words.
 	StatusURL string `json:"status_url,omitempty"`
-	// Schedules rail section — optional. When SchedulesURL is set, the rail shows
-	// a single "Scheduler" entry carrying the TOTAL count; clicking it opens a
-	// modal that lists every entry grouped by category. This keeps a schedule
-	// visible within the agent it fires (shown for ANY agent, unlike the
-	// operator-only OrchestratorNav). Hidden when the agent has none.
-	//   SchedulesURL GET → []{name, detail, paused, pause_url, resume_url,
-	//                         delete_url, edit_action?, id?, category, category_label}
-	// Each row carries its own action URLs (the record types have different
-	// endpoints), so the rail JS stays generic. `category` groups rows in the
-	// modal and `category_label` is the section header — core/ui never names a
-	// category itself; it renders whatever the app provides, in first-seen order.
-	SchedulesURL string `json:"schedules_url,omitempty"`
-	// ScheduleCreators optionally adds "+ New …" buttons to the top of the
-	// Scheduler modal (for schedule kinds the app lets the user CREATE from the
-	// rail, not only via chat). Each renders a button that invokes the named
-	// client action (registered with window.uiRegisterClientAction) with a
-	// {reload, sessionId} context — the app owns the create form and endpoint.
-	// Generic: core/ui renders the button and dispatches the action by name; it
-	// never knows what a "recurring task" is. Omit for none.
-	ScheduleCreators []ScheduleCreator `json:"schedule_creators,omitempty"`
 	// ChannelAgentsURL — optional GET → [{id, name}] of the agents a channel
 	// may be bound to, so the channel editor can re-point a channel at a
 	// different agent. Omit to hide the agent picker.
@@ -439,8 +411,14 @@ type OrchestratorNavItem struct {
 	// instead of opening a chat or table view — for channel-level operations
 	// (clear the thread, decommission). Empty = not an action item.
 	ActionURL string `json:"action_url,omitempty"`
-	Confirm   string `json:"confirm,omitempty"` // confirmation prompt before an ActionURL POST
-	Variant   string `json:"variant,omitempty"` // "danger" | "warning" | "" — styles an action item
+	// ActionMethod "client" makes ActionURL the NAME of a registered client
+	// action (window.uiRegisterClientAction) instead of an endpoint to POST —
+	// for an item that opens the app's own form. The action receives {reload}.
+	// Empty keeps the POST behaviour. Generic: core/ui dispatches by name and
+	// never learns what the form is for.
+	ActionMethod string `json:"action_method,omitempty"`
+	Confirm      string `json:"confirm,omitempty"` // confirmation prompt before an ActionURL POST
+	Variant      string `json:"variant,omitempty"` // "danger" | "warning" | "" — styles an action item
 	// Pinned lifts this item OUT of the "Manage ▾" dropdown and renders it as a
 	// prominent row ABOVE the session list — for an action queue (e.g.
 	// Permissions) that's time-sensitive enough to deserve a fixed, glanceable

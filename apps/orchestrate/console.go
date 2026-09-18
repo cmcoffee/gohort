@@ -206,7 +206,6 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// Per-agent schedules rail — the agent's own event monitors + scheduled
 	// runs + recurring tasks, so a schedule is visible within the agent it fires
 	// (any agent, not just controllers).
-	T.HandleFunc("/api/schedules", g(T.handleSchedules))
 	// Making one, rather than only managing what an agent made
 	// (console_machine_schedule.go).
 	T.HandleFunc("/api/console/machine-options", g(T.handleConsoleMachineOptions))
@@ -230,11 +229,6 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/recurring/create", gw(T.handleConsoleRecurringCreate))
 }
 
-// handleSchedules returns an agent's scheduled runs + event monitors for the
-// per-agent Schedules rail. Scoped "where it fires": monitors by WakeAgent,
-// standing runs by AgentID (the agent that runs on the schedule) — matching
-// introspect(section="schedules"). Each row embeds its own pause/resume/delete
-// URLs so the rail JS stays generic across the two record types.
 // standingAgentOnRailOf reports whether a standing agent belongs on agentID's
 // surfaces. Two agents can have a legitimate claim and BOTH get it:
 //

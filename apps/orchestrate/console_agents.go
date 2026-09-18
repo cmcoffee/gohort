@@ -304,7 +304,15 @@ type consoleAgentRow struct {
 	// told to do." Surfaced so the Enabled-agents view shows each agent's
 	// instructions, not just its schedule/status. Renders as a detail line
 	// under the name in the cards layout.
-	Mission  string `json:"mission,omitempty"`
+	Mission string `json:"mission,omitempty"`
+	// Runs says WHAT fires, not just that something is scheduled. A row
+	// reading "every 24h" is the same sentence whether it runs an agent, a
+	// pipeline or a machine, and the three behave differently enough that the
+	// list should not make somebody open one to find out. Empty for the
+	// ordinary case — an agent running its own mission, which the name already
+	// says. Lifted off the Schedules rail when that was retired; it was the
+	// one thing the rail's rows said that these did not.
+	Runs     string `json:"runs,omitempty"`
 	State    string `json:"state"` // active | paused
 	Schedule string `json:"schedule"`
 	Status   string `json:"status"`
@@ -346,7 +354,7 @@ func consoleAgentRows(user string, udb Database, agentID string) []consoleAgentR
 		if lbl := scheduleStopLabel(StandingStopCause(sa), StandingStopNote(sa)); lbl != "" {
 			state = lbl
 		}
-		row := consoleAgentRow{Name: sa.Name, Mission: sa.Mission, State: state, Schedule: StandingScheduleLabel(sa), ID: sa.Name, Paused: sa.Paused}
+		row := consoleAgentRow{Name: sa.Name, Mission: sa.Mission, State: state, Schedule: StandingScheduleLabel(sa), Runs: standingRunsLabel(user, sa), ID: sa.Name, Paused: sa.Paused}
 		if sa.Broken {
 			row.Broken = true
 			row.State = parkedStateLabel(StandingParkCause(sa), sa.BrokenReason)
@@ -519,4 +527,35 @@ func (T *OrchestrateApp) handleConsoleAgentRun(w http.ResponseWriter, r *http.Re
 		RunStandingAgentNow(context.Background(), RootDB, user, name)
 	}()
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// standingRunsLabel names the TARGET a schedule fires, or "" when it is the
+// agent's own mission and the row already says so.
+//
+// A shared pipeline or machine names its owner too: a schedule that suddenly
+// stops working because somebody else changed or unshared the thing it runs is
+// otherwise a mystery with no thread to pull.
+func standingRunsLabel(user string, sa StandingAgent) string {
+	switch {
+	case sa.TargetsPipeline():
+		if def, ok := pipelineForUser(user, sa.PipelineID); ok {
+			return "pipeline · " + def.Name + sharedBySuffix(user, def.Owner)
+		}
+		return "pipeline run"
+	case sa.TargetsMachine():
+		if def, ok := machineForUser(user, sa.MachineID); ok {
+			return "machine · " + def.Name + sharedBySuffix(user, def.Owner)
+		}
+		return "machine run"
+	}
+	return ""
+}
+
+// sharedBySuffix names the owner of something running on somebody else's
+// behalf, and nothing at all for your own.
+func sharedBySuffix(user, owner string) string {
+	if owner == "" || owner == user {
+		return ""
+	}
+	return " (shared by " + owner + ")"
 }
