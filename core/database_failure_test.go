@@ -201,3 +201,49 @@ func TestSinceRestartsAfterAQuietStretch(t *testing.T) {
 		t.Error("a failure after a quiet stretch extended the old run")
 	}
 }
+
+// A failed listing is not an empty one, and for an auth gate the difference is
+// the whole door.
+//
+// This is the regression that made the store refactor dangerous rather than
+// safe. AuthHasUsers walks the user table; Keys returns nil on a read error;
+// "no keys" means "no accounts configured yet"; and AuthMiddleware serves
+// every request unauthenticated in that state. Before the refactor the path
+// could not be reached, because a read error ended the process. Making the
+// failure survivable is what made it necessary to say which way it falls.
+func TestAFailedUserListingReadsAsConfigured(t *testing.T) {
+	resetDBHealth(t)
+
+	// A store that works and genuinely has nobody.
+	empty := &DBase{Store: kvlite.MemStore()}
+	if AuthHasUsers(empty) {
+		t.Error("an empty store reported users")
+	}
+
+	// A store that cannot be read must NOT report the same thing.
+	broken := brokenDB(errors.New("input/output error"))
+	if !AuthHasUsers(broken) {
+		t.Fatal("a failed read reported 'no users configured' — which opens every request")
+	}
+	if h := DBHealth(); h.Reads == 0 {
+		t.Error("the failed listing was not recorded")
+	}
+}
+
+// TryKeys is what makes that distinction available at all.
+func TestTryKeysSeparatesEmptyFromUnreadable(t *testing.T) {
+	resetDBHealth(t)
+
+	keys, err := (&DBase{Store: kvlite.MemStore()}).TryKeys("t")
+	if err != nil || len(keys) != 0 {
+		t.Errorf("an empty table: keys=%v err=%v", keys, err)
+	}
+	if _, err := brokenDB(errors.New("disk gone")).TryKeys("t"); err == nil {
+		t.Fatal("an unreadable table came back as simply empty")
+	}
+	// And the plain form still collapses them, which is why the callers whose
+	// empty case GRANTS something have to use TryKeys.
+	if got := brokenDB(errors.New("disk gone")).Keys("t"); got != nil {
+		t.Errorf("Keys returned %v on a failed read", got)
+	}
+}

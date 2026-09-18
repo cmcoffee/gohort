@@ -1004,7 +1004,23 @@ func EmailConfigured() bool {
 
 // AuthHasUsers reports whether any user accounts exist.
 func AuthHasUsers(db Database) bool {
-	for _, key := range db.Keys(AuthTable) {
+	keys, err := db.TryKeys(AuthTable)
+	if err != nil {
+		// A listing that FAILED is not a deployment with no accounts, and the
+		// difference is the whole door. False here reaches AuthMiddleware's
+		// "if no users configured, pass through" and serves every request
+		// unauthenticated; it also grants every app to everyone through
+		// UserHasAppAccess and opens the admin console.
+		//
+		// This used to be unreachable: Keys called Critical on an error and
+		// the process ended, which served nothing. Once a store failure became
+		// survivable, the survivable path had to be told which way to fail,
+		// and the answer for an auth gate is always "as though the users are
+		// there".
+		Err("[auth] could not read the user table (%v) — treating the deployment as CONFIGURED so nothing is served unauthenticated", err)
+		return true
+	}
+	for _, key := range keys {
 		if strings.HasPrefix(key, "user:") {
 			return true
 		}
@@ -1203,6 +1219,21 @@ func isLoopbackHost(host string) bool {
 	return false
 }
 
+// hasValidSession reports whether this request would authenticate on its cookie
+// alone, ignoring the deployment key entirely.
+//
+// Read-only: it validates without sliding the expiry, because the sliding
+// renewal belongs to the one path that sees every browser request and can write
+// a cookie, and a refusal check is not that path.
+func hasValidSession(db Database, r *http.Request) bool {
+	cookie, err := r.Cookie(auth_cookie_name)
+	if err != nil || strings.TrimSpace(cookie.Value) == "" {
+		return false
+	}
+	_, ok := AuthValidateSession(db, cookie.Value)
+	return ok
+}
+
 // deploymentKeyQueryAllowed reports whether the URL spelling is accepted.
 //
 // Unset reads as NO. A deployment that has never been configured, or one whose
@@ -1332,14 +1363,26 @@ func AuthMiddleware(db Database, next http.Handler) http.Handler {
 					// at, and this way a wrong key in a URL is answered the
 					// same way a wrong key anywhere else is.
 					if fromQuery && !deploymentKeyQueryAllowed() {
-						refuseDeploymentKeyInQuery(w, r)
-						return
-					}
-					if fromQuery {
+						// Refused only when nothing ELSE would have let this
+						// request through. A signed-in operator who follows a
+						// link carrying the key in its query still has a valid
+						// session, and answering them with a 401 about a
+						// credential they did not need is a lockout dressed as
+						// a security improvement. Falling through leaves the
+						// refusal strictly additive: it takes away the bypass,
+						// not the session.
+						if !hasValidSession(db, r) {
+							refuseDeploymentKeyInQuery(w, r)
+							return
+						}
+						warnDeploymentKeyInQuery(r)
+					} else if fromQuery {
 						warnDeploymentKeyInQuery(r)
 					}
-					next.ServeHTTP(w, r)
-					return
+					if !fromQuery || deploymentKeyQueryAllowed() {
+						next.ServeHTTP(w, r)
+						return
+					}
 				}
 			}
 		}

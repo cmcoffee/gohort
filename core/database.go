@@ -23,6 +23,14 @@ type Database interface {
 	// failures section below for what that costs and why the signatures stay.
 	TryGet(table, key string, output interface{}) (bool, error)
 	TrySet(table, key string, value interface{}) error
+	// TryKeys is Keys for a caller that must not read a failed listing as an
+	// empty one. Keys returns nil on error, and "no keys" is a load-bearing
+	// answer in several places — most sharply AuthHasUsers, where it means
+	// "this deployment has no accounts yet" and opens every request.
+	TryKeys(table string) ([]string, error)
+	// ProbeGet is TryGet with no bookkeeping, for a caller that expects to
+	// fail — see the method for why that is a separate door.
+	ProbeGet(table, key string, output interface{}) (bool, error)
 	Keys(table string) []string
 	CountKeys(table string) int
 	Tables() []string
@@ -204,13 +212,20 @@ type DBase struct {
 }
 
 // Table represents a table within the database.
+//
+// name is carried alongside the handle so a failure can say WHICH table it hit.
+// Without it every report from this wrapper read "get /somekey failed" with an
+// empty table, and Table is the handle most app code uses — so the report meant
+// to tell an operator what is failing could not name it for the majority of
+// call sites.
 type Table struct {
 	table kvlite.Table
+	name  string
 }
 
 // Drop deletes the underlying table.
 func (t Table) Drop() {
-	dbFail(true, "drop", "", "", t.table.Drop())
+	dbFail(true, "drop", t.name, "", t.table.Drop())
 }
 
 // GetString retrieves a string value from the table by key.
@@ -223,7 +238,7 @@ func (T Table) GetString(key string) string {
 // Get retrieves a value from the table by key.
 func (t Table) Get(key string, value interface{}) bool {
 	found, err := t.table.Get(key, value)
-	if dbFail(false, "get", "", key, err) {
+	if dbFail(false, "get", t.name, key, err) {
 		return false
 	}
 	return found
@@ -231,23 +246,23 @@ func (t Table) Get(key string, value interface{}) bool {
 
 // Set sets the value for the given key in the table.
 func (t Table) Set(key string, value interface{}) {
-	dbFail(true, "set", "", key, t.table.Set(key, value))
+	dbFail(true, "set", t.name, key, t.table.Set(key, value))
 }
 
 // CryptSet encrypts and sets the given value for the given key.
 func (t Table) CryptSet(key string, value interface{}) {
-	dbFail(true, "cryptset", "", key, t.table.CryptSet(key, value))
+	dbFail(true, "cryptset", t.name, key, t.table.CryptSet(key, value))
 }
 
 // Unset removes the key from the table.
 func (t Table) Unset(key string) {
-	dbFail(true, "unset", "", key, t.table.Unset(key))
+	dbFail(true, "unset", t.name, key, t.table.Unset(key))
 }
 
 // Keys returns a slice of strings representing the keys in the table.
 func (t Table) Keys() []string {
 	keys, err := t.table.Keys()
-	if dbFail(false, "keys", "", "", err) {
+	if dbFail(false, "keys", t.name, "", err) {
 		return nil
 	}
 	return keys
@@ -256,7 +271,7 @@ func (t Table) Keys() []string {
 // CountKeys returns the number of keys in the table.
 func (t Table) CountKeys() int {
 	count, err := t.table.CountKeys()
-	if dbFail(false, "countkeys", "", "", err) {
+	if dbFail(false, "countkeys", t.name, "", err) {
 		return 0
 	}
 	return count
@@ -448,7 +463,7 @@ func (d DBase) TryGet(table, key string, output interface{}) (bool, error) {
 
 // Table returns a table object for the given table name.
 func (d DBase) Table(table string) Table {
-	return Table{table: d.Store.Table(table)}
+	return Table{table: d.Store.Table(table), name: table}
 }
 
 // Keys returns a list of keys for the specified table.
@@ -458,6 +473,35 @@ func (d DBase) Keys(table string) []string {
 		return nil
 	}
 	return keylist
+}
+
+// ProbeGet is TryGet WITHOUT the bookkeeping, for the one caller whose job is
+// to fail: a type probe that guesses a stored value's shape and advances on the
+// mismatch.
+//
+// Every other read that errors is a symptom. This one is a method, so counting
+// it fills DBFailureReport with noise from somebody browsing the database and
+// leaves the maintenance page reporting a failing store for the rest of the
+// process's life — an alarm that fires on ordinary use is one nobody reads.
+//
+// Named so it cannot be reached for by accident: a caller that wants a read to
+// be seen when it fails should use TryGet.
+func (d DBase) ProbeGet(table, key string, output interface{}) (bool, error) {
+	return d.Store.Get(table, key, output)
+}
+
+// TryKeys is Keys with the error, for a caller that must tell an empty table
+// apart from one it could not read.
+//
+// The difference is not academic. A failed listing read as empty is how a
+// store blip became an authentication bypass: AuthHasUsers walks these keys,
+// an empty answer means "no accounts configured yet", and that opens the
+// door to everyone. Any caller whose empty case GRANTS something needs this
+// one.
+func (d DBase) TryKeys(table string) ([]string, error) {
+	keylist, err := d.Store.Keys(table)
+	dbFail(false, "keys", table, "", err)
+	return keylist, err
 }
 
 // CountKeys returns the number of keys in the specified table.

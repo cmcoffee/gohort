@@ -366,11 +366,13 @@ func (a *AdminApp) handleDBRecord(w http.ResponseWriter, r *http.Request) {
 
 // dbProbeRecord tries to decode a kvlite record into the first matching
 // primitive type. For complex/struct values it returns a descriptive
-// placeholder. TryGet rather than Get, because a wrong guess has to come back
-// as a mismatch to try the next type against — Get would report it as absent
-// and stop the probe on its first miss.
+// placeholder. ProbeGet rather than Get or TryGet: a wrong guess has to come
+// back as a mismatch to try the next type against, which Get would report as
+// absent and stop on — and it must NOT be counted as a store failure, because
+// guessing wrong is how this works. Counting it left the maintenance page
+// reporting a failing database after one ordinary browse.
 func dbProbeRecord(store interface {
-	TryGet(table, key string, output interface{}) (bool, error)
+	ProbeGet(table, key string, output interface{}) (bool, error)
 }, table, key string) (interface{}, bool) {
 	// Ordered by how commonly these appear in settings/routing/config tables.
 	probes := []interface{}{
@@ -383,7 +385,7 @@ func dbProbeRecord(store interface {
 		new([]byte),
 	}
 	for _, ptr := range probes {
-		found, err := store.TryGet(table, key, ptr)
+		found, err := store.ProbeGet(table, key, ptr)
 		if !found {
 			return nil, false
 		}

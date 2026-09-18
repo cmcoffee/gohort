@@ -118,3 +118,47 @@ func TestAWrongKeyInAURLIsNotToldAboutTheHeader(t *testing.T) {
 		t.Error("a wrong key was told how the right one should be presented")
 	}
 }
+
+// The refusal takes away the bypass, not the session.
+//
+// A signed-in operator who follows a link carrying the key in its query still
+// has a valid cookie. Answering them with a 401 about a credential they did not
+// need is a lockout dressed as a security improvement, so the refusal only
+// fires when nothing else would have let the request through.
+func TestAValidSessionSurvivesTheKeyRefusal(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	prevKey, prevAllow, prevAuth := AuthAPIKey, AuthAPIKeyAllowQuery, AuthDB
+	AuthAPIKey = func() string { return "s3cret" }
+	AuthAPIKeyAllowQuery = func() bool { return false }
+	AuthDB = func() Database { return db }
+	t.Cleanup(func() { AuthAPIKey, AuthAPIKeyAllowQuery, AuthDB = prevKey, prevAllow, prevAuth })
+
+	db.Set(AuthTable, "user:alice", AuthUser{Username: "alice"})
+	token := AuthCreateSession(db, "alice")
+
+	reached := false
+	h := AuthMiddleware(db, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Signed in AND carrying the key in the url. The assertion is that it is
+	// not refused OVER THE KEY — whatever the per-app gate decides about a
+	// made-up path afterwards is a different question and not this one.
+	r := httptest.NewRequest("GET", "/anything?key=s3cret", nil)
+	r.AddCookie(&http.Cookie{Name: "gohort_session", Value: token})
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code == http.StatusUnauthorized || strings.Contains(w.Body.String(), deploymentKeyHeader) {
+		t.Fatalf("a valid session was refused over a credential it did not need: %d %s", w.Code, w.Body.String())
+	}
+
+	// No session, same url: still refused, because now the key IS the claim.
+	_ = reached
+	reached = false
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/anything?key=s3cret", nil))
+	if reached || w.Code != http.StatusUnauthorized {
+		t.Fatalf("the bypass survived without a session: reached=%v status=%d", reached, w.Code)
+	}
+}
