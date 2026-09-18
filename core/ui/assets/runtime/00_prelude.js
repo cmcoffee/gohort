@@ -282,12 +282,20 @@
   // for the user — the reserved <gohort-meta>…</gohort-meta> convention plus
   // leaked delivery markers ([ATTACH:…], <<<ATTACH:…>>>…<<<END>>>). Mirrors core
   // StripMetaTags (Go) so the saved copy and the rendered copy agree.
+  // The half-block rules matter as much as the balanced one: a reply cut at
+  // the output limit resumes in a new segment, so an opener and its closer can
+  // arrive in different strings and each half alone used to render verbatim.
+  // Mid-stream this also hides a block from its opener until its closer lands,
+  // instead of flashing the internal note and then removing it.
   window.uiStripMetaTags = function(s) {
-    if (!s || (s.indexOf('<gohort-meta') < 0 && s.indexOf('[ATTACH') < 0 && s.indexOf('<<<ATTACH') < 0)) return s;
+    if (!s || (!/gohort-meta/i.test(s) && s.indexOf('[ATTACH') < 0 && s.indexOf('<<<ATTACH') < 0)) return s;
     return s
-      .replace(/<gohort-meta>[\s\S]*?<\/gohort-meta>/gi, '')
+      .replace(/<gohort-meta\b[^>]*>[\s\S]*?<\/\s*gohort-meta\s*>/gi, '')
+      .replace(/(^|[^<])gohort-meta\b[^>]*>[\s\S]*?<\/\s*gohort-meta\s*>/gi, '$1')
+      .replace(/<gohort-meta\b[^>]*>[\s\S]*$/i, '')
+      .replace(/^[\s\S]*?<\/\s*gohort-meta\s*>/i, '')
       .replace(/\[ATTACH:\s*[^\]]*\]/g, '')
-      .replace(/<<<ATTACH:[^>]*>>>[\s\S]*?<<<END>>>/gi, '')
+      .replace(/<<<ATTACH:[\s\S]*?(?:ATTACH_END>>>|<<<END>>>)/gi, '')
       .replace(/[ \t]+\n/g, '\n')
       .replace(/\n{3,}/g, '\n\n')
       .trim();

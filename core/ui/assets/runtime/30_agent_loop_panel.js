@@ -2819,6 +2819,11 @@
     // permission), and a brief "Copied" flash on the button either way so the
     // action is visibly acknowledged.
     function writeClipboard(text, btn) {
+      // Every copy in this panel funnels through here, so the strip lives here
+      // rather than at each call site: what the user sees is stripped at
+      // render, and the clipboard has to agree or Copy hands back the markers
+      // the page just hid.
+      text = window.uiStripMetaTags(String(text == null ? '' : text));
       var flash = function() {
         if (!btn) return;
         var prior = btn.textContent;
@@ -3250,8 +3255,12 @@
       var m = msgEls[id];
       if (!m) { m = addMessage('assistant', id, ''); }
       m.rawText = (m.rawText || '') + text;
-      // Streaming text stays plain — markdown pass on message_done.
-      m.body.textContent = m.rawText;
+      // Streaming text stays plain — markdown pass on message_done. It still
+      // goes through uiStripMetaTags: the markdown pass is where the strip
+      // used to happen, so an internal note was on screen in plain text for
+      // the whole stream and only vanished when the turn settled. rawText
+      // keeps the original for that later pass.
+      m.body.textContent = window.uiStripMetaTags(m.rawText);
       if (m.rawText.length > 0) unmarkEmptyBubble(m);
       scrollConvo(false);
     }
@@ -3260,7 +3269,7 @@
       var m = msgEls[id];
       if (!m) { m = addMessage('assistant', id, ''); }
       m.rawText = text || '';
-      m.body.textContent = m.rawText;
+      m.body.textContent = window.uiStripMetaTags(m.rawText);
       if (m.rawText.length > 0) unmarkEmptyBubble(m);
       else markEmptyBubble(m);
       scrollConvo(false);

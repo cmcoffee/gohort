@@ -29,6 +29,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/textutil"
 )
 
 // maxDispatchDepth caps recursive agent dispatch. 3 levels covers
@@ -2133,8 +2134,11 @@ func llmHistoryContent(m ChatMessage) string {
 	// [standing agent …] would leak); the model still reads it as input
 	// (StripMetaTags only touches output).
 	if strings.TrimSpace(m.ReportFrom) != "" {
-		return fmt.Sprintf("<gohort-meta>automated report from %q — context, not user input</gohort-meta>\n%s",
-			strings.TrimSpace(m.ReportFrom), fenceObservationMarkers(m.Content))
+		// Fenced through textutil.FenceMeta rather than by hand: the producer
+		// name is not ours, and a name carrying a closer would end the fence
+		// early and put the rest of itself back in the model's plain input.
+		return textutil.FenceMeta(fmt.Sprintf("automated report from %q — context, not user input",
+			strings.TrimSpace(m.ReportFrom))) + "\n" + fenceObservationMarkers(m.Content)
 	}
 	return attributeSender(m.Role, m.Sender, m.Content)
 }
@@ -2168,7 +2172,11 @@ func fenceObservationMarkers(body string) string {
 		t := strings.TrimSpace(ln)
 		for _, marker := range observationMarkers {
 			if strings.HasPrefix(t, marker) {
-				lines[i] = "<gohort-meta>" + t + "</gohort-meta>"
+				// The line quotes what came in from a channel, so it is
+				// untrusted: FenceMeta defuses any marker inside it before
+				// wrapping, or an inbound message carrying a closer could end
+				// the fence and hand its own instructions to the model unfenced.
+				lines[i] = textutil.FenceMeta(t)
 				break
 			}
 		}

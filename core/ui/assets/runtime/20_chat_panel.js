@@ -578,7 +578,7 @@
       if (emptyHint) emptyHint.style.display = 'none';
       var msg = el('div', {class: 'ui-chat-msg ' + (role === 'assistant' ? 'assistant' : 'user')});
       var body = el('div', {class: 'ui-chat-msg-body'});
-      body.textContent = content || '';
+      body.textContent = window.uiStripMetaTags(content || '');
       msg.appendChild(body);
       msg.dataset.role = role;
       msg.dataset.raw  = content || '';
@@ -1031,7 +1031,10 @@
             // chunks just append to the running reply text.
             if (fullReply === '') clearTyping(assistantBody);
             fullReply += data.text || '';
-            assistantBody.textContent = fullReply;
+            // Stripped on the way to the screen, not just at the markdown
+            // pass below: streaming sets textContent directly, so an internal
+            // note used to be readable for the length of the stream.
+            assistantBody.textContent = window.uiStripMetaTags(fullReply);
             scrollToBottom();
             break;
           case 'thinking_chunk':
@@ -1253,7 +1256,9 @@
     function addAssistantActions(msgEl) {
       var bar = el('div', {class: 'ui-chat-actions'});
       bar.appendChild(el('button', {class: 'ui-chat-act', onclick: function() {
-        var t = msgEl.dataset.raw || '';
+        // dataset.raw is the unrendered source, so it still carries any
+        // framework marker the render stripped; Copy must not hand it back.
+        var t = window.uiStripMetaTags(msgEl.dataset.raw || '');
         if (navigator.clipboard) navigator.clipboard.writeText(t);
         showToast('Copied');
       }}, ['Copy']));
@@ -1273,7 +1278,7 @@
             id:      msgEl.dataset.id || '',
             wrap:    msgEl,
             body:    msgEl.querySelector('.ui-chat-msg-body'),
-            rawText: msgEl.dataset.raw || '',
+            rawText: window.uiStripMetaTags(msgEl.dataset.raw || ''),
           });
         } catch (_) {}
       }
@@ -1308,7 +1313,7 @@
     // headings, code fences, inline code, bold, italic, links, lists.
     // mdToHTML is a top-level helper shared with pipeline_panel.
     function renderMessageBody(target, raw) {
-      if (!cfg.markdown) { target.textContent = raw; return; }
+      if (!cfg.markdown) { target.textContent = window.uiStripMetaTags(raw); return; }
       uiRenderMarkdown(target, raw);
     }
 
