@@ -43,12 +43,12 @@ func openViewer() error {
 // promptFolderConsent has no native dialog yet on Windows — deny so
 // no folder is ever read without explicit approval.
 func promptFolderConsent(folder string) bool {
-	core.Warn("[fs] denying read of %s — no folder-consent prompt on Windows yet", folder)
+	core.Warn("[fs] denying read of %s: no folder-consent prompt on Windows yet", folder)
 	return false
 }
 
 func promptWriteConsent(folder string) bool {
-	core.Warn("[fs] denying write to %s — no folder-consent prompt on Windows yet", folder)
+	core.Warn("[fs] denying write to %s: no folder-consent prompt on Windows yet", folder)
 	return false
 }
 
@@ -57,7 +57,7 @@ func promptWriteConsent(folder string) bool {
 // to allow server-initiated tool calls. (A native toast/dialog is a
 // follow-up.)
 func promptApproval(name string, _ map[string]any) (allow, always bool) {
-	core.Warn("[approval] denying %q — no Windows prompt yet; set auto_approve to allow", name)
+	core.Warn("[approval] denying %q: no Windows prompt yet; set auto_approve to allow", name)
 	return false, false
 }
 

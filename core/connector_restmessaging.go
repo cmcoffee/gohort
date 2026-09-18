@@ -132,7 +132,7 @@ func (h restMessagingHandler) Validate(c Connector) error {
 		return err
 	}
 	if s.Service == "" {
-		return fmt.Errorf("service is required (e.g. \"teams\") — it namespaces the bridge")
+		return fmt.Errorf("service is required (e.g. \"teams\"): it namespaces the bridge")
 	}
 	if !connectorNameRE.MatchString(s.Service) {
 		return fmt.Errorf("service %q must be tool-namespace-safe (letters, digits, underscore)", s.Service)
@@ -141,7 +141,7 @@ func (h restMessagingHandler) Validate(c Connector) error {
 		return fmt.Errorf("credential is required (a registered SecureAPI credential name)")
 	}
 	if exists, _, _ := Secure().CredentialStatus(s.Credential); !exists {
-		return fmt.Errorf("no credential named %q — draft it first (draft_oauth_credential) and have the admin enable it", s.Credential)
+		return fmt.Errorf("no credential named %q: draft it first (draft_oauth_credential) and have the admin enable it", s.Credential)
 	}
 	if s.WebhookProvider != "" {
 		// PUSH mode: the provider owns inbound (handshake + verify + extraction), so
@@ -151,7 +151,7 @@ func (h restMessagingHandler) Validate(c Connector) error {
 		}
 	} else {
 		if !strings.HasPrefix(s.PollURL, "https://") && !strings.HasPrefix(s.PollURL, "http://") {
-			return fmt.Errorf("poll_url must be http(s) — got %q (did you fill the preset vars, e.g. team_id/channel_id?)", s.PollURL)
+			return fmt.Errorf("poll_url must be http(s): got %q (did you fill the preset vars, e.g. team_id/channel_id?)", s.PollURL)
 		}
 		if s.Map.ChatID == "" && s.ChatIDConst == "" {
 			return fmt.Errorf("map.chat_id (a dot-path) or chat_id_const (a fixed value) is required")
@@ -227,7 +227,7 @@ func RegisterMessagingPoller(fn MessagingPollerFn) { messagingPoller = fn }
 func startMessagingPoller(c Connector, start bool) error {
 	if messagingPoller == nil {
 		if start {
-			Warn("[connector] no messaging poller registered — rest_messaging %q inert until the bridges app loads", c.Name)
+			Warn("[connector] no messaging poller registered: rest_messaging %q inert until the bridges app loads", c.Name)
 		}
 		return nil
 	}

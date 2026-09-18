@@ -28,7 +28,7 @@ func renderRulesPromptSection(rules string) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("## Rules — operating policy you must follow\n\n")
+	b.WriteString("## Rules: operating policy you must follow\n\n")
 	b.WriteString("These rules are non-negotiable and apply to every turn. If a rule conflicts with anything else in this prompt, the rule wins.\n\n")
 	for _, ln := range strings.Split(rules, "\n") {
 		ln = strings.TrimSpace(ln)
@@ -118,20 +118,20 @@ func memoryModeCopy(mode string) memoryModeText {
 	case "chatbot":
 		return memoryModeText{
 			Header:          "## Saved notes",
-			Intro:           "What you've kept in mind across sessions with this user — generalized lessons (design principles, recurring gotchas) PLUS personalization (their name, preferences, recurring details) PLUS conversation-coherence notes (\"the project we discussed last week\", \"the user is on the beta plan\"). Apply silently; don't list them back. Each entry is numbered so you can reference an index when one is no longer accurate.",
-			StoreToolSuffix: "This agent is in CHATBOT MODE — Explicit Memory is broad. Right for store_fact: generalized lessons (\"X always fails in dev environments\"), user personalization (\"prefers concise replies\", \"works at Acme on the platform team\"), memorable notes that keep conversations coherent (\"the project we've been discussing is named Atlas\"). When the conversation involves more than one person (a channel or room), store personal facts ATTRIBUTED BY NAME — \"Dana prefers texts before 8pm\", never \"the user prefers texts before 8pm\" — so the right fact follows the right person. API specifics, working approaches for a specific task, paragraph-length findings — those still belong in Reference Memory via memory(save) (searchable by similarity, not always in prompt). The rule is the same: always-in-prompt vs. searchable; chatbot mode just widens what counts as worth always seeing.",
+			Intro:           "What you've kept in mind across sessions with this user: generalized lessons (design principles, recurring gotchas) PLUS personalization (their name, preferences, recurring details) PLUS conversation-coherence notes (\"the project we discussed last week\", \"the user is on the beta plan\"). Apply silently; don't list them back. Each entry is numbered so you can reference an index when one is no longer accurate.",
+			StoreToolSuffix: "This agent is in CHATBOT MODE: Explicit Memory is broad. Right for store_fact: generalized lessons (\"X always fails in dev environments\"), user personalization (\"prefers concise replies\", \"works at Acme on the platform team\"), memorable notes that keep conversations coherent (\"the project we've been discussing is named Atlas\"). When the conversation involves more than one person (a channel or room), store personal facts ATTRIBUTED BY NAME (\"Dana prefers texts before 8pm\", never \"the user prefers texts before 8pm\"), so the right fact follows the right person. API specifics, working approaches for a specific task, paragraph-length findings: those still belong in Reference Memory via memory(save) (searchable by similarity, not always in prompt). The rule is the same: always-in-prompt vs. searchable; chatbot mode just widens what counts as worth always seeing.",
 		}
 	case "shortcuts":
 		return memoryModeText{
 			Header:          "## Shortcuts",
-			Intro:           "Working commands and quick references to keep in view — how to access and operate this system directly (auth methods, entry points, log locations, service controls), plus gotchas to avoid. Use these directly rather than re-discovering. Each entry is numbered so you can reference an index when one is no longer accurate.",
-			StoreToolSuffix: "This agent is in SHORTCUTS MODE — Explicit Memory holds the operational commands and gotchas you want ALWAYS in view (working auth, entry points, log locations, \"do X not Y\" rules). Specific one-off findings you only occasionally need go in Reference Memory (searchable), not here.",
+			Intro:           "Working commands and quick references to keep in view: how to access and operate this system directly (auth methods, entry points, log locations, service controls), plus gotchas to avoid. Use these directly rather than re-discovering. Each entry is numbered so you can reference an index when one is no longer accurate.",
+			StoreToolSuffix: "This agent is in SHORTCUTS MODE: Explicit Memory holds the operational commands and gotchas you want ALWAYS in view (working auth, entry points, log locations, \"do X not Y\" rules). Specific one-off findings you only occasionally need go in Reference Memory (searchable), not here.",
 		}
 	default: // "" or "agent"
 		return memoryModeText{
 			Header:          "## Lessons learned",
-			Intro:           "Generalized lessons from prior sessions — design principles, recurring gotchas, things that bit you and the workaround that worked. Apply when the current task touches similar territory. Each lesson is numbered so you can reference an index when forgetting one that's no longer accurate.",
-			StoreToolSuffix: "This agent is in AGENT MODE — Explicit Memory is narrow. Use store_fact ONLY for GENERALIZED lessons that apply across many future jobs: design principles (\"check the sandbox before authoring tools that depend on binaries\"), recurring gotchas (\"endpoint X returns 200 with empty body on missing key, not 404, so check for that pattern\"), \"X fails, route Y instead\" type rules. Specific API details, working approaches for a single task, paragraph-length findings — those go in Reference Memory via memory(save) (searchable by similarity, not always in prompt). NOT for user personalization (\"user prefers concise replies\", \"user's name is Sarah\") — that's chatbot-mode territory and this agent is task-focused. If the lesson reads \"and then it worked\" with no generalized trap underneath — discard, that's a success story, not a lesson.",
+			Intro:           "Generalized lessons from prior sessions: design principles, recurring gotchas, things that bit you and the workaround that worked. Apply when the current task touches similar territory. Each lesson is numbered so you can reference an index when forgetting one that's no longer accurate.",
+			StoreToolSuffix: "This agent is in AGENT MODE: Explicit Memory is narrow. Use store_fact ONLY for GENERALIZED lessons that apply across many future jobs: design principles (\"check the sandbox before authoring tools that depend on binaries\"), recurring gotchas (\"endpoint X returns 200 with empty body on missing key, not 404, so check for that pattern\"), \"X fails, route Y instead\" type rules. Specific API details, working approaches for a single task, paragraph-length findings: those go in Reference Memory via memory(save) (searchable by similarity, not always in prompt). NOT for user personalization (\"user prefers concise replies\", \"user's name is Sarah\"): that's chatbot-mode territory and this agent is task-focused. If the lesson reads \"and then it worked\" with no generalized trap underneath: discard, that's a success story, not a lesson.",
 		}
 	}
 }

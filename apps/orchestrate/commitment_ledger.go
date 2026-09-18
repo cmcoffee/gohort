@@ -139,9 +139,9 @@ func clearCommitment(db Database, sessionID string) {
 // is the same failure with worse manners.
 func commitmentNote(c openCommitment) string {
 	return frameworkNoteTag +
-		"OUTSTANDING FROM YOUR LAST TURN — you said: \"" + c.Said + "\"\n" +
+		"OUTSTANDING FROM YOUR LAST TURN, you said: \"" + c.Said + "\"\n" +
 		"You then called no tool and it did not happen. If they are asking about it now (\"did you\", \"are you really\", \"you said you would\"), THAT is what they mean.\n" +
-		"Do it NOW with a real tool call, or say in one line what is actually stopping you. Do NOT apologize, do NOT call yourself names, and do NOT promise it again — a second promise is the same failure with better manners. Either it happens this turn or you say why it can't."
+		"Do it NOW with a real tool call, or say in one line what is actually stopping you. Do NOT apologize, do NOT call yourself names, and do NOT promise it again: a second promise is the same failure with better manners. Either it happens this turn or you say why it can't."
 }
 
 // commitmentTurnNote is the TurnNotes hook's view: the note if one is owed,

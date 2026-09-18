@@ -123,7 +123,7 @@ func machineAssistSystem(def MachineDef, ph MachinePhase, framing string) string
 	b.WriteString("You are helping someone write ONE step of a workflow an AI agent moves through.\n\n")
 	b.WriteString("THE WORKFLOW: " + def.Name)
 	if d := strings.TrimSpace(def.Description); d != "" {
-		b.WriteString(" — " + d)
+		b.WriteString(" · " + d)
 	}
 	b.WriteString("\nIts steps, in order:\n")
 	for _, p := range def.Phases {
@@ -159,7 +159,7 @@ func machineAssistSystem(def MachineDef, ph MachinePhase, framing string) string
 WHAT TO WRITE
 
 The METHOD, not the output. The declared fields above already say what to produce, and the framework
-sends them with their descriptions — restating them wastes the instruction. Write what a list of
+sends them with their descriptions: restating them wastes the instruction. Write what a list of
 fields cannot say:
 
 - where to look first, and what counts as having looked properly
@@ -168,7 +168,7 @@ fields cannot say:
 
 "Read enough to have a real hypothesis rather than a plausible one; a first ERROR line is usually the
 symptom of something that went wrong several lines earlier" is the shape. "Return a hypothesis field"
-is not — declaring the field already said that.
+is not: declaring the field already said that.
 
 NEVER: ask for JSON, describe an output format, give an example object, paste in what an earlier
 step found, or place {input}-style variables to "receive" the message. The person's message and
@@ -176,7 +176,7 @@ everything earlier steps established arrive automatically; all of that is compos
 framework, and a second copy fights it.
 
 Write to a person, in plain sentences. Short is better than complete. Reply with the instructions
-only — no preamble, no explanation of what you wrote.`)
+only: no preamble, no explanation of what you wrote.`)
 
 	if f := strings.TrimSpace(framing); f != "" {
 		b.WriteString("\n\nThe editor adds, about this field specifically: " + f)

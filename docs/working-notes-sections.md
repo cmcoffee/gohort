@@ -14,7 +14,7 @@ keep it small is the same reason the cap exists.
 
 | Layer | Tool | Self-defined structure? |
 |---|---|---|
-| Rules | — (user-authored) | No. Human-owned policy, top of prompt. |
+| Rules |: (user-authored) | No. Human-owned policy, top of prompt. |
 | Explicit Memory | `store_fact` | No. One flat list per `agent:<id>` namespace. |
 | Working notes | `update_notes` | **One document, any internal shape.** |
 | Reference Memory | `memory_save` | No. Free text, retrieved by similarity. |
@@ -26,7 +26,7 @@ its notes document, and any vocabulary it likes in the graph.
 
 ## The gap
 
-An agent cannot mint a NAMED, ALWAYS-IN-PROMPT register — a slot it addresses
+An agent cannot mint a NAMED, ALWAYS-IN-PROMPT register: a slot it addresses
 by name and updates on its own.
 
 The nearest thing is a heading inside its working notes, which it can already
@@ -40,7 +40,7 @@ ELSE, because `update_notes` replaces the whole block:
 
 **A register is prompt weight.** Letting the agent mint registers is letting the
 agent set its own prompt budget. Every context bug in this codebase has been an
-unbudgeted growth nobody could see from the settings that looked relevant — the
+unbudgeted growth nobody could see from the settings that looked relevant: the
 tail counted in messages while the window counted tokens, then in a share of a
 window that could be a million. A memory layer whose size is decided by the
 thing being measured is that mistake with a shorter fuse.
@@ -92,7 +92,7 @@ Rules, in the order they matter:
 1. **A section names itself.** No registry, no pre-declaration, no admin step. A
    section that does not exist is created; one written empty is removed.
 2. **Section names are normalized** for matching (trimmed, case-folded) and
-   stored as written. `In Flight` and `in flight` are one register — otherwise a
+   stored as written. `In Flight` and `in flight` are one register: otherwise a
    model that varies its capitalization keeps two copies of its own state and
    they disagree.
 3. **A sectionless write still replaces everything**, including sections. That
@@ -114,7 +114,7 @@ that would put your notes at 1,740 of 1,500 characters. Largest sections:
 "deployment quirks" (620), "in flight" (410). Trim one and retry.
 ```
 
-A memory layer that quietly loses its middle is worse than one that says no —
+A memory layer that quietly loses its middle is worse than one that says no
 the agent cannot tell it was truncated, and the note it reads back next turn is
 a sentence that stops. Naming the largest sections turns the refusal into an
 instruction: the model has the block in front of it and can compress the part
@@ -137,12 +137,12 @@ rule; the same behaviour lands here as a parse and a splice.
 
 `core/notes` gains two unexported functions and one export:
 
-- `splitSections(text) []section` — `{name, body}`, first entry unnamed when the
+- `splitSections(text) []section`: `{name, body}`, first entry unnamed when the
   document opens with prose.
-- `joinSections([]section) string` — round-trips, and `join(split(x)) == x` for
+- `joinSections([]section) string`: round-trips, and `join(split(x)) == x` for
   any document (the property worth a test: a parser that reformats other
   people's prose is a parser that loses it).
-- `ApplyNoteSection(text, section, body) (string, error)` — the splice, exported
+- `ApplyNoteSection(text, section, body) (string, error)`: the splice, exported
   because `update_notes` and the HTTP handler both need it and a second
   implementation is how they come to disagree.
 
@@ -158,8 +158,8 @@ not find it silently promoted to a register.
 > when only that part changed; rewrite the whole block when the shape of the
 > work changes.
 
-The existing framing — advisory, revise-don't-append, record the goal never the
-tool call — is unchanged and still governs. The tool description gains the
+The existing framing (advisory, revise-don't-append, record the goal never the
+tool call) is unchanged and still governs. The tool description gains the
 parameter and the same one-line rule. Nothing else in the memory doctrine moves,
 which is the test of whether this is a feature or a layer: a layer would need a
 paragraph.
@@ -167,16 +167,16 @@ paragraph.
 ## The panel
 
 The Memory modal's Working notes textarea already edits the raw document, so it
-works on day one with no change — sections are visible as headings because they
+works on day one with no change: sections are visible as headings because they
 ARE headings.
 
-A line under the counter now names what each register costs, biggest first —
+A line under the counter now names what each register costs, biggest first
 the same measurement the over-cap refusal quotes at the agent. Served by
 `notes.SectionSizes` rather than counted in the browser: a second parser would
 disagree the first time a heading appeared inside a code fence, and then the
 person trimming the block and the model trimming it would be reading two
 different numbers. It refreshes on load and after each save, and stays quiet
-below two sections — naming the only section of a one-section block tells the
+below two sections: naming the only section of a one-section block tells the
 reader what they can already see.
 
 ## Staging
@@ -204,7 +204,7 @@ only the model knows about.
 One thing the build added that the scope did not name: a section write splices
 into the RESOLVED notes, seed included. An agent configured with SeedNotes whose
 store is still empty would otherwise have its first section write silently
-discard the notes it was set up with — the seed renders in the prompt but is not
+discard the notes it was set up with: the seed renders in the prompt but is not
 stored, so a splice against storage alone starts from blank.
 
 ## Explicitly out of scope
@@ -216,5 +216,5 @@ stored, so a splice against storage alone starts from blank.
 - **Section-scoped history.** The ring keeps whole prior documents, which is
   what a revert needs.
 - **Sections anywhere else.** Facts, graph and Reference Memory are unchanged.
-  If sections earn their place here, that is an argument to revisit — after
+  If sections earn their place here, that is an argument to revisit, after
   living with them, not before.

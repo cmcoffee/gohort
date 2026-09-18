@@ -64,7 +64,7 @@ func noteToolOutcome(sess *ToolSession, tool, action string, err error) string {
 // guessing, hundreds of times.
 func ToolNeverWorkedHint(tool, action string, failures int) string {
 	return "\n\nSTOP RETRYING THIS. " + tool + "(action=\"" + action + "\") has now failed " +
-		strconv.Itoa(failures) + " times and has never once succeeded — for anyone, on any arguments. " +
+		strconv.Itoa(failures) + " times and has never once succeeded, for anyone, on any arguments. " +
 		"That is a broken tool DEFINITION, not a mistake in your call, so re-sending it with different " +
 		"params cannot work. Do not try another route to the same thing either. Tell the user plainly " +
 		"that this action is broken and needs fixing (its params or its URL), then carry on with whatever " +

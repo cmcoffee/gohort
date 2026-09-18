@@ -21,7 +21,7 @@ func (a *AdminApp) maintenanceSections() []ui.Section {
 		storeHealthSection(),
 		{
 			Title:    "Scheduled Tasks",
-			Subtitle: "Pending background work — proactive messages, scheduled updates. Expand a row for the full record + payload.",
+			Subtitle: "Pending background work: proactive messages, scheduled updates. Expand a row for the full record + payload.",
 			Body: ui.Table{
 				Source: "api/scheduled-tasks",
 				RowKey: "id",
@@ -91,7 +91,7 @@ func (a *AdminApp) maintenanceSections() []ui.Section {
 		},
 		{
 			Title:     "Migrations",
-			Subtitle:  "Schema / data migrations the apps have run on this deployment. Auto-fire on app init when triggered (no manual button) and never run twice for the same (app, name, owner). An error column indicates a panic during the run — clear the marker in the DB to retry after a fix.",
+			Subtitle:  "Schema / data migrations the apps have run on this deployment. Auto-fire on app init when triggered (no manual button) and never run twice for the same (app, name, owner). An error column indicates a panic during the run: clear the marker in the DB to retry after a fix.",
 			Collapsed: true,
 			Body: ui.Table{
 				Source: "api/migrations",
@@ -109,7 +109,7 @@ func (a *AdminApp) maintenanceSections() []ui.Section {
 		},
 		{
 			Title:    "Vector Index",
-			Subtitle: "Snapshot of the semantic-search index. Chunks are written automatically as records (research / debate / answer) are produced. A chunk whose embedding failed at ingest, or was embedded under a different model or document prefix, is still stored and still found by keyword but invisible to semantic search — the counts below say how many, and Repair below them fixes it. A chunk with no TEXT is counted apart: Repair cannot fix it (nothing to embed) and search cannot return it, so it is dead weight — remove it.",
+			Subtitle: "Snapshot of the semantic-search index. Chunks are written automatically as records (research / debate / answer) are produced. A chunk whose embedding failed at ingest, or was embedded under a different model or document prefix, is still stored and still found by keyword but invisible to semantic search: the counts below say how many, and Repair below them fixes it. A chunk with no TEXT is counted apart: Repair cannot fix it (nothing to embed) and search cannot return it, so it is dead weight, remove it.",
 			Body: ui.Stack{Children: []ui.Component{
 				ui.DisplayPanel{
 					Source: "api/vector-stats",
@@ -291,7 +291,7 @@ func storeHealthLine(h DBFailureReport) string {
 		b.WriteString(".")
 	}
 	if h.LastOp != "" {
-		fmt.Fprintf(&b, " Last: %s — %s", h.LastOp, h.Last)
+		fmt.Fprintf(&b, " Last: %s, %s", h.LastOp, h.Last)
 	}
 	b.WriteString(" The key each failure hit is in the server log; it is left out here because it names somebody's record.")
 	return b.String()

@@ -41,7 +41,7 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 		Tool: Tool{
 			Name: "list_publish_destinations",
 			Description: "List the configured publish destinations, whether this user can publish to each one right now (and if not, why), and where the open document has ALREADY been published. Call this first. " +
-				"A destination that reports available=false cannot be used — pass its reason on to the user as their next step.",
+				"A destination that reports available=false cannot be used: pass its reason on to the user as their next step.",
 			Parameters: map[string]ToolParam{},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
@@ -51,15 +51,15 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 			}
 			dests := docs.PublishDestinations(user)
 			if len(dests) == 0 {
-				return "", fmt.Errorf("no publish destinations are registered on this deployment — an admin configures them in Admin > Publishing")
+				return "", fmt.Errorf("no publish destinations are registered on this deployment: an admin configures them in Admin > Publishing")
 			}
 			var b strings.Builder
 			fmt.Fprintf(&b, "Document: %q\n\nDestinations:\n", doc.Doc.Title)
 			for _, d := range dests {
 				if d.Available {
-					fmt.Fprintf(&b, "- %s (destination id: %s) — available\n", d.Label, d.Kind)
+					fmt.Fprintf(&b, "- %s (destination id: %s), available\n", d.Label, d.Kind)
 				} else {
-					fmt.Fprintf(&b, "- %s (destination id: %s) — NOT available: %s\n", d.Label, d.Kind, d.Reason)
+					fmt.Fprintf(&b, "- %s (destination id: %s), NOT available: %s\n", d.Label, d.Kind, d.Reason)
 				}
 			}
 			if len(doc.Records) == 0 {
@@ -83,7 +83,7 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 					fmt.Fprintf(&b, ", last published %s", r.At)
 				}
 				if r.URL != "" {
-					fmt.Fprintf(&b, " — %s", r.URL)
+					fmt.Fprintf(&b, ", %s", r.URL)
 				}
 				b.WriteString("\n  Publishing here again with update_existing=true REPLACES that page rather than making a second one.\n")
 			}
@@ -94,8 +94,8 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 	listTargets := AgentToolDef{
 		Tool: Tool{
 			Name: "list_publish_targets",
-			Description: "List the places inside a destination a document can land — Confluence spaces, for example. The ids returned here are the ONLY values publish_document accepts as its target: pick one of them, never a space key or id from memory. " +
-				"An empty list means the destination takes no target (a webhook posts to one fixed endpoint) — publish without one.",
+			Description: "List the places inside a destination a document can land: Confluence spaces, for example. The ids returned here are the ONLY values publish_document accepts as its target: pick one of them, never a space key or id from memory. " +
+				"An empty list means the destination takes no target (a webhook posts to one fixed endpoint): publish without one.",
 			Parameters: map[string]ToolParam{
 				"destination": {Type: "string", Description: "The destination id from list_publish_destinations (e.g. \"confluence\")."},
 			},
@@ -108,12 +108,12 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 				return "", err
 			}
 			if len(targets) == 0 {
-				return fmt.Sprintf("%s takes no target — publish to it without one.", kind), nil
+				return fmt.Sprintf("%s takes no target: publish to it without one.", kind), nil
 			}
 			var b strings.Builder
 			fmt.Fprintf(&b, "%d place(s) in %s. Pass one of these ids as target:\n", len(targets), kind)
 			for _, t := range targets {
-				fmt.Fprintf(&b, "- id: %s — %s", t.ID, t.Title)
+				fmt.Fprintf(&b, "- id: %s, %s", t.ID, t.Title)
 				if t.Desc != "" {
 					fmt.Fprintf(&b, " (%s)", t.Desc)
 				}
@@ -128,7 +128,7 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 			Name: "publish_document",
 			Description: "Publish the open document to a destination and return the link. " +
 				"Set update_existing=true to REPLACE the page this document was published to before (list_publish_destinations shows whether there is one); leave it false to create a new one. " +
-				"The target must be an id from list_publish_targets for this destination — anything else is refused.",
+				"The target must be an id from list_publish_targets for this destination: anything else is refused.",
 			Parameters: map[string]ToolParam{
 				"destination":     {Type: "string", Description: "The destination id from list_publish_destinations."},
 				"target":          {Type: "string", Description: "The target id from list_publish_targets (e.g. a Confluence space id). Omit only for a destination that lists no targets."},
@@ -146,7 +146,7 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 				return "", fmt.Errorf("no document is open to publish")
 			}
 			if strings.TrimSpace(doc.Doc.Markdown) == "" {
-				return "", fmt.Errorf("the document is empty — there is nothing to publish yet")
+				return "", fmt.Errorf("the document is empty: there is nothing to publish yet")
 			}
 			kind := strings.TrimSpace(fmt.Sprint(args["destination"]))
 			req := docs.PublishRequest{
@@ -189,14 +189,14 @@ func BuildPublishTools(ctx context.Context, user string, open func() (Document, 
 					// The remote write succeeded; only the bookkeeping failed.
 					// Say both, because the page IS there and a retry would
 					// create a second one.
-					return fmt.Sprintf("Published to %s — %s. NOTE: the link could not be recorded against the document (%v), so publishing again will create a new page rather than updating this one.", kind, linkOrLabel(res), err), nil
+					return fmt.Sprintf("Published to %s: %s. NOTE: the link could not be recorded against the document (%v), so publishing again will create a new page rather than updating this one.", kind, linkOrLabel(res), err), nil
 				}
 			}
 			verb := "Published"
 			if res.Updated {
 				verb = "Updated"
 			}
-			return fmt.Sprintf("%s %q in %s — %s", verb, req.Title, kind, linkOrLabel(res)), nil
+			return fmt.Sprintf("%s %q in %s: %s", verb, req.Title, kind, linkOrLabel(res)), nil
 		},
 	}
 

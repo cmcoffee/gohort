@@ -36,9 +36,9 @@ func (t *FindVideoTool) Caps() []Capability {
 func (t *FindVideoTool) IsInternetTool() bool { return true }
 
 func (t *FindVideoTool) Desc() string {
-	return "Find a video URL by topic via web search. Returns the best candidate URL from yt-dlp-supported platforms (YouTube, TikTok, Vimeo, Twitter/X, Reddit, Instagram, Twitch, etc.) — the LLM then passes it to download_video. " +
+	return "Find a video URL by topic via web search. Returns the best candidate URL from yt-dlp-supported platforms (YouTube, TikTok, Vimeo, Twitter/X, Reddit, Instagram, Twitch, etc.): the LLM then passes it to download_video. " +
 		"Use when the user describes a video they want to find (\"that skater sunset clip\", \"the bear cooking demo\") and you need a URL. " +
-		"Do NOT call when the user already provided a URL — pass it straight to download_video. " +
+		"Do NOT call when the user already provided a URL: pass it straight to download_video. " +
 		"Returns title + source + URL; the LLM picks which to download next."
 }
 
@@ -85,7 +85,7 @@ func (t *FindVideoTool) Run(args map[string]any) (string, error) {
 	}
 	candidates := parseVideoCandidates(raw)
 	if len(candidates) == 0 {
-		return "", fmt.Errorf("no video candidates found in search results — try a more specific query or set `prefer` to a platform")
+		return "", fmt.Errorf("no video candidates found in search results: try a more specific query or set `prefer` to a platform")
 	}
 
 	// Score by platform priority + URL specificity. Sort stably so
@@ -104,18 +104,18 @@ func (t *FindVideoTool) Run(args map[string]any) (string, error) {
 	if count == 1 {
 		c := candidates[0]
 		return fmt.Sprintf(
-			"Found a URL (NOTE: this is a web link only — NO file has been downloaded):\nURL: %s\nTitle: %s\nSource: %s\n\n"+
+			"Found a URL (NOTE: this is a web link only, NO file has been downloaded):\nURL: %s\nTitle: %s\nSource: %s\n\n"+
 				"There is NO video file in the workspace yet, so you CANNOT attach or send it and must NOT write an [ATTACH:] marker for it. "+
-				"To deliver the video, call video(action=\"download\", url=\"%s\") next — that fetches the file into the workspace and attaches it automatically.",
+				"To deliver the video, call video(action=\"download\", url=\"%s\") next, that fetches the file into the workspace and attaches it automatically.",
 			c.URL, c.Title, c.Source, c.URL,
 		), nil
 	}
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Found %d candidate URLs (web links only — NO files downloaded yet):\n\n", len(candidates))
+	fmt.Fprintf(&sb, "Found %d candidate URLs (web links only, NO files downloaded yet):\n\n", len(candidates))
 	for i, c := range candidates {
 		fmt.Fprintf(&sb, "%d. %s\n   Title: %s\n   Source: %s\n\n", i+1, c.URL, c.Title, c.Source)
 	}
-	sb.WriteString("None of these can be attached or sent yet — they are not files. Pick the best fit and call video(action=\"download\", url=<URL>) to fetch it into the workspace and attach it automatically. Do not write an [ATTACH:] marker until download has run.")
+	sb.WriteString("None of these can be attached or sent yet: they are not files. Pick the best fit and call video(action=\"download\", url=<URL>) to fetch it into the workspace and attach it automatically. Do not write an [ATTACH:] marker until download has run.")
 	return sb.String(), nil
 }
 

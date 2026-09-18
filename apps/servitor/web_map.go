@@ -39,7 +39,7 @@ func (T *Servitor) handleMap(w http.ResponseWriter, r *http.Request) {
 	if appliance.Type == "workspace" {
 		// A workspace owns no system to map — its knowledge IS its members'.
 		// Refreshing it means refreshing them, individually.
-		http.Error(w, "a workspace has nothing of its own to map — refresh its member appliances instead", http.StatusBadRequest)
+		http.Error(w, "a workspace has nothing of its own to map: refresh its member appliances instead", http.StatusBadRequest)
 		return
 	}
 

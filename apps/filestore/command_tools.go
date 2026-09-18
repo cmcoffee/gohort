@@ -56,7 +56,7 @@ func SaveCommandTools(db Database, slug, name, desc string, acts []TempToolActio
 		return cmd, Error("say what this command is for in a sentence: it is what an agent reads before opening it")
 	}
 	if len(acts) == 0 {
-		return cmd, Error("a mapping with no actions does nothing — map at least one thing the command can do")
+		return cmd, Error("a mapping with no actions does nothing: map at least one thing the command can do")
 	}
 	for i, a := range acts {
 		switch {
@@ -77,7 +77,7 @@ func SaveCommandTools(db Database, slug, name, desc string, acts []TempToolActio
 		if a.WorkDir != "" {
 			if _, ok := a.Params[a.WorkDir]; !ok {
 				return cmd, Error("action " + a.Name + " sets work_dir to " + a.WorkDir +
-					" but declares no parameter called " + a.WorkDir + " — name the parameter the folder arrives in")
+					" but declares no parameter called " + a.WorkDir + ", name the parameter the folder arrives in")
 			}
 			// Required by construction. An action that declares where it runs
 			// cannot run without being told which folder, so leaving that to
@@ -121,7 +121,7 @@ func SetCommandApproved(db Database, slug, name string, on bool) (StoreCommand, 
 	// "agents: on" that hands out no tools — a switch that lies is worse than
 	// one that refuses.
 	if on && !cmd.Mapped() {
-		return cmd, Error("map this command first — there is nothing for an agent to call yet")
+		return cmd, Error("map this command first: there is nothing for an agent to call yet")
 	}
 	cmd.Approved = on
 	db.Set(commandsTable, commandKey(cmd.Slug, cmd.Name), cmd)
@@ -196,7 +196,7 @@ func storeCarriesLabel(db Database, slug string) string {
 	}
 	switch {
 	case mapped == 0:
-		return "—"
+		return "·"
 	case live == 0:
 		// Mapped and switched off is the state worth naming: the work is done
 		// and nothing can use it, which looks identical to unmapped otherwise.
@@ -313,7 +313,7 @@ func (T *FileStoreApp) handleCommandMapping(w http.ResponseWriter, r *http.Reque
 	case !cmd.Mapped():
 		state, status = "Not mapped yet", "warn"
 	case cmd.Approved:
-		state, status = "Live — agents that reach this folder can call it", "ok"
+		state, status = "Live: agents that reach this folder can call it", "ok"
 	}
 	writeJSON(w, map[string]any{
 		"tool_name": cmd.ToolName(), "tool_desc": cmd.ToolDesc,

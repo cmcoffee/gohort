@@ -46,8 +46,8 @@ var wizard_kinds = map[string]struct {
 	cortex      bool
 	memory_mode string
 }{
-	"assistant":  {"Assistant — a conversational agent that works with people", true, "chatbot"},
-	"specialist": {"Specialist — a focused agent for one job, used directly or by dispatch", false, "agent"},
+	"assistant":  {"Assistant: a conversational agent that works with people", true, "chatbot"},
+	"specialist": {"Specialist: a focused agent for one job, used directly or by dispatch", false, "agent"},
 }
 
 // wizard_template is one crafted starting point offered by the wizard's
@@ -129,15 +129,16 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 
 	typeStep := ui.FormStep{
 		Title: "Type",
-		Intro: "Pick what kind of agent this is and give it a name. The type sets sensible defaults (memory, standing mind) — everything stays adjustable in the editor afterward.",
+		Intro: "Pick what kind of agent this is and give it a name. The type sets sensible defaults (memory, standing mind): everything stays adjustable in the editor afterward.",
 		Fields: []ui.FormField{
 			{Field: "agent_kind", Type: "select", Label: "Agent type", Required: true,
 				Options: []ui.SelectOption{
-					{Value: "", Label: "— choose an agent type —"},
+					{Value: "", Label: "(choose an agent type)"},
 					{Value: "assistant", Label: wizard_kinds["assistant"].label},
 					{Value: "specialist", Label: wizard_kinds["specialist"].label},
 				},
-				Help: "One question: companion or tool? An Assistant talks with people — you, a room, a contact — keeps a standing mind, and remembers who it talks to. A Specialist is built for one job — a research agent with an intake form, a report generator — used by you directly or dispatched to by other agents, and remembers lessons rather than people. The Memory step adjusts either."},
+				Help:   "One question: companion or tool?",
+				Detail: "An Assistant talks with people, whether you, a room or a contact, keeps a standing mind, and remembers who it talks to.\n\nA Specialist is built for one job: a research agent with an intake form, a report generator. You use it directly, or other agents dispatch to it, and it remembers lessons rather than people.\n\nThe Memory step adjusts either."},
 			{Field: "name", Type: "text", Label: "Name", Required: true,
 				Placeholder: "Research helper", SuggestURL: "../api/agents/suggest"},
 			{Field: "description", Type: "text", Label: "Description",
@@ -152,7 +153,7 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 		// and collapses the guided steps (each gated on "!template")
 		// down to Name → Create. Not offered on preset deep links —
 		// they've already committed to a build.
-		tplOpts := []ui.SelectOption{{Value: "", Label: "No template — guided setup"}}
+		tplOpts := []ui.SelectOption{{Value: "", Label: "No template: guided setup"}}
 		for _, t := range wizardTemplates() {
 			tplOpts = append(tplOpts, ui.SelectOption{Value: t.id, Label: t.label})
 		}
@@ -160,7 +161,8 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 		typeStep.Fields = append([]ui.FormField{{
 			Field: "template", Type: "select", Label: "Start from a template",
 			Options: tplOpts,
-			Help:    "A template is a finished, tuned agent — its prompt, budgets, and tools copied as your own. Pick one and the guided questions collapse to just a name. Leave on guided setup to build from a brief instead.",
+			Help:    "A template is a finished, tuned agent: its prompt, budgets and tools copied as your own.",
+			Detail:  "Pick one and the guided questions collapse to just a name. Leave it on guided setup to build from a brief instead.",
 		}}, typeStep.Fields...)
 	}
 	if kindPreset != "" {
@@ -181,7 +183,7 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 			},
 			typeStep.Fields[1:]...)
 		if assistantRun {
-			typeStep.Intro = "Let's set up your personal assistant. Give it a name — you can rename it any time."
+			typeStep.Intro = "Let's set up your personal assistant. Give it a name: you can rename it any time."
 			typeStep.Fields[1].Placeholder = "e.g. Jarvis, Ada, Scout"
 		}
 	}
@@ -189,7 +191,7 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 	purposeStep := ui.FormStep{
 		Title:    "Purpose",
 		ShowWhen: "!template",
-		Intro:    "Describe the job in plain language. You are not writing the agent's prompt — this is the brief it gets drafted from, so concrete beats polished.",
+		Intro:    "Describe the job in plain language. You are not writing the agent's prompt: this is the brief it gets drafted from, so concrete beats polished.",
 		Fields: []ui.FormField{
 			// Pick-first, then write. A blank textarea is the hardest question
 			// on the form for someone who has not used the thing yet: they do
@@ -223,7 +225,7 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 		// Fields: 0 = purpose_picks, 1 = purpose (free text), 2 = example_tasks.
 		purposeStep.Fields[1].Label = "Anything else, in your own words?"
 		purposeStep.Fields[1].Rows = 3
-		purposeStep.Intro = "What do you want help with day to day? Plain language is perfect — this becomes the brief your assistant's working prompt is drafted from."
+		purposeStep.Intro = "What do you want help with day to day? Plain language is perfect: this becomes the brief your assistant's working prompt is drafted from."
 		purposeStep.Fields[1].Placeholder = "e.g. Keep track of my projects and deadlines, draft and tidy up emails, dig up answers when I ask, and remind me about the things I tell it to remember."
 		purposeStep.Fields[2].Placeholder = "What's on my plate this week?\nDraft a reply to this email.\nRemind me to call the vet tomorrow."
 	}
@@ -345,13 +347,13 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 	}
 
 	if assistantRun {
-		personaStep.Intro = "This is the agent you will speak to every day, so it is worth a minute.\n\nPick the answers you would actually want to hear. There are no wrong ones — they shape how it talks to you, not what it can do, and all of it is editable the moment you change your mind."
+		personaStep.Intro = "This is the agent you will speak to every day, so it is worth a minute.\n\nPick the answers you would actually want to hear. There are no wrong ones: they shape how it talks to you, not what it can do, and all of it is editable the moment you change your mind."
 	}
 
 	aboutStep := ui.FormStep{
 		Title:    "About you",
 		ShowWhen: "!template;agent_kind:assistant",
-		Intro:    "Optional, and worth it: what your assistant knows about you from the start. It keeps these as its working notes — view or edit them any time.",
+		Intro:    "Optional, and worth it: what your assistant knows about you from the start. It keeps these as its working notes: view or edit them any time.",
 		Fields: []ui.FormField{
 			{Field: "call_you", Type: "text", Label: "What should it call you?",
 				Placeholder: "e.g. Craig / boss / Dr. Lee"},
@@ -368,33 +370,36 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 	memoryStep := ui.FormStep{
 		Title:    "Memory",
 		ShowWhen: "!template",
-		Intro:    "How it remembers, and whether it keeps a standing mind. The defaults fit most agents — skip this step if unsure; everything stays adjustable in the editor.",
+		Intro:    "How it remembers, and whether it keeps a standing mind. The defaults fit most agents: skip this step if unsure; everything stays adjustable in the editor.",
 		Fields: []ui.FormField{
 			{Field: "memory", Type: "select", Label: "Memory",
 				Options: []ui.SelectOption{
-					{Value: "", Label: "Default for this type — Assistant: personalized, Specialist: lessons only"},
-					{Value: "personalized", Label: "Personalized — remembers the people it talks to, plus lessons"},
-					{Value: "lessons", Label: "Lessons only — remembers what works, not who"},
-					{Value: "none", Label: "None — starts fresh every conversation"},
+					{Value: "", Label: "Default for this type, Assistant: personalized, Specialist: lessons only"},
+					{Value: "personalized", Label: "Personalized: remembers the people it talks to, plus lessons"},
+					{Value: "lessons", Label: "Lessons only: remembers what works, not who"},
+					{Value: "none", Label: "None: starts fresh every conversation"},
 				},
-				Help: "Personalized stores facts about people attributed by name (\"Dana prefers texts before 8pm\") alongside general lessons — pick Lessons only for an agent shared across unrelated groups, so one room's personal details never surface in another. None turns off remembering across sessions entirely; uploaded knowledge and working notes still apply."},
+				Help:   "Whether the agent remembers people, only lessons, or nothing across sessions.",
+				Detail: "Personalized stores facts about people attributed by name (\"Dana prefers texts before 8pm\") alongside general lessons. Pick Lessons only for an agent shared across unrelated groups, so one room's personal details never surface in another.\n\nNone turns off remembering across sessions entirely. Uploaded knowledge and working notes still apply."},
 			{Field: "cortex", Type: "select", Label: "Standing mind",
 				Options: []ui.SelectOption{
-					{Value: "", Label: "Default for this type — Assistant: on, Specialist: off"},
-					{Value: "on", Label: "On — keep a persistent home thread"},
-					{Value: "off", Label: "Off — ordinary sessions only"},
+					{Value: "", Label: "Default for this type, Assistant: on, Specialist: off"},
+					{Value: "on", Label: "On: keep a persistent home thread"},
+					{Value: "off", Label: "Off: ordinary sessions only"},
 				},
-				Help: "A standing mind is the agent's persistent home thread (the 🧠 row pinned in its rail) where schedule reports and monitor wakes land, kept bounded by a rolling summary. Turn it off for a plain back-and-forth persona that nothing ever wakes."},
+				Help:   "A standing mind is the agent's persistent home thread, the 🧠 row pinned in its rail.",
+				Detail: "Schedule reports and monitor wakes land there, kept bounded by a rolling summary. Turn it off for a plain back-and-forth persona that nothing ever wakes."},
 		},
 	}
 
 	tuningStep := ui.FormStep{
 		Title:    "Tuning",
 		ShowWhen: "!template",
-		Intro:    "Optional — the defaults are fine. Skip anything you're unsure about; it's all editable later.",
+		Intro:    "Optional: the defaults are fine. Skip anything you're unsure about; it's all editable later.",
 		Fields: []ui.FormField{
 			{Field: "triggers", Type: "tags", Label: "Dispatch triggers",
-				Help: "Patterns that nudge the host to route a matching message to THIS agent first — case-insensitive substrings of the message (a pattern with * or ? matches attachment filenames instead). Use specific phrases its questions actually contain; loose ones over-fire. Empty is fine."},
+				Help:   "Patterns that nudge the host to route a matching message to THIS agent first.",
+				Detail: "They are case-insensitive substrings of the message; a pattern with * or ? matches attachment filenames instead. Use specific phrases its questions actually contain, because loose ones over-fire. Empty is fine."},
 		},
 	}
 
@@ -410,7 +415,7 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 	createFromTemplateStep := ui.FormStep{
 		Title:    "Create",
 		ShowWhen: "template",
-		Intro:    "Creating copies the template — its prompt, budgets, and tools — as your own agent under the name you chose, then opens the editor to customize it.",
+		Intro:    "Creating copies the template (its prompt, budgets, and tools) as your own agent under the name you chose, then opens the editor to customize it.",
 	}
 	redirectURL := "{id}"
 	if firstRun {
@@ -436,7 +441,7 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 			Title: "Welcome",
 			Intro: "You are about to create your agent: the one you will actually talk to.\n\n" +
 				"It keeps its own memory of you and your work, and it can hand jobs to specialist agents you add later: a researcher, a watcher, something that answers from your own documents. You talk to one thing; it decides who does the work.\n\n" +
-				"The next few questions are about who it is rather than what it does — how it talks to you, and how it handles you when you're wrong. None of it is permanent; all of it is editable the moment you change your mind.",
+				"The next few questions are about who it is rather than what it does: how it talks to you, and how it handles you when you're wrong. None of it is permanent; all of it is editable the moment you change your mind.",
 			Fields: []ui.FormField{
 				{Field: "agent_kind", Type: "hidden", Default: "assistant"},
 				{Field: "first_run", Type: "hidden", Default: "true"},
@@ -474,7 +479,7 @@ func (T *OrchestrateApp) renderAgentWizard(w http.ResponseWriter, r *http.Reques
 	if firstRun {
 		title = "Welcome"
 		sectionTitle = "Create your personal assistant"
-		sectionSub = "You don't have any agents of your own yet. Answer a few questions and your assistant is drafted for you — nothing is created until the last step."
+		sectionSub = "You don't have any agents of your own yet. Answer a few questions and your assistant is drafted for you: nothing is created until the last step."
 		head += wizardSkipLinkHTML(T.hasSharedReachableAgents(r, user))
 	}
 
@@ -566,9 +571,9 @@ func wizardAdvancedLinkHTML() string {
 // string); plain quotes only.
 func wizardSkipLinkHTML(hasShared bool) string {
 	label := "Skip for now"
-	title := "Skip the guided setup — you can come back via New agent"
+	title := "Skip the guided setup: you can come back via New agent"
 	if hasShared {
-		label = "Skip — use agents shared with you"
+		label = "Skip: use agents shared with you"
 		title = "Skip the guided setup and open the agents other users shared with you"
 	}
 	return fmt.Sprintf(`<style>
@@ -876,13 +881,13 @@ func wizardBrief(kindLabel string, req wizardRequest) string {
 		b.WriteString("Tone & style: " + s + "\n")
 	}
 	if tr := decodeWizardPicks(req.Traits); len(tr) > 0 {
-		b.WriteString("Character — how it deals with its user:\n")
+		b.WriteString("Character, how it deals with its user:\n")
 		for _, t := range tr {
 			b.WriteString("- " + t + "\n")
 		}
 	}
 	if m := wizardMoments(req); m != "" {
-		b.WriteString("How it should handle specific moments — the user picked these:\n" + m)
+		b.WriteString("How it should handle specific moments, the user picked these:\n" + m)
 	}
 	if n := strings.TrimSpace(req.StyleNotes); n != "" {
 		b.WriteString("How it should behave, in the user's words:\n" + n + "\n")

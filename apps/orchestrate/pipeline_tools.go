@@ -33,7 +33,7 @@ const maxPipelineDepth = 3
 // regular worker steps use, minus the plan/intent surface.
 func (t *chatTurn) runPipelineSubAgent(ctx context.Context, sysPrompt, userMsg string, allowedToolNames []string, maxRounds int) (string, error) {
 	if t.pipelineDepth >= maxPipelineDepth {
-		return "", fmt.Errorf("pipeline recursion depth exceeded (limit %d) — check that a pipeline tool isn't calling itself directly or transitively", maxPipelineDepth)
+		return "", fmt.Errorf("pipeline recursion depth exceeded (limit %d): check that a pipeline tool isn't calling itself directly or transitively", maxPipelineDepth)
 	}
 	t.pipelineDepth++
 	defer func() { t.pipelineDepth-- }()
@@ -117,7 +117,7 @@ func (t *chatTurn) createPipelineToolToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "create_pipeline_tool",
-			Description: "Author a multi-step sub-agent flow as a single callable tool, attached to ONE specific agent. Pipelines authored here are ALWAYS agent-scoped — saved into the target agent's tools[] and callable on the next turn against that agent, no admin approval required.\n\nThe `for_agent` parameter (or the session's authoring focus, set automatically by your most recent get_agent / create_agent call) determines which agent the pipeline attaches to. If neither is set, the call refuses with a directive error — agent-scoped pipelines need a target.\n\nUser-wide cross-cutting pipeline tools (available to every agent the user runs) are not authored via this tool — the admin creates those via the admin UI. Don't try to make user-wide pipelines from a chat conversation.",
+			Description: "Author a multi-step sub-agent flow as a single callable tool, attached to ONE specific agent. Pipelines authored here are ALWAYS agent-scoped: saved into the target agent's tools[] and callable on the next turn against that agent, no admin approval required.\n\nThe `for_agent` parameter (or the session's authoring focus, set automatically by your most recent get_agent / create_agent call) determines which agent the pipeline attaches to. If neither is set, the call refuses with a directive error, agent-scoped pipelines need a target.\n\nUser-wide cross-cutting pipeline tools (available to every agent the user runs) are not authored via this tool, the admin creates those via the admin UI. Don't try to make user-wide pipelines from a chat conversation.",
 			Parameters: map[string]ToolParam{
 				"name": {
 					Type:        "string",
@@ -147,11 +147,11 @@ func (t *chatTurn) createPipelineToolToolDef() AgentToolDef {
 				},
 				"max_rounds": {
 					Type:        "integer",
-					Description: "Optional cap on the sub-agent's LLM rounds. Default 6 — enough for a 3-4 step flow with retries. Raise to 10-12 only for genuinely complex flows.",
+					Description: "Optional cap on the sub-agent's LLM rounds. Default 6: enough for a 3-4 step flow with retries. Raise to 10-12 only for genuinely complex flows.",
 				},
 				"for_agent": {
 					Type:        "string",
-					Description: "Optional override for the target agent id or exact name. When omitted, the framework uses the session's authoring focus (the agent your most recent get_agent / create_agent call selected). Pass this explicitly only when you need to attach the pipeline to a DIFFERENT agent than the one currently in focus. If neither this nor authoring focus is set, the call errors out — pipelines must have a target.",
+					Description: "Optional override for the target agent id or exact name. When omitted, the framework uses the session's authoring focus (the agent your most recent get_agent / create_agent call selected). Pass this explicitly only when you need to attach the pipeline to a DIFFERENT agent than the one currently in focus. If neither this nor authoring focus is set, the call errors out: pipelines must have a target.",
 				},
 			},
 			Required: []string{"name", "description", "allowed_tools"},
@@ -159,7 +159,7 @@ func (t *chatTurn) createPipelineToolToolDef() AgentToolDef {
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			if pipelineAuthoringDisabled {
-				return "", errors.New("create_pipeline_tool is retired — the old 'tool that wraps a sub-agent' macro is superseded by the declarative `pipeline` tool. Author a multi-stage workflow with pipeline(action=\"create\", name=…, stages=[…]) and attach it to the agent via attached_pipelines; it surfaces as a callable run_<pipeline> tool")
+				return "", errors.New("create_pipeline_tool is retired: the old 'tool that wraps a sub-agent' macro is superseded by the declarative `pipeline` tool. Author a multi-stage workflow with pipeline(action=\"create\", name=…, stages=[…]) and attach it to the agent via attached_pipelines; it surfaces as a callable run_<pipeline> tool")
 			}
 			name := strings.TrimSpace(stringArg(args, "name"))
 			if name == "" {
@@ -169,7 +169,7 @@ func (t *chatTurn) createPipelineToolToolDef() AgentToolDef {
 			prompt := strings.TrimSpace(stringArg(args, "pipeline_prompt"))
 			steps := pipelineStepsFromArgs(args, "pipeline_steps")
 			if prompt == "" && len(steps) == 0 {
-				return "", errors.New("either pipeline_prompt (adaptive LLM-driven) or pipeline_steps (deterministic) is required — pick one based on whether the chain needs reasoning between steps")
+				return "", errors.New("either pipeline_prompt (adaptive LLM-driven) or pipeline_steps (deterministic) is required: pick one based on whether the chain needs reasoning between steps")
 			}
 			toolNames := stringSliceFromArgs(args, "allowed_tools")
 			if len(toolNames) == 0 {
@@ -185,7 +185,7 @@ func (t *chatTurn) createPipelineToolToolDef() AgentToolDef {
 				}
 				for i, s := range steps {
 					if !allowed[s.Tool] {
-						return "", fmt.Errorf("pipeline_steps[%d].tool %q is not in allowed_tools %v — add it to allowed_tools or pick a different tool", i, s.Tool, toolNames)
+						return "", fmt.Errorf("pipeline_steps[%d].tool %q is not in allowed_tools %v: add it to allowed_tools or pick a different tool", i, s.Tool, toolNames)
 					}
 				}
 			}
@@ -221,16 +221,16 @@ func (t *chatTurn) createPipelineToolToolDef() AgentToolDef {
 				autoDefaulted = true
 			}
 			if forAgent == "" {
-				return "", errors.New("create_pipeline_tool needs an agent to attach to — call get_agent (to modify an existing agent) or create_agent (to make a new one) first, which sets the authoring focus automatically for this session. Or pass for_agent=\"<id-or-name>\" explicitly. Pipelines must be agent-scoped; user-wide pipeline tools are admin-authored via the admin UI, not via this chat tool")
+				return "", errors.New("create_pipeline_tool needs an agent to attach to: call get_agent (to modify an existing agent) or create_agent (to make a new one) first, which sets the authoring focus automatically for this session. Or pass for_agent=\"<id-or-name>\" explicitly. Pipelines must be agent-scoped; user-wide pipeline tools are admin-authored via the admin UI, not via this chat tool")
 			}
 
 			// Resolve + authorize the target.
 			target, ok := findAgentByNameOrID(t.udb, t.user, forAgent)
 			if !ok {
-				return "", fmt.Errorf("for_agent=%q not found in your agents — call list_agents to see what's available, or create the agent first", forAgent)
+				return "", fmt.Errorf("for_agent=%q not found in your agents: call list_agents to see what's available, or create the agent first", forAgent)
 			}
 			if target.Owner != t.user {
-				return "", fmt.Errorf("for_agent=%q is a read-only seed agent — clone it first via clone_agent, then attach the tool to the clone", forAgent)
+				return "", fmt.Errorf("for_agent=%q is a read-only seed agent: clone it first via clone_agent, then attach the tool to the clone", forAgent)
 			}
 
 			// Install as a session-scoped draft so the LLM can dispatch
@@ -257,9 +257,9 @@ func (t *chatTurn) createPipelineToolToolDef() AgentToolDef {
 			}
 			prefix := ""
 			if autoDefaulted {
-				prefix = fmt.Sprintf("(auto-targeted %q — the agent you're currently authoring in this session) ", target.Name)
+				prefix = fmt.Sprintf("(auto-targeted %q: the agent you're currently authoring in this session) ", target.Name)
 			}
-			return fmt.Sprintf("%sPipeline tool %q %s on agent %q AND installed as a draft in this session — you can call %q with sample args on the next round to verify it works. Re-call create_pipeline_tool with the same name to iterate. When you're satisfied, END THE TURN with a one-line summary; the agent's saved copy is already the canonical version.", prefix, tt.Name, verb, target.Name, tt.Name), nil
+			return fmt.Sprintf("%sPipeline tool %q %s on agent %q AND installed as a draft in this session: you can call %q with sample args on the next round to verify it works. Re-call create_pipeline_tool with the same name to iterate. When you're satisfied, END THE TURN with a one-line summary; the agent's saved copy is already the canonical version.", prefix, tt.Name, verb, target.Name, tt.Name), nil
 		},
 	}
 }

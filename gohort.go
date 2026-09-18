@@ -499,10 +499,10 @@ func main() {
 	// Terminal access is servitor over MCP now — a governed agent with its own
 	// loop and memory — and the dashboard is where the rest lives.
 	if len(args) == 0 {
-		Stdout("gohort — run a fleet of agents on your own hardware.\n\n")
+		Stdout("gohort: run a fleet of agents on your own hardware.\n\n")
 		Stdout("  %s --setup    first-time setup: admin account, listen address, TLS\n", os.Args[0])
 		Stdout("  %s serve      start the web dashboard\n", os.Args[0])
-		Stdout("\nEverything else — models, agents, credentials, schedules — is configured\nin the dashboard once it is running.\n\n")
+		Stdout("\nEverything else (models, agents, credentials, schedules), is configured\nin the dashboard once it is running.\n\n")
 		flags.Usage()
 		command.Show()
 		return

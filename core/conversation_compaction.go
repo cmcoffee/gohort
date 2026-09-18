@@ -87,7 +87,7 @@ func CompactedView(msgs []Message, st CompactState, cfg CompactionConfig) (summa
 	through := clampThrough(st.SummarizedThrough, len(msgs))
 	recent = msgs[through:]
 	if s := strings.TrimSpace(st.Summary); s != "" {
-		summaryBlock = "\n\n[Prior conversation context — a summary of older exchanges that have aged out of the verbatim window below. Use it for continuity; treat it as recall, not a transcript. The messages below are the most recent.]\n" + s + "\n"
+		summaryBlock = "\n\n[Prior conversation context: a summary of older exchanges that have aged out of the verbatim window below. Use it for continuity; treat it as recall, not a transcript. The messages below are the most recent.]\n" + s + "\n"
 	}
 	return summaryBlock, recent
 }

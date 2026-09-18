@@ -143,7 +143,7 @@ func BuildRecipeFromWorkspace(workspaceDir string) ([]RecipeFile, error) {
 		}
 		total += fi.Size()
 		if maxTotal := maxRecipeTotalSize(); total > maxTotal {
-			return fmt.Errorf("recipe exceeds total size cap (%d bytes) — simplify the tool's workspace or split into multiple tools", maxTotal)
+			return fmt.Errorf("recipe exceeds total size cap (%d bytes): simplify the tool's workspace or split into multiple tools", maxTotal)
 		}
 		data, err := os.ReadFile(path)
 		if err != nil {

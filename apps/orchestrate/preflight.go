@@ -127,7 +127,7 @@ func preflightRecipients(udb Database, owner string, agent AgentRecord) []Prefli
 		case IsContactBlocked(RootDB, owner, recip):
 			out = append(out, PreflightFinding{
 				Gate: PreflightGateRecipient, Name: label, Fatal: true,
-				Detail: fmt.Sprintf("%s is blocked in permission settings — a scheduled message is dropped, not queued.", label),
+				Detail: fmt.Sprintf("%s is blocked in permission settings: a scheduled message is dropped, not queued.", label),
 				Fix:    "Unblock the contact in permission settings if this schedule is meant to reach them.",
 			})
 		case IsContactPreAuthorized(RootDB, owner, recip):
@@ -136,7 +136,7 @@ func preflightRecipients(udb Database, owner string, agent AgentRecord) []Prefli
 			out = append(out, PreflightFinding{
 				Gate: PreflightGateRecipient, Name: label,
 				Detail: fmt.Sprintf("Messaging %s unprompted needs approval. Answering an incoming message is in-thread and sends freely, "+
-					"but a scheduled fire has no incoming message to answer — so it queues instead of sending.", label),
+					"but a scheduled fire has no incoming message to answer, so it queues instead of sending.", label),
 				Fix: fmt.Sprintf("Pre-authorize the contact, or add this agent as an authorized sender on %q.", chFirst(ch.Name, "the channel")),
 			})
 		}
@@ -152,7 +152,7 @@ func PreflightSummary(findings []PreflightFinding) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("Heads-up — on an unattended run this would be held back:\n")
+	b.WriteString("Heads-up, on an unattended run this would be held back:\n")
 	for _, f := range findings {
 		b.WriteString("  • " + f.Name + ": " + f.Detail)
 		if f.Fix != "" {

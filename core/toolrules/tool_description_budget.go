@@ -43,7 +43,7 @@ func CheckDescriptionBudget(where, text string, max int) error {
 	if n <= max {
 		return nil
 	}
-	return fmt.Errorf("%s is %d characters — the cap is %d. This text is re-sent on every turn for the life of the tool, so it has to earn its length. "+
+	return fmt.Errorf("%s is %d characters: the cap is %d. This text is re-sent on every turn for the life of the tool, so it has to earn its length. "+
 		"Rewrite it as one or two sentences saying WHAT the tool does and WHEN to reach for it. Cut: worked examples, restated param docs, "+
 		"failure modes (put those in the error the tool returns, where they're read only when they happen), and anything the caller learns by simply calling it",
 		where, n, max)

@@ -253,7 +253,7 @@ func noteAdaptiveThinking(model string) {
 	adaptiveThinkModels[model] = true
 	adaptiveThinkMu.Unlock()
 	if !already {
-		Log("[llm] %s takes adaptive thinking rather than a token budget — switching for this model", model)
+		Log("[llm] %s takes adaptive thinking rather than a token budget: switching for this model", model)
 	}
 }
 
@@ -627,7 +627,7 @@ func parseAnthResponse(result anthResponse) *Response {
 func warnStopReason(stopReason string) {
 	switch stopReason {
 	case "max_tokens":
-		Warn("[anthropic]: response truncated (stop_reason=max_tokens) — raise max_tokens or the answer is cut off mid-thought")
+		Warn("[anthropic]: response truncated (stop_reason=max_tokens), raise max_tokens or the answer is cut off mid-thought")
 	case "refusal":
 		Warn("[anthropic]: model declined the request (stop_reason=refusal)")
 	}
@@ -797,11 +797,11 @@ func (a *anthStreamState) feed(data []byte) {
 		}
 	case "content_block_start":
 		if event.ContentBlock == nil {
-			Debug("[anthropic]: content_block_start at index %d carried no content_block — any tool input for this block will be dropped", event.Index)
+			Debug("[anthropic]: content_block_start at index %d carried no content_block, any tool input for this block will be dropped", event.Index)
 		}
 		if event.ContentBlock != nil {
 			if event.ContentBlock.Type != "text" && event.ContentBlock.Type != "tool_use" {
-				Debug("[anthropic]: content_block_start index=%d type=%q (not text/tool_use) — deltas for it are ignored",
+				Debug("[anthropic]: content_block_start index=%d type=%q (not text/tool_use), deltas for it are ignored",
 					event.Index, event.ContentBlock.Type)
 			}
 			bs := anthBlockState{blockType: event.ContentBlock.Type}
@@ -921,7 +921,7 @@ func (a *anthStreamState) finish(tag string, cause error) (*Response, error) {
 	if cause != nil {
 		why = cause.Error()
 	}
-	Warn("[%s]: stream ended before the terminal event (%s) — returning %d chars as an interrupted reply",
+	Warn("[%s]: stream ended before the terminal event (%s), returning %d chars as an interrupted reply",
 		tag, why, a.textContent.Len())
 	a.stopReason = stopInterrupted
 	return a.response(tag), nil

@@ -408,7 +408,7 @@ func init() {
 		Help: "How long a delivered chat attachment is stored before age alone removes it. Past this, " +
 			"an old message renders without its picture, so raise it if your users reopen threads " +
 			"older than this. Attachments are typically most of the store's bytes, so this is the " +
-			"knob that decides what the sweep actually reclaims — and the one to lower deliberately " +
+			"knob that decides what the sweep actually reclaims, and the one to lower deliberately " +
 			"rather than by default, since a store younger than the window you pick loses its whole " +
 			"history in one sweep once it ages past it. 0 disables it, leaving only the 500-per-user " +
 			"cap.",
@@ -450,7 +450,7 @@ func init() {
 			"and can never appear. Deletes nothing.",
 		func(ctx context.Context) int {
 			w := CurrentImageReapWindows()
-			Log("[image-reap] dry run over %q — ring %s, attachments %s, orphans %s",
+			Log("[image-reap] dry run over %q: ring %s, attachments %s, orphans %s",
 				ImageDir(), reapWindowLabel(w.Ring), reapWindowLabel(w.Delivered), reapWindowLabel(w.Orphan))
 			if !w.Any() {
 				Log("[image-reap] every window is disabled; nothing is eligible")
@@ -468,7 +468,7 @@ func init() {
 	RegisterMaintenanceFunc("Reclaim space",
 		"reap_images",
 		"Reclaim old images (DELETES)",
-		"Removes exactly what the dry run above lists. Run the dry run first — it uses the same "+
+		"Removes exactly what the dry run above lists. Run the dry run first: it uses the same "+
 			"walk, so what it shows is what this removes.",
 		func(ctx context.Context) int {
 			w := CurrentImageReapWindows()

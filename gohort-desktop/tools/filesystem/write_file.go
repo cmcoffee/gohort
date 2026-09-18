@@ -25,7 +25,7 @@ type write_file_tool struct{}
 func (t *write_file_tool) Name() string { return "filesystem_write_file" }
 
 func (t *write_file_tool) Desc() string {
-	return "Create, overwrite, or append to a text file on the host filesystem of the connected gohort-desktop client. Gated by a SEPARATE write-allowlist from reads — the first write to a new folder prompts the user to approve write access there. Use to save output, edit a config file, or create a file the user asked for. Set append=true to add to the end of an existing file instead of replacing it. Returns a confirmation with the byte count."
+	return "Create, overwrite, or append to a text file on the host filesystem of the connected gohort-desktop client. Gated by a SEPARATE write-allowlist from reads: the first write to a new folder prompts the user to approve write access there. Use to save output, edit a config file, or create a file the user asked for. Set append=true to add to the end of an existing file instead of replacing it. Returns a confirmation with the byte count."
 }
 
 func (t *write_file_tool) Params() map[string]core.ToolParam {

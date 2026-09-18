@@ -1049,7 +1049,8 @@ func init() {
 	// and the defaults) stays here, which is why core makes the calls.
 	promotion.TuneDurationFunc = TuneDuration
 	promotion.TuneIntFunc = TuneInt
-	RegisterTunable(TunableSpec{Key: "tune_promotion_window", Category: "Timeouts", Label: "Sub-session stickiness window", Help: "How long an idle sub-session stays joinable after its last reply before the next turn falls through to the host LLM.", Kind: KindMinutes, Default: 5, Min: 1, Max: 60})
+	RegisterTunable(TunableSpec{Key: "tune_promotion_window", Category: "Timeouts", Label: "Sub-session stickiness window", Help: "How long an idle sub-session stays joinable after its last reply.",
+		Detail: "After that, the next turn falls through to the host LLM.", Kind: KindMinutes, Default: 5, Min: 1, Max: 60})
 	RegisterTunable(TunableSpec{Key: "tune_promotion_turn_cap", Category: "Limits", Label: "Sub-session turn cap", Help: "Maximum number of follow-up turns a single promoted sub-session will serve.", Kind: KindInt, Default: 8, Min: 1, Max: 50})
 
 	// provenance: recency/staleness weights come from the tunables registry.

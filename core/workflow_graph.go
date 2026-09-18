@@ -487,7 +487,7 @@ func edgeTitle(e WorkflowEdge, fired int) string {
 	case fired > 1:
 		parts = append(parts, "taken "+strconv.Itoa(fired)+" times in this conversation")
 	}
-	return strings.Join(parts, " — ")
+	return strings.Join(parts, " · ")
 }
 
 func svgDefs() string {
@@ -519,7 +519,7 @@ func noteSuffix(note string) string {
 	if note == "" {
 		return ""
 	}
-	return " — " + note
+	return " · " + note
 }
 
 // gTrunc caps a label by RUNE count, so a multi-byte name is cut where it

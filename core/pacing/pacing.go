@@ -212,7 +212,7 @@ func askedTime(args map[string]any, start time.Time, loc *time.Location) (time.T
 				return ts, nil
 			}
 		}
-		return time.Time{}, fmt.Errorf("could not read at=%q — use 'YYYY-MM-DD HH:MM' (24-hour, your local time) or an RFC3339 timestamp, or pass minutes instead", raw)
+		return time.Time{}, fmt.Errorf("could not read at=%q, use 'YYYY-MM-DD HH:MM' (24-hour, your local time) or an RFC3339 timestamp, or pass minutes instead", raw)
 	}
 	mins := core.IntArg(args, "minutes")
 	if mins <= 0 {

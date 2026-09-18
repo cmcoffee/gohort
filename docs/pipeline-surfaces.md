@@ -1,8 +1,8 @@
-# Pipeline surfaces — the list, the page, and why they match the machine editor
+# Pipeline surfaces: the list, the page, and why they match the machine editor
 
 A pipeline had no UI at all. It was authored from chat through the `pipeline` grouped tool and
 attached from a picker, so "what pipelines do I have, and is any of them live" had no answer outside
-asking an agent — while `list`, `export`, `import`, `delete` and `run` all existed in the HTTP layer
+asking an agent, while `list`, `export`, `import`, `delete` and `run` all existed in the HTTP layer
 with nothing calling them. This is what closed that (v0.6.221–231), and the decisions worth knowing
 before changing it.
 
@@ -14,7 +14,7 @@ purpose, and they differ in four places on purpose.
 
 Under Machines, because they are the same kind of thing to somebody looking for one.
 
-Each row says what the pipeline is MADE of — `2 worker, 1 fanout · 1 worth a look` — and **who can
+Each row says what the pipeline is MADE of (`2 worker, 1 fanout · 1 worth a look`), and **who can
 call it**. That second column is the point: a pipeline reaches an agent as a tool named
 `run_<name>`, so one attached to nothing is inert, exactly as an unattached machine is. Both facts
 are computed server-side (`pipelineRow`) rather than in the page, so a row says the same thing
@@ -25,7 +25,7 @@ Three ways in, on one line, because they are alternatives rather than steps:
 - **New pipeline** mints `core.StarterPipeline` and lands you in it. It runs as written, uses no
   tools so it works in any deployment, and teaches the rule that is easiest to get wrong by
   demonstrating it: a later stage reads an earlier one by name (`{stage:plan.focus}`). A test asserts
-  it validates AND carries no findings — a starter with a finding teaches the finding.
+  it validates AND carries no findings: a starter with a finding teaches the finding.
 - **Describe one…** drafts from a paragraph, on its own page rather than in a dialog. That is not a
   style choice: `ui.ModalButton` opens a native `<dialog>` with `showModal()`, which renders in the
   browser's TOP LAYER above every z-index, so a failure toast raised inside one is invisible
@@ -46,7 +46,7 @@ rendering both side by side.
 
 `SectionNav` is on, so one section shows at a time and the rail IS the stage list.
 
-**The picture is pinned above the sections**, not parked in one of them — with SectionNav a diagram in
+**The picture is pinned above the sections**, not parked in one of them, with SectionNav a diagram in
 its own section can never be on screen with the stage being read, and a branch or a fanout is exactly
 what a stage's own form cannot show. Every box links to its stage's section, addressed by the slug
 the rail computes from the section titles; `stageSectionTitle` is the one place that title is written,
@@ -56,7 +56,7 @@ as and why.
 
 ## The per-stage form
 
-One form per stage, with the controls that stage actually has and only those — a fanout has a
+One form per stage, with the controls that stage actually has and only those: a fanout has a
 `fan_over` and a branch does not, and a form showing every field to every stage teaches that they are
 all the same thing.
 
@@ -74,24 +74,24 @@ more here than on machines: a pipeline's validator REFUSES what it cannot resolv
 ### What this stage returns (v0.6.239)
 
 Editable, as a `rows` control per field. It was a read-only card at first, on the reasoning that the
-tool writes this shape well — which was right about the SHAPE and wrong about the audience: declaring
+tool writes this shape well, which was right about the SHAPE and wrong about the audience: declaring
 output is how a pipeline stops being a chain of prose, so leaving it to the tool meant the one thing
 that makes a stage useful to the NEXT stage was the one thing the page could not change.
 
 The two questions are asked in ORDER, the way the machine editor learned to ask them: is this
-something the stage WORKS OUT, or a value the pipeline already HOLDS — and only then what to call it.
+something the stage WORKS OUT, or a value the pipeline already HOLDS, and only then what to call it.
 A single combo box asks both at once and hides the second answer behind a dropdown arrow nobody looks
 for.
 
 A **filled** field's source is a picker, not a text box, listing `{input}`, `{prev}`, and every field
 an EARLIER stage declares. Earlier only: stages run strictly in order and `Validate` refuses a forward
 reference, so offering one would be offering a save that cannot succeed. A filled field's type and
-instruction are not shown at all — it holds text, and there is nothing to instruct.
+instruction are not shown at all: it holds text, and there is nothing to instruct.
 
 What the control does NOT edit: `enum` (a list inside a row) and nested `fields` (a shape inside a
-shape). Both are **preserved** through a save rather than dropped — a form that silently deletes what
+shape). Both are **preserved** through a save rather than dropped: a form that silently deletes what
 it cannot show is the worst of the three possible behaviours, worse than refusing and worse than
-read-only — and the card beneath names them as the tool's, so the absence is explained rather than
+read-only, and the card beneath names them as the tool's, so the absence is explained rather than
 mysterious. A **loop's body** stays the tool's for the same reason.
 
 ### Renaming rewrites every reference
@@ -106,7 +106,7 @@ is left alone.
 ### Removing refuses, and says what is in the way
 
 `RemoveStage` refuses while anything still reads the stage, naming every reader with the place it
-reads from — `dig (fan_over)`, `answer (prompt)`, `calc (args.x)`.
+reads from: `dig (fan_over)`, `answer (prompt)`, `calc (args.x)`.
 
 This is the deliberate divergence from machines. A machine's `RemoveStep` silently drops every
 reference to the deleted step, because those references live in FIELDS and dropping one is
@@ -120,7 +120,7 @@ it does not touch. It reuses the drafter, the decoder (`parsePipelineStages`) an
 discipline, so a revised pipeline cannot be a third dialect. The ID does not move, so every agent
 that attached it keeps its `run_<name>` tool.
 
-The reply names what changed in STAGES — added, removed, changed (instructions) or changed (wiring) —
+The reply names what changed in STAGES, added, removed, changed (instructions) or changed (wiring)
 never the word "revised", because a model that ignored the instruction and one that followed it
 produce that word identically. That reporting earned itself during the build: the first version of
 its test omitted a stage's `"model": "lead"` from the stub reply and the report caught it.
@@ -132,13 +132,13 @@ wrote.
 
 ## Run it
 
-`ui.PipelinePanel`, pointed at the pipeline's own `stream` / `sessions` endpoints — the framework's
+`ui.PipelinePanel`, pointed at the pipeline's own `stream` / `sessions` endpoints: the framework's
 panel, not a Run box. A custom app backed by a pipeline already mounts exactly this, so a pipeline
 gets the streaming transcript, the run history, bulk pruning and cancel by pointing at its own
 endpoints instead of growing a second, worse copy of all four.
 
 The input field is named `topic` because that is what `PipelineRunInput` reads (it accepts
-`input|topic`, and the panel titles a run from it) — a field named for the form rather than for the
+`input|topic`, and the panel titles a run from it): a field named for the form rather than for the
 endpoint submits into nothing.
 
 And it says what it is. A machine's *Try it* is a REHEARSAL: no tools, and the step it lands in is
@@ -162,13 +162,13 @@ a loop turns one line of a stage list into twelve calls. The fanout number comes
 
 ## What pipelines deliberately do NOT have
 
-- **No checklist ("What is still missing").** `Validate` REFUSES rather than reports, at every door —
+- **No checklist ("What is still missing").** `Validate` REFUSES rather than reports, at every door
   the stage form, draft, revise, import, and the tool. A stored pipeline therefore has no outstanding
   problems to list. Machines keep imperfect drafts because their checklist is where problems belong.
 - **No repair button.** Same reason: there is no stored broken state to mechanically settle.
 - **Advice, though, is shared.** `PipelineDef.Advice` reports the one finding whose fix is prose (a
   prompt hand-rolling the JSON its declared fields already produce), using the same sentence machines
-  use — see [pipeline-structured-outputs.md](pipeline-structured-outputs.md), which also records a
+  use: see [pipeline-structured-outputs.md](pipeline-structured-outputs.md), which also records a
   second advice rule that was built, tested against the pipelines this repo ships, and removed.
 
 ## Files
@@ -179,6 +179,6 @@ a loop turns one line of a stage list into twelve calls. The fanout number comes
 | `apps/orchestrate/pipeline_editor.go` | per-stage form fields, the stages endpoint, Assign, cost |
 | `apps/orchestrate/pipeline_revise.go` | describe-a-change, undo, and the drafter |
 | `core/pipeline_edit.go` | `RenameStage`, `RemoveStage`, `StageReferences` |
-| `core/pipeline_graph.go` | `PipelineDef.Graph` — the adapter for the shared renderer |
+| `core/pipeline_graph.go` | `PipelineDef.Graph`: the adapter for the shared renderer |
 | `core/pipeline_advice.go` | the soft findings |
 | `apps/orchestrate/pipelines_http.go` | the collection/item routes, `pipelineRow`, duplicate |

@@ -64,10 +64,10 @@ func (p *PipelinePlan) walk(stages []PipelineStage, depth int) {
 		bodyMin, bodyMax := bodyCost(s.Body)
 		switch s.Kind {
 		case StageBranch:
-			step.RunBy = "no model — reads " + orPlaceholder(s.When, "a condition") + " and decides"
+			step.RunBy = "no model: reads " + orPlaceholder(s.When, "a condition") + " and decides"
 			step.Note = branchNote(s)
 		case StageTool:
-			step.RunBy = "no model — calls " + orPlaceholder(s.Tool, "a tool") + " directly"
+			step.RunBy = "no model: calls " + orPlaceholder(s.Tool, "a tool") + " directly"
 		case StageAgent:
 			step.RunBy = "agent " + orPlaceholder(s.Agent, "(unnamed)")
 			step.Min, step.Max = 1, 1
@@ -189,7 +189,7 @@ func branchNote(s PipelineStage) string {
 	if to := strings.TrimSpace(s.SkipTo); to != "" {
 		return "skips ahead to " + to + " when it holds"
 	}
-	return "ENDS the run when it holds — nothing after this stage happens"
+	return "ENDS the run when it holds: nothing after this stage happens"
 }
 
 func boundedRounds(n int) int {

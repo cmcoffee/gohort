@@ -1,4 +1,4 @@
-# Public App Submissions — writes on the capability URL
+# Public App Submissions: writes on the capability URL
 
 Status: **design / target** (not built).
 

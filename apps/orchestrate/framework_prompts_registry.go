@@ -26,6 +26,6 @@ func init() {
 	// = comma-separated bare names (≈15 chars/tool). Overriding this key is the
 	// live A/B lever for slimming the biggest always-on prompt contributor.
 	reg("framework.tools_directive", "Tools available (digest)", "Orchestration",
-		"Always, when tools are in the catalog. Template — placeholders: {tool_list} = bulleted name+description digest; {tool_names} = comma-separated bare names.",
+		"Always, when tools are in the catalog. Template, placeholders: {tool_list} = bulleted name+description digest; {tool_names} = comma-separated bare names.",
 		toolsDirectiveDefault)
 }

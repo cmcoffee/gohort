@@ -50,7 +50,7 @@ func (T *Servitor) runWorkspaceSession(ctx context.Context, id, userID string, w
 	if len(relevant) > 0 {
 		emit(id, probeEvent{Kind: "status", Text: "Scout matched: " + strings.Join(relevant, ", ")})
 	} else {
-		emit(id, probeEvent{Kind: "status", Text: "Scout found no direct matches — the lead will choose where to look."})
+		emit(id, probeEvent{Kind: "status", Text: "Scout found no direct matches: the lead will choose where to look."})
 	}
 	if len(missing) > 0 {
 		emit(id, probeEvent{Kind: "status", Text: "Unavailable member(s): " + strings.Join(missing, ", ")})

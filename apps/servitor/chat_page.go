@@ -31,7 +31,7 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 	// OptionPairs lets us show the human-readable name while keeping
 	// the opaque UUID as the form value.
 	applianceOpts := []ui.SelectOption{
-		{Value: "", Label: "— select appliance —"},
+		{Value: "", Label: "(select appliance)"},
 	}
 	// Client-side id→type map so the page can adapt per-type UI (e.g. hide
 	// the terminal pane for repo appliances, which have nothing to attach to).
@@ -194,7 +194,7 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 							Method: "client", URL: "servitor_open_profile"},
 						{Label: "Rules", Title: "Edit the assistant's rules for this appliance",
 							Method: "client", URL: "servitor_open_rules"},
-						{Label: "Memory", Title: "Manage this appliance's agent memory — Saved facts, Reference Memory, and Graph Memory",
+						{Label: "Memory", Title: "Manage this appliance's agent memory: Saved facts, Reference Memory, and Graph Memory",
 							Method: "client", URL: "servitor_appliance_memory"},
 						{Label: "Refresh", Title: "Re-map the selected appliance. Repositories also pull the latest code first.",
 							Method: "client", URL: "servitor_run_map", Variant: "primary"},
@@ -202,11 +202,11 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 						// overflow menu so the toolbar stays lean.
 						{Label: "Map App", Title: "Enumerate a specific command's subcommands and flags",
 							Method: "client", URL: "servitor_run_mapapp", Group: "More"},
-						{Label: "Permissions", Title: "Choose which categories of risky command run without asking — database writes, file deletion, outbound calls, system control. Unchecked categories still prompt before each command.",
+						{Label: "Permissions", Title: "Choose which categories of risky command run without asking: database writes, file deletion, outbound calls, system control. Unchecked categories still prompt before each command.",
 							Method: "client", URL: "servitor_permissions", Group: "More"},
-						{Label: "Copy session", Title: "Copy the full session as markdown — every user message, every assistant round, every tool call/result — for pasting into a prompt-tuning chat.",
+						{Label: "Copy session", Title: "Copy the full session as markdown (every user message, every assistant round, every tool call/result) for pasting into a prompt-tuning chat.",
 							Method: "client", URL: "copy_session", Group: "More"},
-						{Label: "Export knowledge", Title: "Download this system's accumulated knowledge (profile, facts, techniques, logs) as a markdown file — credentials excluded — for handing to Claude to help build or improve a support tool.",
+						{Label: "Export knowledge", Title: "Download this system's accumulated knowledge (profile, facts, techniques, logs) as a markdown file (credentials excluded) for handing to Claude to help build or improve a support tool.",
 							Method: "client", URL: "servitor_export_knowledge", Group: "More"},
 						{Label: "Clear Memory", Title: "Wipe stored profile, facts, knowledge, and notes for this appliance",
 							Method: "client", URL: "servitor_clear_memory", Variant: "danger", Group: "More"},
@@ -266,7 +266,7 @@ func (T *Servitor) handleChatConfirm(w http.ResponseWriter, r *http.Request) {
 		// Say so rather than answering 204. A silent success settles the card
 		// as answered while the run stays blocked, which reads as servitor
 		// ignoring the click; the runtime's catch re-enables the buttons.
-		http.Error(w, "no pending confirmation on any of your sessions — it may have already been answered, or the run may have ended", http.StatusConflict)
+		http.Error(w, "no pending confirmation on any of your sessions: it may have already been answered, or the run may have ended", http.StatusConflict)
 		return
 	}
 	Log("[servitor] %s answered confirm on session %s: allow=%v", user, delivered, allow)

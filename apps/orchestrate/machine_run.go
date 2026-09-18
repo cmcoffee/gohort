@@ -61,7 +61,7 @@ func (T *OrchestrateApp) handleMachineRuns(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if probs := def.Problems(); len(probs) > 0 && sub == "stream" {
-		http.Error(w, "this machine will not run yet — "+probs[0]+" ("+strconv.Itoa(len(probs))+" outstanding). Its checklist lists them.",
+		http.Error(w, "this machine will not run yet: "+probs[0]+" ("+strconv.Itoa(len(probs))+" outstanding). Its checklist lists them.",
 			http.StatusBadRequest)
 		return
 	}
@@ -117,7 +117,7 @@ func (T *OrchestrateApp) runMachineStreaming(ctx context.Context, def MachineDef
 		id := "phase-" + strconv.Itoa(seq)
 		title := ph.Name
 		if d := strings.TrimSpace(ph.Desc); d != "" {
-			title += " — " + d
+			title += " · " + d
 		}
 		sink(PipelineEvent{Kind: "block", ID: id, Type: "phase", Title: title})
 		out, err := base(ctx, ph, prompt)

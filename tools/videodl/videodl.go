@@ -157,7 +157,7 @@ func (t *DownloadVideoTool) RunWithSession(args map[string]any, sess *ToolSessio
 				if st, statErr := os.Stat(abs); statErr == nil && st.Size() > 0 {
 					Debug("[videodl] cache hit for %s → %s (%d bytes)", target, entry.Filename, entry.Bytes)
 					return fmt.Sprintf(
-						"Already fetched %q (%s) earlier in this conversation — the user already has this clip in their message history. NO redownload performed. Do NOT call workspace(attach) for this; it would duplicate-deliver the same file. If the user is asking about the video they already received, answer from context.",
+						"Already fetched %q (%s) earlier in this conversation: the user already has this clip in their message history. NO redownload performed. Do NOT call workspace(attach) for this; it would duplicate-deliver the same file. If the user is asking about the video they already received, answer from context.",
 						entry.Filename, humanSize(entry.Bytes),
 					), nil
 				}
@@ -223,9 +223,9 @@ func (t *DownloadVideoTool) RunWithSession(args map[string]any, sess *ToolSessio
 	meta := ExtractVideoMetadata(data)
 
 	var sb strings.Builder
-	fmt.Fprintf(&sb, "Stored at %q (%s). To deliver the file to the user, call workspace(action=\"attach\", path=%q, cleanup=true) — most URL pastes imply the user wants the file back. If you're only analyzing the video (user asked \"what's in this\", not \"send this\"), skip the attach.\n", name, humanSize(int64(len(data))), name)
+	fmt.Fprintf(&sb, "Stored at %q (%s). To deliver the file to the user, call workspace(action=\"attach\", path=%q, cleanup=true): most URL pastes imply the user wants the file back. If you're only analyzing the video (user asked \"what's in this\", not \"send this\"), skip the attach.\n", name, humanSize(int64(len(data))), name)
 	if len(frames) > 0 {
-		fmt.Fprintf(&sb, "Sampled %d frames for visual analysis — they will be available to you on the next round so you can describe what you're sending.\n", len(frames))
+		fmt.Fprintf(&sb, "Sampled %d frames for visual analysis: they will be available to you on the next round so you can describe what you're sending.\n", len(frames))
 	}
 	if meta != "" {
 		sb.WriteString("\n")

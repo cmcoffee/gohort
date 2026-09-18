@@ -202,8 +202,8 @@ var ListExternalReachableAgentsFn func(db Database, owner string, granted func(c
 // key's chosen subset, not this list.
 func ListExternalTargets(db Database, user string) []ExternalTarget {
 	out := []ExternalTarget{
-		{Value: "worker", Label: "worker — fast tier, no agent", Group: "Tiers"},
-		{Value: "lead", Label: "lead — strong tier, no agent", Group: "Tiers"},
+		{Value: "worker", Label: "worker: fast tier, no agent", Group: "Tiers"},
+		{Value: "lead", Label: "lead: strong tier, no agent", Group: "Tiers"},
 	}
 	if ListExternalTargetsFn != nil {
 		out = append(out, ListExternalTargetsFn(db, user)...)
@@ -282,7 +282,7 @@ func KeyAllowsAppAgent(db Database, user string, token *AccountToken, agentID st
 		return false, "an admin has not enabled " + label + " access for your account (Admin > Feature Access)"
 	}
 	if token != nil && !token.AllowsFeature(k) {
-		return false, "this API key is not allowed to reach " + label + " — enable \"" + label + "\" on the key (Account > keys > Configure access)"
+		return false, "this API key is not allowed to reach " + label + ", enable \"" + label + "\" on the key (Account > keys > Configure access)"
 	}
 	return true, ""
 }

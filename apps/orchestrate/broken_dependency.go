@@ -61,7 +61,7 @@ func eventMonitorDependencyError(m EventMonitor) string {
 	// into a thread no user can open. A monitor with a channel target is
 	// exempt (delivery goes into the channel, not an agent thread).
 	if strings.TrimSpace(m.WakeAgent) == "" && strings.TrimSpace(m.WakeChannel) == "" {
-		return "it has no wake agent — its old implicit default (the retired Chat seed) no longer runs; relink an agent to resume"
+		return "it has no wake agent: its old implicit default (the retired Chat seed) no longer runs; relink an agent to resume"
 	}
 	if !agentExists(m.Owner, m.WakeAgent) {
 		return fmt.Sprintf("its wake agent was deleted (id %s)", m.WakeAgent)
@@ -108,7 +108,7 @@ func eventMonitorDependencyError(m EventMonitor) string {
 func standingAgentDependencyError(sa StandingAgent) string {
 	if sa.TargetsPipeline() {
 		if !pipelineExists(sa.Owner, sa.PipelineID) {
-			return "its target pipeline is out of reach — " + pipelineMissingReason(sa.Owner, sa.PipelineID)
+			return "its target pipeline is out of reach: " + pipelineMissingReason(sa.Owner, sa.PipelineID)
 		}
 		return ""
 	}
@@ -125,7 +125,7 @@ func standingAgentDependencyError(sa StandingAgent) string {
 		def, ok := machineForUser(sa.Owner, sa.MachineID)
 		switch {
 		case !ok:
-			return "its target machine is out of reach — " + machineMissingReason(sa.Owner, sa.MachineID)
+			return "its target machine is out of reach: " + machineMissingReason(sa.Owner, sa.MachineID)
 		case !def.Unattended:
 			return "its target machine " + strconv.Quote(def.Name) + " converses rather than runs, so a schedule has nobody to answer the step that waits"
 		}
@@ -185,7 +185,7 @@ func parkedStateLabel(cause, reason string) string {
 	if strings.TrimSpace(reason) == "" {
 		return head
 	}
-	return head + " — " + reason
+	return head + " · " + reason
 }
 
 // wireDependencyGuards installs the fire-path resolvers + the credential-delete

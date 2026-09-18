@@ -154,7 +154,7 @@ func (T *CustomApps) dispatchScheduledAction(_ context.Context, t ScheduledTrigg
 		if last := appLastViewed(owner, slug); !last.IsZero() &&
 			time.Since(last) > time.Duration(d)*24*time.Hour {
 			pauseTrigger(owner, t.Name)
-			Log("[customapps] %s/%s idle > %dd — pausing self-update", slug, actName, d)
+			Log("[customapps] %s/%s idle > %dd: pausing self-update", slug, actName, d)
 			return
 		}
 	}

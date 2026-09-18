@@ -1,23 +1,23 @@
-# Servitor Evidence Bundles — asking questions of files you hand it
+# Servitor Evidence Bundles: asking questions of files you hand it
 
 Status: **slices 1, 3 and 4 built** (v0.6.016). A new appliance type whose
-content is a set of uploaded files — a support dump, a log tarball, an encrypted
-diagnostic blob — staged, expanded, ingested, and then investigated with the
+content is a set of uploaded files (a support dump, a log tarball, an encrypted
+diagnostic blob) staged, expanded, ingested, and then investigated with the
 same lead/worker machinery every other appliance type already uses.
 
 What shipped, and where it differs from the design below:
 
-- `bundle_store.go` — line-sliced encrypted storage plus the per-file index.
-  `bundle_format.go` — format detection, timestamp/severity/host parsing.
-  `bundle_ingest.go` — expansion and the single-pass ingest.
-  `bundle_upload.go` — the streaming upload and the ingest trigger.
-  `bundle_tools.go` — the five worker tools. `bundle_prompts.go` — the
+- `bundle_store.go`: line-sliced encrypted storage plus the per-file index.
+  `bundle_format.go`: format detection, timestamp/severity/host parsing.
+  `bundle_ingest.go`: expansion and the single-pass ingest.
+  `bundle_upload.go`: the streaming upload and the ingest trigger.
+  `bundle_tools.go`: the five worker tools. `bundle_prompts.go`: the
   investigator / worker / lead / consolidation prompts.
 - **Upload is one request per file, and staging is separate from ingest.** The
   design implied a batch POST. Per-file requests are what make progress and
   retry per file real, and ingesting after each one would start N passes over a
   half-staged tree, each wiping the one before it. So `/api/bundle/upload`
-  stages and `/api/bundle/ingest` runs once at the end — which doubles as the
+  stages and `/api/bundle/ingest` runs once at the end, which doubles as the
   retry path after a failed ingest, with no re-upload.
 - **Resumable chunked upload was NOT built.** A large upload streams in one
   request; if the connection drops, that file starts over. The per-file retry
@@ -36,7 +36,7 @@ What shipped, and where it differs from the design below:
 - **A line with no parseable timestamp survives a time window.** The
   continuation lines of a stack trace carry no time of their own, and filtering
   them out would sever a trace from the message that introduced it.
-- **`purgeAppliance` now drops the bulk content stores** — both the bundle
+- **`purgeAppliance` now drops the bulk content stores**: both the bundle
   store and, pre-existing, the repo store, which a deleted repo appliance had
   been leaving behind in encrypted storage that nothing pointed at.
 - **`UploadPanel` is a new generic `core/ui` component**, not a servitor
@@ -60,7 +60,7 @@ The question this is for:
 
 Answering it means joining four things: the log lines in the bundle, the code in
 the repo that emits them, the runbook in a collection that says what the service
-is supposed to do, and — often — a live lab box you can reproduce against.
+is supposed to do, and (often), a live lab box you can reproduce against.
 Servitor already joins the last three (`apps/servitor/web.go:3773`). The bundle
 is the missing leg.
 
@@ -127,11 +127,11 @@ same standard rather than borrowed from orchestrate.
    windows, line addressing, grep with context, first/last-seen, and a merged
    cross-file timeline. Embedding a million log lines is the wrong instrument
    and would bury the vector store.
-6. **No archive support** in `ExtractDocument` — no gz, zip, tar, bz2, or xz.
+6. **No archive support** in `ExtractDocument`: no gz, zip, tar, bz2, or xz.
 
 ## The build
 
-### Slice 1 — the bundle appliance and upload
+### Slice 1: the bundle appliance and upload
 
 A fifth `Type: "bundle"` in the picker (`apps/servitor/page.go:22`), with its
 own `ShowWhen` fields. Bundle-only record fields: source filenames, ingest
@@ -145,23 +145,23 @@ Staging lives on local SSD, configured separately from the data directory. The
 production kvlite store is on NFS and staging a multi-gigabyte extract there
 would be miserable.
 
-**One new generic `core/ui` primitive is required: an `UploadPanel`** — multiple
+**One new generic `core/ui` primitive is required: an `UploadPanel`**, multiple
 files, per-file progress, per-file status, retry on one failed file without
 re-sending the rest. The existing `PipelineField{Type: "file"}`
 (`core/ui/components.go:1877`) is the wrong shape: it POSTs one file to an
 extractor endpoint and back-fills a text field for the user to review. Per
-`CLAUDE.md`, the panel goes into `core/ui/` only in fully domain-agnostic form —
+`CLAUDE.md`, the panel goes into `core/ui/` only in fully domain-agnostic form
 it knows about files, progress, and an endpoint, and nothing about servitor,
 appliances, or logs.
 
-### Slice 2 — the transform hook (the decrypt step)
+### Slice 2: the transform hook (the decrypt step)
 
 The record carries an ordered `BundleTransform` list. Each step is a matcher
 (glob or content magic) plus an action:
 
-- **Built-in actions** — gunzip, bunzip2, unxz, untar, unzip. No grant needed;
+- **Built-in actions**: gunzip, bunzip2, unxz, untar, unzip. No grant needed;
   they are pure decompression with no operator-supplied command string.
-- **Command actions** — a template run through `exec_local_ctx` in the run's
+- **Command actions**: a template run through `exec_local_ctx` in the run's
   scratch directory, with `{in}` and `{out}` substituted. This is where
   "decrypt this dump with our tool" lives.
 
@@ -183,7 +183,7 @@ the first bad tarball:
 - extraction happens in the scratch directory, which `scratch_teardown` already
   removes on every exit path including cancellation.
 
-### Slice 3 — the bundle store
+### Slice 3: the bundle store
 
 `BundleFilesDB`, mirroring `repoFileStore` (`repo_backend.go:38`): a hardware-
 locked encrypted store, keyed per (user, appliance), plaintext staging discarded
@@ -208,7 +208,7 @@ lead can say "the scheduler log covers the 11th through the 16th and has 4,200
 ERROR lines, 90% of them after 03:14 on the 14th" before reading a single line
 of content.
 
-### Slice 4 — the tools
+### Slice 4: the tools
 
 All local reads against the encrypted store, so each one extends
 `servitorWorkerToolAllowList` (`tool_guard.go:23`) with the same justification
@@ -225,23 +225,23 @@ comment the existing entries carry.
 Registered from a new `appliance.Type == "bundle"` branch at `web.go:3751`,
 alongside the shared recording, fact, and guide tools that every type gets.
 
-### Slice 5 — the join
+### Slice 5: the join
 
 `wsMember.Kind()` (`apps/servitor/workspace.go:76`) learns a `bundle` kind:
 scoutable from its index and summary, drillable by its own investigator. A
 workspace can then hold the customer's dump, the lab box, the repo, and the
 runbook collection, and answer one question across all four.
 
-Because a bundle is an appliance, `LinkedRepos` works on it for free — a stack
+Because a bundle is an appliance, `LinkedRepos` works on it for free: a stack
 frame found by `search_bundle` goes straight to `search_code` on the linked
 repo. Whether that chain needs a dedicated `trace_to_code` tool or just a prompt
 block telling the worker to do it is worth measuring before building; the LLM
 can already chain the two.
 
-### Slice 6 — selective RAG
+### Slice 6: selective RAG
 
-Do not embed logs. Embed the derived artifacts — the bundle summary, the
-per-file profiles, and any findings the investigator records — into a per-bundle
+Do not embed logs. Embed the derived artifacts: the bundle summary, the
+per-file profiles, and any findings the investigator records, into a per-bundle
 collection. A question then lands on the summary and drills with the exact tools
 from slice 4, which is both cheaper and more accurate than semantic search over
 raw log text.

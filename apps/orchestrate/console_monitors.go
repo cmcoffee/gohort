@@ -117,7 +117,7 @@ func (T *OrchestrateApp) handleConsoleMonitorUpdate(w http.ResponseWriter, r *ht
 		return
 	}
 	if !IsScheduledEventKind(m.Kind) {
-		http.Error(w, "this monitor is push-triggered — it has no schedule to edit", http.StatusBadRequest)
+		http.Error(w, "this monitor is push-triggered: it has no schedule to edit", http.StatusBadRequest)
 		return
 	}
 	var body struct {
@@ -133,7 +133,7 @@ func (T *OrchestrateApp) handleConsoleMonitorUpdate(w http.ResponseWriter, r *ht
 		secs = body.IntervalMinutes * 60
 	}
 	if secs < 5 {
-		http.Error(w, "interval too small — minimum 5 seconds", http.StatusBadRequest)
+		http.Error(w, "interval too small: minimum 5 seconds", http.StatusBadRequest)
 		return
 	}
 	m.IntervalSeconds = secs
@@ -204,7 +204,7 @@ func consoleMonitorRows(user, agentID string) []consoleMonitorRow {
 			case MonitorStopFinished, MonitorStopMet:
 				state = "done"
 			case MonitorStopIdle:
-				state = "stopped — quiet"
+				state = "stopped: quiet"
 			default:
 				state = "paused"
 			}
@@ -365,7 +365,7 @@ func (T *OrchestrateApp) setConsoleMonitorPaused(w http.ResponseWriter, r *http.
 		// success so the monitor comes back healthy.
 		if m.Broken {
 			if reason := eventMonitorDependencyError(m); reason != "" {
-				http.Error(w, "can't resume — "+reason+"; relink it to a live agent or delete it", http.StatusConflict)
+				http.Error(w, "can't resume: "+reason+"; relink it to a live agent or delete it", http.StatusConflict)
 				return
 			}
 			m.Broken = false
@@ -405,7 +405,7 @@ func (T *OrchestrateApp) handleConsoleMonitorRun(w http.ResponseWriter, r *http.
 		return
 	}
 	if !IsScheduledEventKind(m.Kind) {
-		http.Error(w, "this monitor is push-triggered — it has no check to run", http.StatusBadRequest)
+		http.Error(w, "this monitor is push-triggered: it has no check to run", http.StatusBadRequest)
 		return
 	}
 	go func() {
@@ -446,7 +446,7 @@ func monitorRowState(m EventMonitor) map[string]any {
 	case MonitorStopIdle:
 		icon = "off"
 	}
-	return map[string]any{"icon": icon, "tone": tone, "title": m.Name + " — " + m.StopLabel()}
+	return map[string]any{"icon": icon, "tone": tone, "title": m.Name + " · " + m.StopLabel()}
 }
 
 // monitorStopUrgency ranks the causes so a row fed by several monitors shows
@@ -510,9 +510,9 @@ func scheduleStopLabel(cause, note string) string {
 	switch cause {
 	case StoppedByMet:
 		if strings.TrimSpace(note) != "" {
-			return "✓ done — objective met: " + note
+			return "✓ done, objective met: " + note
 		}
-		return "✓ done — objective met"
+		return "✓ done: objective met"
 	case StoppedByOwner:
 		return "paused"
 	case ParkedByObjective, ParkedByDependency:
@@ -540,7 +540,7 @@ func scheduleRowState(name, cause, note string) map[string]any {
 	}
 	title := name
 	if lbl := scheduleStopLabel(cause, note); lbl != "" {
-		title += " — " + strings.TrimPrefix(strings.TrimPrefix(lbl, "✓ "), "⚠ ")
+		title += " · " + strings.TrimPrefix(strings.TrimPrefix(lbl, "✓ "), "⚠ ")
 	}
 	return map[string]any{"icon": icon, "tone": tone, "title": title}
 }

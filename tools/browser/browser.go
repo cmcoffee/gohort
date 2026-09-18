@@ -83,7 +83,7 @@ func (t *BrowsePageTool) Desc() string {
 	return "Load a URL in a real browser (JavaScript executed, cookies handled) and return " +
 		"the rendered page's readable text. Reach for it as fetch_url's recovery path when " +
 		"the simpler tool comes back BLOCKED or USELESS: 403 / captcha challenge page / " +
-		"Cloudflare interstitial / JS-required skeleton / empty body — the headless browser " +
+		"Cloudflare interstitial / JS-required skeleton / empty body: the headless browser " +
 		"clears most soft blocks because it executes JS and ships normal browser headers. " +
 		"Also right as the FIRST call for sites known to require JS (Reddit, Twitter/X, " +
 		"single-page-app news, aggregators, infinite-scroll feeds). " +
@@ -185,8 +185,8 @@ func (t *BrowsePageTool) fetch(target string, maxChars int) (string, error) {
 	case r := <-ch:
 		return r.text, r.err
 	case <-time.After(budget):
-		Log("[browse_page] outer budget %v exceeded for %s — Chromium likely wedged (page creation / CDP / idle wait); goroutine leaks until rod errors out", budget, target)
-		return "", fmt.Errorf("browse_page timed out after %v on %s — Chromium appears wedged. Try fetch_url for static content, or wait and retry if this is transient. Persistent wedge → restart the gohort process.", budget, target)
+		Log("[browse_page] outer budget %v exceeded for %s: Chromium likely wedged (page creation / CDP / idle wait); goroutine leaks until rod errors out", budget, target)
+		return "", fmt.Errorf("browse_page timed out after %v on %s: Chromium appears wedged. Try fetch_url for static content, or wait and retry if this is transient. Persistent wedge → restart the gohort process.", budget, target)
 	}
 }
 

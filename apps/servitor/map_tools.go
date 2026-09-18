@@ -73,7 +73,7 @@ func mapTools(applianceID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "map_find",
-				Description: "Look up one thing in the accumulated map by name — a service, file, table, package, route, host. Returns what it is, what is recorded about it, and how many connections it has. Use it to check whether something is already mapped before investigating it from scratch. The map is built from earlier probes: treat it as a starting point and verify anything load-bearing.",
+				Description: "Look up one thing in the accumulated map by name: a service, file, table, package, route, host. Returns what it is, what is recorded about it, and how many connections it has. Use it to check whether something is already mapped before investigating it from scratch. The map is built from earlier probes: treat it as a starting point and verify anything load-bearing.",
 				Parameters: map[string]ToolParam{
 					"name": {Type: "string", Description: "The thing's name or a known alias, e.g. \"scheduler\", \"users table\", \"POST /api/settings\"."},
 				},
@@ -86,7 +86,7 @@ func mapTools(applianceID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "map_neighbors",
-				Description: "Show what one thing CONNECTS TO in the accumulated map, following recorded relationships outward. Answers \"what does this rely on\" and \"what uses this\" — both directions are returned, because when something breaks the second question is the one that matters. Use it before searching: a recorded connection costs one call, re-deriving it costs several. Verify anything you will state as fact.",
+				Description: "Show what one thing CONNECTS TO in the accumulated map, following recorded relationships outward. Answers \"what does this rely on\" and \"what uses this\": both directions are returned, because when something breaks the second question is the one that matters. Use it before searching: a recorded connection costs one call, re-deriving it costs several. Verify anything you will state as fact.",
 				Parameters: map[string]ToolParam{
 					"name":     {Type: "string", Description: "The thing to start from, by name or alias."},
 					"depth":    {Type: "integer", Description: fmt.Sprintf("How many hops to follow (default 1, max %d). Use 2 to see what your neighbours depend on in turn.", mapMaxDepth)},
@@ -102,7 +102,7 @@ func mapTools(applianceID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "map_path",
-				Description: "Find how one thing reaches another through recorded relationships — the shortest chain from A to B. This is the tool for a trace question (\"when I change this setting, what runs?\"): if the chain was mapped before, it comes back in one call. No path means nobody has recorded one YET, not that none exists — fall back to searching.",
+				Description: "Find how one thing reaches another through recorded relationships: the shortest chain from A to B. This is the tool for a trace question (\"when I change this setting, what runs?\"): if the chain was mapped before, it comes back in one call. No path means nobody has recorded one YET, not that none exists: fall back to searching.",
 				Parameters: map[string]ToolParam{
 					"from": {Type: "string", Description: "Starting thing, by name or alias."},
 					"to":   {Type: "string", Description: "Destination thing, by name or alias."},
@@ -127,7 +127,7 @@ func mapFind(applianceID, name string) (string, error) {
 	}
 	e, found := orch.ScopedGraphEntity(scope, name)
 	if !found {
-		return fmt.Sprintf("%q is not in the map yet. That means nobody has recorded it — NOT that it does not exist. Search for it, and record what you find with link_entities so the next question starts here.", name), nil
+		return fmt.Sprintf("%q is not in the map yet. That means nobody has recorded it: NOT that it does not exist. Search for it, and record what you find with link_entities so the next question starts here.", name), nil
 	}
 	out, in := orch.ScopedGraphEdges(scope, e.ID)
 	var b strings.Builder
@@ -205,7 +205,7 @@ func mapNeighbors(applianceID, name string, depth int, relation string) (string,
 		b.WriteString(ln + "\n")
 	}
 	if truncated {
-		fmt.Fprintf(&b, "\nTRUNCATED at %d connections — narrow with `relation`, or reduce `depth`.\n", mapMaxNodes)
+		fmt.Fprintf(&b, "\nTRUNCATED at %d connections: narrow with `relation`, or reduce `depth`.\n", mapMaxNodes)
 	}
 	b.WriteString("\nThese are RECORDED relationships from earlier probes, not a live read. Verify anything you will state as fact.\n")
 	return b.String(), nil
@@ -272,7 +272,7 @@ func mapPath(applianceID, from, to string) (string, error) {
 		}
 	}
 	if !found {
-		return fmt.Sprintf("No recorded path from %s to %s. That means nobody has traced this chain YET — not that the two are unconnected. Trace it by searching, recording each hop with link_entities as you confirm it.", src.Name, dst.Name), nil
+		return fmt.Sprintf("No recorded path from %s to %s. That means nobody has traced this chain YET: not that the two are unconnected. Trace it by searching, recording each hop with link_entities as you confirm it.", src.Name, dst.Name), nil
 	}
 
 	// Walk back from the destination.
@@ -393,7 +393,7 @@ func scopedGraphPromptBlock(a Appliance) string {
 	if !large {
 		return scopedGraphBlock(a)
 	}
-	return fmt.Sprintf("This system's map has %d recorded things and %d relationships — too many to list here. "+
+	return fmt.Sprintf("This system's map has %d recorded things and %d relationships: too many to list here. "+
 		"Use `map_find` to look one up, `map_neighbors` to see what it connects to, and `map_path` to find how one thing reaches another. "+
 		"It is built from earlier probes, so treat it as a starting point and verify anything load-bearing.\n", ents, edges)
 }

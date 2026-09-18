@@ -219,7 +219,7 @@ func open(path string) (io.ReadCloser, error) {
 	// out; this is the direct-read path (read_<store>), where the name
 	// comes from the model rather than from a walk.
 	if fi, err := os.Lstat(path); err == nil && !fi.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file (%s) — nothing here reads one",
+		return nil, fmt.Errorf("%s is not a regular file (%s): nothing here reads one",
 			filepath.Base(path), fi.Mode().Type())
 	}
 	f, err := os.Open(path)

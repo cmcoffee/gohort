@@ -27,7 +27,7 @@ intake ──► network ─────┐
   each run a fixed order of checks and stop at the first one that is wrong. Each ends by choosing one
   of three exits: `propose_fix` when it can name a single command and a way back, `escalate` when the
   fix needs access, a change window, or a decision it does not have, or `intake` when the domain was
-  wrong. Each declares the same output — finding, evidence, ruled_out, fix_command, rollback — and
+  wrong. Each declares the same output (finding, evidence, ruled_out, fix_command, rollback), and
   contributes its evidence to the `gathered` accumulator, so an escalation carries everything from
   every arm the conversation passed through.
 - **propose_fix** (resident, no tools) states the fix, the evidence, the rollback and the check, and
@@ -55,7 +55,7 @@ is the one restated after the yes.
 
 **Each domain stops at the first failing check.** A step that keeps going after finding the problem
 produces a list of possibilities; a step that stops produces a finding. When the cause lives in
-another domain — a service that is down because a disk is full — the step says so and sends the
+another domain (a service that is down because a disk is full), the step says so and sends the
 conversation back to intake rather than fixing it from where it stands.
 
 **Clean checks are recorded.** `ruled_out` on every domain step and the instruction to include clean
@@ -65,7 +65,7 @@ checks in the handoff exist so the next person does not walk the same ground.
 
 The domain steps name no tools and inherit whatever the agent carries, for the reason the
 investigation recipe does: the exec tool is `run_command` on a servitor agent and may be something
-else elsewhere. The apply step is the exception — it calls `run_command` directly, with no model —
+else elsewhere. The apply step is the exception (it calls `run_command` directly, with no model)
 so the machine expects to be attached to an agent that has it. Narrow a domain step under "How this
 step runs" if it should not reach everything the agent can.
 

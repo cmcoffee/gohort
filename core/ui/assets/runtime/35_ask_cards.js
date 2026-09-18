@@ -135,7 +135,7 @@
           getVal = function(){ return (input.value || '').trim(); };
         } else if (t === 'select') {
           input = document.createElement('select'); input.className = 'ui-ask-input';
-          input.appendChild(el('option', {value: ''}, ['— choose —']));
+          input.appendChild(el('option', {value: ''}, ['(choose)']));
           opts.forEach(function(o){ input.appendChild(el('option', {value: o}, [o])); });
           getVal = function(){ return input.value || ''; };
         } else if (t === 'choice') {

@@ -145,9 +145,9 @@ func cortexDeliverableTools(db Database, agentID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "file_deliverable",
-				Description: "File a DELIVERABLE (a brief, report, or other substantial artifact you produced on request) as its OWN session instead of putting the body in your standing thread. Only a short pointer lands in your cortex; the full text is a session the user opens from the rail. Use this for anything sizable (\"daily brief\", \"write up X\") so your standing thread stays lean — answer small/quick things inline as normal. Then point the user to the filed session; do NOT also paste the full body into this reply.",
+				Description: "File a DELIVERABLE (a brief, report, or other substantial artifact you produced on request) as its OWN session instead of putting the body in your standing thread. Only a short pointer lands in your cortex; the full text is a session the user opens from the rail. Use this for anything sizable (\"daily brief\", \"write up X\") so your standing thread stays lean: answer small/quick things inline as normal. Then point the user to the filed session; do NOT also paste the full body into this reply.",
 				Parameters: map[string]ToolParam{
-					"title": {Type: "string", Description: "Short title — becomes the session name. e.g. \"Daily brief — Jun 17\"."},
+					"title": {Type: "string", Description: "Short title: becomes the session name. e.g. \"Daily brief: Jun 17\"."},
 					"body":  {Type: "string", Description: "The full deliverable text."},
 				},
 				Required: []string{"title", "body"},
@@ -171,14 +171,14 @@ func cortexDeliverableTools(db Database, agentID string) []AgentToolDef {
 				}
 				// Pointer (NOT the body) into the cortex — the standing thread
 				// stays lean but records that the deliverable exists.
-				appendCortexObs(db, agentID, "Deliverable", cortexKindDeliverable, title+" — filed as a session; open it from the rail.")
-				return fmt.Sprintf("Filed %q as a session (id %s). Point the user to it from the rail — do NOT paste the full body into your reply.", title, saved.ID), nil
+				appendCortexObs(db, agentID, "Deliverable", cortexKindDeliverable, title+", filed as a session; open it from the rail.")
+				return fmt.Sprintf("Filed %q as a session (id %s). Point the user to it from the rail: do NOT paste the full body into your reply.", title, saved.ID), nil
 			},
 		},
 		{
 			Tool: Tool{
 				Name:        "note_to_cortex",
-				Description: rewriteMemoryToolNames("Drop a ONE-LINE pointer about what THIS session did into your standing thread (cortex), so your future self and your OTHER sessions stay aware of it without re-reading this conversation. Use it when the session produced something notable — a deliverable, a decision, an action taken on the user's behalf. A POINTER, not a transcript: \"Drafted the Q3 brief\", \"Texted Mom her flight info\", \"Decided on Postgres for the billing service\". Keep your cortex a lean command center — the gist only; the details ride the memory layer (memory_save) or a filed session (file_deliverable). Distinct from store_fact (always-in-prompt rules) and memory_save (pull-only reference)."),
+				Description: rewriteMemoryToolNames("Drop a ONE-LINE pointer about what THIS session did into your standing thread (cortex), so your future self and your OTHER sessions stay aware of it without re-reading this conversation. Use it when the session produced something notable: a deliverable, a decision, an action taken on the user's behalf. A POINTER, not a transcript: \"Drafted the Q3 brief\", \"Texted Mom her flight info\", \"Decided on Postgres for the billing service\". Keep your cortex a lean command center: the gist only; the details ride the memory layer (memory_save) or a filed session (file_deliverable). Distinct from store_fact (always-in-prompt rules) and memory_save (pull-only reference)."),
 				Parameters: map[string]ToolParam{
 					"note": {Type: "string", Description: "The one-line pointer. Self-contained, so it makes sense out of context later. e.g. \"Booked the dentist for Jun 24, 2pm.\""},
 				},
@@ -231,7 +231,7 @@ func cortexContextBlock(db Database, agentID string) string {
 	if len(lines) == 0 {
 		return ""
 	}
-	return "\n\n## Recent standing activity (your cortex)\n\nBackground awareness — recent events on your channels / monitors. This is PASSIVE context, NOT a to-do list: do NOT launch tool calls, lookups, checks, or actions because of anything here. Use it only to inform your reply IF the user's current message is about it; otherwise ignore it entirely and don't mention it. (A bare greeting is not a request to act on this.) These are notes, NOT run records: they have no run id, so don't call inspect_run on them (use list_runs first for a real id).\n\n" + strings.Join(lines, "\n") + "\n"
+	return "\n\n## Recent standing activity (your cortex)\n\nBackground awareness: recent events on your channels / monitors. This is PASSIVE context, NOT a to-do list: do NOT launch tool calls, lookups, checks, or actions because of anything here. Use it only to inform your reply IF the user's current message is about it; otherwise ignore it entirely and don't mention it. (A bare greeting is not a request to act on this.) These are notes, NOT run records: they have no run id, so don't call inspect_run on them (use list_runs first for a real id).\n\n" + strings.Join(lines, "\n") + "\n"
 }
 
 // tuneCortexFeedLines caps how many recent cortex observations the standing-
@@ -240,9 +240,10 @@ const tuneCortexFeedLines = "tune_cortex_feed_lines"
 
 func init() {
 	RegisterTunable(TunableSpec{App: "/orchestrate", Key: tuneCortexFeedLines, Category: "Limits",
-		Label: "Cortex standing-activity lines",
-		Help:  "How many recent cortex observations to inject as background awareness at the top of a forked session. Lower to save context; 0 hides the block.",
-		Kind:  KindInt, Default: 5, Min: 0, Max: 20})
+		Label:  "Cortex standing-activity lines",
+		Help:   "How many recent cortex observations to inject at the top of a forked session.",
+		Detail: "They arrive as background awareness. Lower it to save context; 0 hides the block.",
+		Kind:   KindInt, Default: 5, Min: 0, Max: 20})
 }
 
 // truncateObs shortens an observation snippet to n runes, appending an ellipsis.

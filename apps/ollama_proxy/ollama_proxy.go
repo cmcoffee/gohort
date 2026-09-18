@@ -107,7 +107,7 @@ func StartOllamaServer(port int) {
 		if isLoopbackBind(host) {
 			Log("Ollama Proxy: http://%s  (model: gohort, loopback only)\n", addr)
 		} else {
-			Warn("Ollama Proxy listening on %s — reachable from the network, and every request needs an API key (X-API-Key or Authorization: Bearer). Bind it to 127.0.0.1 in Admin if you did not mean to expose it.", addr)
+			Warn("Ollama Proxy listening on %s, reachable from the network, and every request needs an API key (X-API-Key or Authorization: Bearer). Bind it to 127.0.0.1 in Admin if you did not mean to expose it.", addr)
 		}
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			Warn("ollama proxy: %v", err)
@@ -168,7 +168,7 @@ func (p *ollamaProxy) allow(w http.ResponseWriter, r *http.Request) bool {
 func (p *ollamaProxy) handle(w http.ResponseWriter, r *http.Request) {
 	Debug("[ollama-proxy] %s %s from %s", r.Method, r.URL.Path, callerIP(r))
 	if OllamaProxyEnabledFunc == nil || !OllamaProxyEnabledFunc() {
-		Debug("[ollama-proxy] proxy disabled — returning 503")
+		Debug("[ollama-proxy] proxy disabled: returning 503")
 		http.Error(w, "ollama proxy disabled", http.StatusServiceUnavailable)
 		return
 	}

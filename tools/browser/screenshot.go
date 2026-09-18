@@ -36,12 +36,12 @@ func (t *ScreenshotPageTool) Caps() []Capability {
 
 func (t *ScreenshotPageTool) Desc() string {
 	return "Capture a PNG screenshot of a web page using a real headless browser. " +
-		"Use when the user asks to see, view, show, or screenshot a page — visual " +
+		"Use when the user asks to see, view, show, or screenshot a page: visual " +
 		"questions where text extraction (browse_page / fetch_url) loses the answer. " +
 		"Set full_page=true to capture the entire scrollable page; otherwise just " +
 		"the visible viewport. The screenshot is delivered as an attachment alongside " +
 		"any text response. Slower than text fetches (5–25s). Larger pages may produce " +
-		"multi-MB images — capped at 4 MB; oversized captures fail with a clear error."
+		"multi-MB images: capped at 4 MB; oversized captures fail with a clear error."
 }
 
 func (t *ScreenshotPageTool) Params() map[string]ToolParam {
@@ -160,7 +160,7 @@ func (t *ScreenshotPageTool) RunWithSession(args map[string]any, sess *ToolSessi
 	// error gives the LLM clear feedback so it can tell the user instead
 	// of confidently sending a broken image.
 	if blank, reason := screenshotLooksBlank(data); blank {
-		return "", fmt.Errorf("screenshot came back blank (%s) — page may be DRM-protected, login-walled, or still loading. Not attaching", reason)
+		return "", fmt.Errorf("screenshot came back blank (%s): page may be DRM-protected, login-walled, or still loading. Not attaching", reason)
 	}
 
 	// Save to the session workspace and return the path. NO auto-
@@ -185,7 +185,7 @@ func (t *ScreenshotPageTool) RunWithSession(args map[string]any, sess *ToolSessi
 		mode = "full page"
 	}
 	Debug("[screenshot_page] %s (%s) → %s (%d bytes)", target, mode, name, len(data))
-	return fmt.Sprintf("Captured %s screenshot of %s. Stored at %q (%d bytes). If the user asked you to SEND / SHARE the screenshot, call workspace(action=\"attach\", path=%q, cleanup=true) to deliver. If they just want info from it (describe, summarize, read text), skip the attach — answer from context.",
+	return fmt.Sprintf("Captured %s screenshot of %s. Stored at %q (%d bytes). If the user asked you to SEND / SHARE the screenshot, call workspace(action=\"attach\", path=%q, cleanup=true) to deliver. If they just want info from it (describe, summarize, read text), skip the attach: answer from context.",
 		mode, target, name, len(data), name), nil
 }
 

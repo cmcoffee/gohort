@@ -22,7 +22,7 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), name))
 		existing, ok := LoadAppSpec(t.user, key)
 		if !ok {
-			return "", errors.New("no matching app to update — check the slug (app_def action=list)")
+			return "", errors.New("no matching app to update: check the slug (app_def action=list)")
 		}
 		spec = existing
 		priorHTML = appSpecHTMLText(existing)
@@ -36,16 +36,16 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 			// row the reflex was to re-send the same create rather than to
 			// switch verbs — an app that already exists is revised, not
 			// recreated, and the message never said so.
-			return "", errors.New("name is required to create an app — pass name:\"My App\" (the slug is derived from it; pass slug explicitly to override). If the app already exists, use action=\"update\" with id=\"<slug>\" instead — app_def(action=\"list\") shows what you have")
+			return "", errors.New("name is required to create an app, pass name:\"My App\" (the slug is derived from it; pass slug explicitly to override). If the app already exists, use action=\"update\" with id=\"<slug>\" instead: app_def(action=\"list\") shows what you have")
 		}
 		if slug == "" {
 			slug = slugify(name)
 		}
 		if slug == "" {
-			return "", errors.New("could not derive a slug from the name — pass an explicit slug")
+			return "", errors.New("could not derive a slug from the name: pass an explicit slug")
 		}
 		if _, exists := LoadAppSpec(t.user, slug); exists {
-			return "", fmt.Errorf("an app with slug %q already exists — use action=update, or pick a different name/slug", slug)
+			return "", fmt.Errorf("an app with slug %q already exists: use action=update, or pick a different name/slug", slug)
 		}
 		spec = AppSpec{Slug: slug, Name: name, Owner: t.user}
 	}
@@ -60,7 +60,7 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	if _, ok := args["notes"]; ok {
 		spec.Notes = strings.TrimSpace(stringArg(args, "notes"))
 		if over := spec.NotesOver(); over > 0 {
-			return "", fmt.Errorf("notes is %d characters over the %d-character cap — it is a standing SUMMARY (purpose, decisions and why, open items), not a log; trim it and resend", over, spec.NotesCap())
+			return "", fmt.Errorf("notes is %d characters over the %d-character cap: it is a standing SUMMARY (purpose, decisions and why, open items), not a log; trim it and resend", over, spec.NotesCap())
 		}
 	}
 	if rk := strings.TrimSpace(stringArg(args, "record_key")); rk != "" {
@@ -229,7 +229,7 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	// not be carried onto a revision it says nothing about.
 	spec.ChangeNote = strings.TrimSpace(stringArg(args, "note"))
 	saved := SaveAppSpecAs(spec, reason)
-	msg := fmt.Sprintf("%s app %q at /apps/%s/ (revision %s) — open it in the dashboard under My Apps. Records save to the app's own store; the table lists them. Revise with app_def(action=\"update\", id=%q, …). Status: %s.",
+	msg := fmt.Sprintf("%s app %q at /apps/%s/ (revision %s): open it in the dashboard under My Apps. Records save to the app's own store; the table lists them. Revise with app_def(action=\"update\", id=%q, …). Status: %s.",
 		verb, saved.Name, saved.Slug, saved.Updated, saved.Slug, saved.VerifyStatus())
 
 	msg += "\n\n" + t.appInventoryLine(saved)
@@ -238,7 +238,7 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		for _, st := range saved.Settings {
 			names = append(names, st.Name)
 		}
-		msg += fmt.Sprintf("\n\nSettings (%d): %s — a Settings button on the app's My Apps row opens the page; each reaches every script as an env var of that name.", n, strings.Join(names, ", "))
+		msg += fmt.Sprintf("\n\nSettings (%d): %s, a Settings button on the app's My Apps row opens the page; each reaches every script as an env var of that name.", n, strings.Join(names, ", "))
 	}
 
 	// Report any name-normalization or dropped entries up front — a
@@ -246,7 +246,7 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	// reference the author spelled the original way, and a dropped entry
 	// reads as saved when it wasn't.
 	if len(parseNotes) > 0 {
-		msg += "\n\nHeads up — the framework adjusted your input:\n- " + strings.Join(parseNotes, "\n- ")
+		msg += "\n\nHeads up, the framework adjusted your input:\n- " + strings.Join(parseNotes, "\n- ")
 	}
 
 	// Parse the inline JavaScript an html section carries. A script that
@@ -268,7 +268,7 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 			}
 		}
 		if len(scriptProblems) > 0 {
-			return fmt.Sprintf("%s app %q, BUT its inline JavaScript DOES NOT PARSE — the page will be blank/dead until this is fixed:\n- %s\n\nFix the markup with app_def(action=\"update\", id=%q, …) (it re-checks on save). Send the WHOLE corrected document, and do NOT tell the user the app is ready.",
+			return fmt.Sprintf("%s app %q, BUT its inline JavaScript DOES NOT PARSE, the page will be blank/dead until this is fixed:\n- %s\n\nFix the markup with app_def(action=\"update\", id=%q, …) (it re-checks on save). Send the WHOLE corrected document, and do NOT tell the user the app is ready.",
 				verb, saved.Name, strings.Join(scriptProblems, "\n- "), saved.Slug), nil
 		}
 		// Parsing says the document is well-formed, not that it is whole. A
@@ -279,7 +279,7 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		// REFUSED this shape; reaching here means either a create, or a
 		// rewrite the author explicitly confirmed. Say it plainly either way.
 		if dangling := jsDanglingCalls(appProposedHTMLText(raw)); len(dangling) > 0 {
-			return fmt.Sprintf("%s app %q, BUT the page CALLS CODE IT NEVER DEFINES — it parses and loads, and then dies the moment anyone uses it. Nothing defines: %s\n\nEither add those functions or remove the calls to them. Fix it with app_def(action=\"replace_function\", …) if you are adding one back, or action=\"update\" for the whole document. Do NOT tell the user the app is ready.",
+			return fmt.Sprintf("%s app %q, BUT the page CALLS CODE IT NEVER DEFINES: it parses and loads, and then dies the moment anyone uses it. Nothing defines: %s\n\nEither add those functions or remove the calls to them. Fix it with app_def(action=\"replace_function\", …) if you are adding one back, or action=\"update\" for the whole document. Do NOT tell the user the app is ready.",
 				verb, saved.Name, appNameList(dangling, 12)), nil
 		}
 
@@ -292,7 +292,7 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 		// longer exists. Checking the write's own output cannot go stale.
 		if len(appHTMLSectionScripts(raw)) > 0 {
 			if errs := appPageRuntimeErrors(t.user, saved.Slug); len(errs) > 0 {
-				return fmt.Sprintf("%s app %q, BUT the page FAILS IN A REAL BROWSER — this is the revision you just saved, not an older one:\n- %s\n\nFix it with app_def(action=\"update\", id=%q, …) (it re-checks on save). Send the WHOLE corrected document, and do NOT tell the user the app is ready.",
+				return fmt.Sprintf("%s app %q, BUT the page FAILS IN A REAL BROWSER, this is the revision you just saved, not an older one:\n- %s\n\nFix it with app_def(action=\"update\", id=%q, …) (it re-checks on save). Send the WHOLE corrected document, and do NOT tell the user the app is ready.",
 					verb, saved.Name, strings.Join(errs, "\n- "), saved.Slug), nil
 			}
 		}
@@ -308,10 +308,10 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	if len(saved.DataSources) > 0 {
 		report, _, _, fail := t.checkScripts(saved, false, nil, nil)
 		if fail > 0 {
-			return fmt.Sprintf("%s app %q, BUT a data source FAILED to run — the app will error on load until this is fixed:\n\n%s\nFix the script with app_def(action=\"update\", id=%q, …) (it re-checks on save). Do NOT tell the user the app is ready yet.",
+			return fmt.Sprintf("%s app %q, BUT a data source FAILED to run, the app will error on load until this is fixed:\n\n%s\nFix the script with app_def(action=\"update\", id=%q, …) (it re-checks on save). Do NOT tell the user the app is ready yet.",
 				verb, saved.Name, strings.TrimSpace(report), saved.Slug), nil
 		}
-		msg += "\n\nData source check — all passed:\n" + strings.TrimSpace(report)
+		msg += "\n\nData source check, all passed:\n" + strings.TrimSpace(report)
 		msg += "\nTip: run app_def(action=\"test\", id=\"" + saved.Slug + "\", sample=[{…example form entry…}]) to confirm the full form→data-source→output chain produces real output."
 	}
 	// What to say about verification depends on what this save already did. An
@@ -320,9 +320,9 @@ func (t *chatTurn) appDefCreateOrUpdate(args map[string]any, isUpdate bool) (str
 	// a verify batched alongside the NEXT update reports on the revision being
 	// replaced, and its findings read as fresh.
 	if _, ok := args["sections"]; ok && len(appHTMLSectionScripts(args["sections"])) > 0 {
-		msg += "\nThis save already parsed the inline JavaScript AND loaded /apps/" + saved.Slug + "/ in a real browser — it rendered with no JS errors. That check covered THIS revision, so you don't need a separate verify unless you change the app again."
+		msg += "\nThis save already parsed the inline JavaScript AND loaded /apps/" + saved.Slug + "/ in a real browser: it rendered with no JS errors. That check covered THIS revision, so you don't need a separate verify unless you change the app again."
 	} else {
-		msg += "\nBefore telling the user the app is ready, run app_def(action=\"verify\", id=\"" + saved.Slug + "\") — it loads the page in a real browser and catches render/JS/fetch failures the script checks can't see. Run it in a LATER turn than the update, never batched alongside one: verify reads whatever is stored when it runs, so an update and a verify in the same turn can report on the copy you just replaced."
+		msg += "\nBefore telling the user the app is ready, run app_def(action=\"verify\", id=\"" + saved.Slug + "\"): it loads the page in a real browser and catches render/JS/fetch failures the script checks can't see. Run it in a LATER turn than the update, never batched alongside one: verify reads whatever is stored when it runs, so an update and a verify in the same turn can report on the copy you just replaced."
 	}
 	return msg, nil
 }

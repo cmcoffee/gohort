@@ -28,16 +28,18 @@ func init() {
 	RegisterTunable(TunableSpec{
 		App: "/scribe",
 		Key: tuneCuratorThreshold, Category: "Limits",
-		Label: "Guide curator batch threshold",
-		Help:  "Run the Guide Curator once this many findings are waiting for a user. 0 disables threshold firing, leaving only the interval.",
-		Kind:  KindInt, Default: 5, Min: 0, Max: 100,
+		Label:  "Guide curator batch threshold",
+		Help:   "Run the Guide Curator once this many findings are waiting for a user.",
+		Detail: "0 disables threshold firing, leaving only the interval.",
+		Kind:   KindInt, Default: 5, Min: 0, Max: 100,
 	})
 	RegisterTunable(TunableSpec{
 		App: "/scribe",
 		Key: tuneCuratorInterval, Category: "Limits",
-		Label: "Guide curator interval (minutes)",
-		Help:  "Run the Guide Curator for any user with waiting findings at least this often, even if the threshold was never reached. 0 disables interval firing.",
-		Kind:  KindInt, Default: 60, Min: 0, Max: 1440,
+		Label:  "Guide curator interval (minutes)",
+		Help:   "Run the Guide Curator for any user with waiting findings at least this often.",
+		Detail: "It fires even if the threshold was never reached. 0 disables interval firing.",
+		Kind:   KindInt, Default: 60, Min: 0, Max: 1440,
 	})
 	// A manual trigger in the admin panel. Present because the two automatic
 	// firings are both delayed by design: without this there is no way to see

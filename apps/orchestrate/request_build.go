@@ -33,11 +33,11 @@ func requestBuildTool(user, agentID, agentName string) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "request_build",
-			Description: "Ask to have a SUB-AGENT built for you — the way to answer \"create an agent that…\" when you cannot author one yourself. You do NOT build it: this queues a request the user approves, and on approval Builder authors it as YOUR sub-agent. Give a complete spec in `brief` (what it does, its persona, the tools/sources it needs, any schedule). Use this instead of trying to dispatch, search, or write files. After calling it, tell the user you've queued the build for their approval.",
+			Description: "Ask to have a SUB-AGENT built for you: the way to answer \"create an agent that…\" when you cannot author one yourself. You do NOT build it: this queues a request the user approves, and on approval Builder authors it as YOUR sub-agent. Give a complete spec in `brief` (what it does, its persona, the tools/sources it needs, any schedule). Use this instead of trying to dispatch, search, or write files. After calling it, tell the user you've queued the build for their approval.",
 			Parameters: map[string]ToolParam{
 				"brief": {
 					Type:        "string",
-					Description: "The full build spec for Builder: the sub-agent's job, persona, the tools/credentials/sources it needs, and any schedule or trigger. Write it as a complete brief — Builder acts on this after the user approves, without you in the loop.",
+					Description: "The full build spec for Builder: the sub-agent's job, persona, the tools/credentials/sources it needs, and any schedule or trigger. Write it as a complete brief: Builder acts on this after the user approves, without you in the loop.",
 				},
 				"name": {
 					Type:        "string",
@@ -51,7 +51,7 @@ func requestBuildTool(user, agentID, agentName string) AgentToolDef {
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			brief := strings.TrimSpace(StringArg(args, "brief"))
 			if brief == "" {
-				return "", fmt.Errorf("brief is required — describe the sub-agent to build (its job, persona, tools, schedule)")
+				return "", fmt.Errorf("brief is required: describe the sub-agent to build (its job, persona, tools, schedule)")
 			}
 			if name := strings.TrimSpace(StringArg(args, "name")); name != "" {
 				brief = "Suggested name: " + name + "\n\n" + brief

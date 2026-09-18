@@ -889,7 +889,7 @@ func AuthDeleteUser(db Database, username string) {
 		return
 	}
 	if revoked := FormatRevocation(RevokeUserCredentials(db, username)); revoked != "" {
-		Log("[auth] deleting %q — revoked %s", username, revoked)
+		Log("[auth] deleting %q: revoked %s", username, revoked)
 	}
 	db.Unset(AuthTable, "user:"+username)
 }
@@ -1017,7 +1017,7 @@ func AuthHasUsers(db Database) bool {
 		// survivable, the survivable path had to be told which way to fail,
 		// and the answer for an auth gate is always "as though the users are
 		// there".
-		Err("[auth] could not read the user table (%v) — treating the deployment as CONFIGURED so nothing is served unauthenticated", err)
+		Err("[auth] could not read the user table (%v): treating the deployment as CONFIGURED so nothing is served unauthenticated", err)
 		return true
 	}
 	for _, key := range keys {
@@ -1259,7 +1259,7 @@ var deploymentKeyWarnOnce sync.Once
 // does not become the leak it is complaining about.
 func warnDeploymentKeyInQuery(r *http.Request) {
 	deploymentKeyWarnOnce.Do(func() {
-		Warn("[auth] the deployment API key arrived in the URL (?key=) on %s and was ACCEPTED because this deployment allows it — "+
+		Warn("[auth] the deployment API key arrived in the URL (?key=) on %s and was ACCEPTED because this deployment allows it: "+
 			"a credential in a URL reaches browser history, Referer headers, and every proxy log in between. "+
 			"Send it as the %s header instead, then turn the URL form off.",
 			r.URL.Path, deploymentKeyHeader)
@@ -1279,7 +1279,7 @@ func warnDeploymentKeyInQuery(r *http.Request) {
 // caller that is currently broken, and the operator needs to see it is still
 // happening rather than that it happened once since boot.
 func refuseDeploymentKeyInQuery(w http.ResponseWriter, r *http.Request) {
-	Warn("[auth] REFUSED a request presenting the deployment API key in the URL (?key=) on %s — "+
+	Warn("[auth] REFUSED a request presenting the deployment API key in the URL (?key=) on %s: "+
 		"this deployment accepts it only as the %s header. Set the deployment key's URL form back on if something still needs it.",
 		r.URL.Path, deploymentKeyHeader)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")

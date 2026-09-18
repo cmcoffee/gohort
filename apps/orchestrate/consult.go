@@ -48,7 +48,7 @@ const consultSystemPrompt = `You are advising another AI agent in the middle of 
 
 Answer ONLY from the evidence given. Do not invent endpoints, field names, or behavior that is not in it.
 
-Be concrete. If the question is about a request or response shape, give the exact field names and their exact nesting — a snippet beats a description. If it is about a failure, name the cause and the specific change that fixes it.
+Be concrete. If the question is about a request or response shape, give the exact field names and their exact nesting: a snippet beats a description. If it is about a failure, name the cause and the specific change that fixes it.
 
 If the evidence does not settle the question, say so plainly and name what WOULD settle it (a specific doc page, a specific probe call). A confident wrong answer costs the agent more rounds than an honest "not enough information".
 
@@ -61,7 +61,7 @@ func consultTool(t *chatTurn) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "consult",
-			Description: "Ask a stronger model ONE self-contained question and get its answer back. Call this when: you have hit the same API failure twice and varying the arguments isn't working; the docs are ambiguous about a request or response shape; or you are about to make your first authoring call against an API you have not built against before. Do NOT call it for anything you can settle by testing directly, and do not call it for general advice — it sees only what you paste, not your conversation. The answer is ADVICE: apply it, then VERIFY with a real call before telling the user anything works.",
+			Description: "Ask a stronger model ONE self-contained question and get its answer back. Call this when: you have hit the same API failure twice and varying the arguments isn't working; the docs are ambiguous about a request or response shape; or you are about to make your first authoring call against an API you have not built against before. Do NOT call it for anything you can settle by testing directly, and do not call it for general advice: it sees only what you paste, not your conversation. The answer is ADVICE: apply it, then VERIFY with a real call before telling the user anything works.",
 			Parameters: map[string]ToolParam{
 				"question": {
 					Type:        "string",
@@ -69,7 +69,7 @@ func consultTool(t *chatTurn) AgentToolDef {
 				},
 				"evidence": {
 					Type:        "string",
-					Description: "The raw material the answer depends on — the doc excerpt, the full error body, your current template. Paste it verbatim; do not summarize. The consulted model sees ONLY this, not your conversation or your tools.",
+					Description: "The raw material the answer depends on: the doc excerpt, the full error body, your current template. Paste it verbatim; do not summarize. The consulted model sees ONLY this, not your conversation or your tools.",
 				},
 				"tried": {
 					Type:        "string",
@@ -83,10 +83,10 @@ func consultTool(t *chatTurn) AgentToolDef {
 			question := strings.TrimSpace(StringArg(args, "question"))
 			evidence := strings.TrimSpace(StringArg(args, "evidence"))
 			if question == "" {
-				return "", fmt.Errorf("question is required — ask ONE specific question")
+				return "", fmt.Errorf("question is required: ask ONE specific question")
 			}
 			if evidence == "" {
-				return "", fmt.Errorf("evidence is required — the consulted model sees ONLY what you paste here, not your conversation. Include the doc excerpt, error body, or template the answer depends on")
+				return "", fmt.Errorf("evidence is required: the consulted model sees ONLY what you paste here, not your conversation. Include the doc excerpt, error body, or template the answer depends on")
 			}
 			if tried := strings.TrimSpace(StringArg(args, "tried")); tried != "" {
 				evidence += "\n\nAlready tried, and it failed:\n" + tried
@@ -95,7 +95,7 @@ func consultTool(t *chatTurn) AgentToolDef {
 			if err != nil {
 				return "", err
 			}
-			return "ADVICE (consulted — this is advice, not fact; apply it and VERIFY with a real call before reporting anything as working):\n\n" + advice, nil
+			return "ADVICE (consulted, this is advice, not fact; apply it and VERIFY with a real call before reporting anything as working):\n\n" + advice, nil
 		},
 	}
 }
@@ -115,7 +115,7 @@ func (t *chatTurn) consult(question, evidence string) (string, error) {
 	// should get the same "you are retrying, not stuck" answer whether or not
 	// a lead happens to be reachable.
 	if t.consultCount >= consultMaxPerTurn {
-		return "", fmt.Errorf("consultation limit reached for this turn (%d). You are retrying rather than stuck on a specific unknown — diagnose from what you already have, or tell the user plainly what is blocked and what you tried", consultMaxPerTurn)
+		return "", fmt.Errorf("consultation limit reached for this turn (%d). You are retrying rather than stuck on a specific unknown: diagnose from what you already have, or tell the user plainly what is blocked and what you tried", consultMaxPerTurn)
 	}
 	if t.app == nil {
 		return "", fmt.Errorf("consultation unavailable")
@@ -160,11 +160,11 @@ func (t *chatTurn) consult(question, evidence string) (string, error) {
 	}
 	if advice == "" {
 		Log("[orchestrate.consult] call %d returned an empty answer (tier=%s)", t.consultCount, tier)
-		return "", fmt.Errorf("consultation returned no answer — proceed from what you already have")
+		return "", fmt.Errorf("consultation returned no answer: proceed from what you already have")
 	}
 	// Logged, not silent: a consult that never earns its keep should be
 	// visible as a line you can count, not an invisible cost.
-	Log("[orchestrate.consult] call %d/%d served by tier=%s — q=%q answer=%d chars",
+	Log("[orchestrate.consult] call %d/%d served by tier=%s: q=%q answer=%d chars",
 		t.consultCount, consultMaxPerTurn, tier, firstLineSnippet(question, 80), len(advice))
 	t.turnDiag("consulted", "Asked a stronger model one question mid-task: "+firstLineSnippet(question, 120))
 	return advice, nil

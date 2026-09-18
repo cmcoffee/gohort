@@ -146,6 +146,133 @@
   }
   window.uiStateGlyph = uiStateGlyph;
 
+  // uiInfoIcon(detail, opts) — the ⓘ affordance that holds what the line
+  // beside it had to drop.
+  //
+  // A config surface has two audiences at once: someone scanning for the
+  // knob they came for, and someone who has found it and now needs to know
+  // what it actually does. Writing for the second buries the first, which
+  // is how a settings page turns into a wall. So the visible line is one
+  // short sentence and everything else lives in here, one hover or tap
+  // away — nothing is deleted, only moved off the scan path.
+  //
+  // Hover, focus and click all open it, because a touch device has no
+  // hover and a keyboard has no pointer; Escape and the next outside
+  // click close it. The panel positions itself against the viewport so a
+  // field at the right edge of a narrow column does not open off-screen.
+  //
+  // Generic by construction: it renders whatever string it is handed and
+  // knows nothing about who handed it over.
+  function uiInfoIcon(detail, opts) {
+    detail = String(detail == null ? '' : detail).trim();
+    if (!detail) return null;
+    opts = opts || {};
+    var btn = el('button', {
+      type: 'button',
+      class: 'ui-info' + (opts.className ? ' ' + opts.className : ''),
+      'aria-label': opts.label || 'More information',
+      'aria-expanded': 'false',
+      // The native tooltip is the fallback that always works: if the
+      // popover's script or styling ever fails, the text is still
+      // reachable rather than locked behind a dead glyph.
+      title: detail,
+    }, ['ⓘ']);
+
+    var pop = null;
+    function close() {
+      if (!pop) return;
+      pop.remove();
+      pop = null;
+      btn.setAttribute('aria-expanded', 'false');
+      document.removeEventListener('click', onDocClick, true);
+      window.removeEventListener('keydown', onInfoKey, true);
+      window.removeEventListener('resize', close);
+      window.removeEventListener('scroll', close, true);
+    }
+    function onDocClick(ev) {
+      if (pop && (pop.contains(ev.target) || btn.contains(ev.target))) return;
+      close();
+    }
+    // On WINDOW capture, which runs before the document-level handlers the
+    // modal stack uses, and stopping there: an open popover swallows the
+    // Escape rather than letting it close the dialog the icon sits in.
+    function onInfoKey(ev) {
+      if (ev.key !== 'Escape' || !pop) return;
+      ev.stopPropagation();
+      close();
+      btn.focus();
+    }
+    function open() {
+      if (pop) return;
+      pop = el('div', {class: 'ui-info-pop', role: 'tooltip'});
+      // Paragraph breaks survive: a detail long enough to need the icon is
+      // often long enough to have two thoughts in it.
+      detail.split(/\n\s*\n/).forEach(function(para) {
+        pop.appendChild(el('div', {class: 'ui-info-para'}, [para.replace(/\s*\n\s*/g, ' ')]));
+      });
+      document.body.appendChild(pop);
+      btn.setAttribute('aria-expanded', 'true');
+      position();
+      document.addEventListener('click', onDocClick, true);
+      window.addEventListener('keydown', onInfoKey, true);
+      window.addEventListener('resize', close);
+      window.addEventListener('scroll', close, true);
+    }
+    function position() {
+      if (!pop) return;
+      var r = btn.getBoundingClientRect();
+      var pad = 8;
+      var w = pop.offsetWidth;
+      var left = r.left + r.width / 2 - w / 2;
+      if (left + w > window.innerWidth - pad) left = window.innerWidth - pad - w;
+      if (left < pad) left = pad;
+      var top = r.bottom + 6;
+      // Flip above when the panel would run off the bottom, so the last
+      // field in a long form is as readable as the first.
+      if (top + pop.offsetHeight > window.innerHeight - pad && r.top > pop.offsetHeight + pad) {
+        top = r.top - pop.offsetHeight - 6;
+      }
+      pop.style.left = Math.round(left) + 'px';
+      pop.style.top = Math.round(top) + 'px';
+    }
+
+    var hoverTimer = null;
+    btn.addEventListener('mouseenter', function() {
+      clearTimeout(hoverTimer);
+      hoverTimer = setTimeout(open, 120);
+    });
+    btn.addEventListener('mouseleave', function() {
+      clearTimeout(hoverTimer);
+      // Only a hover-opened panel closes on leave; one opened by click or
+      // focus stays until it is dismissed, so text can be selected.
+      if (pop && !btn.dataset.pinned) hoverTimer = setTimeout(close, 200);
+    });
+    btn.addEventListener('focus', open);
+    btn.addEventListener('blur', function() {
+      if (!btn.dataset.pinned) close();
+    });
+    btn.addEventListener('click', function(ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (pop && btn.dataset.pinned) { delete btn.dataset.pinned; close(); return; }
+      btn.dataset.pinned = '1';
+      open();
+    });
+    return btn;
+  }
+  window.uiInfoIcon = uiInfoIcon;
+
+  // uiAttachInfo(node, detail) — append an info icon to an existing node
+  // (a label, a section title, a toggle row) and hand the node back, so a
+  // render site adds the affordance in one expression instead of three.
+  function uiAttachInfo(node, detail) {
+    var icon = uiInfoIcon(detail);
+    if (node && icon) node.appendChild(icon);
+    return node;
+  }
+  window.uiAttachInfo = uiAttachInfo;
+
+
   function fetchJSON(url, opts) {
     // Live dashboard data — never serve a stale HTTP-cached copy. Embedded
     // webviews (e.g. the gohort-desktop WKWebView behind its proxy) will

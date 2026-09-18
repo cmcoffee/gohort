@@ -26,7 +26,7 @@ import (
 
 func collectionsListTool() ChatTool {
 	gt := NewGroupedTool("collections",
-		"Manage the user's Document Collections so you can wire them into agents (attached_collections=[...]). Actions: list, get, create (mint an empty collection), update (patch name/description), docs (list ingested documents), add_url (ingest one URL into the corpus), add_text (ingest text you have — markdown or JSON — as one titled document; same title replaces), remove_doc (drop one document). Use add_url to pull a known authoritative source (a statute's full-text page) into a collection, add_text to save material the user gave you or you drafted WITH the user's say-so, and remove_doc to prune noise; for bulk topic-based filling, the Knowledge surface's Auto-fill is still the better path.")
+		"Manage the user's Document Collections so you can wire them into agents (attached_collections=[...]). Actions: list, get, create (mint an empty collection), update (patch name/description), docs (list ingested documents), add_url (ingest one URL into the corpus), add_text (ingest text you have (markdown or JSON) as one titled document; same title replaces), remove_doc (drop one document). Use add_url to pull a known authoritative source (a statute's full-text page) into a collection, add_text to save material the user gave you or you drafted WITH the user's say-so, and remove_doc to prune noise; for bulk topic-based filling, the Knowledge surface's Auto-fill is still the better path.")
 
 	gt.AddAction("list", &GroupedToolAction{
 		Description: "List every collection the user owns. Returns [{id, name, description, documents, chunks}] sorted by most-recently-updated. Use this when the user names a collection by display name and you need its ID to pass to attached_collections, or when surveying what corpus material exists for a new agent.",
@@ -109,7 +109,7 @@ func collectionsListTool() ChatTool {
 		Description: "Mint a new empty collection (name + description); returns its record incl. id. Use when an agent needs a standalone reference corpus not tied to a skill. The user then fills it via the Knowledge surface (upload / Auto-fill). For a skill's OWN corpus, prefer create_collection=true on skill_def instead.",
 		Params: map[string]ToolParam{
 			"name":        {Type: "string", Description: "Display name."},
-			"description": {Type: "string", Description: "What the collection holds — write it as \"contains X, for Y\" naming the docs/subjects; it seeds Auto-fill's queries and is how an LLM later picks the collection to attach or search."},
+			"description": {Type: "string", Description: "What the collection holds: write it as \"contains X, for Y\" naming the docs/subjects; it seeds Auto-fill's queries and is how an LLM later picks the collection to attach or search."},
 		},
 		Required: []string{"name"},
 		Caps:     []Capability{CapWrite},
@@ -136,11 +136,11 @@ func collectionsListTool() ChatTool {
 	})
 
 	gt.AddAction("update", &GroupedToolAction{
-		Description: "Patch an existing collection's name and/or description by ID — only the fields you pass change. Use to refine a collection's description so it reads as a model-facing selection cue (\"contains X, for Y\" naming the docs/subjects). Does NOT touch the collection's documents — that stays on the Knowledge surface.",
+		Description: "Patch an existing collection's name and/or description by ID: only the fields you pass change. Use to refine a collection's description so it reads as a model-facing selection cue (\"contains X, for Y\" naming the docs/subjects). Does NOT touch the collection's documents, that stays on the Knowledge surface.",
 		Params: map[string]ToolParam{
 			"id":          {Type: "string", Description: "Collection ID (from collections(action=\"list\"))."},
 			"name":        {Type: "string", Description: "(optional) New display name."},
-			"description": {Type: "string", Description: "(optional) New description — \"contains X, for Y\" naming the docs/subjects it holds."},
+			"description": {Type: "string", Description: "(optional) New description: \"contains X, for Y\" naming the docs/subjects it holds."},
 		},
 		Required: []string{"id"},
 		Caps:     []Capability{CapWrite},
@@ -168,7 +168,7 @@ func collectionsListTool() ChatTool {
 				changed = append(changed, "description")
 			}
 			if len(changed) == 0 {
-				return "", errors.New("nothing to update — pass name and/or description")
+				return "", errors.New("nothing to update: pass name and/or description")
 			}
 			saveCollection(sess.DB, c)
 			Log("[orchestrate.collections] user=%q updated collection %q (id=%s): %s", sess.Username, c.Name, c.ID, strings.Join(changed, ", "))
@@ -178,7 +178,7 @@ func collectionsListTool() ChatTool {
 	})
 
 	gt.AddAction("docs", &GroupedToolAction{
-		Description: "List the documents ingested into a collection — what's actually in its corpus. Returns [{doc_id, name, chunks}]. Use to audit a collection or to find the doc_id of something to drop via remove_doc.",
+		Description: "List the documents ingested into a collection: what's actually in its corpus. Returns [{doc_id, name, chunks}]. Use to audit a collection or to find the doc_id of something to drop via remove_doc.",
 		Params: map[string]ToolParam{
 			"id": {Type: "string", Description: "Collection ID (from collections(action=\"list\"))."},
 		},
@@ -261,10 +261,10 @@ func collectionsListTool() ChatTool {
 	})
 
 	gt.AddAction("add_text", &GroupedToolAction{
-		Description: "Ingest text as ONE titled document in a collection — markdown (or plain prose) as written, or a JSON object/array, which is flattened to sections and path: value lines. Pasting again under the same title REPLACES that document, so a runbook or note can be kept current. A curated write: do it when the user asks or agrees, not on your own initiative.",
+		Description: "Ingest text as ONE titled document in a collection, markdown (or plain prose) as written, or a JSON object/array, which is flattened to sections and path: value lines. Pasting again under the same title REPLACES that document, so a runbook or note can be kept current. A curated write: do it when the user asks or agrees, not on your own initiative.",
 		Params: map[string]ToolParam{
 			"id":    {Type: "string", Description: "Collection ID."},
-			"title": {Type: "string", Description: "Document title — the handle a later add_text with the same title replaces."},
+			"title": {Type: "string", Description: "Document title: the handle a later add_text with the same title replaces."},
 			"text":  {Type: "string", Description: "The document: markdown, plain text, or a JSON object/array."},
 		},
 		Required: []string{"id", "title", "text"},
@@ -298,7 +298,7 @@ func collectionsListTool() ChatTool {
 	})
 
 	gt.AddAction("add_url", &GroupedToolAction{
-		Description: "Ingest ONE specific URL into a collection — fetches the page, extracts its text, and adds it to the corpus. Use to pull in a known authoritative source (a statute's full-text page, an official doc). JS-heavy pages extract poorly; prefer direct text / PDF / clean HTML URLs. No-op if the URL is already ingested.",
+		Description: "Ingest ONE specific URL into a collection: fetches the page, extracts its text, and adds it to the corpus. Use to pull in a known authoritative source (a statute's full-text page, an official doc). JS-heavy pages extract poorly; prefer direct text / PDF / clean HTML URLs. No-op if the URL is already ingested.",
 		Params: map[string]ToolParam{
 			"id":  {Type: "string", Description: "Collection ID."},
 			"url": {Type: "string", Description: "The URL to fetch and ingest."},

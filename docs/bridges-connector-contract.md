@@ -1,10 +1,10 @@
-# Bridge connector contract — and iMessage without the desktop app
+# Bridge connector contract, and iMessage without the desktop app
 
 A **bridge** is any process that relays a messaging service to gohort. It is
 defined entirely by a contract, not by a codebase: POST inbound to
 `/bridges/api/hook`, poll `/bridges/api/poll` for outbound, authenticate with a
 bridge key that declares its service. The gohort-desktop daemon is one
-implementation of that contract for iMessage, not a requirement — anything that
+implementation of that contract for iMessage, not a requirement: anything that
 speaks it is a bridge, including a shell script under `launchd`.
 
 The Bridges app itself is pure transport: no persona, no LLM, no tools. A
@@ -29,46 +29,46 @@ desktop daemon register once and reusing what it made.
 
 **One connector, one row.** The desktop path uses the well-known id
 `desktop:<user>`. A second key for the same owner and service shows up as a
-second bridge — which is correct for a second Mac, and confusing if you meant to
+second bridge, which is correct for a second Mac, and confusing if you meant to
 replace the first. The server prunes same-service records that have **never**
 been seen, on the grounds that a secret which authenticated nothing cannot be
 in use; one that has been seen is treated as a real second connector and kept.
 
-## Inbound — service → gohort
+## Inbound: service → gohort
 
 `POST /bridges/api/hook`, JSON body, `202` on acceptance. Fields:
 
 | field | meaning |
 |---|---|
-| `chat_id` | the conversation's stable id — **format matters, see below** |
+| `chat_id` | the conversation's stable id: **format matters, see below** |
 | `handle` | the sender's address (phone, email, service handle) |
 | `display_name` | the sender's name |
-| `conversation_name` | the group/room title, when it has one — names the thread, distinct from the sender |
+| `conversation_name` | the group/room title, when it has one: names the thread, distinct from the sender |
 | `text` | the message body |
 | `images` / `videos` / `audios` | base64 attachments; audio is transcribed, video is sampled to frames |
-| `msg_id` | the connector's own stable message id — **send this** |
+| `msg_id` | the connector's own stable message id: **send this** |
 | `row_id` | numeric fallback id (what the iMessage relay sends) |
 | `timestamp` | RFC3339, when the message was SENT |
 
 **`chat_id` encodes two facts** and is parsed, not merely stored: a `chat_id`
 containing `;+;` is a **group** (identity is the chat, there is no single
 handle); `;-;` is a **1:1**, and the segment after the last `;` is used to
-alias-match the person. Pick a stable service prefix — `tg;-;123456789`,
+alias-match the person. Pick a stable service prefix: `tg;-;123456789`,
 `tg;+;-1001234567890`.
 
 **Send an id.** Dedupe keys on `msg_id`, falling back to `row_id`. With neither,
 the server falls back to comparing content, which cannot tell a re-delivery from
-two people saying "ok" in the same room — and a duplicate inbound is what starts
+two people saying "ok" in the same room, and a duplicate inbound is what starts
 a self-thread loop, because two identical messages produce two replies that
 arrive as two more messages.
 
 **Send a real timestamp.** Without one every inbound looks like it happened now,
 which is how replayed history wakes an agent as if it were live conversation.
 
-## Outbound — gohort → service
+## Outbound: gohort → service
 
 `GET /bridges/api/poll` with the same header, on an interval (2–5s is typical).
-It returns this service's pending items oldest-first **and removes them** — a
+It returns this service's pending items oldest-first **and removes them**: a
 drain, not a peek. If your process crashes between the poll and the send, that
 message is gone, so send promptly and log failures.
 
@@ -82,7 +82,7 @@ its messages; it is already prefixed into the text as a name tag.
 
 The iMessage daemon **clears the handle** on a message the owner sent
 themselves (`is_from_me`). The server's `IsOwnerHandle` therefore treats an
-empty handle as *the owner* — and `SameHandle`, used to match roster entries,
+empty handle as *the owner*, and `SameHandle`, used to match roster entries,
 treats an empty handle as *no match at all*. That asymmetry is deliberate: "the
 connector cleared the handle" identifies the owner and nobody else, so treating
 it as a match against an arbitrary roster entry would hand every self-sent
@@ -98,7 +98,7 @@ script, with no `.app`, no Wails, and no code signing:
 
 - **Inbound**: read new rows from `~/Library/Messages/chat.db` (the `message`
   table joined to `chat`), and POST each as a hook request. Send `row_id` as the
-  message's `ROWID` — that is exactly what the existing relay does — and set
+message's `ROWID` (that is exactly what the existing relay does), and set
   `timestamp` from the message date rather than from now. Requires Full Disk
   Access for whatever runs the script.
 - **Outbound**: poll, then hand each item to Messages via `osascript`. Recover
@@ -116,7 +116,7 @@ endpoints are the whole story.
 
 - Keep an inbound dedup set; never re-POST an id you have already sent.
 - Treat `202` as accepted and anything else as retryable, with backoff.
-- Poll on a fixed interval — outbound latency is your poll interval, and there
+- Poll on a fixed interval: outbound latency is your poll interval, and there
   is no push.
 - Log a send failure loudly. A drained item that never reached the service is
   invisible to gohort, which believes it delivered.

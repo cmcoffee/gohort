@@ -78,7 +78,7 @@ var appPipelineToolbarAllowed = map[string]bool{
 // that starts in the wrong place.
 var appPipelineToolbarRefusals = map[string]string{
 	"stream": "it POSTs and expects an SSE transcript back, and the only endpoint " +
-		"a custom app has that speaks SSE is pipeline/stream — the recipe itself, which " +
+		"a custom app has that speaks SSE is pipeline/stream: the recipe itself, which " +
 		"the Start button already runs. Pointed at anything else the transcript just empties",
 	"modal": "it streams SSE into a dialog, and a custom app has no second streaming " +
 		"endpoint to stream from (a data source answers once, in JSON, and the modal would " +
@@ -86,7 +86,7 @@ var appPipelineToolbarRefusals = map[string]string{
 	"related": "it fetches a list of RELATED runs keyed off fields on the session " +
 		"summary, and a custom app's summary carries ID, Title and Date only",
 	"load": "it jumps to another run named by a {FieldName} placeholder read off the " +
-		"session summary, which here carries ID, Title and Date only — every other " +
+		"session summary, which here carries ID, Title and Date only: every other " +
 		"placeholder renders empty and the button goes nowhere",
 }
 
@@ -98,13 +98,13 @@ func appPipelineToolbar(spec AppSpec, raw any) ([]ui.PipelineAction, error) {
 	}
 	arr, ok := raw.([]any)
 	if !ok {
-		return nil, fmt.Errorf("a pipeline section's toolbar must be an ARRAY of buttons, got %T — pass toolbar:[{\"label\":\"Copy Link\", \"method\":\"copy\"}]", raw)
+		return nil, fmt.Errorf("a pipeline section's toolbar must be an ARRAY of buttons, got %T, pass toolbar:[{\"label\":\"Copy Link\", \"method\":\"copy\"}]", raw)
 	}
 	var out []ui.PipelineAction
 	for i, item := range arr {
 		m, ok := item.(map[string]any)
 		if !ok {
-			return nil, fmt.Errorf("toolbar entry %d is not an object — each button is {label, method, url?}", i+1)
+			return nil, fmt.Errorf("toolbar entry %d is not an object: each button is {label, method, url?}", i+1)
 		}
 		label := strings.TrimSpace(mapStr(m, "label"))
 		if label == "" {
@@ -115,7 +115,7 @@ func appPipelineToolbar(spec AppSpec, raw any) ([]ui.PipelineAction, error) {
 			return nil, fmt.Errorf("toolbar button %q asks for method %q, which a custom app cannot honor: %s", label, method, why)
 		}
 		if !appPipelineToolbarAllowed[method] {
-			return nil, fmt.Errorf("toolbar button %q has method %q — use open (new tab), copy (to clipboard), post (run one of this app's action scripts) or client (a handler the app registered itself)", label, method)
+			return nil, fmt.Errorf("toolbar button %q has method %q: use open (new tab), copy (to clipboard), post (run one of this app's action scripts) or client (a handler the app registered itself)", label, method)
 		}
 		url := strings.TrimSpace(mapStr(m, "url"))
 		if url == "" {
@@ -123,7 +123,7 @@ func appPipelineToolbar(spec AppSpec, raw any) ([]ui.PipelineAction, error) {
 			// looked at, and making the author spell that out is a chance to
 			// get it subtly wrong for no gain.
 			if method != "copy" {
-				return nil, fmt.Errorf("toolbar button %q needs a url — for method %q that is %s", label, method, appPipelineToolbarURLHint(method))
+				return nil, fmt.Errorf("toolbar button %q needs a url, for method %q that is %s", label, method, appPipelineToolbarURLHint(method))
 			}
 			url = "?session={id}"
 		}
@@ -149,7 +149,7 @@ func appPipelineToolbarURLHint(method string) string {
 	case "client":
 		return "the NAME of a handler registered with window.uiRegisterClientAction, not a path"
 	default:
-		return "the address to open — an absolute URL, or one relative to this app like \"data/<source>\""
+		return "the address to open: an absolute URL, or one relative to this app like \"data/<source>\""
 	}
 }
 
@@ -180,7 +180,7 @@ func appPipelineToolbarTarget(spec AppSpec, label, method, url string) error {
 			return fmt.Errorf("toolbar button %q points at action/%s, which this app does not declare%s", label, name, appDeclaredList("actions", appActionNames(spec)))
 		}
 		if method != "post" {
-			return fmt.Errorf("toolbar button %q opens action/%s with method %q, but an action endpoint answers POST only — use method:\"post\"", label, name, method)
+			return fmt.Errorf("toolbar button %q opens action/%s with method %q, but an action endpoint answers POST only, use method:\"post\"", label, name, method)
 		}
 	case strings.HasPrefix(path, "data/"):
 		name := strings.TrimPrefix(path, "data/")
@@ -202,7 +202,7 @@ func appPipelinePrefill(spec AppSpec, m map[string]any, fields []ui.PipelineFiel
 		// A label or a target with nothing behind it renders no button at all,
 		// so say which key is missing rather than quietly dropping both.
 		if strings.TrimSpace(mapStr(m, "suggest_label")) != "" || strings.TrimSpace(mapStr(m, "suggest_target")) != "" {
-			return errors.New("this pipeline section sets suggest_label/suggest_target but no suggest_script — the Suggest button is the data source, so without one there is nothing to render")
+			return errors.New("this pipeline section sets suggest_label/suggest_target but no suggest_script: the Suggest button is the data source, so without one there is nothing to render")
 		}
 		return nil
 	}
@@ -273,7 +273,7 @@ func appDeclaredList(kind string, names []string) string {
 	if len(names) == 0 {
 		return " (it declares no " + kind + " at all)"
 	}
-	return " — its " + kind + ": " + strings.Join(names, ", ")
+	return ", its " + kind + ": " + strings.Join(names, ", ")
 }
 
 // appToolbarUsesClient reports whether any button in a toolbar dispatches to a
@@ -310,13 +310,13 @@ func appPipelineMetaFields(raw any) ([]ui.SessionMetaField, error) {
 	}
 	arr, ok := raw.([]any)
 	if !ok {
-		return nil, fmt.Errorf("a pipeline section's meta must be an ARRAY, got %T — pass meta:[{\"field\":\"winner\", \"style\":\"pill\"}]", raw)
+		return nil, fmt.Errorf("a pipeline section's meta must be an ARRAY, got %T, pass meta:[{\"field\":\"winner\", \"style\":\"pill\"}]", raw)
 	}
 	var out []ui.SessionMetaField
 	for i, item := range arr {
 		m, ok := item.(map[string]any)
 		if !ok {
-			return nil, fmt.Errorf("meta entry %d is not an object — each is {field, label?, style?, variants?, truncate?}", i+1)
+			return nil, fmt.Errorf("meta entry %d is not an object: each is {field, label?, style?, variants?, truncate?}", i+1)
 		}
 		field := strings.TrimSpace(firstNonEmptyStr(mapStr(m, "field"), mapStr(m, "name")))
 		if field == "" {
@@ -324,7 +324,7 @@ func appPipelineMetaFields(raw any) ([]ui.SessionMetaField, error) {
 		}
 		style := strings.ToLower(strings.TrimSpace(mapStr(m, "style")))
 		if style != "" && !appPipelineMetaStyles[style] {
-			return nil, fmt.Errorf("meta entry %d (%s) has style %q — use \"text\" (a line under the title), \"badge\" (a small neutral pill) or \"pill\" (colored by value, see variants)", i+1, field, style)
+			return nil, fmt.Errorf("meta entry %d (%s) has style %q: use \"text\" (a line under the title), \"badge\" (a small neutral pill) or \"pill\" (colored by value, see variants)", i+1, field, style)
 		}
 		smf := ui.SessionMetaField{
 			Field:    field,
@@ -337,7 +337,7 @@ func appPipelineMetaFields(raw any) ([]ui.SessionMetaField, error) {
 		// that quietly does nothing.
 		if v, ok := m["variants"].(map[string]any); ok && len(v) > 0 {
 			if style != "pill" {
-				return nil, fmt.Errorf("meta entry %d (%s) sets variants but its style is %q — only a pill is colored by value", i+1, field, firstNonEmptyStr(style, "text"))
+				return nil, fmt.Errorf("meta entry %d (%s) sets variants but its style is %q: only a pill is colored by value", i+1, field, firstNonEmptyStr(style, "text"))
 			}
 			smf.Variants = map[string]string{}
 			for key, val := range v {
@@ -393,11 +393,11 @@ func appSessionMetaNotes(raw any, promoted []string) []string {
 			continue
 		}
 		if len(have) == 0 {
-			notes = append(notes, fmt.Sprintf("section %d shows meta field(s) %s, but the bound pipeline promotes NOTHING onto its run rows — those rows will render blank. Add session_meta:[\"<stage>.<field>\"] to the pipeline (the field must be one the stage declares in its output).",
+			notes = append(notes, fmt.Sprintf("section %d shows meta field(s) %s, but the bound pipeline promotes NOTHING onto its run rows: those rows will render blank. Add session_meta:[\"<stage>.<field>\"] to the pipeline (the field must be one the stage declares in its output).",
 				i+1, strings.Join(missing, ", ")))
 			continue
 		}
-		notes = append(notes, fmt.Sprintf("section %d shows meta field(s) %s, which the bound pipeline does not promote — it promotes: %s. Those rows will render blank.",
+		notes = append(notes, fmt.Sprintf("section %d shows meta field(s) %s, which the bound pipeline does not promote, it promotes: %s. Those rows will render blank.",
 			i+1, strings.Join(missing, ", "), strings.Join(promotedFieldNames(promoted), ", ")))
 	}
 	return notes

@@ -205,7 +205,7 @@ func init() {
 		Ext:        ".xlsx",
 		MIME:       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 		Desc:       "Excel spreadsheet (.xlsx) with one or more sheets of rows.",
-		InputHint:  `data: {"sheets":[{"name":"Sheet1","rows":[["Name","Qty"],["alpha",1]]}]} — or a single sheet as {"sheet_name":"...","rows":[[...]]}. First row is typically the header.`,
+		InputHint:  `data: {"sheets":[{"name":"Sheet1","rows":[["Name","Qty"],["alpha",1]]}]}, or a single sheet as {"sheet_name":"...","rows":[[...]]}. First row is typically the header.`,
 		PyRequires: []string{"openpyxl"},
 		Interp:     "python3",
 		Script:     xlsxGeneratorPy,

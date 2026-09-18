@@ -41,7 +41,7 @@ func (t *SendStatusTool) IsFrameworkTool() bool { return true }
 func (t *SendStatusTool) Caps() []Capability { return nil }
 
 func (t *SendStatusTool) Desc() string {
-	return "Post a brief one-line progress note to the user mid-turn — a heads-up before your final reply (a phase change, progress on slow work like downloads, multi-step tool chains, slow APIs, callbacks). Often you don't need to call this explicitly: a short sentence you write right before a tool call already surfaces as a live status. Reach for send_status when you want to post a progress note in a round where you are NOT also calling a tool. It does NOT replace your final reply — keep producing the actual answer for your last, tool-free turn."
+	return "Post a brief one-line progress note to the user mid-turn: a heads-up before your final reply (a phase change, progress on slow work like downloads, multi-step tool chains, slow APIs, callbacks). Often you don't need to call this explicitly: a short sentence you write right before a tool call already surfaces as a live status. Reach for send_status when you want to post a progress note in a round where you are NOT also calling a tool. It does NOT replace your final reply: keep producing the actual answer for your last, tool-free turn."
 }
 
 func (t *SendStatusTool) Params() map[string]ToolParam {

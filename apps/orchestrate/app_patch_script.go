@@ -69,7 +69,7 @@ func (r appScriptRef) set(spec *AppSpec, script string) {
 func pickAppScript(spec AppSpec, name string) (appScriptRef, error) {
 	want := strings.TrimSpace(name)
 	if want == "" {
-		return appScriptRef{}, errors.New("script is required — the name of the data source or action to edit (app_def action=get lists them)")
+		return appScriptRef{}, errors.New("script is required: the name of the data source or action to edit (app_def action=get lists them)")
 	}
 	slug := slugify(want)
 	var hits []appScriptRef
@@ -95,11 +95,11 @@ func pickAppScript(spec AppSpec, name string) (appScriptRef, error) {
 			have = append(have, "action "+quoteName(a.Name))
 		}
 		if len(have) == 0 {
-			return appScriptRef{}, fmt.Errorf("this app has no scripts — no data source or action named %q to edit", want)
+			return appScriptRef{}, fmt.Errorf("this app has no scripts: no data source or action named %q to edit", want)
 		}
-		return appScriptRef{}, fmt.Errorf("no data source or action named %q — this app has: %s", want, strings.Join(have, ", "))
+		return appScriptRef{}, fmt.Errorf("no data source or action named %q, this app has: %s", want, strings.Join(have, ", "))
 	default:
-		return appScriptRef{}, fmt.Errorf("%q names both a data source and an action — pass script=\"data:%s\" or script=\"action:%s\"", want, slug, slug)
+		return appScriptRef{}, fmt.Errorf("%q names both a data source and an action, pass script=\"data:%s\" or script=\"action:%s\"", want, slug, slug)
 	}
 }
 
@@ -139,9 +139,9 @@ func pickAppScriptQualified(spec AppSpec, name string) (appScriptRef, error) {
 func applyTextPatch(text, find, replace, what, slug string) (string, error) {
 	switch n := strings.Count(text, find); {
 	case n == 0:
-		return "", fmt.Errorf("that text does not appear in %s — you may be patching a version the app no longer has. Call app_def(action=\"get\", id=%q, script=<name>) to read the CURRENT script, copy the exact text from it (whitespace included), and patch again", what, slug)
+		return "", fmt.Errorf("that text does not appear in %s: you may be patching a version the app no longer has. Call app_def(action=\"get\", id=%q, script=<name>) to read the CURRENT script, copy the exact text from it (whitespace included), and patch again", what, slug)
 	case n > 1:
-		return "", fmt.Errorf("that text appears %d times in %s — a patch has to identify ONE place. Extend the find text with the surrounding lines until it is unique", n, what)
+		return "", fmt.Errorf("that text appears %d times in %s: a patch has to identify ONE place. Extend the find text with the surrounding lines until it is unique", n, what)
 	}
 	return strings.Replace(text, find, replace, 1), nil
 }
@@ -164,11 +164,11 @@ func pyFunctionSpan(src, name string) (start, end int, err error) {
 	case len(hits) == 0:
 		defined := pyDefinedFunctions(src)
 		if len(defined) == 0 {
-			return 0, 0, fmt.Errorf("no function named %q in this script, and no def was found at all — read it with app_def(action=\"get\", script=<name>) before editing", name)
+			return 0, 0, fmt.Errorf("no function named %q in this script, and no def was found at all: read it with app_def(action=\"get\", script=<name>) before editing", name)
 		}
 		return 0, 0, fmt.Errorf("no function named %q in this script. It defines: %s", name, strings.Join(defined, ", "))
 	case len(hits) > 1:
-		return 0, 0, fmt.Errorf("%q is defined %d times in this script — a replacement has to identify ONE of them, so use patch with enough surrounding text to be unique", name, len(hits))
+		return 0, 0, fmt.Errorf("%q is defined %d times in this script: a replacement has to identify ONE of them, so use patch with enough surrounding text to be unique", name, len(hits))
 	}
 	m := hits[0]
 	start = m[0]
@@ -263,18 +263,18 @@ func (t *chatTurn) appDefPatchScript(args map[string]any, spec AppSpec) (string,
 		if fn := strings.TrimSpace(stringArg(args, "function")); fn != "" {
 			return t.appDefReplaceScriptFunction(args, spec)
 		}
-		return "", fmt.Errorf("find is required — the EXACT text to replace, copied from the current script (app_def action=\"get\", id=%q, script=%q). If what you have is a rewritten FUNCTION, use action=\"replace_function\" with function=\"<name>\" instead", spec.Slug, stringArg(args, "script"))
+		return "", fmt.Errorf("find is required: the EXACT text to replace, copied from the current script (app_def action=\"get\", id=%q, script=%q). If what you have is a rewritten FUNCTION, use action=\"replace_function\" with function=\"<name>\" instead", spec.Slug, stringArg(args, "script"))
 	}
 	replace := stringArg(args, "replace")
 	if find == replace {
-		return "", errors.New("find and replace are identical — nothing to do")
+		return "", errors.New("find and replace are identical: nothing to do")
 	}
 	_, prior := ref.body(spec)
 	next, err := applyTextPatch(prior, find, replace, ref.label(spec), spec.Slug)
 	if err != nil {
 		return "", err
 	}
-	summary := fmt.Sprintf("Patched %s of %%q (revision %%s) — replaced %d chars with %d.", ref.label(spec), len(find), len(replace))
+	summary := fmt.Sprintf("Patched %s of %%q (revision %%s): replaced %d chars with %d.", ref.label(spec), len(find), len(replace))
 	return t.saveScriptEdit(spec, ref, next, summary, "patch", "patch "+ref.label(spec), args)
 }
 
@@ -287,14 +287,14 @@ func (t *chatTurn) appDefReplaceScriptFunction(args map[string]any, spec AppSpec
 	}
 	fn := strings.TrimSpace(stringArg(args, "function"))
 	if fn == "" {
-		return "", errors.New("function is required — the NAME of the function to replace, e.g. function=\"build_rows\"")
+		return "", errors.New("function is required: the NAME of the function to replace, e.g. function=\"build_rows\"")
 	}
 	if !isJSFunctionName(fn) {
-		return "", fmt.Errorf("%q is not a plain function name — pass just the identifier, not a call or a signature", fn)
+		return "", fmt.Errorf("%q is not a plain function name: pass just the identifier, not a call or a signature", fn)
 	}
 	replace := stringArg(args, "replace")
 	if strings.TrimSpace(replace) == "" {
-		return "", errors.New("replace is required — the WHOLE new function, def line included. To delete a function instead, use patch with an empty replace")
+		return "", errors.New("replace is required: the WHOLE new function, def line included. To delete a function instead, use patch with an empty replace")
 	}
 	lang, prior := ref.body(spec)
 	start, end, err := scriptFunctionSpan(lang, prior, fn)
@@ -302,13 +302,13 @@ func (t *chatTurn) appDefReplaceScriptFunction(args map[string]any, spec AppSpec
 		return "", err
 	}
 	if !scriptDefines(lang, replace, fn) {
-		return "", fmt.Errorf("the replacement text does not define %q — pass the WHOLE new function including its definition line, not just the body", fn)
+		return "", fmt.Errorf("the replacement text does not define %q: pass the WHOLE new function including its definition line, not just the body", fn)
 	}
 	next := prior[:start] + strings.TrimRight(replace, "\n") + prior[end:]
 	if end < len(prior) && !strings.HasSuffix(next[:start+len(strings.TrimRight(replace, "\n"))], "\n") && !strings.HasPrefix(prior[end:], "\n") {
 		next = prior[:start] + strings.TrimRight(replace, "\n") + "\n" + prior[end:]
 	}
-	summary := fmt.Sprintf("Replaced function %s in %s of %%q (revision %%s) — %d chars became %d.", fn, ref.label(spec), end-start, len(replace))
+	summary := fmt.Sprintf("Replaced function %s in %s of %%q (revision %%s): %d chars became %d.", fn, ref.label(spec), end-start, len(replace))
 	return t.saveScriptEdit(spec, ref, next, summary, "replacement", "replace_function "+fn+" in "+ref.label(spec), args)
 }
 
@@ -321,7 +321,7 @@ func (t *chatTurn) appDefReplaceScriptFunction(args map[string]any, spec AppSpec
 func (t *chatTurn) saveScriptEdit(spec AppSpec, ref appScriptRef, next, summary, verb, reason string, args map[string]any) (string, error) {
 	lang, _ := ref.body(spec)
 	if problem, checked := scriptSyntaxProblem(t.sandboxCallerCtx(), lang, next); checked && problem != "" {
-		return "", fmt.Errorf("that %s would break the script, so it was NOT applied — the app still serves the previous revision:\n- %s\n\nFix the replacement text and try again", verb, problem)
+		return "", fmt.Errorf("that %s would break the script, so it was NOT applied, the app still serves the previous revision:\n- %s\n\nFix the replacement text and try again", verb, problem)
 	}
 	before := spec
 	ref.set(&spec, next)
@@ -332,11 +332,11 @@ func (t *chatTurn) saveScriptEdit(spec AppSpec, ref appScriptRef, next, summary,
 		report, _, _, fail := t.checkScripts(saved, false, nil, nil)
 		if fail > 0 {
 			SaveAppSpecAs(before, AppSaveNoHistory)
-			return "", fmt.Errorf("that %s made a data source fail when run, so it was ROLLED BACK — the app is serving the previous revision again:\n%s\nFix the replacement text and try again", verb, strings.TrimSpace(report))
+			return "", fmt.Errorf("that %s made a data source fail when run, so it was ROLLED BACK, the app is serving the previous revision again:\n%s\nFix the replacement text and try again", verb, strings.TrimSpace(report))
 		}
 		msg += " Every data source was run after the change and printed valid JSON."
 	} else {
-		msg += " Actions are not run on save (one may reach an external API) — run app_def(action=\"test\", id=" + quoteName(saved.Slug) + ") to execute it."
+		msg += " Actions are not run on save (one may reach an external API): run app_def(action=\"test\", id=" + quoteName(saved.Slug) + ") to execute it."
 	}
 	return msg + " " + saved.VerifyStatus() + ".", nil
 }

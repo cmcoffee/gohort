@@ -175,7 +175,7 @@ func ReferenceGroups(user string) []ReferenceGroup {
 		groups = append(groups, ReferenceGroup{Kind: s.Kind(), Label: s.Label(), Items: items})
 	}
 	if len(slow) > 0 {
-		Log("[reference] listing sources took %s — slow: %s", time.Since(start).Round(time.Millisecond), strings.Join(slow, ", "))
+		Log("[reference] listing sources took %s, slow: %s", time.Since(start).Round(time.Millisecond), strings.Join(slow, ", "))
 	}
 	sort.Slice(groups, func(i, j int) bool { return groups[i].Label < groups[j].Label })
 	return groups
@@ -480,7 +480,7 @@ func (rs *ReferenceSelections) UnmarshalJSON(data []byte) error {
 		if !ok {
 			// Skipped rather than fatal, matching the tool path: one
 			// malformed entry should not reject an otherwise good save.
-			Log("[reference] ignoring attached source %q — expected \"<kind>:<item_id>\"", raw)
+			Log("[reference] ignoring attached source %q, expected \"<kind>:<item_id>\"", raw)
 			continue
 		}
 		out = append(out, sel)

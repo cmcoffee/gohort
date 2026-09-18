@@ -29,8 +29,8 @@ piece that never landed. Today:
 | Rank what the branches found | prose scoring off a joined blob | a declared list, scored by a normal stage |
 | Re-fan over the survivors | not expressible | `fan_over: NAME.items` |
 
-An adversarial shape — several roles arguing in rounds, a panel scoring them, a
-closer — is already expressible: roles are `agent` stages, rounds are `loop`, the
+An adversarial shape (several roles arguing in rounds, a panel scoring them, a
+closer) is already expressible: roles are `agent` stages, rounds are `loop`, the
 panel is `fanout`, the closer is `synthesize`. An INVESTIGATIVE shape is not,
 because every branch of such a fan is itself a small pipeline: search this
 sub-question, read what came back, then judge it. This closes that half. It does
@@ -199,7 +199,7 @@ a revise.
 
 Closed in v0.6.278. A body step is addressed by PATH ("outer.inner"), which is
 unambiguous because a stage name may not contain a dot, and gets its own
-indented section with the same form a top-level stage uses — minus the kinds a
+indented section with the same form a top-level stage uses: minus the kinds a
 body may not be, since offering a choice that gets refused on save arrives after
 somebody wrote the prompt for it. Rename and removal are SCOPED to the body:
 siblings' references are rewritten, and a removal is refused by a sibling that
@@ -220,7 +220,7 @@ question is answered".
 
 One level of it landed after this shipped, in a different form than predicted
 here: `kind: machine` (v0.6.276) runs a whole machine as a stage, so a fanout
-body can be a child RUN — one per item, in parallel, with a depth counter on the
+body can be a child RUN: one per item, in parallel, with a depth counter on the
 context and a hard ceiling. Going deeper than that is still refused, and
 deliberately: cycles, budget, and whose permissions a nested run carries are
 each their own argument. Pretending this one covers it would set up exactly the

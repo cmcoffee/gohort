@@ -228,7 +228,7 @@ func containerUsable(c containerSandbox) bool {
 	containerProbeOnce.Do(func() {
 		ok, why := containerProbe(c, containerProbeRunner)
 		if !ok {
-			nfo.Log("[sandbox] WARNING: %s — falling back to unconfined, which under the default "+
+			nfo.Log("[sandbox] WARNING: %s, falling back to unconfined, which under the default "+
 				"fail-closed policy means shell tools are REFUSED.", why)
 		}
 		containerProbeOK = ok
@@ -265,7 +265,7 @@ func containerProbe(c containerSandbox, run func(containerSandbox, []string) (st
 			c.kind, err, firstLine(out), c.image)
 	}
 	warnPythonSkew(out)
-	nfo.Log("[sandbox] %s probe passed — shell tools run in %s", c.kind, c.image)
+	nfo.Log("[sandbox] %s probe passed: shell tools run in %s", c.kind, c.image)
 	return true, ""
 }
 
@@ -415,7 +415,7 @@ func relabelMounts() bool {
 			return
 		case "off", "0", "false", "no":
 			if selinuxEnforcing() {
-				nfo.Log("[sandbox] SELinux is enforcing and GOHORT_SANDBOX_SELINUX_RELABEL=off — " +
+				nfo.Log("[sandbox] SELinux is enforcing and GOHORT_SANDBOX_SELINUX_RELABEL=off: " +
 					"bind mounts are NOT relabeled, so a container will likely be unable to read its " +
 					"workspace. Label the paths yourself (chcon -Rt container_file_t <path>) or unset this.")
 			}
@@ -425,7 +425,7 @@ func relabelMounts() bool {
 		if relabelOK {
 			// Said once, out loud, because it changes state on the HOST and
 			// the change outlives the process that made it.
-			nfo.Log("[sandbox] SELinux is enforcing — container bind mounts are relabeled shared " +
+			nfo.Log("[sandbox] SELinux is enforcing: container bind mounts are relabeled shared " +
 				"(container_file_t) so the sandbox can read them. This rewrites the label on the " +
 				"workspace, the gohort lib and deps dirs, and any path a scoped tool reads. " +
 				"`restorecon -R <path>` puts a path back; GOHORT_SANDBOX_SELINUX_RELABEL=off disables it.")

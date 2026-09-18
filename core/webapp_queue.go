@@ -72,10 +72,10 @@ func (q *TaskQueue) Acquire(ctx context.Context, id, label, app, linkPath string
 	for {
 		select {
 		case <-w.ready:
-			Log("[queue] %s promoted — starting", id[:8])
+			Log("[queue] %s promoted: starting", id[:8])
 			return true
 		case <-ctx.Done():
-			Log("[queue] %s context cancelled — removing from queue", id[:8])
+			Log("[queue] %s context cancelled: removing from queue", id[:8])
 			q.mu.Lock()
 			for i, qw := range q.queue {
 				if qw.id == id {
@@ -143,7 +143,7 @@ func (q *TaskQueue) Release() {
 		q.queue = q.queue[1:]
 		remaining := len(q.queue)
 		q.mu.Unlock()
-		Log("[queue] slot released — promoting %s (%d still queued)", next.id[:8], remaining)
+		Log("[queue] slot released: promoting %s (%d still queued)", next.id[:8], remaining)
 		select {
 		case next.ready <- struct{}{}:
 		default:
@@ -156,6 +156,6 @@ func (q *TaskQueue) Release() {
 	} else {
 		q.active--
 		q.mu.Unlock()
-		Log("[queue] slot released — no items queued (active: %d)", q.active)
+		Log("[queue] slot released, no items queued (active: %d)", q.active)
 	}
 }

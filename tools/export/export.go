@@ -43,7 +43,7 @@ var allowedInterps = map[string]bool{"python3": true, "node": true}
 
 func init() {
 	gt := NewGroupedTool("export",
-		"Generate a downloadable document (PDF, Excel .xlsx, Word .docx, PowerPoint .pptx, or a format you define) from structured data and deliver it to the user. Use when the user asks for a file/report/spreadsheet/deck they can download — not for showing content inline in chat.")
+		"Generate a downloadable document (PDF, Excel .xlsx, Word .docx, PowerPoint .pptx, or a format you define) from structured data and deliver it to the user. Use when the user asks for a file/report/spreadsheet/deck they can download: not for showing content inline in chat.")
 
 	gt.AddAction("formats", &GroupedToolAction{
 		Description: "List the available export formats (built-in + any you've defined) with the data shape each expects. Call this FIRST if you're unsure which format to use or how to shape the `data` payload.",
@@ -67,7 +67,7 @@ func init() {
 	})
 
 	gt.AddAction("define", &GroupedToolAction{
-		Description: "Register a NEW reusable export format backed by a generator script. The script reads the ExportInput JSON ({title,date,data}) on stdin and writes the file's bytes base64-encoded to stdout on a line beginning with the marker \"" + ExportB64Marker + "\". Any pip packages it imports must be listed in py_requires — they're provisioned (sandboxed, host-side) at define time so create is fast. Use when a user wants a format the built-ins don't cover (CSV, an invoice .xlsx with your layout, a branded .docx, etc.).",
+		Description: "Register a NEW reusable export format backed by a generator script. The script reads the ExportInput JSON ({title,date,data}) on stdin and writes the file's bytes base64-encoded to stdout on a line beginning with the marker \"" + ExportB64Marker + "\". Any pip packages it imports must be listed in py_requires: they're provisioned (sandboxed, host-side) at define time so create is fast. Use when a user wants a format the built-ins don't cover (CSV, an invoice .xlsx with your layout, a branded .docx, etc.).",
 		Params: map[string]ToolParam{
 			"name":        {Type: "string", Description: "Format name (lowercase identifier: letters, digits, _, -). Cannot shadow a built-in (pdf/xlsx/docx/pptx)."},
 			"ext":         {Type: "string", Description: "File extension including the dot, e.g. \".csv\". Defaults to \".\"+name."},
@@ -108,7 +108,7 @@ func handleFormats(_ map[string]any, sess *ToolSession) (string, error) {
 	builtins := ListExportFormats()
 	sort.Slice(builtins, func(i, j int) bool { return builtins[i].Name < builtins[j].Name })
 	for _, f := range builtins {
-		fmt.Fprintf(&b, "- %s (%s) — %s\n    data: %s\n", f.Name, f.Ext, f.Desc, f.InputHint)
+		fmt.Fprintf(&b, "- %s (%s), %s\n    data: %s\n", f.Name, f.Ext, f.Desc, f.InputHint)
 	}
 	if user := listUserFormats(sess); len(user) > 0 {
 		b.WriteString("\nYour defined formats:\n")
@@ -117,7 +117,7 @@ func handleFormats(_ map[string]any, sess *ToolSession) (string, error) {
 			if hint == "" {
 				hint = "(no input hint provided)"
 			}
-			fmt.Fprintf(&b, "- %s (%s) — %s\n    data: %s\n", f.Name, f.Ext, f.Desc, hint)
+			fmt.Fprintf(&b, "- %s (%s), %s\n    data: %s\n", f.Name, f.Ext, f.Desc, hint)
 		}
 	}
 	return b.String(), nil
@@ -136,7 +136,7 @@ func handleCreate(args map[string]any, sess *ToolSession) (string, error) {
 		return "", err
 	}
 	if _, ok := args["data"]; !ok {
-		return "", Error("data is required — see the expected shape via action=formats")
+		return "", Error("data is required: see the expected shape via action=formats")
 	}
 
 	in := ExportInput{
@@ -180,10 +180,10 @@ func handleDefine(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	name := strings.ToLower(strings.TrimSpace(StringArg(args, "name")))
 	if !validFormatName.MatchString(name) {
-		return "", Error("invalid format name — use lowercase letters, digits, _ or - (max 40 chars)")
+		return "", Error("invalid format name: use lowercase letters, digits, _ or - (max 40 chars)")
 	}
 	if _, ok := LookupExportFormat(name); ok {
-		return "", Error("cannot define " + name + " — it's a reserved built-in format")
+		return "", Error("cannot define " + name + ", it's a reserved built-in format")
 	}
 	script := StringArg(args, "script")
 	if strings.TrimSpace(script) == "" {
@@ -262,7 +262,7 @@ func resolveFormat(sess *ToolSession, name string) (*ExportFormat, error) {
 	if f, ok := loadUserFormat(sess, name); ok {
 		return f, nil
 	}
-	return nil, Error("unknown export format " + strconvQuote(name) + " — call action=formats to see what's available")
+	return nil, Error("unknown export format " + strconvQuote(name) + ", call action=formats to see what's available")
 }
 
 func loadUserFormat(sess *ToolSession, name string) (*ExportFormat, bool) {

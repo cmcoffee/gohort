@@ -66,7 +66,7 @@ func dispatchToolboxModeTempTool(sess *ToolSession, tt *TempTool, args map[strin
 	hasCmd := strings.TrimSpace(act.CommandTemplate) != ""
 	switch {
 	case hasURL && hasCmd:
-		return "", fmt.Errorf("toolbox %q action %q declares both url_template and command_template — an action is an HTTP call or a local command, not both", tt.Name, act.Name)
+		return "", fmt.Errorf("toolbox %q action %q declares both url_template and command_template: an action is an HTTP call or a local command, not both", tt.Name, act.Name)
 	case !hasURL && !hasCmd:
 		return "", fmt.Errorf("toolbox %q action %q declares neither url_template nor command_template, so there is nothing for it to run", tt.Name, act.Name)
 	}

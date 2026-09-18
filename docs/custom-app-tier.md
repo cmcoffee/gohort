@@ -1,4 +1,4 @@
-# Custom App Tier — sandboxed LLM-written apps + primitive API
+# Custom App Tier: sandboxed LLM-written apps + primitive API
 
 Status: **design / target** (not built). The declarative app tier (app_def →
 `core/ui` components → `apps/customapps`) is the default and stays so. This doc
@@ -10,13 +10,13 @@ to gohort only through a small, scoped primitive API.
 
 The declarative tier composes pre-built primitives (`Table`, `FormPanel`,
 `WorkbenchPanel`, …). Its wall: a genuinely new shape needs a new primitive added
-to `core/ui` by hand. A custom tier dissolves that wall — the LLM writes the page
+to `core/ui` by hand. A custom tier dissolves that wall: the LLM writes the page
 instead of waiting for a primitive.
 
 But declarative stays the DEFAULT because composed apps get, for free and
 consistently: theming, auth, the data store, mobile layout, and **live framework
 upgrades** (e.g. a spacing or security fix improves every declarative app on
-reload — a frozen custom page never gets that). So:
+reload: a frozen custom page never gets that). So:
 
 - **Declarative** = default. Consistent, safe, self-upgrading. Most apps.
 - **Custom** = escape hatch. Unlimited shapes, sandboxed, frozen code.
@@ -28,7 +28,7 @@ runtime, so the work isn't tier-specific.
 
 ## The non-negotiable: containment
 
-LLM-written JS in gohort's own origin is XSS-by-design — worse here because
+LLM-written JS in gohort's own origin is XSS-by-design: worse here because
 channels/phantom expose agents to untrusted outside messages (prompt injection
 could steer what the page contains). So the custom page is ALWAYS untrusted:
 
@@ -37,7 +37,7 @@ could steer what the page contains). So the custom page is ALWAYS untrusted:
   no shared storage.
 - A strict **CSP** on the iframe document: `default-src 'none'; script-src
   'unsafe-inline'; connect-src 'none'`. The page literally cannot make network
-  calls — every privileged action goes through the bridge.
+  calls: every privileged action goes through the bridge.
 - The **outer page (broker)**, on the gohort origin, holds the real session. It
   receives bridge calls over `postMessage`, enforces grants + scoping, performs
   the actual fetch to `customapps` endpoints, and relays results back.
@@ -83,7 +83,7 @@ store + chat endpoints are shared by both tiers.
 A small bridge shim the iframe loads. Every method is a `postMessage` round-trip
 to the broker, which scopes + enforces. The page never sees a URL or a cookie.
 
-### `gohort.data` — the record store (scoped to this app)
+### `gohort.data`: the record store (scoped to this app)
 
 ```js
 gohort.data.list()              // → Promise<record[]>
@@ -97,7 +97,7 @@ gohort.data.onChange(cb)        // local writes + co-author writes fire this
 Wraps the existing `records` / `record` endpoints. The broker injects owner+slug;
 a custom page cannot address another app's data.
 
-### `gohort.sse` — live streams
+### `gohort.sse`: live streams
 
 ```js
 // Stream a reply from the app's bound agent (wraps chat/send SSE).
@@ -113,7 +113,7 @@ The broker owns the `EventSource`/fetch-stream and relays parsed events via
 `postMessage`; the iframe never holds the raw connection. This is the primitive
 the declarative `ChatPanel`/`AgentLoopPanel` would also be refactored onto.
 
-### `gohort.theme` — consistency without hardcoding
+### `gohort.theme`: consistency without hardcoding
 
 ```js
 gohort.theme.tokens()    // → { bg0, bg1, bg2, text, textHi, accent, danger, ... }
@@ -124,7 +124,7 @@ gohort.theme.onChange(cb)
 The broker auto-injects the active theme's token CSS into the iframe, so a custom
 page uses `var(--accent)` etc. and looks native + follows theme switches.
 
-### `gohort.ui` — optional later convenience
+### `gohort.ui`: optional later convenience
 
 ```js
 gohort.ui.toast(msg)
@@ -145,7 +145,7 @@ app_def(action="create", kind="custom",
 
 Builder writes the HTML (its strength), declares grants. Guidance: use
 `window.gohort.data/.sse/.theme`; do NOT hardcode storage or colors; you have no
-direct network — everything goes through the bridge. Same anti-pattern rule as
+direct network: everything goes through the bridge. Same anti-pattern rule as
 the workbench agent: never improvise a private store; the app's record store is
 the data layer.
 
@@ -161,8 +161,8 @@ New: the broker page + sandboxed iframe, the `gohort.*` bridge shim, AppSpec
 
 1. **Lock the declarative workbench** (data/SSE/agent plumbing proven end to end).
 2. **Extract `gohort.data` / `gohort.sse` / `gohort.theme`** as a clean client lib
-   — usable by the declarative runtime too (refactor `ChatPanel` onto `gohort.sse`).
-3. **Broker + sandboxed iframe + bridge** — the containment layer.
+, usable by the declarative runtime too (refactor `ChatPanel` onto `gohort.sse`).
+3. **Broker + sandboxed iframe + bridge**: the containment layer.
 4. **`app_def` custom kind + Builder guidance.**
 5. **Later:** `gohort.ui` helpers, granular grants, per-app CSP tuning, a
    "re-generate with Builder" path for frozen custom apps.

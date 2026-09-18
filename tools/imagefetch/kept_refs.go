@@ -92,7 +92,7 @@ func keptLabel(k KeptImage) string {
 		// less self-explanatory than a person's name and the caption earns its
 		// place next to it.
 		if extra := collapseSpace(strings.TrimSpace(k.Caption)); extra != "" {
-			return truncateLabel(subject+" — "+extra, maxKeptLabelChars)
+			return truncateLabel(subject+" · "+extra, maxKeptLabelChars)
 		}
 		return truncateLabel(collapseSpace(subject), maxKeptLabelChars)
 	}

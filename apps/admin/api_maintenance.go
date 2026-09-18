@@ -202,11 +202,11 @@ func (a *AdminApp) handleVectorStats(w http.ResponseWriter, r *http.Request) {
 	// instead of a field that failed to load.
 	emptyText := stats.EmptyBySourceText
 	if emptyText == "" {
-		emptyText = "none — every chunk has a vector"
+		emptyText = "none: every chunk has a vector"
 	}
 	staleText := stats.StaleBySourceText
 	if staleText == "" {
-		staleText = "none — every vector is in the current space"
+		staleText = "none: every vector is in the current space"
 	}
 	unusableText := stats.UnusableBySourceText
 	if unusableText == "" {

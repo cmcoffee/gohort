@@ -163,7 +163,7 @@ func SaveStoreCommand(db Database, a StoreCommand) (StoreCommand, error) {
 	case a.Slug == "":
 		return a, Error("say which store this command belongs to")
 	case a.Name == "":
-		return a, Error("give the command a name — a short handle like \"decrypt\"")
+		return a, Error("give the command a name: a short handle like \"decrypt\"")
 	case a.Command == "":
 		return a, Error("give the absolute path of the command to run")
 	case !strings.HasPrefix(a.Command, "/"):
@@ -252,7 +252,7 @@ func runRegisteredCommand(ctx context.Context, dir, bin string, args ...string) 
 	text := strings.TrimSpace(string(out))
 	if ctx.Err() == context.DeadlineExceeded {
 		return text, Error("the command did not finish within " + commandTimeout.String() +
-			" and was stopped. The folder may be half-processed — check it before retrying.")
+			" and was stopped. The folder may be half-processed: check it before retrying.")
 	}
 	return text, err
 }
@@ -406,7 +406,7 @@ func (T *FileStoreApp) handleFolders(w http.ResponseWriter, r *http.Request) {
 func describeStoreCommands(db Database, st Store) string {
 	cmds := StoreCommandsFor(db, st.Slug)
 	if len(cmds) == 0 {
-		return fmt.Sprintf("No commands are registered against %q. If a folder here is unreadable, that is not because a step is missing — nothing is set up to transform it.", st.Name)
+		return fmt.Sprintf("No commands are registered against %q. If a folder here is unreadable, that is not because a step is missing: nothing is set up to transform it.", st.Name)
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "Commands registered against %q, run by a person from the Files page (never by you):\n", st.Name)
@@ -424,7 +424,7 @@ func describeStoreCommands(db Database, st Store) string {
 			if ask == "" {
 				ask = "a value"
 			}
-			fmt.Fprintf(&b, "\n  Asks the person for %s partway through, looked up outside gohort — so it cannot be run unattended.", ask)
+			fmt.Fprintf(&b, "\n  Asks the person for %s partway through, looked up outside gohort, so it cannot be run unattended.", ask)
 		}
 	}
 	b.WriteString("\n\nIf a folder looks empty or unreadable, say which of these to run on it and let the user click it.")

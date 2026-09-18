@@ -95,7 +95,7 @@ func ExtractDocument(ctx context.Context, doc DocumentAttachment) (string, error
 			// A spec that announces itself and then will not parse is worth
 			// saying out loud — falling silently back to raw JSON would look
 			// like it worked and retrieve like it did not.
-			nfo.Log("[document_extract] %q looks like an OpenAPI spec but did not render (%v) — ingesting as plain JSON", doc.Name, err)
+			nfo.Log("[document_extract] %q looks like an OpenAPI spec but did not render (%v): ingesting as plain JSON", doc.Name, err)
 		}
 		// Any other JSON is flattened to sections and "path: value" lines
 		// (see json_flatten.go); raw JSON has nothing to chunk at and
@@ -416,9 +416,9 @@ func collapseHTMLWhitespace(s string) string {
 func extractAudio(ctx context.Context, doc DocumentAttachment) (string, error) {
 	cfg := GetTranscribeConfig()
 	if !cfg.Enabled {
-		nfo.Log("[transcribe] refused %q (%d bytes mime=%q): transcription disabled — configure via `gohort --setup`",
+		nfo.Log("[transcribe] refused %q (%d bytes mime=%q): transcription disabled, configure via `gohort --setup`",
 			doc.Name, len(doc.Data), doc.MimeType)
-		return "", fmt.Errorf("audio attachments need transcription enabled — configure via `gohort --setup` (Audio transcription section)")
+		return "", fmt.Errorf("audio attachments need transcription enabled: configure via `gohort --setup` (Audio transcription section)")
 	}
 	name := strings.TrimSpace(doc.Name)
 	if name == "" {
@@ -538,7 +538,7 @@ func extractWithAntiword(ctx context.Context, data []byte) (string, error) {
 	if lastErr != nil {
 		return "", lastErr
 	}
-	return "", fmt.Errorf("no converter for legacy .doc files is installed — %s, or convert the file to .docx", legacyDocInstallHint())
+	return "", fmt.Errorf("no converter for legacy .doc files is installed: %s, or convert the file to .docx", legacyDocInstallHint())
 }
 
 // legacyDocConverters are the tools that can read a legacy binary Word file,
@@ -601,7 +601,7 @@ func FormatAttachmentPreamble(name, mime, text string) string {
 	var b strings.Builder
 	if isAudioAttachment(mimeLower, ext) {
 		fmt.Fprintf(&b, "## Transcribed audio: %s\n\n", name)
-		b.WriteString("The text below is the COMPLETE transcript of the attached audio file (already transcribed via whisper). When asked to transcribe, return the transcript verbatim — NO meta preamble (no \"the transcription reads:\", no \"here is what it says:\", no parenthetical attribution like \"(that's the full content)\"). Just deliver the words directly. When answering other questions about the audio, cite the transcript inline as needed. Do NOT try to transcribe it yourself; the work is done.\n\n")
+		b.WriteString("The text below is the COMPLETE transcript of the attached audio file (already transcribed via whisper). When asked to transcribe, return the transcript verbatim, NO meta preamble (no \"the transcription reads:\", no \"here is what it says:\", no parenthetical attribution like \"(that's the full content)\"). Just deliver the words directly. When answering other questions about the audio, cite the transcript inline as needed. Do NOT try to transcribe it yourself; the work is done.\n\n")
 		b.WriteString(text)
 		b.WriteString("\n\n---\n\n")
 		return b.String()

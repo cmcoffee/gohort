@@ -407,7 +407,7 @@
     // whole body or one section of it.
     function openDocAssist(section, initial, apply) {
       window.uiOpenAssist({
-        title: (titleInput.value || 'Document') + (section ? ' — ' + section : ''),
+        title: (titleInput.value || 'Document') + (section ? ' · ' + section : ''),
         subtitle: section
           ? 'Drafting one section. The rest of the document is untouched.'
           : 'Drafting the whole document.',
@@ -441,14 +441,14 @@
     var asstThread = el('div', {class: 'ui-tw-asst-thread'},
       [el('div', {class: 'ui-tw-asst-empty'}, ['Ask the assistant to discuss or rewrite this article.'])]);
     var asstInputRow = el('div', {class: 'ui-tw-asst-input-row'});
-    var modeBtn = el('button', {class: 'ui-chat-mode active', title: 'Edit mode — assistant may rewrite the article',
+    var modeBtn = el('button', {class: 'ui-chat-mode active', title: 'Edit mode: assistant may rewrite the article',
       onclick: function() {
         chatMode = (chatMode === 'edit') ? 'chat' : 'edit';
         modeBtn.textContent = chatMode === 'edit' ? 'Edit' : 'Chat';
         modeBtn.classList.toggle('active', chatMode === 'edit');
         modeBtn.title = chatMode === 'edit'
-          ? 'Edit mode — assistant may rewrite the article'
-          : 'Chat mode — discussion only, never touches the article';
+          ? 'Edit mode: assistant may rewrite the article'
+          : 'Chat mode: discussion only, never touches the article';
       }}, ['Edit']);
     var asstInput = el('textarea', {class: 'ui-chat-input', rows: '1',
       placeholder: 'Ask the assistant…'});
@@ -618,7 +618,7 @@
       currentImageURL = '';
       asstThread.innerHTML = '';
       asstThread.appendChild(el('div', {class: 'ui-tw-asst-empty'},
-        [id ? 'Ask the assistant to discuss or rewrite this article.' : 'Start typing your article — the assistant can help once you have something to work with.']));
+        [id ? 'Ask the assistant to discuss or rewrite this article.' : 'Start typing your article: the assistant can help once you have something to work with.']));
       docChat.clear();
       hideImage();
       if (!id) {
@@ -696,7 +696,7 @@
         el('button', {class: 'ui-row-btn', onclick: async function() {
           if (!(await window.uiConfirm('Remove the header image from this article?'))) return;
           hideImage();
-          showToast('Image removed — Save to persist');
+          showToast('Image removed: Save to persist');
         }}, ['Remove']),
       ]));
     }
@@ -751,7 +751,7 @@
             onApply: function(t) {
               docSetValue(t);
               if (data.title) titleInput.value = data.title;
-              showToast('Applied — remember to Save');
+              showToast('Applied: remember to Save');
             },
           });
           asstAppend('assistant', 'Review proposed changes in editor window.');
@@ -860,7 +860,7 @@
         fetchJSON(cfg.merge_sources_url).then(function(items) {
           (items || []).forEach(function(s) {
             var opt = el('option', {value: s.id || s.ID, title: relTime(s.date || s.Date)},
-              [(s.name || s.Name) + ' — ' + relTime(s.date || s.Date)]);
+              [(s.name || s.Name) + ' · ' + relTime(s.date || s.Date)]);
             sourceSelect.appendChild(opt);
           });
         }).catch(function(){});
@@ -895,7 +895,7 @@
               fetchJSON(cfg.merge_sources_url).then(function(items) {
                 (items || []).forEach(function(s) {
                   var opt = el('option', {value: s.id || s.ID},
-                    [(s.name || s.Name) + ' — ' + relTime(s.date || s.Date)]);
+                    [(s.name || s.Name) + ' · ' + relTime(s.date || s.Date)]);
                   sourceSelect.appendChild(opt);
                 });
               });
@@ -906,7 +906,7 @@
         onclick: async function() {
           var other = pasteArea.value.trim();
           if (!other) { showToast('Need something to merge with'); return; }
-          if (!editorValue().trim()) { showToast('Current article is empty — nothing to merge into'); return; }
+          if (!editorValue().trim()) { showToast('Current article is empty: nothing to merge into'); return; }
           if (!(await window.uiConfirm('Merge the source into the current article? The body will be replaced with the merged result.'))) return;
           setBtnBusy(mergeRunBtn, 'Merging…');
           statusLine.textContent = '';
@@ -930,11 +930,11 @@
               // Auto-save so the merge produces a revision. ◀ reverts
               // if the merge result isn't what the user wanted.
               saveArticle();
-              showToast('Merged and saved — use ◀ to revert if needed');
+              showToast('Merged and saved: use ◀ to revert if needed');
               mergePanel.style.display = 'none';
             } else if (merged) {
               // Server returned chat-style instead of article — show it.
-              statusLine.textContent = 'Merge returned conversational text instead of an article body — see the assistant pane.';
+              statusLine.textContent = 'Merge returned conversational text instead of an article body: see the assistant pane.';
               asstAppend('assistant', merged);
             } else {
               showToast('Merge produced no output');

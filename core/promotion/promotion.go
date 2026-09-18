@@ -177,7 +177,7 @@ func ResolveDispatchRoute(hostSessionID string) (*subsession.SubSession, RouteAc
 		if subsession.SubSessionIsLive(active.SubSessionID) {
 			return active, RouteInject
 		}
-		nfo.Log("[sub-session] active sub=%s declared dead by liveness checks — retiring as orphan", active.SubSessionID)
+		nfo.Log("[sub-session] active sub=%s declared dead by liveness checks: retiring as orphan", active.SubSessionID)
 		subsession.RetireSubSession(active.SubSessionID, "orphaned_no_goroutine")
 	}
 	idle := subsession.IdleSubSessionsFor(hostSessionID)

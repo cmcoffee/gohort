@@ -253,7 +253,7 @@ func parseRecallRendered(rendered string) []memSearchItem {
 					cur.Note = "Deletes the whole document (all its chunks) from this agent's knowledge."
 				}
 			case "span":
-				cur.Note = "History is the immutable record of the conversation — not deletable."
+				cur.Note = "History is the immutable record of the conversation: not deletable."
 			}
 			continue
 		}

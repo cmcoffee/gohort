@@ -78,17 +78,18 @@ const (
 	// full copy of the reference photo, which the stitch dutifully shrinks into
 	// a square where a face used to be. framesHold below refuses that render;
 	// this paragraph is the half that tries not to provoke it.
-	faceRefinePrompt = "Image 1 is the picture being edited. Every other image is a reference photograph of a person, supplied ONLY so you can see what that person's face looks like — do not copy their pose, their background, their framing or their crop, and do not output the reference image. " +
+	faceRefinePrompt = "Image 1 is the picture being edited. Every other image is a reference photograph of a person, supplied ONLY so you can see what that person's face looks like: do not copy their pose, their background, their framing or their crop, and do not output the reference image. " +
 		"Output image 1, changed in exactly one respect: the face of the person in image 1 becomes the face of the person in the reference photograph, matching their facial structure, features and likeness. " +
-		"Keep everything else in image 1 identical — the head angle, the gaze direction, the expression, the lighting, the shadows, the skin tone, the image grain, the hair, the clothing, the background and the framing."
+		"Keep everything else in image 1 identical: the head angle, the gaze direction, the expression, the lighting, the shadows, the skin tone, the image grain, the hair, the clothing, the background and the framing."
 )
 
 func init() {
 	RegisterTunable(TunableSpec{
 		Key: "tune_image_face_steps", Category: "Images",
-		Label: "Face refinement steps",
-		Help:  "Sampling steps for the second, face-only pass of an edit. Deliberately higher than the backend's default: the first pass redraws the whole scene and is tuned for speed, this one runs on a small crop where identity is decided, so the steps are cheap and the detail is the entire point.",
-		Kind:  KindInt, Default: 20, Min: 1, Max: 150,
+		Label:  "Face refinement steps",
+		Help:   "Sampling steps for the second, face-only pass of an edit. Deliberately higher than the default.",
+		Detail: "The first pass redraws the whole scene and is tuned for speed. This one runs on a small crop where identity is decided, so the steps are cheap and the detail is the entire point.",
+		Kind:   KindInt, Default: 20, Min: 1, Max: 150,
 	})
 }
 
@@ -121,18 +122,18 @@ func (f faceRefine) run(out restImageOutcome) restImageOutcome {
 	// read those pixels is the same SSRF outcomeAsInputImage refuses by design,
 	// and a face pass is not the place to make that exception.
 	if out.b64 == "" {
-		Debug("[face_refine] %q returns an image URL rather than image data — nothing to read, skipping", f.backend)
+		Debug("[face_refine] %q returns an image URL rather than image data: nothing to read, skipping", f.backend)
 		return out
 	}
 	if len(f.refs) == 0 {
-		Debug("[face_refine] no source photo on this edit — nothing to take an identity from, skipping")
+		Debug("[face_refine] no source photo on this edit: nothing to take an identity from, skipping")
 		return out
 	}
 	// The crop occupies a slot, so a single-input backend has nowhere to put
 	// the reference. Refining without one would sharpen whichever face pass A
 	// invented, which is a better picture of the wrong person.
 	if slots := f.spec.MaxImages(); slots < 2 {
-		Debug("[face_refine] %q takes one image at a time — no slot for the identity reference alongside the crop, skipping", f.backend)
+		Debug("[face_refine] %q takes one image at a time: no slot for the identity reference alongside the crop, skipping", f.backend)
 		return out
 	}
 	raw, err := base64.StdEncoding.DecodeString(out.b64)
@@ -147,7 +148,7 @@ func (f faceRefine) run(out restImageOutcome) restImageOutcome {
 	}
 	faces := detectFaces(src)
 	if len(faces) == 0 {
-		Debug("[face_refine] no face found in the render — leaving it alone")
+		Debug("[face_refine] no face found in the render: leaving it alone")
 		return out
 	}
 	if len(faces) > maxFaceRefines {
@@ -162,7 +163,7 @@ func (f faceRefine) run(out restImageOutcome) restImageOutcome {
 	// was cut out of and drops the only photo that says who the person is.
 	ids := f.identityRefs()
 	if len(ids) == 0 {
-		Debug("[face_refine] no face in any of the %d source photo(s) — nothing to take an identity from, skipping", len(f.refs))
+		Debug("[face_refine] no face in any of the %d source photo(s): nothing to take an identity from, skipping", len(f.refs))
 		return out
 	}
 	f.refs = ids
@@ -239,7 +240,7 @@ func (f faceRefine) render(canvas image.Image, box image.Rectangle) (image.Image
 	// back gets stitched into the frame as a square, at face size, and looks
 	// exactly like a bug — because it is one, just not this file's.
 	if diff, ok := framesHold(crop, img); !ok {
-		return nil, fmt.Errorf("the refinement came back as a different picture rather than the same crop with a new face (frame differs by %.0f%%) — the backend returned the reference photo or redrew the scene", diff*100)
+		return nil, fmt.Errorf("the refinement came back as a different picture rather than the same crop with a new face (frame differs by %.0f%%): the backend returned the reference photo or redrew the scene", diff*100)
 	}
 	return scaleImageTo(img, box.Dx(), box.Dy()), nil
 }
@@ -259,7 +260,7 @@ func (f faceRefine) identityRefs() []inputImage {
 	fracs := make([]float64, len(f.refs))
 	for i, ref := range f.refs {
 		if fracs[i] = faceFraction(ref); fracs[i] <= 0 {
-			Debug("[face_refine] source photo %q has no detectable face — not an identity reference", ref.name)
+			Debug("[face_refine] source photo %q has no detectable face: not an identity reference", ref.name)
 		}
 	}
 	refs := pickIdentityRefs(f.refs, fracs)

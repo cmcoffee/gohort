@@ -116,7 +116,7 @@ func applyPacing(p orchUpdatePayload, armed *orchUpdatePayload, armedID string, 
 		// The successor fired while this fire was still running (a fire that
 		// outlived its own gap). Nothing to move, and nothing to repair: never
 		// re-create a consumed task, that is how chains duplicate.
-		Log("[orchestrate/pacing] task %q: next attempt already ran — pacing to %s skipped", recurringName(p), at.UTC().Format(time.RFC3339))
+		Log("[orchestrate/pacing] task %q: next attempt already ran, pacing to %s skipped", recurringName(p), at.UTC().Format(time.RFC3339))
 		return ""
 	}
 	armed.NextAttemptAt = at.UTC().Format(time.RFC3339)
@@ -139,7 +139,7 @@ func pacedLine(at time.Time, why string, loc *time.Location) string {
 	if time.Until(at) > 20*time.Hour {
 		format = "Mon 2006-01-02 15:04"
 	}
-	return fmt.Sprintf("next attempt %s — %s", local.Format(format), truncateObs(why, 160))
+	return fmt.Sprintf("next attempt %s: %s", local.Format(format), truncateObs(why, 160))
 }
 
 // stampPacedAttempt records the paced time on the attempt that asked for it.

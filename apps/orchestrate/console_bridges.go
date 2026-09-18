@@ -319,7 +319,7 @@ func (T *OrchestrateApp) handleChannelCompact(w http.ResponseWriter, r *http.Req
 	// Nothing to fold into when the rolling summary is turned off — the thread
 	// bounds by forgetting old messages instead, so there's no summary to build.
 	if agent.DisableCompaction {
-		http.Error(w, "compaction is disabled for this agent — nothing to compact", http.StatusBadRequest)
+		http.Error(w, "compaction is disabled for this agent: nothing to compact", http.StatusBadRequest)
 		return
 	}
 	keepRecent := agent.ContextDepth

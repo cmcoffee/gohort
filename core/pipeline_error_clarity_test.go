@@ -255,7 +255,7 @@ func TestLoopBodyProblemsFlattenIntoOneList(t *testing.T) {
 		t.Fatal("two body problems, no error")
 	}
 	msg := err.Error()
-	if strings.Count(msg, "problems — fix them all") != 1 {
+	if strings.Count(msg, "problems, fix them all") != 1 {
 		t.Errorf("the header must appear exactly once, got:\n%s", msg)
 	}
 	if !strings.Contains(msg, "2 problems") {

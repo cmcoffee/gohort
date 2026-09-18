@@ -31,7 +31,7 @@ func getGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			}
 			src := "active (admin-approved)"
 			if p.Shared {
-				src = "active (admin-approved), PUBLISHED deployment-wide — you own it, so an update changes it for every user"
+				src = "active (admin-approved), PUBLISHED deployment-wide: you own it, so an update changes it for every user"
 			}
 			return fmt.Sprintf("source: %s\n%s", src, string(body)), nil
 		}
@@ -69,7 +69,7 @@ func getGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		if owner == sess.Username {
 			return fmt.Sprintf("source: active (shared deployment-wide; you own it, so update edits it in place)\n%s", string(body)), nil
 		}
-		return fmt.Sprintf("source: shared deployment-wide, owned by %s — FULL definition below including its script; reading is always allowed, only editing is not. To change its behavior, copy it under a NEW name with action=\"create\" and edit that.\n%s", owner, string(body)), nil
+		return fmt.Sprintf("source: shared deployment-wide, owned by %s, FULL definition below including its script; reading is always allowed, only editing is not. To change its behavior, copy it under a NEW name with action=\"create\" and edit that.\n%s", owner, string(body)), nil
 	}
 	// Live session tools — the only place an agent-bundled tool appears
 	// (it's reconstituted from the agent record each turn, never written
@@ -84,7 +84,7 @@ func getGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			}
 			src := "session (live)"
 			if sess.BundledToolNames[name] {
-				src = "agent-bundled (attached to this agent's record — delete removes it from the record)"
+				src = "agent-bundled (attached to this agent's record: delete removes it from the record)"
 			}
 			return fmt.Sprintf("source: %s\n%s", src, string(body)), nil
 		}
@@ -97,7 +97,7 @@ func getGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			if err != nil {
 				return "", fmt.Errorf("marshal tool %q: %w", name, err)
 			}
-			return fmt.Sprintf("source: agent-bundled (on agent %s — action=\"update\" edits it there in place)\n%s", ownerAgent, string(body)), nil
+			return fmt.Sprintf("source: agent-bundled (on agent %s, action=\"update\" edits it there in place)\n%s", ownerAgent, string(body)), nil
 		}
 	}
 	// Orphan pool — the tool's last carrying agent was deleted, so the record
@@ -118,7 +118,7 @@ func getGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		if former == "" {
 			former = "a deleted agent"
 		}
-		return fmt.Sprintf("source: ORPHANED — this tool is NOT callable right now. Its last carrying agent (%s) was deleted, which removed the tool from every agent's catalog; the definition below survived. To make it callable again, re-home it (Admin › Orphaned Tools) or re-create it with action=\"create\" using the definition below. Tell the user it needs re-homing rather than working around it.\n%s",
+		return fmt.Sprintf("source: ORPHANED, this tool is NOT callable right now. Its last carrying agent (%s) was deleted, which removed the tool from every agent's catalog; the definition below survived. To make it callable again, re-home it (Admin › Orphaned Tools) or re-create it with action=\"create\" using the definition below. Tell the user it needs re-homing rather than working around it.\n%s",
 			former, string(body)), nil
 	}
 	return "", fmt.Errorf("no tool found with name %q (checked active pool, pending queue, session drafts, live session tools, your other agents' bundled tools, and the orphan pool)", name)
@@ -285,7 +285,7 @@ func unlandedUpdateWarning(sess *ToolSession, name string, args map[string]any) 
 		return ""
 	}
 	return "Re-reading the tool shows " + strings.Join(stale, "; ") +
-		". Do NOT re-issue the same update expecting a different result, and do not report the tool as fixed — say what you tried and that the write did not take."
+		". Do NOT re-issue the same update expecting a different result, and do not report the tool as fixed: say what you tried and that the write did not take."
 }
 
 func tempToolToCreateArgs(tt TempTool) map[string]any {

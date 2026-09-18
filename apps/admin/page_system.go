@@ -64,15 +64,19 @@ func (a *AdminApp) systemSections() []ui.Section {
 						Help:        "Used to build links in notification emails. Include scheme."},
 					{Field: "timezone", Label: "Timezone", Type: "select",
 						Options: TimezoneSelectOptions("System default (host zone)"),
-						Help:    "Deployment timezone for day boundaries (cost/usage), schedules, and displayed times. Blank uses the host zone. Applies on restart."},
+						Help:    "Deployment timezone for day boundaries, schedules, and displayed times.",
+						Detail:  "Day boundaries are what cost and usage roll up on. Blank uses the host zone. Applies on restart."},
 					{Field: "notify_from", Label: "Notification From", Type: "text",
 						Placeholder: "noreply@example.com"},
 					{Field: "api_key_allow_query", Label: "Accept the deployment API key in the URL", Type: "toggle",
-						Help: "Off (recommended): the key is accepted only as the X-Gohort-Key header. A credential in a URL reaches browser history, Referer headers on any outbound link, and the log of every proxy in between, and the key is a blanket authentication bypass. Turn this on only while an integration that cannot send a header is being moved, and expect a refused call to say exactly this."},
+						Help:   "Off, the recommended setting, accepts the key only as the X-Gohort-Key header.",
+						Detail: "A credential in a URL reaches browser history, Referer headers on any outbound link, and the log of every proxy in between, and the key is a blanket authentication bypass.\n\nTurn this on only while an integration that cannot send a header is being moved, and expect a refused call to say exactly this."},
 					{Field: "session_days", Label: "Session idle lifetime (days)", Type: "number",
-						Min: 1, Max: 90, Help: "Default 7. How long a session survives WITHOUT use — it renews while someone is actively working, so this is the idle timeout, not a countdown from login."},
+						Min: 1, Max: 90, Help: "Default 7. How long a session survives WITHOUT use.",
+						Detail: "It renews while someone is actively working, so this is the idle timeout, not a countdown from login."},
 					{Field: "session_absolute_days", Label: "Session maximum age (days)", Type: "number",
-						Min: 0, Max: 3650, Help: "Default 90. The ceiling renewal cannot cross, counted from login — what still forces a fresh sign-in eventually and bounds a stolen session cookie. 0 removes the ceiling, so a session in continuous use never expires."},
+						Min: 0, Max: 3650, Help: "Default 90. The ceiling renewal cannot cross, counted from login.",
+						Detail: "This is what still forces a fresh sign-in eventually, and what bounds a stolen session cookie. 0 removes the ceiling, so a session in continuous use never expires."},
 					{Field: "max_login_attempts", Label: "Max login attempts", Type: "number",
 						Min: 1, Max: 100, Help: "Default 5. Failed attempts above this trigger a temporary lockout."},
 					{Field: "lockout_minutes", Label: "Lockout duration (minutes)", Type: "number",
@@ -90,7 +94,8 @@ func (a *AdminApp) systemSections() []ui.Section {
 				Fields: []ui.FormField{
 					{Field: "channel_wake_rules", Label: "Master rules", Type: "textarea", Rows: 5,
 						Placeholder: "Respond only when called by name\nAlways respond to a direct 1:1 message",
-						Help:        "A cheap worker-LLM check runs these on each inbound. Follow-ups to the agent's own last message bypass the rules; owner messages are evaluated like anyone else's unless a rule says otherwise."},
+						Help:        "A cheap worker-LLM check runs these on each inbound.",
+						Detail:      "Follow-ups to the agent's own last message bypass the rules. Owner messages are evaluated like anyone else's unless a rule says otherwise."},
 				},
 			},
 		},
@@ -101,7 +106,7 @@ func (a *AdminApp) systemSections() []ui.Section {
 		},
 		{
 			Title:    "Users",
-			Subtitle: "Approve pending signups, grant or revoke admin, manage app access, sign someone out of every browser, or delete accounts. Deleting revokes every credential the account holds — sessions, access tokens, desktop and bridge keys, connected accounts. Pending users see a placeholder page until approved.",
+			Subtitle: "Approve pending signups, grant or revoke admin, manage app access, sign someone out of every browser, or delete accounts. Deleting revokes every credential the account holds: sessions, access tokens, desktop and bridge keys, connected accounts. Pending users see a placeholder page until approved.",
 			Body: ui.Table{
 				Source: "api/users",
 				RowKey: "username",
@@ -238,7 +243,7 @@ func (a *AdminApp) systemSections() []ui.Section {
 		},
 		{
 			Title:    "App Groups",
-			Subtitle: "Bundle apps under one name (e.g. \"Writers\", \"Ops\"), then assign a whole group to a user from the Groups picker above — access resolves the group to its apps, so editing a group instantly re-provisions everyone assigned to it.",
+			Subtitle: "Bundle apps under one name (e.g. \"Writers\", \"Ops\"), then assign a whole group to a user from the Groups picker above: access resolves the group to its apps, so editing a group instantly re-provisions everyone assigned to it.",
 			Body: ui.Stack{
 				Children: []ui.Component{
 					// Create a new group (name + optional description). The
@@ -349,7 +354,7 @@ const userAdminHTML = `<div class="uadm">
   function showLink(box, link, emailed){
     box.innerHTML=''; box.style.display='';
     var lbl=document.createElement('div'); lbl.className='uadm-link-lbl';
-    lbl.textContent = emailed ? 'Emailed to the user. Link (copy if needed):' : 'Mail is not configured — copy this link and send it to the user:';
+    lbl.textContent = emailed ? 'Emailed to the user. Link (copy if needed):' : 'Mail is not configured, copy this link and send it to the user:';
     var code=document.createElement('code'); code.textContent=link;
     var copy=document.createElement('button'); copy.className='ui-row-btn'; copy.textContent='Copy';
     copy.addEventListener('click', function(){ if(navigator.clipboard) navigator.clipboard.writeText(link); copy.textContent='Copied'; setTimeout(function(){ copy.textContent='Copy'; }, 1200); });

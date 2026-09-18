@@ -192,7 +192,7 @@ func dispatchTempTool(sess *ToolSession, tt *TempTool, args map[string]any) (str
 	// caching is about input→output equivalence, not the backend.
 	if tt.Cache != nil {
 		if hit, ok := lookupTempToolCache(sess, tt, args); ok {
-			Log("[temptool] %q cache hit — skipping exec", tt.Name)
+			Log("[temptool] %q cache hit: skipping exec", tt.Name)
 			return hit, nil
 		}
 	}
@@ -228,7 +228,7 @@ func splitWorkDir(tt *TempTool, args map[string]any, scoped []string) (string, [
 		return "", nil, fmt.Errorf("work_dir names %q, which this tool does not declare as a parameter", name)
 	}
 	if strings.TrimSpace(p.PathScope) == "" {
-		return "", nil, fmt.Errorf("work_dir parameter %q declares no path_scope, so nothing resolves it to a real directory — give it one naming the registered root the folder lives in", name)
+		return "", nil, fmt.Errorf("work_dir parameter %q declares no path_scope, so nothing resolves it to a real directory: give it one naming the registered root the folder lives in", name)
 	}
 	raw, present := lookupArgCI(args, name)
 	if !present || strings.TrimSpace(fmt.Sprint(raw)) == "" {
@@ -419,7 +419,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 			onDiskName = tt.ScriptName
 		}
 		if onDiskName == "" {
-			return "", fmt.Errorf("tool %q has script_body but no script_name — record is malformed", tt.Name)
+			return "", fmt.Errorf("tool %q has script_body but no script_name: record is malformed", tt.Name)
 		}
 		if strings.ContainsAny(onDiskName, "/\\") {
 			return "", fmt.Errorf("invalid script filename %q on tool %q (no path separators allowed)", onDiskName, tt.Name)
@@ -500,7 +500,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 			// documented local(write) path after a workspace wipe. A confidently
 			// wrong diagnosis is worse than none — it sent an authoring model
 			// chasing the wrong fix instead of the real one.
-			return "", fmt.Errorf("tool %q references script(s) %v under {workspace_dir} that aren't on disk, and the tool record carries no script_body to redeploy them. Either the script was written into the workspace separately and the workspace has since been wiped, or the tool was authored without shipping its script. Fix: re-author with script_body=\"...\" so the script travels WITH the tool record (preferred — survives workspace wipes and export/import), or call local(action=\"write\", path=\"<exact-filename>\", content=\"...\") with a filename matching what command_template expects before each dispatch", tt.Name, missing)
+			return "", fmt.Errorf("tool %q references script(s) %v under {workspace_dir} that aren't on disk, and the tool record carries no script_body to redeploy them. Either the script was written into the workspace separately and the workspace has since been wiped, or the tool was authored without shipping its script. Fix: re-author with script_body=\"...\" so the script travels WITH the tool record (preferred, survives workspace wipes and export/import), or call local(action=\"write\", path=\"<exact-filename>\", content=\"...\") with a filename matching what command_template expects before each dispatch", tt.Name, missing)
 		}
 	}
 
@@ -637,7 +637,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	}
 
 	if res.TimedOut {
-		notice := fmt.Sprintf("\n[TIMED OUT after %s — command killed.]", commandTimeout)
+		notice := fmt.Sprintf("\n[TIMED OUT after %s: command killed.]", commandTimeout)
 		if output == "" {
 			return strings.TrimPrefix(notice, "\n"), nil
 		}
@@ -645,7 +645,7 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	}
 	if res.Err != nil {
 		if output == "" {
-			return fmt.Sprintf("[exit: %v — no output]", res.Err), nil
+			return fmt.Sprintf("[exit: %v, no output]", res.Err), nil
 		}
 		return output + fmt.Sprintf("\n[exit: %v]", res.Err), nil
 	}
@@ -726,7 +726,7 @@ func extractAttachmentMarkers(output string, sess *ToolSession) string {
 				sess.AppendVideo(b64)
 				Log("[temptool.attach] media attached via marker (mime=%s, b64_chars=%d)", mime, len(b64))
 			default:
-				Log("[temptool.attach] unsupported marker mime %q — discarding block", mime)
+				Log("[temptool.attach] unsupported marker mime %q: discarding block", mime)
 			}
 		}
 		remaining = afterOpen[closeIdx+len(closeMarker):]

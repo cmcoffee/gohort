@@ -66,7 +66,7 @@ func (T *Servitor) handleCommandGrants(w http.ResponseWriter, r *http.Request) {
 		}
 		appliance, _ := body["appliance_id"].(string)
 		if appliance = strings.TrimSpace(appliance); appliance == "" {
-			http.Error(w, "a machine is required — a grant names one agent and one machine", http.StatusBadRequest)
+			http.Error(w, "a machine is required: a grant names one agent and one machine", http.StatusBadRequest)
 			return
 		}
 		// Connecting is not permitting: a grant written here carries no

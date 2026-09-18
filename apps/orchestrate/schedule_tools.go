@@ -28,38 +28,38 @@ func (t *chatTurn) recurringToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name: "recurring",
-			Description: "Manage RECURRING background tasks for this agent — a task that re-runs at a fixed interval and appends its reply into a thread the user reads later. Each fire runs as this agent, with its persona / tools / memory, like a live turn.\n" +
+			Description: "Manage RECURRING background tasks for this agent: a task that re-runs at a fixed interval and appends its reply into a thread the user reads later. Each fire runs as this agent, with its persona / tools / memory, like a live turn.\n" +
 				"WHERE IT REPORTS: an agent with a Cortex thread posts its fires THERE by default (the standing home for background work), so a schedule set up mid-conversation doesn't interleave its cycles into the conversation; an agent without one posts into this session. Override per task with `to` (\"session\" / \"cortex\" / \"background\"), and TELL THE USER which thread the reports will show up in.\n" +
-				"WHAT THIS IS: a recurring task on a timer. It is NOT a bridge, NOT a connector, and NOT an event monitor. When you tell the user, call it a \"recurring task\" (or \"scheduled check\") — never a \"bridge\" — and do NOT point them at the Bridges app. Once scheduled it appears in this agent's Schedules rail (beside the chat), where the user can see and cancel it.\n" +
+				"WHAT THIS IS: a recurring task on a timer. It is NOT a bridge, NOT a connector, and NOT an event monitor. When you tell the user, call it a \"recurring task\" (or \"scheduled check\") (never a \"bridge\"), and do NOT point them at the Bridges app. Once scheduled it appears in this agent's Schedules rail (beside the chat), where the user can see and cancel it.\n" +
 				"Pick the action:\n" +
-				"  action=\"schedule\" — set one up. Always: prompt (the directive run each fire, e.g. \"check the build, post if red\" — don't put timing in it). Give it a short name too (e.g. \"build watch\") so its report cards and the Schedules rail identify it; if you omit name, the first line of the prompt is used. Then pick a pattern:\n" +
-				"     pattern=\"fixed\" (default) — fires every interval_minutes (>=1).\n" +
-				"     pattern=\"random\" — random timing, two shapes: (a) set times_per_day to fire N random moments inside a daily window (active_from/active_to), each at least min_gap_minutes apart; or (b) OMIT times_per_day to fire UNLIMITED times per day at random gaps between min_gap_minutes and max_gap_minutes (the min gap is the throttle; runs until cancelled). Use random to make polling feel organic instead of clockwork.\n" +
-				"   Optional modifiers (any pattern): active_from/active_to (a daily HH:MM–HH:MM window, local time, outside which fires wait for the next window) and max_fires (auto-stop after this many total fires). Guardrails: min 1 min between fires, max 5 active tasks per session. Schedules run INDEFINITELY by default — until cancelled (a task that goes ~90 days doing no useful work is reaped). Do NOT set max_fires unless the user explicitly asked for a bounded number of runs. Optional `to` picks where its reports land (default above); a re-issue that omits `to` keeps the task where it already reports.\n" +
-				"  To CHANGE an existing task, re-issue action=\"schedule\" with the SAME name and the new timing / directive — it EDITS that task in place (keeping its run history and the thread it reports to) instead of creating a duplicate. The NAME is what identifies it, across every thread of this agent; a task with no name is matched by an identical prompt instead. Reusing a name is how you edit — pick a new name only when you actually want a second task. recurring(action=\"list\") shows the existing names.\n" +
-				"  action=\"list\" — show this agent's active tasks (id, cadence, fire count, prompt, and WHERE each posts: this session, the Cortex mind, another session, or background). Call before scheduling to avoid duplicates.\n" +
-				"  action=\"cancel\" — stop one. Required: id (from schedule or list).\n" +
-				"  action=\"move\" — retarget WHERE an existing task posts its reports, keeping its timing / fire budget untouched. Required: id, to=\"cortex\" (the agent's standing mind thread — good for background engagement cycles the user shouldn't wade through in a conversation) to=\"session\" (this current conversation — or a SPECIFIC thread via session_id, e.g. one you created with open_session to give a schedule's reports their own home), or to=\"background\" (it still runs; nothing is posted to a thread). Moving to cortex requires the agent to maintain a Cortex thread.\n" +
+				"  action=\"schedule\": set one up. Always: prompt (the directive run each fire, e.g. \"check the build, post if red\": don't put timing in it). Give it a short name too (e.g. \"build watch\") so its report cards and the Schedules rail identify it; if you omit name, the first line of the prompt is used. Then pick a pattern:\n" +
+				"     pattern=\"fixed\" (default): fires every interval_minutes (>=1).\n" +
+				"     pattern=\"random\", random timing, two shapes: (a) set times_per_day to fire N random moments inside a daily window (active_from/active_to), each at least min_gap_minutes apart; or (b) OMIT times_per_day to fire UNLIMITED times per day at random gaps between min_gap_minutes and max_gap_minutes (the min gap is the throttle; runs until cancelled). Use random to make polling feel organic instead of clockwork.\n" +
+				"   Optional modifiers (any pattern): active_from/active_to (a daily HH:MM–HH:MM window, local time, outside which fires wait for the next window) and max_fires (auto-stop after this many total fires). Guardrails: min 1 min between fires, max 5 active tasks per session. Schedules run INDEFINITELY by default, until cancelled (a task that goes ~90 days doing no useful work is reaped). Do NOT set max_fires unless the user explicitly asked for a bounded number of runs. Optional `to` picks where its reports land (default above); a re-issue that omits `to` keeps the task where it already reports.\n" +
+				"  To CHANGE an existing task, re-issue action=\"schedule\" with the SAME name and the new timing / directive: it EDITS that task in place (keeping its run history and the thread it reports to) instead of creating a duplicate. The NAME is what identifies it, across every thread of this agent; a task with no name is matched by an identical prompt instead. Reusing a name is how you edit: pick a new name only when you actually want a second task. recurring(action=\"list\") shows the existing names.\n" +
+				"  action=\"list\", show this agent's active tasks (id, cadence, fire count, prompt, and WHERE each posts: this session, the Cortex mind, another session, or background). Call before scheduling to avoid duplicates.\n" +
+				"  action=\"cancel\": stop one. Required: id (from schedule or list).\n" +
+				"  action=\"move\": retarget WHERE an existing task posts its reports, keeping its timing / fire budget untouched. Required: id, to=\"cortex\" (the agent's standing mind thread, good for background engagement cycles the user shouldn't wade through in a conversation) to=\"session\" (this current conversation, or a SPECIFIC thread via session_id, e.g. one you created with open_session to give a schedule's reports their own home), or to=\"background\" (it still runs; nothing is posted to a thread). Moving to cortex requires the agent to maintain a Cortex thread.\n" +
 				"Give it `until` to make it an OBJECTIVE: the task then runs until the goal is actually reached, is judged after every fire, tells each attempt what the earlier ones tried, and stops when it is done (or parks and says so if it runs out of attempts).\n" +
 				"Use this for periodic polling / checks the agent runs itself. NOT for one-shot work, and NOT for dispatching to other agents.",
 			Parameters: map[string]ToolParam{
 				"action":           {Type: "string", Enum: []string{"schedule", "list", "cancel", "move"}, Description: "schedule | list | cancel | move."},
-				"prompt":           {Type: "string", Description: "(schedule) The recurring task as a directive the agent follows each fire. Don't include timing — that's the pattern params."},
+				"prompt":           {Type: "string", Description: "(schedule) The recurring task as a directive the agent follows each fire. Don't include timing: that's the pattern params."},
 				"name":             {Type: "string", Description: "(schedule, optional) Short label identifying this task on its report cards and in the Schedules rail (e.g. \"build watch\"). Defaults to the prompt's first line if omitted."},
 				"pattern":          {Type: "string", Enum: []string{"fixed", "random"}, Description: "(schedule) fixed = every interval_minutes (default); random = times_per_day random moments inside the active window."},
 				"interval_minutes": {Type: "integer", Description: "(schedule, fixed) How often the task fires, in minutes. Minimum 1."},
-				"times_per_day":    {Type: "integer", Description: "(schedule, random) Fire this many random times inside the daily window (1–48). OMIT for UNLIMITED firing at random gaps — see max_gap_minutes."},
-				"min_gap_minutes":  {Type: "integer", Description: "(schedule, random) Minimum minutes between consecutive fires — the throttle. Defaults to the deployment minimum (1) if omitted."},
+				"times_per_day":    {Type: "integer", Description: "(schedule, random) Fire this many random times inside the daily window (1–48). OMIT for UNLIMITED firing at random gaps: see max_gap_minutes."},
+				"min_gap_minutes":  {Type: "integer", Description: "(schedule, random) Minimum minutes between consecutive fires: the throttle. Defaults to the deployment minimum (1) if omitted."},
 				"max_gap_minutes":  {Type: "integer", Description: "(schedule, unlimited random) Maximum minutes between fires; each gap is random in [min_gap, max_gap]. Defaults to 2× min_gap. Ignored when times_per_day is set."},
 				"active_from":      {Type: "string", Description: "(schedule, optional) Daily window start, 24-hour HH:MM local time (e.g. 09:00). Set together with active_to. Required for random WITH times_per_day; optional otherwise."},
 				"active_to":        {Type: "string", Description: "(schedule, optional) Daily window end, 24-hour HH:MM local time (e.g. 17:30). Must be after active_from."},
-				"max_fires":        {Type: "integer", Description: "(schedule, optional) Auto-stop after this many total fires. OMIT for the default: INDEFINITE — the schedule runs until cancelled. Only set this when the user explicitly asks for a bounded number of runs (\"do this 5 times\")."},
+				"max_fires":        {Type: "integer", Description: "(schedule, optional) Auto-stop after this many total fires. OMIT for the default: INDEFINITE, the schedule runs until cancelled. Only set this when the user explicitly asks for a bounded number of runs (\"do this 5 times\")."},
 				"until":            {Type: "string", Description: "(schedule, optional) Makes this an OBJECTIVE instead of a plain cadence: what must be TRUE for the task to be FINISHED, in plain language (\"the blog post is published and its URL is posted to the thread\"). After every fire the framework judges the attempt against this from what it actually DID, not from what it said it did, and the fire that reaches the goal is the last one. Each later attempt is told what the earlier ones tried and why they fell short. Use it when the user wants something DONE; omit it when they want something RUN on a schedule."}, //nolint:lll
 				"max_attempts":     {Type: "integer", Description: "(schedule, optional, with until) How many fires may end with the goal still UNMET before the task stops trying. Reaching it PARKS the task with the last reason so the owner can see it stopped and why, rather than retiring quietly. OMIT to let max_fires be the only bound."},
 				"id":               {Type: "string", Description: "(cancel / move) Scheduler task id of the recurring task (from schedule or list)."},
-				"agent":            {Type: "string", Description: "(list / cancel / move, optional) WHOSE schedules to act on: another of your own agents, by name or id — or \"all\" (list only) for every agent you own. Omit for the agent you are talking to. Reach for it the moment you are asked about a schedule belonging to a different agent: without it that task is invisible here, and guessing from other records is how a turn ends up describing the wrong thing. EDITING another agent's task is not offered — say plainly that it has to be changed from that agent's own session or the Scheduler console."},
+				"agent":            {Type: "string", Description: "(list / cancel / move, optional) WHOSE schedules to act on: another of your own agents, by name or id, or \"all\" (list only) for every agent you own. Omit for the agent you are talking to. Reach for it the moment you are asked about a schedule belonging to a different agent: without it that task is invisible here, and guessing from other records is how a turn ends up describing the wrong thing. EDITING another agent's task is not offered: say plainly that it has to be changed from that agent's own session or the Scheduler console."},
 				"to":               {Type: "string", Enum: []string{"cortex", "session", "background"}, Description: "(schedule / move) Where the task posts its reports: cortex = the agent's standing mind thread (requires one); session = this current conversation, or the one named by session_id; background = it runs but posts to no thread. OMIT on schedule to take the agent's default (cortex when it has one, else this session). Required on move."},
-				"session_id":       {Type: "string", Description: "(move, optional, with to=\"session\") Target a specific existing session of this agent by id — e.g. a dedicated reports thread created via open_session. Omit to target this current conversation."},
+				"session_id":       {Type: "string", Description: "(move, optional, with to=\"session\") Target a specific existing session of this agent by id: e.g. a dedicated reports thread created via open_session. Omit to target this current conversation."},
 			},
 			Required: []string{"action"},
 			Caps:     []Capability{CapRead, CapWrite},
@@ -77,7 +77,7 @@ func (t *chatTurn) recurringToolDef() AgentToolDef {
 			case "", "help":
 				return "recurring actions: schedule (prompt + interval_minutes, optional to=cortex|session|background) | list | cancel (id) | move (id, to=cortex|session|background).", nil
 			default:
-				return "", fmt.Errorf("unknown action %q for recurring — use schedule | list | cancel | move", stringArg(args, "action"))
+				return "", fmt.Errorf("unknown action %q for recurring: use schedule | list | cancel | move", stringArg(args, "action"))
 			}
 		},
 	}
@@ -94,7 +94,7 @@ func recurringSurfaceArg(args map[string]any, agentHasCortex bool) (string, erro
 		return "", nil
 	case "cortex":
 		if !agentHasCortex {
-			return "", errors.New("this agent doesn't maintain a Cortex thread — enable \"Maintain a Cortex thread\" in its editor first, or leave the task in a session")
+			return "", errors.New("this agent doesn't maintain a Cortex thread: enable \"Maintain a Cortex thread\" in its editor first, or leave the task in a session")
 		}
 		return "cortex", nil
 	case "session", "background":
@@ -147,7 +147,7 @@ func (t *chatTurn) recurringScope(args map[string]any) (agentID, label string, e
 	}
 	a, ok := findAgentByNameOrID(t.udb, t.user, key)
 	if !ok {
-		return "", "", fmt.Errorf("no agent %q — agents(action=\"list\") shows what you have", key)
+		return "", "", fmt.Errorf("no agent %q: agents(action=\"list\") shows what you have", key)
 	}
 	return a.ID, fmt.Sprintf("%q", a.Name), nil
 }
@@ -163,7 +163,7 @@ func (t *chatTurn) recurringAgentName(id string) string {
 
 func (t *chatTurn) recurringSchedule(args map[string]any) (string, error) {
 	if t.session == nil || t.session.ID == "" {
-		return "", errors.New("recurring(schedule) requires an active session — start a turn first")
+		return "", errors.New("recurring(schedule) requires an active session: start a turn first")
 	}
 	// A recurring task runs THIS agent, in THIS session: that is its whole
 	// shape, and there is no parameter to point it elsewhere. For an author
@@ -274,9 +274,9 @@ func (t *chatTurn) recurringSchedule(args map[string]any) (string, error) {
 	}
 	verb, note := "SCHEDULED_OK", ""
 	if replaced {
-		verb, note = "UPDATED_OK", " (edited the existing task in place — no duplicate created; its run history and home thread carried over)"
+		verb, note = "UPDATED_OK", " (edited the existing task in place: no duplicate created; its run history and home thread carried over)"
 	}
-	out := fmt.Sprintf("%s id=%s%s — a recurring TASK now runs %s, appending its reply into %s each cycle. It also appears in this agent's Schedules rail, where the user can cancel it. When you confirm to the user, call it a \"recurring task\" (not a bridge/monitor), SAY WHERE ITS REPORTS WILL APPEAR, and don't send them to the Bridges app. Move it with recurring(action=\"move\"); manage it with recurring(action=\"list\") or recurring(action=\"cancel\", id=%q).", verb, id, note, specCadence(spec), surfaceDestLabel(spec.Surface), id)
+	out := fmt.Sprintf("%s id=%s%s: a recurring TASK now runs %s, appending its reply into %s each cycle. It also appears in this agent's Schedules rail, where the user can cancel it. When you confirm to the user, call it a \"recurring task\" (not a bridge/monitor), SAY WHERE ITS REPORTS WILL APPEAR, and don't send them to the Bridges app. Move it with recurring(action=\"move\"); manage it with recurring(action=\"list\") or recurring(action=\"cancel\", id=%q).", verb, id, note, specCadence(spec), surfaceDestLabel(spec.Surface), id)
 	// Unattended fires answer to gates an interactive turn never meets — a tool
 	// that needs confirmation with nobody there to give it, a proactive message
 	// with no inbound to reply to. Both used to surface only when the task fired,
@@ -375,7 +375,7 @@ func (t *chatTurn) recurringCancel(args map[string]any) (string, error) {
 			return fmt.Sprintf("CANCELLED ok. Recurring task %s on %s removed.", id, t.recurringAgentName(rt.Payload.AgentID)), nil
 		}
 	}
-	return "", fmt.Errorf("no recurring task %s on %s — recurring(action=\"list\", agent=\"all\") shows every id you own", id, scopeLabel)
+	return "", fmt.Errorf("no recurring task %s on %s: recurring(action=\"list\", agent=\"all\") shows every id you own", id, scopeLabel)
 }
 
 // recurringMove retargets where an existing task posts its reports — the agent's
@@ -408,7 +408,7 @@ func (t *chatTurn) recurringMove(args map[string]any) (string, error) {
 	hasCortex := t.agent.Cortex
 	if cross {
 		if scopeID == "" {
-			return "", errors.New(`recurring(move) needs one agent — agent="all" is for list only`)
+			return "", errors.New(`recurring(move) needs one agent: agent="all" is for list only`)
 		}
 		tgt, ok := loadAgent(t.udb, scopeID)
 		if !ok {
@@ -421,7 +421,7 @@ func (t *chatTurn) recurringMove(args map[string]any) (string, error) {
 		return "", err
 	}
 	if surface == "" {
-		return "", errors.New("to is required for recurring(move) — \"cortex\", \"session\", or \"background\"")
+		return "", errors.New("to is required for recurring(move): \"cortex\", \"session\", or \"background\"")
 	}
 	// home is the session the task is re-homed to; only a move to a session
 	// changes it, so switching to cortex/background and back always returns to
@@ -430,7 +430,7 @@ func (t *chatTurn) recurringMove(args map[string]any) (string, error) {
 	// to, which is meaningless for someone else's task — refused rather than
 	// silently re-homing another agent's schedule into this conversation.
 	if cross && surface == "session" {
-		return "", errors.New(`to="session" re-homes a task into a thread of the agent you are talking to, so it cannot target another agent's task — use "cortex" or "background", or move it from that agent's own session`)
+		return "", errors.New(`to="session" re-homes a task into a thread of the agent you are talking to, so it cannot target another agent's task: use "cortex" or "background", or move it from that agent's own session`)
 	}
 	home, destLabel := "", surfaceDestLabel(surface)
 	if surface == "session" {
@@ -442,7 +442,7 @@ func (t *chatTurn) recurringMove(args map[string]any) (string, error) {
 		if sid := strings.TrimSpace(stringArg(args, "session_id")); sid != "" && sid != t.session.ID {
 			sess, ok := loadChatSession(t.udb, t.agent.ID, sid)
 			if !ok {
-				return "", fmt.Errorf("no session %s on this agent — use the id returned by open_session, or omit session_id to target this conversation", sid)
+				return "", fmt.Errorf("no session %s on this agent: use the id returned by open_session, or omit session_id to target this conversation", sid)
 			}
 			home = sid
 			destLabel = fmt.Sprintf("the session %q", firstNonEmptyStr(strings.TrimSpace(sess.Title), sid))
@@ -459,13 +459,13 @@ func (t *chatTurn) recurringMove(args map[string]any) (string, error) {
 		curDest, _ := resolveSurface(p.Surface, p.SessionID, p.AgentID)
 		newDest, _ := resolveSurface(surface, firstNonEmptyStr(home, p.SessionID), p.AgentID)
 		if p.Surface == surface && curDest == newDest {
-			return fmt.Sprintf("Recurring task %s already posts into %s — nothing to move.", id, destLabel), nil
+			return fmt.Sprintf("Recurring task %s already posts into %s: nothing to move.", id, destLabel), nil
 		}
 		// Respect the destination thread's active-task cap, same as schedule —
 		// only when the home actually changes (the cap counts tasks per home).
 		if home != "" && home != p.SessionID {
 			if active := ListOrchestrateUpdates(home); len(active) >= orchUpdateMaxPerSession() {
-				return "", fmt.Errorf("the destination already has %d active recurring tasks (cap %d) — cancel one there first", len(active), orchUpdateMaxPerSession())
+				return "", fmt.Errorf("the destination already has %d active recurring tasks (cap %d): cancel one there first", len(active), orchUpdateMaxPerSession())
 			}
 			p.SessionID = home
 		}
@@ -473,9 +473,9 @@ func (t *chatTurn) recurringMove(args map[string]any) (string, error) {
 		// A deliberate edit renews the idle clock, same as create/update.
 		p.LastActive = time.Now().UTC().Format(time.RFC3339)
 		if !UpdateScheduledTaskPayload(rt.TaskID, p) {
-			return "", errors.New("that task is firing right now — try the move again in a moment (recurring(action=\"list\") for a fresh id)")
+			return "", errors.New("that task is firing right now: try the move again in a moment (recurring(action=\"list\") for a fresh id)")
 		}
-		return fmt.Sprintf("MOVED_OK id=%s — the recurring task now posts its reports into %s. Timing, fire count, and budget are unchanged. Tell the user where its reports will appear from now on.", id, destLabel), nil
+		return fmt.Sprintf("MOVED_OK id=%s: the recurring task now posts its reports into %s. Timing, fire count, and budget are unchanged. Tell the user where its reports will appear from now on.", id, destLabel), nil
 	}
-	return "", fmt.Errorf("no recurring task %s on %s — recurring(action=\"list\", agent=\"all\") shows every id you own", id, scopeLabel)
+	return "", fmt.Errorf("no recurring task %s on %s: recurring(action=\"list\", agent=\"all\") shows every id you own", id, scopeLabel)
 }

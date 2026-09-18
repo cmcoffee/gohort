@@ -107,7 +107,7 @@ var appAgentVisibilityWarnOnce sync.Once
 func warnVisibleAppAgents() {
 	for _, s := range appagents.AppAgents() {
 		if !s.Hidden {
-			Warn("[app-agents] %q (%s) is registered VISIBLE (Hidden:false) — it appears in the agent picker and becomes a tool-scope target, so a stray tool can be mis-scoped onto it. Register it Hidden:true unless users are meant to chat with it directly.", s.Name, s.ID)
+			Warn("[app-agents] %q (%s) is registered VISIBLE (Hidden:false), it appears in the agent picker and becomes a tool-scope target, so a stray tool can be mis-scoped onto it. Register it Hidden:true unless users are meant to chat with it directly.", s.Name, s.ID)
 		}
 	}
 }

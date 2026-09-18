@@ -156,7 +156,7 @@ func (T *Servitor) checkWatch(w ScheduledWatch) {
 func (T *Servitor) recordWatchResult(udb Database, w ScheduledWatch, appliance Appliance, output string, expired bool) {
 	var summary string
 	if expired {
-		summary = fmt.Sprintf("[Watch expired] %s — condition '%s' never matched. Command: %s", w.Task, w.Pattern, w.Command)
+		summary = fmt.Sprintf("[Watch expired] %s: condition '%s' never matched. Command: %s", w.Task, w.Pattern, w.Command)
 	} else {
 		short := output
 		if len(short) > 400 {

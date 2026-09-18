@@ -79,7 +79,7 @@ func (p *prepClock) done() {
 	p.logged = true
 	p.render(func(line string) {
 		if time.Since(p.received) >= prepSlowThreshold {
-			Log("%s — the user waited this long before the model saw the message; the largest phase above is the one to fix", line)
+			Log("%s: the user waited this long before the model saw the message; the largest phase above is the one to fix", line)
 		} else {
 			Debug("%s", line)
 		}

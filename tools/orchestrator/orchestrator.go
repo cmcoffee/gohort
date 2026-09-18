@@ -56,7 +56,7 @@ func (t *DelegateTool) IsFrameworkTool() bool { return true } // hide from admin
 func (t *DelegateTool) Caps() []Capability { return []Capability{CapRead, CapNetwork} }
 
 func (t *DelegateTool) Desc() string {
-	return "Hand a multi-step request to a sub-agent that plans the work, executes each step, and returns a synthesized final answer. Use this when the user's request involves several distinct steps that each need their own tools or research (e.g. \"research X, format Y, schedule Z\" or \"find this information, then use it to do that\"). Do not use for single-step requests — just call the relevant tool directly."
+	return "Hand a multi-step request to a sub-agent that plans the work, executes each step, and returns a synthesized final answer. Use this when the user's request involves several distinct steps that each need their own tools or research (e.g. \"research X, format Y, schedule Z\" or \"find this information, then use it to do that\"). Do not use for single-step requests: just call the relevant tool directly."
 }
 
 func (t *DelegateTool) Params() map[string]ToolParam {
@@ -72,7 +72,7 @@ func (t *DelegateTool) Params() map[string]ToolParam {
 		},
 		"notes": {
 			Type:        "string",
-			Description: "Optional extra guidance for the orchestrator — constraints, format requirements, or preferences for how the answer should be assembled.",
+			Description: "Optional extra guidance for the orchestrator: constraints, format requirements, or preferences for how the answer should be assembled.",
 		},
 	}
 }
@@ -172,7 +172,7 @@ func buildDispatchWorker(sess *ToolSession, workerLLM LLM, workerToolNames []str
 		Tool: Tool{
 			Name: "dispatch_worker",
 			Description: "Dispatch a focused worker to execute one subtask using the available tools. " +
-				"Each call is independent — workers don't share state. Pass enough context in the task " +
+				"Each call is independent: workers don't share state. Pass enough context in the task " +
 				"description so the worker doesn't have to re-discover what's already known. Returns the " +
 				"worker's synthesized findings as plain text.",
 			Parameters: map[string]ToolParam{
@@ -258,15 +258,15 @@ func orchestratorPrompt(notes string) string {
 	b.WriteString("You are an orchestrator coordinating a small team of focused workers to fulfill a complex request.\n\n")
 	b.WriteString("Your job: read the request, decompose it into a short markdown plan of independent subtasks, dispatch each subtask via `dispatch_worker`, and synthesize the workers' outputs into a single coherent final answer.\n\n")
 	b.WriteString("## Planning\n\n")
-	b.WriteString("- Write the plan as a numbered markdown list before dispatching anything. Keep it tight — three to six subtasks is typical; more than that usually means you can collapse some.\n")
+	b.WriteString("- Write the plan as a numbered markdown list before dispatching anything. Keep it tight: three to six subtasks is typical; more than that usually means you can collapse some.\n")
 	b.WriteString("- Each subtask must be self-contained: name what to do, supply any context (URLs, IDs, prior findings) the worker needs, and state what kind of output you want back (a fact, a summary, a list, a formatted block).\n")
 	b.WriteString("- Workers don't share state. If subtask B depends on subtask A's output, dispatch A first, wait for the result, then include the relevant pieces in B's task description.\n\n")
 	b.WriteString("## Dispatching\n\n")
 	b.WriteString("- Call `dispatch_worker` once per subtask. The worker has the tool catalog you were given access to.\n")
 	b.WriteString("- If a worker returns an error or empty findings, decide: retry with a tighter task, route around the failure, or surface it to the user in your final answer.\n")
-	b.WriteString("- Do NOT call `delegate` recursively — workers cannot spawn workers, and you should not try to either.\n\n")
+	b.WriteString("- Do NOT call `delegate` recursively: workers cannot spawn workers, and you should not try to either.\n\n")
 	b.WriteString("## Synthesis\n\n")
-	b.WriteString("- Your final response is what the calling agent receives as the tool result. Make it directly answer the original request — no \"here's what each worker said\" recap unless the user explicitly wants it.\n")
+	b.WriteString("- Your final response is what the calling agent receives as the tool result. Make it directly answer the original request: no \"here's what each worker said\" recap unless the user explicitly wants it.\n")
 	b.WriteString("- Cite specific values from worker output verbatim (paths, URLs, numbers). Don't paraphrase concrete details.\n")
 	b.WriteString("- If a subtask produced nothing useful, say so plainly rather than padding around it.\n")
 	if notes != "" {
@@ -297,7 +297,7 @@ func truncForStatus(s string) string {
 func workerPrompt() string {
 	return "You are a focused worker executing one subtask for an orchestrator. " +
 		"Use the tools you've been given to complete the task, then return a tight synthesis of what you found or did. " +
-		"Do not narrate your process — just do the work and report the result. " +
+		"Do not narrate your process: just do the work and report the result. " +
 		"Cite specific values verbatim (paths, URLs, numbers). " +
 		"If the task is unclear or impossible with your tools, say so plainly and stop. " +
 		"Keep the response under 1500 words; the orchestrator will roll several worker outputs together."

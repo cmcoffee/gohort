@@ -60,7 +60,7 @@ func resolveInputImages(sess *ToolSession, refs []string, max int) ([]inputImage
 		// Say what NOT to do. Given a bare limit the model retried with fewer
 		// pictures and reported the blend as done — so the user who asked for
 		// three images combined got one, and was told it had worked.
-		return nil, fmt.Errorf("this backend takes at most %d image(s) and %d were given. Do NOT retry with fewer and present it as the blend that was asked for — a composite missing pictures is not the picture requested. Tell the user this backend can combine only %d at a time",
+		return nil, fmt.Errorf("this backend takes at most %d image(s) and %d were given. Do NOT retry with fewer and present it as the blend that was asked for: a composite missing pictures is not the picture requested. Tell the user this backend can combine only %d at a time",
 			max, len(refs), max)
 	}
 	out := make([]inputImage, 0, len(refs))
@@ -296,7 +296,7 @@ func resolveInputImage(sess *ToolSession, ref string) (inputImage, error) {
 		return out, fmt.Errorf("empty image reference")
 	}
 	if u, err := url.Parse(ref); err == nil && (u.Scheme == "http" || u.Scheme == "https") {
-		return out, fmt.Errorf("a URL can't be used as a source image directly — download it first (image action=\"fetch\", url=%q), then pass the saved workspace path", ref)
+		return out, fmt.Errorf("a URL can't be used as a source image directly: download it first (image action=\"fetch\", url=%q), then pass the saved workspace path", ref)
 	}
 	// The image space first: "image#1" is the framework's own ring of recently
 	// produced/received pictures, which is what "edit the one you just made"
@@ -315,12 +315,12 @@ func resolveInputImage(sess *ToolSession, ref string) (inputImage, error) {
 		if suffix := strings.TrimSpace(ref[len(RecentImageRefPrefix):]); !isAllDigits(suffix) {
 			if names := keptImageNames(sess); len(names) > 0 {
 				return out, fmt.Errorf("you have no kept image called %q. What you have kept: %s. "+
-					"These are exact names, not filenames — no extension, and they do not shift", suffix, strings.Join(names, ", "))
+					"These are exact names, not filenames: no extension, and they do not shift", suffix, strings.Join(names, ", "))
 			}
 			return out, fmt.Errorf("you have no kept image called %q, and nothing is kept under any name yet. "+
 				"image#<name> only works after action=\"keep\"; for a picture from this conversation use image#1 (most recent) or a media id", suffix)
 		}
-		return out, fmt.Errorf("%s isn't in the recent images — call image(action=\"help\") to see what's there", ref)
+		return out, fmt.Errorf("%s isn't in the recent images: call image(action=\"help\") to see what's there", ref)
 	}
 	if b64, kind, ok := sess.ResolveInboundMedia(ref); ok {
 		if kind != "" && kind != "image" {
@@ -344,9 +344,9 @@ func resolveInputImage(sess *ToolSession, ref string) (inputImage, error) {
 		// past the end is an off-by-one, and the count is the useful fact.
 		var lead string
 		if n := sess.InboundMediaCount(); n == 0 {
-			lead = fmt.Sprintf("%s doesn't exist. media#N only ever names a photo the USER attached to a message, and nothing was attached here. Pictures you found, downloaded or generated are NOT media#N — they are the workspace filename the tool handed back, or image#N", ref)
+			lead = fmt.Sprintf("%s doesn't exist. media#N only ever names a photo the USER attached to a message, and nothing was attached here. Pictures you found, downloaded or generated are NOT media#N: they are the workspace filename the tool handed back, or image#N", ref)
 		} else {
-			lead = fmt.Sprintf("%s is past the end — %d item(s) came in with this message, so the ids stop at media#%d", ref, n, n)
+			lead = fmt.Sprintf("%s is past the end: %d item(s) came in with this message, so the ids stop at media#%d", ref, n, n)
 		}
 		// Whichever mistake it was, the picture it wanted is usually sitting in
 		// the space already. Handing over the manifest is what keeps the
@@ -354,7 +354,7 @@ func resolveInputImage(sess *ToolSession, ref string) (inputImage, error) {
 		if m := RecentImageManifest(sess); m != "" {
 			return out, fmt.Errorf("%s. Use one of these lasting handles instead:\n%s", lead, m)
 		}
-		return out, fmt.Errorf("%s. Pass the workspace filename the tool handed you instead — or, if the user really did send a photo, ask them to re-attach it", lead)
+		return out, fmt.Errorf("%s. Pass the workspace filename the tool handed you instead, or, if the user really did send a photo, ask them to re-attach it", lead)
 	}
 	if sess == nil || strings.TrimSpace(sess.WorkspaceDir) == "" {
 		return out, fmt.Errorf("no workspace available to read %q from", ref)
@@ -383,12 +383,12 @@ func resolveInputImage(sess *ToolSession, ref string) (inputImage, error) {
 		// Naming the pruning is half the fix: without it there is no rule to
 		// learn, only a filename that used to work.
 		if m := RecentImageManifest(sess); m != "" {
-			return out, fmt.Errorf("no file %q in your workspace. Produced images are kept as a small rolling set, so an older filename gets pruned while the picture itself is usually still here under an id. Do NOT go hunting through the workspace for it — pick it from this list:\n%s", ref, m)
+			return out, fmt.Errorf("no file %q in your workspace. Produced images are kept as a small rolling set, so an older filename gets pruned while the picture itself is usually still here under an id. Do NOT go hunting through the workspace for it, pick it from this list:\n%s", ref, m)
 		}
-		return out, fmt.Errorf("no file %q in your workspace, and your recent images are empty too, so this picture is gone. Make it again or ask the user to re-send it — do NOT guess at other filenames", ref)
+		return out, fmt.Errorf("no file %q in your workspace, and your recent images are empty too, so this picture is gone. Make it again or ask the user to re-send it: do NOT guess at other filenames", ref)
 	}
 	if info.Size() > maxInputImageBytes {
-		return out, fmt.Errorf("%q is %s — the limit for a source image is %s", ref, HumanSize(info.Size()), HumanSize(maxInputImageBytes))
+		return out, fmt.Errorf("%q is %s: the limit for a source image is %s", ref, HumanSize(info.Size()), HumanSize(maxInputImageBytes))
 	}
 	data, err := os.ReadFile(abs)
 	if err != nil {
@@ -406,11 +406,11 @@ func verifyInputImage(name string, data []byte) (inputImage, error) {
 		return out, fmt.Errorf("%q is empty", name)
 	}
 	if len(data) > maxInputImageBytes {
-		return out, fmt.Errorf("%q is %s — the limit for a source image is %s", name, HumanSize(int64(len(data))), HumanSize(maxInputImageBytes))
+		return out, fmt.Errorf("%q is %s: the limit for a source image is %s", name, HumanSize(int64(len(data))), HumanSize(maxInputImageBytes))
 	}
 	cfg, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil {
-		return out, fmt.Errorf("%q isn't a readable image (%v) — pass a png/jpg/webp", name, err)
+		return out, fmt.Errorf("%q isn't a readable image (%v): pass a png/jpg/webp", name, err)
 	}
 	if cfg.Width <= 0 || cfg.Height <= 0 {
 		return out, fmt.Errorf("%q has no dimensions", name)

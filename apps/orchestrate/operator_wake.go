@@ -46,7 +46,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 		// below instead.
 		m, ok := GetEventMonitor(RootDB, owner, monitorName)
 		if !ok {
-			Log("[operator.wake] %s/%s: monitor no longer exists — wake dropped", owner, monitorName)
+			Log("[operator.wake] %s/%s: monitor no longer exists, wake dropped", owner, monitorName)
 			return false, "the monitor no longer exists, so the event had nowhere to go"
 		}
 		if strings.TrimSpace(m.WakeBrief) != "" {
@@ -70,7 +70,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 		channelTargetDelivered := false
 		if wakeChannel != "" {
 			if ch, ok := GetChannel(RootDB, owner, wakeChannel); ok {
-				text := fmt.Sprintf("[EVENT — bridge %q fired]\n%s%s", monitorName, summary, brief)
+				text := fmt.Sprintf("[EVENT: bridge %q fired]\n%s%s", monitorName, summary, brief)
 				if _, err := RunChannelAgent(ctx, ChannelInbound{
 					Owner:            owner,
 					AgentID:          ch.AgentID,
@@ -84,7 +84,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 					Log("[operator.wake] %s/%s channel target %q delivery failed: %v", owner, monitorName, wakeChannel, err)
 				}
 			} else {
-				Log("[operator.wake] %s/%s channel target %q not found — falling back to agent thread", owner, monitorName, wakeChannel)
+				Log("[operator.wake] %s/%s channel target %q not found: falling back to agent thread", owner, monitorName, wakeChannel)
 			}
 		}
 		// No wake agent (a legacy monitor from before the field): if the
@@ -98,9 +98,9 @@ func registerOperatorWake(app *OrchestrateApp) {
 			if channelTargetDelivered {
 				return true, ""
 			}
-			MarkEventMonitorBroken(RootDB, owner, monitorName, "it has no wake agent — its old implicit default (the retired Chat seed) no longer runs; relink an agent to resume")
+			MarkEventMonitorBroken(RootDB, owner, monitorName, "it has no wake agent: its old implicit default (the retired Chat seed) no longer runs; relink an agent to resume")
 			Log("[operator.wake] %s/%s parked broken: no wake agent (legacy Chat-seed default retired)", owner, monitorName)
-			return false, "it has no wake agent, so it was parked broken — relink an agent to resume"
+			return false, "it has no wake agent, so it was parked broken: relink an agent to resume"
 		}
 		if wakeSession == "" {
 			wakeSession = cortexSessionID(wakeAgent)
@@ -204,7 +204,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 						delivered = true
 						Debug("[operator.wake] %s/%s notify=direct enqueued alert to phantom chat %s", owner, monitorName, chatTarget)
 						if recordCard {
-							recordMonitorCard(fmt.Sprintf("%s\n\n(auto-posted directly to %s — no reply needed)", summary, chatTarget))
+							recordMonitorCard(fmt.Sprintf("%s\n\n(auto-posted directly to %s: no reply needed)", summary, chatTarget))
 						}
 					} else {
 						Log("[operator.wake] %s/%s notify=direct send to chat %s failed: %v", owner, monitorName, chatTarget, err)
@@ -231,7 +231,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 					wakeTarget = cortexSessionID(wakeAgent)
 				}
 			}
-			msg := fmt.Sprintf("[EVENT — monitor %q fired]\n%s%s\n\nReact in this thread: report it, delegate any needed work (delegation routes through the authorization queue), or just note it.",
+			msg := fmt.Sprintf("[EVENT, monitor %q fired]\n%s%s\n\nReact in this thread: report it, delegate any needed work (delegation routes through the authorization queue), or just note it.",
 				monitorName, summary, brief)
 			// A monitor carrying a goal lets the woken agent say when the next
 			// CHECK is worth making — "still in review, don't look again until
@@ -351,7 +351,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 	RegisterEventPoller(func(ctx context.Context, owner, agentID, check string) (string, error) {
 		out, err := app.RunAgentSync(ctx, owner, owner, agentID, check)
 		if err != nil && strings.Contains(err.Error(), "not found") && agentID != defaultConsoleAgent {
-			Log("[operator.poll] checker %q not found — falling back to %s", agentID, defaultConsoleAgent)
+			Log("[operator.poll] checker %q not found: falling back to %s", agentID, defaultConsoleAgent)
 			return app.RunAgentSync(ctx, owner, owner, defaultConsoleAgent, check)
 		}
 		return out, err
@@ -447,9 +447,9 @@ func (T *OrchestrateApp) handleOperatorEvent(w http.ResponseWriter, r *http.Requ
 	// addresses, and would throttle a legitimate integration behind a shared
 	// NAT for someone else's traffic.
 	if !operatorEventFires.Allow(m.Owner + ":" + m.Name) {
-		Warn("[operator] event monitor %q hit its rate ceiling (%d/min) — refusing further wakes this minute",
+		Warn("[operator] event monitor %q hit its rate ceiling (%d/min): refusing further wakes this minute",
 			m.Name, operatorEventPerMinute)
-		TooManyRequests(w, time.Minute, "this monitor is firing too often — slow down")
+		TooManyRequests(w, time.Minute, "this monitor is firing too often: slow down")
 		return
 	}
 	if m.Paused {

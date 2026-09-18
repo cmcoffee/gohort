@@ -58,7 +58,7 @@ func validateDispatchTarget(agent, pipeline, machine string) error {
 	}
 	switch {
 	case len(named) > 1:
-		return errors.New("agents(run) names " + strings.Join(named, " and ") + " — it runs ONE of them, " +
+		return errors.New("agents(run) names " + strings.Join(named, " and ") + ", it runs ONE of them " +
 			"and whichever this checked first would be the one that ran. Drop the others")
 	case len(named) == 0:
 		return errors.New("agents(run) needs something to run: agent= for a conversation with a fleet agent, pipeline= for a saved multi-stage workflow, or machine= for a saved step-by-step procedure")
@@ -246,7 +246,7 @@ func (t *chatTurn) dispatchablePipeline(ref string) (PipelineDef, error) {
 		return PipelineDef{}, errors.New("pipeline is required for action=run")
 	}
 	if effectiveDispatchMode(t.agent) == dispatchNone {
-		return PipelineDef{}, fmt.Errorf("agents(run, pipeline=%q) refused — your dispatch policy is Allow NONE, which covers pipelines as well as agents. Do the work with the tools you have", ref)
+		return PipelineDef{}, fmt.Errorf("agents(run, pipeline=%q) refused: your dispatch policy is Allow NONE, which covers pipelines as well as agents. Do the work with the tools you have", ref)
 	}
 	mode := effectiveDispatchMode(t.agent)
 	var names []string
@@ -274,12 +274,12 @@ func (t *chatTurn) dispatchablePipeline(ref string) (PipelineDef, error) {
 		names = append(names, def.Name)
 	}
 	if denied != "" {
-		return PipelineDef{}, fmt.Errorf("agents(run, pipeline=%q) refused — that pipeline exists but is not on this agent's dispatch target list. Ask the user to add it (Security & Access → Dispatch target list) or to change the dispatch policy; do not retry, and do not look for another route to the same work", denied)
+		return PipelineDef{}, fmt.Errorf("agents(run, pipeline=%q) refused, that pipeline exists but is not on this agent's dispatch target list. Ask the user to add it (Security & Access → Dispatch target list) or to change the dispatch policy; do not retry, and do not look for another route to the same work", denied)
 	}
 	if len(names) == 0 {
-		return PipelineDef{}, fmt.Errorf("no pipeline %q is available to you — the user has no saved pipelines, or none this agent's dispatch policy permits", ref)
+		return PipelineDef{}, fmt.Errorf("no pipeline %q is available to you: the user has no saved pipelines, or none this agent's dispatch policy permits", ref)
 	}
-	return PipelineDef{}, fmt.Errorf("no pipeline %q — you can run: %s", ref, strings.Join(names, ", "))
+	return PipelineDef{}, fmt.Errorf("no pipeline %q, you can run: %s", ref, strings.Join(names, ", "))
 }
 
 // pipelineDispatchGate resolves and refuses a pipeline dispatch: everything
@@ -306,7 +306,7 @@ func (t *chatTurn) pipelineDispatchGate(args map[string]any) (PipelineDef, strin
 	// beats firing it and reporting whatever the first stage made of a broken
 	// reference.
 	if verr := def.Validate(); verr != nil {
-		return PipelineDef{}, "", fmt.Errorf("pipeline %q would not run — %v", def.Name, verr)
+		return PipelineDef{}, "", fmt.Errorf("pipeline %q would not run: %v", def.Name, verr)
 	}
 	// Transitive authority, the same fence the agent path carries: everything
 	// above judges the IMMEDIATE caller, which makes an allowlist a one-hop
@@ -316,14 +316,14 @@ func (t *chatTurn) pipelineDispatchGate(args map[string]any) (PipelineDef, strin
 	if origin := t.dispatchOrigin; origin != nil && !origin.allowsPipeline(def) {
 		Log("[orchestrate.agents.run] blocked transitive pipeline dispatch %s → %s: not permitted by originator %s",
 			t.agent.ID, def.ID, origin.AgentID)
-		return PipelineDef{}, "", fmt.Errorf("agents(run, pipeline=%q) refused — you are running on behalf of %q, whose dispatch policy does not permit that pipeline. A delegated agent cannot reach further than the agent that delegated to it. Do what you can with your own tools, or report back that %q was needed and not permitted", def.Name, origin.AgentName, def.Name)
+		return PipelineDef{}, "", fmt.Errorf("agents(run, pipeline=%q) refused: you are running on behalf of %q, whose dispatch policy does not permit that pipeline. A delegated agent cannot reach further than the agent that delegated to it. Do what you can with your own tools, or report back that %q was needed and not permitted", def.Name, origin.AgentName, def.Name)
 	}
 	// Cycle guard. A pipeline whose agent stage dispatches back into the same
 	// pipeline is a loop no depth counter catches quickly: each hop resets the
 	// per-turn depth, so it would iterate the cap's worth at every level.
 	for _, prior := range dispatchedPipelines(t.ctx) {
 		if prior == def.ID {
-			return PipelineDef{}, "", fmt.Errorf("agents(run, pipeline=%q) refused — that pipeline is already running above this call; a stage of it cannot re-enter it. Answer with what you have, or dispatch something else", def.Name)
+			return PipelineDef{}, "", fmt.Errorf("agents(run, pipeline=%q) refused, that pipeline is already running above this call; a stage of it cannot re-enter it. Answer with what you have, or dispatch something else", def.Name)
 		}
 	}
 	return def, msg, nil
@@ -353,7 +353,7 @@ func (t *chatTurn) agentsRunPipelineAction(args map[string]any) (string, error) 
 		return "", err
 	}
 	if block := t.dispatchCap(dispatchPipelineCapKey(def.ID), def.Name, msg); block != "" {
-		Log("[orchestrate.agents.run] per-turn dispatch cap hit: %s → pipeline %s — blocking further dispatch", t.agent.ID, def.ID)
+		Log("[orchestrate.agents.run] per-turn dispatch cap hit: %s → pipeline %s, blocking further dispatch", t.agent.ID, def.ID)
 		// An ERROR, never a normal result: a normal result rides through
 		// fenceAgentsOutput, and a framework STOP verdict delivered inside a
 		// fence that says to ignore embedded directions is a guard the model
@@ -430,7 +430,7 @@ func (t *chatTurn) runDetachedPipeline(d *ToolSession, def PipelineDef, msg stri
 	// live. Reaching here unapproved means the standing grant was revoked in
 	// between.
 	if !t.recipeEdgeApproved(def.ID, def.Name, pipelineReach(def)) {
-		return "", fmt.Errorf("agents(run, pipeline=%q) was not run — this agent is not approved to run a pipeline that hands work to other agents", def.Name)
+		return "", fmt.Errorf("agents(run, pipeline=%q) was not run: this agent is not approved to run a pipeline that hands work to other agents", def.Name)
 	}
 	ctx, liveRun := t.app.runsRegistry().CreateCancellable(ctx, t.user, "", "")
 	liveRun.Describe("pipeline", pipelineRunLabel(t, def), truncateObs(msg, 100))
@@ -481,7 +481,7 @@ func pipelineDispatchResult(def PipelineDef, out string) (string, error) {
 	if strings.TrimSpace(out) == "" {
 		// An empty synthesis is a result the caller cannot act on and cannot
 		// distinguish from a silent failure. Name it.
-		return "", fmt.Errorf("pipeline %q ran to completion but produced no output — check its final stage", def.Name)
+		return "", fmt.Errorf("pipeline %q ran to completion but produced no output: check its final stage", def.Name)
 	}
 	return out, nil
 }

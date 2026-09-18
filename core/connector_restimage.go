@@ -215,8 +215,10 @@ func init() {
 	// before the first step runs, and on a GPU shared with a resident LLM it
 	// loads slowly or in low-VRAM mode. Two knobs, because the two cases differ
 	// by an order of magnitude and a single number punishes one of them.
-	RegisterTunable(TunableSpec{Key: "tune_image_poll_max_secs", Category: "Timeouts", Label: "Image render deadline", Help: "How long to wait for a text-to-image backend to finish before giving up. A connector can override this in its own settings.", Kind: KindSeconds, Default: 180, Min: 30, Max: 3600})
-	RegisterTunable(TunableSpec{Key: "tune_image_edit_poll_max_secs", Category: "Timeouts", Label: "Image edit deadline", Help: "Same, for backends that take a source photo. Higher by default: an edit model is usually larger, and the first request after another model was resident pays a full load before it starts.", Kind: KindSeconds, Default: 900, Min: 30, Max: 3600})
+	RegisterTunable(TunableSpec{Key: "tune_image_poll_max_secs", Category: "Timeouts", Label: "Image render deadline", Help: "How long to wait for a text-to-image backend to finish before giving up.",
+		Detail: "A connector can override this in its own settings.", Kind: KindSeconds, Default: 180, Min: 30, Max: 3600})
+	RegisterTunable(TunableSpec{Key: "tune_image_edit_poll_max_secs", Category: "Timeouts", Label: "Image edit deadline", Help: "Same, for backends that take a source photo. Higher by default.",
+		Detail: "An edit model is usually larger, and the first request after another model was resident pays a full load before it starts.", Kind: KindSeconds, Default: 900, Min: 30, Max: 3600})
 	RegisterTunable(TunableSpec{Key: "tune_image_poll_interval_secs", Category: "Timeouts", Label: "Image poll interval", Help: "How often to ask an image backend whether it has finished. A connector can override this in its own settings.", Kind: KindSeconds, Default: 2, Min: 1, Max: 60})
 }
 
@@ -338,12 +340,12 @@ func (h restImageHandler) Validate(c Connector) error {
 		return err
 	}
 	if !strings.HasPrefix(s.SubmitURL, "https://") && !strings.HasPrefix(s.SubmitURL, "http://") {
-		return fmt.Errorf("submit_url must be http(s) — got %q (did you fill the preset var, e.g. base_url?)", s.SubmitURL)
+		return fmt.Errorf("submit_url must be http(s): got %q (did you fill the preset var, e.g. base_url?)", s.SubmitURL)
 	}
 	// A named credential must already exist (no_auth/empty is the local/public path).
 	if s.Credential != "" && s.Credential != "no_auth" && s.Credential != "none" {
 		if exists, _, _ := Secure().CredentialStatus(s.Credential); !exists {
-			return fmt.Errorf("no credential named %q — draft it first (draft_api_credential / draft_oauth_credential) and have the admin enable it, or use \"no_auth\" for an unauthenticated local endpoint", s.Credential)
+			return fmt.Errorf("no credential named %q: draft it first (draft_api_credential / draft_oauth_credential) and have the admin enable it, or use \"no_auth\" for an unauthenticated local endpoint", s.Credential)
 		}
 	}
 	// ComfyUI mapping model: the workflow + map own the body and poll paths, so the
@@ -401,7 +403,7 @@ func (s RestImageSpec) validateImageInput() error {
 		return nil
 	}
 	if strings.TrimSpace(s.UploadURL) == "" {
-		return fmt.Errorf("this workflow has image input node(s) %s but no upload_url — set it to your ComfyUI's /upload/image endpoint", strings.Join(m.ImageNodes, ", "))
+		return fmt.Errorf("this workflow has image input node(s) %s but no upload_url: set it to your ComfyUI's /upload/image endpoint", strings.Join(m.ImageNodes, ", "))
 	}
 	// The upload must land on the same host as the rest of the backend: the
 	// no_auth dispatch is scoped to the submit URL's host, so a cross-host
@@ -428,7 +430,7 @@ func (s RestImageSpec) validateImageInput() error {
 		}
 	}
 	if s.MaxInputImages > len(m.ImageNodes) {
-		return fmt.Errorf("max_input_images is %d but only %d image node(s) are mapped — a caller's extra images would have nowhere to go", s.MaxInputImages, len(m.ImageNodes))
+		return fmt.Errorf("max_input_images is %d but only %d image node(s) are mapped: a caller's extra images would have nowhere to go", s.MaxInputImages, len(m.ImageNodes))
 	}
 	return nil
 }
@@ -473,7 +475,7 @@ func (s RestImageSpec) validateWritableInputs(graph map[string]map[string]any) e
 			}
 			for _, k := range c.keys {
 				if v, ok := in[k]; ok && comfyIsLink(v) {
-					return fmt.Errorf("comfy_map.%s points at node %q, but its %q input is driven by another node in the workflow (it reads from node %v). A value here could not be applied without breaking that wiring — clear this field, or change the graph so %q is a plain value",
+					return fmt.Errorf("comfy_map.%s points at node %q, but its %q input is driven by another node in the workflow (it reads from node %v). A value here could not be applied without breaking that wiring: clear this field, or change the graph so %q is a plain value",
 						c.label, id, k, firstComfyLinkID(v), k)
 				}
 			}
@@ -501,7 +503,7 @@ func sameImageHost(submitURL, otherURL string) error {
 		return fmt.Errorf("upload_url is not a URL: %w", err)
 	}
 	if a.Host != b.Host {
-		return fmt.Errorf("upload_url host %q must match submit_url host %q — the backend's dispatch is scoped to one host.%s",
+		return fmt.Errorf("upload_url host %q must match submit_url host %q: the backend's dispatch is scoped to one host.%s",
 			b.Host, a.Host, hostTypoHint(a.Host, b.Host))
 	}
 	return nil
@@ -533,7 +535,7 @@ func hostTypoHint(submitHost, uploadHost string) string {
 	for i < len(a) && i < len(b) && a[i] == b[i] {
 		i++
 	}
-	return fmt.Sprintf(" They are identical up to character %d, then submit_url has %q and upload_url has %q — check for a typo rather than a different server.",
+	return fmt.Sprintf(" They are identical up to character %d, then submit_url has %q and upload_url has %q: check for a typo rather than a different server.",
 		i, string(a[i:]), string(b[i:]))
 }
 
@@ -683,7 +685,7 @@ func reconcileImageBackends(db Database, keepLive ...string) {
 	restImageMu.Unlock()
 	for _, name := range stale {
 		UnregisterImageBackend(name)
-		Log("[rest_image] dropped backend %q — no approved connector of that name", name)
+		Log("[rest_image] dropped backend %q: no approved connector of that name", name)
 	}
 }
 
@@ -766,7 +768,7 @@ func (t *restImageTool) AlwaysDetach(args map[string]any, sess *ToolSession) boo
 }
 
 func (t *restImageTool) Desc() string {
-	base := fmt.Sprintf("Generate a NEW image from a text description via the %q image backend (a ComfyUI / Automatic1111 / hosted diffusion endpoint declared as a connector). The generated image is attached to your reply AUTOMATICALLY — once this tool returns, you are DONE: do NOT search the workspace, look for a file, or call workspace(attach); the image is already delivered. USE ONLY when the user asks to CREATE, DRAW, MAKE, or GENERATE a fresh image through this specific backend. Not for finding or downloading existing images.", t.connector)
+	base := fmt.Sprintf("Generate a NEW image from a text description via the %q image backend (a ComfyUI / Automatic1111 / hosted diffusion endpoint declared as a connector). The generated image is attached to your reply AUTOMATICALLY, once this tool returns, you are DONE: do NOT search the workspace, look for a file, or call workspace(attach); the image is already delivered. USE ONLY when the user asks to CREATE, DRAW, MAKE, or GENERATE a fresh image through this specific backend. Not for finding or downloading existing images.", t.connector)
 	// Append the admin's per-backend prompt guidance, live-resolved from the spec
 	// (the tool is registered once but reads the spec at call time — Materialize),
 	// so an edit shows up on the next turn. Kept OUT of the fixed string so it can
@@ -785,7 +787,7 @@ func (t *restImageTool) Params() map[string]ToolParam {
 	return map[string]ToolParam{
 		"prompt":   {Type: "string", Description: "A detailed description of the image to generate."},
 		"negative": {Type: "string", Description: "Optional: what to avoid in the image (negative prompt). Backends that don't support it ignore this."},
-		"aspect":   {Type: "string", Enum: []string{"square", "portrait", "landscape", "wide", "tall"}, Description: "Optional: named shape, sized to the backend's native resolution — square (1:1), portrait (2:3), landscape (3:2), wide (16:9), tall (9:16). Easier than raw pixels; use this for \"make it wide/portrait\". Explicit width/height override it."},
+		"aspect":   {Type: "string", Enum: []string{"square", "portrait", "landscape", "wide", "tall"}, Description: "Optional: named shape, sized to the backend's native resolution, square (1:1), portrait (2:3), landscape (3:2), wide (16:9), tall (9:16). Easier than raw pixels; use this for \"make it wide/portrait\". Explicit width/height override it."},
 		"width":    {Type: "number", Description: "Optional: exact image width in pixels (rounded to a multiple of 8). Overrides aspect. Omit for the backend's default size."},
 		"height":   {Type: "number", Description: "Optional: exact image height in pixels (rounded to a multiple of 8). Overrides aspect. Omit for the backend's default size."},
 		"steps":    {Type: "number", Description: "Optional: number of diffusion steps."},
@@ -822,7 +824,7 @@ func (t *restImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 		return "", fmt.Errorf("image backend %q no longer exists", t.connector)
 	}
 	if !c.Approved {
-		return "", fmt.Errorf("image backend %q is not approved — an admin enables it in Admin > Connectors", t.connector)
+		return "", fmt.Errorf("image backend %q is not approved: an admin enables it in Admin > Connectors", t.connector)
 	}
 	s, err := restImageHandler{}.parse(c)
 	if err != nil {
@@ -898,9 +900,9 @@ func (t *restImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	// model not to touch the file for the CURRENT reply (it's already delivered);
 	// the path is purely for a subsequent forward request.
 	if rel, ok := persistImageToWorkspace(sess, out.b64); ok {
-		return "Done — the image was generated and attached to your reply; the user will receive it. Nothing more is needed for THIS reply: do NOT search the workspace or call workspace(attach) again for it — it's already delivered, so just reply. (It is also saved in your workspace as \"" + rel + "\": ONLY if a later request asks you to send or post this same image somewhere else, pass \"" + rel + "\" as the attachment.)" + setNote, nil
+		return "Done: the image was generated and attached to your reply; the user will receive it. Nothing more is needed for THIS reply: do NOT search the workspace or call workspace(attach) again for it, it's already delivered, so just reply. (It is also saved in your workspace as \"" + rel + "\": ONLY if a later request asks you to send or post this same image somewhere else, pass \"" + rel + "\" as the attachment.)" + setNote, nil
 	}
-	return "Done — the image was generated and attached to your reply; the user will receive it. Nothing further is needed: do NOT search the workspace, look for a file, or call workspace(attach) — the image is already delivered. Just reply." + setNote, nil
+	return "Done: the image was generated and attached to your reply; the user will receive it. Nothing further is needed: do NOT search the workspace, look for a file, or call workspace(attach), the image is already delivered. Just reply." + setNote, nil
 }
 
 // truncateRestImagePrompt keeps the continuation's reminder of the idea short —
@@ -1134,7 +1136,7 @@ func (s RestImageSpec) generate(sess *ToolSession, p restImageParams) (restImage
 		return out, fmt.Errorf("the image backend failed to run this workflow: %s", truncateForError(failure))
 	}
 	if !ready {
-		return out, fmt.Errorf("image generation timed out after %s. If the backend is simply slow — a large model loading, or a GPU shared with something else — raise this connector's render timeout in Admin > Connectors, or the deadline in Admin > Tunables > Timeouts", wait)
+		return out, fmt.Errorf("image generation timed out after %s. If the backend is simply slow (a large model loading, or a GPU shared with something else), raise this connector's render timeout in Admin > Connectors, or the deadline in Admin > Tunables > Timeouts", wait)
 	}
 	if useMap {
 		fields := resolvePollFields(map[string]string{
@@ -1255,7 +1257,7 @@ func extractOutcome(node any, b64Path, urlPath, urlTemplate string, tmplVars map
 	if urlTemplate != "" {
 		url := substituteTokens(urlTemplate, tmplVars)
 		if strings.Contains(url, "{") {
-			return out, fmt.Errorf("could not fill image URL template %q — a poll_fields dot-path resolved empty (got %q)", urlTemplate, url)
+			return out, fmt.Errorf("could not fill image URL template %q: a poll_fields dot-path resolved empty (got %q)", urlTemplate, url)
 		}
 		data, err := httpGetImageBytes(url)
 		if err != nil {
@@ -1469,7 +1471,7 @@ func EditImageWithBackend(sess *ToolSession, req EditImageRequest) (*ImageGenRes
 		return nil, err
 	}
 	if !s.SupportsImageInput() {
-		return nil, fmt.Errorf("image backend %q generates from text only — it has no image input wired, so it can't edit a photo", req.Backend)
+		return nil, fmt.Errorf("image backend %q generates from text only: it has no image input wired, so it can't edit a photo", req.Backend)
 	}
 	if len(req.Images) == 0 {
 		return nil, fmt.Errorf("editing needs at least one source image")
@@ -1492,10 +1494,10 @@ func EditImageWithBackend(sess *ToolSession, req EditImageRequest) (*ImageGenRes
 			// because a compose graph errors on a partial fill. Offer the
 			// counts that DO work rather than only the ceiling — "use 5 or 7"
 			// is actionable where "not 6" is not.
-			why = fmt.Sprintf("every pass has to be exactly full or the backend renders an unfilled input against a leftover photo, so it can combine %s images — not %d",
+			why = fmt.Sprintf("every pass has to be exactly full or the backend renders an unfilled input against a leftover photo, so it can combine %s images: not %d",
 				joinCounts(cascadeImageCounts(max)), len(req.Images))
 		}
-		return nil, fmt.Errorf("this backend composes %d image(s) at a time and %d were given: %s. Do NOT retry with fewer and present it as the blend that was asked for — a composite missing pictures is not the picture requested. Tell the user what this backend can actually combine",
+		return nil, fmt.Errorf("this backend composes %d image(s) at a time and %d were given: %s. Do NOT retry with fewer and present it as the blend that was asked for: a composite missing pictures is not the picture requested. Tell the user what this backend can actually combine",
 			max, len(req.Images), why)
 	}
 	images, err := resolveInputImages(sess, req.Images, cascadeCapacity(max))
@@ -1505,7 +1507,7 @@ func EditImageWithBackend(sess *ToolSession, req EditImageRequest) (*ImageGenRes
 	var mask *inputImage
 	if strings.TrimSpace(req.Mask) != "" {
 		if len(s.ComfyMap.MaskNodes) == 0 {
-			return nil, fmt.Errorf("image backend %q has no mask input — omit mask, or ask the admin to map one", req.Backend)
+			return nil, fmt.Errorf("image backend %q has no mask input: omit mask, or ask the admin to map one", req.Backend)
 		}
 		m, err := resolveInputImage(sess, req.Mask)
 		if err != nil {
@@ -1561,7 +1563,7 @@ func EditImageWithBackend(sess *ToolSession, req EditImageRequest) (*ImageGenRes
 // original source; against a composited intermediate it selects a region that
 // no longer means what the caller marked.
 func (s RestImageSpec) editCascaded(sess *ToolSession, req EditImageRequest, steps []cascadeStep, images []inputImage, mask *inputImage, seed int) (*ImageGenResult, error) {
-	Log("[rest_image] %q: %d source image(s) over a %d-image limit — running %d render(s), %s",
+	Log("[rest_image] %q: %d source image(s) over a %d-image limit, running %d render(s), %s",
 		req.Backend, len(images), s.MaxImages(), len(steps), cascadeShape(steps))
 	results := make([]inputImage, len(steps))
 	var out restImageOutcome
@@ -1657,7 +1659,7 @@ func cascadeShape(steps []cascadeStep) string {
 // convenience would be the worst place to make that call.
 func outcomeAsInputImage(out restImageOutcome, name string) (inputImage, error) {
 	if out.b64 == "" {
-		return inputImage{}, fmt.Errorf("this backend returns an image URL rather than image data, so one stage's output cannot be fed into the next — it can only combine as many images as it takes in a single call")
+		return inputImage{}, fmt.Errorf("this backend returns an image URL rather than image data, so one stage's output cannot be fed into the next: it can only combine as many images as it takes in a single call")
 	}
 	data, err := base64.StdEncoding.DecodeString(out.b64)
 	if err != nil {

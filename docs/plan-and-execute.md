@@ -4,8 +4,8 @@ Status: shipped v0.6.336. `extras/plan_and_execute.machine.json` +
 `extras/plan_steps.pipeline.json`. Import the pipeline first, then the machine.
 
 This is the answer to "should we add a built-in planning and execution pipeline". No new
-primitive was added. The recipe is DATA — a machine and a pipeline, both authored in the
-vocabulary that already existed — which was the test the exercise was really for: if the
+primitive was added. The recipe is DATA (a machine and a pipeline, both authored in the
+vocabulary that already existed), which was the test the exercise was really for: if the
 planner could not be said in that vocabulary, the missing piece would have been worth more
 than the feature.
 
@@ -34,7 +34,7 @@ afternoon deepening a plan nobody is waiting on.
 
 **What could not be done survives to the report.** `blocked` accumulates alongside
 `findings`, and the report step is told to end with what was NOT established, plainly
-labelled. An answer that quietly omits its gaps reads exactly like one that had none — the
+labelled. An answer that quietly omits its gaps reads exactly like one that had none: the
 same reason the work-plan tool group in core has a gap report at all (see `core/plan.go`).
 
 ## Why a machine AND a pipeline
@@ -48,7 +48,7 @@ primitive is for:
   list under one name, and the report reads `{state:findings}` without knowing which pass
   produced what.
 
-So the machine is the spine and the pipeline is the muscle — `docs/machine-as-spine.md`
+So the machine is the spine and the pipeline is the muscle: `docs/machine-as-spine.md`
 argued for exactly this, and this is the first shipped recipe that uses it.
 
 ## What it needs to be useful
@@ -58,7 +58,7 @@ happens inside the pipeline's fanout, which inherits whatever the caller carries
 an agent, a schedule or a dispatch with a real tool pool, or every step reports NOTHING
 honestly and at length.
 
-If the pipeline is missing, the `execute` step does not fail — the broken-dependency posture
+If the pipeline is missing, the `execute` step does not fail: the broken-dependency posture
 runs it inline and leaves a breadcrumb. That is right for a recipe carried between
 deployments and wrong here: the run would work every step in one prompt, in sequence, and
 read like it worked. `TestShippedMachinesNameAShippedPipeline` is the guard on our side;

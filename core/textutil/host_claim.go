@@ -95,7 +95,7 @@ func ClaimNote(host string, claims []ToolClaim) string {
 		parts = append(parts, fmt.Sprintf("%q (%s%s)", c.Tool, strings.Join(shown, ", "), extra))
 	}
 	return fmt.Sprintf("\n\n[Note: %s already covers %s and returns its data directly. "+
-		"Prefer it over fetching pages from this host — it sees things a page fetch cannot.]",
+		"Prefer it over fetching pages from this host: it sees things a page fetch cannot.]",
 		joinWithAnd(parts), host)
 }
 

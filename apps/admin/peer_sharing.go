@@ -54,9 +54,9 @@ func peerKeysJSON() []byte {
 	keys := ListPeerKeys()
 	rows := make([]peerKeyRow, 0, len(keys))
 	for _, k := range keys {
-		status := "Not connected yet — the code is still unspent"
+		status := "Not connected yet: the code is still unspent"
 		if strings.TrimSpace(k.Paired) != "" {
-			status = "Paired — running on rotating tokens"
+			status = "Paired: running on rotating tokens"
 		}
 		if k.Disabled {
 			status = "Disabled"
@@ -84,7 +84,7 @@ func (a *AdminApp) handlePeerKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed — mint at /api/peer-keys/mint", http.StatusMethodNotAllowed)
+		http.Error(w, "method not allowed: mint at /api/peer-keys/mint", http.StatusMethodNotAllowed)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -333,7 +333,7 @@ func (a *AdminApp) handlePeers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed — add a peer at /api/peers/add", http.StatusMethodNotAllowed)
+		http.Error(w, "method not allowed: add a peer at /api/peers/add", http.StatusMethodNotAllowed)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -461,7 +461,7 @@ func EmbeddingProviderOptions() []ui.SelectOption {
 			help += " using " + p.EmbedModel
 		}
 		if p.LastError != "" {
-			help += " — last check failed: " + p.LastError
+			help += ", last check failed: " + p.LastError
 		}
 		out = append(out, ui.SelectOption{Value: PeerProviderValue(p.Name), Label: label, Help: help})
 	}
@@ -489,7 +489,7 @@ func TranscribeProviderOptions() []ui.SelectOption {
 			help += " using " + p.TranscribeModel
 		}
 		if p.LastError != "" {
-			help += " — last check failed: " + p.LastError
+			help += ", last check failed: " + p.LastError
 		}
 		out = append(out, ui.SelectOption{Value: PeerProviderValue(p.Name), Label: label, Help: help})
 	}
@@ -514,7 +514,7 @@ func SearchProviderOptions() []ui.SelectOption {
 			help += ", which uses " + p.SearchProvider
 		}
 		if p.LastError != "" {
-			help += " — last check failed: " + p.LastError
+			help += ", last check failed: " + p.LastError
 		}
 		out = append(out, ui.SelectOption{Value: PeerProviderValue(p.Name), Label: label, Help: help})
 	}
@@ -534,9 +534,9 @@ func BrowseProviderOptions() []ui.SelectOption {
 		if p.Instance != "" {
 			label += " (" + p.Instance + ")"
 		}
-		help := "Render pages on " + p.BaseURL + " — this machine then needs no Chromium of its own"
+		help := "Render pages on " + p.BaseURL + ", this machine then needs no Chromium of its own"
 		if p.LastError != "" {
-			help += " — last check failed: " + p.LastError
+			help += ", last check failed: " + p.LastError
 		}
 		out = append(out, ui.SelectOption{Value: PeerProviderValue(p.Name), Label: label, Help: help})
 	}
@@ -603,24 +603,24 @@ func peerCapOptions() []ui.SelectOption {
 	help := map[string]string{
 		PeerCapEmbeddings: "Let the peer embed text using this instance's embedder.",
 		PeerCapImages:     "Generate and edit images on this instance's GPU, including multi-image edits.",
-		PeerCapTranscribe: "Turn speech into text using this instance's STT model — audio files, voice notes, the audio track of a video.",
+		PeerCapTranscribe: "Turn speech into text using this instance's STT model: audio files, voice notes, the audio track of a video.",
 		PeerCapSearch:     "Run web searches through this instance's search provider. Note this SPENDS a metered API key if one is configured here; it is rate-limited separately and more tightly than everything else.",
-		PeerCapBrowse:     "Render pages in this instance's headless browser. Public web only — a peer can never reach this machine's private network through it.",
-		PeerCapModels: "Let the peer run its LLM turns on THIS instance's model — the machine with the GPU does the thinking for the one without. " +
+		PeerCapBrowse:     "Render pages in this instance's headless browser. Public web only: a peer can never reach this machine's private network through it.",
+		PeerCapModels: "Let the peer run its LLM turns on THIS instance's model: the machine with the GPU does the thinking for the one without. " +
 			"The peer configures an ordinary llama.cpp provider pointed here and everything works as if the model were local: streaming, tool calls, images, thinking budgets. " +
 			"Only LOCAL backends are lent (llama.cpp and ollama). A hosted provider is never relayed, because that would spend this operator's API key on someone else's prompts.",
-		PeerCapInvestigate: "Let the peer ask questions about systems THIS instance can reach — for a machine on a network the peer has no route to. " +
+		PeerCapInvestigate: "Let the peer ask questions about systems THIS instance can reach, for a machine on a network the peer has no route to. " +
 			"It sends a question; this instance runs the investigation itself, read-only, under its own approval rules, and returns prose. " +
 			"No command from the peer is ever executed, and no credential leaves here. " +
-			"Requires picking which systems below — the grant alone reaches nothing.",
-		PeerCapKnowledge: "Let the peer hold a COPY of what this instance has already learned about those systems — " +
-			"the structured docs and recorded facts — so it can answer from them instantly instead of asking every time. " +
+			"Requires picking which systems below: the grant alone reaches nothing.",
+		PeerCapKnowledge: "Let the peer hold a COPY of what this instance has already learned about those systems: " +
+			"the structured docs and recorded facts, so it can answer from them instantly instead of asking every time. " +
 			"Each item keeps the age it has here, so a copy of a two-month-old map reads as two months old over there. " +
 			"Separate from Investigate on purpose: this one moves knowledge off this machine, the other only answers questions. " +
 			"Uses the same system list below.",
-		PeerCapExec: "Let the peer run commands on those systems through THIS instance's connection to them — the peer as a wire to a machine it cannot route to. " +
+		PeerCapExec: "Let the peer run commands on those systems through THIS instance's connection to them: the peer as a wire to a machine it cannot route to. " +
 			"Understand what this is: a key granted it has a shell on the named systems, and the CALLING instance decides what runs, not this one. " +
-			"There is no risk gate on this side, by design — that is what makes a peer-reached system behave exactly like a local one. " +
+			"There is no risk gate on this side, by design, that is what makes a peer-reached system behave exactly like a local one. " +
 			"Grant it only to instances you own, and only for the systems below.",
 	}
 	// The checklist is a permission screen, so it qualifies each name — but it
@@ -656,7 +656,7 @@ func peerCapOptions() []ui.SelectOption {
 				"and only a local llama.cpp or ollama is lent. Granting it is harmless and starts " +
 				"working if a local model is configured here."
 		default:
-			h += " Not implemented yet — granting it now has no effect until it ships."
+			h += " Not implemented yet: granting it now has no effect until it ships."
 		}
 		out = append(out, ui.SelectOption{Value: c, Label: label[c], Help: h})
 	}
@@ -709,10 +709,11 @@ func peerSharingSections() []ui.Section {
 							// these. Somebody could mint a peer key trying to connect
 							// a laptop and find nothing that accepts it.
 							Placeholder: "app-box",
-							Help:        "Which gohort instance you are lending to — how you'll recognize it later. Shown only to you."},
+							Help:        "Which gohort instance you are lending to: how you'll recognize it later. Shown only to you."},
 						{Field: "caps", Label: "Capabilities", Type: "checklist",
 							Options: peerCapOptions(),
-							Help:    "The key can do these and nothing else. Change them later with the Grants button on the key row \u2014 no need to mint a new one."},
+							Help:    "The key can do these and nothing else.",
+							Detail:  "Change them later with the Grants button on the key row. There is no need to mint a new one."},
 						{Field: "rate_per_min", Label: "Calls per minute", Type: "number", Min: 0, Max: 100000,
 							Help: "Ceiling on how hard this peer may work this instance. Leave 0 for the default (600/min)."},
 					},
@@ -722,7 +723,7 @@ func peerSharingSections() []ui.Section {
 		{
 			Title: "Peers",
 			Subtitle: "Other instances THIS one can borrow from. Add a peer with the key it issued you, " +
-				"and its capabilities become selectable in the matching settings — a peer offering " +
+				"and its capabilities become selectable in the matching settings: a peer offering " +
 				"embeddings appears in the Embeddings provider dropdown, and one offering rendering " +
 				"contributes its image backends to the picker, edits included.",
 			Body: ui.Stack{Children: []ui.Component{
@@ -734,12 +735,13 @@ func peerSharingSections() []ui.Section {
 					Fields: []ui.FormField{
 						{Field: "name", Label: "Name", Type: "text", Required: true,
 							Placeholder: "gpu-box",
-							Help:        "Short local nickname — lowercase letters, digits, - or _. How you'll pick it from a dropdown."},
+							Help:        "Short local nickname: lowercase letters, digits, - or _. How you'll pick it from a dropdown."},
 						{Field: "base_url", Label: "Address", Type: "text", Required: true,
 							Placeholder: "https://gpu-box.example",
-							Help:        "Where this machine can reach that instance. Pasting a /api/peer/... path is fine — it gets trimmed."},
+							Help:        "Where this machine can reach that instance. Pasting a /api/peer/... path is fine: it gets trimmed."},
 						{Field: "key", Label: "Peer key", Type: "text", Required: true,
-							Help: "Minted on THAT instance under Capabilities › Resource Sharing. Connecting checks it immediately and reports what it grants."},
+							Help:   "Minted on THAT instance, under Capabilities, then Resource Sharing.",
+							Detail: "Connecting checks it immediately and reports what it grants."},
 					},
 				},
 				ui.Table{
@@ -773,15 +775,15 @@ func peerSharingSections() []ui.Section {
 							Invalidate:  []string{"api/peers", "api/image-backends"},
 							Fields: []ui.FormField{{
 								Field: "key", Label: "New peer key", Type: "text", Required: true,
-								Help: "Issued on the OTHER instance — Capabilities › Resource Sharing › Re-issue key. " +
+								Help: "Issued on the OTHER instance: Capabilities › Resource Sharing › Re-issue key. " +
 									"Its address and name here are kept; the key is exchanged for fresh credentials immediately, " +
 									"and what it may reach is re-read at the same time.",
 							}},
 						}),
 						{Type: "button", Label: "Forget", PostTo: "api/peers/{name}", Method: "DELETE",
 							Variant: "danger", Compact: true,
-							Confirm: "Forget this peer? Anything already configured to use it keeps working — " +
-								"its address and key were copied into that setting when you selected it — but it " +
+							Confirm: "Forget this peer? Anything already configured to use it keeps working: " +
+								"its address and key were copied into that setting when you selected it, but it " +
 								"stops appearing as a choice."},
 					},
 				},
@@ -789,7 +791,7 @@ func peerSharingSections() []ui.Section {
 		},
 		{
 			Title: "Shared With",
-			Subtitle: "Keys issued to peer instances. The key column is the secret itself — it is shown so you " +
+			Subtitle: "Keys issued to peer instances. The key column is the secret itself: it is shown so you " +
 				"can paste it into the peer; treat it like a password. Turn a key off to cut a peer's access " +
 				"immediately without losing the record of what was granted.",
 			Body: ui.Table{
@@ -823,10 +825,11 @@ func peerSharingSections() []ui.Section {
 						Fields: []ui.FormField{
 							{Field: "caps", Label: "Capabilities", Type: "checklist",
 								Options: peerCapOptions(),
-								Help:    "The key can do these and nothing else. Removing one takes effect immediately; the peer keeps the same key either way."},
+								Help:    "The key can do these and nothing else.",
+								Detail:  "Removing one takes effect immediately, and the peer keeps the same key either way."},
 							{Field: "appliances", Label: "Systems this key may reach", Type: "checklist",
 								Options: peerApplianceScopeOptions(),
-								Help: "For the Investigate, Share-knowledge and Run-commands grants, and only these — there is no \"all systems\". " +
+								Help: "For the Investigate, Share-knowledge and Run-commands grants, and only these: there is no \"all systems\". " +
 									"The peer sends a QUESTION; this instance runs the investigation itself, on its own network, read-only. " +
 									"Credentials never leave here. Pick systems belonging to ONE user: the investigation runs as them, so it reaches exactly what they can. " +
 									"Leave empty and an Investigate grant reaches nothing."},
@@ -860,14 +863,14 @@ const peerConnectHelpHTML = `
 <p style="margin:0 0 .75rem"><strong>To let another instance use this one:</strong> mint a key below, then on
 that instance open <em>Admin &rsaquo; Capabilities &rsaquo; Resource Sharing &rsaquo; Peers</em>, and enter its
 address plus the key. It checks the connection immediately and reports what the key grants.</p>
-<p style="margin:0 0 .75rem">The address is whatever <em>that</em> machine can reach <em>this</em> one at —
+<p style="margin:0 0 .75rem">The address is whatever <em>that</em> machine can reach <em>this</em> one at
 this instance cannot work that out for you, since behind a proxy or a tunnel the host in your browser's URL
 is usually not it.</p>
-<p style="margin:0 0 .5rem">Once connected, the peer appears as a provider option in the matching setting —
+<p style="margin:0 0 .5rem">Once connected, the peer appears as a provider option in the matching setting
 an embeddings grant shows up in that instance's <em>Embeddings</em> provider dropdown. To check a key by hand:</p>
 <pre style="margin:0 0 .75rem;padding:.6rem .8rem;overflow-x:auto"><code>curl -H "X-Gohort-Peer-Key: &lt;key&gt;" https://THIS-HOST/api/peer/manifest</code></pre>
 <p style="margin:0;opacity:.75">The manifest names every capability, whether this build serves it, and whether
-that key was granted it — so a refusal tells you which of the two it is.</p>
+that key was granted it, so a refusal tells you which of the two it is.</p>
 `
 
 // peerApplianceScopeOptions lists every user's investigable systems as
@@ -930,7 +933,7 @@ func splitPeerApplianceScope(picked []string) (owner string, ids []string, err e
 			owner = u
 		} else if owner != u {
 			return "", nil, fmt.Errorf(
-				"a key can reach one user's systems, not several — %q and %q were both selected", owner, u)
+				"a key can reach one user's systems, not several: %q and %q were both selected", owner, u)
 		}
 		ids = append(ids, id)
 	}
@@ -977,7 +980,7 @@ func LLMProviderOptions(usePrimary bool) []ui.SelectOption {
 			label += " (" + p.Instance + ")"
 		}
 		help := "Run this tier's turns on " + p.BaseURL +
-			" — this machine sends the prompt and the peer's GPU does the work. " +
+			", this machine sends the prompt and the peer's GPU does the work. " +
 			"Leave the endpoint, model and key below blank: they are read from the peer record every time the model is built, " +
 			"so rotating the peer's key takes effect without editing anything here."
 		if p.LastError != "" {
@@ -1006,7 +1009,7 @@ const peerKeyShowOnceJS = `
 window.__peerKeyShowOnce = function(label, key) {
   window.uiOpenModal({
     title: 'Peer key for ' + (label || 'this peer'),
-    subtitle: 'Copy it now — this is the only time it is shown. It goes in the OTHER instance\'s Peers form, ' +
+    subtitle: 'Copy it now, this is the only time it is shown. It goes in the OTHER instance\'s Peers form, ' +
       'where it is exchanged once for rotating credentials. If it is lost, re-issue the key from this table.',
     width: '620px',
     actions: [{label: 'Done', primary: true}],

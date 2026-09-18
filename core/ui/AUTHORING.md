@@ -4,9 +4,9 @@
 
 gohort is a platform for assembling small AI-backed apps. The goal of the `core/ui` framework is to make it **simple for an app developer with no prior web experience to add new capabilities to gohort** by reusing primitives and structures already in place. You should not have to write HTML, CSS, or DOM-manipulation JavaScript to ship a working app. You write a Go struct, declare a page in terms of pre-built components (Table, FormPanel, ChatPanel, PipelinePanel, …), and the framework renders it.
 
-Every primitive in `core/ui` is intentionally generic — *no* primitive knows what "debate" or "research" or "techwriter" means. When an app needs behavior beyond what the primitives offer, it plugs into one of four extension registries (block renderer, markdown extension, client action, `ExtraHeadHTML`) from its own package. This separation is enforced; see `CLAUDE.md` at the repo root for the rule and `scripts/hooks/pre-commit` for the guard.
+Every primitive in `core/ui` is intentionally generic: *no* primitive knows what "debate" or "research" or "techwriter" means. When an app needs behavior beyond what the primitives offer, it plugs into one of four extension registries (block renderer, markdown extension, client action, `ExtraHeadHTML`) from its own package. This separation is enforced; see `CLAUDE.md` at the repo root for the rule and `scripts/hooks/pre-commit` for the guard.
 
-The payoff: each new app pulls from a growing toolkit of reusable parts. You don't redesign the page chrome, the sidebar, the form fields, the chat layout, or the SSE pipeline — you reach for the parts that already exist. The framework stays generic *so that* the toolkit keeps compounding.
+The payoff: each new app pulls from a growing toolkit of reusable parts. You don't redesign the page chrome, the sidebar, the form fields, the chat layout, or the SSE pipeline: you reach for the parts that already exist. The framework stays generic *so that* the toolkit keeps compounding.
 
 ## App anatomy
 
@@ -21,7 +21,7 @@ The framework handles routing, auth, sessions, SSE, LLM wiring, cost tracking, a
 
 ---
 
-## TL;DR — minimal working app
+## TL;DR: minimal working app
 
 ```go
 package hello
@@ -126,10 +126,10 @@ Run `gohort serve :8080`. The Hello page is live at `/hello/`.
 
 - `RegisterApp` (in `init()`) hands the agent to the framework's registry.
 - The Agent methods (`Name`/`Desc`/`SystemPrompt`/`Init`/`Main`) cover CLI/registration.
-- The SimpleWebApp methods (`WebPath`/`WebName`/`WebDesc`/`Routes`) cover the dashboard. The framework creates a per-app sub-mux, calls `Routes()` against it, and mounts it at `prefix` with cost-tracking middleware — no explicit `NewWebUI`/`MountSubMux` plumbing.
+- The SimpleWebApp methods (`WebPath`/`WebName`/`WebDesc`/`Routes`) cover the dashboard. The framework creates a per-app sub-mux, calls `Routes()` against it, and mounts it at `prefix` with cost-tracking middleware: no explicit `NewWebUI`/`MountSubMux` plumbing.
 - `T.HandleFunc(pattern, handler)` registers against that pre-wired sub-mux. Patterns are relative to the prefix.
 - `ui.Page{...}.ServeHTTP(w, r)` renders the page from its declarative spec. You never write HTML in app code.
-- The form has no `Source` (read endpoint) — it's a blank-state form. `PostURL` is the only write target. The field key is `Field` (not `Name`).
+- The form has no `Source` (read endpoint): it's a blank-state form. `PostURL` is the only write target. The field key is `Field` (not `Name`).
 
 If you need direct mux/prefix control (custom access wrappers, alternate mount semantics), implement the older `WebApp` interface with `RegisterRoutes(mux, prefix)` instead. SimpleWebApp is the default; WebApp is the escape hatch.
 
@@ -146,10 +146,10 @@ An app is one struct that implements `core.Agent`. Its `RegisterRoutes` mounts H
 ### Sections wrap Components
 A `ui.Section` has a Title, Subtitle, and a Body (one Component). Common components: `Table`, `FormPanel`, `ChatPanel`, `PipelinePanel`, `DisplayPanel`, `Card`, `Frame`. List them in `Sections: []ui.Section{...}`.
 
-`Card` splices raw HTML into the page; `Frame` gives a COMPLETE HTML document (a game, a canvas animation, an embedded mini-app) its own iframe so its CSS reset and `body` rules style only itself and its `100vh` measures its own box. Reach for `Frame` whenever the markup starts with a doctype or carries its own `<body>` — same origin either way, so relative fetches and storage keep working.
+`Card` splices raw HTML into the page; `Frame` gives a COMPLETE HTML document (a game, a canvas animation, an embedded mini-app) its own iframe so its CSS reset and `body` rules style only itself and its `100vh` measures its own box. Reach for `Frame` whenever the markup starts with a doctype or carries its own `<body>`: same origin either way, so relative fetches and storage keep working.
 
-A `Card` whose content is DERIVED — a diagram, a plan, a list of findings your
-handler worked out — should carry a `Source` and a `RefreshOn`, or it will go
+A `Card` whose content is DERIVED (a diagram, a plan, a list of findings your
+handler worked out) should carry a `Source` and a `RefreshOn`, or it will go
 on describing the record as it was before the edit that was made while looking
 at it:
 
@@ -164,35 +164,35 @@ ui.Card{
 `RefreshOn` entries match an invalidated source by PREFIX, so one entry covers
 the per-record writes (`…/parts?name=x`) a form broadcasts when it saves. The
 card coalesces a burst of saves into one fetch, keeps the last good content if
-the fetch fails, and dispatches `ui-card-refreshed` on itself afterwards —
+the fetch fails, and dispatches `ui-card-refreshed` on itself afterwards
 listen for that if your page decorates the card's elements. Serve the block
 from the SAME function the page renders it with, so the refresh cannot drift
 from the first paint.
 
 ### SSE for streaming, REST for the rest
-Static data → JSON over plain HTTP. Live pipelines → SSE (`/api/send`, framework runtime handles the protocol). The `PipelinePanel` primitive does this for you — you write a *bridge* function that translates your app's events into framework SSE events.
+Static data → JSON over plain HTTP. Live pipelines → SSE (`/api/send`, framework runtime handles the protocol). The `PipelinePanel` primitive does this for you: you write a *bridge* function that translates your app's events into framework SSE events.
 
 ### Apps stay in their lane
-The shared runtime (`core/ui/`) knows nothing about debate, research, blogger, etc. Anything app-specific lives in the app's package — CSS, custom block renderers, markdown extensions. Apps inject them via `Page.ExtraHeadHTML`. This is enforced; new code in `core/ui/` that mentions an app name is a bug.
+The shared runtime (`core/ui/`) knows nothing about debate, research, blogger, etc. Anything app-specific lives in the app's package: CSS, custom block renderers, markdown extensions. Apps inject them via `Page.ExtraHeadHTML`. This is enforced; new code in `core/ui/` that mentions an app name is a bug.
 
 ### The public surface (what an app may depend on)
 
 An app should build only against the surface below. Everything else in `package
 core` is framework internals: it may change or move without notice, and it is
 being migrated under `core/internal/` package-by-package as it proves separable
-(Go bars apps from importing anything under `core/internal/` — the boundary is
+(Go bars apps from importing anything under `core/internal/`: the boundary is
 compiler-enforced, not a convention). If you find yourself reaching for a `core`
 symbol not listed here, that's a signal to either (a) request it be promoted to
 the public surface, or (b) solve it in your own package.
 
 The public surface, ordered most → least stable:
 
-1. **The `Agent` interface** + `RegisterApp` + the `WebApp`/`SimpleWebApp` interfaces + `AppCore` — frozen.
-2. **The logging/aliasing helpers** re-exported from `core` (`Log`, `Fatal`, `Notice`, `Err`, `RequireUser`, config/DB/`LimitGroup` type aliases) — frozen names.
-3. **`ui.Page` + the well-known components** (Table, FormPanel, ChatPanel, PipelinePanel, FormField types) + **`ui.Head`** — adds-only; field renames go through a deprecation pass.
-4. **The extension registries** (block renderer, markdown extension, client action) reached via **`ui.Head`** — frozen signatures; new registries are additive.
-5. **The runtime helpers exposed on `window`** (`uiEl`, `uiMdToHTML`, `uiRenderMarkdown`, `uiOpenModal`, `uiRegister*`) — frozen names.
-6. **CSS class names** — generic `ui-pl-*`, `ui-chat-*`, `ui-form-*` classes are stable; app-specific class names belong in the app's package.
+1. **The `Agent` interface** + `RegisterApp` + the `WebApp`/`SimpleWebApp` interfaces + `AppCore`: frozen.
+2. **The logging/aliasing helpers** re-exported from `core` (`Log`, `Fatal`, `Notice`, `Err`, `RequireUser`, config/DB/`LimitGroup` type aliases): frozen names.
+3. **`ui.Page` + the well-known components** (Table, FormPanel, ChatPanel, PipelinePanel, FormField types) + **`ui.Head`**: adds-only; field renames go through a deprecation pass.
+4. **The extension registries** (block renderer, markdown extension, client action) reached via **`ui.Head`**: frozen signatures; new registries are additive.
+5. **The runtime helpers exposed on `window`** (`uiEl`, `uiMdToHTML`, `uiRenderMarkdown`, `uiOpenModal`, `uiRegister*`): frozen names.
+6. **CSS class names**: generic `ui-pl-*`, `ui-chat-*`, `ui-form-*` classes are stable; app-specific class names belong in the app's package.
 
 Deprecations: a symbol slated for removal is marked `// Deprecated:` for at
 least one minor release before it goes.
@@ -200,7 +200,7 @@ least one minor release before it goes.
 Changes to this surface are recorded in the **commit log**, not a separate
 changelog file. Every commit names the version it ships (`(v0.5.x)`) and its
 message explains what moved and why, so `git log -- core/ core/ui/` is the
-authoritative history — and unlike a hand-maintained list, it cannot drift out
+authoritative history, and unlike a hand-maintained list, it cannot drift out
 of date. A `CHANGELOG.md` used to live at the repo root; it fell 600+ versions
 behind, which is worse than not having one, so it was retired.
 
@@ -215,7 +215,7 @@ behind, which is worse than not having one, so it was retired.
 | A guided multi-step create flow (wizard with Back/Next) | `ui.FormPanel` with `Steps` (see below) |
 | A labeled key-value display (read-only) | `ui.DisplayPanel` |
 | A chat with sessions sidebar | `ui.ChatPanel` |
-| A pipeline — submit a job, watch SSE blocks stream in, view past runs | `ui.PipelinePanel` (with a bridge that emits `block`/`chunk`/`status` events) |
+| A pipeline: submit a job, watch SSE blocks stream in, view past runs | `ui.PipelinePanel` (with a bridge that emits `block`/`chunk`/`status` events) |
 | A live-watch page for an in-flight pipeline (separate from submit) | `ui.PipelineWatchPanel` |
 | An LLM-backed suggestion list ("Suggest topics") | `ui.SuggestPanel` |
 | A single rotatable API key | `ui.ApiKeyPanel` |
@@ -223,16 +223,16 @@ behind, which is worse than not having one, so it was retired.
 | A multi-line list editor (each row a rule) | `ui.FormField{Type: "rules"}` inside `FormPanel` |
 | A compact tag-array editor (chips with × removers) | `ui.FormField{Type: "tags"}` inside `FormPanel` |
 | A toggle (boolean) on a form | `ui.FormField{Type: "toggle"}` |
-| A field that must stay one line (handle, URL, slug, API key) | `ui.FormField{SingleLine: true}` — otherwise a multi-line paste grows the field into a textarea rather than flattening the content |
+| A field that must stay one line (handle, URL, slug, API key) | `ui.FormField{SingleLine: true}`: otherwise a multi-line paste grows the field into a textarea rather than flattening the content |
 | A bar chart | `ui.BarChart` |
 | An article editor with full markdown + image insertion | `ui.ArticleEditor` |
 | A code editor with diff + history | `ui.CodeEditorPanel` |
 
-If your shape doesn't fit any of these cleanly, you may need a new primitive. Prefer combining existing ones first — most app surfaces are some mix of Table + FormPanel + a chat-shaped flow.
+If your shape doesn't fit any of these cleanly, you may need a new primitive. Prefer combining existing ones first: most app surfaces are some mix of Table + FormPanel + a chat-shaped flow.
 
 ### FormPanel wizards (`Steps`)
 
-Setting `Steps` on a `FormPanel` turns it into a multi-step wizard: a numbered progress rail, one step's fields at a time, Back/Next navigation, and the submit button (plus Test/Reset if configured) on the final step. Everything still binds to ONE record — the final submit POSTs exactly what a flat form would, so the server side is unchanged. `Fields` is ignored when `Steps` is set.
+Setting `Steps` on a `FormPanel` turns it into a multi-step wizard: a numbered progress rail, one step's fields at a time, Back/Next navigation, and the submit button (plus Test/Reset if configured) on the final step. Everything still binds to ONE record: the final submit POSTs exactly what a flat form would, so the server side is unchanged. `Fields` is ignored when `Steps` is set.
 
 ```go
 ui.FormPanel{
@@ -273,7 +273,7 @@ A `rows` field edits a LIST of small records inside one field of one record:
 The value is a plain array of objects keyed by the columns' `Field` names, so an
 endpoint keeps its natural shape (`output: [{name, type, required}]`).
 
-Reach for it wherever a structured editor would otherwise be a JSON textarea —
+Reach for it wherever a structured editor would otherwise be a JSON textarea
 phase outputs, pipeline stage outputs, an action's parameters, an intake form's
 fields. That is what every one of those was before this existed.
 
@@ -341,7 +341,7 @@ The server-side endpoints (`/api/records` list+create+update, `/api/records/{id}
 
 ### 2. One-shot pipeline app
 
-User submits a topic → server runs a pipeline → blocks stream into a panel → final report saved. See `private/research/page.go`, `private/debate/page.go`, `private/blogger/page.go` (manual mode — deprecated but still illustrative).
+User submits a topic → server runs a pipeline → blocks stream into a panel → final report saved. See `private/research/page.go`, `private/debate/page.go`, `private/blogger/page.go` (manual mode: deprecated but still illustrative).
 
 ```go
 ui.Page{
@@ -369,10 +369,10 @@ ui.Page{
 
 You write a *bridge* in a `chat_endpoints.go` that:
 
-- `handleChatSessionsList` — GET, returns the sidebar-list shape
-- `handleChatSessionLoad` — GET, returns a saved session as `{blocks: [...]}`
-- `handleChatSessionDelete` — DELETE
-- `handleChatSend` — POST, runs the pipeline + streams SSE events through a bridge struct that translates pipeline events to framework events (`block`, `chunk`, `chunk_replace`, `block_done`, `status`, `done`, `error`)
+- `handleChatSessionsList`: GET, returns the sidebar-list shape
+- `handleChatSessionLoad`: GET, returns a saved session as `{blocks: [...]}`
+- `handleChatSessionDelete`: DELETE
+- `handleChatSend`: POST, runs the pipeline + streams SSE events through a bridge struct that translates pipeline events to framework events (`block`, `chunk`, `chunk_replace`, `block_done`, `status`, `done`, `error`)
 
 ### 3. Chat app
 
@@ -390,7 +390,7 @@ When a primitive doesn't fit and you need app-specific UI without changing core,
 
 ### Prefer the typed `ui.Head` builder
 
-Compose extensions in Go with `ui.Head` and attach it to `Page.Head`. The framework assembles the `<script>`, the `window.uiRegister*` calls, the readiness-retry guard, the `<style>`/`<script>` wrapping, and `</script>` safety — so you never hand-write a head blob:
+Compose extensions in Go with `ui.Head` and attach it to `Page.Head`. The framework assembles the `<script>`, the `window.uiRegister*` calls, the readiness-retry guard, the `<style>`/`<script>` wrapping, and `</script>` safety, so you never hand-write a head blob:
 
 ```go
 page.Head = ui.NewHead().
@@ -400,13 +400,13 @@ page.Head = ui.NewHead().
     MarkdownExtension(myappMdJS)
 ```
 
-The JS you pass is a **function expression** (`"function(ctx){ … }"`) — inline for small handlers, or from an embedded `assets/` file (`//go:embed`) for anything sizeable, matching the runtime's own asset convention. See `apps/hello/hello.go` for a complete button → client action → `window.uiOpenModal` example, and `core/ui/extensions.go` for the API.
+The JS you pass is a **function expression** (`"function(ctx){ … }"`): inline for small handlers, or from an embedded `assets/` file (`//go:embed`) for anything sizeable, matching the runtime's own asset convention. See `apps/hello/hello.go` for a complete button → client action → `window.uiOpenModal` example, and `core/ui/extensions.go` for the API.
 
 Registration order is handled for you (the assembled block guards on the registries existing), so you do **not** need the manual `DOMContentLoaded` deferral the raw form below requires.
 
 ### Raw `Page.ExtraHeadHTML` (escape hatch / underlying mechanism)
 
-`ui.Head` renders into the same `<head>` injection as `Page.ExtraHeadHTML` — a verbatim Go string of HTML. Reach for the raw string only for legacy blobs not yet ported to `ui.Head`, or head markup the builder doesn't model. The examples below show the raw shape each `ui.Head` method emits for you.
+`ui.Head` renders into the same `<head>` injection as `Page.ExtraHeadHTML`: a verbatim Go string of HTML. Reach for the raw string only for legacy blobs not yet ported to `ui.Head`, or head markup the builder doesn't model. The examples below show the raw shape each `ui.Head` method emits for you.
 
 ### Block renderer
 For a new block type emitted on the SSE stream. Register a renderer that takes the block's data and returns DOM.
@@ -445,7 +445,7 @@ window.uiRegisterMarkdownExtension(function(html) {
 ```
 
 ### Rendering markdown into your own element
-If a custom block renderer (or any app DOM) needs to show rendered markdown, use `window.uiRenderMarkdown(el, text)` rather than `el.innerHTML = uiMdToHTML(text)`. It stamps the `.ui-md` prose class on the target, which is what gives headings, code blocks, lists, and links the shared, proportionate type scale. Setting `innerHTML` from `uiMdToHTML` directly works too, but the element then falls back to the browser's default heading/monospace sizes — the giant-headings-next-to-tiny-code look. The styling lives entirely in `.ui-md`; never re-declare generic `h*`/`pre`/`code` rules in your app CSS — override only genuinely app-specific bits.
+If a custom block renderer (or any app DOM) needs to show rendered markdown, use `window.uiRenderMarkdown(el, text)` rather than `el.innerHTML = uiMdToHTML(text)`. It stamps the `.ui-md` prose class on the target, which is what gives headings, code blocks, lists, and links the shared, proportionate type scale. Setting `innerHTML` from `uiMdToHTML` directly works too, but the element then falls back to the browser's default heading/monospace sizes: the giant-headings-next-to-tiny-code look. The styling lives entirely in `.ui-md`; never re-declare generic `h*`/`pre`/`code` rules in your app CSS: override only genuinely app-specific bits.
 
 ### Client action
 A browser-side action invoked by a `PipelineAction{Method: "client"}`. Use for things like `window.print`, custom clipboard handling, focus/scroll helpers.
@@ -481,7 +481,7 @@ Every app gets a sub-mux scoped to its prefix (`/<app-name>/`). Inside `Register
 This used to say the framework "gates everything behind `RequireUser`". It does
 not, and reading it that way is how several handlers shipped with no identity
 check at all. `AuthMiddleware` answers *is this a logged-in user who may reach
-this app* — a question about the app, not about the request. **Every handler
+this app*: a question about the app, not about the request. **Every handler
 calls `RequireUser` itself**, and the answer is not a gate, it is a key:
 
 ```go
@@ -502,7 +502,7 @@ func (T *MyApp) handleRecord(w http.ResponseWriter, r *http.Request) {
 The failure worth naming is the middle ground: resolving the caller and then
 looking the record up in a store that is not scoped to them. That reads like a
 check, passes review, and serves every user's data to every user. If you take
-an id off a request — a session id, a record id, a run id — either load it from
+an id off a request (a session id, a record id, a run id), either load it from
 that user's own store (`udb`, which `RequireUser` hands you), or compare an
 owner field against `user` before you touch it. Answer 404 rather than 403 for
 someone else's id, so a probe cannot confirm it exists.
@@ -548,7 +548,7 @@ Your bridge struct keeps the mapping from your app's domain events (e.g., `direc
 ## Gotchas
 
 ### Registry init order
-Anything you register via `window.uiRegister*` from `ExtraHeadHTML` runs *before* the runtime script at body-end has executed — `window.uiRegister*` won't be defined yet. Always wrap registration in a `DOMContentLoaded` deferral:
+Anything you register via `window.uiRegister*` from `ExtraHeadHTML` runs *before* the runtime script at body-end has executed: `window.uiRegister*` won't be defined yet. Always wrap registration in a `DOMContentLoaded` deferral:
 
 ```js
 function register() {
@@ -562,7 +562,7 @@ if (document.readyState === 'loading') {
 }
 ```
 
-The framework registers its own `DOMContentLoaded → mount()` handler from the runtime IIFE at body end. Yours registers from `<head>`, which fires first in handler order — so your registrations land before the panel mounts.
+The framework registers its own `DOMContentLoaded → mount()` handler from the runtime IIFE at body end. Yours registers from `<head>`, which fires first in handler order, so your registrations land before the panel mounts.
 
 ### Class hint on text blocks
 For app-specific styling on a generic text block, pass `class` in the block payload:
@@ -580,19 +580,19 @@ b.sse.SendNamed("block", map[string]interface{}{
 The runtime appends `class` to the wrap div. Your CSS in `ExtraHeadHTML` targets `.ui-my-final-report .ui-pl-block-body p { … }`.
 
 ### Don't mention apps in `core/ui/`
-The shared runtime stays domain-agnostic. If you find yourself wanting to add an `if (type === "verdict")` to `core/ui/runtime.go`, that's a sign — it should be a registered renderer in your app's package instead.
+The shared runtime stays domain-agnostic. If you find yourself wanting to add an `if (type === "verdict")` to `core/ui/runtime.go`, that's a sign: it should be a registered renderer in your app's package instead.
 
 ### CLI-mode hiding
 Apps that only make sense in the dashboard (most of them) should NOT implement `core.CLIApp`. Without that marker, they're hidden from `gohort --help` and from CLI dispatch, with a friendly "use serve" hint if anyone tries.
 
 ### Private (no-lead) apps
-For apps handling sensitive data (servitor SSH probes, phantom messages) call `T.Private()` in `Init()`. Sets `NoLead` on the AppCore — any reference to `T.LeadChat()` / `T.LeadLLM` silently routes to the worker instead. Combine with `Private: true` on registered route stages so the admin UI can't accidentally route the app to a remote LLM.
+For apps handling sensitive data (servitor SSH probes, phantom messages) call `T.Private()` in `Init()`. Sets `NoLead` on the AppCore: any reference to `T.LeadChat()` / `T.LeadLLM` silently routes to the worker instead. Combine with `Private: true` on registered route stages so the admin UI can't accidentally route the app to a remote LLM.
 
 ### Email-shaped usernames
 gohort usernames ARE email addresses. `AuthCurrentUser(r)` returns the username and that's a valid email recipient. Use this instead of asking the user for their email on every form.
 
 ### Avoid hardcoding paths
-URLs in components are relative to the page that serves them. `Source: "api/records"` resolves to `<prefix>/api/records`. Don't hardcode `/myapp/api/records` — it breaks if the app gets remounted at a different prefix.
+URLs in components are relative to the page that serves them. `Source: "api/records"` resolves to `<prefix>/api/records`. Don't hardcode `/myapp/api/records`: it breaks if the app gets remounted at a different prefix.
 
 ---
 
@@ -629,4 +629,4 @@ Private apps live in `private/<name>/` with the same shape. Apps register themse
 - **Avoid editing `core/ui/`** unless you're adding a generic primitive everyone benefits from.
 - **App-specific styling lives in the app's package**, injected via `ExtraHeadHTML`.
 - **Per-block class hints + the registries** cover most customization.
-- **If you need to add a knob to a primitive**, do it as an optional field with a sensible default — never break existing apps.
+- **If you need to add a knob to a primitive**, do it as an optional field with a sensible default: never break existing apps.

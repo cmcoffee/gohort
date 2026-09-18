@@ -78,7 +78,7 @@ func (a *AdminApp) toolsSections() []ui.Section {
 		},
 		{
 			Title:    "Global Tools",
-			Subtitle: "User-wide tools — available to ALL of the owner's agents. \"Access\" opens the pill editor: descope a tool down to specific agents, or disable it per agent. Share publishes the tool to the deployment-wide catalog, where each user OPTS IN from their Extensions page (it no longer auto-loads for everyone); Unshare pulls it from the catalog. Delete revokes immediately. Export a tool (or all) as a portable bundle. A ⚠ badge marks a tool whose credential dependency is missing.",
+			Subtitle: "User-wide tools: available to ALL of the owner's agents. \"Access\" opens the pill editor: descope a tool down to specific agents, or disable it per agent. Share publishes the tool to the deployment-wide catalog, where each user OPTS IN from their Extensions page (it no longer auto-loads for everyone); Unshare pulls it from the catalog. Delete revokes immediately. Export a tool (or all) as a portable bundle. A ⚠ badge marks a tool whose credential dependency is missing.",
 			Body: ui.Stack{Children: []ui.Component{
 				ui.Table{
 					Source:       "api/persistent-tools",
@@ -193,7 +193,7 @@ func (a *AdminApp) toolsSections() []ui.Section {
 		},
 		{
 			Title:    "Agent-Scoped Tools",
-			Subtitle: "Tools that live on a single agent's record — authored by that agent for itself, or built for it by the Builder. Scoped to the agent(s) shown — a tool on several agents is listed once, with all of them; they don't appear in the shared pool. \"Promote to Global\" moves one into its owner's user-wide pool, where it can be shared and its per-USER access set. Which of a user's own agents load a tool is their choice in the agent editor, not an admin control. A ⚠ badge marks a missing credential dependency.",
+			Subtitle: "Tools that live on a single agent's record: authored by that agent for itself, or built for it by the Builder. Scoped to the agent(s) shown: a tool on several agents is listed once, with all of them; they don't appear in the shared pool. \"Promote to Global\" moves one into its owner's user-wide pool, where it can be shared and its per-USER access set. Which of a user's own agents load a tool is their choice in the agent editor, not an admin control. A ⚠ badge marks a missing credential dependency.",
 			Body: ui.Table{
 				Source:       "api/persistent-tools",
 				RecordsField: "bundled",
@@ -291,7 +291,7 @@ func (a *AdminApp) toolsSections() []ui.Section {
 		},
 		{
 			Title:    "Categories",
-			Subtitle: "Give a group of tools a named category — the heading they appear under in the tool picker and each app's tool list. Tools CLAIM a category themselves (custom tools via their own setting in Gateways/Builder; built-in tools are framework-assigned). Define the name + description here, and use Members to stamp the claim onto your custom tools as pills instead of editing each tool by hand.",
+			Subtitle: "Give a group of tools a named category: the heading they appear under in the tool picker and each app's tool list. Tools CLAIM a category themselves (custom tools via their own setting in Gateways/Builder; built-in tools are framework-assigned). Define the name + description here, and use Members to stamp the claim onto your custom tools as pills instead of editing each tool by hand.",
 			Body: ui.Stack{
 				Children: []ui.Component{
 					// Table of existing groups with per-row editor + delete.
@@ -314,7 +314,8 @@ func (a *AdminApp) toolsSections() []ui.Section {
 								Fields: []ui.FormField{
 									{Field: "name", Type: "text", Label: "Name"},
 									{Field: "description", Type: "textarea", Label: "Description", Rows: 3,
-										Help: "Shown to the model as the category's purpose (it appears in the tool catalog). Write it as a decision shape: when tools under this heading should come into play."},
+										Help:   "Shown to the model as the category's purpose, in the tool catalog.",
+										Detail: "Write it as a decision shape: when tools under this heading should come into play."},
 								},
 							}),
 							// Members — bulk-edit which of YOUR custom tools claim
@@ -334,7 +335,7 @@ func (a *AdminApp) toolsSections() []ui.Section {
 								DescField:     "desc",
 								MetaFields:    []string{"scope"},
 								Intro:         "Your custom tools claiming this category. Add a tool to stamp its Category with this name; remove to clear the claim.",
-								EmptyText:     "No custom tools yet — author one via Builder or Gateways first.",
+								EmptyText:     "No custom tools yet: author one via Builder or Gateways first.",
 							}),
 							// Access for the whole category at once. Same pill
 							// control every other scoped thing uses, over the

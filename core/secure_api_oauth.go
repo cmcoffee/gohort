@@ -167,7 +167,7 @@ func (s *SecureAPI) mintOAuthGrantCtx(ctx context.Context, c SecureCredential, s
 		form.Set("username", c.Username)
 		pw, ok := s.loadPassword(c.Name)
 		if !ok || strings.TrimSpace(pw) == "" {
-			return "", "", 0, fmt.Errorf("password grant for %q has no password set — paste it in Admin > APIs", c.Name)
+			return "", "", 0, fmt.Errorf("password grant for %q has no password set: paste it in Admin > APIs", c.Name)
 		}
 		form.Set("password", pw)
 		basicAuth = true // client_id:client_secret via HTTP Basic
@@ -438,7 +438,7 @@ func (s *SecureAPI) TestMintFromPosted(ctx context.Context, c SecureCredential, 
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("OK — minted an access token via %s (valid ~%s).", c.Grant, ttl.Round(time.Second)), nil
+	return fmt.Sprintf("OK: minted an access token via %s (valid ~%s).", c.Grant, ttl.Round(time.Second)), nil
 }
 
 // TestMintToken mints (and discards) an access token for an oauth2
@@ -466,5 +466,5 @@ func (s *SecureAPI) TestMintToken(ctx context.Context, name string) (string, err
 	if scope == "" {
 		scope = c.AllowedURLPattern
 	}
-	return fmt.Sprintf("OK — minted an access token via %s (valid ~%s). Ready to use as fetch_url_%s against %s.", c.Grant, ttl.Round(time.Second), c.Name, scope), nil
+	return fmt.Sprintf("OK: minted an access token via %s (valid ~%s). Ready to use as fetch_url_%s against %s.", c.Grant, ttl.Round(time.Second), c.Name, scope), nil
 }

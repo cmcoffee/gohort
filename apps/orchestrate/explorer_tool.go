@@ -43,7 +43,7 @@ func (t *chatTurn) enterExplorerModeToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "enter_explorer_mode",
-			Description: "Lift the round budget from the agent's normal limit up to its exploration hard cap for the rest of this step. Call only once an investigation is UNDER WAY and your results already show it needs more chained rounds than usual — evidence in hand, not a hunch. Fits: an unfamiliar API whose endpoints keep revealing sub-resources; working out a multi-step HOW that wasn't obvious up front; build/verify loops that keep uncovering work; probing a tool that returned a confusing error. Do NOT call it at the start of a turn \"just in case\", or for work that's merely multi-step — that's the misuse admins audit for.",
+			Description: "Lift the round budget from the agent's normal limit up to its exploration hard cap for the rest of this step. Call only once an investigation is UNDER WAY and your results already show it needs more chained rounds than usual: evidence in hand, not a hunch. Fits: an unfamiliar API whose endpoints keep revealing sub-resources; working out a multi-step HOW that wasn't obvious up front; build/verify loops that keep uncovering work; probing a tool that returned a confusing error. Do NOT call it at the start of a turn \"just in case\", or for work that's merely multi-step: that's the misuse admins audit for.",
 			Parameters: map[string]ToolParam{
 				"reason": {
 					Type:        "string",

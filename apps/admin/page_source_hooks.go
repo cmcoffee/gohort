@@ -54,7 +54,7 @@ func (a *AdminApp) sourceHooksSections() []ui.Section {
 							{Type: "button", Label: "Enable",
 								PostTo: "api/source-hooks?action=enable&name={name}",
 								Method: "POST", OnlyIf: "disabled", Variant: "success",
-								Confirm: "Enable this source hook? Once active it receives search queries at its endpoint (topic routing, LLM tools) — review the endpoint and mappings first, and add its auth key if it needs one."},
+								Confirm: "Enable this source hook? Once active it receives search queries at its endpoint (topic routing, LLM tools): review the endpoint and mappings first, and add its auth key if it needs one."},
 							{Type: "button", Label: "Disable",
 								PostTo: "api/source-hooks?action=disable&name={name}",
 								Method: "POST", HideIf: "disabled", Variant: "warning"},
@@ -100,11 +100,11 @@ func (a *AdminApp) sourceHooksSections() []ui.Section {
 func sourceHookFormFields() []ui.FormField {
 	return []ui.FormField{
 		{Field: "ident", Type: "header", Label: "Identity"},
-		{Field: "name", Label: "Name", Placeholder: "e.g. PubMed", Help: "Display name and unique key — re-using a name updates that hook."},
+		{Field: "name", Label: "Name", Placeholder: "e.g. PubMed", Help: "Display name and unique key: re-using a name updates that hook."},
 		{Field: "type", Label: "Type", Type: "select", Options: []ui.SelectOption{
-			{Value: "api", Label: "API — search endpoint returning results"},
-			{Value: "rag", Label: "RAG — endpoint returning document chunks"},
-			{Value: "paywall", Label: "Paywall — adds auth headers to fetch_url (not a search tool)"},
+			{Value: "api", Label: "API: search endpoint returning results"},
+			{Value: "rag", Label: "RAG: endpoint returning document chunks"},
+			{Value: "paywall", Label: "Paywall: adds auth headers to fetch_url (not a search tool)"},
 		}},
 		{Field: "endpoint", Label: "Endpoint URL", Placeholder: "https://api.example.com/search", Help: "Base URL for API/RAG. Leave blank for paywall hooks."},
 		{Field: "auth", Type: "header", Label: "Authentication"},
@@ -126,7 +126,8 @@ func sourceHookFormFields() []ui.FormField {
 		{Field: "always_active", Label: "Always active", Type: "toggle", Help: "Query this hook for every topic, regardless of trigger domains."},
 		{Field: "domains", Label: "Paywall domains", Type: "tags", Help: "(paywall only) domains this hook attaches auth to, e.g. wsj.com."},
 		{Field: "max_rps", Label: "Max requests/sec", Type: "number", Min: 0, Max: 100, Help: "0 = unlimited."},
-		{Field: "cost_per_call", Label: "Cost per call ($)", Type: "number", Decimals: 6, Min: 0, Help: "Optional. Dollar cost of one real (cache-miss) call to this hook, for the Costs tab chart + per-source breakdown. 0 = untracked (free endpoint)."},
+		{Field: "cost_per_call", Label: "Cost per call ($)", Type: "number", Decimals: 6, Min: 0, Help: "Optional. Dollar cost of one real, cache-miss call to this hook.",
+			Detail: "It feeds the Costs tab chart and the per-source breakdown. 0 means untracked, for a free endpoint."},
 		{Field: "llm", Type: "header", Label: "LLM exposure"},
 		{Field: "expose_to_llm", Label: "Expose as an agent tool", Type: "toggle", Help: "When on, agents can call this hook directly as a named tool. Paywall hooks are never exposed."},
 		{Field: "tool_name", Label: "Tool name", Placeholder: "pubmed_search", Help: "Lowercase, underscores. Defaults to \"<name>_search\" when blank."},
@@ -141,7 +142,7 @@ func sourceHookFormTemplates() []ui.FormTemplate {
 		h := t.Hook
 		label := h.Name
 		if t.Description != "" {
-			label += " — " + t.Description
+			label += " · " + t.Description
 		}
 		vals := map[string]any{
 			"name":          h.Name,

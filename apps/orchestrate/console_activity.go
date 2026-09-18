@@ -265,7 +265,7 @@ func (T *OrchestrateApp) handleConsoleActivity(w http.ResponseWriter, r *http.Re
 		var activity string
 		switch s.Status {
 		case RunStatusRunning:
-			activity = "● running — " + shortElapsed(now.Sub(s.StartedAt))
+			activity = "● running: " + shortElapsed(now.Sub(s.StartedAt))
 			if s.Round > 0 {
 				activity += fmt.Sprintf(", round %d", s.Round)
 			}
@@ -273,7 +273,7 @@ func (T *OrchestrateApp) handleConsoleActivity(w http.ResponseWriter, r *http.Re
 				activity += ", last tool: " + s.LastTool
 			}
 		default:
-			activity = s.Status + " " + shortElapsed(now.Sub(s.EndedAt)) + " ago — took " + shortElapsed(s.EndedAt.Sub(s.StartedAt))
+			activity = s.Status + " " + shortElapsed(now.Sub(s.EndedAt)) + " ago: took " + shortElapsed(s.EndedAt.Sub(s.StartedAt))
 			if s.Round > 0 {
 				activity += fmt.Sprintf(" (%d rounds)", s.Round)
 			}
@@ -315,7 +315,7 @@ func (T *OrchestrateApp) handleConsoleActivityCancel(w http.ResponseWriter, r *h
 	// on work that carried right on. Rows now offer Cancel only where it does
 	// something (_cancellable), and this is the backstop for a stale row.
 	if !run.Cancel() {
-		http.Error(w, "this run cannot be cancelled — it is not running under a stoppable context", http.StatusConflict)
+		http.Error(w, "this run cannot be cancelled: it is not running under a stoppable context", http.StatusConflict)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

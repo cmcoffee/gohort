@@ -122,8 +122,8 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
   }
   .notice-act:hover { background: #4f46e5; }
   /* Column width for the PHONE layout, where one centred column is the right
-     answer. Desktop stops being that shape entirely — see the wide layout
-     below — so this is not a cap that grows, it is the narrow case's width. */
+     answer. Desktop stops being that shape entirely: see the wide layout
+     below, so this is not a cap that grows, it is the narrow case's width. */
   :root { --dash-w: 700px; }
   .grid {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -137,7 +137,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
   .card:hover { border-color: #58a6ff; transform: translateY(-2px); }
   .card-name { font-size: 1.25rem; font-weight: 600; color: #f0f6fc; margin-bottom: 0.5rem; }
   .card-desc { font-size: 0.9rem; color: #8b949e; line-height: 1.4; }
-  /* Featured hero card — the primary entry point. Spans the full grid
+  /* Featured hero card: the primary entry point. Spans the full grid
      width and is larger so it stands apart by SIZE, not color (a blue
      border reads as a hover/selected state and is confusing here). */
   .card.featured {
@@ -153,10 +153,10 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
      screen. A line that long is measurably harder to read, and the card looks
      empty rather than generous. */
   .card.featured .card-desc { font-size: 1.02rem; max-width: 62ch; }
-  /* Wide card — spans the full grid row at the REGULAR card height (a
+  /* Wide card: spans the full grid row at the REGULAR card height (a
      "double" button). Used for a bottom utility entry like Administrator. */
   .card.wide { grid-column: 1 / -1; }
-  /* Orchestrator family cluster — a full-width titled block grouping the apps
+  /* Orchestrator family cluster: a full-width titled block grouping the apps
      that also appear as shared top-nav tabs (Agents / Bridges / Knowledge /
      Gateways), so the dashboard mirrors that grouping instead of scattering
      them among unrelated cards. It spans the full grid width and holds its own
@@ -171,8 +171,8 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
     text-transform: uppercase; color: #8b949e; margin-bottom: 0.9rem;
   }
   .cluster-grid {
-    /* auto-FIT, not auto-fill. The cluster holds a bounded set — the apps that
-       are also hub tabs, four of them — so a reserved empty track reads as a
+    /* auto-FIT, not auto-fill. The cluster holds a bounded set: the apps that
+       are also hub tabs, four of them, so a reserved empty track reads as a
        missing app rather than as spare room, and invites filling a hole by
        moving something in that does not belong. auto-fit collapses the empty
        track and the members share the width instead.
@@ -188,8 +188,8 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
   #live-panel h3:hover { color: #c9d1d9; }
   /* A row is a flex LINE THAT MAY BECOME TWO, and every part of that is load
      bearing. In the 320px rail (and on a handset) an app badge, a state badge
-     and a status string are all the width there is; the label was flex:1 —
-     basis 0, shrink 1, min-width auto — so it took only what was left over,
+     and a status string are all the width there is; the label was flex:1
+     basis 0, shrink 1, min-width auto, so it took only what was left over,
      which was sometimes a few pixels. A track that narrow wraps the topic one
      character per line: text stacked on itself, a row far taller than the
      badges beside it, and the tail spilling past the card's own border.
@@ -247,7 +247,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
   .auth-link:hover { border-color: #58a6ff; color: #f0f6fc; }
   .auth-logout { display: inline; margin: 0; padding: 0; }
   /* DESKTOP: stop being a phone. Below this the page is one centred column,
-     which is the right answer on a handset and the wrong one on a monitor —
+     which is the right answer on a handset and the wrong one on a monitor
      the same 700px ribbon sat in the middle of a 27-inch screen with two feet
      of nothing either side, and widening the ribbon would only have made a
      bigger ribbon.
@@ -277,7 +277,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
     }
     /* Masthead spans both regions and stays centred over them. */
     .ascii-logo, .subtitle { grid-column: 1 / -1; justify-self: center; }
-    /* The grid drops its cap and fills its region — auto-fill then decides the
+    /* The grid drops its cap and fills its region: auto-fill then decides the
        column count from the space it actually has, which is the whole point of
        auto-fill and was never reachable behind a fixed max-width. */
     .grid { grid-column: 1; grid-row: 3; max-width: none; }
@@ -301,7 +301,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
     .cluster-grid { grid-template-columns: 1fr; gap: 0.75rem; }
     .card { padding: 1rem; }
   }
-  /* Theme overrides — re-point chrome surfaces to the active theme's tokens
+  /* Theme overrides: re-point chrome surfaces to the active theme's tokens
      (injected above via %THEMECSS%). Additive + same selector specificity as
      the rules above, so these win; anything not re-pointed keeps its original
      color as a fallback. */

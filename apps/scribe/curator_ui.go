@@ -102,13 +102,13 @@ const guideCuratorAction = `function(ctx){
             if (run.counts && run.counts[k]) parts.push(run.counts[k] + ' ' + (k === 'contradiction' ? 'flagged' : k));
           });
           top.appendChild(el('strong', {}, [run.findings + ' findings']));
-          if (parts.length) top.appendChild(el('span', {class:'gc-age'}, ['— ' + parts.join(', ')]));
+          if (parts.length) top.appendChild(el('span', {class:'gc-age'}, ['\u00b7 ' + parts.join(', ')]));
           if (run.age) top.appendChild(el('span', {class:'gc-age'}, [run.age]));
           card.appendChild(top);
           if (run.error) card.appendChild(el('div', {class:'gc-err'},
             ['This run stopped early: ' + run.error + '. Anything listed below was still written.']));
           if (run.unaccounted) card.appendChild(el('div', {class:'gc-warn'},
-            [run.unaccounted + ' finding(s) in this batch produced no decision — they were returned to the queue.']));
+            [run.unaccounted + ' finding(s) in this batch produced no decision: they were returned to the queue.']));
           if (run.summary) card.appendChild(el('div', {class:'gc-summary'}, [run.summary]));
           (run.entries || []).forEach(function(e){ card.appendChild(entryRow(run.id, e)); });
           return card;

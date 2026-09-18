@@ -125,9 +125,9 @@ func sourceHookToAgentToolDef(h SourceHook) (AgentToolDef, bool) {
 	if desc == "" {
 		switch h.Type {
 		case HookTypeRAG:
-			desc = fmt.Sprintf("Search %s (a curated knowledge source) — returns document chunks ranked by relevance. Cite ONLY specifics that appear in the returned chunks; if they don't contain the exact answer, this source doesn't cover it (say so, don't supply a number/cite from memory). Prefer it over web_search for material it actually covers.", h.Name)
+			desc = fmt.Sprintf("Search %s (a curated knowledge source): returns document chunks ranked by relevance. Cite ONLY specifics that appear in the returned chunks; if they don't contain the exact answer, this source doesn't cover it (say so, don't supply a number/cite from memory). Prefer it over web_search for material it actually covers.", h.Name)
 		default: // HookTypeAPI
-			desc = fmt.Sprintf("Search %s (a curated external API) — returns titled results with snippets. Cite ONLY what the results contain; if they don't answer the question, the source doesn't cover it (don't fill the gap from memory). Prefer it over web_search for the specialized lookups it covers.", h.Name)
+			desc = fmt.Sprintf("Search %s (a curated external API): returns titled results with snippets. Cite ONLY what the results contain; if they don't answer the question, the source doesn't cover it (don't fill the gap from memory). Prefer it over web_search for the specialized lookups it covers.", h.Name)
 		}
 	}
 	// Capture the hook in the closure so the handler can call
@@ -169,7 +169,7 @@ func sourceHookToAgentToolDef(h SourceHook) (AgentToolDef, bool) {
 			// this, the model treats "I searched an authoritative source" as
 			// "my specific is authoritative" and fills the gap from memory.
 			// Mirrors the skill_knowledge_search append.
-			result += "\n\n[Grounding: cite ONLY specifics that actually appear in these results — a number, name, citation, figure, or quote not shown above is NOT in this source. If the results don't contain the exact answer, say this source doesn't cover it rather than supplying one from memory.]"
+			result += "\n\n[Grounding: cite ONLY specifics that actually appear in these results, a number, name, citation, figure, or quote not shown above is NOT in this source. If the results don't contain the exact answer, say this source doesn't cover it rather than supplying one from memory.]"
 			return result, nil
 		},
 	}
@@ -234,9 +234,9 @@ func QuerySourceToolDef(db Database) (AgentToolDef, bool) {
 	def := AgentToolDef{
 		Tool: Tool{
 			Name:        "query_source",
-			Description: "Search one of the curated knowledge sources the admin wired up — see \"Available sources\" for what each covers and when to prefer it over web_search. Pick the source whose domain fits the question and pass a natural-language query; cite ONLY specifics that appear in the returned results.",
+			Description: "Search one of the curated knowledge sources the admin wired up: see \"Available sources\" for what each covers and when to prefer it over web_search. Pick the source whose domain fits the question and pass a natural-language query; cite ONLY specifics that appear in the returned results.",
 			Parameters: map[string]ToolParam{
-				"source": {Type: "string", Enum: names, Description: "Which source to query — one of the names listed under \"Available sources\"."},
+				"source": {Type: "string", Enum: names, Description: "Which source to query: one of the names listed under \"Available sources\"."},
 				"query":  {Type: "string", Description: "Natural-language search query. Phrase like a web search; the source's adapter handles any specialized syntax."},
 			},
 			Required: []string{"source", "query"},
@@ -261,7 +261,7 @@ func QuerySourceToolDef(db Database) (AgentToolDef, bool) {
 				return fmt.Sprintf("No results from %s for %q.", h.Name, query), nil
 			}
 			// Same grounding guard the per-hook tools carried.
-			result += "\n\n[Grounding: cite ONLY specifics that actually appear in these results — a number, name, citation, figure, or quote not shown above is NOT in this source. If the results don't contain the exact answer, say this source doesn't cover it rather than supplying one from memory.]"
+			result += "\n\n[Grounding: cite ONLY specifics that actually appear in these results, a number, name, citation, figure, or quote not shown above is NOT in this source. If the results don't contain the exact answer, say this source doesn't cover it rather than supplying one from memory.]"
 			return result, nil
 		},
 	}
@@ -279,7 +279,7 @@ func RenderAvailableSourcesBlock(db Database) string {
 	}
 	var b strings.Builder
 	b.WriteString("\n\n## Available sources\n\n")
-	b.WriteString("Curated knowledge sources the admin wired up. When a question fits one of these, prefer query_source(source, query) over web_search — they're authoritative for their domain, and you should cite ONLY what their results contain. Format: **name** — what it covers / when to use.\n\n")
+	b.WriteString("Curated knowledge sources the admin wired up. When a question fits one of these, prefer query_source(source, query) over web_search: they're authoritative for their domain, and you should cite ONLY what their results contain. Format: **name**, what it covers / when to use.\n\n")
 	for _, h := range hooks {
 		name := strings.TrimSpace(h.Name)
 		if name == "" {
@@ -289,14 +289,14 @@ func RenderAvailableSourcesBlock(db Database) string {
 		if desc == "" {
 			switch h.Type {
 			case HookTypeRAG:
-				desc = "curated knowledge corpus — returns ranked document chunks."
+				desc = "curated knowledge corpus: returns ranked document chunks."
 			default:
-				desc = "curated external API — returns titled results with snippets."
+				desc = "curated external API: returns titled results with snippets."
 			}
 		}
 		b.WriteString("- **")
 		b.WriteString(name)
-		b.WriteString("** — ")
+		b.WriteString("** ")
 		b.WriteString(desc)
 		b.WriteString("\n")
 	}

@@ -24,7 +24,7 @@ func (t *FetchImageTool) Caps() []Capability { return []Capability{CapNetwork, C
 
 // HTTP GET image
 func (t *FetchImageTool) Desc() string {
-	return "Download an image from a URL into your session workspace. Returns the saved path. Does NOT deliver — call workspace(action=\"attach\", path=..., cleanup=true) to ship the file. Use this after finding an image URL via web_search, or whenever you already have a specific image URL the user wants."
+	return "Download an image from a URL into your session workspace. Returns the saved path. Does NOT deliver: call workspace(action=\"attach\", path=..., cleanup=true) to ship the file. Use this after finding an image URL via web_search, or whenever you already have a specific image URL the user wants."
 }
 
 func (t *FetchImageTool) Params() map[string]ToolParam {
@@ -36,7 +36,7 @@ func (t *FetchImageTool) Params() map[string]ToolParam {
 func (t *FetchImageTool) IsInternetTool() bool { return true }
 
 func (t *FetchImageTool) Run(args map[string]any) (string, error) {
-	return "", fmt.Errorf("fetch_image requires a session context — use GetAgentToolsWithSession")
+	return "", fmt.Errorf("fetch_image requires a session context: use GetAgentToolsWithSession")
 }
 
 func (t *FetchImageTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
@@ -57,7 +57,7 @@ func (t *FindImageTool) Caps() []Capability { return []Capability{CapNetwork, Ca
 
 // search + download
 func (t *FindImageTool) Desc() string {
-	return "Search for an image by description and save the SINGLE BEST MATCH into your session workspace. The framework's internal vision-LLM picks the best candidate from multiple search results. Returns the saved path. Does NOT deliver to the user — call workspace(action=\"attach\", path=..., cleanup=true) to ship the file. Use this whenever the user asks for a picture, meme, GIF, or photo."
+	return "Search for an image by description and save the SINGLE BEST MATCH into your session workspace. The framework's internal vision-LLM picks the best candidate from multiple search results. Returns the saved path. Does NOT deliver to the user: call workspace(action=\"attach\", path=..., cleanup=true) to ship the file. Use this whenever the user asks for a picture, meme, GIF, or photo."
 }
 
 func (t *FindImageTool) Params() map[string]ToolParam {
@@ -69,7 +69,7 @@ func (t *FindImageTool) Params() map[string]ToolParam {
 func (t *FindImageTool) IsInternetTool() bool { return true }
 
 func (t *FindImageTool) Run(args map[string]any) (string, error) {
-	return "", fmt.Errorf("find_image requires a session context — use GetAgentToolsWithSession")
+	return "", fmt.Errorf("find_image requires a session context: use GetAgentToolsWithSession")
 }
 
 func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
@@ -107,7 +107,7 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 		}
 		Log("[imagefetch/find_image] query=%q delivered %q (title: %q, source: %s)", query, name, meta.Title, meta.Source)
 		msg := fmt.Sprintf(
-			"NOT sent yet — this only SAVED the image to your workspace as %q (title: %q, source: %s). It is NOT delivered, and your reply text alone will NOT include it. To actually send it you MUST call workspace(action=\"attach\", path=%q, cleanup=true) — do that BEFORE you write a reply claiming you sent it. Skip the attach ONLY if the user just wants info about it (describe / identify / summarize), not the image itself.",
+			"NOT sent yet, this only SAVED the image to your workspace as %q (title: %q, source: %s). It is NOT delivered, and your reply text alone will NOT include it. To actually send it you MUST call workspace(action=\"attach\", path=%q, cleanup=true): do that BEFORE you write a reply claiming you sent it. Skip the attach ONLY if the user just wants info about it (describe / identify / summarize), not the image itself.",
 			name, meta.Title, meta.Source, name,
 		)
 		// A found image belongs in the image space too. Without this, "find a
@@ -182,7 +182,7 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 			data, _, _, ok = fetchValidImage(r.ImageURL, r.Link)
 		}
 		if !ok {
-			Log("[imagefetch/find_image] candidate skipped — no usable image for %q (source blocked?)", r.Link)
+			Log("[imagefetch/find_image] candidate skipped: no usable image for %q (source blocked?)", r.Link)
 			continue
 		}
 		usable++
@@ -277,13 +277,13 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 		// queries — asking a model to confirm a specific person is the question
 		// it declines — so this path and the identity case coincide constantly.
 		if blind > 0 {
-			Log("[imagefetch/find_image] query=%q the vision screen never saw the picture on %d of %d candidate(s) — the model in use appears to have no image modality; searches will run unscreened until it does", query, blind, usable)
+			Log("[imagefetch/find_image] query=%q the vision screen never saw the picture on %d of %d candidate(s): the model in use appears to have no image modality; searches will run unscreened until it does", query, blind, usable)
 		}
 		if identityRequired && !fallbackTextMatch {
 			Log("[imagefetch/find_image] query=%q REFUSED: vision screen abstained on all %d candidate(s) and none mentions %v", query, usable, namedSubjectTokens(query))
 			return "", identityUnverifiableError(query, usable)
 		}
-		Log("[imagefetch/find_image] query=%q vision screen returned no rating for any of %d candidate(s) — delivering the best text match unscreened", query, usable)
+		Log("[imagefetch/find_image] query=%q vision screen returned no rating for any of %d candidate(s): delivering the best text match unscreened", query, usable)
 		return saveAndReturn(fallbackData, fallbackMeta)
 	}
 	// Every candidate rated, every one of them exactly zero. A screen that is
@@ -293,12 +293,12 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	// query that was never the problem — this is the exit that answered "house"
 	// with "none clearly depict it" while holding photographs of houses.
 	if bestScore == 0 && scored > 1 {
-		return "", fmt.Errorf("found %d image(s) for %q, and the vision screen rated every one of them 0/100 — "+
+		return "", fmt.Errorf("found %d image(s) for %q, and the vision screen rated every one of them 0/100: "+
 			"identical zeros across %d different pictures point at a screen that is not seeing them (a model with no image "+
 			"modality) rather than that many genuinely wrong results. Do NOT just reword the query; use fetch_image with a "+
 			"specific image URL, and tell the user the image screen looks misconfigured", usable, query, scored)
 	}
-	return "", fmt.Errorf("found image(s) for %q but none clearly depict it (best visual match %d/100) — the search may have surfaced lookalikes or unrelated results; refine the query, or use fetch_image with a specific image URL", query, bestScore)
+	return "", fmt.Errorf("found image(s) for %q but none clearly depict it (best visual match %d/100): the search may have surfaced lookalikes or unrelated results; refine the query, or use fetch_image with a specific image URL", query, bestScore)
 }
 
 // identityUnverifiableError is what a search for a specific person says when it
@@ -311,7 +311,7 @@ func (t *FindImageTool) RunWithSession(args map[string]any, sess *ToolSession) (
 // with more confidence than the last. Rewording cannot fix "no page about this
 // person carries this photo".
 func identityUnverifiableError(query string, usable int) error {
-	return fmt.Errorf("found %d photo(s) matching %q in general, but NONE from a page that mentions them by name — so there is no evidence any of these is the right person, only that they look like the sort of picture asked for. Do NOT retry with a reworded query; a face cannot be confirmed from pixels and rewording will just return a different stranger. Tell the user you couldn't find a picture of them, and ask for one (a photo, a link, a profile URL) if you need it", usable, query)
+	return fmt.Errorf("found %d photo(s) matching %q in general, but NONE from a page that mentions them by name, so there is no evidence any of these is the right person, only that they look like the sort of picture asked for. Do NOT retry with a reworded query; a face cannot be confirmed from pixels and rewording will just return a different stranger. Tell the user you couldn't find a picture of them, and ask for one (a photo, a link, a profile URL) if you need it", usable, query)
 }
 
 // findResolution is how a search that produced no confident match ends.

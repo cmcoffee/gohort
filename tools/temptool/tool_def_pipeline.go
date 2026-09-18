@@ -41,7 +41,7 @@ func createPipelineGrouped(args map[string]any, sess *ToolSession) (string, erro
 		return "", fmt.Errorf("either pipeline_prompt (adaptive) or pipeline_steps (deterministic) is required for mode=\"pipeline\"")
 	}
 	if prompt != "" && len(steps) > 0 {
-		return "", fmt.Errorf("pipeline_prompt and pipeline_steps are mutually exclusive — pick one")
+		return "", fmt.Errorf("pipeline_prompt and pipeline_steps are mutually exclusive: pick one")
 	}
 	inner := stringSliceArg(args["pipeline_tools"])
 	if len(inner) == 0 {
@@ -54,7 +54,7 @@ func createPipelineGrouped(args map[string]any, sess *ToolSession) (string, erro
 		}
 		for i, s := range steps {
 			if !allowed[s.Tool] {
-				return "", fmt.Errorf("pipeline_steps[%d].tool %q is not in pipeline_tools %v — add it or pick a different tool", i, s.Tool, inner)
+				return "", fmt.Errorf("pipeline_steps[%d].tool %q is not in pipeline_tools %v: add it or pick a different tool", i, s.Tool, inner)
 			}
 		}
 	}

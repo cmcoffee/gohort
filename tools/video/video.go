@@ -103,9 +103,9 @@ func (t *VideoTool) Caps() []Capability {
 func (t *VideoTool) IsInternetTool() bool { return true }
 
 func (t *VideoTool) Desc() string {
-	return "Manage videos end-to-end: find a URL by topic, download for delivery, view for analysis-only, transcribe spoken content, transcode to shrink a workspace file under a size cap. Single entry point — pick the action matching intent. " +
-		"actions: find (search the web for a URL), download (fetch a URL AND prepare it for delivery to the user — use when the user shared a URL expecting the file back), view (fetch a URL and just look at frames; NO file delivery — use for research-style \"analyze this video about X\" when the user doesn't need the file), transcribe (workspace audio/video → text; AFTER download when user asks what was said), transcode (re-encode a workspace video to fit under a size cap — use when a previous delivery attempt failed because the file was too large for the transport, typically iMessage's ~20MB limit), help. " +
-		"Decision: when a user PASTES a video URL (TikTok, YouTube, etc.) → action=download (they want the file). When a user asks you to RESEARCH or ANALYZE a video → action=view (they want your analysis, not the file). When delivery feedback says an [ATTACH:] was too large → action=transcode with max_size_mb=18, then re-emit [ATTACH:] with the smaller file. When unsure between download/view, prefer download — delivering a file the user didn't need is far better than failing to deliver a file they did."
+	return "Manage videos end-to-end: find a URL by topic, download for delivery, view for analysis-only, transcribe spoken content, transcode to shrink a workspace file under a size cap. Single entry point: pick the action matching intent. " +
+		"actions: find (search the web for a URL), download (fetch a URL AND prepare it for delivery to the user, use when the user shared a URL expecting the file back), view (fetch a URL and just look at frames; NO file delivery, use for research-style \"analyze this video about X\" when the user doesn't need the file), transcribe (workspace audio/video → text; AFTER download when user asks what was said), transcode (re-encode a workspace video to fit under a size cap, use when a previous delivery attempt failed because the file was too large for the transport, typically iMessage's ~20MB limit), help. " +
+		"Decision: when a user PASTES a video URL (TikTok, YouTube, etc.) → action=download (they want the file). When a user asks you to RESEARCH or ANALYZE a video → action=view (they want your analysis, not the file). When delivery feedback says an [ATTACH:] was too large → action=transcode with max_size_mb=18, then re-emit [ATTACH:] with the smaller file. When unsure between download/view, prefer download: delivering a file the user didn't need is far better than failing to deliver a file they did."
 }
 
 func (t *VideoTool) Params() map[string]ToolParam {
@@ -137,7 +137,7 @@ func (t *VideoTool) Run(args map[string]any) (string, error) {
 	case "", "help":
 		return videoToolHelp(), nil
 	}
-	return "", fmt.Errorf("video(action=%q) requires a session with a workspace — only `find` and `help` work without one", action)
+	return "", fmt.Errorf("video(action=%q) requires a session with a workspace: only `find` and `help` work without one", action)
 }
 
 func (t *VideoTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
@@ -165,7 +165,7 @@ func (t *VideoTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 }
 
 func videoToolHelp() string {
-	return `video — manage videos end-to-end. Single tool covering the full lifecycle.
+	return `video: manage videos end-to-end. Single tool covering the full lifecycle.
 
 ACTIONS:
 
@@ -180,13 +180,13 @@ ACTIONS:
               Behavior: stores in workspace, samples frames + metadata,
                         attaches the file via follow-up workspace(attach).
 
-  view        Fetch a known video URL just for analysis — NO delivery.
+  view        Fetch a known video URL just for analysis: NO delivery.
               Args: url (required)
               Use when: research-style "look at this video about X and
                         tell me what's argued"; user wants your insight,
                         not the file. Phantom rule of thumb: if the
                         user pasted a URL in a casual reply, prefer
-                        download — pasting implies they want the file.
+                        download: pasting implies they want the file.
               Behavior: samples frames into your view queue, returns
                         metadata; no workspace file, no attach.
 
@@ -219,7 +219,7 @@ TYPICAL FLOWS:
     → video(action="download", url=<from find result>)
     → file attached + brief description
 
-  User: "Here's a clip <YouTube URL> — what does she say?"
+  User: "Here's a clip <YouTube URL>, what does she say?"
     → video(action="download", url=<URL>)         (auto-attaches the clip)
     → video(action="transcribe", path=<from download>)
     → reply includes the transcript + the attached file

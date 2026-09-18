@@ -164,7 +164,7 @@ func (t *chatTurn) guardDispatchInput(ctx context.Context, kind, name, msg strin
 		// checking system invites it to reason about the system, which is both
 		// slow and the last thing that should surface in a reply.
 		return errors.New("agents(run, " + kind + "=" + strconv.Quote(name) +
-			") did not run — a constraint on you covers this request, and handing it to " + articleFor(kind) + " " + kind + " does not put it outside that constraint. " +
+			") did not run: a constraint on you covers this request, and handing it to " + articleFor(kind) + " " + kind + " does not put it outside that constraint. " +
 			"Do not route it through another target. Answer within it, or say plainly that you can't.")
 	}
 	return nil
@@ -195,10 +195,10 @@ func (t *chatTurn) guardDispatchOutput(ctx context.Context, kind, name, out stri
 		return out, nil
 	}
 	if dec := e.Check(guardHookPreOutput, out); dec.Blocked {
-		t.turnDiag("guardrail-output-withheld", "The "+kind+" "+strconv.Quote(name)+" ran to completion, but a guardrail withheld its output — it could not be asked to revise it, so nothing was delivered.")
+		t.turnDiag("guardrail-output-withheld", "The "+kind+" "+strconv.Quote(name)+" ran to completion, but a guardrail withheld its output: it could not be asked to revise it, so nothing was delivered.")
 		Log("[orchestrate.%s.guardrail] agent=%s pre_output WITHHELD %d bytes from %s %q", kind, t.agent.ID, len(out), kind, name)
 		return "", errors.New(kind + " " + strconv.Quote(name) +
-			" finished, but its output cannot be given to you — a constraint on you covers what it produced. " +
+			" finished, but its output cannot be given to you: a constraint on you covers what it produced. " +
 			"You have not seen it. Do not run it again to try, and do not describe or guess at what it said.")
 	}
 	return out, nil

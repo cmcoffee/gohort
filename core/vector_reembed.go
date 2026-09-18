@@ -85,11 +85,11 @@ func reembedChunks(ctx context.Context, db Database, what string, want func(c Em
 	}
 	cfg := GetEmbeddingConfig()
 	if !cfg.Enabled {
-		Log("[vector-reembed] embeddings are disabled — nothing to do")
+		Log("[vector-reembed] embeddings are disabled: nothing to do")
 		return 0
 	}
 	if cfg.Endpoint == "" {
-		Log("[vector-reembed] no embedding endpoint configured — nothing to do")
+		Log("[vector-reembed] no embedding endpoint configured: nothing to do")
 		return 0
 	}
 	space := cfg.spaceStamp()
@@ -101,7 +101,7 @@ func reembedChunks(ctx context.Context, db Database, what string, want func(c Em
 	// it says where it is. Reported on a tick rather than per chunk: the
 	// admin panel reads the latest line, and writing one per row would be
 	// lock traffic nobody sees.
-	ReportMaintenanceProgress(ctx, fmt.Sprintf("starting — %d chunk(s) to check", len(keys)))
+	ReportMaintenanceProgress(ctx, fmt.Sprintf("starting: %d chunk(s) to check", len(keys)))
 	lastReport := time.Now()
 
 	for _, key := range keys {
@@ -139,7 +139,7 @@ func reembedChunks(ctx context.Context, db Database, what string, want func(c Em
 			streak++
 			Debug("[vector-reembed] %s/%s section %q failed", c.Source, c.ReportID, c.Section)
 			if streak >= reembedFailStreak {
-				Log("[vector-reembed] stopping — %d consecutive failures (endpoint likely down: %s). Repaired %d before the streak; re-run once the embedder is back.",
+				Log("[vector-reembed] stopping, %d consecutive failures (endpoint likely down: %s). Repaired %d before the streak; re-run once the embedder is back.",
 					streak, cfg.Endpoint, fixed)
 				break
 			}
@@ -246,7 +246,7 @@ func init() {
 	RegisterMaintenanceFunc("Vector index",
 		"reembed_all_chunks",
 		"Re-embed EVERY chunk",
-		"Re-embeds every indexed chunk, current or not. Only for a change the stamp cannot see — "+
+		"Re-embeds every indexed chunk, current or not. Only for a change the stamp cannot see: "+
 			"the same model name now served by a different endpoint, build or quantization, which is "+
 			"a different space with the same name. Otherwise use Repair, which skips what is already "+
 			"right. One embed call per chunk; stops early if the endpoint is down; safe to re-run.",
@@ -259,7 +259,7 @@ func init() {
 		"Vector database cleanup (DELETES)",
 		"Removes rows the index cannot use: a chunk with no text. Nothing to embed, so Repair "+
 			"cannot fix it; nothing to match, so search cannot return it. They are dead weight that "+
-			"kept the counts above from reaching zero. Permanent, and safe — the documents they came "+
+			"kept the counts above from reaching zero. Permanent, and safe: the documents they came "+
 			"from are untouched and can be re-ingested.",
 		func(ctx context.Context) int {
 			return RemoveUnusableChunks(ctx, vectorRepairDB())

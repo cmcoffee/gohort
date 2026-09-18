@@ -68,7 +68,7 @@ func Run() {
 	// + a hand-launched / rebuild copy). lock stays open for our lifetime.
 	lock, ok := acquireSingleInstance()
 	if !ok {
-		core.Warn("[bridge] another Gohort-Bridge is already running — exiting")
+		core.Warn("[bridge] another Gohort-Bridge is already running: exiting")
 		return
 	}
 	defer func() {
@@ -125,7 +125,7 @@ func Run() {
 func daemonStatus() string {
 	c := core.ReadBridgeConfig()
 	if c.ServerURL == "" || core.BridgeAPIKey() == "" {
-		return "Not configured — set up in Gohort"
+		return "Not configured: set up in Gohort"
 	}
 	return "Connected"
 }

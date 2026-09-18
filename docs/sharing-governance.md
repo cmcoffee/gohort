@@ -1,4 +1,4 @@
-# Sharing & Governance — namespacing phase 5
+# Sharing & Governance: namespacing phase 5
 
 Continues `tool-credential-namespacing.md`. Phases 1–4 built the two ownership
 planes (global vs user-owned) and the Extensions surface (named Extensions when this
@@ -9,7 +9,7 @@ user-owned resource is promoted into the global catalog.
 
 ## The model this batch implements
 
-Every shareable resource — credential, tool, agent — lives in one of two planes:
+Every shareable resource (credential, tool, agent), lives in one of two planes:
 
 - **Global plane** (`Owner == ""`). The deployment-wide catalog. Admin-owned.
   Access = **which users** may adopt it. Per-*agent* wiring is a user-plane
@@ -29,11 +29,11 @@ Authority direction, fixed by this batch:
 The admin never *originates* a user's share. They govern the global tier and the
 promotion boundary between planes. Peer (1:1 / named-set) sharing needs **no**
 admin approval; only **global promotion** is gated. (A stricter deployment could
-gate all cross-user sharing — see Open decisions.)
+gate all cross-user sharing: see Open decisions.)
 
 ---
 
-## Deliverable 1 — Generalized `AllowedUsers` picker (ACL editor)
+## Deliverable 1: Generalized `AllowedUsers` picker (ACL editor)
 
 Today `AllowedUsers` exists only on `SecureCredential`, and it's edited as a
 free-text tags field. Generalize it into one ACL concept across all three
@@ -44,19 +44,19 @@ resource kinds, edited with one primitive.
 | Resource | Field today | Change |
 |---|---|---|
 | `SecureCredential` | `AllowedUsers []string` | keep; empty = open to all *permitted* users |
-| `PersistentTempTool` | `Shared bool` only | **add** `AllowedUsers []string` — gates who may *adopt* a Shared tool |
-| `AgentRecord` | none | **add** `AllowedUsers []string` — the recipients of a peer share |
+| `PersistentTempTool` | `Shared bool` only | **add** `AllowedUsers []string`: gates who may *adopt* a Shared tool |
+| `AgentRecord` | none | **add** `AllowedUsers []string`: the recipients of a peer share |
 
 Semantics are uniform: **empty `AllowedUsers` on a global/shared resource = open
 to everyone; a non-empty list = only those users.** On a *user-owned* resource,
 `AllowedUsers` is the peer-share recipient set (empty = private to the owner).
 
-### Editor primitive — reuse `ChipPicker`, not a new component (SHIPPED helper)
+### Editor primitive: reuse `ChipPicker`, not a new component (SHIPPED helper)
 
 `core/ui` already has the right generic primitive: **`ChipPicker` in "attach"
 mode** is a dynamic multi-select over `OptionsSource` that saves the selection as
 a `[]string` (`AttachedField` for the current set, `PostTo` + `SaveKey` to save).
-Adding a `UserPicker` would be redundant surface area — exactly what the mission
+Adding a `UserPicker` would be redundant surface area: exactly what the mission
 warns against. So there is **no new component and no new JS**; instead a thin
 constructor standardizes the ACL configuration:
 
@@ -81,9 +81,9 @@ Reused verbatim by Deliverable 1, Deliverable 3, and peer sharing.
 ### Where it appears
 
 - **Admin API Credentials** (global creds): ACL editor in the existing edit
-  Expand — replaces the tags field.
+  Expand: replaces the tags field.
 - **Admin Global Tools**: ACL editor on each Shared tool.
-- **Extensions** (peer sharing): ACL editor on the user's own agents/creds — see
+- **Extensions** (peer sharing): ACL editor on the user's own agents/creds, see
   peer-sharing section.
 
 ### Enforcement (mostly already wired for creds)
@@ -97,18 +97,18 @@ Reused verbatim by Deliverable 1, Deliverable 3, and peer sharing.
 
 ---
 
-## Deliverable 2 — Admin audit & revoke console — SHIPPED (creds + adoptions)
+## Deliverable 2 (Admin audit & revoke console), SHIPPED (creds + adoptions)
 
 The admin is currently **blind** to the user plane (`List` returns only global;
 user resources live under `ListUser(username)`). For a security posture the admin
 needs read + kill across every user's namespace, even resources they don't own.
 
 **Shipped:** two admin sections next to API Credentials.
-- **User-owned credentials** — `SecureAPI.ListAllUserOwned()` enumerates every
+- **User-owned credentials**: `SecureAPI.ListAllUserOwned()` enumerates every
   `Owner != ""` credential; rows carry owner/name/type/secured/disabled with
-  owner-aware **Disable** (`SetDisabledOwned` — revoke without delete) / **Enable**
+  owner-aware **Disable** (`SetDisabledOwned`: revoke without delete) / **Enable**
   / **Delete** (`DeleteUser`). Endpoint `api/user-credentials`.
-- **Global-tool adoptions** — one row per (tool, adopter) from
+- **Global-tool adoptions**: one row per (tool, adopter) from
   `LoadAdoptedGlobalTools` across `AuthListUsers`, a **⚠ stale** flag when the tool
   has left the shared catalog, and a **Remove** action (`SetGlobalToolAdopted
   false`). Endpoint `api/tool-adoptions`. Shows a shared tool's blast radius.
@@ -116,7 +116,7 @@ needs read + kill across every user's namespace, even resources they don't own.
 
 **User-owned tools** are already visible in the existing Global Tools section (the
 persistent pool is admin-visible), so they aren't duplicated here. **User-owned
-agents** are deferred to Deliverable 5 — there is nothing to audit or revoke until
+agents** are deferred to Deliverable 5: there is nothing to audit or revoke until
 peer-sharing exists; that section joins this area then.
 
 ### New admin section: "User namespace"
@@ -141,7 +141,7 @@ Columns: Owner, Name, Kind, Shared/AllowedUsers summary, State (enabled/disabled
 - **Force-private** (agents) → set `ForcePrivate`.
 - **Unshare** → clear `Shared` / `AllowedUsers`.
 
-All gated by `CanManageShared(reqUser, owner, isAdmin)` — admin bypasses the
+All gated by `CanManageShared(reqUser, owner, isAdmin)`: admin bypasses the
 owner check, which is exactly what `core/sharing.go` already encodes.
 
 ### Adoption view
@@ -152,13 +152,13 @@ a global tool and, if needed, force-unadopt (`SetGlobalToolAdopted(false)`).
 
 ---
 
-## Deliverable 3 — Promotion-request flow (user plane → global plane) — SHIPPED (tool)
+## Deliverable 3, Promotion-request flow (user plane → global plane), SHIPPED (tool)
 
 The bottom-up path. A user who built a useful cred/tool/agent requests it be
 published deployment-wide; the admin approves.
 
 **Shipped:** the generic queue + tool promotion end-to-end.
-- `core/promotion_requests.go` — `PromotionRequest{ID,Owner,Kind,Name,Note,Created,
+- `core/promotion_requests.go`: `PromotionRequest{ID,Owner,Kind,Name,Note,Created,
   State,DecidedBy}` keyed by `(kind,owner,name)` (a re-request updates in place).
   `Create`/`List`(pending-only or all)/`Get`/`SetState`/`PendingPromotion`. Covered
   by `TestPromotionRequests`. (Named `promotion_requests.go` to stay clear of the
@@ -173,10 +173,10 @@ published deployment-wide; the admin approves.
 - New generic primitive: `ui.ModalActionIf` (ModalAction + OnlyIf/HideIf, like
   ExpandIf).
 
-**Only tool promotion is offered today** — deliberately, because the other two
+**Only tool promotion is offered today**: deliberately, because the other two
 aren't fulfillable yet:
 - **Credential:** the safety rule refuses promoting a static user secret, and
-  Extensions only lets users create static-secret creds — so a user-owned cred is
+  Extensions only lets users create static-secret creds, so a user-owned cred is
   always static and there's nothing valid to promote. Credential promotion waits
   for user-ownable per-user/hybrid creds.
 - **Agent:** a globally-runnable agent needs the recipient-run infra (step 5b), so
@@ -211,13 +211,13 @@ the row shows "Requested".
 
 A "Pending promotions" table. **Approve** / **Deny** row actions.
 
-**Approve** semantics differ by kind — this asymmetry is a hard safety rule:
+**Approve** semantics differ by kind, this asymmetry is a hard safety rule:
 
 | Kind | On approve |
 |---|---|
-| **Agent** | Mint a **global copy** (`Owner=""`); references resolve in each recipient's namespace at runtime (already how sharing works). Clean — no secret travels. |
+| **Agent** | Mint a **global copy** (`Owner=""`); references resolve in each recipient's namespace at runtime (already how sharing works). Clean: no secret travels. |
 | **Tool** | Publish the tool **definition** to the shared pool (`Shared=true`, `Owner=""`). Its `hook_capabilities` / temptool body carry no secret. Clean. |
-| **Credential** | **Never** promote a static user secret to global (that would expose one user's secret deployment-wide). Only **hybrid / per-user-secret** creds may be promoted — the *shape* goes global, each adopter supplies their own secret. A static-secret cred promotion is **refused** with an explanatory error. |
+| **Credential** | **Never** promote a static user secret to global (that would expose one user's secret deployment-wide). Only **hybrid / per-user-secret** creds may be promoted: the *shape* goes global, each adopter supplies their own secret. A static-secret cred promotion is **refused** with an explanatory error. |
 
 On approve the request flips to `approved` and (optionally) the admin sets the
 new global resource's `AllowedUsers` via the Deliverable-1 picker in the same
@@ -225,12 +225,12 @@ modal.
 
 ---
 
-## Peer sharing (agents) — the user-plane path this console oversees
+## Peer sharing (agents): the user-plane path this console oversees
 
 Free, no admin approval. Uses `AgentRecord.AllowedUsers` as the source of truth.
 
-**Shipped (5a — owner + admin side):**
-- **Owner side:** the agent page grows a "Share with users" section — an
+**Shipped (5a, owner + admin side):**
+- **Owner side:** the agent page grows a "Share with users" section, an
   `ACLPicker` over `../api/user-candidates` (every approved user; peer sharing is
   open), `RecordSource`/`PostTo` = the agent record, `Field = allowed_users`. The
   recipient set rides through the existing full-record agent save (the per-agent
@@ -248,17 +248,17 @@ Free, no admin approval. Uses `AgentRecord.AllowedUsers` as the source of truth.
 truth; a `shared_agents` index (`SetSharedOwner`) is only a discovery optimization
 for the recipient side, added with it.
 
-**Shipped (5b — recipient side):** a peer-shared agent is now reachable + runnable
+**Shipped (5b, recipient side):** a peer-shared agent is now reachable + runnable
 by its recipients. The key realization: the cross-user RUN machinery already
-existed for **Exposed** (published) agents — `LookupExposedAgent(slug)` resolves
+existed for **Exposed** (published) agents: `LookupExposedAgent(slug)` resolves
 owner+record, and `PublicHandleSend` runs it **as the end-user**, so sessions,
 memory, and credentials resolve in the RECIPIENT's namespace (no secret travels,
 and Fleet/owner-only tools attach only when runtime-user == owner). So 5b was NOT
-a hot-path change — it broadened the `/agents/` exposure + access gate:
+a hot-path change, it broadened the `/agents/` exposure + access gate:
 - `reachableAgent(a)` = `Exposed OR len(AllowedUsers)>0` (minus seeds / hidden
-  app-agents) — the directory/lookup pool now includes peer-shared agents.
+  app-agents): the directory/lookup pool now includes peer-shared agents.
 - `AgentReachableBy(r, slug, owner, allowedUsers)` = app-access (published) OR
-  `user ∈ AllowedUsers` OR owner — the per-user gate on both the dashboard card
+  `user ∈ AllowedUsers` OR owner: the per-user gate on both the dashboard card
   (`DashboardCards`) and the run path (`apps/agents`).
 - `ListGrantableApps` stays published-only (a peer-shared agent isn't app-grantable).
 Covered by `TestReachableAgent`. Net: owner sets AllowedUsers (5a) → the agent
@@ -270,14 +270,14 @@ namespace. No orchestrate-fleet change (that surface is admin-only; recipients u
 
 ## Sequencing within the batch
 
-1. **Data + enforcement — SHIPPED.** `AllowedUsers` on `PersistentTempTool` +
+1. **Data + enforcement: SHIPPED.** `AllowedUsers` on `PersistentTempTool` +
    `AgentRecord`; `SharedToolAllowedUsers` + `CanAdoptGlobalTool` (permission, not
-   existence — an unpublished name is harmless); `SetGlobalToolAdopted` refuses an
+   existence: an unpublished name is harmless); `SetGlobalToolAdopted` refuses an
    ACL-denied adopt but always permits un-adopt; the Extensions catalog GET hides
    tools the user can't adopt. Covered by `TestGlobalToolAdoptACL`.
-2. **ACL editor — SHIPPED (helper, not a new primitive).** `ui.ACLPicker` over the
+2. **ACL editor: SHIPPED (helper, not a new primitive).** `ui.ACLPicker` over the
    existing `ChipPicker`. No new component, no new JS.
-3. **Deliverable 1 UI — SHIPPED.** `core.UserCandidatesJSON` + admin
+3. **Deliverable 1 UI: SHIPPED.** `core.UserCandidatesJSON` + admin
    `api/user-candidates` (approved users as `{value,label}`, the shared ACLPicker
    source). Credential access: the Edit-Expand is now `Stack{FormPanel, ACLPicker}`
    (record mode over `api/secure-api?name={name}`); the free-text `allowed_users`
@@ -287,37 +287,37 @@ namespace. No orchestrate-fleet change (that surface is admin-only; recipients u
    `core.SetPersistentTempToolAllowedUsers`. Covered by
    `TestSetPersistentTempToolAllowedUsers`. (UI follows the proven App-Groups
    FormPanel+ChipPicker pattern; needs a runtime smoke test on deploy.)
-4. **Deliverable 2 — SHIPPED (creds + adoptions).** `ListAllUserOwned` +
+4. **Deliverable 2: SHIPPED (creds + adoptions).** `ListAllUserOwned` +
    `SetDisabledOwned`; `api/user-credentials` + `api/tool-adoptions`; two admin
    sections. Agent audit deferred into step 5 (nothing to revoke until sharing).
-5. **Peer sharing — 5a SHIPPED (owner + admin), 5b deferred (recipient run).**
+5. **Peer sharing: 5a SHIPPED (owner + admin), 5b deferred (recipient run).**
    Owner-side "Share with users" ACLPicker on the agent page; admin "User-owned
    agents" governance section via `AdminListUserOwnedAgents`/`AdminRevokeAgentShare`
    hooks. Recipient-side fleet visibility + run (the payoff) is the deferred 5b.
-6. **Deliverable 3 — SHIPPED (tool).** Promotion queue (`core/promotion_requests.go`)
+6. **Deliverable 3: SHIPPED (tool).** Promotion queue (`core/promotion_requests.go`)
    + Extensions request action + admin "Pending promotions" approve/deny.
    `ui.ModalActionIf` added. Credential + agent promotion deferred (not fulfillable
-   yet — see the Deliverable 3 section).
+   yet: see the Deliverable 3 section).
 
 Steps 1–2 are the foundation (done); 3–6 each land independently on top.
 
 ## Remaining after this batch
 
-- **5b** — recipient-side agent run (the peer-sharing payoff): shared agents in a
+- **5b**, recipient-side agent run (the peer-sharing payoff): shared agents in a
   recipient's fleet, run in owner context with the recipient's own creds. Hot-path
   change; wants runtime testing. Unblocks agent promotion (Deliverable 3).
-- Credential promotion — waits for user-ownable per-user/hybrid creds.
-- Appendix — dashboard clustering via `WebAppHubTab`.
+- Credential promotion: waits for user-ownable per-user/hybrid creds.
+- Appendix: dashboard clustering via `WebAppHubTab`.
 
 ## Open decisions
 
 - **Peer-share approval.** Recommended: peer (named-set) sharing is free; only
   global promotion is gated. A regulated deployment may want a site setting
-  ("require admin approval for any cross-user share") — a single gate in the
+  ("require admin approval for any cross-user share"): a single gate in the
   peer-share handler, deferred unless asked.
 - **Credential promotion of static secrets.** Refused outright (above). Confirm
   there's no case where an admin *wants* to bless a user's static-secret cred
-  as global — if so, it must be a re-entry of the secret by the admin, never a
+  as global: if so, it must be a re-entry of the secret by the admin, never a
   copy of the user's stored one.
 - **Global copy vs move on promotion.** Recommended: agents/tools **copy** to
   global (owner keeps their private original); the owner isn't stripped of their
@@ -328,12 +328,12 @@ Steps 1–2 are the foundation (done); 3–6 each land independently on top.
 
 ---
 
-## Appendix — dashboard clustering of the orchestrator family — SHIPPED
+## Appendix (dashboard clustering of the orchestrator family), SHIPPED
 
 `serve_dashboard` now partitions the cards into featured hero → **orchestrator
 family cluster** (a full-width titled block) → the rest → admin (wide). Family
-membership is exactly `implements WebAppHubTab` — the same single source `HubNav`
-reads, no new metadata — and the cluster is ordered by `HubTab` order
+membership is exactly `implements WebAppHubTab`: the same single source `HubNav`
+reads, no new metadata, and the cluster is ordered by `HubTab` order
 (`hubTabOrder` helper) so it stays in lockstep with the tab row. Pure IA/CSS in
 `core/webapp.go`; no data model, no hot path.
 
@@ -341,23 +341,23 @@ reads, no new metadata — and the cluster is ordered by `HubTab` order
 
 Today `serve_dashboard` renders a **flat** card grid (`dashApp` list;
 `featured` / `wide` / regular sizing only). But the hub tab row already knows the
-orchestrator family — every member implements `WebAppHubTab` (`HubTab() (label,
+orchestrator family: every member implements `WebAppHubTab` (`HubTab() (label,
 order)`): Agents(10), Bridges(20), Knowledge(30), Extensions(40, the app renamed
 from Extensions in v0.6.817). The dashboard
 should reflect that same grouping instead of scattering these among unrelated
 apps.
 
-**Reuse the existing signal — add no new metadata.** An app is "in the family"
+**Reuse the existing signal: add no new metadata.** An app is "in the family"
 iff it implements `WebAppHubTab`. That single interface already single-sources the
 tab row; the dashboard reads the same set.
 
 Proposed dashboard IA:
 
 - **Hero:** the featured entry point (Chat/Orchestrate, `WebAppFeatured`) stays
-  the full-width hero — the family's front door.
+  the full-width hero: the family's front door.
 - **Cluster:** apps implementing `WebAppHubTab`, ordered by their `HubTab` order,
   render as one visually-grouped block **under a heading** (e.g. "Orchestrator")
-  directly beneath the hero — a bordered group, not loose cards.
+  directly beneath the hero: a bordered group, not loose cards.
 - **Everything else:** custom apps + standalone web apps keep the existing flat
   grid below the cluster.
 - **Admin:** stays the bottom `wide` utility card.
@@ -368,11 +368,11 @@ Implementation is contained to `core/webapp.go`:
   membership test is a `WebAppHubTab` type-assert (same as `HubNav`).
 - The cluster renders as a titled `<section>` with its own bordered grid; the
   heading label is a constant (or a new tiny `WebAppFamily() string` method only
-  if we ever need >1 family — **not** needed now, don't add it speculatively).
+  if we ever need >1 family: **not** needed now, don't add it speculatively).
 - Family order = `HubTab` order, so tab-row and dashboard stay in lockstep from
   one source.
 
-This is **UI/IA only** — no permissions, no data model. It can land before or
+This is **UI/IA only**: no permissions, no data model. It can land before or
 after the sharing batch; it shares nothing with it except the observation that
 `WebAppHubTab` is the canonical "orchestrator family" membership test. Keep it a
 separate commit.

@@ -139,7 +139,7 @@ func (T *AppCore) SetTools(names ...string) {
 // RequireLLM returns an error if no LLM is configured.
 func (T *AppCore) RequireLLM() error {
 	if T.LLM == nil {
-		return fmt.Errorf("no language model is configured — set one up in the admin dashboard, under Worker LLM")
+		return fmt.Errorf("no language model is configured: set one up in the admin dashboard, under Worker LLM")
 	}
 	return nil
 }
@@ -261,7 +261,7 @@ func leadUnavailableReason(T *AppCore) string {
 	case T.LeadLLM == nil:
 		return "no lead model is configured for this app"
 	case !LeadIsDistinct():
-		return "no separate lead model is configured — the lead and the worker would be the same model, so there is nothing to escalate to (set one in the LLM settings)"
+		return "no separate lead model is configured: the lead and the worker would be the same model, so there is nothing to escalate to (set one in the LLM settings)"
 	}
 	return "the lead was unavailable"
 }

@@ -549,7 +549,7 @@ func (c *desktopClient) writeFrame(frame []byte) error {
 func InstallToDesktop(user string, inst DesktopInstall) (int, error) {
 	clients := desktopReg.clientsFor(user)
 	if len(clients) == 0 {
-		return 0, fmt.Errorf("no connected desktop bridge for user %q — the user must have the gohort desktop app running to install a desktop capability", user)
+		return 0, fmt.Errorf("no connected desktop bridge for user %q: the user must have the gohort desktop app running to install a desktop capability", user)
 	}
 	frame, err := json.Marshal(desktopInstallMsg{Type: "install", DesktopInstall: inst})
 	if err != nil {
@@ -786,7 +786,7 @@ func (t *desktopChatTool) Name() string {
 }
 
 func (t *desktopChatTool) Desc() string {
-	return t.desc.Desc + " (runs on the user's gohort-desktop client — works when the desktop is connected; returns a clean error otherwise)"
+	return t.desc.Desc + " (runs on the user's gohort-desktop client: works when the desktop is connected; returns a clean error otherwise)"
 }
 
 func (t *desktopChatTool) Params() map[string]ToolParam {
@@ -796,7 +796,7 @@ func (t *desktopChatTool) Params() map[string]ToolParam {
 func (t *desktopChatTool) Run(args map[string]any) (string, error) {
 	clients := desktopReg.clientsFor(t.user)
 	if len(clients) == 0 {
-		return "", fmt.Errorf("your gohort-desktop client isn't connected — open it (it's the gohort app on your Mac / Windows) and try again. The %q tool runs there, not on the server", t.desc.Name)
+		return "", fmt.Errorf("your gohort-desktop client isn't connected: open it (it's the gohort app on your Mac / Windows) and try again. The %q tool runs there, not on the server", t.desc.Name)
 	}
 	// Newest-connected wins (matches LocalToolsForUser's dedup order
 	// for live announces).

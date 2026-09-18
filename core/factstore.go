@@ -103,29 +103,35 @@ const (
 
 func init() {
 	RegisterTunable(TunableSpec{Key: TunableFactSweepThreshold, Category: "Memory",
-		Label: "Memory sweep threshold (0 = off)",
-		Help:  "When an agent's saved-fact count reaches this, an async worker-LLM prune removes junk and collapses redundant notes so the always-in-prompt block stays lean.",
-		Kind:  KindInt, Default: 40, Min: 0, Max: 500})
+		Label:  "Memory sweep threshold (0 = off)",
+		Help:   "When an agent's saved-fact count reaches this, a prune pass runs.",
+		Detail: "An async worker-LLM prune removes junk and collapses redundant notes, so the always-in-prompt block stays lean.",
+		Kind:   KindInt, Default: 40, Min: 0, Max: 500})
 	RegisterTunable(TunableSpec{Key: TunableFactHardCap, Category: "Memory",
-		Label: "Memory hard cap (0 = off)",
-		Help:  "After a sweep, evict least-recently-updated facts until the store is at or below this many. Backstop against unbounded prompt growth.",
-		Kind:  KindInt, Default: 60, Min: 0, Max: 1000})
+		Label:  "Memory hard cap (0 = off)",
+		Help:   "After a sweep, evict least-recently-updated facts until the store is at or below this many.",
+		Detail: "A backstop against unbounded prompt growth.",
+		Kind:   KindInt, Default: 60, Min: 0, Max: 1000})
 	RegisterTunable(TunableSpec{Key: TunableFactGate, Category: "Memory",
-		Label: "Memory relevance gate (chatbot mode)",
-		Help:  "1 = reject ephemeral, non-durable notes at write time in chatbot-mode agents (the personal-assistant/group-chat persona). 0 = store everything the model decides to save.",
-		Kind:  KindBool, Default: 1, Min: 0, Max: 1})
+		Label:  "Memory relevance gate (chatbot mode)",
+		Help:   "1 rejects ephemeral, non-durable notes at write time in chatbot-mode agents.",
+		Detail: "Chatbot mode is the personal-assistant and group-chat persona. 0 stores everything the model decides to save.",
+		Kind:   KindBool, Default: 1, Min: 0, Max: 1})
 	RegisterTunable(TunableSpec{Key: TunableFactTombstoneDays, Category: "Memory",
-		Label: "Memory tombstone retention (days, 0 = keep none)",
-		Help:  "How long a retired fact (superseded, evicted, or merged) stays queryable so recall can explain a hole (\"you had X; it was dropped on <date>\") before it is permanently deleted. 0 = delete retired facts immediately.",
-		Kind:  KindInt, Default: 30, Min: 0, Max: 365})
+		Label:  "Memory tombstone retention (days, 0 = keep none)",
+		Help:   "How long a retired fact stays queryable before it is permanently deleted.",
+		Detail: "Retired means superseded, evicted or merged. Keeping it lets recall explain a hole: \"you had X; it was dropped on <date>\". 0 deletes retired facts immediately.",
+		Kind:   KindInt, Default: 30, Min: 0, Max: 365})
 	RegisterTunable(TunableSpec{Key: TunableStaleVolatileDays, Category: "Memory",
-		Label: "Volatile fact half-life (days)",
-		Help:  "A fact classified volatile (prices, live status, versions) is flagged aging on pull once older than this, and stale past 2x. 0 = never flag volatile facts. Does not affect the always-in-prompt block (it shows the fixed as-of date).",
-		Kind:  KindInt, Default: 3, Min: 0, Max: 365})
+		Label:  "Volatile fact half-life (days)",
+		Help:   "A fact classified volatile is flagged aging on pull once older than this, stale past 2x.",
+		Detail: "Volatile means prices, live status, versions. 0 never flags volatile facts. It does not affect the always-in-prompt block, which shows the fixed as-of date.",
+		Kind:   KindInt, Default: 3, Min: 0, Max: 365})
 	RegisterTunable(TunableSpec{Key: TunableStaleSlowDays, Category: "Memory",
-		Label: "Slow-changing fact half-life (days)",
-		Help:  "A fact classified slow-changing (employer, city, role) is flagged aging on pull once older than this, and stale past 2x. 0 = never flag slow facts.",
-		Kind:  KindInt, Default: 90, Min: 0, Max: 3650})
+		Label:  "Slow-changing fact half-life (days)",
+		Help:   "A fact classified slow-changing is flagged aging on pull once older than this, stale past 2x.",
+		Detail: "Slow-changing means employer, city, role. 0 never flags slow facts.",
+		Kind:   KindInt, Default: 90, Min: 0, Max: 3650})
 }
 
 // FactWritePolicy carries the per-call context StoreMemoryFactP needs beyond the
@@ -553,7 +559,7 @@ func applyJudgedSupersession(db Database, f *MemoryFact, now time.Time, judged [
 	if len(dispute) > 0 {
 		f.Disputes = dispute[0].ID
 		for _, d := range dispute {
-			Log("[factstore] %q did NOT supersede better-sourced %q — both kept (ns=%s)", f.Note, d.Note, f.Namespace)
+			Log("[factstore] %q did NOT supersede better-sourced %q: both kept (ns=%s)", f.Note, d.Note, f.Namespace)
 		}
 	}
 	return applySupersede(db, f.ID, now, replace)
@@ -615,7 +621,7 @@ func judgeSupersedes(chat FactChatFunc, newNote string, candidates []MemoryFact)
 	resp, err := chat(ctx, []Message{
 		{Role: "user", Content: fmt.Sprintf(`A memory store holds short facts about a user. A NEW fact is being saved. For each EXISTING fact listed, decide whether the new fact UPDATES or REPLACES it: they describe the SAME attribute or relationship and cannot both be currently true. Examples of replacement: "lives in Denver" replaced by "lives in Austin"; "works at X" replaced by "works at Y"; "phone is A" replaced by "phone is B".
 
-Do NOT flag facts that can independently both be true: "likes coffee" and "likes tea" are different preferences; "has a dog" and "has a cat" coexist. When unsure, do NOT flag — only flag a clear replacement of the same attribute.
+Do NOT flag facts that can independently both be true: "likes coffee" and "likes tea" are different preferences; "has a dog" and "has a cat" coexist. When unsure, do NOT flag: only flag a clear replacement of the same attribute.
 
 NEW fact: %q
 
@@ -629,12 +635,12 @@ Reply with ONLY a JSON array of the numbers of existing facts the new fact repla
 		// FAIL-OPEN breadcrumb: without the judge, the new fact simply
 		// coexists with what it may have replaced — record that supersession
 		// was skipped so a later "why do I have both?" is attributable.
-		Log("[factstore] supersession judge unavailable (%v) — %q stored WITHOUT supersession check against %d candidate(s)", err, newNote, len(candidates))
+		Log("[factstore] supersession judge unavailable (%v): %q stored WITHOUT supersession check against %d candidate(s)", err, newNote, len(candidates))
 		return nil
 	}
 	var idx []int
 	if DecodeJSON(ResponseText(resp), &idx) != nil {
-		Log("[factstore] supersession judge reply unparseable — %q stored WITHOUT supersession check against %d candidate(s)", newNote, len(candidates))
+		Log("[factstore] supersession judge reply unparseable: %q stored WITHOUT supersession check against %d candidate(s)", newNote, len(candidates))
 		return nil
 	}
 	var out []MemoryFact
@@ -680,7 +686,7 @@ Reply with ONLY JSON: {"relevant": true or false, "supersedes": [numbers]}. Use 
 		// FAIL-OPEN, and say so: with the worker down, the note stores
 		// unjudged — junk passes the gate and contradictions coexist until
 		// a later sweep. A silent skip made that pattern undiagnosable.
-		Log("[factstore] fact-write judge unavailable (%v) — storing %q UNJUDGED (fail-open: no relevance gate, no supersession)", err, newNote)
+		Log("[factstore] fact-write judge unavailable (%v), storing %q UNJUDGED (fail-open: no relevance gate, no supersession)", err, newNote)
 		return true, nil
 	}
 	var parsed struct {
@@ -688,7 +694,7 @@ Reply with ONLY JSON: {"relevant": true or false, "supersedes": [numbers]}. Use 
 		Supersedes []int `json:"supersedes"`
 	}
 	if DecodeJSON(ResponseText(resp), &parsed) != nil {
-		Log("[factstore] fact-write judge reply unparseable — storing %q UNJUDGED (fail-open)", newNote)
+		Log("[factstore] fact-write judge reply unparseable: storing %q UNJUDGED (fail-open)", newNote)
 		return true, nil
 	}
 	relevant := parsed.Relevant == nil || *parsed.Relevant // missing field => keep
@@ -818,7 +824,7 @@ func sweepFacts(db Database, namespace string, chat FactChatFunc) {
 				db.Set(MemoryFactsTable, factDBKey(s.Namespace, s.ID), s)
 				removed--
 			}
-			Log("[factstore] sweep merge on %s: combined note not stored (%v) — %d source fact(s) restored", namespace, res.Reason, len(srcs))
+			Log("[factstore] sweep merge on %s: combined note not stored (%v), %d source fact(s) restored", namespace, res.Reason, len(srcs))
 			continue
 		}
 		// The combined note is a REWORDING of its sources, not new evidence —
@@ -1191,13 +1197,13 @@ func ForgetMemoryFactByIndexQuoted(db Database, namespace string, index int, quo
 	for i := range facts {
 		if containsQuote(facts[i]) {
 			if match != nil {
-				return MemoryFact{}, "the note list has changed and the quote matches more than one note — search the notes and retry with a more specific quote", false
+				return MemoryFact{}, "the note list has changed and the quote matches more than one note: search the notes and retry with a more specific quote", false
 			}
 			match = &facts[i]
 		}
 	}
 	if match == nil {
-		return MemoryFact{}, "the note list has changed and no note contains that quote — it may already be gone; search the notes to confirm", false
+		return MemoryFact{}, "the note list has changed and no note contains that quote: it may already be gone; search the notes to confirm", false
 	}
 	target := *match
 	db.Unset(MemoryFactsTable, factDBKey(namespace, target.ID))
@@ -1401,7 +1407,7 @@ func RenderMemoryFactsBlockWith(facts []MemoryFact, header, intro string) string
 		header = "## Saved facts"
 	}
 	if intro == "" {
-		intro = "Structured facts you've stored from prior conversations with this user (distinct from the Memory section's longer notes — these are short, durable specifics like names, preferences, and dates). Apply when relevant; ignore otherwise. Each fact is numbered so you can reference an index when forgetting."
+		intro = "Structured facts you've stored from prior conversations with this user (distinct from the Memory section's longer notes: these are short, durable specifics like names, preferences, and dates). Apply when relevant; ignore otherwise. Each fact is numbered so you can reference an index when forgetting."
 	}
 	var b strings.Builder
 	b.WriteString(header)
@@ -1424,7 +1430,7 @@ func RenderMemoryFactsBlockWith(facts []MemoryFact, header, intro string) string
 		// than either alone: the model picks whichever it reads first and has no
 		// idea it chose.
 		if n, ok := pos[f.Disputes]; ok && f.Disputes != "" {
-			fmt.Fprintf(&b, " (DISAGREES with note %d, which is better sourced — prefer that one, or check)", n)
+			fmt.Fprintf(&b, " (DISAGREES with note %d, which is better sourced: prefer that one, or check)", n)
 		}
 		b.WriteString("\n")
 		marked = marked || NeedsAttribution(f.MemoryProvenance)
@@ -1451,9 +1457,9 @@ func RenderMemoryFactsBlockWith(facts []MemoryFact, header, intro string) string
 // invisible unless the rule is stated.
 const groundingNote = "A note marked \"not independently checked\" is a LEAD, not an established fact. " +
 	"If you hold a tool that can settle it, check it before relying on it. If you cannot check it, " +
-	"say where it came from rather than asserting it (\"you mentioned the server runs 22.04\" — not \"the server runs 22.04\"). " +
+	"say where it came from rather than asserting it (\"you mentioned the server runs 22.04\": not \"the server runs 22.04\"). " +
 	"Hearing it again, or more firmly, does not make it checked: repetition is the same claim, not new evidence. " +
-	"Unmarked notes need none of this — state them normally.\n"
+	"Unmarked notes need none of this: state them normally.\n"
 
 // factProvenanceMarker returns a STABLE provenance suffix for a non-stable fact:
 // its volatility class plus the absolute AsOf date. Absolute (not "N days ago")

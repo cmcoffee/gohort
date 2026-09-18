@@ -266,7 +266,7 @@ func resolveToolset(ctx context.Context, owner, caller string, a Appliance) reso
 			// costs the same coverage and tells the worker the truth before it
 			// builds a plan on a tool it cannot use.
 			out.Withheld = append(out.Withheld,
-				fmt.Sprintf("%s (needs per-call approval, which a workspace investigation cannot ask for — open this system directly to use it)", name))
+				fmt.Sprintf("%s (needs per-call approval, which a workspace investigation cannot ask for: open this system directly to use it)", name))
 			continue
 		}
 		t, ok := findBindableTool(owner, name)
@@ -277,7 +277,7 @@ func resolveToolset(ctx context.Context, owner, caller string, a Appliance) reso
 		}
 		if b.BodyHash != "" && toolBodyHash(t) != b.BodyHash {
 			out.Withheld = append(out.Withheld,
-				fmt.Sprintf("%s (changed since it was approved for this system — re-approve it in the appliance's Tools list)", name))
+				fmt.Sprintf("%s (changed since it was approved for this system: re-approve it in the appliance's Tools list)", name))
 			continue
 		}
 		if b.BodyHash == "" {
@@ -286,7 +286,7 @@ func resolveToolset(ctx context.Context, owner, caller string, a Appliance) reso
 			// by a future path that forgets to pin; treating it as trusted
 			// would make the pin optional, which is the same as not having it.
 			out.Withheld = append(out.Withheld,
-				fmt.Sprintf("%s (bound without a fingerprint — re-bind it)", name))
+				fmt.Sprintf("%s (bound without a fingerprint: re-bind it)", name))
 			continue
 		}
 		// Run-as-caller can be unsatisfiable, and it has to say so rather than
@@ -373,7 +373,7 @@ func bindToolsetTools(owner, boundBy string, in []ToolBinding) []ToolBinding {
 		}
 		t, ok := pool[name]
 		if !ok {
-			Log("[servitor.toolset] %s: dropping binding %q — not in the owner's tool pool", owner, name)
+			Log("[servitor.toolset] %s: dropping binding %q, not in the owner's tool pool", owner, name)
 			continue
 		}
 		seen[name] = true
@@ -568,13 +568,13 @@ func callerCannotReachCredential(t TempTool, caller, owner string) (string, bool
 		// Not in the caller's namespace and not global. If the OWNER has one of
 		// that name, it is theirs and no setting on this appliance can lend it.
 		if _, ownerHas := sec.LoadUser(owner, cred); ownerHas {
-			return fmt.Sprintf("this system runs tools as each user, and %q is %s's own credential — "+
+			return fmt.Sprintf("this system runs tools as each user, and %q is %s's own credential: "+
 				"switch it to run as the owner, or give each user a credential named %q", cred, owner, cred), true
 		}
 		return fmt.Sprintf("credential %q is not available to you", cred), true
 	}
 	if c.IsPerUser() && !sec.HasUserSecret(c.Name, caller) {
-		return fmt.Sprintf("credential %q is per-user and you have not connected it yet — "+
+		return fmt.Sprintf("credential %q is per-user and you have not connected it yet: "+
 			"add your key on your Account page", cred), true
 	}
 	return "", false

@@ -113,7 +113,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 			if err != nil {
 				extractedAttachments = append(extractedAttachments, extractedAttachment{
 					name:     d.Name,
-					failNote: fmt.Sprintf("[attached %s — decode failed: %v]\n\n", d.Name, err),
+					failNote: fmt.Sprintf("[attached %s, decode failed: %v]\n\n", d.Name, err),
 				})
 				continue
 			}
@@ -125,7 +125,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 			if err != nil {
 				extractedAttachments = append(extractedAttachments, extractedAttachment{
 					name:     d.Name,
-					failNote: fmt.Sprintf("[attached %s — extraction failed: %v]\n\n", d.Name, err),
+					failNote: fmt.Sprintf("[attached %s, extraction failed: %v]\n\n", d.Name, err),
 				})
 				continue
 			}
@@ -192,7 +192,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 	// field for the message-role/Content contract.
 	if strings.TrimSpace(req.Message) == "" {
 		if len(req.Images) > 0 {
-			req.Message = "[attached image — please analyze]"
+			req.Message = "[attached image: please analyze]"
 		}
 	}
 
@@ -700,10 +700,10 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 		// Run a single pseudo-step "Respond" so the flow still
 		// produces a worker output and a synthesis reply.
 		syntheticPlan = true
-		turn.emitStatus("No plan needed — direct response.")
+		turn.emitStatus("No plan needed: direct response.")
 		steps = []PlanStep{{ID: 1, Title: "Respond directly", Status: StepPending}}
 	} else {
-		turn.emitStatus(fmt.Sprintf("Plan committed — %d step%s.", len(steps), plural(len(steps))))
+		turn.emitStatus(fmt.Sprintf("Plan committed: %d step%s.", len(steps), plural(len(steps))))
 	}
 
 	// Plan and per-step status all render as a single in-chat block;
@@ -733,8 +733,8 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 		// intervene. Closing a turn abandons the pending plan — which is what
 		// the tool already tells the model it does.
 		if turn.turnClosed {
-			Log("[orchestrate.orch] turn closed by a control tool — abandoning %d remaining step(s)", len(steps)-i)
-			turn.emitStatus(fmt.Sprintf("Turn closed — %d remaining step%s skipped.", len(steps)-i, plural(len(steps)-i)))
+			Log("[orchestrate.orch] turn closed by a control tool: abandoning %d remaining step(s)", len(steps)-i)
+			turn.emitStatus(fmt.Sprintf("Turn closed: %d remaining step%s skipped.", len(steps)-i, plural(len(steps)-i)))
 			for j := i; j < len(steps); j++ {
 				steps[j].Status = StepBlocked
 				steps[j].BlockedReason = "turn closed before this step ran"
@@ -796,7 +796,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 		turn.emitStatus("Checking for gaps…")
 		gaps := turn.runGapCheck(req.Message, steps, len(steps)+1)
 		if len(gaps) > 0 {
-			turn.emitStatus(fmt.Sprintf("Found %d gap%s — filling…", len(gaps), plural(len(gaps))))
+			turn.emitStatus(fmt.Sprintf("Found %d gap%s: filling…", len(gaps), plural(len(gaps))))
 			// Append the new steps onto the plan and re-emit the
 			// block so the user sees them join the existing card.
 			steps = append(steps, gaps...)
@@ -864,7 +864,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 	// renders as nothing, so the turn looks like it vanished. Mark it so the tool
 	// trace stays reachable in history.
 	if strings.TrimSpace(reply) == "" && len(finalCalls) > 0 {
-		reply = "_(No written reply this turn — see the tool actions above.)_"
+		reply = "_(No written reply this turn: see the tool actions above.)_"
 	}
 	// Delivery backstop: the reply SAYS it sent a picture and nothing was
 	// attached. The channel path has had this for a while; chat never did, so

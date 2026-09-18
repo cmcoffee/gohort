@@ -160,12 +160,12 @@ func (t *chatTurn) computeDispatchableFleet() []AgentRecord {
 	// Grep "available-agents" to confirm it shows N agents each turn, or
 	// catch a suppression (and its reason) if it ever regresses.
 	if t.agent.OwnedBy != "" {
-		Debug("[orchestrate] available-agents: suppressed for agent=%q — sub-agent leaf (no dispatch surface)", t.agent.ID)
+		Debug("[orchestrate] available-agents: suppressed for agent=%q, sub-agent leaf (no dispatch surface)", t.agent.ID)
 		return nil
 	}
 	fleetDB, fleetUser := t.fleetView()
 	if fleetDB == nil || fleetUser == "" {
-		Debug("[orchestrate] available-agents: suppressed for agent=%q — no fleet view (db/user unresolved)", t.agent.ID)
+		Debug("[orchestrate] available-agents: suppressed for agent=%q, no fleet view (db/user unresolved)", t.agent.ID)
 		return nil
 	}
 	// The `agents` grouped tool is force-added to EVERY non-leaf agent's
@@ -181,7 +181,7 @@ func (t *chatTurn) computeDispatchableFleet() []AgentRecord {
 	// only on the no-tools sentinel: an agent an admin set to zero tools
 	// genuinely shouldn't be told to delegate.
 	if isNoToolsSentinel(t.agent.AllowedTools) {
-		Debug("[orchestrate] available-agents: suppressed for agent=%q — no-tools sentinel (admin set zero tools)", t.agent.ID)
+		Debug("[orchestrate] available-agents: suppressed for agent=%q, no-tools sentinel (admin set zero tools)", t.agent.ID)
 		return nil
 	}
 	// Dispatch policy (see AgentRecord.DispatchMode / effectiveDispatchMode):
@@ -197,7 +197,7 @@ func (t *chatTurn) computeDispatchableFleet() []AgentRecord {
 	}
 	mode := effectiveDispatchMode(t.agent)
 	if mode == dispatchNone {
-		Debug("[orchestrate] available-agents: suppressed for agent=%q — dispatch policy is Allow none", t.agent.ID)
+		Debug("[orchestrate] available-agents: suppressed for agent=%q, dispatch policy is Allow none", t.agent.ID)
 		return nil
 	}
 	listed := map[string]bool{}
@@ -261,7 +261,7 @@ func (t *chatTurn) computeDispatchableFleet() []AgentRecord {
 		available = append(available, a)
 	}
 	if len(available) == 0 {
-		Debug("[orchestrate] available-agents: 0 in catalog for agent=%q — no OTHER dispatchable agents in the fleet (not a bug if the user has none)", t.agent.ID)
+		Debug("[orchestrate] available-agents: 0 in catalog for agent=%q, no OTHER dispatchable agents in the fleet (not a bug if the user has none)", t.agent.ID)
 	} else {
 		names := make([]string, 0, len(available))
 		for _, a := range available {
@@ -290,7 +290,7 @@ func (t *chatTurn) renderAvailableAgentsBlock() string {
 	}
 	var b strings.Builder
 	b.WriteString("\n\n## Available agents\n\n")
-	b.WriteString("Specialists the user has authored. **If a question lands in one of these agents' domains, DELEGATE FIRST.** Rely on the agent for the work it's built for — when the use case fits it gives the best result: its own persona, tools, and grounded sources beat your general knowledge. This holds EVEN WHEN you could handle it with your own tools — for a question in a listed agent's domain, delegate rather than web_searching it yourself; a tool call is not a substitute for the specialist. Dispatch as your FIRST move on such a question — don't run several of your own searches and fall back to the agent only when they come up short; the specialist IS the move, not the backup. Answer yourself only when no agent's domain fits — NOT because you feel you already know it or could look it up. And don't narrate that you'll consult an agent and then answer anyway: either dispatch, or answer plainly as you.\n\nDelegate via `agents(action=\"run\", agent=\"<name>\", message=\"<the brief>\")`. **The agent remembers within this session.** It re-threads your prior dispatches to it this session (ephemeral continuity) on top of its own persona, saved facts, and knowledge base, so a follow-up to the same agent can be brief without repeating earlier context. A RELATED FOLLOW-UP goes back to the SAME agent; don't interpret or answer it yourself from the earlier result. This dispatch memory is ephemeral, scoped to this session. Re-dispatch, including the prior context in the brief: \"Earlier you summarized Acme Corp as <X>. Now tell me more about their B2B presence.\" You own the context; the sub-agent answers the question in front of it.\n\nIntegrate the answers into your reply as if they were your own — don't say \"I asked X\" or \"the X agent said\"; the user doesn't know the fleet structure. Just answer with the substance.\n\nFormat: **name** — when to delegate.\n\n")
+	b.WriteString("Specialists the user has authored. **If a question lands in one of these agents' domains, DELEGATE FIRST.** Rely on the agent for the work it's built for, when the use case fits it gives the best result: its own persona, tools, and grounded sources beat your general knowledge. This holds EVEN WHEN you could handle it with your own tools, for a question in a listed agent's domain, delegate rather than web_searching it yourself; a tool call is not a substitute for the specialist. Dispatch as your FIRST move on such a question: don't run several of your own searches and fall back to the agent only when they come up short; the specialist IS the move, not the backup. Answer yourself only when no agent's domain fits: NOT because you feel you already know it or could look it up. And don't narrate that you'll consult an agent and then answer anyway: either dispatch, or answer plainly as you.\n\nDelegate via `agents(action=\"run\", agent=\"<name>\", message=\"<the brief>\")`. **The agent remembers within this session.** It re-threads your prior dispatches to it this session (ephemeral continuity) on top of its own persona, saved facts, and knowledge base, so a follow-up to the same agent can be brief without repeating earlier context. A RELATED FOLLOW-UP goes back to the SAME agent; don't interpret or answer it yourself from the earlier result. This dispatch memory is ephemeral, scoped to this session. Re-dispatch, including the prior context in the brief: \"Earlier you summarized Acme Corp as <X>. Now tell me more about their B2B presence.\" You own the context; the sub-agent answers the question in front of it.\n\nIntegrate the answers into your reply as if they were your own: don't say \"I asked X\" or \"the X agent said\"; the user doesn't know the fleet structure. Just answer with the substance.\n\nFormat: **name**, when to delegate.\n\n")
 	for _, a := range available {
 		// Full description — it's the routing cue (descriptions are
 		// model-facing, per the Builder guidance), shown un-truncated so
@@ -301,7 +301,7 @@ func (t *chatTurn) renderAvailableAgentsBlock() string {
 		}
 		b.WriteString("- **")
 		b.WriteString(a.Name)
-		b.WriteString("** — ")
+		b.WriteString("** ")
 		b.WriteString(desc)
 		// Deterministic dispatch contract: a sub-agent gets its structured
 		// input from the parent's brief, not a form (intake_form isn't applied
@@ -397,7 +397,7 @@ func agentTriggerHintBlock(names []string) string {
 	for i, n := range names {
 		quoted[i] = "**" + n + "**"
 	}
-	return "\n\n[Likely this turn (agent triggers matched): the question lands in " + strings.Join(quoted, ", ") + "'s domain — dispatch to it via agents(action=\"run\", agent=\"<name>\", message=\"<brief>\") as your FIRST move, before web_search or answering from memory. A trigger match is a strong nudge, not a command: skip it only if it plainly doesn't fit.]\n\n"
+	return "\n\n[Likely this turn (agent triggers matched): the question lands in " + strings.Join(quoted, ", ") + "'s domain: dispatch to it via agents(action=\"run\", agent=\"<name>\", message=\"<brief>\") as your FIRST move, before web_search or answering from memory. A trigger match is a strong nudge, not a command: skip it only if it plainly doesn't fit.]\n\n"
 }
 
 // renderActiveDispatchThreads surfaces the agents this session has ALREADY
@@ -438,7 +438,7 @@ func (t *chatTurn) renderActiveDispatchThreads() string {
 	}
 	return "\n\n[Active dispatch threads (this session): you've already delegated to " +
 		strings.Join(parts, "; ") +
-		". If the user's message is a FOLLOW-UP to one of these — \"tell me more\", \"what about X\", drilling into the same topic — re-dispatch it to that SAME agent with the prior context via agents(action=\"run\", agent=\"<name>\", message=\"<brief>\"); do NOT answer it yourself from the earlier result. You delegated it before because it's that agent's domain — that hasn't changed, and the agent re-threads its own prior turns so a brief follow-up is enough.]\n\n"
+		". If the user's message is a FOLLOW-UP to one of these (\"tell me more\", \"what about X\", drilling into the same topic), re-dispatch it to that SAME agent with the prior context via agents(action=\"run\", agent=\"<name>\", message=\"<brief>\"); do NOT answer it yourself from the earlier result. You delegated it before because it's that agent's domain, that hasn't changed, and the agent re-threads its own prior turns so a brief follow-up is enough.]\n\n"
 }
 
 // lastDispatchTopic returns a short label for a dispatch thread — the most
@@ -498,7 +498,7 @@ func (t *chatTurn) renderBuilderExistingToolsBlock() string {
 	}
 	var b strings.Builder
 	b.WriteString("\n\n## Existing custom tools in this user's environment (READ-ONLY for awareness)\n\n")
-	b.WriteString("Tools the user already authored + an admin approved. **These are NOT in your executable catalog — you cannot dispatch them.** They're listed here so you can: (a) check for name collisions before authoring (re-authoring with an existing name OVERWRITES the active entry — no admin re-approval needed, that's the canonical iteration path); (b) reference one in pipeline_tools when composing (pipeline mode resolves by name at dispatch, doesn't need the tool in your callable catalog).\n\nFormat: **name** (mode) — one-line description.\n\n")
+	b.WriteString("Tools the user already authored + an admin approved. **These are NOT in your executable catalog, you cannot dispatch them.** They're listed here so you can: (a) check for name collisions before authoring (re-authoring with an existing name OVERWRITES the active entry, no admin re-approval needed, that's the canonical iteration path); (b) reference one in pipeline_tools when composing (pipeline mode resolves by name at dispatch, doesn't need the tool in your callable catalog).\n\nFormat: **name** (mode), one-line description.\n\n")
 	for _, p := range persistent {
 		desc := strings.TrimSpace(p.Tool.Description)
 		if len(desc) > 140 {
@@ -515,7 +515,7 @@ func (t *chatTurn) renderBuilderExistingToolsBlock() string {
 		b.WriteString(p.Tool.Name)
 		b.WriteString("** (")
 		b.WriteString(mode)
-		b.WriteString(") — ")
+		b.WriteString(") ")
 		b.WriteString(desc)
 		b.WriteString("\n")
 	}
@@ -544,7 +544,7 @@ func (t *chatTurn) renderKnownTopicsBlock() string {
 	}
 	var b strings.Builder
 	b.WriteString("\n\n## Known topics\n\n")
-	fmt.Fprintf(&b, "Snake_case slugs already used for remember (findings) in this agent's bucket. Reuse one when the current finding fits — picking a fresh slug for material that belongs alongside existing entries makes retrieval split across buckets that should be one. Mint a new slug only when the subject genuinely doesn't fit.\n\n")
+	fmt.Fprintf(&b, "Snake_case slugs already used for remember (findings) in this agent's bucket. Reuse one when the current finding fits: picking a fresh slug for material that belongs alongside existing entries makes retrieval split across buckets that should be one. Mint a new slug only when the subject genuinely doesn't fit.\n\n")
 	for _, name := range topics {
 		b.WriteString("- ")
 		b.WriteString(name)
@@ -594,9 +594,9 @@ func (t *chatTurn) skillToolDefs() []AgentToolDef {
 func roundShapePreamble(maxSteps int) string {
 	stepBudget := fmt.Sprintf("up to %d step%s", maxSteps, plural(maxSteps))
 	return "## How this round works\n\n" +
-		"Call tools inline (call → see result → call again → reply; multi-round is fine) or end the round with **ask_user / ask_user_form** (pause for input) or **plan_set** (hand off to fresh-context workers, " + stepBudget + ", min 2, research-style \"investigate A and B in parallel\" — not a wrapper for sequential tool calls). To reply, just write your answer as text; that ends the turn. There is no separate reply tool. The persona below wins on anything it addresses; this is the default otherwise.\n\n" +
-		"**Before a tool call, write ONE short sentence in your own voice saying what you're about to do** — \"Let me grab that video.\" / \"Checking your calendar…\" / \"Pulling the latest numbers.\" The user sees it right away, so they're never left watching dead air while the tool runs. Keep it to a sentence. Do NOT write your actual ANSWER before a tool call — that's not the place for it, and you'd just repeat yourself once the result is back. Save the real answer for your final, tool-free reply AFTER you have the results.\n\n" +
-		"**Delivering files.** Producer tools (image, video, screenshot_page, custom tools that save a file) write to your workspace and return the path — they do NOT auto-attach. To deliver, follow up with `workspace(action=\"attach\", path=\"<returned-path>\", cleanup=true)`. cleanup=true for one-shot deliveries, cleanup=false when the file is also work product. Multiple files in one turn is fine — chain one workspace(attach) per file.\n\n" +
+		"Call tools inline (call → see result → call again → reply; multi-round is fine) or end the round with **ask_user / ask_user_form** (pause for input) or **plan_set** (hand off to fresh-context workers, " + stepBudget + ", min 2, research-style \"investigate A and B in parallel\": not a wrapper for sequential tool calls). To reply, just write your answer as text; that ends the turn. There is no separate reply tool. The persona below wins on anything it addresses; this is the default otherwise.\n\n" +
+		"**Before a tool call, write ONE short sentence in your own voice saying what you're about to do**: \"Let me grab that video.\" / \"Checking your calendar…\" / \"Pulling the latest numbers.\" The user sees it right away, so they're never left watching dead air while the tool runs. Keep it to a sentence. Do NOT write your actual ANSWER before a tool call: that's not the place for it, and you'd just repeat yourself once the result is back. Save the real answer for your final, tool-free reply AFTER you have the results.\n\n" +
+		"**Delivering files.** Producer tools (image, video, screenshot_page, custom tools that save a file) write to your workspace and return the path: they do NOT auto-attach. To deliver, follow up with `workspace(action=\"attach\", path=\"<returned-path>\", cleanup=true)`. cleanup=true for one-shot deliveries, cleanup=false when the file is also work product. Multiple files in one turn is fine: chain one workspace(attach) per file.\n\n" +
 		"Pure conversation (greetings, opinions, follow-ups already answered): just reply as text.\n\n"
 }
 

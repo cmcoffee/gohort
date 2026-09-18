@@ -23,7 +23,7 @@ const groundingJudgeSysPrompt = `You check whether a reply overstates what is KN
 You are given: the notes the assistant holds that are NOT independently verified, the tools this turn ran, and the reply about to be sent.
 
 Answer ASSERTED only when ALL of these hold:
-1. The reply states one of those unverified notes as established fact — flatly, as though confirmed.
+1. The reply states one of those unverified notes as established fact: flatly, as though confirmed.
 2. The turn ran nothing that would have confirmed it. If a tool call could have checked it, the reply may state what it found.
 3. The claim matters to the answer. An aside is not worth a correction.
 
@@ -61,7 +61,7 @@ func (T *OrchestrateApp) judgeTurnGrounding(ctx context.Context, ev TurnGroundin
 		WithSystemPrompt(groundingJudgeSysPrompt), WithJSONMode(),
 		WithRouteKey("app.orchestrate.worker"), WithThink(false))
 	if err != nil {
-		Debug("[grounding-judge] LLM error: %v — no opinion", err)
+		Debug("[grounding-judge] LLM error: %v, no opinion", err)
 		return TurnGroundingVerdict{}, false
 	}
 	var out struct {
@@ -74,7 +74,7 @@ func (T *OrchestrateApp) judgeTurnGrounding(ctx context.Context, ev TurnGroundin
 		// see salvageJudgeJSON. Only text with no verdict at all is given up on.
 		fields, ok := salvageJudgeJSON(resp.Content, []string{"verdict", "claim", "basis"})
 		if !ok {
-			Debug("[grounding-judge] unparseable verdict %q — no opinion", truncateObs(resp.Content, 120))
+			Debug("[grounding-judge] unparseable verdict %q: no opinion", truncateObs(resp.Content, 120))
 			return TurnGroundingVerdict{}, false
 		}
 		out.Verdict, out.Claim, out.Basis = fields["verdict"], fields["claim"], fields["basis"]
@@ -89,10 +89,10 @@ func (T *OrchestrateApp) judgeTurnGrounding(ctx context.Context, ev TurnGroundin
 		// came from. Without either it would tell the model its reply says ""
 		// or that the claim traces to nothing, so this is no opinion rather
 		// than a conviction nobody can act on.
-		Debug("[grounding-judge] ASSERTED with nothing to quote — no opinion")
+		Debug("[grounding-judge] ASSERTED with nothing to quote: no opinion")
 		return TurnGroundingVerdict{}, false
 	}
-	Log("[grounding-judge] ASSERTED — %q traces to unverified note %q", truncateObs(claim, 100), truncateObs(basis, 100))
+	Log("[grounding-judge] ASSERTED: %q traces to unverified note %q", truncateObs(claim, 100), truncateObs(basis, 100))
 	return TurnGroundingVerdict{Asserted: true, Claim: claim, Basis: basis}, true
 }
 

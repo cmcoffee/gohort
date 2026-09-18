@@ -19,7 +19,7 @@ func (t *chatTurn) introspectToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "introspect",
-			Description: "Get accurate, CURRENT details about YOURSELF and your gohort setup — configuration, capabilities (tools/skills/knowledge), channels + cortex, and memory state — read straight from the framework. Use it to answer \"what can you do?\" / \"how are you set up?\" / \"what are you connected to?\" from FACT instead of guessing, and to check your own config before acting. Read-only.",
+			Description: "Get accurate, CURRENT details about YOURSELF and your gohort setup, configuration, capabilities (tools/skills/knowledge), channels + cortex, and memory state, read straight from the framework. Use it to answer \"what can you do?\" / \"how are you set up?\" / \"what are you connected to?\" from FACT instead of guessing, and to check your own config before acting. Read-only.",
 			Parameters: map[string]ToolParam{
 				"section": {Type: "string", Description: "Optional. Which slice to report: \"identity\", \"capabilities\", \"channels\", \"memory\", \"schedules\", or \"all\" (default). Omit for the full picture."},
 			},
@@ -150,7 +150,7 @@ func (t *chatTurn) introspectToolDef() AgentToolDef {
 					// Reply-routing grounding — matches the per-turn [CHANNEL CONTEXT]
 					// note on each inbound: a reply goes BACK to the conversation it
 					// came from automatically; reaching anyone else is a separate send.
-					b.WriteString("- Reply routing: when a message reaches you on a channel, your reply is delivered straight back to that same conversation automatically — no tool needed, and you're already \"on\" it. Reaching a DIFFERENT person or channel is a separate, proactive outbound message (which may be gated).\n")
+					b.WriteString("- Reply routing: when a message reaches you on a channel, your reply is delivered straight back to that same conversation automatically, no tool needed, and you're already \"on\" it. Reaching a DIFFERENT person or channel is a separate, proactive outbound message (which may be gated).\n")
 				}
 				b.WriteString("\n")
 			}
@@ -200,7 +200,7 @@ func (t *chatTurn) introspectToolDef() AgentToolDef {
 					if lbl := m.FireLabel(); lbl != "" {
 						state += ", " + lbl
 					}
-					fmt.Fprintf(&b, "- monitor %q — %s, every %ds, %s\n", m.Name, m.Kind, m.IntervalSeconds, state)
+					fmt.Fprintf(&b, "- monitor %q: %s, every %ds, %s\n", m.Name, m.Kind, m.IntervalSeconds, state)
 				}
 				if monCount == 0 {
 					b.WriteString("- No event monitors / bridges wake you.\n")
@@ -217,7 +217,7 @@ func (t *chatTurn) introspectToolDef() AgentToolDef {
 					if sa.Paused {
 						state = "paused"
 					}
-					fmt.Fprintf(&b, "- scheduled run %q — %s, %s\n", sa.Name, StandingScheduleLabel(sa), state)
+					fmt.Fprintf(&b, "- scheduled run %q: %s, %s\n", sa.Name, StandingScheduleLabel(sa), state)
 				}
 				if runCount == 0 {
 					b.WriteString("- No scheduled runs (standing agents) run as you.\n")
@@ -229,7 +229,7 @@ func (t *chatTurn) introspectToolDef() AgentToolDef {
 				recCount := 0
 				for _, rt := range listAgentRecurringTasks(t.user, a.ID) {
 					recCount++
-					fmt.Fprintf(&b, "- recurring task — %s, %d fire(s) so far: %s\n",
+					fmt.Fprintf(&b, "- recurring task, %s, %d fire(s) so far: %s\n",
 						recurringDetail(rt.Payload), rt.Payload.FireCount, firstLineLabel(rt.Payload.Prompt))
 				}
 				if recCount == 0 {
@@ -243,7 +243,7 @@ func (t *chatTurn) introspectToolDef() AgentToolDef {
 
 			out := strings.TrimSpace(b.String())
 			if out == "" {
-				return "Unknown section — use one of: identity, capabilities, channels, memory, schedules, all.", nil
+				return "Unknown section, use one of: identity, capabilities, channels, memory, schedules, all.", nil
 			}
 			return out, nil
 		},
@@ -270,7 +270,7 @@ func effectiveExtraToolsets(a AgentRecord) []string {
 		out = append(out, "Authoring toolset ("+why+"): tool_def, create_agent, update_agent, clone_agent, "+
 			"delete_agent, add_tool, skill_def, app_def, survey, plus credential drafting. "+
 			"These are appended to the catalog AFTER allowlist filtering, so they never appear in the allowlist "+
-			"above — its absence there says nothing about whether you can call them. "+
+			"above: its absence there says nothing about whether you can call them. "+
 			"Check the tool list you were actually given this turn: if tool_def is there, use it. "+
 			"They are withheld only when the turn runs as someone other than this agent's owner.")
 	}

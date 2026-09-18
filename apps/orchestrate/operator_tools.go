@@ -271,7 +271,7 @@ func replyClaimsAttachment(reply string) bool {
 // wrong here, this is context the model would otherwise go hunting for. Says
 // plainly that the user neither wrote it nor can see it, so the model doesn't
 // thank them for it or quote it back at them.
-const frameworkNoteTag = "[AUTOMATED FRAMEWORK NOTE — reference material, not written by the user, who cannot see it. Do not mention it or reply to it; just use it.]\n"
+const frameworkNoteTag = "[AUTOMATED FRAMEWORK NOTE: reference material, not written by the user, who cannot see it. Do not mention it or reply to it; just use it.]\n"
 
 // pictureWordRe matches a user asking about a picture. Word-bounded, because
 // "pic" inside "epic" and "gif" inside "gifted" are not requests for an image.
@@ -868,7 +868,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "delegate",
-				Description: "Delegate a task to an existing agent — this is how you DO work (you are a controller, you delegate rather than acting directly). If the agent is pre-authorized the delegation runs now and you get the result; otherwise it's queued for the user's approval in the Authorizations pane and you tell them it's waiting.",
+				Description: "Delegate a task to an existing agent: this is how you DO work (you are a controller, you delegate rather than acting directly). If the agent is pre-authorized the delegation runs now and you get the result; otherwise it's queued for the user's approval in the Authorizations pane and you tell them it's waiting.",
 				Parameters: map[string]ToolParam{
 					"agent": {Type: "string", Description: "Name or id of the existing agent to delegate to."},
 					"brief": {Type: "string", Description: "What the agent should do."},
@@ -885,7 +885,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					return "", err
 				}
 				if IsDelegationBlocked(RootDB, owner, agent) {
-					return fmt.Sprintf("Delegation to %q is blocked in the user's permission settings — not run.", agent), nil
+					return fmt.Sprintf("Delegation to %q is blocked in the user's permission settings: not run.", agent), nil
 				}
 				if IsDelegationPreAuthorized(RootDB, owner, agent) {
 					// Root the delegation in the PARENT TURN'S context (sess.Context())
@@ -915,22 +915,22 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				if sess != nil && sess.PendingApprovalPrompt != nil {
 					sess.PendingApprovalPrompt(a)
 				}
-				return fmt.Sprintf("Queued a delegation to %q for the user's approval — it's in the Authorizations pane (id %s) and runs once approved.", agent, a.ID), nil
+				return fmt.Sprintf("Queued a delegation to %q for the user's approval: it's in the Authorizations pane (id %s) and runs once approved.", agent, a.ID), nil
 			},
 		},
 		{
 			Tool: Tool{
 				Name:        "create_standing_agent",
-				Description: "Create a standing (scheduled) agent and start its schedule — the tool for work that RUNS on a clock and reports what it finds, whatever it finds. \"Every 5 minutes, fetch X and tell me the value\"; \"every morning, summarize the overnight alerts\". There is nothing to wait for: the schedule IS the trigger. (An event monitor is the opposite — it stays SILENT until something changes.) A job with a finish line is still this tool: `until` says what must be true for it to be DONE and `max_attempts` bounds the tries, which together are how \"done when you have read and reported it, stop after 2\" is expressed. agent_id must name an agent that already exists. Schedule it EITHER with cron (recurring at a wall-clock time — preferred for \"every day at HH:MM\") OR with interval_seconds + optional start_at (a specific first run, then a fixed interval).",
+				Description: "Create a standing (scheduled) agent and start its schedule: the tool for work that RUNS on a clock and reports what it finds, whatever it finds. \"Every 5 minutes, fetch X and tell me the value\"; \"every morning, summarize the overnight alerts\". There is nothing to wait for: the schedule IS the trigger. (An event monitor is the opposite, it stays SILENT until something changes.) A job with a finish line is still this tool: `until` says what must be true for it to be DONE and `max_attempts` bounds the tries, which together are how \"done when you have read and reported it, stop after 2\" is expressed. agent_id must name an agent that already exists. Schedule it EITHER with cron (recurring at a wall-clock time, preferred for \"every day at HH:MM\") OR with interval_seconds + optional start_at (a specific first run, then a fixed interval).",
 				Parameters: map[string]ToolParam{
 					"name":             {Type: "string", Description: "Short unique name for this standing job, e.g. \"daily-weather\"."},
 					"agent_id":         {Type: "string", Description: "Name or id of an existing agent to run. Give this OR pipeline_id, not both."},
-					"pipeline_id":      {Type: "string", Description: "Name or id of a stored pipeline to run instead of an agent. Use this when the task IS the workflow — a nightly research run, a scheduled report — rather than something an agent should think about first. It runs the pipeline directly, so no model call is spent deciding to start it, and `mission` becomes the pipeline's input."},
+					"pipeline_id":      {Type: "string", Description: "Name or id of a stored pipeline to run instead of an agent. Use this when the task IS the workflow (a nightly research run, a scheduled report), rather than something an agent should think about first. It runs the pipeline directly, so no model call is spent deciding to start it, and `mission` becomes the pipeline's input."},
 					"machine_id":       {Type: "string", Description: "Name or id of a stored MACHINE to run. The third target, for work that carries state between its steps: a pipeline is dataflow with nothing kept between stages, a machine has a blackboard and running lists. Reach for it when the task is \"gather, keep what is new, report on what changed\" rather than a straight-through workflow. The machine must be marked \"this RUNS instead of converses\", because a schedule fires with nobody there to answer a step that waits. `mission` becomes the run's input."},
 					"mission":          {Type: "string", Description: "What the agent should do each run."},
 					"until":            {Type: "string", Description: "(optional) Makes this an OBJECTIVE rather than a plain schedule: what must be TRUE for it to be FINISHED, in plain language (\"the file is uploaded and its link posted to the thread\"). Every run is judged against this from what it actually DID, not from what it said; the run that reaches the goal is the last, and each later attempt is told what the earlier ones tried. Use it when the user wants something DONE; omit it when they want something RUN on a schedule."},
 					"max_attempts":     {Type: "number", Description: "(optional, with until) How many runs may end with the goal still UNMET before the schedule stops trying. Reaching it marks the schedule broken with the last reason, so the owner sees it stopped and why; resuming gives it a fresh allowance. Omit for no attempt bound."},
-					"cron":             {Type: "string", Description: "Recurring wall-clock schedule in the human form DAY(S) HH:MM — NOT 5-field crontab (\"*/1 * * * *\" is INVALID). LOCAL time, the SAME zone time_in_zone reports; use the time the user stated VERBATIM, do NOT convert to UTC. e.g. \"every day at 12pm\" → \"daily 12:00\"; also \"FRI 21:30\", \"weekdays 17:00\". For sub-hourly / every-N-minutes schedules cron can't express, use interval_seconds instead (e.g. 60 = every minute). Leave empty if using interval_seconds."},
+					"cron":             {Type: "string", Description: "Recurring wall-clock schedule in the human form DAY(S) HH:MM, NOT 5-field crontab (\"*/1 * * * *\" is INVALID). LOCAL time, the SAME zone time_in_zone reports; use the time the user stated VERBATIM, do NOT convert to UTC. e.g. \"every day at 12pm\" → \"daily 12:00\"; also \"FRI 21:30\", \"weekdays 17:00\". For sub-hourly / every-N-minutes schedules cron can't express, use interval_seconds instead (e.g. 60 = every minute). Leave empty if using interval_seconds."},
 					"start_at":         {Type: "string", Description: "ISO8601 first-run time, e.g. 2026-06-10T08:00:00-07:00. Use with interval_seconds for an arbitrary start + interval. Omit when using cron."},
 					"interval_seconds": {Type: "number", Description: "Recurrence interval in seconds (60 = every minute, 3600 = hourly, 21600 = every 6h, 86400 = daily). This is the way to schedule sub-hourly / every-N-minutes runs (cron can't). Use with optional start_at. Omit when using cron."},
 				},
@@ -958,7 +958,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				case len(namedTargets) == 0:
 					return "", fmt.Errorf("give the schedule something to run: agent_id, pipeline_id, or machine_id")
 				case len(namedTargets) > 1:
-					return "", fmt.Errorf("name one of %s, not several — whichever the runner checked first would be the one that ran", strings.Join(namedTargets, ", "))
+					return "", fmt.Errorf("name one of %s, not several: whichever the runner checked first would be the one that ran", strings.Join(namedTargets, ", "))
 				}
 				// Resolve the target to its STABLE record id now, and store that.
 				// Agent ids are UUIDs; agent_id here is usually a name/slug. If we
@@ -990,7 +990,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 						}
 					}
 					if !ok {
-						return "", fmt.Errorf("no pipeline named %q — pipeline(action=\"list\") shows the exact names", pipelineRef)
+						return "", fmt.Errorf("no pipeline named %q: pipeline(action=\"list\") shows the exact names", pipelineRef)
 					}
 					if err := def.Validate(); err != nil {
 						return "", fmt.Errorf("pipeline %q would not run: %w", def.Name, err)
@@ -1007,13 +1007,13 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					}
 					def, ok := findMachineByNameOrID(sess.DB, owner, machineRef)
 					if !ok {
-						return "", fmt.Errorf("no machine named %q — machine(action=\"list\") shows the exact names", machineRef)
+						return "", fmt.Errorf("no machine named %q: machine(action=\"list\") shows the exact names", machineRef)
 					}
 					if !def.Unattended {
 						return "", fmt.Errorf("machine %q converses rather than runs: it has a step that waits for a person, and a schedule fires with nobody there. Turn on unattended on that machine, or schedule something else", def.Name)
 					}
 					if probs := def.Problems(); len(probs) > 0 {
-						return "", fmt.Errorf("machine %q will not run yet — %s (%d outstanding)", def.Name, probs[0], len(probs))
+						return "", fmt.Errorf("machine %q will not run yet: %s (%d outstanding)", def.Name, probs[0], len(probs))
 					}
 					machineID = def.ID
 				}
@@ -1023,11 +1023,11 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 						agentID = target.ID
 						if agentHasNoTools(target) {
 							toolWarn = fmt.Sprintf(
-								" ⚠ WARNING: %q has NO tools (its allowlist is set to none), so it can only produce text — it cannot fetch, search, send, or call anything. If this mission needs a tool, pick a different agent or give this one an allowlist via update_agent, then recreate the schedule.",
+								" ⚠ WARNING: %q has NO tools (its allowlist is set to none), so it can only produce text, it cannot fetch, search, send, or call anything. If this mission needs a tool, pick a different agent or give this one an allowlist via update_agent, then recreate the schedule.",
 								target.Name)
 						}
 					} else {
-						return "", fmt.Errorf("no agent named %q found — create it first, or check the name (agents action=list shows the exact names)", agentID)
+						return "", fmt.Errorf("no agent named %q found: create it first, or check the name (agents action=list shows the exact names)", agentID)
 					}
 				}
 				// The scheduler dispatches the agent with Mission as the per-run
@@ -1111,7 +1111,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					if sa.Paused {
 						state = "paused"
 					}
-					next := "—"
+					next := "·"
 					if !sa.NextRun.IsZero() {
 						next = sa.NextRun.Local().Format("Mon Jan 2 3:04 PM")
 					}
@@ -1220,7 +1220,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				Name:        "list_runs",
 				Description: "List recent background/fleet runs (delegated tasks, standing-agent executions, recurring-task fires), status-level. These are NOT your own chat turns. Each line shows the run id for use with inspect_run.",
 				Parameters: map[string]ToolParam{
-					"name":  {Type: "string", Description: "Optional: restrict to one name — an agent's display name OR a recurring task's name, whichever you have."},
+					"name":  {Type: "string", Description: "Optional: restrict to one name, an agent's display name OR a recurring task's name, whichever you have."},
 					"agent": {Type: "string", Description: "Optional: same as name. Accepted so either spelling works."},
 					"limit": {Type: "number", Description: "Optional: max rows (default 15, max 50)."},
 				},
@@ -1305,7 +1305,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				// model to call that tool directly instead of erroring on a run
 				// lookup it will just retry identically until the guard trips.
 				if id != "" && sess.HasTempTool(id) {
-					return "", fmt.Errorf("%q is not a run id — it is a tool you already have loaded and callable. Call %s directly with its own arguments now. inspect_run is ONLY for opaque run ids from list_runs, never a tool name.", id, id)
+					return "", fmt.Errorf("%q is not a run id: it is a tool you already have loaded and callable. Call %s directly with its own arguments now. inspect_run is ONLY for opaque run ids from list_runs, never a tool name.", id, id)
 				}
 				rec, ok := GetRun(RootDB, owner, id)
 				if !ok {
@@ -1316,7 +1316,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					// irrelevant run back (a SUCCESS, so the loop-guard error counter
 					// never trips) and polls it dozens of times making zero progress
 					// (observed live). Return a hard, id-less directive instead.
-					return "", fmt.Errorf("no run with that id — run ids are opaque and come ONLY from list_runs, never constructed. If you were trying to answer the user, this is the WRONG tool: call the tool that does what they asked. If you genuinely need a run, call list_runs first, then inspect_run with an id it returned.")
+					return "", fmt.Errorf("no run with that id: run ids are opaque and come ONLY from list_runs, never constructed. If you were trying to answer the user, this is the WRONG tool: call the tool that does what they asked. If you genuinely need a run, call list_runs first, then inspect_run with an id it returned.")
 				}
 				task := ""
 				if rec.Task != "" {
@@ -1336,7 +1336,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 						line += fmt.Sprintf(", provider charged %d", d.InputTokens)
 					}
 					if d.Tight {
-						line += " — TIGHT: this prompt was within a tenth of the window, which fails intermittently rather than cleanly"
+						line += ", TIGHT: this prompt was within a tenth of the window, which fails intermittently rather than cleanly"
 					}
 					task += line + "\n"
 				}
@@ -1355,27 +1355,27 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "create_event_monitor",
-				Description: "Set up a monitor that WAKES you when something happens (vs a standing agent, which RUNS on a clock). Pick the CHEAPEST kind that detects the change — deterministic beats an LLM checker: \"webhook\" mints a secret URL an external system POSTs to (push, no polling); \"http_poll\" fetches a URL, extracts a value, and wakes you when it crosses a threshold (no LLM — best for numeric/value conditions); \"watch\" invokes a TOOL each interval, hashes its output, and wakes you ONLY when it changes (no LLM until it does — best for \"tell me when X changes\", e.g. a chat via read_chat); \"poll\" runs an LLM checker agent every interval (MOST expensive — reserve for FUZZY conditions a value or hash can't capture). On wake you react in this thread (report / delegate). NOT for work that must run and REPORT every interval whatever it finds: that is a standing agent (create_standing_agent, with until/max_attempts), not a monitor.",
+				Description: "Set up a monitor that WAKES you when something happens (vs a standing agent, which RUNS on a clock). Pick the CHEAPEST kind that detects the change, deterministic beats an LLM checker: \"webhook\" mints a secret URL an external system POSTs to (push, no polling); \"http_poll\" fetches a URL, extracts a value, and wakes you when it crosses a threshold (no LLM, best for numeric/value conditions); \"watch\" invokes a TOOL each interval, hashes its output, and wakes you ONLY when it changes (no LLM until it does, best for \"tell me when X changes\", e.g. a chat via read_chat); \"poll\" runs an LLM checker agent every interval (MOST expensive: reserve for FUZZY conditions a value or hash can't capture). On wake you react in this thread (report / delegate). NOT for work that must run and REPORT every interval whatever it finds: that is a standing agent (create_standing_agent, with until/max_attempts), not a monitor.",
 				Parameters: map[string]ToolParam{
 					"name":             {Type: "string", Description: "Short unique name for this monitor, e.g. \"nvda-below\" or \"ts-join\"."},
-					"kind":             {Type: "string", Description: "\"webhook\", \"http_poll\", \"watch\", or \"poll\" — prefer the cheapest that fits (see the tool description)."},
+					"kind":             {Type: "string", Description: "\"webhook\", \"http_poll\", \"watch\", or \"poll\": prefer the cheapest that fits (see the tool description)."},
 					"wake_brief":       {Type: "string", Description: "What you should do when it fires (guides your reaction). Only used for notify=\"channel\"."},
 					"notify":           {Type: "string", Enum: []string{"channel", "direct", "text"}, Description: "How the user is alerted when it fires. \"channel\" (default): wake here in the thread so you can react/summarize (uses an LLM). \"direct\": post the change verbatim into the channel thread with NO LLM (it just shows up here + lights the unread dot). \"text\": text the owner's phone with the change, no LLM. ASK the user which they want when setting a monitor up."},
 					"wake_agent":       {Type: "string", Description: "(optional) Name or id of the agent this monitor belongs to: the one woken when it fires. Defaults to you. Set it when you are wiring a watch onto ANOTHER agent, so the alert lands in that agent's thread rather than in this conversation."},
-					"deliver_to":       {Type: "string", Description: "Optional: a chat_id from list_chats (e.g. \"any;+;chat872212368359368118\"). When set, the formatted alert is posted DIRECTLY to THAT conversation with NO LLM, instead of waking you in this thread — use it to route a watch/http_poll alert straight to a group chat or other channel. Setting it forces notify=\"direct\" to that chat. Omit to alert in this thread per notify."},
-					"surface":          {Type: "string", Enum: []string{"session", "cortex", "background"}, Description: "Where the fire surfaces for the agent — its trace card, rail badge, and (for a channel wake) its LLM turn all follow. Optional; OMIT it for the default rather than passing an empty string. \"session\" (default) = the creating session; \"cortex\" = the agent's cortex home thread (only if it has one); \"background\" = NO agent visibility (deliver externally via deliver_to only, no card, no badge — for a pure feed like a join/leave ticker you only want in the group chat). Relocatable later without recreate via the console's Move-to control."},
+					"deliver_to":       {Type: "string", Description: "Optional: a chat_id from list_chats (e.g. \"any;+;chat872212368359368118\"). When set, the formatted alert is posted DIRECTLY to THAT conversation with NO LLM, instead of waking you in this thread: use it to route a watch/http_poll alert straight to a group chat or other channel. Setting it forces notify=\"direct\" to that chat. Omit to alert in this thread per notify."},
+					"surface":          {Type: "string", Enum: []string{"session", "cortex", "background"}, Description: "Where the fire surfaces for the agent: its trace card, rail badge, and (for a channel wake) its LLM turn all follow. Optional; OMIT it for the default rather than passing an empty string. \"session\" (default) = the creating session; \"cortex\" = the agent's cortex home thread (only if it has one); \"background\" = NO agent visibility (deliver externally via deliver_to only, no card, no badge, for a pure feed like a join/leave ticker you only want in the group chat). Relocatable later without recreate via the console's Move-to control."},
 					"interval_seconds": {Type: "number", Description: "http_poll/watch/poll: how often to check, in seconds (minimum 30; 900 = every 15 min, 3600 = hourly)."},
-					"until":            {Type: "string", Description: "Optional: the stopping CONDITION in plain words — \"the PR is merged\", \"the build goes green\". After each fire the change it saw is judged against this, and the monitor stops itself when the condition is met (kept, not deleted). Use it when the user wants to keep hearing about something UNTIL a state is reached: the monitor's own trigger says when to alert, this says when to stop. Costs one small model call per fire, so omit it when a fire count (stop_after) already says when to stop."},
-					"stop_after":       {Type: "number", Description: "Optional: stop the monitor after it has fired this many times. This bounds the ALERTS a monitor raises; it does NOT turn a monitor into a run-this-N-times job — for that use create_standing_agent, whose max_attempts bounds RUNS. Use it whenever the user bounds the alerts — \"tell me the next two times\", \"just once\", \"stop after 3\". On the last fire the monitor pauses itself and says so; it is kept, not deleted, and resuming gives it a fresh allowance. Omit for a monitor that should keep watching until the user stops it."},
-					"tool_name":        {Type: "string", Description: "watch only: the tool invoked each interval; its output is hashed and you're woken ONLY when it changes. Use an existing tool that returns the thing to watch (e.g. read_chat for a chat). No LLM runs between changes — the cheapest detection."},
+					"until":            {Type: "string", Description: "Optional: the stopping CONDITION in plain words, \"the PR is merged\", \"the build goes green\". After each fire the change it saw is judged against this, and the monitor stops itself when the condition is met (kept, not deleted). Use it when the user wants to keep hearing about something UNTIL a state is reached: the monitor's own trigger says when to alert, this says when to stop. Costs one small model call per fire, so omit it when a fire count (stop_after) already says when to stop."},
+					"stop_after":       {Type: "number", Description: "Optional: stop the monitor after it has fired this many times. This bounds the ALERTS a monitor raises; it does NOT turn a monitor into a run-this-N-times job, for that use create_standing_agent, whose max_attempts bounds RUNS. Use it whenever the user bounds the alerts: \"tell me the next two times\", \"just once\", \"stop after 3\". On the last fire the monitor pauses itself and says so; it is kept, not deleted, and resuming gives it a fresh allowance. Omit for a monitor that should keep watching until the user stops it."},
+					"tool_name":        {Type: "string", Description: "watch only: the tool invoked each interval; its output is hashed and you're woken ONLY when it changes. Use an existing tool that returns the thing to watch (e.g. read_chat for a chat). No LLM runs between changes: the cheapest detection."},
 					"tool_args":        {Type: "object", Description: "watch only: arguments passed to tool_name every invocation, e.g. {\"chat_id\":\"any;+;chat123\",\"limit\":10}."},
-					"format_script":    {Type: "string", Description: "watch only, optional: sandboxed python that shapes the alert. It receives {\"prior\":...,\"current\":...} JSON on stdin (the previous and current tool output) and prints the notification text to stdout. Printing NOTHING no longer suppresses — it FAILS OPEN to the built-in diff so a broken script can't silently eat a change; to intentionally drop a change, print the sentinel \"SKIP\" (or {\"skip\":true}). No network, no LLM. Omit to use the built-in diff summary. Use this to format exactly the notification you want (e.g. parse a client list and print only \"X joined\" / \"X left\", or \"SKIP\" when only serveradmin changed)."},
+					"format_script":    {Type: "string", Description: "watch only, optional: sandboxed python that shapes the alert. It receives {\"prior\":...,\"current\":...} JSON on stdin (the previous and current tool output) and prints the notification text to stdout. Printing NOTHING no longer suppresses, it FAILS OPEN to the built-in diff so a broken script can't silently eat a change; to intentionally drop a change, print the sentinel \"SKIP\" (or {\"skip\":true}). No network, no LLM. Omit to use the built-in diff summary. Use this to format exactly the notification you want (e.g. parse a client list and print only \"X joined\" / \"X left\", or \"SKIP\" when only serveradmin changed)."},
 					"check_agent":      {Type: "string", Description: "poll only: name/id of an existing agent that checks the condition each interval."},
 					"check":            {Type: "string", Description: "poll only: the question/brief given to the checker. Tell it to answer with the match string when the event has happened."},
 					"match_contains":   {Type: "string", Description: "poll only: fire when the checker's answer contains this (case-insensitive). Default \"YES\"."},
 					"url":              {Type: "string", Description: "http_poll only: URL fetched each interval (e.g. a finance JSON API)."},
 					"json_path":        {Type: "string", Description: "http_poll: dotted path into the JSON response, array indices included, e.g. \"quoteResponse.result.0.regularMarketPrice\". Omit json_path and regex to compare the whole body."},
-					"regex":            {Type: "string", Description: "http_poll: alternative extraction — first capture group of this regex against the body."},
+					"regex":            {Type: "string", Description: "http_poll: alternative extraction, first capture group of this regex against the body."},
 					"compare_op":       {Type: "string", Description: "http_poll: one of < > <= >= == != contains. Fire when extracted_value <op> threshold is true."},
 					"threshold":        {Type: "string", Description: "http_poll: the value compared against (a number for < > <= >=)."},
 				},
@@ -1462,7 +1462,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					if err := missingArgs("http_poll monitor "+strconv.Quote(name),
 						reqArg{"url", m.URL, "the address fetched each interval, e.g. \"https://example.com/status\""},
 						reqArg{"compare_op", m.CompareOp, "one of < > <= >= == != contains"},
-						reqArg{"threshold", m.Threshold, "the value compared against, always as a string — \"200\" with compare_op \"==\", or \"error\" with compare_op \"contains\". If you have no threshold because this should report the value WHATEVER it is, that is not a monitor: a monitor stays silent until something changes. Use create_standing_agent (until = what makes it done, max_attempts = how many runs it gets)"},
+						reqArg{"threshold", m.Threshold, "the value compared against, always as a string: \"200\" with compare_op \"==\", or \"error\" with compare_op \"contains\". If you have no threshold because this should report the value WHATEVER it is, that is not a monitor: a monitor stays silent until something changes. Use create_standing_agent (until = what makes it done, max_attempts = how many runs it gets)"},
 					); err != nil {
 						return "", err
 					}
@@ -1513,10 +1513,10 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					}
 					got, _ := GetEventMonitor(RootDB, owner, name)
 					if m.DeliverChatID != "" {
-						return fmt.Sprintf("Watch monitor %q created: every %ds I run %s and, when its output changes, post the formatted alert DIRECTLY to chat %s — no LLM, it does NOT come back to this thread.%s Next check: %s.",
+						return fmt.Sprintf("Watch monitor %q created: every %ds I run %s and, when its output changes, post the formatted alert DIRECTLY to chat %s, no LLM, it does NOT come back to this thread.%s Next check: %s.",
 							name, got.IntervalSeconds, m.ToolName, m.DeliverChatID, fireLimitSentence(m), got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")) + dupMonitorWarning(m), nil
 					}
-					return fmt.Sprintf("Watch monitor %q created: every %ds I run %s and wake you ONLY when its output changes — no LLM runs in between.%s Next check: %s.",
+					return fmt.Sprintf("Watch monitor %q created: every %ds I run %s and wake you ONLY when its output changes, no LLM runs in between.%s Next check: %s.",
 						name, got.IntervalSeconds, m.ToolName, fireLimitSentence(m), got.NextCheck.Local().Format("Mon Jan 2 3:04 PM")) + dupMonitorWarning(m), nil
 				}
 				wantAgent := strings.TrimSpace(oArgStr(args, "check_agent"))
@@ -1525,7 +1525,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				m.IntervalSeconds = oArgInt(args, "interval_seconds")
 				if err := missingArgs("poll monitor "+strconv.Quote(name),
 					reqArg{"check_agent", wantAgent, "name or id of an existing agent that runs the check"},
-					reqArg{"check", m.Check, "the question that agent is asked each interval, whose answer decides whether to wake you. If there is no question — the agent should just do the work and report every time — use create_standing_agent instead; telling a checker to always answer the match word makes a schedule out of a monitor"},
+					reqArg{"check", m.Check, "the question that agent is asked each interval, whose answer decides whether to wake you. If there is no question (the agent should just do the work and report every time), use create_standing_agent instead; telling a checker to always answer the match word makes a schedule out of a monitor"},
 				); err != nil {
 					return "", err
 				}
@@ -1551,20 +1551,20 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "await_result",
-				Description: "Wait for a DEFERRED result without blocking or hand-polling. Use this whenever a step's result arrives LATER — a contact's reply, a phone call's outcome, an external job you kicked off — instead of looping on the tool yourself round after round. It runs `tool_name` in the background every interval and WAKES you here exactly once, the moment that tool's output CHANGES from now, then removes itself. END your turn right after calling it; you'll be re-woken with the result and continue the plan from there. This is the right move whenever you set something in motion whose answer comes back on someone else's schedule. Examples: after message_contact(\"Alex\", \"...questions...\"), call await_result(tool_name=\"read_chat\", tool_args={\"chat_id\":\"<Alex's chat>\"}, note=\"Alex's answers — then draft the spec and email it to the owner\") to resume when he replies; after placing a call, await_result on the call-status tool to resume when the call reports back.",
+				Description: "Wait for a DEFERRED result without blocking or hand-polling. Use this whenever a step's result arrives LATER (a contact's reply, a phone call's outcome, an external job you kicked off), instead of looping on the tool yourself round after round. It runs `tool_name` in the background every interval and WAKES you here exactly once, the moment that tool's output CHANGES from now, then removes itself. END your turn right after calling it; you'll be re-woken with the result and continue the plan from there. This is the right move whenever you set something in motion whose answer comes back on someone else's schedule. Examples: after message_contact(\"Alex\", \"...questions...\"), call await_result(tool_name=\"read_chat\", tool_args={\"chat_id\":\"<Alex's chat>\"}, note=\"Alex's answers, then draft the spec and email it to the owner\") to resume when he replies; after placing a call, await_result on the call-status tool to resume when the call reports back.",
 				Parameters: map[string]ToolParam{
-					"tool_name":        {Type: "string", Description: "The tool polled each interval to detect the result — e.g. \"read_chat\" for a reply, a call-status tool for a call's outcome. Its output is hashed; you're woken when it changes. Must be a tool you can already call."},
+					"tool_name":        {Type: "string", Description: "The tool polled each interval to detect the result: e.g. \"read_chat\" for a reply, a call-status tool for a call's outcome. Its output is hashed; you're woken when it changes. Must be a tool you can already call."},
 					"tool_args":        {Type: "object", Description: "Arguments passed to tool_name every check, e.g. {\"chat_id\":\"any;+;chat123\"}. Use the same args you'd pass calling it directly."},
-					"note":             {Type: "string", Description: "What you're waiting for AND what to do once it arrives — this is handed back to you on wake to continue the plan. E.g. \"Alex's answers to the spec questions; then write the spec and email it to the owner.\""},
-					"from_sender":      {Type: "string", Description: "Optional but STRONGLY recommended when awaiting a reply in a GROUP chat: the name of the person you're waiting on (e.g. \"Alex Rivera\", as shown in read_chat). The wake then fires ONLY when a new message from THAT person arrives — not on every message in the chat (other participants, or your own outbound). Without it, a busy group wakes you on any change and you'll have to re-await. Omit for a one-on-one chat or a non-chat result (a call/job status) where any change IS the result."},
-					"interval_seconds": {Type: "number", Description: "How often to check, in seconds (minimum 30; default 60). A human reply can be slow — 60-300 is usually right; don't poll faster than the result could plausibly arrive."},
+					"note":             {Type: "string", Description: "What you're waiting for AND what to do once it arrives: this is handed back to you on wake to continue the plan. E.g. \"Alex's answers to the spec questions; then write the spec and email it to the owner.\""},
+					"from_sender":      {Type: "string", Description: "Optional but STRONGLY recommended when awaiting a reply in a GROUP chat: the name of the person you're waiting on (e.g. \"Alex Rivera\", as shown in read_chat). The wake then fires ONLY when a new message from THAT person arrives: not on every message in the chat (other participants, or your own outbound). Without it, a busy group wakes you on any change and you'll have to re-await. Omit for a one-on-one chat or a non-chat result (a call/job status) where any change IS the result."},
+					"interval_seconds": {Type: "number", Description: "How often to check, in seconds (minimum 30; default 60). A human reply can be slow: 60-300 is usually right; don't poll faster than the result could plausibly arrive."},
 				},
 				Required: []string{"tool_name"},
 			},
 			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				toolName := strings.TrimSpace(oArgStr(args, "tool_name"))
 				if toolName == "" {
-					return "", fmt.Errorf("tool_name is required — the tool whose output signals the result (e.g. read_chat for a reply)")
+					return "", fmt.Errorf("tool_name is required: the tool whose output signals the result (e.g. read_chat for a reply)")
 				}
 				var toolArgs map[string]any
 				if ta, ok := args["tool_args"].(map[string]any); ok {
@@ -1608,7 +1608,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					DeleteEventMonitor(RootDB, owner, name)
 					return "", fmt.Errorf("couldn't schedule the await: %w", err)
 				}
-				return fmt.Sprintf("Awaiting a result from %s — checking every %ds; I'll wake here once its output changes, then continue. END this turn now; I'll resume when the result arrives.", toolName, interval), nil
+				return fmt.Sprintf("Awaiting a result from %s: checking every %ds; I'll wake here once its output changes, then continue. END this turn now; I'll resume when the result arrives.", toolName, interval), nil
 			},
 		},
 		// The phantom-named read tools were removed — superseded by the
@@ -1618,7 +1618,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "notify_me",
-				Description: "Send a text to the USER'S OWN phone (the owner). Use this ONLY when the user has explicitly asked to be texted/notified, OR when a monitor, scheduled job, or long-running task is delivering a result the user asked to be alerted about. Do NOT use it on greetings or ordinary chat, and do NOT volunteer unprompted status — for a normal reply, just reply in the conversation. No approval needed since it only reaches the owner. To include an image/file, pass its workspace path in `attachments`.",
+				Description: "Send a text to the USER'S OWN phone (the owner). Use this ONLY when the user has explicitly asked to be texted/notified, OR when a monitor, scheduled job, or long-running task is delivering a result the user asked to be alerted about. Do NOT use it on greetings or ordinary chat, and do NOT volunteer unprompted status, for a normal reply, just reply in the conversation. No approval needed since it only reaches the owner. To include an image/file, pass its workspace path in `attachments`.",
 				Parameters: map[string]ToolParam{
 					"text":        {Type: "string", Description: "The message to send to the owner."},
 					"attachments": {Type: "array", Items: &ToolParam{Type: "string"}, Description: attachmentsParamDesc},
@@ -1665,9 +1665,9 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "message_contact",
-				Description: "Send an iMessage to a CONTACT or a GROUP (anyone other than the owner). Set `to` to the recipient as shown by list_chats — a contact/group NAME (e.g. \"WiWee\"), a handle (phone/email), or a chat_id. Any of them resolve to the right conversation, group chats included; you don't need to track the opaque chat_id — the name works. To send an image/file, pass its workspace path in `attachments`. Your exact words are sent verbatim. Contacting real people is consequential, so it queues for the user's approval (unless they pre-authorized that recipient via 'Always allow', or you're replying to someone who just messaged you), then sends once approved.",
+				Description: "Send an iMessage to a CONTACT or a GROUP (anyone other than the owner). Set `to` to the recipient as shown by list_chats: a contact/group NAME (e.g. \"WiWee\"), a handle (phone/email), or a chat_id. Any of them resolve to the right conversation, group chats included; you don't need to track the opaque chat_id: the name works. To send an image/file, pass its workspace path in `attachments`. Your exact words are sent verbatim. Contacting real people is consequential, so it queues for the user's approval (unless they pre-authorized that recipient via 'Always allow', or you're replying to someone who just messaged you), then sends once approved.",
 				Parameters: map[string]ToolParam{
-					"to":          {Type: "string", Description: "Recipient as shown by list_chats: a contact/group name, a handle (phone/email), or a chat_id. Required — never omit it."},
+					"to":          {Type: "string", Description: "Recipient as shown by list_chats: a contact/group name, a handle (phone/email), or a chat_id. Required: never omit it."},
 					"text":        {Type: "string", Description: "The message to send. Do NOT type delivery markers like [ATTACH: ...] into this text; that is a different surface's convention and is stripped before sending."},
 					"attachments": {Type: "array", Items: &ToolParam{Type: "string"}, Description: attachmentsParamDesc},
 				},
@@ -1677,7 +1677,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				to := strings.TrimSpace(oArgStr(args, "to"))
 				text := strings.TrimSpace(oArgStr(args, "text"))
 				if err := missingArgs("the message_contact call",
-					reqArg{"to", to, "the recipient as shown by list_chats — a contact/group name, a handle, or a chat_id"},
+					reqArg{"to", to, "the recipient as shown by list_chats: a contact/group name, a handle, or a chat_id"},
 					reqArg{"text", text, "the message to send, sent verbatim"},
 				); err != nil {
 					return "", err
@@ -1688,13 +1688,13 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				}
 				rec, ok := link.ResolveRecipient(owner, to)
 				if !ok {
-					return "", fmt.Errorf("no conversation matches %q — set `to` to a contact/group name, handle, or chat_id exactly as shown by list_chats. If you have the person's NAME but not a number, resolve it with from_client_contacts_search first (it reads the local address book), then call message_contact with the number it returns.", to)
+					return "", fmt.Errorf("no conversation matches %q: set `to` to a contact/group name, handle, or chat_id exactly as shown by list_chats. If you have the person's NAME but not a number, resolve it with from_client_contacts_search first (it reads the local address book), then call message_contact with the number it returns.", to)
 				}
 				recip := operatorRecipientKey(rec.ChatID, rec.Handle)
 				label := operatorRecipientLabel(rec)
 				images := messageImages(sess, args, text)
 				if IsContactBlocked(RootDB, owner, recip) {
-					return fmt.Sprintf("Messaging %s is blocked in the user's permission settings — not sent.", label), nil
+					return fmt.Sprintf("Messaging %s is blocked in the user's permission settings: not sent.", label), nil
 				}
 				// Replying to the conversation that just messaged us is in-thread,
 				// not a proactive reach-out — deliver without the approval queue.
@@ -1733,7 +1733,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				// pending, point at it instead of re-queuing.
 				for _, ex := range ListAuthorizations(RootDB, owner) {
 					if ex.Action == "send_message" && ex.ChatID == rec.ChatID && ex.Handle == rec.Handle && ex.Text == text {
-						return fmt.Sprintf("Already queued this exact message to %s for approval (id %s) — it's awaiting the user, NOT re-sent. Don't queue it again; wait for the reply.", label, ex.ID), nil
+						return fmt.Sprintf("Already queued this exact message to %s for approval (id %s): it's awaiting the user, NOT re-sent. Don't queue it again; wait for the reply.", label, ex.ID), nil
 					}
 				}
 				a := SaveAuthorization(RootDB, Authorization{
@@ -1742,16 +1742,16 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				if sess != nil && sess.PendingApprovalPrompt != nil {
 					sess.PendingApprovalPrompt(a)
 				}
-				return fmt.Sprintf("Queued a message to %s for the user's approval — it's in the Authorizations pane (id %s) and sends once approved.", label, a.ID), nil
+				return fmt.Sprintf("Queued a message to %s for the user's approval: it's in the Authorizations pane (id %s) and sends once approved.", label, a.ID), nil
 			},
 		},
 		{
 			Tool: Tool{
 				Name:        "authorize_channel_sender",
-				Description: "Grant ANOTHER agent (e.g. a sub-agent you created) the right to deliver to one of your channels WITHOUT the per-send approval queue — so its scheduled/autonomous runs can post to that group. Names the channel (by name, bound address, or chat_id) and the agent (by name or id).",
+				Description: "Grant ANOTHER agent (e.g. a sub-agent you created) the right to deliver to one of your channels WITHOUT the per-send approval queue, so its scheduled/autonomous runs can post to that group. Names the channel (by name, bound address, or chat_id) and the agent (by name or id).",
 				Parameters: map[string]ToolParam{
-					"channel": {Type: "string", Description: "The channel to grant on — its name, its bound address/chat_id, or its id."},
-					"agent":   {Type: "string", Description: "The agent to authorize — its name or id."},
+					"channel": {Type: "string", Description: "The channel to grant on: its name, its bound address/chat_id, or its id."},
+					"agent":   {Type: "string", Description: "The agent to authorize: its name or id."},
 				},
 				Required: []string{"channel", "agent"},
 			},
@@ -1759,7 +1759,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				chanRef := strings.TrimSpace(oArgStr(args, "channel"))
 				agentRef := strings.TrimSpace(oArgStr(args, "agent"))
 				if err := missingArgs("the authorize_channel_sender call",
-					reqArg{"channel", chanRef, "the channel to grant on — its name, its bound address/chat_id, or its id"},
+					reqArg{"channel", chanRef, "the channel to grant on: its name, its bound address/chat_id, or its id"},
 					reqArg{"agent", agentRef, "the agent to authorize, by name or id"},
 				); err != nil {
 					return "", err
@@ -1777,7 +1777,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					}
 				}
 				if !found {
-					return "", fmt.Errorf("no channel matches %q — use its name, bound address, or id", chanRef)
+					return "", fmt.Errorf("no channel matches %q: use its name, bound address, or id", chanRef)
 				}
 				for _, s := range ch.AuthorizedSenders {
 					if s == target.ID {
@@ -1786,7 +1786,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				}
 				ch.AuthorizedSenders = append(ch.AuthorizedSenders, target.ID)
 				SaveChannel(RootDB, ch)
-				return fmt.Sprintf("Granted %s send access to channel %q — its autonomous runs can now post there without approval.", target.Name, ch.Name), nil
+				return fmt.Sprintf("Granted %s send access to channel %q: its autonomous runs can now post there without approval.", target.Name, ch.Name), nil
 			},
 		},
 		{
@@ -1802,7 +1802,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				to := strings.TrimSpace(oArgStr(args, "to"))
 				if to == "" {
-					return "", fmt.Errorf("to is required — the person's handle/number for their 1:1 thread")
+					return "", fmt.Errorf("to is required, the person's handle/number for their 1:1 thread")
 				}
 				link, ok := ActiveMessagingLink()
 				if !ok {
@@ -1810,7 +1810,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				}
 				rec, ok := link.ResolveRecipient(owner, to)
 				if !ok {
-					return "", fmt.Errorf("couldn't resolve %q to a 1:1 thread — pass the person's phone number/handle (from read_chat's participant list), not their display name", to)
+					return "", fmt.Errorf("couldn't resolve %q to a 1:1 thread, pass the person's phone number/handle (from read_chat's participant list), not their display name", to)
 				}
 				label := operatorRecipientLabel(rec)
 				for _, ch := range ListChannelsForAgent(RootDB, owner, controllerAgentID) {
@@ -1831,7 +1831,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					Owner: owner, Action: "bind_thread", Agent: controllerAgentID,
 					ChatID: rec.ChatID, Handle: rec.Handle, Brief: label, Text: wakePref,
 				})
-				return fmt.Sprintf("Requested a binding to %s's 1:1 thread — queued for the user's approval (id %s). Once approved you can read their replies.", label, a.ID), nil
+				return fmt.Sprintf("Requested a binding to %s's 1:1 thread, queued for the user's approval (id %s). Once approved you can read their replies.", label, a.ID), nil
 			},
 		},
 		{
@@ -1852,7 +1852,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				wake := argBool(args, "wake", true)
 				ch, ok := findAgentBoundChannel(owner, controllerAgentID, to)
 				if !ok {
-					return "", fmt.Errorf("you have no bound thread matching %q — request one with request_thread_binding first", to)
+					return "", fmt.Errorf("you have no bound thread matching %q: request one with request_thread_binding first", to)
 				}
 				ch.AutoReply = wake
 				if wake {
@@ -1864,7 +1864,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				if wake {
 					return fmt.Sprintf("%s will now wake you on replies.", ch.Name), nil
 				}
-				return fmt.Sprintf("%s is now read-only (no wake) — poll it with await_result.", ch.Name), nil
+				return fmt.Sprintf("%s is now read-only (no wake): poll it with await_result.", ch.Name), nil
 			},
 		},
 		{
@@ -2057,7 +2057,7 @@ func missingArgs(subject string, req ...reqArg) error {
 	// Said explicitly, because the caller cannot see it: the rest of the call
 	// was accepted. Without this the natural repair is to rebuild the whole
 	// call from scratch, which is what cost those six rounds.
-	msg := fmt.Sprintf("%s is missing %s — everything else you sent is fine, so resend the same call with %s filled in",
+	msg := fmt.Sprintf("%s is missing %s: everything else you sent is fine, so resend the same call with %s filled in",
 		subject, joinWords(names), pluralIt(len(names)))
 	if len(hints) > 0 {
 		msg += ":\n" + strings.Join(hints, "\n")
@@ -2090,9 +2090,9 @@ func fireLimitSentence(m EventMonitor) string {
 	}
 	switch {
 	case m.MaxFires == 1:
-		parts = append(parts, "It fires ONCE and then stops itself (kept, not deleted — resume it for another).")
+		parts = append(parts, "It fires ONCE and then stops itself (kept, not deleted: resume it for another).")
 	case m.MaxFires > 1:
-		parts = append(parts, fmt.Sprintf("It stops itself after %d fires (kept, not deleted — resume it for another %d).", m.MaxFires, m.MaxFires))
+		parts = append(parts, fmt.Sprintf("It stops itself after %d fires (kept, not deleted: resume it for another %d).", m.MaxFires, m.MaxFires))
 	}
 	if len(parts) == 0 {
 		return ""

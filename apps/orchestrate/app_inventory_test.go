@@ -69,7 +69,7 @@ func TestInventoryIsBluntAboutAnEmptyApp(t *testing.T) {
 func TestBuilderPromptDefersToTheStoredInventory(t *testing.T) {
 	seed, _ := seedAgentByID("seed-builder")
 	p := seed.OrchestratorPrompt
-	if !strings.Contains(p, "STORED —") {
+	if !strings.Contains(p, "STORED:") {
 		t.Error("the prompt never names the inventory line, so nothing connects the rule to the evidence")
 	}
 	if !strings.Contains(p, "may not go past it") {

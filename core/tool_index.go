@@ -92,7 +92,7 @@ func ensureToolIndex(ctx context.Context) {
 		// strategies.
 		toolIndexEntries = nil
 		toolIndexBuilt = true
-		Log("[tool_index] embeddings disabled — classifier-trim is a no-op (worker catalog stays full size)")
+		Log("[tool_index] embeddings disabled: classifier-trim is a no-op (worker catalog stays full size)")
 		return
 	}
 	tools := RegisteredChatTools()

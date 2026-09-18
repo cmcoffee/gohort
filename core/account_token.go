@@ -347,7 +347,7 @@ func lookupAccountTokenOwner(secret string) (string, bool) {
 		// run yet must never be the difference between a credential being
 		// valid and not. Same rule peerKeyFromAccessToken applies.
 		RootDB.Unset(accountTokenTable, secret)
-		Log("[account] key %q (%s) expired at %s — removed", t.Name, t.ID, t.Expires)
+		Log("[account] key %q (%s) expired at %s: removed", t.Name, t.ID, t.Expires)
 		return "", false
 	}
 	touchAccountToken(secret, t)

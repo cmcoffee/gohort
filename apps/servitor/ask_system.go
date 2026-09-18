@@ -48,10 +48,10 @@ func AskSystemToolDef(sess *ToolSession, udb Database, owner, agentID string, co
 	// it belonged to, so an agent holding this tool answered "I have no
 	// Servitor tools" when asked to consult Servitor — true of the vocabulary
 	// it had been given, and wrong about what it could do.
-	desc := "Ask Servitor a question about the live state or configuration of one of the owner's systems — \"what's the current load?\", \"is nginx running?\", \"how full is the data disk?\". " +
+	desc := "Ask Servitor a question about the live state or configuration of one of the owner's systems: \"what's the current load?\", \"is nginx running?\", \"how full is the data disk?\". " +
 		"This is THE way to answer anything about the owner's machines, servers, appliances, lab systems or infrastructure: a Servitor investigator that already knows the system answers it, consulting what it has recorded and probing over SSH where records aren't enough. " +
 		"Strictly read-only: it can inspect, never change. " +
-		"Slow (tens of seconds) — ask one well-formed question rather than many small ones. " +
+		"Slow (tens of seconds): ask one well-formed question rather than many small ones. " +
 		"For ACTIONS (restart, deploy, clean up), use request_capability or an approved tool instead."
 	if list := connectedSystemList(connected, via); list != "" {
 		desc += " Systems you may ask Servitor about: " + list + "."
@@ -72,7 +72,7 @@ func AskSystemToolDef(sess *ToolSession, udb Database, owner, agentID string, co
 			question := StringArg(args, "question")
 			appliance, ok := findAppliance(udb, system)
 			if !ok {
-				return "", fmt.Errorf("no system called %q — use one of the names in this tool's description exactly", system)
+				return "", fmt.Errorf("no system called %q: use one of the names in this tool's description exactly", system)
 			}
 			// Askable, not merely connected: a member of a granted workspace
 			// is reachable here. The narrow check would list a machine in this
@@ -82,7 +82,7 @@ func AskSystemToolDef(sess *ToolSession, udb Database, owner, agentID string, co
 					applianceLabel(appliance.Name, appliance.ID))
 			}
 			if servitorRef == nil {
-				return "", fmt.Errorf("servitor is not running — the investigator cannot be reached")
+				return "", fmt.Errorf("servitor is not running: the investigator cannot be reached")
 			}
 			// The investigation runs in the CONSOLE posture, exactly as the
 			// Guides co-author does: no acting-agent stamp, because stamping
@@ -131,7 +131,7 @@ func connectedSystemList(connected []Appliance, via map[string]string) string {
 			// Say WHY it is reachable. An agent that knows this machine came in
 			// through a group also knows the group is the better place to send
 			// anything that is not about this machine specifically.
-			label += " (a member of " + via[strings.ToLower(a.ID)] + " — ask it directly for questions about this machine alone)"
+			label += " (a member of " + via[strings.ToLower(a.ID)] + ", ask it directly for questions about this machine alone)"
 		default:
 			if k := applianceKindNote(a); k != "" {
 				label += " (" + k + ")"
@@ -148,11 +148,11 @@ func connectedSystemList(connected []Appliance, via map[string]string) string {
 func applianceKindNote(a Appliance) string {
 	switch a.Type {
 	case "workspace":
-		return "a GROUP of systems — one question here is answered across all of its members, so prefer it over asking each machine separately"
+		return "a GROUP of systems: one question here is answered across all of its members, so prefer it over asking each machine separately"
 	case "repo":
-		return "a source repository, not a live host — answers come from the code"
+		return "a source repository, not a live host: answers come from the code"
 	case "bundle":
-		return "uploaded evidence (logs, dumps) — a snapshot, nothing live to probe"
+		return "uploaded evidence (logs, dumps): a snapshot, nothing live to probe"
 	case "toolset":
 		return "reached through curated tools rather than a shell"
 	case "command":

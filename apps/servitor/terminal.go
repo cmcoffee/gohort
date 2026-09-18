@@ -219,7 +219,7 @@ func (T *Servitor) handleTerminal(w http.ResponseWriter, r *http.Request) {
 	// Send a brief header so the user can tell at a glance whether
 	// they're looking at backfilled history or live streaming. When
 	// the buffer is empty it doubles as the "no activity yet" placeholder.
-	header := charsetReset + "\x1b[2m── " + appliance.Name + " — "
+	header := charsetReset + "\x1b[2m── " + appliance.Name + " · "
 	if len(history) == 0 {
 		header += "waiting for agent activity"
 	} else {

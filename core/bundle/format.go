@@ -238,7 +238,7 @@ func FormatSpan(bf File) string {
 	}
 	span := bf.First + " → " + bf.Last
 	if bf.YearInferred {
-		span += " (year inferred from file mtime — the log itself carries none)"
+		span += " (year inferred from file mtime: the log itself carries none)"
 	}
 	return span
 }

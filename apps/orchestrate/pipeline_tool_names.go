@@ -72,9 +72,9 @@ func stageToolFindings(def PipelineDef, known map[string]bool) []string {
 		for _, n := range missing {
 			line := "stage " + s.Name + ": tool " + strconv.Quote(n) + " is not a tool any agent that can run this pipeline holds"
 			if suggestion := didYouMeanTool(n, known); suggestion != "" {
-				line += " — did you mean " + strconv.Quote(suggestion) + "?"
+				line += ", did you mean " + strconv.Quote(suggestion) + "?"
 			} else {
-				line += ` — names must match the catalog exactly (a remote MCP tool is published as "<server>_<tool>", lowercased). A reach ("read", "none") says what you mean without naming anything.`
+				line += `, names must match the catalog exactly (a remote MCP tool is published as "<server>_<tool>", lowercased). A reach ("read", "none") says what you mean without naming anything.`
 			}
 			out = append(out, line)
 		}
@@ -216,7 +216,7 @@ func panelVoiceFindings(udb Database, user string, def PipelineDef) []string {
 		}
 		out = append(out, "stage "+s.Name+" mixes agents and roles: "+strings.Join(agents, ", ")+
 			" resolve to agents, and "+strings.Join(roles, ", ")+" do not, so the worker will answer as them. "+
-			"That is a real option — a role needs no agent. Check the spelling if one of those was meant to be an agent, "+
+			"That is a real option: a role needs no agent. Check the spelling if one of those was meant to be an agent, "+
 			"because a name that misses becomes a role rather than an error.")
 	}
 	return out

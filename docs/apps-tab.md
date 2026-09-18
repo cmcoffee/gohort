@@ -1,4 +1,4 @@
-# The Apps Tab — admin organised by subject, not only by mechanism
+# The Apps Tab: admin organised by subject, not only by mechanism
 
 Status: the list, the per-app summary rows and the availability switch are
 built; gathering each app's own controls onto its pane is still design/target.
@@ -26,7 +26,7 @@ app.techwriter            app.orchestrate.suggest      app.servitor.orchestrator
 blogger.editor            debate.contestability_audit  admin.tool_groups.suggest
 ```
 
-Tunables carry none at all — every key is `tune_<something>` and the Category is
+Tunables carry none at all: every key is `tune_<something>` and the Category is
 cross-cutting (Retrieval, Timeouts, Limits, Cache). Some are plainly app-scoped
 by name (`tune_bridge_reply_budget`, `tune_autofill_max_docs`) and nothing but
 the name says so. Contributed admin sections declare a `Group`, which names the
@@ -45,7 +45,7 @@ page, where moving it looks safe and is not.
 
 **Declared or absent.** A control with no declared app appears on its mechanism
 tab exactly as it does today and does not appear under any app. That makes the
-migration incremental — nothing moves until an app claims its own dials — and
+migration incremental (nothing moves until an app claims its own dials), and
 it makes a missing claim a visible gap rather than a wrong attribution.
 
 ## The enabling change
@@ -109,13 +109,13 @@ type App struct {
 ```
 
 Controls already decline by returning nil, so the custom-app controls need no
-guard beyond checking `Kind` — which is the property that made the registry
+guard beyond checking `Kind`, which is the property that made the registry
 worth having.
 
 ## What is on a pane
 
 **Identity**, for every app: its path, its description, and whether it is
-reachable — a compiled app has no owner and no share state, so this is short and
+reachable: a compiled app has no owner and no share state, so this is short and
 honest rather than a table of empty fields.
 
 **Access**: who can open it, which is the same grant the Users picker edits, read
@@ -138,8 +138,8 @@ empty groups implying there is something to set.
 ## The availability switch (built)
 
 The tab leads with **Enabled apps**: every app in the list above, with one
-switch each. Off means off for the deployment — no dashboard card for anybody,
-and every page and API under the mount answers 503 — and it takes effect on the
+switch each. Off means off for the deployment: no dashboard card for anybody,
+and every page and API under the mount answers 503, and it takes effect on the
 next request, with no restart.
 
 Three properties are the whole design:
@@ -157,9 +157,9 @@ as everything-on, and an app arriving in a later build ships enabled rather than
 invisible until somebody notices it missing. Same non-breaking default, for the
 same reason, as the feature gate in `core/feature_access.go`.
 
-**The gate sits outside the auth middleware.** Every other way into an app — a
+**The gate sits outside the auth middleware.** Every other way into an app: a
 registered public path, an internal inter-app call, the deployment-wide API key,
-an install with no accounts configured — is a documented bypass of the per-user
+an install with no accounts configured: is a documented bypass of the per-user
 grant, and each one would be a way past this too if the check lived among them.
 Switched-off is a fact about the deployment rather than about the caller, so
 `AppAvailabilityMiddleware` decides it before anything asks who is calling.
@@ -171,7 +171,7 @@ is a bigger question than a toggle, and answering it halfway would be worse than
 not answering it.
 
 Two things are deliberately absent from the list, and both are what you would
-need to get back: `/admin` (the only surface that can re-enable anything —
+need to get back: `/admin` (the only surface that can re-enable anything
 `SetAppEnabled` refuses it, and a hand-written record naming it is ignored), and
 every `WebHidden()` app, which is the plumbing the rest is built on (the account
 page, the monitor, the OpenAI-compatible endpoint). The POST endpoint re-checks
@@ -193,8 +193,8 @@ wrong on arrival.
 ## What this does to the Custom Apps tab
 
 It folds in. Custom apps become rows in this list rather than a tab of their
-own, and everything built for them — the control registry, the operator state,
-the tier dials, review — is already app-agnostic enough to come along. The tab
+own, and everything built for them (the control registry, the operator state,
+the tier dials, review) is already app-agnostic enough to come along. The tab
 called "Custom Apps" disappears when its rows have somewhere better to live.
 
 And only then does the tab get called **Apps**. Naming it that while it holds
@@ -213,7 +213,7 @@ and every existing registration keeps compiling unchanged; a registry that never
 declares one behaves exactly as it does now.
 
 **An app claiming a control that is not its own.** Registration is in-process Go,
-so this is not an attack, it is a mistake — and it shows up as a dial on two
+so this is not an attack, it is a mistake, and it shows up as a dial on two
 apps' pages, which the duplicate-claim test catches.
 
 ## Tests
@@ -222,7 +222,7 @@ apps' pages, which the duplicate-claim test catches.
   control groups
 - a route stage declaring `App: "/techwriter"` appears on techwriter's pane AND
   still on the LLMs tab; setting it from either writes the same key
-- a route stage declaring nothing appears ONLY on the LLMs tab — the check that
+- a route stage declaring nothing appears ONLY on the LLMs tab: the check that
   keeps attribution declared rather than inferred
 - a stage whose `App` names no registered app is reported at startup rather than
   silently dropped, because a typo there is a control that vanishes
@@ -235,8 +235,8 @@ apps' pages, which the duplicate-claim test catches.
 1. The `App` field on the three registries. No UI change, nothing declares it
    yet, everything behaves as it does today.
 2. The Apps tab: the list, identity, access. No controls gathered yet.
-3. Backfill `App` on a few apps — techwriter and filestore are the clearest,
-   one route stage and one contributed section — and their controls start
+3. Backfill `App` on a few apps: techwriter and filestore are the clearest,
+   one route stage and one contributed section, and their controls start
    appearing under them without moving.
 4. Fold the Custom Apps rows in and retire that tab.
 5. Rename to **Apps** once step 4 lands, and not before.

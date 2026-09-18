@@ -9,7 +9,7 @@ func (a *AdminApp) credentialsSections() []ui.Section {
 	return []ui.Section{
 		{
 			Title:    "API Credentials",
-			Subtitle: "Secure-API credentials the LLM can call via tools. The LLM never sees the secret — it's injected server-side, and the Allowed URL pattern rejects off-target requests before the secret is attached. \"Secure\" hides the direct call_<name> tool but leaves wrapped temp tools working; \"Disable\" suspends the credential entirely. OAuth2 credentials mint + refresh their own bearer token; a \"Needs secret\" badge marks a Builder-authored draft awaiting its client secret.",
+			Subtitle: "Secure-API credentials the LLM can call via tools. The LLM never sees the secret: it's injected server-side, and the Allowed URL pattern rejects off-target requests before the secret is attached. \"Secure\" hides the direct call_<name> tool but leaves wrapped temp tools working; \"Disable\" suspends the credential entirely. OAuth2 credentials mint + refresh their own bearer token; a \"Needs secret\" badge marks a Builder-authored draft awaiting its client secret.",
 			Body: ui.Stack{
 				Children: []ui.Component{
 					ui.Table{
@@ -264,31 +264,38 @@ func credentialFormFields() []ui.FormField {
 			{Value: "authorization_code", Label: "authorization_code (user connects their own account)"},
 		}},
 		{Field: "token_url", Label: "Token URL (https)", Placeholder: "https://api.ebay.com/identity/v1/oauth2/token", ShowWhen: "type:oauth2"},
-		{Field: "authorize_url", Label: "Authorize URL (https)", Placeholder: "https://accounts.google.com/o/oauth2/v2/auth", ShowWhen: "type:oauth2;grant:authorization_code", Help: "The provider's consent page. Each user is sent here to approve, then redirected back to /account/oauth/callback (PKCE). Register that callback URL with the provider, and set Whose credentials = Per user. The Client Secret below is the app's client secret (blank for a public/PKCE-only client)."},
+		{Field: "authorize_url", Label: "Authorize URL (https)", Placeholder: "https://accounts.google.com/o/oauth2/v2/auth", ShowWhen: "type:oauth2;grant:authorization_code", Help: "The provider's consent page, where each user is sent to approve.",
+			Detail: "They are redirected back to /account/oauth/callback (PKCE). Register that callback URL with the provider, and set Whose credentials to Per user. The Client Secret below is the app's client secret; leave it blank for a public, PKCE-only client."},
 		{Field: "client_id", Label: "Client / App ID", Placeholder: "non-secret app/client ID", ShowWhen: "type:oauth2"},
 		// Single shared secret field (one input avoids the duplicate-name
 		// clobber the form's submit loop would otherwise cause). For OAuth it
 		// IS the client secret; positioned right after Client/App ID so the
 		// OAuth block reads Token URL → Client/App ID → Client Secret → Scope.
-		{Field: "username", Label: "Username", Placeholder: "the user / API key to log in as", ShowWhen: "type:oauth2|basic_auth", Help: "HTTP Basic auth and the OAuth2 password grant. For OPNsense (basic_auth) this is the API key; the secret goes in the Secret/Password field below. Stored as plain config, so it shows when you re-edit (only the secret stays hidden)."},
-		{Field: "secret", Label: "Client Secret / Secret / Password", Type: "password", Help: "The secret for this credential: OAuth = the CLIENT secret (jwt_bearer = the RSA private key; refresh_token = the refresh token); bearer = the token; header/query = the API key; basic_auth = the PASSWORD (OPNsense: the API secret), paired with the Username above. Stored encrypted. Leave blank when editing to keep it."},
+		{Field: "username", Label: "Username", Placeholder: "the user / API key to log in as", ShowWhen: "type:oauth2|basic_auth", Help: "HTTP Basic auth and the OAuth2 password grant.",
+			Detail: "For OPNsense (basic_auth) this is the API key, and the secret goes in the Secret/Password field below. Stored as plain config, so it shows when you re-edit; only the secret stays hidden."},
+		{Field: "secret", Label: "Client Secret / Secret / Password", Type: "password", Help: "The secret for this credential. Stored encrypted; leave it blank when editing to keep it.",
+			Detail: "Which secret depends on the kind. OAuth wants the CLIENT secret (jwt_bearer wants the RSA private key, refresh_token wants the refresh token). bearer wants the token. header and query want the API key. basic_auth wants the PASSWORD, paired with the Username above; on OPNsense that is the API secret."},
 		{Field: "scope", Label: "Scope (optional)", Placeholder: "https://api.ebay.com/oauth/api_scope", ShowWhen: "type:oauth2"},
 		{Field: "jwt_issuer", Label: "JWT issuer (iss)", Placeholder: "service-account@project.iam.gserviceaccount.com", ShowWhen: "type:oauth2;grant:jwt_bearer"},
 		{Field: "jwt_subject", Label: "JWT subject (sub, optional)", ShowWhen: "type:oauth2;grant:jwt_bearer"},
 		{Field: "jwt_audience", Label: "JWT audience (aud, optional)", Placeholder: "defaults to token URL", ShowWhen: "type:oauth2;grant:jwt_bearer"},
 		{Field: "jwt_key_id", Label: "JWT key id (kid, optional)", ShowWhen: "type:oauth2;grant:jwt_bearer"},
-		{Field: "password", Label: "Password", Type: "password", ShowWhen: "type:oauth2;grant:password", Help: "The resource-owner password (the SECOND secret of the password grant; the Client Secret field above holds the CLIENT secret). Stored encrypted, separately. Leave blank when editing to keep it."},
+		{Field: "password", Label: "Password", Type: "password", ShowWhen: "type:oauth2;grant:password", Help: "The resource-owner password: the second secret of the password grant.",
+			Detail: "The Client Secret field above holds the CLIENT secret. This one is stored encrypted, separately. Leave it blank when editing to keep it."},
 
 		{Field: "safety", Type: "header", Label: "Safety + limits"},
-		{Field: "base_url", Label: "Base URL", Placeholder: "https://192.168.0.1", Help: "The server this credential talks to. Requests are allowed only under this host (and the endpoints below). This is where you change which server it reaches."},
-		{Field: "allowed_endpoints", Label: "Allowed Endpoints", Type: "tags", Help: "Paths under the Base URL this credential may call. e.g. /api/* allows everything under /api/ ; /api/core/* scopes to one module. Add/remove entries. Leave empty to allow ANY path under the Base URL."},
+		{Field: "base_url", Label: "Base URL", Placeholder: "https://192.168.0.1", Help: "The server this credential talks to, and where you change which one it reaches.",
+			Detail: "Requests are allowed only under this host, and under the endpoints below."},
+		{Field: "allowed_endpoints", Label: "Allowed Endpoints", Type: "tags", Help: "Paths under the Base URL this credential may call.",
+			Detail: "For example /api/* allows everything under /api/, while /api/core/* scopes to one module. Add or remove entries. Leave it empty to allow ANY path under the Base URL."},
 		// (The legacy "Allowed URL pattern" single-glob field is retired
 		// from the form: two overlapping scoping fields kept misleading
 		// admins and LLMs about which applied. Old records that still
 		// carry a pattern keep working — simple prefix globs are
 		// auto-migrated onto Base URL at startup, complex ones are
 		// honored by the runtime fallback.)
-		{Field: "insecure_skip_tls", Label: "Allow self-signed / skip TLS verification", Type: "toggle", Help: "Turn ON only for LAN appliances with self-signed certs or hosts addressed by IP (e.g. an OPNsense box at https://192.168.0.1, where no cert can validate). Disables certificate checking for THIS credential's requests only. Leave OFF for public internet APIs."},
+		{Field: "insecure_skip_tls", Label: "Allow self-signed / skip TLS verification", Type: "toggle", Help: "Turn it on only for LAN appliances with self-signed certs, or hosts addressed by IP.",
+			Detail: "An OPNsense box at https://192.168.0.1 is the case: no cert can validate. This disables certificate checking for THIS credential's requests only. Leave it off for public internet APIs."},
 		{Field: "denied_url_patterns", Label: "Denied URL patterns", Type: "tags", Help: "Optional explicit denies, checked before the allow pattern."},
 		// A closed set, so it is ticked rather than typed. As free text it
 		// invited "Get" and "POST " — values that match nothing, narrowing a
@@ -304,16 +311,20 @@ func credentialFormFields() []ui.FormField {
 				{Value: "PATCH", Label: "PATCH", Help: "modify"},
 				{Value: "DELETE", Label: "DELETE", Help: "remove"},
 			},
-			Help: "Which HTTP methods this credential may use. NONE CHECKED = all of them, which is the default — tick some to narrow it, most usefully to the read-only three when a credential exists to fetch and nothing else."},
+			Help:   "Which HTTP methods this credential may use. None checked means all of them.",
+			Detail: "All of them is the default. Tick some to narrow it, most usefully to the read-only three when a credential exists to fetch and nothing else."},
 		{Field: "max_calls_per_day", Label: "Max calls / day", Type: "number", Min: 0, Help: "0 = unlimited."},
-		{Field: "cost_per_call", Label: "Cost per call ($)", Type: "number", Decimals: 6, Min: 0, Help: "Optional. Dollar cost of one dispatched call through this credential, for the Costs tab chart + per-source breakdown. 0 = untracked (free endpoint)."},
-		{Field: "requires_confirm", Label: "Require confirm before each call", Type: "toggle", Help: "The escalation tier. ON: every agent call through this credential renders an Allow once / Deny card in the chat and waits for the session owner; headless runs (channel wakes, schedules) are denied outright. Use for services that reach real people (messaging) or spend money. OFF: calls dispatch silently — right for an agent's own low-stakes accounts."},
+		{Field: "cost_per_call", Label: "Cost per call ($)", Type: "number", Decimals: 6, Min: 0, Help: "Optional. Dollar cost of one dispatched call through this credential.",
+			Detail: "It feeds the Costs tab chart and the per-source breakdown. 0 means untracked, for a free endpoint."},
+		{Field: "requires_confirm", Label: "Require confirm before each call", Type: "toggle", Help: "The escalation tier: whether a call through this credential has to be approved first.",
+			Detail: "On, every agent call renders an Allow once / Deny card in the chat and waits for the session owner; headless runs, meaning channel wakes and schedules, are denied outright. Use it for services that reach real people, such as messaging, or that spend money.\n\nOff, calls dispatch silently, which is right for an agent's own low-stakes accounts."},
 		{Field: "cred_scope", Label: "Whose credentials", Type: "select",
 			Options: []ui.SelectOption{
-				{Value: "shared", Label: "Shared — one key for everyone (you set it here)"},
-				{Value: "per_user", Label: "Per user — each user sets their own key (on their Account page)"},
+				{Value: "shared", Label: "Shared: one key for everyone (you set it here)"},
+				{Value: "per_user", Label: "Per user: each user sets their own key (on their Account page)"},
 			},
-			Help: "Shared: this credential's secret (below) is used for every user's calls — a service account / shared key. Per user: leave the secret blank here; each user supplies their OWN key on their Account page, and calls run as that user. Use per-user when writes need real attribution + per-user permissions."},
+			Help:   "Whether one shared secret covers everybody, or each user supplies their own.",
+			Detail: "Shared uses this credential's secret below for every user's calls: a service account or shared key. Per user means you leave the secret blank here, each user supplies their OWN key on their Account page, and calls run as that user. Use per-user when writes need real attribution and per-user permissions."},
 		{Field: "description", Label: "Description", Type: "textarea", Rows: 2, Help: "Shown to the LLM as the call_<name> tool description."},
 	}
 }

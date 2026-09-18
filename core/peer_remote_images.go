@@ -252,7 +252,7 @@ func syncPeerImages(p *RemotePeer, backends []PeerImageBackend) {
 		return
 	}
 	if len(p.ImageConnectors) > 0 {
-		Log("[peer] %q no longer offers rendering — removing %d local backend(s)", p.Name, len(p.ImageConnectors))
+		Log("[peer] %q no longer offers rendering: removing %d local backend(s)", p.Name, len(p.ImageConnectors))
 		teardownPeerImages(*p)
 		p.ImageConnectors = nil
 	}

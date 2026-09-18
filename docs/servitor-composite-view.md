@@ -1,8 +1,8 @@
-# The composite view — joining members, and tracing through them
+# The composite view: joining members, and tracing through them
 
 Status: **spec, nothing built.** Two asks that turn out to be one shape: a
 workspace that answers across code, live state, evidence, a service and docs;
-and generic trace questions — *"what data sources does this function rely on?"*,
+and generic trace questions: *"what data sources does this function rely on?"*,
 *"when I update this setting in the admin UI, what gets called?"*
 
 ## Both asks are the same shape
@@ -17,13 +17,13 @@ answered by re-deriving every hop with substring search, and neither keeps the
 result. That is why they belong in one spec: the machinery that makes a trace
 cheap is the machinery that makes the composite view persistent.
 
-Trace questions ARE answerable today — this whole document was researched by
+Trace questions ARE answerable today: this whole document was researched by
 grepping and reading, one hop at a time. The point is not to make them possible.
 It is to stop paying full price for the same traversal every time.
 
 ## What already exists
 
-**The workspace shell** — scout-then-drill, `MemberRoles`, a drill cap, cluster
+**The workspace shell**: scout-then-drill, `MemberRoles`, a drill cap, cluster
 fan-out, per-member knowledge docs with staleness. Members can now be systems,
 repos, evidence bundles and tool-backed services (v0.6.020).
 
@@ -40,15 +40,15 @@ attributes, typed edges, per-namespace scoping, and lookups:
 map with `link_entities`, one relationship per call, and calls it "a topology you
 can traverse, not flat facts on one node."
 
-**`bundle_timeline`** merges files into one time-ordered sequence — within a
+**`bundle_timeline`** merges files into one time-ordered sequence, within a
 single bundle.
 
 ## What's missing
 
 1. **The workspace accumulates nothing.** There is not one `updateDoc`,
    `storeFact` or graph write in any workspace file. Members remember; the
-   workspace does not. So the cross-domain join — the expensive part, and the
-   only part no member could have produced alone — exists for one answer and
+   workspace does not. So the cross-domain join (the expensive part, and the
+   only part no member could have produced alone) exists for one answer and
    evaporates.
 
 2. **The graph is written as a topology and read as a blob.**
@@ -68,13 +68,13 @@ single bundle.
 5. **Substring search cannot tell a definition from a reference from a comment.**
    The first hop of any trace is only as good as the token you guessed.
 
-6. **Scout ranking is still the MVP heuristic** — comparing "repo hit at 0.7"
+6. **Scout ranking is still the MVP heuristic**: comparing "repo hit at 0.7"
    against "the box's map mentions this". Two more member kinds made that
    harder, not easier.
 
 ## The build
 
-### Slice 1 — member links
+### Slice 1: member links
 
 Generalize `LinkedRepos` into typed relations between members, on the workspace
 record:
@@ -89,14 +89,14 @@ type MemberLink struct {
 
 Rendered in the roster next to Role and Capability, so the lead routes on
 declared structure instead of name similarity. `LinkedRepos` keeps working
-unchanged — it is the same idea at appliance scope, and a link here does not
+unchanged: it is the same idea at appliance scope, and a link here does not
 replace the tool-level join it performs.
 
 Cheapest item in the document and everything else reads better with it: a
 correlation across members is only meaningful once something says which members
 are related.
 
-### Slice 2 — traversal tools
+### Slice 2: traversal tools
 
 Three tools over the existing graph store, available to the lead and the worker:
 
@@ -106,28 +106,28 @@ Three tools over the existing graph store, available to the lead and the worker:
 | `map_neighbors(entity, depth, rel?)` | what does this touch, filtered by relation |
 | `map_path(from, to)` | how does this reach that |
 
-`scopedGraphBlock` stays for small graphs — a whole map that fits is the cheapest
-possible context — and becomes a summary plus these tools past a size threshold,
+`scopedGraphBlock` stays for small graphs: a whole map that fits is the cheapest
+possible context, and becomes a summary plus these tools past a size threshold,
 which is also the point at which pasting it stops working.
 
 This is the slice that turns the accumulated map from documentation into an
 index.
 
-### Slice 3 — trace probes
+### Slice 3: trace probes
 
 A probe shape for trace questions, in the prompts rather than in code: while
 following a chain, the worker records **each hop** with `link_entities` as it
 confirms it. The trace does not just answer the question, it builds the map.
 
 So the first *"when I update this setting, what is called?"* costs a full
-grep-and-read traversal, and the next one — for that setting or any setting that
-shares a hop — starts from `map_neighbors`.
+grep-and-read traversal, and the next one, for that setting or any setting that
+shares a hop: starts from `map_neighbors`.
 
 The prompt has to be explicit that a hop is only recorded when READ, never when
 guessed from a name. A graph half-built from plausible-looking edges is worse
 than no graph, because the next question trusts it.
 
-### Slice 4 — workspace memory
+### Slice 4: workspace memory
 
 A workspace-scoped graph namespace and doc set, distinct from every member's.
 What lands there is only what no member could have produced alone:
@@ -140,9 +140,9 @@ What lands there is only what no member could have produced alone:
 Member facts stay in member namespaces. The workspace records the **joins**,
 which is precisely the part currently thrown away.
 
-### Slice 5 — cross-member timeline
+### Slice 5: cross-member timeline
 
-`workspace_timeline(since, until, members?)` — merge time-ordered lines from
+`workspace_timeline(since, until, members?)`: merge time-ordered lines from
 evidence members, live-system log reads, and any service member whose tools
 expose timestamped events, into one sequence tagged by member.
 
@@ -152,7 +152,7 @@ correlation nobody asked for.
 
 ## Sequencing
 
-1 and 2 together — links make the roster honest, traversal makes the map usable,
+1 and 2 together: links make the roster honest, traversal makes the map usable,
 and neither is large. 3 immediately after, because it is prompt work that starts
 filling the graph traversal depends on. Then 4, then 5.
 
@@ -165,7 +165,7 @@ already requires. A traversal that ends in "the graph says so" is a regression.
 
 **No symbol awareness.** Substring search cannot distinguish `foo(` the
 definition from `foo(` the call from `foo` in a comment. Real call-graph
-tracing needs a parser per language — a much larger piece of work, deliberately
+tracing needs a parser per language: a much larger piece of work, deliberately
 not in this spec, and the reason the FIRST trace of any chain is still expensive.
 
 ## Open decisions
@@ -177,6 +177,6 @@ not in this spec, and the reason the FIRST trace of any chain is still expensive
 - **Is the workspace graph a separate namespace or a view over members?**
   Proposal: separate. A view cannot hold an edge whose endpoints live in two
   different members' namespaces, which is the only kind worth storing here.
-- **Who may write workspace memory — the lead, or a consolidation pass?** The
+- **Who may write workspace memory: the lead, or a consolidation pass?** The
   per-appliance pattern runs a consolidation agent after each turn. Proposal:
   the same, for the same reason (a lead optimizing for the answer under-records).

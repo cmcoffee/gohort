@@ -36,7 +36,8 @@ func init() {
 		App:      "/servitor",
 		Category: "Limits",
 		Label:    "Workspace members drilled per question",
-		Help:     "Maximum member appliances a single workspace question may investigate. Members beyond the cap are reported as skipped rather than silently dropped.",
+		Help:     "Maximum member appliances a single workspace question may investigate.",
+		Detail:   "Members beyond the cap are reported as skipped, rather than silently dropped.",
 		Kind:     KindInt,
 		Default:  6,
 		Min:      1,
@@ -47,7 +48,8 @@ func init() {
 		App:      "/servitor",
 		Category: "Limits",
 		Label:    "Workspace cluster fan-out width",
-		Help:     "How many cluster nodes a single investigate_cluster call queries at once. Higher finishes sooner; each node holds an SSH session and an LLM worker while it runs.",
+		Help:     "How many cluster nodes a single investigate_cluster call queries at once.",
+		Detail:   "Higher finishes sooner. Each node holds an SSH session and an LLM worker while it runs.",
 		Kind:     KindInt,
 		Default:  4,
 		Min:      1,
@@ -100,11 +102,11 @@ func (m wsMember) Kind() string {
 func (m wsMember) KindNote() string {
 	switch m.Kind() {
 	case "repo":
-		return "ingested source code — searchable directly with search_code"
+		return "ingested source code: searchable directly with search_code"
 	case "evidence":
 		return "an uploaded snapshot (logs, a dump). FIXED: it cannot be re-queried, so anything not captured is unobtainable rather than merely unknown"
 	case "service":
-		return "reached only through the tools bound to it — no shell, no filesystem"
+		return "reached only through the tools bound to it: no shell, no filesystem"
 	default:
 		return "a live system, reachable and re-queryable"
 	}
@@ -284,7 +286,7 @@ func (T *Servitor) scoutWorkspace(ctx context.Context, ws Appliance, members []w
 		switch m.Kind() {
 		case "repo":
 			if repoFileCount(m.Owner, m.ID) == 0 {
-				s.Note = "not ingested yet — run Refresh on this repo to make it searchable"
+				s.Note = "not ingested yet: run Refresh on this repo to make it searchable"
 				break
 			}
 			seen := make(map[string]bool)
@@ -308,7 +310,7 @@ func (T *Servitor) scoutWorkspace(ctx context.Context, ws Appliance, members []w
 			// un-mapped bundle scouts as empty and the lead skips the one member
 			// that actually holds the answer.
 			if bundle.Open(m.Owner, m.ID).FileCount() == 0 {
-				s.Note = "no evidence ingested yet — upload this bundle's files to make it searchable"
+				s.Note = "no evidence ingested yet: upload this bundle's files to make it searchable"
 				break
 			}
 			seen := make(map[string]bool)
@@ -361,7 +363,7 @@ func (T *Servitor) scoutWorkspace(ctx context.Context, ws Appliance, members []w
 			if s.Score == 0 && len(docs) == 0 {
 				// Never mapped, so there is nothing to match against. That is the
 				// opposite of "irrelevant" — the lead should know it's unexplored.
-				s.Note = "never mapped — nothing known about this member yet"
+				s.Note = "never mapped: nothing known about this member yet"
 				if m.Kind() == "service" {
 					s.Note += "; its data is only reachable through its tools, so a dispatch is the ONLY way to find out"
 				}
@@ -388,17 +390,17 @@ func scoutBlockFor(ws Appliance, scouts []memberScout, missing []string) string 
 	var b strings.Builder
 	b.WriteString("## Members\n\n")
 	b.WriteString("Members are NOT interchangeable. A function often lives on exactly one of them. Read **Role** and **Known to run** before dispatching: they tell you where a thing lives, independently of this question.\n\n")
-	b.WriteString("- **Role** is what the operator says the member is FOR. Trust it for routing even when the member's map does not currently show the service — a stopped service or an unmapped box still belongs to the node that owns it.\n")
+	b.WriteString("- **Role** is what the operator says the member is FOR. Trust it for routing even when the member's map does not currently show the service: a stopped service or an unmapped box still belongs to the node that owns it.\n")
 	b.WriteString("- **Known to run** is derived from what was actually found on that member last time it was mapped. Trust it for detail, not for completeness.\n")
 	b.WriteString("- A `[last updated: …]` older than a few weeks means you are reading how the system USED to work. Say so, or re-verify with a dispatch, before stating it as current.\n\n")
 	for _, s := range scouts {
 		m := s.Member
-		fmt.Fprintf(&b, "### %s — `%s`\n", m.Name(), m.ID)
+		fmt.Fprintf(&b, "### %s: `%s`\n", m.Name(), m.ID)
 		fmt.Fprintf(&b, "- Kind: %s", m.Kind())
 		if t := m.Target(); t != "" {
 			fmt.Fprintf(&b, " (%s)", t)
 		}
-		fmt.Fprintf(&b, " — %s\n", m.KindNote())
+		fmt.Fprintf(&b, ", %s\n", m.KindNote())
 		// Role and capability are printed for EVERY member on EVERY question.
 		// This is what the lead routes on: without it, a function that lives on
 		// exactly one node is invisible unless the question happened to name it.
@@ -416,7 +418,7 @@ func scoutBlockFor(ws Appliance, scouts []memberScout, missing []string) string 
 			fmt.Fprintf(&b, "- Linked: %s\n", strings.Join(lines, "; "))
 		}
 		if s.Role == "" && s.Capability == "" && s.Note == "" {
-			b.WriteString("- Role not declared and nothing mapped yet — ask this member directly if the question might involve it.\n")
+			b.WriteString("- Role not declared and nothing mapped yet: ask this member directly if the question might involve it.\n")
 		}
 		if s.Note != "" {
 			fmt.Fprintf(&b, "- Status: %s\n", s.Note)
@@ -433,7 +435,7 @@ func scoutBlockFor(ws Appliance, scouts []memberScout, missing []string) string 
 					fmt.Fprintf(&b, "  - …and %d more\n", len(s.Hits)-8)
 					break
 				}
-				fmt.Fprintf(&b, "  - `%s:%d` — %s\n", h.Path, h.Line, h.Text)
+				fmt.Fprintf(&b, "  - `%s:%d`, %s\n", h.Path, h.Line, h.Text)
 			}
 		case len(s.Docs) > 0 || len(s.Facts) > 0:
 			if len(s.Docs) > 0 {
@@ -459,7 +461,7 @@ func scoutBlockFor(ws Appliance, scouts []memberScout, missing []string) string 
 		b.WriteString("\n")
 	}
 	if len(missing) > 0 {
-		fmt.Fprintf(&b, "## Unavailable members\n\nThese are configured on the workspace but could not be resolved — they may have been deleted or un-shared. Say so if the question depends on them: %s\n\n", strings.Join(missing, ", "))
+		fmt.Fprintf(&b, "## Unavailable members\n\nThese are configured on the workspace but could not be resolved: they may have been deleted or un-shared. Say so if the question depends on them: %s\n\n", strings.Join(missing, ", "))
 	}
 	return b.String()
 }
@@ -538,7 +540,7 @@ func divergence_report(perNode map[string]string) string {
 		diffs = append(diffs, diff{value: v, present: present, absent: absent})
 	}
 	if len(diffs) == 0 {
-		return fmt.Sprintf("\n---\n\n**Cross-node comparison:** every concrete value (%d) appeared in all %d reports — no divergence detected.\n", shared, len(nodes))
+		return fmt.Sprintf("\n---\n\n**Cross-node comparison:** every concrete value (%d) appeared in all %d reports, no divergence detected.\n", shared, len(nodes))
 	}
 	// Fewest-nodes-present first: a value on one node out of three is a stronger
 	// signal than one missing from a single node.
@@ -549,13 +551,13 @@ func divergence_report(perNode map[string]string) string {
 		return diffs[i].value < diffs[j].value
 	})
 	var b strings.Builder
-	fmt.Fprintf(&b, "\n---\n\n**Cross-node comparison** — %d value(s) appeared in every report; the following did not:\n\n", shared)
+	fmt.Fprintf(&b, "\n---\n\n**Cross-node comparison**, %d value(s) appeared in every report; the following did not:\n\n", shared)
 	for i, d := range diffs {
 		if i >= 25 {
 			fmt.Fprintf(&b, "- …and %d more differing value(s).\n", len(diffs)-25)
 			break
 		}
-		fmt.Fprintf(&b, "- `%s` — reported by %s; NOT reported by %s\n", d.value, strings.Join(d.present, ", "), strings.Join(d.absent, ", "))
+		fmt.Fprintf(&b, "- `%s`: reported by %s; NOT reported by %s\n", d.value, strings.Join(d.present, ", "), strings.Join(d.absent, ", "))
 	}
 	b.WriteString("\nThese are LEADS, not conclusions: a value missing from a report means that node's worker did not mention it, which is not proof the node lacks it. Verify any difference that matters with a targeted follow-up before stating it as fact.\n")
 	return b.String()

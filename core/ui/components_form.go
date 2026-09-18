@@ -361,6 +361,17 @@ type FormField struct {
 	Placeholder string `json:"placeholder,omitempty"`
 	Help        string `json:"help,omitempty"`
 	Rows        int    `json:"rows,omitempty"`
+	// Detail is the long explanation, moved off the visible line and
+	// behind an ⓘ icon beside the label. Help stays one short sentence
+	// somebody can scan; everything a person needs only once they have
+	// stopped on this field goes here.
+	//
+	// A settings page has two readers at once: one looking for the knob
+	// they came for, and one who has found it and now needs to know what
+	// it does. Writing the whole paragraph inline serves the second and
+	// buries the first. Nothing is deleted by moving it, only taken off
+	// the scan path.
+	Detail string `json:"detail,omitempty"`
 	// Expand / Inline control how a "textarea" field is presented. A large
 	// prompt or JSON blob peeked through a short inline box is hard to read
 	// and edit, so a textarea can instead render as a read-only clamped

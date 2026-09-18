@@ -419,7 +419,7 @@ func applyBedrockMetrics(st *anthStreamState, event []byte) {
 		} `json:"amazon-bedrock-invocationMetrics"`
 	}
 	if err := json.Unmarshal(event, &wrapper); err != nil || wrapper.Metrics == nil {
-		Debug("[bedrock-runtime]: invocation metrics present but unreadable — token counts stay as the stream reported them")
+		Debug("[bedrock-runtime]: invocation metrics present but unreadable, token counts stay as the stream reported them")
 		return
 	}
 	// Guard on >0 so a metrics block that omits a field cannot zero out a count

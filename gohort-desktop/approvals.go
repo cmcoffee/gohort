@@ -194,7 +194,7 @@ func (s *approvalStore) Request(req ApprovalRequest, deliver func(ApprovalReques
 	case allow := <-ch:
 		return allow
 	case <-time.After(approvalDeadline):
-		core.Warn("[approval] timed out waiting for user on %s (%s) — denying", req.Name, req.ID)
+		core.Warn("[approval] timed out waiting for user on %s (%s): denying", req.Name, req.ID)
 		return false
 	}
 }

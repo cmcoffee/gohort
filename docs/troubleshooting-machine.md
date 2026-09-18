@@ -1,7 +1,7 @@
-# St4 — a troubleshooting machine, as the test of the phase model
+# St4: a troubleshooting machine, as the test of the phase model
 
 Status: **superseded** by [investigation.md](investigation.md) (v0.6.106). Kept for its predicted
-failures, which still stand and are still unmet — the investigation machine is the thing most likely
+failures, which still stand and are still unmet: the investigation machine is the thing most likely
 to hit them.
 
 The Design A / Design B question below was settled by asking rather than by building: the real
@@ -12,7 +12,7 @@ different jobs and neither design separated them. Replaces the withdrawn St4 in
 ## Why this, and not a port
 
 The original St4 was "port Builder's intake-to-build flow onto a machine". There was nothing to
-port — see the correction in agent-machines.md. But the *purpose* stands, and it is the only stage
+port: see the correction in agent-machines.md. But the *purpose* stands, and it is the only stage
 that matters for confidence: **something real has to stress the phase model hard enough to send
 St1-St3 back for changes.**
 
@@ -42,7 +42,7 @@ which is vision-in / fix-out. This is text, conversational, and open-ended.
 
 Two candidate designs. **They disagree about one thing, and that disagreement is the experiment.**
 
-### Design A — gathering is a transient phase
+### Design A: gathering is a transient phase
 
 ```
 scope     (transient)  what system, what symptom, what would count as an answer
@@ -61,7 +61,7 @@ exist:
 - **A way to fan out.** `gather` would have to call a pipeline as a tool, which is the same
   requirement in a different hat.
 
-### Design B — the machine holds the frame; the agent does the work
+### Design B: the machine holds the frame; the agent does the work
 
 ```
 scope     (transient)  what system, what symptom, what would count as an answer
@@ -70,8 +70,8 @@ work      (resident)   the agent gathers AND reasons, with its full catalog
                        and its attached pipelines, guarded back to scope
 ```
 
-The machine's job is to hold the investigation frame — what we are looking at, what has been ruled
-out, what the plan was — and NOT to do the gathering. Parallelism comes from the agent invoking an
+The machine's job is to hold the investigation frame: what we are looking at, what has been ruled
+out, what the plan was, and NOT to do the gathering. Parallelism comes from the agent invoking an
 attached pipeline (`run_<pipeline>`), which already works today.
 
 This needs **no St1 changes at all**, which is either the right answer or a suspiciously convenient
@@ -90,7 +90,7 @@ specific consequence.
 
 `walk()` does `cur.State[ph.Name] = PhaseResult{...}`. Re-entering a phase **replaces** its previous
 result. An investigation that gathers, learns something, and gathers again loses the first round's
-findings entirely. `Keep` does not help — it controls which *phases* survive a re-entry, not whether
+findings entirely. `Keep` does not help: it controls which *phases* survive a re-entry, not whether
 a phase's own history does.
 
 This is the failure I most expect. Fixing it means deciding whether a phase result is a value or a
@@ -98,8 +98,8 @@ log, and that is a real change to `MachineState`.
 
 ### 2. The pinned block grows without bound
 
-`MachineState` has no cap. The whole cache argument — the system prefix stays byte-identical across
-a resident run, so cold prefill is paid once — assumes the block is small and stable. A findings list
+`MachineState` has no cap. The whole cache argument (the system prefix stays byte-identical across
+a resident run, so cold prefill is paid once) assumes the block is small and stable. A findings list
 that grows every time `gather` runs breaks both halves: the prefix changes, and it gets big.
 
 A ten-turn investigation is where this shows up. A three-turn triage never will.
@@ -122,12 +122,12 @@ produces a confusing failure rather than an obvious one.
 
 If the user wants to interleave "keep digging" and "explain what you found" as different modes, that
 is two resident phases with a human-driven transition, and the only way between them is
-`change_phase` — an LLM judgment call on every turn. That may be exactly where a user-facing
+`change_phase`: an LLM judgment call on every turn. That may be exactly where a user-facing
 "switch phase" affordance turns out to be needed, which is UI work nobody has specced.
 
 ## The recipe
 
-Built as `extras/troubleshooting.machine.json` — Design B, three phases:
+Built as `extras/troubleshooting.machine.json`, Design B, three phases:
 
 ```
 scope  (transient, thinks)  what is actually being asked; routes to plan or straight to work
@@ -137,7 +137,7 @@ work   (resident)           gathers AND reasons, full catalog, guarded back to s
 
 `scope` routes with `next_from`, because not every question earns a planning step: "what does this
 error mean" goes straight to `work`, while "why is this slow" goes through `plan`. Both transient
-phases set `think: "on"` — they decide rather than transform, which is the case the default is
+phases set `think: "on"`: they decide rather than transform, which is the case the default is
 wrong for.
 
 Neither transient phase names any tools, and that is load-bearing rather than incidental. The moment
@@ -154,7 +154,7 @@ curl -sS -b cookies.txt -X POST http://127.0.0.1:8181/orchestrate/api/agents/<ag
   -H 'Content-Type: application/json' -d '{"machine": "<machineID>"}'
 ```
 
-Attach it to an agent that has **real tools and at least one attached pipeline** — an agent with no
+Attach it to an agent that has **real tools and at least one attached pipeline**: an agent with no
 way to fan out cannot exercise the parallel case, which is one of the three reasons this was chosen.
 
 ## Finding 0, before a single turn was run
@@ -167,8 +167,8 @@ call site (`runner.go:6117`, inside `runPlan`). Servitor's investigations do not
 - The scoped path (`RunScopedAgentRich` → `RunAgentSyncContinuingRich`) builds its own system
   prompt via `prependAgentContext` and also calls `RunAgentLoop` directly.
 
-So attaching this machine to `app-servitor-investigator` would persist fine — the app-agent shadow
-keeps `Machine`, since only prompt-bearing fields refresh from the spec — and then do **nothing at
+So attaching this machine to `app-servitor-investigator` would persist fine: the app-agent shadow
+keeps `Machine`, since only prompt-bearing fields refresh from the spec, and then do **nothing at
 all**. No phase would ever be entered.
 
 That was half-known: agent-machines.md's Open section already said dispatched sub-agents have no
@@ -185,7 +185,7 @@ what a "conversation" means for a caller that never comes back.
 
 An ordinary orchestrate agent **connected to an appliance**. Servitor's tool provider
 (`apps/servitor/agent_provider.go`) offers `request_capability`, `ask_system`, and the approved
-minted tools to any agent with a connection — so a normal agent gets real investigative reach while
+minted tools to any agent with a connection, so a normal agent gets real investigative reach while
 still running through `runPlan`, where the machine lives. Connect it at `/servitor/manage`, then
 attach the machine to that agent.
 
@@ -201,7 +201,7 @@ out, never specifically servitor.
 | **T3** | Fix what T2 found, in core if it is a model problem, in the machine if it is an authoring problem. Telling those apart is the judgement this stage exists to exercise. |
 | **T4** | Only if T2 shows Design B genuinely cannot express the flow: attempt Design A, which means filling `machineCatalog` and moving the phase walk. |
 
-T1 requires no engineering, which is the point — the first honest thing to do with a new primitive
+T1 requires no engineering, which is the point: the first honest thing to do with a new primitive
 is use it, not extend it.
 
 ## The success condition

@@ -10,7 +10,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 	return []ui.Section{
 		{
 			Title:    "Embeddings",
-			Subtitle: "Vector store ingestion + semantic search. Endpoint is an Ollama-compatible /api/embed server — typically the same host as the worker LLM. Disabling makes ingestion and search no-ops.",
+			Subtitle: "Vector store ingestion + semantic search. Endpoint is an Ollama-compatible /api/embed server: typically the same host as the worker LLM. Disabling makes ingestion and search no-ops.",
 			Body: ui.FormPanel{
 				Source:    "api/embeddings",
 				TestURL:   "api/embeddings/test",
@@ -52,7 +52,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		},
 		{
 			Title:    "Image Generation",
-			Subtitle: "Image generation provider used by tools that produce illustrations or thumbnails. Choose a built-in provider (leave API key blank to reuse the matching LLM provider's key), or an approved rest_image connector — a local ComfyUI / Automatic1111 or any spec-declared backend. Use “Add image backend” to stand up a local ComfyUI / A1111 in one step.",
+			Subtitle: "Image generation provider used by tools that produce illustrations or thumbnails. Choose a built-in provider (leave API key blank to reuse the matching LLM provider's key), or an approved rest_image connector: a local ComfyUI / Automatic1111 or any spec-declared backend. Use “Add image backend” to stand up a local ComfyUI / A1111 in one step.",
 			Body: ui.Stack{
 				Children: []ui.Component{
 					ui.FormPanel{
@@ -63,7 +63,8 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 							{Field: "provider", Label: "Provider", Type: "select",
 								Options: imageProviderOptions()},
 							{Field: "api_key", Label: "API Key", Type: "password",
-								Help:     "Provider API key. Leave blank to reuse the matching LLM provider's key. (Ignored for connector backends — they carry their own credential.)",
+								Help:     "Provider API key. Leave it blank to reuse the matching LLM provider's key.",
+								Detail:   "Ignored for connector backends, which carry their own credential.",
 								ShowWhen: "provider"},
 						},
 					},
@@ -93,7 +94,7 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		},
 		{
 			Title:    "Mail (SMTP)",
-			Subtitle: "Outbound SMTP for notification emails — signup approvals, scheduled deliveries, watcher alerts. Leave Server blank for localhost:25.",
+			Subtitle: "Outbound SMTP for notification emails: signup approvals, scheduled deliveries, watcher alerts. Leave Server blank for localhost:25.",
 			Body: ui.FormPanel{
 				Source:    "api/mail",
 				TestURL:   "api/mail/test",
@@ -212,7 +213,8 @@ func embeddingFormFields() []ui.FormField {
 	return append(fields,
 		ui.FormField{Field: "endpoint", Label: "Endpoint", Type: "text",
 			Placeholder: "http://localhost:11434/api",
-			Help:        "Base URL including the API version prefix — gohort appends /embeddings. Pick a preset below for the canonical path on common platforms.",
+			Help:        "Base URL including the API version prefix. gohort appends /embeddings.",
+			Detail:      "Pick a preset below for the canonical path on common platforms.",
 			ShowWhen:    local,
 			Presets: []ui.FieldPreset{
 				{Label: "Ollama", Value: "http://localhost:11434/api", Hint: "Ollama native API (→ /api/embeddings)"},
@@ -222,17 +224,20 @@ func embeddingFormFields() []ui.FormField {
 			}},
 		ui.FormField{Field: "model", Label: "Model", Type: "text",
 			Placeholder: "nomic-embed-text",
-			Help:        "Leave blank for single-model backends (llama.cpp, vLLM, hf-tei — they ignore this field). Required for Ollama. Click a chip below to fill from the endpoint's model list.",
+			Help:        "Leave it blank for single-model backends. Required for Ollama.",
+			Detail:      "llama.cpp, vLLM and hf-tei ignore this field. Click a chip below to fill it from the endpoint's model list.",
 			ShowWhen:    local,
 			ChipsSource: "api/embeddings/models"},
 		ui.FormField{Field: "api_key", Label: "API Key", Type: "password",
-			Help:     "Optional bearer token. Set for OpenAI hosted / authenticated proxies; leave blank for local Ollama, llama.cpp, or vLLM.",
+			Help:     "Optional bearer token.",
+			Detail:   "Set it for OpenAI hosted or authenticated proxies. Leave it blank for local Ollama, llama.cpp, or vLLM.",
 			ShowWhen: local},
 		// The prefixes belong to the MODEL, not to where it runs, so they stay
 		// visible when a peer is doing the embedding.
 		ui.FormField{Field: "query_prefix", Label: "Query prefix", Type: "text",
 			Placeholder: "search_query: ",
-			Help:        "Prepended to every search query before embedding. Asymmetric retrieval models need it: e5 uses \"query: \", nomic-embed \"search_query: \", bge \"Represent this sentence for searching relevant passages: \". Leave blank for symmetric models. Included verbatim, trailing space and all. Safe to change at any time.",
+			Help:        "Prepended to every search query before embedding. Asymmetric retrieval models need it.",
+			Detail:      "e5 uses \"query: \", nomic-embed uses \"search_query: \", bge uses \"Represent this sentence for searching relevant passages: \". Leave it blank for symmetric models. It is included verbatim, trailing space and all, and is safe to change at any time.",
 			ShowWhen:    "enabled",
 			Presets: []ui.FieldPreset{
 				{Label: "e5", Value: "query: ", Hint: "intfloat/e5 family"},
@@ -241,7 +246,8 @@ func embeddingFormFields() []ui.FormField {
 			}},
 		ui.FormField{Field: "doc_prefix", Label: "Document prefix", Type: "text",
 			Placeholder: "search_document: ",
-			Help:        "Prepended to every chunk, fact and tool description before embedding. e5 uses \"passage: \", nomic-embed \"search_document: \"; bge and Qwen3-Embedding use none. Changing it changes the embedding space: stored vectors stop matching until their documents are re-ingested.",
+			Help:        "Prepended to every chunk, fact and tool description before embedding.",
+			Detail:      "e5 uses \"passage: \" and nomic-embed uses \"search_document: \"; bge and Qwen3-Embedding use none. Changing it changes the embedding space: stored vectors stop matching until their documents are re-ingested.",
 			ShowWhen:    "enabled",
 			Presets: []ui.FieldPreset{
 				{Label: "e5", Value: "passage: ", Hint: "intfloat/e5 family"},
@@ -280,7 +286,7 @@ func transcribeFormFields() []ui.FormField {
 	return append(fields,
 		ui.FormField{Field: "endpoint", Label: "Endpoint", Type: "text",
 			Placeholder: "http://localhost:8089/v1",
-			Help:        "Base URL with the version prefix — gohort appends /audio/transcriptions.",
+			Help:        "Base URL with the version prefix: gohort appends /audio/transcriptions.",
 			ShowWhen:    local,
 			Presets: []ui.FieldPreset{
 				{Label: "whisper.cpp", Value: "http://localhost:8089/v1", Hint: "Default whisper.cpp HTTP server port"},
@@ -291,7 +297,8 @@ func transcribeFormFields() []ui.FormField {
 			Help:        "Optional. whisper.cpp ignores this; OpenAI expects 'whisper-1'.",
 			ShowWhen:    local},
 		ui.FormField{Field: "api_key", Label: "API Key", Type: "password",
-			Help:     "Optional bearer token. Set for real OpenAI / authenticated proxies; leave blank for local whisper.cpp.",
+			Help:     "Optional bearer token.",
+			Detail:   "Set it for OpenAI hosted or authenticated proxies. Leave it blank for local Ollama, llama.cpp, or vLLM.",
 			ShowWhen: local},
 	)
 }
@@ -317,7 +324,8 @@ func webSearchFormFields() []ui.FormField {
 		fields = append(fields, ui.FormField{
 			Field: "source", Label: "Search on", Type: "select",
 			Options: peers,
-			Help:    "Search from this instance, or through a peer you've connected under Resource Sharing › Peers. Borrowing a peer means this machine never holds the search API key.",
+			Help:    "Search from this instance, or through a peer you have connected.",
+			Detail:  "Peers live under Resource Sharing, then Peers. Borrowing a peer means this machine never holds the search API key.",
 		})
 	}
 	return append(fields,

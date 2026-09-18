@@ -183,7 +183,7 @@ func formatFactsWithAge(facts []SshFact, now time.Time) string {
 		if !now.IsZero() && f.Updated != "" {
 			if t, err := time.Parse(time.RFC3339, f.Updated); err == nil {
 				if now.Sub(t) > factTTLDuration(f.TTL) {
-					stale = " [STALE — re-verify]"
+					stale = " [STALE: re-verify]"
 				}
 			}
 		}

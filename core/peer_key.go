@@ -248,7 +248,7 @@ func MintPeerKey(label string, caps []string, ratePerMin int) (PeerKey, error) {
 	}
 	label = strings.TrimSpace(label)
 	if label == "" {
-		return PeerKey{}, fmt.Errorf("a label is required — it is how you will recognize this peer later")
+		return PeerKey{}, fmt.Errorf("a label is required: it is how you will recognize this peer later")
 	}
 	clean, err := cleanPeerCaps(caps)
 	if err != nil {
@@ -291,7 +291,7 @@ func cleanPeerCaps(caps []string) ([]string, error) {
 		clean = append(clean, c)
 	}
 	if len(clean) == 0 {
-		return nil, fmt.Errorf("grant at least one capability (%s) — a key with none can authenticate but do nothing", strings.Join(PeerCapabilities(), ", "))
+		return nil, fmt.Errorf("grant at least one capability (%s): a key with none can authenticate but do nothing", strings.Join(PeerCapabilities(), ", "))
 	}
 	sort.Strings(clean)
 	return clean, nil
@@ -387,7 +387,7 @@ func SetPeerKeyDisabled(id string, disabled bool) bool {
 	// gap between "revoked" on screen and revoked in fact.
 	if disabled {
 		if n := RevokePeerGrantTokens(id); n > 0 {
-			Log("[peer] key %q disabled — revoked %d issued token(s)", pk.Label, n)
+			Log("[peer] key %q disabled: revoked %d issued token(s)", pk.Label, n)
 		}
 	}
 	Log("[peer] key %q disabled=%v", pk.Label, disabled)
@@ -492,7 +492,7 @@ func SetPeerKeyScope(id, owner string, appliances []string) (PeerKey, error) {
 		clean = append(clean, a)
 	}
 	if len(clean) > 0 && owner == "" {
-		return PeerKey{}, fmt.Errorf("naming appliances needs an owner — an investigation runs as a user")
+		return PeerKey{}, fmt.Errorf("naming appliances needs an owner: an investigation runs as a user")
 	}
 	// Every id must actually resolve for that owner. Without this a grant can
 	// name an appliance the owner cannot see — wrong user, never shared, since
@@ -516,7 +516,7 @@ func SetPeerKeyScope(id, owner string, appliances []string) (PeerKey, error) {
 		}
 		if len(bad) > 0 {
 			return PeerKey{}, fmt.Errorf(
-				"%s cannot reach %s — an investigation runs as that user, so the grant would fail when used",
+				"%s cannot reach %s: an investigation runs as that user, so the grant would fail when used",
 				owner, strings.Join(bad, ", "))
 		}
 	}
@@ -620,6 +620,6 @@ func peerNoteAuthFailure(r *http.Request) {
 		// Said once per window, not per attempt: a source that has started
 		// failing systematically is worth knowing about, a log line per attempt
 		// is the flood it is trying to cause.
-		Log("[peer] %s has failed authentication %d times in a minute — refusing further attempts without a lookup", src, w.n)
+		Log("[peer] %s has failed authentication %d times in a minute: refusing further attempts without a lookup", src, w.n)
 	}
 }

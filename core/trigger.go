@@ -393,7 +393,7 @@ func StartTriggerScheduler() {
 		// one fire blew up. On panic, reschedule from the stored definition.
 		defer func() {
 			if r := recover(); r != nil {
-				Log("[trigger] %s/%s handler panicked: %v — rescheduling to survive", p.Owner, p.Name, r)
+				Log("[trigger] %s/%s handler panicked: %v, rescheduling to survive", p.Owner, p.Name, r)
 				if cur, ok := GetScheduledTrigger(RootDB, p.Owner, p.Name); ok && !cur.Paused && !cur.Push {
 					if next, recurring := nextTriggerRun(cur, time.Now().In(UserLocation(cur.Owner))); recurring {
 						_ = scheduleTriggerAt(RootDB, cur, next)
@@ -417,7 +417,7 @@ func StartTriggerScheduler() {
 					recordTriggerRun(RootDB, cur, summary)
 					dispatchTriggerAction(ctx, cur, summary)
 					if cur.RepeatUntil != "" && triggerStopMet(ctx, cur) {
-						Log("[trigger] %s/%s stop condition met after %d fire(s) — not rescheduling",
+						Log("[trigger] %s/%s stop condition met after %d fire(s): not rescheduling",
 							cur.Owner, cur.Name, cur.RepeatCount)
 						cur.SchedulerID = ""
 						cur.NextRun = time.Time{}

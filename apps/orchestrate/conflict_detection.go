@@ -40,9 +40,10 @@ const TunableConflictDetection = "tune_conflict_detection"
 
 func init() {
 	RegisterTunable(TunableSpec{App: "/orchestrate", Key: TunableConflictDetection, Category: "Memory",
-		Label: "Finding conflict detection",
-		Help:  "When saving a finding, check for an existing finding it contradicts and surface the conflict in the tool result. Never auto-deletes — you decide whether to keep, forget or reconcile. Costs one worker call only on a save whose dedup search already found a related-but-not-duplicate neighbour; most saves spend nothing. Findings only: facts already supersede and graph edges replace. Turn it off for an agent whose findings are independent of each other.",
-		Kind:  KindBool, Default: 1, Min: 0, Max: 1})
+		Label:  "Finding conflict detection",
+		Help:   "When saving a finding, check for one it contradicts and surface the conflict in the result.",
+		Detail: "It never auto-deletes: you decide whether to keep, forget or reconcile. It costs one worker call only on a save whose dedup search already found a related-but-not-duplicate neighbour, so most saves spend nothing.\n\nFindings only. Facts already supersede, and graph edges replace. Turn it off for an agent whose findings are independent of each other.",
+		Kind:   KindBool, Default: 1, Min: 0, Max: 1})
 }
 
 func conflictDetectionEnabled() bool { return TuneBool(TunableConflictDetection) }
@@ -96,9 +97,9 @@ func (t *chatTurn) detectFindingConflict(newContent string, neighbors []SearchHi
 func renderFindingConflictNote(conflicts []SearchHit) string {
 	var b strings.Builder
 	if len(conflicts) == 1 {
-		b.WriteString("\n\n⚠ Possible conflict: this may contradict a finding you already saved — ")
+		b.WriteString("\n\n⚠ Possible conflict: this may contradict a finding you already saved: ")
 	} else {
-		fmt.Fprintf(&b, "\n\n⚠ Possible conflict: this may contradict %d findings you already saved — ", len(conflicts))
+		fmt.Fprintf(&b, "\n\n⚠ Possible conflict: this may contradict %d findings you already saved: ", len(conflicts))
 	}
 	for i, h := range conflicts {
 		if i > 0 {
@@ -117,7 +118,7 @@ func renderFindingConflictNote(conflicts []SearchHit) string {
 		}
 		fmt.Fprintf(&b, " [id: mem:%s]", h.ReportID)
 	}
-	b.WriteString(". Both are kept — recall them and forget the outdated one if this supersedes it, or reconcile with the user.")
+	b.WriteString(". Both are kept: recall them and forget the outdated one if this supersedes it, or reconcile with the user.")
 	return b.String()
 }
 
@@ -162,7 +163,7 @@ func judgeFindingConflicts(chat FactChatFunc, newContent string, candidates []Se
 	resp, err := chat(ctx, []Message{
 		{Role: "user", Content: fmt.Sprintf(`A memory holds saved research findings. A NEW finding is being saved. For each EXISTING finding listed, decide whether the new finding CONTRADICTS it: they make INCOMPATIBLE claims about the same thing and cannot both be currently true.
 
-Do NOT flag a finding that merely adds detail, covers a different aspect, or agrees — only a genuine contradiction of the same claim. When unsure, do NOT flag.
+Do NOT flag a finding that merely adds detail, covers a different aspect, or agrees: only a genuine contradiction of the same claim. When unsure, do NOT flag.
 
 NEW finding: %q
 

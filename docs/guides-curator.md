@@ -1,4 +1,4 @@
-# The Guide Curator — one agent decides what a guide says
+# The Guide Curator: one agent decides what a guide says
 
 Status: **slices 1, 2 and 4 built** (v0.6.018). An editorial agent that owns the
 guide corpus. Producers stop choosing a destination and stop writing section
@@ -11,15 +11,15 @@ it **may create guides**. Both are expanded in "Authority" below.
 
 What shipped, and where it differs from the design below:
 
-- `core/docs/findings.go` — the `FindingTarget` seam, an optional interface on
+- `core/docs/findings.go`: the `FindingTarget` seam, an optional interface on
   a `DocumentTarget`, mirroring `ReferencingDocumentTarget`.
-  `apps/scribe/findings.go` — the inbox and the digest.
-  `apps/scribe/curator.go` — the agent and its decision kit.
-  `apps/scribe/curator_schedule.go` — threshold + interval firing.
-  `apps/scribe/curator_web.go` / `curator_ui.go` — the digest surface.
+  `apps/scribe/findings.go`: the inbox and the digest.
+  `apps/scribe/curator.go`: the agent and its decision kit.
+  `apps/scribe/curator_schedule.go`: threshold + interval firing.
+  `apps/scribe/curator_web.go` / `curator_ui.go`: the digest surface.
 - **`push_to_guide` was NOT removed.** Slice 5 retires the direct paths and is
   out of scope; servitor gained `record_finding` alongside it. The old tool
-  stays for the case it is actually right for — the user named a destination in
+  stays for the case it is actually right for: the user named a destination in
   their request.
 - **`supersede` refuses a single-observation finding outright**, rather than
   discouraging it in the prompt. A rule that consequential should not depend on
@@ -34,7 +34,7 @@ What shipped, and where it differs from the design below:
   path moves it as a side effect, which is fine when a person pushed a section
   and disorienting when a background batch reopens three guides.
 - **Per-user run locking**, because threshold firing and the interval tick
-  landing together is not hypothetical — it is what happens when a burst of
+  landing together is not hypothetical: it is what happens when a burst of
   findings arrives near an interval boundary, and both runs would file the same
   findings.
 - Slice 3's per-section provenance ledger is **not** built. Supersede works and
@@ -58,14 +58,14 @@ to notice.
 
 The fix is to give the corpus a single writer with editorial authority. Sources
 emit findings; the curator decides. That is also the only way the questions that
-matter become answerable at all — *does this duplicate something already in
-here, does it contradict it, does it supersede it* — because those questions need
+matter become answerable at all: *does this duplicate something already in
+here, does it contradict it, does it supersede it*, because those questions need
 a view of the whole corpus and of the other findings in the batch, and a
 per-push producer has neither.
 
 ## What already exists
 
-More than it first appears. A middleman is already in the path — it just has no
+More than it first appears. A middleman is already in the path: it just has no
 authority.
 
 **The cross-app write seam.** `core/docs/document_writer.go` is a
@@ -85,7 +85,7 @@ write into the open guide's section list: `list_sections`, `add_section`,
 `edit_section`, `draft_section` (`apps/scribe/coauthor.go`).
 
 **And a partial middleman already.** `guideTarget.Append` does NOT blind-append
-into an existing guide — it hands the content to the Guide Author via
+into an existing guide: it hands the content to the Guide Author via
 `runIncorporate` (`apps/scribe/coauthor.go:810`), whose prompt says to merge into
 an existing section or add a fitting one, in the guide's voice, without
 duplicating.
@@ -121,7 +121,7 @@ The agent is a formatter, not an editor.
 
 ## The build
 
-### Slice 1 — findings, not destinations
+### Slice 1: findings, not destinations
 
 A new core seam beside `DocumentTarget`: producers submit a **finding** and name
 no destination.
@@ -141,10 +141,10 @@ finding is about, which is the thing it actually knows.
 
 `push_to_guide` loses its `guide` and `section_title` parameters and becomes a
 finding submission. The tool's description changes from "add this to a guide" to
-"report this so it can be documented" — which is also a more honest description
+"report this so it can be documented", which is also a more honest description
 of what a probe worker is in a position to assert.
 
-### Slice 2 — the curator
+### Slice 2: the curator
 
 A sibling of the Guide Author (`app-guides-curator`), invoked over a **batch** of
 findings, holding the whole corpus:
@@ -166,7 +166,7 @@ curator from becoming a second, competing writer.
 dropped. A curator that silently discards is indistinguishable from one that is
 broken, and the discard log is the only evidence available for tuning it.
 
-### Slice 3 — the provenance ledger
+### Slice 3: the provenance ledger
 
 Per section, the findings that produced it: finding id, source kind + item,
 run id, observed-at, and whether it was superseded.
@@ -175,7 +175,7 @@ This is what makes the rest of the design work rather than being bookkeeping for
 its own sake:
 
 - `supersede` needs something to point at.
-- "is this stale" becomes computable — a section whose newest provenance entry is
+- "is this stale" becomes computable: a section whose newest provenance entry is
   four months old, about a system re-mapped last week, is a candidate for
   re-verification. Servitor already has exactly this concept for its own
   knowledge docs (`docStaleAfter`, `apps/servitor/knowledge.go:14`).
@@ -185,8 +185,8 @@ its own sake:
 ### Authority: it writes, and it reports
 
 The curator commits its decisions without asking. Guides already save every
-change as a revision, so nothing it does is unrecoverable, and the alternative —
-a review queue — is worse in the specific way that matters: a queue nobody drains
+change as a revision, so nothing it does is unrecoverable, and the alternative
+a review queue, is worse in the specific way that matters: a queue nobody drains
 is a slower discard, and it puts a human back in exactly the position this design
 is trying to relieve them of. Approval before every placement would also make the
 curator strictly more work than the current per-push write.
@@ -222,8 +222,8 @@ Three properties this needs to have, or auto-write stops being safe:
   only successful placements looks identical whether it is working well or
   throwing away everything hard.
 
-Each run's decisions are reversible from the digest itself — a per-entry undo
-that reverts to the revision before that placement — so disagreeing with the
+Each run's decisions are reversible from the digest itself: a per-entry undo
+that reverts to the revision before that placement, so disagreeing with the
 curator costs one click rather than an edit.
 
 ### Authority: it may create guides
@@ -232,12 +232,12 @@ Creating a guide is a larger claim than placing a section: it asserts that a
 topic deserves its own document. The curator may make that claim, bounded:
 
 - only from a batch containing **several findings on one topic** that fit no
-  existing guide — one orphan finding is a `Held`, not a new document;
+  existing guide: one orphan finding is a `Held`, not a new document;
 - the creation is named prominently in the digest, with the findings that
   justified it, so a wrong one is visible immediately rather than discovered
   months later as a stub nobody wrote;
 - a newly created guide starts with the sections those findings support and
-  nothing else. The curator does not outline a document it has no material for —
+  nothing else. The curator does not outline a document it has no material for
   an empty scaffold of headings reads as a guide that exists and is unfinished,
   which is worse than one that never got created.
 
@@ -245,7 +245,7 @@ The bound matters because the failure mode is asymmetric. A missed guide is a
 `Held` finding somebody notices; a spurious guide is a document in the user's
 corpus that looks authoritative and is nearly empty.
 
-### Slice 4 — batching
+### Slice 4: batching
 
 The curator runs over accumulated findings, not per submission: on a threshold
 (N pending) or an interval, whichever comes first, through the existing trigger
@@ -255,7 +255,7 @@ Batching is not an optimization here, it is what makes the editorial judgments
 possible. Three findings from three probes about the same service can only be
 merged into one section by something that sees all three.
 
-### Slice 5 — retiring the direct paths
+### Slice 5: retiring the direct paths
 
 - `push_to_guide`'s destination arguments go.
 - The blind new-guide create goes; a new guide becomes a curator decision.
@@ -270,7 +270,7 @@ Slices 1 + 2 + 4 are the minimum that changes anything: findings go to an inbox,
 a curator drains it on a schedule, placement reuses the author that already
 exists.
 
-Slice 3 can trail by one commit, but not more — `supersede` is unimplementable
+Slice 3 can trail by one commit, but not more: `supersede` is unimplementable
 without it, and retrofitting provenance onto sections written without it means
 those sections never get it.
 
@@ -292,5 +292,5 @@ Still open:
   should run in the OWNER's context on the owner's store, matching how servitor
   resolves a shared appliance.
 - **Confidence handling.** Whether a single-observation finding is placed at all,
-  or held until corroborated, is a policy the curator prompt can hold — but it
+  or held until corroborated, is a policy the curator prompt can hold, but it
   needs the field to exist from slice 1 to have the option later.

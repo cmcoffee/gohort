@@ -155,7 +155,7 @@ func (t *backgroundWorkTool) IsFrameworkTool() bool { return true }
 func (t *backgroundWorkTool) Desc() string {
 	return "See and STOP work you started that is still running in the background (a long render, a set of pictures, a dispatched agent). " +
 		"actions: list (what is still running for this conversation), stop (stop it). " +
-		"Use stop the moment the user changes their mind — \"actually don't\", \"forget the rest\", \"cancel that\" — instead of telling them it is on the way. " +
+		"Use stop the moment the user changes their mind (\"actually don't\", \"forget the rest\", \"cancel that\"), instead of telling them it is on the way. " +
 		"Stopping a set stops the whole set, not just the piece in flight. Nothing you stop will be delivered, and nothing further will arrive."
 }
 func (t *backgroundWorkTool) Params() map[string]ToolParam {
@@ -182,14 +182,14 @@ func (t *backgroundWorkTool) RunWithSession(args map[string]any, sess *ToolSessi
 		if len(jobs) == 0 {
 			// Said plainly, because the model's next move on an ambiguous
 			// "stop that" is otherwise to claim it stopped something.
-			return "Nothing is running in the background for this conversation. There is nothing to stop — if the user is waiting on something, it has already finished or was never started.", nil
+			return "Nothing is running in the background for this conversation. There is nothing to stop: if the user is waiting on something, it has already finished or was never started.", nil
 		}
 		var b strings.Builder
 		fmt.Fprintf(&b, "%d still running:\n", len(jobs))
 		for _, j := range jobs {
 			b.WriteString("  " + j.ID)
 			if l := strings.TrimSpace(j.Label); l != "" {
-				b.WriteString(" — " + l)
+				b.WriteString(" · " + l)
 			}
 			b.WriteString("\n")
 		}
@@ -198,19 +198,19 @@ func (t *backgroundWorkTool) RunWithSession(args map[string]any, sess *ToolSessi
 	case "stop":
 		stopped := CancelBackgroundJobs(session, strings.TrimSpace(StringArg(args, "task")))
 		if len(stopped) == 0 {
-			return "Nothing was stopped — there is nothing running in the background for this conversation. Do not tell the user you cancelled something; tell them there was nothing to cancel.", nil
+			return "Nothing was stopped: there is nothing running in the background for this conversation. Do not tell the user you cancelled something; tell them there was nothing to cancel.", nil
 		}
 		var b strings.Builder
 		fmt.Fprintf(&b, "Stopped %d. Nothing from it will be delivered, and no further pieces will arrive:\n", len(stopped))
 		for _, j := range stopped {
 			b.WriteString("  " + j.ID)
 			if l := strings.TrimSpace(j.Label); l != "" {
-				b.WriteString(" — " + l)
+				b.WriteString(" · " + l)
 			}
 			b.WriteString("\n")
 		}
-		b.WriteString("Say so in one line. Do NOT describe jobs, queues or how the work was running — they asked you to stop, not how it stopped.")
+		b.WriteString("Say so in one line. Do NOT describe jobs, queues or how the work was running: they asked you to stop, not how it stopped.")
 		return b.String(), nil
 	}
-	return "", fmt.Errorf("unknown action %q for background_work — use list | stop", StringArg(args, "action"))
+	return "", fmt.Errorf("unknown action %q for background_work: use list | stop", StringArg(args, "action"))
 }

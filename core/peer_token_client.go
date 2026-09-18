@@ -382,10 +382,10 @@ func renewPeerTokenAsync(name string) {
 			// key and one who waits for a retry that cannot work.
 			note := fmt.Sprintf("could not renew the credential for peer %q (%v)", key, err)
 			if isPeerAuthFailure(err) {
-				note += " — that peer is not connected until it is given a new key: " +
+				note += ", that peer is not connected until it is given a new key: " +
 					"re-issue one under its Resource Sharing settings and paste it into Update key here"
 			} else {
-				note += " — retrying; the peer is unreachable rather than refusing"
+				note += ", retrying; the peer is unreachable rather than refusing"
 			}
 			warnPeerResolveOnce("token:"+key, note)
 			return
@@ -615,7 +615,7 @@ func (t *peerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		// learn which of the three happened.
 		warnPeerResolveOnce("transport:"+t.name, fmt.Sprintf(
 			"a request is being sent to peer %q but no such peer is registered here, so it goes out with "+
-				"whatever credential the caller had — which the far side will refuse. The config still "+
+				"whatever credential the caller had, which the far side will refuse. The config still "+
 				"names that peer; the peer record is what is missing. Re-add it under Admin > Peers, or "+
 				"repoint the setting that references it.",
 			t.name))
@@ -692,7 +692,7 @@ func renewRefusedPeerCredential(req *http.Request, p RemotePeer) (string, bool) 
 				"Press Re-check on it under Admin > Peers. If the key is still good that adopts the token "+
 				"flow and everything recovers on its own; if it fails, the Status column then carries that "+
 				"peer's OWN words, which are the only thing that can tell a spent pairing code from a "+
-				"disabled one. Neither can be repaired from this side — a code is single use — so that case "+
+				"disabled one. Neither can be repaired from this side (a code is single use), so that case "+
 				"ends at re-issuing it there and pasting the new one with Update key. Until then every "+
 				"peer-backed capability (embeddings, search, transcription, images) answers 401.",
 			p.Name))
@@ -710,7 +710,7 @@ func renewRefusedPeerCredential(req *http.Request, p RemotePeer) (string, bool) 
 	if cred == "" || cred == strings.TrimSpace(p.Key) {
 		return "", false
 	}
-	Log("[peer] %q refused our credential — exchanged a new one and retrying", p.Name)
+	Log("[peer] %q refused our credential: exchanged a new one and retrying", p.Name)
 	return cred, true
 }
 

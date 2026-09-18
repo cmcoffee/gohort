@@ -234,7 +234,7 @@ func readDocWithAge(udb Database, applianceID, doc string, now time.Time) (conte
 		age = factAgeStr(entry.Updated, now)
 		if docIsStale(entry.Updated, now) {
 			if age != "" {
-				age += " — STALE, re-verify"
+				age += ", STALE, re-verify"
 			} else {
 				age = "STALE, re-verify"
 			}

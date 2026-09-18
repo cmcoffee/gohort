@@ -1,4 +1,4 @@
-# Machines — session-resident phase state for an agent
+# Machines: session-resident phase state for an agent
 
 Status: **St1-St3 built** (v0.6.087). First live run confirmed 2026-08-13: a machine authored through the `machine` tool, attached, and driving a real conversation. The guard, `change_phase`, and the browser surfaces (pill, diagram, editor) are still unconfirmed individually. Decision locked: **a
 Machine replaces the agent's brain** (see Decisions).
@@ -23,7 +23,7 @@ from the original spec, the difference is called out inline under **St1 note** /
 phase spec.
 
 **From the agent editor**: the Phase machine picker sits under Persona. It renders only when you
-have at least one machine — a select whose only option is None teaches nothing.
+have at least one machine: a select whose only option is None teaches nothing.
 
 **Over HTTP**, if you would rather write the JSON yourself:
 
@@ -72,7 +72,7 @@ runs decompose and route before replying; turns 2+ go straight to the resident p
 - `GET /orchestrate/api/sessions/{id}?agent_id=<agentID>` shows `Phase` and `MachineState`.
 - Ask something unrelated to see the guard trip, or watch the model reach for `change_phase`.
 
-A machine cannot be edited into a session that is already parked in it — re-point the agent and
+A machine cannot be edited into a session that is already parked in it: re-point the agent and
 start a new session. Deleting a machine leaves live sessions alone; their next turn runs as an
 ordinary agent turn with a `machine_missing` breadcrumb.
 
@@ -83,11 +83,11 @@ Asked directly, and worth answering here because the two look alike from outside
 A **pipeline** runs start to finish and returns a result; it is callable (`run_<name>`) and can back a
 page. A **machine** gives a conversation its shape: the unit is the TURN, it parks between them, and
 nothing calls it or reads a value out of it. The README's roadmap item "pipelines as agents" wants a
-workflow that is an ACTOR — callable, dispatchable, schedulable, with an ACL of its own — and a
+workflow that is an ACTOR (callable, dispatchable, schedulable, with an ACL of its own), and a
 machine is not that. It borrows the agent's identity rather than having one.
 
-The sharpest evidence is a gap in machines, not a claim about them: a **dispatched** turn — a
-schedule firing, a delegation, a sub-agent call — runs WITHOUT the machine, because those paths
+The sharpest evidence is a gap in machines, not a claim about them: a **dispatched** turn (a
+schedule firing, a delegation, a sub-agent call) runs WITHOUT the machine, because those paths
 assemble their own prompt and have no session to hold a position in (see Open, below). Dispatch and
 schedule are precisely what "pipelines as agents" wants for free. What machines did prove is the
 weaker, useful half: an agent's body CAN be a declared workflow, authored once and pointed at from
@@ -120,19 +120,19 @@ Builder's intake-to-build routing, debate's phase progression, and servitor's sc
 were three hand-rolled instances of this pattern. Checked properly, none of them is:
 
 - **Builder** deliberately has no intake phase. The lean rewrite (v0.5.535) made its persona
-  action-first — "act, don't interrogate. Understand the ask in a message or two, then BUILD it" —
+  action-first: "act, don't interrogate. Understand the ask in a message or two, then BUILD it"
   and what looks like intake is a decision table (`WHAT TO BUILD — first match wins`) inside one
   prompt, resolved per request rather than held as state. `AgentRecord.IntakeForm` is a form spec
   for public surfaces, not a phase. `builder_shadow_state_test.go`, cited as evidence, is about
   seed-record rebasing and has nothing to do with phases.
-- **debate** is `private/debate/pipeline.go` — 3000 lines of imperative Go behind `PipelineWork`,
+- **debate** is `private/debate/pipeline.go`: 3000 lines of imperative Go behind `PipelineWork`,
   the stages-are-code path. It has ordered sections, but it runs start to finish and returns. No
   user turn lands inside it. It is a pipeline, correctly.
 - **servitor**'s `scoutWorkspace` is one function called once from `workspace_session.go:43` to
   enrich a prompt before a turn. A pre-turn step, not a position the session holds.
 
 So the provenance argument was wrong and is withdrawn. What justifies this primitive is the case it
-was actually asked for: a conversation that decomposes once, routes once, and settles — which now
+was actually asked for: a conversation that decomposes once, routes once, and settles, which now
 runs live. Retrospective archaeology is not evidence, and it should not have been written as though
 it were.
 
@@ -144,9 +144,9 @@ it is in** and a **state blackboard** of what earlier phases decided.
 
 Two kinds of phase:
 
-- **Transient** — it runs, produces a structured result, and immediately hands off. Decompose,
+- **Transient**: it runs, produces a structured result, and immediately hands off. Decompose,
   route, plan. The user never takes a turn inside one.
-- **Resident** — subsequent user turns land here directly. Answer, converse, execute. A machine has
+- **Resident**: subsequent user turns land here directly. Answer, converse, execute. A machine has
   at least one, or it is just a pipeline.
 
 The distinction is the whole feature. Transient phases chain **inside one turn**; the turn ends when
@@ -321,13 +321,13 @@ one.
 
 > **St2 note (built).** Both mechanisms exist and converge on `MachineCursor.moveTo`, so a phase
 > reached either way is indistinguishable. The guard runs only on a **resumed** resident phase, never
-> on one the walk just entered — there is nothing to re-decide about a routing call made one line
+> on one the walk just entered: there is nothing to re-decide about a routing call made one line
 > ago. It **fails open** on every uncertain path (call error, unparseable verdict, unresolvable
 > target) and breadcrumbs each one: the cost of a wrong stay is one turn answered from a slightly
 > stale phase, while the cost of a wrong move is discarding the state the conversation is built on.
 > Target resolution falls back verdict → `GuardTo` → `Start`. The guard prompt deliberately excludes
-> the conversation — it gets the author's condition, the blackboard, the phase list, and the new
-> message — because a check handed the history it is meant to judge from outside tends to agree with
+> the conversation: it gets the author's condition, the blackboard, the phase list, and the new
+> message, because a check handed the history it is meant to judge from outside tends to agree with
 > whatever that history was already doing.
 >
 > `change_phase` takes effect **immediately**: it runs any transient phases the move passes through
@@ -360,7 +360,7 @@ Three different answers, and the split is deliberate:
 
 - **Transient phases: no reasoning by default.** They are paid before the user sees a word, so the
   base is off and an author opts in per phase with `think: "on"`. That default is WRONG for a phase
-  that genuinely judges — decomposing an ambiguous request, routing between close options — and the
+that genuinely judges (decomposing an ambiguous request, routing between close options), and the
   `machine` tool's help now says so, because the pipeline tool has always advised turning thinking
   on for decomposition and the two surfaces were quietly giving opposite advice.
 - **The guard: never.** Hardcoded `worker` tier, thinking off. It is a cheap check standing in front
@@ -414,7 +414,7 @@ an agent, the way Cortex and Fleet are.
 > **St3 note (built).** The editor page was NOT built, because there is no pipeline editor page to
 > share: pipelines are authored from chat through the `pipeline` grouped tool, and the only UI they
 > have is an attach picker. Machines follow that house pattern rather than inventing a bespoke page
-> — a `machine` grouped tool for authoring, a select on the agent editor for attaching. The HTTP
+>: a `machine` grouped tool for authoring, a select on the agent editor for attaching. The HTTP
 > routes exist for anyone who would rather write the JSON.
 >
 > The phase pill landed as a GENERIC `AgentLoopPanel.StatusURL`: the app serves
@@ -430,7 +430,7 @@ an agent, the way Cortex and Fleet are.
   is single-select, so the modal is a radio list rather than the chip picker Pipelines uses.
 
   It does NOT delete, and did until v0.6.204. Every other control on that row is scoped to THIS
-  agent — the checkbox attaches, the buttons open — so a × that destroyed the machine for every
+agent (the checkbox attaches, the buttons open), so a × that destroyed the machine for every
   agent running it sat one row-width from a checkbox meaning "use this one". Deleting is managing,
   and managing lives in Extensions → Machines, where the row says what uses a machine before you go.
   The modal says where it went; removing it silently would read as a capability that vanished
@@ -438,14 +438,14 @@ an agent, the way Cortex and Fleet are.
 
 **Editing WAS a JSON textarea**, on the reasoning that the phase schema was still allowed to move
 and a form built against a moving schema is the expensive thing to throw away. That held until the
-fields people actually keep editing were known — they turned out to be the guard wording, the phase
+fields people actually keep editing were known: they turned out to be the guard wording, the phase
 prompts, and whether a phase is resident, which is exactly what the argument predicted. The editor
 page (`/orchestrate/machine?id=…`) is a form per step now, with the map pinned above it; the JSON
 door stays behind *Edit as JSON* for anyone who already knows the shape. See **Editing one** below.
 
 A graph view of a machine's phases and transitions is **built** (see
-[workflow-graph.md](workflow-graph.md)) — "Show diagram" on each row of the Machines modal, with the
-open conversation's path highlighted on the machine it is running — a list of phase names implies an order a machine does not
+[workflow-graph.md](workflow-graph.md)): "Show diagram" on each row of the Machines modal, with the
+open conversation's path highlighted on the machine it is running. A list of phase names implies an order a machine does not
 have, and the runtime overlay is what turns the ⚠ trail into something you can look at.
 
 ## Staging
@@ -453,9 +453,9 @@ have, and the runtime overlay is what turns the ⚠ trail into something you can
 | Stage | Scope |
 |---|---|
 | **St1** ✅ | `core/machine_def.go` + interpreter + `Validate` + session persistence. No UI. |
-| **St2** ✅ | `core/machine_guard.go` (guard evaluation) + `ChangePhase` + the `change_phase` tool. Breadcrumbs and the transition cap moved into St1 — the degradation paths needed them to be honest from the first line. **The phase pill moved to St3**, with the rest of the UI: the chat surface is a `ui.AgentLoopPanel` with no generic per-session badge, and inventing one for this would be exactly the core/ui leak CLAUDE.md forbids. Until then the phase is visible in the ⚠ trail (every transition breadcrumbs) and on `GET /api/sessions/{id}`. |
-| **St3** ✅ | The `machine` tool (authoring), the agent-editor picker, HTTP CRUD + export/import, and the phase pill via a generic `StatusURL`. No editor PAGE — see the St3 note under Surfaces. |
-| **St4** | ~~Port Builder's intake-to-build routing.~~ Withdrawn — there was nothing to port; see the correction under Why. Replaced by a troubleshooting machine as the stress test: [troubleshooting-machine.md](troubleshooting-machine.md). Its success condition is a written-down change to St1-St3 that came from USE rather than design, or a defensible statement that none is needed. |
+| **St2** ✅ | `core/machine_guard.go` (guard evaluation) + `ChangePhase` + the `change_phase` tool. Breadcrumbs and the transition cap moved into St1: the degradation paths needed them to be honest from the first line. **The phase pill moved to St3**, with the rest of the UI: the chat surface is a `ui.AgentLoopPanel` with no generic per-session badge, and inventing one for this would be exactly the core/ui leak CLAUDE.md forbids. Until then the phase is visible in the ⚠ trail (every transition breadcrumbs) and on `GET /api/sessions/{id}`. |
+| **St3** ✅ | The `machine` tool (authoring), the agent-editor picker, HTTP CRUD + export/import, and the phase pill via a generic `StatusURL`. No editor PAGE: see the St3 note under Surfaces. |
+| **St4** | ~~Port Builder's intake-to-build routing.~~ Withdrawn: there was nothing to port; see the correction under Why. Replaced by a troubleshooting machine as the stress test: [troubleshooting-machine.md](troubleshooting-machine.md). Its success condition is a written-down change to St1-St3 that came from USE rather than design, or a defensible statement that none is needed. |
 
 ### What St1 left on the table, deliberately
 
@@ -474,7 +474,7 @@ have, and the runtime overlay is what turns the ⚠ trail into something you can
 
 ## The fields ARE most of the instruction
 
-A step's declared fields are not a schema bolted onto a prompt — each one is sent to the model with
+A step's declared fields are not a schema bolted onto a prompt: each one is sent to the model with
 the description the author wrote. So a description is a directive:
 
 ```
@@ -515,9 +515,9 @@ Reachable with change_phase, and only when the request has genuinely moved on.
 
 Plus the declared fields, requested separately as a validated schema.
 
-**So do not repeat any of it in the prompt.** Earlier steps' findings arrive pinned and labelled; the fields a step must return are asked for on their own. A prompt that pastes `{state:triage.observation}` into a sentence is paying for those tokens twice and keeping a copy that drifts from the field name. Reach for a reference only when the phrasing genuinely matters — "What they saw: X" reading better than a labelled block.
+**So do not repeat any of it in the prompt.** Earlier steps' findings arrive pinned and labelled; the fields a step must return are asked for on their own. A prompt that pastes `{state:triage.observation}` into a sentence is paying for those tokens twice and keeping a copy that drifts from the field name. Reach for a reference only when the phrasing genuinely matters, "What they saw: X" reading better than a labelled block.
 
-The editor shows this under **"What this step actually receives"**, rendered by calling `PhaseBlock` itself with placeholder findings. Not a description of the composition and not a re-implementation — the same bytes a live turn produces, so it cannot quietly stop being true.
+The editor shows this under **"What this step actually receives"**, rendered by calling `PhaseBlock` itself with placeholder findings. Not a description of the composition and not a re-implementation: the same bytes a live turn produces, so it cannot quietly stop being true.
 
 ### Declared routing targets
 
@@ -531,7 +531,7 @@ One declaration replaces a hand-written list in three places:
 
 - **The instruction is generated.** `PhaseBlock` states *"Put exactly one of these in next_phase"*
   and explains each choice in the TARGET's own words (its `desc`), so one description serves the
-  phase and every router that can reach it. The fallback is stated too — a model choosing badly
+  phase and every router that can reach it. The fallback is stated too: a model choosing badly
   should know what happens rather than discover it.
 - **The diagram draws those arrows** instead of one to every phase. Undeclared, a dynamic route
   honestly fans out to everything it could pick; declaring is what turns that into the shape you
@@ -541,7 +541,7 @@ One declaration replaces a hand-written list in three places:
   chose.
 
 The generated contract also carries the set, and a reply outside it is rejected where
-`runDeclaredOutput` can still repair it — one retry with the error, rather than a bad route.
+`runDeclaredOutput` can still repair it: one retry with the error, rather than a bad route.
 Capitalisation is not an error: a model answering "Answer" for "answer" has chosen correctly.
 
 Leaving it undeclared keeps the old behaviour exactly, so nothing existing changes.
@@ -568,18 +568,18 @@ diagram, and a save-time error when a name stops resolving. `next` stays the fal
 ("severity", say) is worth naming yourself.
 
 **A step routes ONE way, and the form now says so before the fact.** The two mechanisms hide each
-other live — pick a field to route on and the choices list goes away under your hand; tick a choice
+other live: pick a field to route on and the choices list goes away under your hand; tick a choice
 and the hand-wired controls do. `Problems()` remains the backstop for the JSON door and the tool,
 which can still write both and should still be told which wins. Neither door ever silently clears
 the other's setting: hide, refuse, explain.
 
 That symmetry needed one generic fix in core/ui: `show_when: "!field"` used plain JavaScript
-truthiness, and an empty ARRAY is truthy — so a checklist with nothing ticked read as answered and
+truthiness, and an empty ARRAY is truthy, so a checklist with nothing ticked read as answered and
 "!choices" could never fire. An empty list, an empty string and an absent key now all mean the same
 thing to a form.
 
 **The person's message arrives whether the prompt asks for it or not.** A transient step's prompt is
-a template, so one that never says `{input}` used to be sent without the message — the model
+a template, so one that never says `{input}` used to be sent without the message: the model
 answering confidently about nothing, which reads as it ignoring instructions. Now the framework
 prepends the message when the prompt is silent about it, and stays out of the way when the author
 placed it themselves.
@@ -587,12 +587,12 @@ placed it themselves.
 **What earlier steps established arrives the same way.** A resident step has always been handed the
 whole blackboard, composed into its block; a transient step was handed nothing, so its author
 hand-copied `{state:triage.observation}`, `{state:triage.source}`, `{state:triage.asked}` one
-reference at a time — three chances to typo a name the definition already knows, and three lines to
+reference at a time: three chances to typo a name the definition already knows, and three lines to
 fix after a rename. Now it is prepended unless the prompt places a `{state:…}` reference of its own.
 
 The vocabulary is FIXED, and that is what makes it a built-in: no name to choose, nothing to
 declare, the same meaning in every machine. It lives in one table (`MachineVars`), which the
-resolver, the editor's help and the `machine` tool's spec all read — a variable documented in one
+resolver, the editor's help and the `machine` tool's spec all read: a variable documented in one
 place and implemented in another is how one of them silently stops being true.
 
 | | | |
@@ -607,7 +607,7 @@ place and implemented in another is how one of them silently stops being true.
 | `{state:NAME.field}` | one field another step established | not a built-in: it names a step |
 
 **A field can take its value from one of these instead of being asked for it.** Name it after a
-built-in — `original_input`, `now`, `user`, `agent`, `prev`, `step`, `machine` — and it is filled
+built-in (`original_input`, `now`, `user`, `agent`, `prev`, `step`, `machine`), and it is filled
 from that built-in. The name IS the choice: `original_input` cannot mean anything else, and a
 machine where it did would be one where the same field name means the opening message here and
 whatever a model wrote there.
@@ -616,7 +616,7 @@ That rule lives in core (`MachinePhase.normalized`), not in the editor that offe
 because the editor is one of four doors: the `machine` tool writes these, `extras/` ships them,
 imports carry them. A rule enforced at one door is a rule that is not true.
 
-An explicit `from` still wins, for the case the name rule cannot express — a field with its own name
+An explicit `from` still wins, for the case the name rule cannot express: a field with its own name
 taking a built-in's value: `{"name": "asked", "from": "{original_input}"}`. The value is already known, so asking a model to copy it across is three ways worse than
 taking it: it costs tokens, it can be paraphrased, and it can be left out. Filled fields are left
 out of the output contract entirely (the model is never shown a field it is not being asked for)
@@ -624,8 +624,8 @@ and merged into the result afterwards, so the blackboard carries them exactly li
 step that asks for nothing and says nothing does not call a model at all.
 
 **All of them are text.** That is not an accident of the current set: a variable holds what the
-framework can hand a prompt, and a prompt takes words. So a filled field is normalized to a string —
-declaring it a list describes something that cannot happen — and `Advice()` says so rather than
+framework can hand a prompt, and a prompt takes words. So a filled field is normalized to a string
+declaring it a list describes something that cannot happen, and `Advice()` says so rather than
 `Problems()` refusing a machine that runs correctly. If you need a list, let the step work it out.
 
 `{input}` and `{original_input}` are the WORDS of a message. Images and files attached to a turn are
@@ -633,14 +633,14 @@ not in them, so a turn that arrived as a photo and nothing else resolves to noth
 leaves a `machine_static_empty` breadcrumb rather than a silently empty field.
 
 Adding a field asks WHAT KIND first: a choice between each built-in (by the name a field takes when
-it holds one, with what it means beside it) and **Variable** — the ordinary case, named in the word
+it holds one, with what it means beside it) and **Variable**: the ordinary case, named in the word
 an author would use to a colleague. A combo box asked both questions at once: click it and you are
 typing, with the built-ins behind a dropdown arrow nobody looks for. Only a Variable reveals a name
 box, a type, a Required toggle and an instruction; a built-in row is the choice and nothing else.
 
 The choice is never locked. It settled the instant it was picked once, which turned a mis-click
 into a remove-and-re-add; the row reshapes on every change anyway. Switching a built-in row to
-Variable hands back an EMPTY name box on purpose — a variable named after a built-in is read as
+Variable hands back an EMPTY name box on purpose: a variable named after a built-in is read as
 that built-in at every door, so pre-filling "now" there would make the switch appear to do nothing.
 
 The kind column is DERIVED, never stored: core decides that a field named after a built-in is that
@@ -648,8 +648,8 @@ built-in (at every door), so the form is told what the definition already means 
 a second copy that could disagree with it.
 
 **Picked when the field is added, settled after that.** The moment a row names a built-in it has
-nothing left to configure — the name is the choice, the value comes from the framework, the type is
-text — so the name locks and the type, required and instruction cells go away. That uses two more
+nothing left to configure: the name is the choice, the value comes from the framework, the type is
+text, so the name locks and the type, required and instruction cells go away. That uses two more
 generic row conditions (`LockWhen` / `HideWhen` on a rows column, the ShowWhen grammar evaluated
 against the row), because the alternative was three controls somebody could change and be ignored
 for. A setting that silently does nothing is worse than one that is not offered.
@@ -665,8 +665,8 @@ message would answer a different question under the same name.
 
 **A resident step's prompt resolves the stable subset.** Its prompt is pinned in the cacheable
 prefix, so only values that hold still may appear there: `{original_input}`, `{user}`, `{agent}`,
-`{step}`, `{machine}` all resolve (they are fixed for the session), while the volatile three —
-`{input}`, `{prev}`, `{now}` — are refused at save time, each with its reason, and zeroed inside
+`{step}`, `{machine}` all resolve (they are fixed for the session), while the volatile three
+`{input}`, `{prev}`, `{now}`: are refused at save time, each with its reason, and zeroed inside
 `PhaseBlock` regardless so no call site can break the cache by passing a clock in. `{established}`
 is refused there too: the block already composes it. Before this, a resident prompt containing
 `{user}` silently rendered a blank.
@@ -675,7 +675,7 @@ is refused there too: the block already composes it. Before this, a resident pro
 
 **In and out from the page where machines live.** Export is a row action on the list (the reason to
 take a copy is usually that you are about to change it, so it should not require opening the machine
-first) and a button in the editor. Import is a modal with a file field — `core/ui` reads the chosen
+first) and a button in the editor. Import is a modal with a file field: `core/ui` reads the chosen
 file as TEXT in the browser and submits its contents, so this is a form rather than an upload path,
 and the imported machine opens in the editor the way a draft or a duplicate does.
 
@@ -687,8 +687,8 @@ since machines shipped.
 
 
 Machines are a bundle artifact type ("machine", `machine_artifact.go`), so they ride the unified
-export/import surface next to agents, pipelines, tools and the rest. The recipe keeps its ID — an
-agent's `Machine` pointer is an ID, and the pointer travels in the agent's own recipe — which is
+export/import surface next to agents, pipelines, tools and the rest. The recipe keeps its ID: an
+agent's `Machine` pointer is an ID, and the pointer travels in the agent's own recipe, which is
 what lets an agent+machine bundle land wired. The agent's dependency walk names its machine, so
 exporting an agent folds the machine in automatically; before this, an exported agent arrived
 pointing at a machine that was never in the box, and walked and talked while quietly not being what
@@ -696,18 +696,18 @@ its author built.
 
 Delegate references normalize to agent NAMES on export (an imported agent is reborn under a fresh
 ID), a machine's own walk folds in the agents its steps delegate to and the exportable tools its
-steps narrow to, and bundle import SKIPS a same-ID or same-named machine rather than copying — the
+steps narrow to, and bundle import SKIPS a same-ID or same-named machine rather than copying: the
 existing one already serves the pointer the traveled ID exists for.
 
 ## Keeping the arms of a branch apart
 
-A machine is a graph, and every waiting step offers every other step to `change_phase` — which is
+A machine is a graph, and every waiting step offers every other step to `change_phase`, which is
 right for a conversation that genuinely changed subject, and wrong for a machine that BRANCHES,
 where the model can cross from one arm to the other because it judged the request close enough.
 
 `exits_to` on a step names where the conversation may be moved FROM it. Empty means anywhere (the
 default, and the right one for most machines). It bounds what the AGENT decides on its own, by
-either door — `change_phase` mid-turn, and a guard's verdict naming somewhere to go — because those
+either door (`change_phase` mid-turn, and a guard's verdict naming somewhere to go), because those
 are the same decision arriving two ways, and bounding one would leave the other open. A step's own
 `next` and the `guard_to` its author declared stay legal whatever the list says.
 
@@ -720,9 +720,9 @@ gets tried again; and `PhaseBlock` offers exactly the legal exits, since listing
 refuse teaches the model to spend a round being told no.
 
 **And it is drawn** (v0.6.206). It was not, for four versions, which was the wrong omission to make:
-`exits_to` is a fact about SHAPE — it exists to stop a conversation crossing from one arm of a split
-into the other — and shape is the one thing the picture carries. Worse than the missing arrows, the
-legend said "any phase can move to any other with `change_phase` — not drawn, because it connects
+`exits_to` is a fact about SHAPE: it exists to stop a conversation crossing from one arm of a split
+into the other, and shape is the one thing the picture carries. Worse than the missing arrows, the
+legend said "any phase can move to any other with `change_phase`: not drawn, because it connects
 everything to everything", which is precisely what `exits_to` makes false; a reader took the drawing
 to mean the bound was not there. Allowed exits are dotted, like a guard, because both are the
 conversation leaving a waiting step by something other than a handoff. The legend now names the
@@ -730,7 +730,7 @@ bounded phases, keeps the blanket claim only for machines that bound nothing, an
 when every phase lists its exits.
 
 **On a step that passes on it is reported, not drawn.** `change_phase` happens DURING a turn and
-such a step never holds one, the same reason a guard there judges nothing — so the checklist says so
+such a step never holds one, the same reason a guard there judges nothing, so the checklist says so
 in the same words as the guard rule, and the graph draws no arrow rather than contradicting the
 report sitting next to it.
 
@@ -742,15 +742,15 @@ A transient phase can name another agent:
 {"name": "verify", "agent": "Log analyst", "prompt": "Test the hypothesis…", "next": "report"}
 ```
 
-The other two ways a phase differs from the agent running the conversation — a narrowed tool
-catalog, a different tier — are configurations of the SAME agent. This one is not: a delegate has
+The other two ways a phase differs from the agent running the conversation (a narrowed tool
+catalog, a different tier) are configurations of the SAME agent. This one is not: a delegate has
 its own persona, tools and memory. It is the shape servitor uses, where something conducts and
 something with different reach does the work.
 
 The seam is `PhaseRunner`, which already meant "run this phase's prompt, hand me its declared
 fields". Delegation is a different runner, not different machinery.
 
-**Two calls when the phase declares fields.** The delegate is a whole agent and answers in prose —
+**Two calls when the phase declares fields.** The delegate is a whole agent and answers in prose
 it plans, uses tools, reports. Asking it for JSON as well would put a decoder's constraints on the
 thing whose value is that it is not a decoder. So it reports, and the phase's own worker shapes that
 report into the declared fields through the same path a non-delegating phase uses, told to take the
@@ -759,7 +759,7 @@ findings as given rather than re-do the work. A phase declaring nothing costs on
 **One continuing thread per (run, phase)**, keyed `machine:<thread>:<phase>` where the thread is the
 conversation's session id, or the run's own id when there is no conversation. Continuing, so a
 re-entered phase builds on what the delegate already established here; scoped to the run, so two
-investigations never share a delegate's context — and a schedule's fires do not either, which is why
+investigations never share a delegate's context, and a schedule's fires do not either, which is why
 a turn-free run mints a fresh id per FIRE rather than reusing the machine's.
 
 **Transient phases only.** A resident phase is where the conversation lives, and delegating it would
@@ -767,7 +767,7 @@ mean the person is talking to something they did not open. `Problems()` reports 
 
 **A name that does not resolve runs the phase inline and says so** (`phase_delegate_missing` in the
 session diagnostics). A machine is portable and the agent it names may not exist in this deployment;
-failing the turn would be worse, and failing silently would be worse still — a machine that quietly
+failing the turn would be worse, and failing silently would be worse still: a machine that quietly
 stops delegating has quietly stopped being what its author built. Delegating to yourself does the
 same, since that is a second turn of the same agent with all of the cost and none of the benefit.
 
@@ -776,14 +776,14 @@ wrong thing wearing the right name is the one outcome worse than an error.
 
 ## The two hosts (v0.6.334)
 
-Which of the five things runs a step — inline worker, one tool, a delegate, a pipeline, a child
-machine — is decided by `machineHost` (`apps/orchestrate/machine_host.go`). A host holds only what
+Which of the five things runs a step (inline worker, one tool, a delegate, a pipeline, a child
+machine) is decided by `machineHost` (`apps/orchestrate/machine_host.go`). A host holds only what
 those runners reach for: a catalog, an approval gate, somewhere to narrate, somewhere to leave
 breadcrumbs, the blackboard. Two are built:
 
-- **Conversational** (`chatTurn.machineHost`) — everything comes from the turn: the live catalog, the
+- **Conversational** (`chatTurn.machineHost`), everything comes from the turn: the live catalog, the
   turn's approval card, the activity surface, the session a delegate's thread hangs off.
-- **Unattended** (`OrchestrateApp.unattendedHost`) — built by the run: the owner's or requester's
+- **Unattended** (`OrchestrateApp.unattendedHost`), built by the run: the owner's or requester's
   pool, no approval gate (nobody to ask; `PhaseWorkerConfirm` reads a nil gate the same way), no
   prior-work ledger (that feeds the end-of-turn judge, which is a property of a reply to a person),
   and narration only where a surface asked for it.
@@ -803,51 +803,51 @@ The two kinds reach tools differently, and the difference is not cosmetic:
 
 - A step the conversation **waits in** runs as the turn itself, so it has the agent's whole
   catalog and its tool list NARROWS that. Empty means everything.
-- A step that **passes on** runs before the turn has a catalog at all — it happens during
-  system-prompt assembly, hundreds of lines before the round's tool session exists — so it reaches
+- A step that **passes on** runs before the turn has a catalog at all: it happens during
+  system-prompt assembly, hundreds of lines before the round's tool session exists, so it reaches
   exactly what it names and nothing otherwise. Empty means NO tools.
 
 That second half was inert until v0.6.171: the control existed, the tool's spec documented it, and
 the runtime handed every passing step an empty catalog, so a step told to "go and look" could not.
 It now builds a session of its own the way a pipeline's sub-run does (shared caches and dispatch
-counts, staged files folded back into the turn), and only when a step actually names tools — a step
+counts, staged files folded back into the turn), and only when a step actually names tools: a step
 that names none pays nothing.
 
 **A step's tools go through the turn's approval gate.** The turn's own loop stops for a tool whose
 credential is marked RequiresConfirm and renders the approval card; a worker stage auto-approves,
 because a pipeline runs with nobody watching and a prompt would hang forever. A machine step runs
-with somebody waiting, so it takes the turn's hook (`PhaseWorkerConfirm` — the host seam the
+with somebody waiting, so it takes the turn's hook (`PhaseWorkerConfirm`: the host seam the
 PhaseRunner doc always promised). Giving steps tools without this would have been a hole underneath
 the card rather than a feature.
 
 `Advice()` catches the mismatch that motivated this: a step whose instructions send it looking, with
 no tools named and no delegate. The shipped investigation recipe has exactly that shape, on purpose,
-and says so in its description — its `hunch` step is meant to be given whatever search tools the
+and says so in its description: its `hunch` step is meant to be given whatever search tools the
 deployment has.
 
 ## What the person sees while it runs
 
-A machine's transient steps run at the HEAD of a turn — before the persona is assembled, before a
+A machine's transient steps run at the HEAD of a turn, before the persona is assembled, before a
 single token reaches the browser. A decompose-then-route machine spends two model calls there, and
 a guarded step pays a third on every turn. That was silence, and silence during work somebody is
 waiting on reads as hung whatever the reason for it.
 
 Each step now announces itself on the activity surface before it runs, in the AUTHOR's words: the
 step's own `desc` is what the rail and the routing instruction already show, so there is no second
-copy to keep in sync. A guard says what it is ("checking whether this is still the same job") —
+copy to keep in sync. A guard says what it is ("checking whether this is still the same job")
 that call is paid on every turn spent in the step, and naming it is the only honest account of
 where the second went.
 
 ## Editing one
 
-> Pipelines are edited the same way, deliberately, and differ in four places on purpose —
+> Pipelines are edited the same way, deliberately, and differ in four places on purpose
 > see [pipeline-surfaces.md](pipeline-surfaces.md). The most instructive difference: removing a step
 > from a MACHINE drops every reference to it, because a machine's references live in fields; removing
 > a STAGE from a pipeline refuses while anything still reads it, because a pipeline's live in prose.
 
 
-**Or describe one.** "Describe one…" next to New machine takes a paragraph — what kinds of turns
-arrive, what should happen to each — and drafts a complete machine, landing you in the editor to
+**Or describe one.** "Describe one…" next to New machine takes a paragraph: what kinds of turns
+arrive, what should happen to each, and drafts a complete machine, landing you in the editor to
 adjust it. The drafter reads the machine tool's own spec (`machineHelpText`) and its output goes
 through the tool's own decoder, so a drafted machine cannot be a third dialect. A draft with
 problems still saves: the checklist phrases them as work remaining, and an imperfect draft beats an
@@ -857,26 +857,26 @@ empty editor.
 `choices`, `keep`, `exits_to` and routing-target list, clears a `guard_to` that pointed at it (an
 empty one means "back to the start", the least surprising landing), and writes down the new start if
 the deleted step was the beginning. Leaving those behind made the checklist report a deletion as
-work to do — blaming the author for doing what they meant.
+work to do: blaming the author for doing what they meant.
 
 Two references are deliberately NOT rewritten, because only a person can answer them: a step whose
 `next` pointed there is left with nowhere to go, and a prompt reading `{state:gone.field}` keeps its
 text. Both surface in the checklist as questions rather than as damage, and the removal's confirm
-names them beforehand — computed by the same walk that will do the removing, so the warning cannot
+names them beforehand: computed by the same walk that will do the removing, so the warning cannot
 promise something else.
 
 **The tool reports the same findings, and can settle the same half.** `machine(action="create")`
-said nothing about what it had just stored beyond "created" — and the author on that path is a
+said nothing about what it had just stored beyond "created", and the author on that path is a
 MODEL, which makes the most common finding ("the prompt asks for JSON, but this step already
 declares fields") a mistake that surface is the most likely to produce and was the least likely to
 catch. The help text warns about it at the top of a long spec and nothing checked afterwards.
 Create/update now append the advice, `list` counts a stored machine's outstanding problems, `get`
-lists them, and `machine(action="repair")` settles the mechanical half — the same
+lists them, and `machine(action="repair")` settles the mechanical half: the same
 `core/machine_repair.go` the button uses, so the two surfaces cannot settle different things.
 Problems never appear on a create reply, and that is not an omission: `Validate` refuses them first.
 
 **Describe a CHANGE, not just a machine.** "Describe one…" was one shot: a paragraph in, a whole
-machine out, and if it missed the only recourse was editing twelve fields by hand — the wrong
+machine out, and if it missed the only recourse was editing twelve fields by hand: the wrong
 recourse for "make triage decide between three lanes instead of two", which is a sentence somebody
 can say. The editor carries the same door for a machine that already exists. It reuses the drafter
 whole (same spec, same decoder, same repair pass); what differs is the ask: the current machine goes
@@ -887,21 +887,21 @@ Identity is the editor's, not the model's. The ID stays put so every agent point
 keeps pointing at it, and an empty name falls back to the old one rather than landing somebody in an
 editor whose title vanished.
 
-The reply names what changed in STEPS — added, removed, changed (instructions) or changed (wiring),
+The reply names what changed in STEPS: added, removed, changed (instructions) or changed (wiring),
 plus a rename or a moved start. Not the word "revised": a model that ignored the instruction and one
 that followed it produce that word identically, and a rewrite nobody asked for is the whole risk of
 the door.
 
 And it is undoable. `MachineDef.Previous` holds the definition a revision replaced, exactly one
 deep, set only by the doors that REPLACE a machine rather than edit part of it. A form that changes
-one field does not need it — the field is right there — but a revision can rewrite every prompt in
+one field does not need it (the field is right there), but a revision can rewrite every prompt in
 the machine, and the prompts are the part somebody actually wrote. Without a way back it is a
 control people are right not to press. The button appears only while there is something to put back,
 undo is one step rather than a toggle (pressing it twice must not walk forward again), and the
 snapshot is stripped on export: a recipe carries a machine, not its history.
 
 **A finding you cannot act on gets a button.** When a step is deleted its references go with it,
-but a machine that arrived any other way — an import, an older save, the `machine` tool — can name a
+but a machine that arrived any other way (an import, an older save, the `machine` tool), can name a
 step that is not there, and then the picker offering targets no longer offers that name. "step
 go_deep: next names unknown step \"testing\"" sat in the checklist with nothing on the page able to
 clear it. `core/machine_repair.go` settles that class and only that class: `next`, `guard_to`,
@@ -910,33 +910,33 @@ declared as something other than text. Each panel fixes what it reports, the but
 the count and titled with the changes themselves, and it does not appear when there is nothing to do.
 
 What it REFUSES is the point. A step that names tools AND delegates, a step that routes by a field
-AND lists choices, a duplicate name, a prompt that hand-rolls JSON — every one has two defensible
+AND lists choices, a duplicate name, a prompt that hand-rolls JSON: every one has two defensible
 answers, so fixing it would be picking one on the author's behalf and deleting work to do it. Those
 stay in the list, and there is a test that keeps them there.
 
 **The one finding whose fix is prose gets a draft, not an edit.** "the prompt asks for JSON, but
 this step already declares fields" is answered by deleting sentences from what the author wrote, and
-which sentences are formatting instructions and which are the subject is a judgement — "return the
+which sentences are formatting instructions and which are the subject is a judgement: "return the
 JSON object's key" is content. So that finding carries a *Rewrite the instructions…* button which
 opens the framework's assist workbench (`uiOpenAssist`) on the stored prompt, with the finding as
 its opening request. Every version including the original stays one click away, which is what makes
-accepting a suggestion safe. It drives the same `/suggest` endpoint the step's own ✨ button uses —
-a second endpoint would be a second set of rules about what a step's instructions may say — and
+accepting a suggestion safe. It drives the same `/suggest` endpoint the step's own ✨ button uses
+a second endpoint would be a second set of rules about what a step's instructions may say, and
 accepting saves through the phase form's own endpoint, so one place still decides what a save does.
 
 **A hidden control is a finding nobody can act on.** Three fields hid values they were still
 storing, and each turned a checklist entry into a dead end. `choices` and `next_from` hide each
-other, which is right while one is in use — but a step carrying BOTH showed NEITHER, while "keep
+other, which is right while one is in use, but a step carrying BOTH showed NEITHER, while "keep
 one" sat in the checklist. The tools list hides under a delegate, so "it names tools AND delegates"
 offered two ways out and one was behind a control nothing could open. `model` and `think` hide the
 same way, and those are not even inert: when the named delegate does not exist in this deployment
 the phase runs INLINE with exactly them. All three now follow the rule the checklist renderer
-already follows for a checked value whose option is gone — what is STORED stays visible so it can be
-removed — while exclusivity is untouched whenever only one side is in use.
+already follows for a checked value whose option is gone: what is STORED stays visible so it can be
+removed, while exclusivity is untouched whenever only one side is in use.
 
-**Renaming a step is one edit.** `RenameStep` rewrites every reference the definition holds —
+**Renaming a step is one edit.** `RenameStep` rewrites every reference the definition holds
 `next`, `choices`, `keep`, `guard_to`, routing targets, `start`, and `{state:old.…}` in prompts,
-guards and fills — so a rename never sends you hunting through the checklist. A rename onto an
+guards and fills, so a rename never sends you hunting through the checklist. A rename onto an
 existing step is refused (its references would silently re-point), the name field reloads the
 editor (everything on the page carries the old name until it does), and a form still addressing
 the old name 404s rather than resurrecting the step. Live sessions parked in the old name heal
@@ -952,7 +952,7 @@ picked from your agents, `tools` is a checklist of the user's actual pool (the s
 editor's Tools modal shows, grouped and filterable), and the prompt's help SPELLS OUT the
 `{state:…}` references available. Nothing in the editor is typed from memory.
 
-A tool an imported machine names that this deployment does not have stays on the list, labelled —
+A tool an imported machine names that this deployment does not have stays on the list, labelled
 a checklist only persists what it can show, so a name left off would be silently dropped by the
 next save. Broken-dependency posture: keep it visible, let the person uncheck it on purpose.
 
@@ -963,7 +963,7 @@ The steps are also the page's left rail (`SectionNav`), so a machine is navigate
 one step at a time, in order.
 
 **The map redraws when a step changes shape.** It is rendered server-side, so an edit that changes
-the machine without reloading the page — ticking a choice adds an arrow — would leave the picture
+the machine without reloading the page (ticking a choice adds an arrow), would leave the picture
 describing the machine as it was a moment before, while you look at it. It re-fetches itself
 (`/graph?links=1`, the map form with the section anchors) on the same invalidation broadcast the
 preview uses, coalesced so a checklist's save-per-box is one redraw, and re-lights the step you are
@@ -971,21 +971,21 @@ on afterwards. Structural edits that reload the page (add, remove, rename, reord
 reach it.
 
 **The map is pinned above the steps** (`Page.Sticky`), because `SectionNav` shows one section at a
-time — a picture in a section of its own could never be on screen with the step being edited, which
+time: a picture in a section of its own could never be on screen with the step being edited, which
 is exactly when you need it: a step's form lists the names it may choose between, while the SHAPE of
 that choice lives in the arrows. The step whose section is open is lit ("you are here"), driven by
 the same URL hash the rail navigates by, so there is one answer to "where am I". Collapsible,
 because a four-step machine is nearly 300px of permanent screen.
 
 **The picture navigates.** The graph is inlined into the editor (links inside an `<img>` SVG are
-inert) and every node links to its step's section — the graph is the rail, drawn. The anchors ride
+inert) and every node links to its step's section: the graph is the rail, drawn. The anchors ride
 the section nav's new hash support: each section has a URL (`#verify`, `#try-it`, same slug
 transform in Go and JS, pinned together by a test), so a deep link or the back button lands on a
 section, on any `SectionNav` page in the product.
 
 **Adding a step lands you on it.** The sections, the rail and every other step's selects are built
 server-side from the phase list, so a step added in the browser exists nowhere on screen until the
-page is rebuilt — the add dialog used to close and appear to do nothing. The add form redirects to
+page is rebuilt: the add dialog used to close and appear to do nothing. The add form redirects to
 the editor carrying the new step's section anchor, so it reopens with that step's form already
 open.
 
@@ -993,23 +993,23 @@ open.
 what the framework composes, so showing the pre-edit composition after a save is the same lie as an
 added step that never appears. It refreshes in place rather than reloading: the prompt box saves on
 a typing debounce, and a reload would yank the page out from under someone mid-sentence. It rides
-the framework's own invalidation broadcast — a phase form writes to `…/phases?name=<step>`, so the
-stale step is named in the event — and re-fetches from the same function that drew it.
+the framework's own invalidation broadcast: a phase form writes to `…/phases?name=<step>`, so the
+stale step is named in the event, and re-fetches from the same function that drew it.
 
 A step the conversation waits in establishes NOTHING, and the form says so where the section would
 be rather than removing it silently: its reply goes to the person, so there is no decoder to hand
 fields to, and `CompleteTurn` never pins that reply to the blackboard (it would paste it into every
 later step's prompt, forever). Anything later steps need is worked out by the step that FEEDS the
-waiting one — which is why the shipped recipe establishes in `triage` and `hunch`, and only talks in
+waiting one, which is why the shipped recipe establishes in `triage` and `hunch`, and only talks in
 `verify` and `answer`.
 
 **Changing a step's KIND rebuilds the form.** The sections under "What kind of step is this?" are
 built from that answer server-side, so toggling it without a rebuild left a step showing controls
-its new kind cannot use — an output contract on a step that now waits, a guard on one that no
+its new kind cannot use: an output contract on a step that now waits, a guard on one that no
 longer does. Same rule as the rename field: a control whose answer changes which controls exist
 reloads, and (being a toggle) it commits on change, so nothing typed is at risk.
 
-**Export and Duplicate** sit on the editor page, next to the machine's own fields — the portable
+**Export and Duplicate** sit on the editor page, next to the machine's own fields: the portable
 recipe and the safe-experiment copy both existed as endpoints and neither was reachable from the
 page where you author. Duplicate opens the copy, because working on the copy is the point.
 
@@ -1022,12 +1022,12 @@ in it.
 nested under it in the rail (`Section.Indent`, a generic one-level nesting for any SectionNav page)
 and each says what it is an alternative to in its own heading: "one of the ways triage can go". A
 flat rail draws two steps that are alternatives exactly like two that run one after the other, which
-is the distinction such a list most needs to make. Only a real fork nests — a step that hands off to
+is the distinction such a list most needs to make. Only a real fork nests: a step that hands off to
 exactly one place is a sequence, and drawing it as a branch would make every machine look forked.
 
 **The map's shape comes from the ARROWS, not the step list.** `layout()` ranks steps by distance
 from the entry over forward edges, so a step sits below whatever leads to it. Within a row, steps are
-ordered by the mean position of their PARENTS (barycentre) — which is what keeps an arm of a branch
+ordered by the mean position of their PARENTS (barycentre), which is what keeps an arm of a branch
 under its own branch two steps down. Declaration order decides only where that genuinely ties: the
 arms of one split, reached from the same step, sit left-to-right in the order they are declared, and
 that is what the ↑↓ buttons act on. Reordering a chain changes nothing in the picture, correctly.
@@ -1040,10 +1040,10 @@ was to reorder a list.
 reading order, the tie-break that arranges same-depth steps in the map, the order earlier findings are pinned into a
 prompt (`establishedBlock` renders in declared order, deliberately, so the cacheable prefix holds),
 and which waiting step catches a step that hands off nowhere (`firstResident`). It is ALSO the entry
-point when `start` was never set — so a move pins `start` to whatever it currently resolves to
+point when `start` was never set, so a move pins `start` to whatever it currently resolves to
 before reordering, because the editor shows the resolved value and a machine that never chose one
 would otherwise have its beginning moved by a button that says nothing about beginnings.
-machines **duplicate** from the list (numbered copies, landing in the copy's editor — iterating on
+machines **duplicate** from the list (numbered copies, landing in the copy's editor: iterating on
 the working one in place is how the working one stops working), and **What a turn costs** is derived
 from the definition: which steps cost a model call when they run, which only pin values and are
 free, and which turns pay a guard check. Per piece rather than per turn, because a deciding step
@@ -1051,11 +1051,11 @@ makes the path dynamic and a guessed total would sometimes lie.
 
 **Assign to agents** is on the page too (and, since v0.6.227, on the Extensions list as a row action, so a fleet can be pointed at machines without opening each one): a checklist of your agents, checked = attached. An unattached
 machine does nothing, and the only place to attach one used to be a different surface (the chat
-toolbar's Configure → Machines — still there, still works). An agent runs one machine at a time, so
+toolbar's Configure → Machines: still there, still works). An agent runs one machine at a time, so
 an agent already running another is labelled with what checking it would move.
 
 **Try it** sits with the picture, and it holds a CONVERSATION: send a message, see which steps ran
-and what each handed on, then keep sending — the cursor rides back through the browser, so a later
+and what each handed on, then keep sending: the cursor rides back through the browser, so a later
 turn resumes the parked step exactly as a live turn would. That is the only way a guard, a
 re-entry, or a one-turn handoff can ever be watched, because all of them exist only across turns.
 Each message appends its own block (turn 4 firing a guard sits under the three turns that led to
@@ -1072,20 +1072,20 @@ Hand-wiring a field lives under *Routing by hand*, collapsed unless it is in use
 
 The step's instructions box carries a **✨** that opens the shared assist workbench
 (`machine_suggest.go`). It is the one box in the app whose right answer depends on parts the author
-cannot see — what the framework composes around it, and what the other steps already establish — so
+cannot see (what the framework composes around it, and what the other steps already establish), so
 the drafter is given all of it, plus the rules the help text spends its words on (write the method,
 not the output; never ask for JSON).
 
 The spec is built server-side (`machine_editor.go`) for two reasons: the selects need the
 machine's own phase names and declared fields, and the help text is the part that carries
-the concepts — it belongs where it can be reviewed and tested, not in a string inside a
+the concepts: it belongs where it can be reviewed and tested, not in a string inside a
 browser file.
 
 **The checklist stays true while you fix things.** It lives in the section body rather than its
 heading so it can be refreshed, and it refetches on the same broadcast the map and the preview use.
 This is the one place staleness actually cost something: it is the list somebody works against, one
 fix at a time, and it said "3 to fix" until a reload however many had been fixed. Both wordings
-exist in Go and in the browser and are pinned together by a test — a refresh phrased differently
+exist in Go and in the browser and are pinned together by a test: a refresh phrased differently
 reads as the page changing its mind rather than as the same list one item shorter.
 
 **The checklist is `Validate`'s own findings**, shown as work remaining rather than as a
@@ -1094,7 +1094,7 @@ disagree with what a save will accept. A half-built machine has problems by defi
 an editor that reported them as failure would be arguing with somebody mid-thought.
 
 **Partial saves are safe.** The meta form holds three fields and the record has phases;
-a phase form holds one section and the phase has others. Both merge rather than replace —
+a phase form holds one section and the phase has others. Both merge rather than replace
 the same failure `patchAgent` exists to prevent on the agent record.
 
 **An incomplete machine still saves.** Refusing to store the third field until the tenth
@@ -1115,8 +1115,8 @@ doors, not a replacement.
 - Dispatched turns (scheduled fires, delegations, phantom, sub-agent calls) run WITHOUT the
   machine. Those paths assemble their own system prompt in `agent_dispatch.go` /
   `scheduled_updates.go` and never enter one, and a dispatch has no session to hold a position in
-  anyway. Since v0.6.174 that is at least VISIBLE: `beginDispatchDiag` — the wiring every dispatch
-  path already did by hand — records a `machine_not_on_dispatch` breadcrumb naming the machine the
+  anyway. Since v0.6.174 that is at least VISIBLE: `beginDispatchDiag` (the wiring every dispatch
+  path already did by hand) records a `machine_not_on_dispatch` breadcrumb naming the machine the
   turn ran without. Whether a dispatch should instead run the machine one-shot from `Start` with an
   ephemeral cursor (the same shape a rehearsal uses) is the open question; it is a real change to
   the most delicate path in the app, so it wants a live test rather than a confident patch.

@@ -697,7 +697,7 @@ func queryEDGAR(hook SourceHook, query string) (string, error) {
 			desc += " (" + src.FileDesc + ")"
 		}
 
-		fmt.Fprintf(&sb, "%d. %s — %s, filed %s\n", i+1, name, desc, src.FileDate)
+		fmt.Fprintf(&sb, "%d. %s: %s, filed %s\n", i+1, name, desc, src.FileDate)
 		fmt.Fprintf(&sb, "   %s\n", filing_url)
 		if src.PeriodEnd != "" {
 			fmt.Fprintf(&sb, "   Period ending: %s\n", src.PeriodEnd)
@@ -994,12 +994,12 @@ func QuerySourceHook(hook SourceHook, query string) (string, error) {
 	}
 
 	// Tier 3: live API.
-	nfo.Debug("[source-hooks] cache MISS %s: %q — calling live API", hook.Name, query)
+	nfo.Debug("[source-hooks] cache MISS %s: %q, calling live API", hook.Name, query)
 	result, err := queryHookLive(hook, query)
 	if err != nil {
 		// Errors are NOT cached — they might be transient (rate limit,
 		// network issue). Let the next call retry.
-		nfo.Debug("[source-hooks] cache SKIP-STORE %s: %q — live error: %v", hook.Name, query, err)
+		nfo.Debug("[source-hooks] cache SKIP-STORE %s: %q, live error: %v", hook.Name, query, err)
 		return result, err
 	}
 	// Cost hook: a real (cache-miss) call to a metered hook hit the API, so
@@ -1300,7 +1300,7 @@ type SourceHookTemplate struct {
 func SourceHookTemplates() []SourceHookTemplate {
 	return []SourceHookTemplate{
 		{
-			Description: "Legal research (case law) — requires Thomson Reuters API access",
+			Description: "Legal research (case law): requires Thomson Reuters API access",
 			NeedsAPIKey: true,
 			Hook: SourceHook{
 				Name:           "Westlaw",
@@ -1316,7 +1316,7 @@ func SourceHookTemplates() []SourceHookTemplate {
 			},
 		},
 		{
-			Description: "Free case law search — free account at courtlistener.com (case law only, not policy)",
+			Description: "Free case law search: free account at courtlistener.com (case law only, not policy)",
 			NeedsAPIKey: true,
 			Hook: SourceHook{
 				Name:           "CourtListener",
@@ -1332,7 +1332,7 @@ func SourceHookTemplates() []SourceHookTemplate {
 			},
 		},
 		{
-			Description: "Academic papers — free API key from semanticscholar.org/product/api",
+			Description: "Academic papers: free API key from semanticscholar.org/product/api",
 			NeedsAPIKey: true,
 			Hook: SourceHook{
 				Name:           "Semantic Scholar",
@@ -1348,7 +1348,7 @@ func SourceHookTemplates() []SourceHookTemplate {
 			},
 		},
 		{
-			Description: "Biomedical literature — free API key from ncbi.nlm.nih.gov/account",
+			Description: "Biomedical literature: free API key from ncbi.nlm.nih.gov/account",
 			NeedsAPIKey: true,
 			Hook: SourceHook{
 				Name:           "PubMed",
@@ -1358,7 +1358,7 @@ func SourceHookTemplates() []SourceHookTemplate {
 			},
 		},
 		{
-			Description: "Open access academic papers — free API key from CORE",
+			Description: "Open access academic papers: free API key from CORE",
 			NeedsAPIKey: true,
 			Hook: SourceHook{
 				Name:           "CORE",
@@ -1374,7 +1374,7 @@ func SourceHookTemplates() []SourceHookTemplate {
 			},
 		},
 		{
-			Description: "Biomedical and life sciences research — free, no API key",
+			Description: "Biomedical and life sciences research: free, no API key",
 			NeedsAPIKey: false,
 			Hook: SourceHook{
 				Name:           "Europe PMC",
@@ -1390,7 +1390,7 @@ func SourceHookTemplates() []SourceHookTemplate {
 			},
 		},
 		{
-			Description: "Academic papers across all disciplines — free, no API key",
+			Description: "Academic papers across all disciplines: free, no API key",
 			NeedsAPIKey: false,
 			Hook: SourceHook{
 				Name:           "OpenAlex",
@@ -1406,7 +1406,7 @@ func SourceHookTemplates() []SourceHookTemplate {
 			},
 		},
 		{
-			Description: "SEC filings, earnings calls, 10-K/10-Q/8-K — free, no API key",
+			Description: "SEC filings, earnings calls, 10-K/10-Q/8-K: free, no API key",
 			NeedsAPIKey: false,
 			Hook: SourceHook{
 				Name:           "SEC EDGAR",

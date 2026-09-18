@@ -229,11 +229,11 @@ func KeepImageOf(sess *ToolSession, ref, name, note string, subject ImageSubject
 	}
 	clean := safeKeptName(name)
 	if clean == "" {
-		return KeptImage{}, fmt.Errorf("name %q is not usable — use letters, digits, - or _, and not a bare number (image#3 already means the third-newest picture)", name)
+		return KeptImage{}, fmt.Errorf("name %q is not usable: use letters, digits, - or _, and not a bare number (image#3 already means the third-newest picture)", name)
 	}
 	data, origin, ok := keepSource(sess, ref)
 	if !ok {
-		return KeptImage{}, fmt.Errorf("no image found for %q — call action=\"help\" to list the pictures you can point at", ref)
+		return KeptImage{}, fmt.Errorf("no image found for %q: call action=\"help\" to list the pictures you can point at", ref)
 	}
 	if len(data) > maxKeptImageBytes {
 		return KeptImage{}, fmt.Errorf("that image is %s, over the %s limit for a kept reference", HumanSize(int64(len(data))), HumanSize(maxKeptImageBytes))
@@ -264,7 +264,7 @@ func KeepImageOf(sess *ToolSession, ref, name, note string, subject ImageSubject
 		}
 	}
 	if !held && len(existing) >= keptImageLimit {
-		return KeptImage{}, fmt.Errorf("you are already keeping %d images, the limit — forget one first with action=\"forget\"", keptImageLimit)
+		return KeptImage{}, fmt.Errorf("you are already keeping %d images, the limit: forget one first with action=\"forget\"", keptImageLimit)
 	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return KeptImage{}, fmt.Errorf("could not open the image library: %w", err)
@@ -394,7 +394,7 @@ func ForgetImage(sess *ToolSession, name string) (bool, error) {
 		// report the picture gone while every future reference still resolves.
 		for _, k := range KeptImages(sess) {
 			if k.Name == clean && k.Inherited {
-				return false, fmt.Errorf("%q belongs to %s, not to you — you can use it but only its owner can forget it. To stop using it here, keep your own image under that name instead", clean, k.Owner)
+				return false, fmt.Errorf("%q belongs to %s, not to you: you can use it but only its owner can forget it. To stop using it here, keep your own image under that name instead", clean, k.Owner)
 			}
 		}
 		return false, nil
@@ -517,12 +517,12 @@ func KeptImageManifest(sess *ToolSession) string {
 	var b strings.Builder
 	inherited := false
 	if len(people) > 0 {
-		b.WriteString("People you have a picture of — when a request names one of them, pass their id as a reference so you are working from their actual face, not a description of it:\n")
+		b.WriteString("People you have a picture of, when a request names one of them, pass their id as a reference so you are working from their actual face, not a description of it:\n")
 		for _, k := range people {
 			if k.Inherited {
 				inherited = true
 			}
-			fmt.Fprintf(&b, "- %s — %s\n", k.Ref, personLine(k))
+			fmt.Fprintf(&b, "- %s: %s\n", k.Ref, personLine(k))
 		}
 		b.WriteString("If a request names somebody who is NOT listed here, you do not know what they look like. Say so, or find a picture. Never render a face from a description and present it as them.\n")
 		b.WriteString("Pass the id and leave them OUT of the prompt: their name and what they look like are carried by the picture, and repeating either in words makes the renderer draw the words instead. Write only what should change around them.\n")
@@ -534,12 +534,12 @@ func KeptImageManifest(sess *ToolSession) string {
 		}
 	}
 	if len(things) > 0 {
-		b.WriteString("Other images you have kept (stable — these names don't shift):\n")
+		b.WriteString("Other images you have kept (stable, these names don't shift):\n")
 		for _, k := range things {
 			if k.Inherited {
 				inherited = true
 			}
-			fmt.Fprintf(&b, "- %s — %s\n", k.Ref, keptLine(k))
+			fmt.Fprintf(&b, "- %s: %s\n", k.Ref, keptLine(k))
 		}
 	}
 	if inherited {
@@ -550,7 +550,7 @@ func KeptImageManifest(sess *ToolSession) string {
 	// tries the id as a filename, fails, and reaches for the only thing that
 	// does produce a deliverable file — rendering a new one, which for a person
 	// is a different face handed over as their reference.
-	b.WriteString("To WORK FROM one, pass its id in the images list of an image call. To SEND one, call workspace(action=\"attach\", path=\"image#<name>\") — the id goes straight in, it is not a file in your workspace, and the kept copy survives being sent. Never re-render a kept picture to make it sendable.\n")
+	b.WriteString("To WORK FROM one, pass its id in the images list of an image call. To SEND one, call workspace(action=\"attach\", path=\"image#<name>\"): the id goes straight in, it is not a file in your workspace, and the kept copy survives being sent. Never re-render a kept picture to make it sendable.\n")
 	return strings.TrimRight(b.String(), "\n")
 }
 
@@ -570,7 +570,7 @@ func personLine(k KeptImage) string {
 	default:
 		// Said plainly: an entry with no handle was never matched to anyone who
 		// messaged in, so it is a label the agent wrote, not an identification.
-		parts = append(parts, label+" (name only — never matched to a handle)")
+		parts = append(parts, label+" (name only: never matched to a handle)")
 	}
 	if k.Inherited {
 		parts = append(parts, "inherited")
@@ -578,7 +578,7 @@ func personLine(k KeptImage) string {
 	if d := describeKept(k); d != "" {
 		parts = append(parts, d)
 	}
-	return strings.Join(parts, " — ")
+	return strings.Join(parts, " · ")
 }
 
 // keptLine renders a non-person entry the way it always read.
@@ -600,7 +600,7 @@ func describeKept(k KeptImage) string {
 	desc := k.Note
 	switch {
 	case desc != "" && k.Caption != "":
-		desc += " — " + k.Caption
+		desc += " · " + k.Caption
 	case desc == "":
 		desc = k.Caption
 	}
@@ -608,7 +608,7 @@ func describeKept(k KeptImage) string {
 	// evidence of what anyone really looks like, and that matters MORE for a
 	// person than for a logo, not less.
 	if k.Origin.AgentMade() {
-		return "MADE BY YOU (" + string(k.Origin) + ") — not a reference for anything real: " + desc
+		return "MADE BY YOU (" + string(k.Origin) + "), not a reference for anything real: " + desc
 	}
 	if k.Origin == ImageOriginUnknown {
 		// NOT the same as "given", and it used to be printed as if it were.
@@ -623,7 +623,7 @@ func describeKept(k KeptImage) string {
 		//
 		// The note cannot rescue it either: "Real photo of Craig" is prose the
 		// agent wrote, not a record of where the pixels came from.
-		return "ORIGIN NOT RECORDED — kept before this was tracked, so it may be something you made. Do not call it a photo or offer it as proof of what anyone looks like until you have looked at it: " + desc
+		return "ORIGIN NOT RECORDED: kept before this was tracked, so it may be something you made. Do not call it a photo or offer it as proof of what anyone looks like until you have looked at it: " + desc
 	}
 	return desc
 }
@@ -635,7 +635,7 @@ func describeKept(k KeptImage) string {
 // it LOOKS like — "navy circular mark, lowercase white wordmark" is useful
 // where "the company's logo" is not.
 const captionImagePrompt = "Describe this image twice, in this exact format:\n\n" +
-	"First line: a short label, under 15 words — what it is.\n" +
+	"First line: a short label, under 15 words, what it is.\n" +
 	"Then a blank line, then a detailed description of 60 to 120 words: subject, " +
 	"composition, colors, any text and its typography, and the overall style. " +
 	"Enough detail that someone who cannot see it could match the look.\n\n" +
@@ -668,7 +668,7 @@ func CaptionImage(sess *ToolSession, data []byte) (caption, description string) 
 	// concludes the backend is broken, and tells the user so. No caption at all
 	// is the honest outcome and one every caller already handles.
 	if ModelSawNoImage(out) {
-		Log("[image_keep] caption skipped — the vision model answered without seeing the image: %.120s", out)
+		Log("[image_keep] caption skipped, the vision model answered without seeing the image: %.120s", out)
 		return "", ""
 	}
 	// Label is the first line; everything after it is the detail. A model that
@@ -760,7 +760,7 @@ func LabelKeptImage(sess *ToolSession, name string, subject ImageSubject) (KeptI
 		// have the model report a label it never applied.
 		for _, k := range KeptImages(sess) {
 			if k.Name == clean && k.Inherited {
-				return KeptImage{}, "", fmt.Errorf("%q belongs to %s, not to you — you can use it but only its owner can label it. Keep your own copy under a different name if you need it labelled here", clean, k.Owner)
+				return KeptImage{}, "", fmt.Errorf("%q belongs to %s, not to you: you can use it but only its owner can label it. Keep your own copy under a different name if you need it labelled here", clean, k.Owner)
 			}
 		}
 		if names := keptImageNames(sess); len(names) > 0 {
@@ -840,23 +840,23 @@ func viewImageNote(imgs []ViewImage) string {
 	}
 	if labeled == 0 {
 		if len(imgs) == 1 {
-			return "Here is 1 image queued for you to view — the preceding tool result says what it is. " + look
+			return "Here is 1 image queued for you to view: the preceding tool result says what it is. " + look
 		}
 		// Nothing to anchor with: say so rather than implying an order that the
 		// parallel producers did not guarantee.
 		return fmt.Sprintf("Here are %d image(s) queued for you to view. They were produced by the tool calls above, "+
-			"but the order they arrived in is NOT necessarily the order those calls are listed in — do not assume "+
+			"but the order they arrived in is NOT necessarily the order those calls are listed in: do not assume "+
 			"the first image belongs to the first call. %s", len(imgs), look)
 	}
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "Here are %d image(s) queued for you to view, each named below in the order they are attached. "+
-		"Use these labels rather than the order of the tool calls above — several image tools can run at once and "+
+		"Use these labels rather than the order of the tool calls above: several image tools can run at once and "+
 		"finish in any order.\n", len(imgs))
 	for i, v := range imgs {
 		label := strings.TrimSpace(v.Label)
 		if label == "" {
-			label = "(unlabeled — the tool that queued it did not say what it is)"
+			label = "(unlabeled: the tool that queued it did not say what it is)"
 		}
 		fmt.Fprintf(&b, "  Image %d of %d: %s\n", i+1, len(imgs), label)
 	}

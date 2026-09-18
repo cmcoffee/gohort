@@ -49,7 +49,7 @@ func (T *OrchestrateApp) handleEvalsPage(w http.ResponseWriter, r *http.Request)
 		Sections: []ui.Section{
 			{
 				Title: "Suites",
-				Subtitle: "A suite grades one thing — an agent, a pipeline, a tool, a machine — and keeps every score it has ever given it. " +
+				Subtitle: "A suite grades one thing (an agent, a pipeline, a tool, a machine), and keeps every score it has ever given it. " +
 					"The number to watch is the one that moves after an edit.",
 				Wide: true,
 				Body: ui.Table{
@@ -123,11 +123,14 @@ func (T *OrchestrateApp) handleEvalSuitePage(w http.ResponseWriter, r *http.Requ
 						{Field: "name", Type: "text", Label: "Name"},
 						{Field: "desc", Type: "text", Label: "Description"},
 						{Field: "runs", Type: "number", Label: "Runs per case",
-							Help: "A single run of a non-deterministic model is an anecdote. Three is the smallest number that tells a flake from a failure."},
+							Help:   "A single run of a non-deterministic model is an anecdote.",
+							Detail: "Three is the smallest number that tells a flake from a failure."},
 						{Field: "stub", Type: "toggle", Label: "Script tool results instead of running them",
-							Help: "ON by default, and leave it on unless you mean it. With it off a run sends the emails, files the tickets and spends the money, every time anybody presses Run."},
+							Help:   "On by default, and leave it on unless you mean it.",
+							Detail: "With it off, a run sends the emails, files the tickets and spends the money, every time anybody presses Run."},
 						{Field: "cases", Type: "textarea", Label: "Cases (JSON)", Rows: 14,
-							Help: "An array of {name, prompt, must_include, must_not_include, must_call_tools, must_not_call_tools, must_fields, judge_prompt}. " +
+							Help: "An array of test cases.",
+							Detail: "Each one is {name, prompt, must_include, must_not_include, must_call_tools, must_not_call_tools, must_fields, judge_prompt}.\n\n" +
 								"must_fields grades a pipeline or machine on its DECLARED output ({\"winner\": \"for\"}), which is a sharper test than searching its prose for a word."},
 					},
 				},
@@ -151,7 +154,7 @@ func (T *OrchestrateApp) handleEvalSuitePage(w http.ResponseWriter, r *http.Requ
 					Fields: []ui.PipelineField{{
 						Name: "topic", Type: "text",
 						Label:       "What changed?",
-						Placeholder: "Shortened the judge prompt — optional, but it is what makes a score in the list readable a month later",
+						Placeholder: "Shortened the judge prompt: optional, but it is what makes a score in the list readable a month later",
 					}},
 					// The three that make a run list a SCORE list. They come
 					// from the meta the run emits, so nothing here computes

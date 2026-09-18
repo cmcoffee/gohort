@@ -54,7 +54,7 @@ func registerStandingRunner(app *OrchestrateApp) {
 		if rec, ok := findAgentByNameOrID(UserDB(app.DB, sa.Owner), sa.Owner, sa.AgentID); ok && rec.PendingApproval {
 			return StandingRunResult{
 				Status:  RunAttention,
-				Summary: "Skipped: agent \"" + rec.Name + "\" is still awaiting approval — activate it in the Authorizations pane and it will run on its next schedule.",
+				Summary: "Skipped: agent \"" + rec.Name + "\" is still awaiting approval: activate it in the Authorizations pane and it will run on its next schedule.",
 			}
 		}
 
@@ -162,7 +162,7 @@ func registerStandingRunner(app *OrchestrateApp) {
 			// it (not a silent "ok") and drop a breadcrumb in the report session's
 			// issues trail so it shows up in the ⚠ affordance, not just the run log.
 			res.Status = RunAttention
-			res.Summary = "Ran out of worker rounds before finishing — raise this agent's round limit or narrow its task. " + res.Summary
+			res.Summary = "Ran out of worker rounds before finishing: raise this agent's round limit or narrow its task. " + res.Summary
 			reportAgent := strings.TrimSpace(sa.ReportAgentID)
 			if reportAgent == "" {
 				reportAgent = sa.AgentID
@@ -172,7 +172,7 @@ func registerStandingRunner(app *OrchestrateApp) {
 				reportSession = cortexSessionID(reportAgent)
 			}
 			appendSessionDiag(UserDB(app.DB, sa.Owner), reportAgent, reportSession, "round-cap",
-				"Scheduled run \""+sa.Name+"\" hit its worker-round limit before finishing — the last action may not have run.")
+				"Scheduled run \""+sa.Name+"\" hit its worker-round limit before finishing: the last action may not have run.")
 		}
 		// Something this run READ carried instructions aimed at the agent.
 		//
@@ -201,8 +201,8 @@ func registerStandingRunner(app *OrchestrateApp) {
 			}
 			appendSessionDiag(UserDB(app.DB, sa.Owner), reportAgent, reportSession, "tool-scan-detected",
 				"Scheduled run \""+sa.Name+"\" read content carrying instructions aimed at this agent. "+
-					"It was marked as hostile and kept, not dropped, so the agent could report it — read what the run did.")
-			Log("[orchestrate/standing] agent=%s schedule=%q INJECTION DETECTED x%d (%d follow-up action(s) stopped) — run flagged for attention",
+					"It was marked as hostile and kept, not dropped, so the agent could report it: read what the run did.")
+			Log("[orchestrate/standing] agent=%s schedule=%q INJECTION DETECTED x%d (%d follow-up action(s) stopped): run flagged for attention",
 				sa.AgentID, sa.Name, run.Detections, run.TaintBlocks)
 		}
 		// Objective check (docs/loop-objectives.md). A standing agent with an
@@ -247,13 +247,13 @@ func registerStandingRunner(app *OrchestrateApp) {
 			if !stop {
 				pacedLine = applyStandingPacing(&cur, pacingAsk)
 			} else if _, _, asked := pacingAsk.Get(); asked {
-				Log("[orchestrate/pacing] standing %s/%s asked to move its next attempt, but the objective %s — the ask was dropped", sa.Owner, sa.Name, line)
+				Log("[orchestrate/pacing] standing %s/%s asked to move its next attempt, but the objective %s: the ask was dropped", sa.Owner, sa.Name, line)
 			}
 			switch {
 			case stalled:
 				SaveStandingAgent(RootDB, cur)
 				MarkStandingAgentStalled(RootDB, sa.Owner, sa.Name,
-					fmt.Sprintf("objective not met after %d attempt(s) — %s", attempt, reason))
+					fmt.Sprintf("objective not met after %d attempt(s): %s", attempt, reason))
 				Log("[orchestrate/objective] standing %s/%s stalled after attempt %d: %s", sa.Owner, sa.Name, attempt, reason)
 			case stop:
 				// Met. Paused rather than deleted: the schedule stays visible,
@@ -392,7 +392,7 @@ func runStandingPipeline(ctx context.Context, app *OrchestrateApp, sa StandingAg
 	if err := def.Validate(); err != nil {
 		return StandingRunResult{
 			Status:  RunAttention,
-			Summary: "Skipped: pipeline " + strconv.Quote(def.Name) + " would not run — " + err.Error(),
+			Summary: "Skipped: pipeline " + strconv.Quote(def.Name) + " would not run: " + err.Error(),
 		}
 	}
 	input := strings.TrimSpace(sa.Mission)
@@ -493,7 +493,7 @@ func runStandingMachine(ctx context.Context, app *OrchestrateApp, sa StandingAge
 		// morning, would enter a step the run could never leave.
 		return StandingRunResult{
 			Status: RunAttention,
-			Summary: "Skipped: machine " + strconv.Quote(def.Name) + " converses rather than runs — it has a step that waits for a person, " +
+			Summary: "Skipped: machine " + strconv.Quote(def.Name) + " converses rather than runs: it has a step that waits for a person, " +
 				"and a schedule fires with nobody there. Turn on \"this RUNS instead of converses\" on that machine, or point this schedule elsewhere.",
 		}
 	}
@@ -504,7 +504,7 @@ func runStandingMachine(ctx context.Context, app *OrchestrateApp, sa StandingAge
 	if probs := def.Problems(); len(probs) > 0 {
 		return StandingRunResult{
 			Status: RunAttention,
-			Summary: "Skipped: machine " + strconv.Quote(def.Name) + " will not run yet — " + probs[0] +
+			Summary: "Skipped: machine " + strconv.Quote(def.Name) + " will not run yet: " + probs[0] +
 				" (" + strconv.Itoa(len(probs)) + " outstanding). Its page lists them.",
 		}
 	}

@@ -60,14 +60,14 @@ func resolve_query_path(path string) (string, error) {
 		abs = real
 	}
 	if !core.PathAllowedOrConsent(abs) {
-		return "", fmt.Errorf("refused: %s is not under an allowed read root (allowed: %v) — operator can add a root via Account → Add Allowed Folder…", abs, core.AllowedReadRoots())
+		return "", fmt.Errorf("refused: %s is not under an allowed read root (allowed: %v), operator can add a root via Account → Add Allowed Folder…", abs, core.AllowedReadRoots())
 	}
 	info, err := os.Stat(abs)
 	if err != nil {
 		return "", fmt.Errorf("stat: %w", err)
 	}
 	if info.IsDir() {
-		return "", fmt.Errorf("%s is a directory — use filesystem_list_directory", abs)
+		return "", fmt.Errorf("%s is a directory: use filesystem_list_directory", abs)
 	}
 	return abs, nil
 }
@@ -82,7 +82,7 @@ func (t *stat_file_tool) Desc() string {
 	return "Inspect a file on the host filesystem of the connected gohort-desktop: " +
 		"size, mtime, line count, and a kind hint (json-like / log-lines / " +
 		"csv-like / html / xml-like / text / binary / empty). Call FIRST " +
-		"when you don't know what's in a file — the kind hint tells you " +
+		"when you don't know what's in a file: the kind hint tells you " +
 		"which query tool to reach for next (json-like → grep for the " +
 		"field; log-lines → tail; csv-like → head for the header)."
 }
@@ -115,7 +115,7 @@ func (t *head_file_tool) Name() string { return "filesystem_head_file" }
 
 func (t *head_file_tool) Desc() string {
 	return "Return the first N lines of a file on the gohort-desktop host " +
-		"(default 50). Cheap targeted slice — the right answer when you " +
+		"(default 50). Cheap targeted slice: the right answer when you " +
 		"need the start of a log, the header row of a CSV, or just want " +
 		"to see the shape of a file without dragging the whole thing " +
 		"across the bridge."
@@ -186,7 +186,7 @@ func (t *read_lines_tool) Name() string { return "filesystem_read_file_range" }
 func (t *read_lines_tool) Desc() string {
 	return "Return a specific line range from a file on the gohort-desktop " +
 		"host. 1-indexed, inclusive. Use after stat or grep tells you where " +
-		"to look — lets you pull exactly the slice you need without dragging " +
+		"to look: lets you pull exactly the slice you need without dragging " +
 		"the rest into context."
 }
 
@@ -222,10 +222,10 @@ func (t *grep_file_tool) Name() string { return "filesystem_grep_file" }
 
 func (t *grep_file_tool) Desc() string {
 	return "Search a file on the gohort-desktop host for a regex pattern " +
-		"(RE2 syntax — Go's regexp, NO PCRE-only constructs). Returns " +
+		"(RE2 syntax: Go's regexp, NO PCRE-only constructs). Returns " +
 		"matching lines with line numbers; optional `context` adds lines " +
 		"before/after each match (max 5). Right tool for finding specific " +
-		"entries inside a huge log or config — the matches come back, the " +
+		"entries inside a huge log or config: the matches come back, the " +
 		"whole file never crosses the bridge."
 }
 
@@ -302,7 +302,7 @@ func format_stat(abs string) (string, error) {
 	if len(first_line) > 200 {
 		first_line = first_line[:200] + "…"
 	}
-	line_count_str := "(unknown — file too large to count cheaply)"
+	line_count_str := "(unknown: file too large to count cheaply)"
 	if line_count >= 0 {
 		line_count_str = fmt.Sprintf("%d", line_count)
 	}

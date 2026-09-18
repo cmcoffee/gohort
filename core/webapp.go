@@ -227,7 +227,7 @@ func reportUnknownAppClaims() {
 		known[wa.WebPath()] = true
 	}
 	warn := func(kind, name, claim string) {
-		Warn("[apps] %s %q claims app %q, which no registered app serves — it will not appear under any app (its own tab still shows it)",
+		Warn("[apps] %s %q claims app %q, which no registered app serves: it will not appear under any app (its own tab still shows it)",
 			kind, name, claim)
 	}
 	for _, st := range ListRouteStages() {
@@ -476,7 +476,7 @@ func SetAppEnabled(db Database, path string, enabled bool) error {
 		return fmt.Errorf("no app path given")
 	}
 	if path == adminAppPath && !enabled {
-		return fmt.Errorf("the administrator panel cannot be disabled — it is the only way back")
+		return fmt.Errorf("the administrator panel cannot be disabled: it is the only way back")
 	}
 	current := DisabledApps(db)
 	next := make([]string, 0, len(current)+1)

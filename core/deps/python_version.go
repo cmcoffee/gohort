@@ -44,7 +44,7 @@ func probeSandboxPython() {
 	pythonProbeOnce.Do(func() {
 		out, err := exec.Command("python3", "--version").CombinedOutput()
 		if err != nil {
-			nfo.Debug("[sandbox] python3 --version failed (%v) — authoring note disabled", err)
+			nfo.Debug("[sandbox] python3 --version failed (%v): authoring note disabled", err)
 			return
 		}
 		// Output is "Python X.Y.Z" on every supported release.

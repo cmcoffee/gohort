@@ -33,7 +33,7 @@ func (t *ViewVideoTool) Caps() []Capability {
 }
 
 func (t *ViewVideoTool) Desc() string {
-	return "Watch a video at a URL: downloads via yt-dlp, samples frames evenly across the clip, and feeds those frames to you on the next round so you can visually describe / analyze it. Returns container metadata only — no file is attached to your reply. For attaching the actual video file to a reply, use download_video instead."
+	return "Watch a video at a URL: downloads via yt-dlp, samples frames evenly across the clip, and feeds those frames to you on the next round so you can visually describe / analyze it. Returns container metadata only: no file is attached to your reply. For attaching the actual video file to a reply, use download_video instead."
 }
 
 // IsInternetTool hides the tool when private-mode chat strips outbound HTTP.

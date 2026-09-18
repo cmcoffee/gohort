@@ -9,7 +9,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 	return []ui.Section{
 		{
 			Title:    "User-owned credentials",
-			Subtitle: "Credentials users create for themselves (on their Extensions page) — the admin API Credentials list above shows only GLOBAL creds, so without this the admin plane is blind to these. Disable revokes a credential without deleting it (the owner keeps the record; it stops resolving); Delete removes it and its encrypted secret. (User-owned agents will join this governance area once peer-sharing ships.)",
+			Subtitle: "Credentials users create for themselves (on their Extensions page): the admin API Credentials list above shows only GLOBAL creds, so without this the admin plane is blind to these. Disable revokes a credential without deleting it (the owner keeps the record; it stops resolving); Delete removes it and its encrypted secret. (User-owned agents will join this governance area once peer-sharing ships.)",
 			Body: ui.Table{
 				Source: "api/user-credentials",
 				RowKey: "id",
@@ -43,7 +43,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 		},
 		{
 			Title:    "Global-tool adoptions",
-			Subtitle: "Who has pulled each SHARED global tool into their fleet (opt-in from their Extensions catalog). Shows a shared tool's blast radius before you revoke it, and lets you force-remove one user's adoption. A ⚠ row is a stale adoption — the tool has since left the shared catalog. Removing an adoption stops that user's agents loading the tool until they re-adopt (if still permitted by its access list).",
+			Subtitle: "Who has pulled each SHARED global tool into their fleet (opt-in from their Extensions catalog). Shows a shared tool's blast radius before you revoke it, and lets you force-remove one user's adoption. A ⚠ row is a stale adoption: the tool has since left the shared catalog. Removing an adoption stops that user's agents loading the tool until they re-adopt (if still permitted by its access list).",
 			Body: ui.Table{
 				Source: "api/tool-adoptions",
 				RowKey: "id",
@@ -66,7 +66,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 		},
 		{
 			Title:    "User-owned agents",
-			Subtitle: "Agents users create and (optionally) peer-share with specific other users. Sharing is user-initiated — this is the admin's audit + revoke. A shared agent runs in its owner's context with each recipient's own credentials (no secret travels). Revoke share clears the recipient list; the owner keeps the agent. Empty recipients = private.",
+			Subtitle: "Agents users create and (optionally) peer-share with specific other users. Sharing is user-initiated: this is the admin's audit + revoke. A shared agent runs in its owner's context with each recipient's own credentials (no secret travels). Revoke share clears the recipient list; the owner keeps the agent. Empty recipients = private.",
 			Body: ui.Table{
 				Source: "api/user-agents",
 				RowKey: "id",
@@ -102,7 +102,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 		},
 		{
 			Title:    "User-owned pipelines",
-			Subtitle: "Pipelines users author and (optionally) peer-share. Same audit as agents above, for the other half of the user plane — a share you cannot see is a share you cannot govern. A shared pipeline is a RECIPE: recipients run the owner's definition against their own agents, tools and credentials, and cannot edit it. Revoke clears the recipient list; the owner keeps the pipeline.",
+			Subtitle: "Pipelines users author and (optionally) peer-share. Same audit as agents above, for the other half of the user plane: a share you cannot see is a share you cannot govern. A shared pipeline is a RECIPE: recipients run the owner's definition against their own agents, tools and credentials, and cannot edit it. Revoke clears the recipient list; the owner keeps the pipeline.",
 			Body: ui.Table{
 				Source: "api/user-pipelines",
 				RowKey: "id",
@@ -131,7 +131,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 		},
 		{
 			Title:    "User-owned machines",
-			Subtitle: "Machines users author and (optionally) peer-share — the third kind in the user plane, and governed exactly like the other two. A shared machine is a PROCEDURE: recipients run the owner's definition against their own agents, tools and credentials, and cannot edit it. A machine marked Runs can be put on a timetable or dispatched by an agent; the rest are only ever reached by a person talking to them. Revoke clears the recipient list; the owner keeps the machine.",
+			Subtitle: "Machines users author and (optionally) peer-share: the third kind in the user plane, and governed exactly like the other two. A shared machine is a PROCEDURE: recipients run the owner's definition against their own agents, tools and credentials, and cannot edit it. A machine marked Runs can be put on a timetable or dispatched by an agent; the rest are only ever reached by a person talking to them. Revoke clears the recipient list; the owner keeps the machine.",
 			Body: ui.Table{
 				Source: "api/user-machines",
 				RowKey: "id",
@@ -151,7 +151,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 					{Type: "button", Label: "Revoke share",
 						PostTo:  "api/user-machines?action=revoke_share&owner={owner}&id={id}",
 						Method:  "POST",
-						Confirm: "Revoke this machine's sharing? Its recipients lose access — including any schedule they armed against it, which is marked broken rather than left to fail. The owner keeps the machine.",
+						Confirm: "Revoke this machine's sharing? Its recipients lose access, including any schedule they armed against it, which is marked broken rather than left to fail. The owner keeps the machine.",
 						OnlyIf:  "shared",
 						Variant: "danger"},
 				},
@@ -160,7 +160,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 		},
 		{
 			Title:    "Pending promotions",
-			Subtitle: "Users' bottom-up requests to publish their own resources deployment-wide. Approve a tool request to Share it to the global catalog (each user then opts in from their Extensions page). Approve an app request to share it with every signed-in user — each gets their own copy of the app, and its scripts run with the owner's credentials, which is why an admin sees it first. Approve a public-link request to mint the app's anonymous link: anyone who has the URL then runs its data sources as the owner, with no login. Deny to dismiss. Credential and agent promotion arrive with their approve paths.",
+			Subtitle: "Users' bottom-up requests to publish their own resources deployment-wide. Approve a tool request to Share it to the global catalog (each user then opts in from their Extensions page). Approve an app request to share it with every signed-in user: each gets their own copy of the app, and its scripts run with the owner's credentials, which is why an admin sees it first. Approve a public-link request to mint the app's anonymous link: anyone who has the URL then runs its data sources as the owner, with no login. Deny to dismiss. Credential and agent promotion arrive with their approve paths.",
 			Body: ui.Table{
 				Source: "api/promotions",
 				RowKey: "id",

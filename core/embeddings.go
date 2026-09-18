@@ -292,7 +292,7 @@ func embedRaw(ctx context.Context, cfg EmbeddingConfig, text string) ([]float32,
 	// source to work out what could even live there. Slow embeds warn without
 	// DEBUG on, because that is the case an operator needs to see.
 	if elapsed > embedSlowWarn {
-		Log("[embed] SLOW %s in %s (endpoint=%s, %d chars) — an embed on a turn's critical path delays the whole message; check whether this endpoint shares a server with the worker model",
+		Log("[embed] SLOW %s in %s (endpoint=%s, %d chars): an embed on a turn's critical path delays the whole message; check whether this endpoint shares a server with the worker model",
 			embedOutcome(err, resp), elapsed.Round(time.Millisecond), url, len(text))
 	} else {
 		Debug("[embed] %s in %s (endpoint=%s, %d chars)", embedOutcome(err, resp), elapsed.Round(time.Millisecond), url, len(text))

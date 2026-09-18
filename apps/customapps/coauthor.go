@@ -55,7 +55,7 @@ func (T *CustomApps) coauthorTools(udb Database, spec AppSpec) []AgentToolDef {
 	return []AgentToolDef{{
 		Tool: Tool{
 			Name:        "add_section",
-			Description: "Append a new section to the document the user currently has OPEN in the workbench. Use this to add content the user asked for (e.g. \"add a section about hooks\") — it writes the section directly into the open document and the viewer updates. Provide the section heading and its body as MARKDOWN (sub-sections as ### …, plus lists/code as needed). Do NOT restate the whole document; pass only the new section. If no document is open you'll get an error — ask the user to select or create one first.",
+			Description: "Append a new section to the document the user currently has OPEN in the workbench. Use this to add content the user asked for (e.g. \"add a section about hooks\"): it writes the section directly into the open document and the viewer updates. Provide the section heading and its body as MARKDOWN (sub-sections as ### …, plus lists/code as needed). Do NOT restate the whole document; pass only the new section. If no document is open you'll get an error: ask the user to select or create one first.",
 			Parameters: map[string]ToolParam{
 				"section_title": {Type: "string", Description: "Heading for the new section (rendered as a ## heading)."},
 				"markdown":      {Type: "string", Description: "The section body as markdown. Sub-sections as ### headings; lists, code fences, etc. allowed. Just the new section, not the whole document."},
@@ -69,11 +69,11 @@ func (T *CustomApps) coauthorTools(udb Database, spec AppSpec) []AgentToolDef {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
 			md := strings.TrimSpace(fmt.Sprint(args["markdown"]))
 			if md == "" {
-				return "", fmt.Errorf("markdown is required — pass the section body")
+				return "", fmt.Errorf("markdown is required: pass the section body")
 			}
 			id := activeRecordID(udb, spec.Slug)
 			if id == "" {
-				return "", fmt.Errorf("no document is open — ask the user to select or create one in the list first")
+				return "", fmt.Errorf("no document is open: ask the user to select or create one in the list first")
 			}
 			tbl := recTable(spec.Slug)
 			var rec map[string]any

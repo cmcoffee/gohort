@@ -212,7 +212,7 @@ func FormatWorkspaceSurvey(list []WorkspaceUsage) string {
 		if u.Agent != "" {
 			where += " / agent " + u.Agent
 		}
-		fmt.Fprintf(&b, "\n  %s — %s in %d file(s), last written %s ago\n", where, HumanSize(u.Bytes), u.Files, roundDuration(u.Newest))
+		fmt.Fprintf(&b, "\n  %s: %s in %d file(s), last written %s ago\n", where, HumanSize(u.Bytes), u.Files, roundDuration(u.Newest))
 		for _, band := range u.ByAge {
 			fmt.Fprintf(&b, "      %-14s %5d file(s)  %s\n", band.Label, band.Files, HumanSize(band.Bytes))
 		}
@@ -266,11 +266,11 @@ func init() {
 			users := len(AuthListUsers(RootDB))
 			Log("[workspace-usage] scanning %q across %d user(s)", root, users)
 			if root == "" {
-				Log("[workspace-usage] no workspaces root configured — nothing to scan")
+				Log("[workspace-usage] no workspaces root configured: nothing to scan")
 				return 0
 			}
 			if users == 0 {
-				Log("[workspace-usage] no users enumerated — the survey walks per-user roots, so it found nothing to look at")
+				Log("[workspace-usage] no users enumerated: the survey walks per-user roots, so it found nothing to look at")
 				return 0
 			}
 			list := SurveyWorkspaces(RootDB)

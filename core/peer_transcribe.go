@@ -93,7 +93,7 @@ func HandlePeerTranscribe(w http.ResponseWriter, r *http.Request) {
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		peerDeny(w, http.StatusBadRequest, "the \"file\" part is required — it carries the audio to transcribe")
+		peerDeny(w, http.StatusBadRequest, "the \"file\" part is required: it carries the audio to transcribe")
 		return
 	}
 	defer file.Close()
@@ -201,7 +201,7 @@ func ResolveTranscribeProvider(cfg TranscribeConfig, provider string) (Transcrib
 	}
 	p, ok := PeerFromProvider(provider)
 	if !ok {
-		return cfg, fmt.Errorf("no peer named %q is registered — add it under Peers first",
+		return cfg, fmt.Errorf("no peer named %q is registered: add it under Peers first",
 			strings.TrimPrefix(provider, peerProviderPrefix))
 	}
 	if !p.Offers(PeerCapTranscribe) {
@@ -253,13 +253,13 @@ func resolveTranscribePeer(cfg TranscribeConfig) TranscribeConfig {
 	p, ok := lookupPeerCached(name)
 	if !ok {
 		warnPeerResolveOnce("transcribe:"+name, fmt.Sprintf(
-			"transcription is configured against peer %q, which is no longer registered — "+
+			"transcription is configured against peer %q, which is no longer registered: "+
 				"still using its last known endpoint %s", name, cfg.Endpoint))
 		return cfg
 	}
 	if !p.Offers(PeerCapTranscribe) {
 		warnPeerResolveOnce("transcribe:"+name, fmt.Sprintf(
-			"peer %q no longer offers transcription (it offers: %s) — "+
+			"peer %q no longer offers transcription (it offers: %s): "+
 				"still using its last known endpoint %s", name, strings.Join(p.Caps, ", "), cfg.Endpoint))
 		return cfg
 	}

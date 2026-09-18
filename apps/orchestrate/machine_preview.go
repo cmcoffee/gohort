@@ -80,7 +80,7 @@ func samplePhaseVars() PhaseVars {
 // so what a save re-fetches cannot drift from what the page first drew.
 func phasePreviewParts(def MachineDef, p MachinePhase) (block, note string) {
 	block = strings.TrimSpace(def.PhaseInstructions(p, sampleStateFor(def, p), samplePhaseVars()))
-	note = "This is what the step is actually told, composed by the framework — your instructions, plus everything the definition already knows. You do not need to repeat any of it."
+	note = "This is what the step is actually told, composed by the framework: your instructions, plus everything the definition already knows. You do not need to repeat any of it."
 	// Who RECEIVES this text depends on what the step runs, and for two kinds of
 	// step the answer is "no model at all". Saying "this is what the step is
 	// actually told" over a tool step's composed prompt is the exact failure
@@ -93,15 +93,15 @@ func phasePreviewParts(def MachineDef, p MachinePhase) (block, note string) {
 	// this is.
 	switch {
 	case strings.TrimSpace(p.Tool) != "":
-		note = "This step calls the tool " + strings.TrimSpace(p.Tool) + ". NO model is asked anything — the text below is composed only to fill that tool's arguments, so wording here changes what the tool receives, not how anything is reasoned about."
+		note = "This step calls the tool " + strings.TrimSpace(p.Tool) + ". NO model is asked anything: the text below is composed only to fill that tool's arguments, so wording here changes what the tool receives, not how anything is reasoned about."
 	case len(p.ModelOutput()) == 0 && strings.TrimSpace(p.Prompt) == "" && len(p.StaticFields()) > 0:
-		note = "This step pins values and asks nothing. NO model runs — the fields below are filled from what the framework already holds, so the composed text is shown for reference only."
+		note = "This step pins values and asks nothing. NO model runs: the fields below are filled from what the framework already holds, so the composed text is shown for reference only."
 	case strings.TrimSpace(p.Pipeline) != "":
 		note = "This text is handed to the pipeline " + strings.TrimSpace(p.Pipeline) + " as its input. What the pipeline's own stages then tell a model is defined in the pipeline, not here."
 	case strings.TrimSpace(p.Machine) != "":
 		note = "This text is handed to the machine " + strings.TrimSpace(p.Machine) + " as its input. What that machine's steps tell a model is defined there, not here."
 	case strings.TrimSpace(p.Agent) != "":
-		note = "This text is the brief handed to the agent " + strings.TrimSpace(p.Agent) + ". When the step declares fields, what it reports back is then shaped by a second call that quotes this brief alongside the reply — so the model sees more than what is shown here."
+		note = "This text is the brief handed to the agent " + strings.TrimSpace(p.Agent) + ". When the step declares fields, what it reports back is then shaped by a second call that quotes this brief alongside the reply, so the model sees more than what is shown here."
 	}
 	// A filled field is deliberately absent below, and absent without a
 	// word reads as a bug rather than as the saving it is.
@@ -116,7 +116,7 @@ func phasePreviewParts(def MachineDef, p MachinePhase) (block, note string) {
 	if p.Resident {
 		note += " A step the conversation waits in receives what earlier steps established, and where else it can go."
 	} else {
-		note += " Notice that the fields you declare arrive as instructions in their own right, each with the description you gave it — that is why the prompt should say HOW to go about the work rather than restating what to produce."
+		note += " Notice that the fields you declare arrive as instructions in their own right, each with the description you gave it, that is why the prompt should say HOW to go about the work rather than restating what to produce."
 	}
 	return block, note
 }

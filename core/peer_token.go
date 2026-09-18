@@ -352,7 +352,7 @@ func peerExchangePairingCode(w http.ResponseWriter, r *http.Request, code string
 	if strings.TrimSpace(k.Paired) != "" {
 		peerNoteAuthFailure(r)
 		peerDeny(w, http.StatusUnauthorized,
-			"this pairing code has already been exchanged — it is single use. "+
+			"this pairing code has already been exchanged: it is single use. "+
 				"Re-issue the key from the serving instance's admin page to get a new one")
 		return PeerKey{}, false
 	}
@@ -382,7 +382,7 @@ func peerExchangeRefreshToken(w http.ResponseWriter, r *http.Request, secret str
 	if time.Now().After(t.Expires) {
 		RootDB.Unset(peerRefreshTable, secret)
 		peerDeny(w, http.StatusUnauthorized,
-			"this refresh token has expired — re-pair from the serving instance's admin page")
+			"this refresh token has expired: re-pair from the serving instance's admin page")
 		return PeerKey{}, false
 	}
 	// The grant must still exist and still be enabled. Checked on every refresh
@@ -412,13 +412,13 @@ func peerExchangeRefreshToken(w http.ResponseWriter, r *http.Request, secret str
 		// leaving it able to re-pair with the code would defeat the detection.
 		n := revokePeerTokenFamily(t.Family)
 		SetPeerKeyDisabled(k.ID, true)
-		Log("[peer] SECURITY: %s presented a refresh token consumed %s ago — "+
+		Log("[peer] SECURITY: %s presented a refresh token consumed %s ago: "+
 			"revoked %d token(s) and disabled the grant. Either the token leaked, or this peer "+
 			"restored an old copy of its state; re-pair from the admin page to resume",
 			k.Label, time.Since(t.ConsumedAt).Round(time.Second), n)
 		peerNoteAuthFailure(r)
 		peerDeny(w, http.StatusUnauthorized,
-			"this refresh token was already used — the grant has been disabled as a precaution "+
+			"this refresh token was already used: the grant has been disabled as a precaution "+
 				"and must be re-paired from the serving instance's admin page")
 		return PeerKey{}, false
 	}
@@ -529,6 +529,6 @@ func RepairPeerKey(id string) (PeerKey, error) {
 	pk.Paired = ""
 	pk.Disabled = false
 	RootDB.Set(peerKeysTable, id, pk)
-	Log("[peer] re-paired key %q — new pairing code issued, %d old token(s) revoked", pk.Label, n)
+	Log("[peer] re-paired key %q: new pairing code issued, %d old token(s) revoked", pk.Label, n)
 	return pk, nil
 }

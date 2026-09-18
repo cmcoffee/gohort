@@ -91,10 +91,10 @@ func (d *agentDest) Label() string {
 func (d *agentDest) Available(user string) (bool, string) {
 	a, ok := d.spec()
 	if !ok {
-		return false, "this destination is no longer configured — an admin sets it up in Admin > Publishing"
+		return false, "this destination is no longer configured: an admin sets it up in Admin > Publishing"
 	}
 	if strings.TrimSpace(a.Agent) == "" {
-		return false, "no agent is named for this destination — an admin sets one in Admin > Publishing"
+		return false, "no agent is named for this destination: an admin sets one in Admin > Publishing"
 	}
 	// Said as a REASON rather than discovered at the moment of publishing: a
 	// destination that is going to fail should say so while somebody is still

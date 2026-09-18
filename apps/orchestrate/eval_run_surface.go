@@ -90,7 +90,7 @@ func (T *OrchestrateApp) streamEvalWith(ctx context.Context, udb Database, suite
 		// Said in the transcript, not only in the record. A suite running for
 		// real sends the emails and spends the money, and whoever is watching
 		// should be able to see that from what they are watching.
-		sink(PipelineEvent{Kind: "status", Text: "LIVE MODE — tools execute for real, with their side effects"})
+		sink(PipelineEvent{Kind: "status", Text: "LIVE MODE: tools execute for real, with their side effects"})
 	}
 
 	seq := 0
@@ -118,7 +118,7 @@ func (T *OrchestrateApp) streamEvalWith(ctx context.Context, udb Database, suite
 		"Outcome": evalOutcome(run),
 		"Version": run.TargetHash,
 	}})
-	return fmt.Sprintf("%s — %s", run.Rate(), evalOutcome(run))
+	return fmt.Sprintf("%s: %s", run.Rate(), evalOutcome(run))
 }
 
 // evalOutcome is the at-a-glance word, kept coarse on purpose: a pill is read

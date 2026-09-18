@@ -111,7 +111,7 @@ func (T *OrchestrateApp) handlePrivateModeSet(w http.ResponseWriter, r *http.Req
 			if conn, ok := v.(*NetworkConnector); ok && conn != nil {
 				conn.SetAllowed(!req.PrivateMode)
 				liveFlipped = true
-				Log("[orchestrate/settings] live cutoff applied to inflight session %s — connector allowed=%v", req.SessionID, !req.PrivateMode)
+				Log("[orchestrate/settings] live cutoff applied to inflight session %s: connector allowed=%v", req.SessionID, !req.PrivateMode)
 			}
 		}
 	}

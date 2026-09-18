@@ -1,4 +1,4 @@
-# File stores — a folder an agent can search
+# File stores: a folder an agent can search
 
 Status: built (v0.6.096). `apps/filestore`.
 
@@ -12,7 +12,7 @@ different way:
   config tree or a CSV export searchable, and embedding a gigabyte of stack traces buys nothing.
 - **An attachment** is one file at a time and lands in the context window.
 - **A shell tool** is an unbounded read waiting to happen.
-- **A servitor bundle** is the closest thing and is better in most ways (see below) — but it costs a
+- **A servitor bundle** is the closest thing and is better in most ways (see below), but it costs a
   per-bundle setup, and that ceremony is the thing being avoided here.
 
 ## What it is
@@ -42,7 +42,7 @@ and acting on the first as though it were the second draws a conclusion from a t
 **Configure → Sources** in the chat toolbar. Stores appear grouped under their source label, each row
 carrying the tools it adds. Attaching commits immediately.
 
-The reverse view — which of your agents a given store is linked to — is behind **Linked agents…** in
+The reverse view (which of your agents a given store is linked to), is behind **Linked agents…** in
 the same modal. It is the same pill control tools and credentials use, on the same endpoint
 (`api/tool-scope?kind=source`), because "where did this reach" is the question you ask about a folder
 of somebody's logs, and answering it by opening four agents in turn is how you come to believe an
@@ -52,12 +52,12 @@ There is **no all-agents option**, unlike tools. A tool can sensibly live in a u
 "every agent I own can read this folder" is a grant nobody should be able to make in one click, and
 the admin-side assignment already decides who may reach it at all.
 
-The Sources entry disappears entirely when you have no sources — an empty toolbar entry reads as a
+The Sources entry disappears entirely when you have no sources: an empty toolbar entry reads as a
 broken feature, and it is the only Configure entry whose subject can be absent (an agent always has
 tools, memory, rules).
 
 The `attached_sources` field behind it is also reachable through the agent tool (Builder), which was
-the ONLY door until v0.6.110 — a poor one for the field most likely to be wrong, since a missing
+the ONLY door until v0.6.110: a poor one for the field most likely to be wrong, since a missing
 attachment fails silently: the tools are simply absent and the agent says it does not know what you
 mean.
 
@@ -70,7 +70,7 @@ The handle does not move afterwards. **Renaming a store changes the label, not t
 It has to work that way: the handle is what agent attachments are keyed on (`attached_sources` stores
 `files:<slug>`) and what a minted command tool's FROZEN `path_scope` names. Moving it on rename would
 break every approved command tool pointed at the store, failing closed with "there is no file store
-called X you can reach" — an approved capability quietly dying because someone fixed a typo in a
+called X you can reach": an approved capability quietly dying because someone fixed a typo in a
 label.
 
 The new name is not wasted: it is what an agent READS. The tool descriptions carry the current label,
@@ -85,7 +85,7 @@ declarations have to move deliberately, which is the point.
 
 ## When a search takes a while
 
-A regex over a multi-gigabyte bundle takes the time it takes, and that is fine — what is not fine is
+A regex over a multi-gigabyte bundle takes the time it takes, and that is fine: what is not fine is
 being unable to tell it apart from a hang. Three things say so now:
 
 - **A heartbeat.** Any tool call running longer than 15s gets `search_x — still running (30s)` on the
@@ -94,13 +94,13 @@ being unable to tell it apart from a hang. Three things say so now:
   channel of its own; the wrapper is the only thing that knows a call is in flight.
 - **A cost line.** A search that took over 5s appends `(read 3140 files, 12480 MB, in 1m11s)`. A slow
   search that explains itself reads as a big bundle, which is what it is.
-- **Runaway guards, not deadlines** — 15 minutes and 64 GB. Set where "still working" stops being
+- **Runaway guards, not deadlines**: 15 minutes and 64 GB. Set where "still working" stops being
   plausible, not where patience runs out. A short clock would trade a slow answer for a wrong one:
   the model gets a partial result and reports an absence nobody established. When one does fire the
   result says `INCOMPLETE`, in different words from the match cap, because "there are more matches"
   and "part of the store was never read" are different facts.
 
-**Non-regular files are skipped entirely** — FIFOs, device nodes, sockets. `os.Open` on a FIFO blocks
+**Non-regular files are skipped entirely**: FIFOs, device nodes, sockets. `os.Open` on a FIFO blocks
 until someone opens the other end, and `/dev/zero` reads without ever reaching EOF; either one hangs
 a search that nothing upstream can cancel. They turn up in a captured filesystem tree without anyone
 putting them there deliberately.
@@ -110,20 +110,20 @@ putting them there deliberately.
 Reaching a store and WRITING into it are separate grants. **Let assigned users upload** is off by
 default: the common store is a directory something else fills, and registering `/var/log` should not
 let every account with an agent add files to it. An admin can upload either way, still bounded by
-the assignment — membership decides reach, and reach gates upload.
+the assignment: membership decides reach, and reach gates upload.
 
 **Delete folders older than (days)** is 0 by default, which keeps everything forever. That is the
 only safe default for a store that may hold the only copy of an incident's evidence.
 
 Nothing deletes on a timer. The window makes a folder ELIGIBLE; an admin runs the sweep from
-Maintenance, where a dry run lists exactly what the delete would remove — the same walk behind both,
+Maintenance, where a dry run lists exactly what the delete would remove: the same walk behind both,
 so what was read is what goes.
 
 What the sweep will touch, and nothing else: a **directory** that is a **direct child** of a store
 root, in a store with a window set, whose newest content is past it. Not the root, not loose files at
 the root, not anything nested, and not a symlinked folder pointing outside the store (resolution goes
 through `SubRoot`, so an escape is skipped and logged rather than followed). The allowlist names what
-may GO, never what may stay — the same argument as `core/workspace_reap.go`, for the same reason: a
+may GO, never what may stay, the same argument as `core/workspace_reap.go`, for the same reason: a
 missed case here costs unreclaimed disk, while the inverse costs somebody's evidence.
 
 Age is read from the folder and its immediate contents rather than a full walk, because a bundle
@@ -134,13 +134,13 @@ about.
 ## Actions on a folder
 
 `ExpandArchives` deliberately refuses `.enc` / `.gpg` / `.pgp` / `.aes` and reports them as
-**unopened** rather than pretending — a store that looks thin because half of it is still encrypted
+**unopened** rather than pretending: a store that looks thin because half of it is still encrypted
 is a different problem from one that is thin because nothing was captured.
 
 What happens next is an **action**: an admin-registered command that runs against ONE folder.
 Decrypting is the first one, and the reason this is a list rather than a `decrypt_command` field.
 Redacting before anyone reads it, unpacking a proprietary container, running an extractor that turns
-a binary dump into text, building an index — all of them are "run a registered binary against this
+a binary dump into text, building an index: all of them are "run a registered binary against this
 folder, then the files are ready". A field named after the first instance makes the second one a
 second field, a second endpoint and a second UI.
 
@@ -166,7 +166,7 @@ first real bundle breaks. Reading only stdout is how a challenge printed to stde
 printed nothing".
 
 **No shell.** Command, folder and input are exec'd as separate arguments, so quoting, word-splitting
-and metacharacters have nowhere to happen — the test proves an input containing `$` and `;rm -rf /`
+and metacharacters have nowhere to happen: the test proves an input containing `$` and `;rm -rf /`
 arrives intact as one argument. The folder is resolved by `SubRoot`, so a traversal is refused before
 anything runs.
 
@@ -195,7 +195,7 @@ triage and the hypothesis for the life of a session.
 
 The message is **stored, not sent**. Sending server-side would run a turn with nobody watching,
 streaming into a page that is not open yet, with a failure nobody sees. Instead the session carries
-the prompt, and the chat panel sends it as the user's first message on open — through the normal
+the prompt, and the chat panel sends it as the user's first message on open, through the normal
 composer, so streaming, cancel, approval prompts and the machine's first phase behave exactly as they
 do when a person types it.
 
@@ -206,7 +206,7 @@ it. A half-typed message in the composer wins over the pre-filled one.
 ## Who may reach one
 
 Configuring a store is admin-only. **Reading one is controlled separately**, by the store's
-`allowed_users` — "Assigned to" on the admin form. Empty means every user.
+`allowed_users`: "Assigned to" on the admin form. Empty means every user.
 
 That split exists because the two halves were mismatched: registering a path was gated from the
 start, and reading whatever is under it was not gated at all. An admin points a store at
@@ -214,12 +214,12 @@ start, and reading whatever is under it was not gated at all. An admin points a 
 
 Checked at every door, not just in the picker:
 
-- the Sources list (`List`) — filters to what the user may reach
-- `ItemTools` — a stale attachment yields no tools rather than tools that refuse on every call
-- `Fetch` — the generic pull path
-- the path scope (`resolveScope`) — the door a minted servitor command tool comes through, and the
+- the Sources list (`List`): filters to what the user may reach
+- `ItemTools`: a stale attachment yields no tools rather than tools that refuse on every call
+- `Fetch`: the generic pull path
+- the path scope (`resolveScope`): the door a minted servitor command tool comes through, and the
   one that would otherwise be missed
-- upload — **including for admins**: admin manages the list, membership decides reach
+- upload, **including for admins**: admin manages the list, membership decides reach
 
 A refusal on the path scope says "no file store called X **you can reach**" rather than "not yours",
 because confirming a store exists is a fact the caller can do nothing with and should not have.
@@ -234,36 +234,36 @@ A store answers "where does X appear". To RUN something over the same folder (un
 an extractor), add a servitor appliance of type `command` and connect the agent to it. Three wires,
 and they are separate on purpose:
 
-1. **The store is assigned to you** (admin) — `AllowsUser`.
-2. **The agent is connected to the command appliance** in servitor — that is what mints the command
+1. **The store is assigned to you** (admin): `AllowsUser`.
+2. **The agent is connected to the command appliance** in servitor, that is what mints the command
    tools at all (`applianceEnabledForAgent`).
-3. **The folder parameter declares `path_scope: "files:<slug>"`** — the mint prompt is handed your
+3. **The folder parameter declares `path_scope: "files:<slug>"`**: the mint prompt is handed your
    stores (`PathScopeRoots`) and told to prefer a scope over an enum, because an enum is frozen when
    written and a drop folder is not.
 4. **The store is linked to that agent** under Configure → Sources.
 
 The agent then calls the tool with a folder NAME, never a path
 (`parse_bundle({"dir": "scan-2026-08-13"})`), and the names currently valid are listed in that
-parameter's description — read when the catalog is built, so a folder added mid-conversation still
+parameter's description: read when the catalog is built, so a folder added mid-conversation still
 resolves even though it is not in the list. The description says so, because a model handed a list
 otherwise treats it as exhaustive and refuses the folder somebody just named.
 
-The appliance's **Work Dir is not a containment boundary** — it is the process cwd, and a template
+The appliance's **Work Dir is not a containment boundary**: it is the process cwd, and a template
 containing `../..` walks straight out of it. `path_scope` is the boundary: it resolves symlinks and
 refuses anything not strictly inside the root, and it substitutes an ABSOLUTE path, so the command
 works regardless of cwd. Set Work Dir for where relative output should land, not for safety.
 
 Check step 3 landed before approving: the approval row's Checks column shows `dir → files:<slug>`
 when the constraint is there, and flags a path-ish parameter that has none. That flag matters,
-because a tool minted WITHOUT the scope still works and looks completely normal at runtime — quoting
+because a tool minted WITHOUT the scope still works and looks completely normal at runtime: quoting
 stops a value contributing shell syntax and does nothing about `../../var/lib/something` being a
 well-formed single argument.
 
 Step 4 was added in v0.6.112. Before it, the two halves disagreed: a store's own tools appeared only
-on an agent it was attached to, while a command tool's `path_scope` resolved against the USER — so an
+on an agent it was attached to, while a command tool's `path_scope` resolved against the USER, so an
 agent nobody had linked the store to could still run a command against it. One link, one meaning.
 
-The gate does NOT refuse in three cases, all deliberate: no agent in play (a CLI path — the user gate
+The gate does NOT refuse in three cases, all deliberate: no agent in play (a CLI path, the user gate
 still applies), no app owning agent records in the deployment (the feature would be dead rather than
 ungated), and a scope kind that is not an attachable source (nothing to attach). A sub-agent needs
 its OWN link; holding it on the parent is not enough, matching how a sub-agent must be connected to a
@@ -278,11 +278,11 @@ Two routes, deliberately:
   The subfolder is created if absent. Admin-gated: it writes to the host filesystem.
 
 Writing takes a stricter path rule than reading. `within` must be a single name, because cleaning
-would happily turn `../escaped` into `escaped` and `/etc/cron.d` into `etc/cron.d` — contained,
+would happily turn `../escaped` into `escaped` and `/etc/cron.d` into `etc/cron.d`: contained,
 neither an escape, and both a surprise. Reading stays permissive, because a nested path there is a
 real search result being read back.
 
-**Archives are expanded**, through `core.ExpandArchives` — lifted out of servitor's bundle ingest
+**Archives are expanded**, through `core.ExpandArchives`: lifted out of servitor's bundle ingest
 once this became its second caller. tar, tar.gz, tar.bz2, zip, and lone .gz/.bz2 streams; nested to
 a depth cap; each archive replaced by a directory named for it so an extracted file still records
 where it came from. Formats with no built-in expander (.7z, .xz, encrypted) are reported as
@@ -318,8 +318,8 @@ trust. Folding both onto one engine is a real lift-to-core candidate.
 `extras/investigator.agent.json`, importable at `POST /orchestrate/api/agents/import`. Two config flags carry
 the memory requirement, and the prompt has to agree with both:
 
-- `memory_mode: "agent"` — the Lessons-learned directive rather than the personalization one.
-- `disable_inferred: true` — Reference Memory off. This is the layer that would compound one
+- `memory_mode: "agent"`: the Lessons-learned directive rather than the personalization one.
+- `disable_inferred: true`: Reference Memory off. This is the layer that would compound one
   incident's findings into the next investigation by similarity, which is the actual mechanism by
   which an agent mixes up two issues.
 - The prompt says which is which, because the mode is a **directive to the model, not a gate on the

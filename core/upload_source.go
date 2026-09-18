@@ -38,7 +38,7 @@ func ResolveUploadSource(sess *ToolSession, ref string) (UploadSource, error) {
 		return out, fmt.Errorf("no file was given to upload")
 	}
 	if strings.HasPrefix(strings.ToLower(ref), "http://") || strings.HasPrefix(strings.ToLower(ref), "https://") {
-		return out, fmt.Errorf("a URL can't be uploaded directly — download it into your workspace first, then pass the saved filename")
+		return out, fmt.Errorf("a URL can't be uploaded directly: download it into your workspace first, then pass the saved filename")
 	}
 	if sess == nil || strings.TrimSpace(sess.WorkspaceDir) == "" {
 		return out, fmt.Errorf("no workspace available to read %q from", ref)
@@ -58,7 +58,7 @@ func ResolveUploadSource(sess *ToolSession, ref string) (UploadSource, error) {
 		return out, fmt.Errorf("%q is empty", ref)
 	}
 	if info.Size() > maxUploadBytes {
-		return out, fmt.Errorf("%q is %s — the upload limit is %s", ref, HumanSize(info.Size()), HumanSize(maxUploadBytes))
+		return out, fmt.Errorf("%q is %s: the upload limit is %s", ref, HumanSize(info.Size()), HumanSize(maxUploadBytes))
 	}
 	data, err := os.ReadFile(abs)
 	if err != nil {

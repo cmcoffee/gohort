@@ -337,7 +337,7 @@ func normalizeArchetypeSlug(s string) string {
 // configuration instead of Builder reinventing it each time.
 func archetypeTool() *GroupedTool {
 	gt := NewGroupedTool("archetype",
-		"Build recipes for the common agent SHAPES (research, knowledge-base, conversational). When a build request matches a known shape, read its recipe FIRST and compose the new agent from it — the recipe carries the vetted toolset, memory config, prompt beats, and caps for that shape. Actions: list, read.")
+		"Build recipes for the common agent SHAPES (research, knowledge-base, conversational). When a build request matches a known shape, read its recipe FIRST and compose the new agent from it: the recipe carries the vetted toolset, memory config, prompt beats, and caps for that shape. Actions: list, read.")
 	gt.AddAction("list", &GroupedToolAction{
 		Description: "List the available agent archetypes with a one-line summary of each.",
 		Params:      map[string]ToolParam{},
@@ -346,7 +346,7 @@ func archetypeTool() *GroupedTool {
 			var b strings.Builder
 			b.WriteString("Agent archetypes (read one with archetype(action=\"read\", slug=\"<slug>\")):\n\n")
 			for _, a := range loadArchetypes() {
-				fmt.Fprintf(&b, "- %s — %s\n", a.Slug, a.Summary)
+				fmt.Fprintf(&b, "- %s: %s\n", a.Slug, a.Summary)
 			}
 			b.WriteString("\nNo match? Build from scratch with create_agent as usual.")
 			return b.String(), nil
@@ -366,7 +366,7 @@ func archetypeTool() *GroupedTool {
 				for _, x := range loadArchetypes() {
 					slugs = append(slugs, x.Slug)
 				}
-				return "", fmt.Errorf("no archetype %q — available: %s. Or build from scratch with create_agent", stringArg(args, "slug"), strings.Join(slugs, ", "))
+				return "", fmt.Errorf("no archetype %q, available: %s. Or build from scratch with create_agent", stringArg(args, "slug"), strings.Join(slugs, ", "))
 			}
 			return a.Body, nil
 		},

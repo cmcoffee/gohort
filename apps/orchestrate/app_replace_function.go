@@ -32,21 +32,21 @@ func (t *chatTurn) appDefReplaceFunction(args map[string]any) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
 	spec, ok := LoadAppSpec(t.user, key)
 	if !ok {
-		return "", errors.New("no matching app — check the slug (app_def action=list)")
+		return "", errors.New("no matching app: check the slug (app_def action=list)")
 	}
 	if strings.TrimSpace(stringArg(args, "script")) != "" {
 		return t.appDefReplaceScriptFunction(args, spec)
 	}
 	fn := strings.TrimSpace(stringArg(args, "function"))
 	if fn == "" {
-		return "", errors.New("function is required — the NAME of the function to replace, e.g. function=\"drawBird\". Read the app's html with app_def(action=\"get\") if you're not sure what it defines")
+		return "", errors.New("function is required: the NAME of the function to replace, e.g. function=\"drawBird\". Read the app's html with app_def(action=\"get\") if you're not sure what it defines")
 	}
 	if !isJSFunctionName(fn) {
-		return "", fmt.Errorf("%q is not a plain function name — pass just the identifier (e.g. \"drawBird\"), not a call, a signature, or a path", fn)
+		return "", fmt.Errorf("%q is not a plain function name: pass just the identifier (e.g. \"drawBird\"), not a call, a signature, or a path", fn)
 	}
 	replace := stringArg(args, "replace")
 	if strings.TrimSpace(replace) == "" {
-		return "", errors.New("replace is required — the WHOLE new function, definition line included (e.g. \"function drawBird() { … }\"). To delete a function instead, use patch_html")
+		return "", errors.New("replace is required: the WHOLE new function, definition line included (e.g. \"function drawBird() { … }\"). To delete a function instead, use patch_html")
 	}
 
 	sections, err := appAuthoringSections(spec)
@@ -68,11 +68,11 @@ func (t *chatTurn) appDefReplaceFunction(args map[string]any) (string, error) {
 	// the diff below would catch anyway — but saying it HERE names the actual
 	// mistake instead of listing its consequences.
 	if !definesFunction(replace, fn) {
-		return "", fmt.Errorf("the replacement text does not define %q — pass the WHOLE new function including its definition line (e.g. \"function %s(…) { … }\"), not just the body", fn, fn)
+		return "", fmt.Errorf("the replacement text does not define %q: pass the WHOLE new function including its definition line (e.g. \"function %s(…) { … }\"), not just the body", fn, fn)
 	}
 
 	next := prior[:start] + strings.TrimRight(replace, "\n") + prior[end:]
-	summary := fmt.Sprintf("Replaced function %s in html section %%d of %%q (revision %%s) — %d chars became %d.", fn, end-start, len(replace))
+	summary := fmt.Sprintf("Replaced function %s in html section %%d of %%q (revision %%s): %d chars became %d.", fn, end-start, len(replace))
 	return t.saveHTMLSectionEdit(spec, sections, idx, prior, next, summary, "replacement", "replace_function "+fn, stringArg(args, "note"))
 }
 

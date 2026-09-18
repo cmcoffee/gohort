@@ -28,7 +28,7 @@ func toolTemplateTool() ChatTool {
 		Description: "Build a tool from a template and attach it to the focused agent (or the one named in `agent`). Fill `values` with the template's option keys (from list). Pass test_args to verify it against the real endpoint in the same call.",
 		Params: map[string]ToolParam{
 			"name":        {Type: "string", Description: "The tool's name (snake_case), how the model will call it."},
-			"template":    {Type: "string", Description: "Which template to use — a name from tool_template(action=\"list\")."},
+			"template":    {Type: "string", Description: "Which template to use: a name from tool_template(action=\"list\")."},
 			"values":      {Type: "object", Description: "The template's options as {key: value}, e.g. {\"url\":\"https://api.x/v1/{id}\",\"credential\":\"x_api\"}. Keys come from the template's fields (see list)."},
 			"agent":       {Type: "string", Description: "(optional) Target agent name/id; omit to use the agent in authoring focus."},
 			"description": {Type: "string", Description: "(optional) Override the tool's description."},
@@ -76,7 +76,7 @@ func toolTemplateCreate(args map[string]any, sess *ToolSession) (string, error) 
 		for _, t := range Templates(TargetTool) {
 			names = append(names, t.Name)
 		}
-		return "", fmt.Errorf("no tool template %q — available: %s (call tool_template(action=\"list\"))", tplName, strings.Join(names, ", "))
+		return "", fmt.Errorf("no tool template %q, available: %s (call tool_template(action=\"list\"))", tplName, strings.Join(names, ", "))
 	}
 
 	// Resolve the target agent — same rules as add_tool.
@@ -144,7 +144,7 @@ func toolTemplateCreate(args map[string]any, sess *ToolSession) (string, error) 
 		}
 		return msg + "\nVerification succeeded:\n\n" + trimmed, nil
 	}
-	return msg + " No test_args given — call create again with the same fields plus test_args to verify it against the real endpoint.", nil
+	return msg + " No test_args given: call create again with the same fields plus test_args to verify it against the real endpoint.", nil
 }
 
 // resolveToolTargetAgent mirrors add_tool's target resolution: an explicit
@@ -155,25 +155,25 @@ func resolveToolTargetAgent(args map[string]any, sess *ToolSession) (AgentRecord
 	if key := strings.TrimSpace(stringArg(args, "agent")); key != "" {
 		found, ok := findAgentByNameOrID(sess.DB, sess.Username, key)
 		if !ok {
-			return target, fmt.Errorf("no agent named or id'd %q in your fleet — call agents(action=\"list\")", key)
+			return target, fmt.Errorf("no agent named or id'd %q in your fleet: call agents(action=\"list\")", key)
 		}
 		target = found
 	} else {
 		focusedID := loadAuthoringInProgress(sess.DB, sess.ChatSessionID)
 		if focusedID == "" {
-			return target, fmt.Errorf("no agent in authoring focus and no `agent` argument — pass agent=\"<name or id>\", or get_agent/create_agent first")
+			return target, fmt.Errorf("no agent in authoring focus and no `agent` argument: pass agent=\"<name or id>\", or get_agent/create_agent first")
 		}
 		found, ok := loadAgent(sess.DB, focusedID)
 		if !ok {
-			return target, fmt.Errorf("focused agent is gone from storage — re-call get_agent on a valid agent, or pass agent=\"<name or id>\"")
+			return target, fmt.Errorf("focused agent is gone from storage: re-call get_agent on a valid agent, or pass agent=\"<name or id>\"")
 		}
 		target = found
 	}
 	if isAppAgent(target.ID) {
-		return target, fmt.Errorf("%q is an app agent — its tools are declared in code and can't be authored into it", target.Name)
+		return target, fmt.Errorf("%q is an app agent: its tools are declared in code and can't be authored into it", target.Name)
 	}
 	if target.Owner != sess.Username {
-		return target, fmt.Errorf("agent %q is a read-only seed — clone_agent first, then continue", target.Name)
+		return target, fmt.Errorf("agent %q is a read-only seed: clone_agent first, then continue", target.Name)
 	}
 	return target, nil
 }

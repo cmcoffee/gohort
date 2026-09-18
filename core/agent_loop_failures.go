@@ -59,17 +59,17 @@ func FirstToolOrderViolation(history []Message) int {
 // Returns the message and whether a consult actually supplied it.
 func failureShapeCorrection(n int, shape, evidence string, consult func(question, evidence string) (string, error)) (string, bool) {
 	if consult != nil {
-		q := fmt.Sprintf("An agent has hit this same failure %d times from different calls and different arguments, so its arguments are not what is wrong. Diagnose the failure itself and give the concrete fix — exact field names and nesting if this is a request-shape problem. If the evidence does not settle it, say so and name what would.", n)
+		q := fmt.Sprintf("An agent has hit this same failure %d times from different calls and different arguments, so its arguments are not what is wrong. Diagnose the failure itself and give the concrete fix: exact field names and nesting if this is a request-shape problem. If the evidence does not settle it, say so and name what would.", n)
 		if advice, err := consult(q, evidence); err == nil && strings.TrimSpace(advice) != "" {
 			return fmt.Sprintf(
-				"You have hit this SAME failure %d times this turn: %q. The arguments are not what's wrong, so a stronger model was consulted with the failure text. Its ADVICE follows — it is advice, not fact: apply it and VERIFY with a real call before reporting anything as working.\n\n%s",
+				"You have hit this SAME failure %d times this turn: %q. The arguments are not what's wrong, so a stronger model was consulted with the failure text. Its ADVICE follows, it is advice, not fact: apply it and VERIFY with a real call before reporting anything as working.\n\n%s",
 				n, shape, strings.TrimSpace(advice)), true
 		} else if err != nil {
 			Debug("[agent_loop] failure-shape guard: consult failed, falling back to directive: %v", err)
 		}
 	}
 	return fmt.Sprintf(
-		"You have now hit this SAME failure %d times this turn, from different calls and different arguments: %q. The arguments are not what's wrong. Stop retrying variations of it — diagnose the failure itself, take a different approach, or tell the user plainly what is blocked and what you tried.",
+		"You have now hit this SAME failure %d times this turn, from different calls and different arguments: %q. The arguments are not what's wrong. Stop retrying variations of it: diagnose the failure itself, take a different approach, or tell the user plainly what is blocked and what you tried.",
 		n, shape), false
 }
 
@@ -163,7 +163,7 @@ const errShapeCollapseAt = 3
 // the marker's own shape never matches the original (the prefix text differs),
 // so sweeps stay idempotent.
 func collapsedFailureMarker(shape string) string {
-	return "(repeated failure collapsed — same as the earlier full result: \"" + oneLineShape(shape) + "\")"
+	return "(repeated failure collapsed, same as the earlier full result: \"" + oneLineShape(shape) + "\")"
 }
 
 // resolvedFailureMarker replaces a failure result whose tool LATER succeeded
@@ -171,7 +171,7 @@ func collapsedFailureMarker(shape string) string {
 // carrying both teaches the model to arbitrate; models side with whatever
 // appears more often, which is the failure.
 func resolvedFailureMarker(toolName string) string {
-	return "(earlier " + toolName + " failure collapsed — a later " + toolName + " call SUCCEEDED this turn; treat the failure as resolved)"
+	return "(earlier " + toolName + " failure collapsed: a later " + toolName + " call SUCCEEDED this turn; treat the failure as resolved)"
 }
 
 // collapseRepeatedFailureResults rewrites duplicate occurrences of one

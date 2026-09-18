@@ -143,7 +143,7 @@ func (t *chatTurn) recoverClaimedDelivery(reply string) {
 	if len(b64s) == 0 {
 		return
 	}
-	Log("[chat] reply claimed a delivery but attached nothing — backstop attaching staged %q", staged)
+	Log("[chat] reply claimed a delivery but attached nothing: backstop attaching staged %q", staged)
 	// Paint it under the bubble the reply just streamed into, the same way a
 	// tool-delivered image arrives.
 	kind := "image"

@@ -89,7 +89,7 @@ func machinesExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 				ui.ModalButton{
 					Label:    "Import…",
 					Title:    "Bring in a machine somebody exported",
-					Subtitle: "Pick a .machine.json recipe. It lands as a machine of your own — a copy, with its own id — and opens in the editor.",
+					Subtitle: "Pick a .machine.json recipe. It lands as a machine of your own (a copy, with its own id), and opens in the editor.",
 					Width:    "480px",
 					Body: ui.FormPanel{
 						PostURL:        "/orchestrate/api/machines/import",
@@ -98,8 +98,9 @@ func machinesExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 						RedirectTarget: "_self",
 						Fields: []ui.FormField{{
 							Field: "recipe", Type: "file", Accept: ".json",
-							Label: "Recipe file",
-							Help:  "The file an Export produced. Steps, prompts and wiring travel; nothing about the conversations that ran it does.",
+							Label:  "Recipe file",
+							Help:   "The file an Export produced.",
+							Detail: "Steps, prompts and wiring travel. Nothing about the conversations that ran it does.",
 						}},
 					},
 				},
@@ -147,7 +148,7 @@ func machinesExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 						Confirm:    "Delete this machine? Agents pointing at it are detached; conversations already running it finish as ordinary agent turns.",
 						Optimistic: true},
 				},
-				EmptyText: "No machines yet. A machine is a set of steps a conversation moves through — decide what kind of question this is, go and look, then answer — where the conversation SETTLES in one of them rather than starting over each turn.",
+				EmptyText: "No machines yet. A machine is a set of steps a conversation moves through (decide what kind of question this is, go and look, then answer), where the conversation SETTLES in one of them rather than starting over each turn.",
 			},
 		}},
 	}, true
@@ -170,7 +171,7 @@ const assignPillsHead = `<script>
     window.uiRegisterClientAction('orchestrate_assign', function(ctx){
       var r = (ctx && ctx.record) || {};
       var url = String(r.edit_url || '');
-      // /orchestrate/machine?id=X or /orchestrate/pipeline?id=X — the
+      // /orchestrate/machine?id=X or /orchestrate/pipeline?id=X: the
       // row already carries where it lives, so the action does not have
       // to be told which kind it is.
       var kind = url.indexOf('/pipeline') >= 0 ? 'pipelines' : 'machines';
@@ -375,7 +376,7 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 		{
 			Title:    "Try it",
 			Wide:     true,
-			Subtitle: "Hold a rehearsal conversation with it: send a message, watch where it goes, then keep sending — later turns resume the parked step, so you can watch a guard fire or a handoff happen. Real driver, no tools, and the step it lands in is not run: it shows the PATH, not the answer.",
+			Subtitle: "Hold a rehearsal conversation with it: send a message, watch where it goes, then keep sending, later turns resume the parked step, so you can watch a guard fire or a handoff happen. Real driver, no tools, and the step it lands in is not run: it shows the PATH, not the answer.",
 			Body:     machineTryPanel(def),
 		},
 		// The real thing, next to the rehearsal, and only for a machine
@@ -407,7 +408,7 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 					Fields: []ui.FormField{{
 						Field: "description", Type: "textarea", Rows: 4,
 						Label:       "What should change?",
-						Placeholder: "Let triage choose between three lanes — logs, config, and a plain question — and give the config lane its own step before it answers.",
+						Placeholder: "Let triage choose between three lanes (logs, config, and a plain question), and give the config lane its own step before it answers.",
 						Help:        "One change, in plain words. It runs a model, so it takes a moment; what it changed is reported when it lands.",
 					}},
 				},
@@ -431,14 +432,14 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			// CHANGES that state.
 			Title: "Assign to agents",
 			Wide:  true,
-			Subtitle: "An unattached machine does nothing — an agent has to carry it into its conversations. " +
+			Subtitle: "An unattached machine does nothing: an agent has to carry it into its conversations. " +
 				"Checking an agent points it at this machine; an agent can only run one at a time, so checking one that runs another moves it.",
 			Body: ui.FormPanel{
 				Source:  machineAPIBase(def) + "/agents",
 				PostURL: machineAPIBase(def) + "/agents",
 				Fields: []ui.FormField{{
 					Field: "agents", Type: "checklist",
-					Placeholder: "(no agents yet — create one in the chat sidebar first)",
+					Placeholder: "(no agents yet: create one in the chat sidebar first)",
 					Options:     attachAgentOptions(udb, user, def),
 				}},
 			},
@@ -486,8 +487,8 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 	// the owner's page. A recipient gets the note on theirs instead.
 	page.Sections = append(page.Sections, ui.Section{
 		Title: "Share with users",
-		Subtitle: "Let specific other users read and run this machine. They run YOUR procedure against THEIR agents, tools and credentials — nothing of yours travels with the share, and nothing of theirs comes back. " +
-			"Editing stays yours: a recipient can run it, put it on a timetable, hand it to their agents, and take a copy — not change it. Empty = private to you. An admin can audit or revoke shares.",
+		Subtitle: "Let specific other users read and run this machine. They run YOUR procedure against THEIR agents, tools and credentials: nothing of yours travels with the share, and nothing of theirs comes back. " +
+			"Editing stays yours: a recipient can run it, put it on a timetable, hand it to their agents, and take a copy, not change it. Empty = private to you. An admin can audit or revoke shares.",
 		Body: ui.ACLPicker(ui.ACLPickerConfig{
 			OptionsSource: "api/user-candidates",
 			RecordSource:  "api/machines/" + url_(def.ID),
@@ -566,7 +567,7 @@ func (T *OrchestrateApp) serveSharedMachinePage(w http.ResponseWriter, r *http.R
 	page.Sections = append(page.Sections, ui.Section{
 		Title:    "Try it",
 		Wide:     true,
-		Subtitle: "Hold a rehearsal conversation with it: send a message and watch where it goes. Real driver, no tools, and the step it lands in is not run — it shows the PATH, not the answer.",
+		Subtitle: "Hold a rehearsal conversation with it: send a message and watch where it goes. Real driver, no tools, and the step it lands in is not run: it shows the PATH, not the answer.",
 		Body:     machineTryPanel(def),
 	})
 	page.Sections = append(page.Sections, unattendedRunSection(def))
@@ -633,7 +634,7 @@ func (T *OrchestrateApp) serveMachineDescribePage(w http.ResponseWriter, r *http
 		Sections: []ui.Section{{
 			Title: "What should it do?",
 			Wide:  true,
-			Subtitle: "Say what kinds of turns arrive and what should happen to each — what the conversation works out first, what it decides between, where it settles. " +
+			Subtitle: "Say what kinds of turns arrive and what should happen to each: what the conversation works out first, what it decides between, where it settles. " +
 				"A draft machine opens in the editor for you to adjust; anything the draft got wrong is waiting in its checklist, which beats an empty editor.",
 			Body: ui.FormPanel{
 				PostURL:     "/orchestrate/api/machines/draft",
@@ -643,7 +644,8 @@ func (T *OrchestrateApp) serveMachineDescribePage(w http.ResponseWriter, r *http
 					Field: "description", Type: "textarea", Rows: 8,
 					Label:       "In plain words",
 					Placeholder: "Triage support questions: work out whether there is a log bundle to dig into or just a question, investigate bundles with the log tools, and answer questions from the knowledge base. Stay in the investigation until the person moves to a new problem.",
-					Help: "It runs a model, so it takes a moment. If it cannot produce something usable it says so here rather than failing quietly. " +
+					Help:        "It runs a model, so it takes a moment.",
+					Detail: "If it cannot produce something usable, it says so here rather than failing quietly.\n\n" +
 						// One shape named concretely, because it is the one
 						// people arrive wanting and describe badly: they ask
 						// for an agent that "checks first" and get a machine
@@ -963,7 +965,7 @@ func findingStep(def MachineDef, line string) string {
 
 func adviceHTML(udb Database, user string, def MachineDef) string {
 	return findingsHTML(def, machineAdvice(udb, user, def),
-		"Nothing — the steps read as instructions rather than specifications.")
+		"Nothing: the steps read as instructions rather than specifications.")
 }
 
 // machineAdvice is the soft list every surface shows: what the definition
@@ -979,7 +981,7 @@ func machineAdvice(udb Database, user string, def MachineDef) []string {
 // user's pool and the agents attached to this machine — see machineChecklist.
 func checklistHTML(def MachineDef, probs []string) string {
 	if len(probs) == 0 {
-		return findingsHTML(def, nil, "✓ Nothing outstanding — this machine will run as written.")
+		return findingsHTML(def, nil, "✓ Nothing outstanding: this machine will run as written.")
 	}
 	return `<div class="machine-findings-count">` + strconv.Itoa(len(probs)) + ` to fix</div>` +
 		findingsHTML(def, probs, "")
@@ -1005,7 +1007,7 @@ func machineMapCard(def MachineDef) ui.Component {
 // so what the page renders and what a refresh fetches cannot drift.
 func machineMapHTML(def MachineDef) string {
 	return `<div class="machine-map">` +
-		`<div class="machine-map-cap">Map — click a step to open it. Its shape follows the arrows, not the step order.</div>` +
+		`<div class="machine-map-cap">Map: click a step to open it. Its shape follows the arrows, not the step order.</div>` +
 		`<div class="machine-map-body">` + machineGraphSVG(def) + `</div>` +
 		`</div>`
 }
@@ -1088,7 +1090,7 @@ const machineMapCSS = `
 }
 .machine-finding-rewrite:hover { background: var(--accent-soft, rgba(99,102,241,0.16)); }
 .machine-map svg a { text-decoration: none; }
-/* You are here. The fill is what carries it — a border alone is lost
+/* You are here. The fill is what carries it: a border alone is lost
    among the boxes that are already drawn heavier for holding a turn. */
 .machine-map [data-node].here rect {
   fill: var(--accent-soft, rgba(99,102,241,0.16));
@@ -1154,7 +1156,7 @@ const machineRewriteJS = `(function() {
     var base = '/orchestrate/api/machines/' + encodeURIComponent(id);
 
     // Open on what is actually STORED rather than on the textarea in the
-    // section, which may be mid-edit or not rendered yet — the rail
+    // section, which may be mid-edit or not rendered yet: the rail
     // mounts one section at a time.
     btn.disabled = true;
     fetch(base)
@@ -1165,10 +1167,10 @@ const machineRewriteJS = `(function() {
         var phase = (def.phases || []).filter(function(p) { return p.name === step; })[0];
         if (!phase) throw new Error('no step called ' + step);
         window.uiOpenAssist({
-          title: 'Rewrite the instructions — ' + step,
+          title: 'Rewrite the instructions, ' + step,
           subtitle: 'The declared fields already say what to produce. Keep the method; drop the format.',
           initial: phase.prompt || '',
-          placeholder: 'Ask for another pass — shorter, keep the second paragraph…',
+          placeholder: 'Ask for another pass, shorter, keep the second paragraph…',
           ask: 'These instructions hand-roll the JSON the declared fields already produce. ' +
                'Rewrite them: delete the format instructions and any example object, keep everything ' +
                'that says HOW to do the work, and add nothing new. Reply with the instructions only.',
@@ -1271,7 +1273,7 @@ func costText(def MachineDef) string {
 		parts = append(parts, "every new turn arriving in "+strings.Join(guarded, " or ")+" pays one extra check (its guard)")
 	}
 	if len(parts) == 0 {
-		return "Nothing beyond the reply itself — no step runs before it and no guard checks it."
+		return "Nothing beyond the reply itself: no step runs before it and no guard checks it."
 	}
 	return "Beyond the reply itself: " + strings.Join(parts, "; ") + ". The reply step is the turn you were paying for anyway."
 }

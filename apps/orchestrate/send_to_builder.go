@@ -73,12 +73,12 @@ func (T *OrchestrateApp) handleSendToBuilder(w http.ResponseWriter, r *http.Requ
 	// Builder improves OTHER agents — handing it its own session would
 	// be a no-op loop. Send the agent you actually want to fix.
 	if agent.ID == "seed-builder" {
-		http.Error(w, "Builder improves other agents — open the agent you want to improve, then send its session to Builder.", http.StatusBadRequest)
+		http.Error(w, "Builder improves other agents: open the agent you want to improve, then send its session to Builder.", http.StatusBadRequest)
 		return
 	}
 	sess, ok := loadChatSession(udb, agent.ID, sessionID)
 	if !ok || len(sess.Messages) == 0 {
-		http.Error(w, "no session to send — chat with the agent first", http.StatusNotFound)
+		http.Error(w, "no session to send: chat with the agent first", http.StatusNotFound)
 		return
 	}
 	// Why the user is sending it. Optional, and best-effort to read: a body
@@ -153,7 +153,7 @@ func buildBuilderBrief(agent AgentRecord, sess ChatSession, reason string) strin
 		}
 		b.WriteString("\nThe session below is where it happened. Treat what I just said as the problem to solve; use the transcript as evidence for it, and tell me if what I described is not what you find there.\n\n")
 	} else {
-		b.WriteString("I was just working with one of my agents and want it improved. I have NOT told you what went wrong — read the session below, and if more than one thing could be the problem, ask me which before you change anything.\n\n")
+		b.WriteString("I was just working with one of my agents and want it improved. I have NOT told you what went wrong: read the session below, and if more than one thing could be the problem, ask me which before you change anything.\n\n")
 	}
 	fmt.Fprintf(&b, "**Agent to improve:** %s  (id: `%s`)\n", agent.Name, agent.ID)
 	if d := strings.TrimSpace(agent.Description); d != "" {
@@ -162,21 +162,21 @@ func buildBuilderBrief(agent AgentRecord, sess ChatSession, reason string) strin
 	b.WriteString("\nPlease:\n")
 	b.WriteString("1. Pull this agent's current configuration (agents tool, action \"get\", full true) so you can see its prompt, rules, and tools before changing anything.\n")
 	if reason != "" {
-		b.WriteString("2. Find the behavior I described in the transcript below — the turns where it actually happened. If you cannot find it, say so rather than fixing something else.\n")
+		b.WriteString("2. Find the behavior I described in the transcript below: the turns where it actually happened. If you cannot find it, say so rather than fixing something else.\n")
 	} else {
-		b.WriteString("2. Read the session transcript below and pinpoint where its behavior fell short of what I wanted — the spots where I had to correct, redirect, or repeat myself.\n")
+		b.WriteString("2. Read the session transcript below and pinpoint where its behavior fell short of what I wanted: the spots where I had to correct, redirect, or repeat myself.\n")
 	}
 	b.WriteString("3. Write the failing case FIRST. Turn the correction into an eval case: the message that produced the bad turn is the prompt, and what I corrected it TO is the assertion. " +
 		"Use eval(action=\"list\") to find a suite that grades this agent and eval(action=\"add_case\", ...) to add it; if there is no suite yet, eval(action=\"create_suite\", target_kind=\"agent\", target=\"" + agent.ID + "\", ...).\n")
 	b.WriteString("4. Run that suite now, BEFORE you change anything: eval(action=\"run\", suite=\"<name>\", note=\"before\"). Suites run with tools stubbed, so nothing external happens. " +
-		"The case you just wrote should FAIL. If it passes, the case does not capture the problem — fix the case rather than the agent, or the score will say a bug is gone that never left.\n")
+		"The case you just wrote should FAIL. If it passes, the case does not capture the problem: fix the case rather than the agent, or the score will say a bug is gone that never left.\n")
 	b.WriteString("5. Propose specific changes (prompt wording, standing rules, tools, or knowledge) that would prevent the problem, and walk me through them before you apply anything.\n")
 	b.WriteString("6. After I accept a change, run the suite again with a note saying what you changed, and tell me BOTH scores. " +
 		"A fix that does not move the number is not a fix, and a fix that moves this case while breaking another is worth knowing about before I find out in production.\n\n")
 
 	transcript := renderSessionMarkdown(agent, sess)
 	if len(transcript) > maxBriefTranscript {
-		transcript = "_[Earlier turns omitted — showing the most recent part of the session.]_\n\n" +
+		transcript = "_[Earlier turns omitted: showing the most recent part of the session.]_\n\n" +
 			transcript[len(transcript)-maxBriefTranscript:]
 	}
 	// The transcript is another session's content — user text, the agent's

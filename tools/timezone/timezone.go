@@ -24,7 +24,7 @@ func (t *TimeZoneTool) Name() string       { return "time_in_zone" }
 func (t *TimeZoneTool) Caps() []Capability { return []Capability{CapRead} } // reads system clock
 
 func (t *TimeZoneTool) Desc() string {
-	return `Current time and timezone math — use this for ANY "what time is it" or cross-timezone question; do NOT compute offsets or DST yourself. Two operations:
+	return `Current time and timezone math: use this for ANY "what time is it" or cross-timezone question; do NOT compute offsets or DST yourself. Two operations:
 - operation="now" → the current date and time. Pass zone for a specific place; omit zone for the local time.
 - operation="convert", time, from, to (+ optional date) → that clock time in 'from' expressed in 'to'.
 Zones accept IANA names ("America/New_York", "Asia/Tokyo"), major city names ("New York", "Tokyo", "London"), or US abbreviations ("EST", "PST").`
@@ -33,7 +33,7 @@ Zones accept IANA names ("America/New_York", "Asia/Tokyo"), major city names ("N
 func (t *TimeZoneTool) Params() map[string]ToolParam {
 	return map[string]ToolParam{
 		"operation": {Type: "string", Description: `"now" for the current time in a zone, or "convert" to translate a clock time between zones.`},
-		"zone":      {Type: "string", Description: `Zone for operation="now" — IANA name, major city, or US abbreviation. Omit for the local (server) time.`},
+		"zone":      {Type: "string", Description: `Zone for operation="now": IANA name, major city, or US abbreviation. Omit for the local (server) time.`},
 		"time":      {Type: "string", Description: `Clock time for operation="convert", e.g. "3:00 PM", "15:00", "3pm".`},
 		"from":      {Type: "string", Description: `Source zone for operation="convert".`},
 		"to":        {Type: "string", Description: `Target zone for operation="convert".`},

@@ -365,7 +365,7 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 	// message. The message's own send time is the one signal that settles it, so
 	// this guard belongs here rather than in any single connector.
 	if sent, stale := inboundIsStale(req.Timestamp); stale {
-		Log("[bridges] inbound on %s was sent %s (%s ago) — recorded as history, not routed",
+		Log("[bridges] inbound on %s was sent %s (%s ago): recorded as history, not routed",
 			activeChatID, sent.Format(time.RFC3339), time.Since(sent).Round(time.Minute))
 		return
 	}
@@ -373,7 +373,7 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 	// Panic / disabled: recorded above (dedup), but don't route or reply —
 	// either the global switch (panic) or this specific bridge being turned off.
 	if !T.config().Enabled || !key.Enabled {
-		Log("[bridges] %s disabled — inbound from %s recorded, not routed",
+		Log("[bridges] %s disabled: inbound from %s recorded, not routed",
 			map[bool]string{true: "transport", false: "bridge " + key.Name}[!T.config().Enabled], req.Handle)
 		return
 	}
@@ -428,7 +428,7 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 		}
 	}
 	if !found || !ch.AutoReply || ChannelDirection(ch) == DirectionOutbound {
-		Log("[bridges] no auto-reply channel for svc=%s handle=%q chat=%q — recorded only", svc, req.Handle, activeChatID)
+		Log("[bridges] no auto-reply channel for svc=%s handle=%q chat=%q: recorded only", svc, req.Handle, activeChatID)
 		// Diagnostic: show the candidate ids vs every bound channel's address so
 		// a mismatch (stale member-handle binding on a group, owner skew, wrong
 		// service) is obvious in the log instead of a silent record-only.
@@ -470,7 +470,7 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 	// survives the agent rephrasing, and it doesn't care which transport
 	// carried the message back.
 	if carriesOurTag(req.Text) {
-		Log("[bridges] inbound on %s carries our own outbound tag — recorded, not routed", activeChatID)
+		Log("[bridges] inbound on %s carries our own outbound tag: recorded, not routed", activeChatID)
 		return
 	}
 	// Content fingerprint, for outbound that carried no tag. fromMe cannot be
@@ -478,13 +478,13 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 	// as a RECEIVED message with the handle populated, which skipped this guard
 	// entirely on the exact thread it was written for.
 	if isOwnEcho(activeChatID, req.Handle, req.Text, T.isOwnerHandle(req.Handle)) {
-		Log("[bridges] inbound on %s is our own message echoed back — recorded, not routed", activeChatID)
+		Log("[bridges] inbound on %s is our own message echoed back: recorded, not routed", activeChatID)
 		return
 	}
 	// A conversation that already blew the reply budget stays cut until its
 	// cooldown expires. Recording continues so nothing is lost from history.
 	if loopTripped(activeChatID, req.Handle) {
-		Log("[bridges] conversation %s is in loop cooldown — inbound recorded, not routed", activeChatID)
+		Log("[bridges] conversation %s is in loop cooldown: inbound recorded, not routed", activeChatID)
 		return
 	}
 
@@ -532,7 +532,7 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 		allowed := ChannelGatekeeperAllow(gctx, in)
 		gcancel()
 		if !allowed {
-			Log("[bridges] gatekeeper blocked inbound from %s on channel %q — recorded only", sender, ch.Name)
+			Log("[bridges] gatekeeper blocked inbound from %s on channel %q: recorded only", sender, ch.Name)
 			// Mirror the blocked message into the bound agent's own transcript so it
 			// shows in the agent's chat and is in-context on its next wake — the
 			// agent reads along even when it stays silent. No-op if orchestrate isn't
@@ -553,7 +553,7 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 			return
 		}
 		if !replyHere {
-			Log("[bridges] inbound-only channel %q — processed, reply not delivered here", ch.Name)
+			Log("[bridges] inbound-only channel %q: processed, reply not delivered here", ch.Name)
 			return
 		}
 		if strings.TrimSpace(reply.Text) == "" && len(reply.Images) == 0 && len(reply.Videos) == 0 {
@@ -640,7 +640,7 @@ func (T *Bridges) handlePanic(w http.ResponseWriter, r *http.Request) {
 	c := T.config()
 	c.Enabled = false
 	T.setConfig(c)
-	Log("[bridges] PANIC — transport disabled; no inbound routes, no outbound delivers")
+	Log("[bridges] PANIC: transport disabled; no inbound routes, no outbound delivers")
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"enabled": false, "message": "Bridges disabled. Re-enable from Master switches."})
 }

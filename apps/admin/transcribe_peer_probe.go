@@ -33,7 +33,7 @@ func peerTranscribeTestResult(ctx context.Context, p RemotePeer) (bool, string, 
 	}
 	if !granted {
 		return false, "", "reached " + p.BaseURL +
-			", but it does not offer transcription to this key — grant \"transcribe\" on that instance (Resource Sharing › Shared With › Grants) and Refresh the peer here"
+			", but it does not offer transcription to this key: grant \"transcribe\" on that instance (Resource Sharing › Shared With › Grants) and Refresh the peer here"
 	}
 	if m.Transcribe == nil {
 		return false, "", "reached " + p.BaseURL +

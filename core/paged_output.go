@@ -193,7 +193,7 @@ func (p OutputPage) Read() (string, error) {
 	if text == "" {
 		var ok bool
 		if text, ok = lookupSpilled(strings.TrimSpace(p.ID)); !ok {
-			return "", fmt.Errorf("output_id %q is unknown here — the capture has expired (kept %s), or was made by another instance; re-run the command", p.ID, spilledOutputTTL)
+			return "", fmt.Errorf("output_id %q is unknown here: the capture has expired (kept %s), or was made by another instance; re-run the command", p.ID, spilledOutputTTL)
 		}
 	}
 	if strings.TrimSpace(p.Grep) != "" {
@@ -295,7 +295,7 @@ func (p OutputPage) releaseHint() string {
 	if p.Text != "" || strings.TrimSpace(p.ID) == "" {
 		return ""
 	}
-	return fmt.Sprintf(" Done with it? %s(%s) drops what you have read from this conversation — the capture stays, and %s brings it back.",
+	return fmt.Sprintf(" Done with it? %s(%s) drops what you have read from this conversation: the capture stays, and %s brings it back.",
 		ReleaseOutputToolName, p.ref(), p.Tool)
 }
 
@@ -334,7 +334,7 @@ func spillNote(tool, ref string, offset, end, total int, text string) string {
 	lines := strings.Count(text, "\n") + 1
 	return fmt.Sprintf("\n... [TRUNCATED: showing chars %d–%d of %d (lines %d–%d of %d). "+
 		"Read on WITHOUT re-running: %s(%s, offset=%d). "+
-		"Or search the whole capture: %s(%s, grep=\"PATTERN\") — no re-run, no workspace file needed.]",
+		"Or search the whole capture: %s(%s, grep=\"PATTERN\"), no re-run, no workspace file needed.]",
 		offset, end, total, shownFrom, shownTo, lines, tool, ref, end, tool, ref)
 }
 
@@ -369,7 +369,7 @@ const ReleaseOutputToolName = "release_output"
 // releasedMarker opens every stub. Matched to keep a second release of the
 // same id from counting the stub as a fresh reclaim, and to keep a stub
 // from being mistaken for output.
-const releasedMarker = "[RELEASED —"
+const releasedMarker = "[RELEASED"
 
 // toolResultTextPrefix is how the prompt-tool path frames a result it
 // appends as plain text (see the native/prompt split in the agent loop).

@@ -45,11 +45,11 @@ type ApplianceDispatch struct {
 func DispatchApplianceTool(ctx context.Context, udb Database, d ApplianceDispatch) (string, error) {
 	tool, ok := LoadApplianceTool(udb, d.Appliance.ID, d.ToolName)
 	if !ok {
-		return "", fmt.Errorf("no tool named %q exists for %s — ask for the capability first, and the owner approves it before it can run",
+		return "", fmt.Errorf("no tool named %q exists for %s: ask for the capability first, and the owner approves it before it can run",
 			d.ToolName, applianceLabel(d.Appliance.Name, d.Appliance.ID))
 	}
 	if !tool.Approved {
-		return "", fmt.Errorf("%q exists for %s but the owner has not approved it yet. Nothing ran and nothing is queued — tell the person it is waiting on their approval, and do not look for another way to do it",
+		return "", fmt.Errorf("%q exists for %s but the owner has not approved it yet. Nothing ran and nothing is queued: tell the person it is waiting on their approval, and do not look for another way to do it",
 			tool.Name, applianceLabel(d.Appliance.Name, d.Appliance.ID))
 	}
 	// Path-scoped parameters are checked HERE, when the tool runs, and
@@ -98,8 +98,8 @@ func DispatchApplianceTool(ctx context.Context, udb Database, d ApplianceDispatc
 	// however permissive the grants are.
 	cat := tool.Risk
 	if rendered, _ := classify_command_scoped(cmd, ""); riskRank(rendered) > riskRank(cat) {
-		Log("[servitor] %q rendered as %s but was approved as %s — refusing", tool.Name, rendered, cat)
-		return "", fmt.Errorf("%q was approved as a %s command, but with these values it reads as %s. Nothing ran. The arguments changed what the command does beyond what was approved — use different values, or have the owner approve a capability that covers this",
+		Log("[servitor] %q rendered as %s but was approved as %s: refusing", tool.Name, rendered, cat)
+		return "", fmt.Errorf("%q was approved as a %s command, but with these values it reads as %s. Nothing ran. The arguments changed what the command does beyond what was approved: use different values, or have the owner approve a capability that covers this",
 			tool.Name, string(cat), string(rendered))
 	}
 
@@ -226,7 +226,7 @@ func scopeHint(choices []string) string {
 		// model told "no valid values" concludes the tool is broken and
 		// stops; told what is actually true, it can say so.
 		return "Name one folder in the store this is limited to. Nothing is in it right now, " +
-			"so nothing will resolve until a folder appears — say that rather than guessing a name."
+			"so nothing will resolve until a folder appears: say that rather than guessing a name."
 	}
 	shown := choices
 	extra := 0
@@ -236,9 +236,9 @@ func scopeHint(choices []string) string {
 	}
 	hint := "Name ONE folder, exactly as listed: " + strings.Join(shown, ", ") + "."
 	if extra > 0 {
-		hint += " (" + strconv.Itoa(extra) + " more not listed — the store's own list tool has all of them.)"
+		hint += " (" + strconv.Itoa(extra) + " more not listed: the store's own list tool has all of them.)"
 	}
-	return hint + " Read when this turn started; a folder added since still works. A path is not accepted here — a name is."
+	return hint + " Read when this turn started; a folder added since still works. A path is not accepted here: a name is."
 }
 
 // applianceToolDescription says what it does and WHERE, because an agent that
@@ -249,7 +249,7 @@ func applianceToolDescription(t ApplianceTool, a Appliance) string {
 	if desc == "" {
 		desc = "Run a prepared command"
 	}
-	return fmt.Sprintf("%s — on %s. Prepared and approved in advance; you supply values only, never the command.",
+	return fmt.Sprintf("%s, on %s. Prepared and approved in advance; you supply values only, never the command.",
 		strings.TrimSuffix(desc, "."), applianceLabel(a.Name, a.ID))
 }
 

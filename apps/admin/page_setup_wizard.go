@@ -86,7 +86,7 @@ func (a *AdminApp) renderSetupWizard(w http.ResponseWriter, r *http.Request) {
 func (a *AdminApp) setupWizardPage() ui.Page {
 	providerStep := ui.FormStep{
 		Title: "Provider",
-		Intro: "Pick where the model runs. A local provider (Ollama or llama.cpp) needs an endpoint and no key; a hosted one needs an API key. You can add a second, higher-precision model later — this sets the one most work runs on.",
+		Intro: "Pick where the model runs. A local provider (Ollama or llama.cpp) needs an endpoint and no key; a hosted one needs an API key. You can add a second, higher-precision model later: this sets the one most work runs on.",
 		Fields: []ui.FormField{
 			{Field: "provider", Label: "Provider", Type: "select", Required: true,
 				Options: []ui.SelectOption{
@@ -105,19 +105,23 @@ func (a *AdminApp) setupWizardPage() ui.Page {
 					{Label: "llama.cpp", Value: "http://localhost:8080/v1"}}},
 			{Field: "api_key", Label: "API key", Type: "password",
 				ShowWhen: "provider:anthropic|openai|gemini|bedrock",
-				Help:     "Stored encrypted. On AWS Bedrock this is optional — leave it blank to sign with your AWS credentials (including SSO) instead of a bearer token."},
+				Help:     "Stored encrypted. On AWS Bedrock it is optional.",
+				Detail:   "Leave it blank to sign with your AWS credentials, including SSO, instead of a bearer token."},
 			{Field: "aws_region", Label: "AWS region", Type: "text", ShowWhen: "provider:bedrock",
 				Placeholder: "us-east-1",
-				Help:        "Blank uses $AWS_REGION, then us-east-1. Not every region AWS lists for Bedrock has a Messages-API endpoint — us-west-1 notably does not, use us-west-2.",
+				Help:        "Blank uses $AWS_REGION, then us-east-1.",
+				Detail:      "Not every region AWS lists for Bedrock has a Messages-API endpoint. us-west-1 notably does not; use us-west-2.",
 				Presets:     bedrockRegionPresets()},
 			{Field: "bedrock_api", Label: "Bedrock API", Type: "select", ShowWhen: "provider:bedrock",
 				Options: []ui.SelectOption{
 					{Value: "", Label: "Messages API (bedrock-mantle)"},
 					{Value: "invoke", Label: "InvokeModel (bedrock-runtime)"}},
-				Help: "Which Bedrock API your AWS role is allowed to call. Messages API needs bedrock-mantle:CreateInference; InvokeModel needs bedrock:InvokeModel and is what most AI-tooling permission sets grant. A 403 on CreateInference means switch to InvokeModel. Both stream."},
+				Help:   "Which Bedrock API your AWS role is allowed to call. Both stream.",
+				Detail: "The Messages API needs bedrock-mantle:CreateInference. InvokeModel needs bedrock:InvokeModel, and is what most AI-tooling permission sets grant. A 403 on CreateInference means switch to InvokeModel."},
 			{Field: "aws_profile", Label: "AWS profile", Type: "text", ShowWhen: "provider:bedrock",
 				Placeholder: "(default)",
-				Help:        "Which set of AWS credentials to use. Blank uses $AWS_PROFILE. Credentials are never stored here — they come from your environment or ~/.aws, so for SSO run `aws sso login` on this machine first."},
+				Help:        "Which set of AWS credentials to use. Blank uses $AWS_PROFILE.",
+				Detail:      "Credentials are never stored here: they come from your environment or ~/.aws, so for SSO run `aws sso login` on this machine first."},
 		},
 	}
 
@@ -127,13 +131,14 @@ func (a *AdminApp) setupWizardPage() ui.Page {
 		Fields: []ui.FormField{
 			{Field: "model", Label: "Model", Type: "text",
 				Placeholder: "e.g. qwen3.6-27b, claude-sonnet-5, us.anthropic.claude-opus-4-8",
-				Help:        "For a local provider this is the name the server knows it by (`ollama list`). On Bedrock: Bare names get the `anthropic.` prefix added (anthropic.claude-opus-4-8). Many AWS accounts require a region-prefixed inference profile instead — e.g. us.anthropic.claude-opus-4-8 — and a bare id is denied. Anything already containing `anthropic.` is sent as typed."},
+				Help:        "For a local provider, the name the server knows it by (`ollama list`).",
+				Detail:      "On Bedrock, bare names get the `anthropic.` prefix added, giving anthropic.claude-opus-4-8. Many AWS accounts require a region-prefixed inference profile instead, such as us.anthropic.claude-opus-4-8, and deny a bare id. Anything already containing `anthropic.` is sent as typed."},
 		},
 	}
 
 	checkStep := ui.FormStep{
 		Title: "Check",
-		Intro: "Press Test connectivity to send one short prompt with the settings above. This is a real request: it proves the endpoint answers, the credentials work, and the model name is valid. Nothing has been saved yet — Finish setup writes it.",
+		Intro: "Press Test connectivity to send one short prompt with the settings above. This is a real request: it proves the endpoint answers, the credentials work, and the model name is valid. Nothing has been saved yet: Finish setup writes it.",
 	}
 
 	page := ui.Page{
@@ -292,7 +297,7 @@ func (a *AdminApp) handleWorkerLLMTest(w http.ResponseWriter, r *http.Request) {
 	if model == "" {
 		model = "the provider default"
 	}
-	writeTestResult(w, true, "Connected — "+model+" answered in "+took.String()+"."+credNote, "")
+	writeTestResult(w, true, "Connected: "+model+" answered in "+took.String()+"."+credNote, "")
 }
 
 // bedrockRegionPresets lists regions that actually have a Messages-API
@@ -305,7 +310,7 @@ func bedrockRegionPresets() []ui.FieldPreset {
 	return []ui.FieldPreset{
 		{Label: "us-east-1", Value: "us-east-1", Hint: "N. Virginia"},
 		{Label: "us-east-2", Value: "us-east-2", Hint: "Ohio"},
-		{Label: "us-west-2", Value: "us-west-2", Hint: "Oregon — use this one, not us-west-1"},
+		{Label: "us-west-2", Value: "us-west-2", Hint: "Oregon: use this one, not us-west-1"},
 		{Label: "eu-west-1", Value: "eu-west-1", Hint: "Ireland"},
 		{Label: "eu-central-1", Value: "eu-central-1", Hint: "Frankfurt"},
 		{Label: "ap-northeast-1", Value: "ap-northeast-1", Hint: "Tokyo"},

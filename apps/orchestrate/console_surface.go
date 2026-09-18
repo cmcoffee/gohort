@@ -92,7 +92,7 @@ func surfaceDestLabel(surface string) string {
 	case "cortex":
 		return "this agent's Cortex mind thread"
 	case "background":
-		return "no thread (background — the run happens, nothing is posted)"
+		return "no thread (background: the run happens, nothing is posted)"
 	default:
 		return "this session"
 	}

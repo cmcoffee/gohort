@@ -122,7 +122,7 @@ func renewRefusedPeerUpload(ctx context.Context, up media.UploadRequest) (string
 	if cred == "" || cred == strings.TrimSpace(p.Key) {
 		return "", false
 	}
-	Log("[peer] %q refused our credential on a media upload — exchanged a new one and retrying", p.Name)
+	Log("[peer] %q refused our credential on a media upload: exchanged a new one and retrying", p.Name)
 	return cred, true
 }
 

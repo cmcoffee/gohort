@@ -219,7 +219,7 @@ func openapiBuildSpec(t Template, vals map[string]any) (json.RawMessage, []strin
 		base = strings.TrimRight(b, "/")
 	}
 	if base == "" {
-		return nil, nil, fmt.Errorf("no server URL in the spec — set base_url")
+		return nil, nil, fmt.Errorf("no server URL in the spec: set base_url")
 	}
 	cred := TemplateStr(vals, "credential")
 	if cred == "" {
@@ -277,7 +277,7 @@ func openapiDetect(_ Template, vals map[string]any) (map[string]any, []string, e
 	for _, o := range ops {
 		s := o.Method + " " + o.Path
 		if o.Summary != "" {
-			s += " — " + o.Summary
+			s += " · " + o.Summary
 		}
 		lines = append(lines, s)
 	}
@@ -294,7 +294,7 @@ func openapiTemplate() Template {
 		Name:        "openapi_tool",
 		Label:       "Import from OpenAPI spec",
 		Category:    "Tools",
-		Description: "Paste an OpenAPI/Swagger spec — its endpoints become a toolbox (one action each). Params are derived from the path/query; Detect previews what you'll get.",
+		Description: "Paste an OpenAPI/Swagger spec: its endpoints become a toolbox (one action each). Params are derived from the path/query; Detect previews what you'll get.",
 		Target:      TargetTool,
 		Kind:        "toolbox",
 		Strategy:    "openapi_tool",
@@ -303,7 +303,7 @@ func openapiTemplate() Template {
 			{Key: "base_url", Label: "Base URL (optional override)", Type: "text", Group: "Connection", Help: "auto-filled from the spec's server; override if it's wrong"},
 			{Key: "credential", Label: "Credential", Type: "credential", Group: "Auth", Help: "no_auth for a public API; a SecureAPI credential name for an authenticated one"},
 			{Key: "filter", Label: "Path filter (optional)", Type: "text", Group: "Options", Help: "only import paths starting with this prefix, e.g. /pets"},
-			{Key: "operations", Label: "Operations (preview)", Type: "textarea", Group: "Preview", Advanced: true, Help: "filled by Detect — the endpoints that will become actions"},
+			{Key: "operations", Label: "Operations (preview)", Type: "textarea", Group: "Preview", Advanced: true, Help: "filled by Detect: the endpoints that will become actions"},
 			{Key: "description", Label: "Toolbox description", Type: "text", Group: "Tool"},
 		},
 	}

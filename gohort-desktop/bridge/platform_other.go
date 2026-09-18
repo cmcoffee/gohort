@@ -37,18 +37,18 @@ func openViewer() error {
 
 // promptFolderConsent denies by default; no native dialog here.
 func promptFolderConsent(folder string) bool {
-	core.Warn("[fs] denying read of %s — no folder-consent prompt on this platform", folder)
+	core.Warn("[fs] denying read of %s: no folder-consent prompt on this platform", folder)
 	return false
 }
 
 func promptWriteConsent(folder string) bool {
-	core.Warn("[fs] denying write to %s — no folder-consent prompt on this platform", folder)
+	core.Warn("[fs] denying write to %s: no folder-consent prompt on this platform", folder)
 	return false
 }
 
 // promptApproval denies by default; no native dialog on these platforms.
 func promptApproval(name string, _ map[string]any) (allow, always bool) {
-	core.Warn("[approval] denying %q — no prompt on this platform; set auto_approve to allow", name)
+	core.Warn("[approval] denying %q: no prompt on this platform; set auto_approve to allow", name)
 	return false, false
 }
 

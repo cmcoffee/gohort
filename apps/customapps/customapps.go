@@ -209,7 +209,7 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 	// data-source/action scripts. Bundle imports land disabled; the Custom
 	// Apps index's Enable button is the review gate.
 	if spec.Disabled {
-		http.Error(w, "this app is disabled — review it and press Enable on the My Apps page to activate it", http.StatusForbidden)
+		http.Error(w, "this app is disabled: review it and press Enable on the My Apps page to activate it", http.StatusForbidden)
 		return
 	}
 	// appdb is the app's record store for THIS user: a dedicated per-app file when
@@ -469,7 +469,7 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 					// shared app, only when some of them are the reader's own.
 					{Type: "button", Label: "Settings", Method: "GET", PostTo: "{slug}/_settings", OnlyIf: "has_settings", HideIf: "disabled"},
 					{Type: "button", Label: "Enable", Method: "POST", PostTo: "_app/enable?slug={slug}", OnlyIf: "disabled",
-						Confirm: "Enable this imported app? Review its data-source and action scripts first — they run in your sandbox once the app is live."},
+						Confirm: "Enable this imported app? Review its data-source and action scripts first: they run in your sandbox once the app is live."},
 					// One Share button opens the sharing modal (customapps_share).
 					{Type: "button", Label: "Share", Method: "client", PostTo: "customapps_share", OnlyIf: "mine"},
 					// Pause / Resume a self-updating app. Only one shows at a time,
@@ -509,10 +509,10 @@ const shareModalScript = `<script>
   var direct = truthy(rec.direct);
   var shareHelp = 'Every signed-in user gets their own copy. Your data-source and action scripts run with your credentials for them.'
     + (direct ? '' : ' An administrator approves this before it goes live.');
-  var requestedHelp = 'Publish requested — an administrator reviews it before it goes live. ' + shareHelp;
+  var requestedHelp = 'Publish requested: an administrator reviews it before it goes live. ' + shareHelp;
   var publicHelp = 'Anonymous, read-only. Your data sources run with your credentials for anyone who has the link. Nothing is saved. Revoke anytime by turning this off.'
     + (direct ? '' : ' An administrator approves the link before it exists.');
-  var publicRequestedHelp = 'Public link requested — an administrator reviews it before the link exists. ' + publicHelp;
+  var publicRequestedHelp = 'Public link requested: an administrator reviews it before the link exists. ' + publicHelp;
   function makeToggle(label, help, checked, onChange) {
     var wrap = document.createElement('label');
     wrap.style.cssText = 'display:block;cursor:pointer';
@@ -548,7 +548,7 @@ const shareModalScript = `<script>
     title: 'Share "' + (rec.name || slug) + '"',
     width: '520px',
     mount: function(body) {
-      // Status: what the owner cannot see from the toggles — a request
+      // Status: what the owner cannot see from the toggles, a request
       // pending or denied, the audience an administrator set, a disable
       // that was not theirs. Server-worded, one line each; absent when
       // there is nothing to say.
@@ -599,7 +599,7 @@ const shareModalScript = `<script>
             return;
           }
           // Enabling public exposes the app to anyone with the URL, running the
-          // owner's credentialed data sources with no login — confirm before it
+          // owner's credentialed data sources with no login: confirm before it
           // goes live (or before the request is filed). uiConfirm is the
           // runtime's cross-host dialog (native confirm is broken in the
           // gohort-desktop WKWebView).
@@ -769,7 +769,7 @@ func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owne
 		}
 		if s.Disabled {
 			row["disabled"] = "1"
-			status = "disabled — review, then Enable"
+			status = "disabled: review, then Enable"
 		} else if has, allPaused, next := appScheduleStatus(owner, s.Slug); has {
 			// Self-updating app: badge its state and expose auto_running/auto_paused
 			// so the Pause/Resume row actions show the right one.
@@ -1423,7 +1423,7 @@ func (T *CustomApps) setShared(owner, slug string, on bool) error {
 	}
 	if on {
 		if other, shared := LookupSharedOwner(T.DB, sharedAppsIndex, slug); shared && other != owner {
-			return Error("another user already shares an app at this slug — rename yours to share it")
+			return Error("another user already shares an app at this slug: rename yours to share it")
 		}
 	}
 	spec.Shared = on
@@ -1560,7 +1560,7 @@ func (T *CustomApps) handlePublic(w http.ResponseWriter, r *http.Request, rest s
 	// whole subtree rather than just the data path: an unknown token still
 	// costs an index lookup, and the page render is not free either.
 	if !publicAppRequests.Allow(RequestSource(r)) {
-		TooManyRequests(w, time.Minute, "too many requests — slow down")
+		TooManyRequests(w, time.Minute, "too many requests: slow down")
 		return
 	}
 	rest = strings.Trim(rest, "/")
@@ -1702,7 +1702,7 @@ func publishLimitationNote(spec AppSpec) string {
 	}
 	sort.Strings(kinds)
 	return "Heads up: the " + strings.Join(kinds, " and the ") + " won't work on the public link. " +
-		"Those run a model on your account and keep their own history, so they need a signed-in session — " +
+		"Those run a model on your account and keep their own history, so they need a signed-in session: " +
 		"visitors will see a short note in their place. Everything else on the page (tables, charts, data sources) works normally."
 }
 
@@ -1767,8 +1767,8 @@ func (T *CustomApps) handlePublicData(w http.ResponseWriter, r *http.Request, sp
 	// per-source limiting does nothing. The page and the empty records/actions
 	// responses stay under the looser subtree limit above.
 	if !publicAppScripts.Allow(spec.Owner + "/" + spec.Slug) {
-		Warn("[customapps] public app %q hit its script ceiling (%d/min) — refusing further runs this minute", spec.Slug, publicScriptsPerMinute)
-		TooManyRequests(w, time.Minute, "this app is being asked for data too quickly — try again shortly")
+		Warn("[customapps] public app %q hit its script ceiling (%d/min): refusing further runs this minute", spec.Slug, publicScriptsPerMinute)
+		TooManyRequests(w, time.Minute, "this app is being asked for data too quickly: try again shortly")
 		return
 	}
 	var ds *AppDataSource

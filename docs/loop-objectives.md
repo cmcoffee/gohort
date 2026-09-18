@@ -1,4 +1,4 @@
-# Loop objectives — a recurring task that knows when it is done
+# Loop objectives: a recurring task that knows when it is done
 
 Status: **built** (v0.6.624, 2026-09-07). All three stages, on ALL THREE scheduling surfaces.
 Decision locked by the build: an objective is a schedule with a completion check, not a new
@@ -6,8 +6,8 @@ trigger kind.
 
 **Standing agents too (v0.6.621).** The original spec scoped this to recurring tasks and put
 standing agents in Out of scope. That was wrong, and the reason is structural rather than a
-matter of taste: a Fleet agent is not given the `recurring` tool at all — it schedules through
-`create_standing_agent` — so scoping objectives to `recurring` made them unreachable for exactly
+matter of taste: a Fleet agent is not given the `recurring` tool at all, it schedules through
+`create_standing_agent`, so scoping objectives to `recurring` made them unreachable for exactly
 the agents most likely to be handed a goal. Found by asking one for an objective and watching it
 do the work inline instead, because it had nothing else to reach for.
 
@@ -17,7 +17,7 @@ judge step, card line, ledger prefix and stand-down in `fireOrchestrateUpdate`.
 
 Landed in stage 2 (v0.6.616): `Attempts` on the payload, `noteObjectiveAttempt`,
 `objectiveAttemptsBlock`, and the block's injection into the fire's prompt. Stage 2 also fixed a
-stage-1 mistake — see **Stop or continue** below: a stalled objective was cancelled, which made
+stage-1 mistake, see **Stop or continue** below: a stalled objective was cancelled, which made
 the task VANISH from the console rather than stand there saying it had stopped.
 
 Landed in stage 3 (v0.6.617): `until` / `max_attempts` on the `recurring` tool and its listing,
@@ -27,8 +27,8 @@ allowance instead of stalling on its first fire.
 
 **Event monitors too (v0.6.624).** The third surface, added after a user asked a Fleet agent to
 fetch a status endpoint every five minutes and stop after two: the monitor was created, reported
-as set up, and then polled forever. `EventMonitor` had no fire counter and no cap — the only
-stopping condition the record could express was `OneShot`, and only `await_result` ever set it —
+as set up, and then polled forever. `EventMonitor` had no fire counter and no cap: the only
+stopping condition the record could express was `OneShot`, and only `await_result` ever set it
 so a bound the user stated out loud had nowhere to go, and nothing anywhere said so. Monitors
 now take both a fire count (`stop_after`) and a condition (`until`); see **The monitor half**.
 
@@ -58,14 +58,14 @@ One `orchUpdatePayload` (a recurring task) with three new fields:
 |---|---|
 | `Until string` | the completion check, in plain language: "the post is published and its URL was posted to the thread" |
 | `MaxAttempts int` | how many fires may end without the check passing before the task escalates; 0 = `max_fires` governs |
-| `Attempts []objectiveAttempt` | `{at, met, reason}` per earlier fire, oldest first, capped at twelve. Carried on the PAYLOAD, which is what survives into the next fire — the same reason `RemainingToday` and `LastActive` live there. |
+| `Attempts []objectiveAttempt` | `{at, met, reason}` per earlier fire, oldest first, capped at twelve. Carried on the PAYLOAD, which is what survives into the next fire: the same reason `RemainingToday` and `LastActive` live there. |
 
 **On `Attempts` and the run ledger.** The spec first proposed this field, then dropped it on the
 grounds that the ledger already records a row per fire. Building stage 2 showed that was half
 right and settled it the other way: the ledger holds the *fire*, in prose written for a person to
 read in Activity, while the next attempt needs the *verdict*, structured. Recovering reasons by
 parsing a display string would make a wire format out of a sentence written to be read. Two
-records, two jobs, and the bound counts neither — `MaxAttempts` is measured against `FireCount`.
+records, two jobs, and the bound counts neither: `MaxAttempts` is measured against `FireCount`.
 
 Everything else is the recurring task it already is: prompt, cadence (`interval_minutes`,
 `times_per_day`, the random `min_gap`/`max_gap` window, `active_from`/`active_to`), surface,
@@ -96,7 +96,7 @@ card is appended:
    `· objective not yet — <reason>`, or `· objective STALLED after N attempt(s) — <reason>`. That
    is the one visible change per fire.
 4. **Stop or continue.** *(built)* On a manual Run now the verdict is judged and shown, but the
-   schedule is deliberately untouched — that path's contract — so an owner can retry a stalled
+schedule is deliberately untouched (that path's contract), so an owner can retry a stalled
    objective after fixing what the reason named.
    - Verdict passed: the pre-armed successor is cancelled (`CancelOrchestrateUpdate`), the card's
      verdict line reads *done*, and the task is retired the way the fire cap retires it today
@@ -110,14 +110,14 @@ card is appended:
      The successor is cancelled and the task is then **parked** (`parkRecurringBroken`), carrying
      its reason and its attempt history. Stage 1 only cancelled, and that was wrong: the fired
      occurrence is already off the queue before the handler runs, so cancelling the successor too
-     removed the last trace of the task — an owner who was never going to get their objective
+     removed the last trace of the task: an owner who was never going to get their objective
      would also never see that it had stopped trying. A parked task stays listed, stops firing,
      and can be resumed. A MET objective still retires outright, the way any capped task does.
 
 ## The next attempt reads the earlier ones
 
 *(built)* The reason a fifth attempt is not a first attempt: the fire's prompt gets one block,
-built from `Attempts` and placed last, in the volatile tail beside the time context — recency is
+built from `Attempts` and placed last, in the volatile tail beside the time context: recency is
 where it belongs, and that tail never caches, so the block costs no prefix reuse:
 
 ```
@@ -137,8 +137,8 @@ reached, and here is why each time".
 
 Through the existing `recurring` tool, two optional parameters:
 
-- `until` — the completion check. Setting it makes the task an objective.
-- `max_attempts` — fires that may end unmet before the task stalls.
+- `until`: the completion check. Setting it makes the task an objective.
+- `max_attempts`: fires that may end unmet before the task stalls.
 
 *(built)* `recurring(action="schedule")` with the same name and an `until` edits the task in
 place, the way it already does for timing. `recurring(action="list")` returns `objective`,
@@ -156,7 +156,7 @@ recurring view (`console_recurring.go`). An objective is a recurring row with tw
 |---|---|---|
 | Name | prompt's first line | same |
 | Cadence | `recurring · every 1440m · 09:00–09:30` | same |
-| Fires | `3 / 10 fired` | same — the fire count is not the attempt count once a Resume has moved the allowance |
+| Fires | `3 / 10 fired` | same: the fire count is not the attempt count once a Resume has moved the allowance |
 | State | blank, or the broken label | `objective — no attempts yet`, or `objective — not yet (3 attempt(s)): <last reason>`; a stalled one shows the broken label, which already carries the stall reason |
 | Next run | RFC3339 | same; blank once parked |
 
@@ -170,7 +170,7 @@ top of the fire, so the button would do nothing.
 
 **Resume** is the answer to "I fixed what the stall named". It clears the park, puts the task back
 on its real cadence, and moves `AttemptsBase` to the current fire count so the allowance restarts
-— without that the resumed task stalls again on its first fire, which is the whole reason the
+· without that the resumed task stalls again on its first fire, which is the whole reason the
 attempt number is measured against the allowance rather than the lifetime fire count. History is
 kept: `Attempts`, `FireCount` and the ledger are untouched. Offered on any parked row, since "the
 cause is fixed" is the same request whatever parked it; a task parked for a deleted agent simply
@@ -200,16 +200,16 @@ intention, and its home is with the other standing things.
 
 ## Stages
 
-1. **Fields, judge, ledger, card.** — **BUILT (v0.6.615).** `Until`, `MaxAttempts`, `Attempts` on the payload; the judge
+1. **Fields, judge, ledger, card.**: **BUILT (v0.6.615).** `Until`, `MaxAttempts`, `Attempts` on the payload; the judge
    step and the verdict line in `fireOrchestrateUpdate`; retire on pass; stall on cap. Tests: a
    fire whose judge passes cancels its successor and posts *done*; a fire whose judge fails leaves
    the successor armed and the ledger one row longer; the cap stalls with an attention drop; a
    judge error records *unjudged* and counts.
-2. **The attempts block.** — **BUILT (v0.6.616).** Built from `Attempts` into the fire prompt.
+2. **The attempts block.**: **BUILT (v0.6.616).** Built from `Attempts` into the fire prompt.
    Tests: the block names every prior reason oldest-first, is absent on the first attempt and on
    a task that is not an objective, keeps the newest twelve, and recording on the pre-armed
    successor never reaches back into the firing payload's slice.
-3. **Authoring and console.** — **BUILT (v0.6.617).** `until` / `max_attempts` on the `recurring`
+3. **Authoring and console.**: **BUILT (v0.6.617).** `until` / `max_attempts` on the `recurring`
    tool and its listing, the objective state on the console row, and Resume for a parked task.
    Tests: the tool declares both parameters; the state label reads correctly at each stage; a
    resumed objective starts a fresh allowance instead of stalling immediately.
@@ -233,7 +233,7 @@ can offer:
 | | recurring task | standing agent |
 |---|---|---|
 | authored with | `recurring(action="schedule", until=…)` | `create_standing_agent(until=…)` |
-| attempt number | `FireCount + 1 - AttemptsBase` | `UnmetCount + 1` — there is no lifetime fire count to subtract from |
+| attempt number | `FireCount + 1 - AttemptsBase` | `UnmetCount + 1`: there is no lifetime fire count to subtract from |
 | met | cancels the pre-armed successor, task retires | sets `Paused`, schedule stays listed and can be started again |
 | stalled | parks via `parkRecurringBroken` | `MarkStandingAgentBroken`, which pauses and unschedules |
 | resumed by | console **Resume**, moving `AttemptsBase` | `ClearStandingAgentBroken`, zeroing `UnmetCount` |
@@ -248,7 +248,7 @@ standing runner acts on any fire, because the runner closure is not told the tri
 that is met is met however the fire that met it was started.
 
 `core.ObjectiveAttempt` is the one type both records store, and it is the only objective code in
-core — the judging and the outcome rules stay with the runner in `apps/orchestrate`. The fields
+core: the judging and the outcome rules stay with the runner in `apps/orchestrate`. The fields
 are FLAT on both records rather than shared through an embedded struct, because kvlite stores
 them with gob and gob nests an embedded struct, which would change the shape of everything
 already written.
@@ -258,22 +258,22 @@ already written.
 A monitor is not an agent making attempts. It watches something and reports what changed, which
 makes it the one surface where the two halves of "stop" come apart:
 
-- **`stop_after` — a count.** Bounds the ALERTS. Counted in `fireWake` and enforced by
+- **`stop_after`: a count.** Bounds the ALERTS. Counted in `fireWake` and enforced by
   `StopEventMonitor`, with no model anywhere in it. This is what "tell me the next two times"
   needs, and it is what the reported failure actually asked for.
-- **`until` — a condition.** Bounds the WATCHING. Judged after each fire from what the fire
+- **`until`: a condition.** Bounds the WATCHING. Judged after each fire from what the fire
   observed, so a monitor can keep alerting on every change and stop when one of them means the
   goal is reached: "keep telling me about this PR, and stop when it's merged."
 
 Both stop the same way the standing half does: `Paused`, kept, and stated in the run ledger. A
 resumed monitor gets a fresh allowance through `RearmMonitorFires`, which moves `FiresBase`
-rather than resetting `FireCount` — the same reason `AttemptsBase` exists on the recurring side.
+rather than resetting `FireCount`: the same reason `AttemptsBase` exists on the recurring side.
 A cap reached with an unmet condition says so, because from the outside the two stops look
 identical and only one of them means the thing was waited out.
 
 **The observation checker is a separate prompt, and has to be.** The attempt checker treats the
 ACTIONS as the evidence and is told that an attempt which ran none has almost certainly not
-reached its goal — the rule that stops an agent from claiming success it did not earn. A monitor
+reached its goal: the rule that stops an agent from claiming success it did not earn. A monitor
 fire runs no actions BY DESIGN. Sent through the attempt checker, every fire would look like an
 attempt that did nothing, and a goal plainly visible in the change would read NOT_YET forever.
 `objectiveObservationSysPrompt` judges the observation instead and says outright that taking no
@@ -288,7 +288,7 @@ nothing. A monitor given neither behaves exactly as every monitor did before.
 
 - Objectives on pipelines and machines. A pipeline loop stage already has `until` as a bool
   field; a machine's phases already have exits. If a goal needs those, author it there.
-  (Standing agents AND event monitors were both listed here and have since been built — see the
+  (Standing agents AND event monitors were both listed here and have since been built: see the
   status note.)
 - A judge that plans the next attempt. The ledger tells the next fire what failed; deciding what
   to do about it is the fire's job, with the tools it already has.

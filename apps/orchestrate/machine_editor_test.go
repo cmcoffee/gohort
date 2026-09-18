@@ -435,7 +435,7 @@ func TestEachPhaseGetsItsOwnComputedChoices(t *testing.T) {
 			{Name: "verify", Resident: true, Guard: "they moved on", GuardTo: "triage"},
 		},
 	}
-	agents := []ui.SelectOption{{Value: "", Label: "— this agent —"}, {Value: "ag-9", Label: "Log analyst"}}
+	agents := []ui.SelectOption{{Value: "", Label: "(this agent)"}, {Value: "ag-9", Label: "Log analyst"}}
 
 	fieldsOf := func(phase string) string {
 		p, ok := def.Phase(phase)

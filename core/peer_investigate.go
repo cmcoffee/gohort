@@ -161,7 +161,7 @@ func PeerInvestigate(ctx context.Context, p RemotePeer, applianceID, question st
 		// sends people to check DNS and certificates.
 		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "Client.Timeout") {
 			return "", fmt.Errorf(
-				"peer %q did not answer within %s. The investigation is probably still running over there — "+
+				"peer %q did not answer within %s. The investigation is probably still running over there: "+
 					"a narrower question usually returns; a mapping-sized one will not. "+
 					"To re-map that system, do it on %s itself; a refresh here only re-syncs what it already knows",
 				p.Name, peerInvestigateTimeout, p.Name)
@@ -368,7 +368,7 @@ func peerMissingCapErr(p RemotePeer, want string) error {
 	}
 	return fmt.Errorf("peer %q is not offering %q. As of the last check (%s) it offered: %s. "+
 		"Either that instance does not serve %q yet (rebuild and restart it), or its key was not granted it "+
-		"(Admin → Resource Sharing → Keys → Grants, over there), or this list is simply out of date — "+
+		"(Admin → Resource Sharing → Keys → Grants, over there), or this list is simply out of date: "+
 		"re-check the peer under Peers to refresh it",
 		p.Name, want, when, offers, want)
 }

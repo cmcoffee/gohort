@@ -205,9 +205,9 @@ func (T *Servitor) handleInject(w http.ResponseWriter, r *http.Request) {
 		}
 		noteID, clean := q.Push(req.Text)
 		if !clean {
-			emit(req.ID, probeEvent{Kind: "status", Text: "Note queued (oldest dropped — queue at capacity)"})
+			emit(req.ID, probeEvent{Kind: "status", Text: "Note queued (oldest dropped: queue at capacity)"})
 		} else {
-			emit(req.ID, probeEvent{Kind: "status", Text: "Note queued — orchestrator will see it on its next decision."})
+			emit(req.ID, probeEvent{Kind: "status", Text: "Note queued: orchestrator will see it on its next decision."})
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"note_id": noteID})

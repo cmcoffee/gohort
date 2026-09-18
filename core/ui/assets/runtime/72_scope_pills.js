@@ -34,7 +34,7 @@
       (on ? 'var(--accent,#6366f1)' : 'transparent') + ';color:' + color +
       (primary ? ';font-weight:600' : '');
     b.textContent = (on ? '✓ ' : (partial ? '– ' : '')) + label;
-    if (partial && !on) b.title = 'Some are on and some are not — click to turn all on';
+    if (partial && !on) b.title = 'Some are on and some are not: click to turn all on';
     b.addEventListener('click', function () {
       if (b.disabled) return;
       b.disabled = true;

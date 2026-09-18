@@ -29,7 +29,7 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 	// on — observed burning whole autonomous cycles retrying an action whose
 	// stored url_template was empty, misreading it as a missing parameter.
 	if strings.TrimSpace(tt.CommandTemplate) == "" {
-		return "", fmt.Errorf("tool %q has an EMPTY url_template — its stored definition is broken, and NO arguments will make this call work. Do not retry. Fix the definition: tool_def(action=\"update\", name=%q, url_template=\"https://...\") — or for a toolbox action, actions=[{name:\"<action>\", url_template:\"https://...\"}]", tt.Name, tt.Name)
+		return "", fmt.Errorf("tool %q has an EMPTY url_template: its stored definition is broken, and NO arguments will make this call work. Do not retry. Fix the definition: tool_def(action=\"update\", name=%q, url_template=\"https://...\"), or for a toolbox action, actions=[{name:\"<action>\", url_template:\"https://...\"}]", tt.Name, tt.Name)
 	}
 	urlStr, err := substituteURL(tt.CommandTemplate, tt.Params, tt.Required, args)
 	if err != nil {
@@ -104,7 +104,7 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 			var probe any
 			if jerr := json.Unmarshal([]byte(body), &probe); jerr != nil {
 				Debug("[temptool] api tool %q produced invalid JSON body: %s\nTEMPLATE: %s\nBODY: %s", tt.Name, jerr, tt.BodyTemplate, body)
-				return "", fmt.Errorf("body template substitution produced invalid JSON: %w. Template: %s. Substituted body: %s. (For an XML/non-JSON API, set content_type — e.g. \"application/xml\" — so the body is sent RAW instead of being JSON-encoded/validated.)", jerr, tt.BodyTemplate, body)
+				return "", fmt.Errorf("body template substitution produced invalid JSON: %w. Template: %s. Substituted body: %s. (For an XML/non-JSON API, set content_type: e.g. \"application/xml\", so the body is sent RAW instead of being JSON-encoded/validated.)", jerr, tt.BodyTemplate, body)
 			}
 			Debug("[temptool] api tool %q body validated (%d bytes)", tt.Name, len(body))
 		}
@@ -164,7 +164,7 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 			if hdr == "" {
 				hdr = "HTTP 2xx"
 			}
-			return fmt.Sprintf("response_extract could not parse the response (%s): %v. The HTTP call SUCCEEDED — the body just didn't match the spec. Check select/fields against the real XML, or drop response_extract to see the raw body.", hdr, xerr), nil
+			return fmt.Sprintf("response_extract could not parse the response (%s): %v. The HTTP call SUCCEEDED: the body just didn't match the spec. Check select/fields against the real XML, or drop response_extract to see the raw body.", hdr, xerr), nil
 		}
 		body = string(out)
 		if tt.ResponsePipe == "" {
@@ -179,7 +179,7 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 	pres := RunSandboxedShellPipe(pipeCtx, tt.ResponsePipe, body)
 	piped := strings.TrimSpace(pres.Output)
 	if pres.TimedOut {
-		notice := fmt.Sprintf("\n[response_pipe TIMED OUT after %s — command killed.]", commandTimeout)
+		notice := fmt.Sprintf("\n[response_pipe TIMED OUT after %s: command killed.]", commandTimeout)
 		if piped == "" {
 			return strings.TrimPrefix(notice, "\n"), nil
 		}
@@ -196,7 +196,7 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 		// alternative operator used bare in object construction, which
 		// jq requires parenthesized. Say so directly.
 		if strings.Contains(tt.ResponsePipe, "//") && strings.Contains(fmt.Sprint(pres.Err), "//") {
-			hint = " HINT: jq requires the `//` alternative operator to be PARENTHESIZED inside object construction — write `{k: (.a // .b)}`, not `{k: .a // .b}`. Fix the response_pipe (delete + recreate the tool)."
+			hint = " HINT: jq requires the `//` alternative operator to be PARENTHESIZED inside object construction, write `{k: (.a // .b)}`, not `{k: .a // .b}`. Fix the response_pipe (delete + recreate the tool)."
 		}
 		if piped == "" {
 			// The pipe produced nothing usable — but the HTTP call ALREADY
@@ -220,7 +220,7 @@ func dispatchAPIModeTempTool(sess *ToolSession, tt *TempTool, args map[string]an
 			if header == "" {
 				header = "HTTP 2xx"
 			}
-			return fmt.Sprintf("%s\n[response_pipe failed: %v — the HTTP call SUCCEEDED; showing the RAW response below. Do NOT retry the call (a repeat POST would double-submit). Fix the pipe later via delete + recreate. Pipe: %s]%s\n%s", header, pres.Err, tt.ResponsePipe, hint, rawBody), nil
+			return fmt.Sprintf("%s\n[response_pipe failed: %v, the HTTP call SUCCEEDED; showing the RAW response below. Do NOT retry the call (a repeat POST would double-submit). Fix the pipe later via delete + recreate. Pipe: %s]%s\n%s", header, pres.Err, tt.ResponsePipe, hint, rawBody), nil
 		}
 		return piped + fmt.Sprintf("\n[response_pipe exit: %v]%s", pres.Err, hint), nil
 	}

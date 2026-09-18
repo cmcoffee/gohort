@@ -134,7 +134,7 @@ func (s storeSource) folderMenu(st Store) string {
 		// case this is rather than reporting an emptiness that isn't one.
 		files, ferr := List(st.Path, "")
 		if ferr == nil && len(files) > 0 {
-			return "The file store " + st.Name + " has no subfolders — its " +
+			return "The file store " + st.Name + " has no subfolders: its " +
 				strconv.Itoa(len(files)) + " file" + plural(len(files)) +
 				" sit at the top level. Search it without naming `within`."
 		}
@@ -147,7 +147,7 @@ func (s storeSource) folderMenu(st Store) string {
 			fmt.Fprintf(&b, "…and %d more.\n", len(folders)-i)
 			break
 		}
-		fmt.Fprintf(&b, "- %s — %d file%s, %s, last written %s\n",
+		fmt.Fprintf(&b, "- %s: %d file%s, %s, last written %s\n",
 			f.Name, f.Files, plural(f.Files), HumanSize(f.Bytes), f.Modified.Format("2006-01-02 15:04"))
 	}
 	return b.String()
@@ -229,7 +229,7 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 	commandsTool := AgentToolDef{
 		Tool: Tool{
 			Name:        "list_" + slug + "_commands",
-			Description: fmt.Sprintf("List the commands an admin has registered against the %q file store — what each one does to a folder, and whether it asks a person for input. Read-only and instant: this NAMES them, it does not run them. Reach for it when a folder looks empty, unreadable, or still packaged: the usual reason is that one of these has to be run on it first, and telling the user WHICH one is the useful answer. Running one is a person's click in Files, not a tool call.", label),
+			Description: fmt.Sprintf("List the commands an admin has registered against the %q file store: what each one does to a folder, and whether it asks a person for input. Read-only and instant: this NAMES them, it does not run them. Reach for it when a folder looks empty, unreadable, or still packaged: the usual reason is that one of these has to be run on it first, and telling the user WHICH one is the useful answer. Running one is a person's click in Files, not a tool call.", label),
 			Caps:        []Capability{CapRead},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
@@ -241,7 +241,7 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 		{
 			Tool: Tool{
 				Name:        "list_" + slug,
-				Description: fmt.Sprintf("List what is in the %q file store: its subfolders (newest first, with file counts and sizes), or the files inside one of them.%s Call this when you do not already know what is there — the search and read tools take a subfolder name.", label, about),
+				Description: fmt.Sprintf("List what is in the %q file store: its subfolders (newest first, with file counts and sizes), or the files inside one of them.%s Call this when you do not already know what is there, the search and read tools take a subfolder name.", label, about),
 				Parameters: map[string]ToolParam{
 					"within": {Type: "string", Description: "Optional subfolder to list the FILES of. Omit to list the subfolders themselves."},
 				},
@@ -270,7 +270,7 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 						fmt.Fprintf(&b, "…and %d more.\n", len(files)-i)
 						break
 					}
-					fmt.Fprintf(&b, "- %s — %s, %s\n", f.Rel, HumanSize(f.Size), f.Modified.Format("2006-01-02 15:04"))
+					fmt.Fprintf(&b, "- %s: %s, %s\n", f.Rel, HumanSize(f.Size), f.Modified.Format("2006-01-02 15:04"))
 				}
 				return b.String(), nil
 			},
@@ -278,12 +278,12 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 		{
 			Tool: Tool{
 				Name:        "search_" + slug,
-				Description: fmt.Sprintf("Search the %q file store for a pattern, returning matching lines with a few lines of context.%s This is a regular-expression search over raw lines, NOT a semantic one: search for what would literally BE in the text (an error string, an id, a stack frame, a config key), not for a description of it. Compressed .gz files are searched too. Results are capped, and the reply says so when the cap was hit — which matters, because a capped result cannot tell you how OFTEN something occurs.", label, about),
+				Description: fmt.Sprintf("Search the %q file store for a pattern, returning matching lines with a few lines of context.%s This is a regular-expression search over raw lines, NOT a semantic one: search for what would literally BE in the text (an error string, an id, a stack frame, a config key), not for a description of it. Compressed .gz files are searched too. Results are capped, and the reply says so when the cap was hit, which matters, because a capped result cannot tell you how OFTEN something occurs.", label, about),
 				Parameters: map[string]ToolParam{
 					"pattern":     {Type: "string", Description: "A regular expression. A plain string is a valid one. Prefer something distinctive over something common."},
 					"within":      {Type: "string", Description: "Optional subfolder to search. Omit to search the whole store. Use list_" + slug + " to see what is there."},
 					"file_glob":   {Type: "string", Description: "Optional filename filter, e.g. \"*.log\" or \"catalina*\". Narrows a large tree."},
-					"ignore_case": {Type: "boolean", Description: "Match case-insensitively. Default false — use it when hunting a word, not when hunting an identifier."},
+					"ignore_case": {Type: "boolean", Description: "Match case-insensitively. Default false: use it when hunting a word, not when hunting an identifier."},
 					"context":     {Type: "number", Description: "Lines either side of each hit (0-8, default 2)."},
 				},
 				Required: []string{"pattern"},
@@ -313,9 +313,9 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 					// absence nobody established.
 					if res.Stopped != "" {
 						return "No matches in what was read, but the search did not finish: " + res.Stopped +
-							". Narrow it with `within` or `file_glob` and try again — do not conclude this pattern is absent.", nil
+							". Narrow it with `within` or `file_glob` and try again: do not conclude this pattern is absent.", nil
 					}
-					return "Nothing matched. The pattern is a regular expression over raw lines — check it appears literally, try ignore_case, widen file_glob, or drop `within` to search the whole store.", nil
+					return "Nothing matched. The pattern is a regular expression over raw lines: check it appears literally, try ignore_case, widen file_glob, or drop `within` to search the whole store.", nil
 				}
 				return renderMatches(res), nil
 			},
@@ -323,7 +323,7 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 		{
 			Tool: Tool{
 				Name:        "read_" + slug,
-				Description: fmt.Sprintf("Read a window of lines from one file in the %q store — use it after a search to see what surrounds a hit. Bounded: it returns a window, never a whole file.", label),
+				Description: fmt.Sprintf("Read a window of lines from one file in the %q store: use it after a search to see what surrounds a hit. Bounded: it returns a window, never a whole file.", label),
 				Parameters: map[string]ToolParam{
 					"file":   {Type: "string", Description: "Path of the file, exactly as a search result or listing reported it."},
 					"within": {Type: "string", Description: "The subfolder the file is in, if the search reported one."},
@@ -385,13 +385,13 @@ func renderMatches(res SearchResult) string {
 		fmt.Fprintf(&b, "\n(read %d files, %d MB, in %s)\n", res.Scanned, res.Bytes>>20, res.Elapsed.Round(time.Second))
 	}
 	if res.Capped {
-		b.WriteString("\n(result cap reached — these are the first matches, not all of them. Narrow the pattern or the file_glob before concluding anything about how often this occurs.)\n")
+		b.WriteString("\n(result cap reached: these are the first matches, not all of them. Narrow the pattern or the file_glob before concluding anything about how often this occurs.)\n")
 	}
 	// Different sentence from the cap, deliberately. The cap means there
 	// are more matches; this means part of the store was never read, so
 	// an absence here is not evidence of absence.
 	if res.Stopped != "" {
-		b.WriteString("\n(INCOMPLETE — " + res.Stopped + ". Files not read may contain matches. Narrow with `within` or `file_glob` rather than treating this as the whole picture.)\n")
+		b.WriteString("\n(INCOMPLETE: " + res.Stopped + ". Files not read may contain matches. Narrow with `within` or `file_glob` rather than treating this as the whole picture.)\n")
 	}
 	return strings.TrimLeft(b.String(), "\n")
 }

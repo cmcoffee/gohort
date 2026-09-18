@@ -243,7 +243,7 @@ func comfyDetect(_ ConnectorTemplate, vals map[string]any) (map[string]any, []st
 			return nil, warns, err // nothing to offer: the JSON itself is unreadable
 		}
 		return out, append(warns, "couldn't wire this graph automatically ("+err.Error()+
-			") — the fields below are BEST GUESSES. Check each against the workflow and pick the right node from the suggestions."), nil
+			"): the fields below are BEST GUESSES. Check each against the workflow and pick the right node from the suggestions."), nil
 	}
 	out := map[string]any{
 		"workflow_type":  ComfyWorkflowTypeOf(s.ComfyMap),
@@ -365,9 +365,12 @@ func comfyuiTemplate() ConnectorTemplate {
 		Params:      map[string]string{"preset": "comfyui"},
 		Fields: []TemplateField{
 			{Key: "base_url", Label: "ComfyUI URL", Type: "text", Group: "Connection", Help: "e.g. http://localhost:8188"},
-			{Key: "workflow_type", Label: "What this backend does", Type: "select", Group: "Connection", Options: ComfyWorkflowTypes(), Default: ComfyTypeGenerate, Help: "generate = text to image. edit = change a photo you give it (img2img). blend = combine two photos, with no model loaded at all. This picks the STARTING graph; paste your own below to override it. One backend does one of these — add a second connector, pointed at the same ComfyUI, for another."},
-			{Key: "workflow_file", Label: "Load workflow from a file", Type: "file", Group: "Connection", Accept: ".json,application/json", Into: "workflow", Help: "Pick the .json ComfyUI wrote with “Save (API Format)”. It is read here in your browser and dropped into the box below for review — nothing is sent until you Save."},
-			{Key: "workflow", Label: "Workflow (ComfyUI “Save (API Format)” JSON)", Type: "textarea", Group: "Connection", Help: "Leave blank to start from the graph the type above selects. Enable Dev Mode in ComfyUI to get the API-format export. After saving, this shows the graph actually in use."},
+			{Key: "workflow_type", Label: "What this backend does", Type: "select", Group: "Connection", Options: ComfyWorkflowTypes(), Default: ComfyTypeGenerate, Help: "generate = text to image. edit = change a photo you give it. blend = combine two photos.",
+				Detail: "edit is img2img; blend combines two photos with no model loaded at all. This picks the STARTING graph, and you can paste your own below to override it. One backend does one of these: add a second connector, pointed at the same ComfyUI, for another."},
+			{Key: "workflow_file", Label: "Load workflow from a file", Type: "file", Group: "Connection", Accept: ".json,application/json", Into: "workflow", Help: "Pick the .json ComfyUI wrote with “Save (API Format)”.",
+				Detail: "It is read here in your browser and dropped into the box below for review. Nothing is sent until you Save."},
+			{Key: "workflow", Label: "Workflow (ComfyUI “Save (API Format)” JSON)", Type: "textarea", Group: "Connection", Help: "Leave it blank to start from the graph the type above selects.",
+				Detail: "Enable Dev Mode in ComfyUI to get the API-format export. After saving, this shows the graph actually in use."},
 			{Key: "credential", Label: "Credential", Type: "credential", Group: "Connection", Advanced: true, Help: "no_auth for a local LAN box; a SecureAPI credential name for a hosted/authenticated server."},
 			{Key: "prompt_nodes", Label: "Prompt node(s)", Type: "text", Group: "Node mapping", SuggestFrom: comfyNodeChoicesKey, Help: "node id(s) the prompt is written into"},
 			{Key: "negative_nodes", Label: "Negative node(s)", Type: "text", Group: "Node mapping", SuggestFrom: comfyNodeChoicesKey},
@@ -378,17 +381,21 @@ func comfyuiTemplate() ConnectorTemplate {
 			{Key: "seed_nodes", Label: "Seed node(s)", Type: "text", Group: "Node mapping", SuggestFrom: comfyNodeChoicesKey},
 			{Key: "seed_key", Label: "Seed key", Type: "text", Group: "Node mapping", Help: "\"seed\" or \"noise_seed\""},
 			{Key: "output_node", Label: "Output (SaveImage) node", Type: "text", Group: "Node mapping", SuggestFrom: comfyNodeChoicesKey, Help: "the image is read from this node"},
-			{Key: "image_nodes", Label: "Input image node(s)", Type: "text", Group: "Image input", SuggestFrom: comfyNodeChoicesKey, Help: "LoadImage node id(s) a source photo is written into — this is what makes the backend able to EDIT a photo rather than only generate one. ORDER MATTERS for a multi-image compose: the first id gets the caller's first image."},
+			{Key: "image_nodes", Label: "Input image node(s)", Type: "text", Group: "Image input", SuggestFrom: comfyNodeChoicesKey, Help: "LoadImage node ids a source photo is written into.",
+				Detail: "This is what makes the backend able to EDIT a photo rather than only generate one. ORDER MATTERS for a multi-image compose: the first id gets the caller's first image."},
 			{Key: "image_key", Label: "Image input key", Type: "text", Group: "Image input", Advanced: true, Help: "usually \"image\""},
 			{Key: "mask_nodes", Label: "Mask node(s)", Type: "text", Group: "Image input", SuggestFrom: comfyNodeChoicesKey, Advanced: true, Help: "LoadImageMask node id(s), for inpainting a selected region"},
-			{Key: "upload_url", Label: "Upload endpoint", Type: "text", Group: "Image input", Advanced: true, Help: "where source photos are POSTed before the graph runs; defaults to <ComfyUI URL>/upload/image. Must be the same host as the ComfyUI URL."},
+			{Key: "upload_url", Label: "Upload endpoint", Type: "text", Group: "Image input", Advanced: true, Help: "Where source photos are POSTed before the graph runs.",
+				Detail: "Defaults to <ComfyUI URL>/upload/image. Must be the same host as the ComfyUI URL."},
 			{Key: "default_width", Label: "Default width", Type: "number", Group: "Defaults"},
 			{Key: "default_height", Label: "Default height", Type: "number", Group: "Defaults"},
 			{Key: "default_steps", Label: "Default steps", Type: "number", Group: "Defaults"},
 			{Key: "poll_interval_secs", Label: "Poll interval (seconds)", Type: "number", Group: "Defaults", Advanced: true, Help: "How often to ask this backend whether it has finished. Blank uses the value in Admin > Tunables > Timeouts."},
-			{Key: "poll_max_secs", Label: "Render timeout (seconds)", Type: "number", Group: "Defaults", Help: "How long to wait for this backend to finish. Leave blank to use the deadline in Admin > Tunables > Timeouts (higher for backends that edit photos, since a large edit model has to load first). Raise it here only if THIS workflow is slower than the rest."},
+			{Key: "poll_max_secs", Label: "Render timeout (seconds)", Type: "number", Group: "Defaults", Help: "How long to wait for this backend to finish.",
+				Detail: "Leave it blank to use the deadline in Admin, Tunables, Timeouts, which is higher for backends that edit photos, since a large edit model has to load first. Raise it here only if THIS workflow is slower than the rest."},
 			{Key: "prompt_suffix", Label: "Append to every prompt", Type: "textarea", Group: "House style", Help: "e.g. crisp, high-contrast, sharp typography"},
-			{Key: "prompt_guidance", Label: "Prompt guidance for the model", Type: "textarea", Group: "House style", Help: "Added to the generate_image tool's description the model reads (NOT the prompt). Teach it this backend's quirks, e.g. 'put any words you want rendered as text inside \"double quotes\"'."},
+			{Key: "prompt_guidance", Label: "Prompt guidance for the model", Type: "textarea", Group: "House style", Help: "Added to the generate_image tool's description the model reads, not to the prompt.",
+				Detail: "Teach it this backend's quirks. For example, 'put any words you want rendered as text inside \"double quotes\"'."},
 		},
 	}
 }
@@ -399,7 +406,7 @@ func a1111Template() ConnectorTemplate {
 		Name:        "a1111",
 		Label:       "Automatic1111",
 		Category:    "Image generation",
-		Description: "A local or self-hosted Automatic1111 (stable-diffusion-webui) server. Synchronous txt2img — no workflow needed.",
+		Description: "A local or self-hosted Automatic1111 (stable-diffusion-webui) server. Synchronous txt2img: no workflow needed.",
 		Kind:        RestImageConnectorKind,
 		Strategy:    "rest_image_preset",
 		Params:      map[string]string{"preset": "a1111"},
@@ -410,9 +417,11 @@ func a1111Template() ConnectorTemplate {
 			{Key: "default_height", Label: "Default height", Type: "number", Group: "Defaults"},
 			{Key: "default_steps", Label: "Default steps", Type: "number", Group: "Defaults"},
 			{Key: "poll_interval_secs", Label: "Poll interval (seconds)", Type: "number", Group: "Defaults", Advanced: true, Help: "How often to ask this backend whether it has finished. Blank uses the value in Admin > Tunables > Timeouts."},
-			{Key: "poll_max_secs", Label: "Render timeout (seconds)", Type: "number", Group: "Defaults", Help: "How long to wait for this backend to finish. Leave blank to use the deadline in Admin > Tunables > Timeouts (higher for backends that edit photos, since a large edit model has to load first). Raise it here only if THIS workflow is slower than the rest."},
+			{Key: "poll_max_secs", Label: "Render timeout (seconds)", Type: "number", Group: "Defaults", Help: "How long to wait for this backend to finish.",
+				Detail: "Leave it blank to use the deadline in Admin, Tunables, Timeouts, which is higher for backends that edit photos, since a large edit model has to load first. Raise it here only if THIS workflow is slower than the rest."},
 			{Key: "prompt_suffix", Label: "Append to every prompt", Type: "textarea", Group: "House style", Help: "e.g. crisp, high-contrast, sharp typography"},
-			{Key: "prompt_guidance", Label: "Prompt guidance for the model", Type: "textarea", Group: "House style", Help: "Added to the generate_image tool's description the model reads (NOT the prompt). Teach it this backend's quirks, e.g. 'put any words you want rendered as text inside \"double quotes\"'."},
+			{Key: "prompt_guidance", Label: "Prompt guidance for the model", Type: "textarea", Group: "House style", Help: "Added to the generate_image tool's description the model reads, not to the prompt.",
+				Detail: "Teach it this backend's quirks. For example, 'put any words you want rendered as text inside \"double quotes\"'."},
 		},
 	}
 }
@@ -457,13 +466,14 @@ func a1111Img2ImgTemplate() ConnectorTemplate {
 		Strategy:    "rest_image_preset",
 		Params:      map[string]string{"preset": "a1111_img2img"},
 		Fields: []TemplateField{
-			{Key: "base_url", Label: "Automatic1111 URL", Type: "text", Group: "Connection", Help: "e.g. http://localhost:7860 — the same server as your text-to-image backend, if you have one."},
+			{Key: "base_url", Label: "Automatic1111 URL", Type: "text", Group: "Connection", Help: "e.g. http://localhost:7860, the same server as your text-to-image backend, if you have one."},
 			{Key: "credential", Label: "Credential", Type: "credential", Group: "Connection", Advanced: true, Help: "no_auth for a local box; a SecureAPI credential name for an authenticated server."},
 			{Key: "default_width", Label: "Default width", Type: "number", Group: "Defaults"},
 			{Key: "default_height", Label: "Default height", Type: "number", Group: "Defaults"},
 			{Key: "default_steps", Label: "Default steps", Type: "number", Group: "Defaults"},
 			{Key: "prompt_suffix", Label: "Append to every prompt", Type: "textarea", Group: "House style", Help: "e.g. crisp, high-contrast, sharp typography"},
-			{Key: "prompt_guidance", Label: "Prompt guidance for the model", Type: "textarea", Group: "House style", Help: "Added to the image tool's description the model reads (NOT the prompt). For an editing backend, say what it is good at changing."},
+			{Key: "prompt_guidance", Label: "Prompt guidance for the model", Type: "textarea", Group: "House style", Help: "Added to the image tool's description the model reads, not to the prompt.",
+				Detail: "For an editing backend, say what it is good at changing."},
 		},
 	}
 }

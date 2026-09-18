@@ -99,7 +99,7 @@ func scratch_guidance(dir string) string {
 	}
 	var b strings.Builder
 	b.WriteString("## Scratch directory\n\n")
-	fmt.Fprintf(&b, "`%s` is yours for this session. Write every temp file, script, and spooled command output there — writing and deleting inside it never needs approval, and it is removed automatically when the session ends, so you do not need to clean it up yourself.\n\n", dir)
-	b.WriteString("Writing ANYWHERE else — including a redirect or `tee` onto an existing file — modifies the system and will stop for operator approval. Never redirect over a real file to \"test\" something.\n\n")
+	fmt.Fprintf(&b, "`%s` is yours for this session. Write every temp file, script, and spooled command output there: writing and deleting inside it never needs approval, and it is removed automatically when the session ends, so you do not need to clean it up yourself.\n\n", dir)
+	b.WriteString("Writing ANYWHERE else (including a redirect or `tee` onto an existing file), modifies the system and will stop for operator approval. Never redirect over a real file to \"test\" something.\n\n")
 	return b.String()
 }

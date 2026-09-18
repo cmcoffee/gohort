@@ -1177,7 +1177,7 @@ func (r *retryLLM) peerRefused(err error) bool {
 		return false
 	}
 	InvalidatePeerAccessToken(r.peer)
-	Log("[peer] %q refused our credential on a model call — dropped it so the next request re-exchanges", r.peer)
+	Log("[peer] %q refused our credential on a model call: dropped it so the next request re-exchanges", r.peer)
 	return true
 }
 
@@ -1327,11 +1327,11 @@ func (r *retryLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOpt
 		// and nothing in content/tool_calls" — disabling thinking on
 		// retry strips its ability to decide on a tool, so we keep it
 		// and just nudge.
-		Debug("[retry] unusable response (err=%v, %s) — retrying with hint, thinking still enabled", err, respShape(resp))
+		Debug("[retry] unusable response (err=%v, %s): retrying with hint, thinking still enabled", err, respShape(resp))
 		hinted := append([]Message{}, messages...)
 		hinted = append(hinted, Message{
 			Role:    "user",
-			Content: "Your previous turn produced no output. Reason briefly, then either call a tool or send a text reply — do not end your turn empty.",
+			Content: "Your previous turn produced no output. Reason briefly, then either call a tool or send a text reply: do not end your turn empty.",
 		})
 		resp2, err2 := r.inner.Chat(ctx, hinted, opts...)
 		if err2 == nil && responseIsUseable(resp2) {
@@ -1340,7 +1340,7 @@ func (r *retryLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOpt
 		// Last-ditch retry: drop thinking entirely. Worse for tool
 		// decisions but sometimes the only thing that produces output
 		// when the model is wedged.
-		Debug("[retry] still empty after hint — falling back to thinking disabled")
+		Debug("[retry] still empty after hint: falling back to thinking disabled")
 		f := false
 		retryOpts := append(append([]ChatOption{}, opts...), WithThink(f))
 		resp3, err3 := r.inner.Chat(ctx, hinted, retryOpts...)
@@ -1403,18 +1403,18 @@ func (r *retryLLM) ChatStream(ctx context.Context, messages []Message, handler S
 			// The caller has thrown its partial away. Hand the error back
 			// unwrapped so the normal transience rules decide — a stream that
 			// died on a deadline retries, one that died on a 400 still does not.
-			Debug("[retry] stream failed after %d partial chunk(s); caller discarded them — retrying: %v", chunks, err)
+			Debug("[retry] stream failed after %d partial chunk(s); caller discarded them, retrying: %v", chunks, err)
 			return resp, err
 		}
 		if handlerCalled || !shouldRetryEmpty(resp, err) {
 			return resp, err
 		}
 		// First retry: keep thinking ON, append a hint message.
-		Debug("[retry] unusable stream response (err=%v, %s) — retrying with hint, thinking still enabled", err, respShape(resp))
+		Debug("[retry] unusable stream response (err=%v, %s): retrying with hint, thinking still enabled", err, respShape(resp))
 		hinted := append([]Message{}, messages...)
 		hinted = append(hinted, Message{
 			Role:    "user",
-			Content: "Your previous turn produced no output. Reason briefly, then either call a tool or send a text reply — do not end your turn empty.",
+			Content: "Your previous turn produced no output. Reason briefly, then either call a tool or send a text reply: do not end your turn empty.",
 		})
 		handlerCalled = false
 		resp2, err2 := r.inner.ChatStream(ctx, hinted, wrappedHandler, opts...)
@@ -1426,7 +1426,7 @@ func (r *retryLLM) ChatStream(ctx context.Context, messages []Message, handler S
 			return resp2, err2
 		}
 		// Last-ditch retry: drop thinking.
-		Debug("[retry] still empty after hint — falling back to thinking disabled")
+		Debug("[retry] still empty after hint: falling back to thinking disabled")
 		f := false
 		retryOpts := append(append([]ChatOption{}, opts...), WithThink(f))
 		handlerCalled = false
@@ -1563,7 +1563,7 @@ func doWithRetry(ctx context.Context, maxRetries int, opts []ChatOption, fn func
 				secs = 30
 			}
 			backoff := time.Duration(secs) * time.Second
-			Log("[retry] attempt %d/%d failed: %v — retrying in %v", attempt+1, maxRetries, err, backoff)
+			Log("[retry] attempt %d/%d failed: %v, retrying in %v", attempt+1, maxRetries, err, backoff)
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -1631,7 +1631,7 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 	switch cfg.Provider {
 	case "anthropic":
 		if cfg.APIKey == "" {
-			return nil, Error("anthropic API key is not configured — set it in the web UI under Admin → LLMs → Worker LLM")
+			return nil, Error("anthropic API key is not configured: set it in the web UI under Admin → LLMs → Worker LLM")
 		}
 		model := cfg.Model
 		if model == "" {
@@ -1667,7 +1667,7 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		}
 	case "openai":
 		if cfg.APIKey == "" {
-			return nil, Error("openai API key is not configured — set it in the web UI under Admin → LLMs → Worker LLM")
+			return nil, Error("openai API key is not configured: set it in the web UI under Admin → LLMs → Worker LLM")
 		}
 		model := cfg.Model
 		if model == "" {
@@ -1677,7 +1677,7 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		inner.(*openAIClient).streamIdleTimeout = cfg.StreamIdleTimeout
 	case "gemini":
 		if cfg.APIKey == "" {
-			return nil, Error("gemini API key is not configured — set it in the web UI under Admin → LLMs → Worker LLM")
+			return nil, Error("gemini API key is not configured: set it in the web UI under Admin → LLMs → Worker LLM")
 		}
 		model := cfg.Model
 		if model == "" {
@@ -1740,7 +1740,7 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		}
 		StartLlamacppScheduler(mp)
 	default:
-		return nil, Error("no LLM provider is configured — set one in the web UI under Admin → LLMs → Worker LLM")
+		return nil, Error("no LLM provider is configured: set one in the web UI under Admin → LLMs → Worker LLM")
 	}
 
 	return &retryLLM{inner: inner, maxRetries: 5, peer: peerName}, nil
@@ -1851,7 +1851,7 @@ func (f *FakeLLM) answer(ctx context.Context, messages []Message, handler Stream
 	f.mu.Unlock()
 
 	if !ok {
-		return nil, fmt.Errorf("FakeLLM: call %d has no scripted turn (%d scripted) — the loop asked more times than this test expects", n+1, len(f.Turns))
+		return nil, fmt.Errorf("FakeLLM: call %d has no scripted turn (%d scripted), the loop asked more times than this test expects", n+1, len(f.Turns))
 	}
 	if turn.Wait != nil {
 		// Before the error and the context check, so a test can hold a call

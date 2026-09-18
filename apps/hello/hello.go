@@ -42,7 +42,7 @@ type HelloAgent struct {
 func (T HelloAgent) Name() string         { return "hello" }
 func (T HelloAgent) SystemPrompt() string { return "" }
 func (T HelloAgent) Desc() string {
-	return "Apps: Reference scaffold — a minimal hello-world app."
+	return "Apps: Reference scaffold, a minimal hello-world app."
 }
 
 func (T *HelloAgent) Init() error { return T.Flags.Parse() }
@@ -91,7 +91,7 @@ func (T *HelloAgent) handlePage(w http.ResponseWriter, r *http.Request) {
 		Sections: []ui.Section{
 			{
 				Title:    "Greeting",
-				Subtitle: "Type your name and submit — server echoes it back.",
+				Subtitle: "Type your name and submit: server echoes it back.",
 				Body: ui.FormPanel{
 					// No Source — this is a write-only form (no
 					// existing record to load). PostURL is the only
@@ -110,7 +110,7 @@ func (T *HelloAgent) handlePage(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Client action (SDK demo)",
-				Subtitle: "Button, action, and modal are all framework primitives — no hand-written HTML/JS.",
+				Subtitle: "Button, action, and modal are all framework primitives: no hand-written HTML/JS.",
 				Body: ui.Toolbar{Actions: []ui.ToolbarAction{
 					{Label: "Say hello", Method: "client", URL: "hello_greet", Variant: "primary"},
 				}},
@@ -142,7 +142,7 @@ const helloGreetJS = `function(ctx){
     mount: function(body){
       var p = document.createElement('p');
       p.className = 'hello-greet-note';
-      p.textContent = 'No hand-written <script> blob, no overlay, no Escape/close boilerplate — the framework assembled all of it.';
+      p.textContent = 'No hand-written <script> blob, no overlay, no Escape/close boilerplate: the framework assembled all of it.';
       body.appendChild(p);
     }
   });

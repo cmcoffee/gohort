@@ -60,8 +60,8 @@ func TestAppSettingsParse(t *testing.T) {
 		`"flavor" is a choice with no options`,
 		`"count" is a number but defaults to "lots"`,
 		`"alerts" declared twice`,
-		`entry 9 IGNORED — needs a name`,
-		`entry 10 IGNORED — not an object`,
+		`entry 9 IGNORED: needs a name`,
+		`entry 10 IGNORED: not an object`,
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("notes lack %q:\n%s", want, joined)

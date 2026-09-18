@@ -131,7 +131,7 @@ func (T *OrchestrateApp) handleConsoleRecurringResume(w http.ResponseWriter, r *
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		Log("[orchestrate/objective] task %q resumed by %s — allowance restarts at fire %d", recurringName(p), user, p.FireCount)
+		Log("[orchestrate/objective] task %q resumed by %s: allowance restarts at fire %d", recurringName(p), user, p.FireCount)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}

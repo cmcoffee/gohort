@@ -951,7 +951,7 @@
       fetch(cfg.status_url)
         .then(function(r){ return r.ok ? r.json() : null; })
         .then(function(rec) {
-          if (!rec) { status.textContent = 'Lost track of the status — reload to see where it got to.'; return; }
+          if (!rec) { status.textContent = 'Lost track of the status: reload to see where it got to.'; return; }
           var state = String(rec[cfg.status_field || 'state'] || '');
           var failed = (cfg.status_failed || []).indexOf(state) >= 0;
           var done   = (cfg.status_done || []).indexOf(state) >= 0;

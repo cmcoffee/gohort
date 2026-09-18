@@ -196,7 +196,7 @@ func (h *machineHost) runToolPhase(ctx context.Context, ph MachinePhase, tool, p
 	}
 	if handler == nil {
 		h.diag("machine_step_tool_missing", "step "+ph.Name+" calls "+tool+
-			", which this agent does not carry — attach what provides it, or point the step at a tool it has.")
+			", which this agent does not carry: attach what provides it, or point the step at a tool it has.")
 		return "", Error("step " + ph.Name + ": tool " + tool + " is not available to this agent")
 	}
 	// Templated with the machine's own vocabulary, so a step can pass what an
@@ -282,7 +282,7 @@ func (h *machineHost) runDelegatedPhase(ctx context.Context, ph MachinePhase, re
 	// step would have used. The delegate is asked for its work, not for a schema.
 	return base(ctx, ph, "A delegate was given this task:\n\n"+prompt+
 		"\n\nIt reported back:\n\n"+report+
-		"\n\nRecord what it found in the fields below. Take the delegate's findings as given — "+
+		"\n\nRecord what it found in the fields below. Take the delegate's findings as given: "+
 		"do not re-do its work, second-guess it, or fill a field it did not address. "+
 		"A field it left unanswered is better left empty than invented.")
 }
@@ -349,7 +349,7 @@ func (h *machineHost) runPipelinePhase(ctx context.Context, ph MachinePhase, ref
 	// reads the report into the declared fields.
 	return base(ctx, ph, "A pipeline was run for this task:\n\n"+prompt+
 		"\n\nIt produced:\n\n"+report+
-		"\n\nRecord what it produced in the fields below. Take its output as given — "+
+		"\n\nRecord what it produced in the fields below. Take its output as given: "+
 		"do not re-do the work, second-guess it, or fill a field it did not address. "+
 		"A field it left unanswered is better left empty than invented.")
 }
@@ -431,7 +431,7 @@ func (h *machineHost) runChildMachinePhase(ctx context.Context, ph MachinePhase,
 	}
 	return base(ctx, ph, "A separate run was carried out for this task:\n\n"+prompt+
 		"\n\nIt finished with:\n\n"+report+
-		"\n\nRecord what it found in the fields below. Take its findings as given — "+
+		"\n\nRecord what it found in the fields below. Take its findings as given: "+
 		"do not re-do the work, second-guess it, or fill a field it did not address. "+
 		"A field it left unanswered is better left empty than invented.")
 }

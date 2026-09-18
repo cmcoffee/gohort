@@ -46,7 +46,7 @@
 # Archetype: Investigator sub-agent
 
 A read-only sub-agent that goes and LOOKS when its parent needs to know
-something it cannot answer from memory — probing whatever it is attached to,
+something it cannot answer from memory: probing whatever it is attached to,
 reporting what it found and what it could not determine, and keeping what it
 learns so the next question about the same subject starts warm.
 
@@ -63,7 +63,7 @@ Three reasons, and the third is the one that bites later.
 - **Its transcript stays in its own session.** An investigation is dozens of
   probe results; put the probe tools in the parent's OWN catalog and every one
   of them lands in its persisted history and is replayed into its prompt forever
-  after. On a standing thread that is unrecoverable — the parent gets slower
+  after. On a standing thread that is unrecoverable: the parent gets slower
   every day and nothing in its settings explains why. Dispatched, the parent
   receives the ANSWER and nothing else. (A machine phase escapes this too, and
   is the "built in" variant at the end of this doc: a transient phase runs on a
@@ -77,39 +77,39 @@ Three reasons, and the third is the one that bites later.
 
 ## Composition (create_agent)
 
-- **owned_by**: the parent agent's ID. Ownership IS the dispatch link — the
+- **owned_by**: the parent agent's ID. Ownership IS the dispatch link: the
   parent may dispatch without an `allowed_dispatch_targets` entry, and deleting
   the parent takes the investigator with it. Pair with **hidden: true** so it
   stays out of the global fleet menu; nobody chats to an investigator directly.
 - **allowed_tools**: only what LOOKS at the subject. Attach the subject as a
-  Source (`attached_sources`) rather than naming tools where you can — a folder,
-  an MCP server, a system — because a source contributes its own per-item tools
+  Source (`attached_sources`) rather than naming tools where you can: a folder,
+  an MCP server, a system, because a source contributes its own per-item tools
   and keeps working when the catalog moves underneath.
 - **Memory ON**, and this is the point of the archetype rather than a default
-  worth keeping. Facts are what the investigator knows about the subject —
+  worth keeping. Facts are what the investigator knows about the subject
   versions, paths, which service actually serves which port. Working notes are
   what it is mid-way through; give each subject its own section
   (`update_notes(section: "<subject>", …)`) so a note about one is not rewritten
   by a finding about another.
-- **think**: `"on"`. An investigation is judgement — what to probe next, whether
-  an answer actually settles the question — not a lookup. (Sub-agents default to
+- **think**: `"on"`. An investigation is judgement: what to probe next, whether
+  an answer actually settles the question: not a lookup. (Sub-agents default to
   `"off"`; override it here.)
 - **max_worker_rounds** ~14. Probing is iterative: a first look usually only
   tells you what to look at next.
-- **gap_check** ON — it re-checks that the answer covers the question, which is
+- **gap_check** ON: it re-checks that the answer covers the question, which is
   exactly the failure an investigation makes: answering the part that was easy
   to find out.
-- **rules vs. persona** — `rules` renders above memory and above the persona and
+- **rules vs. persona**: `rules` renders above memory and above the persona and
   wins every conflict. Two of the beats below are constraints rather than craft
   and belong there: "never state a value you did not see" and "always say what
   you could not determine". Both are what a model drops under pressure to produce
   a clean answer, which is the moment they exist for. How to probe, how to
-  report, when to widen — persona.
+  report, when to widen: persona.
 
 ## The read-only gate
 
 Do not rely on the persona for this. Give the investigator a machine with one
-transient phase, or a pipeline stage, carrying **`reach: "read"`** — the coarse
+transient phase, or a pipeline stage, carrying **`reach: "read"`**: the coarse
 tool scope that keeps only what reads, dropping anything that writes, runs, or
 reaches the network.
 
@@ -153,7 +153,7 @@ investigator. It cannot go and look, which is the one thing this shape is for.
 **When the looking IS remote, leave the reach at `""` and bound the step with
 its `Deny` list instead**, naming the tools that write. Deny is applied last and
 is the final word, so it holds whatever the reach admitted. It costs you the
-property that made reach worth preferring — a name list describes one caller —
+property that made reach worth preferring (a name list describes one caller)
 so keep it short and aim it at the write-shaped names rather than trying to
 enumerate the safe ones. Remote MCP tools whose names look mutating are already
 confirmation-gated underneath (`mcpLooksMutating`), so Deny is the second lock
@@ -163,7 +163,7 @@ The editor's checklist and the `machine` tool's reply both report a step whose
 reach removes a tool the same step names, so this shows up when you save it
 rather than when it runs.
 
-## Orchestrator prompt — the shape
+## Orchestrator prompt: the shape
 
 The persona is an investigator whose every answer is either grounded or openly
 incomplete. Cover these beats:
@@ -172,17 +172,17 @@ incomplete. Cover these beats:
    subject before probing. A fact recorded last week that still answers the
    question is a better answer than a fresh probe, and it is instant.
 2. **Probe narrowly, then widen.** One well-aimed look, read the result, decide
-   the next one. Do not fire five probes in parallel hoping one lands — the
+   the next one. Do not fire five probes in parallel hoping one lands: the
    answer to the second usually depends on the first.
 3. **Say what you did not determine.** An investigation that reports only its
    findings reads as complete when it is not. Every answer ends with what
-   remains unknown and what would settle it — that sentence is the difference
+   remains unknown and what would settle it, that sentence is the difference
    between evidence and a guess, and the parent is going to act on this.
 4. **Never state a value you did not see.** No inferred version numbers, no
    assumed paths, no plausible-sounding port. If the probe did not return it,
    it is unknown; say so.
 5. **Record what is durable.** `remember` the facts that will still be true next
-   week — versions, layouts, which service owns which path. Not the transient
+   week: versions, layouts, which service owns which path. Not the transient
    readings that prompted this question; those are the answer, not the memory.
 6. **Answer the question that was asked.** The parent asked something specific
    because it is about to do something with it. A survey of the whole subject is
@@ -190,7 +190,7 @@ incomplete. Cover these beats:
 
 **Reporting shape**: findings first, in plain sentences, each traceable to what
 produced it. Then, when anything is missing, a short `Not determined:` line. No
-preamble about having investigated — the parent knows.
+preamble about having investigated: the parent knows.
 
 ## Wiring the parent
 
@@ -201,7 +201,7 @@ The parent needs one thing: to know when to hand over. Add a beat to ITS prompt:
 > Do not guess at live state, and do not go and look yourself.
 
 That last clause matters. A parent holding both the investigator and the
-subject's own tools will use the tools — they are closer — and the transcript
+subject's own tools will use the tools (they are closer), and the transcript
 lands in its thread, which is the thing this archetype exists to avoid.
 
 ## Built into one agent, with no second record
@@ -213,7 +213,7 @@ happens before the answer rather than because the model remembered to ask for it
 
 It escapes the transcript problem for the same reason a delegate does. A
 transient phase runs during system-prompt assembly, before the turn's own loop
-exists, on a session of its own — its probe calls never enter the thread. What
+exists, on a session of its own: its probe calls never enter the thread. What
 survives is the fields it declares, which arrive in the persona as
 `{state:<phase>.<field>}`.
 
@@ -247,13 +247,13 @@ machine_def(action: "create", name: "grounded_answers",
 
 ### The three settings that carry it
 
-- **`reach: "read"`** — the gate, and the reason this is safe to run unattended.
+- **`reach: "read"`**: the gate, and the reason this is safe to run unattended.
   A capability class, not a tool list, so it survives a catalog that moves. It
   fails closed; see above.
-- **`think: "on"`** — transient phases default to thinking OFF, which is right
+- **`think: "on"`**: transient phases default to thinking OFF, which is right
   for a router and wrong here. Deciding what to probe next, and whether an
   answer actually settles the question, is judgement.
-- **`guard` + `guard_to`** — what stops it investigating on every turn. The
+- **`guard` + `guard_to`**: what stops it investigating on every turn. The
   machine starts at `look`, so the FIRST turn establishes the ground; after that
   the cursor rests on `answer` and only returns to `look` when the guard fires.
   Without the guard you pay a full investigation on "thanks, that's great".
@@ -263,7 +263,7 @@ machine_def(action: "create", name: "grounded_answers",
 **A memory of its own.** The separate investigator accumulates facts about the
 SUBJECT in its own namespace, which is what makes its second answer better than
 its first. A phase writes into the parent's memory, where findings about the
-subject mix with everything else that agent knows — or into phase state, which
+subject mix with everything else that agent knows, or into phase state, which
 goes when the session does. Mitigate it by having the `look` phase `remember`
 what is durable and keep a working-notes SECTION per subject
 (`update_notes(section: "<subject>", …)`), so the subject's running picture stays
@@ -275,15 +275,15 @@ particular turn did not need to.
 
 ### Choosing between them
 
-- The agent's job IS the subject — a support agent whose every question is about
-  one system — build it in. Always look, then answer.
+- The agent's job IS the subject: a support agent whose every question is about
+  one system: build it in. Always look, then answer.
 - Investigating is occasional, or several agents want the same investigator, or
-  the subject deserves a memory that outlives one agent's sessions — use the
+  the subject deserves a memory that outlives one agent's sessions: use the
   sub-agent. The second record earns itself.
 
 ## What to tell the user
 
-"I gave <parent> an investigator — when you ask something it can only answer by
+"I gave <parent> an investigator: when you ask something it can only answer by
 going and looking, it hands off to <name>, which probes read-only and reports
 back. It remembers what it learns, so the second question about the same thing
 is faster and better than the first. It can look; it cannot change anything."

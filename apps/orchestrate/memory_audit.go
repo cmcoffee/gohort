@@ -95,7 +95,7 @@ func (T *OrchestrateApp) auditAgentMemory(udb Database, user, agentID string, ag
 		if parkedCallRE.MatchString(notes) {
 			out = append(out, MemoryFinding{
 				Layer: "Working notes", Kind: "parked_call",
-				Detail: "This note records work to do later rather than the current state. If it names a tool call, the agent cannot make it from a note — and when the tool's schema isn't loaded it will improvise a way to reach it instead of asking.",
+				Detail: "This note records work to do later rather than the current state. If it names a tool call, the agent cannot make it from a note, and when the tool's schema isn't loaded it will improvise a way to reach it instead of asking.",
 				Quote:  firstMatchingLine(notes, parkedCallRE),
 			})
 		}
@@ -157,7 +157,7 @@ func auditGraphMemory(udb Database, ns string, orphaned, retired map[string]bool
 		for _, f := range deadToolFindings("Graph Memory", strings.Join(parts, "\n"), orphaned, retired) {
 			// Name the entity: "Graph Memory" alone doesn't tell you which of
 			// thirty nodes to open.
-			f.Detail = fmt.Sprintf("Entity %q — %s", e.Name, f.Detail)
+			f.Detail = fmt.Sprintf("Entity %q: %s", e.Name, f.Detail)
 			out = append(out, f)
 		}
 	}
@@ -252,7 +252,7 @@ func deadToolFindings(layer, text string, orphaned, retired map[string]bool) []M
 		if at, ok := mentionsName(text, name); ok {
 			out = append(out, MemoryFinding{
 				Layer: layer, Kind: "dead_tool",
-				Detail: fmt.Sprintf("References %q, which is in Orphaned Tools — its last carrying agent was deleted, so no agent can call it. Re-home the tool, or drop the reference.", name),
+				Detail: fmt.Sprintf("References %q, which is in Orphaned Tools: its last carrying agent was deleted, so no agent can call it. Re-home the tool, or drop the reference.", name),
 				Quote:  quoteAround(text, at),
 			})
 		}
@@ -261,7 +261,7 @@ func deadToolFindings(layer, text string, orphaned, retired map[string]bool) []M
 		if at, ok := mentionsName(text, name); ok {
 			out = append(out, MemoryFinding{
 				Layer: layer, Kind: "dead_tool",
-				Detail: fmt.Sprintf("Names %q, which was a tool and is not any more — renamed or removed. Anything relying on it is describing a call that cannot be made.", name),
+				Detail: fmt.Sprintf("Names %q, which was a tool and is not any more: renamed or removed. Anything relying on it is describing a call that cannot be made.", name),
 				Quote:  quoteAround(text, at),
 			})
 		}
@@ -397,10 +397,10 @@ func suggestOrphanedToolRehome(owner string, rec AgentRecord, tool string) {
 		Action: orphanMemoryRefAction,
 		Agent:  rec.ID,
 		Brief:  tool,
-		Text: fmt.Sprintf("%q remembers using %q, but that tool's last agent was just deleted, so nothing can call it now. Approving re-homes the tool onto %s so its memory is true again. Ignoring this is fine — the tool's definition is kept in Orphaned Tools either way, and you can edit the memory instead from the agent's Memory pane.",
+		Text: fmt.Sprintf("%q remembers using %q, but that tool's last agent was just deleted, so nothing can call it now. Approving re-homes the tool onto %s so its memory is true again. Ignoring this is fine: the tool's definition is kept in Orphaned Tools either way, and you can edit the memory instead from the agent's Memory pane.",
 			rec.Name, tool, rec.Name),
 	})
-	Log("[orchestrate.memaudit] %s still references orphaned tool %q — suggested re-home", rec.Name, tool)
+	Log("[orchestrate.memaudit] %s still references orphaned tool %q: suggested re-home", rec.Name, tool)
 }
 
 // orphanMemoryRefAction is the Authorizations action for the offer above.

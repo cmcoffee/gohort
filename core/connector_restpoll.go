@@ -68,7 +68,7 @@ func (h restPollHandler) Validate(c Connector) error {
 		return fmt.Errorf("credential is required (a registered SecureAPI credential name)")
 	}
 	if exists, _, _ := Secure().CredentialStatus(s.Credential); !exists {
-		return fmt.Errorf("no credential named %q — draft it first (draft_api_credential / draft_oauth_credential) and have the admin enable it", s.Credential)
+		return fmt.Errorf("no credential named %q: draft it first (draft_api_credential / draft_oauth_credential) and have the admin enable it", s.Credential)
 	}
 	if !strings.HasPrefix(s.URL, "https://") && !strings.HasPrefix(s.URL, "http://") {
 		return fmt.Errorf("url must be http(s)")

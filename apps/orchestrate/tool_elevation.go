@@ -234,7 +234,7 @@ func suggestToolScope(db Database, agentID, toolName string, sessions int) {
 		Action: "scope_tool",
 		Agent:  agentID,
 		Brief:  toolName,
-		Text: fmt.Sprintf("%q has loaded %q in %d recent runs, so it's evidently part of this agent's kit. Scoping it puts the tool in the agent's catalog directly instead of being loaded on demand (a shared tool leaves the general pool). Nothing is blocked either way — the tool already works.",
+		Text: fmt.Sprintf("%q has loaded %q in %d recent runs, so it's evidently part of this agent's kit. Scoping it puts the tool in the agent's catalog directly instead of being loaded on demand (a shared tool leaves the general pool). Nothing is blocked either way: the tool already works.",
 			rec.Name, toolName, sessions),
 	})
 	Log("[orchestrate.elevate] suggested scoping %q to agent=%s (%d distinct sessions)", toolName, agentID, sessions)

@@ -254,7 +254,7 @@ func (t *chatTurn) emitAck(ctx context.Context, userMsg string) {
 	}
 	cctx, cancel := context.WithTimeout(ctx, ackTimeout())
 	defer cancel()
-	sys := "A user just messaged an assistant that may need tools, web search, or sub-agents to answer. In ONE short, natural sentence, acknowledge you're on it (e.g. \"On it — let me look that up.\" / \"Sure, checking now.\" / \"Give me a sec to dig into that.\"). Do NOT answer the request, do NOT ask questions, do NOT name tools or agents. If the message is a greeting, a thanks, or something you'd answer instantly with no lookup, reply with exactly NONE."
+	sys := "A user just messaged an assistant that may need tools, web search, or sub-agents to answer. In ONE short, natural sentence, acknowledge you're on it (e.g. \"On it: let me look that up.\" / \"Sure, checking now.\" / \"Give me a sec to dig into that.\"). Do NOT answer the request, do NOT ask questions, do NOT name tools or agents. If the message is a greeting, a thanks, or something you'd answer instantly with no lookup, reply with exactly NONE."
 	resp, err := t.app.WorkerChat(cctx,
 		[]Message{{Role: "user", Content: userMsg}},
 		WithSystemPrompt(sys), WithMaxTokens(30), WithThink(false),
@@ -389,9 +389,9 @@ func searchOrderGuidanceBlock(agent AgentRecord, hasCorpus bool) string {
 	}
 	return `
 
-## Search order — knowledge first
+## Search order: knowledge first
 
-Before reaching for web_search / fetch_url, ask: "Does this question require information that has CHANGED since my documents were written?" If no, call ` + "`knowledge_search`" + ` first — APIs don't change daily, runbooks haven't been edited, last year's policies haven't moved. Web is the exception. One cheap query beats an unnecessary web round.
+Before reaching for web_search / fetch_url, ask: "Does this question require information that has CHANGED since my documents were written?" If no, call ` + "`knowledge_search`" + ` first: APIs don't change daily, runbooks haven't been edited, last year's policies haven't moved. Web is the exception. One cheap query beats an unnecessary web round.
 
 If results from different documents disagree on a specific point, surface the conflict ("Doc A says X but Doc B says Y") rather than averaging or silently picking one.`
 }
@@ -446,7 +446,7 @@ func (t *chatTurn) incognitoSession() bool {
 // still describes the capability, and an absent tool gets improvised around
 // rather than reported. So the tool stays mounted and explains itself.
 func (t *chatTurn) refuseDurableMemoryInCleanRoom(verb, because string) error {
-	return fmt.Errorf("%s: this is an incognito (clean-room) session, where %s. Durable memory is neither read into this conversation nor written out of it — that is what the user asked for when they opened it, not a fault to route around. Say so plainly instead of retrying; if it should persist, they can tell you again in an ordinary session.", verb, because)
+	return fmt.Errorf("%s: this is an incognito (clean-room) session, where %s. Durable memory is neither read into this conversation nor written out of it, that is what the user asked for when they opened it, not a fault to route around. Say so plainly instead of retrying; if it should persist, they can tell you again in an ordinary session.", verb, because)
 }
 
 // gatedPersona returns the agent's persona prompt with any

@@ -53,13 +53,13 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 	// the gate refuses is the drift worth preventing. It had just never been
 	// applied to the action that names the whole surface.
 	if allowRun && t.app != nil && !t.canDispatchAnything() {
-		Debug("[orchestrate] agents: run action withheld for agent=%q — nothing reachable (dispatch mode %q, 0 agents / 0 pipelines / 0 machines)",
+		Debug("[orchestrate] agents: run action withheld for agent=%q, nothing reachable (dispatch mode %q, 0 agents / 0 pipelines / 0 machines)",
 			t.agent.ID, effectiveDispatchMode(t.agent))
 		allowRun = false
 	}
-	desc := "Manage and call other agents in the fleet. Three actions: list (see what agents exist), get (read one agent's full record + set authoring focus), run (delegate work and get the result back — to a named agent for its judgement, to a named pipeline to run a saved multi-stage workflow, or to a named machine to run a saved step-by-step procedure). Single entry point for agent operations — pick the action that matches the intent."
+	desc := "Manage and call other agents in the fleet. Three actions: list (see what agents exist), get (read one agent's full record + set authoring focus), run (delegate work and get the result back, to a named agent for its judgement, to a named pipeline to run a saved multi-stage workflow, or to a named machine to run a saved step-by-step procedure). Single entry point for agent operations: pick the action that matches the intent."
 	if !allowRun {
-		desc = "Inspect other agents in the fleet. Two actions: list (see what agents exist), get (read one agent's full record + set authoring focus). This catalog variant is READ-ONLY — dispatch (run) is intentionally disabled for this agent because its job is authoring/composition, not delegation. If you need to delegate execution work, use plan_set with worker steps; if you need a specialist's domain knowledge during authoring, dispatch a plan_set worker with web_search / fetch_url."
+		desc = "Inspect other agents in the fleet. Two actions: list (see what agents exist), get (read one agent's full record + set authoring focus). This catalog variant is READ-ONLY: dispatch (run) is intentionally disabled for this agent because its job is authoring/composition, not delegation. If you need to delegate execution work, use plan_set with worker steps; if you need a specialist's domain knowledge during authoring, dispatch a plan_set worker with web_search / fetch_url."
 	}
 	params := map[string]ToolParam{
 		"action": {
@@ -68,11 +68,11 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 		},
 		"id": {
 			Type:        "string",
-			Description: "(get) Agent id from action=\"list\" — or its name, which resolves the same way. The `agent` param is accepted here interchangeably.",
+			Description: "(get) Agent id from action=\"list\", or its name, which resolves the same way. The `agent` param is accepted here interchangeably.",
 		},
 		"full": {
 			Type:        "boolean",
-			Description: "(get) When true, return the COMPLETE record — full orchestrator_prompt / plan_guidance / rules text and full tool definitions. Default false returns a compact view (prose previewed, tools by name) to save context. Use full=true only when you need to READ prose you didn't write this session — e.g. to edit an inherited prompt after clone_agent, or modify an agent from an earlier session. For agents you're authoring fresh, the compact view is enough.",
+			Description: "(get) When true, return the COMPLETE record: full orchestrator_prompt / plan_guidance / rules text and full tool definitions. Default false returns a compact view (prose previewed, tools by name) to save context. Use full=true only when you need to READ prose you didn't write this session: e.g. to edit an inherited prompt after clone_agent, or modify an agent from an earlier session. For agents you're authoring fresh, the compact view is enough.",
 		},
 	}
 	caps := []Capability{CapRead}
@@ -91,7 +91,7 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 		// A pipeline is dispatchable without being attached, so unlike a
 		// run_<name> tool there is nothing else in the catalog to advertise
 		// it — this description is the only place it appears.
-		pipeDesc := "(run) Name or id of a saved PIPELINE to run instead of dispatching to an agent — a fixed multi-stage workflow that takes your message as its starting input and hands back the final synthesized output. " +
+		pipeDesc := "(run) Name or id of a saved PIPELINE to run instead of dispatching to an agent: a fixed multi-stage workflow that takes your message as its starting input and hands back the final synthesized output. " +
 			"Use it when the work has a workflow already built for it; use `agent` when you want another agent's judgement. Give either this or `agent`, never both."
 		if names := t.dispatchablePipelineNames(maxAdvertisedPipelines); len(names) > 0 {
 			pipeDesc += " Pipelines you can run: " + strings.Join(names, "; ") + "."
@@ -101,7 +101,7 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 		// a machine is never attached as a tool, so this description is the
 		// only place it appears in the catalog, and an agent that cannot see
 		// its own reach answers "I can't do that" about a procedure it holds.
-		machDesc := "(run) Name or id of a saved MACHINE to run — a procedure that walks its own steps, carrying what each one established into the next, and hands back the result of the step that finishes it. " +
+		machDesc := "(run) Name or id of a saved MACHINE to run: a procedure that walks its own steps, carrying what each one established into the next, and hands back the result of the step that finishes it. " +
 			"Use it when the work has a shape that has to be REMEMBERED as it goes (investigate, then test the hunch, then report) rather than a fixed set of stages; use `pipeline` for a fixed workflow, and `agent` when you want another agent's judgement. Give exactly one of the three."
 		if names := t.dispatchableMachineNames(maxAdvertisedMachines); len(names) > 0 {
 			machDesc += " Machines you can run: " + strings.Join(names, "; ") + "."
@@ -123,10 +123,10 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 		// its reply and a job it should not be sitting silent through.
 		params["await"] = ToolParam{
 			Type: "boolean",
-			Description: "TRUE (the default) when you need this agent's answer to write your own reply — the call waits and hands you the answer. " +
+			Description: "TRUE (the default) when you need this agent's answer to write your own reply: the call waits and hands you the answer. " +
 				"FALSE when you are handing the work off: the call returns immediately, the agent works in the background, and its answer arrives on its own as a message when it is done. " +
 				"Use false for \"go do X and let me know\" and for anything you would otherwise sit silent through for minutes; use true for \"find out X so I can use it\". " +
-				"On a messaging conversation prefer false — the person sees nothing at all while you wait, so a long silence reads as an assistant that stopped answering.",
+				"On a messaging conversation prefer false: the person sees nothing at all while you wait, so a long silence reads as an assistant that stopped answering.",
 		}
 		// CapNetwork is tagged here even though the bare tool itself
 		// doesn't make HTTP calls: the `run` action dispatches into a
@@ -149,7 +149,7 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 	// fleet agents do not (they'd be reaching into another agent's kit).
 	allowRunTool := isBuilderAgent(t.agent.ID)
 	if allowRunTool {
-		desc += " You (Builder) also have action=\"run_tool\": execute one of a target agent's attached tools directly with explicit args (tool + tool_args) to verify it works, without an LLM dispatch — the fast path for checking an authored agent's tools one by one."
+		desc += " You (Builder) also have action=\"run_tool\": execute one of a target agent's attached tools directly with explicit args (tool + tool_args) to verify it works, without an LLM dispatch, the fast path for checking an authored agent's tools one by one."
 		if _, ok := params["agent"]; !ok {
 			params["agent"] = ToolParam{
 				Type:        "string",
@@ -162,7 +162,7 @@ func (t *chatTurn) agentsGroupedToolDef(allowRun bool) AgentToolDef {
 		}
 		params["tool_args"] = ToolParam{
 			Type:        "object",
-			Description: "(run_tool) Arguments to pass to the tool, as a JSON object keyed by the tool's param names. For a toolbox include \"action\". Runs the tool exactly as the target agent would, against its real credential/endpoint — a mutating action (POST, etc.) has real side effects, so verify with a read action first when unsure.",
+			Description: "(run_tool) Arguments to pass to the tool, as a JSON object keyed by the tool's param names. For a toolbox include \"action\". Runs the tool exactly as the target agent would, against its real credential/endpoint: a mutating action (POST, etc.) has real side effects, so verify with a read action first when unsure.",
 		}
 		// run_tool dispatches into the tool's own execution path (secure-API
 		// / sandbox), so it may make network calls — tag it like run does so
@@ -252,7 +252,7 @@ func (t *chatTurn) agentsHandler(allowRun, allowRunTool bool) ToolHandlerFunc {
 			return t.agentsGetAction(args)
 		case "run":
 			if !allowRun {
-				return "", fmt.Errorf("agents(run) is not available to this agent — your job is authoring/composition, not delegation. To execute work, call plan_set with worker steps; to consult a specialist during authoring, dispatch a plan_set worker with web_search / fetch_url instead of dispatching to another agent")
+				return "", fmt.Errorf("agents(run) is not available to this agent: your job is authoring/composition, not delegation. To execute work, call plan_set with worker steps; to consult a specialist during authoring, dispatch a plan_set worker with web_search / fetch_url instead of dispatching to another agent")
 			}
 			// One call, two kinds of target. Which one is named decides the
 			// path; naming both or neither is refused before either runs.
@@ -273,7 +273,7 @@ func (t *chatTurn) agentsHandler(allowRun, allowRunTool bool) ToolHandlerFunc {
 			return fenceAgentsOutput(t.agentsRunAction(args))
 		case "run_tool":
 			if !allowRunTool {
-				return "", fmt.Errorf("agents(run_tool) is not available to this agent — it's a Builder-only allowance for verifying an agent's tools directly")
+				return "", fmt.Errorf("agents(run_tool) is not available to this agent: it's a Builder-only allowance for verifying an agent's tools directly")
 			}
 			return fenceAgentsOutput(t.agentsRunToolAction(args))
 		default:
@@ -334,7 +334,7 @@ func (t *chatTurn) agentsToolWanted() bool {
 	if t.canDispatchAnything() || agentCanAuthor(t.agent) {
 		return true
 	}
-	Debug("[orchestrate] agents: tool withheld entirely for agent=%q — nothing reachable and not an authoring agent", t.agent.ID)
+	Debug("[orchestrate] agents: tool withheld entirely for agent=%q, nothing reachable and not an authoring agent", t.agent.ID)
 	return false
 }
 
@@ -437,34 +437,34 @@ func fenceAgentsOutput(out string, err error) (string, error) {
 }
 
 func agentsToolHelp(allowRun, allowRunTool bool) string {
-	base := `agents — usage:
+	base := `agents, usage:
 
-  action="list"   — return the user's orchestrate agents as a JSON
+  action="list": return the user's orchestrate agents as a JSON
                     array of {id, name, description, owned}. No
                     other params. Call before get when you don't
                     know what agents exist.
 
-  action="get"    — fetch one agent's full record by id AND set it
+  action="get": fetch one agent's full record by id AND set it
                     as authoring focus for this session. Required:
                     id (from list).
 `
 	if allowRun {
 		base += `
-  action="run"    — dispatch work and get the result back as the
+  action="run": dispatch work and get the result back as the
                     tool result. Name exactly ONE target:
 
-                      agent=<name|id>    — another fleet agent
+                      agent=<name|id>: another fleet agent
                         answers in its own persona, with its own
                         memory, facts and tools.
 
-                      pipeline=<name|id> — a saved multi-stage
+                      pipeline=<name|id>: a saved multi-stage
                         workflow runs start to finish on your
                         message as its input, and hands back its
                         final output. Fixed steps, no judgement
-                        about which to take — reach for it when a
+                        about which to take: reach for it when a
                         workflow for this work already exists.
 
-                      machine=<name|id>  — a saved procedure walks
+                      machine=<name|id>: a saved procedure walks
                         its own steps, carrying what each one
                         established into the next and deciding
                         where to go, then hands back the result of
@@ -479,28 +479,28 @@ func agentsToolHelp(allowRun, allowRunTool bool) string {
 `
 	} else {
 		base += `
-  (action="run" is intentionally disabled for this agent — use
+  (action="run" is intentionally disabled for this agent: use
    plan_set with worker steps to execute, or with web_search /
    fetch_url to consult specialist knowledge during authoring.)
 `
 	}
 	if allowRunTool {
 		base += `
-  action="run_tool" — (Builder only) execute ONE of a target
+  action="run_tool": (Builder only) execute ONE of a target
                     agent's attached tools directly, with explicit
                     args, and get its raw output. Skips the sub-
-                    agent LLM turn that action="run" costs — use it
+                    agent LLM turn that action="run" costs: use it
                     to verify a tool works without relying on the
                     agent to pick and call it. Required: agent,
                     tool, plus tool_args={...} (for a toolbox,
                     tool is the toolbox name and tool_args carries
                     {"action":"<sub>", ...}). Runs against the real
-                    credential/endpoint — a write action has real
+                    credential/endpoint: a write action has real
                     effects, so exercise read actions first.
 `
 	}
 	base += `
-  action="help"   — show this spec.`
+  action="help": show this spec.`
 	return base
 }
 
@@ -574,7 +574,7 @@ func (t *chatTurn) agentsGetAction(args map[string]any) (string, error) {
 		key = strings.TrimSpace(stringArg(args, "agent"))
 	}
 	if key == "" {
-		return "", errors.New("action=get needs the agent to fetch — pass id=\"<uuid>\" or agent=\"<name or id>\" (agents(action=\"list\") shows both)")
+		return "", errors.New("action=get needs the agent to fetch: pass id=\"<uuid>\" or agent=\"<name or id>\" (agents(action=\"list\") shows both)")
 	}
 	// Builder and retired seeds are hidden from this surface — see
 	// agentsRunAction and agentsListAction for the rationale. A caller
@@ -653,7 +653,7 @@ func (t *chatTurn) agentsRunToolAction(args map[string]any) (string, error) {
 	fleetDB, fleetUser := t.fleetView()
 	target, ok := findAgentByNameOrID(fleetDB, fleetUser, key)
 	if !ok {
-		return "", fmt.Errorf("agent %q not found in your store — call agents(action=list) to see what's available", key)
+		return "", fmt.Errorf("agent %q not found in your store: call agents(action=list) to see what's available", key)
 	}
 	// Locate the named tool in the target agent's attached kit — the store
 	// rows scoped to it (flattened namespace; the record embeds no copies).
@@ -687,13 +687,13 @@ func (t *chatTurn) agentsRunToolAction(args map[string]any) (string, error) {
 	toolCopy := *found
 	out, err := temptool.DispatchTempToolDirect(sess, &toolCopy, toolArgs)
 	if err != nil {
-		return fmt.Sprintf("Ran %q on agent %q — FAILED: %v. The tool's own definition (params / url_template / body_template / credential) is the thing to fix; edit it with tool_def(action=\"update\", name=%q, ...) for a toolbox, or add_tool for a single shell/api tool, then run_tool again.", toolName, target.Name, err, toolName), nil
+		return fmt.Sprintf("Ran %q on agent %q, FAILED: %v. The tool's own definition (params / url_template / body_template / credential) is the thing to fix; edit it with tool_def(action=\"update\", name=%q, ...) for a toolbox, or add_tool for a single shell/api tool, then run_tool again.", toolName, target.Name, err, toolName), nil
 	}
 	// The rest is kept and paged with read_output. This is a real result the
 	// caller asked for, not a preview, so cutting it left the answer half
 	// delivered with no way to the other half.
 	trimmed := SpillOutput(strings.TrimSpace(out), 2000, "read_output")
-	return fmt.Sprintf("Ran %q on agent %q — result:\n\n%s", toolName, target.Name, trimmed), nil
+	return fmt.Sprintf("Ran %q on agent %q, result:\n\n%s", toolName, target.Name, trimmed), nil
 }
 
 // slimAgentJSON renders an AgentRecord for the agents(get) tool result:
@@ -707,7 +707,7 @@ func slimAgentJSON(udb Database, user string, a AgentRecord) []byte {
 		if len(s) <= n {
 			return s
 		}
-		return s[:n] + fmt.Sprintf("…[%d chars total — previewed; you have the full text you set, re-send it wholesale to change it]", len(s))
+		return s[:n] + fmt.Sprintf("…[%d chars total: previewed; you have the full text you set, re-send it wholesale to change it]", len(s))
 	}
 	type toolSummary struct {
 		Name        string `json:"name"`
@@ -797,7 +797,7 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 	fleetDB, fleetUser := t.fleetView()
 	target, ok := findAgentByNameOrID(fleetDB, fleetUser, key)
 	if !ok {
-		return AgentRecord{}, "", fmt.Errorf("agent %q not found in your store — call agents(action=list) to see what's available", key)
+		return AgentRecord{}, "", fmt.Errorf("agent %q not found in your store: call agents(action=list) to see what's available", key)
 	}
 	// A dispatch to a retiring archetype seed (Research / KB) materializes the
 	// user's own copy and runs that — retirement never breaks a live dispatch.
@@ -805,10 +805,10 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 	// A sub-agent held for approval is not live yet — refuse to dispatch it until
 	// the owner activates it from the Authorizations pane.
 	if target.PendingApproval {
-		return AgentRecord{}, "", fmt.Errorf("agents(run, agent=%q) refused — that agent is awaiting approval and isn't live yet; it becomes dispatchable once the user approves it in the Authorizations pane", key)
+		return AgentRecord{}, "", fmt.Errorf("agents(run, agent=%q) refused, that agent is awaiting approval and isn't live yet; it becomes dispatchable once the user approves it in the Authorizations pane", key)
 	}
 	if target.ID == t.agent.ID {
-		return AgentRecord{}, "", fmt.Errorf("agents(run, agent=%q) is impossible — you ARE %s, or you ARE a worker spawned by %s. Calling yourself is infinite recursion. STOP trying to dispatch back to yourself; do the work directly with the tools you already have. Retrying this call will keep failing — pick a different agent or just execute the work yourself", key, t.agent.Name, t.agent.Name)
+		return AgentRecord{}, "", fmt.Errorf("agents(run, agent=%q) is impossible: you ARE %s, or you ARE a worker spawned by %s. Calling yourself is infinite recursion. STOP trying to dispatch back to yourself; do the work directly with the tools you already have. Retrying this call will keep failing: pick a different agent or just execute the work yourself", key, t.agent.Name, t.agent.Name)
 	}
 	// Builder is never dispatchable. Builder's authoring rhythm needs
 	// a human in the loop — Phase 1 conversational intake, ask_user
@@ -832,13 +832,13 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 	// dispatch runs Builder as a sub-agent and its output lands
 	// PendingApproval.
 	if isBuilderAgent(target.ID) && !t.agent.Fleet && !t.agent.AllowBuilderDispatch {
-		return AgentRecord{}, "", fmt.Errorf("agents(run, agent=%q) refused — Builder is dispatch-callable only from a channel/fleet agent, or from an agent the user has granted \"Can dispatch Builder\" (Security & Access). Point the user at Builder in their agent picker (or the chat URL for Builder) and describe what they want built", key)
+		return AgentRecord{}, "", fmt.Errorf("agents(run, agent=%q) refused: Builder is dispatch-callable only from a channel/fleet agent, or from an agent the user has granted \"Can dispatch Builder\" (Security & Access). Point the user at Builder in their agent picker (or the chat URL for Builder) and describe what they want built", key)
 	}
 	// seed-chat is retired from every surface, dispatch included — an
 	// unhidden shadow or an explicit allowlist pick must not resurrect the
 	// fossil. (seed-research / seed-kb stay dispatchable on purpose.)
 	if isFleetRetiredSeed(target.ID) {
-		return AgentRecord{}, "", fmt.Errorf("agents(run, agent=%q) refused — the framework Chat seed is retired; handle the request yourself or dispatch to one of the user's own agents", key)
+		return AgentRecord{}, "", fmt.Errorf("agents(run, agent=%q) refused: the framework Chat seed is retired; handle the request yourself or dispatch to one of the user's own agents", key)
 	}
 	// Cycle guard. The current turn's agent is always considered "in
 	// flight" — combined with dispatchChain (inherited from parent
@@ -850,7 +850,7 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 	// turn right back into Builder.
 	for _, prior := range t.dispatchChain {
 		if prior == target.ID {
-			return AgentRecord{}, "", fmt.Errorf("agents(run): dispatch cycle — %q is already on the call chain for this turn; pick a different target or answer directly", target.Name)
+			return AgentRecord{}, "", fmt.Errorf("agents(run): dispatch cycle, %q is already on the call chain for this turn; pick a different target or answer directly", target.Name)
 		}
 	}
 	// Dispatch gate. Two cases mirror the visibility logic in
@@ -888,7 +888,7 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 	// dispatching its own sub-agent 100+ times in one autonomous turn via
 	// the ownership bypass.
 	if effectiveDispatchMode(t.agent) == dispatchNone {
-		return AgentRecord{}, "", fmt.Errorf("agents(run): this agent's dispatch policy is Allow NONE (Security & Access) — it may not dispatch to ANY agent, including its own sub-agents. Do the work directly with your own tools; do not retry this call. If delegation is genuinely needed, the user must change the dispatch policy first")
+		return AgentRecord{}, "", fmt.Errorf("agents(run): this agent's dispatch policy is Allow NONE (Security & Access), it may not dispatch to ANY agent, including its own sub-agents. Do the work directly with your own tools; do not retry this call. If delegation is genuinely needed, the user must change the dispatch policy first")
 	}
 	// The Permissions pane records a per-TARGET delegation policy in the root
 	// store. The Operator's delegate tool has always honored a Block there,
@@ -899,7 +899,7 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 	// the ownership carve-outs because a Block is about the TARGET, not the
 	// route taken to reach it.
 	if IsDelegationBlocked(RootDB, fleetUser, target.Name) || IsDelegationBlocked(RootDB, fleetUser, target.ID) {
-		return AgentRecord{}, "", fmt.Errorf("agents(run): delegation to %q is BLOCKED in the user's permission settings — the call was refused. Do NOT retry and do NOT route around it; only the user can change this in the Permissions pane", target.Name)
+		return AgentRecord{}, "", fmt.Errorf("agents(run): delegation to %q is BLOCKED in the user's permission settings, the call was refused. Do NOT retry and do NOT route around it; only the user can change this in the Permissions pane", target.Name)
 	}
 	// A hidden app agent is refused OUTRIGHT, before any carve-out — including
 	// the allowlist mode, which deliberately ignores Hidden for user agents. An
@@ -908,7 +908,7 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 	// implementing agent. Keyed on the registry so a stale shadow or a stray
 	// allowlist entry from the era these leaked into pickers cannot reopen it.
 	if hiddenAppAgent(target.ID) {
-		return AgentRecord{}, "", fmt.Errorf("agents(run): %q is an app-internal agent and cannot be dispatched directly — use the app's own tools instead", target.Name)
+		return AgentRecord{}, "", fmt.Errorf("agents(run): %q is an app-internal agent and cannot be dispatched directly, use the app's own tools instead", target.Name)
 	}
 	if target.OwnedBy == t.agent.ID {
 		// Allowed by ownership; skip the standard checks.
@@ -924,7 +924,7 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 	} else if isBuilderAgent(t.agent.ID) && target.OwnedBy != "" {
 		// Builder override — allow dispatch to any sub-agent for
 		// post-authoring verification. Logged for audit visibility.
-		Log("[orchestrate.agents.run] Builder override — dispatching to sub-agent %q (owned_by=%q)", target.Name, target.OwnedBy)
+		Log("[orchestrate.agents.run] Builder override: dispatching to sub-agent %q (owned_by=%q)", target.Name, target.OwnedBy)
 	} else if target.OwnedBy != "" {
 		// A sub-agent is PRIVATE to its owner. Reaching here means the caller is
 		// neither the owning parent (handled above) nor Builder — so refuse
@@ -933,7 +933,7 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 		// hand that agent the parent's reach. It's internal composition owned by one
 		// parent, not a shared fleet capability. (A capability meant to be shared
 		// should be a top-level agent, not a sub-agent.)
-		return AgentRecord{}, "", fmt.Errorf("agents(run): %q is a sub-agent owned by another agent and is private to its owner — you can't dispatch to it. If you need this capability, ask its owning agent, or have the user make it a top-level agent.", target.Name)
+		return AgentRecord{}, "", fmt.Errorf("agents(run): %q is a sub-agent owned by another agent and is private to its owner, you can't dispatch to it. If you need this capability, ask its owning agent, or have the user make it a top-level agent.", target.Name)
 	} else {
 		// The HEALED mode, matching the fleet catalog. An allowlist whose every
 		// target was deleted reads as "all" on both surfaces or on neither;
@@ -973,7 +973,7 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 		if !origin.allows(target) {
 			Log("[orchestrate.agents.run] blocked transitive dispatch %s → %s: not permitted by originator %s",
 				t.agent.ID, target.ID, origin.AgentID)
-			return AgentRecord{}, "", fmt.Errorf("agents(run): %q is not reachable on this dispatch. You are running on behalf of %q, whose dispatch policy does not permit %q — a delegated agent cannot reach further than the agent that delegated to it. Do what you can with your own tools, or report back that %q was needed and not permitted",
+			return AgentRecord{}, "", fmt.Errorf("agents(run): %q is not reachable on this dispatch. You are running on behalf of %q, whose dispatch policy does not permit %q: a delegated agent cannot reach further than the agent that delegated to it. Do what you can with your own tools, or report back that %q was needed and not permitted",
 				target.Name, origin.AgentName, target.Name, target.Name)
 		}
 	}
@@ -1004,7 +1004,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	//       the dispatcher is the Builder, whose job is to sweep an agent's
 	//       whole toolset.
 	if block := t.dispatchCap(target.ID, target.Name, msg); block != "" {
-		Log("[orchestrate.agents.run] per-turn dispatch cap hit: %s → %s — blocking further dispatch", t.agent.ID, target.ID)
+		Log("[orchestrate.agents.run] per-turn dispatch cap hit: %s → %s, blocking further dispatch", t.agent.ID, target.ID)
 		// Returned as an ERROR, never as a normal result. A normal result rides
 		// through fenceAgentsOutput, which wraps it in the untrusted-content
 		// banner — a framework STOP verdict delivered inside a fence that says
@@ -1270,7 +1270,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 			text += fmt.Sprintf(" (%d tool call%s)", n, plural(n))
 		}
 		if step.Done {
-			text += " — done"
+			text += ", done"
 		}
 		t.sse.Send(map[string]any{
 			"kind": "activity",
@@ -1476,7 +1476,7 @@ func (t *chatTurn) agentsDispatchPolicy(allowRun bool) DetachPolicy {
 			// the approval or refused the handoff, so reaching here without one
 			// means the standing grant was revoked in between.
 			if !t.dispatchEdgeApproved(target) {
-				return "", fmt.Errorf("agents(run): %q was not run — this agent is not approved to delegate to it", target.Name)
+				return "", fmt.Errorf("agents(run): %q was not run, this agent is not approved to delegate to it", target.Name)
 			}
 			// Same two guards as the inline path, on the DETACHED session's
 			// context: t.ctx died with the turn that handed this off, and a

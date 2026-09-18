@@ -101,7 +101,7 @@ func TestDispatchCapVerdictIsAnErrorNotAFencedResult(t *testing.T) {
 	if err == nil {
 		t.Fatalf("cap verdict came back as a normal result (would be fenced): %q", out)
 	}
-	if !strings.HasPrefix(err.Error(), "STOP —") {
+	if !strings.HasPrefix(err.Error(), "STOP:") {
 		t.Fatalf("cap error must carry the STOP verdict for the loop guards; got: %v", err)
 	}
 	if strings.Contains(out+err.Error(), "UNTRUSTED EXTERNAL CONTENT") {

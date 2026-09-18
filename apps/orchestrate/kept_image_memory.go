@@ -57,7 +57,7 @@ func keptImageMemoryBody(k KeptImage) string {
 	// sentence that contains the question.
 	if subject := SubjectLabel(k.Subject); subject != "" {
 		if k.Subject.Person {
-			fmt.Fprintf(&b, "It is a picture of %s — this is what %s looks like, and it is the picture to use when a request names them.\n", subject, subject)
+			fmt.Fprintf(&b, "It is a picture of %s: this is what %s looks like, and it is the picture to use when a request names them.\n", subject, subject)
 		} else {
 			fmt.Fprintf(&b, "It is a picture of %s.\n", subject)
 		}

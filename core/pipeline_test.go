@@ -367,7 +367,7 @@ func TestAPanelsSecondRoundSeesTheFirst(t *testing.T) {
 	}
 	// The product is the whole transcript, not a verdict and not the last
 	// round alone: a synthesizer needs to see who moved.
-	for _, want := range []string{"## Round 1 — Optimist", "## Round 2 — Skeptic"} {
+	for _, want := range []string{"## Round 1: Optimist", "## Round 2: Skeptic"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("the transcript should keep every round (%q missing):\n%s", want, out)
 		}

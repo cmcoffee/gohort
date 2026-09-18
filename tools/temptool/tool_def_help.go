@@ -14,14 +14,14 @@ var _ = json.Marshal
 // helpText is the full usage guide returned by action="help". Kept
 // inline (not loaded from disk) so it ships with the binary and
 // can't drift from the action descriptions.
-const helpText = `tool_def — runtime tool builder
+const helpText = `tool_def: runtime tool builder
 
 Use this to define a wrapper around a shell command or an HTTP API
 call. Three modes: "shell", "api", and "pipeline". Pick by what you
 need to do, not by what's easier to write.
 
 ================================================================
-SANDBOX FACT SHEET — read this BEFORE authoring shell-mode tools
+SANDBOX FACT SHEET: read this BEFORE authoring shell-mode tools
 ================================================================
 
 The shell-mode sandbox is restrictive. The most common authoring
@@ -34,10 +34,10 @@ PYTHON
   * Safe imports: json, re, csv, sqlite3, urllib.parse, hashlib,
     hmac, datetime, collections, itertools, functools, os, sys,
     subprocess, pathlib, base64, html, xml.etree.ElementTree,
-    statistics, math, random. (urllib.request is NOT on this list —
+    statistics, math, random. (urllib.request is NOT on this list
     it is a network call and tool_def REFUSES scripts that use it;
     see NETWORK.)
-  * Need a third-party package? PIVOT — jq/awk for parsing,
+  * Need a third-party package? PIVOT: jq/awk for parsing,
     gohort.fetch_url for HTTP, or api mode usually reaches the
     same outcome.
 
@@ -47,37 +47,37 @@ SHELL
   * Reliably available binaries: jq, awk, sed, grep, head,
     tail, sort, uniq, tr, cut, wc, basename, dirname, date, cat,
     echo, printf, tee, xargs, find.
-  * NOT available: bash-only features. curl/wget are NOT usable —
+  * NOT available: bash-only features. curl/wget are NOT usable
     the sandbox has no network (see NETWORK), and tool_def
     REFUSES scripts that call them.
 
 NETWORK
   * The shell sandbox is NETWORK-ISOLATED (bwrap --unshare-net).
-    curl, wget, urllib.request, socket — they ALL FAIL inside a
+    curl, wget, urllib.request, socket: they ALL FAIL inside a
     shell-mode tool, and tool_def refuses a script_body that uses
     any of them at authoring time.
   * HTTP from a script goes through the gohort bridge instead:
-    "from gohort import fetch_url" then fetch_url(url) — granted
+    "from gohort import fetch_url" then fetch_url(url): granted
     by default, no declaration needed. Authenticated or scoped
     endpoints: hook_capabilities=["fetch_via:<credential>"].
   * api mode is usually the better fit for HTTPS work anyway. It
     handles credentials, allow-listed URLs, audit logs, and rate
-    limits — none of which a script gets on its own. Pick api
+    limits: none of which a script gets on its own. Pick api
     mode for any work that just hits an HTTPS endpoint.
 
 FILESYSTEM
   * Writable paths:
-      {workspace_dir}  — your tool's bound sandbox. PERSISTS
+      {workspace_dir}: your tool's bound sandbox. PERSISTS
                          across invocations of THIS tool when
                          StatePath is set; otherwise contents
                          survive while the tool exists but you
                          shouldn't rely on persistence across
                          deletes.
-      /tmp             — tmpfs, ephemeral. WIPED every invocation.
+      /tmp: tmpfs, ephemeral. WIPED every invocation.
                          Fine for scratch files within a single
                          dispatch; do NOT use for state.
   * Read-only paths: /usr, /bin, /sbin, /lib, /etc/{resolv.conf,
-    hosts, ssl, alternatives} — bound from the host so binaries
+    hosts, ssl, alternatives}: bound from the host so binaries
     + DNS + TLS just work.
   * NOT VISIBLE: /home, /root, /var, anywhere outside the binds
     above. Don't reference user home paths or arbitrary system
@@ -93,7 +93,7 @@ THE script_body / script_name PATTERN
     re-ship the script per call.
   * MULTI-FILE: helper files your entry script pulls in (a Python
     module it imports, a bash file it sources) are bundled into the
-    tool AUTOMATICALLY — write them to the workspace with local(write)
+    tool AUTOMATICALLY: write them to the workspace with local(write)
     under the name the script imports (helper.py for "import helper"),
     and they travel with the tool and survive workspace wipes. No
     extra param; just author them beside the entry script.
@@ -112,9 +112,9 @@ PROBING FOR BINARIES (workspace probe action)
         workspace(action="probe", name="ffmpeg")
         → "available at /usr/bin/ffmpeg" or "NOT available"
   * No user confirmation required (the probe is scope-limited to
-    a "command -v" lookup with a validated identifier — zero
+    a "command -v" lookup with a validated identifier: zero
     injection surface). Call it freely during design.
-  * If the probe says NOT available, pivot — don't author a tool
+  * If the probe says NOT available, pivot: don't author a tool
     that will fail at dispatch.
 
 EMITTING ATTACHMENTS (images, video, audio)
@@ -137,39 +137,39 @@ EMITTING ATTACHMENTS (images, video, audio)
     through stdout) and don't need authoring.
 
 If you're tempted to author a tool that imports requests, runs
-under bash, or writes to /tmp expecting persistence — STOP and
+under bash, or writes to /tmp expecting persistence: STOP and
 pivot. The shell sandbox will reject those at dispatch time.
 
 ================================================================
-WHEN TO USE WHICH MODE — decide by the work, not by what's familiar
+WHEN TO USE WHICH MODE: decide by the work, not by what's familiar
 ================================================================
 
 **COMPOSE BEFORE YOU BUILD.** Before authoring anything that touches
 the network, check whether an existing framework tool already does
 the fetch step:
 
-  web_search       — search the web, returns ranked results
-  fetch_url        — GET a URL, returns body
-  find_image       — search for an image and save best match to workspace
-  fetch_image      — download a specific image URL to workspace
-  download_video   — download a video from a supported site to workspace
+  web_search: search the web, returns ranked results
+  fetch_url: GET a URL, returns body
+  find_image: search for an image and save best match to workspace
+  fetch_image: download a specific image URL to workspace
+  download_video: download a video from a supported site to workspace
 
 If one of these covers the fetch, your authoring job is the LOCAL
-PROCESSING ON TOP — write that as a shell-mode tool and chain the two
+PROCESSING ON TOP: write that as a shell-mode tool and chain the two
 via pipeline_steps. Don't reimplement the fetch. The framework's
 versions handle credentials, retries, redirects, content-type sniffing,
-size caps, caching, and observability — none of which a curl-in-shell
+size caps, caching, and observability: none of which a curl-in-shell
 script gets.
 
 Decision tree:
 
   Network involved?
-    └─ YES — does an existing tool already fetch what you need?
+    └─ YES: does an existing tool already fetch what you need?
         ├─ YES → pipeline mode: chain that tool + a shell-mode
         │        processor you author for the transformation.
         └─ NO  → api mode (HTTPS endpoint the framework can't
                   already reach).
-    └─ NO  — purely local computation? → shell mode.
+    └─ NO: purely local computation? → shell mode.
 
 That's the rule. The two most common mistakes:
   (1) Reaching for shell mode + a Python urllib (or curl) script
@@ -179,58 +179,58 @@ That's the rule. The two most common mistakes:
       in URLs are all eliminated by api mode.
   (2) Re-authoring a fetch when fetch_url or web_search already
       does it. The right shape is pipeline_steps that chains the
-      existing fetch tool with your custom processor — you only
+      existing fetch tool with your custom processor: you only
       author the part that doesn't already exist.
 
-api mode — for HTTPS endpoints the framework doesn't already reach.
+api mode, for HTTPS endpoints the framework doesn't already reach.
   Use when:
     - The task is to hit an authenticated HTTPS URL with a
-      registered credential (Bearer, header, query, basic_auth) —
+      registered credential (Bearer, header, query, basic_auth)
       pass credential="<name>".
     - The task is an unauthenticated public API (Open-Meteo,
-      wttr.in, exchange rates, geocoders, etc.) — pass
+      wttr.in, exchange rates, geocoders, etc.): pass
       credential="no_auth". Same machinery (allow-list, audit log,
       rate limit) without an auth header.
   Do NOT write a Python urllib or curl-in-shell client around an
   HTTPS endpoint. There is no situation where a hand-rolled HTTP
   client in shell mode is the right answer.
 
-shell mode — for local computation in a sandbox.
+shell mode, for local computation in a sandbox.
   Use when:
     - You need to parse, transform, or aggregate data with a
-      script (Python, Bash, jq, awk, sed) — and the data is
+      script (Python, Bash, jq, awk, sed), and the data is
       passed in as an arg, NOT fetched by the script itself.
     - You need persistent state across invocations (StatePath).
     - You need a multi-step computation that operates on
       caller-supplied input only.
   Sandbox: bubblewrap, network technically reachable but using it
   for HTTP work is the anti-pattern called out above. Constraints
-  documented in the SANDBOX FACT SHEET at the top of this help —
+  documented in the SANDBOX FACT SHEET at the top of this help
   read that before authoring shell-mode tools.
 
-pipeline mode — for composition (THIS is how "use existing tools").
+pipeline mode, for composition (THIS is how "use existing tools").
   Two variants:
     pipeline_steps (DETERMINISTIC): each step is one tool call,
       args templated with {param} (caller args) and $N / $N.field
       (prior step output). No inner LLM. Cheap, fast, predictable.
-      The right choice for "fetch X then process X" — pair an
+      The right choice for "fetch X then process X": pair an
       existing fetch tool with a shell-mode processor you author.
     pipeline_prompt (ADAPTIVE): a sub-agent LLM runs the chain
       with reasoning between steps. Use when the chain needs
       branching ("if the search returns a paper PDF, fetch and
       summarize; if it returns a webpage, scrape and summarize").
 
-Worked example — fetch a JSON endpoint and project just the fields
+Worked example: fetch a JSON endpoint and project just the fields
 you want, composing fetch_url + a shell processor:
 
-  Step 1 — author the shell processor (works on caller-supplied data):
+  Step 1, author the shell processor (works on caller-supplied data):
     tool_def(action="create", mode="shell",
              name="project_user_summary",
              description="Project name + repo count from a GitHub user JSON.",
              params={"json": {"type": "string", "description": "raw JSON body"}},
              command_template="echo {json} | jq -c '{login, public_repos, followers}'")
 
-  Step 2 — author the pipeline that chains fetch_url + the processor:
+  Step 2, author the pipeline that chains fetch_url + the processor:
     tool_def(action="create", mode="pipeline",
              name="gh_user_summary",
              description="Get a GitHub user's summary by username.",
@@ -248,16 +248,16 @@ already gives you all of that.
 When NOT to use pipeline mode:
   - The whole flow is one HTTPS call: just use api mode directly.
   - The processing is so trivial it fits in api mode's
-    response_pipe (which is jq / awk on the response body —
+    response_pipe (which is jq / awk on the response body
     cheaper than a pipeline_steps chain when nothing else is in
     the chain).
 
 ================================================================
-WRAPPING A SCRIPT — fast path
+WRAPPING A SCRIPT: fast path
 ================================================================
 
 The single-call shortcut (this example uses jq, but Python, Bash,
-awk, sed all work the same way — pick the smallest tool for the
+awk, sed all work the same way: pick the smallest tool for the
 job, not a Python script by default):
 
   tool_def(action=create, mode="shell",
@@ -281,19 +281,19 @@ and the file system handles it correctly. The template only sees
 filenames and {arg} placeholders, which are safe.
 
 ================================================================
-command_template — placeholders are pre-quoted; DON'T wrap them
+command_template: placeholders are pre-quoted; DON'T wrap them
 ================================================================
 
 Every {param} placeholder in command_template is SHELL-QUOTED by
 the framework at dispatch time. Wrapping a placeholder in quotes
 yourself creates nested quoting and breaks the command.
 
-WRONG (nested quotes — the framework's quote is INSIDE your quote):
+WRONG (nested quotes, the framework's quote is INSIDE your quote):
   command_template:  curl '{url}' -H "X-Auth: {token}"
   → renders to:     curl ''https://...'' -H "X-Auth: 'abc123'"
   → shell sees doubled and nested quotes, command parses wrong
 
-RIGHT (bare placeholders — let the framework do the quoting):
+RIGHT (bare placeholders, let the framework do the quoting):
   command_template:  curl {url} -H X-Auth:\ {token}
   → renders to:     curl 'https://...' -H X-Auth:\ 'abc123'
   → values arrive as separate argv entries, correctly quoted
@@ -305,10 +305,10 @@ values as bare placeholders and read them positionally in the script:
 
 The rule: NEVER put a quote character around a {placeholder}, in
 either single or double form. Literal quotes ELSEWHERE in the
-template are fine — only the placeholders are auto-quoted.
+template are fine: only the placeholders are auto-quoted.
 
 ================================================================
-url_template / body_template — placeholders are URL-encoded; DON'T
+url_template / body_template: placeholders are URL-encoded; DON'T
 wrap them either
 ================================================================
 
@@ -323,7 +323,7 @@ WRONG (literal quotes survive into the URL):
   with {query}="Seattle WA":
   → renders to: https://api.example.com/search?q='Seattle%20WA'
   → upstream sees q=%27Seattle%20WA%27 (encoded single quotes
-    around the value — usually a 400 / "no results" / wrong match)
+    around the value: usually a 400 / "no results" / wrong match)
 
 RIGHT (bare placeholder):
   url_template:  https://api.example.com/search?q={query}
@@ -344,13 +344,13 @@ segments substitutes as real separators:
 When the API wants a NESTED PATH as ONE segment, add ":encoded"
 ("segment" is a synonym) and the whole value is percent-encoded,
 slashes included. GitLab's files endpoint is the case this exists
-for — it takes the file path as an id:
+for, it takes the file path as an id:
   url_template:  /projects/{id}/repository/files/{path:encoded}/raw?ref={ref}
   with {path}="src/handlers/webhook_retry.py":
   → renders to: .../files/src%2Fhandlers%2Fwebhook_retry.py/raw?ref=dev
 
 PASS NATURAL VALUES either way. Do NOT pre-encode: "%2F" arrives
-as "%252F", because the escaper encodes "%" as it must — a literal
+as "%252F", because the escaper encodes "%" as it must: a literal
 percent in a value is indistinguishable from an encoding you did
 by hand. Before this modifier existed there was no third thing to
 try: a raw "/" and a hand-written "%2F" both 404 on that endpoint.
@@ -358,7 +358,7 @@ A modifier that is not "encoded" / "segment" is REFUSED, at
 authoring time and at dispatch, rather than left in the URL as a
 literal.
 
-Same rule for body_template — bare {placeholders}, no wrapping
+Same rule for body_template: bare {placeholders}, no wrapping
 quotes. The framework JSON-encodes string values for you (the
 encoder adds its own surrounding quotes), so writing
   body_template:  {"key":"{value}"}
@@ -367,7 +367,7 @@ double-quotes the value. Write
 instead and let the encoder handle the JSON quoting.
 
 ================================================================
-AUTHORING A SHELL-MODE TOOL — script_body inline is the path
+AUTHORING A SHELL-MODE TOOL: script_body inline is the path
 ================================================================
 
 The canonical pattern is ONE call that ships the script content with
@@ -398,33 +398,33 @@ Why script_body inline:
   - One call, not three. Workers don't waste rounds on a
     write-then-run-then-wrap dance.
   - test_args runs the freshly-authored tool with concrete inputs
-    and folds the result (or error) into your response — if it
+    and folds the result (or error) into your response: if it
     errors, fix it inline and re-call tool_def; if it works,
     you're done.
 
 CRITICAL: command_template must reference the same filename you
 passed as script_name. If script_name="weather.py", command_template
-must say {workspace_dir}/weather.py — NOT {workspace_dir}/script.py
+must say {workspace_dir}/weather.py: NOT {workspace_dir}/script.py
 or any other name. Mismatch → dispatch fails with "no such file."
 
 Iterating-and-testing via local(write) + local(run) BEFORE the
-tool_def call is OPTIONAL — useful when you're debugging a non-
+tool_def call is OPTIONAL: useful when you're debugging a non-
 trivial algorithm interactively. Once it works, copy the verified
 content into script_body and call tool_def ONCE. Do NOT skip
-script_body and hope the workspace file survives — it won't, across
+script_body and hope the workspace file survives: it won't, across
 sessions or after workspace pruning.
 
 ================================================================
-NETWORK POLICY — shell sandbox is network-isolated by default
+NETWORK POLICY: shell sandbox is network-isolated by default
 ================================================================
 
 Shell-mode tools run in a bwrap sandbox with --unshare-net. That
-means: urllib.request, socket.connect, curl, wget — ALL FAIL from
+means: urllib.request, socket.connect, curl, wget, ALL FAIL from
 inside the sandbox, and tool_def REFUSES a script_body that uses
 any of them at authoring time.
 
-HTTP goes through the gohort bridge instead. The bare hooks —
-fetch_url, browse_page, log — are granted BY DEFAULT for any
+HTTP goes through the gohort bridge instead. The bare hooks
+fetch_url, browse_page, log: are granted BY DEFAULT for any
 shell-mode tool with script_body; no declaration needed:
 
   tool_def(action=create, mode="shell",
@@ -443,7 +443,7 @@ shell-mode tool with script_body; no declaration needed:
 Why this shape (vs raw network):
   - Every outbound call is logged in gohort's audit trail
   - Secrets stay in the credential store, out of the script's hands
-  - Same posture across sessions — no surprises on a fresh workspace
+  - Same posture across sessions: no surprises on a fresh workspace
 
 For authenticated endpoints, declare the credential and route the
 request THROUGH it (allow-list enforced, auth injected server-side,
@@ -458,18 +458,18 @@ Then in the script:
                    "https://api.openweathermap.org/data/2.5/weather?q=Seattle")
   print(data["body"])
 
-  # fetch_via also takes method, body, and extra request headers —
+  # fetch_via also takes method, body, and extra request headers
   # e.g. a CalDAV PROPFIND that needs a Depth header and an XML body:
   #   fetch_via("apple_caldav", url, method="PROPFIND", body=xml,
   #             headers={"Depth": "1", "Content-Type": "application/xml"})
   # The credential's auth header always wins over anything you pass.
   # Returns {status, status_line, body}; status is the NUMERIC code, same
   # as fetch_url, so a plain  if r["status"] != 200:  works unchanged.
-  # Do NOT write  int(r["status"].split()[1])  — that was a workaround
+  # Do NOT write  int(r["status"].split()[1]), that was a workaround
   # for an older shape and now raises on an int.
 
 (secret:<name> exists for the rare API that can't be reached that
-way — the script gets the decrypted value and injects it itself.
+way: the script gets the decrypted value and injects it itself.
 Prefer fetch_via.)
 
 The escape hatch (raw_network=true) is RESERVED for narrow cases:
@@ -481,10 +481,10 @@ right answer. raw_network=true should be a deliberate exception
 flagged in the description, not a default.
 
 ================================================================
-state_path — for tools that need to remember
+state_path, for tools that need to remember
 ================================================================
 
-The sandbox itself persists across dispatches of the same tool —
+The sandbox itself persists across dispatches of the same tool
 your script can write a file in dispatch #1 and read it back in
 dispatch #2. That's the default behavior.
 
@@ -499,7 +499,7 @@ Most tools don't need this; leave it unset.
 api mode and response_pipe
 ================================================================
 
-api-mode tool shape (authenticated — credential registered in admin):
+api-mode tool shape (authenticated, credential registered in admin):
 
   tool_def(action=create, mode="api",
            name="get_issue",
@@ -514,7 +514,7 @@ api-mode tool shape (authenticated — credential registered in admin):
            },
            response_pipe="jq -c '{title, state, body, user: .user.login}'")
 
-Public API (no auth) — same shape, credential="none":
+Public API (no auth), same shape, credential="none":
 
   tool_def(action=create, mode="api",
            name="get_weather_forecast",
@@ -552,7 +552,7 @@ URL placeholders are URL-encoded at dispatch. Body placeholders are
 JSON-encoded. Both are safe against injection.
 
 ================================================================
-WRITING THE DESCRIPTION — one or two sentences, then stop
+WRITING THE DESCRIPTION: one or two sentences, then stop
 ================================================================
 
 A tool's description and its param descriptions are re-sent on EVERY
@@ -560,7 +560,7 @@ turn the tool sits in a catalog, for the whole life of the tool. You
 write them once; every future conversation pays for them. Treat the
 length as a budget you are spending on someone else's behalf.
 
-CAPS (enforced — create and update are refused over them):
+CAPS (enforced, create and update are refused over them):
   tool description          500 characters
   toolbox action            250 characters
   each param description    250 characters
@@ -579,10 +579,10 @@ Do NOT put these in the description:
   * a restatement of the params (they are right there, with their own
     descriptions)
   * failure modes and troubleshooting ("if you get a 404, check the
-    id") — that belongs in the ERROR the tool returns, where it is
+    id"), that belongs in the ERROR the tool returns, where it is
     read only when it actually happens, instead of on every turn
   * setup or authoring history ("built against v2 of the API, uses the
-    acme_api credential") — the caller cannot act on it
+    acme_api credential"): the caller cannot act on it
   * emphasis markup and repetition. Saying it once is saying it.
 
 Param descriptions are one line: what the value is, plus the format
@@ -598,7 +598,7 @@ If a rule genuinely has to reach the caller before they call, it goes
 in the ONE param it constrains, not in the tool description.
 
 ================================================================
-WHAT THE TOOL RETURNS — anchor list items, never omit a field
+WHAT THE TOOL RETURNS: anchor list items, never omit a field
 ================================================================
 
 The output shape is part of the tool's contract, same as its params.
@@ -607,8 +607,8 @@ clean and still produce wrong answers in use by breaking them.
 
 ANCHOR EVERY ITEM IN A LIST RESULT.
 
-A tool that returns many similar-shaped items — search hits,
-headlines, rows, files, messages — must give each item an id. Without
+A tool that returns many similar-shaped items: search hits,
+headlines, rows, files, messages: must give each item an id. Without
 one the caller can read every field correctly and still attach it to
 the wrong item: the attributes survive, the binding to their item
 doesn't. It looks like a hallucination and isn't. It's two neighbors
@@ -616,7 +616,7 @@ in an undifferentiated wall of text.
 
 WRONG (nothing to point at):
   ### Cracker Barrel CEO steps down after rebrand chaos
-  *BBC Business* — Mon, 27 Jul 2026
+  *BBC Business*: Mon, 27 Jul 2026
   Julie Masino will exit after backlash over the logo redesign.
 
 RIGHT (each item carries a handle):
@@ -655,12 +655,12 @@ caller can't mistake for content. Ragged records let values slide
 across item boundaries.
 
 ================================================================
-WebDAV / CalDAV — the Depth header is not optional
+WebDAV / CalDAV: the Depth header is not optional
 ================================================================
 
 A calendar-query REPORT (or a PROPFIND) applies at the DEPTH the
-request asks for. Depth 0 means "the collection resource itself" —
-which is never a VEVENT — so the server answers 207 Multi-Status
+request asks for. Depth 0 means "the collection resource itself"
+which is never a VEVENT, so the server answers 207 Multi-Status
 with an EMPTY multistatus and no error anywhere:
 
   <?xml version="1.0" encoding="UTF-8"?><multistatus xmlns="DAV:"/>
@@ -695,32 +695,32 @@ verifies clean, and returns nothing forever. Set the header:
 Rules that make the difference between working and silently empty:
   * headers={"Depth": "1"} on REPORT and PROPFIND. Always.
   * The filter MUST nest comp-filter VCALENDAR > VEVENT > time-range.
-    A time-range at the VCALENDAR level matches nothing — same empty
+    A time-range at the VCALENDAR level matches nothing: same empty
     207, no error.
   * <c:calendar-data/> is a SELF-CLOSING prop. Putting <d:prop>
     children inside it (<d:summary/> etc.) is not a partial-retrieval
-    spec and returns nothing useful — those are iCalendar properties,
+    spec and returns nothing useful: those are iCalendar properties,
     not DAV ones.
   * content_type="application/xml" so the body substitutes RAW.
   * Parse with response_extract, not a hand-written XML pipe.
   * A WRITE is a plain PUT of one .ics to <calendar>/<uid>.ics with
-    content_type="text/calendar" — no Depth, no filter. A create tool
+    content_type="text/calendar": no Depth, no filter. A create tool
     working proves NOTHING about a read tool: they exercise different
     verbs, different headers, and different server-side logic.
 
 If a read returns 2xx with zero records, check in this order:
 Depth header, filter nesting, the time range, and only THEN the
-calendar path — a path that accepts a PUT is a path that exists.
+calendar path: a path that accepts a PUT is a path that exists.
 
 ================================================================
-toolbox mode — wrap a whole API surface
+toolbox mode: wrap a whole API surface
 ================================================================
 
 When the work is "expose several endpoints of one API as tools"
 (GitHub: users + repos + issues; Stripe: charges + invoices +
 customers; an internal service with 5 read endpoints), use mode=
 "toolbox" instead of authoring N separate api-mode tools. A toolbox
-surfaces as ONE catalog entry with action="<sub>" dispatch — the
+surfaces as ONE catalog entry with action="<sub>" dispatch: the
 same UX as the framework's built-in grouped tools (tool_def itself
 is one). Cleaner for the catalog, one credential shared across
 actions, one approval.
@@ -761,7 +761,7 @@ Called as:
     github(action="get_repo", owner="cmcoffee", repo="gohort")
     github(action="list_issues", owner="cmcoffee", repo="gohort", state="open")
 
-Each action is structurally a single api-mode endpoint — same URL
+Each action is structurally a single api-mode endpoint: same URL
 template substitution, same method/body_template/response_pipe
 semantics. The toolbox is a packaging primitive on top.
 
@@ -770,21 +770,21 @@ Why toolbox over N api-mode tools:
     gh_get_repo, ...). Much cleaner when the catalog is already
     busy.
   * One credential declared at toolbox level vs repeated per tool.
-  * One pending-approval entry vs N — admin reviews "the github
+  * One pending-approval entry vs N: admin reviews "the github
     toolbox" as one unit.
   * Adding a new endpoint = adding one entry to actions[], not
     minting a new tool_def call.
 
 When NOT to use toolbox:
-  * The work is one HTTPS call — mode="api" is leaner.
+  * The work is one HTTPS call: mode="api" is leaner.
   * The endpoints share NOTHING (different APIs, different
-    credentials) — author separate api-mode tools per endpoint.
+    credentials): author separate api-mode tools per endpoint.
   * The "actions" would have wildly different params with no
-    semantic relation — that's usually a sign the work isn't really
+    semantic relation: that's usually a sign the work isn't really
     a wrapper around one API.
 
 ================================================================
-verify — action="test" (DO THIS BEFORE YOU CALL A TOOL DONE)
+verify: action="test" (DO THIS BEFORE YOU CALL A TOOL DONE)
 ================================================================
 
 Authoring a tool and NOT exercising it is how a broken
@@ -802,7 +802,7 @@ catches these BEFORE the tool ships.
              ])
 
 What it does per endpoint:
-  * Checks every REQUIRED param is actually sent — referenced in the
+  * Checks every REQUIRED param is actually sent: referenced in the
     url_template or the body_template. An unreferenced required param
     is the #1 bug (the "must be a string" 400). Fails offline, no
     network needed.
@@ -813,7 +813,7 @@ What it does per endpoint:
   * READ endpoints (GET): makes a REAL call, asserts a 2xx, and runs
     the response_pipe against the real body (catches shape mismatches).
   * WRITE endpoints (POST/PUT/PATCH/DELETE): body-validated but NOT
-    auto-fired — the report tells you to make one manual call and
+    auto-fired: the report tells you to make one manual call and
     confirm a 2xx yourself (so test never spams the live service).
 
 Pass a cases entry per endpoint with REAL values so reads hit 2xx.
@@ -833,9 +833,9 @@ SHELL tools go through the same action, with checks that fit a script:
     bad indent fails HERE instead of on every future call.
   * Reports how each required param reaches the script: substituted
     into command_template, or ONLY as a lowercase env var (params are
-    always exported as env vars — os.environ["summary"], $summary).
+    always exported as env vars: os.environ["summary"], $summary).
   * RUNS the tool with your case args and checks the exit status.
-    This is a genuine dispatch — its side effects really happen, so
+    This is a genuine dispatch: its side effects really happen, so
     pass args you're willing to have executed.
 
 Without a cases entry a shell tool reports UNVERIFIED, not PASS:
@@ -852,7 +852,7 @@ your tool is callable in this session AND auto-queued for admin
 review in the background. The admin decides whether to keep it
 past the session; you don't ask, you author. Saying "want me to
 register it now?" after writing a script means you skipped the
-tool_def call — go make it.
+tool_def call: go make it.
 
 persist=false (default): the tool exists only for the current
 session. Disappears at session end. No approval required.
@@ -866,7 +866,7 @@ for one-off transformations.
 cache (optional)
 ================================================================
 
-cache opts a tool into persistent result memoization — the same
+cache opts a tool into persistent result memoization: the same
 call returns the prior result instead of re-executing. Use for
 tools whose output is expensive AND deterministic given the same
 args:
@@ -886,7 +886,7 @@ Shape (all fields optional inside the cache object):
                   Empty = no expiry.
   scope           "user" (default; dedup per-user across sessions),
                   "session" (per-conversation), or "global" (shared
-                  across all users — only when the result is
+                  across all users: only when the result is
                   content-addressable AND privacy-safe).
   invalidate_when Array of post-hit checks. Each entry has the form
                   "kind:expression". Today one kind:
@@ -894,7 +894,7 @@ Shape (all fields optional inside the cache object):
                   The rendered path must exist on disk or the entry
                   is dropped and the tool re-runs.
 
-Example — api tool with TTL (current-weather lookup, ~10min fresh):
+Example, api tool with TTL (current-weather lookup, ~10min fresh):
 
     create(mode="api",
            name="current_weather",
@@ -909,7 +909,7 @@ Example — api tool with TTL (current-weather lookup, ~10min fresh):
 The same (lat, lon) within 10 minutes returns the prior response
 without re-hitting Open-Meteo.
 
-Example — shell tool with file_exists invalidation (download once):
+Example, shell tool with file_exists invalidation (download once):
 
     create(mode="shell",
            name="download_url_to_workspace",
@@ -946,14 +946,14 @@ common pitfalls
   the script source via script_body.
 
 - Embedding a multi-line script inside command_template. Shell
-  quoting will fight you. Use script_body — the file system handles
+  quoting will fight you. Use script_body: the file system handles
   the source verbatim and the template only sees filenames.
 
 - Wrapping a script you haven't tested. Use the local(write/run)
   iterate loop first; only wrap once it actually works.
 
 - Using api mode for arithmetic or text munging. Use shell mode
-  with a small Python or jq command — no credential needed.
+  with a small Python or jq command: no credential needed.
 
 - Defining response_pipe that produces empty output. The LLM-
   visible result is what comes off stdout; if your jq filter
@@ -1003,7 +1003,7 @@ func pruneRequired(required, params any) any {
 		if _, exists := paramMap[strings.TrimSpace(name)]; exists {
 			kept = append(kept, r)
 		} else {
-			Debug("[temptool] update: dropped required %q — the action no longer declares that param", name)
+			Debug("[temptool] update: dropped required %q, the action no longer declares that param", name)
 		}
 	}
 	return kept

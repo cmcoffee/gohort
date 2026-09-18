@@ -84,7 +84,7 @@ func (t *chatTurn) offerGuardrailAppeal(rule, hook, candidate string) string {
 		return ""
 	}
 	t.appealOffer = &guardrailAppealOffer{Rule: rule, Hook: hook, Candidate: candidate}
-	return " If this rule genuinely does not apply here — its condition was already met — you may say so ONCE by calling guardrail_appeal with a quote from the user's own words that shows it. A quote, not an explanation: the framework looks it up and decides. If you have no such quote, comply instead."
+	return "If this rule genuinely does not apply here (its condition was already met), you may say so ONCE by calling guardrail_appeal with a quote from the user's own words that shows it. A quote, not an explanation: the framework looks it up and decides. If you have no such quote, comply instead."
 }
 
 // appealCleared reports whether an appeal has already cleared this rule for the
@@ -139,10 +139,10 @@ func (t *chatTurn) guardrailAppealToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name: "guardrail_appeal",
-			Description: "Dispute a block you have just received — a rule whose condition was already met, or content withheld because a scan found instructions in it. " +
+			Description: "Dispute a block you have just received: a rule whose condition was already met, or content withheld because a scan found instructions in it. " +
 				"Only usable right after a block that invited an appeal, and only once per turn. " +
 				"You must cite the user's OWN WORDS: pass `quote` with the exact phrase they used. " +
-				"The framework searches the conversation for it and decides — an explanation of why you are right is not evidence and will not be looked at. " +
+				"The framework searches the conversation for it and decides: an explanation of why you are right is not evidence and will not be looked at. " +
 				"If you cannot point at something the user actually said, comply with the block instead.",
 			Parameters: map[string]ToolParam{
 				"claim": {
@@ -151,7 +151,7 @@ func (t *chatTurn) guardrailAppealToolDef() AgentToolDef {
 				},
 				"quote": {
 					Type:        "string",
-					Description: "Exact words the USER wrote that establish it, e.g. \"tell me a joke\". Short and verbatim beats long and paraphrased — a paraphrase will not be found.",
+					Description: "Exact words the USER wrote that establish it, e.g. \"tell me a joke\". Short and verbatim beats long and paraphrased: a paraphrase will not be found.",
 				},
 			},
 			Required: []string{"claim", "quote"},
@@ -160,7 +160,7 @@ func (t *chatTurn) guardrailAppealToolDef() AgentToolDef {
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			offer := t.appealOffer
 			if offer == nil {
-				return "There is nothing to appeal — no guardrail has blocked you. Carry on with the work.", nil
+				return "There is nothing to appeal: no guardrail has blocked you. Carry on with the work.", nil
 			}
 			if t.appealSpent {
 				return "You have already appealed once this turn. The block stands; comply with it.", nil
@@ -175,24 +175,24 @@ func (t *chatTurn) guardrailAppealToolDef() AgentToolDef {
 			quote := strings.TrimSpace(stringArg(args, "quote"))
 			if len(strings.Join(strings.Fields(quote), " ")) < appealQuoteMinLen {
 				t.turnDiag("guardrail-appeal-failed", fmt.Sprintf(
-					"Appeal against %q offered no usable quote — the block stands.", offer.Rule))
+					"Appeal against %q offered no usable quote: the block stands.", offer.Rule))
 				return "That is not a citation. Quote the user's own words, or comply with the block.", nil
 			}
 			n, excerpt := t.countUserQuote(quote)
 			if n == 0 && offer.Scan {
 				t.turnDiag("scan-appeal-failed", fmt.Sprintf(
-					"Appeal against the injection detection in %s cited %q, which appears nowhere in the user's turns — the content stays withheld.", offer.Tool, quote))
+					"Appeal against the injection detection in %s cited %q, which appears nowhere in the user's turns: the content stays withheld.", offer.Tool, quote))
 				Log("[orchestrate.toolscan] agent=%s appeal FAILED (tool=%q, quote not found)", t.agent.ID, offer.Tool)
-				return "That quote does not appear anywhere in the user's messages, so it establishes nothing. The content stays withheld — tell the user what was found and carry on without it.", nil
+				return "That quote does not appear anywhere in the user's messages, so it establishes nothing. The content stays withheld: tell the user what was found and carry on without it.", nil
 			}
 			if offer.Scan {
 				return t.settleScanAppeal(offer, claim, quote, n, excerpt)
 			}
 			if n == 0 {
 				t.turnDiag("guardrail-appeal-failed", fmt.Sprintf(
-					"Appeal against %q cited %q, which appears nowhere in the user's turns — the block stands.", offer.Rule, quote))
+					"Appeal against %q cited %q, which appears nowhere in the user's turns: the block stands.", offer.Rule, quote))
 				Log("[orchestrate.guardrail] agent=%s appeal FAILED (rule=%q, quote not found)", t.agent.ID, offer.Rule)
-				return "That quote does not appear anywhere in the user's messages, so it establishes nothing. The block stands — comply with it.", nil
+				return "That quote does not appear anywhere in the user's messages, so it establishes nothing. The block stands: comply with it.", nil
 			}
 
 			// The finding is the framework's, phrased as fact. The warden is
@@ -206,15 +206,15 @@ func (t *chatTurn) guardrailAppealToolDef() AgentToolDef {
 			verdicts, err := t.app.runWardenWithFinding(t.ctx, t.agent, offer.Hook, offer.Candidate, t.requester(), finding)
 			if err != nil {
 				t.turnDiag("guardrail-appeal-failed", fmt.Sprintf(
-					"Appeal against %q could not be re-checked (%v) — the block stands.", offer.Rule, err))
-				return "The appeal could not be checked. The block stands — comply with it.", nil
+					"Appeal against %q could not be re-checked (%v): the block stands.", offer.Rule, err))
+				return "The appeal could not be checked. The block stands: comply with it.", nil
 			}
 			if worstVerdict(verdicts) == guardViolate {
 				_, reason := firstViolation(verdicts)
 				t.turnDiag("guardrail-appeal-failed", fmt.Sprintf(
 					"Appeal against %q was re-checked with the verified quote (%d user message(s)) and still violates: %s", offer.Rule, n, reason))
 				Log("[orchestrate.guardrail] agent=%s appeal REJECTED (rule=%q, matches=%d)", t.agent.ID, offer.Rule, n)
-				return "Re-checked with your quote, and it still breaks the rule. The block stands — comply with it.", nil
+				return "Re-checked with your quote, and it still breaks the rule. The block stands: comply with it.", nil
 			}
 
 			if t.appealWon == nil {
@@ -229,7 +229,7 @@ func (t *chatTurn) guardrailAppealToolDef() AgentToolDef {
 				"Guardrail %q blocked a %s check, and the agent appealed: it cited %q, which the framework found in %d user message(s). Re-checked with that finding, the rule reads as satisfied and the block was lifted for the rest of this turn.",
 				offer.Rule, offer.Hook, quote, n))
 			Log("[orchestrate.guardrail] agent=%s appeal UPHELD (rule=%q, matches=%d)", t.agent.ID, offer.Rule, n)
-			return fmt.Sprintf("Appeal upheld — %q appears in %d of the user's messages, so the rule's condition is met. Go ahead with what you were doing.", quote, n), nil
+			return fmt.Sprintf("Appeal upheld: %q appears in %d of the user's messages, so the rule's condition is met. Go ahead with what you were doing.", quote, n), nil
 		},
 	}
 }

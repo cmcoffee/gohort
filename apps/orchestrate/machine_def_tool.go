@@ -34,7 +34,7 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "machine",
-			Description: "Author phase machines — workflows an agent LIVES IN across a conversation, rather than running once and returning. A machine is a set of phases; the session remembers which phase it is in between turns, and what earlier phases decided. Actions: create, update, update_phase, list, get, delete.\n\n`update` REPLACES the whole phase list, which is right while authoring and wrong for every small edit after: use `update_phase` to change one field of one step (clear a tool list, reword a prompt, widen a reach) and leave the rest of the machine alone.\n\nUse a machine when a conversation should do something ONCE and then settle: work out what is being asked, pick an approach, then answer in that frame for the rest of the thread. Use a PIPELINE instead when the work runs start-to-finish and hands back a result. Use neither for a one-off question.\n\n**Pass `attach_to_agents` in the same call** — an unattached machine does nothing at all, because a machine only runs inside a session on an agent that points at it. Call action=\"help\" for the full spec.",
+			Description: "Author phase machines: workflows an agent LIVES IN across a conversation, rather than running once and returning. A machine is a set of phases; the session remembers which phase it is in between turns, and what earlier phases decided. Actions: create, update, update_phase, list, get, delete.\n\n`update` REPLACES the whole phase list, which is right while authoring and wrong for every small edit after: use `update_phase` to change one field of one step (clear a tool list, reword a prompt, widen a reach) and leave the rest of the machine alone.\n\nUse a machine when a conversation should do something ONCE and then settle: work out what is being asked, pick an approach, then answer in that frame for the rest of the thread. Use a PIPELINE instead when the work runs start-to-finish and hands back a result. Use neither for a one-off question.\n\n**Pass `attach_to_agents` in the same call**: an unattached machine does nothing at all, because a machine only runs inside a session on an agent that points at it. Call action=\"help\" for the full spec.",
 			Parameters: map[string]ToolParam{
 				"action":      {Type: "string", Description: "One of: create | update | update_phase | list | get | repair | delete | help."},
 				"name":        {Type: "string", Description: "Machine name. Required for create; get/update/repair/delete also accept the id."},
@@ -45,7 +45,7 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 				"phase":       {Type: "string", Description: "(update_phase) Which step to change. Only the fields you pass are written; every other field of that step, and every other step, is left exactly as it was."},
 				"tools": {
 					Type:        "array",
-					Description: "(update_phase) Exact tool names this step may reach, applied on top of its reach. Pass an EMPTY array to clear the list, which makes the step inherit the whole catalog again — that is the only way to say it, since an omitted list and an empty one are the same value once parsed. Note that a non-empty list drops framework-provided tools it does not name (knowledge_search, fetch_knowledge_doc, ask_user), so name those here if the step's prompt calls for them.",
+					Description: "(update_phase) Exact tool names this step may reach, applied on top of its reach. Pass an EMPTY array to clear the list, which makes the step inherit the whole catalog again, that is the only way to say it, since an omitted list and an empty one are the same value once parsed. Note that a non-empty list drops framework-provided tools it does not name (knowledge_search, fetch_knowledge_doc, ask_user), so name those here if the step's prompt calls for them.",
 					Items:       &ToolParam{Type: "string"},
 				},
 				"deny": {
@@ -53,7 +53,7 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 					Description: "(update_phase) Tool names this step may NOT reach, subtracted last. Empty array clears.",
 					Items:       &ToolParam{Type: "string"},
 				},
-				"reach":    {Type: "string", Description: "(update_phase) \"all\" (everything the agent has — the default), \"read\" (only what reads: nothing that writes, runs, or reaches the network), or \"none\" (this step only decides).", Enum: []string{"all", "read", "none"}},
+				"reach":    {Type: "string", Description: "(update_phase) \"all\" (everything the agent has, the default), \"read\" (only what reads: nothing that writes, runs, or reaches the network), or \"none\" (this step only decides).", Enum: []string{"all", "read", "none"}},
 				"prompt":   {Type: "string", Description: "(update_phase) The step's directive."},
 				"desc":     {Type: "string", Description: "(update_phase) One-line summary of what the step is for."},
 				"think":    {Type: "string", Description: "(update_phase) \"on\" or \"off\".", Enum: []string{"on", "off"}},
@@ -63,7 +63,7 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 				"guard_to": {Type: "string", Description: "(update_phase) Where the guard sends it."},
 				"phases": {
 					Type:        "array",
-					Description: "(create/update) Ordered phases, each an object: {\"name\": unique label, \"desc\": one line, \"prompt\": the directive}. The KEY field is \"resident\": true marks a phase user turns come back to (a turn ENDS there); false/omitted marks a transient phase that runs, produces a result, and hands straight off inside the same turn. Every machine needs at least one resident phase. Transient phases declare \"output\": [{name,type,desc,required}] and hand off with \"next\", or, to decide at run time, list the phases they may hand to in \"choices\" (the framework declares the routing field itself — do not declare one, and do not list the options in a prompt). Resident phases may NOT declare output — their reply goes to the user. A resident phase with \"next\" gets ONE turn then hands off (an intake beat); without one it stays. Add \"guard\": a plain-language condition that, checked each turn, moves the conversation out (\"the user has moved on to a different subject\"), with \"guard_to\" naming where it goes. Per-phase \"reach\" (\"\"|\"read\"|\"none\" — prefer this to naming tools; it survives being run by a different agent), \"tools\" (exact names on top of reach; empty inherits), \"deny\" (names this phase may NOT reach, subtracted last — the list for \"everything it had except this one\"), \"model\" (\"worker\"|\"lead\"), \"think\" (\"on\"|\"off\" — OFF by default on a transient phase; turn it ON for one that genuinely judges, such as decomposing an ambiguous request or routing between close options). Prompts template a fixed set of built-ins — {input}/{original_input}/{established}/{prev}/{now}/{user}/{agent}/{step}/{machine} (transient only; the message AND the earlier findings are supplied anyway if you never place them) and {state:PHASE} / {state:PHASE.field} (anywhere). **Call action=\"help\" for the full spec.**",
+					Description: "(create/update) Ordered phases, each an object: {\"name\": unique label, \"desc\": one line, \"prompt\": the directive}. The KEY field is \"resident\": true marks a phase user turns come back to (a turn ENDS there); false/omitted marks a transient phase that runs, produces a result, and hands straight off inside the same turn. Every machine needs at least one resident phase. Transient phases declare \"output\": [{name,type,desc,required}] and hand off with \"next\", or, to decide at run time, list the phases they may hand to in \"choices\" (the framework declares the routing field itself, do not declare one, and do not list the options in a prompt). Resident phases may NOT declare output: their reply goes to the user. A resident phase with \"next\" gets ONE turn then hands off (an intake beat); without one it stays. Add \"guard\": a plain-language condition that, checked each turn, moves the conversation out (\"the user has moved on to a different subject\"), with \"guard_to\" naming where it goes. Per-phase \"reach\" (\"\"|\"read\"|\"none\", prefer this to naming tools; it survives being run by a different agent), \"tools\" (exact names on top of reach; empty inherits), \"deny\" (names this phase may NOT reach, subtracted last, the list for \"everything it had except this one\"), \"model\" (\"worker\"|\"lead\"), \"think\" (\"on\"|\"off\", OFF by default on a transient phase; turn it ON for one that genuinely judges, such as decomposing an ambiguous request or routing between close options). Prompts template a fixed set of built-ins, {input}/{original_input}/{established}/{prev}/{now}/{user}/{agent}/{step}/{machine} (transient only; the message AND the earlier findings are supplied anyway if you never place them) and {state:PHASE} / {state:PHASE.field} (anywhere). **Call action=\"help\" for the full spec.**",
 					Items:       &ToolParam{Type: "object"},
 				},
 				"attach_to_agents": {
@@ -93,29 +93,29 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 			case "help", "":
 				return machineHelpText, nil
 			default:
-				return "", fmt.Errorf("unknown action %q — use create | update | list | get | repair | delete | help", action)
+				return "", fmt.Errorf("unknown action %q: use create | update | list | get | repair | delete | help", action)
 			}
 		},
 	}
 }
 
 const machineHelpText = `machine actions:
-- create  {name, description?, start?, phases:[...], attach_to_agents?:[names]} — author a machine.
-- update  {name|id, ...} — revise in place (same id, attachments stay).
-- list    — your machines: [{id, name, description, phases, start}].
-- get     {name|id, full?:true} — one machine's definition.
-- repair  {name|id} — settle the findings with exactly one right answer (references to steps that
+- create  {name, description?, start?, phases:[...], attach_to_agents?:[names]}, author a machine.
+- update  {name|id, ...}: revise in place (same id, attachments stay).
+- list, your machines: [{id, name, description, phases, start}].
+- get     {name|id, full?:true}, one machine's definition.
+- repair  {name|id}: settle the findings with exactly one right answer (references to steps that
            are gone, a field filled from a variable but declared as a number). Anything with two
            defensible answers is left alone and still reported.
 - delete  {name|id}.
 
-An unattached machine does nothing — pass attach_to_agents, or the agent never enters it.
+An unattached machine does nothing: pass attach_to_agents, or the agent never enters it.
 
 === WHAT A MACHINE IS ===
 A pipeline runs start-to-finish and returns a result. A machine is where a conversation SITS. The
 session remembers which phase it is in between turns, plus a blackboard of what earlier phases
 decided. The canonical shape is: work out what is being asked (once), pick an approach (once), then
-answer in that frame for the rest of the thread — re-deciding only when the subject genuinely
+answer in that frame for the rest of the thread: re-deciding only when the subject genuinely
 changes.
 
 Turn 1 runs the transient phases and then replies from the resident one. Turns 2+ go straight to the
@@ -134,7 +134,7 @@ choices    (transient) [phase names] this phase may hand to; it DECIDES between 
 next_from  (transient) one of THIS phase's declared string fields, whose value names the next phase.
            Only when the routing value is ALSO a finding worth naming. Overrides choices.
 agent      (transient) delegate this phase to another agent by name or id
-pipeline   (transient) run this phase THROUGH a stored pipeline, by name. Not with "agent" —
+pipeline   (transient) run this phase THROUGH a stored pipeline, by name. Not with "agent"
            a step is run by one thing. A TOOL runs no model at all. An agent brings judgement, its own tools and its own
            memory; a pipeline is a fixed recipe (stages, fan out over a list, loop until a
            field goes true). Reach for a pipeline when the step is a procedure you want run
@@ -142,23 +142,23 @@ pipeline   (transient) run this phase THROUGH a stored pipeline, by name. Not wi
            phase declares costs one model call rather than two, because the shape it already
            produced becomes the phase's own.
 machine    (transient) run this phase as a CHILD RUN of another machine, by name. Not with
-           "agent" or "pipeline" — one runner per step. The child must be marked unattended (it
+           "agent" or "pipeline": one runner per step. The child must be marked unattended (it
            RUNS rather than converses), gets its own blackboard, and its result becomes this
            step's, so this step's "accumulates" folds it into the parent's working set. Depth is
            capped at one: a child may not run a child. Use it for work that is a smaller version
-           of the SAME shape — a run that finds a gap and starts a run to fill it.
-accumulates [{name, from, mode?, by?}] — the run-scoped LISTS this phase adds to. "from" is one of
+           of the SAME shape: a run that finds a gap and starts a run to fill it.
+accumulates [{name, from, mode?, by?}]: the run-scoped LISTS this phase adds to. "from" is one of
            THIS phase's declared output fields; a list field contributes its elements, a scalar
            contributes itself. mode: append (default) | replace | union ("by" keys a union on one
            field of each element). The list lands on the blackboard under ITS OWN name, so many
            phases build one working set: read it with {state:LIST} (a numbered rendering),
            {state:LIST.items} (the list), {state:LIST.count}. A list may not share a name with a
-           step. Use it for what a run collects — answers, sources, unanswered questions — and
+           step. Use it for what a run collects (answers, sources, unanswered questions), and
            plain "output" for what ONE step decided.
-output     [{name, type, desc, required, from}] — validated JSON. Transient phases only.
+output     [{name, type, desc, required, from}]: validated JSON. Transient phases only.
            A field NAMED after a built-in (original_input, now, user, agent, prev, step, machine)
            IS that built-in: it is filled from what the framework already holds and never asked
-           of the model. Do not spend a prompt or a description on one — a value already known is
+           of the model. Do not spend a prompt or a description on one: a value already known is
            not a judgement. Use "from" only to give such a value your OWN field name:
            {"name": "asked", "from": "{original_input}"}. Filled fields hold TEXT and are left out
            of the contract entirely.
@@ -166,44 +166,44 @@ output     [{name, type, desc, required, from}] — validated JSON. Transient ph
            never describe a shape, never give an example object: the framework encodes the fields
            and validates what comes back. A prompt that also specifies a format is two sets of
            formatting rules, and the usual result is a JSON string nested inside a JSON field.
-           Write the prompt to a person — say what to find, and let the fields say what to return.
+           Write the prompt to a person: say what to find, and let the fields say what to return.
 guard      (resident) plain-language condition that moves the conversation out
 guard_to   (resident) where a tripped guard goes; defaults to the start phase
 exits_to   [phase names] this phase may be MOVED to by change_phase (the agent deciding mid-turn
            that the request moved on). Empty = anywhere, which is right for most machines. Use it
            when the machine BRANCHES and the arms must stay separate: without it every resident
            phase offers every other phase, so a conversation can cross from one arm to the other.
-           Bounds the agent only — this phase's own next, and its guard's target, are always allowed.
+           Bounds the agent only: this phase's own next, and its guard's target, are always allowed.
 keep       [phase names] whose state survives RE-ENTRY into this phase; empty keeps everything
 tool       a tool this step CALLS DIRECTLY, with "args", and no model runs at all. The cheap step:
            every other runner thinks first, so "fetch this one thing and carry on" cost a model
            call to decide to do the only thing it could do. Args are templated ({input}, {prev},
-           {state:PHASE.field}) — a placeholder fills a VALUE and can never become a key. A runner
+           {state:PHASE.field}), a placeholder fills a VALUE and can never become a key. A runner
            like agent/pipeline/machine, so it excludes them, and it cannot be resident.
 reach      how much of the agent's catalog this phase may touch: empty = all of it, "read" = only
            tools that read (nothing that writes, runs a command, or reaches the network), "none" =
            nothing, which is right for a phase that only decides or reshapes what it was given.
-           PREFER THIS over naming tools. A catalog is assembled per turn out of things that move —
+           PREFER THIS over naming tools. A catalog is assembled per turn out of things that move
            an MCP server publishes its tools when it connects, a credential mints its own per
-           session, an attachment mints more per agent — and a machine is portable across all of
+           session, an attachment mints more per agent, and a machine is portable across all of
            them, so a name list written here describes one deployment and misdescribes the next.
            A capability travels.
 tools      what this phase may use, BY NAME, on top of whatever reach allowed. Empty INHERITS, in a
-           resident and a transient phase alike. Naming any tool narrows to those — plus the workflow controls,
+           resident and a transient phase alike. Naming any tool narrows to those, plus the workflow controls,
            which never go away, plus whatever the agent's attached SOURCES grant, which attaching
            is what granted; name one of a source's own tools and the list governs those too. For a
            phase that only decides or reshapes what it was given, list the single name "__none__":
            it reaches nothing and skips building a catalog it will not use. A phase needing
            different REACH (its own persona, memory, tools) should be delegated with "agent".
-           Names must match the agent's catalog EXACTLY — a phase naming a tool nobody has reaches
+           Names must match the agent's catalog EXACTLY: a phase naming a tool nobody has reaches
            nothing under that name, so use list_reference_sources / the agent's own tool list
            rather than a plausible-looking guess.
-deny       names this phase may NOT reach, subtracted LAST — after reach, after tools. The list to
+deny       names this phase may NOT reach, subtracted LAST, after reach, after tools. The list to
            use when a step keeps everything it has EXCEPT one thing: "tools" can only say that by
            enumerating the catalog minus one, which freezes the step at the catalog of the day it
            was written, while a deny keeps the step current and holds back only what it names.
            It only subtracts, so a deny naming a tool this deployment does not have is satisfied
-           rather than a mistake. The workflow controls cannot be denied — a step that cannot
+           rather than a mistake. The workflow controls cannot be denied: a step that cannot
            change_phase is stranded, not restricted.
 model      "worker" | "lead"    think   "on" | "off"
 
@@ -212,19 +212,19 @@ Transient = runs and hands off inside one turn; the user never takes a turn in i
 classify, plan. It MUST hand off (next or next_from).
 Resident = the conversation lives here. Answer, converse, execute. It may NOT declare output (its
 reply goes to the person, not a decoder) and may not use {input}, {prev} or {now} in its prompt
-(pinned across turns; the message is already in the conversation). The stable variables —
-{original_input}, {user}, {agent}, {step}, {machine} — work there.
-A resident phase with "next" gets exactly ONE turn and then hands off — that is how you write an
+(pinned across turns; the message is already in the conversation). The stable variables
+{original_input}, {user}, {agent}, {step}, {machine}: work there.
+A resident phase with "next" gets exactly ONE turn and then hands off, that is how you write an
 intake beat that asks its questions and moves on.
 
 === ROUTING ===
 Static: "next": "answer".
-Deciding: "choices": ["hunch", "answer"] — the phase picks one at run time. Do NOT declare a field
+Deciding: "choices": ["hunch", "answer"], the phase picks one at run time. Do NOT declare a field
 for it and do NOT list the options in a prompt or a description: the framework declares next_step
 with those values, writes the instruction naming each destination and what it is for, and rejects a
 choice that is not a phase when the machine is SAVED. Keep "next" as the fallback.
 By hand: declare a string field and point "next_from" at it, when the value is also a finding worth
-naming. Give that field "enum": [phase names] to declare where it may send the turn — that is what
+naming. Give that field "enum": [phase names] to declare where it may send the turn, that is what
 gets the arrows drawn, makes a name that is not a phase a save-time error, and constrains the reply
 where the decoder can still repair it. "choices" does all of that for you. If the model returns a name that does not exist at run time, the machine falls back to
 "next" and leaves a breadcrumb rather than stranding the turn.
@@ -239,7 +239,7 @@ Write guards as a condition for LEAVING, not for staying: "the user has moved on
 earlier breakdown does not cover".
 
 === TEMPLATING ===
-A fixed vocabulary of primitives — no declaring, no naming, same meaning in every machine:
+A fixed vocabulary of primitives, no declaring, no naming, same meaning in every machine:
 {input} the person's message this turn · {original_input} the message that opened the conversation ·
 {established} everything earlier phases worked out · {prev} the phase run just before, this turn ·
 {now} the date and time where the person is · {user} · {agent} · {step} · {machine}.
@@ -247,7 +247,7 @@ Transient phases only (a resident phase's prompt is pinned across turns).
 You do not have to place {input} or {established}: a transient phase is handed the message when its
 prompt mentions none, and the blackboard when it places no {state:…} reference of its own. Reach for
 {state:PHASE.field} only when you need ONE value inside a sentence.
-{state:NAME} a phase's reply · {state:NAME.field} one declared field — anywhere, any turn.
+{state:NAME} a phase's reply · {state:NAME.field} one declared field, anywhere, any turn.
 Every reference is checked when the machine is saved.
 
 === A WORKED EXAMPLE ===
@@ -269,7 +269,7 @@ phases: [
 === THINKING ===
 Transient phases run WITHOUT reasoning by default, because they are paid before the user sees a
 single word. That default is wrong for some of them. Turn "think": "on" on a phase that genuinely
-JUDGES — decomposing an ambiguous request, routing between approaches that are close together,
+JUDGES: decomposing an ambiguous request, routing between approaches that are close together,
 weighing evidence. Leave it off for a phase that transforms or classifies something already clear.
 Same rule pipeline stages follow, and decomposition is the case that most often earns it.
 
@@ -277,13 +277,13 @@ The guard never reasons; that is not configurable. It is a cheap check in front 
 guard that needs deliberation is really a transient phase.
 
 The RESIDENT phase inherits the agent's own think setting, so the reply reasons if the agent does.
-Set "think" on a resident phase only to differ from the agent — a fast lookup phase inside an
+Set "think" on a resident phase only to differ from the agent: a fast lookup phase inside an
 otherwise deliberate agent, or the reverse.
 
 === COST ===
 Transient phases are extra model calls before the user sees anything, so keep them few, and cheap
 unless the phase is doing real judgment (see THINKING). A guard is one small call per turn in that
-phase. The resident phase's own turn costs exactly what an ordinary agent turn costs — the machine
+phase. The resident phase's own turn costs exactly what an ordinary agent turn costs: the machine
 adds nothing to the turns it is not doing work on.`
 
 // machineCreateOrUpdate parses the phases array and saves a MachineDef.
@@ -316,7 +316,7 @@ func (t *chatTurn) machineCreateOrUpdate(args map[string]any, isUpdate bool) (st
 			isUpdate = false
 			def = MachineDef{Name: name, Owner: t.user}
 		default:
-			return "", errors.New("no matching machine to update — nothing is stored under that name/id, and this call carries no phases to store as a new one. machine(action=\"list\") shows what you actually have")
+			return "", errors.New("no matching machine to update: nothing is stored under that name/id, and this call carries no phases to store as a new one. machine(action=\"list\") shows what you actually have")
 		}
 	} else {
 		def = MachineDef{Name: name, Owner: t.user}
@@ -355,10 +355,10 @@ func (t *chatTurn) machineCreateOrUpdate(args map[string]any, isUpdate bool) (st
 		if len(attached) > 1 {
 			target = "those agents"
 		}
-		fmt.Fprintf(&b, " Pointed %s at it — new sessions on %s will run it (sessions already open keep what they started with).",
+		fmt.Fprintf(&b, " Pointed %s at it: new sessions on %s will run it (sessions already open keep what they started with).",
 			strings.Join(attached, ", "), target)
 	case len(unknown) == 0:
-		b.WriteString(" NOT attached to any agent yet, so nothing runs it — pass attach_to_agents, or point an agent at it.")
+		b.WriteString(" NOT attached to any agent yet, so nothing runs it: pass attach_to_agents, or point an agent at it.")
 	}
 	if len(unknown) > 0 {
 		fmt.Fprintf(&b, " No agent found named: %s.", strings.Join(unknown, ", "))
@@ -421,7 +421,7 @@ func machineFindingsText(catalog, advice []string) string {
 			strings.Join(catalog, "\n- ")
 	}
 	if len(advice) > 0 {
-		out += "\n\nWorth a look — none of this stopped the save, and none of it is certain:\n- " +
+		out += "\n\nWorth a look, none of this stopped the save, and none of it is certain:\n- " +
 			strings.Join(advice, "\n- ")
 	}
 	return out
@@ -491,7 +491,7 @@ func (t *chatTurn) machineList() (string, error) {
 	}
 	var b strings.Builder
 	for _, d := range defs {
-		fmt.Fprintf(&b, "- %s (id=%s) — %d phase%s: %s. Starts in %s.",
+		fmt.Fprintf(&b, "- %s (id=%s), %d phase%s: %s. Starts in %s.",
 			d.Name, d.ID, len(d.Phases), plural(len(d.Phases)), strings.Join(d.PhaseNames(), ", "), d.StartPhase())
 		if desc := strings.TrimSpace(d.Description); desc != "" {
 			fmt.Fprintf(&b, " %s", desc)
@@ -516,7 +516,7 @@ func (t *chatTurn) machineList() (string, error) {
 func (t *chatTurn) machineGet(args map[string]any) (string, error) {
 	def, ok := t.findMachine(args)
 	if !ok {
-		return "", errors.New("no machine found by that name or id — machine(action=\"list\") shows what you have")
+		return "", errors.New("no machine found by that name or id: machine(action=\"list\") shows what you have")
 	}
 	full := boolArg(args, "full")
 	view := struct {
@@ -540,13 +540,13 @@ func (t *chatTurn) machineGet(args map[string]any) (string, error) {
 	}
 	out := string(b)
 	if !full {
-		out += "\n\n(phase prompts previewed — call again with full=true to read them in full)"
+		out += "\n\n(phase prompts previewed: call again with full=true to read them in full)"
 	}
 	// Both halves here, because a stored machine can carry problems that
 	// create would have refused — this is the surface somebody reaches
 	// for when asked to fix one.
 	if probs := def.Problems(); len(probs) > 0 {
-		out += fmt.Sprintf("\n\nStill missing (%d) — it is stored and it runs degraded until these are settled:\n- %s",
+		out += fmt.Sprintf("\n\nStill missing (%d), it is stored and it runs degraded until these are settled:\n- %s",
 			len(probs), strings.Join(probs, "\n- "))
 		if fixable := def.Repairs(RepairAll); len(fixable) > 0 {
 			out += fmt.Sprintf("\n\n%d of those have exactly one right answer (references to steps that are gone, and the like). "+
@@ -581,11 +581,11 @@ func (t *chatTurn) machineGet(args map[string]any) (string, error) {
 func (t *chatTurn) machineUpdatePhase(args map[string]any) (string, error) {
 	def, ok := t.findMachine(args)
 	if !ok {
-		return "", errors.New("no machine found by that name or id — machine(action=\"list\") shows what you have")
+		return "", errors.New("no machine found by that name or id: machine(action=\"list\") shows what you have")
 	}
 	want := strings.TrimSpace(stringArg(args, "phase"))
 	if want == "" {
-		return "", errors.New("name the phase to change (phase=\"<name>\") — this machine has: " + strings.Join(def.PhaseNames(), ", "))
+		return "", errors.New("name the phase to change (phase=\"<name>\"), this machine has: " + strings.Join(def.PhaseNames(), ", "))
 	}
 	idx := -1
 	for i, ph := range def.Phases {
@@ -596,7 +596,7 @@ func (t *chatTurn) machineUpdatePhase(args map[string]any) (string, error) {
 	}
 	if idx < 0 {
 		return "", errors.New("no phase named " + strconv.Quote(want) + " in " + strconv.Quote(def.Name) +
-			" — it has: " + strings.Join(def.PhaseNames(), ", "))
+			", it has: " + strings.Join(def.PhaseNames(), ", "))
 	}
 
 	ph := &def.Phases[idx]
@@ -623,7 +623,7 @@ func (t *chatTurn) machineUpdatePhase(args map[string]any) (string, error) {
 		}
 		*dst = stringSliceArg(args, key)
 		if len(*dst) == 0 {
-			changed = append(changed, key+" (cleared — the step inherits the catalog again)")
+			changed = append(changed, key+" (cleared: the step inherits the catalog again)")
 			return
 		}
 		changed = append(changed, key+" = "+strings.Join(*dst, ", "))
@@ -665,7 +665,7 @@ func (t *chatTurn) machineUpdatePhase(args map[string]any) (string, error) {
 	if v, present := args["prompt"]; present {
 		if strings.TrimSpace(fmt.Sprint(v)) == "" {
 			return "", errors.New("refusing to empty the prompt of step " + strconv.Quote(ph.Name) +
-				" — an empty prompt is a step that says nothing, and this call looks more like an omitted field than a deliberate erasure. " +
+				", an empty prompt is a step that says nothing, and this call looks more like an omitted field than a deliberate erasure. " +
 				"Pass the wording you want, or use action=\"update\" if you really mean to rewrite the step")
 		}
 		ph.Prompt = fmt.Sprint(v)
@@ -681,7 +681,7 @@ func (t *chatTurn) machineUpdatePhase(args map[string]any) (string, error) {
 	setList("deny", &ph.Deny)
 
 	if len(changed) == 0 {
-		return "", errors.New("nothing to change — name at least one field (tools, deny, reach, prompt, desc, think, model, next, guard, guard_to). " +
+		return "", errors.New("nothing to change: name at least one field (tools, deny, reach, prompt, desc, think, model, next, guard, guard_to). " +
 			"An omitted field is left alone; pass tools=[] to CLEAR a list")
 	}
 	if err := def.Validate(); err != nil {
@@ -690,7 +690,7 @@ func (t *chatTurn) machineUpdatePhase(args map[string]any) (string, error) {
 	saved := SaveMachineDef(t.udb, def)
 	Log("[orchestrate.machines] user=%q updated phase %q of machine %q: %s",
 		t.user, saved.Phases[idx].Name, saved.Name, strings.Join(changed, "; "))
-	out := fmt.Sprintf("Updated step %q of %q — changed %s. Every other step is untouched.",
+	out := fmt.Sprintf("Updated step %q of %q: changed %s. Every other step is untouched.",
 		saved.Phases[idx].Name, saved.Name, strings.Join(changed, ", "))
 	out += " Sessions already open keep the phase they are parked in; the change applies from their next turn."
 	return out + t.machineFindingsNote(saved), nil
@@ -706,11 +706,11 @@ func (t *chatTurn) machineUpdatePhase(args map[string]any) (string, error) {
 func (t *chatTurn) machineRepair(args map[string]any) (string, error) {
 	def, ok := t.findMachine(args)
 	if !ok {
-		return "", errors.New("no machine found by that name or id — machine(action=\"list\") shows what you have")
+		return "", errors.New("no machine found by that name or id: machine(action=\"list\") shows what you have")
 	}
 	fixed := def.Repair(RepairAll)
 	if len(fixed) == 0 {
-		return "Nothing to repair in " + strconv.Quote(def.Name) + " — every finding it has needs a judgement, so none of them can be settled mechanically. " +
+		return "Nothing to repair in " + strconv.Quote(def.Name) + ", every finding it has needs a judgement, so none of them can be settled mechanically. " +
 			"machine(action=\"get\") lists them.", nil
 	}
 	saved := SaveMachineDef(t.udb, def)

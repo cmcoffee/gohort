@@ -18,8 +18,10 @@ func TestAuthorFieldIsNotAToggleForBuilder(t *testing.T) {
 	if !strings.Contains(strings.ToLower(f.Label), "always on") {
 		t.Errorf("label should say the capability is always on, got %q", f.Label)
 	}
-	if !strings.Contains(f.Help, "owner-only") {
-		t.Error("help should mention the owner-only runtime gate — the one condition that DOES withhold authoring")
+	// Help or Detail: the long half of a field's copy lives behind the ⓘ
+	// icon now, and the reader still gets it either way.
+	if !strings.Contains(f.Help+f.Detail, "owner-only") {
+		t.Error("the field should mention the owner-only runtime gate, the one condition that DOES withhold authoring")
 	}
 }
 

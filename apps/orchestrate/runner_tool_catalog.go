@@ -177,7 +177,7 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 		// tool had gone missing. The dispatch path already recovers per-name;
 		// do the same here so a stale allowlist entry costs one tool, not all
 		// of them.
-		Log("[orchestrate.tools] catalog build failed for agent=%s (%v) — resolving per-name", t.agent.ID, err)
+		Log("[orchestrate.tools] catalog build failed for agent=%s (%v): resolving per-name", t.agent.ID, err)
 		tools = nil
 		resolved := toolNames[:0]
 		for _, n := range toolNames {
@@ -243,10 +243,10 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// as designed. Say it out loud, in the log AND in the model's own context,
 	// so the absence has a stated cause instead of a guessed one.
 	if agentCanAuthor(t.agent) && !ownerRun {
-		Log("[orchestrate.tools] authoring catalog WITHHELD from agent %q (%s): owner=%q but this turn runs as %q — authoring tools are owner-only",
+		Log("[orchestrate.tools] authoring catalog WITHHELD from agent %q (%s): owner=%q but this turn runs as %q, authoring tools are owner-only",
 			t.agent.Name, t.agent.ID, t.agent.Owner, t.user)
 		t.turnDiag("authoring_withheld", "Owned by "+t.agent.Owner+" but this turn runs as "+t.user+
-			". Authoring is owner-only, so tool_def / create_agent / update_agent are absent BY DESIGN — nothing is broken.")
+			". Authoring is owner-only, so tool_def / create_agent / update_agent are absent BY DESIGN: nothing is broken.")
 	}
 	if agentCanAuthor(t.agent) && ownerRun {
 		Log("[orchestrate.tools] authoring catalog GRANTED to agent %q (%s) for user %q (orchestrator=%v)",
@@ -266,7 +266,7 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 		// authors; saving is ~17.6k tokens on every turn that does not.
 		if forOrchestrator && !isBuilderAgent(t.agent.ID) {
 			t.authoringLazyPrompt = registerLazyAuthoringTools(t, extra)
-			Log("[orchestrate.tools] agent=%s: %d authoring tool(s) deferred behind load_tool — index only in the prompt", t.agent.ID, len(extra))
+			Log("[orchestrate.tools] agent=%s: %d authoring tool(s) deferred behind load_tool, index only in the prompt", t.agent.ID, len(extra))
 		} else {
 			tools = append(tools, extra...)
 			for _, td := range extra {
@@ -800,7 +800,7 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 				serves := t.cacheServes[ck]
 				t.toolMu.Unlock()
 				if serves > 1 {
-					cached = "♻ You already have this exact result from earlier THIS TURN — it has not changed, and it is not being repeated here. Do NOT make this call again: scroll up and use the result you already received, or take a genuinely different action (different tool, different arguments, or answer the user now)."
+					cached = "♻ You already have this exact result from earlier THIS TURN: it has not changed, and it is not being repeated here. Do NOT make this call again: scroll up and use the result you already received, or take a genuinely different action (different tool, different arguments, or answer the user now)."
 					Debug("[orchestrate.tools] cache stub for %s (re-serve #%d this turn)", name, serves)
 				}
 				if !hidden {
@@ -853,7 +853,7 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 					t.dispatchCounts[key] = prior + 1
 					attempted := t.dispatchCounts[key] - 1
 					t.toolMu.Unlock()
-					msg := fmt.Sprintf("You've already dispatched %s with these exact args %d times this turn. The result is whatever it was — re-dispatching won't change it. Either USE the result from one of the prior calls, or call something DIFFERENT (different URL, different query, different tool). Don't retry the same call.",
+					msg := fmt.Sprintf("You've already dispatched %s with these exact args %d times this turn. The result is whatever it was: re-dispatching won't change it. Either USE the result from one of the prior calls, or call something DIFFERENT (different URL, different query, different tool). Don't retry the same call.",
 						name, attempted)
 					if !hidden {
 						t.sse.Send(map[string]any{

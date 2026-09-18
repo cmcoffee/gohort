@@ -136,7 +136,7 @@
             // Native tooltip carries the full label + metadata, so the
             // row can ellipsize at a narrow sidebar width without
             // hiding information.
-            title: label + ' — ' + meta,
+            title: label + ' · ' + meta,
           }, [
             el('div', {class: 'ui-chat-side-text'}, [
               el('div', {class: 'ui-chat-side-title'}, [label]),
@@ -199,7 +199,7 @@
     if (!opts.url) return;
     var ta = el('textarea', {
       class: 'ui-doc-rules-ta',
-      placeholder: 'One rule per line. Examples:\n  Never post API keys, passwords, or other secrets.\n  Match the existing tone — terse, factual.',
+      placeholder: 'One rule per line. Examples:\n  Never post API keys, passwords, or other secrets.\n  Match the existing tone, terse, factual.',
     });
     ta.value = '(loading…)';
     ta.disabled = true;
@@ -219,7 +219,7 @@
             method: 'POST', headers: {'Content-Type': 'application/json'},
             body: JSON.stringify({rules: ta.value}),
           }).then(function() {
-            showToast('Rules saved — applies to the next assistant message');
+            showToast('Rules saved: applies to the next assistant message');
             api.close();
           }).catch(function(err) {
             btn.disabled = false;
@@ -261,7 +261,7 @@
         }).catch(function() {
           ta.disabled = false;
           ta.value = '';
-          status.textContent = 'Could not load existing rules — saving will overwrite them.';
+          status.textContent = 'Could not load existing rules: saving will overwrite them.';
         });
       },
     });
@@ -323,12 +323,12 @@
 
     async function saveCurrent(api) {
       var body = opts.currentBody ? opts.currentBody() : '';
-      if (!body.trim()) { showToast('Nothing to save — the document is empty'); return; }
+      if (!body.trim()) { showToast('Nothing to save: the document is empty'); return; }
       var name = await uiPrompt('Name this template:', (opts.currentName && opts.currentName()) || '');
       if (name === null) return;
       name = String(name).trim();
       if (!name) return;
-      var desc = await uiPrompt('Short description (optional) — this is what tells rows apart in the picker:', '');
+      var desc = await uiPrompt('Short description (optional), this is what tells rows apart in the picker:', '');
       if (desc === null) desc = '';
       fetchJSON(opts.listURL, {
         method: 'POST', headers: {'Content-Type': 'application/json'},

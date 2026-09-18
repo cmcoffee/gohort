@@ -15,7 +15,7 @@ func init() {
 	RegisterRouteStage(RouteStage{
 		Key:     "app.servitor",
 		App:     "/servitor",
-		Label:   "Servitor (worker — runs SSH commands)",
+		Label:   "Servitor (worker: runs SSH commands)",
 		Default: "worker",
 		Group:   "Servitor",
 		Private: true,

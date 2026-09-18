@@ -51,7 +51,7 @@ const adminUsersModalJS = `function el(tag, attrs, kids){ var n=document.createE
         .then(function(d){
           doBtn.disabled=false; doBtn.textContent=o;
           if(d.status==='password_set'){ overlay.remove(); if(ctx&&ctx.reload) ctx.reload(); (window.uiAlert||window.alert)('Password updated for '+user+'.'); return; }
-          msg.textContent = d.emailed ? ('Reset link emailed to '+user+'.') : 'Mail not configured — copy this link:'; msg.className='admu-msg ok';
+          msg.textContent = d.emailed ? ('Reset link emailed to '+user+'.') : 'Mail not configured, copy this link:'; msg.className='admu-msg ok';
           linkBox.innerHTML=''; linkBox.style.display='';
           var code=el('code',{text:d.link}); var cp=el('button',{class:'ui-row-btn'},['Copy']);
           cp.addEventListener('click', function(){ if(navigator.clipboard) navigator.clipboard.writeText(d.link); cp.textContent='Copied'; setTimeout(function(){ cp.textContent='Copy'; },1200); });
@@ -60,7 +60,7 @@ const adminUsersModalJS = `function el(tag, attrs, kids){ var n=document.createE
         .catch(function(e){ doBtn.disabled=false; doBtn.textContent=o; msg.textContent='Failed: '+(e&&e.message||e); msg.className='admu-msg err'; });
     });
     var card = el('div', {class:'admu-card'}, [
-      el('div', {class:'admu-title'}, ['Reset password — '+user]),
+      el('div', {class:'admu-title'}, ['Reset password, '+user]),
       el('label', {class:'admu-opt'}, [rLink, ' Send reset link']),
       el('label', {class:'admu-opt'}, [rSet, ' Set new password']),
       pw,
@@ -166,7 +166,7 @@ window.uiTemplateForm = function(cfg, reload){
   window.uiOpenSimpleModal({ title:(cfg.create?'Add ':'Configure ')+(cfg.label||'backend'), width:'720px', mount:function(body,dlg){
     var vals=cfg.values||{}, inputs={}, suggestLists=[];
     // A candidate list is computed from what the admin pasted, so it changes
-    // with the document — rebuilt on load AND after every Detect, or the
+    // with the document: rebuilt on load AND after every Detect, or the
     // options describe a workflow that is no longer in the box.
     function fillSuggestions(source){
       suggestLists.forEach(function(sg){
@@ -479,7 +479,7 @@ var categoryScopeManageAction = scopeManageActionJS("category",
       return { items: [], note: 'No tools claim this category yet. Use Members to add some, then set the category\u2019s access here and every tool in it moves together.' };
     }
     if (st.custom) {
-      note = 'Custom: the tools in this category do not all have the same access, so there is no single answer for the category. A dashed pill is one they disagree on — click it to turn every tool in the category on there.';
+      note = 'Custom: the tools in this category do not all have the same access, so there is no single answer for the category. A dashed pill is one they disagree on: click it to turn every tool in the category on there.';
     } else if (st.global) {
       note = 'Global: every tool in this category is in the user-wide pool, so all agents can use them. Turn an agent off to deny the whole category there.';
     } else {
@@ -548,7 +548,7 @@ function __artifactPreviewModal(p, text, filename){
   var n = p.would_import || 0, s = p.would_skip || 0;
   window.uiOpenModal({
     title: 'Import preview',
-    subtitle: filename + ' — nothing has been imported yet. Imported artifacts land as drafts for review; a name that already exists is skipped.',
+    subtitle: filename + ', nothing has been imported yet. Imported artifacts land as drafts for review; a name that already exists is skipped.',
     width: '760px',
     actions: [
       {label: 'Cancel'},

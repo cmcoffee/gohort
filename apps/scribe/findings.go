@@ -184,7 +184,7 @@ func prunePendingFindings(udb Database) {
 	for _, f := range drop {
 		udb.Unset(findingsTable, f.ID)
 	}
-	Log("[guides.curator] dropped %d findings over the %d queue cap — is the curator running?",
+	Log("[guides.curator] dropped %d findings over the %d queue cap: is the curator running?",
 		len(drop), maxPendingFindings)
 }
 

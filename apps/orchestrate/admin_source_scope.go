@@ -145,7 +145,7 @@ func setSourceScope(db Database, owner, name, target string, on bool) error {
 		return fmt.Errorf("%q is not a source reference", name)
 	}
 	if target == "global" {
-		return fmt.Errorf("a source has no global scope — link it to the agents that need it, one at a time")
+		return fmt.Errorf("a source has no global scope: link it to the agents that need it, one at a time")
 	}
 	udb := agentUserDB(db, owner)
 	if udb == nil {
@@ -159,7 +159,7 @@ func setSourceScope(db Database, owner, name, target string, on bool) error {
 		return fmt.Errorf("agent %q not found", target)
 	}
 	if isAppAgent(a.ID) {
-		return fmt.Errorf("%s is an app agent — its sources are declared by the app", chFirst(a.Name, a.ID))
+		return fmt.Errorf("%s is an app agent: its sources are declared by the app", chFirst(a.Name, a.ID))
 	}
 	held := agentHasSource(a, sel)
 	if held == on {

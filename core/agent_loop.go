@@ -272,7 +272,7 @@ func (T *AppCore) RunAgentLoop(ctx context.Context, messages []Message, cfg Agen
 		if thinkTagOutsideCode(resp.Content) {
 			cleaned, leaked := StripThinkTags(resp.Content)
 			if leaked {
-				Log("[agent_loop] think-tag leak stripped from final content (%d -> %d chars) — upstream reasoning/content separation failed", len(resp.Content), len(cleaned))
+				Log("[agent_loop] think-tag leak stripped from final content (%d -> %d chars): upstream reasoning/content separation failed", len(resp.Content), len(cleaned))
 				resp.Content = cleaned
 			}
 		}
@@ -323,10 +323,10 @@ func (T *AppCore) runAgentLoopInner(ctx context.Context, messages []Message, cfg
 	// work that will de-escalate on its first round anyway. Checked before
 	// the failure-memory save is armed, so a refused turn writes nothing.
 	if over, spent := overDailySpend(cfg); over {
-		Log("[agent_loop] daily spend cap reached for %q ($%.2f of $%.2f) — turn refused", cfg.BudgetKey, spent, cfg.DailySpendUSD)
+		Log("[agent_loop] daily spend cap reached for %q ($%.2f of $%.2f): turn refused", cfg.BudgetKey, spent, cfg.DailySpendUSD)
 		lr.emitDiag("spend-cap", fmt.Sprintf("This agent has spent $%.2f of its $%.2f daily allowance; the turn was not run.", spent, cfg.DailySpendUSD))
 		return &Response{Content: fmt.Sprintf(
-			"I've reached my spending limit for now — $%.2f of the $%.2f allowed in a 24-hour window — so I didn't run this. It frees up as earlier work ages out, or the owner can raise the limit.",
+			"I've reached my spending limit for now ($%.2f of the $%.2f allowed in a 24-hour window), so I didn't run this. It frees up as earlier work ages out, or the owner can raise the limit.",
 			spent, cfg.DailySpendUSD)}, messages, nil
 	}
 	defer func() { saveFailureMemory(cfg.FailureMemoryKey, lr.repeatFail) }()
@@ -712,7 +712,7 @@ func (lr *loopRun) rebuildToolMaps(active []AgentToolDef) {
 		// Loud, not silent: a shadowed tool is invisible by nature, so the
 		// only way it gets noticed is a line naming it.
 		if _, dup := lr.handlers[td.Tool.Name]; dup {
-			Log("[agent_loop] tool name collision: %q is registered twice — keeping the first definition, ignoring the later one (an expanded toolbox action and a standalone tool can mint the same name)", td.Tool.Name)
+			Log("[agent_loop] tool name collision: %q is registered twice, keeping the first definition, ignoring the later one (an expanded toolbox action and a standalone tool can mint the same name)", td.Tool.Name)
 			continue
 		}
 		lr.toolDefs = append(lr.toolDefs, td.Tool)
@@ -973,7 +973,7 @@ func (lr *loopRun) emitDiag(kind, detail string) {
 // never fired: the turn ships the flaw and the trail says nothing happened.
 func (lr *loopRun) noteUncorrected(kind, detail string) {
 	if lr.corrections.exhausted(kind) {
-		Debug("[agent_loop] %s detected again but its correction budget is spent — letting it stand", kind)
+		Debug("[agent_loop] %s detected again but its correction budget is spent: letting it stand", kind)
 		lr.emitDiag(kind+"-uncorrected", detail)
 	}
 }
@@ -1283,16 +1283,16 @@ func (lr *loopRun) finish() (*Response, []Message, error) {
 	lr.lastRoundToolCalled = lr.lastResp != nil && len(lr.lastResp.ToolCalls) > 0
 	if lr.lastResp != nil && (lr.forceFinal || lr.lastRoundToolCalled || strings.TrimSpace(lr.lastResp.Content) == "") && lr.T.LLM != nil {
 		if lr.forceFinal {
-			Debug("[agent_loop] wedge break — issuing a forced-final-answer call with no tools")
+			Debug("[agent_loop] wedge break: issuing a forced-final-answer call with no tools")
 		} else if lr.lastRoundToolCalled {
-			Debug("[agent_loop] budget exhausted mid-tool-call (last content is narration, not a synthesis) — issuing a forced-final-answer call with no tools")
+			Debug("[agent_loop] budget exhausted mid-tool-call (last content is narration, not a synthesis): issuing a forced-final-answer call with no tools")
 		} else {
-			Debug("[agent_loop] empty after lookback rescue — issuing a forced-final-answer call with no tools")
+			Debug("[agent_loop] empty after lookback rescue: issuing a forced-final-answer call with no tools")
 		}
 		wrapHistory := append([]Message{}, lr.history...)
 		wrapHistory = append(wrapHistory, Message{
 			Role:    "user",
-			Content: "Stop calling tools now and produce your final answer for the user from whatever you've gathered so far — even if incomplete, summarize what you found and what you tried, and if something didn't work, say so plainly. Just text, no tool calls.",
+			Content: "Stop calling tools now and produce your final answer for the user from whatever you've gathered so far: even if incomplete, summarize what you found and what you tried, and if something didn't work, say so plainly. Just text, no tool calls.",
 		})
 		// No-tools, no-think final call so the model has nothing to
 		// chase — must produce text. Inherit RouteKey for telemetry.
@@ -1329,9 +1329,9 @@ func (lr *loopRun) finish() (*Response, []Message, error) {
 				// signal via HitRoundCap + the rounds_used exit log.
 				if strings.Contains(forced.Content, "<function=") || strings.Contains(forced.Content, "<tool_call>") {
 					if name, _ := parseFunctionTagToolCall(forced.Content); strings.TrimSpace(name) != "" {
-						forced.Content = "I ran out of steps before finishing — I was about to call \"" + name + "\" but it did NOT run. Say \"continue\" and I'll pick up where I left off, or narrow the request."
+						forced.Content = "I ran out of steps before finishing: I was about to call \"" + name + "\" but it did NOT run. Say \"continue\" and I'll pick up where I left off, or narrow the request."
 					} else {
-						forced.Content = "I ran out of steps before finishing — an action I was about to take did NOT run. Say \"continue\" and I'll pick up where I left off, or narrow the request."
+						forced.Content = "I ran out of steps before finishing: an action I was about to take did NOT run. Say \"continue\" and I'll pick up where I left off, or narrow the request."
 					}
 				}
 				lr.lastResp = forced
@@ -1392,7 +1392,7 @@ func (lr *loopRun) roundCapOutputGuardrail() {
 	if !dec.Blocked {
 		return
 	}
-	Debug("[agent_loop] guardrail pre-output on the round-cap exit (correctable=%v) — no rounds left to revise in, substituting the decline", dec.Correctable)
+	Debug("[agent_loop] guardrail pre-output on the round-cap exit (correctable=%v): no rounds left to revise in, substituting the decline", dec.Correctable)
 	lr.substituteBlockedOutput(lr.lastResp,
 		"The turn ran out of rounds and the reply it was about to send violated an enforced guardrail. A neutral decline was substituted so nothing protected was released.")
 }
@@ -1449,13 +1449,13 @@ func (lr *loopRun) roundHead() loopAction {
 				if lr.hardStop > lr.maxRounds+lr.graceRounds {
 					lr.hardStop = lr.maxRounds + lr.graceRounds
 				}
-				Debug("[agent_loop] round %d: cap reached — entering wrap-up grace, hard stop at round %d", lr.round, lr.hardStop)
+				Debug("[agent_loop] round %d: cap reached, entering wrap-up grace, hard stop at round %d", lr.round, lr.hardStop)
 			}
 		} else if lr.hardStop >= 0 {
 			// The cap lifted again (e.g. the model flipped orchestrate's
 			// explorer mode mid-grace, so StopRound now returns false).
 			// Cancel wrap-up and resume normal running until the next cap.
-			Debug("[agent_loop] round %d: cap lifted — cancelling wrap-up grace", lr.round)
+			Debug("[agent_loop] round %d: cap lifted, cancelling wrap-up grace", lr.round)
 			lr.hardStop = -1
 		}
 		if lr.hardStop >= 0 && lr.round > lr.hardStop {
@@ -1474,7 +1474,7 @@ func (lr *loopRun) roundHead() loopAction {
 	if lr.cfg.OnRoundReset != nil && lr.cfg.OnRoundReset() {
 		lr.baseRound = lr.round - 1 // remaining counts from this round forward
 		remaining := lr.maxRounds - lr.baseRound
-		Debug("[agent_loop] round reset at round %d/%d — %d rounds remain", lr.round, lr.maxRounds, remaining)
+		Debug("[agent_loop] round reset at round %d/%d: %d rounds remain", lr.round, lr.maxRounds, remaining)
 		lr.wrapUpWarningFired = false
 		lr.midpointNudgeFired = false
 		lr.failureStreak = 0
@@ -1484,7 +1484,7 @@ func (lr *loopRun) roundHead() loopAction {
 			lr.history = append(lr.history, Message{
 				Role: "user",
 				Content: fmt.Sprintf(
-					frameworkNoticeTag+"Fresh budget window: you have %d rounds for this phase. The framework will nudge you at the halfway mark and again near the cap — pace this phase as if starting clean. (Hard MaxRounds cap is still %d total for the turn.)",
+					frameworkNoticeTag+"Fresh budget window: you have %d rounds for this phase. The framework will nudge you at the halfway mark and again near the cap: pace this phase as if starting clean. (Hard MaxRounds cap is still %d total for the turn.)",
 					remaining, lr.maxRounds),
 			})
 		}
@@ -1516,7 +1516,7 @@ func (lr *loopRun) roundHead() loopAction {
 		lr.history = append(lr.history, Message{
 			Role: "user",
 			Content: fmt.Sprintf(
-				frameworkNoticeTag+"Halfway checkpoint: you're at round %d of %d for this phase. Taking stock is worth a moment — if you're making real progress, keep going; if not, consider switching tools, trying a different angle, or asking the user for clarification before the remaining budget gets spent.",
+				frameworkNoticeTag+"Halfway checkpoint: you're at round %d of %d for this phase. Taking stock is worth a moment: if you're making real progress, keep going; if not, consider switching tools, trying a different angle, or asking the user for clarification before the remaining budget gets spent.",
 				phaseRound, phaseTotal),
 		})
 		lr.midpointNudgeFired = true
@@ -1545,11 +1545,11 @@ func (lr *loopRun) roundHead() loopAction {
 		var wrapUpMsg string
 		if pending > 0 {
 			wrapUpMsg = fmt.Sprintf(
-				frameworkNoticeTag+"Budget checkpoint: %d rounds left of a %d-round budget, and %d authorized work item(s) still remain on your list. Finish the current item cleanly with a real result, then move to the next one — do NOT skip the remaining items and do NOT start new exploration outside the list. If you genuinely can't complete an item with the rounds remaining, mark it as such and continue.",
+				frameworkNoticeTag+"Budget checkpoint: %d rounds left of a %d-round budget, and %d authorized work item(s) still remain on your list. Finish the current item cleanly with a real result, then move to the next one: do NOT skip the remaining items and do NOT start new exploration outside the list. If you genuinely can't complete an item with the rounds remaining, mark it as such and continue.",
 				remaining, lr.maxRounds, pending)
 		} else {
 			wrapUpMsg = fmt.Sprintf(
-				frameworkNoticeTag+"You have %d rounds left of a %d-round budget. Stop exploring and produce a final answer NOW with what you've gathered. If the task isn't complete, summarize what you found, what you tried, and what's still open. Do NOT start new investigations — wind down cleanly.",
+				frameworkNoticeTag+"You have %d rounds left of a %d-round budget. Stop exploring and produce a final answer NOW with what you've gathered. If the task isn't complete, summarize what you found, what you tried, and what's still open. Do NOT start new investigations: wind down cleanly.",
 				remaining, lr.maxRounds)
 		}
 		lr.history = append(lr.history, Message{Role: "user", Content: wrapUpMsg})
@@ -1563,9 +1563,9 @@ func (lr *loopRun) roundHead() loopAction {
 		left := lr.hardStop - lr.round + 1
 		var msg string
 		if left <= 1 {
-			msg = frameworkNoticeTag + "[ROUND LIMIT — HARD STOP after this round. Produce your final answer NOW from what you already have. Start no new work; make a tool call only if it is the single step needed to finish, then answer.]"
+			msg = frameworkNoticeTag + "[ROUND LIMIT: HARD STOP after this round. Produce your final answer NOW from what you already have. Start no new work; make a tool call only if it is the single step needed to finish, then answer.]"
 		} else {
-			msg = fmt.Sprintf(frameworkNoticeTag+"[Round limit reached — wrap up and give your final answer. %d round(s) left before a hard stop. Finish in-flight work only; start nothing new.]", left)
+			msg = fmt.Sprintf(frameworkNoticeTag+"[Round limit reached: wrap up and give your final answer. %d round(s) left before a hard stop. Finish in-flight work only; start nothing new.]", left)
 		}
 		lr.history = append(lr.history, Message{Role: "user", Content: msg})
 	}
@@ -1739,7 +1739,7 @@ func (lr *loopRun) callModel() loopAction {
 		if bad > 0 {
 			prev = strconv.Quote(lr.history[bad-1].Role)
 		}
-		Log("[agent_loop] round %d: WARNING history[%d] carries tool results but follows %s, which has no tool calls — providers reject this ordering (a mid-round correction injected before the tool-results message is the usual cause)",
+		Log("[agent_loop] round %d: WARNING history[%d] carries tool results but follows %s, which has no tool calls, providers reject this ordering (a mid-round correction injected before the tool-results message is the usual cause)",
 			lr.round, bad, prev)
 	}
 	// If the caller wants reasoning streamed but didn't set a content
@@ -1833,7 +1833,7 @@ func (lr *loopRun) callModel() loopAction {
 		refused := estimatePromptTokens(lr.history, lr.systemPrompt)
 		noteContextRefusal(lr.cfg.ContextSize, refused)
 		window := recoveryWindow(lr.cfg.ContextSize, lr.rs.err, refused)
-		Debug("[agent_loop] round %d: context exceeded — recovering into a %d-token window (refused prompt ~%d tokens)", lr.round, window, refused)
+		Debug("[agent_loop] round %d: context exceeded, recovering into a %d-token window (refused prompt ~%d tokens)", lr.round, window, refused)
 
 		compactHistory(lr.history, lr.systemPrompt, window, true)
 		// Compaction only cuts bodies. If the bulk is ordinary
@@ -1851,7 +1851,7 @@ func (lr *loopRun) callModel() loopAction {
 		if stillTooBig(lr.history, lr.systemPrompt, window) {
 			budget := window - EstimateTokens(lr.systemPrompt) - 34000
 			if n := elideOldMessageText(lr.history, budget, contextRecoveryKeepWhole); n > 0 {
-				Log("[agent_loop] context recovery: summarization unavailable — elided ~%d tokens of older message text", n)
+				Log("[agent_loop] context recovery: summarization unavailable, elided ~%d tokens of older message text", n)
 			}
 		}
 		if lr.rs.streamHandler != nil {
@@ -1876,7 +1876,7 @@ func (lr *loopRun) callModel() loopAction {
 			// breakdown, and requiring --debug to learn where two million
 			// tokens went means the answer is missing exactly when it is
 			// being asked for.
-			Log("[agent_loop] round %d: context exceeded after force-compact — %s", lr.round, promptSizeReport(lr.cfg, lr.systemPrompt, lr.history))
+			Log("[agent_loop] round %d: context exceeded after force-compact, %s", lr.round, promptSizeReport(lr.cfg, lr.systemPrompt, lr.history))
 			return lr.exit(lr.rs.resp, lr.history, fmt.Errorf("context exhausted: %s. Compaction only trims conversation history, so if the bulk is elsewhere a new session will not help (%w)",
 				promptSizeHeadline(lr.cfg, lr.systemPrompt, lr.history), lr.rs.err))
 		}
@@ -1909,10 +1909,10 @@ func (lr *loopRun) callModel() loopAction {
 				why = "the lead model refused this round on its own content policy"
 				diag = "The lead model refused this round on its provider's content policy"
 			}
-			Log("[agent_loop] round %d: %s — retrying on the worker model", lr.round, why)
+			Log("[agent_loop] round %d: %s, retrying on the worker model", lr.round, why)
 			lr.deescalated = "lead-unavailable"
 			if lr.cfg.OnDiag != nil {
-				lr.cfg.OnDiag("tier_deescalated", diag+" — this turn continued on the local worker model instead of stopping.")
+				lr.cfg.OnDiag("tier_deescalated", diag+", this turn continued on the local worker model instead of stopping.")
 			}
 			workerOpts := append(append([]ChatOption{}, lr.rs.opts...), WithRouteKey(""))
 			if lr.rs.streamHandler != nil {
@@ -1934,9 +1934,9 @@ func (lr *loopRun) callModel() loopAction {
 		lr.leadTokens += lr.rs.resp.InputTokens + lr.rs.resp.OutputTokens
 		if lr.deescalated == "" && LeadTurnTokenBudget > 0 && lr.leadTokens >= LeadTurnTokenBudget {
 			lr.deescalated = "budget"
-			Log("[agent_loop] lead budget spent (%d tokens ≥ %d) — remaining rounds run on the worker tier", lr.leadTokens, LeadTurnTokenBudget)
+			Log("[agent_loop] lead budget spent (%d tokens ≥ %d): remaining rounds run on the worker tier", lr.leadTokens, LeadTurnTokenBudget)
 			if lr.cfg.OnDiag != nil {
-				lr.cfg.OnDiag("tier_deescalated", fmt.Sprintf("This turn spent its lead-model budget (%d tokens) — the remaining rounds ran on the worker model.", lr.leadTokens))
+				lr.cfg.OnDiag("tier_deescalated", fmt.Sprintf("This turn spent its lead-model budget (%d tokens): the remaining rounds ran on the worker model.", lr.leadTokens))
 			}
 		}
 	}
@@ -1946,7 +1946,7 @@ func (lr *loopRun) callModel() loopAction {
 	// work costs the owner more than the round would have.
 	if spent, crossed := chargeDailySpend(lr.cfg, lr.rs.resp); crossed && lr.deescalated == "" && !lr.T.LeadDenied() {
 		lr.deescalated = "spend-cap"
-		Log("[agent_loop] daily spend cap reached mid-turn for %q ($%.2f of $%.2f) — remaining rounds run on the worker tier", lr.cfg.BudgetKey, spent, lr.cfg.DailySpendUSD)
+		Log("[agent_loop] daily spend cap reached mid-turn for %q ($%.2f of $%.2f): remaining rounds run on the worker tier", lr.cfg.BudgetKey, spent, lr.cfg.DailySpendUSD)
 		lr.emitDiag("spend-cap", fmt.Sprintf("This agent crossed its $%.2f daily allowance mid-turn; the rest of the turn ran on the local worker model.", lr.cfg.DailySpendUSD))
 	}
 
@@ -2018,7 +2018,7 @@ func (lr *loopRun) recordResponse() loopAction {
 			// pending input. InjectionDrain, not OnRoundStart.
 			if lr.cfg.InjectionDrain != nil && lr.round < lr.maxRounds {
 				if injected := lr.cfg.InjectionDrain(); len(injected) > 0 {
-					Debug("[agent_loop] pre-finalize injection (prompt-tools): %d note(s) — continuing", len(injected))
+					Debug("[agent_loop] pre-finalize injection (prompt-tools): %d note(s), continuing", len(injected))
 					lr.history = append(lr.history, Message{Role: "assistant", Content: lr.rs.resp.Content, Reasoning: lr.rs.resp.Reasoning})
 					lr.history = append(lr.history, injected...)
 					return actContinue
@@ -2063,7 +2063,7 @@ func (lr *loopRun) recordResponse() loopAction {
 		// principal, and the thing about to happen rests on what they said.
 		// Deflected ONCE, then allowed — see premiseGate.
 		if note, held := lr.premise.hold(tc.Name, lr.writeTools[tc.Name]); held {
-			Debug("[agent_loop] premise gate: held %s — turn rests on %s's unverified claim", tc.Name, lr.cfg.LiveClaimSpeaker)
+			Debug("[agent_loop] premise gate: held %s, turn rests on %s's unverified claim", tc.Name, lr.cfg.LiveClaimSpeaker)
 			lr.emitDiag("unverified-premise-held", fmt.Sprintf("Held %s: this turn acts on %s's unverified claim. Asked to check it first.", tc.Name, lr.cfg.LiveClaimSpeaker))
 			lr.history = append(lr.history, Message{Role: "user", Content: frameworkNoticeTag + note})
 			if lr.cfg.OnStep != nil {
@@ -2098,7 +2098,7 @@ func (lr *loopRun) recordResponse() loopAction {
 		if toolErr == nil && tc.Name == ReleaseOutputToolName {
 			if ids := ReleaseIDsFromArgs(tc.Args); len(ids) > 0 {
 				if n, chars := ReleaseOutputsFromHistory(lr.history, ids); n > 0 {
-					Debug("[agent_loop] release_output: %d id(s) — %d result(s) released, %d chars out of the conversation", len(ids), n, chars)
+					Debug("[agent_loop] release_output: %d id(s), %d result(s) released, %d chars out of the conversation", len(ids), n, chars)
 				}
 			}
 		}
@@ -2221,7 +2221,7 @@ func (lr *loopRun) finalRoundTextToolCall() loopAction {
 	allowProse := true
 	if lr.rs.resp.StopReason == "stop" && len(lr.rs.resp.Content) >= cleanFinishProseFloor {
 		allowProse = false
-		Debug("[agent_loop] prose tool-call scan skipped — model finished cleanly with %d chars (stop_reason=%q)", len(lr.rs.resp.Content), lr.rs.resp.StopReason)
+		Debug("[agent_loop] prose tool-call scan skipped: model finished cleanly with %d chars (stop_reason=%q)", len(lr.rs.resp.Content), lr.rs.resp.StopReason)
 	}
 	parsed := ParseTextToolCall(lr.rs.resp.Content, lr.handlers, lr.toolDefs, allowProse)
 	if parsed == nil && lr.rs.resp.Reasoning != "" && strings.Contains(lr.rs.resp.Reasoning, "<function=") {
@@ -2322,7 +2322,7 @@ func (lr *loopRun) finalRoundTextToolCall() loopAction {
 			lr.history = append(lr.history, Message{
 				Role: "user",
 				Content: frameworkNoticeTag + fmt.Sprintf(
-					"You wrote your reply as though you were handing over %s. Nothing was attached and nothing exists to attach — it was never created, fetched, or it failed. The user received your words and no file. Either call the tool that actually produces it now, or tell them plainly that you do not have it. Do NOT present a file you have not made, and do not write a delivery marker for one.", named),
+					"You wrote your reply as though you were handing over %s. Nothing was attached and nothing exists to attach: it was never created, fetched, or it failed. The user received your words and no file. Either call the tool that actually produces it now, or tell them plainly that you do not have it. Do NOT present a file you have not made, and do not write a delivery marker for one.", named),
 			})
 			return actContinue
 		}
@@ -2339,7 +2339,7 @@ func (lr *loopRun) finalRoundTextToolCall() loopAction {
 		// is letting a false statement stand.
 		if lr.corrections.exhausted(correctionPhantomDelivery) {
 			named := strings.Join(refs, ", ")
-			Debug("[agent_loop] phantom delivery still uncorrected after %d attempts (%s) — substituting a truthful reply", maxCorrectionsPerKind, named)
+			Debug("[agent_loop] phantom delivery still uncorrected after %d attempts (%s): substituting a truthful reply", maxCorrectionsPerKind, named)
 			lr.emitDiag("phantom-delivery-uncorrected", fmt.Sprintf("The reply claimed %s again after two corrections, and no such file exists. The claim was replaced rather than delivered.", named))
 			lr.retractRound()
 			lr.rs.resp.Content = UnfulfilledDeliveryReply(refs)
@@ -2382,7 +2382,7 @@ func (lr *loopRun) finalRoundTextToolCall() loopAction {
 			lr.settleRound() // finalize the stripped prose so the retry doesn't concatenate into it
 			lr.history = append(lr.history, Message{
 				Role:    "user",
-				Content: frameworkNoticeTag + "Your previous response wrote a tool invocation as plain TEXT (in a <tool_code> block or ::name(...):: form)." + hint + " That format does NOT execute — only structured tool_calls do. Re-issue the call NOW using the framework's native tool-calling mechanism. Do not wrap it in <tool_code>, do not use ::name():: syntax, do not narrate 'Creating the tool now…' — just emit the structured call.",
+				Content: frameworkNoticeTag + "Your previous response wrote a tool invocation as plain TEXT (in a <tool_code> block or ::name(...):: form)." + hint + " That format does NOT execute: only structured tool_calls do. Re-issue the call NOW using the framework's native tool-calling mechanism. Do not wrap it in <tool_code>, do not use ::name():: syntax, do not narrate 'Creating the tool now…', just emit the structured call.",
 			})
 			return actContinue
 		}
@@ -2409,7 +2409,7 @@ func (lr *loopRun) finalRoundTruncation() loopAction {
 	// would either miss it or scold the model for being interrupted.
 	if responseWasTruncated(lr.rs.resp) {
 		if lr.corrections.available(correctionTruncated) {
-			Debug("[agent_loop] round %d: output truncated (stop_reason=%q, %d chars) — continuing (correction %d/%d)",
+			Debug("[agent_loop] round %d: output truncated (stop_reason=%q, %d chars), continuing (correction %d/%d)",
 				lr.round, lr.rs.resp.StopReason, len(lr.rs.resp.Content), lr.corrections.spend(correctionTruncated), maxCorrectionsPerKind)
 			lr.emitDiag("output-truncated", truncationDiag(lr.rs.resp))
 			lr.settleRound() // finalize the partial so the continuation doesn't concatenate into it
@@ -2427,7 +2427,7 @@ func (lr *loopRun) finalRoundTruncation() loopAction {
 			lr.truncatedLead.WriteString(lr.rs.resp.Content)
 			lr.history = append(lr.history, Message{
 				Role:    "user",
-				Content: frameworkNoticeTag + "Your previous reply was CUT OFF before you finished it — you did not choose to stop. Continue from where you left off without repeating what you already said. If you were about to call a tool, emit the real structured tool call now; keep any preamble short so the call itself fits.",
+				Content: frameworkNoticeTag + "Your previous reply was CUT OFF before you finished it: you did not choose to stop. Continue from where you left off without repeating what you already said. If you were about to call a tool, emit the real structured tool call now; keep any preamble short so the call itself fits.",
 			})
 			return actContinue
 		}
@@ -2445,7 +2445,7 @@ func (lr *loopRun) finalRoundTruncation() loopAction {
 	// re-bills the whole prompt. The user gets told what they are
 	// looking at and decides.
 	if providerCutReply(lr.rs.resp) {
-		Log("[agent_loop] round %d: provider stopped the reply partway (stop_reason=%q, %d chars) — delivering the fragment with a diagnostic",
+		Log("[agent_loop] round %d: provider stopped the reply partway (stop_reason=%q, %d chars), delivering the fragment with a diagnostic",
 			lr.round, lr.rs.resp.StopReason, len(lr.rs.resp.Content))
 		lr.emitDiag("provider-refusal", "The provider's content classifier stopped this reply partway (stop_reason=refusal); what you see is the fragment produced before the stop, not a finished answer. Rephrasing the request or retrying may get a complete one.")
 	}
@@ -2488,7 +2488,7 @@ func (lr *loopRun) finalRoundPromiseGuards() loopAction {
 		lr.settleRound() // finalize the announcement so the retry doesn't concatenate into it
 		lr.history = append(lr.history, Message{
 			Role:    "user",
-			Content: frameworkNoticeTag + "Your previous reply ended by announcing a call or content that never followed (it ends with a colon). If you meant to run a tool, emit the REAL structured tool call NOW — never write it out as text or stop after describing it. If no tool exists for what you described, say so plainly and finish the reply instead.",
+			Content: frameworkNoticeTag + "Your previous reply ended by announcing a call or content that never followed (it ends with a colon). If you meant to run a tool, emit the REAL structured tool call NOW: never write it out as text or stop after describing it. If no tool exists for what you described, say so plainly and finish the reply instead.",
 		})
 		return actContinue
 	}
@@ -2544,11 +2544,11 @@ func (lr *loopRun) finalRoundToolMentionGuard() loopAction {
 			// the premise just gets the refusal restated.
 			why := "it takes no arguments, so there was nothing to run"
 			if needsArgs {
-				why = "naming a tool in text does not run it — the arguments have to travel in a real structured call"
+				why = "naming a tool in text does not run it: the arguments have to travel in a real structured call"
 			}
 			lr.history = append(lr.history, Message{
 				Role:    "user",
-				Content: fmt.Sprintf(frameworkNoticeTag+"Your previous response referred to the %q tool but did not actually call it (%s). That tool IS available to you on this turn — do not say you lack access to what it reaches. If you intend to use it, emit the real structured tool call NOW. If you did NOT mean to use it, answer the user directly and do not claim you used it.", name, why),
+				Content: fmt.Sprintf(frameworkNoticeTag+"Your previous response referred to the %q tool but did not actually call it (%s). That tool IS available to you on this turn: do not say you lack access to what it reaches. If you intend to use it, emit the real structured tool call NOW. If you did NOT mean to use it, answer the user directly and do not claim you used it.", name, why),
 			})
 			return actContinue
 		}
@@ -2659,15 +2659,15 @@ func (lr *loopRun) finalRoundStallGuards() loopAction {
 			diag = fmt.Sprintf("The turn stopped with %d unaddressed tool error(s) and rounds to spare; re-prompted to adjust and retry rather than give up.", lr.cumulativeToolErrors)
 			if promised && len(trimmedContent) >= 30 {
 				stopped = "ended your turn by saying you were ABOUT to do the work, and then called no tool"
-				diag = fmt.Sprintf("The reply promised work it never did — it announced the next step, called no tool, and left %d tool error(s) unaddressed with rounds to spare. Re-prompted to actually do it.", lr.cumulativeToolErrors)
+				diag = fmt.Sprintf("The reply promised work it never did: it announced the next step, called no tool, and left %d tool error(s) unaddressed with rounds to spare. Re-prompted to actually do it.", lr.cumulativeToolErrors)
 			}
 			nudge = fmt.Sprintf(
-				frameworkNoticeTag+"You %s, but %d tool call%s errored earlier this turn that you didn't follow up on, and you have %d round%s remaining. Saying what you are about to do is not doing it — the user sees the sentence and nothing else, and nothing runs after your turn ends. DON'T end here with a polite summary of what you tried — that's giving up. Re-read the most recent error message(s) carefully, ADJUST your approach (different args, different tool, different sequence), and TRY AGAIN with a real tool call. If you genuinely have no other avenues, say so explicitly — but only after you've actually tried adjusting at least once.",
+				frameworkNoticeTag+"You %s, but %d tool call%s errored earlier this turn that you didn't follow up on, and you have %d round%s remaining. Saying what you are about to do is not doing it: the user sees the sentence and nothing else, and nothing runs after your turn ends. DON'T end here with a polite summary of what you tried: that's giving up. Re-read the most recent error message(s) carefully, ADJUST your approach (different args, different tool, different sequence), and TRY AGAIN with a real tool call. If you genuinely have no other avenues, say so explicitly, but only after you've actually tried adjusting at least once.",
 				stopped, lr.cumulativeToolErrors, errPlural, roundsLeft, roundPlural)
 		} else {
 			diag = "The reply said the work was about to happen and then ended the turn without calling a single tool. Re-prompted to do it now or say plainly what is stopping it."
 			nudge = fmt.Sprintf(
-				frameworkNoticeTag+"You ended your turn saying you were about to do something, and then called no tool at all — so nothing happened. Nothing runs after your turn ends; the user is left holding a sentence. You have %d round%s remaining. Do it NOW with a real tool call, or say plainly what is stopping you. Do not repeat the promise, and do not apologize for it: do the work or explain why you can't.",
+				frameworkNoticeTag+"You ended your turn saying you were about to do something, and then called no tool at all, so nothing happened. Nothing runs after your turn ends; the user is left holding a sentence. You have %d round%s remaining. Do it NOW with a real tool call, or say plainly what is stopping you. Do not repeat the promise, and do not apologize for it: do the work or explain why you can't.",
 				roundsLeft, roundPlural)
 		}
 		lr.emitDiag("giveup-retried", diag)
@@ -2709,7 +2709,7 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 	// every call (budget pacer) and would loop forever here.
 	if lr.cfg.InjectionDrain != nil && lr.round < lr.maxRounds {
 		if injected := lr.cfg.InjectionDrain(); len(injected) > 0 {
-			Debug("[agent_loop] pre-finalize injection: %d note(s) arrived during the final round — continuing instead of finishing", len(injected))
+			Debug("[agent_loop] pre-finalize injection: %d note(s) arrived during the final round, continuing instead of finishing", len(injected))
 			lr.history = append(lr.history, injected...)
 			return actContinue
 		}
@@ -2760,7 +2760,7 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 		// would tell the model its reply "did not happen" about a sentence
 		// that was true.
 		if verdict.Unkept && lr.corrections.available(correctionUnkeptClaim) && lr.round < lr.maxRounds {
-			Debug("[agent_loop] turn judge: reply claims work the turn did not do (%q) — %s; re-prompting: correction %d/%d",
+			Debug("[agent_loop] turn judge: reply claims work the turn did not do (%q), %s; re-prompting: correction %d/%d",
 				truncForLog(verdict.Claim, 80), verdict.Why, lr.corrections.spend(correctionUnkeptClaim), maxCorrectionsPerKind)
 			lr.emitDiag("unkept-claim-corrected", fmt.Sprintf("The reply said %q, which did not happen: %s. Re-prompted to do it or say so.", truncForLog(verdict.Claim, 120), verdict.Why))
 			// Retract rather than settle: the claim is false and, on a
@@ -2771,7 +2771,7 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 			lr.history = append(lr.history, Message{
 				Role: "user",
 				Content: frameworkNoticeTag + fmt.Sprintf(
-					"Your reply says: %q. That did not happen — %s. The user reads your words and gets nothing else; nothing runs after your turn ends. Either do it NOW with a real tool call, or rewrite the reply to say plainly what actually happened and what you could not do. Do not apologize, do not restate the claim, and do not promise it for later.",
+					"Your reply says: %q. That did not happen: %s. The user reads your words and gets nothing else; nothing runs after your turn ends. Either do it NOW with a real tool call, or rewrite the reply to say plainly what actually happened and what you could not do. Do not apologize, do not restate the claim, and do not promise it for later.",
 					verdict.Claim, verdict.Why),
 			})
 			return actContinue
@@ -2794,7 +2794,7 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 				lr.history = append(lr.history, Message{
 					Role: "user",
 					Content: frameworkNoticeTag + fmt.Sprintf(
-						"Your reply says: %q. That is plumbing — how the work is being carried out — and they did not ask about it. Nothing else is wrong with the reply. Send the SAME message with that part removed: what you are doing for them, in one line, the way a person would. No ids, no mention of how or where anything runs, no invitation to check back, no time estimate you were not given.",
+						"Your reply says: %q. That is plumbing (how the work is being carried out), and they did not ask about it. Nothing else is wrong with the reply. Send the SAME message with that part removed: what you are doing for them, in one line, the way a person would. No ids, no mention of how or where anything runs, no invitation to check back, no time estimate you were not given.",
 						leak),
 				})
 				return actContinue
@@ -2825,7 +2825,7 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 		ToolCalls: lr.turnToolCalls,
 	}); convicted {
 		if lr.corrections.available(correctionUngrounded) && lr.round < lr.maxRounds {
-			Debug("[agent_loop] grounding judge: reply asserts an unchecked claim (%q) — re-prompting: correction %d/%d",
+			Debug("[agent_loop] grounding judge: reply asserts an unchecked claim (%q), re-prompting: correction %d/%d",
 				truncForLog(gv.Claim, 80), lr.corrections.spend(correctionUngrounded), maxCorrectionsPerKind)
 			lr.emitDiag("ungrounded-claim-corrected", fmt.Sprintf("The reply stated %q as fact; it traces to an unchecked note (%q). Re-prompted to check it or attribute it.",
 				truncForLog(gv.Claim, 120), truncForLog(gv.Basis, 120)))
@@ -2906,7 +2906,7 @@ func (lr *loopRun) finalRoundOutputGuardrail() loopAction {
 			// place with the safe decline and return that. The floor is a
 			// canned reply, not the leak, no matter how hard the turn was
 			// pushed.
-			Debug("[agent_loop] guardrail pre-output final (correctable=%v halted=%v) — handing the reply to the rejection model", dec.Correctable, halted)
+			Debug("[agent_loop] guardrail pre-output final (correctable=%v halted=%v): handing the reply to the rejection model", dec.Correctable, halted)
 			lr.emitDiag("guardrail-output-substituted", "A reply kept violating an enforced guardrail; a neutral decline was substituted so nothing protected was released.")
 			lr.retractRound() // DISCARD the leaking draft bubble; the safe reply below is what gets delivered
 			fallback := guardrailRejectionReply(lr.cfg, "pre_output", lr.history)
@@ -2987,7 +2987,7 @@ func (lr *loopRun) interimGuardrail() loopAction {
 				lr.guardrailOutputCorrections < maxGuardrailOutputCorrections &&
 				lr.round < lr.maxRounds
 			if !canRedirect {
-				Debug("[agent_loop] guardrail periodic final at round %d (correctable=%v) — handing over to the rejection model", lr.round, dec.Correctable)
+				Debug("[agent_loop] guardrail periodic final at round %d (correctable=%v): handing over to the rejection model", lr.round, dec.Correctable)
 				lr.emitDiag("guardrail-halted", "An enforced guardrail stopped this turn; the reply was written by a separate check, not by the agent.")
 				reply := guardrailRejectionReply(lr.cfg, GuardHookPeriodic, lr.history)
 				lr.replaceBlockedDraft(reply)
@@ -3106,13 +3106,13 @@ func (lr *loopRun) toolRoundSetup() loopAction {
 func (lr *loopRun) toolRoundPlanCalls() loopAction {
 	for i, tc := range lr.rs.resp.ToolCalls {
 		if i >= maxToolCallsPerRound {
-			lr.rs.results[i] = ToolResult{ID: tc.ID, Content: fmt.Sprintf("Error: round batch cap — a single round may fire at most %d tool calls; this call (#%d) was dropped. Use the results you already have, or continue next round with a SMALLER, deliberate batch.", maxToolCallsPerRound, i+1), IsError: true}
+			lr.rs.results[i] = ToolResult{ID: tc.ID, Content: fmt.Sprintf("Error: round batch cap, a single round may fire at most %d tool calls; this call (#%d) was dropped. Use the results you already have, or continue next round with a SMALLER, deliberate batch.", maxToolCallsPerRound, i+1), IsError: true}
 			lr.rs.toolErrors++
 			continue
 		}
 		if tc.Name == "stay_silent" {
 			if lr.rs.dropAllSilent {
-				Debug("[agent_loop] stay_silent dropped — bundled with %d real tool call(s)", lr.rs.realCount)
+				Debug("[agent_loop] stay_silent dropped: bundled with %d real tool call(s)", lr.rs.realCount)
 				lr.rs.results[i] = ToolResult{
 					ID:      tc.ID,
 					Content: "Error: stay_silent was ignored because it was bundled with other tool calls. stay_silent closes the turn and must be the ONLY tool call in your response. Complete your other tool work first, observe the results, then call stay_silent alone in a later turn.",
@@ -3126,7 +3126,7 @@ func (lr *loopRun) toolRoundPlanCalls() loopAction {
 					Debug("[agent_loop] duplicate stay_silent dropped (already silenced)")
 					lr.rs.results[i] = ToolResult{
 						ID:      tc.ID,
-						Content: "Acknowledged (duplicate). The turn is already closing silently — only one stay_silent call is needed per turn.",
+						Content: "Acknowledged (duplicate). The turn is already closing silently: only one stay_silent call is needed per turn.",
 					}
 					continue
 				}
@@ -3205,7 +3205,7 @@ func (lr *loopRun) toolRoundPlanCalls() loopAction {
 				// against a guessed API — a habit that outlived the
 				// gate). A denial denies the OPERATION, not one route
 				// to it — say so.
-				lr.rs.results[i] = ToolResult{ID: tc.ID, Content: "Error: tool call denied by user — this operation was not authorized to run. Do NOT work around the denial by attempting the same operation through a different tool (raw fetch_url, shell, or a dispatch); proceed without it, or report that it needs the owner's authorization.", IsError: true}
+				lr.rs.results[i] = ToolResult{ID: tc.ID, Content: "Error: tool call denied by user, this operation was not authorized to run. Do NOT work around the denial by attempting the same operation through a different tool (raw fetch_url, shell, or a dispatch); proceed without it, or report that it needs the owner's authorization.", IsError: true}
 				lr.rs.toolErrors++
 				continue
 			}
@@ -3253,7 +3253,7 @@ func (lr *loopRun) toolRoundPlanCalls() loopAction {
 			lr.rs.guardBlockedThisRound = true
 			lr.rs.results[i] = ToolResult{
 				ID:      tc.ID,
-				Content: fmt.Sprintf("STOP — you have already called '%s' with these exact arguments %d times this turn and it failed the same way each time. Calling it again will NOT change the result. Do something different: try another approach or different arguments, or tell the user plainly that this isn't working and what you tried. Do not repeat this call.", tc.Name, lr.repeatFail[sig]),
+				Content: fmt.Sprintf("STOP: you have already called '%s' with these exact arguments %d times this turn and it failed the same way each time. Calling it again will NOT change the result. Do something different: try another approach or different arguments, or tell the user plainly that this isn't working and what you tried. Do not repeat this call.", tc.Name, lr.repeatFail[sig]),
 				IsError: true,
 			}
 			lr.rs.toolErrors++
@@ -3268,7 +3268,7 @@ func (lr *loopRun) toolRoundPlanCalls() loopAction {
 			lr.rs.guardBlockedThisRound = true
 			lr.rs.results[i] = ToolResult{
 				ID:      tc.ID,
-				Content: fmt.Sprintf("STOP — you have already called '%s' with these exact arguments %d times this turn and it returned the SAME result every time. It is giving you no new information and making no progress. Do NOT call it again. Answer the user with what you already have, use a DIFFERENT tool, or tell them plainly you cannot get what they asked for.", tc.Name, lr.repeatSame[sig]),
+				Content: fmt.Sprintf("STOP: you have already called '%s' with these exact arguments %d times this turn and it returned the SAME result every time. It is giving you no new information and making no progress. Do NOT call it again. Answer the user with what you already have, use a DIFFERENT tool, or tell them plainly you cannot get what they asked for.", tc.Name, lr.repeatSame[sig]),
 				IsError: true,
 			}
 			lr.rs.toolErrors++
@@ -3288,7 +3288,7 @@ func (lr *loopRun) toolRoundPlanCalls() loopAction {
 			lr.rs.guardBlockedThisRound = true
 			lr.rs.results[i] = ToolResult{
 				ID:      tc.ID,
-				Content: fmt.Sprintf("HELD — you already sent a message to this recipient this turn via '%s', so this additional send was NOT delivered (it would double-message them). If you drafted several variations, that's expected: pick the ONE you want and send it on your NEXT turn. If you genuinely need to send a distinct follow-up, do it next turn, not batched with the first.", tc.Name),
+				Content: fmt.Sprintf("HELD: you already sent a message to this recipient this turn via '%s', so this additional send was NOT delivered (it would double-message them). If you drafted several variations, that's expected: pick the ONE you want and send it on your NEXT turn. If you genuinely need to send a distinct follow-up, do it next turn, not batched with the first.", tc.Name),
 				IsError: true,
 			}
 			lr.rs.toolErrors++
@@ -3300,7 +3300,7 @@ func (lr *loopRun) toolRoundPlanCalls() loopAction {
 		// held by a guard above never becomes the canonical for a sibling
 		// that would otherwise have run.
 		if canon, dup := lr.rs.batchSig[sig]; dup {
-			Debug("[agent_loop] batch-dedup: %s call #%d is identical to #%d — running once", tc.Name, i+1, canon+1)
+			Debug("[agent_loop] batch-dedup: %s call #%d is identical to #%d, running once", tc.Name, i+1, canon+1)
 			lr.rs.batchDup = append(lr.rs.batchDup, [2]int{i, canon})
 			continue
 		}
@@ -3343,13 +3343,13 @@ func (lr *loopRun) toolRoundAbort() loopAction {
 				}
 				lr.rs.results[w.index] = ToolResult{
 					ID:      w.tc.ID,
-					Content: fmt.Sprintf("[SKIPPED] Tool '%s' was dropped because '%s' was called in the same response. Control tools (ask_user, respond_directly, plan_set, …) end the round — they must be the ONLY tool call. If you need to do other work first, do it in an earlier round.", w.tc.Name, abortName),
+					Content: fmt.Sprintf("[SKIPPED] Tool '%s' was dropped because '%s' was called in the same response. Control tools (ask_user, respond_directly, plan_set, …) end the round: they must be the ONLY tool call. If you need to do other work first, do it in an earlier round.", w.tc.Name, abortName),
 					IsError: true,
 				}
 				lr.rs.toolErrors++
 			}
 			lr.rs.work = []toolWork{lr.rs.work[abortIdx]}
-			Debug("[agent_loop] round aborted by control tool %q — dropped %d other call(s)", abortName, len(lr.rs.resp.ToolCalls)-1)
+			Debug("[agent_loop] round aborted by control tool %q: dropped %d other call(s)", abortName, len(lr.rs.resp.ToolCalls)-1)
 		}
 	}
 	return actNone
@@ -3410,7 +3410,7 @@ func (lr *loopRun) toolRoundSingleFire() loopAction {
 			lr.rs.toolErrors++
 		}
 		if firstIdx >= 0 && len(filtered) < len(lr.rs.work) {
-			Debug("[agent_loop] single-fire %v — dropped %d excess call(s)", group, len(lr.rs.work)-len(filtered))
+			Debug("[agent_loop] single-fire %v: dropped %d excess call(s)", group, len(lr.rs.work)-len(filtered))
 			lr.rs.work = filtered
 		}
 	}
@@ -3543,7 +3543,7 @@ func (lr *loopRun) dispatchTools() loopAction {
 		src := lr.rs.results[canon]
 		lr.rs.results[dup] = ToolResult{
 			ID:      lr.rs.resp.ToolCalls[dup].ID,
-			Content: fmt.Sprintf("[DUPLICATE CALL — you issued this exact call %d times in one response; it ran ONCE and every copy returns the same result below. To get something different, change the arguments.]\n\n%s", countBatchDupes(lr.rs.batchDup, canon)+1, src.Content),
+			Content: fmt.Sprintf("[DUPLICATE CALL: you issued this exact call %d times in one response; it ran ONCE and every copy returns the same result below. To get something different, change the arguments.]\n\n%s", countBatchDupes(lr.rs.batchDup, canon)+1, src.Content),
 			IsError: src.IsError,
 		}
 	}
@@ -3565,7 +3565,7 @@ func (lr *loopRun) dispatchTools() loopAction {
 			// "it's broken" (repeated) and "it works" (said once).
 			if shapes := lr.toolFailShapes[w.tc.Name]; len(shapes) > 0 {
 				if n := retireResolvedFailureResults(lr.history, shapes, w.tc.Name); n > 0 {
-					Debug("[agent_loop] failure-streak collapse: %s succeeded — %d earlier failure result(s) marked resolved", w.tc.Name, n)
+					Debug("[agent_loop] failure-streak collapse: %s succeeded, %d earlier failure result(s) marked resolved", w.tc.Name, n)
 				}
 				delete(lr.toolFailShapes, w.tc.Name)
 			}
@@ -3610,7 +3610,7 @@ func (lr *loopRun) dispatchTools() loopAction {
 		// after this loop, so the model always sees first + latest.
 		if n >= errShapeCollapseAt {
 			if c := collapseRepeatedFailureResults(lr.history, shape, false); c > 0 {
-				Debug("[agent_loop] failure-streak collapse: %q — %d earlier duplicate result(s) collapsed", oneLineShape(shape), c)
+				Debug("[agent_loop] failure-streak collapse: %q, %d earlier duplicate result(s) collapsed", oneLineShape(shape), c)
 			}
 		}
 		// Say it plainly, once. The model can see each failure but not
@@ -3618,7 +3618,7 @@ func (lr *loopRun) dispatchTools() loopAction {
 		// which is the fact that should change its approach.
 		if n >= errShapeNudgeAt && !lr.errShapeNudged[shape] {
 			lr.errShapeNudged[shape] = true
-			Debug("[agent_loop] failure-shape guard: %q seen %d times this turn — nudging", oneLineShape(shape), n)
+			Debug("[agent_loop] failure-shape guard: %q seen %d times this turn, nudging", oneLineShape(shape), n)
 			msg, consulted := failureShapeCorrection(n, oneLineShape(shape), lr.rs.results[w.index].Content, lr.cfg.Consult)
 			// DEFERRED, not appended here. We are between the assistant
 			// message that carried the tool calls and the tool-results
@@ -3634,7 +3634,7 @@ func (lr *loopRun) dispatchTools() loopAction {
 			if consulted {
 				Log("[agent_loop] failure-shape guard: consulted on %q after %d hits", oneLineShape(shape), n)
 				if lr.cfg.OnDiag != nil {
-					lr.cfg.OnDiag("consulted", fmt.Sprintf("Hit the same failure %d times (%q) — a stronger model was consulted and its advice was given to the agent.", n, oneLineShape(shape)))
+					lr.cfg.OnDiag("consulted", fmt.Sprintf("Hit the same failure %d times (%q): a stronger model was consulted and its advice was given to the agent.", n, oneLineShape(shape)))
 				}
 			}
 		}
@@ -3644,9 +3644,9 @@ func (lr *loopRun) dispatchTools() loopAction {
 		// positive is a cheaper model, not a truncated turn.
 		if n >= errShapeDeescalateAt && lr.deescalated == "" {
 			lr.deescalated = "no-progress"
-			Log("[agent_loop] failure-shape guard: %q hit %d times with no progress — remaining rounds run on the worker tier", oneLineShape(shape), n)
+			Log("[agent_loop] failure-shape guard: %q hit %d times with no progress, remaining rounds run on the worker tier", oneLineShape(shape), n)
 			if lr.cfg.OnDiag != nil {
-				lr.cfg.OnDiag("tier_deescalated", fmt.Sprintf("Hit the same failure %d times with no progress (%q) — the rest of this turn ran on the worker model instead of the lead model.", n, oneLineShape(shape)))
+				lr.cfg.OnDiag("tier_deescalated", fmt.Sprintf("Hit the same failure %d times with no progress (%q): the rest of this turn ran on the worker model instead of the lead model.", n, oneLineShape(shape)))
 			}
 		}
 	}
@@ -3655,7 +3655,7 @@ func (lr *loopRun) dispatchTools() loopAction {
 	// no subsequent "round N+1: starting", the hang is in the
 	// bookkeeping/OnStep/iteration-restart path. Log-level (not
 	// Debug) so it surfaces regardless of debug flags.
-	Log("[agent_loop] round %d: tool dispatch complete (%d tools, %d errors) — appending results to history", lr.round, len(lr.rs.work), lr.rs.toolErrors)
+	Log("[agent_loop] round %d: tool dispatch complete (%d tools, %d errors), appending results to history", lr.round, len(lr.rs.work), lr.rs.toolErrors)
 	// Add tool results to history for the next LLM round.
 	lr.history = append(lr.history, Message{
 		Role:        "user",
@@ -3700,7 +3700,7 @@ func (lr *loopRun) releaseSpentOutputs() {
 		return
 	}
 	if n, chars := ReleaseOutputsFromHistory(lr.history, ids); n > 0 {
-		Debug("[agent_loop] release_output: %d id(s) — %d result(s) released, %d chars out of the conversation", len(ids), n, chars)
+		Debug("[agent_loop] release_output: %d id(s), %d result(s) released, %d chars out of the conversation", len(ids), n, chars)
 	}
 }
 
@@ -3735,7 +3735,7 @@ func (lr *loopRun) settleToolRound() loopAction {
 	// comes from the rejection model, never from the context that just
 	// tripped the rule.
 	if lr.rs.guardrailHalt != "" {
-		Debug("[agent_loop] guardrail halt at %s — ending the turn, handing over to the rejection model", lr.rs.guardrailHalt)
+		Debug("[agent_loop] guardrail halt at %s: ending the turn, handing over to the rejection model", lr.rs.guardrailHalt)
 		lr.emitDiag("guardrail-halted", "An enforced guardrail stopped this turn; the reply was written by a separate check, not by the agent.")
 		lr.retractRound()
 		reply := guardrailRejectionReply(lr.cfg, lr.rs.guardrailHalt, lr.history)
@@ -3766,11 +3766,11 @@ func (lr *loopRun) settleToolRound() loopAction {
 	if lr.rs.allFailed {
 		lr.failureStreak++
 		if !lr.failureStreakWarned && lr.failureStreak >= failureStreakThreshold {
-			Debug("[agent_loop] failure streak hit %d — injecting pivot nudge", lr.failureStreak)
+			Debug("[agent_loop] failure streak hit %d: injecting pivot nudge", lr.failureStreak)
 			lr.history = append(lr.history, Message{
 				Role: "user",
 				Content: fmt.Sprintf(
-					frameworkNoticeTag+"You've hit %d rounds in a row where every tool call failed. Recommending checking other vectors first before resuming this approach — a different tool, a different angle, or asking the user for clarification is often faster than continuing to iterate here.",
+					frameworkNoticeTag+"You've hit %d rounds in a row where every tool call failed. Recommending checking other vectors first before resuming this approach: a different tool, a different angle, or asking the user for clarification is often faster than continuing to iterate here.",
 					lr.failureStreak),
 			})
 			lr.failureStreakWarned = true
@@ -3802,14 +3802,14 @@ func (lr *loopRun) settleToolRound() loopAction {
 		// ONLY calls were synthesized and every one of them failed,
 		// so a real tool call is never short-circuited.
 		if lr.synthesizedFrom != "" {
-			Debug("[agent_loop] loop-guard: blocked call was synthesized from prose — returning the model's own answer (%d chars) instead of regenerating", len(lr.synthesizedFrom))
+			Debug("[agent_loop] loop-guard: blocked call was synthesized from prose, returning the model's own answer (%d chars) instead of regenerating", len(lr.synthesizedFrom))
 			lr.rs.resp.Content = lr.synthesizedFrom
 			lr.rs.resp.ToolCalls = nil
 			return lr.exit(lr.rs.resp, lr.history, nil)
 		}
 		lr.guardBlockedStreak++
 		if lr.guardBlockedStreak >= guardBlockedBreakLimit {
-			Debug("[agent_loop] loop-guard wedge: %d blocked-with-no-progress rounds — forcing final answer", lr.guardBlockedStreak)
+			Debug("[agent_loop] loop-guard wedge: %d blocked-with-no-progress rounds, forcing final answer", lr.guardBlockedStreak)
 			lr.forceFinal = true
 			return actBreak
 		}
@@ -3840,15 +3840,15 @@ func (lr *loopRun) settleToolRound() loopAction {
 		// keep_going, keep_going, ls, ls, keep_going, keep_going, keep_going —
 		// seven rounds and twenty seconds to arrive exactly where round one
 		// already was.
-		Debug("[agent_loop] keep_going while a background job is outstanding — nothing to continue to, finalizing")
-		lr.emitDiag("keep-going-while-detached", "The turn asked for another round while a background job was still running. There is nothing to wait for in-turn — the result arrives on its own — so the turn was finalized instead of spinning.")
+		Debug("[agent_loop] keep_going while a background job is outstanding: nothing to continue to, finalizing")
+		lr.emitDiag("keep-going-while-detached", "The turn asked for another round while a background job was still running. There is nothing to wait for in-turn (the result arrives on its own), so the turn was finalized instead of spinning.")
 		lr.forceFinal = true
 		return actBreak
 	}
 	if lr.rs.keepGoingOnly {
 		lr.keepGoingStreak++
 		if lr.keepGoingStreak >= keepGoingSpinLimit {
-			Debug("[agent_loop] keep_going spin: %d consecutive keep_going-only rounds — forcing final answer", lr.keepGoingStreak)
+			Debug("[agent_loop] keep_going spin: %d consecutive keep_going-only rounds, forcing final answer", lr.keepGoingStreak)
 			lr.forceFinal = true
 			return actBreak
 		}
@@ -3856,7 +3856,7 @@ func (lr *loopRun) settleToolRound() loopAction {
 		// real tool, so the promise-correction path never ran.
 		lr.history = append(lr.history, Message{
 			Role:    "user",
-			Content: frameworkNoticeTag + "You have signalled continue without taking any action. Do NOT call keep_going again. This round, either emit the ACTUAL tool call you intend (the tool is already loaded — call it directly), or, if you cannot, give your final answer to the user now.",
+			Content: frameworkNoticeTag + "You have signalled continue without taking any action. Do NOT call keep_going again. This round, either emit the ACTUAL tool call you intend (the tool is already loaded: call it directly), or, if you cannot, give your final answer to the user now.",
 		})
 	} else {
 		lr.keepGoingStreak = 0
@@ -3904,7 +3904,7 @@ func (lr *loopRun) settleToolRound() loopAction {
 	// loop server-side so no further LLM rounds happen.
 	for _, w := range lr.rs.work {
 		if w.tc.Name == "stay_silent" && !lr.rs.results[w.index].IsError {
-			Debug("[agent_loop] stay_silent fired — closing turn")
+			Debug("[agent_loop] stay_silent fired: closing turn")
 			// Honor the suppression — stay_silent's whole purpose. Blank the
 			// reply text so every caller (web reply, channel outbound,
 			// dispatch result) emits NOTHING; attachments gathered this turn
@@ -3925,7 +3925,7 @@ func (lr *loopRun) settleToolRound() loopAction {
 	if lr.rs.roundAborted {
 		for _, w := range lr.rs.work {
 			if lr.rs.abortSet[w.tc.Name] && !lr.rs.results[w.index].IsError {
-				Debug("[agent_loop] control tool %q fired — closing turn", w.tc.Name)
+				Debug("[agent_loop] control tool %q fired: closing turn", w.tc.Name)
 				return lr.exit(lr.rs.resp, lr.history, nil)
 			}
 		}

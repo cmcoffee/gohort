@@ -118,7 +118,7 @@ func sectionIDList(sections []map[string]any) string {
 		}
 	}
 	if len(ids) == 0 {
-		return "none yet — the next save assigns them"
+		return "none yet: the next save assigns them"
 	}
 	return strings.Join(ids, ", ")
 }
@@ -127,7 +127,7 @@ func sectionIDList(sections []map[string]any) string {
 func sectionArg(args map[string]any) (map[string]any, error) {
 	m, ok := args["section_def"].(map[string]any)
 	if !ok || len(m) == 0 {
-		return nil, errors.New("section_def is required — the section OBJECT ({kind, title, fields…}), the same shape one entry of `sections` takes")
+		return nil, errors.New("section_def is required: the section OBJECT ({kind, title, fields…}), the same shape one entry of `sections` takes")
 	}
 	m = normalizeSection(m)
 	if strings.TrimSpace(mapStr(m, "kind")) == "" {
@@ -144,7 +144,7 @@ func (t *chatTurn) applySectionEdit(args map[string]any, reason string, mutate f
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
 	spec, ok := LoadAppSpec(t.user, key)
 	if !ok {
-		return "", errors.New("no matching app — check the slug (app_def action=list)")
+		return "", errors.New("no matching app: check the slug (app_def action=list)")
 	}
 	current, err := appAuthoringSections(spec)
 	if err != nil {
@@ -182,7 +182,7 @@ func toAnySlice(secs []map[string]any) []any {
 func (t *chatTurn) appDefUpdateSection(args map[string]any) (string, error) {
 	id := strings.TrimSpace(stringArg(args, "section_id"))
 	if id == "" {
-		return "", errors.New("section_id is required — the id of the section to replace (app_def action=get lists them)")
+		return "", errors.New("section_id is required: the id of the section to replace (app_def action=get lists them)")
 	}
 	repl, err := sectionArg(args)
 	if err != nil {
@@ -191,7 +191,7 @@ func (t *chatTurn) appDefUpdateSection(args map[string]any) (string, error) {
 	return t.applySectionEdit(args, "update_section "+id, func(secs []map[string]any) ([]map[string]any, error) {
 		i := findSectionByID(secs, id)
 		if i < 0 {
-			return nil, fmt.Errorf("no section with id %q — this app has: %s", id, sectionIDList(secs))
+			return nil, fmt.Errorf("no section with id %q, this app has: %s", id, sectionIDList(secs))
 		}
 		repl["id"] = id
 		out := append([]map[string]any{}, secs...)
@@ -210,7 +210,7 @@ func (t *chatTurn) appDefAddSection(args map[string]any) (string, error) {
 	after := strings.TrimSpace(firstNonEmptyStr(stringArg(args, "after"), stringArg(args, "section_id")))
 	return t.applySectionEdit(args, "add_section", func(secs []map[string]any) ([]map[string]any, error) {
 		if id := strings.TrimSpace(mapStr(add, "id")); id != "" && findSectionByID(secs, id) >= 0 {
-			return nil, fmt.Errorf("a section with id %q already exists — use update_section to change it, or give the new one a different id", id)
+			return nil, fmt.Errorf("a section with id %q already exists: use update_section to change it, or give the new one a different id", id)
 		}
 		out := append([]map[string]any{}, secs...)
 		switch {
@@ -221,7 +221,7 @@ func (t *chatTurn) appDefAddSection(args map[string]any) (string, error) {
 		}
 		i := findSectionByID(out, after)
 		if i < 0 {
-			return nil, fmt.Errorf("no section with id %q to insert after — this app has: %s", after, sectionIDList(secs))
+			return nil, fmt.Errorf("no section with id %q to insert after, this app has: %s", after, sectionIDList(secs))
 		}
 		out = append(out[:i+1], append([]map[string]any{add}, out[i+1:]...)...)
 		return out, nil
@@ -234,15 +234,15 @@ func (t *chatTurn) appDefAddSection(args map[string]any) (string, error) {
 func (t *chatTurn) appDefRemoveSection(args map[string]any) (string, error) {
 	id := strings.TrimSpace(stringArg(args, "section_id"))
 	if id == "" {
-		return "", errors.New("section_id is required — the id of the section to remove (app_def action=get lists them)")
+		return "", errors.New("section_id is required: the id of the section to remove (app_def action=get lists them)")
 	}
 	return t.applySectionEdit(args, "remove_section "+id, func(secs []map[string]any) ([]map[string]any, error) {
 		i := findSectionByID(secs, id)
 		if i < 0 {
-			return nil, fmt.Errorf("no section with id %q — this app has: %s", id, sectionIDList(secs))
+			return nil, fmt.Errorf("no section with id %q, this app has: %s", id, sectionIDList(secs))
 		}
 		if len(secs) == 1 {
-			return nil, errors.New("that is the app's only section — an app needs at least one; delete the app instead, or update_section it into what you want")
+			return nil, errors.New("that is the app's only section: an app needs at least one; delete the app instead, or update_section it into what you want")
 		}
 		out := append([]map[string]any{}, secs[:i]...)
 		return append(out, secs[i+1:]...), nil

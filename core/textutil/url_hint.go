@@ -26,10 +26,10 @@ func SameOriginURLHint(target string) string {
 		return ""
 	}
 	if slug := customAppSlug(t); slug != "" {
-		return " — that is a path on THIS server, not a public URL. It looks like your own app: to check that it renders, call app_def(action=\"verify\", id=\"" +
+		return ", that is a path on THIS server, not a public URL. It looks like your own app: to check that it renders, call app_def(action=\"verify\", id=\"" +
 			slug + "\") (loads it in a real browser and reports JS errors); to show it to the user, call show_html(url=\"" + t + "\")."
 	}
-	return " — that is a path on THIS server, not a public URL. These tools reach the public internet. To display a page from this server to the user, call show_html(url=\"" + t + "\")."
+	return ", that is a path on THIS server, not a public URL. These tools reach the public internet. To display a page from this server to the user, call show_html(url=\"" + t + "\")."
 }
 
 // customAppSlug extracts the app slug from a /apps/<slug>/… path, or "" when

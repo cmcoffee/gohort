@@ -7,9 +7,9 @@ call. This replaces the flow shipped in v0.6.537, which works and is confusing.
 
 Mapping a command is one job. It is currently spread across three surfaces:
 
-1. **Map commands** — a chat on the store row. Builder probes the binary and
+1. **Map commands**: a chat on the store row. Builder probes the binary and
    proposes tools.
-2. **Tools** — a picker on the same row, where you bind a proposal to the store.
+2. **Tools**: a picker on the same row, where you bind a proposal to the store.
    The binding is the approval.
 3. The **global tools list**, where the proposal also shows up, attached to
    nothing, reading as orphaned.
@@ -41,18 +41,18 @@ folder, and the interface models neither.
 
 Three nouns, each owning the next.
 
-**Store** — a folder. Already exists.
+**Store**: a folder. Already exists.
 
-**Command** — a registered binary belonging to one store. Already exists.
+**Command**: a registered binary belonging to one store. Already exists.
 
-**Toolbox** — what mapping produces: the actions one binary can perform, under
+**Toolbox**, what mapping produces: the actions one binary can perform, under
 one name. New, and the reason the user asked for it: a binary is one thing, so
 its actions should be one thing, sitting next to the command they came from
 rather than scattered as loose tools in a global list.
 
 A toolbox is **attached to stores**, plural. `capture-tools` mapped once from
 `/opt/bin/cap` serves every folder of captures. That attachment is what says
-where it may run, and it is the only grant involved — no per-store tool
+where it may run, and it is the only grant involved: no per-store tool
 authority, no separate approval concept.
 
 This also answers "global to the store" better than the current answer does. The
@@ -64,7 +64,7 @@ re-mapping.
 
 An orphan is a record nothing points at. Under the model, a toolbox is reached
 from the command it was mapped from, which is reached from the store it belongs
-to. There is no state in which it exists and nothing explains it — the worst
+to. There is no state in which it exists and nothing explains it: the worst
 case is a toolbox attached to no store yet, which reads as *not attached*, on
 the row of the command it maps, next to a button that attaches it.
 
@@ -98,7 +98,7 @@ to the command's own row. What it produced is on that row. Nothing has to be
 found somewhere else afterwards.
 
 Enabling actions is per-action on the toolbox, which the existing
-`TempToolAction.Disabled` already supports — quarantining one action without
+`TempToolAction.Disabled` already supports: quarantining one action without
 touching the rest. That is a better fit than the current all-or-nothing bind: an
 agent probing a binary will propose things worth having and things worth
 refusing, and the admin should be able to keep six of eight.
@@ -107,14 +107,14 @@ refusing, and the admin should be able to keep six of eight.
 
 **Toolbox mode is HTTP-only.** `dispatchToolboxModeTempTool` builds a synthetic
 tool with `Mode: TempToolModeAPI` and calls `dispatchAPIModeTempTool`;
-`TempToolAction` carries `URLTemplate`, `Method`, `BodyTemplate`, `Headers` —
+`TempToolAction` carries `URLTemplate`, `Method`, `BodyTemplate`, `Headers`
 every field is an HTTP field. There is no way today to express "this action runs
 a command line".
 
 So the model needs `TempToolAction` to gain a shell kind: a `CommandTemplate`
 alongside `URLTemplate`, and a dispatcher branch that runs it the way
 `dispatchShellModeTempTool` does. This is the load-bearing change, and it is a
-change to a shared type — it wants its own review, separate from the filestore
+change to a shared type: it wants its own review, separate from the filestore
 work that consumes it.
 
 Worth doing regardless of this feature: a toolbox that can only wrap an API is
@@ -123,7 +123,7 @@ as "several related endpoints under one name".
 
 ## Safety, and where it differs from today
 
-A registered command execs with **no shell** — the binary, the folder and the
+A registered command execs with **no shell**: the binary, the folder and the
 input are separate argv entries. A minted shell tool currently does not: its
 `CommandTemplate` goes through `RunSandboxedShell`, so mapping a
 carefully-argv-exec'd command produces something looser than the thing it maps.
@@ -142,7 +142,7 @@ grant.
 *(Built, v0.6.539-543.)*
 
 1. **`TempToolAction` learns shell.** A `CommandTemplate` field and a dispatcher
-   branch, argv-only. Reviewed on its own — it is a shared type.
+   branch, argv-only. Reviewed on its own: it is a shared type.
 2. **Toolbox records, attached to stores.** Replaces `Store.Toolset` and the
    store-scoped tool table from v0.6.536-537. `Store.Toolboxes []string`;
    toolboxes stored once, referenced by many.
@@ -151,8 +151,8 @@ grant.
    against the command it was opened from, and the row shows it on return.
 5. **Retire the global-list appearance.** A mapped toolbox is not a deployment
    tool and should not be listed as one. This turned out to hold by
-   construction — toolboxes live in filestore's own table and are never written
-   to the persistent tool pool the admin tool pages enumerate — so what step 5
+   construction: toolboxes live in filestore's own table and are never written
+   to the persistent tool pool the admin tool pages enumerate, so what step 5
    actually needed was a guard against somebody later "helpfully" writing one
    there too, and the other half of the same idea: if a toolbox is not in the
    deployment list, the FOLDER is the only place it can be seen, so the stores
@@ -227,7 +227,7 @@ provenance fields and a column that explains them.
 
 Reuse. One binary mapped once could be attached to several folders. That was
 worth less than it looked: a command is registered per folder already, so a
-second folder was never free — it cost a registration, and the attachment only
+second folder was never free: it cost a registration, and the attachment only
 saved the *conversation*. If it bites, the answer is a "copy the mapping from…"
 action on the command row: still one record, still one place to look.
 
@@ -235,7 +235,7 @@ action on the command row: still one record, still one place to look.
 
 `MigrateToolboxesOntoCommands` runs at startup. Each stored toolbox is folded
 onto the command it names, and the folder's attachment comes across AS the
-approval — an admin who approved something should not have to approve it again
+approval: an admin who approved something should not have to approve it again
 under a new name. A toolbox attached nowhere arrives unapproved; one whose
 command is gone is dropped. Idempotent, and the old table is emptied only after
 the command is written.
@@ -246,5 +246,5 @@ Both wrong versions were wrong the same way: the mapping was given a life of its
 own, and then an interface had to exist to reconnect it to the thing it had
 never been separable from. The first version scattered it into a global list;
 the second gave it a table beside its own command. The question that would have
-caught both is *can this record exist without the one it describes?* — and if
+caught both is *can this record exist without the one it describes?*, and if
 not, it is fields, not a noun.

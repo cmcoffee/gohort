@@ -180,7 +180,7 @@ func resolvePeerTier(want string) (peerServableTier, error) {
 	tiers := peerServableTiers()
 	if len(tiers) == 0 {
 		return peerServableTier{}, fmt.Errorf(
-			"this instance has no local model to lend — inference sharing serves llama.cpp and ollama only, " +
+			"this instance has no local model to lend: inference sharing serves llama.cpp and ollama only, " +
 				"because relaying a hosted provider would spend this operator's API key on a peer's prompts")
 	}
 	want = strings.TrimSpace(want)
@@ -200,7 +200,7 @@ func resolvePeerTier(want string) (peerServableTier, error) {
 		names = append(names, t.Model+" ("+t.Tier+")")
 	}
 	return peerServableTier{}, fmt.Errorf(
-		"this instance does not serve %q — it serves: %s. Refused rather than answered from a different model, "+
+		"this instance does not serve %q, it serves: %s. Refused rather than answered from a different model, "+
 			"which would return text the caller attributes to a model that never ran",
 		want, strings.Join(names, ", "))
 }
@@ -558,7 +558,7 @@ func ResolveModelProvider(cfg LLMProviderConfig, provider string) (LLMProviderCo
 	}
 	p, ok := PeerFromProvider(provider)
 	if !ok {
-		return cfg, fmt.Errorf("no peer named %q is registered — add it under Peers first",
+		return cfg, fmt.Errorf("no peer named %q is registered: add it under Peers first",
 			strings.TrimPrefix(provider, peerProviderPrefix))
 	}
 	if !p.Offers(PeerCapModels) {

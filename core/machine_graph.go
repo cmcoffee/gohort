@@ -151,7 +151,7 @@ func (d MachineDef) Graph() WorkflowGraph {
 			}
 			g.Edges = append(g.Edges, WorkflowEdge{
 				From: p.Name, To: t, Style: EdgeBack, Label: "may exit",
-				Note: "this phase may be moved to " + t + " — and, because it lists its exits, nowhere else",
+				Note: "this phase may be moved to " + t + ", and, because it lists its exits, nowhere else",
 			})
 			drawn[t] = true
 		}
@@ -170,7 +170,7 @@ func (d MachineDef) Graph() WorkflowGraph {
 		switch {
 		case len(bounded) == 0:
 			g.Legend = append(g.Legend,
-				"Any phase can move to any other with change_phase — not drawn, because it connects everything to everything.")
+				"Any phase can move to any other with change_phase: not drawn, because it connects everything to everything.")
 		case len(bounded) < len(d.Phases):
 			g.Legend = append(g.Legend,
 				"\""+strings.Join(bounded, "\", \"")+"\" may only move where their dotted arrows go. "+

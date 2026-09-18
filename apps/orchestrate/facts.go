@@ -78,7 +78,7 @@ func (t *chatTurn) storeFactNote(note string, domain ClaimDomain) (string, error
 	// picture under a NAME makes image#<name> valid indefinitely, which is what
 	// the note was reaching for.
 	if refs := TransientImageRefs(note); len(refs) > 0 {
-		return "", fmt.Errorf("not saved: %s %s a handle that will stop resolving. image#N is a POSITION in the recent list (it means a different picture as new ones arrive) and media#N lasts only the turn it arrived on, but this note is kept forever — so it would point at the wrong pictures within a few turns while still reading as fact. If these pictures matter later, keep each one under a name first (image action=\"keep\", name=…), then write the note using image#<name>, which stays valid. If the note is really about this conversation rather than something durable, don't pin it at all",
+		return "", fmt.Errorf("not saved: %s %s a handle that will stop resolving. image#N is a POSITION in the recent list (it means a different picture as new ones arrive) and media#N lasts only the turn it arrived on, but this note is kept forever, so it would point at the wrong pictures within a few turns while still reading as fact. If these pictures matter later, keep each one under a name first (image action=\"keep\", name=…), then write the note using image#<name>, which stays valid. If the note is really about this conversation rather than something durable, don't pin it at all",
 			strings.Join(refs, ", "), map[bool]string{true: "are", false: "is"}[len(refs) > 1])
 	}
 	// Pass the agent's memory mode + worker chat so: (a) a changed fact
@@ -138,7 +138,7 @@ func explainRetiredHole(db Database, namespace, query string) string {
 	var b strings.Builder
 	b.WriteString("No live fact matches, but you previously stored (now retired):\n")
 	for _, f := range matches {
-		fmt.Fprintf(&b, "- %q — %s", f.Note, RetireReasonLabel(f.Reason))
+		fmt.Fprintf(&b, "- %q: %s", f.Note, RetireReasonLabel(f.Reason))
 		if !f.RetiredAt.IsZero() {
 			fmt.Fprintf(&b, " on %s", f.RetiredAt.Format("2006-01-02"))
 		}
@@ -149,7 +149,7 @@ func explainRetiredHole(db Database, namespace, query string) string {
 		}
 		b.WriteString(".\n")
 	}
-	b.WriteString("\nTreat retired notes as historical, not current — verify before relying on them.")
+	b.WriteString("\nTreat retired notes as historical, not current: verify before relying on them.")
 	return b.String()
 }
 

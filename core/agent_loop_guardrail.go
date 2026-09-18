@@ -260,7 +260,7 @@ func guardrailRejectionReply(cfg AgentLoopConfig, reason string, history []Messa
 		if reply := strings.TrimSpace(cfg.GuardrailReject(reason, lastUserRequest(history))); reply != "" {
 			return reply
 		}
-		Debug("[agent_loop] guardrail rejection model returned nothing — using the canned decline")
+		Debug("[agent_loop] guardrail rejection model returned nothing: using the canned decline")
 	}
 	return guardrailSafeFallbackReply(cfg.GuardrailDeclines)
 }
@@ -370,7 +370,8 @@ func init() {
 		Key:      "tune_guardrail_action_arg_chars",
 		Category: "Limits",
 		Label:    "Guardrail: argument text read per tool call",
-		Help:     "How much of each argument the pre-action guardrail check reads when judging a consequential tool call. A rule about the CONTENT of what an agent sends is applied to this much of it — raise it if your rules need to see long message bodies or documents, at the cost of a bigger check on every consequential call. The whole candidate is additionally capped at four times this. Does not affect the reply check, which always sees the complete reply.",
+		Help:     "How much of each argument the pre-action guardrail check reads.",
+		Detail:   "A rule about the CONTENT of what an agent sends is applied to this much of it. Raise it if your rules need to see long message bodies or documents, at the cost of a bigger check on every consequential call. The whole candidate is additionally capped at four times this.\n\nIt does not affect the reply check, which always sees the complete reply.",
 		Kind:     KindInt,
 		Default:  guardrailArgCharsDefault,
 		Min:      200,

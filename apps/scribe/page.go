@@ -19,7 +19,7 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 		ItemKey:   "id",
 		ItemLabel: "title",
 		ListTitle: "Documents",
-		ListEmpty: "Nothing yet — create a guide or an article.",
+		ListEmpty: "Nothing yet: create a guide or an article.",
 		DeleteURL: "guide?id={id}",
 		NewButton: ui.ModalButton{
 			Label: "New",
@@ -29,8 +29,10 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 				SubmitLabel: "Create",
 				Fields: []ui.FormField{
 					{Field: "kind", Label: "Kind", Type: "select", Options: []ui.SelectOption{
-						{Value: "guide", Label: "Guide", Help: "Many sections with a table of contents. The Guide Author adds and edits sections; you edit any section in place."},
-						{Value: "article", Label: "Article", Help: "One body under a title, with an optional header image. Type into it directly, or have the Guide Author write it. Starts private."},
+						{Value: "guide", Label: "Guide", Help: "Many sections with a table of contents.",
+							Detail: "The Guide Author adds and edits sections; you edit any section in place."},
+						{Value: "article", Label: "Article", Help: "One body under a title, with an optional header image. Starts private.",
+							Detail: "Type into it directly, or have the Guide Author write it."},
 					}},
 					{Field: "title", Label: "Title", Type: "text", Placeholder: "e.g. Getting Started with Kubernetes"},
 					{Field: "subtitle", Label: "Subtitle", Type: "text", Placeholder: "Optional one-line description"},
@@ -115,7 +117,7 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 					Text: "Reorganize this guide into the clearest reading order for someone new to the topic: " +
 						"overview and prerequisites first, then setup and steps in sequence, then advanced and reference material, " +
 						"with troubleshooting or FAQ last. Only change the order; don't rewrite any section's content."},
-				{Label: "Something else", Input: true, Placeholder: "e.g. move troubleshooting up front — that's what people open this for",
+				{Label: "Something else", Input: true, Placeholder: "e.g. move troubleshooting up front: that's what people open this for",
 					Help: "Say how you want it ordered.",
 					// Seeded with the rule the default enforces, so the common
 					// edit ("…but keep X first") is a change to one clause rather
@@ -144,15 +146,15 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 			// section" meant not using it.
 			{Label: "Update from sources", Kind: "compose", ComposeTitle: "Update from linked sources", ComposeOptions: []ui.ComposeOption{
 				{Label: "Every section", Help: "Check each section against the linked sources and revise what has drifted.",
-					Text: "Update this guide so its sections reflect its LINKED SOURCES — the attached knowledge collections and reference sources — as they stand right now.\n\n" +
+					Text: "Update this guide so its sections reflect its LINKED SOURCES (the attached knowledge collections and reference sources) as they stand right now.\n\n" +
 						"1. Call list_sections to see the current structure.\n" +
 						"2. For the guide's subject and each section, use search_knowledge and pull_reference to gather what the linked sources CURRENTLY say.\n" +
-						"3. Where a section is outdated or contradicted by the sources, call edit_section to revise it — grounded strictly in the sources, carrying any citations. Where the sources cover something important the guide is missing, add_section for it.\n" +
-						"4. Leave sections that already match their sources unchanged — don't rewrite for the sake of it. Work ONLY from the guide's linked sources here; do not use web research.\n\n" +
+						"3. Where a section is outdated or contradicted by the sources, call edit_section to revise it: grounded strictly in the sources, carrying any citations. Where the sources cover something important the guide is missing, add_section for it.\n" +
+						"4. Leave sections that already match their sources unchanged: don't rewrite for the sake of it. Work ONLY from the guide's linked sources here; do not use web research.\n\n" +
 						"When done, reply with a short bulleted summary of exactly which sections you changed or added and why. If nothing needed changing, say so plainly."},
-				{Label: "Something else", Input: true, Placeholder: "e.g. only the Install section — the rest is still right",
+				{Label: "Something else", Input: true, Placeholder: "e.g. only the Install section: the rest is still right",
 					Help: "Say which sections, or what to look for.",
-					Text: "Update this guide from its LINKED SOURCES only — the attached knowledge collections and reference sources, not web research. Use search_knowledge and pull_reference to check, and edit_section to revise. "},
+					Text: "Update this guide from its LINKED SOURCES only: the attached knowledge collections and reference sources, not web research. Use search_knowledge and pull_reference to check, and edit_section to revise. "},
 			}},
 		},
 		// The agent writes sections via its tools; re-render the open guide when a
@@ -205,7 +207,7 @@ func (T *Scribe) servePage(w http.ResponseWriter, r *http.Request) {
 			InjectURL:    "chat/inject",
 			Markdown:     true,
 			LockActivity: true,
-			EmptyText:    "Ask me to draft or revise — e.g. \"Add an introduction\", \"Expand the setup section\", or \"Rewrite this as a runbook.\"",
+			EmptyText:    "Ask me to draft or revise: e.g. \"Add an introduction\", \"Expand the setup section\", or \"Rewrite this as a runbook.\"",
 			Placeholder:  "Ask the Guide Author…",
 		},
 	}
@@ -440,13 +442,13 @@ const guideSectionCtrlCSS = `<style>
 /* The section editor is where the writing actually happens, so its body field
    takes the whole modal rather than a fixed 16rem box with the rest of the
    dialog empty beneath it. The modal card is already a flex column capped at
-   88vh, and its body flexes, so growing means opting in here — min-height is
+   88vh, and its body flexes, so growing means opting in here: min-height is
    kept as the floor for a short viewport, where the body scrolls instead. */
 .guide-edit-field.guide-edit-grow { flex: 1 1 auto; min-height: 0; margin-bottom: 0; }
 .guide-edit-field.guide-edit-grow textarea { flex: 1 1 auto; min-height: min(24rem, 40vh); }
 .guide-edit-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.4rem; }
 /* Touch devices have no hover, so the hover-revealed section controls would be
-   unreachable — keep them visible there, and drop them out of the heading overlap
+   unreachable: keep them visible there, and drop them out of the heading overlap
    onto their own right-aligned row on narrow screens. */
 @media (hover: none) {
   .guide-sec-ctrls { opacity: 1; }
@@ -622,7 +624,7 @@ const guideSettingsAction = `function(ctx){
           // Private (no internet).
           var pcb = el('input', {type:'checkbox'}); if (d && d.private) pcb.checked = true;
           body.appendChild(el('label', {class:'guide-share-row'}, [pcb,
-            el('span', {text: "Private — no internet access. The assistant answers and edits only from this document's attached knowledge; web search and research are disabled, and every model call stays on the local worker."})]));
+            el('span', {text: "Private, no internet access. The assistant answers and edits only from this document's attached knowledge; web search and research are disabled, and every model call stays on the local worker."})]));
           // Sharing.
           body.appendChild(el('div', {class:'guide-set-head', text:'Sharing'}));
           var scb = el('input', {type:'checkbox'}); if (d && d.shared) scb.checked = true;
@@ -631,8 +633,8 @@ const guideSettingsAction = `function(ctx){
           var rEdit = el('input', {type:'radio', name:'guide-share-mode', value:'edit'});
           if ((d && d.mode) === 'edit') rEdit.checked = true; else rView.checked = true;
           var modeWrap = el('div', {class:'guide-share-modes'}, [
-            el('label', {class:'guide-share-mode'}, [rView, el('span', {text:'View only — read & export'})]),
-            el('label', {class:'guide-share-mode'}, [rEdit, el('span', {text:'Can edit — edit sections & co-author'})]),
+            el('label', {class:'guide-share-mode'}, [rView, el('span', {text:'View only, read & export'})]),
+            el('label', {class:'guide-share-mode'}, [rEdit, el('span', {text:'Can edit, edit sections & co-author'})]),
           ]);
           body.appendChild(modeWrap);
           function syncModes(){ modeWrap.style.display = scb.checked ? 'flex' : 'none'; }
@@ -674,7 +676,7 @@ const guidePublishAction = `function(ctx){
       fetch('publish/state?' + qp, {credentials:'same-origin'}).then(function(r){ return r.json(); }).then(function(d){
         window.uiOpenSimpleModal({title:'Publish guide', width:'760px', mount: function(body){
           if (!d || !d.configured){
-            body.appendChild(el('p', {class:'guide-kn-intro', text:'No publish destinations are configured on this deployment yet. An admin sets them up in Admin > Publishing — a Confluence site, or any endpoint that accepts a posted document.'}));
+            body.appendChild(el('p', {class:'guide-kn-intro', text:'No publish destinations are configured on this deployment yet. An admin sets them up in Admin > Publishing: a Confluence site, or any endpoint that accepts a posted document.'}));
             return;
           }
           if (!d.can_publish){
@@ -711,7 +713,7 @@ const guidePublishAction = `function(ctx){
           window.uiMountComponent({
             type: 'agent_loop_panel',
             // Names the guide being published. This panel is mounted inside a
-            // modal, not inside the workbench, so {scope} has no host to read —
+            // modal, not inside the workbench, so {scope} has no host to read
             // the id the modal was opened for is carried directly instead.
             send_url: 'publish/chat/send?guide=' + encodeURIComponent(gid),
             cancel_url: 'chat/cancel',

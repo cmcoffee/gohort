@@ -16,7 +16,7 @@ import (
 func buildRepoAuditPrompt(a Appliance) string {
 	return "You are auditing servitor's stored knowledge about the code repository " + repoDisplayTarget(a) + ", which was JUST re-pulled and may have changed. Your only job is to keep the stored knowledge TRUE to the current code, both the knowledge docs and the discrete facts.\n\n" +
 		"Verify every claim against the CURRENT code using search_code, read_file, and list_dir, then:\n" +
-		"1. DOCS: if the code now contradicts a doc (renamed/removed/added subsystems, changed data model, moved entry points, new or dropped services), rewrite the corrected version with update_doc(doc, content) — the FULL corrected markdown, not a diff. If a doc still matches, leave it.\n" +
+		"1. DOCS: if the code now contradicts a doc (renamed/removed/added subsystems, changed data model, moved entry points, new or dropped services), rewrite the corrected version with update_doc(doc, content), the FULL corrected markdown, not a diff. If a doc still matches, leave it.\n" +
 		"2. FACTS: if a stored fact's value is now different, correct it with store_fact(key, value). If a fact's subject no longer exists in the code (a removed service, dropped table, deleted route), retire it with retire_fact(key). Only retire a fact you have VERIFIED is gone from the code; if unsure, leave it.\n\n" +
 		"Correct, do not re-derive. Preserve everything still accurate and change only what the code contradicts; do not reword for style, expand scope, or invent new docs or facts. If nothing has changed, make no changes. When finished, give a one-paragraph summary of what you corrected or retired and what you verified as still current."
 }
@@ -35,7 +35,7 @@ func (T *Servitor) runRepoMemoryAudit(ctx context.Context, sid, user string, udb
 	docs := allDocs(udb, appliance.ID)
 	factsBlock := strings.TrimSpace(scopedFactsBlock(udb, appliance))
 	if len(docs) == 0 && factsBlock == "" {
-		emit(sid, probeEvent{Kind: "status", Text: "No stored knowledge to validate yet — run Refresh to build it."})
+		emit(sid, probeEvent{Kind: "status", Text: "No stored knowledge to validate yet: run Refresh to build it."})
 		return
 	}
 
@@ -76,7 +76,7 @@ func (T *Servitor) runRepoMemoryAudit(ctx context.Context, sid, user string, udb
 			// writeDoc does not guard empty content, so refuse it here — an
 			// empty rewrite would erase a doc the audit was meant to preserve.
 			if len(content) < 20 {
-				return "Refused: content is empty or too short to be a real doc — not overwriting.", nil
+				return "Refused: content is empty or too short to be a real doc, not overwriting.", nil
 			}
 			writeDoc(udb, appliance.ID, doc, content)
 			corrected[doc] = true
@@ -89,7 +89,7 @@ func (T *Servitor) runRepoMemoryAudit(ctx context.Context, sid, user string, udb
 	storeFact := AgentToolDef{
 		Tool: Tool{
 			Name:        "store_fact",
-			Description: "Correct (or add) a discrete fact — a short key: value about this system — when the current code shows the stored value is now different. Overwrites the existing value for that key. Keep it specific: a version, port, path, table, or framework name.",
+			Description: "Correct (or add) a discrete fact (a short key: value about this system), when the current code shows the stored value is now different. Overwrites the existing value for that key. Keep it specific: a version, port, path, table, or framework name.",
 			Parameters: map[string]ToolParam{
 				"key":   {Type: "string", Description: "The fact key, e.g. \"http_port\" or \"orm\"."},
 				"value": {Type: "string", Description: "The corrected value, verified against the current code."},
@@ -113,7 +113,7 @@ func (T *Servitor) runRepoMemoryAudit(ctx context.Context, sid, user string, udb
 	retireFact := AgentToolDef{
 		Tool: Tool{
 			Name:        "retire_fact",
-			Description: "Retire a stored fact whose subject no longer exists in the current code — a removed service, dropped table, deleted route. Only retire a fact you have VERIFIED is gone from the code; if unsure, leave it. Use the exact key from the stored facts list.",
+			Description: "Retire a stored fact whose subject no longer exists in the current code: a removed service, dropped table, deleted route. Only retire a fact you have VERIFIED is gone from the code; if unsure, leave it. Use the exact key from the stored facts list.",
 			Parameters: map[string]ToolParam{
 				"key": {Type: "string", Description: "The exact fact key to retire, from the stored facts list."},
 			},
@@ -129,7 +129,7 @@ func (T *Servitor) runRepoMemoryAudit(ctx context.Context, sid, user string, udb
 				emit(sid, probeEvent{Kind: "status", Text: "Retired obsolete fact: " + key})
 				return "Retired " + key + ".", nil
 			}
-			return "No stored fact with key " + key + " (already gone, or wrong key — check the stored facts list).", nil
+			return "No stored fact with key " + key + " (already gone, or wrong key: check the stored facts list).", nil
 		},
 	}
 
@@ -150,7 +150,7 @@ func (T *Servitor) runRepoMemoryAudit(ctx context.Context, sid, user string, udb
 	})
 
 	if ctx.Err() != nil {
-		emit(sid, probeEvent{Kind: "status", Text: "Memory validation cancelled — any docs already corrected this run are kept."})
+		emit(sid, probeEvent{Kind: "status", Text: "Memory validation cancelled: any docs already corrected this run are kept."})
 		return
 	}
 	if err != nil {

@@ -423,7 +423,7 @@
         // it wants breaking up into the slots below.
         head.appendChild(el('span', {
           class: 'ui-sec-title-fixed intro',
-          title: 'Text ahead of the first heading. Move it into sections, or leave it — it stays at the top either way.',
+          title: 'Text ahead of the first heading. Move it into sections, or leave it: it stays at the top either way.',
         }, ['Unsectioned']));
       } else if (s.spec) {
         head.appendChild(el('span', {class: 'ui-sec-title-fixed'}, [s.title]));
@@ -557,7 +557,7 @@
       body.innerHTML = '';
       if (!s.items.length) {
         body.appendChild(el('div', {class: 'ui-rules-empty'},
-          [hintFor(s) || 'Nothing here yet — add an item below.']));
+          [hintFor(s) || 'Nothing here yet: add an item below.']));
       }
       s.items.forEach(function(it, i) {
         var row = el('div', {class: 'ui-rules-row'});
@@ -721,8 +721,9 @@
       else if (s.mode === 'list' || s.mode === 'steps') renderItems(s, body, null);
       else renderProse(s, body);
       wrap.appendChild(body);
-      if (s.spec && s.spec.help) {
-        wrap.appendChild(el('div', {class: 'ui-sec-help'}, [s.spec.help]));
+      if (s.spec && (s.spec.help || s.spec.detail)) {
+        wrap.appendChild(window.uiAttachInfo(
+          el('div', {class: 'ui-sec-help'}, [s.spec.help || '']), s.spec.detail));
       }
       return wrap;
     }

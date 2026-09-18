@@ -114,7 +114,7 @@ func UnfulfilledDeliveryReply(refs []string) string {
 	if named := strings.Join(refs, ", "); named != "" {
 		what = named
 	}
-	return fmt.Sprintf("I said I was sending %s, and I was wrong — it was never made, so there's nothing to send. Say the word and I'll have another go at it.", what)
+	return fmt.Sprintf("I said I was sending %s, and I was wrong: it was never made, so there's nothing to send. Say the word and I'll have another go at it.", what)
 }
 
 // StripToolCallMarkup removes fake tool-call markup from streamed
@@ -519,7 +519,7 @@ func containsActionPromise(content string) bool {
 // small models kept attributing them to the human and answering THEM
 // ("You're right, I dispatched Comedian 120 times. My bad.") instead of the
 // actual user. The tag makes the origin explicit and forbids replying to it.
-const frameworkNoticeTag = "[AUTOMATED FRAMEWORK NOTICE — not written by the user, who cannot see it. Do not reply to it, apologize, or address anyone about it; silently adjust and continue.] "
+const frameworkNoticeTag = "[AUTOMATED FRAMEWORK NOTICE: not written by the user, who cannot see it. Do not reply to it, apologize, or address anyone about it; silently adjust and continue.] "
 
 // isGuardStopResult reports whether a nominally-successful tool result is
 // actually a framework guard verdict ("STOP — you have already…") rather than
@@ -531,7 +531,7 @@ func isGuardStopResult(content string) bool {
 	if len(head) > 600 {
 		head = head[:600]
 	}
-	return strings.Contains(head, "STOP — you")
+	return strings.Contains(head, "STOP: you")
 }
 
 // endsWithCallAnnouncement detects the announce-then-stop failure: the reply's

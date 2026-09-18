@@ -682,7 +682,7 @@ func (d MachineDef) Validate() error {
 	case 1:
 		return Error(probs[0])
 	}
-	return Error("this machine has " + strconv.Itoa(len(probs)) + " problems — fix them all in one revision:\n- " + strings.Join(probs, "\n- "))
+	return Error("this machine has " + strconv.Itoa(len(probs)) + " problems, fix them all in one revision:\n- " + strings.Join(probs, "\n- "))
 }
 
 // Advice is what is worth fixing but does not stop a machine running —
@@ -714,10 +714,10 @@ func (d MachineDef) Advice() []string {
 		}
 		if len(p.Tools) > 0 && strings.TrimSpace(p.Agent) != "" {
 			out = append(out, "step "+name+": it names tools AND delegates. A delegate works from its own catalog, "+
-				"so the list here does nothing — narrow the delegate itself, or drop the delegate and let this step do the work.")
+				"so the list here does nothing: narrow the delegate itself, or drop the delegate and let this step do the work.")
 		}
 		if PhaseReach(p) == ReachNone && strings.TrimSpace(p.Agent) == "" && wantsToLook(p.Prompt) {
-			out = append(out, "step "+name+": the instructions send it looking, but its reach is set to nothing — "+
+			out = append(out, "step "+name+": the instructions send it looking, but its reach is set to nothing: "+
 				"it will answer from the prompt alone. Change its reach under \"How this step runs\", or give the step to an "+
 				"agent that already has what it needs.")
 		}
@@ -751,7 +751,7 @@ func promptFormatAdvice(name string) string { return DeclaredOutputPromptAdvice(
 // sentence reads in the vocabulary of whatever is reporting it.
 func DeclaredOutputPromptAdvice(kind, name string) string {
 	return kind + " " + name + ": the prompt asks for JSON, but this " + kind + " already declares " +
-		"fields — the framework encodes them for you and validates what comes back. Delete the " +
+		"fields: the framework encodes them for you and validates what comes back. Delete the " +
 		"format instructions and the example, and say what to FIND instead. Two sets of " +
 		"formatting rules is how a model ends up returning a JSON string inside a JSON field."
 }
@@ -920,7 +920,7 @@ func (d MachineDef) problems() []string {
 		// The inverse of the rule below, and worth its own sentence: a
 		// step that waits for a person, in a run with no person, is a
 		// step the walk enters and cannot leave.
-		probs = append(probs, "this machine RUNS unattended, so no step may wait for the person — "+
+		probs = append(probs, "this machine RUNS unattended, so no step may wait for the person: "+
 			strings.Join(residentNames(d), ", ")+" would stop the run with nobody there to continue it. "+
 			"Turn off \"the conversation waits here\", or turn off unattended.")
 	case d.Unattended && !d.hasTerminalPhase():
@@ -928,11 +928,11 @@ func (d MachineDef) problems() []string {
 		// an unattended one ends by running out of steps. Without a step
 		// that hands off nowhere there is no result to return, and the
 		// run would walk until the backstop.
-		probs = append(probs, "this machine RUNS unattended but no step finishes it — every step hands on to another, "+
+		probs = append(probs, "this machine RUNS unattended but no step finishes it: every step hands on to another, "+
 			"so the run has no result and would walk until it hits the "+strconv.Itoa(MaxUnattendedTransitions)+"-step ceiling. "+
 			"Leave \"then go to\" empty on the step that produces the answer.")
 	case !d.Unattended && resident == 0:
-		probs = append(probs, "no step waits for the person — a machine with nowhere for a turn to land is a pipeline, not a machine. Turn on \"the conversation waits here\" (resident) on the step that replies.")
+		probs = append(probs, "no step waits for the person: a machine with nowhere for a turn to land is a pipeline, not a machine. Turn on \"the conversation waits here\" (resident) on the step that replies.")
 	}
 	// Accumulators join the same namespaces phases live in, so
 	// {state:answers} and {state:answers.count} resolve like any other
@@ -980,15 +980,15 @@ func (d MachineDef) accumulatorProblems(taken map[string]bool) []string {
 			from := strings.TrimSpace(a.From)
 			switch {
 			case name == "":
-				probs = append(probs, "step "+p.Name+": a contribution with no list name — say which list it adds to")
+				probs = append(probs, "step "+p.Name+": a contribution with no list name, say which list it adds to")
 			case strings.Contains(name, "."):
 				probs = append(probs, "step "+p.Name+": list name "+strconv.Quote(name)+" may not contain a dot, for the same reason a step name may not: {state:a.b} would be ambiguous")
 			case taken[name]:
-				probs = append(probs, "step "+p.Name+": list "+strconv.Quote(name)+" has the same name as a step. They share the blackboard, so one would overwrite the other — rename the list.")
+				probs = append(probs, "step "+p.Name+": list "+strconv.Quote(name)+" has the same name as a step. They share the blackboard, so one would overwrite the other: rename the list.")
 			}
 			switch {
 			case from == "":
-				probs = append(probs, "step "+p.Name+": contribution to "+strconv.Quote(name)+" says nothing about WHAT it adds — name one of this step's own output fields in \"from\".")
+				probs = append(probs, "step "+p.Name+": contribution to "+strconv.Quote(name)+" says nothing about WHAT it adds: name one of this step's own output fields in \"from\".")
 			case !declaredHere[from]:
 				probs = append(probs, "step "+p.Name+": contributes "+strconv.Quote(from)+" to "+strconv.Quote(name)+", but this step declares no such field. A step can only contribute what it produces.")
 			}
@@ -1063,22 +1063,22 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 	// somebody will set and then wonder about.
 	if tool := strings.TrimSpace(p.Tool); tool != "" {
 		if strings.TrimSpace(p.Prompt) != "" {
-			probs = append(probs, "step "+name+": a tool step takes args, not instructions — there is no model to instruct. Put the values in args.")
+			probs = append(probs, "step "+name+": a tool step takes args, not instructions, there is no model to instruct. Put the values in args.")
 		}
 		if p.Resident {
-			probs = append(probs, "step "+name+": a tool step cannot be where the conversation waits — it calls a tool and hands on. Give the reply to a step that answers.")
+			probs = append(probs, "step "+name+": a tool step cannot be where the conversation waits, it calls a tool and hands on. Give the reply to a step that answers.")
 		}
 		if strings.TrimSpace(p.Think) != "" || strings.TrimSpace(p.Model) != "" {
-			probs = append(probs, "step "+name+": think and model do not apply to a tool step — no model runs")
+			probs = append(probs, "step "+name+": think and model do not apply to a tool step, no model runs")
 		}
 		if PhaseReach(p) != ReachAll {
-			probs = append(probs, "step "+name+": reach does not apply to a tool step — it calls "+strconv.Quote(tool)+" and nothing else")
+			probs = append(probs, "step "+name+": reach does not apply to a tool step, it calls "+strconv.Quote(tool)+" and nothing else")
 		}
 		if len(p.Tools) > 0 {
 			probs = append(probs, "step "+name+": a tool step names the ONE tool it calls in \"tool\"; the tools list narrows a step that decides which to use, which this one does not")
 		}
 	} else if len(p.Args) > 0 {
-		probs = append(probs, "step "+name+": args belong to a tool step — name the tool it calls, or drop them")
+		probs = append(probs, "step "+name+": args belong to a tool step, name the tool it calls, or drop them")
 	}
 	if !validReach(p.Reach) {
 		probs = append(probs, "step "+name+": reach must be \"read\", \"none\", or empty to inherit everything, got "+strconv.Quote(p.Reach))
@@ -1094,16 +1094,16 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 		}
 		if toolrules.IsWorkflowControlTool(d) {
 			probs = append(probs, "step "+name+": cannot deny "+strconv.Quote(d)+
-				" — the workflow controls are how a step hands on, and a step that cannot reach them is stranded rather than restricted. Narrow what the step DOES with reach or tools instead.")
+				", the workflow controls are how a step hands on, and a step that cannot reach them is stranded rather than restricted. Narrow what the step DOES with reach or tools instead.")
 		}
 		for _, t := range p.Tools {
 			if strings.TrimSpace(t) == d {
-				probs = append(probs, "step "+name+": "+strconv.Quote(d)+" is in both tools and deny — deny wins, so the tools entry does nothing. Remove whichever one you did not mean.")
+				probs = append(probs, "step "+name+": "+strconv.Quote(d)+" is in both tools and deny: deny wins, so the tools entry does nothing. Remove whichever one you did not mean.")
 			}
 		}
 	}
 	if runners := phaseRunners(p); len(runners) > 1 {
-		probs = append(probs, "step "+name+" names "+strings.Join(runners, " and ")+" — a step is run by ONE thing. "+
+		probs = append(probs, "step "+name+" names "+strings.Join(runners, " and ")+", a step is run by ONE thing. "+
 			"An agent brings its own persona and tools; a pipeline is a fixed recipe; a machine is a whole run of its own. "+
 			"Keep whichever the step is really for.")
 	}
@@ -1119,20 +1119,20 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 		// but the finish line: the step that hands off nowhere is where
 		// the run stops and what it returns. The inverse rule (a run must
 		// HAVE one) is checked once for the machine, in problems().
-		probs = append(probs, "step "+name+" passes on but goes nowhere — a step the person never takes a turn in has to hand off somewhere. Set next, or list choices for it to decide between.")
+		probs = append(probs, "step "+name+" passes on but goes nowhere: a step the person never takes a turn in has to hand off somewhere. Set next, or list choices for it to decide between.")
 	}
 	if p.Resident && len(p.Output) > 0 {
 		// A resident phase's reply IS the user-facing message. Wrapping
 		// it in a JSON contract would hand the person a decoded envelope
 		// instead of an answer, so structure belongs on the transient
 		// phases that feed this one.
-		probs = append(probs, "step "+name+": output is not valid on a step the conversation waits in — its reply goes to the person, not to a decoder. Declare the structure on the step that feeds it.")
+		probs = append(probs, "step "+name+": output is not valid on a step the conversation waits in, its reply goes to the person, not to a decoder. Declare the structure on the step that feeds it.")
 	}
 	if strings.TrimSpace(p.Agent) != "" && p.Resident {
 		// A resident phase is where the conversation lives. Delegating it
 		// would mean the person is talking to something other than the
 		// agent they opened, without being told.
-		probs = append(probs, "step "+name+": agent is not valid on a step the conversation waits in — this is where the conversation lives, and handing it to a delegate means the person is talking to something they did not open. Delegate the step that does the work, and let this one report what came back.")
+		probs = append(probs, "step "+name+": agent is not valid on a step the conversation waits in, this is where the conversation lives, and handing it to a delegate means the person is talking to something they did not open. Delegate the step that does the work, and let this one report what came back.")
 	}
 	// The steps a deciding phase may choose between must be real, and the
 	// framework's own routing field must not collide with one the author
@@ -1141,9 +1141,9 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 	if len(p.Choices) > 0 {
 		switch {
 		case p.Resident:
-			probs = append(probs, "step "+name+": a step the conversation waits in cannot choose its next step by deciding — its reply goes to the person, not to a decoder. It leaves through change_phase or a guard.")
+			probs = append(probs, "step "+name+": a step the conversation waits in cannot choose its next step by deciding, its reply goes to the person, not to a decoder. It leaves through change_phase or a guard.")
 		case strings.TrimSpace(p.NextFrom) != "":
-			probs = append(probs, "step "+name+": it both routes on the field "+p.NextFrom+" and lists steps to choose between. Keep one — the field wins today, so the list is doing nothing.")
+			probs = append(probs, "step "+name+": it both routes on the field "+p.NextFrom+" and lists steps to choose between. Keep one: the field wins today, so the list is doing nothing.")
 		}
 		for _, t := range p.Choices {
 			if t = strings.TrimSpace(t); t != "" && !seen[t] {
@@ -1228,12 +1228,12 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 		// blank into a save-time answer.
 		for _, v := range []struct{ tok, why string }{
 			{"{input}", "the person's message is already in the conversation, and pinning it would rewrite the cached prompt every turn"},
-			{"{prev}", "it means the step run just before, within one turn — a step the conversation waits in IS the turn"},
+			{"{prev}", "it means the step run just before, within one turn: a step the conversation waits in IS the turn"},
 			{"{now}", "a clock in a pinned prompt rewrites the cached prompt every turn; the framework already stamps the time on the turn itself"},
 			{"{established}", "what earlier steps established is already composed into this step's block"},
 		} {
 			if strings.Contains(p.Prompt, v.tok) {
-				probs = append(probs, "step "+name+": "+v.tok+" is not available in a step the conversation waits in — "+v.why+". The stable variables ({original_input}, {user}, {agent}, {step}, {machine}) work here.")
+				probs = append(probs, "step "+name+": "+v.tok+" is not available in a step the conversation waits in: "+v.why+". The stable variables ({original_input}, {user}, {agent}, {step}, {machine}) work here.")
 			}
 		}
 	}

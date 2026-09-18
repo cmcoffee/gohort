@@ -278,7 +278,7 @@ func main() {
 			fmt.Printf("  %s -> %v\n", b, s)
 		}
 	}
-	fmt.Printf("\nOUT edges by kind: %d type(s) (each must MOVE or be restated — cannot be a hook), %d func(s), %d value(s)\n",
+	fmt.Printf("\nOUT edges by kind: %d type(s) (each must MOVE or be restated, cannot be a hook), %d func(s), %d value(s)\n",
 		len(outKind["type"]), len(outKind["func"]), len(outKind["value"]))
 	if len(outKind["type"]) > 0 {
 		var ts []string

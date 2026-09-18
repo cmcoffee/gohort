@@ -547,7 +547,7 @@
     // exactly the background the document is being written against.
     function openDocAssist(section, initial, apply) {
       window.uiOpenAssist({
-        title: (nameInput.value || 'Document') + (section ? ' — ' + section : ''),
+        title: (nameInput.value || 'Document') + (section ? ' · ' + section : ''),
         subtitle: section
           ? 'Drafting one section. The rest of the document is untouched.'
           : 'Drafting the whole document.',
@@ -1319,7 +1319,7 @@
           row.appendChild(input);
           if (values && values.length) {
             var picker = el('select', {class: 'ui-cw-var-picker'});
-            picker.appendChild(el('option', {value: ''}, ['— pick from library —']));
+            picker.appendChild(el('option', {value: ''}, ['(pick from library)']));
             values.forEach(function(val) {
               var label = val.name || '';
               if (val.desc) label += ' (' + val.desc + ')';

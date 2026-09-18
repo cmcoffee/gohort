@@ -192,7 +192,7 @@ func InitCostRates(db Database) {
 		Debug("[cost] rates loaded from database")
 		return
 	}
-	Debug("[cost] no rates configured — cost estimates will show 'rates not configured'")
+	Debug("[cost] no rates configured: cost estimates will show 'rates not configured'")
 }
 
 // AsJSON returns the rates as a JSON string, used by the admin UI

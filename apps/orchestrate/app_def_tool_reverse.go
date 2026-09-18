@@ -32,7 +32,7 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
 	spec, ok := LoadAppSpec(t.user, key)
 	if !ok {
-		return "", errors.New("no matching app — check the slug (app_def action=list)")
+		return "", errors.New("no matching app: check the slug (app_def action=list)")
 	}
 	records := appStoredRecords(t.user, spec)
 	// One script's body, on request. Bodies are omitted from the full view for
@@ -97,14 +97,14 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 		secs, exact := authoringSectionsFromPage(spec.Page)
 		if len(secs) == 0 {
 			out["page"] = json.RawMessage(spec.Page)
-			out["sections_note"] = "This app predates section storage and its page could not be reversed. `page` above is the RENDERED page — NOT valid input to action=update. Re-author the sections array from scratch (each section needs a `kind`); the next successful update stores it for real."
+			out["sections_note"] = "This app predates section storage and its page could not be reversed. `page` above is the RENDERED page: NOT valid input to action=update. Re-author the sections array from scratch (each section needs a `kind`); the next successful update stores it for real."
 			break
 		}
 		out["sections"] = secs
 		if exact {
-			out["sections_note"] = "Reconstructed from the stored page (this app predates section storage) — lossless for these section kinds. Edit and pass back to action=update."
+			out["sections_note"] = "Reconstructed from the stored page (this app predates section storage): lossless for these section kinds. Edit and pass back to action=update."
 		} else {
-			out["sections_note"] = "Reconstructed BEST-EFFORT from the stored page (this app predates section storage). Section kinds are right, but per-kind fields may be incomplete — check them against action=help before passing back to action=update, since update REPLACES the page with what you send."
+			out["sections_note"] = "Reconstructed BEST-EFFORT from the stored page (this app predates section storage). Section kinds are right, but per-kind fields may be incomplete: check them against action=help before passing back to action=update, since update REPLACES the page with what you send."
 		}
 	}
 	// Surface the logic seam so an update can inspect + revise it (scripts omitted
@@ -116,7 +116,7 @@ func (t *chatTurn) appDefGet(args map[string]any) (string, error) {
 			ds[i] = map[string]any{"name": d.Name, "language": d.Language, "capabilities": d.Capabilities, "script": appScriptSummary(d.Language, d.Script)}
 		}
 		out["data_sources"] = ds
-		out["scripts_note"] = "Script bodies are omitted here; get with script=<name> returns one. Edit a script in place with patch (find/replace) or replace_function, both with script=<name> — never re-send the whole data_sources/actions array to change one line."
+		out["scripts_note"] = "Script bodies are omitted here; get with script=<name> returns one. Edit a script in place with patch (find/replace) or replace_function, both with script=<name>: never re-send the whole data_sources/actions array to change one line."
 	}
 	if len(spec.Actions) > 0 {
 		acts := make([]map[string]any, len(spec.Actions))

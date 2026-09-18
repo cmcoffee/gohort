@@ -337,7 +337,7 @@ type installFrame struct {
 // running a new local subprocess. A nil Installer means server-push is off.
 func (c *wsClient) handleInstall(m installFrame) {
 	if c.installer == nil {
-		core.Warn("[ws-bridge] ignoring install frame — server-push not enabled on this daemon")
+		core.Warn("[ws-bridge] ignoring install frame: server-push not enabled on this daemon")
 		return
 	}
 	// Removes apply directly — tearing down is safe.
@@ -517,7 +517,7 @@ func capResult(result string) string {
 		return result
 	}
 	head := strings.ToValidUTF8(result[:maxResultBytes], "")
-	return head + fmt.Sprintf("\n\n[gohort-bridge: result truncated — was %d bytes, showing the first %d]", len(result), len(head))
+	return head + fmt.Sprintf("\n\n[gohort-bridge: result truncated, was %d bytes, showing the first %d]", len(result), len(head))
 }
 
 func (c *wsClient) sendResult(conn *websocket.Conn, id, result, errMsg string) {

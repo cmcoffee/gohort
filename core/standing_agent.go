@@ -692,7 +692,7 @@ func StartStandingScheduler() {
 		if p.Trigger == "schedule" {
 			defer func() {
 				if r := recover(); r != nil {
-					Log("[standing] run %s/%s PANICKED: %v — re-arming next fire anyway", p.Owner, p.Name, r)
+					Log("[standing] run %s/%s PANICKED: %v, re-arming next fire anyway", p.Owner, p.Name, r)
 				}
 				if cur, ok := GetStandingAgent(RootDB, p.Owner, p.Name); ok && !cur.Paused {
 					if err := ScheduleStandingAgent(RootDB, cur); err != nil {
@@ -703,11 +703,11 @@ func StartStandingScheduler() {
 		}
 		sa, ok := GetStandingAgent(RootDB, p.Owner, p.Name)
 		if !ok {
-			Log("[standing] no such standing agent %s/%s — dropping task", p.Owner, p.Name)
+			Log("[standing] no such standing agent %s/%s: dropping task", p.Owner, p.Name)
 			return
 		}
 		if sa.Paused {
-			Log("[standing] %s/%s is paused — skipping fire", p.Owner, p.Name)
+			Log("[standing] %s/%s is paused: skipping fire", p.Owner, p.Name)
 			return
 		}
 		// Dependency guard: if the target agent was deleted since the last fire,

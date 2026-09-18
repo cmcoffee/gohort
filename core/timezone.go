@@ -75,7 +75,7 @@ func ResolveZone(s string) (*time.Location, string, error) {
 	if loc, err := time.LoadLocation(raw); err == nil {
 		return loc, raw, nil
 	}
-	return nil, "", fmt.Errorf(`unknown timezone %q — use an IANA name like "America/New_York" or "Asia/Tokyo", a major city ("Tokyo", "London"), or a US abbreviation (EST/CST/MST/PST)`, raw)
+	return nil, "", fmt.Errorf(`unknown timezone %q: use an IANA name like "America/New_York" or "Asia/Tokyo", a major city ("Tokyo", "London"), or a US abbreviation (EST/CST/MST/PST)`, raw)
 }
 
 // commonTimezones is the curated shortlist offered in the timezone dropdowns —
@@ -169,7 +169,7 @@ func ApplyDeploymentTimezone(db Database) {
 	}
 	loc, iana, err := ResolveZone(name)
 	if err != nil {
-		Warn("[timezone] configured zone %q is invalid (%s) — using host zone %q", name, err, time.Local.String())
+		Warn("[timezone] configured zone %q is invalid (%s): using host zone %q", name, err, time.Local.String())
 		return
 	}
 	time.Local = loc

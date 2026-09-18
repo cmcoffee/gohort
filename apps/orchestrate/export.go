@@ -77,7 +77,7 @@ func (T *OrchestrateApp) handleSessionExport(w http.ResponseWriter, r *http.Requ
 		w.Header().Set("Content-Disposition", `attachment; filename="`+filenameBase+`.md"`)
 		_, _ = w.Write([]byte(body))
 	default:
-		http.Error(w, "unknown format — try md or json", http.StatusBadRequest)
+		http.Error(w, "unknown format: try md or json", http.StatusBadRequest)
 	}
 }
 
@@ -171,7 +171,7 @@ func renderSessionMarkdown(agent AgentRecord, sess ChatSession) string {
 // that have no store, or don't want the section).
 func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Database) string {
 	var b bytes.Buffer
-	fmt.Fprintf(&b, "# Session export — %s\n\n", sess.Title)
+	fmt.Fprintf(&b, "# Session export: %s\n\n", sess.Title)
 	fmt.Fprintf(&b, "- **Agent:** %s (id: %s)\n", agent.Name, agent.ID)
 	if agent.Description != "" {
 		fmt.Fprintf(&b, "- **Description:** %s\n", agent.Description)
@@ -197,7 +197,7 @@ func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Data
 	// missing span, so the export is complete in substance even when it cannot
 	// be complete in verbatim.
 	if st := exportCompaction(udb, agent.ID, sess.ID); st != nil {
-		fmt.Fprintf(&b, "\n> **Earlier turns are not reproduced verbatim.** This thread has been compacted %s: the messages before the first one below were folded into the running summary and archived to this agent's recall index, then dropped from the stored thread to bound its size. The summary follows; the verbatim tail starts after it. Nothing was lost by the export — ask the agent about an earlier turn and it can still recall it.\n",
+		fmt.Fprintf(&b, "\n> **Earlier turns are not reproduced verbatim.** This thread has been compacted %s: the messages before the first one below were folded into the running summary and archived to this agent's recall index, then dropped from the stored thread to bound its size. The summary follows; the verbatim tail starts after it. Nothing was lost by the export: ask the agent about an earlier turn and it can still recall it.\n",
 			foldCountPhrase(st.Folds))
 		fmt.Fprintf(&b, "\n## Summary of earlier turns\n\n%s\n", st.Summary)
 	}
@@ -225,7 +225,7 @@ func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Data
 				fmt.Fprintf(&b, "deliberately not included here; they are in the session's diagnostics in the app.\n\n")
 			}
 			for _, e := range events {
-				fmt.Fprintf(&b, "- %s — %s\n", e.At.Format(time.RFC3339), e.What)
+				fmt.Fprintf(&b, "- %s: %s\n", e.At.Format(time.RFC3339), e.What)
 				if e.Detail != "" {
 					// Blockquoted and indented under its own bullet: the detail
 					// is quoted material (a rule, a retracted claim) and runs
@@ -247,7 +247,7 @@ func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Data
 	withholdResults := resolveGuardrailHooks(agent) != nil
 	if withholdResults {
 		b.WriteString("> **Tool results are withheld from this export.** This agent enforces guardrails, so\n")
-		b.WriteString("> what its tools returned is not serialized here — only the calls it made. The\n")
+		b.WriteString("> what its tools returned is not serialized here: only the calls it made. The\n")
 		b.WriteString("> results were visible in the live session.\n\n")
 	}
 
@@ -259,7 +259,7 @@ func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Data
 	for _, m := range sess.Messages {
 		ts := ""
 		if !m.Created.IsZero() {
-			ts = " — " + m.Created.Format(time.RFC3339)
+			ts = " · " + m.Created.Format(time.RFC3339)
 		}
 		header := strings.ToUpper(m.Role[:1]) + m.Role[1:]
 		fmt.Fprintf(&b, "## %s%s\n\n", header, ts)
@@ -272,7 +272,7 @@ func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Data
 			if p, ok := planByIdx[assistantSeq]; ok && !p.Synthetic && len(p.Steps) > 0 {
 				b.WriteString("**Plan:**\n\n")
 				for _, st := range p.Steps {
-					fmt.Fprintf(&b, "  %d. **%s** — _intent:_ %s\n", st.ID, st.Title, st.Intent)
+					fmt.Fprintf(&b, "  %d. **%s**, _intent:_ %s\n", st.ID, st.Title, st.Intent)
 					if st.Output != "" {
 						out := st.Output
 						if len(out) > 800 {
@@ -306,7 +306,7 @@ func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Data
 							// leaves the owner-only pane, and a rule that stops the agent
 							// SAYING something is not served by shipping the same content
 							// in a transcript someone can forward.
-							b.WriteString("  ↳ [result withheld — see below]\n")
+							b.WriteString("  ↳ [result withheld: see below]\n")
 						} else {
 							res := tc.Result
 							if len(res) > 800 {
@@ -383,9 +383,10 @@ const tuneExportGuardrailDetail = "tune_export_guardrail_detail"
 // hand an export to somebody else.
 func init() {
 	RegisterTunable(TunableSpec{App: "/orchestrate", Key: tuneExportGuardrailDetail, Category: "Exports",
-		Label: "Include guardrail detail in session exports",
-		Help:  "Add the full detail of each guardrail or correction event — the rule that fired, the check's reason, the claim that was retracted — to an exported transcript. Off by default: exports get forwarded, and the detail names the rules an agent enforces. Turn on when exporting your own sessions for debugging.",
-		Kind:  KindBool, Default: 0, Min: 0, Max: 1})
+		Label:  "Include guardrail detail in session exports",
+		Help:   "Add the full detail of each guardrail or correction event to an exported transcript.",
+		Detail: "That is the rule that fired, the check's reason, and the claim that was retracted. Off by default, because exports get forwarded and the detail names the rules an agent enforces. Turn it on when exporting your own sessions for debugging.",
+		Kind:   KindBool, Default: 0, Min: 0, Max: 1})
 }
 
 // guardrailExportEvent is one guardrail action, reduced to what is safe to put in

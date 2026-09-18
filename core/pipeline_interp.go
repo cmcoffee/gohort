@@ -389,7 +389,7 @@ func (r *pipelineRun) resolveCount(stage PipelineStage, ceiling int, status func
 			// somewhere with no form at all. Count is the answer, quietly.
 		default:
 			if status != nil {
-				status(fmt.Sprintf("%s: count_from %s gave %q, which is not a number of times — running %d", stage.Name, ref, raw, n))
+				status(fmt.Sprintf("%s: count_from %s gave %q, which is not a number of times, running %d", stage.Name, ref, raw, n))
 			}
 		}
 	}
@@ -398,7 +398,7 @@ func (r *pipelineRun) resolveCount(stage PipelineStage, ceiling int, status func
 	}
 	if n > ceiling {
 		if status != nil {
-			status(fmt.Sprintf("%s: %d is over the ceiling — running %d", stage.Name, n, ceiling))
+			status(fmt.Sprintf("%s: %d is over the ceiling, running %d", stage.Name, n, ceiling))
 		}
 		n = ceiling
 	}
@@ -556,7 +556,7 @@ func (r *pipelineRun) runList(ctx context.Context, stages []PipelineStage, prev,
 				continue
 			}
 			if strings.TrimSpace(stage.SkipTo) == "" {
-				r.status(fmt.Sprintf("%s: %s is true — ending the pipeline here", stage.Name, stage.When))
+				r.status(fmt.Sprintf("%s: %s is true, ending the pipeline here", stage.Name, stage.When))
 				return prev, true, nil
 			}
 			target := indexOfStage(stages, stage.SkipTo)
@@ -564,7 +564,7 @@ func (r *pipelineRun) runList(ctx context.Context, stages []PipelineStage, prev,
 				// Validate proved this exists; defensive only.
 				return "", false, Error("stage " + stage.Name + ": skip_to target " + stage.SkipTo + " not found")
 			}
-			r.status(fmt.Sprintf("%s: %s is true — skipping ahead to %s", stage.Name, stage.When, stage.SkipTo))
+			r.status(fmt.Sprintf("%s: %s is true, skipping ahead to %s", stage.Name, stage.When, stage.SkipTo))
 			i = target - 1 // the loop's own increment lands on the target
 			continue
 		}
@@ -845,7 +845,7 @@ func (T *AppCore) runDeclaredOutput(ctx context.Context, label string, decl []Pi
 		return out, fields, nil
 	}
 	if status != nil {
-		status(label + ": reply did not match the declared shape (" + derr.Error() + ") — retrying once")
+		status(label + ": reply did not match the declared shape (" + derr.Error() + "): retrying once")
 	}
 	if ctx.Err() != nil {
 		return "", nil, ctx.Err()
@@ -884,7 +884,7 @@ func renderOutputContract(fields []PipelineField) string {
 	var b strings.Builder
 	b.WriteString("\n\nReply with a single JSON object and nothing else, using these keys:\n")
 	writeContractFields(&b, fields, "")
-	b.WriteString("\nNo prose, no markdown, no code fences — the JSON object only.")
+	b.WriteString("\nNo prose, no markdown, no code fences: the JSON object only.")
 	return b.String()
 }
 
@@ -919,7 +919,7 @@ func writeContractFields(b *strings.Builder, fields []PipelineField, indent stri
 		// the description can say what the field MEANS while this says
 		// what may go in it.
 		if len(f.Enum) > 0 {
-			b.WriteString(" — exactly one of: " + strings.Join(f.Enum, ", "))
+			b.WriteString(", exactly one of: " + strings.Join(f.Enum, ", "))
 		}
 		b.WriteString("\n")
 		if len(f.Fields) > 0 {
@@ -1204,7 +1204,7 @@ func (r *pipelineRun) runToolStage(ctx context.Context, stage PipelineStage, pre
 		}
 		sort.Strings(available)
 		if len(available) == 0 {
-			return "", Error("tool " + strconv.Quote(name) + " is not available to this pipeline — the caller supplied no tool catalog. A tool stage can only call tools the invoking agent has.")
+			return "", Error("tool " + strconv.Quote(name) + " is not available to this pipeline: the caller supplied no tool catalog. A tool stage can only call tools the invoking agent has.")
 		}
 		return "", Error("tool " + strconv.Quote(name) + " is not available to this pipeline; the caller has: " + strings.Join(available, ", "))
 	}
@@ -1233,7 +1233,7 @@ func (r *pipelineRun) runToolStage(ctx context.Context, stage PipelineStage, pre
 			// {prev}, so handing back a refusal would feed a downstream prompt
 			// text that reads like content. A pipeline is not a conversation —
 			// there is nobody here to read a message and choose differently.
-			return "", Error("stage " + stage.Name + ": tool " + strconv.Quote(name) + " was not called — a constraint on the agent running this pipeline covers it")
+			return "", Error("stage " + stage.Name + ": tool " + strconv.Quote(name) + " was not called: a constraint on the agent running this pipeline covers it")
 		}
 	}
 	out, err := handler(ctx, args)
@@ -1549,7 +1549,7 @@ func (r *pipelineRun) runPanelStage(ctx context.Context, stage PipelineStage, pr
 		for i, v := range voices {
 			transcript = append(transcript, panelSaid{Voice: v, Text: results[i]})
 			if rounds > 1 {
-				fmt.Fprintf(&b, "## Round %d — %s\n%s\n\n", round, v, results[i])
+				fmt.Fprintf(&b, "## Round %d: %s\n%s\n\n", round, v, results[i])
 				continue
 			}
 			fmt.Fprintf(&b, "## %s\n%s\n\n", v, results[i])
@@ -1710,7 +1710,7 @@ func (r *pipelineRun) runLoopStage(ctx context.Context, stage PipelineStage, pre
 		}
 		done, _ := src.Fields[untilField].(bool)
 		if done {
-			r.status(fmt.Sprintf("%s: %s went true after pass %d — stopping early", stage.Name, stage.Until, i))
+			r.status(fmt.Sprintf("%s: %s went true after pass %d, stopping early", stage.Name, stage.Until, i))
 			break
 		}
 	}

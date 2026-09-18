@@ -154,7 +154,7 @@ func HandlePeerSearch(w http.ResponseWriter, r *http.Request) {
 	if !peerCapRateAllow(k.ID, PeerCapSearch, peerSearchRatePerMin) {
 		w.Header().Set("Retry-After", "60")
 		peerDeny(w, http.StatusTooManyRequests, fmt.Sprintf(
-			"search is limited to %d calls per minute per key — it spends a metered API key, so it is capped separately from the general peer rate",
+			"search is limited to %d calls per minute per key: it spends a metered API key, so it is capped separately from the general peer rate",
 			peerSearchRatePerMin))
 		return
 	}
@@ -274,7 +274,7 @@ func HandlePeerBrowse(w http.ResponseWriter, r *http.Request) {
 	// otherwise reach. Without this, a peer key is a LAN proxy.
 	if err := RefuseNonPublicHost(req.URL); err != nil {
 		peerDeny(w, http.StatusBadRequest, err.Error()+
-			" — a peer may only browse the public web through this instance, never its private network")
+			", a peer may only browse the public web through this instance, never its private network")
 		return
 	}
 	max := req.MaxChars
@@ -338,7 +338,7 @@ func ResolveSearchProvider(cfg WebSearchConfig, provider string) (WebSearchConfi
 	}
 	p, ok := PeerFromProvider(provider)
 	if !ok {
-		return cfg, fmt.Errorf("no peer named %q is registered — add it under Peers first",
+		return cfg, fmt.Errorf("no peer named %q is registered: add it under Peers first",
 			strings.TrimPrefix(provider, peerProviderPrefix))
 	}
 	if !p.Offers(PeerCapSearch) {
@@ -380,13 +380,13 @@ func resolveSearchPeer(cfg WebSearchConfig) WebSearchConfig {
 	p, ok := lookupPeerCached(name)
 	if !ok {
 		warnPeerResolveOnce("search:"+name, fmt.Sprintf(
-			"web search is configured against peer %q, which is no longer registered — "+
+			"web search is configured against peer %q, which is no longer registered: "+
 				"still using its last known endpoint %s", name, cfg.Endpoint))
 		return cfg
 	}
 	if !p.Offers(PeerCapSearch) {
 		warnPeerResolveOnce("search:"+name, fmt.Sprintf(
-			"peer %q no longer offers search (it offers: %s) — "+
+			"peer %q no longer offers search (it offers: %s): "+
 				"still using its last known endpoint %s", name, strings.Join(p.Caps, ", "), cfg.Endpoint))
 		return cfg
 	}

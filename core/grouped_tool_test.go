@@ -44,7 +44,7 @@ func TestHelpWithParamsFlagsTheMissAndRoutesIt(t *testing.T) {
 		t.Errorf("banner must lead the output, found at offset %d", idx)
 	}
 	// The spec itself is still there; the caller did ask for help.
-	if !strings.Contains(out, "tool_def — usage:") {
+	if !strings.Contains(out, "tool_def, usage:") {
 		t.Errorf("the usage spec should still follow the banner, got:\n%s", out)
 	}
 }

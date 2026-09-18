@@ -1,4 +1,4 @@
-# Evals — a suite you can attach to anything, with results that survive
+# Evals: a suite you can attach to anything, with results that survive
 
 Status: **built** (v0.6.765). The rollout at the end of this document shipped in
 full, plus one step it did not plan: the suite is reachable as a TOOL, so an
@@ -20,7 +20,7 @@ Every one of those is a claim that something got better, and the only
 instrument for checking is somebody noticing later.
 
 There is already an eval feature and it is better than it looks. What is
-missing is not the grading — it is that grading is welded to one primitive and
+missing is not the grading: it is that grading is welded to one primitive and
 throws its answers away.
 
 ## What exists, and what is actually wrong with it
@@ -38,7 +38,7 @@ None of that needs redesigning. Three things around it do.
 
 **1. It is a field on `AgentRecord`.** `Evals []EvalCase` exists on exactly one
 type. A pipeline, a tool, a machine, an app and a skill cannot be graded at
-all — and a pipeline is the primitive most likely to regress silently, because
+all, and a pipeline is the primitive most likely to regress silently, because
 its output is five prompts deep.
 
 **2. Results are never stored.** `RunAgentEvals` returns `[]EvalResult` to
@@ -103,8 +103,8 @@ evals beyond agents at all.
 ## Results that survive
 
 Each execution writes an `EvalRun`: when, which suite, the per-case
-`EvalResult`s, the aggregate pass rate, and — the field that makes the whole
-thing worth building — **a fingerprint of the target as it was**.
+`EvalResult`s, the aggregate pass rate, and (the field that makes the whole
+thing worth building) **a fingerprint of the target as it was**.
 
 ```go
 type EvalRun struct {
@@ -133,15 +133,15 @@ and somebody wants to watch it and come back to it. `core/pipeline_runs.go`
 already serves exactly that for anything satisfying `RunWork`, and it recently
 grew the three things an eval run needs most:
 
-- **detached execution** — a thirty-case suite outlives the tab that started it
-- **reconnect** — come back to one in progress
-- **cancel** — stop a suite that is obviously failing rather than paying for
+- **detached execution**: a thirty-case suite outlives the tab that started it
+- **reconnect**: come back to one in progress
+- **cancel**: stop a suite that is obviously failing rather than paying for
   the rest of it
 
 So the suite mounts as a `RunSurface`: one block per case, streamed as it
 finishes, red or green with its reasons. `session_meta` promotes the pass rate
 onto the sidebar row, which makes the run history a **score history** with no
-extra work — the list of past runs IS the graph, in the panel that already
+extra work: the list of past runs IS the graph, in the panel that already
 draws it.
 
 It also lands on the activity ribbon, which matters more here than elsewhere:
@@ -151,7 +151,7 @@ an eval suite is the thing most likely to be started and forgotten.
 
 **It does not gate authoring.** There is a verify gate for apps and tools
 already, and extending it to "a failing suite blocks the save" is a different
-feature with a different failure mode — the one where somebody cannot ship a
+feature with a different failure mode: the one where somebody cannot ship a
 fix because an unrelated case is flaky. Evals report; a gate is a later,
 separate decision, and one that wants this running first so there is evidence
 about flakiness before anything is blocked on it.
@@ -175,7 +175,7 @@ somebody.
   SAVE-time error, not a mid-run one
 - stub mode is the default, and a suite with `Stub: false` says so where it is
   started rather than only in the record
-- a consequential tool is not executed under stub mode — asserted by the tool
+- a consequential tool is not executed under stub mode: asserted by the tool
   not being called, not by the absence of its output
 - two runs of an unchanged target carry the same TargetHash; editing the
   agent's prompt changes it
@@ -188,21 +188,21 @@ somebody.
 
 All six shipped, in this order:
 
-1. `EvalSuite` + `EvalRun` records and storage — 93327f8
-2. The runner generalized to take a target rather than an `AgentRecord` — 906eac2
-3. Mounted as a `RunSurface`, pass rate promoted via `session_meta` — 906eac2,
+1. `EvalSuite` + `EvalRun` records and storage: 93327f8
+2. The runner generalized to take a target rather than an `AgentRecord`: 906eac2
+3. Mounted as a `RunSurface`, pass rate promoted via `session_meta`: 906eac2,
    with the list and per-suite pages in 9d5f2ca
-4. Pipeline targets, including stage-field assertions — 5620df7
-5. Tool and machine targets — c8c0394
+4. Pipeline targets, including stage-field assertions: 5620df7
+5. Tool and machine targets: c8c0394
 6. "Create a suite from this agent's evals", as a COPY that leaves the agent's
-   own field alone — b029afa
+   own field alone: b029afa
 
 Then two the plan did not have. `f3c6b57` made the suite an agent-facing tool,
 on the argument that an agent able to edit another agent and unable to measure
 the result will always find something to improve and never learn that last
 week's edit made things worse. `d91c91a` fixed the schema trap underneath it: a
 `*bool` cannot hold false through gob, so "stubbing off" saved nothing and the
-suite silently re-armed it on the next load — `StubMode` is a string for that
+suite silently re-armed it on the next load: `StubMode` is a string for that
 reason, and unset still reads as ON.
 
 Bump `version.txt` on every commit (no trailing newline).

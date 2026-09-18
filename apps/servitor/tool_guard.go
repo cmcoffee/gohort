@@ -148,7 +148,7 @@ func assertAllowedWithBindings(label string, tools []AgentToolDef, allowed map[s
 	}
 	if len(bad) > 0 {
 		sort.Strings(bad)
-		panic(fmt.Sprintf("servitor tool guard: %s contains disallowed tools %v — update servitor/tool_guard.go allow-list only after confirming they make no third-party network calls, or bind the tool to the appliance", label, bad))
+		panic(fmt.Sprintf("servitor tool guard: %s contains disallowed tools %v, update servitor/tool_guard.go allow-list only after confirming they make no third-party network calls, or bind the tool to the appliance", label, bad))
 	}
 }
 

@@ -8,12 +8,12 @@ Framework foundation for all fuzz agents. Provides the agent interface, LLM abst
 
 Base struct embedded by all agents. Provides:
 
-- `LLM` — Primary (worker) model for volume calls
-- `LeadLLM` — Optional precision model for critical calls (falls back to LLM if nil)
-- `DB` — Agent-private database bucket
-- `Cache` — Ephemeral per-run cache
-- `Report` — Token usage tracking
-- `Flags` — CLI flag parsing
+- `LLM`: Primary (worker) model for volume calls
+- `LeadLLM`: Optional precision model for critical calls (falls back to LLM if nil)
+- `DB`: Agent-private database bucket
+- `Cache`: Ephemeral per-run cache
+- `Report`: Token usage tracking
+- `Flags`: CLI flag parsing
 
 ### Key Methods
 
@@ -80,9 +80,9 @@ list, detail, delete := HistoryHandlers[Record, Summary](dbFunc, tableName, tran
 
 ### Other Web Utilities
 
-- `NewSSEWriter(w)` — Creates SSE stream writer
-- `ServeHTMLWithBase(w, html, prefix)` — Serves HTML with base href injection
-- `MountSubMux(mux, prefix, sub)` — Mounts a sub-mux under a path prefix
+- `NewSSEWriter(w)`: Creates SSE stream writer
+- `ServeHTMLWithBase(w, html, prefix)`: Serves HTML with base href injection
+- `MountSubMux(mux, prefix, sub)`: Mounts a sub-mux under a path prefix
 
 ## Search Utilities
 
@@ -119,9 +119,9 @@ Each knob gets an editable, revert-to-default row in the admin UI; no per-knob U
 
 Per-namespace stores agents layer on top of:
 
-- `factstore.go` — flat always-in-prompt facts (semantic dedup + supersession at save).
-- `graphstore.go` — entities + typed relationships (`UpsertGraphEntity` / `LinkGraphEdge`, queried via the agent's `link_entities` / `recall_about` tools), with a query-time graph→vector bridge that folds the top related knowledge passages into a recall.
-- `vector_store.go` — embedded-chunk semantic index (reference memory + knowledge).
+- `factstore.go`: flat always-in-prompt facts (semantic dedup + supersession at save).
+- `graphstore.go`: entities + typed relationships (`UpsertGraphEntity` / `LinkGraphEdge`, queried via the agent's `link_entities` / `recall_about` tools), with a query-time graph→vector bridge that folds the top related knowledge passages into a recall.
+- `vector_store.go`: embedded-chunk semantic index (reference memory + knowledge).
 
 ## External-Cost Ledger
 
@@ -147,6 +147,6 @@ Shipped kinds live in sibling files: `connector_mcp.go` (`remote_mcp`, wraps
 `MCPServerConfig`), `connector_restpoll.go` (`rest_poll`, a watch-monitor;
 implements the optional `ConnectorAutoApprover` so it goes live on create),
 `connector_desktop.go` (`desktop_mcp`) and `connector_command.go`
-(`desktop_command`) — the last two push a `DesktopInstall` to the owner's
+(`desktop_command`): the last two push a `DesktopInstall` to the owner's
 desktop bridge via `InstallToDesktop`. The LLM-facing `connector` tool and the
 **Admin › Connectors** surface live in `apps/orchestrate` and `apps/admin`.

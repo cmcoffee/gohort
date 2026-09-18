@@ -41,9 +41,9 @@ var MarkdownDocTemplates = []ui.DocTemplate{
 - never <the thing that must not happen>
 
 ## Failure modes
-- ambiguous request — <what to do>
-- no results — <what to do, instead of guessing>
-- sources disagree — <what to do>
+- ambiguous request: <what to do>
+- no results: <what to do, instead of guessing>
+- sources disagree: <what to do>
 
 ## Output format
 *Length, structure, whether to cite, when to use code blocks or tables.*
@@ -115,10 +115,10 @@ var MarkdownDocTemplates = []ui.DocTemplate{
 ## Timeline
 *Times in one zone, stated. What was observed, not what was concluded later.*
 
-- HH:MM — first signal
-- HH:MM — detected
-- HH:MM — mitigated
-- HH:MM — resolved
+- HH:MM, first signal
+- HH:MM, detected
+- HH:MM, mitigated
+- HH:MM, resolved
 
 ## What happened
 *The mechanism. How the failure actually propagated.*
@@ -129,7 +129,7 @@ var MarkdownDocTemplates = []ui.DocTemplate{
 ## What went well
 
 ## Follow-up actions
-- [ ] action — owner — date
+- [ ] action (owner), date
 `,
 	},
 	{
@@ -206,7 +206,7 @@ var MarkdownDocTemplates = []ui.DocTemplate{
 	{
 		Name:        "Meeting notes",
 		Description: "Attendees, decisions, and action items with owners.",
-		Body: `# <topic> — <date>
+		Body: `# <topic>: <date>
 
 **Present:**
 
@@ -217,7 +217,7 @@ var MarkdownDocTemplates = []ui.DocTemplate{
 *Points raised that didn't resolve into a decision.*
 
 ## Action items
-- [ ] action — owner — date
+- [ ] action (owner), date
 
 ## Open questions
 `,

@@ -9,7 +9,7 @@ func (a *AdminApp) skillsSections() []ui.Section {
 	return []ui.Section{
 		{
 			Title:    "Skills",
-			Subtitle: "Domain packs the assistant draws on in its own context — instructions plus optional knowledge sources (attached collections and/or source-hooks). The LLM reaches a skill via read_skill (pull its approach), skill_knowledge_search (search its sources — collections + source-hooks merged) and skill_knowledge_fetch_doc. A skill with Triggers also auto-injects its instructions when they match the turn (e.g. *.pdf). No activation, no sub-agents — stateless calls. Builder is the canonical authoring path; this surface manages what's authored. Disabled skills are hidden from the LLM. Export a skill (or all skills) as a portable bundle — instructions and bundled tool scripts travel inline, secrets never do; imports land disabled for review.",
+			Subtitle: "Domain packs the assistant draws on in its own context: instructions plus optional knowledge sources (attached collections and/or source-hooks). The LLM reaches a skill via read_skill (pull its approach), skill_knowledge_search (search its sources: collections + source-hooks merged) and skill_knowledge_fetch_doc. A skill with Triggers also auto-injects its instructions when they match the turn (e.g. *.pdf). No activation, no sub-agents: stateless calls. Builder is the canonical authoring path; this surface manages what's authored. Disabled skills are hidden from the LLM. Export a skill (or all skills) as a portable bundle: instructions and bundled tool scripts travel inline, secrets never do; imports land disabled for review.",
 			Body: ui.Stack{Children: []ui.Component{ui.Table{
 				Source: "api/skills",
 				RowKey: "id",
@@ -41,13 +41,17 @@ func (a *AdminApp) skillsSections() []ui.Section {
 								Fields: []ui.FormField{
 									{Field: "name", Type: "text", Label: "Name"},
 									{Field: "description", Type: "textarea", Label: "Description", Rows: 2,
-										Help: "One-sentence \"use when…\" hint. Surfaces in the LLM's \"Available skills\" prompt block so it judges when to read_skill / skill_knowledge_search. Write it as a decision shape, not a label."},
+										Help:   "One-sentence \"use when…\" hint. Write it as a decision shape, not a label.",
+										Detail: "It surfaces in the LLM's \"Available skills\" prompt block, so the model can judge when to call read_skill or skill_knowledge_search."},
 									{Field: "triggers", Type: "tags", Label: "Triggers (optional)",
-										Help: "When ANY trigger matches the turn, the skill's instructions inject automatically (deterministic). A pattern with * or ? (e.g. *.pdf) matches attachment filenames; anything else is a case-insensitive substring of the message. Leave empty for a knowledge skill the LLM reaches for explicitly via skill_knowledge_search."},
+										Help:   "When ANY trigger matches the turn, the skill's instructions inject automatically.",
+										Detail: "The injection is deterministic. A pattern with * or ?, such as *.pdf, matches attachment filenames; anything else is a case-insensitive substring of the message.\n\nLeave it empty for a knowledge skill the LLM reaches for explicitly via skill_knowledge_search."},
 									{Field: "instructions", Type: "textarea", Label: "Instructions (markdown)", Rows: 10,
-										Help: "The skill's approach. Returned by read_skill, attached to the first skill_knowledge_search result, and injected when a trigger matches — the lens for applying the skill's knowledge."},
+										Help:   "The skill's approach: the lens for applying its knowledge.",
+										Detail: "It is returned by read_skill, attached to the first skill_knowledge_search result, and injected when a trigger matches."},
 									{Field: "playbook_text", Type: "textarea", Label: "Playbook (optional, JSON)", Rows: 8,
-										Help: "Conditional behaviour the framework ENFORCES: a JSON array of rules, each \"establish Y; if Y then Z, else U\". When the skill is consulted, each rule's fact is established by a step with the skill's tools, and the agent is handed only the arm that applies. Rule: {\"fact\": \"queue_draining\", \"how\": \"Read the consumer lag for the orders queue.\", \"then\": \"Look at the consumer.\", \"else\": \"Look at the broker.\"}. Optional: \"when\": [triggers]; \"type\": \"choice\" with \"values\" and \"cases\"; \"then_rule\" / \"else_rule\" to nest one level. A playbook skill fires on its own when the skill's Triggers (above) or a rule's when match the message; without either it runs only when the agent consults the skill. Prose that does not branch belongs in Instructions."},
+										Help:   "Conditional behaviour the framework ENFORCES: a JSON array of branching rules.",
+										Detail: "Each rule is \"establish Y; if Y then Z, else U\". When the skill is consulted, each rule's fact is established by a step with the skill's tools, and the agent is handed only the arm that applies.\n\nA rule looks like {\"fact\": \"queue_draining\", \"how\": \"Read the consumer lag for the orders queue.\", \"then\": \"Look at the consumer.\", \"else\": \"Look at the broker.\"}. Optional keys: \"when\" takes a list of triggers; \"type\": \"choice\" takes \"values\" and \"cases\"; \"then_rule\" and \"else_rule\" nest one level.\n\nA playbook skill fires on its own when the skill's Triggers above, or a rule's when, match the message. Without either it runs only when the agent consults the skill. Prose that does not branch belongs in Instructions."},
 								},
 							},
 							// Allowed tools — picker from the registered
@@ -108,7 +112,7 @@ func (a *AdminApp) skillsSections() []ui.Section {
 						Confirm: "Delete this skill? The definition is gone for good; Builder will need to re-author if you want it back.",
 						Variant: "danger"},
 				},
-				EmptyText: "No skills defined. Talk to Builder in Agents to author one — \"create a skill called X that fires when…\".",
+				EmptyText: "No skills defined. Talk to Builder in Agents to author one: \"create a skill called X that fires when…\".",
 			},
 				// Export all skills (every owner) as one bundle.
 				ui.Toolbar{
@@ -148,8 +152,8 @@ func (a *AdminApp) skillsSections() []ui.Section {
 			},
 		},
 		{
-			Title:    "Agent Capabilities — Outward & Spending",
-			Subtitle: "The blast radius of each agent: what it can do that reaches REAL PEOPLE or COSTS MONEY. Read-only, derived live from each agent's bound channels, its messaging tools, and the paid credentials its attached tools dispatch through. Agents with no outward or spending reach are omitted — so this list IS the surface to watch.",
+			Title:    "Agent Capabilities: Outward & Spending",
+			Subtitle: "The blast radius of each agent: what it can do that reaches REAL PEOPLE or COSTS MONEY. Read-only, derived live from each agent's bound channels, its messaging tools, and the paid credentials its attached tools dispatch through. Agents with no outward or spending reach are omitted, so this list IS the surface to watch.",
 			Body: ui.Table{
 				Source: "/orchestrate/api/capabilities",
 				RowKey: "agent_id",
@@ -158,7 +162,7 @@ func (a *AdminApp) skillsSections() []ui.Section {
 					{Field: "message_summary", Label: "Can message (people)", Flex: 2},
 					{Field: "spend_summary", Label: "Can spend (paid APIs)", Flex: 2},
 				},
-				EmptyText: "No agent has outward or spending capability — none can text people, send email, or spend through a paid credential.",
+				EmptyText: "No agent has outward or spending capability: none can text people, send email, or spend through a paid credential.",
 			},
 		},
 	}

@@ -14,13 +14,13 @@ func validateToolStage(s PipelineStage, done map[string]map[string]PipelineField
 		return Error("stage " + s.Name + " is kind=tool but names no tool")
 	}
 	if strings.TrimSpace(s.Prompt) != "" {
-		return Error("stage " + s.Name + ": a tool stage takes args, not a prompt — there is no model to prompt. Put the values in args.")
+		return Error("stage " + s.Name + ": a tool stage takes args, not a prompt, there is no model to prompt. Put the values in args.")
 	}
 	if strings.TrimSpace(s.Agent) != "" {
-		return Error("stage " + s.Name + ": agent does not apply to a tool stage — use kind=agent to dispatch, or kind=tool to call a tool directly")
+		return Error("stage " + s.Name + ": agent does not apply to a tool stage, use kind=agent to dispatch, or kind=tool to call a tool directly")
 	}
 	if StageThinkMode(s) != "" {
-		return Error("stage " + s.Name + ": think does not apply to a tool stage — no model runs")
+		return Error("stage " + s.Name + ": think does not apply to a tool stage, no model runs")
 	}
 	// Every {stage:...} in an argument is a real reference and gets the
 	// same forward/unknown check a prompt does. Arg names are sorted so
@@ -59,11 +59,11 @@ func validateStageModel(s PipelineStage) error {
 		return nil
 	case StageFanout:
 		if strings.TrimSpace(s.Agent) != "" {
-			return Error("stage " + s.Name + ": model does not apply to a fanout that dispatches to an agent — the agent's own configuration decides its tier")
+			return Error("stage " + s.Name + ": model does not apply to a fanout that dispatches to an agent, the agent's own configuration decides its tier")
 		}
 		return nil
 	case StageAgent:
-		return Error("stage " + s.Name + ": model does not apply to an agent stage — the dispatched agent's own configuration decides its tier")
+		return Error("stage " + s.Name + ": model does not apply to an agent stage, the dispatched agent's own configuration decides its tier")
 	case StageBranch:
 		return Error("stage " + s.Name + ": a branch makes no LLM call, so model does not apply")
 	case StageTool:
@@ -79,7 +79,7 @@ func validateStageModel(s PipelineStage) error {
 // at save time rather than at run time.
 func validateBranchStage(s PipelineStage, stages []PipelineStage, at int, done map[string]map[string]PipelineFieldType, inLoop bool) error {
 	if len(s.Output) > 0 || len(s.Body) > 0 {
-		return Error("stage " + s.Name + ": a branch makes no LLM call, so it has no output or body — it only reads an earlier stage's field")
+		return Error("stage " + s.Name + ": a branch makes no LLM call, so it has no output or body, it only reads an earlier stage's field")
 	}
 	ref := strings.TrimSpace(s.When)
 	if ref == "" {
@@ -105,7 +105,7 @@ func validateBranchStage(s PipelineStage, stages []PipelineStage, at int, done m
 		// purpose-built early exit, so point the author at it rather than
 		// inventing an answer.
 		if inLoop {
-			return Error("stage " + s.Name + ": a branch inside a loop body cannot end the pipeline — use the loop's until to stop early, or set skip_to to jump within the body")
+			return Error("stage " + s.Name + ": a branch inside a loop body cannot end the pipeline, use the loop's until to stop early, or set skip_to to jump within the body")
 		}
 		return nil
 	}
@@ -114,7 +114,7 @@ func validateBranchStage(s PipelineStage, stages []PipelineStage, at int, done m
 			continue
 		}
 		if i <= at {
-			return Error("stage " + s.Name + ": skip_to " + target + " points backwards — a branch only jumps FORWARD. Repeating work is what kind=loop is for, where count bounds it.")
+			return Error("stage " + s.Name + ": skip_to " + target + " points backwards: a branch only jumps FORWARD. Repeating work is what kind=loop is for, where count bounds it.")
 		}
 		return nil
 	}
@@ -132,7 +132,7 @@ func doubleBraceProblem(stage, where, text string) error {
 	if !strings.Contains(text, "{{") {
 		return nil
 	}
-	return Error("stage " + stage + " " + where + " uses {{double braces}} — this vocabulary takes SINGLE ones: {input}, {prev}, {stage:NAME}, {stage:NAME.field}, {item}, {iteration}. A double brace resolves to nothing and reaches the model as literal braces, so it fails silently rather than loudly.")
+	return Error("stage " + stage + " " + where + " uses {{double braces}}, this vocabulary takes SINGLE ones: {input}, {prev}, {stage:NAME}, {stage:NAME.field}, {item}, {iteration}. A double brace resolves to nothing and reaches the model as literal braces, so it fails silently rather than loudly.")
 }
 
 // barePrefixProblem catches a reference written with the prompt-text PREFIX in
@@ -153,7 +153,7 @@ func barePrefixProblem(stage, where, ref string) error {
 	}
 	bare := strings.TrimSpace(trimmed[len("stage:"):])
 	return Error("stage " + stage + " " + where + " is written with the stage: PREFIX (" + strconv.Quote(trimmed) +
-		"). Here a reference is BARE — " + strconv.Quote(bare) + " — and the stage:NAME form belongs only inside prompt TEXT.")
+		"). Here a reference is BARE: " + strconv.Quote(bare) + ", and the stage:NAME form belongs only inside prompt TEXT.")
 }
 
 // builtinTemplateTokens are the template names the interpreter resolves itself.
@@ -179,7 +179,7 @@ func checkStageRef(stage, where, ref string, done map[string]map[string]Pipeline
 		bare := strings.TrimSpace(strings.Trim(trimmed, "{}"))
 		bare = strings.TrimPrefix(bare, "stage:")
 		return Error("stage " + stage + " " + where + " is written as a prompt template (" + trimmed +
-			"). It takes a BARE reference — " + strconv.Quote(bare) + " — not {…}. The {stage:NAME.field} form is for PROMPT text only.")
+			"). It takes a BARE reference: " + strconv.Quote(bare) + ", not {…}. The {stage:NAME.field} form is for PROMPT text only.")
 	}
 	if p := barePrefixProblem(stage, where, ref); p != nil {
 		return p
@@ -190,7 +190,7 @@ func checkStageRef(stage, where, ref string, done map[string]map[string]Pipeline
 	// exists, it is just spelled {prev}.
 	if builtinTemplateTokens[strings.ToLower(name)] && field == "" {
 		return Error("stage " + stage + " " + where + " references " + strconv.Quote(name) +
-			", which is a BUILT-IN, not a stage. Write {" + strings.ToLower(name) + "} — the {stage:NAME} form is only for a stage you named yourself.")
+			", which is a BUILT-IN, not a stage. Write {" + strings.ToLower(name) + "}, the {stage:NAME} form is only for a stage you named yourself.")
 	}
 	fields, ok := done[name]
 	if !ok {
@@ -199,7 +199,7 @@ func checkStageRef(stage, where, ref string, done map[string]map[string]Pipeline
 		// choose between them without knowing that position in the array IS
 		// execution order. So state the rule, not just the symptom.
 		return Error("stage " + stage + " " + where + " references " + strconv.Quote(name) +
-			", which has not run at that point. Either no stage is named that, or it is listed AFTER this one — " +
+			", which has not run at that point. Either no stage is named that, or it is listed AFTER this one: " +
 			"stages run in the order given and a reference only ever reaches BACKWARD, so a later stage has to be moved earlier in the array.")
 	}
 	if field == "" {
@@ -213,7 +213,7 @@ func checkStageRef(stage, where, ref string, done map[string]map[string]Pipeline
 			// addressable from outside — the loop answers under its OWN name.
 			return Error("stage " + stage + " " + where + " references " + ref + ", but " + name +
 				" declares no output fields. If " + name + " is a LOOP, read its result as {stage:" + name +
-				"} — a loop's body stage names are not visible outside it (they hold a different value each pass), and collect:\"all\" makes that output every pass rather than the last.")
+				"}, a loop's body stage names are not visible outside it (they hold a different value each pass), and collect:\"all\" makes that output every pass rather than the last.")
 		}
 		return Error("stage " + stage + " " + where + " references " + ref + ", but stage " + name + " declares no output field " + field)
 	}
@@ -280,11 +280,11 @@ func validateOutputFields(stage string, fields []PipelineField, nested bool) (ma
 			// entirely and hand-parse a JSON string, losing the field
 			// addressing that fan_over and until depend on.
 			return nil, Error("stage " + stage + ": output field " + f.Name + " has unknown type " + strconv.Quote(string(f.Type)) +
-				" — use one of: string, number, bool, list, object. A list of items (sub-questions, findings, links) is type list, which is also what fan_over reads.")
+				", use one of: string, number, bool, list, object. A list of items (sub-questions, findings, links) is type list, which is also what fan_over reads.")
 		}
 		if len(f.Fields) > 0 {
 			if nested {
-				return nil, Error("stage " + stage + ": output field " + f.Name + " nests too deep — one level only (deeper structure still renders as JSON, it just isn't addressable)")
+				return nil, Error("stage " + stage + ": output field " + f.Name + " nests too deep: one level only (deeper structure still renders as JSON, it just isn't addressable)")
 			}
 			if k := f.resolved(); k != FieldList && k != FieldObject {
 				return nil, Error("stage " + stage + ": output field " + f.Name + " is type " + string(k) + " and cannot declare nested fields")

@@ -1,7 +1,7 @@
 # Objective pacing: an attempt that can say when to come back
 
 Status: **built** (v0.6.758, 2026-09-14), on all three scheduling surfaces. The one piece
-deliberately NOT built is stage 3's optional `pace: "self"` backoff — see the end of **Stages**. Written after the
+deliberately NOT built is stage 3's optional `pace: "self"` backoff: see the end of **Stages**. Written after the
 question "should we have a Task registry for agentic tasks", where the answer was no (objectives
 already are that registry, `docs/loop-objectives.md`) but one of the two gaps behind the question is
 real.
@@ -230,7 +230,7 @@ the same rule at arming (`NextAttemptAt` wins only if it is after `nextPoll`), s
 never poll something faster than its owner set it to. A met goal drops the ask instead of leaving a
 reason on a monitor that has stopped.
 
-**`pace: "self"` — NOT built, and the recommendation is to leave it.** The spec called it optional
+**`pace: "self"`: NOT built, and the recommendation is to leave it.** The spec called it optional
 and droppable, and building the rest made the case clearer:
 
 - It adds a MODE to three records and backoff arithmetic to three arming sites, for behaviour nobody
@@ -249,7 +249,7 @@ They meet only at the end, where both move the next occurrence through the same 
 
 - **Recurring and standing only.** Event monitors already had this bound: `ConsecutiveFailures` plus
   `monitorFailureThreshold` parks them after three failed polls. Backing off there would only make
-  the owner wait longer to learn it is broken. The other two had no bound at all — a fire that
+  the owner wait longer to learn it is broken. The other two had no bound at all: a fire that
   errored was recorded and re-armed on the same cadence, forever.
 - **The curve is relative to the schedule's own cadence** (2x, 4x, 8x, 16x, then stop climbing):
   five minutes is a long wait for a five-minute task and no wait at all for a daily one. Capped by

@@ -267,7 +267,7 @@ func (T *Account) handleConnections(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(http.StatusNoContent)
 				return
 			}
-			http.Error(w, "this integration connects via OAuth — use Connect", http.StatusBadRequest)
+			http.Error(w, "this integration connects via OAuth: use Connect", http.StatusBadRequest)
 			return
 		}
 		// Guard: only per_user credentials are touchable from the account page
@@ -286,7 +286,7 @@ func (T *Account) handleConnections(w http.ResponseWriter, r *http.Request) {
 				// The admin's lock is about the deployment's exposure and is
 				// not a user's to lift. Said plainly rather than silently
 				// ignored, so a switch that will not move explains itself.
-				http.Error(w, "an admin has secured this integration for everyone — you can keep it locked, but not open it", http.StatusForbidden)
+				http.Error(w, "an admin has secured this integration for everyone: you can keep it locked, but not open it", http.StatusForbidden)
 				return
 			}
 			if err := Secure().SetUserSecured(body.Name, user, *body.Secured); err != nil {
@@ -302,7 +302,7 @@ func (T *Account) handleConnections(w http.ResponseWriter, r *http.Request) {
 		case c.IsAuthCode():
 			// OAuth creds connect via the consent flow (oauth/start), not by
 			// posting a secret here.
-			http.Error(w, "this integration connects via OAuth — use Connect", http.StatusBadRequest)
+			http.Error(w, "this integration connects via OAuth: use Connect", http.StatusBadRequest)
 			return
 		default:
 			// Key creds: set or clear the user's key (empty secret = disconnect).
@@ -429,12 +429,15 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 					{Field: "notify", Label: "Email notifications", Type: "toggle",
 						Help: "Receive email when an agent finishes work for you."},
 					{Field: "private_mode", Label: "Private mode by default", Type: "toggle",
-						Help: "Mask network-capable tools (web search, fetch, …) by default — keeps turns local. Per-agent overrides still apply."},
+						Help:   "Mask network-capable tools by default, which keeps turns local.",
+						Detail: "Web search, fetch and the like. Per-agent overrides still apply."},
 					{Field: "inferred_disabled", Label: "Clean mode by default", Type: "toggle",
-						Help: "Suppress the Reference Memory layer by default — agents answer fresh from your question + knowledge, without prior derived findings. Per-agent overrides still apply."},
+						Help:   "Suppress the Reference Memory layer by default.",
+						Detail: "Agents then answer fresh from your question and knowledge, without prior derived findings. Per-agent overrides still apply."},
 					{Field: "timezone", Label: "Timezone", Type: "select",
 						Options: TimezoneSelectOptions("System default"),
-						Help:    "Your personal timezone, used for the times agents see and the day boundaries of schedules you own. Blank uses the system default."},
+						Help:    "Your personal timezone. Blank uses the system default.",
+						Detail:  "It sets the times agents see, and the day boundaries of schedules you own."},
 				},
 			},
 		},
@@ -469,7 +472,7 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 	sections = append(sections,
 		ui.Section{
 			Title:    "API keys (personal access)",
-			Subtitle: "Tokens for connecting an external client — e.g. Claude Desktop over MCP, or a voice platform over the OpenAI /v1 endpoint — to your own gohort agents. Send it as the client's X-API-Key header, or as \"Authorization: Bearer <token>\". Shown once at creation; revoke any time. Each key is SCOPED: a new key reaches nothing until you grant it features and targets (Configure access). Keys created before scoping existed are marked Unrestricted — set a scope to lock them down.",
+			Subtitle: "Tokens for connecting an external client: e.g. Claude Desktop over MCP, or a voice platform over the OpenAI /v1 endpoint, to your own gohort agents. Send it as the client's X-API-Key header, or as \"Authorization: Bearer <token>\". Shown once at creation; revoke any time. Each key is SCOPED: a new key reaches nothing until you grant it features and targets (Configure access). Keys created before scoping existed are marked Unrestricted: set a scope to lock them down.",
 			Body:     ui.Card{HTML: tokensHTML},
 		},
 	)
@@ -698,7 +701,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
 (function(){
   var root = document.getElementById('acct-tokens');
   if (!root) return;
-  var CAT = null; // {features:[{key,label}], targets:[{value,label,group}]} — loaded once
+  var CAT = null; // {features:[{key,label}], targets:[{value,label,group}]}, loaded once
   function el(tag, attrs, kids){ var n=document.createElement(tag); if(attrs) for(var k in attrs){ if(k==='text') n.textContent=attrs[k]; else n.setAttribute(k,attrs[k]); } (kids||[]).forEach(function(c){ n.appendChild(typeof c==='string'?document.createTextNode(c):c); }); return n; }
   function targets(){ return fetch('api/token-targets',{credentials:'same-origin'}).then(function(r){return r.json();}).then(function(d){ CAT=d||{features:[],targets:[],tools:[]}; }).catch(function(){ CAT={features:[],targets:[],tools:[]}; }); }
   function load(){ return fetch('api/tokens',{credentials:'same-origin'}).then(function(r){return r.json();}).then(render).catch(function(){ root.textContent='Failed to load.'; }); }
@@ -742,7 +745,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
     }
     // MCP tools. A key with no explicit list is NOT narrowed (every exposed
     // tool), which is why an untouched editor sends tools:null rather than an
-    // empty array — an empty array means "none", and the two must not be the
+    // empty array: an empty array means "none", and the two must not be the
     // same value on the wire.
     var toolsTouched = false;
     if(CAT.tools && CAT.tools.length){
@@ -750,7 +753,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
       var selTools = selected.tools; // null/undefined = not narrowed
       var narrowed = !!selTools;
       var sel = {}; (selTools||[]).forEach(function(n){ sel[n]=true; });
-      var note = el('div',{class:'acct-tok-scope-note',text: narrowed ? 'Only the ticked tools.' : 'Not narrowed — this key may call every exposed tool. Tick any to restrict it.'});
+      var note = el('div',{class:'acct-tok-scope-note',text: narrowed ? 'Only the ticked tools.' : 'Not narrowed, this key may call every exposed tool. Tick any to restrict it.'});
       wrap.appendChild(note);
       var mg = el('div',{class:'acct-tok-scope-grp'});
       CAT.tools.forEach(function(t){
@@ -768,7 +771,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
       var out = { features: f, targets: t };
       // Only send a tools list once the user has actually touched it, or when
       // the key already had one. Otherwise a key that was never narrowed stays
-      // un-narrowed instead of being pinned to today's tool set — which would
+      // un-narrowed instead of being pinned to today's tool set, which would
       // silently deny any tool added later.
       if(toolsTouched || selected.tools){ out.tools = m; }
       return out;
@@ -802,7 +805,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
   function scopeSummary(t){
     if(!t.scope){ return null; } // legacy: rendered as a badge instead
     var f=(t.scope.features||[]).length, tg=(t.scope.targets||[]).length;
-    if(!f && !tg) return 'Reaches nothing yet — set a scope';
+    if(!f && !tg) return 'Reaches nothing yet: set a scope';
     return (f?f+' feature'+(f>1?'s':''):'no features')+' · '+(tg?tg+' target'+(tg>1?'s':''):'no targets');
   }
 
@@ -899,7 +902,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
   }
   function reveal(t){
     if(!t || !t.token) return;
-    root.insertBefore(el('div',{class:'acct-tok-reveal'},[ el('div',{class:'acct-tok-sub',text:'Copy this now — it will not be shown again:'}), el('code',{text:t.token}) ]), root.firstChild);
+    root.insertBefore(el('div',{class:'acct-tok-reveal'},[ el('div',{class:'acct-tok-sub',text:'Copy this now, it will not be shown again:'}), el('code',{text:t.token}) ]), root.firstChild);
   }
   targets().then(load);
 })();

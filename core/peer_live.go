@@ -81,7 +81,7 @@ func peerRowsFrom(st OllamaSchedStats, doing string) []LiveEntry {
 		}
 		out = append(out, LiveEntry{
 			ID:          "peerqueue:" + doing + ":" + caller,
-			Label:       fmt.Sprintf("%s — %d waiting to %s", peerDisplayName(caller), n, doing),
+			Label:       fmt.Sprintf("%s: %d waiting to %s", peerDisplayName(caller), n, doing),
 			Queued:      true,
 			Background:  true,
 			PublicLabel: true,
@@ -96,9 +96,9 @@ func peerRowsFrom(st OllamaSchedStats, doing string) []LiveEntry {
 func peerRowLabel(caller, doing string, n int) string {
 	name := peerDisplayName(caller)
 	if n > 1 {
-		return fmt.Sprintf("%s — %s (%d at once)", name, doing, n)
+		return fmt.Sprintf("%s: %s (%d at once)", name, doing, n)
 	}
-	return fmt.Sprintf("%s — %s", name, doing)
+	return fmt.Sprintf("%s: %s", name, doing)
 }
 
 // peerDisplayName renders the caller label as the operator knows the peer.

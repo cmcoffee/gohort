@@ -25,7 +25,7 @@ is no bounty. Credit in the advisory if you want it.
 
 Pre-1.0. Fixes land on `main` and ship in the next version; nothing is backported. If you
 are running a build from some weeks ago, the answer to almost any report will begin with
-"update first" — the version number moves several times a day.
+"update first": the version number moves several times a day.
 
 ## The trust model
 
@@ -33,10 +33,10 @@ Most of this codebase is an argument about who is trusted with what. Stated plai
 
 | Party | Trusted? |
 |---|---|
-| **The operator / admin** | Yes, completely. They author tools, approve credentials, and configure the deployment. Nothing here defends against a hostile admin, and that is deliberate — it is their machine. |
+| **The operator / admin** | Yes, completely. They author tools, approve credentials, and configure the deployment. Nothing here defends against a hostile admin, and that is deliberate: it is their machine. |
 | **Users of a deployment** | Semi-trusted. Per-user data isolation, per-user credentials, explicit cross-user sharing. A user is not an admin and cannot become one by asking. |
 | **The model** | **Not trusted.** This is the spine of the design: approval gates on tools that need them, capability grants per tool, credentials the model cannot read, an independent guardrail warden that never saw the conversation, dispatch allowlists that cannot widen along a chain. |
-| **Tool output and fetched content** | Not trusted. Anything a tool brings back — a web page, an API response, a file — is data, never instruction, and is scanned on the way in. |
+| **Tool output and fetched content** | Not trusted. Anything a tool brings back (a web page, an API response, a file), is data, never instruction, and is scanned on the way in. |
 | **Peers** | Authenticated and semi-trusted. A peer is reached by key, gated per capability, and a shared recipe runs against the *recipient's* tools and credentials: the recipe travels, the authority does not. |
 
 The practical consequence: a model that has been talked into something should still be
@@ -47,11 +47,11 @@ data. When it *can*, that is a vulnerability and worth reporting.
 
 Shell and script tools run under one of three backends, and the third one is not a sandbox:
 
-- **bubblewrap** (Linux) — a mount namespace. The workspace is writable, most of the
+- **bubblewrap** (Linux): a mount namespace. The workspace is writable, most of the
   filesystem is read-only or absent, network follows the caller's grant.
-- **Seatbelt** (macOS, `sandbox-exec`) — a deny-by-default profile with the workspace
+- **Seatbelt** (macOS, `sandbox-exec`): a deny-by-default profile with the workspace
   writable.
-- **unconfined** — no bwrap on a Linux host, or a macOS host where `sandbox-exec` is
+- **unconfined**: no bwrap on a Linux host, or a macOS host where `sandbox-exec` is
   missing or refused the probe profile. **Shell tools then run at the daemon's own
   privilege.**
 
@@ -59,7 +59,7 @@ Unconfined is a real, reachable state, not a theoretical one. Check which you ar
 **Admin → System Status**, or call `GetSandboxStatus()`.
 
 **Confinement is required by default.** On a host with no working backend, shell and script
-tools are refused rather than run at the daemon's privilege — `run_local`, temp tools,
+tools are refused rather than run at the daemon's privilege: `run_local`, temp tools,
 persistent shells, response pipes, and event-monitor evaluator scripts all fail closed with
 an error naming the cause. To permit unconfined execution, say so explicitly:
 
@@ -70,19 +70,19 @@ GOHORT_ALLOW_UNSANDBOXED=on       # anything may
 ```
 
 `admin` is the setting that makes an unconfinable host livable. It splits the two decisions
-that "allow unsandboxed" otherwise collapses — whether the deployment tolerates unconfined
+that "allow unsandboxed" otherwise collapses: whether the deployment tolerates unconfined
 execution at all, and whether the caller is trusted to have it. An admin at the keyboard keeps
 their shell tools; agents, schedules, channel wakes, monitor evaluators, export generators and
 non-admin users stay fail-closed. That split is the point: the untrusted party is the model,
 not the operator.
 
 A run is "an admin's" only if it reaches exec through a session owned by an admin user. Nothing
-the model says can stamp it — anything with no known human behind it is not an admin. An
+the model says can stamp it: anything with no known human behind it is not an admin. An
 unrecognized value is read as `off`, so a typo in this switch refuses rather than opens.
 
 This used to be the other way round: unconfined was the default and `GOHORT_SANDBOX_REQUIRED=1`
 was the opt-in to safety. The argument for that default was that a host with no backend would
-otherwise have no working shell tools at all, with nothing installable to fix it on macOS —
+otherwise have no working shell tools at all, with nothing installable to fix it on macOS
 which is true, and is not a reason to default open. The remedy was never "install something",
 it is "say you accept the risk", and that is one flag either way. Dangerous by default and
 safe on request is the wrong way round.
@@ -123,7 +123,7 @@ anything wider than localhost:
 
 ## What is and is not a vulnerability
 
-**In scope** — anything that crosses a boundary the design claims to hold:
+**In scope**, anything that crosses a boundary the design claims to hold:
 
 - A model, tool, or script reaching a credential, tool, or user's data it was not granted.
 - Escaping confinement on a host that reports `Confined: true`.
@@ -132,7 +132,7 @@ anything wider than localhost:
   an admin surface.
 - A secured credential's secret becoming readable by tool code.
 
-**Out of scope** — real behavior, but working as designed:
+**Out of scope**, real behavior, but working as designed:
 
 - Prompt injection that makes an agent *say* something wrong or unhelpful. Models can be
   talked into nonsense; that is why nothing downstream trusts their output. Injection that

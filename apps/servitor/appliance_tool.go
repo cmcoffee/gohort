@@ -80,7 +80,7 @@ func SaveApplianceTool(udb Database, t ApplianceTool) (ApplianceTool, error) {
 	t.Name = strings.ToLower(strings.TrimSpace(t.Name))
 	t.ApplianceID = strings.TrimSpace(t.ApplianceID)
 	if !toolNamePattern.MatchString(t.Name) {
-		return t, fmt.Errorf("tool name %q is not usable — lowercase letters, digits and underscore, 3-49 chars", t.Name)
+		return t, fmt.Errorf("tool name %q is not usable: lowercase letters, digits and underscore, 3-49 chars", t.Name)
 	}
 	if t.ApplianceID == "" {
 		return t, fmt.Errorf("an appliance tool must be bound to a system")
@@ -130,7 +130,7 @@ func validateTemplateParams(template string, params map[string]ToolParam) error 
 		return fmt.Errorf("template uses {%s} with no matching parameter declared", strings.Join(missing, "}, {"))
 	}
 	if len(unused) > 0 {
-		return fmt.Errorf("parameter(s) %s are declared but appear nowhere in the template — the value would be collected and discarded", strings.Join(unused, ", "))
+		return fmt.Errorf("parameter(s) %s are declared but appear nowhere in the template: the value would be collected and discarded", strings.Join(unused, ", "))
 	}
 	return nil
 }
@@ -302,7 +302,7 @@ Rules:
 - Put every flag, path, subcommand and sudo INSIDE the template. The template is frozen after this.
 - Use {placeholders} ONLY where a value genuinely varies between runs (a version, a filename, a service name). A request with nothing variable should have no parameters at all.
 - Declare every placeholder as a parameter with a type. Use an enum ONLY when the known facts list the allowed values.
-- When a placeholder is a FOLDER that belongs to one of the file stores listed below, declare "path_scope":"files:<slug>" on that parameter instead of an enum. The value is then checked against that store when the tool RUNS, and substituted as an absolute path. Use this rather than an enum whenever the set of folders can change, which it usually can — an enum is frozen when you write it and a drop folder is not.
+- When a placeholder is a FOLDER that belongs to one of the file stores listed below, declare "path_scope":"files:<slug>" on that parameter instead of an enum. The value is then checked against that store when the tool RUNS, and substituted as an absolute path. Use this rather than an enum whenever the set of folders can change, which it usually can: an enum is frozen when you write it and a drop folder is not.
 - Never put a placeholder where a flag or subcommand goes. Values are quoted at runtime, so a placeholder can never contribute syntax.
 - Name the tool for what it DOES on this machine, lowercase with underscores.
 
@@ -332,7 +332,7 @@ func MintApplianceTool(ctx context.Context, chat FactChatFunc, appliance Applian
 	if roots := PathScopeRoots(owner); len(roots) > 0 {
 		b.WriteString("\nFILE STORES ON THIS SERVER (use path_scope for a folder parameter):\n")
 		for _, rt := range roots {
-			line := "- " + rt.Ref + " — " + rt.Label
+			line := "- " + rt.Ref + " · " + rt.Label
 			if rt.Detail != "" {
 				line += ": " + rt.Detail
 			}
@@ -342,7 +342,7 @@ func MintApplianceTool(ctx context.Context, chat FactChatFunc, appliance Applian
 	if known := formatFacts(facts); strings.TrimSpace(known) != "" {
 		fmt.Fprintf(&b, "\nWHAT IS KNOWN ABOUT IT:\n%s\n", known)
 	} else {
-		b.WriteString("\nNothing is known about this machine yet — prefer portable, widely available commands.\n")
+		b.WriteString("\nNothing is known about this machine yet: prefer portable, widely available commands.\n")
 	}
 	fmt.Fprintf(&b, "\nREQUEST: %s\n", strings.TrimSpace(intent))
 

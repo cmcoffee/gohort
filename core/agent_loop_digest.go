@@ -160,7 +160,7 @@ func emitPromptDigest(ctx context.Context, cfg AgentLoopConfig, d PromptDigest) 
 		line += fmt.Sprintf(", provider charged %d", d.InputTokens)
 	}
 	if d.Tight {
-		Log("[agent_loop] HEADROOM: %s — %d tokens from the window. A prompt this close to the wall fails intermittently rather than cleanly.", line, d.Headroom)
+		Log("[agent_loop] HEADROOM: %s, %d tokens from the window. A prompt this close to the wall fails intermittently rather than cleanly.", line, d.Headroom)
 	} else {
 		Debug("[agent_loop] %s", line)
 	}
@@ -362,9 +362,9 @@ func promptSizeHeadline(cfg AgentLoopConfig, systemPrompt string, history []Mess
 	}
 	switch {
 	case sysBytes >= histBytes && sysBytes >= toolBytes:
-		return fmt.Sprintf("most of it is the system prompt (~%dk tokens), which compaction cannot shrink — the agent's own instructions, memory or attached sources are the place to look", sysBytes/4000)
+		return fmt.Sprintf("most of it is the system prompt (~%dk tokens), which compaction cannot shrink: the agent's own instructions, memory or attached sources are the place to look", sysBytes/4000)
 	case toolBytes >= histBytes:
-		return fmt.Sprintf("most of it is tool definitions (~%dk tokens across %d tools), which compaction cannot shrink — narrow the agent's tool list", toolBytes/4000, len(cfg.Tools))
+		return fmt.Sprintf("most of it is tool definitions (~%dk tokens across %d tools), which compaction cannot shrink: narrow the agent's tool list", toolBytes/4000, len(cfg.Tools))
 	default:
 		return fmt.Sprintf("most of it is conversation history (~%dk tokens)", histBytes/4000)
 	}

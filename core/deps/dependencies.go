@@ -215,7 +215,7 @@ func legacyDocDependency() struct {
 			staleAfter    time.Duration
 		}{
 			name: "textutil", enables: enables,
-			hint: "ships with macOS at /usr/bin/textutil — nothing to install",
+			hint: "ships with macOS at /usr/bin/textutil: nothing to install",
 		}
 	}
 	return struct {
@@ -226,7 +226,7 @@ func legacyDocDependency() struct {
 		staleAfter    time.Duration
 	}{
 		name: "antiword", enables: enables, apt: "antiword",
-		hint:        "apt install antiword (or catdoc — either is used, whichever is present)",
+		hint:        "apt install antiword (or catdoc: either is used, whichever is present)",
 		versionArgs: []string{"-h"},
 	}
 }
@@ -260,7 +260,7 @@ func sandboxDependency() struct {
 			staleAfter    time.Duration
 		}{
 			name: "sandbox-exec", enables: enables,
-			hint: "ships with macOS at /usr/bin/sandbox-exec — nothing to install. See Admin → System Status for whether it is actually confining.",
+			hint: "ships with macOS at /usr/bin/sandbox-exec: nothing to install. See Admin → System Status for whether it is actually confining.",
 		}
 	}
 	return struct {

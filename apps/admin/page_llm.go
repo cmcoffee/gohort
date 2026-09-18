@@ -9,14 +9,16 @@ func (a *AdminApp) llmSections() []ui.Section {
 	return []ui.Section{
 		{
 			Title:    "Worker LLM",
-			Subtitle: "The primary / local model most work runs on. Applies immediately on save (the live LLM is rebuilt — no restart). API key is stored encrypted; leave it blank to keep the current one.",
+			Subtitle: "The primary / local model most work runs on. Applies immediately on save (the live LLM is rebuilt: no restart). API key is stored encrypted; leave it blank to keep the current one.",
 			Body: ui.FormPanel{
 				Source: "api/worker-llm",
 				Fields: []ui.FormField{
 					{Field: "provider", Label: "Provider", Type: "select", Options: LLMProviderOptions(false),
-						Help: "Local providers (ollama / llama.cpp) are the usual worker. A peer offering inference appears here too — its GPU runs the turns."},
+						Help:   "Local providers, ollama or llama.cpp, are the usual worker.",
+						Detail: "A peer offering inference appears here too, and its GPU runs the turns."},
 					{Field: "model", Label: "Model", Type: "text", Placeholder: "e.g. qwen3.6-27b",
-						Help: "Blank = provider default. On AWS Bedrock, many accounts require a region-prefixed inference profile (us.anthropic.claude-opus-4-8) and deny the bare id."},
+						Help:   "Blank uses the provider default.",
+						Detail: "On AWS Bedrock, many accounts require a region-prefixed inference profile (us.anthropic.claude-opus-4-8) and deny the bare id."},
 					{Field: "api_key", Label: "API key", Type: "password", Placeholder: "(leave blank to keep current)",
 						Help: "Stored encrypted. Not needed for local ollama / llama.cpp."},
 					{Field: "endpoint", Label: "Endpoint", Type: "text", Placeholder: "http://localhost:8080/v1",
@@ -25,17 +27,21 @@ func (a *AdminApp) llmSections() []ui.Section {
 							{Label: "Ollama", Value: "http://localhost:11434"},
 							{Label: "llama.cpp", Value: "http://localhost:8080/v1"}}},
 					{Field: "aws_region", Label: "AWS region", Type: "text", Placeholder: "us-east-1",
-						Help:    "AWS Bedrock only. Blank uses $AWS_REGION, then us-east-1. Not every region AWS lists for Bedrock has a Messages-API endpoint — us-west-1 does not, use us-west-2.",
+						Help:    "AWS Bedrock only. Blank uses $AWS_REGION, then us-east-1.",
+						Detail:  "Not every region AWS lists for Bedrock has a Messages-API endpoint. us-west-1 does not; use us-west-2.",
 						Presets: bedrockRegionPresets()},
 					{Field: "bedrock_api", Label: "Bedrock API", Type: "select",
 						Options: []ui.SelectOption{
 							{Value: "", Label: "Messages API (bedrock-mantle)"},
 							{Value: "invoke", Label: "InvokeModel (bedrock-runtime)"}},
-						Help: "Which Bedrock API your AWS role may call. Messages API needs bedrock-mantle:CreateInference; InvokeModel needs bedrock:InvokeModel and is what most AI-tooling permission sets grant. A 403 on CreateInference means switch to InvokeModel. Both stream."},
+						Help:   "Which Bedrock API your AWS role may call. Both stream.",
+						Detail: "The Messages API needs bedrock-mantle:CreateInference. InvokeModel needs bedrock:InvokeModel, and is what most AI-tooling permission sets grant. A 403 on CreateInference means switch to InvokeModel."},
 					{Field: "aws_profile", Label: "AWS profile", Type: "text", Placeholder: "(default)",
-						Help: "AWS Bedrock only. Blank uses $AWS_PROFILE. Credentials are never stored here — for SSO, run `aws sso login` on the gohort host. The API key field above is optional and means a Bedrock bearer token instead."},
+						Help:   "AWS Bedrock only. Blank uses $AWS_PROFILE.",
+						Detail: "Credentials are never stored here. For SSO, run `aws sso login` on the gohort host. The API key field above is optional, and means a Bedrock bearer token instead."},
 					{Field: "context_size", Label: "Context size (tokens)", Type: "number", Min: 0, Max: 1000000,
-						Help: "0 = default (65K for ollama / llama.cpp; 200K for Anthropic / Bedrock). Local providers send this as num_ctx; for Anthropic / Bedrock it's the working cap history compaction keys on — the API accepts up to 1M, but every input token bills per turn, so keep it modest."},
+						Help:   "0 uses the default: 65K for ollama and llama.cpp, 200K for Anthropic and Bedrock.",
+						Detail: "Local providers send this as num_ctx. For Anthropic and Bedrock it is the working cap history compaction keys on. The API accepts up to 1M, but every input token bills per turn, so keep it modest."},
 					{Field: "request_timeout_seconds", Label: "Request timeout (sec)", Type: "number", Min: 0, Max: 3600,
 						Help: "0 = default 300s."},
 					{Field: "native_tools", Label: "Native tool calling", Type: "toggle",
@@ -67,17 +73,21 @@ func (a *AdminApp) llmSections() []ui.Section {
 					{Field: "endpoint", Label: "Endpoint", Type: "text", Placeholder: "(provider default)",
 						Help: "For local / self-hosted lead providers."},
 					{Field: "aws_region", Label: "AWS region", Type: "text", Placeholder: "us-east-1",
-						Help:    "AWS Bedrock only. Blank uses $AWS_REGION, then us-east-1 (us-west-1 has no endpoint; use us-west-2).",
+						Help:    "AWS Bedrock only. Blank uses $AWS_REGION, then us-east-1.",
+						Detail:  "Not every region AWS lists for Bedrock has a Messages-API endpoint. us-west-1 does not; use us-west-2.",
 						Presets: bedrockRegionPresets()},
 					{Field: "bedrock_api", Label: "Bedrock API", Type: "select",
 						Options: []ui.SelectOption{
 							{Value: "", Label: "Messages API (bedrock-mantle)"},
 							{Value: "invoke", Label: "InvokeModel (bedrock-runtime)"}},
-						Help: "Which Bedrock API your AWS role may call. Messages API needs bedrock-mantle:CreateInference; InvokeModel needs bedrock:InvokeModel and is what most AI-tooling permission sets grant. A 403 on CreateInference means switch to InvokeModel. Both stream."},
+						Help:   "Which Bedrock API your AWS role may call. Both stream.",
+						Detail: "The Messages API needs bedrock-mantle:CreateInference. InvokeModel needs bedrock:InvokeModel, and is what most AI-tooling permission sets grant. A 403 on CreateInference means switch to InvokeModel."},
 					{Field: "aws_profile", Label: "AWS profile", Type: "text", Placeholder: "(default)",
-						Help: "AWS Bedrock only. Blank uses $AWS_PROFILE."},
+						Help:   "AWS Bedrock only. Blank uses $AWS_PROFILE.",
+						Detail: "Credentials are never stored here. For SSO, run `aws sso login` on the gohort host. The API key field above is optional, and means a Bedrock bearer token instead."},
 					{Field: "context_size", Label: "Context size (tokens)", Type: "number", Min: 0, Max: 1000000,
-						Help: "0 = default (200K for Anthropic / Bedrock; 65K for local providers). For Anthropic / Bedrock this is the working cap lead agent-loop history compaction keys on, not a hard API limit — the API accepts up to 1M, but input tokens bill on every turn, so raise it only for genuine long-context work."},
+						Help:   "0 uses the default: 200K for Anthropic and Bedrock, 65K for local providers.",
+						Detail: "For Anthropic and Bedrock this is the working cap the lead agent-loop history compaction keys on, not a hard API limit. The API accepts up to 1M, but input tokens bill on every turn, so raise it only for genuine long-context work."},
 					{Field: "native_tools", Label: "Native tool calling", Type: "toggle",
 						Help: "Disable for models without tool-calling support (ollama)."},
 					{Type: "header", Label: "Thinking", Collapsed: true},
@@ -93,7 +103,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 		},
 		{
 			Title: "Model Privacy",
-			Subtitle: "Some stages handle material that must not reach a third-party model — SSH credentials, log contents, system facts — so they are pinned to the worker tier and cannot escalate. " +
+			Subtitle: "Some stages handle material that must not reach a third-party model (SSH credentials, log contents, system facts), so they are pinned to the worker tier and cannot escalate. " +
 				"That pin exists because the lead is normally remote. If it is not, the pin costs you the better reasoner on exactly the work that needs it most.",
 			Body: ui.FormPanel{
 				Source: "api/llm-privacy",
@@ -101,16 +111,16 @@ func (a *AdminApp) llmSections() []ui.Section {
 					{Field: "all_private", Label: "All LLMs are private", Type: "toggle",
 						Help: "OFF (the default): private stages stay on the worker, always. " +
 							"ON: private stages may be routed to the lead tier as well, and the lead options appear for them in the routing table below. " +
-							"Turn this on only if you are certain every model above runs on hardware you control — this is your assertion, not a detected fact, " +
+							"Turn this on only if you are certain every model above runs on hardware you control: this is your assertion, not a detected fact, " +
 							"and getting it wrong sends credentials and log contents to a third party with no way to recall them."},
 					{Field: "advice", Label: "What this deployment looks like", Type: "readonly",
-						Help: "Judged from the configured providers. Advice only — the toggle is what takes effect."},
+						Help: "Judged from the configured providers. Advice only: the toggle is what takes effect."},
 				},
 			},
 		},
 		{
 			Title:    "LLM Routing",
-			Subtitle: "Pick which tier handles each pipeline stage, and whether it reasons. \"lead\" uses the precision (remote) LLM; \"worker\" uses the local model; the \"(thinking)\" variant of either enables extended reasoning on that tier. Tier and thinking are independent — a stage escalated to lead keeps thinking only if you pick \"lead (thinking)\". Budget caps thinking tokens for that stage (0 = stage default). Private stages cannot route to lead unless Model Privacy is turned on above.",
+			Subtitle: "Pick which tier handles each pipeline stage, and whether it reasons. \"lead\" uses the precision (remote) LLM; \"worker\" uses the local model; the \"(thinking)\" variant of either enables extended reasoning on that tier. Tier and thinking are independent: a stage escalated to lead keeps thinking only if you pick \"lead (thinking)\". Budget caps thinking tokens for that stage (0 = stage default). Private stages cannot route to lead unless Model Privacy is turned on above.",
 			Body: ui.Table{
 				Source: "api/routing",
 				RowKey: "key",
@@ -160,7 +170,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 		},
 		{
 			Title:    "Ollama Proxy",
-			Subtitle: "Expose gohort as a fair-queued Ollama endpoint. Point Ollama clients at gohort's port instead of Ollama's; they share the local model scheduler. This is a separate listener on its own port — it is not behind the dashboard login, the admin IP allowlist, or TLS, so what it is bound to is what decides who can reach it. Requires restart when the port or interface changes.",
+			Subtitle: "Expose gohort as a fair-queued Ollama endpoint. Point Ollama clients at gohort's port instead of Ollama's; they share the local model scheduler. This is a separate listener on its own port: it is not behind the dashboard login, the admin IP allowlist, or TLS, so what it is bound to is what decides who can reach it. Requires restart when the port or interface changes.",
 			Body: ui.FormPanel{
 				Source: "api/settings",
 				Fields: []ui.FormField{
@@ -176,7 +186,8 @@ func (a *AdminApp) llmSections() []ui.Section {
 							{Value: "0.0.0.0", Label: "Any machine on the network (0.0.0.0)",
 								Confirm: "Expose the Ollama proxy on every network interface? It is not behind the dashboard login. Off-box requests will be refused without a personal access token, but the port becomes reachable."},
 						},
-						Help:     "This machine only is the default and needs no credential, the same trust gohort extends to anything else running on the box. Choosing the network means every request from off-box must carry a personal access token in X-API-Key or Authorization: Bearer — check your Ollama client can send a header before switching, because most cannot.",
+						Help:     "This machine only is the default, and needs no credential.",
+						Detail:   "That is the same trust gohort extends to anything else running on the box. Choosing the network means every request from off-box must carry a personal access token in X-API-Key or Authorization: Bearer. Check your Ollama client can send a header before switching, because most cannot.",
 						ShowWhen: "ollama_proxy_enabled"},
 				},
 			},
@@ -189,7 +200,8 @@ func (a *AdminApp) llmSections() []ui.Section {
 				Fields: []ui.FormField{
 					{Field: "history_budget_percent", Label: "History budget (% of context window)",
 						Type: "number", Min: 25, Max: 90, Placeholder: "50",
-						Help: "Steady-state cap on per-round history as a percent of the LLM's context window. Default 50 (a 200K-window worker targets ~100K of history). Lower = faster prefill, more aggressive elision of old tool results; higher = more retained context, slower prefill. Clamped to 25-90."},
+						Help:   "Steady-state cap on per-round history, as a percent of the LLM's context window.",
+						Detail: "Default 50, so a 200K-window worker targets about 100K of history. Lower means faster prefill and more aggressive elision of old tool results; higher means more retained context and slower prefill. Clamped to 25-90."},
 				},
 			},
 		},

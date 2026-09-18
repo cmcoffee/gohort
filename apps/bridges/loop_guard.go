@@ -91,7 +91,8 @@ func init() {
 		App: "/bridges",
 		Key: "tune_bridge_reply_budget", Category: "Limits",
 		Label:   "Loop guard: agent replies per conversation",
-		Help:    "How many replies the agent may send into ONE conversation inside the window below before routing is cut as a suspected loop. Every reply counts, including a guardrail decline — so testing an agent from your phone spends this budget. Raise it if ordinary use trips the cut; lower it to catch runaways sooner.",
+		Help:    "How many replies the agent may send into ONE conversation before routing is cut.",
+		Detail:  "The window is set below, and the cut treats it as a suspected loop. Every reply counts, including a guardrail decline, so testing an agent from your phone spends this budget. Raise it if ordinary use trips the cut; lower it to catch runaways sooner.",
 		Kind:    KindInt,
 		Default: replyBudgetDefault, Min: 2, Max: 200,
 	})
@@ -99,7 +100,8 @@ func init() {
 		App: "/bridges",
 		Key: "tune_bridge_reply_window_min", Category: "Limits",
 		Label:   "Loop guard: reply window (minutes)",
-		Help:    "The window the reply budget is counted over. It has to outlast a slow loop (an agent loop runs at ~13s per round) while staying short enough that a normal conversation's replies age out.",
+		Help:    "The window the reply budget is counted over.",
+		Detail:  "It has to outlast a slow loop, and an agent loop runs at about 13s per round, while staying short enough that a normal conversation's replies age out.",
 		Kind:    KindInt,
 		Default: float64(replyWindowDefault / time.Minute), Min: 1, Max: 120,
 	})
@@ -107,7 +109,8 @@ func init() {
 		App: "/bridges",
 		Key: "tune_bridge_self_thread_budget", Category: "Limits",
 		Label:   "Loop guard: replies into your own thread",
-		Help:    "The stricter budget for a thread addressed to YOURSELF, where an agent can end up answering its own messages. Anywhere else a person has to type, so a runaway cannot start. Note this only applies when the transport keys the conversation by your handle; a conversation keyed by chat id falls under the general budget above.",
+		Help:    "The stricter budget for a thread addressed to YOURSELF, where an agent can answer itself.",
+		Detail:  "Anywhere else a person has to type, so a runaway cannot start. This only applies when the transport keys the conversation by your handle; a conversation keyed by chat id falls under the general budget above.",
 		Kind:    KindInt,
 		Default: selfThreadBudgetDefault, Min: 1, Max: 50,
 	})
@@ -115,7 +118,8 @@ func init() {
 		App: "/bridges",
 		Key: "tune_bridge_loop_cooldown_min", Category: "Limits",
 		Label:   "Loop guard: cooldown (minutes)",
-		Help:    "How long routing stays cut for a conversation after the budget trips. Inbound messages are still recorded to the transcript throughout; nothing wakes the agent until it expires.",
+		Help:    "How long routing stays cut for a conversation after the budget trips.",
+		Detail:  "Inbound messages are still recorded to the transcript throughout. Nothing wakes the agent until it expires.",
 		Kind:    KindInt,
 		Default: float64(loopCooldownDefault / time.Minute), Min: 1, Max: 240,
 	})
@@ -445,7 +449,7 @@ func LoopGuardReset() {
 // silently contained still means the agent burned a run per round and the owner
 // saw a burst of texts — they need to know which thread did it.
 func logLoopCut(chatID string) {
-	Log("[bridges] LOOP GUARD: conversation %s produced %d agent replies in %s — routing CUT for %s. "+
+	Log("[bridges] LOOP GUARD: conversation %s produced %d agent replies in %s, routing CUT for %s. "+
 		"Inbound is still recorded; nothing wakes the agent. Common cause: a self-thread where the agent's own "+
 		"replies arrive back as owner messages.", chatID, replyBudgetFor(), replyWindowFor(), loopCooldownFor())
 }

@@ -121,7 +121,7 @@ func (d MachineDef) PhaseBlock(ph MachinePhase, st MachineState, v PhaseVars) st
 	if len(ph.Tools) > 0 || len(ph.Deny) > 0 || PhaseReach(ph) != ReachAll {
 		b.WriteString("\n## Tools in this phase\n")
 		if PhaseReach(ph) == ReachRead {
-			b.WriteString("This phase may only READ. Nothing that writes, runs a command, or reaches the network is available here — that is the step's design, not a fault.\n")
+			b.WriteString("This phase may only READ. Nothing that writes, runs a command, or reaches the network is available here, that is the step's design, not a fault.\n")
 		}
 		if PhaseReach(ph) == ReachNone {
 			// The author's explicit "nothing". Saying it plainly beats
@@ -129,8 +129,8 @@ func (d MachineDef) PhaseBlock(ph MachinePhase, st MachineState, v PhaseVars) st
 			b.WriteString("This phase reaches no tools. Answer from what you were given and what is already in this conversation.\n")
 			b.WriteString("If the job genuinely needs one, change_phase to a step that carries it rather than describing a call you cannot make.\n")
 		} else if len(ph.Tools) > 0 {
-			b.WriteString("This phase narrows what you may reach to: " + strings.Join(ph.Tools, ", ") + " — alongside your workflow controls and anything your attachments grant.\n")
-			b.WriteString("Go by what is IN your catalog. A tool you used earlier in this conversation, under a phase that allowed it, and can no longer see is out of scope HERE — not misnamed. Don't retry those names. Work with what you have, or change_phase if the job has genuinely moved to a phase that carries what you need.\n")
+			b.WriteString("This phase narrows what you may reach to: " + strings.Join(ph.Tools, ", ") + ", alongside your workflow controls and anything your attachments grant.\n")
+			b.WriteString("Go by what is IN your catalog. A tool you used earlier in this conversation, under a phase that allowed it, and can no longer see is out of scope HERE: not misnamed. Don't retry those names. Work with what you have, or change_phase if the job has genuinely moved to a phase that carries what you need.\n")
 		}
 		// Named, not merely absent. A tool the model has used all conversation
 		// and now cannot see reads as a fault it should work around — by

@@ -1,4 +1,4 @@
-# Resumable dispatch — design
+# Resumable dispatch: design
 
 Status: design (not yet built). Author note: distilled from a working session;
 the goal is that a dispatched sub-agent can **ask its caller a question mid-task
@@ -11,7 +11,7 @@ Today dispatch is synchronous one-shot: a caller runs a sub-agent
 string comes back. There is no "pause partway and ask the caller a question."
 
 That forces a bad choice on any sub-agent that hits genuine ambiguity: guess, or
-fail. The motivating case is authoring — Chat delegates "build a tool that reads
+fail. The motivating case is authoring: Chat delegates "build a tool that reads
 the wiwee chat" to Builder; if the brief is under-specified Builder can only
 guess. The general case is every sub-agent in the fleet: it should be able to
 ask rather than guess.
@@ -32,7 +32,7 @@ sub-agent is not a frozen goroutine to freeze and thaw. It is:
 
 "Resume" = run a **brand-new turn** over that persisted history with the answer
 appended as the latest user message. The sub-agent continues by re-reading its
-own context, not by resuming a stack frame. It cannot tell the difference — and
+own context, not by resuming a stack frame. It cannot tell the difference, and
 neither can a turn that asked three questions across an hour.
 
 This is what makes the whole thing tractable: nothing exotic persists, and there
@@ -73,7 +73,7 @@ the channel agent" and it is the same machine.
 **Where it suspends.** The sub-agent calls an `ask_caller` tool. Instead of
 blocking, that ends its turn: the dispatch run returns a **SUSPENDED** result
 carrying `{question, subSessionID}`, and flips the record `active → idle`. No
-goroutine is left parked — an idle sub-session is free.
+goroutine is left parked: an idle sub-session is free.
 
 **What persists.** Two things, both already durable: the `SubSession` record (now
 `idle`) and the sub-agent's `ChatSession` (its full history, including the
@@ -86,7 +86,7 @@ persisted history with the answer as the new user message.
 ## Propagation up the chain
 
 A SUSPENDED result bubbles up. Each caller that receives "child needs input"
-either answers it itself or — if it is user-facing — surfaces it. Chat is
+either answers it itself or (if it is user-facing), surfaces it. Chat is
 user-facing, so it renders the question in the **channel** and routes the reply
 back down by sub-session id. Depth-N works because every level just forwards a
 SUSPENDED with the id attached. `Builder ↔ Chat ↔ user` is the 2-level case.
@@ -101,20 +101,20 @@ SUSPENDED with the id attached. `Builder ↔ Chat ↔ user` is the 2-level case.
    This is mostly a **lift**: extract phantom's goal-conversation runner into a
    shared core/orchestrate "resumable dispatch," parameterized on *who it waits
    on* (a contact vs. the channel/user).
-3. **An answer-router in orchestrate** — the `RouteGoal` analog: an inbound
+3. **An answer-router in orchestrate**, the `RouteGoal` analog: an inbound
    message finds the right idle autonomous sub-session and re-drives it.
-4. **Host handling in the channel agent** — render a child's question in the
+4. **Host handling in the channel agent**: render a child's question in the
    channel, and route the user's reply to the waiting sub-session instead of
    treating it as a normal chat turn.
 
 ## Sharp edges
 
-- **Liveness.** An idle sub-session has no worker — that is the *normal* state,
+- **Liveness.** An idle sub-session has no worker, that is the *normal* state,
   not an error. The liveness-checker + orphan-retirement machinery already
   exists to tell "parked, will re-drive" from "goroutine died."
 - **Runaway asking.** `SubSession.TurnCount` already caps follow-ups; reuse it so
   a child cannot ask forever.
-- **Compaction.** The channel's running summary must not bury an open question —
+- **Compaction.** The channel's running summary must not bury an open question
   a pending-question marker must be pinned (same class as monitor-wake
   de-pollution in `apps/orchestrate/operator_compaction.go`).
 - **Multiple parked children.** The id-on-the-question handles routing; the
@@ -135,10 +135,10 @@ phantom's goal conversations working on top of it unchanged. Then add the
 
 ## Related work in the tree
 
-- `core/sub_session.go` — the autonomous sub-session lifecycle index (the spine).
-- `apps/phantom/tool_goal_conversation.go` — the proven resume loop to lift.
-- `apps/orchestrate/agent_dispatch.go` — `RunAgentSync` (sync) and
+- `core/sub_session.go`: the autonomous sub-session lifecycle index (the spine).
+- `apps/phantom/tool_goal_conversation.go`: the proven resume loop to lift.
+- `apps/orchestrate/agent_dispatch.go`: `RunAgentSync` (sync) and
   `RunAgentSyncContinuing` (the resume entry point).
-- `apps/orchestrate/operator_wake.go` — the channel waker (question delivery).
-- `apps/orchestrate/operator_compaction.go` — where the pinned-question marker
+- `apps/orchestrate/operator_wake.go`: the channel waker (question delivery).
+- `apps/orchestrate/operator_compaction.go`, where the pinned-question marker
   fix lands.

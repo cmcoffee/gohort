@@ -28,7 +28,8 @@ func init() {
 		App:      "/orchestrate",
 		Category: "Limits",
 		Label:    "Compaction fold trigger (% of context depth)",
-		Help:     "How far a persistent thread's unsummarized tail may grow, as a percent of the agent's Context Depth, before the rolling summary folds it back down to the depth. 150 = fold at 1.5x depth, so the prompt floats between depth and 1.5x depth (e.g. depth 100 → prompt stays 100-150). Higher folds less often (looser prompt, fewer summary LLM calls); lower keeps the prompt tighter at the cost of more frequent folds. Was effectively 300 (3x) before this was configurable.",
+		Help:     "How far a thread's unsummarized tail may grow, as a percent of its Context Depth.",
+		Detail:   "Past this, the rolling summary folds the tail back down to the depth. 150 folds at 1.5x depth, so the prompt floats between depth and 1.5x depth: at depth 100 the prompt stays between 100 and 150.\n\nHigher folds less often, giving a looser prompt and fewer summary LLM calls. Lower keeps the prompt tighter at the cost of more frequent folds. It was effectively 300, or 3x, before this was configurable.",
 		Kind:     KindInt,
 		Default:  150,
 		Min:      110,
@@ -39,11 +40,12 @@ func init() {
 		App:      "/orchestrate",
 		Category: "Limits",
 		Label:    "Persistent-thread tail budget (tokens)",
-		Help: "How much verbatim conversation a persistent thread carries into each turn, before older messages in it are left to the rolling summary. " +
-			"This is the only bound here measured in TOKENS — Context Depth and the fold trigger count MESSAGES, which works until a message stops being a chat turn. " +
+		Help:     "How much verbatim conversation a persistent thread carries into each turn.",
+		Detail: "Older messages in it are left to the rolling summary.\n\n" +
+			"This is the only bound here measured in TOKENS: Context Depth and the fold trigger count MESSAGES, which works until a message stops being a chat turn. " +
 			"On a Cortex or channel thread the messages are standing reports, monitor wakes and daily briefs, so a thread sitting exactly at depth 12 can still arrive having eaten most of the window while every message-shaped setting reads as healthy. " +
 			"An absolute number rather than a share of the window, because this is what a turn COSTS: a share of a 200k model is a slow turn and a share of a 1M model is a slower one, while 24000 tokens takes the same time to process on either. " +
-			"Lower it if talking to a standing thread is slow while a fresh one is fast — that gap IS this. It is also capped at a third of the model's window, so a small local model is never handed a tail it cannot hold. 0 turns the budget off and leaves only the message count.",
+			"Lower it if talking to a standing thread is slow while a fresh one is fast, that gap IS this. It is also capped at a third of the model's window, so a small local model is never handed a tail it cannot hold. 0 turns the budget off and leaves only the message count.",
 		Kind:    KindInt,
 		Default: 24000,
 		Min:     0,
@@ -127,7 +129,7 @@ func (T *OrchestrateApp) compactOperatorHistory(udb Database, owner string, agen
 	// overlap between the summary and the shown tail is far cheaper than
 	// silently dropping the live turn.
 	if st.SummarizedThrough > len(cm) {
-		Log("[operator.compact] cursor %d > history %d for %s:%s — resetting fold cursor (corrupted state recovery)",
+		Log("[operator.compact] cursor %d > history %d for %s:%s, resetting fold cursor (corrupted state recovery)",
 			st.SummarizedThrough, len(cm), agent.ID, sessID)
 		st.SummarizedThrough = 0
 		saveCompactState(udb, agent.ID, sessID, st)
@@ -245,7 +247,7 @@ func capTailTokens(tail []ChatMessage, contextSize int, agentID, sessID string) 
 	if kept >= len(tail) {
 		return tail
 	}
-	Log("[operator.compact] %s:%s tail trimmed to %d of %d messages (~%d tokens, %s %d) — a persistent thread's messages are reports, not turns",
+	Log("[operator.compact] %s:%s tail trimmed to %d of %d messages (~%d tokens, %s %d), a persistent thread's messages are reports, not turns",
 		agentID, sessID, kept, len(tail), total, why, budget)
 	return tail[len(tail)-kept:]
 }
@@ -437,7 +439,7 @@ func (T *OrchestrateApp) trimStoredHistory(udb Database, agent AgentRecord, sess
 	if agent.DisableCompaction {
 		Log("[operator.compact] %s:%s storage capped to %d (compaction off; older forgotten)", agent.ID, sessID, keep)
 		appendSessionDiag(udb, agent.ID, sessID, "history-forgotten",
-			fmt.Sprintf("this thread reached %d stored messages with compaction OFF, so the oldest %d were dropped for good — no summary, no archive. Turn compaction on for this agent to keep older turns as a rolling summary instead.", len(msgs), len(msgs)-keep))
+			fmt.Sprintf("this thread reached %d stored messages with compaction OFF, so the oldest %d were dropped for good: no summary, no archive. Turn compaction on for this agent to keep older turns as a rolling summary instead.", len(msgs), len(msgs)-keep))
 		return msgs[len(msgs)-keep:]
 	}
 	if operatorFoldBusy(agent.ID, sessID) {
@@ -472,7 +474,7 @@ func (T *OrchestrateApp) trimStoredHistory(udb Database, agent AgentRecord, sess
 // worker model to mimic the wake pattern — reflexive list_runs + a canned
 // greeting — instead of engaging the user on their next real message. That is
 // exactly the "channel crystallized" failure. We collapse long runs.
-const monitorWakePrefix = "[EVENT — monitor"
+const monitorWakePrefix = "[EVENT: monitor"
 
 // collapseMonitorWakes replaces a maximal CONTIGUOUS run of monitor-wake turns
 // (each a wake user-message plus its assistant reply) with a single marker,
@@ -512,7 +514,7 @@ func collapseMonitorWakes(msgs []ChatMessage, keepRecent int) []ChatMessage {
 		}
 		omitted := len(units) - keepRecent
 		out = append(out, ChatMessage{Role: "user",
-			Content: fmt.Sprintf("[%d earlier monitor wakes omitted — already handled, nothing pending]", omitted)})
+			Content: fmt.Sprintf("[%d earlier monitor wakes omitted: already handled, nothing pending]", omitted)})
 		for _, u := range units[len(units)-keepRecent:] {
 			out = append(out, u...)
 		}
@@ -552,7 +554,7 @@ func (T *OrchestrateApp) operatorFold(ctx context.Context, aging []Message, prio
 			// pass: a partial extension is real progress, and the caller's
 			// cursor only advances when a summary comes back.
 			if strings.TrimSpace(summary) != strings.TrimSpace(prior) {
-				Log("[operator.compact] fold stopped early (%v) — keeping the %d chunk(s) already folded", err, len(facts))
+				Log("[operator.compact] fold stopped early (%v): keeping the %d chunk(s) already folded", err, len(facts))
 				return summary, facts, nil
 			}
 			return "", nil, err
@@ -677,7 +679,7 @@ func (T *OrchestrateApp) archiveOperatorSpan(udb Database, agentID, sessID strin
 	}
 	source := operatorLCMSource(agentID, sessID)
 	reportID := fmt.Sprintf("%s#f%d", source, foldSeq)
-	title := fmt.Sprintf("operator history — messages %d–%d", firstIndex, firstIndex+len(folded)-1)
+	title := fmt.Sprintf("operator history: messages %d–%d", firstIndex, firstIndex+len(folded)-1)
 	// Shared core primitive: redacts secret-shaped lines, then ingests.
 	if err := IngestRecallSpan(context.Background(), udb, source, reportID, title, body, "lcm"); err != nil {
 		Log("[operator.lcm] archive FAILED for span %s: %v", reportID, err)

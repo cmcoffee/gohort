@@ -411,7 +411,7 @@ func (pr *planRun) planSetToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "plan_set",
-			Description: fmt.Sprintf("Commit to a multi-step plan for this turn. Each step is {title, intent, worker_brief}; the framework spins up a fresh focused worker LLM per step. Use ONLY when the turn genuinely needs decomposition (research with multiple branches, layered analysis, complex multi-tool workflows). For single-tool turns CALL THE TOOL DIRECTLY (you have web_search, fetch_url, calculate, etc.) instead of going through plan_set — it's much faster. **MINIMUM 2 STEPS** — a 1-step plan is wasteful (planner + worker + synthesis for what would be one inline call); the handler rejects it. Budget: %s.", stepBudget),
+			Description: fmt.Sprintf("Commit to a multi-step plan for this turn. Each step is {title, intent, worker_brief}; the framework spins up a fresh focused worker LLM per step. Use ONLY when the turn genuinely needs decomposition (research with multiple branches, layered analysis, complex multi-tool workflows). For single-tool turns CALL THE TOOL DIRECTLY (you have web_search, fetch_url, calculate, etc.) instead of going through plan_set: it's much faster. **MINIMUM 2 STEPS**: a 1-step plan is wasteful (planner + worker + synthesis for what would be one inline call); the handler rejects it. Budget: %s.", stepBudget),
 			Parameters: map[string]ToolParam{
 				"steps": {
 					Type:        "array",
@@ -421,10 +421,10 @@ func (pr *planRun) planSetToolDef() AgentToolDef {
 						Properties: map[string]ToolParam{
 							"title":        {Type: "string", Description: "Short step name (1 line)."},
 							"intent":       {Type: "string", Description: "One-sentence statement of what this step is looking for or aims to produce. Shown to the user BEFORE the worker runs."},
-							"worker_brief": {Type: "string", Description: "The SYSTEM PROMPT the worker LLM gets for this step. 2-5 sentences. Be specific about what to produce, output format, and what to avoid. The framework auto-injects available tools + agent rules; you don't need to repeat them. **Always end the brief with: \"Lead your final response with ONE concrete sentence summarizing what you accomplished — that line surfaces on the plan card as the step's outcome. Then write the details underneath.\"** Workers that lead with process narration (\"I searched for X...\") leave the user with a misleading status line; leading with the outcome (\"Found 3 candidate Foundation cast updates from Apple TV's October press release.\") makes the plan card honest. NOT visible to the user."},
+							"worker_brief": {Type: "string", Description: "The SYSTEM PROMPT the worker LLM gets for this step. 2-5 sentences. Be specific about what to produce, output format, and what to avoid. The framework auto-injects available tools + agent rules; you don't need to repeat them. **Always end the brief with: \"Lead your final response with ONE concrete sentence summarizing what you accomplished, that line surfaces on the plan card as the step's outcome. Then write the details underneath.\"** Workers that lead with process narration (\"I searched for X...\") leave the user with a misleading status line; leading with the outcome (\"Found 3 candidate Foundation cast updates from Apple TV's October press release.\") makes the plan card honest. NOT visible to the user."},
 							"tools": {
 								Type:        "array",
-								Description: rewriteMemoryToolNames("Explicit tool surface for THIS step's worker — tight list of tool names the worker actually needs to complete the brief. Pick from the tools currently in YOUR catalog (the worker can't access tools you don't see). Be tight: 2-5 names is typical; one tool is common when the step is a focused lookup. The knowledge/memory tools and agents are always appended for the worker — don't list them. The worker has NO plan_set and NO ask_user, so the brief must stand on its own: fold any clarification the step needs into the brief up front. If you're unsure which tools the worker needs, list none and the worker gets the agent's default pool (broader catalog, more LLM cognitive load)."),
+								Description: rewriteMemoryToolNames("Explicit tool surface for THIS step's worker: tight list of tool names the worker actually needs to complete the brief. Pick from the tools currently in YOUR catalog (the worker can't access tools you don't see). Be tight: 2-5 names is typical; one tool is common when the step is a focused lookup. The knowledge/memory tools and agents are always appended for the worker: don't list them. The worker has NO plan_set and NO ask_user, so the brief must stand on its own: fold any clarification the step needs into the brief up front. If you're unsure which tools the worker needs, list none and the worker gets the agent's default pool (broader catalog, more LLM cognitive load)."),
 								Items:       &ToolParam{Type: "string"},
 							},
 						},
@@ -456,7 +456,7 @@ func (pr *planRun) planSetToolDef() AgentToolDef {
 			if len(steps) < minSteps {
 				pr.planSetRejects++
 				pr.forceNoThinkAfterReject = true
-				return "", fmt.Errorf("plan_set requires at least %d step(s) (got %d). For a single tool call, invoke the tool directly inline — plan_set's planner+worker+synthesis overhead is only worth it for genuinely multi-step work", minSteps, len(steps))
+				return "", fmt.Errorf("plan_set requires at least %d step(s) (got %d). For a single tool call, invoke the tool directly inline: plan_set's planner+worker+synthesis overhead is only worth it for genuinely multi-step work", minSteps, len(steps))
 			}
 			// Reject vacuous plans — steps whose intent is "just
 			// respond" or "summarize and reply" with no actual work.
@@ -468,7 +468,7 @@ func (pr *planRun) planSetToolDef() AgentToolDef {
 			if vacuous := looksLikeVacuousPlan(steps); vacuous != "" {
 				pr.planSetRejects++
 				pr.forceNoThinkAfterReject = true
-				return "", fmt.Errorf("plan_set rejected: %s. For a turn that needs no tool work, just write the answer as your reply text — there is no reply tool. plan_set is for genuinely multi-step research / decomposition", vacuous)
+				return "", fmt.Errorf("plan_set rejected: %s. For a turn that needs no tool work, just write the answer as your reply text: there is no reply tool. plan_set is for genuinely multi-step research / decomposition", vacuous)
 			}
 			pr.capturedSteps = steps
 			pr.cancelOrch()
@@ -482,7 +482,7 @@ func (pr *planRun) askUserToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "ask_user",
-			Description: "Pause and ask the user a clarifying question. Use whenever GUESSING is the alternative — not when SEARCHING is: 2+ plausible matches you'd be picking between arbitrarily, a choice between meaningfully different approaches, personal info only they have, or an ambiguity no tool could resolve. Don't ask for what you could look up. **DEFAULT TO `options`** whenever the answer space is bounded — one tap beats typing — and never write the choices into the question TEXT instead; without `options` this renders as plain chat text, no card and no buttons. For multi-step builds, pass `plan` to paint a checklist card above the question.",
+			Description: "Pause and ask the user a clarifying question. Use whenever GUESSING is the alternative, not when SEARCHING is: 2+ plausible matches you'd be picking between arbitrarily, a choice between meaningfully different approaches, personal info only they have, or an ambiguity no tool could resolve. Don't ask for what you could look up. **DEFAULT TO `options`** whenever the answer space is bounded (one tap beats typing), and never write the choices into the question TEXT instead; without `options` this renders as plain chat text, no card and no buttons. For multi-step builds, pass `plan` to paint a checklist card above the question.",
 			Parameters: map[string]ToolParam{
 				"question": {
 					Type:        "string",
@@ -490,7 +490,7 @@ func (pr *planRun) askUserToolDef() AgentToolDef {
 				},
 				"options": {
 					Type:        "array",
-					Description: "**STRONGLY PREFERRED whenever the answer has natural choices.** Array of STRINGS, one label each — options=[\"yes\", \"edit\", \"no\"] — not a count, not a number, not a JSON-encoded string. Renders radios (checkboxes when multi=true) plus a free-text fallback. Labels 1-4 words, 8 max. Omit only for genuinely open-ended typed answers.",
+					Description: "**STRONGLY PREFERRED whenever the answer has natural choices.** Array of STRINGS, one label each (options=[\"yes\", \"edit\", \"no\"]), not a count, not a number, not a JSON-encoded string. Renders radios (checkboxes when multi=true) plus a free-text fallback. Labels 1-4 words, 8 max. Omit only for genuinely open-ended typed answers.",
 					Items:       &ToolParam{Type: "string"},
 				},
 				"multi": {
@@ -499,7 +499,7 @@ func (pr *planRun) askUserToolDef() AgentToolDef {
 				},
 				"plan": {
 					Type:        "array",
-					Description: "Optional build-plan steps, rendered as a checklist above the question. Array of OBJECTS with 'title' and optional 'detail' — e.g. [{\"title\":\"Create agent shell\",\"detail\":\"create_agent\"},{\"title\":\"Add search tool\",\"detail\":\"add_tool(mode=api)\"}]. Not a count, not a list of numbers, not a string. Later authoring calls flip rows to ✓.",
+					Description: "Optional build-plan steps, rendered as a checklist above the question. Array of OBJECTS with 'title' and optional 'detail': e.g. [{\"title\":\"Create agent shell\",\"detail\":\"create_agent\"},{\"title\":\"Add search tool\",\"detail\":\"add_tool(mode=api)\"}]. Not a count, not a list of numbers, not a string. Later authoring calls flip rows to ✓.",
 					Items: &ToolParam{
 						Type: "object",
 						Properties: map[string]ToolParam{
@@ -563,7 +563,7 @@ func (pr *planRun) askUserFormToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "ask_user_form",
-			Description: "Pause and collect SEVERAL pieces of info from the user in one pass. Two shapes, depending on whether you need CHOICES or typed ENTRY:\n• CHOICES: each step has discrete options (e.g. language + deployment target + timeline) — the user clicks through them one at a time. PREFER this over a single ask_user with a numbered list in the question text.\n• ENTRY FIELDS: give a step a type (\"text\", \"number\", \"textarea\", \"select\", \"password\") when the user must TYPE a specific value — an API base URL, a key, a count, an endpoint. Any step with a type turns the whole thing into a single FORM: every field shows at once with one Submit, instead of a step-through. Mix freely — a select field with options plus text/number fields. For ONE question, use ask_user instead.",
+			Description: "Pause and collect SEVERAL pieces of info from the user in one pass. Two shapes, depending on whether you need CHOICES or typed ENTRY:\n• CHOICES: each step has discrete options (e.g. language + deployment target + timeline): the user clicks through them one at a time. PREFER this over a single ask_user with a numbered list in the question text.\n• ENTRY FIELDS: give a step a type (\"text\", \"number\", \"textarea\", \"select\", \"password\") when the user must TYPE a specific value, an API base URL, a key, a count, an endpoint. Any step with a type turns the whole thing into a single FORM: every field shows at once with one Submit, instead of a step-through. Mix freely: a select field with options plus text/number fields. For ONE question, use ask_user instead.",
 			Parameters: map[string]ToolParam{
 				"steps": {
 					Type:        "array",
@@ -785,11 +785,11 @@ func (pr *planRun) catalogKnowTools() error {
 	pr.cat.knowTools = append(pr.cat.knowTools, AgentToolDef{
 		Tool: Tool{
 			Name:        "compact_context",
-			Description: "Free up context: discard the bodies of EARLIER tool results you've already read and no longer need — e.g. after judging a long smoke-test report, a big page fetch, or a verbose listing. Their bodies are replaced with a short marker (re-run the tool if you need the data again); the most recent result and the whole conversation stay intact. Call this at a natural breakpoint when you're carrying long tool outputs you're done with, to keep a long session from bloating its context. No arguments.",
+			Description: "Free up context: discard the bodies of EARLIER tool results you've already read and no longer need, e.g. after judging a long smoke-test report, a big page fetch, or a verbose listing. Their bodies are replaced with a short marker (re-run the tool if you need the data again); the most recent result and the whole conversation stay intact. Call this at a natural breakpoint when you're carrying long tool outputs you're done with, to keep a long session from bloating its context. No arguments.",
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			pr.compactRequested = true
-			return "Acknowledged — earlier verbose tool-result bodies you've consumed will be released on your next step. Continue with your next action.", nil
+			return "Acknowledged: earlier verbose tool-result bodies you've consumed will be released on your next step. Continue with your next action.", nil
 		},
 	})
 	// show_html — the viewer/previewer pane (preview_tool.go). Framework
@@ -1466,7 +1466,7 @@ func (pr *planRun) guardAskText(q string) (string, bool) {
 	if dec := enforce.Check(GuardHookPreOutput, q); !dec.Blocked {
 		return q, true
 	}
-	Log("[orchestrate.guardrail] agent=%s blocked a question the agent was about to ask — declining instead of asking", pr.t.agent.ID)
+	Log("[orchestrate.guardrail] agent=%s blocked a question the agent was about to ask: declining instead of asking", pr.t.agent.ID)
 	pr.t.turnDiag("guardrail-ask-blocked",
 		"The agent was about to ask the user a question that violated an enforced guardrail. It declined instead, and the turn is NOT waiting on an answer.")
 	// The same fresh-context writer the loop uses for a blocked reply, so a
@@ -1558,7 +1558,7 @@ func (pr *planRun) emitCapturedAsBubble(text string) {
 	// predicate appendMidTurnBubbles uses, so the bubbles on screen and the
 	// bubbles in the reloaded transcript are decided the same way.
 	if last := strings.TrimSpace(pr.lastFinalizedText); last != "" && repeatsWithoutAdding(trimmed, last) {
-		Debug("[orchestrate.orch] captured reply (%d ch) is a near-duplicate of last shown bubble (%d ch) — suppressing", len(trimmed), len(last))
+		Debug("[orchestrate.orch] captured reply (%d ch) is a near-duplicate of last shown bubble (%d ch): suppressing", len(trimmed), len(last))
 		return
 	}
 	Debug("[orchestrate.orch] emitting captured reply as bubble (%d ch, last bubble %d ch)", len(trimmed), len(strings.TrimSpace(pr.lastFinalizedText)))
@@ -1622,7 +1622,7 @@ func (pr *planRun) onRoundStartHandler() []Message {
 			return []Message{{
 				Role: "user",
 				Content: fmt.Sprintf(
-					"[Round %d/%d — FINAL round. If you are NOT finished (still mid-build / tools left to add or verify), call enter_explorer_mode NOW to extend your budget. Otherwise produce your final answer from what you have.]",
+					"[Round %d/%d: FINAL round. If you are NOT finished (still mid-build / tools left to add or verify), call enter_explorer_mode NOW to extend your budget. Otherwise produce your final answer from what you have.]",
 					pr.roundCounter, cap,
 				),
 			}}
@@ -1630,7 +1630,7 @@ func (pr *planRun) onRoundStartHandler() []Message {
 		return []Message{{
 			Role: "user",
 			Content: fmt.Sprintf(
-				"[Round %d/%d — FINAL round. No more tool calls. Produce your final answer NOW from what you have so far.]",
+				"[Round %d/%d: FINAL round. No more tool calls. Produce your final answer NOW from what you have so far.]",
 				pr.roundCounter, cap,
 			),
 		}}
@@ -1641,7 +1641,7 @@ func (pr *planRun) onRoundStartHandler() []Message {
 		return []Message{{
 			Role: "user",
 			Content: fmt.Sprintf(
-				"[Round %d/%d — only %d round%s left. enter_explorer_mode extends your budget to %d rounds for this step. Call it if you're (a) mid-build with tools still to add or verify, (b) mapping an unfamiliar API / system surface that keeps revealing more, (c) figuring out HOW to do something multi-step where each result reveals the next move (e.g. \"scrape this for a video\" — find container, identify format, locate manifest, resolve segments), or (d) troubleshooting a misbehaving tool — probing variant args / inspecting related state to narrow down the failure mode before you can work around it or report cleanly. If you're nearly done, wrap up.]",
+				"[Round %d/%d: only %d round%s left. enter_explorer_mode extends your budget to %d rounds for this step. Call it if you're (a) mid-build with tools still to add or verify, (b) mapping an unfamiliar API / system surface that keeps revealing more, (c) figuring out HOW to do something multi-step where each result reveals the next move (e.g. \"scrape this for a video\", find container, identify format, locate manifest, resolve segments), or (d) troubleshooting a misbehaving tool, probing variant args / inspecting related state to narrow down the failure mode before you can work around it or report cleanly. If you're nearly done, wrap up.]",
 				pr.roundCounter, cap, remaining, plural(remaining), pr.orchHardCap,
 			),
 		}}
@@ -1665,7 +1665,7 @@ func (pr *planRun) onRoundStartHandler() []Message {
 	return []Message{{
 		Role: "user",
 		Content: fmt.Sprintf(
-			"[Round %d/%d — %d round%s left before this turn ends. Pace accordingly: if the answer needs more searches than that, use plan_set instead of iterating inline.]",
+			"[Round %d/%d: %d round%s left before this turn ends. Pace accordingly: if the answer needs more searches than that, use plan_set instead of iterating inline.]",
 			pr.roundCounter, cap, remaining, plural(remaining),
 		),
 	}}
@@ -1749,14 +1749,14 @@ func (pr *planRun) prepareMessages() {
 		// Every name missed. The literal reading of that is "no tools", which
 		// is both unlikely to be meant and unsurvivable — it takes the control
 		// plane with it, so the model can neither answer nor leave the phase.
-		Log("[orchestrate.orch] machine phase %q matched NOTHING in this agent's catalog — running the full %d-tool catalog rather than none",
+		Log("[orchestrate.orch] machine phase %q matched NOTHING in this agent's catalog: running the full %d-tool catalog rather than none",
 			pr.mach.Name(), len(narrowed))
 		t.turnDiag("machine_phase_tools_unmatched", fmt.Sprintf(
-			"phase %q allows %v, and NONE of those names exist in this agent's catalog, so the phase ran with the full catalog instead of an empty one. Fix the phase's tool names — they must match the catalog exactly, and a remote MCP tool is exposed as \"<server>_<tool>\" in lowercase (getConfluencePage on the server is atlassian_getconfluencepage here).",
+			"phase %q allows %v, and NONE of those names exist in this agent's catalog, so the phase ran with the full catalog instead of an empty one. Fix the phase's tool names: they must match the catalog exactly, and a remote MCP tool is exposed as \"<server>_<tool>\" in lowercase (getConfluencePage on the server is atlassian_getconfluencepage here).",
 			pr.mach.Name(), pr.mach.phase.Tools))
 	} else if len(phaseUnmatched) > 0 {
 		t.turnDiag("machine_phase_tool_missing", fmt.Sprintf(
-			"phase %q allows %v, but %v are not in this agent's catalog under those names, so the phase ran without them. Tool names in a phase must match the catalog exactly — a remote MCP tool is exposed as \"<server>_<tool>\", not its raw remote name.",
+			"phase %q allows %v, but %v are not in this agent's catalog under those names, so the phase ran without them. Tool names in a phase must match the catalog exactly: a remote MCP tool is exposed as \"<server>_<tool>\", not its raw remote name.",
 			pr.mach.Name(), pr.mach.phase.Tools, phaseUnmatched))
 	}
 	pr.allTools = narrowed
@@ -2019,7 +2019,7 @@ func (pr *planRun) finish() (steps []PlanStep, question, directReply string, err
 	// "ran out of turns, got nothing back" failure (common for retrieval-heavy
 	// agents that exhaust rounds mid-investigation).
 	if pr.resp != nil && pr.resp.HitRoundCap {
-		t.turnDiag("round-cap", "This turn ran out of worker rounds before finishing — raise the round limit or narrow the ask.")
+		t.turnDiag("round-cap", "This turn ran out of worker rounds before finishing: raise the round limit or narrow the ask.")
 		msg := "I ran out of working rounds for this turn before I could finish, and didn't have a partial answer to show. Try narrowing the question, or ask me to continue and I'll pick up from here."
 		// Same as the resp.Content path above: gate on the near-duplicate check,
 		// not a coarse "already rendered something" boolean, so this shows even

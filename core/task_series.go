@@ -36,9 +36,10 @@ import (
 func init() {
 	RegisterTunable(TunableSpec{
 		Key: "tune_task_series_max", Category: "Limits",
-		Label: "Background pieces per series",
-		Help:  "Ceiling on how many pieces of background work one declared series may run — \"make me four variations\" and the like. Each piece is a separate background job, run one after another, so this is the number of extra messages the user gets. A request for more is clamped to this, not refused.",
-		Kind:  KindInt, Default: 4, Min: 1, Max: 10,
+		Label:  "Background pieces per series",
+		Help:   "Ceiling on how many pieces of background work one declared series may run.",
+		Detail: "\"Make me four variations\" and the like. Each piece is a separate background job, run one after another, so this is the number of extra messages the user gets. A request for more is clamped to this, not refused.",
+		Kind:   KindInt, Default: 4, Min: 1, Max: 10,
 	})
 }
 
@@ -227,7 +228,7 @@ func SeriesContinuation(piece, of int, what string) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString(SeriesContinuationMarker + " THIS IS PIECE " + strconv.Itoa(piece) + " OF " + strconv.Itoa(of) + " — you are not done.\n")
+	b.WriteString(SeriesContinuationMarker + " THIS IS PIECE " + strconv.Itoa(piece) + " OF " + strconv.Itoa(of) + ", you are not done.\n")
 	// The TOOL CALL FIRST, and said before anything about the reply.
 	//
 	// This instruction used to open with "deliver this one, and in the SAME turn
@@ -241,13 +242,13 @@ func SeriesContinuation(piece, of int, what string) string {
 	if w := strings.TrimSpace(what); w != "" {
 		b.WriteString(" (" + w + ")")
 	}
-	b.WriteString(" — with a prompt that is a genuine variation on the idea rather than a repeat of the one you just used: a different angle, palette, composition, or mood, whichever the request was about.\n")
-	b.WriteString("THEN, in the same turn, write one line delivering the piece that just finished. Both, in that order. A turn that only writes the line is a turn that abandoned the set — the words \"starting the next one\" are not starting it.\n")
+	b.WriteString(", with a prompt that is a genuine variation on the idea rather than a repeat of the one you just used: a different angle, palette, composition, or mood, whichever the request was about.\n")
+	b.WriteString("THEN, in the same turn, write one line delivering the piece that just finished. Both, in that order. A turn that only writes the line is a turn that abandoned the set: the words \"starting the next one\" are not starting it.\n")
 	// The failure this line exists for: the model reads "start the next one",
 	// starts it, and then tells the user about the mechanism — "the second
 	// variation is now running in the background" — which is exactly the
 	// machinery the detach notice bans, restated by a turn that never saw it.
-	b.WriteString("Say it the way a person would: here is the first, the next is coming. Do NOT mention jobs, queues, backgrounds or waiting, do NOT put a time on it, and do NOT ask whether they want the rest — they already said yes by asking for several.\n")
+	b.WriteString("Say it the way a person would: here is the first, the next is coming. Do NOT mention jobs, queues, backgrounds or waiting, do NOT put a time on it, and do NOT ask whether they want the rest: they already said yes by asking for several.\n")
 	b.WriteString("Start the next one UNLESS the user has since asked for something different or told you to stop; if they have, say what you are dropping and drop it.")
 	return b.String()
 }

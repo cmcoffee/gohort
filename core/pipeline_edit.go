@@ -252,7 +252,7 @@ func (d *PipelineDef) RemoveStage(name string) error {
 	}
 	if refs := d.StageReferences(name); len(refs) > 0 {
 		return Error("cannot remove " + strconv.Quote(name) + " while it is read by " +
-			strings.Join(refs, ", ") + " — a pipeline's references live in its prompts, so removing " +
+			strings.Join(refs, ", ") + ", a pipeline's references live in its prompts, so removing " +
 			"one silently would mean rewriting what you wrote. Change those first.")
 	}
 	out := d.Stages[:0:0]

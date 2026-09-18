@@ -24,7 +24,7 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		// Transport kill-switch — flips the master switch off; inbound is still
 		// recorded but nothing routes to an agent or delivers.
 		Sticky: ui.PanicBar{
-			Label:   "⚠ PANIC — disable all bridges",
+			Label:   "⚠ PANIC: disable all bridges",
 			OnClick: "/bridges/api/panic",
 			Confirm: "Disable all bridges? Inbound stops routing to agents and nothing is delivered until you re-enable. Reversible.",
 		},
@@ -47,9 +47,10 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 							{Field: "self_name", Label: "Your name", Type: "text", Placeholder: "Craig",
 								Help: "How your own messages are labeled in group chats."},
 							{Field: "self_handle", Label: "Your handle", Type: "text", Placeholder: "+15551234567",
-								Help: "Your own phone/email — lets the agent text you directly (notify_me) and resolve \"me\" as a recipient."},
+								Help: "Your own phone/email: lets the agent text you directly (notify_me) and resolve \"me\" as a recipient."},
 							{Field: "tag_override", Label: "Outbound name tag (global override)", Type: "text", Placeholder: "(agent's own name)",
-								Help: "Optional. When set, every agent that signs its outbound messages uses THIS name instead of its own — a deployment-wide label so all agents present as one identity. Leave blank to let each agent sign with its own name. A per-channel override still wins over this. Whether an agent tags at all is set per-agent in the agent editor."},
+								Help:   "Optional. A deployment-wide signing name, so all agents present as one identity.",
+								Detail: "When set, every agent that signs its outbound messages uses THIS name instead of its own. Leave it blank to let each agent sign with its own name. A per-channel override still wins over this, and whether an agent tags at all is set per-agent in the agent editor."},
 						},
 					},
 				}},
@@ -86,7 +87,7 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				// storage. (Poll → CHANNEL target and unified creation are
 				// Stages B/C; today a poll bridge wakes its agent's thread.)
 				Title:    "Polling bridges",
-				Subtitle: "POLL sources: gohort calls an API on a schedule (through a saved credential) and, when the response changes, delivers into the target — a channel (its agent reacts in that conversation) or an agent's own thread. Agents create these with the bridge tool; pause or delete one here. Zero LLM cost until something changes.",
+				Subtitle: "POLL sources: gohort calls an API on a schedule (through a saved credential) and, when the response changes, delivers into the target, a channel (its agent reacts in that conversation) or an agent's own thread. Agents create these with the bridge tool; pause or delete one here. Zero LLM cost until something changes.",
 				Body: ui.Table{
 					Source: "/orchestrate/api/console/bridges",
 					RowKey: "name",
@@ -114,7 +115,7 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 							Method:     "POST",
 							PostTo:     "/orchestrate/api/console/bridges/set-channel?owner={owner}&name={name}&channel_id={id}",
 							Confirm:    "Deliver this bridge's changes into this channel? Its bound agent will react there.",
-							EmptyText:  "No channels yet — create one in Agents, then connect it here.",
+							EmptyText:  "No channels yet: create one in Agents, then connect it here.",
 						}),
 						// Channel activity — the recent messages that have landed in the
 						// connected channel's conversation. Only when hooked (a poll
@@ -141,7 +142,7 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 							Confirm: "Delete this polling bridge? Its schedule is cancelled; the agent and credential it used are untouched.",
 							Compact: true},
 					},
-					EmptyText: "No polling bridges yet. Ask an agent to \"bridge\" an API (e.g. watch a feed and wake me on new items) — it drafts the credential and creates the poll here.",
+					EmptyText: "No polling bridges yet. Ask an agent to \"bridge\" an API (e.g. watch a feed and wake me on new items): it drafts the credential and creates the poll here.",
 				},
 			},
 			{
@@ -166,7 +167,7 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 								ButtonText: "Add",
 								Method:     "POST",
 								PostTo:     "/bridges/api/add-convo?chat_id={id}",
-								EmptyText:  "No new incoming chats yet — they appear here as people message you.",
+								EmptyText:  "No new incoming chats yet: they appear here as people message you.",
 								// Refresh the conversations table behind the modal, and
 								// drop the just-added contact from this picker.
 								Invalidate: []string{"/bridges/api/conversations"},
@@ -216,7 +217,7 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 								Method:            "PATCH",
 								Field:             "members",
 								AliasHandlesField: "alias_handles",
-								EmptyText:         "No members yet. Add one — handle is the phone/email; aliases are the same person's other handles.",
+								EmptyText:         "No members yet. Add one: handle is the phone/email; aliases are the same person's other handles.",
 							}),
 							// Edit — one place to rename the chat AND link/relink it to
 							// an agent's channel. The channel picker reuses
@@ -245,7 +246,7 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 									Method:     "POST",
 									PostTo:     "/bridges/api/connect-channel?chat_id={chat_id}&channel_id={id}",
 									Confirm:    "Route this chat to this channel's agent? Any current binding is replaced.",
-									EmptyText:  "No free channels — create one in Agents (or free one up by clearing another chat), then link it here.",
+									EmptyText:  "No free channels: create one in Agents (or free one up by clearing another chat), then link it here.",
 									Invalidate: []string{"/bridges/api/conversations"},
 								},
 								// Clear — unbind the channel, freeing it back to the
@@ -275,7 +276,7 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "API keys",
-				Subtitle: "Bridge keys authenticate connectors and the MCP server. Minting one shows the secret ONCE — copy it then. Put a key in a connector's config or the MCP client's X-API-Key header. (The iMessage desktop daemon auto-registers its own key, so you don't mint one for it here.)",
+				Subtitle: "Bridge keys authenticate connectors and the MCP server. Minting one shows the secret ONCE: copy it then. Put a key in a connector's config or the MCP client's X-API-Key header. (The iMessage desktop daemon auto-registers its own key, so you don't mint one for it here.)",
 				Body: ui.KeyManager{
 					ListURL:   "/bridges/api/keys",
 					CreateURL: "/bridges/api/keys",
@@ -286,7 +287,7 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "MCP Server",
-				Subtitle: "Lets an external MCP client (e.g. Claude Desktop) reach your agents over a JSON-RPC endpoint — a tool-API, not a messaging bridge: the client calls tools/call to dispatch to an agent. It authenticates with one of the bridge keys above in the X-API-Key header.",
+				Subtitle: "Lets an external MCP client (e.g. Claude Desktop) reach your agents over a JSON-RPC endpoint, a tool-API, not a messaging bridge: the client calls tools/call to dispatch to an agent. It authenticates with one of the bridge keys above in the X-API-Key header.",
 				Body: ui.DisplayPanel{
 					Source: "/mcp/status",
 					Pairs: []ui.DisplayPair{

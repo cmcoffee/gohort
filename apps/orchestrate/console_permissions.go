@@ -79,7 +79,7 @@ func approvalDisplay(udb Database, user string, a Authorization) (who, detail st
 		// Says plainly that nothing is waiting on this. The old copy ("keep X in
 		// this agent's own kit") read as a permission being withheld, when the
 		// agent has been calling the tool all along — that IS the evidence.
-		detail = "Suggestion: \"" + a.Brief + "\" looks like part of this agent's kit — scope it so it's always in the catalog instead of loaded on demand. It keeps working either way."
+		detail = "Suggestion: \"" + a.Brief + "\" looks like part of this agent's kit: scope it so it's always in the catalog instead of loaded on demand. It keeps working either way."
 	case orphanMemoryRefAction:
 		if rec, found := loadAgent(udb, a.Agent); found {
 			who = rec.Name
@@ -87,7 +87,7 @@ func approvalDisplay(udb Database, user string, a Authorization) (who, detail st
 		// Says what is actually wrong — the agent's memory is now false — and
 		// that nothing is blocked. It runs fine; it just runs believing it can
 		// call something it cannot.
-		detail = "Suggestion: this agent's memory still refers to \"" + a.Brief + "\", whose last agent was deleted, so nothing can call it. Approving re-homes the tool here so the memory is true again. Or edit the memory from the agent's Memory pane — nothing is blocked either way."
+		detail = "Suggestion: this agent's memory still refers to \"" + a.Brief + "\", whose last agent was deleted, so nothing can call it. Approving re-homes the tool here so the memory is true again. Or edit the memory from the agent's Memory pane: nothing is blocked either way."
 	}
 	return who, detail
 }

@@ -51,17 +51,17 @@ func (addToolTool) Name() string             { return "add_tool" }
 func (addToolTool) Caps() []Capability       { return []Capability{CapWrite} }
 func (addToolTool) SingleFirePerBatch() bool { return true }
 func (addToolTool) Desc() string {
-	base := "Attach ONE single-action tool to an agent — either the one named in the `agent` argument, or (when omitted) the agent currently in authoring focus, set by your most recent get_agent or create_agent call. Note that create_agent MOVES the focus to the agent it just created, so if you've made sub-agents since you started on your intended target, pass `agent` explicitly rather than trusting focus. This builds a single shell OR api tool — it does NOT build or edit toolboxes. If you need MULTIPLE related endpoints under one tool name (a whole API surface sharing one credential, e.g. the `moltbook` or a GitHub toolbox), or you need to change one action of an existing toolbox, use the `tool_def` tool instead (mode=\"toolbox\" to create, action=\"update\" to edit one action) — not this. Pick the mode that fits the work:\n"
+	base := "Attach ONE single-action tool to an agent: either the one named in the `agent` argument, or (when omitted) the agent currently in authoring focus, set by your most recent get_agent or create_agent call. Note that create_agent MOVES the focus to the agent it just created, so if you've made sub-agents since you started on your intended target, pass `agent` explicitly rather than trusting focus. This builds a single shell OR api tool: it does NOT build or edit toolboxes. If you need MULTIPLE related endpoints under one tool name (a whole API surface sharing one credential, e.g. the `moltbook` or a GitHub toolbox), or you need to change one action of an existing toolbox, use the `tool_def` tool instead (mode=\"toolbox\" to create, action=\"update\" to edit one action): not this. Pick the mode that fits the work:\n"
 	if !pipelineAuthoringDisabled {
 		base += "  - mode=\"pipeline\": a multi-step sub-agent flow with its own prompt + inner tools. Use for \"do X, then Y, then summarize\" patterns.\n"
 	}
 	base += "  - mode=\"shell\":    a sandboxed shell command template. Use for deterministic file/data ops (\"count lines\", \"extract emails\").\n" +
 		"  - mode=\"api\":      a single HTTP call against a registered credential. Use for \"look this up in our system\" patterns.\n"
 	if pipelineAuthoringDisabled {
-		base += "\nNOTE: pipeline-mode tool authoring is retired. add_tool now builds shell + api tools only. For a multi-step workflow (do X, then Y, then summarize), author a declarative pipeline with the `pipeline` tool (action=\"create\", stages=[…]) and attach it to the agent via attached_pipelines — it surfaces as a callable run_<pipeline> tool."
+		base += "\nNOTE: pipeline-mode tool authoring is retired. add_tool now builds shell + api tools only. For a multi-step workflow (do X, then Y, then summarize), author a declarative pipeline with the `pipeline` tool (action=\"create\", stages=[…]) and attach it to the agent via attached_pipelines: it surfaces as a callable run_<pipeline> tool."
 	}
-	base += "\nOUTPUT SHAPE IS PART OF THE TOOL, not an afterthought. If it returns a list of similar items (search hits, headlines, rows, files, messages), give every item a stable id, and emit a field an item lacks as an explicit null instead of dropping the key. Unanchored items get bound to the wrong neighbor and absent keys get filled in from whatever else is in context — both pass verification and fail in use. Full section: tool_def(action=\"help\")."
-	base += "\nRe-calling with the same name overwrites — that's how you iterate. The tool is installed as a session draft so you can dispatch it by name immediately to verify it works before declaring success. If no agent is in authoring focus, call agents(action=\"get\") on the target agent or create_agent first."
+	base += "\nOUTPUT SHAPE IS PART OF THE TOOL, not an afterthought. If it returns a list of similar items (search hits, headlines, rows, files, messages), give every item a stable id, and emit a field an item lacks as an explicit null instead of dropping the key. Unanchored items get bound to the wrong neighbor and absent keys get filled in from whatever else is in context: both pass verification and fail in use. Full section: tool_def(action=\"help\")."
+	base += "\nRe-calling with the same name overwrites: that's how you iterate. The tool is installed as a session draft so you can dispatch it by name immediately to verify it works before declaring success. If no agent is in authoring focus, call agents(action=\"get\") on the target agent or create_agent first."
 	return base
 }
 func (addToolTool) Params() map[string]ToolParam {
@@ -72,7 +72,7 @@ func (addToolTool) Params() map[string]ToolParam {
 		},
 		"script_body": {
 			Type:        "string",
-			Description: "(shell) The script's source, shipped WITH the tool record so it survives workspace wipes and travels on export — the preferred way to author a shell tool. The framework writes it into the workspace and, if you omit command_template, infers one (e.g. python3 {workspace_dir}/script.py) from the extension. Declared params reach the script as ENVIRONMENT VARIABLES, not positional argv — read them with os.environ['name']. Network calls: use `from gohort import fetch_url` — urllib/requests/curl/wget are blocked in the sandbox. What the script PRINTS is the tool's result: emit one record per item with a stable id, and print an explicit null for a field the item lacks rather than omitting it.",
+			Description: "(shell) The script's source, shipped WITH the tool record so it survives workspace wipes and travels on export: the preferred way to author a shell tool. The framework writes it into the workspace and, if you omit command_template, infers one (e.g. python3 {workspace_dir}/script.py) from the extension. Declared params reach the script as ENVIRONMENT VARIABLES, not positional argv: read them with os.environ['name']. Network calls: use `from gohort import fetch_url`, urllib/requests/curl/wget are blocked in the sandbox. What the script PRINTS is the tool's result: emit one record per item with a stable id, and print an explicit null for a field the item lacks rather than omitting it.",
 		},
 		"script_name": {
 			Type:        "string",
@@ -80,15 +80,15 @@ func (addToolTool) Params() map[string]ToolParam {
 		},
 		"agent": {
 			Type:        "string",
-			Description: "Optional. Name or id of the agent to attach this tool to. Omit to use the agent currently in authoring focus (your most recent get_agent / create_agent). PASS IT EXPLICITLY whenever you've created another agent since you started working on the intended target — create_agent moves the focus, so building helper sub-agents for a parent and then calling add_tool would otherwise attach the tool to the last helper instead of the parent.",
+			Description: "Optional. Name or id of the agent to attach this tool to. Omit to use the agent currently in authoring focus (your most recent get_agent / create_agent). PASS IT EXPLICITLY whenever you've created another agent since you started working on the intended target: create_agent moves the focus, so building helper sub-agents for a parent and then calling add_tool would otherwise attach the tool to the last helper instead of the parent.",
 		},
 		"mode": {
 			Type: "string",
 			Description: func() string {
 				if pipelineAuthoringDisabled {
-					return "One of \"shell\", \"api\" — a single-action tool. There is NO \"toolbox\" mode here: multi-action toolboxes are authored and edited via the `tool_def` tool. Each branch validates the required fields for that mode. (Pipeline mode is retired — use the `pipeline` tool for multi-stage workflows.)"
+					return "One of \"shell\", \"api\": a single-action tool. There is NO \"toolbox\" mode here: multi-action toolboxes are authored and edited via the `tool_def` tool. Each branch validates the required fields for that mode. (Pipeline mode is retired: use the `pipeline` tool for multi-stage workflows.)"
 				}
-				return "One of \"pipeline\", \"shell\", \"api\" — a single-action tool. There is NO \"toolbox\" mode here: multi-action toolboxes are authored and edited via the `tool_def` tool. Each branch validates the required fields for that mode."
+				return "One of \"pipeline\", \"shell\", \"api\": a single-action tool. There is NO \"toolbox\" mode here: multi-action toolboxes are authored and edited via the `tool_def` tool. Each branch validates the required fields for that mode."
 			}(),
 		},
 		"description": {
@@ -97,7 +97,7 @@ func (addToolTool) Params() map[string]ToolParam {
 		},
 		"params": {
 			Type:        "object",
-			Description: "Optional JSON object of {param_name: {type, description}}. Placeholders {name} in command_template / url_template are substituted from caller args. One line per description — what the value is, plus the format only when the name and type don't already say it (cap 250 chars).",
+			Description: "Optional JSON object of {param_name: {type, description}}. Placeholders {name} in command_template / url_template are substituted from caller args. One line per description: what the value is, plus the format only when the name and type don't already say it (cap 250 chars).",
 		},
 		// Pipeline-mode fields (pipeline_prompt / pipeline_steps /
 		// pipeline_tools / pipeline_max_rounds) were dropped from the schema
@@ -108,7 +108,7 @@ func (addToolTool) Params() map[string]ToolParam {
 		// Shell-mode fields.
 		"command_template": {
 			Type:        "string",
-			Description: "(shell mode) Shell command template. {param_name} placeholders are shell-quoted at dispatch time. Runs in a workspace sandbox. Optional when you pass script_body with a recognized extension — the framework infers the template from it; state it explicitly for stdin / kwargs / non-positional shapes.",
+			Description: "(shell mode) Shell command template. {param_name} placeholders are shell-quoted at dispatch time. Runs in a workspace sandbox. Optional when you pass script_body with a recognized extension: the framework infers the template from it; state it explicitly for stdin / kwargs / non-positional shapes.",
 		},
 		// API-mode fields.
 		"url_template": {
@@ -125,7 +125,7 @@ func (addToolTool) Params() map[string]ToolParam {
 		},
 		"credential": {
 			Type:        "string",
-			Description: "(api mode) OPTIONAL. For AUTHENTICATED APIs (internal services, paid APIs): name of a registered credential (admin sets these up). The credential supplies the auth header and constrains the URL pattern. For PUBLIC APIs that need no authentication (Reddit JSON, Wikipedia, public data feeds): OMIT this field entirely, or pass \"no_auth\" — the ONE accepted no-auth spelling (same rule as tool_def). Do not pass placeholder strings like \"none\" / \"public\" / \"n/a\" — the framework rejects those. Empty/no_auth = public HTTP call; any other name = authenticated via that credential.",
+			Description: "(api mode) OPTIONAL. For AUTHENTICATED APIs (internal services, paid APIs): name of a registered credential (admin sets these up). The credential supplies the auth header and constrains the URL pattern. For PUBLIC APIs that need no authentication (Reddit JSON, Wikipedia, public data feeds): OMIT this field entirely, or pass \"no_auth\", the ONE accepted no-auth spelling (same rule as tool_def). Do not pass placeholder strings like \"none\" / \"public\" / \"n/a\": the framework rejects those. Empty/no_auth = public HTTP call; any other name = authenticated via that credential.",
 		},
 		"response_pipe": {
 			Type:        "string",
@@ -161,17 +161,17 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 	if key := strings.TrimSpace(stringArg(args, "agent")); key != "" {
 		found, ok := findAgentByNameOrID(sess.DB, sess.Username, key)
 		if !ok {
-			return "", fmt.Errorf("add_tool: no agent named or id'd %q in your fleet — call agents(action=\"list\") to see the exact names", key)
+			return "", fmt.Errorf("add_tool: no agent named or id'd %q in your fleet, call agents(action=\"list\") to see the exact names", key)
 		}
 		target = found
 	} else {
 		focusedID := loadAuthoringInProgress(sess.DB, sess.ChatSessionID)
 		if focusedID == "" {
-			return "", errors.New("add_tool: no agent in authoring focus and no agent argument — either pass agent=\"<name or id>\" to name the target explicitly, or call agents(action=\"get\", ...) / create_agent first to set focus")
+			return "", errors.New("add_tool: no agent in authoring focus and no agent argument, either pass agent=\"<name or id>\" to name the target explicitly, or call agents(action=\"get\"...) / create_agent first to set focus")
 		}
 		found, ok := loadAgent(sess.DB, focusedID)
 		if !ok {
-			return "", fmt.Errorf("add_tool: focused agent %q is gone from storage — re-call get_agent on a valid agent to reset focus, or pass agent=\"<name or id>\"", focusedID)
+			return "", fmt.Errorf("add_tool: focused agent %q is gone from storage, re-call get_agent on a valid agent to reset focus, or pass agent=\"<name or id>\"", focusedID)
 		}
 		target = found
 	}
@@ -182,10 +182,10 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 	// seed check below). This is what prevents a stray tool landing on a hidden
 	// app agent like Casefile's "Case Analyzer".
 	if isAppAgent(target.ID) {
-		return "", fmt.Errorf("add_tool: %q is an app agent — its tools are declared by its owning app in code and can't be authored into it. Point add_tool at one of your own agents (agents(action=\"list\")), or add the capability to the app itself", target.Name)
+		return "", fmt.Errorf("add_tool: %q is an app agent, its tools are declared by its owning app in code and can't be authored into it. Point add_tool at one of your own agents (agents(action=\"list\")), or add the capability to the app itself", target.Name)
 	}
 	if target.Owner != sess.Username {
-		return "", fmt.Errorf("add_tool: agent %q is a read-only seed — call clone_agent to make an editable copy, then continue", target.Name)
+		return "", fmt.Errorf("add_tool: agent %q is a read-only seed, call clone_agent to make an editable copy, then continue", target.Name)
 	}
 	name := strings.TrimSpace(stringArg(args, "name"))
 	if name == "" {
@@ -213,7 +213,7 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 	switch mode {
 	case "pipeline":
 		if pipelineAuthoringDisabled {
-			return "", errors.New("pipeline-mode tool authoring is retired. For a multi-step workflow, author a declarative pipeline with the `pipeline` tool (action=\"create\", name=…, stages=[{name, kind:\"worker\"|\"agent\", prompt, agent?}]), then attach it to this agent via attached_pipelines on create_agent/update_agent — it surfaces as a callable run_<pipeline> tool. For single-step work, use mode=\"shell\" or mode=\"api\" here")
+			return "", errors.New("pipeline-mode tool authoring is retired. For a multi-step workflow, author a declarative pipeline with the `pipeline` tool (action=\"create\", name=…, stages=[{name, kind:\"worker\"|\"agent\", prompt, agent?}]), then attach it to this agent via attached_pipelines on create_agent/update_agent, it surfaces as a callable run_<pipeline> tool. For single-step work, use mode=\"shell\" or mode=\"api\" here")
 		}
 		prompt := strings.TrimSpace(stringArg(args, "pipeline_prompt"))
 		steps := pipelineStepsFromArgs(args, "pipeline_steps")
@@ -231,7 +231,7 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 			}
 			for i, s := range steps {
 				if !allowed[s.Tool] {
-					return "", fmt.Errorf("pipeline_steps[%d].tool %q is not in pipeline_tools %v — add it or pick a different tool", i, s.Tool, inner)
+					return "", fmt.Errorf("pipeline_steps[%d].tool %q is not in pipeline_tools %v: add it or pick a different tool", i, s.Tool, inner)
 				}
 			}
 		}
@@ -257,7 +257,7 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 		}
 		cmd = outCmd
 		if cmd == "" {
-			return "", errors.New("command_template is required for mode=\"shell\" (or pass script_body with a recognized extension — .py/.sh/.bash/.js/.jq/.rb — and the framework will infer it)")
+			return "", errors.New("command_template is required for mode=\"shell\" (or pass script_body with a recognized extension (.py/.sh/.bash/.js/.jq/.rb), and the framework will infer it)")
 		}
 		tt.Mode = "" // legacy shell mode key is empty string per common.go
 		tt.CommandTemplate = cmd
@@ -282,14 +282,14 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 		// right shape is to OMIT the credential entirely; the runtime
 		// branches to plain HTTP in that case.
 		if credential != "" && isPlaceholderCredential(credential) {
-			return "", fmt.Errorf("credential value %q is a placeholder string, not a real credential. For PUBLIC APIs (no auth needed), OMIT the credential field entirely — the runtime will route through plain HTTP. For AUTHENTICATED APIs, pass the actual registered credential name (have the user register one via the admin UI if none exists)", credential)
+			return "", fmt.Errorf("credential value %q is a placeholder string, not a real credential. For PUBLIC APIs (no auth needed), OMIT the credential field entirely: the runtime will route through plain HTTP. For AUTHENTICATED APIs, pass the actual registered credential name (have the user register one via the admin UI if none exists)", credential)
 		}
 		// A secured credential is locked to the tools that already use it — a
 		// new/edited api tool can't declare it (that would self-grant the
 		// secret). Same gate the shell path enforces on fetch_via:/secret:.
 		if credential != "" {
 			if cr, ok := Secure().Load(credential); ok && cr.Secured {
-				return "", fmt.Errorf("credential %q is SECURED — locked to the tools that already use it; a new tool can't declare it. Ask an admin to unsecure it in Admin > APIs to change which tools use it", credential)
+				return "", fmt.Errorf("credential %q is SECURED: locked to the tools that already use it; a new tool can't declare it. Ask an admin to unsecure it in Admin > APIs to change which tools use it", credential)
 			}
 		}
 		tt.Mode = TempToolModeAPI
@@ -308,9 +308,9 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 		// "unknown mode" error, concluded add_tool "can't inspect or update
 		// the sub-actions", and abandoned a real fix it had already
 		// diagnosed. Point it straight at the update path it needed.
-		return "", fmt.Errorf("add_tool does not build toolboxes — use the `tool_def` tool for that. To EDIT one action of the existing %q toolbox without recreating it, call tool_def(action=\"update\", name=%q, actions=[{name:\"<action>\", ...just the fields you're changing}]) — other actions are preserved. To create a new toolbox, tool_def(action=\"create\", mode=\"toolbox\", credential=…, actions=[…]). Call tool_def(action=\"help\") for the full spec", name, name)
+		return "", fmt.Errorf("add_tool does not build toolboxes: use the `tool_def` tool for that. To EDIT one action of the existing %q toolbox without recreating it, call tool_def(action=\"update\", name=%q, actions=[{name:\"<action>\"...just the fields you're changing}]), other actions are preserved. To create a new toolbox, tool_def(action=\"create\", mode=\"toolbox\", credential=…, actions=[…]). Call tool_def(action=\"help\") for the full spec", name, name)
 	default:
-		return "", fmt.Errorf("unknown mode %q — add_tool supports \"shell\" and \"api\". For a MULTI-action toolbox, use the `tool_def` tool (mode=\"toolbox\"); for a multi-stage workflow, use the `pipeline` tool", mode)
+		return "", fmt.Errorf("unknown mode %q: add_tool supports \"shell\" and \"api\". For a MULTI-action toolbox, use the `tool_def` tool (mode=\"toolbox\"); for a multi-stage workflow, use the `pipeline` tool", mode)
 	}
 
 	// Commit to the user's unified tool store, scoped to the focused agent.
@@ -355,18 +355,18 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 		out, dispatchErr := temptool.DispatchTempToolDirect(sess, &copy, testArgs)
 		if dispatchErr != nil {
 			RecordToolVerification(sess, tt.Name, false, fmt.Sprintf("verification call failed: %v", dispatchErr))
-			return fmt.Sprintf("Tool %q (mode=%s) %s on agent %q. Verification call with test_args FAILED: %v. Re-call add_tool with the same name to fix the template (re-state every field — partial updates aren't supported). Once it returns a sensible result you're done.", tt.Name, mode, verb, target.Name, dispatchErr), nil
+			return fmt.Sprintf("Tool %q (mode=%s) %s on agent %q. Verification call with test_args FAILED: %v. Re-call add_tool with the same name to fix the template (re-state every field: partial updates aren't supported). Once it returns a sensible result you're done.", tt.Name, mode, verb, target.Name, dispatchErr), nil
 		}
 		RecordToolVerification(sess, tt.Name, true, "")
 		// A verification call's body is a preview — the point is that it
 		// worked — but an author checking WHAT came back should not have to
 		// run the tool again, so the rest is kept and paged.
 		trimmed := SpillOutput(strings.TrimSpace(out), 1200, "read_output")
-		return fmt.Sprintf("Tool %q (mode=%s) %s on agent %q. Verification call with test_args succeeded:\n\n%s\n\nIf the result looks right, you're done — END THE TURN with a one-line summary. If the shape is off, re-call add_tool with the same name and a corrected template.", tt.Name, mode, verb, target.Name, trimmed), nil
+		return fmt.Sprintf("Tool %q (mode=%s) %s on agent %q. Verification call with test_args succeeded:\n\n%s\n\nIf the result looks right, you're done, END THE TURN with a one-line summary. If the shape is off, re-call add_tool with the same name and a corrected template.", tt.Name, mode, verb, target.Name, trimmed), nil
 	}
 
-	RecordToolVerification(sess, tt.Name, false, "never tested — authored without test_args")
-	return fmt.Sprintf("Tool %q (mode=%s) %s on agent %q. NO test_args were provided so the tool was not verified — re-call add_tool with the same fields PLUS test_args={...} to confirm the template works against the real endpoint. (Skip only if the tool has no params or you intend to test from a follow-up round.)", tt.Name, mode, verb, target.Name), nil
+	RecordToolVerification(sess, tt.Name, false, "never tested: authored without test_args")
+	return fmt.Sprintf("Tool %q (mode=%s) %s on agent %q. NO test_args were provided so the tool was not verified: re-call add_tool with the same fields PLUS test_args={...} to confirm the template works against the real endpoint. (Skip only if the tool has no params or you intend to test from a follow-up round.)", tt.Name, mode, verb, target.Name), nil
 }
 
 // testArgsFromArgs pulls the test_args object out of the LLM-supplied
@@ -458,7 +458,7 @@ func bundleAgentTool(db Database, owner string, base AgentRecord, t TempTool) er
 	// through here); refuse regardless of caller. Keyed on the registry so a
 	// drift-able Owner can't slip a tool onto an app agent.
 	if isAppAgent(base.ID) {
-		return fmt.Errorf("cannot bundle a tool onto app agent %q — app agents get their tools from the owning app, not the LLM-authored plane", base.Name)
+		return fmt.Errorf("cannot bundle a tool onto app agent %q: app agents get their tools from the owning app, not the LLM-authored plane", base.Name)
 	}
 	rec, ok := loadAgent(db, base.ID)
 	if !ok {

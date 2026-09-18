@@ -47,15 +47,15 @@ func buildPlanTools(id string, required bool) planToolSet {
 // when a question turns out to be bigger than it looked.
 func planSetDescription(required bool) string {
 	if required {
-		return "REQUIRED FIRST CALL — emit a structured investigation plan before any other tool. " +
+		return "REQUIRED FIRST CALL: emit a structured investigation plan before any other tool. " +
 			"Each step has a short title (5–10 words) and a what_to_find description (1–3 sentences) explaining what success looks like for that step. " +
 			"Order steps by dependency: foundation/discovery first, then deeper investigation that builds on it. " +
 			"Typically 5–12 steps for a generic system; scale up to 15+ for complex appliances (Kubernetes hosts, multi-tenant DB servers, hosts running many distinct services). " +
-			"Err toward more steps with narrower scopes rather than fewer steps with sprawling scopes — narrow steps produce sharper findings and clearer gap reports. " +
-			"You can revise step status as you go, but the initial plan is your contract — use revise_plan only if findings reveal a step you couldn't have known to include."
+			"Err toward more steps with narrower scopes rather than fewer steps with sprawling scopes: narrow steps produce sharper findings and clearer gap reports. " +
+			"You can revise step status as you go, but the initial plan is your contract: use revise_plan only if findings reveal a step you couldn't have known to include."
 	}
-	return "Commit to a multi-step investigation plan, and track it. Use when answering needs SEVERAL distinct findings that build on each other — not for a question one probe can settle. " +
+	return "Commit to a multi-step investigation plan, and track it. Use when answering needs SEVERAL distinct findings that build on each other: not for a question one probe can settle. " +
 		"Each step has a short title (5-10 words) and a what_to_find description (1-3 sentences) saying what success looks like. Order by dependency: discovery first, then what builds on it. " +
 		"Typically 3-8 steps for a focused question. Once set, work the steps with mark_step_in_progress / record_step_findings / mark_step_blocked, and call report_gaps before your final answer so unresolved steps are stated rather than quietly dropped. " +
-		"A plan is a commitment the user can see in the checklist — set one when the work deserves it, skip it when a single probe answers the question."
+		"A plan is a commitment the user can see in the checklist: set one when the work deserves it, skip it when a single probe answers the question."
 }

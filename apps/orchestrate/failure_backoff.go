@@ -116,7 +116,7 @@ func noteRecurringFailure(p orchUpdatePayload, armed *orchUpdatePayload, armedID
 		return ""
 	}
 	if !RescheduleTaskAt(armedID, at) {
-		Log("[orchestrate/backoff] task %q: next fire already ran — backoff skipped", recurringName(p))
+		Log("[orchestrate/backoff] task %q: next fire already ran, backoff skipped", recurringName(p))
 		return ""
 	}
 	// Same two fields an explicit ask writes, so every surface that explains a
@@ -124,7 +124,7 @@ func noteRecurringFailure(p orchUpdatePayload, armed *orchUpdatePayload, armedID
 	armed.NextAttemptAt = at.UTC().Format(time.RFC3339)
 	armed.NextAttemptWhy = fmt.Sprintf("backed off after %d consecutive failure(s)", armed.ConsecutiveFailures)
 	UpdateScheduledTaskPayload(armedID, *armed)
-	Log("[orchestrate/backoff] task %q failed %d time(s) in a row — next fire moved to %s",
+	Log("[orchestrate/backoff] task %q failed %d time(s) in a row: next fire moved to %s",
 		recurringName(p), armed.ConsecutiveFailures, at.UTC().Format(time.RFC3339))
 	return backoffNote(armed.ConsecutiveFailures, at, UserLocation(p.Username))
 }
@@ -141,7 +141,7 @@ func noteStandingFailure(sa *StandingAgent) string {
 	at := now.Add(delay)
 	sa.NextAttemptAt = at
 	sa.NextAttemptWhy = fmt.Sprintf("backed off after %d consecutive failure(s)", sa.ConsecutiveFailures)
-	Log("[orchestrate/backoff] standing %s/%s failed %d time(s) in a row — next run moved to %s",
+	Log("[orchestrate/backoff] standing %s/%s failed %d time(s) in a row: next run moved to %s",
 		sa.Owner, sa.Name, sa.ConsecutiveFailures, at.UTC().Format(time.RFC3339))
 	return backoffNote(sa.ConsecutiveFailures, at, UserLocation(sa.Owner))
 }
@@ -150,6 +150,6 @@ func noteStandingFailure(sa *StandingAgent) string {
 // is not a one-off, and the time says when to expect the next word, so a
 // schedule that has gone quiet can be told apart from one that has stopped.
 func backoffNote(streak int, at time.Time, loc *time.Location) string {
-	return fmt.Sprintf(" Failed %d time(s) in a row, so the next run is backed off to %s — fix what the error names and it returns to its normal schedule on the first run that works.",
+	return fmt.Sprintf(" Failed %d time(s) in a row, so the next run is backed off to %s: fix what the error names and it returns to its normal schedule on the first run that works.",
 		streak, at.In(loc).Format("Mon 2006-01-02 15:04"))
 }

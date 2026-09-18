@@ -320,19 +320,19 @@ func (t *chatTurn) reportUnreachableStepTools(ph MachinePhase) {
 	var says []string
 	if len(byReach) > 0 {
 		says = append(says, "step "+ph.Name+" names "+strings.Join(byReach, ", ")+
-			" — in this agent's catalog, but taken away before the step ran by the step's own tool reach ("+
+			", in this agent's catalog, but taken away before the step ran by the step's own tool reach ("+
 			reachSays(PhaseReach(ph))+"). Reach is applied first and the name list only narrows what "+
 			"survives it, so this step's two tool controls are asking for different things. "+reachWhy(PhaseReach(ph)))
 	}
 	if len(byDeny) > 0 {
 		says = append(says, "step "+ph.Name+" both names and denies "+strings.Join(byDeny, ", ")+
-			". Deny is the final word, applied after the name list, so naming a tool cannot bring it back — "+
+			". Deny is the final word, applied after the name list, so naming a tool cannot bring it back: "+
 			"take it off one of the two lists.")
 	}
 	if len(unknown) > 0 {
 		says = append(says, "step "+ph.Name+" names "+strings.Join(unknown, ", ")+
 			", which this agent's catalog does not carry under those names. "+
-			"Names must match the catalog exactly — an attached source mints its own (search_<store>), "+
+			"Names must match the catalog exactly: an attached source mints its own (search_<store>), "+
 			"and a remote MCP tool is published as \"<server>_<tool>\" in lowercase. "+
 			"Check too that the agent is attached to the source they come from.")
 	}
@@ -350,9 +350,9 @@ func (t *chatTurn) reportUnreachableStepTools(ph MachinePhase) {
 func reachSays(reach string) string {
 	switch reach {
 	case ReachNone:
-		return "\"Nothing — this step only decides\""
+		return "\"Nothing: this step only decides\""
 	case ReachRead:
-		return "\"Read-only — nothing that writes or reaches the network\""
+		return "\"Read-only: nothing that writes or reaches the network\""
 	}
 	return "\"Everything the agent has\""
 }
@@ -366,7 +366,7 @@ func reachWhy(reach string) string {
 		return "That reach admits nothing at all, so no name can resolve under it: give the step a reach, or drop the name list."
 	case ReachRead:
 		return "Read-only admits a tool only if EVERY capability it declares is a read, and reaching the " +
-			"network is not one — so a remote MCP tool and an attached source's search tool are dropped " +
+			"network is not one, so a remote MCP tool and an attached source's search tool are dropped " +
 			"however plainly they only read. Set the reach to \"Everything the agent has\" and let the name " +
 			"list do the bounding, or use the step's Deny list to subtract."
 	}
@@ -434,7 +434,7 @@ func (t *chatTurn) changePhaseToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "change_phase",
-			Description: "Move this conversation to a different PHASE of your current workflow. Use it when the user's request no longer belongs to the phase you are in — a new subject that needs re-planning, or work that belongs to a later step. Do NOT use it for a follow-up, a clarification, or a related question: those are the same job. The phases available to you are listed in your current-phase block. Takes effect immediately: the result tells you what the new phase expects.",
+			Description: "Move this conversation to a different PHASE of your current workflow. Use it when the user's request no longer belongs to the phase you are in: a new subject that needs re-planning, or work that belongs to a later step. Do NOT use it for a follow-up, a clarification, or a related question: those are the same job. The phases available to you are listed in your current-phase block. Takes effect immediately: the result tells you what the new phase expects.",
 			Parameters: map[string]ToolParam{
 				"phase": {Type: "string", Description: "Name of the phase to move to, exactly as listed in your current-phase block."},
 				"why":   {Type: "string", Description: "One short sentence: what about this request put it outside the current phase."},
@@ -493,7 +493,7 @@ func (t *chatTurn) changePhaseToolDef() AgentToolDef {
 			t.machine = turnMachine{def: m.def, phase: ph, state: cur.State, on: true,
 				vars: PhaseVars{MachineTurn: t.machineTurn(""), Opening: cur.Opening}}
 
-			return "Phase changed to " + ph.Name + ". The current-phase block in your system prompt is now out of date — these instructions replace it for the rest of this turn:\n" +
+			return "Phase changed to " + ph.Name + ". The current-phase block in your system prompt is now out of date, these instructions replace it for the rest of this turn:\n" +
 				m.def.PhaseBlock(ph, cur.State, t.machine.vars), nil
 		},
 	}
@@ -644,7 +644,7 @@ func priorReportsFrom(msgs []ChatMessage) []string {
 			continue
 		}
 		if line := judgeFirstLine(m.Content, 160); line != "" {
-			out = append(out, from+" — "+line)
+			out = append(out, from+" · "+line)
 		} else {
 			out = append(out, from)
 		}

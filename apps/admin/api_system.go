@@ -332,7 +332,7 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 		// Logged at Warn when it widens: this is the one setting on the page
 		// that turns a local endpoint into a network-reachable one.
 		if bind == "0.0.0.0" {
-			Warn("[admin] user %q exposed the Ollama proxy on all interfaces — requests from off-box now require an API key", current)
+			Warn("[admin] user %q exposed the Ollama proxy on all interfaces: requests from off-box now require an API key", current)
 		} else {
 			Log("[admin] user %q set ollama_proxy_bind=%s", current, bind)
 		}
@@ -352,7 +352,7 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 			AuthSetUITheme(a.db, t)
 			Log("[admin] user %q set ui_theme=%q", current, t)
 		} else {
-			Log("[admin] user %q tried to set unknown ui_theme=%q — ignored", current, t)
+			Log("[admin] user %q tried to set unknown ui_theme=%q: ignored", current, t)
 		}
 	}
 	if req.DocBrand != nil {
@@ -373,7 +373,7 @@ func (a *AdminApp) handleUpdateSettings(w http.ResponseWriter, r *http.Request) 
 			a.db.Set(WebTable, TimezoneKey, "")
 			Log("[admin] user %q cleared timezone (host zone; applies on restart)", current)
 		} else if _, iana, err := ResolveZone(tz); err != nil {
-			Log("[admin] user %q tried to set unknown timezone=%q — ignored", current, tz)
+			Log("[admin] user %q tried to set unknown timezone=%q: ignored", current, tz)
 		} else {
 			a.db.Set(WebTable, TimezoneKey, iana)
 			Log("[admin] user %q set timezone=%q (applies on restart)", current, iana)

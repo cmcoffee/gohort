@@ -108,7 +108,7 @@ func (T *OrchestrateApp) judgeWithPrompt(ctx context.Context, sysPrompt, message
 		WithSystemPrompt(sysPrompt), WithJSONMode(),
 		WithRouteKey("app.orchestrate.worker"), WithThink(false))
 	if err != nil {
-		Debug("[objective] LLM error: %v — no opinion", err)
+		Debug("[objective] LLM error: %v, no opinion", err)
 		return objectiveVerdict{}, false
 	}
 	var out struct {
@@ -120,7 +120,7 @@ func (T *OrchestrateApp) judgeWithPrompt(ctx context.Context, sysPrompt, message
 		// salvageJudgeJSON recovers the object by its keys.
 		fields, ok := salvageJudgeJSON(resp.Content, []string{"verdict", "reason"})
 		if !ok {
-			Debug("[objective] unparseable verdict %q — no opinion", truncateObs(resp.Content, 120))
+			Debug("[objective] unparseable verdict %q: no opinion", truncateObs(resp.Content, 120))
 			return objectiveVerdict{}, false
 		}
 		out.Verdict, out.Reason = fields["verdict"], fields["reason"]
@@ -134,7 +134,7 @@ func (T *OrchestrateApp) judgeWithPrompt(ctx context.Context, sysPrompt, message
 	default:
 		// Neither word. Retiring a task on a verdict nobody can read is worse
 		// than one more attempt.
-		Debug("[objective] unusable verdict %q — no opinion", truncateObs(out.Verdict, 60))
+		Debug("[objective] unusable verdict %q: no opinion", truncateObs(out.Verdict, 60))
 		return objectiveVerdict{}, false
 	}
 	reason := strings.TrimSpace(out.Reason)
@@ -145,7 +145,7 @@ func (T *OrchestrateApp) judgeWithPrompt(ctx context.Context, sysPrompt, message
 	if met {
 		word = "MET"
 	}
-	Log("[objective] %s (attempt %d) — %q (tools=%d errors=%d)",
+	Log("[objective] %s (attempt %d): %q (tools=%d errors=%d)",
 		word, attempt, truncateObs(reason, 140), tools, toolErrors)
 	return objectiveVerdict{Met: met, Reason: reason}, true
 }
@@ -226,12 +226,12 @@ func (T *OrchestrateApp) settleMonitorObjective(ctx context.Context, m EventMoni
 	if !met {
 		applyMonitorPacing(&cur, ask)
 	} else if _, _, asked := ask.Get(); asked {
-		Log("[orchestrate/pacing] monitor %s/%s asked to move its next check, but the goal is met — the ask was dropped", m.Owner, m.Name)
+		Log("[orchestrate/pacing] monitor %s/%s asked to move its next check, but the goal is met: the ask was dropped", m.Owner, m.Name)
 	}
 	SaveEventMonitor(RootDB, cur)
 	if met {
 		StopEventMonitor(RootDB, m.Owner, m.Name, MonitorStopMet,
-			"Stopped: the condition it was watching for is met — "+reason+" Nothing is broken; resume it to watch again.")
+			"Stopped: the condition it was watching for is met: "+reason+" Nothing is broken; resume it to watch again.")
 	}
 }
 
@@ -255,15 +255,15 @@ func objectiveReason(v objectiveVerdict, judged bool) string {
 // cancelling silently.
 func objectiveOutcome(v objectiveVerdict, judged bool, attempt, maxAttempts int) (line string, stop, stalled bool) {
 	if judged && v.Met {
-		return "objective met — " + v.Reason, true, false
+		return "objective met: " + v.Reason, true, false
 	}
 	// Not "met, probably". An attempt nobody could judge is an attempt that
 	// showed nothing, and it costs a fire like any other.
 	reason := objectiveReason(v, judged)
 	if maxAttempts > 0 && attempt >= maxAttempts {
-		return fmt.Sprintf("objective STALLED after %d attempt(s) — %s", attempt, reason), true, true
+		return fmt.Sprintf("objective STALLED after %d attempt(s): %s", attempt, reason), true, true
 	}
-	return "objective not yet — " + reason, false, false
+	return "objective not yet: " + reason, false, false
 }
 
 // objectiveAttemptNumber is which attempt of the CURRENT allowance this fire
@@ -299,14 +299,14 @@ func objectiveStateLabel(o objectiveRun) string {
 	if strings.TrimSpace(o.Until) == "" {
 		return ""
 	}
-	label := "objective — no attempts yet"
+	label := "objective: no attempts yet"
 	if n := len(o.Attempts); n > 0 {
 		last := o.Attempts[n-1]
 		switch {
 		case last.Met:
-			label = "objective — met: " + truncateObs(last.Reason, 160)
+			label = "objective, met: " + truncateObs(last.Reason, 160)
 		default:
-			label = fmt.Sprintf("objective — not yet (%d attempt(s)): %s", n, truncateObs(last.Reason, 160))
+			label = fmt.Sprintf("objective, not yet (%d attempt(s)): %s", n, truncateObs(last.Reason, 160))
 		}
 	}
 	// The Next run cell already shows WHEN. This is the half it cannot carry:
@@ -417,7 +417,7 @@ func objectiveAttemptsBlock(o objectiveRun) string {
 		if ts, err := time.Parse(time.RFC3339, a.NextAt); err == nil {
 			paced = " (asked to resume " + ts.In(loc).Format("2006-01-02 15:04") + ")"
 		}
-		fmt.Fprintf(&b, " %d. %s — %s: %s%s\n", i+1, when, verdict, truncateObs(a.Reason, 200), paced)
+		fmt.Fprintf(&b, " %d. %s, %s: %s%s\n", i+1, when, verdict, truncateObs(a.Reason, 200), paced)
 	}
 	b.WriteString("Do not repeat an attempt that already failed for the same reason.]")
 	return b.String()

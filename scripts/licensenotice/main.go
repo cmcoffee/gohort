@@ -81,7 +81,7 @@ func main() {
 		fail("listing dependencies: %v", err)
 	}
 	if len(mods) == 0 {
-		fail("no dependencies found for %s — that is almost certainly a broken invocation rather than a dependency-free build", *target)
+		fail("no dependencies found for %s, that is almost certainly a broken invocation rather than a dependency-free build", *target)
 	}
 
 	var b strings.Builder
@@ -102,7 +102,7 @@ func main() {
 	// Reported together and last: fixing them one build at a time, each after a
 	// full compile, is how a five-minute job becomes an afternoon.
 	if len(missing) > 0 {
-		fail("no license file found for %d module(s) — add the filename to licenseNames if the module keeps its terms somewhere unusual, or vendor the text under %s/<module path>/ with a SOURCE file saying where it came from:\n  %s",
+		fail("no license file found for %d module(s), add the filename to licenseNames if the module keeps its terms somewhere unusual, or vendor the text under %s/<module path>/ with a SOURCE file saying where it came from:\n  %s",
 			len(missing), *vendored, strings.Join(missing, "\n  "))
 	}
 	if err := os.WriteFile(*out, []byte(b.String()), 0o644); err != nil {
@@ -211,7 +211,7 @@ func entry(m mod, texts map[string]string, note string) string {
 		// working copy on the machine that built it. Say so: the binary
 		// contains whatever was in that directory, which is not something a
 		// reader can look up.
-		b.WriteString(" (LOCAL WORKING COPY — not a released version; built from " + m.Dir + ")")
+		b.WriteString(" (LOCAL WORKING COPY: not a released version; built from " + m.Dir + ")")
 	}
 	b.WriteString("\n" + strings.Repeat("=", 74) + "\n\n")
 	if note != "" {

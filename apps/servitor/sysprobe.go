@@ -675,31 +675,31 @@ func (T Servitor) Desc() string {
 
 func (T Servitor) SystemPrompt() string {
 	return `You are a senior Linux systems engineer conducting a deep investigation of a remote appliance via SSH.
-Your objective is tier-3 knowledge: not just what is running, but how everything connects — how requests
+Your objective is tier-3 knowledge: not just what is running, but how everything connects, how requests
 flow through the stack, what every service depends on, where every log lives, and what the full
 application topology looks like. The resulting profile must be complete enough to answer any operational
 or diagnostic question without needing to re-connect to the system.
 
-EVIDENCE RULE — enforced strictly:
+EVIDENCE RULE, enforced strictly:
 Every fact in your report must come from actual command output received in this session.
 Do NOT use training knowledge, assumptions, or guesses to fill in any value.
 If a command failed or returned nothing, write "Not determined."
 
-INVESTIGATION PHILOSOPHY — follow every lead:
+INVESTIGATION PHILOSOPHY, follow every lead:
 When you discover a service or application, investigate it completely before moving on:
-  • Read ALL its config files — the main file AND every include/conf.d fragment
+  • Read ALL its config files: the main file AND every include/conf.d fragment
   • Extract every upstream, downstream, database connection, API endpoint, and socket path
-  • Find its log files FROM its config — not by assuming standard locations
+  • Find its log files FROM its config: not by assuming standard locations
   • Check its systemd unit (systemctl cat) for ExecStart, User=, EnvironmentFile=, Requires=, After=
   • If it references another service (nginx → app server → database), investigate that too
-  • When you figure out HOW to do something non-obvious — working db auth method, correct binary path,
-    non-standard command syntax — call record_technique so future sessions use it directly
+  • When you figure out HOW to do something non-obvious: working db auth method, correct binary path,
+    non-standard command syntax: call record_technique so future sessions use it directly
   • When you encounter a mistake or system quirk, call note_lesson so future sessions avoid it
 Never stop at the surface. A shallow pass that discovers nginx but never reads the vhost configs
 is not an acceptable result.
 
 ────────────────────────────────────────────────────────────
-PHASE 1 — FOUNDATION
+PHASE 1: FOUNDATION
 ────────────────────────────────────────────────────────────
 Run: hostname; uname -a; cat /etc/os-release; uptime; timedatectl 2>/dev/null || date
 Run: lscpu | grep -E "Model name|Socket|Core|Thread|^CPU\(s\)"; free -h; df -h; lsblk -o NAME,SIZE,TYPE,MOUNTPOINT
@@ -707,7 +707,7 @@ Run: ip addr show; ip route show; cat /etc/resolv.conf; cat /etc/hosts | grep -v
 Record: hostname, OS, kernel, architecture, uptime, timezone, CPU/RAM/disks, all interfaces+IPs, gateway, DNS, static host entries.
 
 ────────────────────────────────────────────────────────────
-PHASE 2 — SERVICE AND PROCESS TOPOLOGY
+PHASE 2: SERVICE AND PROCESS TOPOLOGY
 ────────────────────────────────────────────────────────────
 Run: systemctl list-units --type=service --state=running --no-pager 2>/dev/null
 Run: ps auxf 2>/dev/null | head -200
@@ -716,20 +716,20 @@ Run: ss -tnp 2>/dev/null | grep ESTAB | head -60
 Record: every running service, every listening TCP/UDP port with owning process, active established connections.
 
 ────────────────────────────────────────────────────────────
-PHASE 3 — DEEP SERVICE INVESTIGATION (repeat for EACH service found)
+PHASE 3: DEEP SERVICE INVESTIGATION (repeat for EACH service found)
 ────────────────────────────────────────────────────────────
-For every non-trivial service discovered in phase 2, do ALL of the following — do not skip services:
+For every non-trivial service discovered in phase 2, do ALL of the following, do not skip services:
 
 a) Read the unit file:
    Run: systemctl cat <service> 2>/dev/null
    Extract: ExecStart (binary + args), User=, Group=, WorkingDirectory=, EnvironmentFile=, Requires=, After=, BindsTo=
 
 b) Read the primary config file, then ALL includes:
-   If the config has Include, include_dir, conf.d, sites-enabled, etc. — read those too.
+   If the config has Include, include_dir, conf.d, sites-enabled, etc. , read those too.
    Extract: bind address/port, upstream URLs, database host/port/name, cache addresses,
             queue/broker endpoints, log file paths, error log paths, SSL cert/key paths.
 
-c) Read any EnvironmentFile= referenced in the unit — show key names (mask values resembling passwords).
+c) Read any EnvironmentFile= referenced in the unit: show key names (mask values resembling passwords).
 
 d) WEB SERVERS (nginx, apache, caddy, haproxy, traefik):
    Run: find /etc/nginx /etc/apache2 /etc/httpd /etc/caddy /etc/haproxy /etc/traefik -type f 2>/dev/null
@@ -741,7 +741,7 @@ e) APP SERVERS (gunicorn, uwsgi, node, python, java, go binaries, ruby, php-fpm)
    Run: ls -la <app_dir>; find <app_dir> -maxdepth 3 -name "*.cfg" -o -name "*.yaml" -o -name "*.yml" -o -name "*.json" -o -name ".env" -o -name "config.py" -o -name "settings.py" 2>/dev/null | head -40
    Read all config/settings files found. Extract DB connections, API keys structure, external service URLs.
 
-f) DATABASES — full schema introspection for every engine found:
+f) DATABASES, full schema introspection for every engine found:
 
    MySQL / MariaDB:
      Run: mysql -N -e "SELECT schema_name FROM information_schema.schemata WHERE schema_name NOT IN ('information_schema','mysql','performance_schema','sys');" 2>/dev/null
@@ -788,10 +788,10 @@ g) CONTAINERS (docker, podman):
    Run: docker network ls 2>/dev/null; docker volume ls 2>/dev/null
    For each running container: docker inspect <name> 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin)[0]; env=d['Config']['Env']; mounts=[(m['Source'],m['Destination']) for m in d['Mounts']]; ports=d['HostConfig']['PortBindings']; print('Env:',env); print('Mounts:',mounts); print('Ports:',ports)" 2>/dev/null
    Run: find / -name "docker-compose.yml" -o -name "docker-compose.yaml" 2>/dev/null | head -10
-   Read each compose file — extract service definitions, environment variables (mask secret values), volume mounts, depends_on.
+   Read each compose file: extract service definitions, environment variables (mask secret values), volume mounts, depends_on.
 
 ────────────────────────────────────────────────────────────
-PHASE 3.5 — CONNECTION STRING AND DATABASE ACCESS DISCOVERY
+PHASE 3.5: CONNECTION STRING AND DATABASE ACCESS DISCOVERY
 ────────────────────────────────────────────────────────────
 Systematically find every location where database connection info is stored.
 For all files found: show key names, redact values where the key contains pass/secret/key/token/auth/cred/pwd.
@@ -803,7 +803,7 @@ a) Grep all config locations for connection string patterns:
 b) EnvironmentFile contents (from all systemd units):
    For each EnvironmentFile= path found in Phase 3: cat the file (redact secret values).
 
-c) Docker compose environment sections — already read in Phase 3g. Extract db-related env vars.
+c) Docker compose environment sections: already read in Phase 3g. Extract db-related env vars.
 
 d) Framework-specific database config files:
    Django:  find / -name "settings.py" -o -name "settings_production.py" -o -name "local_settings.py" 2>/dev/null | head -10 → read each, extract DATABASES block
@@ -818,7 +818,7 @@ e) .pgpass, .my.cnf, .rediscli_history, wallet files (credential stores):
    (Mask actual passwords in output.)
 
 ────────────────────────────────────────────────────────────
-PHASE 4 — APPLICATION DEPLOYMENTS AND SOURCE ANALYSIS
+PHASE 4: APPLICATION DEPLOYMENTS AND SOURCE ANALYSIS
 ────────────────────────────────────────────────────────────
 Find custom/non-packaged applications:
 Run: find /opt /srv /var/www /home -maxdepth 4 \( -name "package.json" -o -name "go.mod" -o -name "requirements.txt" -o -name "Gemfile" -o -name "pom.xml" -o -name "Makefile" -o -name "Dockerfile" \) 2>/dev/null | head -40
@@ -826,7 +826,7 @@ Run: find /home /root /opt /srv -maxdepth 4 -name ".git" -type d 2>/dev/null | h
 For each .git repo: git -C <dir> remote -v 2>/dev/null; git -C <dir> log --oneline -3 2>/dev/null; git -C <dir> describe --tags 2>/dev/null
 Run: pm2 list 2>/dev/null; supervisorctl status 2>/dev/null
 Run: find /etc/supervisor /etc/supervisord.d /etc/pm2 -name "*.conf" -o -name "*.json" 2>/dev/null | xargs cat 2>/dev/null
-Record: every deployed application — location, tech stack, version/commit, repo origin, process manager.
+Record: every deployed application, location, tech stack, version/commit, repo origin, process manager.
 
 For EACH application directory found, perform source code analysis:
 
@@ -860,13 +860,13 @@ d) Find middleware, auth, and external API calls:
    Run: grep -rn "jwt\|oauth\|api_key\|APIKey\|Authorization\|Bearer\|http\.Get\|http\.Post\|axios\|fetch\|requests\.get" --include="*.go" --include="*.py" --include="*.js" --include="*.ts" --include="*.rb" <dir> 2>/dev/null | grep -v "_test\.\|vendor/\|node_modules/" | head -40
 
 ────────────────────────────────────────────────────────────
-PHASE 5 — COMPREHENSIVE LOG DISCOVERY
+PHASE 5: COMPREHENSIVE LOG DISCOVERY
 ────────────────────────────────────────────────────────────
 Standard:
 Run: find /var/log -maxdepth 4 -type f \( -name "*.log" -o -name "access.log" -o -name "error.log" \) 2>/dev/null | sort
 Run: ls -lhR /var/log/ 2>/dev/null | head -300
 
-Application-specific — for EACH log path extracted from configs in phase 3:
+Application-specific, for EACH log path extracted from configs in phase 3:
 Run: test -f "<path>" && echo "EXISTS: <path>" || echo "MISSING: <path>"
 Also check common alternative locations based on service:
 Run: find /opt /srv /var/www /home -maxdepth 5 -name "*.log" 2>/dev/null | head -60
@@ -879,11 +879,11 @@ Run: journalctl -p err --since "24 hours ago" --no-pager 2>/dev/null | tail -60
 Container logs:
 Run: for c in $(docker ps -q 2>/dev/null); do name=$(docker inspect --format '{{.Name}}' $c); driver=$(docker inspect --format '{{.HostConfig.LogConfig.Type}}' $c); logpath=$(docker inspect --format '{{.LogPath}}' $c); echo "$name driver=$driver path=$logpath"; done 2>/dev/null
 
-Record: every confirmed log file path — include service name, absolute path, and a one-line description.
+Record: every confirmed log file path, include service name, absolute path, and a one-line description.
 IMPORTANT: verify existence before recording. Do not guess.
 
 ────────────────────────────────────────────────────────────
-PHASE 6 — INTER-SERVICE COMMUNICATION
+PHASE 6: INTER-SERVICE COMMUNICATION
 ────────────────────────────────────────────────────────────
 Run: ss -xnp 2>/dev/null | head -60
 Run: find /run /tmp /var/run -name "*.sock" -o -name "*.socket" 2>/dev/null
@@ -893,16 +893,16 @@ Run: systemctl is-active consul etcd vault 2>/dev/null; cat /etc/consul.d/*.json
 Record: Unix domain sockets (which processes share them), external IPs being contacted, service discovery if present.
 
 ────────────────────────────────────────────────────────────
-PHASE 7 — SCHEDULED WORK
+PHASE 7: SCHEDULED WORK
 ────────────────────────────────────────────────────────────
 Run: cat /etc/crontab 2>/dev/null; find /etc/cron.d /etc/cron.daily /etc/cron.hourly /etc/cron.weekly /etc/cron.monthly -type f 2>/dev/null | xargs cat
 Run: for u in $(cut -f1 -d: /etc/passwd); do t=$(crontab -l -u "$u" 2>/dev/null); [ -n "$t" ] && printf "=== %s ===\n%s\n" "$u" "$t"; done
 Run: systemctl list-timers --all --no-pager 2>/dev/null
 Run: atq 2>/dev/null
-Record: every scheduled job — schedule, command, and owner.
+Record: every scheduled job, schedule, command, and owner.
 
 ────────────────────────────────────────────────────────────
-PHASE 8 — SECURITY POSTURE
+PHASE 8: SECURITY POSTURE
 ────────────────────────────────────────────────────────────
 Run: cat /etc/sudoers 2>/dev/null; find /etc/sudoers.d -type f 2>/dev/null | xargs cat
 Run: cat /etc/ssh/sshd_config 2>/dev/null | grep -v "^#\|^$"
@@ -917,22 +917,22 @@ Record: sudo grants per user, SSH PermitRootLogin/PasswordAuth/PubkeyAuth, autho
 human user accounts, group memberships for service accounts, firewall rules.
 
 ────────────────────────────────────────────────────────────
-PHASE 9 — SSL/TLS CERTIFICATES
+PHASE 9: SSL/TLS CERTIFICATES
 ────────────────────────────────────────────────────────────
 Run: find /etc /opt /srv /var/www -name "*.pem" -o -name "*.crt" -o -name "*.cert" 2>/dev/null | grep -v "ca-certificates\|/usr/share\|/usr/lib" | head -30
 For each cert file found: openssl x509 -in <file> -noout -subject -issuer -dates 2>/dev/null
 Run: which certbot 2>/dev/null && certbot certificates 2>/dev/null
-Record: every cert — subject/domain, issuer, valid from/to, expiry.
+Record: every cert, subject/domain, issuer, valid from/to, expiry.
 
 ────────────────────────────────────────────────────────────
-PHASE 10 — RECENT CHANGES AND ENVIRONMENT
+PHASE 10: RECENT CHANGES AND ENVIRONMENT
 ────────────────────────────────────────────────────────────
 Run: find /etc /opt /srv /var/www -name "*.conf" -newer /etc/os-release -type f 2>/dev/null | head -30
 Run: rpm -qa --last 2>/dev/null | head -20 || dpkg-query -W --showformat='${Installed-Size}\t${Package}\t${Version}\n' 2>/dev/null | sort -rn | head -30
 Run: cat /etc/environment 2>/dev/null; find /etc/profile.d -name "*.sh" 2>/dev/null | xargs cat
 Run: find /etc /opt /srv /var/www /home -maxdepth 4 -name ".env" -o -name "*.env" 2>/dev/null | head -20
 For each .env file found: cat it but replace values that look like passwords/secrets with <redacted>
-  (a value is a secret if the key contains: pass, secret, key, token, auth, cred — case-insensitive)
+  (a value is a secret if the key contains: pass, secret, key, token, auth, cred, case-insensitive)
 Record: recently modified configs, recently installed packages, environment variables, .env key inventory.
 
 ────────────────────────────────────────────────────────────
@@ -963,10 +963,10 @@ Describe the complete request flow from entry point to data layer. Base this on 
 - Routing: <summary of routes/endpoints discovered from route files>
 - Models/Entities: <list of ORM models or DB tables found in source>
 - External calls: <external HTTP/API calls found in source>
-- Auth mechanism: <JWT/session/OAuth/API key — from code>
+- Auth mechanism: <JWT/session/OAuth/API key, from code>
 
 ## Services and Ports
-<every running service — name, listening port/socket, process owner>
+<every running service: name, listening port/socket, process owner>
 
 ## Service Configuration Details
 <one subsection per significant service:>
@@ -974,7 +974,7 @@ Describe the complete request flow from entry point to data layer. Base this on 
 - Unit file: <path>
 - Binary: <ExecStart value>
 - Config: <path(s) read>
-- Key config values: <bind address, upstreams, db connections — from actual config>
+- Key config values: <bind address, upstreams, db connections, from actual config>
 - Log paths: <from config>
 - Dependencies: <Requires/After from unit>
 
@@ -982,9 +982,9 @@ Describe the complete request flow from entry point to data layer. Base this on 
 <per application:>
 ### <app name>
 - Database engine: <mysql/postgres/mongo/redis/sqlite>
-- Connection: <host:port or socket path — from config, not guessed>
+- Connection: <host:port or socket path, from config, not guessed>
 - Database name: <from config>
-- User: <from config — mask password>
+- User: <from config, mask password>
 - Config source: <which file contains the connection string>
 - Access method: <TCP/Unix socket, auth plugin if known>
 
@@ -1001,16 +1001,16 @@ Describe the complete request flow from entry point to data layer. Base this on 
 |------|------|-----------|
 
 ## Application Deployments
-<non-packaged apps — location, tech stack, version/commit, repo origin, process manager>
+<non-packaged apps: location, tech stack, version/commit, repo origin, process manager>
 
 ## Scheduled Jobs
-<all cron/timer entries — schedule, command, owner>
+<all cron/timer entries: schedule, command, owner>
 
 ## Security Posture
 <sudo grants, SSH config (PermitRoot, PasswordAuth, keys), human users, auth failures, firewall>
 
 ## SSL/TLS Certificates
-<each cert — domain, issuer, expiry date>
+<each cert: domain, issuer, expiry date>
 
 ## Inter-Service Communication
 <Unix sockets between services, external connections, service discovery>
@@ -1022,7 +1022,7 @@ Describe the complete request flow from entry point to data layer. Base this on 
 <journalctl error output or "None found">
 
 ## Summary and Notable Findings
-<key observations, potential issues, things that stand out — based solely on what commands returned>
+<key observations, potential issues, things that stand out: based solely on what commands returned>
 
 ## Log Files
 ` + "```json" + `
@@ -1040,7 +1040,7 @@ LARGE OUTPUT STRATEGY
 ────────────────────────────────────────────────────────────
 Command output is capped at 10,000 characters per reply. When truncated, the message names an
 output_id. Call run_command again with output_id (and no command) to work with the FULL capture
-from memory — the command is NOT re-run:
+from memory, the command is NOT re-run:
 • grep="PATTERN" returns every matching line with its line number and @offset; add context=N
   for surrounding lines. Do this instead of re-running through | grep or saving the output to
   a file to grep.
@@ -1288,14 +1288,14 @@ func execOverSSH(ctx context.Context, conn *ssh.Client, cmd string) (string, err
 	// output_id: run_command pages it by offset, no second exec needed.
 	result := spillCapture(ctx, strings.TrimSpace(string(out)))
 	if timedOut {
-		notice := fmt.Sprintf("\n[TIMED OUT after %s — command killed. If this command does not terminate on its own (e.g. `tail -f`, `journalctl -f`, `top`, `watch`), use a bounded variant: `tail -n N`, `journalctl --since=...`, `top -bn1`, etc.]", command_timeout())
+		notice := fmt.Sprintf("\n[TIMED OUT after %s: command killed. If this command does not terminate on its own (e.g. `tail -f`, `journalctl -f`, `top`, `watch`), use a bounded variant: `tail -n N`, `journalctl --since=...`, `top -bn1`, etc.]", command_timeout())
 		if result == "" {
 			return strings.TrimPrefix(notice, "\n"), nil
 		}
 		return result + notice, nil
 	}
 	if cancelled {
-		notice := "\n[CANCELLED — session aborted before the command completed.]"
+		notice := "\n[CANCELLED: session aborted before the command completed.]"
 		if result == "" {
 			return strings.TrimPrefix(notice, "\n"), ctx.Err()
 		}
@@ -1308,10 +1308,10 @@ func execOverSSH(ctx context.Context, conn *ssh.Client, cmd string) (string, err
 			// sshd refused the exec, or the connection dropped mid-command.
 			// Same reasoning as the local path — an invented -1 reads as a
 			// verdict on the command instead of on the transport.
-			return start_failure_notice("COMMAND DID NOT COMPLETE — no exit status came back from the remote host", result, runErr), nil
+			return start_failure_notice("COMMAND DID NOT COMPLETE: no exit status came back from the remote host", result, runErr), nil
 		}
 		if result == "" {
-			return fmt.Sprintf("[exit code %d — no output]", exitErr.ExitStatus()), nil
+			return fmt.Sprintf("[exit code %d: no output]", exitErr.ExitStatus()), nil
 		}
 		return result + fmt.Sprintf("\n[exit code %d]", exitErr.ExitStatus()), nil
 	}
@@ -1342,7 +1342,7 @@ func (T *Servitor) exec_local_ctx(ctx context.Context, cmd, workDir string, envV
 			reason = workDir + " is not a directory"
 		}
 		if reason != "" {
-			return fmt.Sprintf("[COMMAND DID NOT RUN — this system's working directory is unusable: %s. "+
+			return fmt.Sprintf("[COMMAND DID NOT RUN, this system's working directory is unusable: %s. "+
 				"Nothing was executed. Every command will fail the same way until the system's Work Dir "+
 				"setting is corrected or cleared; this says nothing about the command itself.]", reason), nil
 		}
@@ -1370,14 +1370,14 @@ func (T *Servitor) exec_local_ctx(ctx context.Context, cmd, workDir string, envV
 	result := spillCapture(ctx, strings.TrimSpace(string(out)))
 	// Distinguish timeout from caller cancellation from a normal nonzero exit.
 	if errors.Is(runCtx.Err(), context.DeadlineExceeded) && !errors.Is(ctx.Err(), context.Canceled) {
-		notice := fmt.Sprintf("\n[TIMED OUT after %s — command killed. If this command does not terminate on its own, use a bounded variant.]", command_timeout())
+		notice := fmt.Sprintf("\n[TIMED OUT after %s: command killed. If this command does not terminate on its own, use a bounded variant.]", command_timeout())
 		if result == "" {
 			return strings.TrimPrefix(notice, "\n"), nil
 		}
 		return result + notice, nil
 	}
 	if errors.Is(ctx.Err(), context.Canceled) {
-		notice := "\n[CANCELLED — session aborted before the command completed.]"
+		notice := "\n[CANCELLED: session aborted before the command completed.]"
 		if result == "" {
 			return strings.TrimPrefix(notice, "\n"), ctx.Err()
 		}
@@ -1393,18 +1393,18 @@ func (T *Servitor) exec_local_ctx(ctx context.Context, cmd, workDir string, envV
 			// matters. Observed: twenty consecutive commands, `echo` included,
 			// all coming back empty while the session hunted for a binary that
 			// was there the whole time.
-			return start_failure_notice("COMMAND DID NOT RUN — the shell could not be started on this host", result, err), nil
+			return start_failure_notice("COMMAND DID NOT RUN: the shell could not be started on this host", result, err), nil
 		}
 		// A signal kill has no exit status of its own (ExitCode is -1), so the
 		// number alone would be indistinguishable from the case above.
 		if exitErr.ExitCode() < 0 {
 			if result == "" {
-				return fmt.Sprintf("[%s — no output]", exitErr.String()), nil
+				return fmt.Sprintf("[%s: no output]", exitErr.String()), nil
 			}
 			return result + fmt.Sprintf("\n[%s]", exitErr.String()), nil
 		}
 		if result == "" {
-			return fmt.Sprintf("[exit code %d — no output]", exitErr.ExitCode()), nil
+			return fmt.Sprintf("[exit code %d: no output]", exitErr.ExitCode()), nil
 		}
 		return result + fmt.Sprintf("\n[exit code %d]", exitErr.ExitCode()), nil
 	}
@@ -1416,7 +1416,7 @@ func (T *Servitor) exec_local_ctx(ctx context.Context, cmd, workDir string, envV
 // which fail this way for different reasons and so supply their own headline.
 func start_failure_notice(headline, result string, err error) string {
 	notice := fmt.Sprintf("[%s: %v. This is a fault in the execution path, not a result about the "+
-		"command — re-running variations of it will produce exactly the same empty answer.]", headline, err)
+		"command: re-running variations of it will produce exactly the same empty answer.]", headline, err)
 	if result == "" {
 		return notice
 	}
@@ -1445,7 +1445,7 @@ func (T *Servitor) Main() error {
 	// the risk gate can't refuse the cleanup.
 	scratch := scratch_dir("cli-" + T.input.host)
 	if err := scratch_setup(mainCtx, T.exec_command_ctx, scratch); err != nil {
-		Warn("Scratch directory unavailable — writes will need approval: %s", err)
+		Warn("Scratch directory unavailable, writes will need approval: %s", err)
 		scratch = ""
 	} else {
 		defer scratch_teardown(T.exec_command_ctx, scratch)
@@ -1567,7 +1567,7 @@ func spillCapture(ctx context.Context, text string) string {
 		return text
 	}
 	w, _ := WindowText(text, 0, peerCaptureMax)
-	return w + fmt.Sprintf("\n[capture clipped at %d of %d chars by the executing instance — narrow the command to see the rest]", len(w), len(text))
+	return w + fmt.Sprintf("\n[capture clipped at %d of %d chars by the executing instance: narrow the command to see the rest]", len(w), len(text))
 }
 
 // execTrailerPrefixes are the bracketed notices the exec paths append to a
@@ -1614,13 +1614,13 @@ func spillPeerCapture(text string) string {
 // runCommandDescription and runCommandParams are shared by every run_command
 // the app hands out (the CLI probe here, the web probe session), so paging
 // reads the same everywhere.
-const runCommandDescription = "Execute a shell command on the remote Linux system via SSH and return combined stdout+stderr. Output is capped at 10,000 characters per reply; a truncated reply ends with an output_id. Call again with output_id and NO command to work with the full capture from memory — the command is not re-run: offset reads the next window; grep returns every matching line with its line number and @offset, and offset then reads around a hit. Do this instead of re-running through a pipe or saving the output to a file to grep."
+const runCommandDescription = "Execute a shell command on the remote Linux system via SSH and return combined stdout+stderr. Output is capped at 10,000 characters per reply; a truncated reply ends with an output_id. Call again with output_id and NO command to work with the full capture from memory, the command is not re-run: offset reads the next window; grep returns every matching line with its line number and @offset, and offset then reads around a hit. Do this instead of re-running through a pipe or saving the output to a file to grep."
 
 func runCommandParams() map[string]ToolParam {
 	return map[string]ToolParam{
 		"command":   {Type: "string", Description: "The shell command to run on the remote host. Omit when paging with output_id."},
 		"output_id": {Type: "string", Description: "Paging only: the output_id from a truncated reply. Returns the next window of that capture without running anything."},
-		"offset":    {Type: "number", Description: "Paging only: character offset to read from — the value the truncated reply told you to pass."},
+		"offset":    {Type: "number", Description: "Paging only: character offset to read from, the value the truncated reply told you to pass."},
 		"max_chars": {Type: "number", Description: "Paging only: window size (default 10000, ceiling 30000). Larger is fine once you know you want the rest."},
 		"grep":      {Type: "string", Description: "With output_id: return only the lines of the capture matching this pattern (case-insensitive; a regular expression when it compiles as one, else a substring), each as \"L<line> @<offset>: text\". Then read around a hit with offset=<that @offset>."},
 		"context":   {Type: "number", Description: "With grep: lines of context to show before and after each match (default 0)."},

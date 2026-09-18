@@ -130,9 +130,9 @@ func (s EvalSuite) Validate() error {
 	switch s.TargetKind {
 	case EvalTargetAgent, EvalTargetPipeline, EvalTargetTool, EvalTargetMachine:
 	case "":
-		probs = append(probs, "the suite names no target kind — one of agent | pipeline | tool | machine")
+		probs = append(probs, "the suite names no target kind: one of agent | pipeline | tool | machine")
 	default:
-		probs = append(probs, fmt.Sprintf("unknown target kind %q — use agent | pipeline | tool | machine", s.TargetKind))
+		probs = append(probs, fmt.Sprintf("unknown target kind %q: use agent | pipeline | tool | machine", s.TargetKind))
 	}
 	if strings.TrimSpace(s.TargetID) == "" {
 		probs = append(probs, "the suite names no target")
@@ -145,21 +145,21 @@ func (s EvalSuite) Validate() error {
 		name := strings.TrimSpace(c.Name)
 		switch {
 		case name == "":
-			probs = append(probs, fmt.Sprintf("case %d has no name — the name is how a result is read", i+1))
+			probs = append(probs, fmt.Sprintf("case %d has no name: the name is how a result is read", i+1))
 			continue
 		case seen[name]:
-			probs = append(probs, fmt.Sprintf("duplicate case name %q — two results under one name cannot be told apart", name))
+			probs = append(probs, fmt.Sprintf("duplicate case name %q: two results under one name cannot be told apart", name))
 			continue
 		}
 		seen[name] = true
 		if strings.TrimSpace(c.Prompt) == "" {
-			probs = append(probs, fmt.Sprintf("case %q has no prompt — there is nothing to send", name))
+			probs = append(probs, fmt.Sprintf("case %q has no prompt: there is nothing to send", name))
 		}
 		if s.TargetKind == EvalTargetTool && (len(c.MustCallTools) > 0 || len(c.MustNotCallTools) > 0) {
 			// Grading a tool runs it directly, with no model to decide whether
 			// to call it. "It called the tool" is a tautology here, and one
 			// that would pass every time while looking like a real assertion.
-			probs = append(probs, fmt.Sprintf("case %q asserts on tool CALLS, but this suite grades a tool directly — there is no model deciding whether to call it", name))
+			probs = append(probs, fmt.Sprintf("case %q asserts on tool CALLS, but this suite grades a tool directly: there is no model deciding whether to call it", name))
 		}
 		if len(c.MustInclude) == 0 && len(c.MustNotInclude) == 0 &&
 			len(c.MustCallTools) == 0 && len(c.MustNotCallTools) == 0 &&
@@ -167,7 +167,7 @@ func (s EvalSuite) Validate() error {
 			strings.TrimSpace(c.JudgePrompt) == "" {
 			// A case that asserts nothing passes unconditionally, which is
 			// worse than no case: it raises the score and grades nothing.
-			probs = append(probs, fmt.Sprintf("case %q asserts nothing — it would pass whatever the target does", name))
+			probs = append(probs, fmt.Sprintf("case %q asserts nothing: it would pass whatever the target does", name))
 		}
 	}
 	switch len(probs) {
@@ -367,7 +367,7 @@ type EvalTargetMissing struct {
 }
 
 func (e EvalTargetMissing) Error() string {
-	return fmt.Sprintf("this suite grades the %s %q, which no longer exists — point it at another one or delete the suite", e.Kind, e.ID)
+	return fmt.Sprintf("this suite grades the %s %q, which no longer exists: point it at another one or delete the suite", e.Kind, e.ID)
 }
 
 // evalTarget is a resolved thing to grade: how to run one case against it, and
@@ -461,7 +461,7 @@ func (T *OrchestrateApp) resolveEvalTarget(udb Database, user string, suite Eval
 			Exec:        toolEvalExecutor(tool),
 		}, nil
 	default:
-		return evalTarget{}, Error(fmt.Sprintf("unknown target kind %q — use agent | pipeline | tool | machine", suite.TargetKind))
+		return evalTarget{}, Error(fmt.Sprintf("unknown target kind %q: use agent | pipeline | tool | machine", suite.TargetKind))
 	}
 }
 
@@ -535,7 +535,7 @@ func gradeEvalFields(c EvalCase, fields map[string]any) (reasons []string, pass 
 
 func declaredFieldNames(fields map[string]any) string {
 	if len(fields) == 0 {
-		return "none — the final stage has no output contract"
+		return "none: the final stage has no output contract"
 	}
 	names := make([]string, 0, len(fields))
 	for n := range fields {
@@ -632,7 +632,7 @@ func toolEvalExecutor(tool AgentToolDef) evalExecutor {
 // fingerprint per run, and a surface to watch it on.
 func EvalSuiteFromAgent(agent AgentRecord) (EvalSuite, error) {
 	if len(agent.Evals) == 0 {
-		return EvalSuite{}, Error("this agent has no eval cases to lift — add some in the agent editor first")
+		return EvalSuite{}, Error("this agent has no eval cases to lift: add some in the agent editor first")
 	}
 	name := strings.TrimSpace(agent.Name)
 	if name == "" {

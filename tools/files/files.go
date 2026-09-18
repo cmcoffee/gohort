@@ -47,7 +47,7 @@ type ReadFileTool struct{}
 func (t *ReadFileTool) Name() string       { return "read_file" }
 func (t *ReadFileTool) Caps() []Capability { return []Capability{CapRead} }
 func (t *ReadFileTool) Desc() string {
-	return "Read a file from your workspace sandbox. Path is relative to the workspace root; absolute paths and `..` traversal are rejected. Returns up to 64 KB of content; larger files are truncated. Binary files are returned as best-effort UTF-8 with replacement characters — use a more specific tool if you need raw bytes."
+	return "Read a file from your workspace sandbox. Path is relative to the workspace root; absolute paths and `..` traversal are rejected. Returns up to 64 KB of content; larger files are truncated. Binary files are returned as best-effort UTF-8 with replacement characters: use a more specific tool if you need raw bytes."
 }
 func (t *ReadFileTool) Params() map[string]ToolParam {
 	return map[string]ToolParam{
@@ -79,7 +79,7 @@ func (t *ReadFileTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	}
 	if len(data) > maxReadBytes {
 		truncated := string(data[:maxReadBytes])
-		return truncated + fmt.Sprintf("\n... [TRUNCATED: read %d of %d bytes — re-call with a smaller range or pipe via run_local for the rest]", maxReadBytes, len(data)), nil
+		return truncated + fmt.Sprintf("\n... [TRUNCATED: read %d of %d bytes, re-call with a smaller range or pipe via run_local for the rest]", maxReadBytes, len(data)), nil
 	}
 	return string(data), nil
 }
@@ -91,7 +91,7 @@ type ListDirectoryTool struct{}
 func (t *ListDirectoryTool) Name() string       { return "list_directory" }
 func (t *ListDirectoryTool) Caps() []Capability { return []Capability{CapRead} }
 func (t *ListDirectoryTool) Desc() string {
-	return "List the contents of a directory inside your workspace sandbox. Path is relative to the workspace root (use empty string for the root itself). Each line shows: type-flag (d/f/l), size in bytes, and name. Capped at 200 entries — larger dirs are truncated."
+	return "List the contents of a directory inside your workspace sandbox. Path is relative to the workspace root (use empty string for the root itself). Each line shows: type-flag (d/f/l), size in bytes, and name. Capped at 200 entries: larger dirs are truncated."
 }
 func (t *ListDirectoryTool) Params() map[string]ToolParam {
 	return map[string]ToolParam{
@@ -158,7 +158,7 @@ func (t *WriteFileTool) Caps() []Capability { return []Capability{CapWrite} }
 func (t *WriteFileTool) NeedsConfirm() bool { return true }
 
 func (t *WriteFileTool) Desc() string {
-	return "Write content to a file in your workspace sandbox. Path is relative to the workspace root; parent directories are created automatically. Mode controls existing-file behavior: \"create\" fails if the file exists, \"overwrite\" replaces it, \"append\" adds to the end. Each call requires explicit user approval. Single-call payload is capped at 256 KB — larger writes should be split."
+	return "Write content to a file in your workspace sandbox. Path is relative to the workspace root; parent directories are created automatically. Mode controls existing-file behavior: \"create\" fails if the file exists, \"overwrite\" replaces it, \"append\" adds to the end. Each call requires explicit user approval. Single-call payload is capped at 256 KB: larger writes should be split."
 }
 
 func (t *WriteFileTool) Params() map[string]ToolParam {
@@ -236,7 +236,7 @@ func (t *WriteFileTool) RunWithSession(args map[string]any, sess *ToolSession) (
 	// enough — the model already has the catalog and knows the
 	// argument shape; this just nudges intent.
 	return fmt.Sprintf(
-		"wrote %d bytes to %s (mode=%s). If this is executable code, run it to test — or define a reusable tool that wraps it. If it is data or output, no further action is needed.",
+		"wrote %d bytes to %s (mode=%s). If this is executable code, run it to test, or define a reusable tool that wraps it. If it is data or output, no further action is needed.",
 		len(content), rel, mode,
 	), nil
 }

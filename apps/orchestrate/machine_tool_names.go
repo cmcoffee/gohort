@@ -231,9 +231,9 @@ func phaseToolFindings(def MachineDef, known map[string]bool) []string {
 		for _, n := range missing {
 			line := "step " + p.Name + ": tool " + strconv.Quote(n) + " is not a tool this agent can reach"
 			if suggestion := didYouMeanTool(n, known); suggestion != "" {
-				line += " — did you mean " + strconv.Quote(suggestion) + "?"
+				line += ", did you mean " + strconv.Quote(suggestion) + "?"
 			} else {
-				line += ` — names must match the catalog exactly (a remote MCP tool is published as "<server>_<tool>", lowercased)`
+				line += `, names must match the catalog exactly (a remote MCP tool is published as "<server>_<tool>", lowercased)`
 			}
 			out = append(out, line)
 		}
@@ -395,12 +395,12 @@ func reachAdviceFor(units []toolScopeUnit, user string) []string {
 		switch {
 		case anyDynamic:
 			out = append(out, p.Label+" names "+strings.Join(fragile, ", ")+
-				" — names that exist only while the server or attachment behind them does. A reach "+
+				", names that exist only while the server or attachment behind them does. A reach "+
 				"(\"read\", \"none\") says what it may DO without depending on what happens to be connected.")
 		case allRead && known > 1:
 			out = append(out, p.Label+" names "+strconv.Itoa(known)+
 				" tools that all only read. If what you mean is \"this may look, not act\", reach \"read\" "+
-				"says it in a word and keeps saying it for another caller — the list grants exactly these and "+
+				"says it in a word and keeps saying it for another caller: the list grants exactly these and "+
 				"nothing else, which is narrower, so keep it if that is the point.")
 		}
 	}

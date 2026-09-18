@@ -104,7 +104,7 @@ func (g *guideTarget) Append(ctx context.Context, user, docID, newDocTitle, sect
 		return "", fmt.Errorf("you don't have edit access to that guide")
 	}
 	if resolved.isArticle() {
-		return "", fmt.Errorf("%q is an article, which has one body rather than sections — push into a guide, or create one", resolved.Title)
+		return "", fmt.Errorf("%q is an article, which has one body rather than sections: push into a guide, or create one", resolved.Title)
 	}
 	if orch := findOrchestrate(); orch != nil {
 		if _, err := g.app.runIncorporate(ctx, udb, orch, user, docID, sectionTitle, markdown, resolved.Private); err != nil {

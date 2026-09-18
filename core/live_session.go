@@ -243,13 +243,13 @@ func (m *LiveSessionMap[T]) HandleCancel(logPrefix string) http.HandlerFunc {
 		if s, ok := m.sessions[id]; ok && !s.Done {
 			if s.Spawned {
 				m.mu.Unlock()
-				Log("[web] %s %s cancel rejected — spawned by parent session, cancel the parent instead", logPrefix, id)
+				Log("[web] %s %s cancel rejected: spawned by parent session, cancel the parent instead", logPrefix, id)
 				http.Error(w, "this session was spawned by a parent pipeline -- cancel the parent instead", http.StatusConflict)
 				return
 			}
 			if s.Restoring {
 				m.mu.Unlock()
-				Log("[web] %s %s cancel rejected — session still restoring from queue", logPrefix, id)
+				Log("[web] %s %s cancel rejected: session still restoring from queue", logPrefix, id)
 				http.Error(w, "session is still being restored from the queue -- retry in a moment", http.StatusConflict)
 				return
 			}

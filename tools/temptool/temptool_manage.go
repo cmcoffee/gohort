@@ -21,7 +21,7 @@ func (t *ListTempToolsTool) Name() string { return "list_temp_tools" }
 func (t *ListTempToolsTool) Caps() []Capability { return []Capability{CapExecute} }
 
 func (t *ListTempToolsTool) Desc() string {
-	return "List the temp tools currently defined for this session. Returns each tool's name, description, parameters, and command template — useful for reviewing what you've built before deciding whether to add another."
+	return "List the temp tools currently defined for this session. Returns each tool's name, description, parameters, and command template: useful for reviewing what you've built before deciding whether to add another."
 }
 
 func (t *ListTempToolsTool) Params() map[string]ToolParam { return map[string]ToolParam{} }
@@ -63,7 +63,7 @@ func (t *ListTempToolsTool) RunWithSession(args map[string]any, sess *ToolSessio
 		default:
 			tag = " [session-only]"
 		}
-		fmt.Fprintf(&b, "%d. %s%s — %s\n", i+1, t.Name, tag, t.Description)
+		fmt.Fprintf(&b, "%d. %s%s: %s\n", i+1, t.Name, tag, t.Description)
 		fmt.Fprintf(&b, "   command: %s\n", t.CommandTemplate)
 		if len(t.Params) > 0 {
 			b.WriteString("   params: ")

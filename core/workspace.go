@@ -195,7 +195,7 @@ func validateNoSymlinks(root, abs string) error {
 			return fmt.Errorf("lstat %q: %w", cur, err)
 		}
 		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("path traverses a symlink at %q — not allowed inside the workspace sandbox", cur)
+			return fmt.Errorf("path traverses a symlink at %q: not allowed inside the workspace sandbox", cur)
 		}
 	}
 	return nil

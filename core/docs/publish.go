@@ -196,7 +196,7 @@ func PublishDocument(ctx context.Context, user, kind string, req PublishRequest)
 			}
 		}
 		if !found {
-			return PublishResult{}, fmt.Errorf("%q is not one of the %d place(s) available in %s — list them and pick one of those ids", req.Target, len(targets), d.Label())
+			return PublishResult{}, fmt.Errorf("%q is not one of the %d place(s) available in %s: list them and pick one of those ids", req.Target, len(targets), d.Label())
 		}
 	}
 	if strings.TrimSpace(req.Title) == "" {

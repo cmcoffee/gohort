@@ -219,10 +219,10 @@ func appPageRuntimeErrors(user, slug string) []string {
 	}
 	var out []string
 	for _, e := range rep.PageErrors {
-		out = append(out, "uncaught JS exception — "+appOneLine(e, 300))
+		out = append(out, "uncaught JS exception: "+appOneLine(e, 300))
 	}
 	for _, e := range rep.ConsoleErrors {
-		out = append(out, "console error — "+appOneLine(e, 300))
+		out = append(out, "console error: "+appOneLine(e, 300))
 	}
 	if len(out) > 6 {
 		out = append(out[:6], fmt.Sprintf("…and %d more", len(out)-6))

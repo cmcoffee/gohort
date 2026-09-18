@@ -218,7 +218,7 @@ func promptsEditor() ui.ArticleEditor {
 		TitleReadOnly:    true,      // a block's name is its key — edit the body, not the name
 		EmptyText:        "Select a prompt block on the left to view and edit it.",
 		PlaceholderTitle: "Block name",
-		PlaceholderBody:  "The block's effective text — edit to override the shipped default; clear (or match the default) to revert.",
+		PlaceholderBody:  "The block's effective text: edit to override the shipped default; clear (or match the default) to revert.",
 		// A prompt block IS structured markdown, so the outline is the
 		// natural view of it. No Templates: blocks are framework-defined
 		// and you edit them, never create one from a skeleton.
@@ -226,7 +226,7 @@ func promptsEditor() ui.ArticleEditor {
 		AssistURL: "/prompts/api/assist",
 		RulesURL:  "/prompts/api/rules",
 		Actions: []ui.ToolbarAction{
-			{Label: "Optimize", Title: "Let the model tighten this block — more concise and accurate, preserving every distinct instruction and lesson. The original is saved as a revision first, so you can revert.",
+			{Label: "Optimize", Title: "Let the model tighten this block: more concise and accurate, preserving every distinct instruction and lesson. The original is saved as a revision first, so you can revert.",
 				Method: "client", URL: "prompts_optimize"},
 			{Label: "Revert to default", Title: "Discard the override and restore the shipped default text",
 				Method: "client", URL: "prompts_revert"},
@@ -360,7 +360,7 @@ func init() {
 		Label: "Prompt revision history",
 		Help: "How many past versions of each prompt block are kept. Every edit and every Optimize " +
 			"snapshots the text it replaced, so this is how many rewrites back you can reach to " +
-			"restore one — the reason to keep revisions at all. Snapshots are single blocks of " +
+			"restore one: the reason to keep revisions at all. Snapshots are single blocks of " +
 			"text, so the storage is cheap and raising this is close to free. Lowering it prunes " +
 			"on the next edit to each block, and the dropped snapshots are gone.",
 		Kind: KindInt, Default: 10, Min: 2, Max: 200})
@@ -511,9 +511,9 @@ func (T *PromptsApp) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	editMode := req.Mode != "chat"
 
-	sys := "You help an operator review and refine a gohort FRAMEWORK PROMPT BLOCK — text the system injects into agents' system prompts to shape their behavior. Be precise and terse. Preserve the block's intent and any hard-won \"this burned us\" lessons; don't add fluff, hedging, or AI-tells."
+	sys := "You help an operator review and refine a gohort FRAMEWORK PROMPT BLOCK: text the system injects into agents' system prompts to shape their behavior. Be precise and terse. Preserve the block's intent and any hard-won \"this burned us\" lessons; don't add fluff, hedging, or AI-tells."
 	if editMode {
-		sys += " EDIT MODE: return ONLY the revised block text — no preamble, no explanation, no code fences."
+		sys += " EDIT MODE: return ONLY the revised block text, no preamble, no explanation, no code fences."
 	} else {
 		sys += " DISCUSSION MODE: answer in conversational prose. Do NOT return a rewritten block; if the user wants a change applied, tell them to switch to Edit."
 	}
@@ -552,7 +552,7 @@ func (T *PromptsApp) handleChat(w http.ResponseWriter, r *http.Request) {
 // "more concise and accurate" brief and returns the revised text. Shared by the
 // single-block Optimize (via the chat endpoint) and the bulk pass below.
 func (T *PromptsApp) optimizeText(ctx context.Context, title, current string) (string, error) {
-	sys := "You refine a gohort FRAMEWORK PROMPT BLOCK — text injected into agents' system prompts to shape behavior. EDIT MODE: return ONLY the revised block text, no preamble or code fences. Be precise and terse; preserve every distinct instruction and every hard-won \"this burned us\" lesson; remove only redundancy and filler; no hedging or AI-tells."
+	sys := "You refine a gohort FRAMEWORK PROMPT BLOCK: text injected into agents' system prompts to shape behavior. EDIT MODE: return ONLY the revised block text, no preamble or code fences. Be precise and terse; preserve every distinct instruction and every hard-won \"this burned us\" lesson; remove only redundancy and filler; no hedging or AI-tells."
 	ctxLine := "The block"
 	if s := strings.TrimSpace(title); s != "" {
 		ctxLine += " (" + s + ")"

@@ -23,14 +23,14 @@ whole framework" path.
 
 ## Phases
 
-### Phase 0 — Agent-loop SDK. ~1-2 days. DONE (this is the packaging).
+### Phase 0: Agent-loop SDK. ~1-2 days. DONE (this is the packaging).
 Import core, build an LLM, run loops with your own tools. Shipped as
 `core.NewAgent` + `AppCore.RunOnce` + the `extras/sdk-agent` example. Minimal
 public surface: `AppCore`, `RunAgentLoop`, `AgentLoopConfig`, `LLM`,
 `NewLLMFromConfig`, `LLMProviderConfig`, `ChatOption` helpers, `AgentToolDef` /
 `Tool` / `ToolParam`, `Database`, `Message`, `Response`.
 
-### Phase 1 — Decouple the DB family. The real project.
+### Phase 1: Decouple the DB family. The real project.
 Make memory/RAG/collections/graph usable with injected state instead of the
 `RootDB` globals. Work: thread an env/runtime struct (carrying `RootDB`,
 `VectorDB`, `CollectionsDB`, `AuthDB`, `EmbeddingConfig`) through the ambient
@@ -58,13 +58,13 @@ file, same globals), the memory-fact embedding/dedup path (`StoreMemoryFact` ->
 `EmbedWith`), chunk ingest (writes to the `VectorDB` global), and the graph
 store. Each is a mechanical application of the same three-part split.
 
-### Phase 2 — Stable API surface + docs. ~3-5 days.
+### Phase 2: Stable API surface + docs. ~3-5 days.
 Draw the line across the ~1305 exported core symbols: what's SDK vs internal
 (move internals behind `internal/`, or document the surface), version it, write
-docs + examples. This is the deferred "external audience" work — the difference
+docs + examples. This is the deferred "external audience" work: the difference
 between "works if you know the internals" and "a real SDK."
 
-### Phase 3 — Multi-instance isolation. Skip unless needed.
+### Phase 3: Multi-instance isolation. Skip unless needed.
 A few globals (scheduler singletons, route registry, tunables cache) are
 process-wide. Fine for one SDK consumer; only matters for multiple isolated
 gohort instances in one process. Defer until a concrete use case.

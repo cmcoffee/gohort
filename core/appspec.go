@@ -190,13 +190,13 @@ func (s AppSpec) VerifyStatus() string {
 	v := s.Verify
 	switch {
 	case v == nil:
-		return "never verified — run app_def(action=\"verify\") before telling the user it is ready"
+		return "never verified: run app_def(action=\"verify\") before telling the user it is ready"
 	case !v.Current(s):
 		verdict := "FAIL"
 		if v.Pass {
 			verdict = "PASS"
 		}
-		return "last verify (" + verdict + ", " + v.At + ") was against an EARLIER revision (" + v.Against + "); the revision serving now (" + s.Updated + ") is unverified — run verify again"
+		return "last verify (" + verdict + ", " + v.At + ") was against an EARLIER revision (" + v.Against + "); the revision serving now (" + s.Updated + ") is unverified: run verify again"
 	case v.Pass:
 		return "verified PASS at " + v.At + " against this revision"
 	default:

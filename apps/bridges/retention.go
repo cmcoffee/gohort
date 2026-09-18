@@ -147,7 +147,7 @@ func (T *Bridges) sweepRetention() {
 func (T *Bridges) dropLegacySeenMessages() {
 	if n := T.DB.CountKeys(legacySeenMsgTable); n > 0 {
 		T.DB.Drop(legacySeenMsgTable)
-		Log("[bridges] dropped %d legacy dedup key(s) — the table stored an untimed value that can no longer be read", n)
+		Log("[bridges] dropped %d legacy dedup key(s): the table stored an untimed value that can no longer be read", n)
 	}
 }
 

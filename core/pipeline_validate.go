@@ -68,12 +68,12 @@ func (d PipelineDef) validateSessionMeta() error {
 		fields, isStage := declared[stage]
 		if !isStage {
 			probs = append(probs, "session_meta "+ref+": no top-level stage named "+strconv.Quote(stage)+
-				" (a loop body stage cannot be promoted — it holds a different value every pass)")
+				" (a loop body stage cannot be promoted: it holds a different value every pass)")
 			continue
 		}
 		if !fields[field] {
 			probs = append(probs, "session_meta "+ref+": stage "+stage+" declares no output field "+strconv.Quote(field)+
-				" — only a stage with an `output` contract has fields to promote")
+				", only a stage with an `output` contract has fields to promote")
 			continue
 		}
 		if reservedSessionMetaKeys[strings.ToLower(field)] {
@@ -81,7 +81,7 @@ func (d PipelineDef) validateSessionMeta() error {
 			continue
 		}
 		if seen[field] {
-			probs = append(probs, "session_meta "+ref+": a field named "+strconv.Quote(field)+" is already promoted — a row carries one value per name")
+			probs = append(probs, "session_meta "+ref+": a field named "+strconv.Quote(field)+" is already promoted: a row carries one value per name")
 			continue
 		}
 		seen[field] = true
@@ -92,7 +92,7 @@ func (d PipelineDef) validateSessionMeta() error {
 	case 1:
 		return Error(probs[0])
 	}
-	return Error("this pipeline has " + strconv.Itoa(len(probs)) + " session_meta problems — fix them all in one revision:\n- " + strings.Join(probs, "\n- "))
+	return Error("this pipeline has " + strconv.Itoa(len(probs)) + " session_meta problems, fix them all in one revision:\n- " + strings.Join(probs, "\n- "))
 }
 
 // validateStageList validates one stage list against the scope built so
@@ -118,7 +118,7 @@ func validateStageList(stages []PipelineStage, done map[string]map[string]Pipeli
 	case 1:
 		return Error(probs[0])
 	}
-	return Error("this pipeline has " + strconv.Itoa(len(probs)) + " problems — fix them all in one revision:\n- " + strings.Join(probs, "\n- "))
+	return Error("this pipeline has " + strconv.Itoa(len(probs)) + " problems, fix them all in one revision:\n- " + strings.Join(probs, "\n- "))
 }
 
 // stageListProblems is validateStageList's collector. Split out so a LOOP
@@ -168,17 +168,17 @@ func stageListProblems(stages []PipelineStage, done map[string]map[string]Pipeli
 				// A panel of one is an agent stage (or a worker stage)
 				// wearing a heavier word. Say which, because the fix is to
 				// change the kind rather than to add a voice nobody wanted.
-				probs = append(probs, "stage "+s.Name+": a panel needs at least two voices — with one, use kind \"agent\" (or \"worker\") instead")
+				probs = append(probs, "stage "+s.Name+": a panel needs at least two voices, with one, use kind \"agent\" (or \"worker\") instead")
 			case len(s.Panel) > panelMaxVoices:
 				probs = append(probs, "stage "+s.Name+": "+strconv.Itoa(len(s.Panel))+" voices is past the cap of "+
-					strconv.Itoa(panelMaxVoices)+" — every voice is a model call per round")
+					strconv.Itoa(panelMaxVoices)+", every voice is a model call per round")
 			}
 			if len(s.Output) > 0 {
-				probs = append(probs, "stage "+s.Name+": a panel produces several voices, not one declared shape — "+
+				probs = append(probs, "stage "+s.Name+": a panel produces several voices, not one declared shape: "+
 					"declare the output on the stage that reads it instead")
 			}
 			if len(s.Body) > 0 {
-				probs = append(probs, "stage "+s.Name+": a panel voice is one contribution, so it takes no body — "+
+				probs = append(probs, "stage "+s.Name+": a panel voice is one contribution, so it takes no body: "+
 					"for multi-step branches use kind \"fanout\"")
 			}
 			if s.Count > panelMaxRounds {
@@ -190,7 +190,7 @@ func stageListProblems(stages []PipelineStage, done map[string]map[string]Pipeli
 		// it is a control that does nothing, and an author who set it believes
 		// their stage takes its count from the form.
 		if strings.TrimSpace(s.CountFrom) != "" && s.Kind != StagePanel && s.Kind != StageLoop {
-			probs = append(probs, "stage "+s.Name+": count_from is only read by kind=panel (rounds) and kind=loop (passes) — "+
+			probs = append(probs, "stage "+s.Name+": count_from is only read by kind=panel (rounds) and kind=loop (passes): "+
 				"nothing else repeats, so there is no count for it to set")
 		}
 		if s.Kind != StagePanel && len(s.Panel) > 0 {
@@ -292,7 +292,7 @@ func stageListProblems(stages []PipelineStage, done map[string]map[string]Pipeli
 // iteration left behind.
 func validateLoopStage(s PipelineStage, done map[string]map[string]PipelineFieldType, inLoop bool) (error, []string) {
 	if inLoop {
-		return Error("stage " + s.Name + ": loops do not nest — one level only (put the inner work in its own pipeline and call it from a stage)"), nil
+		return Error("stage " + s.Name + ": loops do not nest, one level only (put the inner work in its own pipeline and call it from a stage)"), nil
 	}
 	if len(s.Body) == 0 {
 		return Error("stage " + s.Name + " is kind=loop but has no body stages to repeat"), nil
@@ -300,13 +300,13 @@ func validateLoopStage(s PipelineStage, done map[string]map[string]PipelineField
 	if len(s.Output) > 0 {
 		// Naming the loop's result is a reasonable thing to want, so say where
 		// the name already is rather than only that this slot is wrong.
-		return Error("stage " + s.Name + ": output is not valid on kind=loop — a loop has no shape of its own to declare. Drop it: a later stage reads this loop as {stage:" + s.Name + "}, which is the last pass (or every pass joined, with collect=\"all\"). Declare output on the BODY stage that produces the value if a body stage needs to read it mid-pass, or if until has to test a bool"), nil
+		return Error("stage " + s.Name + ": output is not valid on kind=loop, a loop has no shape of its own to declare. Drop it: a later stage reads this loop as {stage:" + s.Name + "}, which is the last pass (or every pass joined, with collect=\"all\"). Declare output on the BODY stage that produces the value if a body stage needs to read it mid-pass, or if until has to test a bool"), nil
 	}
 	if s.Count < 1 {
 		return Error("stage " + s.Name + ": kind=loop needs count (how many times to repeat, 1-" + strconv.Itoa(loopMaxIterations) + ")"), nil
 	}
 	if s.Count > loopMaxIterations {
-		return Error("stage " + s.Name + ": count " + strconv.Itoa(s.Count) + " exceeds the maximum of " + strconv.Itoa(loopMaxIterations) + " — a pipeline runs unattended, so the ceiling is fixed"), nil
+		return Error("stage " + s.Name + ": count " + strconv.Itoa(s.Count) + " exceeds the maximum of " + strconv.Itoa(loopMaxIterations) + ", a pipeline runs unattended, so the ceiling is fixed"), nil
 	}
 	switch strings.TrimSpace(s.Collect) {
 	case "", "last", "all":
@@ -356,7 +356,7 @@ func fanoutCollectedShape(s PipelineStage) map[string]PipelineFieldType {
 // same reasons, plus one of its own about who runs the branch.
 func validateFanoutBody(s PipelineStage, done map[string]map[string]PipelineFieldType, inLoop bool) (error, []string) {
 	if inLoop {
-		return Error("stage " + s.Name + ": bodies do not nest — one level only. Put the inner work in its own pipeline and call it from a stage."), nil
+		return Error("stage " + s.Name + ": bodies do not nest, one level only. Put the inner work in its own pipeline and call it from a stage."), nil
 	}
 	if strings.TrimSpace(s.Agent) != "" {
 		// Both would have to mean something, and neither reading is
@@ -378,7 +378,7 @@ func validateFanoutBody(s PipelineStage, done map[string]map[string]PipelineFiel
 // until is". Appended to every until refusal, because the field is the least
 // guessable thing in the vocabulary: it is not a condition, it is the NAME of a
 // bool a body stage promised to return.
-const untilShape = "until reads ONE bool field, by bare name: until:\"check.done\", where a body stage named check declares output:[{\"name\":\"done\",\"type\":\"bool\"}]. It is not an expression — there is no ==, no quotes, no braces. To stop when a critic is satisfied, have the critic stage declare a bool (\"satisfied\") alongside its prose and point until at it."
+const untilShape = "until reads ONE bool field, by bare name: until:\"check.done\", where a body stage named check declares output:[{\"name\":\"done\",\"type\":\"bool\"}]. It is not an expression: there is no ==, no quotes, no braces. To stop when a critic is satisfied, have the critic stage declare a bool (\"satisfied\") alongside its prose and point until at it."
 
 // looksLikeCondition reports a bare-reference slot written as a comparison.
 //
@@ -396,7 +396,7 @@ func looksLikeCondition(ref string) bool {
 }
 
 // boolRefShape is what both slots need said when one is written as a condition.
-const boolRefShape = "It reads ONE bool field, by bare name — when:\"check.done\" — where the stage named check declares output:[{\"name\":\"done\",\"type\":\"bool\"}]. It is NOT an expression: no ==, no quotes, no braces, no method calls. To branch on a critic being satisfied, have that stage declare a bool alongside its prose and point when at it."
+const boolRefShape = "It reads ONE bool field, by bare name (when:\"check.done\"), where the stage named check declares output:[{\"name\":\"done\",\"type\":\"bool\"}]. It is NOT an expression: no ==, no quotes, no braces, no method calls. To branch on a critic being satisfied, have that stage declare a bool alongside its prose and point when at it."
 
 // checkLoopUntil validates a loop's early exit.
 //
@@ -430,7 +430,7 @@ func checkLoopUntil(s PipelineStage, ref string, done, inner map[string]map[stri
 		return bad("references " + ref + ", which is declared " + string(t) + ", not bool")
 	}
 	if _, outer := done[name]; outer {
-		return Error("stage " + s.Name + ": until references " + ref + ", which is OUTSIDE the loop — its value never changes between passes, so the loop would either run once or all " + strconv.Itoa(s.Count) + " times. Point it at a body stage.")
+		return Error("stage " + s.Name + ": until references " + ref + ", which is OUTSIDE the loop: its value never changes between passes, so the loop would either run once or all " + strconv.Itoa(s.Count) + " times. Point it at a body stage.")
 	}
 	return nil
 }

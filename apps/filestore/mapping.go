@@ -84,10 +84,10 @@ func (T *FileStoreApp) mappingTools(ctx context.Context, st Store, cmd StoreComm
 			Tool: Tool{
 				Name: "probe_command",
 				Description: fmt.Sprintf(
-					"Run %s (%s), the command you are mapping, with arguments of your choosing — start with its help flag. Returns whatever it printed, INCLUDING when it exits non-zero, because a usage message is usually printed on a failing exit and that is the most useful thing a probe gets back. This is how you learn the interface you are about to describe; do not guess it.",
+					"Run %s (%s), the command you are mapping, with arguments of your choosing: start with its help flag. Returns whatever it printed, INCLUDING when it exits non-zero, because a usage message is usually printed on a failing exit and that is the most useful thing a probe gets back. This is how you learn the interface you are about to describe; do not guess it.",
 					cmd.Label, cmd.Command),
 				Parameters: map[string]ToolParam{
-					"args": {Type: "string", Description: "Arguments to pass, space separated — e.g. \"--help\". Passed as separate argv entries with NO shell, so quoting and metacharacters do nothing."},
+					"args": {Type: "string", Description: "Arguments to pass, space separated: e.g. \"--help\". Passed as separate argv entries with NO shell, so quoting and metacharacters do nothing."},
 				},
 				Caps: []Capability{CapExecute},
 			},
@@ -99,14 +99,14 @@ func (T *FileStoreApp) mappingTools(ctx context.Context, st Store, cmd StoreComm
 			Tool: Tool{
 				Name: "propose_tools",
 				Description: fmt.Sprintf(
-					"Write down what %s can do, as one action per thing it does. Propose narrow actions rather than one that takes a mode argument — unpack and verify are two actions, not one with a switch. What you write is inert: no agent can call it until an admin turns Agents on for this command, so propose what you actually verified and say in each description what you did not. Calling this again REPLACES what you proposed before, which is how you correct it.",
+					"Write down what %s can do, as one action per thing it does. Propose narrow actions rather than one that takes a mode argument: unpack and verify are two actions, not one with a switch. What you write is inert: no agent can call it until an admin turns Agents on for this command, so propose what you actually verified and say in each description what you did not. Calling this again REPLACES what you proposed before, which is how you correct it.",
 					cmd.Label),
 				Parameters: map[string]ToolParam{
 					"description": {Type: "string", Description: "What this binary is for, in a sentence. It is what an agent reads before opening the bundle."},
 					"actions": {Type: "string", Description: "JSON array of actions: [{\"name\":\"unpack\",\"description\":\"...\",\"command_template\":\"/opt/bin/cap unpack {folder}\",\"params\":{\"folder\":{\"type\":\"string\",\"description\":\"...\"}},\"required\":[\"folder\"]}]. " +
 						"Every {placeholder} in a command_template must be declared in that action's params. " +
-						"A parameter that takes a FOLDER from this store must declare \"path_scope\":\"files\" — that is what turns the folder name into a real path when the tool runs; without it the command receives the bare name and finds nothing. " +
-						"If the binary must RUN INSIDE the folder rather than take it as an argument — it resolves its inputs relative to the working directory — also add \"work_dir\":\"folder\" naming that parameter, and leave the folder out of the command line."},
+						"A parameter that takes a FOLDER from this store must declare \"path_scope\":\"files\", that is what turns the folder name into a real path when the tool runs; without it the command receives the bare name and finds nothing. " +
+						"If the binary must RUN INSIDE the folder rather than take it as an argument (it resolves its inputs relative to the working directory), also add \"work_dir\":\"folder\" naming that parameter, and leave the folder out of the command line."},
 				},
 				Required: []string{"description", "actions"},
 				Caps:     []Capability{CapWrite},
@@ -146,7 +146,7 @@ func (T *FileStoreApp) proposeTools(st Store, cmd StoreCommand, args map[string]
 	var acts []TempToolAction
 	raw := strings.TrimSpace(stringArg(args, "actions"))
 	if raw == "" {
-		return "", Error("actions is required — a mapping with none does nothing")
+		return "", Error("actions is required: a mapping with none does nothing")
 	}
 	if err := json.Unmarshal([]byte(raw), &acts); err != nil {
 		return "", Error("actions must be a JSON array of {name, description, command_template, params}: " + err.Error())
@@ -157,7 +157,7 @@ func (T *FileStoreApp) proposeTools(st Store, cmd StoreCommand, args map[string]
 		for _, ph := range templatePlaceholders(a.CommandTemplate) {
 			if _, ok := a.Params[ph]; !ok {
 				return "", Error("action " + a.Name + " uses {" + ph + "} but declares no parameter called " + ph +
-					" — declare it, or take it out of the command")
+					", declare it, or take it out of the command")
 			}
 		}
 		// Folder pinning and the work_dir check live in SaveCommandTools,
@@ -172,7 +172,7 @@ func (T *FileStoreApp) proposeTools(st Store, cmd StoreCommand, args map[string]
 		// A re-map of an already-approved command IS live on save. Saying
 		// otherwise would leave an admin believing a correction was parked
 		// when it had in fact replaced what agents are calling right now.
-		live = "and it is LIVE — this command is already approved for agents, so this replaces what they were calling"
+		live = "and it is LIVE: this command is already approved for agents, so this replaces what they were calling"
 	}
 	return fmt.Sprintf("Mapped %s: %s as %s, %s. Call this again to correct it.",
 		cmd.Label, countOf(len(saved.Tools), "action", "actions"), saved.ToolName(), live), nil

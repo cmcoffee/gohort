@@ -80,10 +80,10 @@ func (p WorkPlanToolSet) Pending() int {
 	return p.Plan.Pending()
 }
 
-const workPlanGenericSetDescription = "Commit to a multi-step plan, and track it. Use when the work needs SEVERAL distinct results that build on each other — not for something a single call settles. " +
+const workPlanGenericSetDescription = "Commit to a multi-step plan, and track it. Use when the work needs SEVERAL distinct results that build on each other: not for something a single call settles. " +
 	"Each step has a short title (5-10 words) and a what_to_find description (1-3 sentences) saying what success looks like for that step. Order by dependency: what has to be known first goes first. " +
 	"Typically 3-8 steps for a focused piece of work. Once set, work the steps with mark_step_in_progress / record_step_findings / mark_step_blocked, and call report_gaps before your final answer so unresolved steps are stated rather than quietly dropped. " +
-	"A plan is a commitment the user can see — set one when the work deserves it, skip it when one call answers the question."
+	"A plan is a commitment the user can see: set one when the work deserves it, skip it when one call answers the question."
 
 const workPlanGenericWorkHint = "Do the work for that step now."
 
@@ -184,7 +184,7 @@ func WorkPlanTools(spec WorkPlanToolSpec) WorkPlanToolSet {
 			// progressed will happily say so again — four identical rounds of
 			// "starting step 1" with no work between them.
 			if plan.StatusOf(stepID) == WorkStepInProgress {
-				return fmt.Sprintf("Step %d is ALREADY the step in progress — this call changed nothing. Stop marking it and do the step's work now, then call record_step_findings.", stepID), nil
+				return fmt.Sprintf("Step %d is ALREADY the step in progress: this call changed nothing. Stop marking it and do the step's work now, then call record_step_findings.", stepID), nil
 			}
 			if err := plan.SetStatus(stepID, WorkStepInProgress); err != nil {
 				return "", err
@@ -197,7 +197,7 @@ func WorkPlanTools(spec WorkPlanToolSpec) WorkPlanToolSet {
 	findingsTool := AgentToolDef{
 		Tool: Tool{
 			Name:        "record_step_findings",
-			Description: "Attach findings to a plan step and mark it done. Findings are a 1-3 sentence summary of what was learned for this step — your synthesis, NOT the raw output you got back. Call it once that step's work has produced something worth keeping.",
+			Description: "Attach findings to a plan step and mark it done. Findings are a 1-3 sentence summary of what was learned for this step: your synthesis, NOT the raw output you got back. Call it once that step's work has produced something worth keeping.",
 			Parameters: map[string]ToolParam{
 				"step_id":  {Type: "integer", Description: "The step ID to record findings for."},
 				"findings": {Type: "string", Description: "1-3 sentence summary of what was learned for this step."},
@@ -220,15 +220,15 @@ func WorkPlanTools(spec WorkPlanToolSpec) WorkPlanToolSet {
 				return "", err
 			}
 			changed("step", "")
-			return fmt.Sprintf("Step %d marked done. Move to the next pending step, OR if all pending steps are done, revisit any blocked steps now — what you learned from the other steps often unblocks them.", stepID), nil
+			return fmt.Sprintf("Step %d marked done. Move to the next pending step, OR if all pending steps are done, revisit any blocked steps now: what you learned from the other steps often unblocks them.", stepID), nil
 		},
 	}
 
 	blockedTool := AgentToolDef{
 		Tool: Tool{
 			Name: "mark_step_blocked",
-			Description: "Mark a plan step as a GENUINE dead-end — it cannot be completed however many rounds you have: no access, a required tool is missing, the thing it needs is unreachable, or every reasonable angle is exhausted. " +
-				"Do NOT use it to hide difficulty on a first attempt (try a couple of angles first), and NEVER because you are low on rounds or 'out of time' — that is not a blocker. An unfinished step should be left pending, not blocked; a slow step is faster revisited after the rest of the plan. " +
+			Description: "Mark a plan step as a GENUINE dead-end, it cannot be completed however many rounds you have: no access, a required tool is missing, the thing it needs is unreachable, or every reasonable angle is exhausted. " +
+				"Do NOT use it to hide difficulty on a first attempt (try a couple of angles first), and NEVER because you are low on rounds or 'out of time', that is not a blocker. An unfinished step should be left pending, not blocked; a slow step is faster revisited after the rest of the plan. " +
 				"The reason appears in the final answer's gap section, so it has to describe a real obstacle.",
 			Parameters: map[string]ToolParam{
 				"step_id": {Type: "integer", Description: "The step ID to mark blocked."},
@@ -260,7 +260,7 @@ func WorkPlanTools(spec WorkPlanToolSpec) WorkPlanToolSet {
 		Tool: Tool{
 			Name: "revise_plan",
 			Description: fmt.Sprintf(
-				"Revise the plan when what you found reveals something you could not have known to plan for. Three operations, all optional and combinable: add (new steps appended with fresh IDs), remove (drop PENDING steps that are no longer relevant — done/blocked/in_progress steps are durable history and are refused), reorder (a full new ordering of the remaining step IDs). Capped at %d revisions — use it deliberately, not reflexively. The plan is your contract; revise it when reality contradicts the contract, not because you would write it differently in hindsight.",
+				"Revise the plan when what you found reveals something you could not have known to plan for. Three operations, all optional and combinable: add (new steps appended with fresh IDs), remove (drop PENDING steps that are no longer relevant, done/blocked/in_progress steps are durable history and are refused), reorder (a full new ordering of the remaining step IDs). Capped at %d revisions: use it deliberately, not reflexively. The plan is your contract; revise it when reality contradicts the contract, not because you would write it differently in hindsight.",
 				WorkPlanRevisionLimit,
 			),
 			Parameters: map[string]ToolParam{
@@ -333,10 +333,10 @@ func WorkPlanTools(spec WorkPlanToolSpec) WorkPlanToolSet {
 			gaps := plan.MarkGapsReported()
 			changed("step", "")
 			if len(gaps.Blocked) == 0 && len(gaps.Skipped) == 0 {
-				return "No gaps. Every plan step was completed with findings. Write your final answer now — no 'what I could not determine' section needed.", nil
+				return "No gaps. Every plan step was completed with findings. Write your final answer now: no 'what I could not determine' section needed.", nil
 			}
 			var b strings.Builder
-			b.WriteString("Gap report — fold the following into a clearly labelled 'what I could not determine' section of your final answer:\n\n")
+			b.WriteString("Gap report, fold the following into a clearly labelled 'what I could not determine' section of your final answer:\n\n")
 			if len(gaps.Blocked) > 0 {
 				b.WriteString("Blocked:\n")
 				for _, g := range gaps.Blocked {

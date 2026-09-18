@@ -39,9 +39,10 @@ const TunableGraphExtract = "tune_graph_extract"
 
 func init() {
 	RegisterTunable(TunableSpec{App: "/orchestrate", Key: TunableGraphExtract, Category: "Memory",
-		Label: "Automatic entity extraction (0 = off)",
-		Help:  "After a turn, run a worker-LLM pass over the user's message and auto-populate the graph memory with the entity relationships it states. Off the hot path (background, single-flight + cooldown). Conservative: explicit relationships between named entities only, alias-merged, never auto-replacing. Extracted edges are marked observed.",
-		Kind:  KindBool, Default: 0, Min: 0, Max: 1})
+		Label:  "Automatic entity extraction (0 = off)",
+		Help:   "After a turn, populate the graph memory with the relationships the message states.",
+		Detail: "A worker-LLM pass does it off the hot path, in the background, single-flight and with a cooldown. It is conservative: explicit relationships between named entities only, alias-merged, never auto-replacing. Extracted edges are marked observed.",
+		Kind:   KindBool, Default: 0, Min: 0, Max: 1})
 }
 
 func graphExtractEnabled() bool { return TuneBool(TunableGraphExtract) }
@@ -315,10 +316,10 @@ func judgeGraphTriples(chat FactChatFunc, text string) []graphTriple {
 
 Rules:
 - Only EXPLICIT relationships the text actually states. Do NOT infer or guess.
-- Only NAMED entities — specific people, organizations, places, projects, or named things. Skip generic nouns ("a dog", "the meeting") unless they carry a proper name.
+- Only NAMED entities: specific people, organizations, places, projects, or named things. Skip generic nouns ("a dog", "the meeting") unless they carry a proper name.
 - relation is a short lowercase verb phrase ("works at", "owns", "lives in", "married to", "manages").
 - subject_kind / object_kind is one of: person, org, project, place, thing.
-- The text may be labelled "USER SAID" and "ASSISTANT SAID". Take what the USER states as given. From the ASSISTANT take only what it ASSERTS as established — skip anything hedged, proposed or asked about ("might be", "could indicate", "let me check whether", "if X then Y", "I suspect"). A hypothesis it was still testing is not a fact about the world.
+- The text may be labelled "USER SAID" and "ASSISTANT SAID". Take what the USER states as given. From the ASSISTANT take only what it ASSERTS as established: skip anything hedged, proposed or asked about ("might be", "could indicate", "let me check whether", "if X then Y", "I suspect"). A hypothesis it was still testing is not a fact about the world.
 - Skip anything the assistant is quoting as an EXAMPLE, or describing as what it would do rather than what is.
 - If the text states no such relationship, reply with an empty array.
 

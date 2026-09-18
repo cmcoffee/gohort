@@ -325,7 +325,7 @@ func IsFrameworkToolDef(td AgentToolDef) bool {
 const (
 	toolsDirectiveKey     = "framework.tools_directive"
 	toolsDirectiveFat     = "## Tools available\n\n{tool_list}"
-	toolsDirectiveDefault = "## Tools available\n\nPrefer calling a tool over guessing or answering from memory — every tool named here is live and callable this turn, and each one's full parameter schema accompanies this request. Available: {tool_names}"
+	toolsDirectiveDefault = "## Tools available\n\nPrefer calling a tool over guessing or answering from memory: every tool named here is live and callable this turn, and each one's full parameter schema accompanies this request. Available: {tool_names}"
 )
 
 // noWebAccessNotice returns a short system-prompt line when the assembled
@@ -344,7 +344,7 @@ func noWebAccessNotice(tools []AgentToolDef) string {
 			return ""
 		}
 	}
-	return "\n\nYou have NO web or internet access in this session. If a question needs information you'd have to look up online, say so plainly and answer from what you already know — do NOT go hunting through your other tools for a substitute; none of them reach the web."
+	return "\n\nYou have NO web or internet access in this session. If a question needs information you'd have to look up online, say so plainly and answer from what you already know: do NOT go hunting through your other tools for a substitute; none of them reach the web."
 }
 
 func buildToolUseDirective(tools []AgentToolDef) string {
@@ -363,7 +363,7 @@ func renderDirectiveTemplate(tpl string, tools []AgentToolDef) string {
 			if len(desc) > 200 {
 				desc = desc[:200] + "…"
 			}
-			fmt.Fprintf(&b, "- **%s** — %s\n", t.Tool.Name, desc)
+			fmt.Fprintf(&b, "- **%s**: %s\n", t.Tool.Name, desc)
 		}
 		tpl = strings.ReplaceAll(tpl, "{tool_list}", b.String())
 	}

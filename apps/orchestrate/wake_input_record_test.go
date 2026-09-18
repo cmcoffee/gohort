@@ -19,7 +19,7 @@ import (
 func TestAnEventInputIsStoredAsACardNotAsTheUsersMessage(t *testing.T) {
 	now := time.Now()
 	got := storedRunInput(AgentSyncRun{
-		Message:         "[EVENT — monitor \"molty\" fired]\n…",
+		Message:         "[EVENT: monitor \"molty\" fired]\n…",
 		InputReportFrom: "molty",
 		InputReportKind: cortexKindMonitor,
 	}, "[EVENT — monitor \"molty\" fired]\n…", now)

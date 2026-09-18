@@ -20,7 +20,7 @@ from the logs and then confirm it *from the same logs*, because that is the chea
 of it. It reads as thorough and it is circular. Separating the two into phases is what stops it.
 
 **An observation is not always a log.** Sometimes it is something seen on a live customer system, and
-sometimes there is no observation at all — just a question. So logs are one source among several, not
+sometimes there is no observation at all: just a question. So logs are one source among several, not
 the entry condition.
 
 ## Shape
@@ -37,7 +37,7 @@ answer   (resident)           No observation: answer from docs, tickets, the
 
 **`hunch` ships unable to look, on purpose.** It is transient, and a transient step runs before the
 turn has a catalog: it reaches exactly the tools it names and nothing else. Its prompt tells it to
-go and search, and the recipe names no tools for it — because the tools are called
+go and search, and the recipe names no tools for it, because the tools are called
 `search_prod_logs` here and something else in the next deployment, so a portable recipe cannot ship
 them. The handoff is written into the recipe's own description ("open the hunch step and tick the
 tools it should search with"), and the editor's *worth a look* panel says the same thing in the
@@ -50,12 +50,12 @@ reason-only would make the recipe self-consistent and quietly cost it the reach 
 ## Why `look_where` is the important field
 
 The first draft of this had `verify` carry no log tools, on the theory that a log-derived hunch must
-not be confirmed from logs. That is wrong the moment the observation came from a live box — then the
+not be confirmed from logs. That is wrong the moment the observation came from a live box, then the
 logs *are* the independent evidence. A static tool restriction cannot express "independent of
 wherever this came from".
 
 So `hunch` states it instead. It declares the hypothesis, `confirms_if`, `refutes_if`, and
-`look_where` — and `verify` follows that. Positive direction rather than negative restriction, and it
+`look_where`, and `verify` follows that. Positive direction rather than negative restriction, and it
 forces the hypothesis phase to answer the harder question: *what would settle this?* That question is
 most of the difference between an investigation and a guess.
 
@@ -89,7 +89,7 @@ Nothing is per-investigation. A new folder appears in the store and is immediate
 question just gets asked.
 
 All four attach in one place: **Configure → Sources** in the chat toolbar. Each row names the tools
-that attachment adds to the agent — `search_prod_logs`, `investigate_<system>` — because that is what
+that attachment adds to the agent (`search_prod_logs`, `investigate_<system>`), because that is what
 attaching actually does, and an attachment whose tools you cannot see is indistinguishable from one
 that did not take. If you have ever told an agent to "check the logs in the log folder" and had it
 answer that it has no such thing, that list is the fix: ask for the tool by the name on the row.
@@ -97,7 +97,7 @@ answer that it has no such thing, that list is the fix: ask for the tool by the 
 ## Memory
 
 Point the agent's own memory at generalizations only: `memory_mode: "agent"` (the Lessons-learned
-directive) and `disable_inferred: true` (Reference Memory off — the layer that would otherwise
+directive) and `disable_inferred: true` (Reference Memory off: the layer that would otherwise
 compound one incident's findings into the next by similarity).
 
 Per-investigation specifics live in the session and go with it. The machine's own blackboard holds
@@ -106,29 +106,29 @@ needs per-folder memory scoping.
 
 ## What it learns
 
-Nothing, by itself — and that is deliberate. Memory policy belongs to the AGENT, not to this recipe.
+Nothing, by itself, and that is deliberate. Memory policy belongs to the AGENT, not to this recipe.
 
 An investigator that remembers the wrong thing is worse than one that remembers nothing: memory is
 shared across every investigation the agent runs, and `recall_about` surfaces an entity's neighbours
 automatically, so anything tied to one incident arrives unbidden in an unrelated one later. What may
-be remembered is also deployment-specific — where the line falls between "the product" and "this
+be remembered is also deployment-specific, where the line falls between "the product" and "this
 customer's system" depends on what you work on, which is not something a shipped recipe can know.
 
 So put it in the agent's **Rules** (Configure → Rules), where it is stated once, applies in every
 phase and with no machine at all, and can be edited without re-importing anything:
 
 > **Memory scope.** Record two kinds of thing and nothing else. Durable rules about the SHAPE of the
-> data — where a class of evidence lives, which file to start from — via `store_fact`. Structure of
-> the product itself — what calls what, what emits what, where a component lives — via
+> data (where a class of evidence lives, which file to start from) via `store_fact`. Structure of
+> the product itself (what calls what, what emits what, where a component lives) via
 > `link_entities` as subject-relation-object, with paths and config keys in `subject_attrs`.
 >
 > The product, never the instance. Not this host, not this cluster, not this ticket, not this
 > customer's deployment, not today's timestamps. If you cannot name the thing without naming the
-> customer, it does not get recorded — say it in the answer instead.
+> customer, it does not get recorded: say it in the answer instead.
 
 The graph tools are already in the catalog whether or not you write that rule: they gate on Explicit
 memory (`!explicitOff()`), not Reference memory, so `disable_inferred` never hid them. What was
-missing was ever asking — a model does not volunteer memory writes.
+missing was ever asking: a model does not volunteer memory writes.
 
 ## Open
 
@@ -143,7 +143,7 @@ missing was ever asking — a model does not volunteer memory writes.
 ## Loading it
 
 Orchestrate mounts at `/orchestrate`, so its API paths carry that prefix. (Every curl in these docs
-had it missing until v0.6.107 — the same relative-vs-absolute mistake that made the Files admin
+had it missing until v0.6.107: the same relative-vs-absolute mistake that made the Files admin
 section 404.)
 
 ```sh
@@ -156,11 +156,11 @@ curl -sS -b cookies.txt -X POST http://127.0.0.1:8181/orchestrate/api/agents/<ag
   -H 'Content-Type: application/json' -d '{"machine": "<machineID>"}'
 ```
 
-Or ask Builder: *"load the machine in extras/investigation.machine.json and attach it to <agent>"* —
+Or ask Builder: *"load the machine in extras/investigation.machine.json and attach it to <agent>"*
 it has the `machine` tool and `attach_to_agents` does step 2 in the same call.
 
 Or, once it exists, attach it from **Configure → Machines** in the chat toolbar, or the Phase machine
 picker on the agent editor.
 
-Then **open a NEW session** — the machine is pinned per session at creation, so an existing
+Then **open a NEW session**: the machine is pinned per session at creation, so an existing
 conversation will not pick it up.

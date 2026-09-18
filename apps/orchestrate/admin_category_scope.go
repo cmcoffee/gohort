@@ -147,7 +147,7 @@ func setCategoryScope(db Database, owner, category, target string, on bool) erro
 		}
 	}
 	if len(failed) > 0 {
-		return fmt.Errorf("%d of %d tools in %q could not be changed (%s) — the category now reads Custom",
+		return fmt.Errorf("%d of %d tools in %q could not be changed (%s): the category now reads Custom",
 			len(failed), len(members), category, strings.Join(failed, ", "))
 	}
 	Log("[categories] user %q set %q on category %q (%d tools)", owner, target, category, len(members))

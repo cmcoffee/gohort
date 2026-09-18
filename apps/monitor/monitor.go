@@ -33,7 +33,7 @@ type MonitorApp struct {
 func (T MonitorApp) Name() string         { return "monitor" }
 func (T MonitorApp) SystemPrompt() string { return "" }
 func (T MonitorApp) Desc() string {
-	return "Apps: Central live monitor — what every agent and app is doing right now."
+	return "Apps: Central live monitor, what every agent and app is doing right now."
 }
 func (T *MonitorApp) Init() error { return T.Flags.Parse() }
 func (T *MonitorApp) Main() error {
@@ -133,13 +133,13 @@ func (T *MonitorApp) handlePage(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	title, backURL := "Monitor", "/"
-	agentsTitle := "Agents — live & recent"
+	agentsTitle := "Agents: live & recent"
 	agentsSubtitle := "Every agent turn: chat, scheduled, standing, channel, dispatch, and the OpenAI endpoint. Sub-agents nest (↳) under the turn that called them; recently finished runs linger briefly."
 	sections := []ui.Section{
 		{Title: agentsTitle, Subtitle: agentsSubtitle, Body: agents},
 		{
 			Title:    "Everything running now",
-			Subtitle: "The instantaneous snapshot behind the live pill — apps and pipelines alongside active agents.",
+			Subtitle: "The instantaneous snapshot behind the live pill: apps and pipelines alongside active agents.",
 			Body:     live,
 		},
 	}
@@ -149,7 +149,7 @@ func (T *MonitorApp) handlePage(w http.ResponseWriter, r *http.Request) {
 		// happening on the deployment is the thing they just navigated away
 		// from, and it would be the larger of the two.
 		title, backURL = "Task", "/monitor"
-		agents.EmptyText = "That task has finished — it is no longer running, and finished runs are kept only briefly."
+		agents.EmptyText = "That task has finished: it is no longer running, and finished runs are kept only briefly."
 		sections = []ui.Section{{
 			Title:    "This task",
 			Subtitle: "The run you followed, and any sub-agents it started. Refreshes every 3 seconds; it disappears shortly after it finishes.",

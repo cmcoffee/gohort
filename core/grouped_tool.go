@@ -71,7 +71,7 @@ func (def *GroupedToolAction) typoHint(args map[string]any) string {
 	var hints []string
 	for _, k := range unknown {
 		if near := def.nearestParamName(k); near != "" {
-			hints = append(hints, fmt.Sprintf("you supplied %q — did you mean %q?", k, near))
+			hints = append(hints, fmt.Sprintf("you supplied %q: did you mean %q?", k, near))
 		}
 	}
 	return strings.Join(hints, " ")
@@ -358,7 +358,7 @@ func (g *GroupedTool) RunWithSession(args map[string]any, sess *ToolSession) (ou
 		// created.) Return a directive ERROR so the misfire is unmistakable.
 		if extras := nonActionArgKeys(args); len(extras) > 0 {
 			return "", fmt.Errorf(
-				"%s was called with no \"action\" but WITH params (%s) — nothing was done. Pick an action: %s. Re-call with action=\"<one>\" plus its params (action=\"help\" for the full spec)",
+				"%s was called with no \"action\" but WITH params (%s): nothing was done. Pick an action: %s. Re-call with action=\"<one>\" plus its params (action=\"help\" for the full spec)",
 				g.name, strings.Join(extras, ", "), strings.Join(g.sortedActionNames(), ", "))
 		}
 		// A COMPLETELY bare call used to return the usage spec, on the theory
@@ -374,7 +374,7 @@ func (g *GroupedTool) RunWithSession(args map[string]any, sess *ToolSession) (ou
 		// error that NAMES the actions keeps discovery cheap while making it
 		// unmistakable that nothing ran.
 		return "", fmt.Errorf(
-			"%s was called with no arguments — nothing was done, and this is NOT a result. Pick an action: %s. Re-call with action=\"<one>\" plus its params, or action=\"help\" for the full spec. If you meant to pass arguments, they did not arrive: send them again with the action",
+			"%s was called with no arguments: nothing was done, and this is NOT a result. Pick an action: %s. Re-call with action=\"<one>\" plus its params, or action=\"help\" for the full spec. If you meant to pass arguments, they did not arrive: send them again with the action",
 			g.name, strings.Join(g.sortedActionNames(), ", "))
 	}
 	def, ok := g.actions[action]
@@ -480,14 +480,14 @@ func (g *GroupedTool) sortedActionNames() []string {
 // readable block. Returned by action="help" or when no action given.
 func (g *GroupedTool) formatHelp() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s — usage:\n\n", g.name)
+	fmt.Fprintf(&b, "%s, usage:\n\n", g.name)
 	if g.preamble != "" {
 		b.WriteString(strings.TrimSpace(g.preamble))
 		b.WriteString("\n\n")
 	}
 	for _, name := range g.sortedActionNames() {
 		def := g.actions[name]
-		fmt.Fprintf(&b, "  action=%q — %s\n", name, def.Description)
+		fmt.Fprintf(&b, "  action=%q: %s\n", name, def.Description)
 		if len(def.Params) > 0 {
 			// Sort params alphabetically for consistency.
 			keys := make([]string, 0, len(def.Params))
@@ -505,7 +505,7 @@ func (g *GroupedTool) formatHelp() string {
 				if required[k] {
 					req = " (required)"
 				}
-				fmt.Fprintf(&b, "    %s (%s)%s — %s\n", k, p.Type, req, p.Description)
+				fmt.Fprintf(&b, "    %s (%s)%s: %s\n", k, p.Type, req, p.Description)
 			}
 		} else {
 			b.WriteString("    (no params)\n")
@@ -515,7 +515,7 @@ func (g *GroupedTool) formatHelp() string {
 		}
 		b.WriteString("\n")
 	}
-	b.WriteString(`  action="help" — show this usage spec.` + "\n")
+	b.WriteString(`  action="help": show this usage spec.` + "\n")
 	return b.String()
 }
 
@@ -525,11 +525,11 @@ func (g *GroupedTool) formatHelp() string {
 // me about THIS one") gets an address instead of a manual.
 func (g *GroupedTool) helpIgnoredParamsBanner(extras []string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "NOTE: action=\"help\" ignores every other param — %s had no effect here, and nothing was looked up. This is the GENERIC usage spec for %s, not information about %s.\n",
+	fmt.Fprintf(&b, "NOTE: action=\"help\" ignores every other param, %s had no effect here, and nothing was looked up. This is the GENERIC usage spec for %s, not information about %s.\n",
 		strings.Join(extras, ", "), g.name, strings.Join(extras, "/"))
 	for _, k := range extras {
 		if takers := g.actionsWithParam(k); len(takers) > 0 {
-			fmt.Fprintf(&b, "  To act on %q, call one of: %s — e.g. %s(action=%q, %s=…).\n",
+			fmt.Fprintf(&b, "  To act on %q, call one of: %s, e.g. %s(action=%q, %s=…).\n",
 				k, strings.Join(takers, ", "), g.name, takers[0], k)
 		}
 	}

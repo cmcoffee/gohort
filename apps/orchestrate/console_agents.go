@@ -376,7 +376,7 @@ func consoleAgentRows(user string, udb Database, agentID string) []consoleAgentR
 		// never go away.
 		if clash, ok := standingNameCollision(udb, user, sa); ok && hasLegacyRunsNamed(user, sa.Name) {
 			row.State = "⚠ shares a name with the agent " + chFirst(clash.Name, clash.ID) +
-				", and runs recorded before this release cannot tell them apart — rename one, or wait for those runs to age out"
+				", and runs recorded before this release cannot tell them apart: rename one, or wait for those runs to age out"
 		}
 		rows = append(rows, row)
 	}
@@ -480,7 +480,7 @@ func (T *OrchestrateApp) setConsoleAgentPaused(w http.ResponseWriter, r *http.Re
 		// clearing the broken flag on success (see the monitor path for rationale).
 		if sa.Broken {
 			if reason := standingAgentDependencyError(sa); reason != "" {
-				http.Error(w, "can't resume — "+reason+"; relink it to a live agent or delete it", http.StatusConflict)
+				http.Error(w, "can't resume: "+reason+"; relink it to a live agent or delete it", http.StatusConflict)
 				return
 			}
 			sa.Broken = false

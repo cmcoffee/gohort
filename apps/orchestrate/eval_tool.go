@@ -41,9 +41,9 @@ func evalTool(t *chatTurn) *GroupedTool {
 	gt := NewGroupedTool("eval",
 		"Run and read the eval suites saved for this owner's agents, pipelines, tools and machines. "+
 			"A suite is a set of cases plus the thing they grade; running one returns a pass RATE per case, "+
-			"which is the signal on a non-deterministic model — a single pass is an anecdote. "+
+			"which is the signal on a non-deterministic model: a single pass is an anecdote. "+
 			"Use it to MEASURE a change you made instead of asserting it helped: run before, edit, run after, compare. "+
-			"When a failure you just diagnosed has no case, write one — a suite only measures what somebody thought to assert. "+
+			"When a failure you just diagnosed has no case, write one: a suite only measures what somebody thought to assert. "+
 			"Actions: list, run, history, add_case, remove_case, create_suite.")
 
 	gt.AddAction("list", &GroupedToolAction{
@@ -61,9 +61,9 @@ func evalTool(t *chatTurn) *GroupedTool {
 					"until a suite exists there is nothing here to measure a change against.", nil
 			}
 			var b strings.Builder
-			fmt.Fprintf(&b, "Eval suites (%d) — run one with eval(action=\"run\", suite=\"<name or id>\"):\n\n", len(suites))
+			fmt.Fprintf(&b, "Eval suites (%d), run one with eval(action=\"run\", suite=\"<name or id>\"):\n\n", len(suites))
 			for _, s := range suites {
-				fmt.Fprintf(&b, "- %s — grades the %s %q, %d case%s, %d run%s each, tools %s\n",
+				fmt.Fprintf(&b, "- %s: grades the %s %q, %d case%s, %d run%s each, tools %s\n",
 					s.Name, s.TargetKind, s.TargetID, len(s.Cases), plural(len(s.Cases)),
 					s.RunCount(), plural(s.RunCount()), evalToolStubWord(s))
 				if runs := ListEvalRuns(udb, s.ID); len(runs) > 0 {
@@ -85,7 +85,7 @@ func evalTool(t *chatTurn) *GroupedTool {
 		// capability is declared for the shape the tool CAN take, because a
 		// reach that admits this tool has no way to know which mode the suite
 		// it is about to run was saved in.
-		Description: "Run one eval suite and return the pass rate per case. Cases with tools STUBBED (the default) return scripted tool results, so nothing external happens; a suite saved with stubbing off executes its target's tools for real. Records the run, so the score becomes part of the suite's history. Give a note saying what changed — it is what makes the history readable later.",
+		Description: "Run one eval suite and return the pass rate per case. Cases with tools STUBBED (the default) return scripted tool results, so nothing external happens; a suite saved with stubbing off executes its target's tools for real. Records the run, so the score becomes part of the suite's history. Give a note saying what changed: it is what makes the history readable later.",
 		Params: map[string]ToolParam{
 			"suite": {Type: "string", Description: "The suite's name or id, as shown by eval(action=\"list\")."},
 			"note":  {Type: "string", Description: "What changed since the last run, e.g. \"shortened the refund-policy rule\". Stored with the score."},
@@ -172,7 +172,7 @@ func evalTool(t *chatTurn) *GroupedTool {
 				limit = len(runs)
 			}
 			var b strings.Builder
-			fmt.Fprintf(&b, "%s — %d run%s, newest first:\n\n", suite.Name, len(runs), plural(len(runs)))
+			fmt.Fprintf(&b, "%s, %d run%s, newest first:\n\n", suite.Name, len(runs), plural(len(runs)))
 			for _, r := range runs[:limit] {
 				when := r.Started.Local().Format("2006-01-02 15:04")
 				switch {
@@ -204,7 +204,7 @@ func evalTool(t *chatTurn) *GroupedTool {
 			"judge_prompt":        {Type: "string", Description: "A yes/no criterion for an LLM judge, e.g. \"the reply names the policy that decided it\". Use when the thing you want is a property of the answer rather than a string in it."},
 			"must_fields":         {Type: "object", Description: "For a pipeline: expected values of the FINAL stage's declared output fields, e.g. {\"winner\": \"for\"}. Compared case-insensitively."},
 			"stub_results":        {Type: "object", Description: "What each tool should RETURN instead of running, keyed by tool name. Lets a multi-step case behave like production with no side effect. Ignored unless the suite is stubbed."},
-			"notes":               {Type: "string", Description: "Why this case exists — the failure it was written for. Not graded."},
+			"notes":               {Type: "string", Description: "Why this case exists: the failure it was written for. Not graded."},
 		},
 		Required: []string{"suite", "name", "prompt"},
 		Caps:     []Capability{CapRead, CapWrite},
@@ -239,13 +239,13 @@ func evalTool(t *chatTurn) *GroupedTool {
 			if replaced {
 				verb = "Replaced"
 			}
-			return fmt.Sprintf("%s case %q in %q — %d case%s now. It is not measured until the suite runs: eval(action=\"run\", suite=%q).",
+			return fmt.Sprintf("%s case %q in %q: %d case%s now. It is not measured until the suite runs: eval(action=\"run\", suite=%q).",
 				verb, c.Name, saved.Name, len(saved.Cases), plural(len(saved.Cases)), saved.Name), nil
 		},
 	})
 
 	gt.AddAction("remove_case", &GroupedToolAction{
-		Description: "Remove one case from a suite by name. Use it for a case that no longer describes anything you want — not for one that is failing, which is the case doing its job.",
+		Description: "Remove one case from a suite by name. Use it for a case that no longer describes anything you want: not for one that is failing, which is the case doing its job.",
 		Params: map[string]ToolParam{
 			"suite": {Type: "string", Description: "The suite's name or id."},
 			"name":  {Type: "string", Description: "The case name to remove, as shown by a run."},
@@ -273,7 +273,7 @@ func evalTool(t *chatTurn) *GroupedTool {
 			}
 			if len(kept) == len(suite.Cases) {
 				return "", Error("no case named " + strconv.Quote(want) + " in " + strconv.Quote(suite.Name) +
-					" — it holds: " + strings.Join(names, ", "))
+					", it holds: " + strings.Join(names, ", "))
 			}
 			if len(kept) == 0 {
 				// Validate would refuse this anyway; refusing HERE says why in
@@ -286,7 +286,7 @@ func evalTool(t *chatTurn) *GroupedTool {
 			if err != nil {
 				return "", err
 			}
-			return fmt.Sprintf("Removed case %q from %q — %d case%s left.",
+			return fmt.Sprintf("Removed case %q from %q: %d case%s left.",
 				want, saved.Name, len(saved.Cases), plural(len(saved.Cases))), nil
 		},
 	})
@@ -404,7 +404,7 @@ func evalToolScope(t *chatTurn, sess *ToolSession) (Database, string, error) {
 		user = t.user
 	}
 	if t == nil || t.app == nil {
-		return nil, "", Error("evals are not reachable from this run — it has no app context to resolve a suite's target against")
+		return nil, "", Error("evals are not reachable from this run: it has no app context to resolve a suite's target against")
 	}
 	if user == "" {
 		return nil, "", Error("evals are per-owner and this run has no user")
@@ -425,7 +425,7 @@ func evalToolScope(t *chatTurn, sess *ToolSession) (Database, string, error) {
 func findEvalSuite(udb Database, want string) (EvalSuite, error) {
 	want = strings.TrimSpace(want)
 	if want == "" {
-		return EvalSuite{}, Error("name the suite to run — eval(action=\"list\") shows what exists")
+		return EvalSuite{}, Error("name the suite to run: eval(action=\"list\") shows what exists")
 	}
 	if s, ok := LoadEvalSuite(udb, want); ok {
 		return s, nil
@@ -440,7 +440,7 @@ func findEvalSuite(udb Database, want string) (EvalSuite, error) {
 	if len(names) == 0 {
 		return EvalSuite{}, Error("no eval suites are saved for this owner, so there is nothing named " + strconv.Quote(want))
 	}
-	return EvalSuite{}, Error("no eval suite named " + strconv.Quote(want) + " — there is: " + strings.Join(names, ", "))
+	return EvalSuite{}, Error("no eval suite named " + strconv.Quote(want) + ", there is: " + strings.Join(names, ", "))
 }
 
 // renderEvalRunForTool is the result an agent reads.
@@ -451,7 +451,7 @@ func findEvalSuite(udb Database, want string) (EvalSuite, error) {
 // The headline goes first so a caller that reads one line reads the number.
 func renderEvalRunForTool(suite EvalSuite, run EvalRun) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s — %s (%s), grading the %s %q on version %s.\n",
+	fmt.Fprintf(&b, "%s: %s (%s), grading the %s %q on version %s.\n",
 		suite.Name, run.Rate(), evalOutcome(run), suite.TargetKind, suite.TargetID,
 		evalToolShortHash(run.TargetHash))
 	fmt.Fprintf(&b, "Each case ran %d time%s, tools %s.\n",
@@ -537,7 +537,7 @@ func evalToolShortHash(h string) string {
 
 func evalToolNote(note string) string {
 	if note = strings.TrimSpace(note); note != "" {
-		return " — " + note
+		return " · " + note
 	}
 	return ""
 }

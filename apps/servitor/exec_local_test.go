@@ -54,7 +54,7 @@ func TestExecLocalOrdinaryFailuresKeepTheirExitCode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out, "[exit code 3 — no output]") {
+	if !strings.Contains(out, "[exit code 3: no output]") {
 		t.Errorf("a real nonzero exit lost its status: %q", out)
 	}
 	if strings.Contains(out, "COMMAND DID NOT RUN") {

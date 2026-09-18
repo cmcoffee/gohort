@@ -93,7 +93,7 @@ func (t *chatTurn) appInventoryLine(spec AppSpec) string {
 				}
 				kinds = append(kinds, k)
 			}
-			parts = append(parts, fmt.Sprintf("pipeline: %q — %d stage(s): %s",
+			parts = append(parts, fmt.Sprintf("pipeline: %q, %d stage(s): %s",
 				def.Name, len(def.Stages), strings.Join(kinds, " → ")))
 		} else {
 			parts = append(parts, "pipeline: "+id+" (DOES NOT RESOLVE)")
@@ -103,5 +103,5 @@ func (t *chatTurn) appInventoryLine(spec AppSpec) string {
 		parts = append(parts, "agent: "+id)
 	}
 
-	return "STORED — " + strings.Join(parts, "; ") + ".\nDescribe ONLY what this line contains. If the user asked for something that is not in it, either add it now or SAY it is missing; a button, a saved history, or a table you describe and did not build is the first thing they will go looking for. The pipeline's stage list is part of this: do not describe rounds, passes or steps the stages do not actually perform."
+	return "STORED: " + strings.Join(parts, "; ") + ".\nDescribe ONLY what this line contains. If the user asked for something that is not in it, either add it now or SAY it is missing; a button, a saved history, or a table you describe and did not build is the first thing they will go looking for. The pipeline's stage list is part of this: do not describe rounds, passes or steps the stages do not actually perform."
 }

@@ -39,10 +39,11 @@ func buildTunableSections() []ui.Section {
 		// Bool knobs render as a real toggle, not a 0/1 number field.
 		if s.Kind == KindBool {
 			byCat[s.Category] = append(byCat[s.Category], ui.FormField{
-				Field: s.Key,
-				Label: toggleLabel(s.Label),
-				Type:  "toggle",
-				Help:  s.Help,
+				Field:  s.Key,
+				Label:  toggleLabel(s.Label),
+				Type:   "toggle",
+				Help:   s.Help,
+				Detail: s.Detail,
 			})
 			continue
 		}
@@ -62,6 +63,7 @@ func buildTunableSections() []ui.Section {
 			Label:    s.Label + unit,
 			Type:     "number",
 			Help:     s.Help,
+			Detail:   s.Detail,
 			Min:      int(s.Min),
 			Max:      int(s.Max),
 			Decimals: s.Decimals,
@@ -215,7 +217,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		"Tool Groups": "Extensions",
 		"Skills":      "Extensions", "Pipelines": "Extensions", "Catalog": "Extensions",
 
-		"Agent Capabilities — Outward & Spending": "Agents",
+		"Agent Capabilities: Outward & Spending": "Agents",
 
 		"Scheduled Tasks": "Maintenance", "Maintenance": "Maintenance",
 		"Migrations": "Maintenance", "Vector Index": "Maintenance",
@@ -232,7 +234,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		"Templates":  true,
 		"Catalog":    true,
 		"Migrations": true, "Database Browser": true,
-		"Agent Capabilities — Outward & Spending": true,
+		"Agent Capabilities: Outward & Spending": true,
 	}
 	// Wide sections that still shouldn't run the width of a large monitor.
 	// The cost chart needs more than one grid column, but past ~900px the
@@ -359,7 +361,7 @@ var configureBackendPickAction = `function(ctx){
   if(!window.uiTemplateForm){` + connectorFormDef + `}
   fetch('api/connectors',{cache:'no-store',credentials:'same-origin'}).then(function(r){return r.json();}).then(function(rows){
     var img=(rows||[]).filter(function(x){ return x.is_image; });
-    if(!img.length){ window.uiAlert && window.uiAlert('No image backend yet — add one first.'); return; }
+    if(!img.length){ window.uiAlert && window.uiAlert('No image backend yet: add one first.'); return; }
     if(img.length===1){ window.uiConfigureBackend(img[0].name, function(){ location.reload(); }); return; }
     var names=img.map(function(x){return x.name;});
     var pick=window.prompt('Configure which backend?\n'+names.join(', '), names[0]);

@@ -120,7 +120,7 @@ func peerExecFor(ctx context.Context, a Appliance) func(string) (string, error) 
 	return func(cmd string) (string, error) {
 		peer, ok := GetRemotePeer(a.PeerName)
 		if !ok {
-			return "", fmt.Errorf("peer %q is not registered on this instance — add it under Peers, or delete this system", a.PeerName)
+			return "", fmt.Errorf("peer %q is not registered on this instance: add it under Peers, or delete this system", a.PeerName)
 		}
 		// The peer returns the capture whole (see spillCapture); it is
 		// spilled HERE, so the output_id the agent gets back is one this
@@ -236,7 +236,7 @@ func (T *Servitor) handleAppliancePeers(w http.ResponseWriter, r *http.Request) 
 			}
 			switch {
 			case k.Owner != "" && k.Owner != owner && !a.Shared:
-				rw.Blocked = "this key runs as " + k.Owner + ", who cannot reach this system — share the system with all users first, or use a key owned by " + owner
+				rw.Blocked = "this key runs as " + k.Owner + ", who cannot reach this system: share the system with all users first, or use a key owned by " + owner
 			case k.Disabled:
 				rw.Blocked = "this key is disabled"
 			}
@@ -279,7 +279,7 @@ func (T *Servitor) handleAppliancePeers(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		if !key.Allows(PeerCapInvestigate) {
-			http.Error(w, "that key is not granted the investigate capability — an admin sets that under Resource Sharing", http.StatusBadRequest)
+			http.Error(w, "that key is not granted the investigate capability: an admin sets that under Resource Sharing", http.StatusBadRequest)
 			return
 		}
 		// A key that has never been scoped adopts this appliance's owner. It
@@ -488,7 +488,7 @@ func (T *Servitor) refreshPeerKnowledge(ctx context.Context, id string, applianc
 	if imported == 0 && kept == 0 {
 		probeSessions.AppendEvent(id, probeEvent{Kind: "reply", Text: "Synced, but " + appliance.PeerName +
 			" has nothing recorded about this system yet. Map it on " + appliance.PeerName +
-			" first — a refresh here copies what it knows, it does not make it go and look."}, true)
+			" first: a refresh here copies what it knows, it does not make it go and look."}, true)
 		probeSessions.ScheduleCleanup(id)
 		return
 	}
@@ -498,7 +498,7 @@ func (T *Servitor) refreshPeerKnowledge(ctx context.Context, id string, applianc
 		// side won matters when the two disagree.
 		msg += fmt.Sprintf(" and kept %d that this instance had learned more recently", kept)
 	}
-	msg += ".\n\nAges shown against this system are the ORIGIN's — when each thing was learned, not when it was copied here."
+	msg += ".\n\nAges shown against this system are the ORIGIN's: when each thing was learned, not when it was copied here."
 	probeSessions.AppendEvent(id, probeEvent{Kind: "reply", Text: msg}, true)
 	probeSessions.ScheduleCleanup(id)
 }
@@ -526,7 +526,7 @@ func (T *Servitor) registerPeerExec() {
 		// is a loop neither end can see, and the far one would be executing on
 		// behalf of a key it never issued.
 		if strings.TrimSpace(a.PeerName) != "" {
-			return "", fmt.Errorf("%q is itself a remote system here — commands are not relayed onward", a.Name)
+			return "", fmt.Errorf("%q is itself a remote system here: commands are not relayed onward", a.Name)
 		}
 		exec := &Servitor{}
 		exec.AppCore = T.AppCore

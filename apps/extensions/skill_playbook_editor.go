@@ -93,7 +93,7 @@ func skillPlaybookPage(skill SkillRecord) ui.Page {
 			RedirectTarget: "_self",
 			Fields: []ui.FormField{
 				{Field: "fact", Type: "text", Label: "What must be established first?", Placeholder: "queue_draining",
-					Help: "One word, no spaces — it is the name of a field the check fills in."},
+					Help: "One word, no spaces: it is the name of a field the check fills in."},
 				{Field: "how", Type: "textarea", Rows: 3, Label: "How is it established?", Placeholder: "Read the consumer lag for the orders queue over the last five minutes.",
 					Help: "Written to whoever runs the check, with the skill's tools. Say what to look at and what counts."},
 				{Field: "then", Type: "textarea", Rows: 2, Label: "If yes, then…", Placeholder: "Look at the consumer: its log, restart count, lag trend."},
@@ -102,7 +102,7 @@ func skillPlaybookPage(skill SkillRecord) ui.Page {
 		},
 	})
 	return ui.Page{
-		Title:      skill.Name + " — playbook",
+		Title:      skill.Name + ", playbook",
 		ShowTitle:  true,
 		BackURL:    "/extensions",
 		Nav:        HubNav("/extensions"),
@@ -141,9 +141,10 @@ func rulePanel(endpoint string, rule PlaybookRule) ui.FormPanel {
 	fields := []ui.FormField{
 		{Field: "sentence", Type: "readonly", Label: "Reads as"},
 		{Field: "when", Type: "tags", Label: "Applies when the message mentions (optional)",
-			Help: "Matched like the skill's triggers: case-insensitive substrings of the message. Empty means every time the skill is consulted."},
+			Help:   "Matched like the skill's triggers: case-insensitive substrings of the message.",
+			Detail: "Empty means every time the skill is consulted."},
 		{Field: "fact", Type: "text", Label: "What must be established first?",
-			Help: "One word, no spaces — the name of the field the check fills in."},
+			Help: "One word, no spaces: the name of the field the check fills in."},
 		{Field: "how", Type: "textarea", Rows: 3, Label: "How is it established?",
 			Help: "Written to whoever runs the check, with the skill's tools. Say what to look at and what counts."},
 		{Field: "type", Type: "select", Label: "The answer is", ReloadOnChange: true,

@@ -1,4 +1,4 @@
-# Workflow graph — one picture for machines and pipelines
+# Workflow graph: one picture for machines and pipelines
 
 Status: **G1 + G2 built** (v0.6.086), unverified in a browser. Decision locked: **the renderer takes
 a node/edge adapter, not a `MachineDef`**.
@@ -22,7 +22,7 @@ taken by the knowledge graph.
 
 A machine is cyclic by construction. `guard_to` sends you backward, `next_from` routes sideways, a
 resident phase self-loops every turn, and `change_phase` can jump from any node to any other. The
-list of phase cards an editor would naturally produce is not a neutral presentation of that — it is
+list of phase cards an editor would naturally produce is not a neutral presentation of that: it is
 a wrong one, because it implies an order the machine does not have.
 
 Pipelines are the milder case but the same kind of object: `branch` / `skip_to` are edges, `loop`
@@ -31,8 +31,8 @@ which is why nobody has missed a picture. That is an argument about urgency, not
 
 The second reason, and the better one: **a graph is where a running conversation becomes legible**.
 The ⚠ trail already records every transition, guard verdict, and routing fallback, in order, as
-sentences. Draw the same information on the structure it happened in — this node is where you are,
-these edges have fired, that one has never fired once — and "why is this agent behaving like that"
+sentences. Draw the same information on the structure it happened in: this node is where you are,
+these edges have fired, that one has never fired once, and "why is this agent behaving like that"
 stops being a reading exercise.
 
 ## Decisions
@@ -44,7 +44,7 @@ stops being a reading exercise.
    `core/ui/` has burned time on exactly this leak twice (see CLAUDE.md).
 2. **Server-side SVG, not a JS graph library.** Rendered in Go from the adapter, returned as an
    image. Deterministic, unit-testable the way the rest of the machine work has been, no external
-   dependency, and no browser-verification risk — which is currently the weakest link in this whole
+   dependency, and no browser-verification risk, which is currently the weakest link in this whole
    feature (the phase pill and the Machines modal are both unverified live).
 3. **Read-only first.** Interactive editing is a separate, later decision. Authoring already works
    through the `machine` tool, and the comprehension problem is worth solving on its own.
@@ -95,13 +95,13 @@ func (d PipelineDef) Graph() WorkflowGraph  // core/pipeline_graph.go
 
 - One node per phase. `rest` for resident, `step` for transient, `entry` marks `StartPhase()`.
 - Solid edge for `Next`.
-- Dashed edge per phase named in a `NextFrom` field's plausible targets — but the values are
+- Dashed edge per phase named in a `NextFrom` field's plausible targets, but the values are
   run-time, so the honest rendering is **one dashed edge from the router to every phase**, labeled
   with the field name. Drawing only the phases mentioned in a `Desc` would be a guess.
 - A `back`-styled edge for each `Guard` → `GuardTo`, labeled with a truncated guard condition.
 - A self-loop marker on a resident phase with no `Next` (it stays), and a solid edge when it has one
   (the one-beat handoff). As built the self-loop is a badge INSIDE the node, not a loop hanging off
-  its side — see the note at the top.
+  its side: see the note at the top.
 - `change_phase` is NOT drawn. It connects every node to every other, so drawing it produces a
   complete graph and destroys the picture. It belongs in the legend as a sentence: *any phase can
   move to any other via change_phase.*
@@ -119,17 +119,17 @@ Staging for why not the diagnostics prose):
 - A count on repeat-fired edges (a guard that has tripped four times is the shape of a machine whose
   resident phase is scoped too narrowly).
 
-Served as `GET /orchestrate/api/machines/{id}/graph?session=<id>` — no session gives the plain structure. This
+Served as `GET /orchestrate/api/machines/{id}/graph?session=<id>`: no session gives the plain structure. This
 is the piece that makes the graph a debugging surface rather than documentation, and it should ship
 in the same pass, not later: the structural render alone is a picture of something you could already
 read from the def.
 
 ## Surfaces
 
-- **The Machines modal** — the machine's structure, next to its row. It already lists phase names as
+- **The Machines modal**: the machine's structure, next to its row. It already lists phase names as
   `a → b → c`, which is the lie this replaces.
-- **The chat toolbar** — the running session's graph, next to the ⚠ trail. Same modal shell.
-- **`GET /orchestrate/api/machines/{id}/graph`** — `image/svg+xml`, so it can be linked, saved, or dropped into
+- **The chat toolbar**: the running session's graph, next to the ⚠ trail. Same modal shell.
+- **`GET /orchestrate/api/machines/{id}/graph`**: `image/svg+xml`, so it can be linked, saved, or dropped into
   a doc.
 
 ## Staging
@@ -138,16 +138,16 @@ read from the def.
 |---|---|
 | **G1** ✅ | `WorkflowGraph` + `MachineDef.Graph()` + the SVG renderer + `/graph`. |
 | **G2** ✅ | Runtime overlay. It reads `MachineCursor.Log`, NOT the diagnostics trail as originally sketched: "which edges did this take" is a structural question, and parsing framework-authored prose would break silently the first time someone reworded a message. |
-| **G3** ✅ | `PipelineDef.Graph()` — proved the adapter: the renderer took a second def with no changes at all, and `NodeExit`, reserved in G1 for "a pipeline's terminal stage", was waiting for it. Three shapes needed thought rather than translation, below. |
-| **G4** | Interactive editing, only if G1-G3 show the layout holds up. Still not committed to — and the reason has changed. The layout does hold up, but what the pages needed was not a canvas: the map is pinned above the sections and every box is a LINK to that step's or stage's own form (v0.6.196 for machines, v0.6.222 for pipelines). Reading the shape and editing one piece at a time turned out to be the whole requirement; dragging boxes would answer a question nobody asked. |
+| **G3** ✅ | `PipelineDef.Graph()`, proved the adapter: the renderer took a second def with no changes at all, and `NodeExit`, reserved in G1 for "a pipeline's terminal stage", was waiting for it. Three shapes needed thought rather than translation, below. |
+| **G4** | Interactive editing, only if G1-G3 show the layout holds up. Still not committed to, and the reason has changed. The layout does hold up, but what the pages needed was not a canvas: the map is pinned above the sections and every box is a LINK to that step's or stage's own form (v0.6.196 for machines, v0.6.222 for pipelines). Reading the shape and editing one piece at a time turned out to be the whole requirement; dragging boxes would answer a question nobody asked. |
 
 ### What G3 had to decide
 
-A pipeline reads as a list, which is why it went so long without a picture — and a list is exactly
+A pipeline reads as a list, which is why it went so long without a picture, and a list is exactly
 wrong for the three shapes that make pipelines worth having.
 
 **A fanout is one box and many calls.** It cannot be drawn as N boxes (N is a run-time value), so
-the box carries the multiplier as a tag — `× each plan.queries` — and the legend says what one box
+the box carries the multiplier as a tag (`× each plan.queries`), and the legend says what one box
 means. Drawing it as an ordinary step would make a research pipeline look like a straight line of
 four calls when it is four plus twelve.
 
@@ -160,7 +160,7 @@ no `skip_to` ENDS the pipeline, which is not an arrow, so it is a legend line na
 pass"), the body runs in order, the last body stage returns to the loop node (dotted, "again"), and
 the loop leaves once ("when it stops"). Summarising the body as "3 stages inside" would be a picture
 of a box. Body node IDs are prefixed with the loop's name because body names are scoped to the loop
-— two loops may each hold a `critique`, and they are not the same node.
+· two loops may each hold a `critique`, and they are not the same node.
 
 ## Open
 
@@ -168,12 +168,12 @@ of a box. Body node IDs are prefixed with the loop's name because body names are
   scrolls it horizontally. No refusal needed, and a large machine stays readable rather than being
   shrunk to fit.
 - ~~**Does the pipeline adapter want subgraphs?**~~ Answered by G3 (v0.6.222): flattened, and the
-  guess in the original note was right. A loop is drawn as a HUB — an arrow into the body ("each
-  pass"), the body in order, a dotted edge back ("again"), and one arrow out ("when it stops") — with
+  guess in the original note was right. A loop is drawn as a HUB: an arrow into the body ("each
+  pass"), the body in order, a dotted edge back ("again"), and one arrow out ("when it stops"), with
   the body's stages as ordinary nodes whose ids are prefixed with the loop's name, because body names
   are scoped to the loop and two loops may each hold a `critique`. A subgraph box would be the more
   literal drawing and buys nothing at this size: the hub already says the body repeats, and the back
-  edge says what stops it. What the body must NOT be is summarised — "3 stages inside" is a picture
+  edge says what stops it. What the body must NOT be is summarised: "3 stages inside" is a picture
   of a box.
 - ~~**Theming.**~~ Done: every colour in the renderer is `var(--token, #fallback)`, so the SVG takes
   the page's theme and still reads when served standalone from `/graph` (where no variables exist and
@@ -186,6 +186,6 @@ of a box. Body node IDs are prefixed with the loop's name because body names are
 ## Not doing
 
 A drag-and-drop editor before a machine has run a live conversation. St4 of
-[agent-machines.md](agent-machines.md) — porting Builder's intake-to-build flow onto a machine — is
+[agent-machines.md](agent-machines.md) (porting Builder's intake-to-build flow onto a machine), is
 explicitly allowed to send the phase model back for changes, and building an editor against a schema
 that may still move is the expensive ordering.

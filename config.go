@@ -343,7 +343,7 @@ func setup_quickstart() {
 					continue
 				}
 				if nfo.GetSecret("  Confirm password: ") != pass {
-					Stdout("  Passwords didn't match — try again.\n")
+					Stdout("  Passwords didn't match: try again.\n")
 					continue
 				}
 				break
@@ -351,7 +351,7 @@ func setup_quickstart() {
 			AuthSetUser(global.db, user, pass, true)
 			Stdout("  Admin %q created.\n", user)
 		} else {
-			Warn("No admin user — dashboard access is unrestricted until you add one.")
+			Warn("No admin user: dashboard access is unrestricted until you add one.")
 		}
 	}
 
@@ -365,7 +365,7 @@ func setup_quickstart() {
 	Stdout("\nDone. Start the server with:\n\n  gohort serve\n\n")
 	Stdout("Then finish setting up in the browser:\n\n  %s\n\n", setupDashboardURL())
 	Stdout("Sign in as the admin account above. The model, search, embeddings,\n")
-	Stdout("transcription and the rest are configured there — this menu only\n")
+	Stdout("transcription and the rest are configured there: this menu only\n")
 	Stdout("covers what has to be set before the browser can reach you.\n")
 	Stdout("\nOpening the remaining terminal settings next (press q to skip).\n")
 }
@@ -593,7 +593,7 @@ func add_source_hook() {
 	} else {
 		hook.Endpoint = GetInput("API endpoint URL: ")
 		hook.QueryParam = GetInput("Query parameter name (default: q): ")
-		hook.ResultsPath = GetInput("JSON results path (e.g., results, data.items — blank for root): ")
+		hook.ResultsPath = GetInput("JSON results path (e.g., results, data.items, blank for root): ")
 		hook.TitleField = GetInput("Title field name (default: title): ")
 		hook.URLField = GetInput("URL field name (default: url): ")
 		hook.SnippetField = GetInput("Snippet field name (default: snippet): ")
@@ -614,7 +614,7 @@ func add_source_hook() {
 		hook.AuthType = HookAuthNone
 	}
 
-	triggers := GetInput("Trigger domains (comma-separated, e.g., legal,medical — or blank for always active): ")
+	triggers := GetInput("Trigger domains (comma-separated, e.g., legal,medical, or blank for always active): ")
 	if triggers == "" {
 		hook.AlwaysActive = true
 	} else {
@@ -644,7 +644,7 @@ func list_source_hooks() {
 		if auth == "" {
 			auth = "none"
 		}
-		Stdout("  %s [%s] — %s (auth: %s, trigger: %s)\n", h.Name, h.Type, h.Endpoint, auth, trigger)
+		Stdout("  %s [%s], %s (auth: %s, trigger: %s)\n", h.Name, h.Type, h.Endpoint, auth, trigger)
 	}
 }
 
@@ -686,7 +686,7 @@ func update_hook_triggers() {
 		if !h.AlwaysActive && len(h.TriggerDomains) > 0 {
 			trigger = strings.Join(h.TriggerDomains, ", ")
 		}
-		Stdout("  %d. %s — trigger: %s\n", i+1, h.Name, trigger)
+		Stdout("  %d. %s, trigger: %s\n", i+1, h.Name, trigger)
 	}
 
 	choice := GetInput("\nEnter number to update (or blank to cancel): ")
@@ -805,7 +805,7 @@ func add_template_hook() {
 		if t.NeedsAPIKey {
 			key_note = "API key required"
 		}
-		Stdout("  %d. %s — %s (%s)%s\n", len(available), t.Hook.Name, t.Description, key_note, status)
+		Stdout("  %d. %s: %s (%s)%s\n", len(available), t.Hook.Name, t.Description, key_note, status)
 	}
 
 	choice := GetInput("\nEnter number to add (or blank to cancel): ")
@@ -1062,17 +1062,17 @@ admin_allowed_ips =
 # data_dir and follow it automatically.
 data_dir =
 logs_dir =
-# vector_dir holds the embedding/vector store (gohort_vectors.db) —
+# vector_dir holds the embedding/vector store (gohort_vectors.db)
 # a derived, regenerable cache that is the hot path for semantic
 # search. Empty = co-located with data_dir (unchanged behavior).
 # Point it at a fast LOCAL disk (e.g. an SSD) when data_dir lives on
 # network storage: the cold-load full-table scan that gates the first
 # search is dominated by per-row latency, so local storage is the
-# single biggest win. It need not be backed up — if lost, re-ingest.
+# single biggest win. It need not be backed up: if lost, re-ingest.
 vector_dir =
 
 # repo_dir holds the repo browser's cloned+encrypted source cache
-# (gohort_repos.db). Like vector_dir it is a bulk, re-clonable cache —
+# (gohort_repos.db). Like vector_dir it is a bulk, re-clonable cache
 # point it at a fast LOCAL disk when data_dir lives on network storage,
 # and it need not be backed up (if lost, re-clone). Empty = co-located
 # with data_dir.

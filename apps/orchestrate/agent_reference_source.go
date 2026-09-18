@@ -70,7 +70,7 @@ func (s agentReferenceSource) Fetch(ctx context.Context, user, itemID, query str
 	// question as a request to go DO something — and a drafting surface waiting
 	// on a sentence of schema does not want a run that files a deliverable.
 	ask := "A colleague is drafting something and needs to know this to get it right:\n\n" + query +
-		"\n\nAnswer from what you actually know — the specific names, shapes, values and conventions involved. " +
+		"\n\nAnswer from what you actually know: the specific names, shapes, values and conventions involved. " +
 		"If you don't have something, say which part you don't have rather than filling it in: they are about to write code or prose on top of this answer, " +
 		"and an invented detail will look correct. Answer only; take no action and produce no deliverable."
 	out, err := s.app.RunAgentSync(ctx, user, user, itemID, ask, "reference")
@@ -113,9 +113,9 @@ func (s agentReferenceSource) ItemTools(user, itemID string) []AgentToolDef {
 	return []AgentToolDef{{
 		Tool: Tool{
 			Name: toolName,
-			Description: "Ask " + name + " about this domain — schemas, table and column names, interfaces, conventions, what a field holds, how something is done here. " +
+			Description: "Ask " + name + " about this domain: schemas, table and column names, interfaces, conventions, what a field holds, how something is done here. " +
 				"Use it BEFORE writing anything whose correctness depends on a detail you would otherwise guess: a name, a type, a unit, a required parameter, an existing helper. " +
-				"Guessing produces work that looks right and is wrong. Ask again when an answer raises another question — several small, specific questions beat one broad one.",
+				"Guessing produces work that looks right and is wrong. Ask again when an answer raises another question: several small, specific questions beat one broad one.",
 			Parameters: map[string]ToolParam{
 				"question": {Type: "string", Description: "A specific question, as you would ask a colleague who knows this system. e.g. \"Which table holds invoice line items, and what column has the region?\""},
 			},
@@ -154,7 +154,7 @@ func (s agentReferenceSource) ItemTools(user, itemID string) []AgentToolDef {
 			if strings.TrimSpace(out) == "" {
 				// Reported, never swallowed: silence must not read to the model
 				// as confirmation of whatever it was about to assume.
-				return name + " returned no answer for that. Ask a narrower question, or tell the user this detail isn't covered — do not guess it.", nil
+				return name + " returned no answer for that. Ask a narrower question, or tell the user this detail isn't covered: do not guess it.", nil
 			}
 			return out, nil
 		},

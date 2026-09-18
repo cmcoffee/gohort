@@ -58,7 +58,7 @@ func sessionContextOf(udb Database, sess ChatSession) *sessionContextView {
 	}
 	v.Note = "The model sees the rolling summary in place of the messages it covers, then the verbatim ones. Folded spans are archived, so recall_history can still reach their exact text."
 	if st.FoldSeq > 0 && v.Summary == "" {
-		v.Note = "This thread has folded, but the stored summary is empty — the fold's summariser returned nothing. Older turns survive only in the recall archive."
+		v.Note = "This thread has folded, but the stored summary is empty: the fold's summariser returned nothing. Older turns survive only in the recall archive."
 	}
 	return v
 }

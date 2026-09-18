@@ -146,7 +146,7 @@ func installAutostart() error {
 		core.Warn("auto-load failed: %s", strings.TrimSpace(string(out)))
 		core.Log("Load manually:\n  launchctl enable %s\n  launchctl bootstrap %s %s", svcID, uid, path)
 	} else {
-		core.Log("service loaded — gohort-bridge will start at login")
+		core.Log("service loaded: gohort-bridge will start at login")
 	}
 	return nil
 }

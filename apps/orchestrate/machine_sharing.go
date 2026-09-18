@@ -194,7 +194,7 @@ func machineMissingReason(user, ref string) string {
 			}
 		}
 	}
-	return "no machine " + strconv.Quote(ref) + " — it was deleted or renamed, or the share was withdrawn"
+	return "no machine " + strconv.Quote(ref) + ", it was deleted or renamed, or the share was withdrawn"
 }
 
 // breakMachineSchedulesForLostRecipients marks broken any schedule belonging to
@@ -224,7 +224,7 @@ func breakMachineSchedulesForLostRecipients(def MachineDef, before []string) {
 			}
 			MarkStandingAgentBroken(RootDB, u, sa.Name,
 				fmt.Sprintf("runs machine %q, which %s no longer shares with you", label, def.Owner))
-			Log("[orchestrate.machines] share of %q withdrawn from %q — their schedule %q was marked broken", label, u, sa.Name)
+			Log("[orchestrate.machines] share of %q withdrawn from %q: their schedule %q was marked broken", label, u, sa.Name)
 		}
 	}
 }

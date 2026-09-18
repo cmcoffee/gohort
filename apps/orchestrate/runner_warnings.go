@@ -96,7 +96,7 @@ func injectFalseUnavailabilityWarning(sess *ChatSession, turnToolCalls []Persist
 		Role: "user",
 		Content: "FRAMEWORK NOTICE: your previous reply said " + named + " is unavailable to you, or blamed a framework/platform error for not being able to use it. That is incorrect: " + named +
 			" IS in your tool catalog for this turn, and you did not call it. Nothing is broken and there is nothing for the user to report. Call " + named +
-			" now with real arguments. If a call fails, quote the actual error you received — do not infer unavailability from a call you never made.",
+			" now with real arguments. If a call fails, quote the actual error you received: do not infer unavailability from a call you never made.",
 		Created: time.Now(),
 		Hidden:  true,
 	})
@@ -165,7 +165,7 @@ func injectAuthoringMismatchWarning(sess *ChatSession, turnToolCalls []Persisted
 	if pending != 1 {
 		note += "s"
 	}
-	note += ". Do not describe work you haven't done. Re-do the next pending step by ACTUALLY calling the right authoring tool with concrete arguments. One tool call per turn — that is the only path that advances the plan."
+	note += ". Do not describe work you haven't done. Re-do the next pending step by ACTUALLY calling the right authoring tool with concrete arguments. One tool call per turn, that is the only path that advances the plan."
 	sess.Messages = append(sess.Messages, ChatMessage{
 		Role:    "user",
 		Content: note,
@@ -203,11 +203,11 @@ func injectSkippedGapReportWarning(sess *ChatSession, udb Database, reply string
 			return false // still executing — a reply here is legitimate
 		}
 	}
-	note := "FRAMEWORK NOTICE: your previous reply closed out the build plan without calling report_build_gaps. That call is required before any reply that presents the build as finished — it is what surfaces blocked steps and tools that are not verified. Marking a step done is your OWN claim and is not evidence the tool works."
+	note := "FRAMEWORK NOTICE: your previous reply closed out the build plan without calling report_build_gaps. That call is required before any reply that presents the build as finished: it is what surfaces blocked steps and tools that are not verified. Marking a step done is your OWN claim and is not evidence the tool works."
 	if un := unverifiedTools(udb, sess.ID); len(un) > 0 {
 		note += "\n\nTools you authored that do NOT currently stand verified:"
 		for _, u := range un {
-			note += fmt.Sprintf("\n  - %s — %s", u.Tool, u.Reason)
+			note += fmt.Sprintf("\n  - %s: %s", u.Tool, u.Reason)
 		}
 		note += "\n\nYou may have told the user these are working. Verify each one now (add_tool with test_args, or tool_def(action=\"test\")), then say plainly what was actually confirmed and what was not."
 	} else {
@@ -252,7 +252,7 @@ func injectFailedAuthoringWarning(sess *ChatSession, turnToolCalls []PersistedTo
 	}
 	sess.Messages = append(sess.Messages, ChatMessage{
 		Role:    "user",
-		Content: "FRAMEWORK NOTICE: your reply says a tool, agent, app, skill, or pipeline was created, updated, or fixed — but EVERY authoring call this turn that tried to CHANGE something returned an error, so nothing was saved. The old version is still live and the user still has the problem. Do NOT tell the user it's done, and do NOT describe the fixes as applied. Read the error text, correct the arguments, and make ONE fixed authoring call (prefer action=\"update\" over delete+recreate).",
+		Content: "FRAMEWORK NOTICE: your reply says a tool, agent, app, skill, or pipeline was created, updated, or fixed, but EVERY authoring call this turn that tried to CHANGE something returned an error, so nothing was saved. The old version is still live and the user still has the problem. Do NOT tell the user it's done, and do NOT describe the fixes as applied. Read the error text, correct the arguments, and make ONE fixed authoring call (prefer action=\"update\" over delete+recreate).",
 		Created: time.Now(),
 		Hidden:  true,
 	})
@@ -299,7 +299,7 @@ func injectPromisedAuthoringWarning(sess *ChatSession, turnToolCalls []Persisted
 	}
 	sess.Messages = append(sess.Messages, ChatMessage{
 		Role:    "user",
-		Content: "FRAMEWORK NOTICE: your previous reply said you were about to create or update a tool or agent, but no authoring call fired during that turn — tool_def / add_tool / create_agent / update_agent never ran, so nothing was saved and the user is waiting on work that never started. Describing the change is not making it. Make ONE concrete authoring call now with real arguments. If you need the user to approve first, call ask_user — do not promise in prose and end the turn.",
+		Content: "FRAMEWORK NOTICE: your previous reply said you were about to create or update a tool or agent, but no authoring call fired during that turn, tool_def / add_tool / create_agent / update_agent never ran, so nothing was saved and the user is waiting on work that never started. Describing the change is not making it. Make ONE concrete authoring call now with real arguments. If you need the user to approve first, call ask_user: do not promise in prose and end the turn.",
 		Created: time.Now(),
 		Hidden:  true,
 	})

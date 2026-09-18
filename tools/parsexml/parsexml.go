@@ -22,7 +22,7 @@ type ParseXMLTool struct{}
 func (t *ParseXMLTool) Name() string { return "parse_xml" }
 
 func (t *ParseXMLTool) Desc() string {
-	return "Extract JSON from XML DECLARATIVELY — no hand-written parsing (ElementTree/xpath/regex are unreliable, especially with namespaces). Pass the XML plus a spec. ALL element/attribute matching is by LOCAL name, so namespaces/prefixes are IGNORED: <response>, <D:response>, and <ns0:response> all match \"response\". Use for XML you already hold (a script's output, a pasted doc); for an XML HTTP response, prefer an api tool's response_extract instead. Empty result is [] (not an error)."
+	return "Extract JSON from XML DECLARATIVELY: no hand-written parsing (ElementTree/xpath/regex are unreliable, especially with namespaces). Pass the XML plus a spec. ALL element/attribute matching is by LOCAL name, so namespaces/prefixes are IGNORED: <response>, <D:response>, and <ns0:response> all match \"response\". Use for XML you already hold (a script's output, a pasted doc); for an XML HTTP response, prefer an api tool's response_extract instead. Empty result is [] (not an error)."
 }
 
 // Caps: nil — pure transform, no side effects (matches calculate).
@@ -31,7 +31,7 @@ func (t *ParseXMLTool) Caps() []Capability { return nil }
 func (t *ParseXMLTool) Params() map[string]ToolParam {
 	return map[string]ToolParam{
 		"xml": {Type: "string", Description: "The XML content to parse."},
-		"spec": {Type: "object", Description: "Extraction spec. Shape: {\"select\":\"<local element name of the repeating record>\", \"where\":{...optional...}, \"fields\":{\"<out_key>\":\"<selector>\"}}. Selectors: \"name\"=text of first descendant <name>; \"a/b\"=child path; \"@attr\"=attribute on the record; \"name/@attr\". where (one of): {\"has\":\"<selector>\"} keep records where the selector resolves — accepts a bare descendant name (\"calendar\") OR a path (\"propstat/prop/resourcetype/calendar\"), same grammar as fields; {\"missing\":\"<selector>\"}; {\"equals\":{\"field\":\"<sel>\",\"value\":\"x\"}}; {\"contains\":{...}}. Omit select to treat the whole document as one object. Example: {\"select\":\"response\",\"where\":{\"has\":\"calendar\"},\"fields\":{\"path\":\"href\",\"displayname\":\"displayname\"}}."},
+		"spec": {Type: "object", Description: "Extraction spec. Shape: {\"select\":\"<local element name of the repeating record>\", \"where\":{...optional...}, \"fields\":{\"<out_key>\":\"<selector>\"}}. Selectors: \"name\"=text of first descendant <name>; \"a/b\"=child path; \"@attr\"=attribute on the record; \"name/@attr\". where (one of): {\"has\":\"<selector>\"} keep records where the selector resolves, accepts a bare descendant name (\"calendar\") OR a path (\"propstat/prop/resourcetype/calendar\"), same grammar as fields; {\"missing\":\"<selector>\"}; {\"equals\":{\"field\":\"<sel>\",\"value\":\"x\"}}; {\"contains\":{...}}. Omit select to treat the whole document as one object. Example: {\"select\":\"response\",\"where\":{\"has\":\"calendar\"},\"fields\":{\"path\":\"href\",\"displayname\":\"displayname\"}}."},
 	}
 }
 
@@ -42,7 +42,7 @@ func (t *ParseXMLTool) Run(args map[string]any) (string, error) {
 	}
 	spec := ParseExtractSpec(args["spec"])
 	if spec == nil {
-		return "", fmt.Errorf("spec is required — an object with at least a fields map, e.g. {\"select\":\"response\",\"fields\":{\"path\":\"href\"}}")
+		return "", fmt.Errorf("spec is required: an object with at least a fields map, e.g. {\"select\":\"response\",\"fields\":{\"path\":\"href\"}}")
 	}
 	out, err := ExtractXML([]byte(xmlStr), *spec)
 	if err != nil {

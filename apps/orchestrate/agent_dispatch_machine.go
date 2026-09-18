@@ -189,7 +189,7 @@ func (t *chatTurn) dispatchableMachine(ref string) (MachineDef, error) {
 	}
 	mode := effectiveDispatchMode(t.agent)
 	if mode == dispatchNone {
-		return MachineDef{}, fmt.Errorf("agents(run, machine=%q) refused — your dispatch policy is Allow NONE, which covers machines as well as agents and pipelines. Do the work with the tools you have", ref)
+		return MachineDef{}, fmt.Errorf("agents(run, machine=%q) refused: your dispatch policy is Allow NONE, which covers machines as well as agents and pipelines. Do the work with the tools you have", ref)
 	}
 	var names []string
 	var denied, converses string
@@ -220,16 +220,16 @@ func (t *chatTurn) dispatchableMachine(ref string) (MachineDef, error) {
 	}
 	switch {
 	case denied != "":
-		return MachineDef{}, fmt.Errorf("agents(run, machine=%q) refused — that machine exists but is not on this agent's dispatch target list. Ask the user to add it (Security & Access → Dispatch target list) or to change the dispatch policy; do not retry, and do not look for another route to the same work", denied)
+		return MachineDef{}, fmt.Errorf("agents(run, machine=%q) refused, that machine exists but is not on this agent's dispatch target list. Ask the user to add it (Security & Access → Dispatch target list) or to change the dispatch policy; do not retry, and do not look for another route to the same work", denied)
 	case converses != "":
 		// The same fact the schedule reports, worded the same way. A machine
 		// that converses is not a target that is temporarily unavailable — it
 		// is a different kind of thing, and the caller should stop asking.
-		return MachineDef{}, fmt.Errorf("agents(run, machine=%q) refused — that machine converses rather than runs: it has a step that waits for a person, and a dispatched run has nobody there. Ask the user to turn on \"this RUNS instead of converses\" on it, or do the work another way", converses)
+		return MachineDef{}, fmt.Errorf("agents(run, machine=%q) refused, that machine converses rather than runs: it has a step that waits for a person, and a dispatched run has nobody there. Ask the user to turn on \"this RUNS instead of converses\" on it, or do the work another way", converses)
 	case len(names) == 0:
-		return MachineDef{}, fmt.Errorf("no machine %q is available to you — the user has no machines that RUN, or none this agent's dispatch policy permits", ref)
+		return MachineDef{}, fmt.Errorf("no machine %q is available to you: the user has no machines that RUN, or none this agent's dispatch policy permits", ref)
 	}
-	return MachineDef{}, fmt.Errorf("no machine %q — you can run: %s", ref, strings.Join(names, ", "))
+	return MachineDef{}, fmt.Errorf("no machine %q, you can run: %s", ref, strings.Join(names, ", "))
 }
 
 // machineDispatchGate resolves and refuses a machine dispatch: everything
@@ -256,7 +256,7 @@ func (t *chatTurn) machineDispatchGate(args map[string]any) (MachineDef, string,
 	// common case, and it is the same list the Run button and the schedule
 	// refuse on, so the three cannot disagree about whether a machine can run.
 	if probs := def.Problems(); len(probs) > 0 {
-		return MachineDef{}, "", fmt.Errorf("machine %q will not run yet — %s (%d outstanding). Its page lists them; do not retry until they are fixed",
+		return MachineDef{}, "", fmt.Errorf("machine %q will not run yet: %s (%d outstanding). Its page lists them; do not retry until they are fixed",
 			def.Name, probs[0], len(probs))
 	}
 	// Steps that hand off to something else USED to be refused here: the
@@ -274,14 +274,14 @@ func (t *chatTurn) machineDispatchGate(args map[string]any) (MachineDef, string,
 	if origin := t.dispatchOrigin; origin != nil && !origin.allowsMachine(def) {
 		Log("[orchestrate.agents.run] blocked transitive machine dispatch %s → %s: not permitted by originator %s",
 			t.agent.ID, def.ID, origin.AgentID)
-		return MachineDef{}, "", fmt.Errorf("agents(run, machine=%q) refused — you are running on behalf of %q, whose dispatch policy does not permit that machine. A delegated agent cannot reach further than the agent that delegated to it. Do what you can with your own tools, or report back that %q was needed and not permitted", def.Name, origin.AgentName, def.Name)
+		return MachineDef{}, "", fmt.Errorf("agents(run, machine=%q) refused: you are running on behalf of %q, whose dispatch policy does not permit that machine. A delegated agent cannot reach further than the agent that delegated to it. Do what you can with your own tools, or report back that %q was needed and not permitted", def.Name, origin.AgentName, def.Name)
 	}
 	// Cycle guard. A machine whose delegating step dispatches back into the
 	// same machine is a loop no depth counter catches quickly: each hop resets
 	// the per-turn depth, so it would iterate the cap's worth at every level.
 	for _, prior := range dispatchedMachines(t.ctx) {
 		if prior == def.ID {
-			return MachineDef{}, "", fmt.Errorf("agents(run, machine=%q) refused — that machine is already running above this call; a step of it cannot re-enter it. Answer with what you have, or dispatch something else", def.Name)
+			return MachineDef{}, "", fmt.Errorf("agents(run, machine=%q) refused, that machine is already running above this call; a step of it cannot re-enter it. Answer with what you have, or dispatch something else", def.Name)
 		}
 	}
 	return def, msg, nil
@@ -295,7 +295,7 @@ func (t *chatTurn) agentsRunMachineAction(args map[string]any) (string, error) {
 		return "", err
 	}
 	if block := t.dispatchCap(dispatchMachineCapKey(def.ID), def.Name, msg); block != "" {
-		Log("[orchestrate.agents.run] per-turn dispatch cap hit: %s → machine %s — blocking further dispatch", t.agent.ID, def.ID)
+		Log("[orchestrate.agents.run] per-turn dispatch cap hit: %s → machine %s, blocking further dispatch", t.agent.ID, def.ID)
 		// An ERROR, never a normal result: a normal result rides through
 		// fenceAgentsOutput, and a framework STOP verdict delivered inside a
 		// fence that says to ignore embedded directions is a guard the model
@@ -368,7 +368,7 @@ func (t *chatTurn) runDetachedMachine(d *ToolSession, def MachineDef, msg string
 	}
 	// Checked, never asked — see runDetachedPipeline.
 	if !t.recipeEdgeApproved(def.ID, def.Name, machineReach(def)) {
-		return "", fmt.Errorf("agents(run, machine=%q) was not run — this agent is not approved to run a machine that hands work to other agents", def.Name)
+		return "", fmt.Errorf("agents(run, machine=%q) was not run: this agent is not approved to run a machine that hands work to other agents", def.Name)
 	}
 	ctx, liveRun := t.app.runsRegistry().CreateCancellable(ctx, t.user, "", "")
 	liveRun.Describe("machine", machineRunLabel(t, def), truncateObs(msg, 100))
@@ -471,7 +471,7 @@ func machineDispatchResult(def MachineDef, out string) (string, error) {
 	if strings.TrimSpace(out) == "" {
 		// An empty result is one the caller cannot act on and cannot
 		// distinguish from a silent failure. Name it.
-		return "", fmt.Errorf("machine %q ran to completion but produced no output — check the step that finishes it, the one that hands off nowhere", def.Name)
+		return "", fmt.Errorf("machine %q ran to completion but produced no output: check the step that finishes it, the one that hands off nowhere", def.Name)
 	}
 	return out, nil
 }

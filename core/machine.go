@@ -258,7 +258,7 @@ func exitNames(def MachineDef, from MachinePhase) []string {
 		out = append(out, p.Name)
 	}
 	if len(out) == 0 {
-		return []string{"nowhere — this step is where the conversation stays"}
+		return []string{"nowhere: this step is where the conversation stays"}
 	}
 	return out
 }
@@ -315,7 +315,7 @@ func (T *AppCore) walk(ctx context.Context, def MachineDef, cur *MachineCursor, 
 			// second.
 			if def.Unattended {
 				note("machine_run_cap", "machine "+def.Name+" ran "+strconv.Itoa(hops)+" steps without finishing; stopping at "+ph.Name+
-					". A run that reaches this ceiling is looping — check the guard or routing field that should have ended it.")
+					". A run that reaches this ceiling is looping: check the guard or routing field that should have ended it.")
 			} else {
 				note("machine_transition_cap", "machine "+def.Name+" made "+strconv.Itoa(hops)+" step transitions without reaching a step the conversation waits in; replying from "+ph.Name)
 			}

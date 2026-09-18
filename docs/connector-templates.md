@@ -1,4 +1,4 @@
-# Connector Templates — design
+# Connector Templates: design
 
 **Status:** Stages 1–2 shipped (2026-07-21). Stage 2b (inline import-preview
 collection) + Stage 3 pending. **Author:** design pass, 2026-07-21.
@@ -10,13 +10,13 @@ We build backend integrations three different ways today, each ad hoc:
 1. **Presets** (`rest_image` comfyui/a1111, `rest_messaging` teams/slack) fill spec
    *defaults*, as hardcoded per-kind maps in `core`.
 2. **The ComfyUI config panel** is bespoke admin JS: which fields to show, the
-   node-map table, the auto-detect — all hardcoded per backend.
+   node-map table, the auto-detect: all hardcoded per backend.
 3. **The deferred "instance-vars + collect-on-import" plan** wants connectors to
    *declare* their per-instance values so import/catalog can prompt for them.
 
 Adding the next backend (Flux, a hosted SD endpoint, a proper A1111 config panel,
 Teams/Slack config) means writing another preset **and** another admin panel. The
-config surface — "how to map out the values, what the Configure button does" —
+config surface ("how to map out the values, what the Configure button does")
 isn't reusable.
 
 ## The abstraction
@@ -24,7 +24,7 @@ isn't reusable.
 A **connector template** is a declarative integration built *on* a connector kind.
 It owns the whole config surface: the fields, how they map to the spec, and
 (optionally) how to auto-detect them. A **generic renderer** builds the Add and
-Configure panels from the declaration — no per-backend admin JS.
+Configure panels from the declaration: no per-backend admin JS.
 
 A template is **not a new kind.** Kinds (`rest_image`, `rest_messaging`) are the
 *runtime mechanism* (a Go `ConnectorHandler`). Templates are the *authored,
@@ -64,7 +64,7 @@ type TemplateField struct {
 ```
 
 **Field types stay deliberately small.** The ComfyUI node map is *not* a special
-"nodemap" widget — it's just a group of `text` fields (`prompt_nodes`,
+"nodemap" widget: it's just a group of `text` fields (`prompt_nodes`,
 `negative_nodes`, …) under a "Node mapping" group, auto-filled by `Detect`. The
 only richness is grouping + the optional Detect button. This keeps the renderer a
 small form engine, not a UI framework.
@@ -79,7 +79,7 @@ func ConnectorTemplate(name string) (ConnectorTemplate, bool)
 
 ## The two backends, as templates
 
-**comfyui** (`rest_image`) — the hardest one, proving the shape:
+**comfyui** (`rest_image`), the hardest one, proving the shape:
 - Fields: `base_url` (text, Connection), `workflow` (textarea, Connection),
   the node map (`prompt_nodes`/`negative_nodes`/`text_keys`/`width_nodes`/
   `height_nodes`/`steps_nodes`/`seed_nodes`/`seed_key`/`output_node`, text, Node
@@ -90,7 +90,7 @@ func ConnectorTemplate(name string) (ConnectorTemplate, bool)
   `base_url`, then `ComfyWorkflow` + `ComfyMap` + defaults + suffix.
 - `ReadValues(spec)` = today's `comfyCfgFromSpec`.
 
-**a1111** (`rest_image`) — falls out for free:
+**a1111** (`rest_image`), falls out for free:
 - Fields: `base_url` (text), `default_width`/`default_height`/`default_steps`
   (number), `prompt_suffix` (textarea), `credential` (credential, advanced).
 - No `Detect`.
@@ -105,7 +105,7 @@ paths.
 One admin panel + generic endpoints replace `add_image_backend` and
 `configure_comfyui`:
 
-- `GET /api/connector-templates` → `[{name,label,category,description}]` — powers a
+- `GET /api/connector-templates` → `[{name,label,category,description}]`: powers a
   grouped "Add…" menu and the catalog.
 - `GET /api/connector-templates/{name}` → the field schema.
 - `POST /api/connector-templates/{name}/detect` → `Detect(vals)` → auto-filled vals.
@@ -134,17 +134,17 @@ Then:
 
 A template or connector spec authored on a **newer** gohort may carry fields this
 version doesn't know (a feature added later, imported into an older install).
-Rule: **never error, always preserve** — keep the unknown fields dormant until a
+Rule: **never error, always preserve**, keep the unknown fields dormant until a
 gohort that understands them runs. No version arithmetic required; it's emergent.
 
 1. **Lenient parse.** Never `json.DisallowUnknownFields`. Unknown keys in a spec,
    a template, or a field-values payload are ignored, not rejected. `Validate`
    must never fail a spec for having extra keys. (Audit: no `DisallowUnknownFields`
-   on the connector/template path — Go's default unmarshal already ignores extras.)
+   on the connector/template path: Go's default unmarshal already ignores extras.)
 
 2. **Preserve on rebuild.** The reason this needs care: reading a spec into a typed
    struct drops unknown fields, and re-marshaling that struct would lose them. So
-   any flow that **rebuilds** a spec — the template Configure/Save — MERGES the
+any flow that **rebuilds** a spec (the template Configure/Save), MERGES the
    template's known fields onto the connector's **existing raw Spec at the
    JSON-object level**, instead of replacing it with a freshly-marshaled struct:
 
@@ -156,7 +156,7 @@ gohort that understands them runs. No version arithmetic required; it's emergent
 
    Unknown keys survive; a newer gohort later recognizes and acts on them.
    (Today's `/api/image-gen/comfy` save replaces the whole spec via
-   `json.Marshal(struct)` and *would* drop them — Stage 1 switches to this merge.)
+   `json.Marshal(struct)` and *would* drop them: Stage 1 switches to this merge.)
 
 3. **No min-version gate needed** for the basic case. An older version preserves +
    ignores; the upgraded version uses. A template *may* later mark a field with a
@@ -165,18 +165,18 @@ gohort that understands them runs. No version arithmetic required; it's emergent
 
 4. **Templates-as-data (Stage 2+)** obey the same rule: an imported template
    definition with an unknown field `Type` or feature is skipped by the older
-   renderer and preserved, never rejected — so a template shared from a newer
+   renderer and preserved, never rejected, so a template shared from a newer
    gohort still installs (minus the parts this version can't render).
 
 ## Where things live (generalization discipline)
 
 - `ConnectorTemplate` type + registry: **core** (like `RegisterConnectorKind`).
 - Template *declarations* (comfyui, a1111): **core** next to their preset/kind, OR
-  the owning app — a declaration is data, not a leak.
+  the owning app: a declaration is data, not a leak.
 - `Detect`/`BuildSpec`/`ReadValues` hooks: **core** functions the template points
-  at (`ApplyComfyWorkflow` etc.) — no per-backend UI.
+  at (`ApplyComfyWorkflow` etc.): no per-backend UI.
 - The generic renderer (endpoints + one client action): **admin app**, domain-
-  agnostic — it renders *any* template's schema. No ComfyUI-specific JS survives.
+  agnostic: it renders *any* template's schema. No ComfyUI-specific JS survives.
 
 Net: the bespoke ComfyUI panel becomes the first template; the admin app keeps one
 generic renderer instead of a panel per backend.
@@ -191,8 +191,8 @@ generic renderer instead of a panel per backend.
   Save uses the **merge-on-rebuild** from "Forward compatibility", replacing
   today's whole-spec `json.Marshal(struct)` (admin.go:1114) that drops unknown
   fields. (Audit done: no `DisallowUnknownFields` on the connector path, so lenient
-  parse already holds — only the merge is missing.)
-- **Stage 2 (shipped):** `Connector.Template` provenance — set on template create,
+  parse already holds: only the merge is missing.)
+- **Stage 2 (shipped):** `Connector.Template` provenance, set on template create,
   carried in `PortableConnector` through export/import, preferred by
   `TemplateForConnector` over inference. Configure is now provenance-driven
   (`configurable` = a template resolves), so an **imported** connector gets its
@@ -204,18 +204,18 @@ generic renderer instead of a panel per backend.
   rewrites the shared artifact-import UI (connectors/tools/agents/credentials/
   skills) for a marginal UX gain over the Configure-button flow above.
 - **Stage 3:** more templates as pure declarations (Flux, hosted SD, teams/slack
-  config) — no new renderer code.
+  config): no new renderer code.
 
 ## Open questions / risks
 
 1. **Over-abstraction.** Keep field types to what comfyui + a1111 + one messaging
    case actually need (text/textarea/number/bool/select/credential). Resist a
    generic form engine. If a backend needs a widget the schema can't express, that
-   backend keeps a bespoke panel — the template registry doesn't forbid it.
+   backend keeps a bespoke panel: the template registry doesn't forbid it.
 2. **Configure vs raw Edit spec.** Templates own the friendly panel; Edit spec
    stays the raw escape hatch (already comfy-workflow-aware).
 3. **Reverse mapping.** `ReadValues` must round-trip `BuildSpec` for Configure to
-   prefill correctly — covered by a per-template round-trip test.
+   prefill correctly: covered by a per-template round-trip test.
 4. **Migration.** Existing connectors created before `Template` provenance: infer
    the template from kind + shape (has `comfy_workflow` → comfyui), or leave them
    on Edit spec until re-saved through the panel.

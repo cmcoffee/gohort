@@ -434,7 +434,7 @@ func graphChannelResource(spec RestMessagingSpec) (string, error) {
 			return strings.TrimPrefix(su, base), nil
 		}
 	}
-	return "", fmt.Errorf("can't derive subscription resource — send_url must be a graph.microsoft.com messages endpoint (got %q); use the teams preset", su)
+	return "", fmt.Errorf("can't derive subscription resource: send_url must be a graph.microsoft.com messages endpoint (got %q); use the teams preset", su)
 }
 
 // graphEnsureSubscription creates the subscription, or renews (PATCH) an existing
@@ -464,7 +464,7 @@ func (T *Bridges) graphEnsureSubscription(c Connector, spec RestMessagingSpec) (
 			T.setWebhookSub(c.Name, sub)
 			return expTime, nil
 		}
-		Warn("[bridges] graph webhook %q renew failed (status=%d) — recreating subscription", c.Name, status)
+		Warn("[bridges] graph webhook %q renew failed (status=%d): recreating subscription", c.Name, status)
 	}
 
 	body, _ := json.Marshal(map[string]any{

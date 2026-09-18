@@ -180,7 +180,7 @@ func (tt *turnTelemetry) churnDiag() (kind, detail string, ok bool) {
 	}
 	if worstDupCount >= churnDupLimit {
 		return "tool_churn", fmt.Sprintf(
-			"%s was called %d times with identical arguments in one turn — the same call repeated without making progress. If it kept reporting success, the change may not be landing.",
+			"%s was called %d times with identical arguments in one turn: the same call repeated without making progress. If it kept reporting success, the change may not be landing.",
 			worstDup, worstDupCount), true
 	}
 	// High volume on one tool, with failures.
@@ -193,7 +193,7 @@ func (tt *turnTelemetry) churnDiag() (kind, detail string, ok bool) {
 		}
 		if worstCount >= churnCallLimit {
 			return "tool_churn", fmt.Sprintf(
-				"%s was called %d times in one turn with %d tool error(s) — a sustained fight with one tool rather than progress.",
+				"%s was called %d times in one turn with %d tool error(s): a sustained fight with one tool rather than progress.",
 				worstTool, worstCount, tt.toolErrorCount), true
 		}
 	}

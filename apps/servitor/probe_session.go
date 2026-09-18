@@ -269,9 +269,9 @@ func (pr *probeRun) connect() probeAction {
 			}
 		}
 		if repoFileCount(pr.ownerUser, pr.appliance.ID) == 0 {
-			msg := "Repository not ingested yet — run Refresh to clone and map it."
+			msg := "Repository not ingested yet: run Refresh to clone and map it."
 			if pr.saveProfile {
-				msg = "Clone failed — check the Git URL, branch, and access token, then try again. (Is git installed on the host?)"
+				msg = "Clone failed: check the Git URL, branch, and access token, then try again. (Is git installed on the host?)"
 			}
 			probeSessions.AppendEvent(pr.id, probeEvent{Kind: "error", Text: msg}, true)
 			probeSessions.ScheduleCleanup(pr.id)
@@ -284,7 +284,7 @@ func (pr *probeRun) connect() probeAction {
 		// that is nothing, the fix is an upload, which is the user's move and
 		// not something this session can perform on their behalf.
 		if n := bundle.Open(pr.ownerUser, pr.appliance.ID).FileCount(); n == 0 {
-			msg := "No evidence ingested yet — upload the bundle's files first."
+			msg := "No evidence ingested yet: upload the bundle's files first."
 			if pr.appliance.BundleState == bundleStateIngesting {
 				msg = "The upload is still being expanded and ingested. Wait for it to finish, then ask again."
 			} else if pr.appliance.BundleState == bundleStateFailed && pr.appliance.BundleError != "" {
@@ -302,7 +302,7 @@ func (pr *probeRun) connect() probeAction {
 		// failure, so it says so instead of running an empty session.
 		if len(pr.appliance.Toolset) == 0 {
 			probeSessions.AppendEvent(pr.id, probeEvent{Kind: "error",
-				Text: "No tools are bound to this system yet — edit it and pick the tools its investigations may use."}, true)
+				Text: "No tools are bound to this system yet: edit it and pick the tools its investigations may use."}, true)
 			probeSessions.ScheduleCleanup(pr.id)
 			return actReturn
 		}
@@ -366,16 +366,16 @@ func (pr *probeRun) sshExec(cmd string) (string, error) {
 	if !isConnErr {
 		return result, err
 	}
-	emit(pr.id, probeEvent{Kind: "status", Text: "SSH connection lost — reconnecting…"})
+	emit(pr.id, probeEvent{Kind: "status", Text: "SSH connection lost: reconnecting…"})
 	dropConn(pr.userID, pr.appliance.ID)
 	newClient, rerr := acquireConn(pr.userID, pr.appliance)
 	if rerr != nil {
-		reconnMsg := fmt.Sprintf("[SSH DISCONNECTED — reconnect failed: %v. Stop issuing SSH commands; the session must be restarted.]", rerr)
+		reconnMsg := fmt.Sprintf("[SSH DISCONNECTED, reconnect failed: %v. Stop issuing SSH commands; the session must be restarted.]", rerr)
 		emit(pr.id, probeEvent{Kind: "error", Text: "Reconnect failed: " + rerr.Error()})
 		return reconnMsg, nil
 	}
 	pr.a.conn = newClient
-	emit(pr.id, probeEvent{Kind: "status", Text: "SSH reconnected — retrying command…"})
+	emit(pr.id, probeEvent{Kind: "status", Text: "SSH reconnected: retrying command…"})
 	return pr.a.exec_command_ctx(pr.ctx, cmd)
 }
 
@@ -495,7 +495,7 @@ func (pr *probeRun) execSeam() {
 			// Non-fatal: the run proceeds with no sanctioned write location, which
 			// only means writes gate as they otherwise would. Surfaced rather than
 			// swallowed so an unexpected flurry of approval prompts is explicable.
-			emit(pr.id, probeEvent{Kind: "status", Text: "Scratch directory unavailable — writes will need approval: " + err.Error()})
+			emit(pr.id, probeEvent{Kind: "status", Text: "Scratch directory unavailable, writes will need approval: " + err.Error()})
 		} else {
 			pr.scratch = dir
 			pr.scratchCleanup = func() { scratch_teardown(rawExec, dir) }
@@ -641,11 +641,11 @@ func (pr *probeRun) newRunPtyTool() AgentToolDef {
 					strings.Contains(errMsg, "broken pipe") ||
 					strings.Contains(errMsg, "new SSH session")
 				if isConnErr {
-					emit(pr.id, probeEvent{Kind: "status", Text: "SSH connection lost — reconnecting…"})
+					emit(pr.id, probeEvent{Kind: "status", Text: "SSH connection lost: reconnecting…"})
 					dropConn(pr.userID, pr.appliance.ID)
 					newClient, rerr := acquireConn(pr.userID, pr.appliance)
 					if rerr != nil {
-						return fmt.Sprintf("[SSH DISCONNECTED — reconnect failed: %v. Stop issuing SSH commands; the session must be restarted.]", rerr), nil
+						return fmt.Sprintf("[SSH DISCONNECTED, reconnect failed: %v. Stop issuing SSH commands; the session must be restarted.]", rerr), nil
 					}
 					pr.a.conn = newClient
 					emit(pr.id, probeEvent{Kind: "status", Text: "SSH reconnected."})
@@ -903,7 +903,7 @@ func (pr *probeRun) memoryTools() {
 			Name:        "note_lesson",
 			Description: "Append a lesson or correction to the persistent notes for this appliance. Call this after discovering a mistake, a wrong assumption, or a non-obvious quirk about this system (e.g. 'sudo is not installed', 'mysql uses socket /tmp/mysql.sock not /var/run', 'journalctl requires sudo'). Notes are re-injected into every future session so the same mistake is not repeated.",
 			Parameters: map[string]ToolParam{
-				"note": {Type: "string", Description: "The lesson to record. Be concise and specific — one sentence per call."},
+				"note": {Type: "string", Description: "The lesson to record. Be concise and specific: one sentence per call."},
 			},
 			Required: []string{"note"},
 		},
@@ -930,15 +930,15 @@ func (pr *probeRun) memoryTools() {
 	pr.record_technique_tool = AgentToolDef{
 		Tool: Tool{
 			Name: "record_technique",
-			Description: "Record a technique that worked on this system — a successful approach, correct command syntax, " +
+			Description: "Record a technique that worked on this system: a successful approach, correct command syntax, " +
 				"working auth method, or non-obvious way to accomplish something. " +
 				"Call this whenever you figure out HOW to do something that wasn't obvious: " +
 				"e.g. 'MySQL root login works without a password via unix socket: mysql -u root', " +
-				"'PostgreSQL uses peer auth — connect as postgres user: sudo -u postgres psql', " +
+				"'PostgreSQL uses peer auth, connect as postgres user: sudo -u postgres psql' " +
 				"'Redis requires AUTH token found in /etc/redis/redis.conf', " +
 				"'Python app uses venv at /opt/app/venv/bin/python'. " +
 				"Techniques are injected at the start of every future session so you know exactly how to access things. " +
-				"DATABASE AUTH IS MANDATORY: the moment any database login succeeds, record_technique MUST be called with the exact working command — this prevents re-discovery on every future session.",
+				"DATABASE AUTH IS MANDATORY: the moment any database login succeeds, record_technique MUST be called with the exact working command, this prevents re-discovery on every future session.",
 			Parameters: map[string]ToolParam{
 				"technique": {Type: "string", Description: "Concise description of what works and exactly how. Include the specific command or path."},
 			},
@@ -982,13 +982,13 @@ func (pr *probeRun) memoryTools() {
 				"fully traced a request routing chain, found credentials or secrets that unlock further access, " +
 				"identified how the application accesses a resource (DB driver, ORM setup, connection method), " +
 				"or confirmed any significant security or architectural finding. " +
-				"Discoveries are surfaced at the TOP of every future session as pre-established knowledge — " +
+				"Discoveries are surfaced at the TOP of every future session as pre-established knowledge: " +
 				"anything recorded here will not be re-investigated. " +
 				"This is NOT for routine facts or techniques. Only call it when you have answered a significant goal with real evidence. " +
 				"DATABASE ACCESS: when you successfully enter a database and see its schemas/tables, call record_discovery with the full access path, credentials, and what you found inside.",
 			Parameters: map[string]ToolParam{
 				"title":    {Type: "string", Description: "One-line summary, e.g. 'Production PostgreSQL access confirmed' or 'Full request routing chain mapped'."},
-				"finding":  {Type: "string", Description: "Full narrative: what you found, where, exact values (credentials, paths, ports, schema names, route patterns), and why it matters. Include the evidence — commands run and their output."},
+				"finding":  {Type: "string", Description: "Full narrative: what you found, where, exact values (credentials, paths, ports, schema names, route patterns), and why it matters. Include the evidence: commands run and their output."},
 				"category": {Type: "string", Description: "One of: database | credentials | routing | service | code | security | config | general"},
 			},
 			Required: []string{"title", "finding"},
@@ -1015,9 +1015,9 @@ func (pr *probeRun) memoryTools() {
 	pr.store_fact_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "store_fact",
-			Description: "Save an APPLIANCE-WIDE property (os, hostname, kernel, arch, timezone, primary role) under a short key; same key overwrites. Component-specific details — a service's version, port, or config path — go on that component's own entity via link_entities subject_attrs, NOT here. ttl='short' for volatile state, default 'long'. (The 'What to Record' section has the full routing guide.)",
+			Description: "Save an APPLIANCE-WIDE property (os, hostname, kernel, arch, timezone, primary role) under a short key; same key overwrites. Component-specific details (a service's version, port, or config path), go on that component's own entity via link_entities subject_attrs, NOT here. ttl='short' for volatile state, default 'long'. (The 'What to Record' section has the full routing guide.)",
 			Parameters: map[string]ToolParam{
-				"key":   {Type: "string", Description: "Short appliance-wide key, e.g. 'os', 'hostname', 'kernel', 'arch'. NOT a component-specific key like 'nginx_version' — that goes in link_entities subject_attrs."},
+				"key":   {Type: "string", Description: "Short appliance-wide key, e.g. 'os', 'hostname', 'kernel', 'arch'. NOT a component-specific key like 'nginx_version', that goes in link_entities subject_attrs."},
 				"value": {Type: "string", Description: "The fact value."},
 				"ttl":   {Type: "string", Description: "Freshness window: 'short' (re-verify after 30 min, for volatile state) or 'long' (trust for 24h, for stable config/versions). Default: 'long'."},
 				"tags": {
@@ -1052,7 +1052,7 @@ func (pr *probeRun) memoryTools() {
 	pr.link_entities_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "link_entities",
-			Description: "Record a RELATIONSHIP between two named parts of this system — the structured graph map. Subject-relation-object, e.g. subject='nginx' relation='proxies to' object='app on :8080'. Entities auto-merge by name; put non-relational details (version, path, port) in subject_attrs. Call it whenever you learn how parts connect. (store_fact is only for appliance-wide properties; the 'What to Record' section has the full routing guide.)",
+			Description: "Record a RELATIONSHIP between two named parts of this system: the structured graph map. Subject-relation-object, e.g. subject='nginx' relation='proxies to' object='app on :8080'. Entities auto-merge by name; put non-relational details (version, path, port) in subject_attrs. Call it whenever you learn how parts connect. (store_fact is only for appliance-wide properties; the 'What to Record' section has the full routing guide.)",
 			Parameters: map[string]ToolParam{
 				"subject":       {Type: "string", Description: "The subject entity's name, e.g. 'nginx', 'app', 'postgres'."},
 				"subject_kind":  {Type: "string", Description: "Subject type: service, app, database, host, file, process, port, or thing. Defaults to thing."},
@@ -1098,7 +1098,7 @@ func (pr *probeRun) memoryTools() {
 	pr.store_rule_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "store_rule",
-			Description: "Save a standing instruction or preference the user has expressed about how to work with this system. Call this when the user states a rule, preference, or convention they want followed in all future sessions — e.g. 'always check staging before production', 'never restart the web server without warning', 'use sudo for all service commands'. Rules persist across sessions and are injected into every future prompt.",
+			Description: "Save a standing instruction or preference the user has expressed about how to work with this system. Call this when the user states a rule, preference, or convention they want followed in all future sessions: e.g. 'always check staging before production', 'never restart the web server without warning', 'use sudo for all service commands'. Rules persist across sessions and are injected into every future prompt.",
 			Parameters: map[string]ToolParam{
 				"rule": {Type: "string", Description: "The standing instruction to remember, written as a clear directive."},
 			},
@@ -1199,7 +1199,7 @@ func (pr *probeRun) readTools() {
 	pr.search_facts_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "search_facts",
-			Description: "Search stored facts across all appliances by keyword. Checks fact keys, values, and tags. Call this before running SSH commands — the answer may already be in persistent memory.",
+			Description: "Search stored facts across all appliances by keyword. Checks fact keys, values, and tags. Call this before running SSH commands: the answer may already be in persistent memory.",
 			Parameters: map[string]ToolParam{
 				"query":     {Type: "string", Description: "Substring to search in fact keys, values, and tags."},
 				"appliance": {Type: "string", Description: "Optional appliance name or ID filter."},
@@ -1246,7 +1246,7 @@ func (pr *probeRun) readTools() {
 	pr.search_knowledge_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "search_knowledge",
-			Description: "Search the curated KNOWLEDGE linked to this appliance (runbooks, vendor docs, guides the owner attached) for material relevant to the task. Returns the top matching passages with their source. Use it to ground your answer in authoritative reference material — it does NOT touch the live system, so pair it with the system-probing tools rather than replacing them.",
+			Description: "Search the curated KNOWLEDGE linked to this appliance (runbooks, vendor docs, guides the owner attached) for material relevant to the task. Returns the top matching passages with their source. Use it to ground your answer in authoritative reference material: it does NOT touch the live system, so pair it with the system-probing tools rather than replacing them.",
 			Parameters: map[string]ToolParam{
 				"query": {Type: "string", Description: "What to look up, in natural language."},
 				"k":     {Type: "number", Description: "Max passages to return (default 5, max 12)."},
@@ -1305,8 +1305,8 @@ func (pr *probeRun) reportTools() {
 			Name: "watch_condition",
 			Description: "Register an expect-style watch: runs the given command every minute until " +
 				"the output contains the success pattern, then stores the result. " +
-				"Use this when you've started something that takes time — a backup, a service restart, " +
-				"a migration — and want to know when it finishes without blocking. " +
+				"Use this when you've started something that takes time: a backup, a service restart, " +
+				"a migration, and want to know when it finishes without blocking. " +
 				"The watch fires silently in the background; the result is in stored facts on next session.",
 			Parameters: map[string]ToolParam{
 				"task":            {Type: "string", Description: "What you are waiting for (human description)."},
@@ -1363,7 +1363,7 @@ func (pr *probeRun) reportTools() {
 			}
 			var b strings.Builder
 			for _, w := range watches {
-				b.WriteString(fmt.Sprintf("- [%s] %s — checking: %s (pattern: %q, timeout: %s)\n",
+				b.WriteString(fmt.Sprintf("- [%s] %s, checking: %s (pattern: %q, timeout: %s)\n",
 					w.ID[:8], w.Task, w.Command, w.Pattern, w.TimeoutAt))
 			}
 			return b.String(), nil
@@ -1374,7 +1374,7 @@ func (pr *probeRun) reportTools() {
 	pr.save_to_codewriter_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "save_to_codewriter",
-			Description: "Save a SQL query, shell script, or code snippet to the user's CodeWriter library in gohort. This is a local save action — do NOT run anything on the appliance. Use this when the user asks to save the script/query for later reuse rather than (or in addition to) running it immediately.",
+			Description: "Save a SQL query, shell script, or code snippet to the user's CodeWriter library in gohort. This is a local save action: do NOT run anything on the appliance. Use this when the user asks to save the script/query for later reuse rather than (or in addition to) running it immediately.",
 			Parameters: map[string]ToolParam{
 				"name": {Type: "string", Description: "Short descriptive name for the snippet (e.g. 'Active connections by database')."},
 				"lang": {Type: "string", Description: "Language or type: 'sql', 'bash', 'python', 'go', 'javascript', 'text', etc."},
@@ -1404,7 +1404,7 @@ func (pr *probeRun) reportTools() {
 	pr.save_to_scribe_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "save_to_scribe",
-			Description: "Save a report, runbook, findings summary, or any prose document as a new article in the user's Scribe library in gohort. This is a local save action — do NOT run anything on the appliance or search for Scribe on the remote system. Use this when the user asks to document findings, save a report, or create a runbook from the session results.",
+			Description: "Save a report, runbook, findings summary, or any prose document as a new article in the user's Scribe library in gohort. This is a local save action: do NOT run anything on the appliance or search for Scribe on the remote system. Use this when the user asks to document findings, save a report, or create a runbook from the session results.",
 			Parameters: map[string]ToolParam{
 				"subject": {Type: "string", Description: "Title or subject of the document (e.g. 'Disk usage report – web01', 'MySQL slow query runbook')."},
 				"body":    {Type: "string", Description: "Full document body in markdown."},
@@ -1437,7 +1437,7 @@ func (pr *probeRun) reportTools() {
 	pr.list_guides_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "list_guides",
-			Description: "List the user's existing guides (living multi-section documents in the gohort Guides app), so you can pick the right one to push a finding into with push_to_guide. Local read — do NOT look for guides on the remote system. No arguments.",
+			Description: "List the user's existing guides (living multi-section documents in the gohort Guides app), so you can pick the right one to push a finding into with push_to_guide. Local read: do NOT look for guides on the remote system. No arguments.",
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			ds := ListDocuments(pr.userID, "guide")
@@ -1465,11 +1465,11 @@ func (pr *probeRun) reportTools() {
 	pr.record_finding_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "record_finding",
-			Description: "Report something you learned that is worth DOCUMENTING, without choosing a destination. Use this for anything durable a future reader would want: a config value, a path, a working procedure, a failure mode and its cause. A curator later decides which guide it belongs in, merges it with related findings, and drops what isn't worth keeping — so you do NOT name a guide or a section. Do NOT report that a probe ran, or that a service was up at one moment; that is not documentation. Local save action — never run anything on the appliance for this.",
+			Description: "Report something you learned that is worth DOCUMENTING, without choosing a destination. Use this for anything durable a future reader would want: a config value, a path, a working procedure, a failure mode and its cause. A curator later decides which guide it belongs in, merges it with related findings, and drops what isn't worth keeping, so you do NOT name a guide or a section. Do NOT report that a probe ran, or that a service was up at one moment; that is not documentation. Local save action: never run anything on the appliance for this.",
 			Parameters: map[string]ToolParam{
-				"topic":      {Type: "string", Description: "One line naming what this is ABOUT — e.g. \"nginx TLS cert renewal\", \"scheduler queue timeout\". Not a section title; the curator decides those."},
+				"topic":      {Type: "string", Description: "One line naming what this is ABOUT: e.g. \"nginx TLS cert renewal\", \"scheduler queue timeout\". Not a section title; the curator decides those."},
 				"content":    {Type: "string", Description: "The finding itself, in markdown, written so it is useful months from now: the concrete values, paths, and commands, not a narration of how you found them."},
-				"confidence": {Type: "string", Description: "\"verified\" (checked directly, more than once or from more than one angle), \"probable\" (consistent with what you saw, not separately confirmed), or \"single-observation\" (seen once). Be honest — a single observation cannot overwrite documented text, and claiming more than you checked is how a wrong value gets into a guide.", Enum: []string{"verified", "probable", "single-observation"}},
+				"confidence": {Type: "string", Description: "\"verified\" (checked directly, more than once or from more than one angle), \"probable\" (consistent with what you saw, not separately confirmed), or \"single-observation\" (seen once). Be honest: a single observation cannot overwrite documented text, and claiming more than you checked is how a wrong value gets into a guide.", Enum: []string{"verified", "probable", "single-observation"}},
 			},
 			Required: []string{"topic", "content"},
 		},
@@ -1505,11 +1505,11 @@ func (pr *probeRun) reportTools() {
 	pr.push_to_guide_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "push_to_guide",
-			Description: "Add a finding from this investigation to one of the user's GUIDES (living documents in the gohort Guides app) as a new section. Local save action — do NOT run anything on the appliance or look for Guides on the remote system. Use when the user asks to add/document something you looked up into a guide (\"add the cron jobs to my Ops guide\"). If a guide with the given name exists it's appended to; otherwise a new guide by that name is created. Call list_guides first if unsure of the exact name.",
+			Description: "Add a finding from this investigation to one of the user's GUIDES (living documents in the gohort Guides app) as a new section. Local save action: do NOT run anything on the appliance or look for Guides on the remote system. Use when the user asks to add/document something you looked up into a guide (\"add the cron jobs to my Ops guide\"). If a guide with the given name exists it's appended to; otherwise a new guide by that name is created. Call list_guides first if unsure of the exact name.",
 			Parameters: map[string]ToolParam{
 				"guide":         {Type: "string", Description: "The target guide's name (e.g. 'Ops', 'DB Runbook'). If none matches an existing guide, a new guide with this name is created."},
 				"section_title": {Type: "string", Description: "Title for the new section (e.g. 'Cron jobs', 'Disk layout')."},
-				"content":       {Type: "string", Description: "The section body in markdown — the finding, written up cleanly. No top-level heading; the title is separate."},
+				"content":       {Type: "string", Description: "The section body in markdown: the finding, written up cleanly. No top-level heading; the title is separate."},
 			},
 			Required: []string{"guide", "section_title", "content"},
 		},
@@ -1834,16 +1834,16 @@ func (pr *probeRun) mapProbeTool() probeAction {
 			// it's been ignoring.
 			if pr.m.probeLoopSignalCount >= probeLoopSignalLimit {
 				emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Probe refused: orchestrator hit loop-signal limit (%d signals)", pr.m.probeLoopSignalCount)})
-				return fmt.Sprintf("[DELEGATION REFUSED — your prior %d delegations have triggered worker LOOP DETECTED responses. Your current investigation strategy is not converging. STOP delegating new probes. Write your final report based on what you have already learned. Acknowledge what you could not determine and why. Do not call probe again in this session.]", pr.m.probeLoopSignalCount), nil
+				return fmt.Sprintf("[DELEGATION REFUSED: your prior %d delegations have triggered worker LOOP DETECTED responses. Your current investigation strategy is not converging. STOP delegating new probes. Write your final report based on what you have already learned. Acknowledge what you could not determine and why. Do not call probe again in this session.]", pr.m.probeLoopSignalCount), nil
 			}
 			cacheKey := normalizeTask(task)
 			if cached, ok := pr.m.probeCache[cacheKey]; ok {
 				pr.m.probeTopicCount[cacheKey]++
 				if pr.m.probeTopicCount[cacheKey] >= probeTopicLimit {
 					emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Topic exhausted: %q (%dx)", task, pr.m.probeTopicCount[cacheKey])})
-					return fmt.Sprintf("[TOPIC EXHAUSTED — you have re-delegated this topic %d times now. Stop probing this area entirely. Pivot to a fundamentally different domain (different service, different layer, different angle on the original goal). Re-delegating the same topic in different words will not produce new information.]\n\nLast result for reference:\n\n%s", pr.m.probeTopicCount[cacheKey], cached), nil
+					return fmt.Sprintf("[TOPIC EXHAUSTED: you have re-delegated this topic %d times now. Stop probing this area entirely. Pivot to a fundamentally different domain (different service, different layer, different angle on the original goal). Re-delegating the same topic in different words will not produce new information.]\n\nLast result for reference:\n\n%s", pr.m.probeTopicCount[cacheKey], cached), nil
 				}
-				return "[ALREADY PROBED — result below. Do not probe this topic again; move to a different area.]\n\n" + cached, nil
+				return "[ALREADY PROBED: result below. Do not probe this topic again; move to a different area.]\n\n" + cached, nil
 			}
 			context, _ := args["context"].(string)
 			var msg strings.Builder
@@ -1930,7 +1930,7 @@ func (pr *probeRun) mapBrief() probeAction {
 	// the prior data as "work is done."
 	if pr.saveProfile && strings.TrimSpace(pr.appliance.Profile) != "" {
 		pr.m.invMsg.WriteString("## RE-MAPPING (full re-derivation)\n\n")
-		pr.m.invMsg.WriteString("This system was mapped before — prior facts, discoveries, and techniques are listed below FOR YOUR REFERENCE ONLY. They are NOT a substitute for a fresh investigation. Re-verify what's still true, discover what's changed, and produce a complete new profile.\n\n")
+		pr.m.invMsg.WriteString("This system was mapped before: prior facts, discoveries, and techniques are listed below FOR YOUR REFERENCE ONLY. They are NOT a substitute for a fresh investigation. Re-verify what's still true, discover what's changed, and produce a complete new profile.\n\n")
 		pr.m.invMsg.WriteString("You MUST emit a fresh `set_plan` as your first tool call. The previous plan is gone; treat this run as a clean slate that benefits from prior context, not as a continuation.\n\n")
 	}
 	pr.m.invMsg.WriteString("## System Snapshot\n\n")
@@ -1952,7 +1952,7 @@ func (pr *probeRun) mapBrief() probeAction {
 			pr.m.invMsg.WriteString("\n\n")
 		}
 		if gb := scopedGraphPromptBlock(pr.appliance); gb != "" {
-			pr.m.invMsg.WriteString("## System Map so far (extend it — don't re-map what's here)\n\n")
+			pr.m.invMsg.WriteString("## System Map so far (extend it: don't re-map what's here)\n\n")
 			pr.m.invMsg.WriteString(gb)
 			pr.m.invMsg.WriteString("\n\n")
 		}
@@ -1963,14 +1963,14 @@ func (pr *probeRun) mapBrief() probeAction {
 		}
 	}
 	pr.m.invMsg.WriteString("Begin your investigation.\n\n")
-	pr.m.invMsg.WriteString("REQUIRED FIRST CALL: `set_plan` with ordered steps — typically 5–12, scale higher (15+) for complex appliances. Err toward more steps with narrower scopes rather than fewer with sprawling scopes; narrow steps produce sharper findings. Each step needs a short title and a what_to_find description. Foundation/discovery steps come first; deeper investigation later builds on what they find.\n\n")
+	pr.m.invMsg.WriteString("REQUIRED FIRST CALL: `set_plan` with ordered steps, typically 5–12, scale higher (15+) for complex appliances. Err toward more steps with narrower scopes rather than fewer with sprawling scopes; narrow steps produce sharper findings. Each step needs a short title and a what_to_find description. Foundation/discovery steps come first; deeper investigation later builds on what they find.\n\n")
 	pr.m.invMsg.WriteString("After the plan is set, work the steps one at a time:\n")
 	pr.m.invMsg.WriteString("  1. mark_step_in_progress (step_id)\n")
-	pr.m.invMsg.WriteString("  2. probe (delegate worker investigation for that step — may call multiple times)\n")
-	pr.m.invMsg.WriteString("  3. record_step_findings (step_id, 1–3 sentence summary) — OR mark_step_blocked (step_id, reason) if you can't complete it\n")
+	pr.m.invMsg.WriteString("  2. probe (delegate worker investigation for that step: may call multiple times)\n")
+	pr.m.invMsg.WriteString("  3. record_step_findings (step_id, 1–3 sentence summary), OR mark_step_blocked (step_id, reason) if you can't complete it\n")
 	pr.m.invMsg.WriteString("  4. Move to the next pending step\n\n")
-	pr.m.invMsg.WriteString(fmt.Sprintf("If findings reveal something you couldn't have planned for, call `revise_plan` to add/remove/reorder steps (max %d revisions per session — use deliberately, not reflexively).\n\n", WorkPlanRevisionLimit))
-	pr.m.invMsg.WriteString("BEFORE WRITING YOUR FINAL ANSWER: call `report_gaps`. It returns a structured summary of every blocked or skipped step. You MUST incorporate that into a 'What I Couldn't Determine' section in your final answer — the user trusts the report only when you're explicit about what you couldn't see. If the gap report is empty (everything completed), no such section is needed.\n\n")
+	pr.m.invMsg.WriteString(fmt.Sprintf("If findings reveal something you couldn't have planned for, call `revise_plan` to add/remove/reorder steps (max %d revisions per session: use deliberately, not reflexively).\n\n", WorkPlanRevisionLimit))
+	pr.m.invMsg.WriteString("BEFORE WRITING YOUR FINAL ANSWER: call `report_gaps`. It returns a structured summary of every blocked or skipped step. You MUST incorporate that into a 'What I Couldn't Determine' section in your final answer: the user trusts the report only when you're explicit about what you couldn't see. If the gap report is empty (everything completed), no such section is needed.\n\n")
 	pr.m.invMsg.WriteString("Use store_fact / record_discovery / record_technique alongside step work for durable knowledge that survives the session. When all steps are done or blocked AND report_gaps has been called, write your final answer.")
 	return actNone
 }
@@ -2032,13 +2032,13 @@ func (pr *probeRun) stuckMsgFn() []Message {
 	if pr.m.stuckRoundCount == 12 && !pr.m.softNudgeFired {
 		pr.m.softNudgeFired = true
 		return []Message{{Role: "user", Content: fmt.Sprintf(
-			"Pacing check: you've spent 12 rounds on step %d (%q) without advancing. Move to another pending step now — call mark_step_in_progress on it and work it; leave this step unfinished (do NOT mark it blocked) and revisit it later with what you learn elsewhere. Coming back fresh is faster than grinding. Don't burn more than 8 more rounds here before switching.",
+			"Pacing check: you've spent 12 rounds on step %d (%q) without advancing. Move to another pending step now: call mark_step_in_progress on it and work it; leave this step unfinished (do NOT mark it blocked) and revisit it later with what you learn elsewhere. Coming back fresh is faster than grinding. Don't burn more than 8 more rounds here before switching.",
 			curStep, stepTitle)}}
 	}
 	if pr.m.stuckRoundCount == 20 && !pr.m.firmNudgeFired {
 		pr.m.firmNudgeFired = true
 		return []Message{{Role: "user", Content: fmt.Sprintf(
-			"Hard pacing limit: you've spent 20 rounds on step %d (%q). Switch to another pending step NOW — call mark_step_in_progress on the next one and work it. Leave step %d unfinished and pending; do NOT mark it blocked just because it's slow (blocking it for pacing/time is invalid — you'll get more rounds to revisit it). Only block a step for a genuine dead-end (no access, missing tool, unreachable).",
+			"Hard pacing limit: you've spent 20 rounds on step %d (%q). Switch to another pending step NOW: call mark_step_in_progress on the next one and work it. Leave step %d unfinished and pending; do NOT mark it blocked just because it's slow (blocking it for pacing/time is invalid: you'll get more rounds to revisit it). Only block a step for a genuine dead-end (no access, missing tool, unreachable).",
 			curStep, stepTitle, curStep)}}
 	}
 	return nil
@@ -2139,12 +2139,12 @@ func (pr *probeRun) mapInvestigate() probeAction {
 		}
 		if pr.m.prevPending >= 0 && pending >= pr.m.prevPending {
 			emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf(
-				"Investigator stalled with %d step(s) still pending — wrapping up with findings so far.", pending)})
+				"Investigator stalled with %d step(s) still pending: wrapping up with findings so far.", pending)})
 			break
 		}
 		pr.m.prevPending = pending
 		emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf(
-			"Investigator reached its round budget with %d step(s) pending — continuing the investigation…", pending)})
+			"Investigator reached its round budget with %d step(s) pending: continuing the investigation…", pending)})
 		// Fresh stuck-detector window for the new budget.
 		pr.m.stuckTrackedStep, pr.m.stuckRoundCount, pr.m.softNudgeFired, pr.m.firmNudgeFired = 0, 0, false, false
 		withHeartbeat(pr.ctx, pr.id, "Investigator (continued)", func() {
@@ -2330,7 +2330,7 @@ func (pr *probeRun) chatProbeTool() probeAction {
 		Tool: Tool{
 			Name: "probe",
 			Description: "Execute a specific SSH investigation task on the target system. " +
-				"Be precise — one clear goal per probe. Pass rich context so the worker " +
+				"Be precise: one clear goal per probe. Pass rich context so the worker " +
 				"uses what you already know.",
 			Parameters: map[string]ToolParam{
 				"task":    {Type: "string", Description: "Single clear goal: find X, read Y, verify Z."},
@@ -2348,9 +2348,9 @@ func (pr *probeRun) chatProbeTool() probeAction {
 				pr.c.qaTopicCount[cacheKey]++
 				if pr.c.qaTopicCount[cacheKey] >= qaTopicLimit {
 					emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Topic exhausted: %q (%dx)", task, pr.c.qaTopicCount[cacheKey])})
-					return fmt.Sprintf("[TOPIC EXHAUSTED — you have re-delegated this topic %d times now. Stop probing this area entirely. Pivot to a fundamentally different domain. Re-delegating the same topic in different words will not produce new information.]\n\nLast result for reference:\n\n%s", pr.c.qaTopicCount[cacheKey], cached), nil
+					return fmt.Sprintf("[TOPIC EXHAUSTED: you have re-delegated this topic %d times now. Stop probing this area entirely. Pivot to a fundamentally different domain. Re-delegating the same topic in different words will not produce new information.]\n\nLast result for reference:\n\n%s", pr.c.qaTopicCount[cacheKey], cached), nil
 				}
-				return "[ALREADY PROBED — result below. Do not probe this topic again; move to a different area.]\n\n" + cached, nil
+				return "[ALREADY PROBED: result below. Do not probe this topic again; move to a different area.]\n\n" + cached, nil
 			}
 			context, _ := args["context"].(string)
 			var msg strings.Builder
@@ -2361,7 +2361,7 @@ func (pr *probeRun) chatProbeTool() probeAction {
 			}
 			if pr.udb != nil {
 				if disc := discoveriesFor(pr.udb, pr.appliance.ID); len(disc) > 0 {
-					msg.WriteString("## Key Discoveries (pre-established — do not re-investigate)\n\n")
+					msg.WriteString("## Key Discoveries (pre-established: do not re-investigate)\n\n")
 					msg.WriteString(formatDiscoveries(disc))
 					msg.WriteString("\n\n")
 				}
@@ -2420,7 +2420,7 @@ func (pr *probeRun) chatProbeTool() probeAction {
 				pr.c.allProbeResults = append(pr.c.allProbeResults, result)
 			}
 			result = SpillOutput(result, 14000, "read_output")
-			emit(pr.id, probeEvent{Kind: "status", Text: "Worker complete — reviewing findings."})
+			emit(pr.id, probeEvent{Kind: "status", Text: "Worker complete: reviewing findings."})
 			return result, nil
 		},
 		NeedsConfirm: false,
@@ -2439,7 +2439,7 @@ func (pr *probeRun) drainInjections() []Message {
 	out := make([]Message, 0, len(notes))
 	ids := make([]string, 0, len(notes))
 	for _, n := range notes {
-		out = append(out, Message{Role: "user", Content: "[USER NOTE — submitted mid-investigation] " + n.Text})
+		out = append(out, Message{Role: "user", Content: "[USER NOTE: submitted mid-investigation] " + n.Text})
 		ids = append(ids, n.ID)
 	}
 	emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Orchestrator picked up %d user note(s).", len(notes))})
@@ -2541,9 +2541,9 @@ func (pr *probeRun) chatInvestigate() probeAction {
 		before := len(pr.c.allProbeResults)
 		if pending := pr.c.chatPlan.Pending(); pending > 0 {
 			emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf(
-				"Investigator reached its round budget with %d plan step(s) pending — continuing…", pending)})
+				"Investigator reached its round budget with %d plan step(s) pending: continuing…", pending)})
 		} else {
-			emit(pr.id, probeEvent{Kind: "status", Text: "Investigator reached its round budget — continuing the investigation…"})
+			emit(pr.id, probeEvent{Kind: "status", Text: "Investigator reached its round budget: continuing the investigation…"})
 		}
 		withHeartbeat(pr.ctx, pr.id, "Investigator: working (continued)", func() {
 			pr.c.res, pr.c.err = pr.c.orch.RunScopedAgentRich(pr.ctx, pr.c.leadScope, orchestrate.AgentSyncRun{
@@ -2633,7 +2633,7 @@ func (pr *probeRun) chatAfter() probeAction {
 			// only name identifier swaps, each one is verified against the
 			// findings before applying, and a malformed verdict changes
 			// nothing.
-			verifyPrompt := "You are a fact-checker. Compare the response against the raw worker findings below. Your ONLY job: find specific identifiers in the response — table names, service names, file paths, usernames, database names, column names, IP addresses, port numbers, version strings — that do NOT appear character-for-character in the findings (wrong underscore, wrong prefix or suffix, wrong capitalization).\n\n" +
+			verifyPrompt := "You are a fact-checker. Compare the response against the raw worker findings below. Your ONLY job: find specific identifiers in the response (table names, service names, file paths, usernames, database names, column names, IP addresses, port numbers, version strings) that do NOT appear character-for-character in the findings (wrong underscore, wrong prefix or suffix, wrong capitalization).\n\n" +
 				"Respond with ONLY a JSON array of corrections, each {\"wrong\": \"<exact string copied from the response>\", \"right\": \"<exact string copied from the findings>\"}. If every identifier matches exactly, respond with [].\n\n" +
 				"## Raw Worker Findings\n\n" + rawFindings
 			verifyResp, verifyErr := pr.a.WorkerChat(pr.ctx,
@@ -2728,7 +2728,7 @@ func (pr *probeRun) finishTurn() probeAction {
 			tooThin := len(newProfile) < minMapProfileChars ||
 				(prior != "" && len(newProfile) < len(prior)/3)
 			if pr.ctx.Err() != nil || tooThin {
-				emit(pr.id, probeEvent{Kind: "status", Text: "Map didn't produce a complete profile — keeping the previous one."})
+				emit(pr.id, probeEvent{Kind: "status", Text: "Map didn't produce a complete profile: keeping the previous one."})
 				Log("[servitor.map] kept prior profile for %q (new=%d chars, prior=%d chars, cancelled=%v)",
 					pr.appliance.Name, len(newProfile), len(prior), pr.ctx.Err() != nil)
 			} else {

@@ -55,7 +55,7 @@ func stubTools(tools []AgentToolDef, scripted map[string]string) []AgentToolDef 
 			if canned != "" {
 				return canned, nil
 			}
-			return fmt.Sprintf("[eval-stub] %s called — no real effect (eval stub mode).", name), nil
+			return fmt.Sprintf("[eval-stub] %s called: no real effect (eval stub mode).", name), nil
 		}
 	}
 	return out
@@ -177,7 +177,7 @@ func (T *OrchestrateApp) evalAgentCatalog(udb Database, agent AgentRecord) []Age
 		// Degrade to the old behaviour rather than grading nothing: a suite
 		// that reports "the agent called no tools" because the harness could
 		// not build a catalog is worse than one graded on a thin one.
-		Log("[orchestrate.evals] agent %q: catalog resolve failed (%v) — grading on the allowlist alone", agent.Name, err)
+		Log("[orchestrate.evals] agent %q: catalog resolve failed (%v), grading on the allowlist alone", agent.Name, err)
 		pool, _ = GetAgentTools(agent.AllowedTools...)
 	}
 	// The three sources an allowlist cannot name.

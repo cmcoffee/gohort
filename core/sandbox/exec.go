@@ -314,7 +314,7 @@ func RunSandboxedShellIn(ctx context.Context, spec ShellRun) SandboxedShellResul
 	hook, err := newHook(spec.WorkspaceDir, spec.HookCapabilities, spec.HookSession)
 	if err != nil || hook == nil {
 		if err != nil {
-			nfo.Log("[sandbox] hook init failed for iterate-and-test run (%v) — running without hook; gohort.fetch in this script will raise HookError", err)
+			nfo.Log("[sandbox] hook init failed for iterate-and-test run (%v): running without hook; gohort.fetch in this script will raise HookError", err)
 		}
 		return runSandboxedShellWithBinds(ctx, spec.withHookPath(""))
 	}
@@ -462,7 +462,7 @@ func explainMissingGohortModule(out string, remaps bool) string {
 	libDir := gohortLibDir()
 	note := "\n[gohort] The `gohort` helper package could not be deployed on this host, so it is " +
 		"not present in the sandbox. This is a DEPLOYMENT fault, not a problem with the arguments " +
-		"you passed, and no retry or different argument will get around it — say so plainly and do " +
+		"you passed, and no retry or different argument will get around it: say so plainly and do " +
 		"not work around it by guessing at what the tool would have returned. "
 	if libDir == "" {
 		note += "Nothing was written: the server log carries the reason under [hook/helpers]."
@@ -1039,7 +1039,7 @@ func scopedRunRefusal(sb sandboxBackend, readOnly []string) error {
 	return Error("this tool reads a registered path (" + paths + ") and the " + sb.name() +
 		" sandbox on this host cannot restrict reads to it: it confines writes and network, but its " +
 		"policy allows reads filesystem-wide, so the path_scope narrows nothing. Refusing rather " +
-		"than running a check that does not apply — the path would be readable and so would " +
+		"than running a check that does not apply: the path would be readable and so would " +
 		"everything around it. If the command only needs to RUN IN that folder rather than read it " +
 		"and nothing else, carry it as a working directory instead: that asks the sandbox to make one " +
 		"directory reachable, which is a promise every backend can keep, and it is refused nowhere. " +

@@ -55,7 +55,7 @@ const agentMemoryModalTemplate = `<script>
       function closeDlg() { _m.close(); }
       dlg.close = closeDlg; dlg.remove = closeDlg;
 
-      // Section visibility — set after the agent record loads.
+      // Section visibility: set after the agent record loads.
       // Sections always build in the DOM; we just hide via display:none
       // based on flags. If both disable_explicit AND disable_inferred
       // are set, the Memory toolbar button should be hidden by
@@ -63,7 +63,7 @@ const agentMemoryModalTemplate = `<script>
       // is defensive in case the modal opens anyway.
       var disabledNotice = document.createElement('div');
       disabledNotice.style.cssText = 'color:var(--text-mute);font-style:italic;padding:1rem 0;text-align:center;display:none';
-      disabledNotice.textContent = 'Both Explicit and Reference Memory are disabled for this agent — nothing to manage.';
+      disabledNotice.textContent = 'Both Explicit and Reference Memory are disabled for this agent: nothing to manage.';
       body.appendChild(disabledNotice);
 
       // --- Search section (base + 'memsearch') ---
@@ -227,7 +227,7 @@ const agentMemoryModalTemplate = `<script>
       // --- Needs attention (the memory audit) ---
       // Placed FIRST and rendered on open rather than behind a button: nobody
       // clicks an audit, and the note that motivated this survived months of
-      // not being looked for. Read-only by design — it points at the layer's
+      // not being looked for. Read-only by design: it points at the layer's
       // own editor below and the owner decides, because wrongly evicting
       // someone's memory is worse than a stale entry.
       var auditWrap = document.createElement('div');
@@ -237,7 +237,7 @@ const agentMemoryModalTemplate = `<script>
       auditWrap.appendChild(auditTitle);
       var auditIntro = document.createElement('p');
       auditIntro.style.cssText = 'margin:0 0 0.5rem;color:var(--text-mute);font-size:0.83rem';
-      auditIntro.textContent = 'Entries that name something no longer there, or that record work instead of state. Nothing is removed for you — fix each one in its section below.';
+      auditIntro.textContent = 'Entries that name something no longer there, or that record work instead of state. Nothing is removed for you: fix each one in its section below.';
       auditWrap.appendChild(auditIntro);
       var auditList = document.createElement('div');
       auditList.style.cssText = 'display:flex;flex-direction:column;gap:0.45rem';
@@ -299,7 +299,7 @@ const agentMemoryModalTemplate = `<script>
       // The agent rewrites this itself, unprompted, and it renders nearest the
       // TOP of every prompt. It was also the only memory layer with no panel
       // here, so a wrong note steered every turn with nowhere to go and look
-      // at it — which is how a stale parked tool call survived across sessions.
+      // at it, which is how a stale parked tool call survived across sessions.
       var notesWrap = document.createElement('div');
       notesWrap.style.cssText = 'margin-top:1rem;padding-top:0.8rem;border-top:1px solid var(--border)';
       var notesHeader = document.createElement('div');
@@ -314,7 +314,7 @@ const agentMemoryModalTemplate = `<script>
       notesWrap.appendChild(notesHeader);
       var notesIntro = document.createElement('p');
       notesIntro.style.cssText = 'margin:0 0 0.5rem;color:var(--text-mute);font-size:0.85rem';
-      notesIntro.textContent = 'The agent keeps its own running state here and rewrites it as work moves. Trim anything stale — especially a parked tool call ("pending task: some_tool with x=y"), which it cannot make from a note and will try to work around.';
+      notesIntro.textContent = 'The agent keeps its own running state here and rewrites it as work moves. Trim anything stale, especially a parked tool call ("pending task: some_tool with x=y"), which it cannot make from a note and will try to work around.';
       notesWrap.appendChild(notesIntro);
       var notesArea = document.createElement('textarea');
       notesArea.rows = 5;
@@ -360,7 +360,7 @@ const agentMemoryModalTemplate = `<script>
       function renderNotesSizes(sections) {
         // Only worth showing once there is a choice to make: naming the single
         // section of a one-section block tells the reader what they can already
-        // see. Editing goes stale until the next save, which is honest — this
+        // see. Editing goes stale until the next save, which is honest: this
         // is a measurement of what is STORED.
         if (!sections || sections.length < 2) { notesSizes.textContent = ''; return; }
         notesSizes.textContent = 'Sections: ' + sections.slice(0, 4).map(function(x) {
@@ -401,7 +401,7 @@ const agentMemoryModalTemplate = `<script>
           // Off, and this reader has no way to turn them on: an app agent's
           // flags live in its code-registered spec and its record is hidden
           // from the pickers. A section explaining a setting nobody can reach
-          // is worse than no section — it reads as something broken, and the
+          // is worse than no section: it reads as something broken, and the
           // remedy it names does not exist.
           notesWrap.style.display = 'none';
           return;
@@ -417,7 +417,7 @@ const agentMemoryModalTemplate = `<script>
         notesCount();
         renderNotesSizes(d.sections);
         if (d.from_seed) {
-          notesStatus.textContent = 'Showing the configured seed — the agent has not written notes yet.';
+          notesStatus.textContent = 'Showing the configured seed: the agent has not written notes yet.';
         } else if (d.updated_at && String(d.updated_at).indexOf('0001-01-01') !== 0) {
           notesStatus.textContent = 'Agent last rewrote this ' + new Date(d.updated_at).toLocaleString() + '.';
         }
@@ -425,7 +425,7 @@ const agentMemoryModalTemplate = `<script>
 
       // --- Reference Memory section (read-only list w/ delete + wipe) ---
       // Vector-grown derived chunks (memory_save findings, synthesis
-      // auto-ingest). Read-only — editing embeddings doesn't make
+      // auto-ingest). Read-only: editing embeddings doesn't make
       // sense; the affordance is "prune drift" not "rewrite."
       var inferredWrap = document.createElement('div');
       inferredWrap.style.cssText = 'margin-top:1rem;padding-top:0.8rem;border-top:1px solid var(--border)';
@@ -629,7 +629,7 @@ const agentMemoryModalTemplate = `<script>
         }
       }).catch(function(){});
 
-      // --- Footer: Cancel + Save (saves facts only — Inferred is
+      // --- Footer: Cancel + Save (saves facts only, Inferred is
       // per-entry delete; Notes auto-write paths are gone) ---
       var actions = document.createElement('div');
       actions.style.cssText = 'display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.8rem;padding-top:0.6rem;border-top:1px solid var(--border)';

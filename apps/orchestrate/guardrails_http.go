@@ -213,7 +213,7 @@ func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Re
 				}
 			}
 			if globals := len(prompts.EnabledGlobalRules()); own > 0 || globals > 0 {
-				Log("[orchestrate.guardrails] agent=%s guardrails SUSPENDED by owner — %d own rule(s) kept but NOT enforced; %d global rule(s) still apply", agentID, own, globals)
+				Log("[orchestrate.guardrails] agent=%s guardrails SUSPENDED by owner: %d own rule(s) kept but NOT enforced; %d global rule(s) still apply", agentID, own, globals)
 			}
 		}
 		// Counts BOTH sides of each list — submitted and kept. A silent drop
@@ -280,7 +280,7 @@ func (T *OrchestrateApp) handleAgentGuardrailTest(w http.ResponseWriter, r *http
 	}
 	if len(guardrailRules(agent)) == 0 {
 		writeJSON(w, map[string]any{"status": guardComply, "verdicts": []guardrailVerdict{},
-			"note": "This agent has no guardrails authored yet — add a rule to enable the check."})
+			"note": "This agent has no guardrails authored yet: add a rule to enable the check."})
 		return
 	}
 	// Owner unless the caller asked to stand in as someone else. This is the one
@@ -335,7 +335,7 @@ func (T *OrchestrateApp) handleAgentGuardrailTest(w http.ResponseWriter, r *http
 	} else if active[guardHookPreAction] && len(active) == 1 {
 		// Only reachable when an owner explicitly selects pre_action alone — it is
 		// no longer the default, precisely because it leaves conversation unjudged.
-		resp["note"] = "Only pre_action is active, which judges consequential tool calls — not ordinary replies. " +
+		resp["note"] = "Only pre_action is active, which judges consequential tool calls: not ordinary replies. " +
 			"A message that violates a rule but produces a prose answer with no such tool call is not judged. " +
 			"Add pre_input or pre_output to cover conversation."
 	}
@@ -366,7 +366,7 @@ func extractJSONObject(s string) string { return textutil.FirstJSONObject(s) }
 // the check itself failed: the agent should not learn that retrying might
 // succeed, which is exactly what a compromised context would try next.
 func guardrailNoVerdictMessage() string {
-	return "BLOCKED: this action could not be verified against the enforced guardrails, and this agent is configured to refuse unverified actions. The action did NOT happen. Do not retry it, and do not re-route around it — attempt a different approach, or tell the user plainly that you cannot complete this step."
+	return "BLOCKED: this action could not be verified against the enforced guardrails, and this agent is configured to refuse unverified actions. The action did NOT happen. Do not retry it, and do not re-route around it: attempt a different approach, or tell the user plainly that you cannot complete this step."
 }
 
 // handleAgentDeclineSuggest writes a set of declines in the AGENT'S VOICE.

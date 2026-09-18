@@ -45,7 +45,7 @@ func (t *TranscribeTool) Desc() string {
 	return "Transcribe an audio or video file in your workspace to text via the configured STT endpoint (whisper). " +
 		"Use AFTER a file lands in the workspace (e.g. via download_video, fetch_url, or user attachment) when the user asks what was said / for a transcript / for the spoken content. " +
 		"For video files, the audio stream is extracted via ffmpeg first. For audio files (mp3/wav/m4a/etc.), the bytes go directly to STT. " +
-		"Returns the recognized text. Don't call without a clear ask — STT costs a round trip and the user often only wants the file itself."
+		"Returns the recognized text. Don't call without a clear ask: STT costs a round trip and the user often only wants the file itself."
 }
 
 func (t *TranscribeTool) Params() map[string]ToolParam {
@@ -67,7 +67,7 @@ func (t *TranscribeTool) RunWithSession(args map[string]any, sess *ToolSession) 
 		return "", fmt.Errorf("transcribe requires a session with a workspace")
 	}
 	if !GetTranscribeConfig().Enabled {
-		return "", fmt.Errorf("transcription is not configured — enable it in the admin dashboard, under Audio Transcription (STT)")
+		return "", fmt.Errorf("transcription is not configured: enable it in the admin dashboard, under Audio Transcription (STT)")
 	}
 	relPath := strings.TrimSpace(StringArg(args, "path"))
 	if relPath == "" {
@@ -131,7 +131,7 @@ func (t *TranscribeTool) RunWithSession(args map[string]any, sess *ToolSession) 
 	// short description of the video. Make it explicit: this is
 	// reference content for the LLM's own understanding; only echo it
 	// verbatim when the user explicitly asked for the transcript.
-	return "[transcript for your reference — use to understand / describe the video; " +
+	return "[transcript for your reference: use to understand / describe the video; " +
 		"do NOT echo this verbatim to the user unless they explicitly asked for the transcript " +
 		"or to see what was said]\n\n" + text, nil
 }

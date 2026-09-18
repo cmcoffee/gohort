@@ -210,7 +210,7 @@ func pipelineMissingReason(user, id string) string {
 			}
 		}
 	}
-	return "no pipeline " + strconv.Quote(id) + " — it was deleted, or the share was withdrawn"
+	return "no pipeline " + strconv.Quote(id) + ", it was deleted, or the share was withdrawn"
 }
 
 // breakSchedulesForLostRecipients marks broken any schedule belonging to a user
@@ -241,7 +241,7 @@ func breakSchedulesForLostRecipients(def PipelineDef, before []string) {
 			}
 			MarkStandingAgentBroken(RootDB, u, sa.Name,
 				fmt.Sprintf("runs pipeline %q, which %s no longer shares with you", label, def.Owner))
-			Log("[orchestrate.pipelines] share of %q withdrawn from %q — their schedule %q was marked broken", label, u, sa.Name)
+			Log("[orchestrate.pipelines] share of %q withdrawn from %q: their schedule %q was marked broken", label, u, sa.Name)
 		}
 	}
 }

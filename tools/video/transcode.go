@@ -115,7 +115,7 @@ func transcodeVideoAction(args map[string]any, sess *ToolSession) (string, error
 	}
 	videoKbps := totalKbpsBudget - audioKbps
 	if videoKbps < 80 {
-		return "", fmt.Errorf("file too long (%.1fs) for %.1fMB cap — minimum encoder would need ~80kbps video and you've got %.0fkbps to work with. Either raise max_size_mb or trim the clip first", durSec, maxSizeMB, videoKbps)
+		return "", fmt.Errorf("file too long (%.1fs) for %.1fMB cap: minimum encoder would need ~80kbps video and you've got %.0fkbps to work with. Either raise max_size_mb or trim the clip first", durSec, maxSizeMB, videoKbps)
 	}
 
 	// Encode + verify loop. Each pass tries one scale step; if the
@@ -132,7 +132,7 @@ func transcodeVideoAction(args map[string]any, sess *ToolSession) (string, error
 		}
 	}
 	finalSize := fileSize(outputAbs)
-	return "", fmt.Errorf("could not shrink %q under %.1fMB cap even at 480p — final pass was %.1fMB. The clip is too high-motion for this bitrate target; trim its length or accept a higher cap",
+	return "", fmt.Errorf("could not shrink %q under %.1fMB cap even at 480p: final pass was %.1fMB. The clip is too high-motion for this bitrate target; trim its length or accept a higher cap",
 		path, maxSizeMB, float64(finalSize)/1024/1024)
 }
 

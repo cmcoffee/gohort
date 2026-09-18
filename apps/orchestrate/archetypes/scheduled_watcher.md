@@ -47,7 +47,7 @@
 ---
 # Archetype: Scheduled watcher
 
-An agent that checks something on a clock and reports what it found — every time it looks, or only when what it sees crosses a line.
+An agent that checks something on a clock and reports what it found: every time it looks, or only when what it sees crosses a line.
 
 A status endpoint, a queue, a page, a room: the subject varies, the shape does
 not. Half of building one is choosing the trigger, and that is the half that
@@ -58,7 +58,7 @@ tell me when it changes", "keep an eye on Y", "alert me if Z goes down", "let
 me know when the PR is merged", or any request whose shape is *a thing to
 look at* plus *a cadence*.
 
-## Choose the trigger FIRST — it decides everything else
+## Choose the trigger FIRST: it decides everything else
 
 This is the step that goes wrong, and it goes wrong in one direction: reaching
 for an event monitor because the request contains "every 5 minutes", when the
@@ -83,7 +83,7 @@ use a standing agent instead:
 
 A condition you cannot write down is a condition that does not exist.
 
-## Bounding it — say when it stops
+## Bounding it: say when it stops
 
 An unbounded watch runs until somebody remembers to stop it. If the user put a
 limit in the request, it belongs on the record, not in the agent's head:
@@ -97,19 +97,19 @@ limit in the request, it belongs on the record, not in the agent's head:
   `max_attempts` so a goal that never arrives stops and says so instead of
   going quiet.
 
-"Check it twice and stop" is `until` + `max_attempts` on a standing agent — not
+"Check it twice and stop" is `until` + `max_attempts` on a standing agent: not
 a monitor with a fire cap, because the monitor only counts fires it actually
 made.
 
-## Picking a monitor kind — cheapest that detects the change
+## Picking a monitor kind: cheapest that detects the change
 
-1. **`webhook`** — the external system POSTs to a minted URL. No polling at all.
-2. **`http_poll`** — fetches a URL, extracts a value (`json_path` or `regex`),
+1. **`webhook`**: the external system POSTs to a minted URL. No polling at all.
+2. **`http_poll`**: fetches a URL, extracts a value (`json_path` or `regex`),
    compares it (`compare_op` + `threshold`). No LLM.
-3. **`watch`** — invokes a TOOL each interval and hashes its output; wakes only
+3. **`watch`**: invokes a TOOL each interval and hashes its output; wakes only
    when the output changes. No LLM until something does. This is the one for
    "tell me when this chat/page/roster changes".
-4. **`poll`** — runs an LLM checker agent every interval. The most expensive by
+4. **`poll`**: runs an LLM checker agent every interval. The most expensive by
    a wide margin. Reserve it for a fuzzy condition no value or hash can express.
 
 `interval_seconds` has a floor of 30 and should match how fast the thing can
@@ -118,13 +118,13 @@ actually change; a human reply or a deploy is minutes, not seconds.
 **The edge-trigger rule, which surprises people:** a monitor fires on the
 crossing INTO the condition and re-arms only when a later check finds it false
 again. A condition that can never go false fires exactly once and then goes
-quiet forever — the schedule keeps running and nothing else happens. If the
+quiet forever: the schedule keeps running and nothing else happens. If the
 thing being watched stays tripped for long stretches, either that single alert
 is what you want, or the job was a standing agent all along.
 
 ## Composition (create_agent)
 
-- **allowed_tools**: only what looks at the subject — `fetch_url`,
+- **allowed_tools**: only what looks at the subject, `fetch_url`,
   `web_search`, `browse_page`, `screenshot_page` for the open web; the specific
   API or credential-backed tool when the subject is a system. A watcher reports;
   it should not carry authoring, messaging or destructive tools unless the user
@@ -142,20 +142,20 @@ is what you want, or the job was a standing agent all along.
   transient failure into a long expensive turn.
 - **gap_check** OFF. The question is fixed and narrow, and the extra pass costs
   a model call on every fire.
-- **rules vs. persona** — `rules` renders above memory and above the persona and
+- **rules vs. persona**: `rules` renders above memory and above the persona and
   wins every conflict, so what the watcher must never do belongs there: "report
-  what you observed this run and nothing else — if the check failed, say it
+  what you observed this run and nothing else: if the check failed, say it
   failed rather than reporting the last known value". A scheduled run has no
   reader in the moment to catch an invented number.
 
-## Orchestrator prompt — the shape
+## Orchestrator prompt: the shape
 
 The persona is a reporter with one beat. Cover these:
 
 1. **Look, once.** Call the one tool that answers the question. Do not go
    exploring: a scheduled run that wanders is a bill nobody watched.
 2. **Say what you observed, in the words a person can act on.** The value, the
-   state, the change since last time. Lead with it — a fire that buries its
+   state, the change since last time. Lead with it: a fire that buries its
    finding under process is a fire the owner learns to skip.
 3. **Say when you could not look.** A failed fetch, a timeout, an error is a
    REPORT, not silence and not a guess. Name what failed.
@@ -166,7 +166,7 @@ The persona is a reporter with one beat. Cover these:
 
 ## What the framework does on its own
 
-Say these to the user rather than building them into the prompt — they are
+Say these to the user rather than building them into the prompt: they are
 already true, and an agent told to do them again will do them twice:
 
 - A check that keeps failing stops itself after three consecutive failures and
@@ -176,4 +176,4 @@ already true, and an agent told to do them again will do them twice:
 - A watch that goes a long time with nothing to report pauses itself, kept, and
   resumes with one click.
 - A stopped schedule states WHY on its row: finished, paused, stalled, or needs
-  attention — with the reason it stopped.
+  attention, with the reason it stopped.

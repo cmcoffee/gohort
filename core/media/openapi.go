@@ -113,7 +113,7 @@ func renderOperation(specTitle, method, route string, op map[string]any, sharedP
 	// label and is often all a ranked result shows.
 	fmt.Fprintf(&b, "## %s %s", method, route)
 	if summary != "" {
-		fmt.Fprintf(&b, " — %s", summary)
+		fmt.Fprintf(&b, ", %s", summary)
 	}
 	b.WriteString("\n\n")
 	// Repeated inside the body too: the heading may be stripped or truncated by
@@ -186,7 +186,7 @@ func paramList(v any) []string {
 			line += " " + t
 		}
 		if d := str(p, "description"); d != "" {
-			line += " — " + oneLine(d)
+			line += " · " + oneLine(d)
 		}
 		out = append(out, line)
 	}
@@ -238,7 +238,7 @@ func responseList(v any) []string {
 		line := "`" + c + "`"
 		if r, ok := m[c].(map[string]any); ok {
 			if d := str(r, "description"); d != "" {
-				line += " — " + oneLine(d)
+				line += " · " + oneLine(d)
 			}
 			if content, ok := r["content"].(map[string]any); ok {
 				for ct, entry := range content {

@@ -52,16 +52,16 @@ func BuildDocAssistPrompt(name, section, draft, refContext string) string {
 		fmt.Fprintf(&b, "## Document\n\n%s\n\n", strings.TrimSpace(name))
 	}
 	if section != "" {
-		fmt.Fprintf(&b, "## What you are writing\n\nThe %q section. Return that section's body only — no heading, and do not restate what other sections cover.\n\n", section)
+		fmt.Fprintf(&b, "## What you are writing\n\nThe %q section. Return that section's body only: no heading, and do not restate what other sections cover.\n\n", section)
 		if strings.TrimSpace(draft) == "" {
-			b.WriteString("## Current section\n\n(empty — nothing written yet)\n\n")
+			b.WriteString("## Current section\n\n(empty: nothing written yet)\n\n")
 		} else {
 			fmt.Fprintf(&b, "## Current section\n\n%s\n\n", draft)
 		}
 	} else {
 		b.WriteString("## What you are writing\n\nThe whole document.\n\n")
 		if strings.TrimSpace(draft) == "" {
-			b.WriteString("## Current draft\n\n(empty — nothing written yet)\n\n")
+			b.WriteString("## Current draft\n\n(empty: nothing written yet)\n\n")
 		} else {
 			fmt.Fprintf(&b, "## Current draft\n\n%s\n\n", draft)
 		}

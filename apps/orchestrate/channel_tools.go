@@ -235,7 +235,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 		{
 			Tool: Tool{
 				Name:        "list_chats",
-				Description: "List the conversations on the channels YOU can reach — your own, plus any inherited from the agent that dispatched you — with display name, handle, and chat id, so you can read or message one. Scoped to those channels only (you can't see chats outside them). Read-only.",
+				Description: "List the conversations on the channels YOU can reach (your own, plus any inherited from the agent that dispatched you) with display name, handle, and chat id, so you can read or message one. Scoped to those channels only (you can't see chats outside them). Read-only.",
 				Parameters:  map[string]ToolParam{"limit": {Type: "number", Description: "Max conversations (default 20)."}},
 			},
 			Handler: func(ctx context.Context, args map[string]any) (string, error) {
@@ -269,7 +269,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 		{
 			Tool: Tool{
 				Name:        "read_chat",
-				Description: "Read recent messages from one conversation, plus its participants and their handles (phone/email) — so in a group you can reach a specific person by number. Use a chat_id from list_chats. Read-only.",
+				Description: "Read recent messages from one conversation, plus its participants and their handles (phone/email), so in a group you can reach a specific person by number. Use a chat_id from list_chats. Read-only.",
 				Parameters: map[string]ToolParam{
 					"chat_id": {Type: "string", Description: "The conversation's chat id (from list_chats)."},
 					"limit":   {Type: "number", Description: "How many recent messages (default 20)."},
@@ -290,7 +290,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 					}
 				}
 				if !ok {
-					return "", fmt.Errorf("no chat %q on your channels — use a chat_id from list_chats", chatID)
+					return "", fmt.Errorf("no chat %q on your channels: use a chat_id from list_chats", chatID)
 				}
 				msgs := ct.Messages(owner, chatID, oArgInt(args, "limit"))
 				if len(msgs) == 0 {
@@ -332,7 +332,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 		{
 			Tool: Tool{
 				Name:        "list_members",
-				Description: "List a conversation's participants with their handles (phone/email) — the roster you need to reach a specific person in a group by number. Use a chat_id from list_chats. Read-only.",
+				Description: "List a conversation's participants with their handles (phone/email): the roster you need to reach a specific person in a group by number. Use a chat_id from list_chats. Read-only.",
 				Parameters: map[string]ToolParam{
 					"chat_id": {Type: "string", Description: "The conversation's chat id (from list_chats)."},
 				},
@@ -351,7 +351,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 					}
 				}
 				if !ok {
-					return "", fmt.Errorf("no chat %q on your channels — use a chat_id from list_chats", chatID)
+					return "", fmt.Errorf("no chat %q on your channels: use a chat_id from list_chats", chatID)
 				}
 				members := ct.Members(owner, chatID)
 				if len(members) == 0 {
@@ -363,7 +363,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 					if nm == "" {
 						nm = m.Handle
 					}
-					fmt.Fprintf(&b, "- %s — %s\n", nm, m.Handle)
+					fmt.Fprintf(&b, "- %s: %s\n", nm, m.Handle)
 				}
 				return strings.TrimSpace(b.String()), nil
 			},
@@ -371,14 +371,14 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 		{
 			Tool: Tool{
 				Name:        "send_message",
-				Description: "Send a message OUT over one of the channels you can reach (your own, or one inherited from the agent that dispatched you) — to a contact or group on your channels. Set `to` to a display name, handle (phone/email), or chat_id from list_chats. Scoped to those channels only. To send an image/file, pass its workspace path in `attachments`. NOTE: if you are simply REPLYING to someone who just messaged you, you don't need this tool — put your text in your reply and attach images to it; it delivers in-thread. Use this to reach a DIFFERENT contact/group or to message proactively. Contacting a real person is consequential, so it queues for the user's approval unless they've pre-authorized that recipient (replies in-thread send without a gate).",
+				Description: "Send a message OUT over one of the channels you can reach (your own, or one inherited from the agent that dispatched you), to a contact or group on your channels. Set `to` to a display name, handle (phone/email), or chat_id from list_chats. Scoped to those channels only. To send an image/file, pass its workspace path in `attachments`. NOTE: if you are simply REPLYING to someone who just messaged you, you don't need this tool, put your text in your reply and attach images to it; it delivers in-thread. Use this to reach a DIFFERENT contact/group or to message proactively. Contacting a real person is consequential, so it queues for the user's approval unless they've pre-authorized that recipient (replies in-thread send without a gate).",
 				Parameters: map[string]ToolParam{
 					"to":          {Type: "string", Description: "Recipient as shown by list_chats: a display name, handle (phone/email), or chat_id. (Alias: chat_id.)"},
 					"text":        {Type: "string", Description: "The message text to send to the channel. (Alias: message.)"},
-					"chat_id":     {Type: "string", Description: "Alias for `to` (a conversation's chat id) — accepted for compatibility; prefer `to`."},
-					"message":     {Type: "string", Description: "Alias for `text` — accepted for compatibility; prefer `text`."},
+					"chat_id":     {Type: "string", Description: "Alias for `to` (a conversation's chat id): accepted for compatibility; prefer `to`."},
+					"message":     {Type: "string", Description: "Alias for `text`: accepted for compatibility; prefer `text`."},
 					"attachments": {Type: "array", Items: &ToolParam{Type: "string"}, Description: attachmentsParamDesc},
-					"attachment":  {Type: "string", Description: "Singular alias for `attachments` — a single attachment ref (workspace file, media id, or image/video URL). Accepted for compatibility; prefer `attachments`."},
+					"attachment":  {Type: "string", Description: "Singular alias for `attachments`: a single attachment ref (workspace file, media id, or image/video URL). Accepted for compatibility; prefer `attachments`."},
 				},
 				// No hard-required set: a recipient may arrive as `to` OR `chat_id`
 				// and the body as `text` OR `message`; the handler validates the pair.
@@ -397,13 +397,13 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 				}
 				chatID, handle, ok := resolve(to)
 				if !ok {
-					return "", fmt.Errorf("no recipient %q on your channels — use a name, handle, or chat_id from list_chats", to)
+					return "", fmt.Errorf("no recipient %q on your channels: use a name, handle, or chat_id from list_chats", to)
 				}
 				recip := operatorRecipientKey(chatID, handle)
 				label := chFirst(handle, chatID)
 				images := messageImages(sess, args, text)
 				if IsContactBlocked(RootDB, owner, recip) {
-					return fmt.Sprintf("Messaging %s is blocked in the user's permission settings — not sent.", label), nil
+					return fmt.Sprintf("Messaging %s is blocked in the user's permission settings: not sent.", label), nil
 				}
 				// Replying to the conversation that just messaged us is in-thread,
 				// not a proactive reach-out — deliver without the approval queue.
@@ -448,7 +448,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 				if sess != nil && sess.PendingApprovalPrompt != nil {
 					sess.PendingApprovalPrompt(a)
 				}
-				return fmt.Sprintf("Queued a message to %s for the user's approval (id %s) — it sends once approved.", label, a.ID), nil
+				return fmt.Sprintf("Queued a message to %s for the user's approval (id %s): it sends once approved.", label, a.ID), nil
 			},
 		},
 	}
@@ -462,10 +462,10 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 		tools = append(tools, AgentToolDef{
 			Tool: Tool{
 				Name: "search_chat",
-				Description: "Search past messages on your channels for a word or phrase — the way to answer \"what was the last thing said about X?\" from a conversation you aren't currently reading. " +
+				Description: "Search past messages on your channels for a word or phrase: the way to answer \"what was the last thing said about X?\" from a conversation you aren't currently reading. " +
 					"Searches the FULL stored history (read_chat only shows the recent tail), newest matches first. Case-insensitive. Read-only.",
 				Parameters: map[string]ToolParam{
-					"query":   {Type: "string", Description: "The word or phrase to find — a topic, a name, an error string."},
+					"query":   {Type: "string", Description: "The word or phrase to find: a topic, a name, an error string."},
 					"chat_id": {Type: "string", Description: "Optional: limit to one conversation (chat_id from list_chats). Omit to search every conversation on your channels."},
 					"limit":   {Type: "number", Description: "Max matches to return (default 10)."},
 				},
@@ -507,7 +507,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 						}
 					}
 					if !inScope {
-						return "", fmt.Errorf("no chat %q on your channels — use a chat_id from list_chats", chatID)
+						return "", fmt.Errorf("no chat %q on your channels: use a chat_id from list_chats", chatID)
 					}
 				}
 				if len(hits) == 0 {
@@ -523,7 +523,7 @@ func channelChatTools(sess *ToolSession, owner, agentID string, via ...string) [
 				var b strings.Builder
 				for _, h := range hits {
 					who := chFirst(h.line.Sender, h.line.Role)
-					fmt.Fprintf(&b, "[%s] %s — %s: %s\n", h.chat, localChatTime(h.line.Timestamp), who, h.line.Text)
+					fmt.Fprintf(&b, "[%s] %s, %s: %s\n", h.chat, localChatTime(h.line.Timestamp), who, h.line.Text)
 				}
 				return strings.TrimSpace(b.String()), nil
 			},

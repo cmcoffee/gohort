@@ -166,7 +166,7 @@ func scrubNote(replaced []string) string {
 		return ""
 	}
 	who := strings.Join(replaced, ", ")
-	return fmt.Sprintf(" NOTE: your prompt named %s. Their picture was attached, so the name was replaced with which image they are in before the render — "+
+	return fmt.Sprintf(" NOTE: your prompt named %s. Their picture was attached, so the name was replaced with which image they are in before the render: "+
 		"a name means nothing to the renderer, and at worst pulls in whoever it thinks that name looks like, which is how an attached reference gets ignored. "+
 		"Say where someone is, not who they are: \"the person in the first image\".", who)
 }
@@ -276,11 +276,11 @@ func refuseInventedReference(sess *ToolSession, prompt string, refs []string) er
 	if claim == "" {
 		return nil // iterating on your own render, which is the point of the ring
 	}
-	fix := "If you meant to change a picture you made, say what should CHANGE and drop the likeness wording — it is your render, so there is no likeness to keep."
+	fix := "If you meant to change a picture you made, say what should CHANGE and drop the likeness wording: it is your render, so there is no likeness to keep."
 	if given := givenRefsFor(sess); given != "" {
 		fix = "Pass a picture you were GIVEN instead: " + given + ". " + fix
 	} else {
-		fix = "You have not been given a picture of anyone, so there is no reference to pass — ask for one. " + fix
+		fix = "You have not been given a picture of anyone, so there is no reference to pass: ask for one. " + fix
 	}
 	return fmt.Errorf("nothing was rendered. Your prompt says %q, but every picture you passed is one you MADE yourself. "+
 		"A generated face is not a photograph of anyone: it was invented, and using it as the reference for another render "+
@@ -346,7 +346,7 @@ func refuseUnpassedPeople(sess *ToolSession, prompt string, attached []ImageSubj
 	if len(missed) == 0 {
 		return nil
 	}
-	return fmt.Errorf("nothing was rendered. Your prompt names %s, and you HAVE a picture of them — rendering now would invent a face instead of using theirs, which is the whole failure the library exists to prevent. "+
+	return fmt.Errorf("nothing was rendered. Your prompt names %s, and you HAVE a picture of them: rendering now would invent a face instead of using theirs, which is the whole failure the library exists to prevent. "+
 		"Put the id in images and take the name out of the prompt; refer to them by position instead (\"the person in the first image\"). "+
 		"If that word did not mean a person here, reword it so it is not capitalized and call again",
 		strings.Join(missed, ", "))

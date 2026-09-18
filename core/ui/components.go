@@ -73,6 +73,10 @@ type SectionSpec struct {
 	// Help renders under the section, like FormField.Help does for an
 	// input. Say what belongs in this area.
 	Help string `json:"help,omitempty"`
+	// Detail is the long version, behind an ⓘ icon on the section's help
+	// line. Help says what belongs in the area in one line; Detail says
+	// why, what a good one looks like, and what goes wrong.
+	Detail string `json:"detail,omitempty"`
 	// Placeholder shows inside the empty editor. Falls back to Help.
 	Placeholder string `json:"placeholder,omitempty"`
 	// Required marks the slot visually while it's empty. Advisory only —
@@ -99,6 +103,11 @@ type SelectOption struct {
 	Label string `json:"label,omitempty"`
 	Help  string `json:"help,omitempty"`
 	Group string `json:"group,omitempty"`
+	// Detail is this option's long explanation, behind an ⓘ icon beside
+	// its label in a checklist. Same split as FormField.Detail: Help is
+	// the scannable line, Detail is what the reader wants once they have
+	// stopped on this one option.
+	Detail string `json:"detail,omitempty"`
 	// Confirm, when set, asks the user to confirm before this option is
 	// applied (select + segmented row actions). Use for a consequential
 	// choice — a lockdown level that drops access, an irreversible tier — so

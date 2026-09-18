@@ -115,7 +115,7 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if _, ok := GetRemotePeer(req.PeerName); !ok {
-				http.Error(w, fmt.Sprintf("no peer named %q is registered — add it under Peers first", req.PeerName), http.StatusBadRequest)
+				http.Error(w, fmt.Sprintf("no peer named %q is registered: add it under Peers first", req.PeerName), http.StatusBadRequest)
 				return
 			}
 			if req.Name == "" {
@@ -171,7 +171,7 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 		// changed.
 		req.LeadTierAvailable = false
 		if !AllLLMsPrivate() && (req.OrchestratorTier == "lead" || req.WorkerTier == "lead") {
-			http.Error(w, "pinning this appliance to the lead model needs Admin → LLMs → Model Privacy turned on — "+
+			http.Error(w, "pinning this appliance to the lead model needs Admin → LLMs → Model Privacy turned on: "+
 				"Servitor handles credentials and log contents, so it stays on the worker until every configured model is private",
 				http.StatusBadRequest)
 			return

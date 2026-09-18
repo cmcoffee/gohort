@@ -52,19 +52,19 @@ func listGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		// why deleting the session copy doesn't stick (the record
 		// reloads it each turn). Say so, and say how to remove it.
 		case sess.BundledToolNames[t.Name]:
-			tag = " [agent-bundled — attached to this agent's record; delete removes it from the record too]"
+			tag = " [agent-bundled: attached to this agent's record; delete removes it from the record too]"
 		case persistentByName[t.Name]:
 			tag = " [persistent]"
 		case pendingByName[t.Name]:
 			tag = " [pending approval]"
 		case sharedOwners[t.Name] != "" && sharedOwners[t.Name] != sess.Username:
-			tag = " [shared deployment-wide — owned by " + sharedOwners[t.Name] + "; read-only to you, copy under a new name to change it]"
+			tag = " [shared deployment-wide: owned by " + sharedOwners[t.Name] + "; read-only to you, copy under a new name to change it]"
 		case sharedOwners[t.Name] == sess.Username:
-			tag = " [persistent, shared deployment-wide — you own it; edits affect every user]"
+			tag = " [persistent, shared deployment-wide: you own it; edits affect every user]"
 		default:
 			tag = " [session-only]"
 		}
-		fmt.Fprintf(&b, "%d. %s%s [%s] — %s\n", i+1, t.Name, tag, modeLabel(t.Mode), t.Description)
+		fmt.Fprintf(&b, "%d. %s%s [%s]: %s\n", i+1, t.Name, tag, modeLabel(t.Mode), t.Description)
 	}
 	// Orphan pending: tools queued for approval that aren't currently in
 	// sess.TempTools (e.g. requested in a prior session, still waiting).
@@ -79,13 +79,13 @@ func listGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		}
 	}
 	if len(orphanPending) > 0 {
-		b.WriteString("\nPending approval (queued but not yet usable in this session — admin must approve):\n")
+		b.WriteString("\nPending approval (queued but not yet usable in this session, admin must approve):\n")
 		for _, name := range orphanPending {
 			mode := pendingModeByName[name]
 			if mode == "" {
 				mode = "shell"
 			}
-			fmt.Fprintf(&b, "  - %s [%s] — %s\n", name, modeLabel(mode), pendingDescByName[name])
+			fmt.Fprintf(&b, "  - %s [%s]: %s\n", name, modeLabel(mode), pendingDescByName[name])
 		}
 	}
 	// Approved-but-not-loaded: tools in the user's persistent pool that
@@ -104,13 +104,13 @@ func listGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	sort.Strings(orphanPersistent)
 	if len(orphanPersistent) > 0 {
-		b.WriteString("\nApproved & in your tool pool, but NOT loaded in this session (exists already — inspect with tool_def get, or load_tool it to call/test it; don't re-author a duplicate):\n")
+		b.WriteString("\nApproved & in your tool pool, but NOT loaded in this session (exists already, inspect with tool_def get, or load_tool it to call/test it; don't re-author a duplicate):\n")
 		for _, name := range orphanPersistent {
 			mode := persistentModeByName[name]
 			if mode == "" {
 				mode = "shell"
 			}
-			fmt.Fprintf(&b, "  - %s [%s] — %s\n", name, modeLabel(mode), persistentDescByName[name])
+			fmt.Fprintf(&b, "  - %s [%s]: %s\n", name, modeLabel(mode), persistentDescByName[name])
 		}
 	}
 	// Orphaned: the last agent carrying the tool was deleted, so the record
@@ -126,7 +126,7 @@ func listGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		}
 		sort.Slice(orphaned, func(i, j int) bool { return orphaned[i].Tool.Name < orphaned[j].Tool.Name })
 		if len(orphaned) > 0 {
-			b.WriteString("\nORPHANED — definition survives but the tool is NOT callable by anyone (its last carrying agent was deleted). Re-home in Admin › Orphaned Tools, or tool_def get then re-create it. Do NOT try to reach these another way:\n")
+			b.WriteString("\nORPHANED: definition survives but the tool is NOT callable by anyone (its last carrying agent was deleted). Re-home in Admin › Orphaned Tools, or tool_def get then re-create it. Do NOT try to reach these another way:\n")
 			for _, o := range orphaned {
 				mode := o.Tool.Mode
 				if mode == "" {
@@ -136,7 +136,7 @@ func listGrouped(args map[string]any, sess *ToolSession) (string, error) {
 				if former == "" {
 					former = "deleted agent"
 				}
-				fmt.Fprintf(&b, "  - %s [%s] (was on %s) — %s\n", o.Tool.Name, modeLabel(mode), former, o.Tool.Description)
+				fmt.Fprintf(&b, "  - %s [%s] (was on %s): %s\n", o.Tool.Name, modeLabel(mode), former, o.Tool.Description)
 			}
 		}
 	}

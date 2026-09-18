@@ -166,17 +166,20 @@ func init() {
 	// the model to regenerate a checkable miss; the hard cap is a runaway guard
 	// set well above it so genuine multi-image turns ("make me 4 logos") aren't
 	// blocked. Both are per-turn (the attempt counter is session-scoped).
-	RegisterTunable(TunableSpec{Key: "tune_image_max_regens", Category: "Limits", Label: "Image auto-regeneration budget", Help: "How many times the model may regenerate an image to fix a CHECKABLE miss (a specific count, named object, or required text) before it must deliver the best result. 0 disables auto-retry — the model still SEES the image (Tier 1) but is told to caveat rather than retry.", Kind: KindInt, Default: 2, Min: 0, Max: 5})
-	RegisterTunable(TunableSpec{Key: "tune_image_gen_hard_cap", Category: "Limits", Label: "Image generations per turn (hard cap)", Help: "Absolute ceiling on generate_image calls in one turn — a runaway guard, not the retry budget. Set well above the auto-regeneration budget so legitimate multi-image requests still work.", Kind: KindInt, Default: 10, Min: 1, Max: 50})
+	RegisterTunable(TunableSpec{Key: "tune_image_max_regens", Category: "Limits", Label: "Image auto-regeneration budget", Help: "How many times the model may regenerate an image to fix a CHECKABLE miss.",
+		Detail: "A checkable miss is a specific count, a named object, or required text. After the budget it must deliver the best result. 0 disables auto-retry: the model still SEES the image (Tier 1) but is told to caveat rather than retry.", Kind: KindInt, Default: 2, Min: 0, Max: 5})
+	RegisterTunable(TunableSpec{Key: "tune_image_gen_hard_cap", Category: "Limits", Label: "Image generations per turn (hard cap)", Help: "Absolute ceiling on generate_image calls in one turn: a runaway guard, not the retry budget.",
+		Detail: "Set it well above the auto-regeneration budget, so legitimate multi-image requests still work.", Kind: KindInt, Default: 10, Min: 1, Max: 50})
 	// Whether a render waits or goes to the background. On, the conversation is
 	// never held open by a picture: the reply comes straight back and each
 	// finished image arrives as its own message. Off, the generic duration rule
 	// applies and only renders slower than the detach threshold go background —
 	// which for a twenty-second generate means never.
 	RegisterTunable(TunableSpec{Key: "tune_image_always_detach", Category: "Limits",
-		Label: "Run image renders in the background",
-		Help:  "Send every image generate/edit to the background instead of holding the turn open for it. The agent answers immediately and each finished picture arrives as its own message, so a set of variations is delivered one at a time rather than after the whole batch. Turn off to keep renders inline unless they are slower than the detach threshold.",
-		Kind:  KindBool, Default: 1, Min: 0, Max: 1})
+		Label:  "Run image renders in the background",
+		Help:   "Send every image generate and edit to the background instead of holding the turn open.",
+		Detail: "The agent answers immediately and each finished picture arrives as its own message, so a set of variations is delivered one at a time rather than after the whole batch. Turn it off to keep renders inline unless they are slower than the detach threshold.",
+		Kind:   KindBool, Default: 1, Min: 0, Max: 1})
 }
 
 // imageMaxRegens / imageGenHardCap read the Tier-2 knobs with safe fallbacks.
@@ -211,27 +214,27 @@ func ImageGenHardCap() int {
 // objective criteria and whether they were met) and tracks the remaining
 // regeneration budget so the retry chain is bounded.
 func imageVerifyText(attempt, maxRegens int) string {
-	const base = "IMAGE:generated. The image is shown to you now — verify it against what the user EXPLICITLY asked for: a specific count, a named object, or required/visible text. "
+	const base = "IMAGE:generated. The image is shown to you now, verify it against what the user EXPLICITLY asked for: a specific count, a named object, or required/visible text. "
 	const tail = " Do not describe or try to open a file path."
 	if maxRegens <= 0 {
 		return base + "If it misses an explicit requirement, tell the user plainly; otherwise deliver it." + tail
 	}
 	if regensLeft := maxRegens - (attempt - 1); regensLeft > 0 {
-		return base + fmt.Sprintf("If it FAILS one of those checkable requirements, call generate_image again with a CORRECTED prompt that fixes the specific miss (do not repeat the same prompt) and refine_of_previous=true — %d regeneration(s) left. Regenerate ONLY for such explicit requirements, never for aesthetic or stylistic preference. Otherwise deliver it.", regensLeft) + tail
+		return base + fmt.Sprintf("If it FAILS one of those checkable requirements, call generate_image again with a CORRECTED prompt that fixes the specific miss (do not repeat the same prompt) and refine_of_previous=true: %d regeneration(s) left. Regenerate ONLY for such explicit requirements, never for aesthetic or stylistic preference. Otherwise deliver it.", regensLeft) + tail
 	}
-	return base + "The auto-regeneration budget for this image is spent — do NOT call generate_image again to retry it. Deliver this result; if it still falls short of an explicit requirement, tell the user plainly rather than retrying." + tail
+	return base + "The auto-regeneration budget for this image is spent: do NOT call generate_image again to retry it. Deliver this result; if it still falls short of an explicit requirement, tell the user plainly rather than retrying." + tail
 }
 
 type generateImageChatTool struct{}
 
 func (t *generateImageChatTool) Name() string { return "generate_image" }
 func (t *generateImageChatTool) Desc() string {
-	return "Generate a NEW image from a text description via the configured image-generation backend and return the image URL. USE ONLY when the user explicitly asks to CREATE, DRAW, MAKE, or GENERATE a fresh image — e.g. \"draw me a dragon\", \"create a logo\", \"generate an illustration\". DO NOT use this for finding existing images (use find_image), downloading from a known URL (use fetch_image), or capturing a webpage (use screenshot_page). For real-world reference images, generation is the wrong tool — it produces invented content, not real photos."
+	return "Generate a NEW image from a text description via the configured image-generation backend and return the image URL. USE ONLY when the user explicitly asks to CREATE, DRAW, MAKE, or GENERATE a fresh image: e.g. \"draw me a dragon\", \"create a logo\", \"generate an illustration\". DO NOT use this for finding existing images (use find_image), downloading from a known URL (use fetch_image), or capturing a webpage (use screenshot_page). For real-world reference images, generation is the wrong tool: it produces invented content, not real photos."
 }
 func (t *generateImageChatTool) Params() map[string]ToolParam {
 	return map[string]ToolParam{
 		"prompt":             {Type: "string", Description: "A detailed description of the image to generate."},
-		"refine_of_previous": {Type: "boolean", Description: "Set true ONLY when this call regenerates the PREVIOUS image to fix a specific checkable miss (a failed count, named object, or required text). Leave false or omit for a new, distinct image — that starts a fresh regeneration budget."},
+		"refine_of_previous": {Type: "boolean", Description: "Set true ONLY when this call regenerates the PREVIOUS image to fix a specific checkable miss (a failed count, named object, or required text). Leave false or omit for a new, distinct image, that starts a fresh regeneration budget."},
 	}
 }
 func (t *generateImageChatTool) Run(args map[string]any) (string, error) {
@@ -274,7 +277,7 @@ func (t *generateImageChatTool) RunWithSession(args map[string]any, sess *ToolSe
 	refine, _ := args["refine_of_previous"].(bool)
 	attempt, total := sess.NextImageAttempt(refine)
 	if hardCap := ImageGenHardCap(); total > hardCap {
-		return "", fmt.Errorf("image generation limit reached for this turn (%d calls) — deliver the best result so far or tell the user what fell short instead of regenerating again", hardCap)
+		return "", fmt.Errorf("image generation limit reached for this turn (%d calls): deliver the best result so far or tell the user what fell short instead of regenerating again", hardCap)
 	}
 	// On a refine (chain length > 1), tell the user the wait is deliberate
 	// (nil-safe: apps without live status just ignore it).

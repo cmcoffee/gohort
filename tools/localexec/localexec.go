@@ -42,7 +42,7 @@ type RunLocalTool struct{}
 func (t *RunLocalTool) Name() string { return "run_local" }
 
 func (t *RunLocalTool) Desc() string {
-	return "Run a shell command in your workspace sandbox. Whenever this host has a sandbox, the workspace is the only writable path and credentials (.ssh, .aws, .gnupg, .kube, keychains) are unreadable. What else is visible differs: bubblewrap builds a mount namespace where nothing outside the workspace exists at all, while the macOS backend confines writes and network and leaves other reads open — so do not rely on a read outside the workspace either succeeding or failing. Network is allowed. Each call requires explicit user approval. Output is capped at 10,000 characters; the command is killed after 90 seconds."
+	return "Run a shell command in your workspace sandbox. Whenever this host has a sandbox, the workspace is the only writable path and credentials (.ssh, .aws, .gnupg, .kube, keychains) are unreadable. What else is visible differs: bubblewrap builds a mount namespace where nothing outside the workspace exists at all, while the macOS backend confines writes and network and leaves other reads open, so do not rely on a read outside the workspace either succeeding or failing. Network is allowed. Each call requires explicit user approval. Output is capped at 10,000 characters; the command is killed after 90 seconds."
 }
 
 func (t *RunLocalTool) Caps() []Capability {
@@ -59,7 +59,7 @@ func (t *RunLocalTool) Params() map[string]ToolParam {
 	return map[string]ToolParam{
 		"command": {
 			Type:        "string",
-			Description: "The shell command to run inside the workspace sandbox. Standard sh -c semantics — pipes, redirects, and quoting work normally. Output (stdout+stderr combined) is returned.",
+			Description: "The shell command to run inside the workspace sandbox. Standard sh -c semantics: pipes, redirects, and quoting work normally. Output (stdout+stderr combined) is returned.",
 		},
 	}
 }
@@ -123,7 +123,7 @@ func (t *RunLocalTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	}
 
 	if ctx.Err() == context.DeadlineExceeded {
-		notice := fmt.Sprintf("\n[TIMED OUT after %s — command killed. Use a bounded variant if the command does not terminate on its own.]", commandTimeout)
+		notice := fmt.Sprintf("\n[TIMED OUT after %s: command killed. Use a bounded variant if the command does not terminate on its own.]", commandTimeout)
 		if output == "" {
 			return strings.TrimPrefix(notice, "\n"), nil
 		}
@@ -137,7 +137,7 @@ func (t *RunLocalTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 			// workspace dir is gone. "[exit code -1 — no output]" would claim
 			// the command ran and printed nothing, which sends the caller
 			// rewriting a command that never executed in the first place.
-			notice := fmt.Sprintf("[COMMAND DID NOT RUN — %v. This is a fault in the execution path, not a "+
+			notice := fmt.Sprintf("[COMMAND DID NOT RUN: %v. This is a fault in the execution path, not a "+
 				"result about the command; re-running variations of it will fail identically.]", runErr)
 			if output == "" {
 				return notice, nil
@@ -145,7 +145,7 @@ func (t *RunLocalTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 			return output + "\n" + notice, nil
 		}
 		if output == "" {
-			return fmt.Sprintf("[exit code %d — no output]", exitErr.ExitCode()), nil
+			return fmt.Sprintf("[exit code %d: no output]", exitErr.ExitCode()), nil
 		}
 		return output + fmt.Sprintf("\n[exit code %d]", exitErr.ExitCode()), nil
 	}

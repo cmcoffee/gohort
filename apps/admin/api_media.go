@@ -76,7 +76,7 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 			return
 		}
 		if !req.Enabled {
-			writeTestResult(w, false, "", "embeddings are disabled — flip the toggle on first")
+			writeTestResult(w, false, "", "embeddings are disabled: flip the toggle on first")
 			return
 		}
 		// Resolve a peer selection the same way the SAVE path does. Without
@@ -122,7 +122,7 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 				where += " (" + p.Instance + ")"
 			}
 		}
-		writeTestResult(w, true, fmt.Sprintf("OK — %d-dim embedding from %s via %s", len(vec), modelLabel, where), "")
+		writeTestResult(w, true, fmt.Sprintf("OK: %d-dim embedding from %s via %s", len(vec), modelLabel, where), "")
 	})
 
 	// /api/embeddings/models — probe the saved embedding endpoint for
@@ -262,7 +262,7 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 			return
 		}
 		if !req.Enabled {
-			writeTestResult(w, false, "", "transcription is disabled — flip the toggle on first")
+			writeTestResult(w, false, "", "transcription is disabled: flip the toggle on first")
 			return
 		}
 		// Resolve a peer selection the same way the SAVE path does. Without
@@ -327,7 +327,7 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 			writeTestResult(w, true, fmt.Sprintf("Endpoint reachable + /models OK (HTTP %d)", status), "")
 			return
 		case status == 401 || status == 403:
-			writeTestResult(w, false, "", fmt.Sprintf("HTTP %d — endpoint reached but rejected the API key", status))
+			writeTestResult(w, false, "", fmt.Sprintf("HTTP %d: endpoint reached but rejected the API key", status))
 			return
 		}
 		// /models 404/405 → fall back to a plain GET on the endpoint root.
@@ -345,7 +345,7 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 			return
 		}
 		if rootStatus >= 200 && rootStatus < 500 {
-			writeTestResult(w, true, fmt.Sprintf("Endpoint reachable (HTTP %d at root; %d at /models — server doesn't expose /models, fine for whisper.cpp)", rootStatus, status), "")
+			writeTestResult(w, true, fmt.Sprintf("Endpoint reachable (HTTP %d at root; %d at /models: server doesn't expose /models, fine for whisper.cpp)", rootStatus, status), "")
 			return
 		}
 		writeTestResult(w, false, "", fmt.Sprintf("HTTP %d at root, HTTP %d at /models", rootStatus, status))
@@ -380,7 +380,7 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 		// here. Report that it's live rather than falling into the built-in
 		// gemini/openai key test (which would reject the name as "unknown").
 		if ImageBackendRegistered(req.Provider) {
-			writeTestResult(w, true, "Connector backend “"+req.Provider+"” is approved and active. It uses its own credential — generate an image to verify it end to end.", "")
+			writeTestResult(w, true, "Connector backend “"+req.Provider+"” is approved and active. It uses its own credential: generate an image to verify it end to end.", "")
 			return
 		}
 		// Fall back to the matching LLM provider's key when blank (same
@@ -395,7 +395,7 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 			}
 		}
 		if key == "" {
-			writeTestResult(w, false, "", "no API key — set one here, or set the matching LLM provider's key")
+			writeTestResult(w, false, "", "no API key: set one here, or set the matching LLM provider's key")
 			return
 		}
 		var url string
@@ -431,7 +431,7 @@ func (a *AdminApp) registerMediaRoutes(sub *http.ServeMux) {
 		case resp.StatusCode >= 200 && resp.StatusCode < 300:
 			writeTestResult(w, true, fmt.Sprintf("%s reachable + key accepted (HTTP %d)", req.Provider, resp.StatusCode), "")
 		case resp.StatusCode == 401 || resp.StatusCode == 403:
-			writeTestResult(w, false, "", fmt.Sprintf("HTTP %d — %s rejected the API key", resp.StatusCode, req.Provider))
+			writeTestResult(w, false, "", fmt.Sprintf("HTTP %d: %s rejected the API key", resp.StatusCode, req.Provider))
 		default:
 			writeTestResult(w, false, "", fmt.Sprintf("HTTP %d from %s", resp.StatusCode, req.Provider))
 		}

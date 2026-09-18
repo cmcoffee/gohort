@@ -48,6 +48,11 @@ type TunableSpec struct {
 	Category string // admin section this knob groups under ("Retrieval", "Timeouts", "Limits", "Cache")
 	Label    string
 	Help     string
+	// Detail is the long explanation, shown behind an ⓘ icon beside the
+	// label. Help is the one-line version. A knob usually needs both: an
+	// operator scanning Site Settings wants the line, and an operator
+	// about to change a number wants the paragraph about what it costs.
+	Detail   string
 	Kind     TunableKind
 	Default  float64 // numeric default in the knob's natural unit
 	Min      float64
@@ -256,31 +261,40 @@ func init() {
 	RegisterTunable(TunableSpec{Key: TunableReferenceK, Category: "Retrieval", Label: "Reference-memory recall k",
 		Help: "Default passages for memory_search (reference memory).", Kind: KindInt, Default: 5, Min: 1, Max: 100})
 	RegisterTunable(TunableSpec{Key: tunableRecallPerDoc, Category: "Retrieval", Label: "Recall passages per document (0 = off)",
-		Help: "How many passages one document may hold in a search result before passages from OTHER documents are ranked ahead of its remaining ones. Nothing is dropped: the extras fill whatever slots the other documents leave. Stops one long document filling every slot when a second relevant document exists.", Kind: KindInt, Default: 2, Min: 0, Max: 20})
+		Help:   "How many passages one document may hold before other documents rank ahead of it.",
+		Detail: "Nothing is dropped: the extras fill whatever slots the other documents leave. This stops one long document filling every slot when a second relevant document exists.", Kind: KindInt, Default: 2, Min: 0, Max: 20})
 	RegisterTunable(TunableSpec{Key: TunableRecallMinScore, Category: "Retrieval", Label: "Recall min score (0 = off)",
-		Help: "Cosine floor below which a recall hit is dropped. 0 keeps every top-k hit; raise to trade recall for precision.", Kind: KindFloat, Default: 0, Min: 0, Max: 1, Decimals: 2})
+		Help:   "Cosine floor below which a recall hit is dropped.",
+		Detail: "0 keeps every top-k hit. Raise it to trade recall for precision.", Kind: KindFloat, Default: 0, Min: 0, Max: 1, Decimals: 2})
 	RegisterTunable(TunableSpec{Key: TunableRecencyWeight, Category: "Retrieval", Label: "Recency weight (0 = off)",
-		Help: "How much recall down-weights aged facts/findings vs their semantic score. 0 = pure semantic (age ignored); 1 = full bite. Never drops a hit — a stale one is scaled by at least (1-weight). Reuses the fact staleness half-lives; stable facts and curated knowledge never decay.", Kind: KindFloat, Default: 0.3, Min: 0, Max: 1, Decimals: 2})
+		Help:   "How much recall down-weights aged facts and findings against their semantic score.",
+		Detail: "0 is pure semantic, ignoring age; 1 is full bite. It never drops a hit: a stale one is scaled by at least (1-weight). It reuses the fact staleness half-lives, and stable facts and curated knowledge never decay.", Kind: KindFloat, Default: 0.3, Min: 0, Max: 1, Decimals: 2})
 	RegisterTunable(TunableSpec{Key: TunableChunkChars, Category: "Retrieval", Label: "Embedding chunk size (chars)",
-		Help: "Max characters per embedded chunk. Applies to NEW ingestions only — existing documents keep their chunking until re-ingested.", Kind: KindInt, Default: 1000, Min: 200, Max: 8000})
+		Help:   "Max characters per embedded chunk.",
+		Detail: "Applies to NEW ingestions only. Existing documents keep their chunking until they are re-ingested.", Kind: KindInt, Default: 1000, Min: 200, Max: 8000})
 	RegisterTunable(TunableSpec{Key: TunableLLMMaxRetries, Category: "Limits", Label: "LLM retry attempts",
 		Help: "Retries for a failed LLM call before giving up (per-call override still applies).", Kind: KindInt, Default: 5, Min: 0, Max: 20})
 	RegisterTunable(TunableSpec{Key: "tune_prompt_cache_1h", Category: "LLM", Label: "Extended prompt cache (1 hour)",
-		Help: "Keep the cached prompt prefix alive for an HOUR instead of the 5-minute default. A toggle rather than a number because those are the only two lifetimes the API has. " +
-			"Off, a cache expires while somebody reads a reply, so an interactive session re-writes its whole prefix on nearly every turn — writes are billed at 1.25x input, reads at 0.1x. " +
+		Help: "Keep the cached prompt prefix alive for an hour instead of the 5-minute default.",
+		Detail: "A toggle rather than a number, because those are the only two lifetimes the API has.\n\n" +
+			"Off, a cache expires while somebody reads a reply, so an interactive session re-writes its whole prefix on nearly every turn. Writes are billed at 1.25x input, reads at 0.1x. " +
 			"On, the write costs 2x but happens once. Over ten turns of a 200k prefix that is roughly 2.5M billable-equivalent tokens against 0.58M. " +
 			"Leave it OFF for batch work with no human pauses, where the cache never had time to expire anyway. " +
 			"The cost model follows this setting: with it on, a cache write is priced at 2x unless an operator set the multiplier by hand.", Kind: KindBool, Default: 0})
 	RegisterTunable(TunableSpec{Key: TunableRecallHintThreshold, Category: "Retrieval", Label: "Recall-hint threshold",
-		Help: "Cosine floor a knowledge hit must clear to be surfaced as a per-turn recall hint (for agents with recall hints on). Higher = fewer, more-confident hints.", Kind: KindFloat, Default: 0.7, Min: 0, Max: 1, Decimals: 2})
+		Help:   "Cosine floor a knowledge hit must clear to be surfaced as a per-turn recall hint.",
+		Detail: "It applies to agents with recall hints on. Higher means fewer, more confident hints.", Kind: KindFloat, Default: 0.7, Min: 0, Max: 1, Decimals: 2})
 	RegisterTunable(TunableSpec{Key: TunableRecallHintMax, Category: "Retrieval", Label: "Recall-hint max count",
-		Help: "Most recall-hint pointers injected per turn (deduped by document). Keeps the nudge compact so it doesn't crowd the worker's context.", Kind: KindInt, Default: 4, Min: 1, Max: 12})
+		Help:   "Most recall-hint pointers injected per turn, deduped by document.",
+		Detail: "Keeps the nudge compact, so it does not crowd the worker's context.", Kind: KindInt, Default: 4, Min: 1, Max: 12})
 	RegisterTunable(TunableSpec{Key: TunableRecallHintMinChars, Category: "Retrieval", Label: "Recall-hint min query chars",
-		Help: "Skip recall hints when the user message is shorter than this — a greeting shouldn't trigger a corpus search.", Kind: KindInt, Default: 12, Min: 0, Max: 200})
+		Help: "Skip recall hints when the user message is shorter than this: a greeting shouldn't trigger a corpus search.", Kind: KindInt, Default: 12, Min: 0, Max: 200})
 	RegisterTunable(TunableSpec{Key: TunableRecallHintTimeout, Category: "Retrieval", Label: "Recall-hint budget (seconds)",
-		Help: "How long a turn may spend building recall hints before giving up and sending the prompt without them. Hints are an optional nudge, so this is a LATENCY cap, not a correctness one: exceeding it costs a hint, while a generous value costs the user their turn. It was previously borrowing the knowledge-INGEST timeout, which is sized for bulk work and made a slow embedding backend stall every message for up to a minute.", Kind: KindSeconds, Default: 3, Min: 1, Max: 60})
+		Help:   "How long a turn may spend building recall hints before sending the prompt without them.",
+		Detail: "Hints are an optional nudge, so this is a LATENCY cap, not a correctness one: exceeding it costs a hint, while a generous value costs the user their turn.\n\nIt was previously borrowing the knowledge-INGEST timeout, which is sized for bulk work and made a slow embedding backend stall every message for up to a minute.", Kind: KindSeconds, Default: 3, Min: 1, Max: 60})
 	RegisterTunable(TunableSpec{Key: TunableRecallHintAutoPromote, Category: "Retrieval", Label: "Recall-hint auto-promote score (0 = off)",
-		Help: "When a curated-knowledge recall hit scores at or above this, inject its BODY into the turn (not just a pointer) — the one opt-in to automatic RAG. 0 = off (pointers only, the safe default); ~0.92 promotes only near-certain matches. Only curated knowledge is ever auto-injected, never derived memory.", Kind: KindFloat, Default: 0, Min: 0, Max: 1, Decimals: 2})
+		Help:   "Score at which a curated-knowledge hit has its BODY injected, not just a pointer.",
+		Detail: "This is the one opt-in to automatic RAG. 0 is off, meaning pointers only, and is the safe default; around 0.92 promotes only near-certain matches. Only curated knowledge is ever auto-injected, never derived memory.", Kind: KindFloat, Default: 0, Min: 0, Max: 1, Decimals: 2})
 }
 
 // Retrieval accessors — keep the names the orchestrate recall code already

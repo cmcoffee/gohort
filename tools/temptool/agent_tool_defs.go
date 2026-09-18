@@ -26,7 +26,7 @@ func BuildAgentToolDefs(sess *ToolSession) []AgentToolDef {
 	for _, tt := range tools {
 		names = append(names, tt.Name)
 	}
-	Debug("[temptool] BuildAgentToolDefs: producing %d AgentToolDef(s) — %v", len(tools), names)
+	Debug("[temptool] BuildAgentToolDefs: producing %d AgentToolDef(s), %v", len(tools), names)
 	out := make([]AgentToolDef, 0, len(tools))
 	for _, tt := range tools {
 		out = append(out, agentToolDefsFromTemp(sess, tt)...)
@@ -141,9 +141,9 @@ func CheckCatalogNameCollision(sess *ToolSession, name string, actions []TempToo
 				continue
 			}
 			if existing == tt.Name {
-				return fmt.Errorf("name %q is already taken by an existing tool — pick another name, or use action=\"update\" to change that tool in place", existing)
+				return fmt.Errorf("name %q is already taken by an existing tool: pick another name, or use action=\"update\" to change that tool in place", existing)
 			}
-			return fmt.Errorf("name %q collides with toolbox %q, whose action %q already publishes that exact name — two tools cannot share one catalog name (one would silently shadow the other). Either pick a different name, or use action=\"update\" on toolbox %q to change the action itself",
+			return fmt.Errorf("name %q collides with toolbox %q, whose action %q already publishes that exact name: two tools cannot share one catalog name (one would silently shadow the other). Either pick a different name, or use action=\"update\" on toolbox %q to change the action itself",
 				existing, tt.Name, strings.TrimPrefix(existing, tt.Name+"_"), tt.Name)
 		}
 	}
@@ -166,18 +166,18 @@ func CheckCatalogNameCollision(sess *ToolSession, name string, actions []TempToo
 		}
 		for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
 			if holds(p.Tool) {
-				return fmt.Errorf("name %q is already taken by a tool in your user-wide pool — names are unique across all your agents; pick another name, or use action=\"update\" to change that tool", name)
+				return fmt.Errorf("name %q is already taken by a tool in your user-wide pool: names are unique across all your agents; pick another name, or use action=\"update\" to change that tool", name)
 			}
 		}
 		for _, p := range LoadPendingTempTools(sess.DB, sess.Username) {
 			if holds(p.Tool) {
-				return fmt.Errorf("name %q is already taken by a pending tool of yours — pick another name, or use action=\"update\"", name)
+				return fmt.Errorf("name %q is already taken by a pending tool of yours: pick another name, or use action=\"update\"", name)
 			}
 		}
 		if ListUserAgentTools != nil {
 			for _, at := range ListUserAgentTools(sess.DB, sess.Username) {
 				if holds(at) {
-					return fmt.Errorf("name %q is already taken by another of your agents' tools — names are unique across all your agents; pick another name, or use action=\"update\" to edit that tool in place", name)
+					return fmt.Errorf("name %q is already taken by another of your agents' tools: names are unique across all your agents; pick another name, or use action=\"update\" to edit that tool in place", name)
 				}
 			}
 		}
@@ -259,7 +259,7 @@ func newToolboxGroupedTool(tt *TempTool) *GroupedTool {
 	// user's persistent/scoped kit included — so the description must not
 	// claim "defined this session" (it taught the model, and anyone reading
 	// a session export, a false provenance for long-lived tools).
-	gtDesc := tt.Description + fmt.Sprintf(" (toolbox — wraps credential %q with %d action(s); manage via tool_def)", tt.Credential, live)
+	gtDesc := tt.Description + fmt.Sprintf(" (toolbox: wraps credential %q with %d action(s); manage via tool_def)", tt.Credential, live)
 	gt := NewGroupedTool(tt.Name, gtDesc)
 	for i := range tt.Actions {
 		if tt.Actions[i].Disabled {
@@ -412,9 +412,9 @@ func agentToolFromTemp(sess *ToolSession, tt *TempTool) AgentToolDef {
 	caps := tempToolCaps(tt)
 	// Same provenance-neutral rule as the toolbox suffix above: persistent
 	// pool tools flow through here too, so no "defined this session" claim.
-	descSuffix := " (custom shell tool — manage via tool_def)"
+	descSuffix := " (custom shell tool: manage via tool_def)"
 	if tt.Mode == TempToolModeAPI {
-		descSuffix = fmt.Sprintf(" (custom api tool — wraps credential %q; manage via tool_def)", tt.Credential)
+		descSuffix = fmt.Sprintf(" (custom api tool: wraps credential %q; manage via tool_def)", tt.Credential)
 	}
 	return AgentToolDef{
 		Tool: Tool{

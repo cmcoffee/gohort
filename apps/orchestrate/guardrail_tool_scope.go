@@ -303,17 +303,17 @@ func scopeAndRecordGuardrailTool(ctx context.Context, app *OrchestrateApp, db Da
 	if err != nil {
 		// No reading is the safe outcome: the tool stays, the warden keeps
 		// judging each call, and the next block asks again.
-		Log("[orchestrate.guardrail] agent=%s could not scope rule %q against tool %q (%v) — the tool stays offered", agentID, rule, tool, err)
+		Log("[orchestrate.guardrail] agent=%s could not scope rule %q against tool %q (%v): the tool stays offered", agentID, rule, tool, err)
 		return
 	}
 	saveGuardrailToolScope(db, agentID, GuardrailToolScope{
 		Rule: rule, Tool: tool, Scope: scope, Why: why, At: time.Now(),
 	})
 	if scope != guardrailScopeAll {
-		Log("[orchestrate.guardrail] agent=%s rule %q refuses only SOME uses of %q — the tool stays offered", agentID, rule, tool)
+		Log("[orchestrate.guardrail] agent=%s rule %q refuses only SOME uses of %q: the tool stays offered", agentID, rule, tool)
 		return
 	}
-	Log("[orchestrate.guardrail] agent=%s rule %q refuses EVERY use of %q — withholding it from the catalog: %s", agentID, rule, tool, why)
+	Log("[orchestrate.guardrail] agent=%s rule %q refuses EVERY use of %q, withholding it from the catalog: %s", agentID, rule, tool, why)
 	// The breadcrumb is here, once, because this is the moment something
 	// changed. It says what stopped being available and why, so a capability
 	// that goes missing next turn is answerable from the trail the owner can
@@ -356,7 +356,7 @@ func (T *OrchestrateApp) classifyGuardrailToolScope(ctx context.Context, rule, t
 		desc = strings.TrimSpace(ct.Desc())
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "RULE (the owner's words — trusted):\n%s\n\n", rule)
+	fmt.Fprintf(&b, "RULE (the owner's words, trusted):\n%s\n\n", rule)
 	fmt.Fprintf(&b, "TOOL: %s\n", tool)
 	if desc != "" {
 		fmt.Fprintf(&b, "WHAT IT DOES: %s\n", desc)
@@ -411,12 +411,12 @@ const guardrailToolScopeSystemPrompt = `You classify how a rule relates to a too
 Answer with JSON only:
 {"scope": "all" | "some", "why": "<one short sentence>"}
 
-"all"  — the rule forbids what the tool DOES. No call to it could comply, whatever
+"all": the rule forbids what the tool DOES. No call to it could comply, whatever
          the arguments. Examples: rule "never delegate to other agents" against a
          tool whose only function is dispatching to another agent; rule "never send
          email" against a tool that sends email.
 
-"some" — the rule forbids certain uses and permits others. The tool has legitimate
+"some": the rule forbids certain uses and permits others. The tool has legitimate
          calls under this rule. Examples: rule "never email the CEO" against a tool
          that sends email to anyone; rule "don't post before 9am" against a posting
          tool; any rule naming a recipient, a subject, a time, an amount, or a
@@ -495,7 +495,7 @@ func validateGuardrailToolBindings(agent AgentRecord, rules string) error {
 		if r.Tool == "" || known[r.Tool] {
 			continue
 		}
-		return fmt.Errorf("the rule %q is bound to %q, which is not a tool this agent can call — pick one from the list, or drop the #%s to make the rule apply everywhere", r.Text, r.Tool, r.Tool)
+		return fmt.Errorf("the rule %q is bound to %q, which is not a tool this agent can call: pick one from the list, or drop the #%s to make the rule apply everywhere", r.Text, r.Tool, r.Tool)
 	}
 	return nil
 }

@@ -321,9 +321,9 @@ func TestAnEmptySlugResolvesToNothing(t *testing.T) {
 // the intent, update the digest in the same commit so it shows in the diff.
 func TestShippedPersonasUnchanged(t *testing.T) {
 	for _, tc := range []struct{ slug, sum string }{
-		{"conversational", "02180e1ef22e3f234b5883aa2b9ca9e246f75327981abd2f134821df0ecf4702"},
-		{"knowledge_base", "a8254110d50093eaa81ad73ad41a1c46f002f8066cb4d09af3466139b7bd590c"},
-		{"research", "2a570183462b68e77a0837242ee79f83120c4bfc67f5d7757e3ac38afa636a30"},
+		{"conversational", "b1653501dafbbe23fdef4cef36b9872826be19b50dd6e526479054df74bad0b3"},
+		{"knowledge_base", "7c643d1d1e75f3ad465fee617af5ccef7bc1989d3f3fde78c7ece16325bc6a67"},
+		{"research", "220d7a2c31e5bad3db74bf693cfbdffede4d49b3c93cf8beedef1074fa4dc110"},
 	} {
 		data, err := archetypeFS.ReadFile("archetypes/" + tc.slug + ".md")
 		if err != nil {

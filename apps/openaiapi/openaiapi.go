@@ -183,15 +183,15 @@ func canonicalTier(m string) string {
 // request may not use the endpoint.
 func (T *OpenAIAPI) gateFeature(w http.ResponseWriter, user string, token *AccountToken) bool {
 	if !FeatureAllowedForUser(T.DB, OpenAIFeatureKey, user) {
-		writeErr(w, http.StatusForbidden, "the OpenAI /v1 endpoint is not enabled for your account — ask an admin to grant it under Feature Access")
+		writeErr(w, http.StatusForbidden, "the OpenAI /v1 endpoint is not enabled for your account: ask an admin to grant it under Feature Access")
 		return false
 	}
 	if token != nil && !token.AllowsFeature(OpenAIFeatureKey) {
-		writeErr(w, http.StatusForbidden, "this API key is not scoped for the OpenAI endpoint — enable it under Account → API keys → Scope")
+		writeErr(w, http.StatusForbidden, "this API key is not scoped for the OpenAI endpoint: enable it under Account → API keys → Scope")
 		return false
 	}
 	if token != nil && token.IsLegacyUnscoped() {
-		Log("[openai_api] %s: key %q predates scoping — allowed unrestricted (set a scope under Account → API keys to lock it down)", user, token.ID)
+		Log("[openai_api] %s: key %q predates scoping, allowed unrestricted (set a scope under Account → API keys to lock it down)", user, token.ID)
 	}
 	return true
 }
@@ -206,7 +206,7 @@ func gateTarget(w http.ResponseWriter, user string, token *AccountToken, canonic
 		return true
 	}
 	if token != nil && !token.AllowsTarget(canonical) {
-		writeErr(w, http.StatusForbidden, "this API key is not scoped to reach "+canonical+" — grant it under Account → API keys → Scope, or use a target the key allows (GET /v1/models lists them)")
+		writeErr(w, http.StatusForbidden, "this API key is not scoped to reach "+canonical+", grant it under Account → API keys → Scope, or use a target the key allows (GET /v1/models lists them)")
 		Log("[openai_api] %s: key %q denied target %q (not in scope)", user, token.ID, canonical)
 		return false
 	}
@@ -246,7 +246,7 @@ func (T *OpenAIAPI) gateAppTarget(w http.ResponseWriter, user string, token *Acc
 func (T *OpenAIAPI) handleModels(w http.ResponseWriter, r *http.Request) {
 	user := APIKeyUser(r)
 	if user == "" {
-		writeErr(w, http.StatusUnauthorized, "missing or invalid API key — send a personal access token from /account as X-API-Key or Authorization: Bearer")
+		writeErr(w, http.StatusUnauthorized, "missing or invalid API key, send a personal access token from /account as X-API-Key or Authorization: Bearer")
 		return
 	}
 	token := AccountTokenFromRequest(r)
@@ -292,7 +292,7 @@ func (T *OpenAIAPI) handleModels(w http.ResponseWriter, r *http.Request) {
 			if allow("channel:" + c.ChatID) {
 				data = append(data, map[string]any{
 					"id": "channel:" + c.ChatID, "object": "model", "owned_by": "gohort",
-					"description": c.Name + " — " + c.AgentName,
+					"description": c.Name + " · " + c.AgentName,
 				})
 			}
 		}
@@ -307,7 +307,7 @@ func (T *OpenAIAPI) handleChatCompletions(w http.ResponseWriter, r *http.Request
 	}
 	user := APIKeyUser(r)
 	if user == "" {
-		writeErr(w, http.StatusUnauthorized, "missing or invalid API key — send a personal access token from /account as X-API-Key or Authorization: Bearer")
+		writeErr(w, http.StatusUnauthorized, "missing or invalid API key, send a personal access token from /account as X-API-Key or Authorization: Bearer")
 		return
 	}
 	token := AccountTokenFromRequest(r)
@@ -375,7 +375,7 @@ func (T *OpenAIAPI) handleChatCompletions(w http.ResponseWriter, r *http.Request
 				if !gateTarget(w, user, token, "channel:"+tgt.ChatID) {
 					return
 				}
-				Log("[openai_api] %s: model %q resolved as a CHANNEL (no prefix) — prefer \"channel:%s\"", user, target, target)
+				Log("[openai_api] %s: model %q resolved as a CHANNEL (no prefix), prefer \"channel:%s\"", user, target, target)
 				T.serveChannel(w, r, user, target, req)
 				return
 			}
@@ -387,11 +387,11 @@ func (T *OpenAIAPI) handleChatCompletions(w http.ResponseWriter, r *http.Request
 			if !T.gateAppTarget(w, user, token, "agent:"+id) {
 				return
 			}
-			Log("[openai_api] %s: model %q resolved as an AGENT (no prefix) — prefer \"agent:%s\"", user, target, target)
+			Log("[openai_api] %s: model %q resolved as an AGENT (no prefix), prefer \"agent:%s\"", user, target, target)
 			T.serveAgent(w, r, user, target, req)
 			return
 		}
-		Log("[openai_api] %s: model %q matched no channel or agent — answering from the WORKER tier (no persona, tools, memory or thread). If you meant a conversation, check the id and that its agent has \"Reachable over MCP\" on.", user, target)
+		Log("[openai_api] %s: model %q matched no channel or agent, answering from the WORKER tier (no persona, tools, memory or thread). If you meant a conversation, check the id and that its agent has \"Reachable over MCP\" on.", user, target)
 	}
 	// Tier passthrough (worker/lead, or an unresolved bare name that falls back
 	// to worker). Gate on the canonical tier.
@@ -486,7 +486,7 @@ func (T *OpenAIAPI) serveAgent(w http.ResponseWriter, r *http.Request, user, age
 	}
 	resolved, ok := orchestrate.ResolveExternalAgent(T.DB, user, agentKey)
 	if !ok {
-		writeErr(w, http.StatusNotFound, fmt.Sprintf("no agent %q reachable for this account — check the id, and turn on \"Reachable over MCP\" on that agent (the same switch governs this endpoint)", agentKey))
+		writeErr(w, http.StatusNotFound, fmt.Sprintf("no agent %q reachable for this account: check the id, and turn on \"Reachable over MCP\" on that agent (the same switch governs this endpoint)", agentKey))
 		return
 	}
 	input, system := turnInput(req)
@@ -522,7 +522,7 @@ func (T *OpenAIAPI) serveAgent(w http.ResponseWriter, r *http.Request, user, age
 // recorded in the thread either way, so it shows up in gohort's transcript.
 func (T *OpenAIAPI) serveChannel(w http.ResponseWriter, r *http.Request, user, chatKey string, req chatReq) {
 	if chatKey == "" {
-		writeErr(w, http.StatusBadRequest, "model \"channel:\" needs a chat id, handle, or room name — GET /v1/models lists the reachable ones")
+		writeErr(w, http.StatusBadRequest, "model \"channel:\" needs a chat id, handle, or room name, GET /v1/models lists the reachable ones")
 		return
 	}
 	orch := findOrchestrate()
@@ -532,7 +532,7 @@ func (T *OpenAIAPI) serveChannel(w http.ResponseWriter, r *http.Request, user, c
 	}
 	tgt, ok := orch.ResolveExternalChannel(user, chatKey)
 	if !ok {
-		writeErr(w, http.StatusNotFound, fmt.Sprintf("no reachable conversation %q — check GET /v1/models, and make sure the agent bound to that chat has \"Reachable over MCP\" on", chatKey))
+		writeErr(w, http.StatusNotFound, fmt.Sprintf("no reachable conversation %q: check GET /v1/models, and make sure the agent bound to that chat has \"Reachable over MCP\" on", chatKey))
 		return
 	}
 	input, system := turnInput(req)

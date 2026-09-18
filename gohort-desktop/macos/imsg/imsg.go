@@ -135,7 +135,7 @@ func waitOrStop(stop <-chan struct{}, d time.Duration) bool {
 func openChatDB(dbPath string, interval time.Duration, stop <-chan struct{}) *sql.DB {
 	for {
 		if _, err := os.Stat(dbPath); err != nil {
-			nfo.Log("chat.db not accessible (%v) — retrying in %s\n"+
+			nfo.Log("chat.db not accessible (%v): retrying in %s\n"+
 				"Make sure the bridge has Full Disk Access:\n"+
 				"System Settings → Privacy & Security → Full Disk Access", err, interval)
 			if !waitOrStop(stop, interval) {
@@ -145,7 +145,7 @@ func openChatDB(dbPath string, interval time.Duration, stop <-chan struct{}) *sq
 		}
 		d, err := sql.Open("sqlite", "file:"+dbPath+"?mode=ro&_busy_timeout=5000")
 		if err != nil {
-			nfo.Log("open chat.db: %v — retrying in %s", err, interval)
+			nfo.Log("open chat.db: %v, retrying in %s", err, interval)
 			if !waitOrStop(stop, interval) {
 				return nil
 			}
@@ -154,7 +154,7 @@ func openChatDB(dbPath string, interval time.Duration, stop <-chan struct{}) *sq
 		d.SetMaxOpenConns(3)
 		if err := d.Ping(); err != nil {
 			d.Close()
-			nfo.Log("chat.db ping failed (%v) — retrying in %s\n"+
+			nfo.Log("chat.db ping failed (%v): retrying in %s\n"+
 				"Make sure the bridge has Full Disk Access:\n"+
 				"System Settings → Privacy & Security → Full Disk Access", err, interval)
 			if !waitOrStop(stop, interval) {
@@ -459,7 +459,7 @@ func runTest(dbPath string) {
 		count++
 	}
 	if count == 0 {
-		fmt.Println("(no messages found — check that the query joins are correct for your macOS version)")
+		fmt.Println("(no messages found: check that the query joins are correct for your macOS version)")
 	}
 	fmt.Printf("--- max ROWID in db: %d ---\n", latestMessageRowID(dbPath))
 }
@@ -593,7 +593,7 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, cur relayCursor, v
 				// e.g. a pdf or vcard). Send a NEUTRAL placeholder, never "[Image]":
 				// claiming a picture when none was sent makes the agent hallucinate
 				// one. The server-side note tells the agent it can't inspect it.
-				nfo.Log("rowid=%d: %d attachment(s), none processable — using [Attachment] placeholder", rowID, attachCount)
+				nfo.Log("rowid=%d: %d attachment(s), none processable, using [Attachment] placeholder", rowID, attachCount)
 				text = "[Attachment]"
 			} else {
 				// Row exists but content not yet written — iMessage fills text
@@ -613,7 +613,7 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, cur relayCursor, v
 				if len(hexBody) > 256 {
 					hexBody = hexBody[:256]
 				}
-				nfo.Log("rowid=%d handle=%q: still empty after %d polls, skipping — body[%d]=%x", rowID, handle, polls, len(body), hexBody)
+				nfo.Log("rowid=%d handle=%q: still empty after %d polls, skipping, body[%d]=%x", rowID, handle, polls, len(body), hexBody)
 				emptyRowMu.Lock()
 				delete(emptyRowSeen, rowID)
 				emptyRowMu.Unlock()
@@ -648,11 +648,11 @@ func processNewMessages(cfg Config, db *sql.DB, hasBody bool, cur relayCursor, v
 		}
 		if err := postHook(cfg, payload); err != nil {
 			if he, ok := err.(*hookErr); ok && he.skip {
-				nfo.Log("hook rejected rowid=%d handle=%s: %v — skipping row", rowID, handle, err)
+				nfo.Log("hook rejected rowid=%d handle=%s: %v, skipping row", rowID, handle, err)
 				out.rowID = rowID
 				continue
 			}
-			nfo.Log("hook FAILED rowid=%d handle=%s: %v — will retry next poll", rowID, handle, err)
+			nfo.Log("hook FAILED rowid=%d handle=%s: %v, will retry next poll", rowID, handle, err)
 			break
 		}
 		// Relayed. This is the only site that carries the date floor forward —
@@ -1097,7 +1097,7 @@ func readImageAttachments(db *sql.DB, messageID int64) []string {
 		case isJPEG:
 			// already vision-ready — send raw
 		case isGIF && info.Size() <= maxInboundGifBytes:
-			nfo.Log("gif passthrough (raw, %d bytes): %s — server frame-samples", len(data), filepath.Base(path))
+			nfo.Log("gif passthrough (raw, %d bytes): %s, server frame-samples", len(data), filepath.Base(path))
 		default:
 			converted := toJPEG(path)
 			if converted != nil {
@@ -1366,7 +1366,7 @@ func tryDeliver(cfg Config, db *sql.DB, item OutboxItem, attempt int) {
 			if converted, err := convertToJPEG(tmpPath); err == nil {
 				sendPath = converted
 			} else {
-				nfo.Log("image %d webp convert warning: %v — sending original", i, err)
+				nfo.Log("image %d webp convert warning: %v, sending original", i, err)
 			}
 		case ".gif":
 			fi, _ := os.Stat(tmpPath)
@@ -1385,7 +1385,7 @@ func tryDeliver(cfg Config, db *sql.DB, item OutboxItem, attempt int) {
 				if converted, jerr := convertToJPEG(tmpPath); jerr == nil {
 					sendPath = converted
 				} else {
-					nfo.Log("image %d: jpeg fallback also failed (%v) — sending original gif", i, jerr)
+					nfo.Log("image %d: jpeg fallback also failed (%v), sending original gif", i, jerr)
 				}
 			}
 		}
@@ -1646,7 +1646,7 @@ end run`
 		if err := cmd.Run(); err == nil {
 			return nil
 		} else {
-			nfo.Log("sendViaMessages: chat GUID %q failed: %v — trying fallbacks", chatGUID, err)
+			nfo.Log("sendViaMessages: chat GUID %q failed: %v, trying fallbacks", chatGUID, err)
 		}
 	}
 
@@ -1691,7 +1691,7 @@ end run`
 		if err := cmd.Run(); err == nil {
 			return nil
 		} else {
-			nfo.Log("sendViaMessages: secondScreen fallback failed: %v — giving up", err)
+			nfo.Log("sendViaMessages: secondScreen fallback failed: %v, giving up", err)
 			return err
 		}
 	}
@@ -1820,7 +1820,7 @@ end run`
 		if out, err := cmd.CombinedOutput(); err == nil {
 			return nil
 		} else {
-			nfo.Log("sendFile chatGUID failed (%v): %s — trying handle", err, strings.TrimSpace(string(out)))
+			nfo.Log("sendFile chatGUID failed (%v): %s, trying handle", err, strings.TrimSpace(string(out)))
 		}
 	}
 	// If handle is empty, try the address parsed from the chat GUID (e.g. email).

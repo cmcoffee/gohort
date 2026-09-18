@@ -160,7 +160,7 @@ func init() {
 		"survey_workspace_bound_tools",
 		"Survey workspace-bound tools",
 		"Read-only. Lists tools whose command_template runs a script from "+
-			"{workspace_dir} that is not carried in the tool record — the ones that "+
+			"{workspace_dir} that is not carried in the tool record: the ones that "+
 			"would break if a run were given a different workspace. Reports names, "+
 			"owners and templates to the log; changes nothing.",
 		func(ctx context.Context) int {

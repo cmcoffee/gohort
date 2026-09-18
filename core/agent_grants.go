@@ -75,7 +75,7 @@ func RegisterAgentGrantor(g AgentGrantor) {
 	agentGrantorMu.Lock()
 	defer agentGrantorMu.Unlock()
 	if _, dup := agentGrantors[g.Name]; dup {
-		Log("[grants] agent grantor %q registered twice — replacing the earlier one", g.Name)
+		Log("[grants] agent grantor %q registered twice: replacing the earlier one", g.Name)
 	}
 	agentGrantors[g.Name] = g
 }
@@ -129,7 +129,7 @@ func AgentGrantSummaries(user, agentID string) []AgentGrantSummary {
 func safeGranted(g AgentGrantor, user, agentID string) (out []AgentGrant) {
 	defer func() {
 		if r := recover(); r != nil {
-			Log("[grants] grantor %q panicked listing grants for agent %q (%v) — reporting none", g.Name, agentID, r)
+			Log("[grants] grantor %q panicked listing grants for agent %q (%v): reporting none", g.Name, agentID, r)
 			out = nil
 		}
 	}()

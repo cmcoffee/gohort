@@ -386,7 +386,7 @@ func (T *Bridges) deliverBotOutbound(ctx context.Context, spec BotFrameworkSpec)
 		sendURL := conv.ServiceURL + "/v3/conversations/" + url.PathEscape(it.ChatID) + "/activities"
 		_, status, err := authedRequest(spec.Credential, "POST", sendURL, string(body))
 		if err != nil || status >= 300 {
-			Warn("[bridges] bot send failed (svc=%s chat=%s): err=%v status=%d — re-queued %d item(s)",
+			Warn("[bridges] bot send failed (svc=%s chat=%s): err=%v status=%d, re-queued %d item(s)",
 				spec.Service, it.ChatID, err, status, len(items)-i)
 			for _, r := range items[i:] {
 				T.enqueueOutbox(r)

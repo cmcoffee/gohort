@@ -48,10 +48,10 @@ func findBridgeBinary() string {
 func (a *App) InstallBridge() save_result {
 	bin := findBridgeBinary()
 	if bin == "" {
-		return save_result{Error: "Gohort-Bridge.app not found — install it (e.g. `make install-all`) or drag it to /Applications, then try again."}
+		return save_result{Error: "Gohort-Bridge.app not found: install it (e.g. `make install-all`) or drag it to /Applications, then try again."}
 	}
 	if out, err := exec.Command(bin, "--install").CombinedOutput(); err != nil {
-		return save_result{Error: fmt.Sprintf("Bridge install failed: %v — %s", err, strings.TrimSpace(string(out)))}
+		return save_result{Error: fmt.Sprintf("Bridge install failed: %v, %s", err, strings.TrimSpace(string(out)))}
 	}
 	// Launch it now so the user doesn't have to wait for next login.
 	if runtime.GOOS == "darwin" {
@@ -70,7 +70,7 @@ func (a *App) UninstallBridge() save_result {
 		return save_result{Error: "Gohort-Bridge.app not found."}
 	}
 	if out, err := exec.Command(bin, "--uninstall").CombinedOutput(); err != nil {
-		return save_result{Error: fmt.Sprintf("Bridge uninstall failed: %v — %s", err, strings.TrimSpace(string(out)))}
+		return save_result{Error: fmt.Sprintf("Bridge uninstall failed: %v, %s", err, strings.TrimSpace(string(out)))}
 	}
 	return save_result{OK: true}
 }

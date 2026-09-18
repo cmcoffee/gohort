@@ -34,7 +34,7 @@ func requestLine(what string, on bool, state, decidedBy string) string {
 	}
 	switch state {
 	case PromotionPendingState:
-		return what + ": requested — awaiting an administrator."
+		return what + ": requested, awaiting an administrator."
 	case PromotionDeniedState:
 		by := "an administrator"
 		if decidedBy != "" {
@@ -55,7 +55,7 @@ func shareStatusLines(spec AppSpec) []string {
 		if st.DisabledBy != "" {
 			lines = append(lines, "Disabled by "+st.DisabledBy+". Nobody can open it until it is enabled again.")
 		} else {
-			lines = append(lines, "Disabled — review its scripts, then Enable.")
+			lines = append(lines, "Disabled: review its scripts, then Enable.")
 		}
 	}
 	state, by := promotionState(spec.Owner, "app", spec.Slug)
@@ -68,7 +68,7 @@ func shareStatusLines(spec AppSpec) []string {
 			if st.UpdatedBy != "" {
 				who = st.UpdatedBy
 			}
-			lines = append(lines, "Audience: "+strings.Join(st.AllowedUsers, ", ")+" — narrowed by "+who+".")
+			lines = append(lines, "Audience: "+strings.Join(st.AllowedUsers, ", ")+" (narrowed by "+who+").")
 		} else {
 			lines = append(lines, "Audience: every signed-in user.")
 		}

@@ -303,7 +303,7 @@ var containerRuntimes = []string{"podman", "docker"}
 func detectSandboxFor(sel sandboxSelection) sandboxBackend {
 	switch sel.Pick {
 	case "none":
-		nfo.Log("[sandbox] GOHORT_SANDBOX_BACKEND=none — confinement is disabled by configuration")
+		nfo.Log("[sandbox] GOHORT_SANDBOX_BACKEND=none: confinement is disabled by configuration")
 		return noSandbox{}
 	case "podman", "docker", "container":
 		if sb := pickContainer(sel); sb != nil {
@@ -314,7 +314,7 @@ func detectSandboxFor(sel sandboxSelection) sandboxBackend {
 		if p, err := sel.Look("bwrap"); err == nil {
 			return bwrapSandbox{path: p}
 		}
-		nfo.Log("[sandbox] GOHORT_SANDBOX_BACKEND=bubblewrap but bwrap is not on PATH — falling back to unconfined")
+		nfo.Log("[sandbox] GOHORT_SANDBOX_BACKEND=bubblewrap but bwrap is not on PATH: falling back to unconfined")
 		return noSandbox{}
 	case "", "auto":
 		// The historical behaviour, unchanged.
@@ -326,16 +326,16 @@ func detectSandboxFor(sel sandboxSelection) sandboxBackend {
 		// refusal — an unrecognized name is not a request for less
 		// confinement, it is a request nobody can act on.
 		nfo.Log("[sandbox] WARNING: GOHORT_SANDBOX_BACKEND=%q is not a known backend "+
-			"(auto, bubblewrap, podman, docker, container, none) — using the platform default",
+			"(auto, bubblewrap, podman, docker, container, none): using the platform default",
 			sel.Pick)
 	}
 	switch sel.GOOS {
 	case "linux":
 		if p, err := sel.Look("bwrap"); err == nil {
-			nfo.Debug("[sandbox] bubblewrap at %s — shell tools are OS-sandboxed", p)
+			nfo.Debug("[sandbox] bubblewrap at %s: shell tools are OS-sandboxed", p)
 			return bwrapSandbox{path: p}
 		}
-		nfo.Debug("[sandbox] bwrap not found on PATH — shell tools will run unconfined")
+		nfo.Debug("[sandbox] bwrap not found on PATH: shell tools will run unconfined")
 	case "darwin":
 		// Deliberately NOT falling through to a bwrap lookup: it can never
 		// succeed on darwin, and pretending to try is what produced the
@@ -347,13 +347,13 @@ func detectSandboxFor(sel sandboxSelection) sandboxBackend {
 		// assuming it does would break every shell tool on the Mac at once.
 		if p, err := sel.Look(seatbeltBinary); err == nil {
 			if sel.Seatbelt(p) {
-				nfo.Debug("[sandbox] seatbelt at %s — shell tools are OS-sandboxed", p)
+				nfo.Debug("[sandbox] seatbelt at %s: shell tools are OS-sandboxed", p)
 				return seatbeltSandbox{path: p}
 			}
 		}
-		nfo.Debug("[sandbox] no usable sandbox backend on macOS — shell tools will run unconfined")
+		nfo.Debug("[sandbox] no usable sandbox backend on macOS: shell tools will run unconfined")
 	default:
-		nfo.Debug("[sandbox] no sandbox backend for %s — shell tools will run unconfined", sel.GOOS)
+		nfo.Debug("[sandbox] no sandbox backend for %s: shell tools will run unconfined", sel.GOOS)
 	}
 	return noSandbox{}
 }
@@ -388,7 +388,7 @@ func pickContainer(sel sandboxSelection) sandboxBackend {
 		}
 		return c
 	}
-	nfo.Log("[sandbox] GOHORT_SANDBOX_BACKEND=%s but no container runtime is usable [%s] — "+
+	nfo.Log("[sandbox] GOHORT_SANDBOX_BACKEND=%s but no container runtime is usable [%s]: "+
 		"falling back to unconfined, which under the default policy means shell tools are REFUSED",
 		sel.Pick, strings.Join(tried, ", "))
 	return nil
@@ -480,7 +480,7 @@ func unsandboxedAdviceFor(goos string) string {
 	case "linux":
 		return "Install bubblewrap (apt install bubblewrap / dnf install bubblewrap)." + container + optOut
 	case "darwin":
-		return "macOS confinement uses sandbox-exec (Seatbelt), and this host either lacks it or it refused the probe profile — " +
+		return "macOS confinement uses sandbox-exec (Seatbelt), and this host either lacks it or it refused the probe profile: " +
 			"check the log for the refusal. Nothing can be installed to fix that; sandbox-exec ships with macOS or not at all." +
 			container + optOut
 	default:
@@ -494,7 +494,7 @@ func unsandboxedAdviceFor(goos string) string {
 // operator to install bubblewrap, which on macOS is an instruction to do
 // something impossible in order to fix something that was never going to work.
 func sandboxUnavailableErr() error {
-	return Error("this host has no OS sandbox, and gohort refuses to run shell tools unconfined by default — the tool did not run. " +
+	return Error("this host has no OS sandbox, and gohort refuses to run shell tools unconfined by default: the tool did not run. " +
 		unsandboxedAdvice())
 }
 
@@ -511,7 +511,7 @@ var sandboxRefuseOnce sync.Once
 // explains why.
 func warnRefusing(what string) {
 	sandboxRefuseOnce.Do(func() {
-		nfo.Log("[sandbox] REFUSING: no OS sandbox on this host (%s) — %s are refused rather than run unconfined. %s",
+		nfo.Log("[sandbox] REFUSING: no OS sandbox on this host (%s), %s are refused rather than run unconfined. %s",
 			runtime.GOOS, what, unsandboxedAdvice())
 	})
 }
@@ -525,7 +525,7 @@ func warnRefusing(what string) {
 func warnUnsandboxed(what string) {
 	sandboxWarnOnce.Do(func() {
 		nfo.Log("[sandbox] WARNING: no OS sandbox on this host (%s) and unsandboxed execution was explicitly permitted "+
-			"(GOHORT_ALLOW_UNSANDBOXED) — %s run with this account's full permissions. %s",
+			"(GOHORT_ALLOW_UNSANDBOXED): %s run with this account's full permissions. %s",
 			runtime.GOOS, what, unsandboxedAdvice())
 	})
 }

@@ -134,7 +134,7 @@ func (T *FileStoreApp) resolveScope(user, storeSlug, value string) (string, erro
 	if err != nil {
 		// Worded for the model that supplied the value: what was refused
 		// and what would change the answer.
-		return "", Error(err.Error() + " — use one of the folders in " + st.Name +
+		return "", Error(err.Error() + ", use one of the folders in " + st.Name +
 			", exactly as it was listed")
 	}
 	return dir, nil
@@ -225,7 +225,7 @@ type FileStoreApp struct {
 func (T *FileStoreApp) Name() string         { return "filestore" }
 func (T *FileStoreApp) SystemPrompt() string { return "" }
 func (T *FileStoreApp) Desc() string {
-	return "Apps: File stores — make a folder on this server searchable by an agent."
+	return "Apps: File stores, make a folder on this server searchable by an agent."
 }
 func (T *FileStoreApp) Init() error { return T.Flags.Parse() }
 func (T *FileStoreApp) Main() error {

@@ -103,7 +103,7 @@ func (T *OrchestrateApp) installTaskRunner() {
 				// there are pieces left and nothing told it otherwise.
 				run.Complete(RunStatusCanceled)
 				if n := CloseTaskSeriesForSession(sessionID); n > 0 {
-					Log("[task] cancelled run %s — closed %d set(s) still running in session %s", run.ID, n, sessionID)
+					Log("[task] cancelled run %s: closed %d set(s) still running in session %s", run.ID, n, sessionID)
 				}
 				return
 			}
@@ -164,14 +164,14 @@ func (T *OrchestrateApp) deliverTaskResult(origin taskOrigin, label string, out 
 func buildWakeNote(sessionID, label string, out TaskProduct, taskErr error) wakeNote {
 	var fact strings.Builder
 	fact.WriteString(taskWakeMarker + " The work you started earlier is done: " + label + ".\n")
-	act := "Deliver this to the user now, and say what it was for — several messages may have passed since they asked, so name the request rather than assuming they are still looking at it."
+	act := "Deliver this to the user now, and say what it was for: several messages may have passed since they asked, so name the request rather than assuming they are still looking at it."
 	if taskErr != nil {
 		fact.WriteString("It FAILED: " + taskErr.Error() + "\n")
 		act = "Tell the user it failed and what went wrong. Do not silently retry it."
 	} else {
 		fact.WriteString(strings.TrimSpace(out.Text) + "\n")
 		if n := stageTaskAttachments(sessionID, out); n > 0 {
-			fmt.Fprintf(&fact, "The %d file(s) it produced are ATTACHED to the message you are about to send — they go out with it automatically. Do not attach them again and do not describe how to find them.\n", n)
+			fmt.Fprintf(&fact, "The %d file(s) it produced are ATTACHED to the message you are about to send: they go out with it automatically. Do not attach them again and do not describe how to find them.\n", n)
 		}
 		// More of this work to do. It joins the ACT half deliberately: the
 		// count and the order belong to this one turn, and an instruction to
@@ -544,7 +544,7 @@ func deliverWakeToChannel(p orchUpdatePayload, subSess *ToolSession, reply strin
 		// A web session is the ordinary case and says nothing; a session that
 		// LOOKS like a channel and resolved nobody is the one worth a line.
 		if strings.HasPrefix(p.SessionID, "chan:") || p.SessionID == cortexSessionID(p.AgentID) {
-			Log("[task] finished work for session %s has no deliverable recipient — it is in the thread but was NOT sent to the conversation", p.SessionID)
+			Log("[task] finished work for session %s has no deliverable recipient: it is in the thread but was NOT sent to the conversation", p.SessionID)
 		}
 		return
 	}

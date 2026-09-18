@@ -89,7 +89,7 @@ func jsMaskLiterals(src string) string {
 		case c == '`':
 			// Template literals are masked whole, interpolations included. Code
 			// inside `${…}` is vanishingly rare in an app's game loop and the
-			// only cost of ignoring it is a definition this scan doesn't see —
+			// only cost of ignoring it is a definition this scan doesn't see
 			// which the diff then cancels out anyway.
 			i++
 			for i < n && out[i] != '`' {
@@ -165,7 +165,7 @@ func jsRegexCanStart(prev byte, prevWord string) bool {
 		return true
 	}
 	if prevWord != "" {
-		return false // an identifier or a number — this divides
+		return false // an identifier or a number: this divides
 	}
 	switch prev {
 	case 0, '(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '^', '~', '<', '>':
@@ -186,7 +186,7 @@ var (
 	jsFuncDeclRE = regexp.MustCompile(`(?:^|[^\w$.])(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)\s*\(`)
 	jsClassDefRE = regexp.MustCompile(`(?:^|[^\w$.])class\s+([A-Za-z_$][\w$]*)`)
 	jsBindingRE  = regexp.MustCompile(`(?:^|[^\w$.])(?:var|let|const)\s+([A-Za-z_$][\w$]*)`)
-	// Method shorthand — `{ draw(ctx) {`, `, tick() {`, `get width() {` — which
+	// Method shorthand `{ draw(ctx) {`, `, tick() {`, `get width() {`, which
 	// otherwise reads as a call site and gets reported as undefined. This also
 	// matches `if (x) {` and friends, harmlessly: keywords are filtered out of
 	// the called set before anything is compared.
@@ -242,7 +242,7 @@ var jsGlobals = map[string]bool{
 }
 
 // jsDanglingCalls returns the names an html blob's inline scripts CALL but
-// never define — the shape a half-finished rewrite leaves behind, and the one
+// never define: the shape a half-finished rewrite leaves behind, and the one
 // thing a JavaScript parser will never object to.
 //
 // Conservative by construction. A name is only reported when EVERY occurrence
@@ -297,7 +297,7 @@ func jsDanglingCalls(html string) []string {
 
 // jsNewDanglingCalls reports the names an edit BROKE: dangling after, not
 // dangling before. Framing the check as a diff is what makes it safe to act
-// on — every imprecision in the scanner is present on both sides and cancels,
+// on: every imprecision in the scanner is present on both sides and cancels,
 // so an author is only ever stopped by damage this specific edit did.
 func jsNewDanglingCalls(before, after string) []string {
 	prior := map[string]bool{}
@@ -383,8 +383,8 @@ func jsScriptBodies(html string) []string {
 		}
 		out = append(out, body)
 	}
-	// A bare fragment of JavaScript — a replacement being checked before it is
-	// spliced in, or a section whose script tag the regex couldn't see — is
+	// A bare fragment of JavaScript: a replacement being checked before it is
+	// spliced in, or a section whose script tag the regex couldn't see: is
 	// still JavaScript. Only when it doesn't open as markup: html with no
 	// script at all must scan as nothing, not as code.
 	if len(out) == 0 {
@@ -417,7 +417,7 @@ func jsMatchPair(masked string, i int, open, close byte) int {
 }
 
 // jsFunctionSpan locates the whole definition of a named function in src and
-// returns the byte range covering it — declaration keyword through closing
+// returns the byte range covering it: declaration keyword through closing
 // brace, plus a trailing semicolon when the form has one.
 //
 // Recognizes the three shapes an app actually uses: `function name(…) {…}`,
@@ -450,17 +450,17 @@ func jsFunctionSpan(src, name string) (start, end int, err error) {
 	case len(hits) == 0:
 		defined := jsDefinedFunctions(src)
 		if len(defined) == 0 {
-			return 0, 0, fmt.Errorf("no function named %q in this html section, and no named functions were found at all — read the current html with app_def(action=\"get\") before editing", name)
+			return 0, 0, fmt.Errorf("no function named %q in this html section, and no named functions were found at all: read the current html with app_def(action=\"get\") before editing", name)
 		}
 		return 0, 0, fmt.Errorf("no function named %q in this html section. It defines: %s", name, strings.Join(defined, ", "))
 	case len(hits) > 1:
-		return 0, 0, fmt.Errorf("%q is defined %d times in this html section — a replacement has to identify ONE of them, so use patch_html with enough surrounding text to be unique", name, len(hits))
+		return 0, 0, fmt.Errorf("%q is defined %d times in this html section: a replacement has to identify ONE of them, so use patch_html with enough surrounding text to be unique", name, len(hits))
 	}
 
 	h := hits[0]
 	end, err = jsFunctionBodyEnd(masked, h.bodyFrom)
 	if err != nil {
-		return 0, 0, fmt.Errorf("found %q but could not find where it ends (%v) — use patch_html for this one", name, err)
+		return 0, 0, fmt.Errorf("found %q but could not find where it ends (%v): use patch_html for this one", name, err)
 	}
 	// Swallow a trailing semicolon so replacing an expression form doesn't
 	// leave a stray `;` behind.

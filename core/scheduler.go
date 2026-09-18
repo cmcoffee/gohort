@@ -279,7 +279,7 @@ func StartGlobalScheduler(ctx context.Context) {
 	if schedDB == nil {
 		if RootDB == nil {
 			schedDBMu.Unlock()
-			Log("[scheduler] RootDB not set — scheduler disabled")
+			Log("[scheduler] RootDB not set: scheduler disabled")
 			return
 		}
 		schedDB = RootDB.Bucket("scheduler")
@@ -434,7 +434,7 @@ func fireDueTasks(ctx context.Context, db Database) {
 		schedHandlersMu.RUnlock()
 
 		if fn == nil {
-			Log("[scheduler] no handler for kind %q — dropping task %s", task.Kind, task.ID)
+			Log("[scheduler] no handler for kind %q: dropping task %s", task.Kind, task.ID)
 			continue
 		}
 		if label := DescribeTask(task); label != "" {

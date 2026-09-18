@@ -37,7 +37,7 @@ func (T Extensions) SystemPrompt() string { return "" }
 // choice in Scribe.
 func (T Extensions) StoreName() string { return "gateways" }
 func (T Extensions) Desc() string {
-	return "Apps: the capabilities your agents draw on — credentials, tools, skills, connections."
+	return "Apps: the capabilities your agents draw on, credentials, tools, skills, connections."
 }
 func (T *Extensions) Init() error { return T.Flags.Parse() }
 func (T *Extensions) Main() error {
@@ -445,7 +445,7 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			agent := agentLabel(st)
-			group := "Session drafts (legacy) — " + agent
+			group := "Session drafts (legacy): " + agent
 			if t := strings.TrimSpace(st.SessionTitle); t != "" {
 				group += " · " + t
 			}
@@ -484,7 +484,7 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 				Name: o.Tool.Name, Description: o.Tool.Description, Mode: o.Tool.Mode,
 				Credential: o.Tool.Credential, Category: o.Tool.Category, Missing: missing,
 				Orphan: true, Deletable: true,
-				Group: "Orphaned Tools — agent " + former + " was deleted",
+				Group: "Orphaned Tools: agent " + former + " was deleted",
 			})
 		}
 		// Name-conflict pass: the same name living in more than one bucket is
@@ -678,7 +678,7 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			switch action {
 			case "set_category", "disable", "enable":
 			default:
-				http.Error(w, "this action applies to pool tools only — "+name+" is scoped to an agent", http.StatusBadRequest)
+				http.Error(w, "this action applies to pool tools only: "+name+" is scoped to an agent", http.StatusBadRequest)
 				return
 			}
 			if AttachToolToAgent == nil {
@@ -919,7 +919,7 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 		var playbook []PlaybookRule
 		if body.PlaybookText != nil && strings.TrimSpace(*body.PlaybookText) != "" {
 			if err := json.Unmarshal([]byte(*body.PlaybookText), &playbook); err != nil {
-				http.Error(w, "playbook rules: not a JSON array — "+err.Error(), http.StatusBadRequest)
+				http.Error(w, "playbook rules: not a JSON array: "+err.Error(), http.StatusBadRequest)
 				return
 			}
 			if probs := (SkillRecord{Playbook: playbook}).PlaybookProblems(); len(probs) > 0 {
@@ -1128,10 +1128,11 @@ func credentialFormFields() []ui.FormField {
 		{Field: "param_name", Label: "Header / Param name", Placeholder: "X-Api-Key or api_key", ShowWhen: "type:header|query"},
 		{Field: "base_url", Label: "Base URL", Placeholder: "https://api.example.com", Help: "The server this credential talks to. Requests are allowed only under this host."},
 		{Field: "secret", Label: "Secret / token / password", Type: "password", ShowWhen: "type:bearer|header|query|basic_auth", Help: "Stored encrypted, never shown to the assistant. Leave blank when editing to keep the stored value."},
-		{Field: "requires_confirm", Label: "Require confirm before each call", Type: "toggle", Help: "When on, every agent call through this credential asks you to allow it first. Use for anything that reaches real people or spends money."},
+		{Field: "requires_confirm", Label: "Require confirm before each call", Type: "toggle", Help: "When on, every agent call through this credential asks you to allow it first.",
+			Detail: "Use it for anything that reaches real people or spends money."},
 		{Field: "secured", Label: "Only tools that declare it", Type: "toggle",
 			Help: "OFF: every one of your agents gets a fetch_url_<name> tool for this credential and can call the API directly. " +
-				"ON: no such tool is generated — the credential is reachable only through tools you build that name it, so access follows those tools' scope rather than being open to everything you run. " +
+				"ON: no such tool is generated, the credential is reachable only through tools you build that name it, so access follows those tools' scope rather than being open to everything you run. " +
 				"The secret is never handed to tool code either way; calls are signed server-side."},
 		{Field: "description", Label: "Description", Type: "textarea", Rows: 2, Help: "Shown to your agents as the tool description."},
 	}
@@ -1180,9 +1181,11 @@ func playbookCount(s SkillRecord) string {
 func userSkillFormFields() []ui.FormField {
 	return []ui.FormField{
 		{Field: "name", Label: "Name", Placeholder: "Contract Reviewer", Help: "Shown to your agents; also the H2 header above the instructions when the skill is active."},
-		{Field: "description", Label: "Description", Help: "One line — when this skill applies. The assistant reads it to decide relevance."},
-		{Field: "triggers", Label: "Triggers", Type: "textarea", Rows: 3, Placeholder: "contract\n*.pdf", Help: "Substring patterns (or *.ext for attachments), ONE PER LINE. Any match activates the skill. Leave blank to rely on the description."},
-		{Field: "instructions", Label: "Instructions", Type: "textarea", Rows: 12, Help: "Markdown appended to the assistant's prompt while the skill is active — the approach, voice, or method it should apply."},
+		{Field: "description", Label: "Description", Help: "One line: when this skill applies. The assistant reads it to decide relevance."},
+		{Field: "triggers", Label: "Triggers", Type: "textarea", Rows: 3, Placeholder: "contract\n*.pdf", Help: "Substring patterns, or *.ext for attachments, ONE PER LINE. Any match activates the skill.",
+			Detail: "Leave it blank to rely on the description instead."},
+		{Field: "instructions", Label: "Instructions", Type: "textarea", Rows: 12, Help: "Markdown appended to the assistant's prompt while the skill is active.",
+			Detail: "The approach, voice, or method it should apply."},
 		// The rules as they stand, then the two ways to change them. Read-only
 		// until asked: the common visit is to look, and a textarea full of
 		// JSON invites an accidental edit to something the editor writes
@@ -1192,9 +1195,10 @@ func userSkillFormFields() []ui.FormField {
 		// the other way to write the same rules — by answering questions
 		// instead of typing JSON.
 		{Field: "playbook_text", Label: "Playbook", Type: "textarea", Rows: 8,
-			Placeholder: "No rules yet — use Playbook Editor, or Edit to type them.",
+			Placeholder: "No rules yet: use Playbook Editor, or Edit to type them.",
 			Links:       []ui.FormFieldLink{{Label: "Playbook Editor", Field: "playbook_url", Target: "_blank"}},
-			Help:        "Conditional rules the framework runs and settles BEFORE the assistant answers — \"establish Y first; if yes do Z, if no do U\". A JSON array; each rule: {\"fact\": \"queue_draining\", \"how\": \"Read the consumer lag.\", \"then\": \"Look at the consumer.\", \"else\": \"Look at the broker.\"}. Optional: \"when\": [triggers]; \"type\": \"choice\" with \"values\" and \"cases\"; \"then_rule\" / \"else_rule\" to nest one level."},
+			Help:        "Conditional rules the framework settles BEFORE the assistant answers.",
+			Detail:      "The shape is \"establish Y first; if yes do Z, if no do U\". It is a JSON array, and each rule looks like {\"fact\": \"queue_draining\", \"how\": \"Read the consumer lag.\", \"then\": \"Look at the consumer.\", \"else\": \"Look at the broker.\"}.\n\nOptional keys: \"when\" takes a list of triggers; \"type\": \"choice\" takes \"values\" and \"cases\"; \"then_rule\" and \"else_rule\" nest one level."},
 	}
 }
 
@@ -1220,7 +1224,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 		{
 			Title: "API credentials",
 			Wide:  true,
-			Subtitle: "API keys you own and manage yourself. They live in your namespace — no other user can reach them, and they never appear on the admin page. " +
+			Subtitle: "API keys you own and manage yourself. They live in your namespace: no other user can reach them, and they never appear on the admin page. " +
 				"By default every one of your agents gets a fetch_url_<name> tool for each; turn on \"Only tools that declare it\" to narrow a credential to the tools you build for it. " +
 				"Secrets are stored encrypted and never shown to the assistant.",
 			Body: ui.Stack{Children: []ui.Component{
@@ -1290,7 +1294,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 		},
 		{
 			Title:    "Tools",
-			Subtitle: "Everything built for you, grouped by category — the same heading a tool appears under in the tool picker and each app's tool list. Categories are assigned from the Categories list directly below this table (open one and tick its tools); tools that haven't claimed one sit under \"Uncategorized\". The Agents column says who can use each tool (blank = your global pool, every agent), and Access is where you change that. Tools the assistant authored but nobody has vouched for are badged Unconfirmed and are dropped automatically if left that way. \"Orphaned Tools\" lost their agent when it was deleted. Filter the list with the box above.",
+			Subtitle: "Everything built for you, grouped by category: the same heading a tool appears under in the tool picker and each app's tool list. Categories are assigned from the Categories list directly below this table (open one and tick its tools); tools that haven't claimed one sit under \"Uncategorized\". The Agents column says who can use each tool (blank = your global pool, every agent), and Access is where you change that. Tools the assistant authored but nobody has vouched for are badged Unconfirmed and are dropped automatically if left that way. \"Orphaned Tools\" lost their agent when it was deleted. Filter the list with the box above.",
 			// Tools first, then the categories that head them. Categories used to
 			// be their own rail section, which put the fix one navigation away
 			// from the problem: you read "Uncategorized" in this table and had to
@@ -1466,7 +1470,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 				// classes so this reads as a section within the section rather than
 				// a stray second table.
 				ui.Card{HTML: `<div class="ui-section-h" style="margin-top:1.6rem">Categories</div>` +
-					`<div class="ui-section-sub">The headings used above — and the same ones the tool picker and each app's tool list use. ` +
+					`<div class="ui-section-sub">The headings used above, and the same ones the tool picker and each app's tool list use. ` +
 					`Open one to tick the tools that belong in it, or start a new one and fill it in the same step. ` +
 					`A tool holds one category, so filing it here moves it out of wherever it was.</div>`},
 				ui.Table{
@@ -1490,7 +1494,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 							Field:         "tools",
 							PostTo:        "api/tool-categories?name={name}",
 							Noun:          "tool",
-							Intro:         "Tick the tools that belong under this heading. Unticking one clears its category — it does not delete anything.",
+							Intro:         "Tick the tools that belong under this heading. Unticking one clears its category: it does not delete anything.",
 							EmptyText:     "You have no tools yet.",
 							// Filing a tool changes the heading it sits under in the
 							// table above, which is now on screen at the same time.
@@ -1502,7 +1506,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 				ui.ModalButton{
 					Label:    "Add category",
 					Title:    "New category",
-					Subtitle: "Name it, then tick the tools that belong in it. A category exists because tools point at it — an empty one has nothing to show.",
+					Subtitle: "Name it, then tick the tools that belong in it. A category exists because tools point at it: an empty one has nothing to show.",
 					Width:    "560px",
 					Body: ui.FormPanel{
 						PostURL:     "api/tool-categories?name={name}",
@@ -1521,7 +1525,8 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 							{Field: "tools", Type: "checklist", Label: "Tools",
 								Options:     userToolCheckOptions(user),
 								Placeholder: "(you have no tools to file yet)",
-								Help:        "Tick what belongs under this heading. At least one — a category with nothing pointing at it has nothing to show. You can change the set later from Choose tools."},
+								Help:        "Tick what belongs under this heading. At least one.",
+								Detail:      "A category with nothing pointing at it has nothing to show. You can change the set later from Choose tools."},
 						},
 						Invalidate: []string{"api/tool-categories", "api/tools"},
 					},
@@ -1530,7 +1535,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 		},
 		{
 			Title:    "Skills",
-			Subtitle: "Behavior packs your agents draw on — instructions the assistant applies when a skill's triggers or description match the turn. Author or edit one right here — name, triggers, instructions, the tools it may call and the collections it may search — or ask Builder in Agents for skills that ship their own code. Open a skill to give it a playbook: conditional rules — \"establish Y first; if yes do Z, if no do U\" — that the framework runs and settles before the assistant answers. Disable to mute a skill without losing it; delete to retire it.",
+			Subtitle: "Behavior packs your agents draw on: instructions the assistant applies when a skill's triggers or description match the turn. Author or edit one right here (name, triggers, instructions, the tools it may call and the collections it may search), or ask Builder in Agents for skills that ship their own code. Open a skill to give it a playbook: conditional rules (\"establish Y first; if yes do Z, if no do U\") that the framework runs and settles before the assistant answers. Disable to mute a skill without losing it; delete to retire it.",
 			Body: ui.Stack{Children: []ui.Component{
 				ui.Table{
 					Source: "api/skills",
@@ -1611,7 +1616,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 				ui.ModalButton{
 					Label:    "Add skill",
 					Title:    "New skill",
-					Subtitle: "A behavior pack — instructions your agents apply when the triggers match. For a skill that ships code or grants tools, use Builder instead.",
+					Subtitle: "A behavior pack: instructions your agents apply when the triggers match. For a skill that ships code or grants tools, use Builder instead.",
 					Variant:  "primary",
 					Width:    "640px",
 					Body: ui.FormPanel{
@@ -1804,7 +1809,7 @@ func (T *Extensions) handleUserToolAccess(w http.ResponseWriter, r *http.Request
 			// nothing invites clicking them to find out.
 			out["items"] = []pill{{Key: "bound_only", Label: "Bound targets only", On: true}}
 			out["note"] = "Bound targets only: hidden from your agents. The tool stays available wherever it is " +
-				"explicitly attached — a Servitor system's Tools list, for instance — and Builder still loads it, " +
+				"explicitly attached (a Servitor system's Tools list, for instance), and Builder still loads it, " +
 				"so it can be tested and fixed. Turn this off to offer it to agents."
 			w.Header().Set("Cache-Control", "no-store")
 			writeJSON(w, out)
@@ -1819,10 +1824,10 @@ func (T *Extensions) handleUserToolAccess(w http.ResponseWriter, r *http.Request
 		case !found:
 			// Nothing exists to toggle OFF — the first pill switched ON is what
 			// keeps (or re-homes) the tool.
-			out["note"] = "Not kept yet — switch on an agent (or All my agents) to keep it."
+			out["note"] = "Not kept yet: switch on an agent (or All my agents) to keep it."
 			for _, o := range LoadOrphanedTempTools(db, user) {
 				if o.Tool.Name == name {
-					out["note"] = "Orphaned — the agent that held this tool was deleted. Switch on an agent (or All my agents) to re-home it, or Delete to discard."
+					out["note"] = "Orphaned: the agent that held this tool was deleted. Switch on an agent (or All my agents) to re-home it, or Delete to discard."
 					break
 				}
 			}
@@ -1833,7 +1838,7 @@ func (T *Extensions) handleUserToolAccess(w http.ResponseWriter, r *http.Request
 		}
 		if subs {
 			out["note"] = out["note"].(string) +
-				" Indented pills are sub-agents — each is its own switch, so turning a parent on does not give its sub-agents the tool."
+				" Indented pills are sub-agents: each is its own switch, so turning a parent on does not give its sub-agents the tool."
 		}
 		if len(st.Missing) > 0 {
 			out["note"] = "⚠ Missing dependency: " + strings.Join(st.Missing, ", ") + ". " + out["note"].(string)

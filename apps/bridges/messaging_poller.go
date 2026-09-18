@@ -214,7 +214,7 @@ func (T *Bridges) pollOnce(ctx context.Context, c Connector, spec RestMessagingS
 			break
 		}
 		if pages+1 >= maxPollPages {
-			Warn("[bridges] messaging poller %q hit the %d-page cap for svc=%s — cursor may lag; widen the interval or narrow the query", c.Name, maxPollPages, spec.Service)
+			Warn("[bridges] messaging poller %q hit the %d-page cap for svc=%s: cursor may lag; widen the interval or narrow the query", c.Name, maxPollPages, spec.Service)
 			break
 		}
 		pollURL = more
@@ -239,7 +239,7 @@ func (T *Bridges) deliverOutbound(ctx context.Context, spec RestMessagingSpec) {
 		// them — they'd pile up in the uncapped outbox silently. Surface it (guards
 		// leave breadcrumbs) so the misconfiguration is visible, not invisible.
 		if n := T.pendingOutboxCount(spec.Service); n > 0 {
-			Warn("[bridges] %d queued reply(ies) for svc=%q but its rest_messaging connector has no send_url — set the bound channel to inbound-only, or add send_url to deliver them", n, spec.Service)
+			Warn("[bridges] %d queued reply(ies) for svc=%q but its rest_messaging connector has no send_url: set the bound channel to inbound-only, or add send_url to deliver them", n, spec.Service)
 		}
 		return
 	}
@@ -260,7 +260,7 @@ func (T *Bridges) deliverOutbound(ctx context.Context, spec RestMessagingSpec) {
 		reqBody := renderSendBody(spec.SendBody, it.ChatID, it.Text)
 		_, status, err := authedRequest(spec.Credential, method, sendURL, reqBody)
 		if err != nil || status >= 300 {
-			Warn("[bridges] messaging send failed (svc=%s chat=%s): err=%v status=%d — re-queued %d item(s)",
+			Warn("[bridges] messaging send failed (svc=%s chat=%s): err=%v status=%d, re-queued %d item(s)",
 				spec.Service, it.ChatID, err, status, len(items)-i)
 			for _, r := range items[i:] {
 				T.enqueueOutbox(r)
@@ -296,13 +296,13 @@ func (T *Bridges) probeMessaging(c Connector) (string, error) {
 	}
 	msgs := messagesFromResponse(root, spec)
 	var b strings.Builder
-	fmt.Fprintf(&b, "Polled %s (HTTP %d) — mapped %d message(s).", pollURL, status, len(msgs))
+	fmt.Fprintf(&b, "Polled %s (HTTP %d): mapped %d message(s).", pollURL, status, len(msgs))
 	if len(msgs) > 0 {
 		m := msgs[0]
 		fmt.Fprintf(&b, "\nFirst message → chat_id=%q sender=%q name=%q text=%q",
 			m.ChatID, m.Handle, m.DisplayName, truncateText(m.Text, 140))
 	} else {
-		b.WriteString("\n(no messages matched — check list_path and map.chat_id/map.text against the raw response shape)")
+		b.WriteString("\n(no messages matched: check list_path and map.chat_id/map.text against the raw response shape)")
 	}
 	return b.String(), nil
 }

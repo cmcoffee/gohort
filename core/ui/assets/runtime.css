@@ -1184,6 +1184,38 @@ select:-webkit-autofill {
   white-space: pre-wrap;
 }
 .ui-form-help { display: block; font-size: 0.75rem; color: var(--text-mute); margin-top: 0.3rem; }
+
+/* Info icon (uiInfoIcon) — the ⓘ that holds the detail the visible line
+ * dropped. Sized to sit on a label's baseline without pushing the row
+ * taller, and dim until pointed at so a form of them does not read as a
+ * row of warnings. */
+.ui-info {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 1.05em; height: 1.05em; margin-left: 0.35em;
+  padding: 0; border: none; background: none;
+  font-size: 0.95em; line-height: 1;
+  color: var(--text-mute); opacity: 0.65;
+  cursor: help; vertical-align: baseline;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+.ui-info:hover, .ui-info:focus-visible, .ui-info[aria-expanded="true"] {
+  opacity: 1; color: var(--accent-hi, var(--accent));
+}
+.ui-info:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; border-radius: 50%; }
+/* Fixed, body-level and above the modal layer: a field near the bottom of
+ * a scrolling panel must not clip its own explanation. */
+.ui-info-pop {
+  position: fixed; z-index: 10050;
+  max-width: min(26rem, calc(100vw - 1rem));
+  background: var(--bg-2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 0.45rem;
+  padding: 0.55rem 0.7rem;
+  font-size: 0.78rem; line-height: 1.5; font-weight: 400;
+  text-transform: none; letter-spacing: normal;
+  white-space: normal; text-align: left;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+.ui-info-para + .ui-info-para { margin-top: 0.45rem; }
 /* Section-divider field (FormField type="header") — splits a long
  * form into visually grouped chunks without breaking the single-save
  * pattern. Renders as a labeled rule above subsequent fields. */

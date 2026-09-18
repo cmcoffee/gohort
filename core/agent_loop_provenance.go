@@ -99,8 +99,8 @@ func idProvenanceRefusal(tool string, args map[string]any, known map[string]bool
 			continue
 		}
 		return fmt.Sprintf(
-			"STOP — '%s' was NOT called. Its %s is %q, an identifier nothing in this conversation ever produced: it is not in any tool result, and the user did not give it to you. You composed it.%s\n\n"+
-				"An id you did not receive will not start working on a retry, and the service's 404 for one reads exactly like a deleted record or a broken endpoint — do not report it as either. "+
+			"STOP: '%s' was NOT called. Its %s is %q, an identifier nothing in this conversation ever produced: it is not in any tool result, and the user did not give it to you. You composed it.%s\n\n"+
+				"An id you did not receive will not start working on a retry, and the service's 404 for one reads exactly like a deleted record or a broken endpoint: do not report it as either. "+
 				"Call the tool that LISTS or SEARCHES the records you want, copy the id from its result character-for-character, and use that. If you cannot find the record, say so plainly.\n\n"+
 				"'%s' itself is available and working, and so is your access to it. What was refused is this one argument, nothing else. Do not tell the user the tool is missing, unavailable, or absent from your tool set, and do not reach for another route to the same record.",
 			tool, name, v, nearestKnownIDNote(id, known), tool)
@@ -125,7 +125,7 @@ func nearestKnownIDNote(id string, known map[string]bool) string {
 	if bestLen < 8 {
 		return ""
 	}
-	return fmt.Sprintf(" The closest id this conversation actually produced is %q — check whether you meant that one, and whether you joined pieces of two different ids together.", best)
+	return fmt.Sprintf(" The closest id this conversation actually produced is %q: check whether you meant that one, and whether you joined pieces of two different ids together.", best)
 }
 
 // sortedArgNames keeps a refusal deterministic when a call carries more than

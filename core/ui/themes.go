@@ -167,13 +167,13 @@ func ThemeCSS() string {
 // Built-in themes. Add a new one here (or via RegisterTheme from anywhere) and
 // it auto-appears in the picker + validates + ships its CSS — no other edits.
 func init() {
-	RegisterTheme(ThemeSpec{Name: "indigo", Label: "Indigo — cool slate + indigo accent", Tokens: map[string]string{
+	RegisterTheme(ThemeSpec{Name: "indigo", Label: "Indigo: cool slate + indigo accent", Tokens: map[string]string{
 		"--bg-0": "#0f1117", "--bg-1": "#1a1d27", "--bg-2": "#232733",
 		"--text": "#e4e7ef", "--text-hi": "#ffffff", "--text-mute": "#9ca3b8",
 		"--border": "#333848", "--accent": "#6366f1", "--accent-hi": "#818cf8",
 		"--danger": "#ef4444", "--success": "#22c55e", "--warning": "#f59e0b", "--tap": "44px",
 	}})
-	RegisterTheme(ThemeSpec{Name: "blackboard", Label: "Blackboard — warm navy + amber", Tokens: map[string]string{
+	RegisterTheme(ThemeSpec{Name: "blackboard", Label: "Blackboard: warm navy + amber", Tokens: map[string]string{
 		"--bg-0": "#0c1424", "--bg-1": "#142037", "--bg-2": "#1c2a45",
 		"--text": "#f5f0e1", "--text-hi": "#ffffff", "--text-mute": "#9aa3b8",
 		"--border": "#2a3a5e", "--accent": "#d4a657", "--accent-hi": "#f0c878",
@@ -185,7 +185,7 @@ func init() {
 		"--border": "#30363d", "--accent": "#4f8cff", "--accent-hi": "#79c0ff",
 		"--danger": "#f85149", "--success": "#56d364", "--warning": "#d29922", "--tap": "44px",
 	}})
-	RegisterTheme(ThemeSpec{Name: "light", Label: "Light — slate-on-white + indigo", Tokens: map[string]string{
+	RegisterTheme(ThemeSpec{Name: "light", Label: "Light: slate-on-white + indigo", Tokens: map[string]string{
 		"--bg-0": "#f6f7f9", "--bg-1": "#ffffff", "--bg-2": "#eceef2",
 		"--text": "#24292f", "--text-hi": "#0d1117", "--text-mute": "#57606a",
 		"--border": "#d0d7de", "--accent": "#4f46e5", "--accent-hi": "#6366f1",

@@ -67,7 +67,7 @@ func (T *PublishApp) Main() error {
 func (T *PublishApp) WebPath() string { return "/publish" }
 func (T *PublishApp) WebName() string { return "Publishing" }
 func (T *PublishApp) WebDesc() string {
-	return "Where finished documents go — Confluence and other destinations."
+	return "Where finished documents go: Confluence and other destinations."
 }
 
 // WebHidden keeps Publishing off the dashboard. It configures a capability other

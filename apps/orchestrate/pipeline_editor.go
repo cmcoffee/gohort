@@ -63,15 +63,16 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 		{Field: "name", Type: "text", Label: "Name",
 			Help: "How later stages address it: {stage:" + s.Name + "} for everything it returned, {stage:" + s.Name + ".field} for one piece. Renaming rewrites every reference for you."},
 		{Field: "kind", Type: "select", Label: "What it does", Options: []ui.SelectOption{
-			{Value: "worker", Label: "Worker — one model call"},
-			{Value: "agent", Label: "Agent — dispatch to one of your agents"},
-			{Value: "fanout", Label: "Fanout — run once per item of an earlier list, in parallel"},
-			{Value: "panel", Label: "Panel — several voices on the same question, over rounds"},
-			{Value: "loop", Label: "Loop — repeat a body of stages"},
-			{Value: "branch", Label: "Branch — read a bool and skip or stop (no model call)"},
-			{Value: "tool", Label: "Tool — call a tool directly (no model, no tokens)"},
-			{Value: "machine", Label: "Machine — run a whole machine as this stage"},
-		}, Help: "Changing this changes which controls below apply. Anything the new kind does not use stays visible while it still holds a value, so you can clear it."},
+			{Value: "worker", Label: "Worker: one model call"},
+			{Value: "agent", Label: "Agent: dispatch to one of your agents"},
+			{Value: "fanout", Label: "Fanout: run once per item of an earlier list, in parallel"},
+			{Value: "panel", Label: "Panel: several voices on the same question, over rounds"},
+			{Value: "loop", Label: "Loop: repeat a body of stages"},
+			{Value: "branch", Label: "Branch: read a bool and skip or stop (no model call)"},
+			{Value: "tool", Label: "Tool: call a tool directly (no model, no tokens)"},
+			{Value: "machine", Label: "Machine: run a whole machine as this stage"},
+		}, Help: "Changing this changes which controls below apply.",
+			Detail: "Anything the new kind does not use stays visible while it still holds a value, so you can clear it."},
 	}
 
 	// The prompt: every kind that makes a model call.
@@ -87,32 +88,38 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 		ui.FormField{Field: "agent", Type: "select", Label: "Which agent",
 			ShowWhen: keepWhileSet(s.Agent, "kind:agent"),
 			Options:  append([]ui.SelectOption{{Value: "", Label: "(none)"}}, cat.agents...),
-			Help:     "It answers with its own persona, tools and memory; what comes back is shaped into this stage's declared fields."},
+			Help:     "It answers with its own persona, tools and memory.",
+			Detail:   "What comes back is shaped into this stage's declared fields."},
 		ui.FormField{Field: "fan_over", Type: "text", Label: "Fan over",
 			ShowWhen: keepWhileSet(s.FanOver, "kind:fanout"),
-			Help:     "An earlier stage whose prompt emits a JSON array, or one of its declared list fields: \"plan.queries\". Capped at 12 items, 6 at a time."},
+			Help:     "An earlier stage whose prompt emits a JSON array, or one of its declared list fields.",
+			Detail:   "For example \"plan.queries\". Capped at 12 items, 6 at a time."},
 		ui.FormField{Field: "count", Type: "number", Label: "At most this many passes",
 			ShowWhen: keepWhileSet(strconv.Itoa(s.Count), "kind:loop"),
 			Help:     "1-25. The hard ceiling: a loop that never satisfies its stop condition ends here."},
 		ui.FormField{Field: "until", Type: "text", Label: "Stop early when",
 			ShowWhen: keepWhileSet(s.Until, "kind:loop"),
-			Help:     "One bool field a BODY stage declares, by bare name: \"critic.satisfied\". Not an expression — no ==, no braces. A field from outside the loop never changes between passes."},
+			Help:     "One bool field a BODY stage declares, by bare name: \"critic.satisfied\".",
+			Detail:   "Not an expression: no ==, no braces. A field from outside the loop never changes between passes."},
 		ui.FormField{Field: "when", Type: "text", Label: "Take the branch when",
 			ShowWhen: keepWhileSet(s.When, "kind:branch"),
 			Help:     "A bool field an EARLIER stage declared, by bare name. True takes the branch."},
 		ui.FormField{Field: "skip_to", Type: "select", Label: "…and skip to",
 			ShowWhen: keepWhileSet(s.SkipTo, "kind:branch"),
 			Options:  append([]ui.SelectOption{{Value: "", Label: "(end the pipeline)"}}, laterStageOptions(def, s.Name)...),
-			Help:     "Forward only — repeating work is what a loop is for. Leave it empty and a taken branch ENDS the pipeline, returning the last stage's output."},
+			Help:     "Forward only. Repeating work is what a loop is for.",
+			Detail:   "Leave it empty and a taken branch ENDS the pipeline, returning the last stage's output."},
 		ui.FormField{Field: "tool", Type: "select", Label: "Which tool",
 			ShowWhen: keepWhileSet(s.Tool, "kind:tool"),
 			Options:  append([]ui.SelectOption{{Value: "", Label: "(none)"}}, cat.tools...),
-			Help:     "Called directly with the arguments you write. For computation rather than judgement: arithmetic, dedup, one specific API call."},
+			Help:     "Called directly with the arguments you write.",
+			Detail:   "For computation rather than judgement: arithmetic, dedup, one specific API call."},
 		ui.FormField{Field: "machine", Type: "select", Label: "Which machine",
 			ShowWhen: keepWhileSet(s.Machine, "kind:machine"),
 			Options:  append([]ui.SelectOption{{Value: "", Label: "(none)"}}, cat.machines...),
-			Help: "A whole run as this stage: its own steps, its own working set, and its last step's result becomes this stage's. " +
-				"Only machines marked \"this RUNS instead of converses\" can be used, because a stage has nobody waiting in it. " +
+			Help:     "A whole run as this stage.",
+			Detail: "It has its own steps and its own working set, and its last step's result becomes this stage's." +
+				"\n\nOnly machines marked \"this RUNS instead of converses\" can be used, because a stage has nobody waiting in it. " +
 				"In a fanout body it becomes one child run per item."},
 	)
 
@@ -122,7 +129,7 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 	// stage has to read a PIECE of.
 	fields = append(fields,
 		ui.FormField{Type: "header", Label: "What this stage returns",
-			Help: "Declare fields and the framework asks for them, validates the reply, and exposes each one as {stage:" + s.Name + ".field} — that is what makes fan_over-a-field, a loop's until, and a branch's when possible. " +
+			Help: "Declare fields and the framework asks for them, validates the reply, and exposes each one as {stage:" + s.Name + ".field}, that is what makes fan_over-a-field, a loop's until, and a branch's when possible. " +
 				"Never ask for JSON in the instructions as well: two sets of formatting rules is how a model ends up returning a JSON string inside a JSON field. Declare nothing for a prose stage."},
 		stageOutputRows(def, s),
 	)
@@ -134,16 +141,16 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 			ShowWhen: keepWhileSet(s.Model, "kind:worker|fanout"),
 			Options: []ui.SelectOption{
 				{Value: "", Label: "Inherit the agent's routing"},
-				{Value: "worker", Label: "Worker — the cheap, local one"},
-				{Value: "lead", Label: "Lead — the precise, remote one"},
+				{Value: "worker", Label: "Worker: the cheap, local one"},
+				{Value: "lead", Label: "Lead: the precise, remote one"},
 			},
 			Help: "A transform or a routing decision is worker work; a stage that commits to an explanation is usually lead."},
 		ui.FormField{Field: "think", Type: "select", Label: "Reasoning",
 			ShowWhen: keepWhileSet(StageThinkMode(s), "kind:worker|fanout"),
 			Options: []ui.SelectOption{
 				{Value: "", Label: "Inherit"},
-				{Value: "on", Label: "On — this stage is a judgement"},
-				{Value: "off", Label: "Off — this stage is a transform"},
+				{Value: "on", Label: "On: this stage is a judgement"},
+				{Value: "off", Label: "Off: this stage is a transform"},
 			}},
 		// The coarse control, and the one that stays true: a pipeline is
 		// invoked by whichever agent attached it, so the catalog it
@@ -152,24 +159,25 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 		ui.FormField{Field: "panel", Type: "tags", Label: "The voices",
 			ShowWhen:    keepWhileList(s.Panel, "kind:panel"),
 			Placeholder: "Optimist, Skeptic, Cost",
-			Help: "Two to " + strconv.Itoa(PanelMaxVoices) + ". A name that matches one of your agents IS that agent — its persona, its memory, its tools. " +
+			Help: "Two to " + strconv.Itoa(PanelMaxVoices) + ". A name that matches one of your agents IS that agent: its persona, its memory, its tools. " +
 				"One that does not is a role the worker answers as, which is how a panel of perspectives runs without authoring three agents first. " +
 				"Write the prompt to whoever is answering and place {voice}; {panel} is everything said so far, and goes at the end on its own if you leave it out."},
 		ui.FormField{Field: "count", Type: "number", Label: "Rounds", Min: 1, Max: PanelMaxRounds,
 			ShowWhen: keepWhileSet(chIf(s.Kind == StagePanel && s.Count > 0, strconv.Itoa(s.Count), ""), "kind:panel"),
-			Help: "One round is a poll — nobody has replied to anybody. Two is the smallest thing worth calling a debate. " +
+			Help: "One round is a poll: nobody has replied to anybody. Two is the smallest thing worth calling a debate. " +
 				"Voices times rounds is model calls, so three voices over three rounds is nine before anything is synthesized."},
 		ui.FormField{Field: "reach", Type: "select", Label: "Tools this stage may reach",
 			ShowWhen: keepWhileSet(StageReach(s), "kind:worker|fanout"),
 			Options: []ui.SelectOption{
 				{Value: ReachAll, Label: "Everything the calling agent has",
 					Help: "The default. A pipeline attached to an agent with web_search inherits it."},
-				{Value: ReachRead, Label: "Read-only — nothing that writes or reaches the network",
+				{Value: ReachRead, Label: "Read-only: nothing that writes or reaches the network",
 					Help: "For a stage that gathers and reports. Searching, listing and reading stay; posting, running and fetching go."},
-				{Value: ReachNone, Label: "Nothing — this stage only reshapes what it was handed",
+				{Value: ReachNone, Label: "Nothing: this stage only reshapes what it was handed",
 					Help: "For a synthesizer or a formatter that should not be tempted to go and fetch."},
 			},
-			Help: "Prefer this to naming tools. A pipeline is run by whatever agent attached it, and its catalog is assembled fresh each turn — an MCP server publishes its tools when it connects, a credential mints its own per session — so a name can stop resolving without anybody changing this pipeline."},
+			Help:   "Prefer this to naming tools.",
+			Detail: "A pipeline is run by whatever agent attached it, and its catalog is assembled fresh each turn: an MCP server publishes its tools when it connects, a credential mints its own per session. So a name can stop resolving without anybody changing this pipeline."},
 		ui.FormField{Type: "header", Label: stageNameNarrowingLabel(s),
 			Collapsed: len(s.Tools) == 0,
 			ShowWhen:  "kind:worker|fanout;reach:!none"},
@@ -177,7 +185,8 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 			ShowWhen:    keepWhileList(s.Tools, "kind:worker|fanout;reach:!none"),
 			Options:     toolChecklistOptions(cat.tools, s.Tools),
 			Placeholder: "(no tools to offer)",
-			Help:        "Names on TOP of the reach above; none checked means the reach alone decides. A stage that must reach one particular thing and not its neighbours is what this is for."},
+			Help:        "Names on TOP of the reach above. None checked means the reach alone decides.",
+			Detail:      "A stage that must reach one particular thing and not its neighbours is what this is for."},
 	)
 	return fields
 }
@@ -187,7 +196,7 @@ func stageFormFields(def PipelineDef, s PipelineStage, cat editorCatalog) []ui.F
 // Same rule the machine editor's steps follow.
 func stageNameNarrowingLabel(s PipelineStage) string {
 	if n := len(s.Tools); n > 0 {
-		return "Narrow by name — " + strconv.Itoa(n) + " named"
+		return "Narrow by name: " + strconv.Itoa(n) + " named"
 	}
 	return "Narrow by name (advanced)"
 }
@@ -350,7 +359,7 @@ func (T *OrchestrateApp) handlePipelineStages(w http.ResponseWriter, r *http.Req
 			// A form still addressing a stage that was renamed or
 			// removed. Treating its save as a create would resurrect the
 			// old stage beside the new one.
-			http.Error(w, "no stage called "+strconv.Quote(name)+" — it was renamed or removed; reload the page",
+			http.Error(w, "no stage called "+strconv.Quote(name)+", it was renamed or removed; reload the page",
 				http.StatusNotFound)
 			return
 		}
@@ -589,7 +598,7 @@ func attachPipelineAgentOptions(udb Database, user string) []ui.SelectOption {
 		}
 		label := chFirst(ag.Name, ag.ID)
 		if d := strings.TrimSpace(ag.Description); d != "" {
-			label += " — " + d
+			label += " · " + d
 		}
 		out = append(out, ui.SelectOption{Value: ag.ID, Label: label})
 	}
@@ -641,7 +650,7 @@ func pipelineCostText(def PipelineDef) string {
 		parts = append(parts, strings.Join(free, ", ")+" make no model call at all")
 	}
 	if len(parts) == 0 {
-		return "Nothing — this pipeline has no stages yet."
+		return "Nothing: this pipeline has no stages yet."
 	}
 	return strings.Join(parts, ". ") + ". A stage that declares output may pay one extra repair call when a reply comes back malformed."
 }
@@ -702,7 +711,7 @@ func pipelineAgentPills(udb Database, user string, def PipelineDef) map[string]a
 func stageOutputRows(def PipelineDef, s PipelineStage) ui.FormField {
 	return ui.FormField{
 		Field: "output", Type: "rows", Label: "", AddLabel: "+ Add field",
-		Placeholder: "(nothing — this stage returns prose)",
+		Placeholder: "(nothing: this stage returns prose)",
 		Columns: []ui.FormField{
 			{Field: "kind", Type: "select", Label: "What is this?", Width: 4,
 				Options: []ui.SelectOption{
@@ -710,7 +719,8 @@ func stageOutputRows(def PipelineDef, s PipelineStage) ui.FormField {
 					{Value: "asked", Label: "Something this stage works out"},
 					{Value: "filled", Label: "A value the pipeline already holds"},
 				},
-				Help: "A value the pipeline already holds is FILLED: it is left out of what the model is asked for entirely and merged into the result afterwards. Asking for something you already have invites a paraphrase."},
+				Help:   "A value the pipeline already holds is FILLED.",
+				Detail: "It is left out of what the model is asked for entirely and merged into the result afterwards. Asking for something you already have invites a paraphrase."},
 			{Field: "name", Type: "text", Label: "Name", Width: 3, HideWhen: "!kind",
 				Placeholder: "short_lowercase_name",
 				Help:        "Later stages read it as {stage:" + s.Name + ".<name>}."},
@@ -720,7 +730,8 @@ func stageOutputRows(def PipelineDef, s PipelineStage) ui.FormField {
 			// a typo the validator then refuses.
 			{Field: "from", Type: "select", Label: "Filled from", Width: 4, ShowWhen: "kind:filled",
 				Options: stageFillOptions(def, s.Name),
-				Help:    "Only values from EARLIER in the run: stages run strictly in order, so a reference forward resolves to nothing and the save is refused."},
+				Help:    "Only values from EARLIER in the run.",
+				Detail:  "Stages run strictly in order, so a reference forward resolves to nothing and the save is refused."},
 			// A filled field holds text, always, so its type and its
 			// instruction are controls that would do nothing.
 			{Field: "type", Type: "select", Label: "Type", Width: 2, ShowWhen: "kind:asked", Options: []ui.SelectOption{
@@ -733,7 +744,7 @@ func stageOutputRows(def PipelineDef, s PipelineStage) ui.FormField {
 			{Field: "required", Type: "toggle", Label: "Required", ShowWhen: "kind:asked",
 				Help: "A required field the model omits fails the stage. An optional one resolves to empty."},
 			{Field: "desc", Type: "textarea", Rows: 3, OwnLine: true, ShowWhen: "kind:asked",
-				Label:       "What to find — write it as the instruction for this field",
+				Label:       "What to find: write it as the instruction for this field",
 				Placeholder: "e.g. the specific claim the sources actually support, not a summary of what they discuss."},
 		},
 	}
@@ -749,8 +760,8 @@ func stageOutputRows(def PipelineDef, s PipelineStage) ui.FormField {
 func stageFillOptions(def PipelineDef, upTo string) []ui.SelectOption {
 	out := []ui.SelectOption{
 		{Value: "", Label: "Choose a value…"},
-		{Value: "{input}", Label: "{input} — what the run was started with"},
-		{Value: "{prev}", Label: "{prev} — the previous stage's whole output"},
+		{Value: "{input}", Label: "{input}: what the run was started with"},
+		{Value: "{prev}", Label: "{prev}: the previous stage's whole output"},
 	}
 	for _, s := range def.Stages {
 		if strings.TrimSpace(s.Name) == strings.TrimSpace(upTo) {
@@ -761,12 +772,12 @@ func stageFillOptions(def PipelineDef, upTo string) []ui.SelectOption {
 			continue
 		}
 		out = append(out, ui.SelectOption{
-			Value: "{stage:" + name + "}", Label: "{stage:" + name + "} — all of " + name + "'s output",
+			Value: "{stage:" + name + "}", Label: "{stage:" + name + "}: all of " + name + "'s output",
 		})
 		for _, f := range s.ModelOutput() {
 			out = append(out, ui.SelectOption{
 				Value: "{stage:" + name + "." + f.Name + "}",
-				Label: "{stage:" + name + "." + f.Name + "} — " + previewText(f.Desc, 40),
+				Label: "{stage:" + name + "." + f.Name + "} " + previewText(f.Desc, 40),
 			})
 		}
 	}

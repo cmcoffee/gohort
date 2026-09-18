@@ -238,7 +238,7 @@ func sanitizeName(name string, pk int, first, last, nick, org string) string {
 		}, name)
 	}
 	if bad {
-		nfo.Log("contacts: pk=%d sanitized garbage name — raw bytes: %x | first=%q last=%q nick=%q org=%q -> %q",
+		nfo.Log("contacts: pk=%d sanitized garbage name, raw bytes: %x | first=%q last=%q nick=%q org=%q -> %q",
 			pk, []byte(strings.TrimSpace(first+" "+last+" "+nick+" "+org)), first, last, nick, org, name)
 	}
 	return strings.TrimSpace(name)

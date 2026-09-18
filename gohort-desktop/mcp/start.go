@@ -47,7 +47,7 @@ func Start() func() {
 	}
 	var cfg config
 	if json.Unmarshal(b, &cfg) != nil {
-		core.Warn("[mcp] %s is not valid JSON — ignoring", path)
+		core.Warn("[mcp] %s is not valid JSON: ignoring", path)
 		return func() {}
 	}
 	if len(cfg.MCPServers) == 0 {
@@ -198,6 +198,6 @@ func bringUp(name string, sc serverConfig) (*server, error) {
 		registered = append(registered, newTool(srv, def))
 	}
 	core.ReplaceDynamicTools(mcpSource(name), registered)
-	core.Log("[mcp] server %q online — %d tool(s)", name, len(tools))
+	core.Log("[mcp] server %q online: %d tool(s)", name, len(tools))
 	return srv, nil
 }

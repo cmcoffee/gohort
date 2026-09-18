@@ -103,11 +103,11 @@ func appsAvailabilitySection() ui.Section {
 	return ui.Section{
 		Title: "Enabled apps",
 		Subtitle: "Switch an app off to take it off this deployment: its dashboard card disappears for everyone " +
-			"and its pages and API answer 503 until it is switched back on. Takes effect immediately — no restart. " +
+			"and its pages and API answer 503 until it is switched back on. Takes effect immediately: no restart. " +
 			"Per-user grants are left untouched, so switching an app back on restores exactly the access it had. " +
 			"This governs the app's web surface only; tools, scheduled tasks and routing an app registered at " +
 			"startup keep running. The administrator panel and the framework's own internal apps (your account " +
-			"page, the monitor, the API endpoints) are not listed — they are what you would need to get back.",
+			"page, the monitor, the API endpoints) are not listed: they are what you would need to get back.",
 		Group: AppsTabGroup,
 		Wide:  true,
 		Body: ui.Table{
@@ -231,7 +231,7 @@ func (a *AdminApp) handleAppSummary(w http.ResponseWriter, r *http.Request) {
 	// of two words is the bad news, so the server says.
 	state, severity := "Enabled", "ok"
 	if !AppEnabled(a.db, path) {
-		state, severity = "Disabled — its pages and API answer 503", "bad"
+		state, severity = "Disabled: its pages and API answer 503", "bad"
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"path":           path,
@@ -269,7 +269,7 @@ func describeAppAccess(db Database, path string) string {
 	}
 	switch {
 	case granted == 0:
-		return plural(admins, "admin") + " only — no other account has been granted it"
+		return plural(admins, "admin") + " only: no other account has been granted it"
 	default:
 		return plural(granted, "account") + " granted, plus " + plural(admins, "admin")
 	}
@@ -290,7 +290,7 @@ func describeAppControls(r *http.Request, path string) string {
 		parts = append(parts, plural(n, "settings panel"))
 	}
 	if len(parts) == 0 {
-		return "none declared — anything this app configures still lives on the LLMs, Tuning and Extensions tabs"
+		return "none declared: anything this app configures still lives on the LLMs, Tuning and Extensions tabs"
 	}
 	return strings.Join(parts, ", ")
 }

@@ -363,7 +363,8 @@ func init() {
 	RegisterTunable(TunableSpec{Key: "tune_secure_api_max_response_bytes", Category: "Limits", Label: "SecureAPI response byte cap", Help: "Max response body returned directly to the LLM as text (no response pipe).", Kind: KindInt, Default: 262144, Min: 16384, Max: 4194304})
 	RegisterTunable(TunableSpec{Key: "tune_secure_api_max_response_bytes_pipe", Category: "Limits", Label: "SecureAPI response byte cap (piped)", Help: "Higher response read cap used when a response_pipe is configured.", Kind: KindInt, Default: 4194304, Min: 262144, Max: 67108864})
 	RegisterTunable(TunableSpec{Key: "tune_secure_api_max_save_bytes", Category: "Limits", Label: "SecureAPI save byte cap", Help: "Max response body written to the workspace via save_to.", Kind: KindInt, Default: 104857600, Min: 1048576, Max: 1073741824})
-	RegisterTunable(TunableSpec{Key: "tune_secure_api_upload_timeout", Category: "Timeouts", Label: "SecureAPI upload timeout", Help: "Wall-clock cap for a streaming file upload through a credential. Separate from the request timeout: a file takes as long as the link allows.", Kind: KindSeconds, Default: 300, Min: 30, Max: 3600})
+	RegisterTunable(TunableSpec{Key: "tune_secure_api_upload_timeout", Category: "Timeouts", Label: "SecureAPI upload timeout", Help: "Wall-clock cap for a streaming file upload through a credential.",
+		Detail: "Separate from the request timeout: a file takes as long as the link allows.", Kind: KindSeconds, Default: 300, Min: 30, Max: 3600})
 	RegisterTunable(TunableSpec{Key: "tune_secure_api_request_timeout", Category: "Timeouts", Label: "SecureAPI request timeout", Help: "Wall-clock cap per SecureAPI call.", Kind: KindSeconds, Default: 30, Min: 5, Max: 300})
 	RegisterTunable(TunableSpec{Key: "tune_secure_api_audit_ring_size", Category: "Limits", Label: "SecureAPI audit ring size", Help: "Per-credential audit-log retention; older entries drop FIFO.", Kind: KindInt, Default: 50, Min: 10, Max: 1000})
 }
@@ -462,7 +463,7 @@ func (s *SecureAPI) cleanupLegacyNoAuth() {
 			Debug("[secure_api] cleanup of legacy %q credential failed: %v", name, err)
 			continue
 		}
-		Log("[secure_api] removed vestigial %q credential — fetch_url now handles unauthenticated HTTP directly", name)
+		Log("[secure_api] removed vestigial %q credential: fetch_url now handles unauthenticated HTTP directly", name)
 	}
 }
 
@@ -961,7 +962,7 @@ func (s *SecureAPI) EnforceSecuredBinding(credName, toolName, user string) error
 		// deny set removes the auto-route), which these dispatch paths bypass.
 		// Applies to unnamed callers (persistent shell / run_local) too.
 		if !s.UserMayUse(c, user) {
-			return fmt.Errorf("credential %q is not shared with you — an admin grants access via Access in Admin > APIs", credName)
+			return fmt.Errorf("credential %q is not shared with you: an admin grants access via Access in Admin > APIs", credName)
 		}
 		return nil
 	}
@@ -977,7 +978,7 @@ func (s *SecureAPI) EnforceSecuredBinding(credName, toolName, user string) error
 		return nil
 	}
 	if credSliceHas(c.RevokedToolBindings, toolName) {
-		return fmt.Errorf("credential %q is SECURED and tool %q's binding was REVOKED — an admin re-approves it in Admin > APIs to restore access", credName, toolName)
+		return fmt.Errorf("credential %q is SECURED and tool %q's binding was REVOKED: an admin re-approves it in Admin > APIs to restore access", credName, toolName)
 	}
 	if !credSliceHas(c.ApprovedToolBindings, toolName) {
 		// Declaring-but-unrecorded (a tool authored before the binding record, or
@@ -1358,7 +1359,7 @@ func (s *SecureAPI) BuildTools(sess *ToolSession) []AgentToolDef {
 	// SecureCredential. Empty-output states caused by Disabled or
 	// Secured are normal and shouldn't emit noise.
 	if len(allKeys) > 0 && len(creds) == 0 {
-		Debug("[secure_api] BuildTools: %d keys in table but 0 credentials decoded — check struct compat against persisted records", len(allKeys))
+		Debug("[secure_api] BuildTools: %d keys in table but 0 credentials decoded, check struct compat against persisted records", len(allKeys))
 	}
 	return out
 }
@@ -1397,11 +1398,11 @@ func (s *SecureAPI) agentToolFromCredential(c SecureCredential, sess *ToolSessio
 				},
 				"request_headers": {
 					Type:        "object",
-					Description: "Optional extra headers as a {name: value} object. Cannot override the auth header — that's set by the credential.",
+					Description: "Optional extra headers as a {name: value} object. Cannot override the auth header: that's set by the credential.",
 				},
 				"save_to": {
 					Type:        "string",
-					Description: "Optional. Workspace-relative path to write the response body to as raw bytes (e.g. \"voice.mp3\", \"report.pdf\"). Use for binary responses (audio, image, PDF, archive) — without this, binary content returns as garbled text in the tool result. When set, the tool result is a short metadata line (status, size, content-type, path) instead of the body. Pair with attach_file to deliver the saved file to the user.",
+					Description: "Optional. Workspace-relative path to write the response body to as raw bytes (e.g. \"voice.mp3\", \"report.pdf\"). Use for binary responses (audio, image, PDF, archive), without this, binary content returns as garbled text in the tool result. When set, the tool result is a short metadata line (status, size, content-type, path) instead of the body. Pair with attach_file to deliver the saved file to the user.",
 				},
 			},
 			Required: []string{"url"},
@@ -1543,7 +1544,7 @@ func (s *SecureAPI) dispatchToolCallFull(sess *ToolSession, credName, urlStr, me
 			Name:              "no_auth",
 			Type:              SecureCredNone,
 			AllowedURLPattern: "https://**",
-			Description:       "Synthesized unauthenticated dispatch — back-compat for tools authored before fetch_url subsumed this path.",
+			Description:       "Synthesized unauthenticated dispatch: back-compat for tools authored before fetch_url subsumed this path.",
 		}
 		args := map[string]any{
 			"url":    urlStr,
@@ -1648,7 +1649,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		if base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/"); base != "" {
 			rawURL = base + rawURL
 		} else {
-			return "", fmt.Errorf("url %q is a path with no host, and credential %q has no Base URL to resolve it against — author the tool with an absolute https:// URL, or set the credential's Base URL", rawURL, c.Name)
+			return "", fmt.Errorf("url %q is a path with no host, and credential %q has no Base URL to resolve it against, author the tool with an absolute https:// URL, or set the credential's Base URL", rawURL, c.Name)
 		}
 	}
 	method := strings.ToUpper(strings.TrimSpace(StringArg(args, "method")))
@@ -1697,7 +1698,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		// as "nothing is allowed" when empty actually means everything
 		// under base_url. Show the resolved meaning inline, where it's
 		// read, instead of hoping a rule sentence elsewhere wins.
-		eps := "(empty — every path under base_url is allowed; the endpoint list is NOT the problem)"
+		eps := "(empty: every path under base_url is allowed; the endpoint list is NOT the problem)"
 		if len(c.AllowedEndpoints) > 0 {
 			eps = fmt.Sprintf("%v", c.AllowedEndpoints)
 		}
@@ -1713,9 +1714,9 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		// is invisible unless someone diffs the strings by eye.
 		if base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/"); base != "" {
 			if rawURL != base && !strings.HasPrefix(rawURL, base+"/") {
-				baseErr += fmt.Sprintf(". DIAGNOSIS: the request's scheme+host does not match Base URL %q — they must match EXACTLY (https vs http, and www.host vs bare host count as DIFFERENT hosts). The Allowed Endpoints list is NOT the problem. Fix: correct the Base URL, or author the tool with a path-only url so it inherits the credential's host", c.BaseURL)
+				baseErr += fmt.Sprintf(". DIAGNOSIS: the request's scheme+host does not match Base URL %q, they must match EXACTLY (https vs http, and www.host vs bare host count as DIFFERENT hosts). The Allowed Endpoints list is NOT the problem. Fix: correct the Base URL, or author the tool with a path-only url so it inherits the credential's host", c.BaseURL)
 			} else {
-				baseErr += fmt.Sprintf(". DIAGNOSIS: the host matches; the PATH is outside Allowed Endpoints %v. An EMPTY list allows every path under Base URL; a non-empty list allows ONLY the listed patterns — add the missing pattern or clear the list", c.AllowedEndpoints)
+				baseErr += fmt.Sprintf(". DIAGNOSIS: the host matches; the PATH is outside Allowed Endpoints %v. An EMPTY list allows every path under Base URL; a non-empty list allows ONLY the listed patterns: add the missing pattern or clear the list", c.AllowedEndpoints)
 			}
 		}
 		return "", credMisconfigEscalation(c.Name, baseErr, noteCredRejection(c.Name))
@@ -1749,7 +1750,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 			count++
 		}
 		if count >= c.MaxCallsPerDay {
-			return "", fmt.Errorf("daily cap of %d reached for credential %q (counted %d successful calls in the last 24h) — raise the cap in admin if this is legitimate", c.MaxCallsPerDay, c.Name, count)
+			return "", fmt.Errorf("daily cap of %d reached for credential %q (counted %d successful calls in the last 24h): raise the cap in admin if this is legitimate", c.MaxCallsPerDay, c.Name, count)
 		}
 	}
 	parsed, err := url.Parse(rawURL)
@@ -1805,7 +1806,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 				if terr != nil {
 					return "", terr
 				}
-				return "", fmt.Errorf("you haven't connected your %q account yet — click Connect on your Account page (Connected accounts)", c.Name)
+				return "", fmt.Errorf("you haven't connected your %q account yet: click Connect on your Account page (Connected accounts)", c.Name)
 			}
 			secret = tok
 		} else {
@@ -1813,7 +1814,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 			secret, ok = s.resolveSecret(c, callUser)
 			if !ok || secret == "" {
 				if c.IsPerUser() {
-					return "", fmt.Errorf("you haven't connected your %q account yet — set your key on your Account page (Connected accounts)", c.Name)
+					return "", fmt.Errorf("you haven't connected your %q account yet: set your key on your Account page (Connected accounts)", c.Name)
 				}
 				return "", fmt.Errorf("credential %q has no stored secret (re-add it via the admin UI)", c.Name)
 			}
@@ -1834,7 +1835,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// canceled" that the model misreads as the host being down (it then tells
 	// the user the firewall is unreachable, which is wrong).
 	if connector != nil && !connector.Allowed() {
-		return "", fmt.Errorf("blocked by Private mode: network egress is OFF for this turn, so the call to %q was NOT attempted. The credential and host are fine — this is a local privacy setting, NOT a connectivity or firewall problem. To reach it, turn off Private mode on this agent (or dispatch to an agent that has network). Do NOT report the host as down or unreachable", rawURL)
+		return "", fmt.Errorf("blocked by Private mode: network egress is OFF for this turn, so the call to %q was NOT attempted. The credential and host are fine: this is a local privacy setting, NOT a connectivity or firewall problem. To reach it, turn off Private mode on this agent (or dispatch to an agent that has network). Do NOT report the host as down or unreachable", rawURL)
 	}
 	// Derive from the TURN's context, not Background. Every governed call —
 	// fetch_url, api-mode temp tools, connectors, the image poll — went through
@@ -2015,7 +2016,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		// Private mode flipped ON mid-call → the context was cancelled. Report
 		// the real reason, not a "request failed" the model reads as host-down.
 		if connector != nil && !connector.Allowed() {
-			return "", fmt.Errorf("blocked by Private mode: network egress was turned OFF mid-call, so the request to %q was cancelled — this is a privacy setting, NOT a host/connectivity failure. Turn off Private mode to reach it", rawURL)
+			return "", fmt.Errorf("blocked by Private mode: network egress was turned OFF mid-call, so the request to %q was cancelled, this is a privacy setting, NOT a host/connectivity failure. Turn off Private mode to reach it", rawURL)
 		}
 		// A TIMEOUT is usually transient (slow LAN appliance, connection warmup,
 		// a momentary blip) — NOT a sign the IP / scheme / port / credential is
@@ -2026,7 +2027,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 			if parsed != nil && parsed.Host != "" {
 				host = parsed.Host
 			}
-			return "", fmt.Errorf("%s did not respond within %s (timeout). This is OFTEN TRANSIENT — a slow LAN appliance, connection warmup, or a momentary network blip — and usually does NOT mean the IP, http-vs-https, port, or credential is wrong. Retry the request once or twice before concluding anything. Only suspect a misconfiguration if it times out REPEATEDLY across retries; do NOT tell the user to change the address/scheme/port based on a single timeout", host, callTimeout)
+			return "", fmt.Errorf("%s did not respond within %s (timeout). This is OFTEN TRANSIENT (a slow LAN appliance, connection warmup, or a momentary network blip), and usually does NOT mean the IP, http-vs-https, port, or credential is wrong. Retry the request once or twice before concluding anything. Only suspect a misconfiguration if it times out REPEATEDLY across retries; do NOT tell the user to change the address/scheme/port based on a single timeout", host, callTimeout)
 		}
 		return "", fmt.Errorf("request failed: %s", redact(err.Error()))
 	}
@@ -2069,7 +2070,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		auditEntry.ResponseBytes = int(written)
 		s.recordAudit(auditEntry)
 		s.touch(c.Name)
-		return fmt.Sprintf("HTTP %d %s — saved %d bytes to %s (%s). Use attach_file(%q) to deliver to the user.",
+		return fmt.Sprintf("HTTP %d %s: saved %d bytes to %s (%s). Use attach_file(%q) to deliver to the user.",
 			resp.StatusCode, http.StatusText(resp.StatusCode), written, saveTo, ct, saveTo), nil
 	}
 
@@ -2121,7 +2122,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// that signal and floods the context; say it outright instead.
 	if resp.StatusCode >= 400 {
 		if b := strings.TrimSpace(string(bodyBytes)); strings.HasPrefix(b, "<!DOCTYPE") || strings.HasPrefix(b, "<!doctype") || strings.HasPrefix(b, "<html") {
-			fmt.Fprintf(&sb, "[HTML error page suppressed — the server returned a web PAGE, not an API response. The URL path is almost certainly wrong for this API (missing prefix like /api, or a route the API doesn't serve). Re-check the endpoint path against the provider's docs; do NOT retry the same URL.]")
+			fmt.Fprintf(&sb, "[HTML error page suppressed: the server returned a web PAGE, not an API response. The URL path is almost certainly wrong for this API (missing prefix like /api, or a route the API doesn't serve). Re-check the endpoint path against the provider's docs; do NOT retry the same URL.]")
 			return sb.String(), nil
 		}
 	}
@@ -2133,7 +2134,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	// credential (rebuilds as a shell tool, or blocks the user for the
 	// endpoint) instead of just fixing the path.
 	if s := resp.StatusCode; s == 400 || s == 404 || s == 405 || s == 422 {
-		fmt.Fprintf(&sb, "[The server RESPONDED with HTTP %d — it is reachable and speaking HTTP, so the credential and protocol are FINE. A %d means the PATH, QUERY PARAMS, or BODY are wrong FOR THIS ENDPOINT — iterate the request: try a different path/params, copy the shape of a working sibling tool on this credential (check_credential lists them), or read the provider's HTTP-API docs. Do NOT switch this tool to shell/telnet, and do NOT ask the user to reconfigure the credential, over a 4xx.]\n", s, s)
+		fmt.Fprintf(&sb, "[The server RESPONDED with HTTP %d: it is reachable and speaking HTTP, so the credential and protocol are FINE. A %d means the PATH, QUERY PARAMS, or BODY are wrong FOR THIS ENDPOINT, iterate the request: try a different path/params, copy the shape of a working sibling tool on this credential (check_credential lists them), or read the provider's HTTP-API docs. Do NOT switch this tool to shell/telnet, and do NOT ask the user to reconfigure the credential, over a 4xx.]\n", s, s)
 	}
 	if strings.Contains(ct, "json") {
 		var anyVal interface{}
@@ -2141,7 +2142,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 			if pretty, err := json.MarshalIndent(anyVal, "", "  "); err == nil {
 				sb.Write(pretty)
 				if truncated {
-					sb.WriteString("\n... [TRUNCATED — response exceeded 256KB cap. To get the full data, narrow the request: add pagination/limit query params, filter on the API side (e.g. ?status=completed&limit=10), or wrap the call in a persistent tool with response_pipe to jq-project only the fields you need.]")
+					sb.WriteString("\n... [TRUNCATED: response exceeded 256KB cap. To get the full data, narrow the request: add pagination/limit query params, filter on the API side (e.g. ?status=completed&limit=10), or wrap the call in a persistent tool with response_pipe to jq-project only the fields you need.]")
 				}
 				return sb.String(), nil
 			}
@@ -2149,7 +2150,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	}
 	sb.Write(bodyBytes)
 	if truncated {
-		sb.WriteString("\n... [TRUNCATED — response exceeded 256KB cap. To get the full data, narrow the request: add pagination/limit query params, filter on the API side (e.g. ?status=completed&limit=10), or wrap the call in a persistent tool with response_pipe to jq-project only the fields you need.]")
+		sb.WriteString("\n... [TRUNCATED: response exceeded 256KB cap. To get the full data, narrow the request: add pagination/limit query params, filter on the API side (e.g. ?status=completed&limit=10), or wrap the call in a persistent tool with response_pipe to jq-project only the fields you need.]")
 	}
 	return sb.String(), nil
 }
@@ -2186,7 +2187,7 @@ func CredentialAuthGuard(rawURL string, headers map[string]any) error {
 			continue
 		}
 		if rawURL == base || strings.HasPrefix(rawURL, base+"/") {
-			return fmt.Errorf("refusing to send a raw auth header to %s — registered credential %q covers this host. Dispatch through the credential instead (the fetch_url_%s tool, or fetch_via(%q, url) in a script): the server injects the CURRENT stored secret, so calls keep working after a key rotation, and the key stays out of the conversation. If you hold a NEWER key than the stored one, save it with store_credential_secret(%q, <key>) first — never keep using an inline key", rawURL, c.Name, c.Name, c.Name, c.Name)
+			return fmt.Errorf("refusing to send a raw auth header to %s: registered credential %q covers this host. Dispatch through the credential instead (the fetch_url_%s tool, or fetch_via(%q, url) in a script): the server injects the CURRENT stored secret, so calls keep working after a key rotation, and the key stays out of the conversation. If you hold a NEWER key than the stored one, save it with store_credential_secret(%q, <key>) first: never keep using an inline key", rawURL, c.Name, c.Name, c.Name, c.Name)
 		}
 	}
 	return nil
@@ -2235,14 +2236,14 @@ func (s *SecureAPI) AutoRouteCredential(rawURL string) (string, error) {
 		name := covering[0]
 		_, enabled, hasSecret := s.CredentialStatus(name)
 		if !enabled {
-			return "", fmt.Errorf("this host is covered by credential %q, but it's DISABLED — fetch_url will not send unauthenticated to a credential-covered host. An admin enables it in Admin > APIs; then retry", name)
+			return "", fmt.Errorf("this host is covered by credential %q, but it's DISABLED: fetch_url will not send unauthenticated to a credential-covered host. An admin enables it in Admin > APIs; then retry", name)
 		}
 		if !hasSecret {
-			return "", fmt.Errorf("this host is covered by credential %q, but no secret is set — an admin must paste the key in Admin > APIs, then retry. fetch_url will not send unauthenticated to a credential-covered host", name)
+			return "", fmt.Errorf("this host is covered by credential %q, but no secret is set: an admin must paste the key in Admin > APIs, then retry. fetch_url will not send unauthenticated to a credential-covered host", name)
 		}
 		return name, nil
 	default:
-		return "", fmt.Errorf("this host is covered by MULTIPLE credentials %v — fetch_url can't auto-pick one. Call the specific credential tool directly (fetch_url_<name>) so the right auth is used", covering)
+		return "", fmt.Errorf("this host is covered by MULTIPLE credentials %v: fetch_url can't auto-pick one. Call the specific credential tool directly (fetch_url_<name>) so the right auth is used", covering)
 	}
 }
 
@@ -2286,7 +2287,7 @@ func (s *SecureAPI) SetCredentialSecret(name, secret string) error {
 	}
 	name = strings.TrimSpace(name)
 	if _, ok := s.Load(name); !ok {
-		return fmt.Errorf("credential %q not registered — draft it first", name)
+		return fmt.Errorf("credential %q not registered: draft it first", name)
 	}
 	if strings.TrimSpace(secret) == "" {
 		return fmt.Errorf("refusing to store an empty secret")
@@ -2359,7 +2360,7 @@ func credMisconfigEscalation(name, baseErr string, count int) error {
 	if count < credRejectThreshold {
 		return fmt.Errorf("%s", baseErr)
 	}
-	return fmt.Errorf("%s. STOP — this credential has been rejected %d times in a row. Its Base URL, Allowed Endpoints, or scheme is MISCONFIGURED, and trying different URLs will NOT fix it. Do not retry. Report this exact error to the user and ask them to correct the %q credential in Admin > APIs (Base URL must match the request's scheme+host, e.g. http:// vs https://; an Allowed Endpoint like /api/* permits everything under /api/).", baseErr, count, name)
+	return fmt.Errorf("%s. STOP: this credential has been rejected %d times in a row. Its Base URL, Allowed Endpoints, or scheme is MISCONFIGURED, and trying different URLs will NOT fix it. Do not retry. Report this exact error to the user and ask them to correct the %q credential in Admin > APIs (Base URL must match the request's scheme+host, e.g. http:// vs https://; an Allowed Endpoint like /api/* permits everything under /api/).", baseErr, count, name)
 }
 
 // urlAllowedByCredential is the request-time allow-list gate. It prefers the

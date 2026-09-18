@@ -48,7 +48,7 @@ const (
 
 func init() {
 	gt := NewGroupedTool("workspace",
-		"Sandboxed scratch space for tasks that need files or shell. Lifecycle actions (create / use / list / pin / unpin / delete / info) manage the workspace itself; file actions (ls / cat / write / rm / run) operate inside the active workspace. Workspaces are ephemeral by default — auto-cleaned 24h after last use; pin to keep. Use only when the user has explicitly asked to write a script, run code, build a custom tool, or save work product — for information lookup use web_search or fetch_url instead.")
+		"Sandboxed scratch space for tasks that need files or shell. Lifecycle actions (create / use / list / pin / unpin / delete / info) manage the workspace itself; file actions (ls / cat / write / rm / run) operate inside the active workspace. Workspaces are ephemeral by default: auto-cleaned 24h after last use; pin to keep. Use only when the user has explicitly asked to write a script, run code, build a custom tool, or save work product, for information lookup use web_search or fetch_url instead.")
 	gt.SetFrameworkTool(true) // owns the universal attach action; auto-wired by the runner
 
 	// ---- lifecycle actions ----
@@ -57,7 +57,7 @@ func init() {
 		Description: "Create a new workspace and switch the session's active path to it. All subsequent file-writing tools (fetch_url save_to, generate_image, workspace write, etc.) put their output here for the rest of this turn. Returns the workspace id. Optional: pin=true creates it pinned (survives session end + idle timeout); name is a human-friendly label.",
 		Params: map[string]ToolParam{
 			"name": {Type: "string", Description: "Human-friendly label for the workspace (snake_case recommended). Optional but useful for `list` and admin views."},
-			"pin":  {Type: "boolean", Description: "If true, creates the workspace as pinned — won't be auto-cleaned. Default false (ephemeral)."},
+			"pin":  {Type: "boolean", Description: "If true, creates the workspace as pinned: won't be auto-cleaned. Default false (ephemeral)."},
 		},
 		Caps:    []Capability{CapWrite},
 		Handler: handleCreate,
@@ -81,7 +81,7 @@ func init() {
 	})
 
 	gt.AddAction("pin", &GroupedToolAction{
-		Description: "Mark a workspace as pinned — survives session end and is not auto-cleaned by the idle reconciler. Use when you want to keep work product around for a future session.",
+		Description: "Mark a workspace as pinned: survives session end and is not auto-cleaned by the idle reconciler. Use when you want to keep work product around for a future session.",
 		Params: map[string]ToolParam{
 			"id": {Type: "string", Description: "Workspace ID."},
 		},
@@ -135,7 +135,7 @@ func init() {
 	})
 
 	gt.AddAction("cat", &GroupedToolAction{
-		Description: "Read a file from the active workspace as text. Returns up to 64 KB; longer files are truncated with a notice. For large files (logs, JSON dumps, spilled tool results) prefer the targeted query actions — head / tail / read_lines / grep / stat — which return only the slice you need rather than the whole file.",
+		Description: "Read a file from the active workspace as text. Returns up to 64 KB; longer files are truncated with a notice. For large files (logs, JSON dumps, spilled tool results) prefer the targeted query actions (head / tail / read_lines / grep / stat), which return only the slice you need rather than the whole file.",
 		Params: map[string]ToolParam{
 			"path": {Type: "string", Description: "Workspace-relative path to read."},
 		},
@@ -147,7 +147,7 @@ func init() {
 	})
 
 	gt.AddAction("head", &GroupedToolAction{
-		Description: "Return the first N lines of a workspace file (default 50). Cheap targeted slice — use this when you need the start of a log, the header of a CSV, or just want to see the shape of a file without reading the whole thing.",
+		Description: "Return the first N lines of a workspace file (default 50). Cheap targeted slice: use this when you need the start of a log, the header of a CSV, or just want to see the shape of a file without reading the whole thing.",
 		Params: map[string]ToolParam{
 			"path":  {Type: "string", Description: "Workspace-relative path to read."},
 			"lines": {Type: "integer", Description: "Number of lines to return (default 50)."},
@@ -187,7 +187,7 @@ func init() {
 	})
 
 	gt.AddAction("grep", &GroupedToolAction{
-		Description: "Search a workspace file for a regex pattern. Returns matching lines with line numbers; optional `context` includes lines before/after each match (max 5). Right tool for finding specific records inside a spilled log, a large JSON dump, or any text you DON'T want to read end-to-end. Pattern is RE2 (Go's regexp) — no PCRE-only constructs.",
+		Description: "Search a workspace file for a regex pattern. Returns matching lines with line numbers; optional `context` includes lines before/after each match (max 5). Right tool for finding specific records inside a spilled log, a large JSON dump, or any text you DON'T want to read end-to-end. Pattern is RE2 (Go's regexp): no PCRE-only constructs.",
 		Params: map[string]ToolParam{
 			"path":        {Type: "string", Description: "Workspace-relative path to search."},
 			"pattern":     {Type: "string", Description: "RE2 regex to match against each line."},
@@ -203,7 +203,7 @@ func init() {
 	})
 
 	gt.AddAction("stat", &GroupedToolAction{
-		Description: "Inspect a workspace file: size, mtime, line count, and a kind hint (json-like / log-lines / csv-like / html / xml-like / text / binary / empty). Call FIRST when you encounter an unfamiliar file (e.g. a spilled tool result) — the kind hint tells you which query action to reach for next (json-like → grep for the field you want; log-lines → tail; csv-like → head for the header).",
+		Description: "Inspect a workspace file: size, mtime, line count, and a kind hint (json-like / log-lines / csv-like / html / xml-like / text / binary / empty). Call FIRST when you encounter an unfamiliar file (e.g. a spilled tool result): the kind hint tells you which query action to reach for next (json-like → grep for the field you want; log-lines → tail; csv-like → head for the header).",
 		Params: map[string]ToolParam{
 			"path": {Type: "string", Description: "Workspace-relative path to inspect."},
 		},
@@ -240,11 +240,11 @@ func init() {
 	})
 
 	gt.AddAction("run", &GroupedToolAction{
-		Description: "Run a shell command inside the active workspace, confined by whichever sandbox this host has. The workspace is the only writable path it allows. What is READABLE outside it is NOT the same everywhere — bubblewrap hides it, the macOS backend does not — so never rely on a read outside the workspace either succeeding or failing. Auto-mints a workspace if none is active. 90s timeout, output capped at 10KB. NOTE: each call requires user confirmation — use sparingly. YOUR TOOLS ARE NOT REACHABLE FROM THIS SHELL: a tool is not on PATH and not an importable Python module, so `<tool_name> ...`, `python -m <tool_name>` and `from tools import <tool_name>` all just fail. Call the tool directly by name instead — and if its schema isn't loaded yet, load_tool(names=[\"<tool_name>\"]) first. (The one exception is the fetch family — fetch_url / fetch_via / browse_page work here as commands and as `from gohort import ...`.) For just CHECKING whether a binary exists (e.g. `command -v ffmpeg`), call workspace(action=\"probe\", name=\"ffmpeg\") instead — no-confirmation, validated-input, purpose-built for that check.",
+		Description: "Run a shell command inside the active workspace, confined by whichever sandbox this host has. The workspace is the only writable path it allows. What is READABLE outside it is NOT the same everywhere (bubblewrap hides it, the macOS backend does not), so never rely on a read outside the workspace either succeeding or failing. Auto-mints a workspace if none is active. 90s timeout, output capped at 10KB. NOTE: each call requires user confirmation, use sparingly. YOUR TOOLS ARE NOT REACHABLE FROM THIS SHELL: a tool is not on PATH and not an importable Python module, so `<tool_name> ...`, `python -m <tool_name>` and `from tools import <tool_name>` all just fail. Call the tool directly by name instead, and if its schema isn't loaded yet, load_tool(names=[\"<tool_name>\"]) first. (The one exception is the fetch family: fetch_url / fetch_via / browse_page work here as commands and as `from gohort import ...`.) For just CHECKING whether a binary exists (e.g. `command -v ffmpeg`), call workspace(action=\"probe\", name=\"ffmpeg\") instead: no-confirmation, validated-input, purpose-built for that check.",
 		Params: map[string]ToolParam{
-			"command":  {Type: "string", Description: "Shell command to execute. Standard sh -c semantics — pipes, redirects, quoting work normally."},
-			"env":      {Type: "object", Description: "Optional {\"KEY\":\"value\"} map of environment variables exposed to the command — reachable as $KEY in shell or os.environ.get(\"KEY\") in Python. Use to feed a debug script the same inputs a registered shell tool would receive as params."},
-			"cwd_root": {Type: "string", Description: "Optional registered root to start the command in, as \"kind:name\" (e.g. \"files:support-bundles\"). Use when a binary must RUN AT the base of a folder it reads — it resolves its own inputs relative to the working directory. The folder stays READ-ONLY: the workspace is still the only writable path, so write output there. Omit to start in the workspace, which is almost always right. If you do not know what is registered, pass any value and the refusal lists them."},
+			"command":  {Type: "string", Description: "Shell command to execute. Standard sh -c semantics: pipes, redirects, quoting work normally."},
+			"env":      {Type: "object", Description: "Optional {\"KEY\":\"value\"} map of environment variables exposed to the command, reachable as $KEY in shell or os.environ.get(\"KEY\") in Python. Use to feed a debug script the same inputs a registered shell tool would receive as params."},
+			"cwd_root": {Type: "string", Description: "Optional registered root to start the command in, as \"kind:name\" (e.g. \"files:support-bundles\"). Use when a binary must RUN AT the base of a folder it reads: it resolves its own inputs relative to the working directory. The folder stays READ-ONLY: the workspace is still the only writable path, so write output there. Omit to start in the workspace, which is almost always right. If you do not know what is registered, pass any value and the refusal lists them."},
 			"cwd":      {Type: "string", Description: "Folder inside cwd_root to start in, relative to that root. Omit, or pass \".\", to start at the base of the root itself."},
 		},
 		Required:     []string{"command"},
@@ -254,7 +254,7 @@ func init() {
 	})
 
 	gt.AddAction("probe", &GroupedToolAction{
-		Description: "Check whether a binary is available in the shell-mode tool sandbox. Returns the path if found, or a 'not available' message if not. Use this BEFORE authoring a shell-mode tool that depends on a non-POSIX binary (ImageMagick's `convert`, `ffmpeg`, `yt-dlp`, etc.) — if the probe says not available, the tool will fail at dispatch, so pivot to a different design. Safe and cheap; no user confirmation required (binary name is validated as identifier-only).",
+		Description: "Check whether a binary is available in the shell-mode tool sandbox. Returns the path if found, or a 'not available' message if not. Use this BEFORE authoring a shell-mode tool that depends on a non-POSIX binary (ImageMagick's `convert`, `ffmpeg`, `yt-dlp`, etc.): if the probe says not available, the tool will fail at dispatch, so pivot to a different design. Safe and cheap; no user confirmation required (binary name is validated as identifier-only).",
 		Params: map[string]ToolParam{
 			"name": {Type: "string", Description: "Binary name to probe (e.g. \"ffmpeg\", \"convert\", \"yt-dlp\", \"python3\"). Identifier-only: letters, digits, _, -, +, ."},
 		},
@@ -266,11 +266,11 @@ func init() {
 	// ---- delivery + inspection actions ----
 
 	gt.AddAction("attach", &GroupedToolAction{
-		Description: "Deliver a file from the active workspace to the user as an attachment. This is the ONLY action that puts a file in front of the user — every other action just stages or inspects locally. Any file the workspace contains can be attached, regardless of which tool produced it (find_image / fetch_image / generate_image / workspace write / a Builder-authored shell tool / etc.). After this call the file ships with your reply. Cap: 20MB per file.",
+		Description: "Deliver a file from the active workspace to the user as an attachment. This is the ONLY action that puts a file in front of the user: every other action just stages or inspects locally. Any file the workspace contains can be attached, regardless of which tool produced it (find_image / fetch_image / generate_image / workspace write / a Builder-authored shell tool / etc.). After this call the file ships with your reply. Cap: 20MB per file.",
 		Params: map[string]ToolParam{
 			"path":    {Type: "string", Description: "Workspace-relative filename to deliver (e.g. \"meme.jpg\", \"report.pdf\")."},
 			"name":    {Type: "string", Description: "Optional display name shown to the user. Defaults to the filename."},
-			"cleanup": {Type: "boolean", Description: "If true, deletes the file from the workspace after successful delivery. Default false (keep). Producer tools that return one-shot files (find_image, fetch_image, generate_image) recommend cleanup=true — workspace stays tidy."},
+			"cleanup": {Type: "boolean", Description: "If true, deletes the file from the workspace after successful delivery. Default false (keep). Producer tools that return one-shot files (find_image, fetch_image, generate_image) recommend cleanup=true: workspace stays tidy."},
 		},
 		Required: []string{"path"},
 		Caps:     []Capability{CapRead, CapWrite},
@@ -317,9 +317,9 @@ func handleCreate(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	pinNote := ""
 	if w.Pinned {
-		pinNote = " (PINNED — survives session end)"
+		pinNote = " (PINNED: survives session end)"
 	}
-	return fmt.Sprintf("Workspace created (id=%s, name=%q)%s. Active for this session — file-writing tools will land here. Path: %s",
+	return fmt.Sprintf("Workspace created (id=%s, name=%q)%s. Active for this session: file-writing tools will land here. Path: %s",
 		w.ID, w.Name, pinNote, dir), nil
 }
 
@@ -351,7 +351,7 @@ func handleList(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	ws := ListManagedWorkspaces(owner)
 	if len(ws) == 0 {
-		return "No workspaces — use action=create to mint one.", nil
+		return "No workspaces: use action=create to mint one.", nil
 	}
 	sort.Slice(ws, func(i, j int) bool {
 		// Pinned first, then most-recently-used.
@@ -656,7 +656,7 @@ func handleRun(args map[string]any, sess *ToolSession) (string, error) {
 			shown, totalLines, len(output))
 	}
 	if res.TimedOut {
-		notice := fmt.Sprintf("\n[TIMED OUT after %s — command killed.]", runTimeout)
+		notice := fmt.Sprintf("\n[TIMED OUT after %s: command killed.]", runTimeout)
 		if output == "" {
 			return strings.TrimPrefix(notice, "\n"), nil
 		}
@@ -664,7 +664,7 @@ func handleRun(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	if res.Err != nil {
 		if output == "" {
-			return fmt.Sprintf("[exit: %v — no output]", res.Err), nil
+			return fmt.Sprintf("[exit: %v, no output]", res.Err), nil
 		}
 		return output + fmt.Sprintf("\n[exit: %v]", res.Err), nil
 	}
@@ -717,10 +717,10 @@ func flagToolInvocation(cmd string, sess *ToolSession) string {
 			// The lazy-schema split: the model was shown this tool by name and
 			// description with no callable schema, which is the exact condition
 			// that produces this workaround. Name the one call that fixes it.
-			return fmt.Sprintf("%q is one of your custom tools, not a shell command — it is not on PATH and not an importable module, so this would only fail. Its schema isn't loaded yet: call load_tool(names=[%q]) first, then call %s({...}) directly. Do not try to reach it through the shell.",
+			return fmt.Sprintf("%q is one of your custom tools, not a shell command: it is not on PATH and not an importable module, so this would only fail. Its schema isn't loaded yet: call load_tool(names=[%q]) first, then call %s({...}) directly. Do not try to reach it through the shell.",
 				name, name, name)
 		case custom[name] || sess.HasTool(name):
-			return fmt.Sprintf("%q is a tool you already have, not a shell command — it is not on PATH and not an importable module. Call %s({...}) directly instead of going through the shell.",
+			return fmt.Sprintf("%q is a tool you already have, not a shell command: it is not on PATH and not an importable module. Call %s({...}) directly instead of going through the shell.",
 				name, name)
 		}
 	}
@@ -747,7 +747,7 @@ func handleProbe(args map[string]any, sess *ToolSession) (string, error) {
 		return "", fmt.Errorf("name is required")
 	}
 	if !validProbeName.MatchString(name) {
-		return "", fmt.Errorf("invalid binary name %q — must be identifier characters only (letters, digits, _, -, +, .)", name)
+		return "", fmt.Errorf("invalid binary name %q: must be identifier characters only (letters, digits, _, -, +, .)", name)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -762,12 +762,12 @@ func handleProbe(args map[string]any, sess *ToolSession) (string, error) {
 	// where every probe would otherwise report every binary absent.
 	if res.Err != nil {
 		return fmt.Sprintf("The probe for %q could not run, so nothing is known about whether it exists: %v "+
-			"This is a fault in the execution path, not an answer about the binary — do not redesign the tool around it.",
+			"This is a fault in the execution path, not an answer about the binary: do not redesign the tool around it.",
 			name, res.Err), nil
 	}
 	output := strings.TrimSpace(res.Output)
 	if output == "" {
-		return fmt.Sprintf("%q is NOT available in the sandbox. Pivot your design — either use a different binary or switch the tool's mode (api / pipeline / different shell tool).", name), nil
+		return fmt.Sprintf("%q is NOT available in the sandbox. Pivot your design: either use a different binary or switch the tool's mode (api / pipeline / different shell tool).", name), nil
 	}
 	return fmt.Sprintf("%q is available at %s. Safe to use in shell-mode tools.", name, output), nil
 }
@@ -899,7 +899,7 @@ func staleAttachWarning(sess *ToolSession, relPath string, info os.FileInfo) str
 		}
 	}
 	return fmt.Sprintf(" NOTE: this file is NOT one your tools produced this turn (it was already in the workspace, last written %s ago). This turn produced: %s."+
-		" If you meant to send what you just made, attach one of those instead — do not describe this one as something you have just created.",
+		" If you meant to send what you just made, attach one of those instead: do not describe this one as something you have just created.",
 		humanAge(time.Since(info.ModTime())), strings.Join(staged, ", "))
 }
 
@@ -992,7 +992,7 @@ func handleViewImage(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	mime := http.DetectContentType(data)
 	if !strings.HasPrefix(mime, "image/") {
-		return "", fmt.Errorf("%q is %s, not an image — use cat for text", rel, mime)
+		return "", fmt.Errorf("%q is %s, not an image: use cat for text", rel, mime)
 	}
 	if sess.LLM == nil {
 		return "", fmt.Errorf("view_image requires an LLM bound to the session")

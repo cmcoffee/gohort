@@ -40,7 +40,7 @@ type editPlan struct {
 func planEdit(sess *ToolSession, args map[string]any, avail imageActions) (editPlan, error) {
 	var p editPlan
 	if !avail.edit {
-		return p, fmt.Errorf("the edit action is unavailable — no image backend here is wired for image input (img2img / inpaint). Tell the user editing isn't set up; do NOT retry")
+		return p, fmt.Errorf("the edit action is unavailable: no image backend here is wired for image input (img2img / inpaint). Tell the user editing isn't set up; do NOT retry")
 	}
 	prompt := strings.TrimSpace(StringArg(args, "prompt"))
 	refs := stringsArg(args, "images")
@@ -49,7 +49,7 @@ func planEdit(sess *ToolSession, args map[string]any, avail imageActions) (editP
 		if m := RecentImageManifest(sess); m != "" {
 			hint = m
 		}
-		return p, fmt.Errorf("edit needs at least one source image — %s", hint)
+		return p, fmt.Errorf("edit needs at least one source image: %s", hint)
 	}
 	// Before anything is dispatched: take attached people's NAMES out of the
 	// prompt, and refuse outright if it names somebody whose picture we have
@@ -78,7 +78,7 @@ func planEdit(sess *ToolSession, args map[string]any, avail imageActions) (editP
 		if len(avail.editors) == 0 {
 			return p, fmt.Errorf("no image backend here can edit photos")
 		}
-		return p, fmt.Errorf("image backend %q creates from text and cannot work from a source picture — use one of: %s, or drop images to render from the prompt alone", backend, strings.Join(editorNames(avail), ", "))
+		return p, fmt.Errorf("image backend %q creates from text and cannot work from a source picture, use one of: %s, or drop images to render from the prompt alone", backend, strings.Join(editorNames(avail), ", "))
 	}
 	// Count mismatch, named in terms of what this deployment can do. Checked
 	// here rather than left to the backend so the answer arrives before an
@@ -96,18 +96,18 @@ func planEdit(sess *ToolSession, args map[string]any, avail imageActions) (editP
 		if len(refs) < n {
 			fix = "Supply %d, or ask the person for the missing one(s) before trying again."
 		}
-		return p, fmt.Errorf("you passed %s, and this deployment composes %s at a time — %q takes exactly %d. "+fix,
+		return p, fmt.Errorf("you passed %s, and this deployment composes %s at a time: %q takes exactly %d. "+fix,
 			pluralPictures(len(refs)), joinCounts(editorImageCounts(avail)), backend, n, n)
 	}
 	// Some editing workflows have no text node at all — a blend or an upscale is
 	// pure pixel work. Demanding a prompt there makes the model invent one that
 	// goes nowhere.
 	if prompt == "" && backendNeedsPrompt(avail, backend) {
-		return p, fmt.Errorf("prompt is required for this backend — describe what should CHANGE (e.g. \"make it snowy\", \"put the subject on a beach\")")
+		return p, fmt.Errorf("prompt is required for this backend: describe what should CHANGE (e.g. \"make it snowy\", \"put the subject on a beach\")")
 	}
 	// ENFORCEMENT, same as generate: the enum is a hint, this is the boundary.
 	if !ImageBackendReachable(sess, backend) {
-		return p, fmt.Errorf("image backend %q is not available to you — use one of: %s", backend, strings.Join(editorNames(avail), ", "))
+		return p, fmt.Errorf("image backend %q is not available to you, use one of: %s", backend, strings.Join(editorNames(avail), ", "))
 	}
 	return editPlan{
 		backend: backend, prompt: prompt, refs: refs,
@@ -214,8 +214,8 @@ func queueSourceForComparison(sess *ToolSession, refs []string) bool {
 // the same subject and everything it is asked to judge depends on telling them
 // apart.
 func fidelityNote(ref string) string {
-	return fmt.Sprintf(" COMPARE: two pictures are included with this result — FIRST the source you passed (%s), SECOND the edited result. "+
-		"This is the one identity question looking CAN settle — not who the person is, but whether the person in the second picture is the SAME ONE as in the first. "+
+	return fmt.Sprintf(" COMPARE: two pictures are included with this result, FIRST the source you passed (%s), SECOND the edited result. "+
+		"This is the one identity question looking CAN settle: not who the person is, but whether the person in the second picture is the SAME ONE as in the first. "+
 		"If a face, animal or product came out visibly different, say so and try once more with the likeness named as the thing to preserve; "+
 		"if it survived, deliver it and do not raise this again.", ref)
 }
@@ -258,7 +258,7 @@ func buildEditPrompt(sess *ToolSession, prompt string, refs []string) (string, s
 // Naming the specific artifacts beats a general "don't composite", because the
 // failure is a literal reading of the input, not a stylistic choice.
 func editCompositingGuard() string {
-	return " Produce ONE finished image. The supplied pictures are references for likeness and content ONLY —" +
+	return " Produce ONE finished image. The supplied pictures are references for likeness and content ONLY" +
 		" they must not appear as objects inside the result. No inset, thumbnail, corner overlay, watermark," +
 		" picture-in-picture, side-by-side panel, collage, or duplicate of a face anywhere in the frame."
 }

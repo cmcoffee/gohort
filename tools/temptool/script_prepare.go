@@ -68,13 +68,13 @@ func PrepareScriptBody(sess *ToolSession, toolName, cmd, scriptBody, scriptName 
 		if perr == nil {
 			cmd = inferCommandTemplate(scriptName, scriptBody, paramOrder)
 			if cmd != "" {
-				Log("[temptool] auto-inferred command_template=%q (script=%s, params=%v) — supply command_template explicitly for kwargs / stdin / non-positional shapes",
+				Log("[temptool] auto-inferred command_template=%q (script=%s, params=%v): supply command_template explicitly for kwargs / stdin / non-positional shapes",
 					cmd, scriptName, paramOrder)
 			}
 		}
 	}
 	if strings.TrimSpace(cmd) == "" {
-		return "", "", "", fmt.Errorf("command_template is required (or supply script_body with a recognized extension — .py/.sh/.bash/.js/.jq/.rb — and the framework will infer it; declared params reach the script as ENVIRONMENT VARIABLES, not positional argv — read them with os.environ['name'])")
+		return "", "", "", fmt.Errorf("command_template is required (or supply script_body with a recognized extension.py/.sh/.bash/.js/.jq/.rb, and the framework will infer it; declared params reach the script as ENVIRONMENT VARIABLES, not positional argv, read them with os.environ['name'])")
 	}
 	canonical := canonicalScriptName(toolName, scriptName, scriptBody)
 	if _, werr := EnsureSessionWorkspace(sess); werr != nil {
@@ -90,7 +90,7 @@ func PrepareScriptBody(sess *ToolSession, toolName, cmd, scriptBody, scriptName 
 	// The template must actually reference the script, or the tool is born
 	// broken — the exact failure this helper exists to prevent.
 	if !strings.Contains(cmd, scriptName) && !strings.Contains(cmd, "{workspace_dir}") {
-		return "", "", "", fmt.Errorf("script_body was written to %s (canonical %s) but command_template %q doesn't reference it — add {workspace_dir}/%s to the template", scriptPath, canonical, cmd, scriptName)
+		return "", "", "", fmt.Errorf("script_body was written to %s (canonical %s) but command_template %q doesn't reference it: add {workspace_dir}/%s to the template", scriptPath, canonical, cmd, scriptName)
 	}
 	return cmd, scriptName, canonical, nil
 }

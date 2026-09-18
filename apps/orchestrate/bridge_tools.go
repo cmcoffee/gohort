@@ -53,21 +53,21 @@ draft_api_credential or draft_oauth_credential; the admin pastes the secret and
 enables it in Admin > APIs). The bridge references the credential by name.
 
 A bridge's SOURCE (how the watched info is generated) is one of:
-  - source_kind="tool"     — run a named, TESTABLE api/toolbox tool each interval
+  - source_kind="tool": run a named, TESTABLE api/toolbox tool each interval
                              (preferred: a reusable, verifiable artifact). Author
                              + verify it with tool_def (action="test") first, then
                              point the bridge at it with tool= + tool_args=.
-  - source_kind="url"       — a raw call through a credential (credential= + url=).
+  - source_kind="url": a raw call through a credential (credential= + url=).
                              The simple path; the default when source_kind is omitted.
-  - source_kind="pipeline"  — a declarative pipeline (not wired yet).
+  - source_kind="pipeline": a declarative pipeline (not wired yet).
 
 VERIFY-BEFORE-STANDING (hard gate): the source is EXERCISED once at create time
-and the bridge is REFUSED if it doesn't return a 2xx — a standing poll on a
+and the bridge is REFUSED if it doesn't return a 2xx: a standing poll on a
 broken source (stale key, wrong URL) would 401/404-loop in the background where
 nobody sees it. Fix the source, then create.
 
 How it fires: every interval the framework runs the source, hashes the output,
-and wakes the target agent ONLY when the output differs from the last poll — the
+and wakes the target agent ONLY when the output differs from the last poll: the
 cheap "tell me when X changes" path, zero LLM cost until something changes. The
 source must return STABLE output for identical inputs (a value that always
 changes fires every cycle). The first poll records the baseline (no wake).
@@ -83,15 +83,15 @@ Typical flow when wiring a new service:
 		Description: "Create a bridge: poll credential's url every interval_minutes; wake wake_agent on change.",
 		Params: map[string]ToolParam{
 			"name":             {Type: "string", Description: "Unique short name for this bridge (per user)."},
-			"source_kind":      {Type: "string", Description: "How the watched info is generated: \"tool\" (a named, TESTABLE api/toolbox tool — preferred: it's a reusable, verifiable artifact), \"url\" (a raw call through a credential — the simple path), or \"pipeline\" (a declarative pipeline for multi-step/aggregate sources). Defaults to \"url\" when omitted (back-compat). A tool/pipeline source is exercised before the bridge is created; the url source is hard-probed. Whatever the kind, the bridge fires only when the source's output CHANGES, so the source must return STABLE output for identical inputs (a value that always changes — a timestamp/nonce — fires every cycle)."},
+			"source_kind":      {Type: "string", Description: "How the watched info is generated: \"tool\" (a named, TESTABLE api/toolbox tool, preferred: it's a reusable, verifiable artifact), \"url\" (a raw call through a credential, the simple path), or \"pipeline\" (a declarative pipeline for multi-step/aggregate sources). Defaults to \"url\" when omitted (back-compat). A tool/pipeline source is exercised before the bridge is created; the url source is hard-probed. Whatever the kind, the bridge fires only when the source's output CHANGES, so the source must return STABLE output for identical inputs (a value that always changes (a timestamp/nonce), fires every cycle)."},
 			"tool":             {Type: "string", Description: "(source_kind=tool) Name of an existing api/toolbox tool to run each interval; its output is hashed and the bridge wakes on change. Author + test it first with tool_def (action=\"test\"). Pass its inputs via tool_args."},
-			"tool_args":        {Type: "object", Description: "(source_kind=tool) Arguments passed to `tool` on every invocation, as a {name: value} object. Keep them CONSTANT — the bridge sends the same args each cycle and watches for the response changing."},
+			"tool_args":        {Type: "object", Description: "(source_kind=tool) Arguments passed to `tool` on every invocation, as a {name: value} object. Keep them CONSTANT: the bridge sends the same args each cycle and watches for the response changing."},
 			"credential":       {Type: "string", Description: "(source_kind=url) Name of a registered SecureAPI credential. The bridge calls the API through it for auth + URL allow-list. Draft it first if it doesn't exist yet."},
-			"url":              {Type: "string", Description: "(source_kind=url) The URL to poll each interval. PREFER a path-only URL (e.g. \"/api/v1/notifications\") — it resolves against the credential's Base URL at poll time, so the host can never disagree with the admin's config. A full https:// URL also works but must match the credential's Base URL host EXACTLY (www vs bare host count as different)."},
+			"url":              {Type: "string", Description: "(source_kind=url) The URL to poll each interval. PREFER a path-only URL (e.g. \"/api/v1/notifications\"): it resolves against the credential's Base URL at poll time, so the host can never disagree with the admin's config. A full https:// URL also works but must match the credential's Base URL host EXACTLY (www vs bare host count as different)."},
 			"wake_agent":       {Type: "string", Description: "Name or id of the agent to wake when the response changes; its OWN home thread receives the change-alert. Omit to wake the agent creating the bridge (self-monitoring). Ignored when `channel` is set (the channel's bound agent is used instead)."},
-			"channel":          {Type: "string", Description: "(optional) Deliver the change INTO this channel instead of the agent's home thread — name or id of one of the user's channels. The channel's bound agent reacts in the channel's conversation, and if the channel has a live transport (iMessage/etc) the reaction flows out it. This is the \"source → channel\" shape. When set, wake_agent is derived from the channel."},
+			"channel":          {Type: "string", Description: "(optional) Deliver the change INTO this channel instead of the agent's home thread: name or id of one of the user's channels. The channel's bound agent reacts in the channel's conversation, and if the channel has a live transport (iMessage/etc) the reaction flows out it. This is the \"source → channel\" shape. When set, wake_agent is derived from the channel."},
 			"interval_minutes": {Type: "number", Description: "How often to poll, in minutes (minimum 1; 15 = every 15 min, 60 = hourly)."},
-			"wake_brief":       {Type: "string", Description: "Guidance handed to the woken agent on each change — what the data means and what to do about it."},
+			"wake_brief":       {Type: "string", Description: "Guidance handed to the woken agent on each change: what the data means and what to do about it."},
 			"method":           {Type: "string", Description: "(source_kind=url, optional) HTTP method; defaults to GET."},
 			"body":             {Type: "string", Description: "(source_kind=url, optional) request body for POST/PUT etc."},
 		},
@@ -123,7 +123,7 @@ Typical flow when wiring a new service:
 				return "", fmt.Errorf("bridge requires an authenticated session")
 			}
 			if _, present := args["channel"]; !present {
-				return "", fmt.Errorf("nothing to update — pass channel=<name/id> to hook a channel, or channel=\"\" to detach")
+				return "", fmt.Errorf("nothing to update: pass channel=<name/id> to hook a channel, or channel=\"\" to detach")
 			}
 			return setBridgeChannel(owner, strings.TrimSpace(stringArg(args, "name")), strings.TrimSpace(stringArg(args, "channel")))
 		},
@@ -143,7 +143,7 @@ Typical flow when wiring a new service:
 // "source → channel/agent" concept as the /bridges/ messaging app's
 // PUSH-source bridges; they converge, they aren't rivals). Until the
 // two views merge, the poll bridges are managed here.
-const bridgeWhereToManage = "\n\nManage these under Admin → Bridges (and per-agent under the chat rail's Event monitors). Note: an API-poll bridge is a POLL source that wakes an agent; the /bridges/ app currently shows PUSH sources (iMessage/SMS) — same bridge concept, two views that are converging."
+const bridgeWhereToManage = "\n\nManage these under Admin → Bridges (and per-agent under the chat rail's Event monitors). Note: an API-poll bridge is a POLL source that wakes an agent; the /bridges/ app currently shows PUSH sources (iMessage/SMS), same bridge concept, two views that are converging."
 
 // bridgeOwner pulls the runtime user from the session; "" when unknown.
 func bridgeOwner(sess *ToolSession) string {
@@ -209,7 +209,7 @@ func bridgeCreate(args map[string]any, sess *ToolSession, defaultWakeAgent strin
 	if want := strings.TrimSpace(stringArg(args, "channel")); want != "" {
 		ch, ok := resolveOwnerChannel(owner, want)
 		if !ok {
-			return "", fmt.Errorf("no channel named %q for this user — create it in Agents first, or omit channel to wake an agent's own thread. (list the user's channels to see valid names/ids)", want)
+			return "", fmt.Errorf("no channel named %q for this user: create it in Agents first, or omit channel to wake an agent's own thread. (list the user's channels to see valid names/ids)", want)
 		}
 		wakeChannelID = ch.ID
 		wantAgent = ch.AgentID // the channel's bound agent is the target
@@ -233,13 +233,13 @@ func bridgeCreate(args map[string]any, sess *ToolSession, defaultWakeAgent strin
 		return "", fmt.Errorf("a bridge (or monitor) named %q already exists", name)
 	}
 	if wantAgent == "" {
-		return "", fmt.Errorf("wake_agent is required — name the agent to wake when the source changes")
+		return "", fmt.Errorf("wake_agent is required: name the agent to wake when the source changes")
 	}
 	// Resolve the agent the bridge feeds. Empty fallback → hard error rather
 	// than silently waking the wrong agent.
 	wakeAgent := resolveCheckAgent(sess, owner, wantAgent, "")
 	if wakeAgent == "" {
-		return "", fmt.Errorf("no agent named %q to wake — pass a real agent name or id for wake_agent", wantAgent)
+		return "", fmt.Errorf("no agent named %q to wake: pass a real agent name or id for wake_agent", wantAgent)
 	}
 
 	// Resolve the SOURCE — how the watched info is generated. Each kind sets the
@@ -265,10 +265,10 @@ func bridgeCreate(args map[string]any, sess *ToolSession, defaultWakeAgent strin
 		// fails on a schedule.
 		exists, enabled, hasSecret := Secure().CredentialStatus(cred)
 		if !exists {
-			return "", fmt.Errorf("no API credential named %q — draft one first with draft_api_credential or draft_oauth_credential, then have the admin enable it in Admin > APIs", cred)
+			return "", fmt.Errorf("no API credential named %q: draft one first with draft_api_credential or draft_oauth_credential, then have the admin enable it in Admin > APIs", cred)
 		}
 		if !enabled || !hasSecret {
-			return "", fmt.Errorf("credential %q isn't live yet (enabled=%v, secret set=%v) — a bridge is only created once its source verifiably works. Have the admin finish it in Admin > APIs, then create the bridge", cred, enabled, hasSecret)
+			return "", fmt.Errorf("credential %q isn't live yet (enabled=%v, secret set=%v): a bridge is only created once its source verifiably works. Have the admin finish it in Admin > APIs, then create the bridge", cred, enabled, hasSecret)
 		}
 		// Host-mismatch tripwire. A bridge is a STANDING dispatch: an absolute URL
 		// whose scheme+host disagrees with the credential's Base URL is refused at
@@ -279,7 +279,7 @@ func bridgeCreate(args map[string]any, sess *ToolSession, defaultWakeAgent strin
 			if c, ok := Secure().Load(cred); ok {
 				if base := strings.TrimRight(strings.TrimSpace(c.BaseURL), "/"); base != "" &&
 					url != base && !strings.HasPrefix(url, base+"/") {
-					return "", fmt.Errorf("bridge url %q is outside credential %q's Base URL (%s) — refusing to create a standing poll that would send this credential's auth to a different host. Pass a PATH-ONLY url (e.g. \"/api/v1/notifications\") so the bridge always inherits the credential's host; if the host itself is wrong, that's a credential fix for the admin, not a bridge parameter", url, cred, c.BaseURL)
+					return "", fmt.Errorf("bridge url %q is outside credential %q's Base URL (%s): refusing to create a standing poll that would send this credential's auth to a different host. Pass a PATH-ONLY url (e.g. \"/api/v1/notifications\") so the bridge always inherits the credential's host; if the host itself is wrong, that's a credential fix for the admin, not a bridge parameter", url, cred, c.BaseURL)
 				}
 			}
 		}
@@ -295,7 +295,7 @@ func bridgeCreate(args map[string]any, sess *ToolSession, defaultWakeAgent strin
 	case "tool":
 		tool := strings.TrimSpace(stringArg(args, "tool"))
 		if tool == "" {
-			return "", fmt.Errorf("source_kind=tool needs a `tool` (name of an existing, PERSISTENT api/toolbox tool — author it with tool_def and verify it with tool_def action=\"test\" first)")
+			return "", fmt.Errorf("source_kind=tool needs a `tool` (name of an existing, PERSISTENT api/toolbox tool: author it with tool_def and verify it with tool_def action=\"test\" first)")
 		}
 		toolName = tool
 		if ta, ok := args["tool_args"].(map[string]any); ok {
@@ -305,9 +305,9 @@ func bridgeCreate(args map[string]any, sess *ToolSession, defaultWakeAgent strin
 		}
 		sourceDesc = fmt.Sprintf("run tool %q", tool)
 	case "pipeline":
-		return "", fmt.Errorf("source_kind=pipeline isn't wired yet — for now use source_kind=\"tool\" (point the bridge at an api/toolbox tool, which can itself chain calls) or source_kind=\"url\"")
+		return "", fmt.Errorf("source_kind=pipeline isn't wired yet, for now use source_kind=\"tool\" (point the bridge at an api/toolbox tool, which can itself chain calls) or source_kind=\"url\"")
 	default:
-		return "", fmt.Errorf("unknown source_kind %q — use \"tool\", \"url\", or \"pipeline\"", sourceKind)
+		return "", fmt.Errorf("unknown source_kind %q: use \"tool\", \"url\", or \"pipeline\"", sourceKind)
 	}
 
 	m := EventMonitor{
@@ -334,10 +334,10 @@ func bridgeCreate(args map[string]any, sess *ToolSession, defaultWakeAgent strin
 	// error) is caught by the status check. On either, refuse to create.
 	probe, perr := InvokeWatchTool(owner, m.WakeAgent, m.ToolName, m.ToolArgs)
 	if perr != nil {
-		return "", fmt.Errorf("bridge source verification FAILED — not creating the bridge (its source must work before it goes on a schedule). Error: %v", perr)
+		return "", fmt.Errorf("bridge source verification FAILED: not creating the bridge (its source must work before it goes on a schedule). Error: %v", perr)
 	}
 	if status := watchProbeHTTPError(probe); status != "" {
-		return "", fmt.Errorf("bridge source returned %s — not creating the bridge (a standing poll on a failing source is worse than none). Fix the source (auth, URL, params) and retry. Response: %s", status, truncateForError(probe, 300))
+		return "", fmt.Errorf("bridge source returned %s: not creating the bridge (a standing poll on a failing source is worse than none). Fix the source (auth, URL, params) and retry. Response: %s", status, truncateForError(probe, 300))
 	}
 	m.LastHash = HashWatcherBody(probe)
 
@@ -365,16 +365,16 @@ func setBridgeChannel(owner, name, channelID string) (string, error) {
 	if strings.TrimSpace(channelID) == "" {
 		m.WakeChannel = ""
 		SaveEventMonitor(RootDB, m)
-		return fmt.Sprintf("Bridge %q detached from its channel — changes now wake agent %q's own thread.", name, m.WakeAgent), nil
+		return fmt.Sprintf("Bridge %q detached from its channel: changes now wake agent %q's own thread.", name, m.WakeAgent), nil
 	}
 	ch, ok := resolveOwnerChannel(owner, channelID)
 	if !ok {
-		return "", fmt.Errorf("no channel %q for this user — create it in Agents first, or list the user's channels to see valid names/ids", channelID)
+		return "", fmt.Errorf("no channel %q for this user: create it in Agents first, or list the user's channels to see valid names/ids", channelID)
 	}
 	m.WakeChannel = ch.ID
 	m.WakeAgent = ch.AgentID // deliver via the channel's bound agent
 	SaveEventMonitor(RootDB, m)
-	return fmt.Sprintf("Bridge %q now delivers into channel %q — its bound agent reacts there on each change.", name, bridgeChannelLabel(owner, ch.ID)), nil
+	return fmt.Sprintf("Bridge %q now delivers into channel %q: its bound agent reacts there on each change.", name, bridgeChannelLabel(owner, ch.ID)), nil
 }
 
 // resolveOwnerChannel finds one of the owner's channels by id (exact) or by
@@ -419,7 +419,7 @@ func dupMonitorWarning(m EventMonitor) string {
 	if len(dups) > 1 {
 		subj = "other monitors are"
 	}
-	return fmt.Sprintf(" ⚠️ Possible duplicate: %s already watching this same source with the same delivery target (%s) — the user may get doubled alerts. Remove one if that's unintended.",
+	return fmt.Sprintf(" ⚠️ Possible duplicate: %s already watching this same source with the same delivery target (%s), the user may get doubled alerts. Remove one if that's unintended.",
 		subj, strings.Join(quoted, ", "))
 }
 

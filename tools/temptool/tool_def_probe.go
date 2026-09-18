@@ -22,11 +22,11 @@ import (
 func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	name := strings.TrimSpace(StringArg(args, "name"))
 	if name == "" {
-		return "", fmt.Errorf("name is required — the api/toolbox tool to verify")
+		return "", fmt.Errorf("name is required: the api/toolbox tool to verify")
 	}
 	tt, ok := loadExistingToolRecord(sess, name)
 	if !ok {
-		return "", fmt.Errorf("no tool named %q — use action=\"list\" to see what exists", name)
+		return "", fmt.Errorf("no tool named %q: use action=\"list\" to see what exists", name)
 	}
 
 	// Flatten to a uniform endpoint list. A single api tool becomes one
@@ -48,7 +48,7 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		return testShellTool(tt, args, sess)
 	case TempToolModeAPI:
 		if strings.TrimSpace(tt.CommandTemplate) == "" {
-			return "", fmt.Errorf("tool %q has no url_template — nothing to probe", name)
+			return "", fmt.Errorf("tool %q has no url_template: nothing to probe", name)
 		}
 		endpoints = []TempToolAction{{
 			Name: name, Params: tt.Params, Required: tt.Required,
@@ -58,7 +58,7 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			ResponsePipe: tt.ResponsePipe, ResponseExtract: tt.ResponseExtract,
 		}}
 	default:
-		return "", fmt.Errorf("tool %q is mode=%q — test verifies shell, api and toolbox tools. For a %s tool, exercise it by calling it directly with real args", name, tt.Mode, tt.Mode)
+		return "", fmt.Errorf("tool %q is mode=%q: test verifies shell, api and toolbox tools. For a %s tool, exercise it by calling it directly with real args", name, tt.Mode, tt.Mode)
 	}
 	if len(endpoints) == 0 {
 		return "", fmt.Errorf("tool %q has no endpoints to test", name)
@@ -75,7 +75,7 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Verification report for %q (%d endpoint(s)):\n\n", name, len(endpoints))
 	if !netOK {
-		b.WriteString("(network is blocked this turn — running OFFLINE checks only; read endpoints are not live-probed.)\n\n")
+		b.WriteString("(network is blocked this turn: running OFFLINE checks only; read endpoints are not live-probed.)\n\n")
 	}
 	failCount, writeManual, emptyRead := 0, 0, 0
 
@@ -113,9 +113,9 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		}
 		if len(unref) > 0 {
 			if ep.BodyTemplate == "" && !isRead {
-				fail("required param(s) %v are sent NOWHERE — this %s action has no body_template, so the API never receives them (the exact cause of a 400 like \"content must be a string\"). Add a body_template, e.g. {\"content\": {content}}.", unref, method)
+				fail("required param(s) %v are sent NOWHERE: this %s action has no body_template, so the API never receives them (the exact cause of a 400 like \"content must be a string\"). Add a body_template, e.g. {\"content\": {content}}.", unref, method)
 			} else {
-				fail("required param(s) %v appear in neither url_template nor body_template — the API will never receive them.", unref)
+				fail("required param(s) %v appear in neither url_template nor body_template: the API will never receive them.", unref)
 			}
 		} else {
 			pass("all required params are wired into the url/body templates")
@@ -140,17 +140,17 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 					if _, err := substituteRaw(ep.BodyTemplate, ep.Params, ep.Required, sample); err != nil {
 						fail("body_template render failed: %v", err)
 					} else {
-						pass("body_template renders (raw, %s — no JSON validation)", epCT)
+						pass("body_template renders (raw, %s: no JSON validation)", epCT)
 					}
 				} else if body, err := substituteJSON(ep.BodyTemplate, ep.Params, ep.Required, sample); err != nil {
 					fail("body_template render failed: %v", err)
 				} else if jerr := json.Unmarshal([]byte(body), new(any)); jerr != nil {
-					fail("body_template produced INVALID JSON: %v — rendered body: %s. (For an XML/non-JSON API set content_type, e.g. \"application/xml\", so the body is sent RAW.)", jerr, oneLine(body, 200))
+					fail("body_template produced INVALID JSON: %v, rendered body: %s. (For an XML/non-JSON API set content_type, e.g. \"application/xml\", so the body is sent RAW.)", jerr, oneLine(body, 200))
 				} else {
 					pass("body_template renders valid JSON")
 				}
 			} else {
-				note("body_template not render-checked — no sample args covering required %v (pass a case)", ep.Required)
+				note("body_template not render-checked: no sample args covering required %v (pass a case)", ep.Required)
 			}
 		}
 
@@ -168,19 +168,19 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		if isRead {
 			switch {
 			case !netOK:
-				note("read endpoint NOT live-probed — network is blocked this turn (private mode); offline checks only")
+				note("read endpoint NOT live-probed: network is blocked this turn (private mode); offline checks only")
 			case coversRequired(sample, ep.Required):
 				status, body, derr := liveProbe(sess, tt.Credential, ep, sample)
 				switch {
 				case derr != nil:
 					fail("live probe errored: %v", derr)
 				case !isStatus2xx(status):
-					fail("live call returned %q (want 2xx) — body: %s", status, oneLine(body, 200))
+					fail("live call returned %q (want 2xx), body: %s", status, oneLine(body, 200))
 				default:
 					pass("live %s returned %q", method, status)
 					if ep.ResponsePipe != "" {
 						if perr := runPipeAgainst(ep.ResponsePipe, body, sess); perr != "" {
-							fail("response_pipe failed on the REAL response body (shape mismatch — e.g. the filter expects .posts[] but the body is a bare array): %s", perr)
+							fail("response_pipe failed on the REAL response body (shape mismatch: e.g. the filter expects .posts[] but the body is a bare array): %s", perr)
 						} else {
 							pass("response_pipe runs clean on the real response")
 						}
@@ -198,15 +198,15 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 					// a fresh account — but it must never read as proof the tool
 					// returns data.
 					if emptyResultBody(body, ep) {
-						note("live call returned 2xx but ZERO records — this proves the request is well-formed, NOT that the query is right. If you expected data: check the filter/date-range, and for WebDAV/CalDAV check headers (a REPORT/PROPFIND without \"Depth\": \"1\" matches nothing and returns exactly this). Confirm against data you know exists before calling it done.")
+						note("live call returned 2xx but ZERO records: this proves the request is well-formed, NOT that the query is right. If you expected data: check the filter/date-range, and for WebDAV/CalDAV check headers (a REPORT/PROPFIND without \"Depth\": \"1\" matches nothing and returns exactly this). Confirm against data you know exists before calling it done.")
 						emptyRead++
 					}
 				}
 			default:
-				note("read endpoint NOT live-probed — no sample args for required %v (pass a case with real values to hit the live API)", ep.Required)
+				note("read endpoint NOT live-probed: no sample args for required %v (pass a case with real values to hit the live API)", ep.Required)
 			}
 		} else {
-			note("write endpoint NOT auto-fired — make ONE manual %s call and confirm a 2xx before calling this done", method)
+			note("write endpoint NOT auto-fired: make ONE manual %s call and confirm a 2xx before calling this done", method)
 			writeManual++
 		}
 
@@ -232,14 +232,14 @@ func testGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		RecordToolVerification(sess, name, false, fmt.Sprintf("%d of %d endpoint(s) FAILED verification", failCount, len(endpoints)))
 		fmt.Fprintf(&b, "RESULT: %d of %d endpoint(s) FAILED. Fix each with tool_def(action=\"update\", actions=[{name, ...}]) and re-run test until green. Do NOT call this tool done or hand it to a user while any endpoint is FAIL.", failCount, len(endpoints))
 	case writeManual > 0:
-		RecordToolVerification(sess, name, false, fmt.Sprintf("%d write endpoint(s) never fired — needs one manual live call each to confirm a 2xx", writeManual))
-		fmt.Fprintf(&b, "RESULT: all automated checks passed. %d write endpoint(s) still need ONE manual live call each — fire one, confirm a 2xx, then it's done.", writeManual)
+		RecordToolVerification(sess, name, false, fmt.Sprintf("%d write endpoint(s) never fired: needs one manual live call each to confirm a 2xx", writeManual))
+		fmt.Fprintf(&b, "RESULT: all automated checks passed. %d write endpoint(s) still need ONE manual live call each: fire one, confirm a 2xx, then it's done.", writeManual)
 	case emptyRead > 0:
 		// Checks passed, but every read came back empty — the tool is
 		// UNPROVEN, not verified. Signing it off here is what let a list tool
 		// that could never return a row ship as "verified".
-		RecordToolVerification(sess, name, false, fmt.Sprintf("%d read endpoint(s) returned 2xx with zero records — not proven to return data", emptyRead))
-		fmt.Fprintf(&b, "RESULT: the request shape is valid, but %d read endpoint(s) came back EMPTY — nothing here proves the tool returns data. Point a case at a record you KNOW exists and re-run; if it is still empty, the query (filter, date range, headers) is wrong, not the plumbing.", emptyRead)
+		RecordToolVerification(sess, name, false, fmt.Sprintf("%d read endpoint(s) returned 2xx with zero records: not proven to return data", emptyRead))
+		fmt.Fprintf(&b, "RESULT: the request shape is valid, but %d read endpoint(s) came back EMPTY, nothing here proves the tool returns data. Point a case at a record you KNOW exists and re-run; if it is still empty, the query (filter, date range, headers) is wrong, not the plumbing.", emptyRead)
 	default:
 		RecordToolVerification(sess, name, true, "")
 		b.WriteString("RESULT: all endpoints passed. Tool verified.")
@@ -297,14 +297,14 @@ func testShellTool(tt TempTool, args map[string]any, sess *ToolSession) (string,
 		lang, problem, checked := scriptSyntaxCheck(tt, sess)
 		switch {
 		case !checked:
-			note("script_body not syntax-checked (no checker available for this language) — the live run is the only proof")
+			note("script_body not syntax-checked (no checker available for this language): the live run is the only proof")
 		case problem != "":
-			fail("script_body has a SYNTAX ERROR — every dispatch dies before the tool does any work: %s", problem)
+			fail("script_body has a SYNTAX ERROR, every dispatch dies before the tool does any work: %s", problem)
 		default:
 			pass("script_body parses clean (%s)", lang)
 		}
 	} else if strings.Contains(tt.CommandTemplate, "{workspace_dir}") {
-		note("no script_body on the record, but command_template references a workspace file — the tool breaks the moment that workspace is wiped. Re-author with script_body so the script travels with the tool record.")
+		note("no script_body on the record, but command_template references a workspace file: the tool breaks the moment that workspace is wiped. Re-author with script_body so the script travels with the tool record.")
 	}
 
 	// B. Param delivery. A shell tool receives every arg BOTH as a {param}
@@ -320,7 +320,7 @@ func testShellTool(tt TempTool, args map[string]any, sess *ToolSession) (string,
 	}
 	switch {
 	case len(envOnly) > 0:
-		note("required param(s) %v are not in command_template — they reach the script ONLY as lowercase env vars (os.environ[%q] / $%s). Confirm the script reads them there, not from argv.", envOnly, envOnly[0], envOnly[0])
+		note("required param(s) %v are not in command_template: they reach the script ONLY as lowercase env vars (os.environ[%q] / $%s). Confirm the script reads them there, not from argv.", envOnly, envOnly[0], envOnly[0])
 	case len(tt.Required) > 0:
 		pass("every required param is substituted into command_template")
 	}
@@ -344,7 +344,7 @@ func testShellTool(tt TempTool, args map[string]any, sess *ToolSession) (string,
 			if !scriptCallsHook(body, hc.call) || hookCapabilityDeclared(tt.HookCapabilities, hc.capability) {
 				continue
 			}
-			fail("script_body calls %s() but hook_capabilities does not include %q — that call is refused at dispatch (\"method not granted\"), and the script fails on whatever it does with the result. Add %q to hook_capabilities.",
+			fail("script_body calls %s() but hook_capabilities does not include %q, that call is refused at dispatch (\"method not granted\"), and the script fails on whatever it does with the result. Add %q to hook_capabilities.",
 				hc.call, hc.capability, hc.capability)
 		}
 	}
@@ -353,9 +353,9 @@ func testShellTool(tt TempTool, args map[string]any, sess *ToolSession) (string,
 	ran := false
 	switch {
 	case sample == nil:
-		note("tool NOT run — pass cases=[{args:{...}}] with real values. Running it is the ONLY thing that verifies a shell tool; the checks above can't.")
+		note("tool NOT run, pass cases=[{args:{...}}] with real values. Running it is the ONLY thing that verifies a shell tool; the checks above can't.")
 	case !coversRequired(sample, tt.Required):
-		note("tool NOT run — the supplied case doesn't cover required %v. Pass a value for each.", tt.Required)
+		note("tool NOT run: the supplied case doesn't cover required %v. Pass a value for each.", tt.Required)
 	default:
 		ran = true
 		out, derr := DispatchTempToolDirect(sess, &tt, sample)
@@ -365,7 +365,7 @@ func testShellTool(tt TempTool, args map[string]any, sess *ToolSession) (string,
 		case shellRunFailed(out):
 			fail("live run returned a non-zero exit / timeout: %s", oneLine(out, 300))
 		default:
-			pass("live run succeeded — output: %s", oneLine(out, 200))
+			pass("live run succeeded, output: %s", oneLine(out, 200))
 		}
 	}
 
@@ -388,7 +388,7 @@ func testShellTool(tt TempTool, args map[string]any, sess *ToolSession) (string,
 		RecordToolVerification(sess, tt.Name, false, "shell tool failed verification")
 		b.WriteString("RESULT: FAILED. Fix with tool_def(action=\"update\", script_body=\"...\") and re-run test until it's green. Do NOT call this tool done or hand it to a user while it FAILs.")
 	case !ran:
-		RecordToolVerification(sess, tt.Name, false, "never run — test was called without cases")
+		RecordToolVerification(sess, tt.Name, false, "never run: test was called without cases")
 		b.WriteString("RESULT: NOT VERIFIED. The static checks passed, but the tool was never executed. Re-run: tool_def(action=\"test\", name=\"" + tt.Name + "\", cases=[{args:{...}}]) with real values.")
 	default:
 		RecordToolVerification(sess, tt.Name, true, "")

@@ -119,7 +119,7 @@ func TestSelfDelegationRunsInline(t *testing.T) {
 // the thing this editor was built to stop being the only door.
 func TestEditorOffersDelegation(t *testing.T) {
 	_, _, _, def := editorFixture(t)
-	agents := []ui.SelectOption{{Value: "", Label: "— this agent —"}, {Value: "ag-9", Label: "Log analyst"}}
+	agents := []ui.SelectOption{{Value: "", Label: "(this agent)"}, {Value: "ag-9", Label: "Log analyst"}}
 	fieldsOf := func(name string) string {
 		p, ok := def.Phase(name)
 		if !ok {

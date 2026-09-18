@@ -125,7 +125,7 @@ func HandlePeerImageRender(w http.ResponseWriter, r *http.Request) {
 		// have several peers configured and has to know which one is stale.
 		host, _ := os.Hostname()
 		peerDeny(w, http.StatusBadRequest, "backend "+backend+" on "+host+" generates from text only and has no image "+
-			"input, so it cannot edit a photo — this peer's record of what "+host+" offers is out of date; refresh the peer on that side")
+			"input, so it cannot edit a photo: this peer's record of what "+host+" offers is out of date; refresh the peer on that side")
 		return
 	}
 

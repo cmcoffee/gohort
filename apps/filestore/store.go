@@ -153,7 +153,7 @@ func SaveStore(db Database, s Store) (Store, error) {
 	if strings.TrimSpace(s.Slug) == "" {
 		s.Slug = RefToolSlug(s.Name)
 		if s.Slug == "" {
-			return s, Error("that name produces no usable handle — use letters and digits")
+			return s, Error("that name produces no usable handle: use letters and digits")
 		}
 	}
 	db.Set(storesTable, s.Slug, s)

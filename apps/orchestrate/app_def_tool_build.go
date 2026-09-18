@@ -175,7 +175,7 @@ func unknownSectionKeyNotes(raw any) []string {
 			continue
 		}
 		sort.Strings(stray) // map order is not an order
-		note := fmt.Sprintf("section %d (kind %q): ignored %s — this kind reads: %s. Nothing you sent under those keys was stored.",
+		note := fmt.Sprintf("section %d (kind %q): ignored %s, this kind reads: %s. Nothing you sent under those keys was stored.",
 			i+1, kind, strings.Join(stray, ", "), strings.Join(append(append([]string{}, known...), sectionKeys[""]...), ", "))
 		// Where it DOES belong, when the key is a real parameter one level up.
 		// Listing what the kind reads answers "why was this dropped" and not
@@ -189,7 +189,7 @@ func unknownSectionKeyNotes(raw any) []string {
 			}
 		}
 		if len(misplaced) > 0 {
-			note += fmt.Sprintf(" %s is a TOP-LEVEL app_def parameter — move it out of the section, beside \"sections\".",
+			note += fmt.Sprintf(" %s is a TOP-LEVEL app_def parameter: move it out of the section, beside \"sections\".",
 				strings.Join(misplaced, " and "))
 		}
 		notes = append(notes, note)
@@ -248,7 +248,7 @@ func appShapeNotes(raw any, boundPipeline bool) []string {
 	// registries, two different rules, and asserting the stricter one here
 	// would send an author reordering a page that was already correct.
 	if len(clientButtonAt) > 0 && !htmlSection {
-		notes = append(notes, fmt.Sprintf("section(s) %s have a toolbar button with method \"client\", but the app has no html section — nothing registers the handler, so the button renders and does nothing but toast an error when clicked. Add an html section whose script calls window.uiRegisterClientAction(\"<the button's url>\", fn).",
+		notes = append(notes, fmt.Sprintf("section(s) %s have a toolbar button with method \"client\", but the app has no html section: nothing registers the handler, so the button renders and does nothing but toast an error when clicked. Add an html section whose script calls window.uiRegisterClientAction(\"<the button's url>\", fn).",
 			strings.Join(intsToStrings(clientButtonAt), ", ")))
 	}
 	// A pipeline bound with nothing to run it. The app carries a pipeline_id,
@@ -261,10 +261,10 @@ func appShapeNotes(raw any, boundPipeline bool) []string {
 	// Only when a binding exists: an app with no pipeline_id is simply not a
 	// pipeline app, and has nothing to be missing.
 	if pipelineAt < 0 && boundPipeline {
-		notes = append(notes, "this app binds a pipeline (pipeline_id) but has NO section of kind \"pipeline\" — nothing on the page can start a run, show its stages, or list past ones. Add {kind:\"pipeline\"}. An action script cannot run a pipeline; the section is the only surface that does.")
+		notes = append(notes, "this app binds a pipeline (pipeline_id) but has NO section of kind \"pipeline\": nothing on the page can start a run, show its stages, or list past ones. Add {kind:\"pipeline\"}. An action script cannot run a pipeline; the section is the only surface that does.")
 	}
 	if pipelineAt >= 0 && len(recordViews) > 0 {
-		notes = append(notes, fmt.Sprintf("section(s) %s read the app's RECORD store, which a pipeline never writes to — a run's history lives in the pipeline panel's own sidebar (section %d). Those sections will stay on their empty state forever unless an action script writes records, so do not tell the user past runs will appear there.",
+		notes = append(notes, fmt.Sprintf("section(s) %s read the app's RECORD store, which a pipeline never writes to: a run's history lives in the pipeline panel's own sidebar (section %d). Those sections will stay on their empty state forever unless an action script writes records, so do not tell the user past runs will appear there.",
 			strings.Join(recordViews, ", "), pipelineAt+1))
 	}
 	return notes
@@ -494,7 +494,7 @@ func buildAppSection(spec AppSpec, m map[string]any, createFields []ui.FormField
 		// agent happens to own: the user gets a page to launch it, watch it
 		// work, and read what it produced last week.
 		if strings.TrimSpace(spec.PipelineID) == "" {
-			return ui.Section{}, errors.New("a pipeline section needs the app to have a pipeline_id (the stored pipeline this app runs) — author the pipeline first with the `pipeline` tool, then pass its name or id as pipeline_id")
+			return ui.Section{}, errors.New("a pipeline section needs the app to have a pipeline_id (the stored pipeline this app runs): author the pipeline first with the `pipeline` tool, then pass its name or id as pipeline_id")
 		}
 		sec.NoChrome = true // the panel manages its own layout
 		fields := appPipelineFields(m["fields"])
@@ -578,7 +578,7 @@ func buildAppSection(spec AppSpec, m map[string]any, createFields []ui.FormField
 		// server-side). Reach for a typed section first; this is a last resort.
 		html := mapStr(m, "html")
 		if strings.TrimSpace(html) == "" {
-			return ui.Section{}, errors.New("an html section needs an `html` field (the raw HTML to render) — pass the markup itself, not a nested object")
+			return ui.Section{}, errors.New("an html section needs an `html` field (the raw HTML to render): pass the markup itself, not a nested object")
 		}
 		// A COMPLETE document gets its own frame; a fragment is inlined. An
 		// author writing a game or an animation writes a whole document
@@ -594,9 +594,9 @@ func buildAppSection(spec AppSpec, m map[string]any, createFields []ui.FormField
 		}
 	default:
 		if kind == "" {
-			return ui.Section{}, errors.New("this section has no `kind` and none could be inferred from its fields — every section needs kind: form | table | display | chart | empty | chat | workbench | actions | html. Call action=get to read the app's current sections in editable form (or action=help for each kind's fields)")
+			return ui.Section{}, errors.New("this section has no `kind` and none could be inferred from its fields, every section needs kind: form | table | display | chart | empty | chat | workbench | actions | html. Call action=get to read the app's current sections in editable form (or action=help for each kind's fields)")
 		}
-		return ui.Section{}, fmt.Errorf("unknown section kind %q — use form | table | display | chart | empty | chat | workbench | actions | html", kind)
+		return ui.Section{}, fmt.Errorf("unknown section kind %q: use form | table | display | chart | empty | chat | workbench | actions | html", kind)
 	}
 	return sec, nil
 }
@@ -653,7 +653,7 @@ func buildWorkbench(spec AppSpec, m map[string]any) (ui.WorkbenchPanel, error) {
 		ItemKey:          spec.RecordKey,
 		ItemLabel:        itemLabel,
 		ListTitle:        firstNonEmptyStr(mapStr(m, "list_title"), "Items"),
-		ListEmpty:        firstNonEmptyStr(mapStr(m, "list_empty"), "Nothing yet — create one."),
+		ListEmpty:        firstNonEmptyStr(mapStr(m, "list_empty"), "Nothing yet: create one."),
 		NewButton:        newButton,
 		DeleteURL:        "record?id={id}",
 		RecordURL:        "record?id={id}",
@@ -690,11 +690,11 @@ func entryListError(section, item, plural string, raw any) error {
 	arr, isArr := raw.([]any)
 	switch {
 	case raw == nil, !isArr && raw == nil:
-		return fmt.Errorf("a %s section needs at least one %s — pass %s:[{%q:…, \"label\":…}]", section, item, plural, "field")
+		return fmt.Errorf("a %s section needs at least one %s, pass %s:[{%q:…, \"label\":…}]", section, item, plural, "field")
 	case !isArr:
 		return fmt.Errorf("a %s section's %s must be an ARRAY of objects, got %T", section, plural, raw)
 	case len(arr) == 0:
-		return fmt.Errorf("a %s section needs at least one %s — %s was empty", section, item, plural)
+		return fmt.Errorf("a %s section needs at least one %s: %s was empty", section, item, plural)
 	}
 	// Non-empty in, nothing out: every entry lacked the key. Report the keys
 	// they DO carry, which is the fastest possible route to the fix.

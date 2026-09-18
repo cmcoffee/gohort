@@ -114,7 +114,7 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 		}
 		dir := scratch_dir(id)
 		if err := scratch_setup(ctx, rawExec, dir); err != nil {
-			emit(id, probeEvent{Kind: "status", Text: "Scratch directory unavailable — writes will need approval: " + err.Error()})
+			emit(id, probeEvent{Kind: "status", Text: "Scratch directory unavailable, writes will need approval: " + err.Error()})
 		} else {
 			scratch = dir
 			scratchCleanup = func() { scratch_teardown(rawExec, dir) }
@@ -236,7 +236,7 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 			// nudge in the agent loop catches genuine error streaks
 			// independently.
 			if count > 5 {
-				return fmt.Sprintf("Note: %s has been called %d times this session. Recommending checking other vectors first before continuing — a different tool or angle may move faster than more variants of %s. If %s really is the right tool here, try narrowing the scope (smaller path, more specific pattern) and continue.", key, count-1, key, key), nil
+				return fmt.Sprintf("Note: %s has been called %d times this session. Recommending checking other vectors first before continuing: a different tool or angle may move faster than more variants of %s. If %s really is the right tool here, try narrowing the scope (smaller path, more specific pattern) and continue.", key, count-1, key, key), nil
 			}
 			emit(id, probeEvent{Kind: "cmd", Text: cmd})
 			if err := gateCommand(cmd); err != nil {
@@ -314,7 +314,7 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 		// Previously a silent return: the user watched the exploration in the
 		// chat feed and then nothing saved, with no explanation. Say so.
 		if ctx.Err() == nil {
-			emit(id, probeEvent{Kind: "error", Text: "Mapping ended without a final reference document — nothing was saved. Re-run Map."})
+			emit(id, probeEvent{Kind: "error", Text: "Mapping ended without a final reference document: nothing was saved. Re-run Map."})
 		}
 		return
 	}
@@ -343,7 +343,7 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 				tooThin := len(reply) < minMapProfileChars ||
 					(prior != "" && len(reply) < len(prior)/3)
 				if tooThin {
-					emit(id, probeEvent{Kind: "status", Text: "Map didn't produce a complete profile — keeping the previous one."})
+					emit(id, probeEvent{Kind: "status", Text: "Map didn't produce a complete profile: keeping the previous one."})
 					Log("[servitor.map] kept prior profile for %q (new=%d chars, prior=%d chars)",
 						appliance.Name, len(reply), len(prior))
 				} else {

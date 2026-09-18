@@ -222,7 +222,7 @@ func appSampleFieldWarnings(fields map[string]string, sample []map[string]any) [
 	sort.Strings(keys)
 	out := make([]string, 0, len(keys))
 	for _, k := range keys {
-		out = append(out, fmt.Sprintf("WARN sample key %q is not a field any section writes or reads (fields: %s) — a script that reads it will pass here and see nothing live.", k, strings.Join(appFieldList(fields), ", ")))
+		out = append(out, fmt.Sprintf("WARN sample key %q is not a field any section writes or reads (fields: %s), a script that reads it will pass here and see nothing live.", k, strings.Join(appFieldList(fields), ", ")))
 	}
 	return out
 }

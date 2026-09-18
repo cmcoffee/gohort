@@ -54,7 +54,7 @@ type createAgentTool struct{}
 func (createAgentTool) Name() string             { return "create_agent" }
 func (createAgentTool) SingleFirePerBatch() bool { return true }
 func (createAgentTool) Desc() string {
-	return "Create a new agent owned by the user. Returns the saved agent JSON with its assigned id. REQUIRED: name, description, orchestrator_prompt, allowed_tools. Pick the allowlist deliberately — a tight 4-10 tool set sharpens the catalog and prevents off-task tool use; pass [\"*\"] only if the user genuinely wants everything. Call after gathering requirements AND running a failure-mode pass: for each mode (ambiguous input, multi-result tools, empty results, conflicting evidence) the orchestrator_prompt should say what the agent does — \"pick the top result\" is right for \"what's the weather\" and wrong for \"find this person\". Refine later via update_agent."
+	return "Create a new agent owned by the user. Returns the saved agent JSON with its assigned id. REQUIRED: name, description, orchestrator_prompt, allowed_tools. Pick the allowlist deliberately: a tight 4-10 tool set sharpens the catalog and prevents off-task tool use; pass [\"*\"] only if the user genuinely wants everything. Call after gathering requirements AND running a failure-mode pass: for each mode (ambiguous input, multi-result tools, empty results, conflicting evidence) the orchestrator_prompt should say what the agent does, \"pick the top result\" is right for \"what's the weather\" and wrong for \"find this person\". Refine later via update_agent."
 }
 func (createAgentTool) Params() map[string]ToolParam {
 	return agentMutationParams(false)
@@ -78,7 +78,7 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	// must explicitly state which tools the agent gets. If the user
 	// genuinely wants every tool, pass ["*"] as the single element.
 	if len(rec.AllowedTools) == 0 {
-		return "", errors.New("allowed_tools is required — pick a tight allowlist (4-10 tool names) for the agent's actual job. If the user genuinely wants every tool, pass [\"*\"]")
+		return "", errors.New("allowed_tools is required: pick a tight allowlist (4-10 tool names) for the agent's actual job. If the user genuinely wants every tool, pass [\"*\"]")
 	}
 	rec.AllowedTools = normalizeAllowedTools(rec.AllowedTools)
 	// LLM-supplied inline tools commit to the user's unified store AFTER the
@@ -126,7 +126,7 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 			Owner:  sess.Username,
 			Action: "activate_sub_agent",
 			Agent:  saved.ID,
-			Brief:  fmt.Sprintf("Activate %q — sub-agent Builder drafted for %s. Inherits the parent's read-only tools; nothing consequential.", saved.Name, sess.DispatchParentAgentID),
+			Brief:  fmt.Sprintf("Activate %q: sub-agent Builder drafted for %s. Inherits the parent's read-only tools; nothing consequential.", saved.Name, sess.DispatchParentAgentID),
 		})
 		// Surface it as an inline Approve/Deny card in the conversation so the
 		// owner decides right here — not only in the Permissions pane. No-op on a
@@ -167,7 +167,7 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		// is nothing for Builder to verify by dispatch — it stays gated until
 		// the parent owner approves. Report and end the turn.
 		return fmt.Sprintf(
-			"AGENT_DRAFTED ok. id=%s name=%q — saved but HELD FOR APPROVAL. It will not run until the owner approves it in the Authorizations pane; on approval it goes live as a sub-agent of %s and inherits that parent's read-only tools.%s DONE — reply with a one-line summary of what you drafted and END THE TURN. Do NOT call ask_user or create_agent again.\n\nSaved record: %s",
+			"AGENT_DRAFTED ok. id=%s name=%q: saved but HELD FOR APPROVAL. It will not run until the owner approves it in the Authorizations pane; on approval it goes live as a sub-agent of %s and inherits that parent's read-only tools.%s DONE: reply with a one-line summary of what you drafted and END THE TURN. Do NOT call ask_user or create_agent again.\n\nSaved record: %s",
 			saved.ID, saved.Name, sess.DispatchParentAgentID, toolWarn, b,
 		), nil
 	}
@@ -195,12 +195,12 @@ func (createAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	// Say where focus landed and how to override it, so the next add_tool is a
 	// deliberate choice rather than a guess about hidden state.
 	focusNote := fmt.Sprintf(
-		" Authoring focus is now %q — a subsequent add_tool with no `agent` argument attaches THERE. To tool up a different agent (e.g. the parent this was built for), pass agent=\"<name or id>\" explicitly.",
+		" Authoring focus is now %q: a subsequent add_tool with no `agent` argument attaches THERE. To tool up a different agent (e.g. the parent this was built for), pass agent=\"<name or id>\" explicitly.",
 		saved.Name,
 	)
 	unresolved := unresolvedToolNote(sess.DB, saved)
 	return fmt.Sprintf(
-		"AGENT_CREATED ok. id=%s name=%q.%s%s%s DONE — reply with a short summary of what was saved and END THE TURN. Do NOT call ask_user, create_agent, or any other tool after this.\n\nSaved record: %s",
+		"AGENT_CREATED ok. id=%s name=%q.%s%s%s DONE: reply with a short summary of what was saved and END THE TURN. Do NOT call ask_user, create_agent, or any other tool after this.\n\nSaved record: %s",
 		saved.ID, saved.Name, verifyHint, focusNote, unresolved, b,
 	), nil
 }
@@ -235,7 +235,7 @@ func unresolvedToolNote(db Database, a AgentRecord) string {
 		return ""
 	}
 	return fmt.Sprintf(" WARNING: %s in allowed_tools match no tool this user has, so the agent does NOT have %s"+
-		" — an allowlist is an intersection, and a name that resolves to nothing removes nothing and adds nothing."+
+		", an allowlist is an intersection, and a name that resolves to nothing removes nothing and adds nothing."+
 		" The next save strips %s. Either author the tool first and add the name back, or drop it and tell the user"+
 		" what the agent cannot do.",
 		strings.Join(bad, ", "), pluralThem(len(bad)), pluralThem(len(bad)))
@@ -475,7 +475,7 @@ func unresolvedToolsWarning(sess *ToolSession, rec *AgentRecord) string {
 	var out string
 	if len(framework) > 0 {
 		out += fmt.Sprintf(
-			" NOTE: %s %s provided by the framework, not by this list — the agent gets them when the condition behind them holds (a corpus attached, for knowledge_search / fetch_knowledge_doc), and listing them here neither grants nor removes them. Harmless to leave; if the agent CANNOT reach one, the cause is elsewhere — most often a machine phase or pipeline stage whose own tool list narrows the catalog, which drops framework tools it does not name.",
+			" NOTE: %s %s provided by the framework, not by this list, the agent gets them when the condition behind them holds (a corpus attached, for knowledge_search / fetch_knowledge_doc), and listing them here neither grants nor removes them. Harmless to leave; if the agent CANNOT reach one, the cause is elsewhere: most often a machine phase or pipeline stage whose own tool list narrows the catalog, which drops framework tools it does not name.",
 			strings.Join(framework, ", "), isAre(len(framework)))
 	}
 	if len(missing) == 0 {
@@ -494,7 +494,7 @@ type updateAgentTool struct{}
 func (updateAgentTool) Name() string             { return "update_agent" }
 func (updateAgentTool) SingleFirePerBatch() bool { return true }
 func (updateAgentTool) Desc() string {
-	return "Update fields on an existing agent the user owns. Only fields you supply are changed; omitted fields stay as-is. Returns the saved agent JSON. Cannot mutate seed agents — use clone_agent first if the user wants to customize a starter."
+	return "Update fields on an existing agent the user owns. Only fields you supply are changed; omitted fields stay as-is. Returns the saved agent JSON. Cannot mutate seed agents: use clone_agent first if the user wants to customize a starter."
 }
 func (updateAgentTool) Params() map[string]ToolParam {
 	return agentMutationParams(true)
@@ -518,7 +518,7 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		return "", fmt.Errorf("agent %q not found by id or name", id)
 	}
 	if existing.Owner != sess.Username {
-		return "", fmt.Errorf("agent %q is not yours — clone it first to customize", id)
+		return "", fmt.Errorf("agent %q is not yours: clone it first to customize", id)
 	}
 	// LOCK — no editing another agent's sub-agent (see agentMutationLock).
 	if msg := agentMutationLock(existing, sess); msg != "" {
@@ -582,7 +582,7 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	// because the allowlist is rewritten while the tools it references
 	// were authored somewhere else.
 	return fmt.Sprintf(
-		"AGENT_UPDATED ok. id=%s name=%q.%s%s DONE — reply with a short summary of what changed and END THE TURN. Do NOT call ask_user, update_agent, or any other tool after this.\n\nSaved record: %s",
+		"AGENT_UPDATED ok. id=%s name=%q.%s%s DONE: reply with a short summary of what changed and END THE TURN. Do NOT call ask_user, update_agent, or any other tool after this.\n\nSaved record: %s",
 		saved.ID, saved.Name, verifyHint, unresolvedToolNote(sess.DB, saved), b,
 	), nil
 }
@@ -629,7 +629,7 @@ func (cloneAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (st
 	emitPrivilegeCard(sess, saved, nil, nil)
 	b := agentEchoJSON(saved)
 	return fmt.Sprintf(
-		"AGENT_CLONED ok. id=%s name=%q. DONE — reply with a short summary of what was cloned and END THE TURN. Do NOT call ask_user, clone_agent, or any other tool after this.\n\nSaved record: %s",
+		"AGENT_CLONED ok. id=%s name=%q. DONE: reply with a short summary of what was cloned and END THE TURN. Do NOT call ask_user, clone_agent, or any other tool after this.\n\nSaved record: %s",
 		saved.ID, saved.Name, b,
 	), nil
 }
@@ -641,7 +641,7 @@ type deleteAgentTool struct{}
 func (deleteAgentTool) Name() string             { return "delete_agent" }
 func (deleteAgentTool) SingleFirePerBatch() bool { return true }
 func (deleteAgentTool) Desc() string {
-	return "Delete an owned agent and all of its sessions. CONFIRM with the user before calling — this is irreversible. Seed agents cannot be deleted."
+	return "Delete an owned agent and all of its sessions. CONFIRM with the user before calling: this is irreversible. Seed agents cannot be deleted."
 }
 func (deleteAgentTool) Params() map[string]ToolParam {
 	return map[string]ToolParam{
@@ -702,11 +702,11 @@ func agentMutationLock(target AgentRecord, sess *ToolSession) string {
 	// Explicit per-agent lock — the user marked this agent protected, so NO agent
 	// may edit or delete it; only the human (dashboard/editor) can.
 	if target.Locked {
-		return fmt.Sprintf("can't modify %q — it's locked; only the user can change it (from the agent editor)", target.ID)
+		return fmt.Sprintf("can't modify %q: it's locked; only the user can change it (from the agent editor)", target.ID)
 	}
 	caller := strings.TrimSpace(sess.DispatchParentAgentID)
 	if target.OwnedBy != "" && target.OwnedBy != caller {
-		return fmt.Sprintf("can't modify %q — it belongs to another agent; only its owner or the user (from the dashboard) can change it", target.ID)
+		return fmt.Sprintf("can't modify %q: it belongs to another agent; only its owner or the user (from the dashboard) can change it", target.ID)
 	}
 	return ""
 }
@@ -725,17 +725,17 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		"rules":               {Type: "string", Description: "Optional standing rules, one per line, applied to every turn."},
 		"allowed_tools": {
 			Type:        "array",
-			Description: "Explicit allowlist of worker tool names. REQUIRED on create — a deliberate 4-10 tool set, or [\"*\"] for everything. Omit on update to leave it unchanged. An empty stored list runs the default pool (read + network).",
+			Description: "Explicit allowlist of worker tool names. REQUIRED on create: a deliberate 4-10 tool set, or [\"*\"] for everything. Omit on update to leave it unchanged. An empty stored list runs the default pool (read + network).",
 			Items:       &ToolParam{Type: "string"},
 		},
 		"max_plan_steps":           {Type: "integer", Description: fmt.Sprintf("Optional 1-12. Default %d.", defaultMaxPlanSteps)},
 		"max_worker_rounds":        {Type: "integer", Description: fmt.Sprintf("Optional 1-%d. Default %d. Anything under %d is raised to %d.", maxWorkerRoundsCeiling, defaultMaxWorkerRounds, minWorkerRounds, minWorkerRounds)},
 		"think_budget":             {Type: "integer", Description: "Max thinking tokens per LLM call; applies only when thinking is on. 0 (default) = deployment default (4096). The admin global budget is a hard ceiling, so this can only LOWER it."},
-		"action_quotas":            {Type: "array", Description: "How often one action may run in a rolling 24 hours, as \"action = number\" entries (\"moltbook/create_post = 6\"). Names a grouped tool's action or a whole tool. Enforced by the framework — the call is refused when the allowance is spent — so do NOT also write the limit into the prompt and ask the agent to count for itself. Only successful calls count. Omit for no limit.", Items: &ToolParam{Type: "string"}},
+		"action_quotas":            {Type: "array", Description: "How often one action may run in a rolling 24 hours, as \"action = number\" entries (\"moltbook/create_post = 6\"). Names a grouped tool's action or a whole tool. Enforced by the framework (the call is refused when the allowance is spent), so do NOT also write the limit into the prompt and ask the agent to count for itself. Only successful calls count. Omit for no limit.", Items: &ToolParam{Type: "string"}},
 		"daily_spend_usd":          {Type: "number", Description: "What this agent may cost in a rolling 24 hours, in US dollars. 0 (default) = no limit. Crossing it drops the rest of the running turn to the local worker model and declines the next turn until the window frees up. Does nothing where no cost rates are configured."},
 		"lead_model":               {Type: "boolean", Description: "When true, MAIN reasoning (plan + synthesis) escalates to the lead/precision LLM; per-step workers stay on the worker model. Ignored when no distinct lead is configured, or when force_private or the Private toggle is on. Default false."},
 		"gap_check":                {Type: "boolean", Description: "When true, the runner runs a structural-gap review pass after the plan finishes (research-style quality bar). Default false."},
-		"work_plan":                {Type: "boolean", Description: "When true, the agent gets a TRACKED plan: it commits to a visible checklist, marks each step in progress, closes it with findings or blocks it with a reason, and states anything unfinished in its answer. The checklist survives the turn. Replaces plan_set for that agent. Default false — set it for work with several results that build on each other, leave it off for question-answering."},
+		"work_plan":                {Type: "boolean", Description: "When true, the agent gets a TRACKED plan: it commits to a visible checklist, marks each step in progress, closes it with findings or blocks it with a reason, and states anything unfinished in its answer. The checklist survives the turn. Replaces plan_set for that agent. Default false: set it for work with several results that build on each other, leave it off for question-answering."},
 		"disable_explicit":         {Type: "boolean", Description: rewriteMemoryToolNames("Turns off Explicit Memory (store_fact / list_facts / forget_fact + the always-in-prompt facts block). For agents that should hold no standing state. Orthogonal to disable_inferred. Default false.")},
 		"disable_inferred":         {Type: "boolean", Description: rewriteMemoryToolNames("Turns off Reference Memory: memory_save / memory_search / memory_forget stripped from the catalog, derived chunks excluded from recall. For agents that must answer from authoritative sources only. The per-turn Clean toggle is this switch scoped to one turn. Default false.")},
 		"memory_mode":              {Type: "string", Description: rewriteMemoryToolNames("Explicit Memory framing: \"agent\" (default) or \"chatbot\". agent = store_fact holds generalized lessons only; specifics go to Reference Memory via memory_save. chatbot = those PLUS user personalization and conversation-coherence notes. chatbot for conversational agents, agent for task-focused ones. No-op when disable_explicit is true.")},
@@ -745,14 +745,14 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		"force_private":            {Type: "boolean", Description: "Locks the agent into Private mode: every turn drops network-capability tools (web_search, fetch_url, dispatch, …) regardless of the user toggle, and the toggle is hidden. Overrides allow_private_mode. Default false."},
 		"disable_skills":           {Type: "boolean", Description: "Fully suppresses skills: no activation, no prompt addendum, no skill_knowledge chunks, no skill-attached tools. For agents that must faithfully report one source. The per-turn Clean toggle also suppresses skills. Default false."},
 		"allowed_skills":           {Type: "array", Description: "Strict allowlist of skill IDs the classifier may consider. Skills are opt-in per agent; empty (default) = none active. IDs from skill_def(action=list).", Items: &ToolParam{Type: "string"}},
-		"hidden":                   {Type: "boolean", Description: "When true, hidden from other agents' \"Available agents\" block and refused by agents(run) — unless a caller lists it in allowed_dispatch_targets. Default false."},
-		"allowed_dispatch_targets": {Type: "array", Description: "Dispatch allowlist of TARGETS — agent IDs, and pipeline IDs or names. Empty (default) = may call any non-hidden agent and any of the owner's pipelines. Non-empty = ONLY these, hidden or not (the explicit pick wins, so it reaches hidden specialists) — and a pipeline not listed is not reachable either.", Items: &ToolParam{Type: "string"}},
-		"attached_collections":     {Type: "array", Description: "Document Collection IDs merged into this agent's RAG recall — a curated reference corpus without authoring a skill. Bound at the agent layer, no activation needed. IDs from the Collections surface. Default empty.", Items: &ToolParam{Type: "string"}},
-		"attached_sources":         {Type: "array", Description: "Cross-app REFERENCE SOURCES this agent may draw on, each as \"<kind>:<item_id>\". Each attachment mints its own NAMED tools on the agent, shaped by what the source is. \"system:<appliance-id>\" — a servitor system, evidence bundle, tool-backed service, or a whole WORKSPACE spanning several: gives search_<name>_knowledge (instant, already-gathered), get_<name>_facts, investigate_<name> (live read-only investigation — slow). \"files:<store-slug>\" — a registered FOLDER on this host (log bundles, captures, exports): gives list_<slug> (subfolders/files, newest first), search_<slug> (regex over raw lines, reads .gz, takes an optional subfolder), read_<slug> (a bounded line window around a hit); read-only, so a Private agent keeps them. Any other source gets a named search over its content. Use list_reference_sources for the valid kinds and ids and the tools each item actually mints. Attach a workspace when the agent needs answers that span code, live state, evidence and services at once; attach a file store when it must ground answers in files somebody else drops there. Default empty.", Items: &ToolParam{Type: "string"}},
+		"hidden":                   {Type: "boolean", Description: "When true, hidden from other agents' \"Available agents\" block and refused by agents(run), unless a caller lists it in allowed_dispatch_targets. Default false."},
+		"allowed_dispatch_targets": {Type: "array", Description: "Dispatch allowlist of TARGETS: agent IDs, and pipeline IDs or names. Empty (default) = may call any non-hidden agent and any of the owner's pipelines. Non-empty = ONLY these, hidden or not (the explicit pick wins, so it reaches hidden specialists), and a pipeline not listed is not reachable either.", Items: &ToolParam{Type: "string"}},
+		"attached_collections":     {Type: "array", Description: "Document Collection IDs merged into this agent's RAG recall: a curated reference corpus without authoring a skill. Bound at the agent layer, no activation needed. IDs from the Collections surface. Default empty.", Items: &ToolParam{Type: "string"}},
+		"attached_sources":         {Type: "array", Description: "Cross-app REFERENCE SOURCES this agent may draw on, each as \"<kind>:<item_id>\". Each attachment mints its own NAMED tools on the agent, shaped by what the source is. \"system:<appliance-id>\", a servitor system, evidence bundle, tool-backed service, or a whole WORKSPACE spanning several: gives search_<name>_knowledge (instant, already-gathered), get_<name>_facts, investigate_<name> (live read-only investigation, slow). \"files:<store-slug>\", a registered FOLDER on this host (log bundles, captures, exports): gives list_<slug> (subfolders/files, newest first), search_<slug> (regex over raw lines, reads .gz, takes an optional subfolder), read_<slug> (a bounded line window around a hit); read-only, so a Private agent keeps them. Any other source gets a named search over its content. Use list_reference_sources for the valid kinds and ids and the tools each item actually mints. Attach a workspace when the agent needs answers that span code, live state, evidence and services at once; attach a file store when it must ground answers in files somebody else drops there. Default empty.", Items: &ToolParam{Type: "string"}},
 		"attached_pipelines":       {Type: "array", Description: "Pipeline IDs (pipeline action=list). Each becomes its own callable tool here (run_<pipeline>), so a saved multi-stage workflow is on hand without the generic pipeline tool. Author the pipeline first. Default empty.", Items: &ToolParam{Type: "string"}},
-		"recall_hints":             {Type: "boolean", Description: "Each turn surfaces a short scored list of the agent's OWN knowledge relevant to the message — pointers (title + doc_id for fetch_knowledge_doc), not content. Needs a real corpus. Default false."},
-		"triggers":                 {Type: "array", Description: "Substring/glob patterns matched against each user message. On a match the host agent gets a per-turn nudge to dispatch HERE first. Author SPECIFIC patterns the domain's questions actually contain (criminal law: \"penal code\", \"felony\", \"sentencing\") — loose ones over-fire and train the host to ignore the hint. Empty = in the catalog, no nudge.", Items: &ToolParam{Type: "string"}},
-		"owned_by":                 {Type: "string", Description: "Parent agent ID, making this a sub-agent: deleting the parent cascade-deletes this agent (sessions/memory/knowledge included), and the parent may dispatch to it without an allowed_dispatch_targets entry — ownership IS the dispatch link. Pair with hidden=true to keep it out of the global fleet menu."},
+		"recall_hints":             {Type: "boolean", Description: "Each turn surfaces a short scored list of the agent's OWN knowledge relevant to the message: pointers (title + doc_id for fetch_knowledge_doc), not content. Needs a real corpus. Default false."},
+		"triggers":                 {Type: "array", Description: "Substring/glob patterns matched against each user message. On a match the host agent gets a per-turn nudge to dispatch HERE first. Author SPECIFIC patterns the domain's questions actually contain (criminal law: \"penal code\", \"felony\", \"sentencing\"), loose ones over-fire and train the host to ignore the hint. Empty = in the catalog, no nudge.", Items: &ToolParam{Type: "string"}},
+		"owned_by":                 {Type: "string", Description: "Parent agent ID, making this a sub-agent: deleting the parent cascade-deletes this agent (sessions/memory/knowledge included), and the parent may dispatch to it without an allowed_dispatch_targets entry, ownership IS the dispatch link. Pair with hidden=true to keep it out of the global fleet menu."},
 		"ingest_attachments":       {Type: "boolean", Description: "Extracted text from uploaded documents (PDF/DOCX/text) is ALSO ingested into the agent's knowledge store under topic=\"attachments\", searchable in later sessions. For document-Q&A agents whose uploads are referenced repeatedly. Default false."},
 		"think":                    {Type: "string", Description: "Reasoning override: \"on\", \"off\", or \"auto\" (the route decides). Create defaults: top-level \"on\", sub-agents (owned_by set) \"off\"; update keeps the stored value when omitted. \"on\" for planners/synthesizers, \"off\" for lookups, transformers, routers."},
 		"intake_form": {
@@ -762,12 +762,12 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		},
 		"tools": {
 			Type:        "array",
-			Description: "Agent-scoped tools that auto-load whenever this agent runs — bespoke shell/api tools for THIS agent's job, kept out of the user-wide pool (two agents can carry same-named tools with different configs). Each entry a TempTool: {name, description, params, mode (\"shell\"|\"api\"), command_template, body_template, credential, method}. Do NOT also list these in allowed_tools; they attach automatically. For a multi-stage workflow use attached_pipelines instead.",
+			Description: "Agent-scoped tools that auto-load whenever this agent runs: bespoke shell/api tools for THIS agent's job, kept out of the user-wide pool (two agents can carry same-named tools with different configs). Each entry a TempTool: {name, description, params, mode (\"shell\"|\"api\"), command_template, body_template, credential, method}. Do NOT also list these in allowed_tools; they attach automatically. For a multi-stage workflow use attached_pipelines instead.",
 			Items:       &ToolParam{Type: "object"},
 		},
 		"evals": {
 			Type:        "array",
-			Description: "Saved test cases for the eval harness. Each EvalCase: {name, prompt, must_include[], must_not_include[], must_call_tools[], must_not_call_tools[], stub_results{} (tool→canned result), judge_prompt, notes}. Each runs as a fresh session: case-insensitive substring checks on the reply; tool checks against the ACTUAL call trace (catches narrated-but-never-emitted calls); judge_prompt an optional LLM-judged criterion. STUB is the default — nothing real fires. Run via POST .../api/agents/{id}/eval?runs=30 (?live=1 non-consequential for real, ?live=all everything).",
+			Description: "Saved test cases for the eval harness. Each EvalCase: {name, prompt, must_include[], must_not_include[], must_call_tools[], must_not_call_tools[], stub_results{} (tool→canned result), judge_prompt, notes}. Each runs as a fresh session: case-insensitive substring checks on the reply; tool checks against the ACTUAL call trace (catches narrated-but-never-emitted calls); judge_prompt an optional LLM-judged criterion. STUB is the default: nothing real fires. Run via POST .../api/agents/{id}/eval?runs=30 (?live=1 non-consequential for real, ?live=all everything).",
 			Items:       &ToolParam{Type: "object"},
 		},
 		// exposed / public_name are intentionally OMITTED here — they're

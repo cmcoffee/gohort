@@ -31,7 +31,7 @@ type FindToolsTool struct{}
 func (t *FindToolsTool) Name() string { return "find_tools" }
 
 func (t *FindToolsTool) Desc() string {
-	return "Search the deployment's tool catalog by intent. Use when the question or task doesn't match any tool currently visible in your catalog — the framework only surfaces the top-K most relevant tools per turn, so specialty tools (image editing, video processing, niche APIs, etc.) may be hidden until you search for them. Pass a short query describing what you want to do (\"resize an image\", \"download a video\", \"check the weather\"). Returns matching tool names + descriptions ranked by relevance. After a match, call the specific tool by name."
+	return "Search the deployment's tool catalog by intent. Use when the question or task doesn't match any tool currently visible in your catalog: the framework only surfaces the top-K most relevant tools per turn, so specialty tools (image editing, video processing, niche APIs, etc.) may be hidden until you search for them. Pass a short query describing what you want to do (\"resize an image\", \"download a video\", \"check the weather\"). Returns matching tool names + descriptions ranked by relevance. After a match, call the specific tool by name."
 }
 
 // CapRead — the search itself is just an embed + cosine pass over

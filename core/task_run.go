@@ -29,8 +29,9 @@ import (
 func init() {
 	RegisterTunable(TunableSpec{
 		Key: "tune_task_detach_threshold", Category: "Timeouts",
-		Label: "Detach long tool calls after",
-		Help:  "A tool call expected to take longer than this runs detached: it returns straight away, keeps working in the background, and delivers its result into the conversation when it finishes. Set high to keep everything inline.",
+		Label:  "Detach long tool calls after",
+		Help:   "A tool call expected to take longer than this runs detached.",
+		Detail: "It returns straight away, keeps working in the background, and delivers its result into the conversation when it finishes. Set it high to keep everything inline.",
 		// 300s clears the image-generate deadline (180s) and sits under the edit
 		// one (900s), so today only edits detach.
 		//
@@ -62,9 +63,10 @@ func init() {
 	// actually complain about. Raise it to make a channel behave like a chat.
 	RegisterTunable(TunableSpec{
 		Key: "tune_task_detach_threshold_unattended", Category: "Timeouts",
-		Label: "Detach long tool calls after (messaging)",
-		Help:  "Detach threshold for turns answering a messaging conversation, where the person sees nothing at all until a reply arrives — no progress indicator, no live status. Set lower than the main threshold so an agent on a channel answers straight away and reports back, instead of going quiet mid-conversation. Raise it to the main value to treat both surfaces alike.",
-		Kind:  KindSeconds, Default: 20, Min: 5, Max: 3600,
+		Label:  "Detach long tool calls after (messaging)",
+		Help:   "Detach threshold for turns answering a messaging conversation.",
+		Detail: "There, the person sees nothing at all until a reply arrives: no progress indicator, no live status. Set it lower than the main threshold so an agent on a channel answers straight away and reports back, instead of going quiet mid-conversation. Raise it to the main value to treat both surfaces alike.",
+		Kind:   KindSeconds, Default: 20, Min: 5, Max: 3600,
 	})
 }
 
@@ -304,14 +306,14 @@ func detachedNotice(run TaskRun, typical time.Duration) string {
 		b.WriteString(" (" + l + ")")
 	}
 	b.WriteString(".\n")
-	b.WriteString("There is NO result yet and nothing has been delivered. Do NOT describe the outcome, do NOT claim anything was sent, and do NOT call this tool again for the same request — a second call starts a second job.\n")
+	b.WriteString("There is NO result yet and nothing has been delivered. Do NOT describe the outcome, do NOT claim anything was sent, and do NOT call this tool again for the same request: a second call starts a second job.\n")
 	// Closing the OTHER route out. Told only not to re-call the tool, a model
 	// goes looking for the result by hand — observed: workspace(ls) one round
 	// after a detach, reasoning "let me check the workspace for the result from
 	// the earlier successful edit". Nothing is there to find, so the round is
 	// spent to learn nothing, and what it does find is older files it can then
 	// mistake for this one.
-	b.WriteString("It is NOT in your workspace and will not be until it finishes, so do not go looking for it there or anywhere else — listing files, searching, or trying a different route to the same thing all find nothing or find something older.\n")
+	b.WriteString("It is NOT in your workspace and will not be until it finishes, so do not go looking for it there or anywhere else: listing files, searching, or trying a different route to the same thing all find nothing or find something older.\n")
 	b.WriteString("Say you are doing it and that you will report back, in one line, the way a person would: \"I'll get that going and let you know when it's done.\" ")
 	// The estimate is only ever a MEASURED one. It used to be the deadline —
 	// the point at which the framework gives up — so a render that finishes in
@@ -320,9 +322,9 @@ func detachedNotice(run TaskRun, typical time.Duration) string {
 	if typical > 0 {
 		fmt.Fprintf(&b, "This usually takes about %s; say so if it is worth knowing.\n", humanizeTaskDuration(typical))
 	} else {
-		b.WriteString("Put NO time on it — nothing here knows how long it will take, and a number you invent is one they will hold you to.\n")
+		b.WriteString("Put NO time on it: nothing here knows how long it will take, and a number you invent is one they will hold you to.\n")
 	}
-	b.WriteString("Do NOT explain that you are running in the background, do NOT tell them they can keep talking to you, and do NOT invite them to check on it — that is machinery, they did not ask about it, and the live indicator already shows the work.\n")
+	b.WriteString("Do NOT explain that you are running in the background, do NOT tell them they can keep talking to you, and do NOT invite them to check on it, that is machinery, they did not ask about it, and the live indicator already shows the work.\n")
 	b.WriteString("The result arrives on its own as a new message when it is done; you will be told then, and that is when you deliver it. Until then answer whatever they say next as normal.")
 	return b.String()
 }
@@ -345,7 +347,7 @@ func detachedNotice(run TaskRun, typical time.Duration) string {
 // as a failure the model should work around.
 func secondDetachNotice(tool string, prior TaskRun, of int) string {
 	var b strings.Builder
-	b.WriteString("NOT STARTED — you already have one of these running this turn")
+	b.WriteString("NOT STARTED: you already have one of these running this turn")
 	if id := strings.TrimSpace(prior.ID); id != "" {
 		b.WriteString(" (task " + id)
 		if l := strings.TrimSpace(prior.Label); l != "" {
@@ -354,16 +356,16 @@ func secondDetachNotice(tool string, prior TaskRun, of int) string {
 		b.WriteString(")")
 	}
 	b.WriteString(".\n")
-	b.WriteString("Nothing was wrong with this call. It was not run because a second background job delivers a SECOND result to the user, minutes later, as its own message — for one thing they asked for once.\n")
+	b.WriteString("Nothing was wrong with this call. It was not run because a second background job delivers a SECOND result to the user, minutes later, as its own message, for one thing they asked for once.\n")
 	b.WriteString("The first job is still working. It has not failed, and getting nothing back yet is not a sign that it did. Do NOT call " + tool + " again this turn, and do NOT go looking for another way to do the same thing.\n")
 	// The refusal used to end the matter, and for a model that genuinely meant
 	// to make several that was the wrong answer to the wrong question: it was
 	// not repeating itself, it was working through a set. So say what has
 	// actually been arranged on its behalf. See core/task_series.go.
 	if of > 1 {
-		fmt.Fprintf(&b, "You are not being told no — you are being told EARLY. This is now a set of %d: the one already running is the first, and when it lands you will be told to start the next, and so on until the set is done. Nothing is lost by waiting, and you do not need to remember the count.\n", of)
+		fmt.Fprintf(&b, "You are not being told no: you are being told EARLY. This is now a set of %d: the one already running is the first, and when it lands you will be told to start the next, and so on until the set is done. Nothing is lost by waiting, and you do not need to remember the count.\n", of)
 	} else {
-		b.WriteString("If you MEANT to make several, they still happen — one at a time, not all at once. Say how many you intend on the FIRST call (the count parameter, where the tool has one) and you will be told to start the next as each finishes.\n")
+		b.WriteString("If you MEANT to make several, they still happen: one at a time, not all at once. Say how many you intend on the FIRST call (the count parameter, where the tool has one) and you will be told to start the next as each finishes.\n")
 	}
 	// The wording matters, and this notice used to get it wrong in a way that
 	// showed up verbatim in front of a user. It explained the situation with the
@@ -372,7 +374,7 @@ func secondDetachNotice(tool string, prior TaskRun, of int) string {
 	// in the background", which is precisely what detachedNotice bans as
 	// machinery nobody asked about. A notice that hands over the vocabulary it
 	// does not want repeated is the one at fault, not the model.
-	b.WriteString("Finish your turn now: say you are on it and will report back, in one line, the way a person would. Do NOT mention jobs, queues, or anything about HOW the work is being carried out, do NOT invite them to check on it, and do NOT put a time on it — that is machinery, they did not ask about it, and the live indicator already shows the work.\n")
+	b.WriteString("Finish your turn now: say you are on it and will report back, in one line, the way a person would. Do NOT mention jobs, queues, or anything about HOW the work is being carried out, do NOT invite them to check on it, and do NOT put a time on it, that is machinery, they did not ask about it, and the live indicator already shows the work.\n")
 	b.WriteString("The result arrives on its own when it is done, and that is when you deliver it. If they genuinely want another one after that, start it then.")
 	return b.String()
 }

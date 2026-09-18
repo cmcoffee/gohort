@@ -145,12 +145,12 @@ code{background:#0d1117;padding:1px 5px;border-radius:4px;color:#79c0ff}
 <h1>Gohort-Bridge API Key</h1>
 <p>The key the Gohort-Bridge agent uses to authenticate with the server.
 Generate one in <code>Phantom &rarr; API Keys</code>. Saved locally for the
-bridge — no server connection needed, so this can't hang.</p>
+bridge: no server connection needed, so this can't hang.</p>
 <input id="key" type="password" placeholder="paste API key" autocomplete="off" spellcheck="false" autofocus>
 <div id="msg"></div>
 <button onclick="savekey()">Save Key</button>
 </div><script>
-// NB: uses a plain HTTP POST to the local proxy, NOT window.go — Wails
+// NB: uses a plain HTTP POST to the local proxy, NOT window.go, Wails
 // doesn't inject its Go-bridge into proxy-served pages, so it's absent
 // here. The proxy handles POST /__desktop/apikey in Go.
 var key=document.getElementById('key'),msg=document.getElementById('msg');
@@ -676,7 +676,7 @@ func (gp *gohort_proxy) clear_and_configure(w http.ResponseWriter) {
 	gp.cached_proxy = nil
 	gp.landing_done = false
 	gp.mu.Unlock()
-	core.Log("[gohort-desktop] escape-hatch hit %s — settings cleared", CONFIGURE_PATH)
+	core.Log("[gohort-desktop] escape-hatch hit %s: settings cleared", CONFIGURE_PATH)
 	gp.serve_configure(w)
 }
 
@@ -836,7 +836,7 @@ var GOHORT_NOT_RUNNING_HTML = `<!DOCTYPE html>
 <script>
 function change_server() {
   // This page is served from the loopback origin, where window.go is
-  // absent — so we can't call App.ResetSettings here. Navigate to the
+  // absent, so we can't call App.ResetSettings here. Navigate to the
   // escape-hatch path instead; the proxy clears the saved URL in Go and
   // serves the configure form.
   location.replace('/__desktop/configure');

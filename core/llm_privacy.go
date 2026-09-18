@@ -77,7 +77,7 @@ type LLMPrivacyVerdict struct {
 func ProviderLooksPrivate(provider, endpoint string) (bool, string) {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "anthropic", "openai", "gemini", "bedrock":
-		return false, "a hosted provider — prompts leave this deployment"
+		return false, "a hosted provider: prompts leave this deployment"
 	}
 	ep := strings.TrimSpace(endpoint)
 	if ep == "" {
@@ -136,7 +136,7 @@ func RecommendAllLLMsPrivate() (recommended bool, verdicts []LLMPrivacyVerdict) 
 		if t.name == "Lead" && strings.TrimSpace(provider) == "" {
 			verdicts = append(verdicts, LLMPrivacyVerdict{
 				Tier: t.name, Private: true,
-				Reason: "not configured — lead stages run on the worker model",
+				Reason: "not configured: lead stages run on the worker model",
 			})
 			continue
 		}

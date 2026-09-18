@@ -161,7 +161,7 @@ func (t *chatTurn) rememberToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "remember",
-			Description: "Save something worth keeping. ONE decision: `pin`.\n\n**pin=true** — a SHORT note that must shape EVERY future turn (a preference, an identity fact, a standing instruction). It's injected into your prompt automatically from now on, so keep it to a sentence and use it sparingly. Examples: \"User prefers metric units.\", \"Deploy header is X-Auth: <jwt>.\"\n\n**pin=false** (default) — a longer FINDING you might need to look up later (an API spec, a config recipe, a working approach, a document detail). It's stored for retrieval, not injected; you get it back later via `recall`. Paragraph-length, self-contained.\n\nRule of thumb: if you'd want it in front of you unprompted → pin=true; if you'd go looking for it when a relevant question comes up → pin=false. The framework dedupes either way. Don't re-save something `recall` just returned.\n\nRequired: `content`. Optional: `pin`, `topic` (snake_case bucket for findings), `subject` (short heading for a finding).",
+			Description: "Save something worth keeping. ONE decision: `pin`.\n\n**pin=true**, a SHORT note that must shape EVERY future turn (a preference, an identity fact, a standing instruction). It's injected into your prompt automatically from now on, so keep it to a sentence and use it sparingly. Examples: \"User prefers metric units.\", \"Deploy header is X-Auth: <jwt>.\"\n\n**pin=false** (default), a longer FINDING you might need to look up later (an API spec, a config recipe, a working approach, a document detail). It's stored for retrieval, not injected; you get it back later via `recall`. Paragraph-length, self-contained.\n\nRule of thumb: if you'd want it in front of you unprompted → pin=true; if you'd go looking for it when a relevant question comes up → pin=false. The framework dedupes either way. Don't re-save something `recall` just returned.\n\nRequired: `content`. Optional: `pin`, `topic` (snake_case bucket for findings), `subject` (short heading for a finding).",
 			Parameters: map[string]ToolParam{
 				"content": {Type: "string", Description: "What to remember, as a self-contained statement. For pin=true keep it to one sentence; for a finding, several sentences to a paragraph with enough context to make sense later out of context."},
 				"pin":     {Type: "boolean", Description: "true → always-in-prompt note (durable preference/identity/instruction). false (default) → recall-on-demand finding (reference material)."},
@@ -169,7 +169,7 @@ func (t *chatTurn) rememberToolDef() AgentToolDef {
 				// uses, so it takes the same declaration. Offering it on one and
 				// not the other would classify the identical note differently
 				// depending on which tool the model happened to reach for.
-				"domain":  {Type: "string", Enum: []string{"self", "world"}, Description: "(pin=true) Whether the person telling you this SETTLES it. \"self\" = about them: a preference, their name, their goals — they are the authority. \"world\" = true or false independently of who said it: a server, a version, how some system behaves — being told is not having checked, and recall marks these so a remark is not later quoted as established fact."},
+				"domain":  {Type: "string", Enum: []string{"self", "world"}, Description: "(pin=true) Whether the person telling you this SETTLES it. \"self\" = about them: a preference, their name, their goals, they are the authority. \"world\" = true or false independently of who said it: a server, a version, how some system behaves, being told is not having checked, and recall marks these so a remark is not later quoted as established fact."},
 				"topic":   {Type: "string", Description: "(findings only) snake_case bucket slug, e.g. `acme_api`. Reuse one from the \"Known topics\" block when it fits, or mint a new one. Omit for `general`."},
 				"subject": {Type: "string", Description: "(findings only) short heading for THIS finding, e.g. \"Acme API rotates tokens every 24h\". Optional."},
 			},
@@ -183,7 +183,7 @@ func (t *chatTurn) rememberToolDef() AgentToolDef {
 			}
 			if boolArg(args, "pin") {
 				if t.explicitOff() {
-					return "", errors.New("always-in-prompt memory is disabled for this agent — call remember with pin=false (or omit pin) to save a recall-only finding instead")
+					return "", errors.New("always-in-prompt memory is disabled for this agent: call remember with pin=false (or omit pin) to save a recall-only finding instead")
 				}
 				return t.storeFactNote(content, claimDomainArg(args))
 			}
@@ -191,7 +191,7 @@ func (t *chatTurn) rememberToolDef() AgentToolDef {
 				// Deliberately does NOT steer to pin=true: reference material
 				// funneled into the always-in-prompt block bloats every future
 				// turn. Pinning is only for what independently qualifies.
-				return "", errors.New("recall memory is disabled for this agent — the finding was NOT saved. Do not re-save it with pin=true unless it is genuinely a short durable preference or instruction that belongs in every prompt; reference material should simply not be saved here")
+				return "", errors.New("recall memory is disabled for this agent: the finding was NOT saved. Do not re-save it with pin=true unless it is genuinely a short durable preference or instruction that belongs in every prompt; reference material should simply not be saved here")
 			}
 			// memorySave reads content/topic/subject straight off args.
 			return t.memorySave(args)
@@ -206,16 +206,16 @@ func (t *chatTurn) recallToolDef() AgentToolDef {
 	// no multi-layer framing, no `layer` knob — so what the model is told matches
 	// what recall can actually return. Every other agent gets the full four-layer
 	// verb plus an optional `layer` filter to narrow to one source on demand.
-	desc := "Look something up across ALL of your memory at once — no need to pick a source. Pass `query` to search; each hit is tagged with where it came from:\n\n  [pinned]    your always-in-prompt notes\n  [finding]   things you saved with remember (may have drifted — verify when it matters)\n  [knowledge] authoritative uploaded/shared docs (source of truth)\n  [history]   earlier in this conversation, aged out of view\n\nEvery hit carries an `id:`. To read the FULL item behind a hit (a whole document, the surrounding conversation), call recall again with that `id`. Pass the same id to `forget` to delete it (findings and pinned notes only). Ids come ONLY from a recall result in front of you — never construct, guess, or reuse an id-shaped string from anywhere else. With no id in hand, search with `query` first.\n\nTo restrict the search to a SINGLE source, pass `layer` (e.g. `knowledge` to answer strictly from authoritative docs). Omit it to search everything. Pass `topic` to narrow [finding]/[knowledge] hits to one topic bucket.\n\nA 'no matches' result means your memory genuinely has nothing on this — do NOT speculate from it. Required: `query` OR `id`. Optional: `k`, `layer`, `topic`."
+	desc := "Look something up across ALL of your memory at once: no need to pick a source. Pass `query` to search; each hit is tagged with where it came from:\n\n  [pinned]    your always-in-prompt notes\n  [finding]   things you saved with remember (may have drifted, verify when it matters)\n  [knowledge] authoritative uploaded/shared docs (source of truth)\n  [history]   earlier in this conversation, aged out of view\n\nEvery hit carries an `id:`. To read the FULL item behind a hit (a whole document, the surrounding conversation), call recall again with that `id`. Pass the same id to `forget` to delete it (findings and pinned notes only). Ids come ONLY from a recall result in front of you: never construct, guess, or reuse an id-shaped string from anywhere else. With no id in hand, search with `query` first.\n\nTo restrict the search to a SINGLE source, pass `layer` (e.g. `knowledge` to answer strictly from authoritative docs). Omit it to search everything. Pass `topic` to narrow [finding]/[knowledge] hits to one topic bucket.\n\nA 'no matches' result means your memory genuinely has nothing on this: do NOT speculate from it. Required: `query` OR `id`. Optional: `k`, `layer`, `topic`."
 	params := map[string]ToolParam{
 		"query": {Type: "string", Description: "What to look for, in natural language. Your current question, trimmed to the gist, usually works."},
 		"id":    {Type: "string", Description: "An id COPIED from a recall hit you can see (e.g. `doc:…`, `span:…`, `mem:…`, `fact:…`). Returns the full item behind that id instead of searching. Never assemble one yourself: if you have not run a recall query in this conversation, you have no ids, so pass `query` instead."},
 		"k":     {Type: "number", Description: "Max hits in TOTAL, split across the layers searched (default 4 per layer; per-layer share capped by the knowledge ceiling). Leave default unless you want a wider or narrower net."},
 		"layer": {Type: "string", Enum: []string{"knowledge", "finding", "pinned", "history"}, Description: "Optional. Restrict the search to ONE source, named by the tag you see on hits: `knowledge` (authoritative docs), `finding` (your saved findings), `pinned` (always-in-prompt notes), or `history` (earlier conversation). Omit to search all four. Use `knowledge` when the answer must come strictly from the corpus."},
-		"topic": {Type: "string", Description: "Optional snake_case topic slug — narrows [finding] and [knowledge] hits to one subject bucket (pinned notes and history aren't topic-filed). Pass a slug from the \"Known topics\" block, e.g. the one you filed a finding under with remember. Omit to span all topics."},
+		"topic": {Type: "string", Description: "Optional snake_case topic slug: narrows [finding] and [knowledge] hits to one subject bucket (pinned notes and history aren't topic-filed). Pass a slug from the \"Known topics\" block, e.g. the one you filed a finding under with remember. Omit to span all topics."},
 	}
 	if t.recallCorpusOnly() {
-		desc = "Look something up in your knowledge corpus — the authoritative uploaded/shared documents this agent answers from. Pass `query` to search; each hit carries a `doc:` id, and calling recall again with that id returns the full document. Ids come ONLY from a recall result in front of you — never construct or guess one; with no id in hand, search with `query` first.\n\nA 'no matches' result means the corpus genuinely has nothing on this — do NOT speculate from it or fall back to general knowledge. Required: `query` OR `id`. Optional: `k`, `topic`."
+		desc = "Look something up in your knowledge corpus: the authoritative uploaded/shared documents this agent answers from. Pass `query` to search; each hit carries a `doc:` id, and calling recall again with that id returns the full document. Ids come ONLY from a recall result in front of you (never construct or guess one; with no id in hand, search with `query` first.\n\nA 'no matches' result means the corpus genuinely has nothing on this), do NOT speculate from it or fall back to general knowledge. Required: `query` OR `id`. Optional: `k`, `topic`."
 		params = map[string]ToolParam{
 			"query": {Type: "string", Description: "What to look for, in natural language. Your current question, trimmed to the gist, usually works."},
 			"id":    {Type: "string", Description: "A `doc:…` id COPIED from a recall hit you can see. Returns the full document behind it instead of searching. Never assemble one yourself: with no recall result in hand, pass `query` instead."},
@@ -326,7 +326,7 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 		// The caller named a layer this agent has disabled (e.g. layer=pinned
 		// with Explicit memory off). Say so instead of reporting a hollow
 		// "no matches" the model would read as a genuine miss.
-		return "", errors.New("that memory layer is disabled for this agent — omit `layer` to search the layers that are available")
+		return "", errors.New("that memory layer is disabled for this agent: omit `layer` to search the layers that are available")
 	}
 	perLayer := recallPerLayerBudget(args, len(layers))
 	now := time.Now()
@@ -500,14 +500,14 @@ func findingMatchesPinned(text string, pinnedNotes []string) bool {
 // not evidence — never infer an answer from a miss.
 func recallNoMatchMessage(layers map[string]bool) string {
 	if len(layers) == 1 && layers["knowledge"] {
-		return "No matches in your knowledge corpus. Don't infer an answer from the absence or fall back to general knowledge — say the corpus had nothing on it."
+		return "No matches in your knowledge corpus. Don't infer an answer from the absence or fall back to general knowledge: say the corpus had nothing on it."
 	}
 	if len(layers) == 1 {
 		var only string
 		for k := range layers {
 			only = k
 		}
-		return fmt.Sprintf("No matches in your %s memory. Don't infer an answer from the absence — either widen the search (omit `layer`) or say you found nothing.", only)
+		return fmt.Sprintf("No matches in your %s memory. Don't infer an answer from the absence: either widen the search (omit `layer`) or say you found nothing.", only)
 	}
 	// Name exactly what was searched: with a gated layer pruned, claiming a
 	// sweep of "pinned notes" the agent doesn't have would be a false negative
@@ -524,7 +524,7 @@ func recallNoMatchMessage(layers map[string]bool) string {
 			searched = append(searched, l.label)
 		}
 	}
-	return fmt.Sprintf("No matches anywhere in your memory (%s). Don't infer an answer from the absence — either rephrase, or proceed and say your memory had nothing on it.", strings.Join(searched, ", "))
+	return fmt.Sprintf("No matches anywhere in your memory (%s). Don't infer an answer from the absence: either rephrase, or proceed and say your memory had nothing on it.", strings.Join(searched, ", "))
 }
 
 // rerankFindingsByRecency re-orders finding hits by semantic score × recency, so
@@ -582,9 +582,9 @@ func recallAgeNote(date string) string {
 	// a season gets a warning, so the caution keeps its force where it lands.
 	switch days := int(time.Since(ts).Hours()) / 24; {
 	case days >= 365:
-		stamp += fmt.Sprintf(", ~%dmo ago — OLD; if this describes an external system (an API shape, an endpoint, a version), re-verify before relying on it", days/30)
+		stamp += fmt.Sprintf(", ~%dmo ago: OLD; if this describes an external system (an API shape, an endpoint, a version), re-verify before relying on it", days/30)
 	case days >= 90:
-		stamp += fmt.Sprintf(", ~%dd ago — may have changed since", days)
+		stamp += fmt.Sprintf(", ~%dd ago: may have changed since", days)
 	}
 	return stamp + ")"
 }
@@ -680,7 +680,7 @@ func (t *chatTurn) recallIDWasIssued(id string) bool {
 // reason: naming the tool that produces real ids is the only instruction that
 // ends the loop.
 func (t *chatTurn) inventedRecallIDError(id string) error {
-	return fmt.Errorf("no id %q has been given to you in this conversation, so there is nothing to fetch. recall ids are opaque and come ONLY from a recall result you can see — they are never constructed, guessed, or built from a UUID. Call recall with `query` (a natural-language description of what you are after) and use an id from ITS output. If you were about to answer the user, do that instead: nothing here is blocking you", id)
+	return fmt.Errorf("no id %q has been given to you in this conversation, so there is nothing to fetch. recall ids are opaque and come ONLY from a recall result you can see: they are never constructed, guessed, or built from a UUID. Call recall with `query` (a natural-language description of what you are after) and use an id from ITS output. If you were about to answer the user, do that instead: nothing here is blocking you", id)
 }
 
 // recallFetch returns the FULL item behind a recall id — the drill-down that
@@ -691,7 +691,7 @@ func (t *chatTurn) recallFetch(id string) (string, error) {
 		if !t.recallIDWasIssued(id) {
 			return "", t.inventedRecallIDError(id)
 		}
-		return "", fmt.Errorf("unrecognized id %q — pass an id exactly as recall returned it (doc:… / mem:… / span:… / fact:…)", id)
+		return "", fmt.Errorf("unrecognized id %q, pass an id exactly as recall returned it (doc:… / mem:… / span:… / fact:…)", id)
 	}
 	// A well-formed id for something nobody ever handed out is the same
 	// fabrication wearing a correct prefix, and the miss messages below all
@@ -723,7 +723,7 @@ func (t *chatTurn) recallFetch(id string) (string, error) {
 				return f.Note, nil
 			}
 		}
-		return fmt.Sprintf("No pinned note with id fact:%s — it may have been forgotten.", ref), nil
+		return fmt.Sprintf("No pinned note with id fact:%s, it may have been forgotten.", ref), nil
 	default:
 		return "", fmt.Errorf("unrecognized id kind %q", kind)
 	}
@@ -735,7 +735,7 @@ func (t *chatTurn) forgetToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "forget",
-			Description: fmt.Sprintf("Delete something from your memory, by id or by search.\n\n  id — from a recall hit:\n    fact:<id>  a pinned note (or pass a bare number matching the index in your %q prompt block — then ALWAYS also pass quote)\n    mem:<id>   a finding you saved with remember\n  query — no id in hand: deletes the findings matching the query (tightly capped, relevance-floored — same precision as recall). Use for \"drop what I saved about X\".\n\n[knowledge] and [history] items are NOT deletable here — knowledge is admin-managed source-of-truth, and history is the immutable record of what was said. Required: `id` OR `query`.", t.factsBlockName()),
+			Description: fmt.Sprintf("Delete something from your memory, by id or by search.\n\n  id, from a recall hit:\n    fact:<id>  a pinned note (or pass a bare number matching the index in your %q prompt block, then ALWAYS also pass quote)\n    mem:<id>   a finding you saved with remember\n  query, no id in hand: deletes the findings matching the query (tightly capped, relevance-floored, same precision as recall). Use for \"drop what I saved about X\".\n\n[knowledge] and [history] items are NOT deletable here: knowledge is admin-managed source-of-truth, and history is the immutable record of what was said. Required: `id` OR `query`.", t.factsBlockName()),
 			Parameters: map[string]ToolParam{
 				"id":    {Type: "string", Description: fmt.Sprintf("The id from a recall hit (fact:… or mem:…), or a bare 1-based number to drop the matching pinned note in your %q block.", t.factsBlockName())},
 				"quote": {Type: "string", Description: "With a bare-number id: a distinctive phrase copied verbatim from the note you're deleting, so the right note is dropped even if the numbered list shifted since you read it. Ignored for fact:/mem: ids (those are stable)."},
@@ -767,7 +767,7 @@ func (t *chatTurn) forgetToolDef() AgentToolDef {
 				// wipe the store.
 				if strings.TrimSpace(stringArg(args, "query")) != "" {
 					if t.inferredOff() {
-						return "", errors.New("recall memory is disabled for this agent — there are no findings to forget")
+						return "", errors.New("recall memory is disabled for this agent: there are no findings to forget")
 					}
 					return t.memoryForget(args)
 				}
@@ -791,7 +791,7 @@ func (t *chatTurn) forgetToolDef() AgentToolDef {
 				if !t.recallIDWasIssued(id) {
 					return "", t.inventedRecallIDError(id)
 				}
-				return "", fmt.Errorf("unrecognized id %q — pass fact:… , mem:… , or a bare number", id)
+				return "", fmt.Errorf("unrecognized id %q, pass fact:…, mem:…, or a bare number", id)
 			}
 			// Same fabrication guard recall uses. Deleting by an invented id is
 			// harmless (nothing matches), but "it may already be gone" reads as
@@ -805,13 +805,13 @@ func (t *chatTurn) forgetToolDef() AgentToolDef {
 				if ForgetMemoryFactByID(t.udb, factsNamespace(t.agent.ID), ref) {
 					return "Forgot pinned note.", nil
 				}
-				return fmt.Sprintf("No pinned note with id fact:%s — it may already be gone.", ref), nil
+				return fmt.Sprintf("No pinned note with id fact:%s, it may already be gone.", ref), nil
 			case "mem":
 				return t.forgetFindingByReportID(ref)
 			case "doc":
-				return "That's [knowledge] — admin-managed source-of-truth. It can't be deleted from here.", nil
+				return "That's [knowledge]: admin-managed source-of-truth. It can't be deleted from here.", nil
 			case "span":
-				return "That's [history] — the immutable record of the conversation. It can't be deleted from here.", nil
+				return "That's [history]: the immutable record of the conversation. It can't be deleted from here.", nil
 			default:
 				return "", fmt.Errorf("unrecognized id kind %q", kind)
 			}
@@ -852,7 +852,7 @@ func (t *chatTurn) forgetFindingByReportID(reportID string) (string, error) {
 				return "Forgot that memory entry.", nil
 			}
 		}
-		return fmt.Sprintf("No finding with id mem:%s — it may already be gone.", reportID), nil
+		return fmt.Sprintf("No finding with id mem:%s, it may already be gone.", reportID), nil
 	}
 	DeleteChunksByIDs(VectorDB, ids)
 	Log("[orchestrate.unified_memory.forget] user=%q agent=%q dropped finding report_id=%s (%d chunks)",

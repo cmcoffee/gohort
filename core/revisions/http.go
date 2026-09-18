@@ -103,7 +103,7 @@ func (s Surface) serveList(w http.ResponseWriter) {
 		// far back it goes, and the alternative is somebody assuming an edit
 		// from last month is still in here.
 		Subtitle: fmt.Sprintf("The last %d edits are kept. Older ones are gone.", Kept),
-		Empty:    "No versions kept yet — they start once this " + noun + " is edited.",
+		Empty:    "No versions kept yet: they start once this " + noun + " is edited.",
 		Entries:  []surfaceEntry{},
 	}
 	for _, rev := range List(s.Store, s.Kind, s.Key) {

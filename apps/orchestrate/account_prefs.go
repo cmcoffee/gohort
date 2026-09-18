@@ -48,7 +48,7 @@ func (T *OrchestrateApp) accountSection(r *http.Request, user string) (ui.Sectio
 	// of the user-facing picker, so the only choices are last-accessed
 	// (the unset default) or one of the user's own visible agents.
 	opts := []ui.SelectOption{
-		{Value: "", Label: "Last accessed — wherever you left off"},
+		{Value: "", Label: "Last accessed: wherever you left off"},
 	}
 	grouped, _, _ := agentPickerOptions(pickerAgents(listAgents(udb, user)))
 	opts = append(opts, grouped...)
@@ -60,7 +60,8 @@ func (T *OrchestrateApp) accountSection(r *http.Request, user string) (ui.Sectio
 			Fields: []ui.FormField{
 				{Field: "default_agent", Type: "select", Label: "Default agent",
 					Options: opts,
-					Help:    "Which agent the chat surface opens on when you arrive without a deep link. Last accessed remembers your selection per browser (per device); picking a specific agent applies everywhere. An agent's own link still wins."},
+					Help:    "Which agent the chat surface opens on when you arrive without a deep link.",
+					Detail:  "Last accessed remembers your selection per browser, so per device. Picking a specific agent applies everywhere. An agent's own link still wins."},
 			},
 		},
 	}, true

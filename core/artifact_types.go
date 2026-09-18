@@ -1045,7 +1045,7 @@ func (customAppArtifact) ImportArtifact(_ Database, recipe json.RawMessage, owne
 	// spec whose sections would render empty and read as the author's bug.
 	upgraded, ok := upgradeAppSpec(spec)
 	if !ok {
-		return slug, "", fmt.Errorf("this app was authored for a newer gohort (app schema %d; this install reads schema %d) — upgrade gohort before importing it", spec.SchemaVersion(), appSpecSchema)
+		return slug, "", fmt.Errorf("this app was authored for a newer gohort (app schema %d; this install reads schema %d): upgrade gohort before importing it", spec.SchemaVersion(), appSpecSchema)
 	}
 	spec = upgraded
 	if _, exists := LoadAppSpec(owner, slug); exists {
@@ -1242,7 +1242,7 @@ func (monitorArtifact) ExportArtifact(db Database, name, owner string) (json.Raw
 		return nil, fmt.Errorf("no monitor named %q for user %q", name, owner)
 	}
 	if m.OneShot {
-		return nil, fmt.Errorf("monitor %q is a one-shot await bound to its session — not a reusable recipe", m.Name)
+		return nil, fmt.Errorf("monitor %q is a one-shot await bound to its session: not a reusable recipe", m.Name)
 	}
 	// Refuse a recipe that would smuggle a literal secret: the polled URL and
 	// the format script travel verbatim, and tool args are passed to the
@@ -1355,7 +1355,7 @@ func (monitorArtifact) ImportArtifact(db Database, recipe json.RawMessage, owner
 		return "", "", Error("missing monitor name")
 	}
 	if m.OneShot {
-		return name, "", fmt.Errorf("monitor %q is a one-shot await — not importable", name)
+		return name, "", fmt.Errorf("monitor %q is a one-shot await: not importable", name)
 	}
 	if _, exists := GetEventMonitor(db, owner, name); exists {
 		return name, "a monitor with this name already exists", nil

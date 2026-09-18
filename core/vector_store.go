@@ -525,7 +525,7 @@ func ingestReport(ctx context.Context, db Database, source, reportID, title, rep
 	// into the deployment-wide knowledge store. Refuse the ingest if a
 	// caller ever wires it up by mistake.
 	if source == "servitor" {
-		Debug("[vector] refusing to ingest source=servitor (sensitive data — must stay in app)")
+		Debug("[vector] refusing to ingest source=servitor (sensitive data: must stay in app)")
 		return 0
 	}
 	// Remove any existing chunks for this report — re-ingestion on
@@ -606,7 +606,7 @@ func IngestPagedReport(ctx context.Context, db Database, source, reportID, repor
 		return
 	}
 	if source == "servitor" {
-		Debug("[vector] refusing to ingest source=servitor (sensitive data — must stay in app)")
+		Debug("[vector] refusing to ingest source=servitor (sensitive data: must stay in app)")
 		return
 	}
 	DeleteReportChunks(db, reportID)
@@ -714,7 +714,7 @@ func embedWithSplitFallbackDepth(ctx context.Context, cfg EmbeddingConfig, secti
 		return []embedPiece{{Text: text}}
 	}
 	if depth >= maxSplitDepth {
-		Debug("[vector] embed split depth cap %d reached for section %q (text %d chars) — storing raw", maxSplitDepth, section, len(text))
+		Debug("[vector] embed split depth cap %d reached for section %q (text %d chars): storing raw", maxSplitDepth, section, len(text))
 		return []embedPiece{{Text: text}}
 	}
 	prompt := section + "\n\n" + text
@@ -740,7 +740,7 @@ func embedWithSplitFallbackDepth(ctx context.Context, cfg EmbeddingConfig, secti
 		Debug("[vector] embed too-large but split produced empty halves: section %q", section)
 		return []embedPiece{{Text: text}}
 	}
-	Debug("[vector] embed too-large for section %q (%d chars) — sub-splitting (depth=%d)", section, len(text), depth)
+	Debug("[vector] embed too-large for section %q (%d chars): sub-splitting (depth=%d)", section, len(text), depth)
 	out := embedWithSplitFallbackDepth(ctx, cfg, section, left, depth+1)
 	out = append(out, embedWithSplitFallbackDepth(ctx, cfg, section, right, depth+1)...)
 	return out
@@ -1224,7 +1224,7 @@ func MaintenanceOutcome(key string) string {
 	return o.line
 }
 
-// finishMaintenanceProgress moves the pass from running to finished: its
+// finishMaintenanceProgress moves the pass from running to finished its
 // last line becomes the outcome, so a reader who arrives late sees how it
 // ended rather than nothing at all.
 func finishMaintenanceProgress(key string, count int) {
@@ -1238,7 +1238,7 @@ func finishMaintenanceProgress(key string, count int) {
 		line = fmt.Sprintf("%d record(s) changed", count)
 	}
 	maintenanceProgress.done[key] = maintenanceOutcome{
-		line: "finished — " + line,
+		line: "finished: " + line,
 		at:   time.Now(),
 	}
 	delete(maintenanceProgress.at, key)

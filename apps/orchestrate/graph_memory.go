@@ -132,7 +132,7 @@ func (t *chatTurn) linkEntitiesToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "link_entities",
-			Description: rewriteMemoryToolNames("Record a RELATIONSHIP between two named things in your graph memory — the structured layer for who/what connects to whom. State it as subject-relation-object: subject=\"Robin\", relation=\"works at\", object=\"Acme\". Entities are auto-created and merged by name/alias (so \"Robin\" and \"Robin Vale\" become one node). Use this when you learn how named things relate — people to orgs, people to people, projects to owners, things to places.\n\n**Graph vs the other memory layers**: a RELATIONSHIP between named things → link_entities. A preference/directive that shapes every answer (\"user prefers metric\") → store_fact. Bulky reference material to recall later → memory_save. A document → knowledge_search.\n\nSet `replace`=true when this CORRECTS a single-valued relation (job, home, manager) so the old value is removed (\"works at Acme\" → \"works at Globex\"). Leave it off for relations that can have many values at once (knows, owns, member of). Put non-relational details (email, title, phone) in `subject_attrs`, not as fake relationships."),
+			Description: rewriteMemoryToolNames("Record a RELATIONSHIP between two named things in your graph memory: the structured layer for who/what connects to whom. State it as subject-relation-object: subject=\"Robin\", relation=\"works at\", object=\"Acme\". Entities are auto-created and merged by name/alias (so \"Robin\" and \"Robin Vale\" become one node). Use this when you learn how named things relate, people to orgs, people to people, projects to owners, things to places.\n\n**Graph vs the other memory layers**: a RELATIONSHIP between named things → link_entities. A preference/directive that shapes every answer (\"user prefers metric\") → store_fact. Bulky reference material to recall later → memory_save. A document → knowledge_search.\n\nSet `replace`=true when this CORRECTS a single-valued relation (job, home, manager) so the old value is removed (\"works at Acme\" → \"works at Globex\"). Leave it off for relations that can have many values at once (knows, owns, member of). Put non-relational details (email, title, phone) in `subject_attrs`, not as fake relationships."),
 			Parameters: map[string]ToolParam{
 				"subject":       {Type: "string", Description: "The subject entity's name. e.g. \"Robin Vale\"."},
 				"subject_kind":  {Type: "string", Description: "Subject type: person, org, project, place, or thing. Defaults to thing."},
@@ -189,9 +189,9 @@ func (t *chatTurn) forgetGraphToolDef() AgentToolDef {
 		Tool: Tool{
 			Name: "forget_graph",
 			Description: "Delete from your graph memory when something you recorded is wrong or stale. Two modes:\n" +
-				"- Remove ONE relationship: pass subject, relation, object (the same three you'd give link_entities) — e.g. subject=\"Robin\", relation=\"works at\", object=\"Acme\" removes just that edge, leaving both entities.\n" +
-				"- Remove a WHOLE entity: pass only name — deletes that node and every relationship touching it (use when a person/org/project shouldn't be in the graph at all).\n" +
-				"Resolves names/aliases like recall_about. This is the deletion counterpart to link_entities — use it to fix mistakes instead of leaving stale nodes to resurface in recall_about.",
+				"- Remove ONE relationship: pass subject, relation, object (the same three you'd give link_entities), e.g. subject=\"Robin\", relation=\"works at\", object=\"Acme\" removes just that edge, leaving both entities.\n" +
+				"- Remove a WHOLE entity: pass only name, deletes that node and every relationship touching it (use when a person/org/project shouldn't be in the graph at all).\n" +
+				"Resolves names/aliases like recall_about. This is the deletion counterpart to link_entities: use it to fix mistakes instead of leaving stale nodes to resurface in recall_about.",
 			Parameters: map[string]ToolParam{
 				"name":     {Type: "string", Description: "Entity to delete entirely, WITH all its relationships, by name or alias. Use this OR subject/relation/object, not both."},
 				"subject":  {Type: "string", Description: "For removing one relationship: the subject entity name (as in link_entities)."},
@@ -214,14 +214,14 @@ func (t *chatTurn) forgetGraphToolDef() AgentToolDef {
 				}
 				subj, ok := FindGraphEntity(t.udb, ns, subject)
 				if !ok {
-					return fmt.Sprintf("No entity named %q in your graph memory — nothing to unlink.", subject), nil
+					return fmt.Sprintf("No entity named %q in your graph memory: nothing to unlink.", subject), nil
 				}
 				obj, ok := FindGraphEntity(t.udb, ns, object)
 				if !ok {
-					return fmt.Sprintf("No entity named %q in your graph memory — nothing to unlink.", object), nil
+					return fmt.Sprintf("No entity named %q in your graph memory: nothing to unlink.", object), nil
 				}
 				if !DeleteGraphEdge(t.udb, ns, subj.ID, relation, obj.ID) {
-					return fmt.Sprintf("No %q relationship from %s to %s to remove — it may already be gone.", relation, subj.Name, obj.Name), nil
+					return fmt.Sprintf("No %q relationship from %s to %s to remove: it may already be gone.", relation, subj.Name, obj.Name), nil
 				}
 				return fmt.Sprintf("Removed relationship: %s → %s → %s. Both entities remain.", subj.Name, relation, obj.Name), nil
 			}
@@ -232,10 +232,10 @@ func (t *chatTurn) forgetGraphToolDef() AgentToolDef {
 			}
 			e, ok := FindGraphEntity(t.udb, ns, name)
 			if !ok {
-				return fmt.Sprintf("Nothing in your graph memory named %q — nothing to delete.", name), nil
+				return fmt.Sprintf("Nothing in your graph memory named %q: nothing to delete.", name), nil
 			}
 			if !DeleteGraphEntity(t.udb, ns, e.ID) {
-				return fmt.Sprintf("Could not delete %q — it may already have been removed.", e.Name), nil
+				return fmt.Sprintf("Could not delete %q: it may already have been removed.", e.Name), nil
 			}
 			return fmt.Sprintf("Deleted entity %q and all its relationships from graph memory.", e.Name), nil
 		},
@@ -248,7 +248,7 @@ func (t *chatTurn) recallAboutToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "recall_about",
-			Description: "Look up EVERYTHING you know about a named thing in one call, resolved by name or alias. Returns the entity's attributes and relationships from graph memory (ask depth 2 to also see the neighbors' connections), PLUS the Explicit-memory facts that name it, PLUS the top matching passages from your knowledge store — so you get the structured graph, the flat facts, and the unstructured detail together instead of checking each layer separately. Use it whenever a person/org/project/place comes up and you want the recorded truth instead of guessing. Read-only; pairs with link_entities (which records).",
+			Description: "Look up EVERYTHING you know about a named thing in one call, resolved by name or alias. Returns the entity's attributes and relationships from graph memory (ask depth 2 to also see the neighbors' connections), PLUS the Explicit-memory facts that name it, PLUS the top matching passages from your knowledge store, so you get the structured graph, the flat facts, and the unstructured detail together instead of checking each layer separately. Use it whenever a person/org/project/place comes up and you want the recorded truth instead of guessing. Read-only; pairs with link_entities (which records).",
 			Parameters: map[string]ToolParam{
 				"name":  {Type: "string", Description: "The entity to look up, by name or any alias. e.g. \"Robin\"."},
 				"depth": {Type: "integer", Description: "How many hops to expand: 1 (default, the entity and its direct relationships) or 2 (also the neighbors' relationships)."},

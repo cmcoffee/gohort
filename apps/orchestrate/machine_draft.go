@@ -71,7 +71,7 @@ func (T *OrchestrateApp) handleMachineDraft(w http.ResponseWriter, r *http.Reque
 	if derr == nil {
 		if probs := def.Problems(); len(probs) > 0 {
 			if fixed, ferr := T.draftMachineOnce(ctx, ask+
-				"\n\nA previous draft had these problems — produce a corrected machine:\n- "+
+				"\n\nA previous draft had these problems, produce a corrected machine:\n- "+
 				strings.Join(probs, "\n- ")); ferr == nil && len(fixed.Problems()) < len(probs) {
 				def = fixed
 			}
@@ -144,17 +144,17 @@ The full specification of what a machine is and every field a phase takes:
 
 DESIGN RULES
 
-Fewer steps is better. The canonical shape — work something out once, decide a lane once, then a
-step the conversation settles in — is three steps, and most ideas fit it. Only add a step when the
+Fewer steps is better. The canonical shape: work something out once, decide a lane once, then a
+step the conversation settles in: is three steps, and most ideas fit it. Only add a step when the
 description genuinely needs another position for the conversation to hold.
 
 Every machine needs at least one resident step (a step the conversation waits in). A step that
-decides between destinations lists them in "choices" — never declare a routing field by hand.
+decides between destinations lists them in "choices": never declare a routing field by hand.
 Prompts say HOW to go about the work; the declared fields say WHAT to produce, each description
-written as the instruction for that field. Never ask for JSON in a prompt, never place {input} —
+written as the instruction for that field. Never ask for JSON in a prompt, never place {input}
 the message arrives on its own.
 
-Name steps in lowercase, short: triage, hunch, verify, answer. Give every step a one-line "desc" —
+Name steps in lowercase, short: triage, hunch, verify, answer. Give every step a one-line "desc"
 it becomes the routing instruction other steps see. Set "think": "on" only on steps that genuinely
 judge.
 

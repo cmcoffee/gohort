@@ -815,7 +815,7 @@ func RecentImageManifest(sess *ToolSession) string {
 		desc := r.Note
 		switch {
 		case desc != "" && r.Caption != "":
-			desc += " — " + r.Caption
+			desc += " · " + r.Caption
 		case desc == "":
 			desc = r.Caption
 		}
@@ -826,19 +826,19 @@ func RecentImageManifest(sess *ToolSession) string {
 	}
 	if len(given) > 0 {
 		// First, because these are the ones a request for a reference means.
-		b.WriteString("Pictures you were GIVEN or found — these are real, and are what a request about \"the photo\" or a real person or thing refers to (newest first):\n")
+		b.WriteString("Pictures you were GIVEN or found, these are real, and are what a request about \"the photo\" or a real person or thing refers to (newest first):\n")
 		for _, r := range given {
-			fmt.Fprintf(&b, "- %s — %s\n", label(r), describe(r))
+			fmt.Fprintf(&b, "- %s: %s\n", label(r), describe(r))
 		}
 	}
 	if len(made) > 0 {
-		b.WriteString("Pictures YOU MADE — not evidence of what anything really looks like. Use one only to keep working on that same render, never as the reference for a real subject (newest first):\n")
+		b.WriteString("Pictures YOU MADE: not evidence of what anything really looks like. Use one only to keep working on that same render, never as the reference for a real subject (newest first):\n")
 		for _, r := range made {
-			fmt.Fprintf(&b, "- %s — %s\n", label(r), describe(r))
+			fmt.Fprintf(&b, "- %s: %s\n", label(r), describe(r))
 		}
 	}
 	b.WriteString("Pass an id in the images list of an image call to work from it. PREFER the image#r.… form: it always means that same picture. " +
-		"The image#N form is only its position right now — saving any picture, including your own render, makes that one image#1 and pushes the rest down. " +
+		"The image#N form is only its position right now: saving any picture, including your own render, makes that one image#1 and pushes the rest down. " +
 		"They are kept automatically; you never need to delete them.")
 	return b.String()
 }

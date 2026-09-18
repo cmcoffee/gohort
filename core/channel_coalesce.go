@@ -37,7 +37,8 @@ func init() {
 		Key:      "tune_channel_coalesce_ms",
 		Category: "Limits",
 		Label:    "Channel message coalesce window (ms)",
-		Help:     "How long an inbound channel message is held so rapid follow-ups from the same conversation (a question, then an image posted right after) merge into ONE agent turn instead of racing as separate turns on a shared session. A message that arrives while a turn is still running cancels and reprocesses it with both messages folded in, unless that turn already replied. 0 disables coalescing (each message dispatches immediately).",
+		Help:     "How long an inbound channel message is held, so rapid follow-ups merge into one turn.",
+		Detail:   "A question and an image posted right after it become ONE agent turn, instead of racing as separate turns on a shared session. A message that arrives while a turn is still running cancels and reprocesses it with both messages folded in, unless that turn already replied. 0 disables coalescing, and each message dispatches immediately.",
 		Kind:     KindInt,
 		Default:  1500,
 		Min:      0,
@@ -211,7 +212,7 @@ func (c *ChannelCoalescer) leadOwn(key string, in ChannelInbound, run ChannelAge
 			return ChannelReply{}, nil
 
 		case time.Now().After(deadline):
-			Log("[channel] session %q still busy after %s — taking the slot for %q", key, channelDispatchTimeout, in.Handle)
+			Log("[channel] session %q still busy after %s: taking the slot for %q", key, channelDispatchTimeout, in.Handle)
 			if st.cancel != nil {
 				go st.cancel()
 			}

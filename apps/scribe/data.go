@@ -292,12 +292,12 @@ func init() {
 	RegisterTunable(TunableSpec{
 		Key: TunableGuideRevisionCap, Category: "Limits", App: "/scribe",
 		Label: "Guide revision history",
-		Help: "How many past versions of a guide are kept. Every destructive co-author pass — a " +
-			"reorganize, an audit's edits, a restore — saves one first, so this is how far back an " +
+		Help: "How many past versions of a guide are kept. Every destructive co-author pass: a " +
+			"reorganize, an audit's edits, a restore: saves one first, so this is how far back an " +
 			"author can reach for a section that got wiped. Each entry is a FULL copy of the guide, " +
 			"so the cost scales with document size, not edit count: raise it for a deployment of " +
 			"short guides, and watch it for one with large ones. Lowering it is not free and is not " +
-			"deferred — the next save on each guide trims that guide to the new number and the " +
+			"deferred: the next save on each guide trims that guide to the new number and the " +
 			"dropped versions are gone, so lower it deliberately rather than to tidy up.",
 		Kind: KindInt, Default: 50, Min: 5, Max: 500})
 }
@@ -394,7 +394,7 @@ func renderGuideHTML(g Guide, controls bool) string {
 	b.WriteString(`</header>`)
 
 	if len(secs) == 0 {
-		b.WriteString(`<p class="guide-doc-empty">This guide has no sections yet. Ask the assistant on the right to draft one — for example, "Add an introduction section."`)
+		b.WriteString(`<p class="guide-doc-empty">This guide has no sections yet. Ask the assistant on the right to draft one, for example, "Add an introduction section."`)
 		if controls {
 			b.WriteString(` Or <button type="button" class="guide-add-link" data-guide-act="add">add one yourself</button>.`)
 		}
@@ -592,13 +592,13 @@ func renderRevisionHTML(rev, cur Guide, at string) string {
 	b.WriteString(`<div class="guide-rev-banner">`)
 	if len(gone) == 0 {
 		b.WriteString(`<div class="guide-rev-head">Nothing here is missing from the current guide.</div>` +
-			`<div class="guide-rev-sub">Every section in this version still exists. Wording may differ — compare the ones you care about below.</div>`)
+			`<div class="guide-rev-sub">Every section in this version still exists. Wording may differ: compare the ones you care about below.</div>`)
 	} else {
 		b.WriteString(`<div class="guide-rev-head">` + fmt.Sprint(len(gone)) + ` section` + plural(len(gone)) + ` in this version ` + wasWere(len(gone)) + ` not in the current guide:</div><ul class="guide-rev-list">`)
 		for i, s := range gone {
 			b.WriteString(`<li><a href="#rev-gone-` + fmt.Sprint(i+1) + `">` + HTMLEscape(sectionHeading(s, i)) + `</a></li>`)
 		}
-		b.WriteString(`</ul><div class="guide-rev-sub">Copy what you need — this is a read-only look at ` + HTMLEscape(at) + `, and nothing here changes the guide.</div>`)
+		b.WriteString(`</ul><div class="guide-rev-sub">Copy what you need: this is a read-only look at ` + HTMLEscape(at) + `, and nothing here changes the guide.</div>`)
 	}
 	b.WriteString(`</div>`)
 

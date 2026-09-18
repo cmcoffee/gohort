@@ -262,9 +262,9 @@ func (s servitorSource) ItemToolsWithSession(sess *ToolSession, user, itemID str
 	searchTool := AgentToolDef{
 		Tool: Tool{
 			Name:        "search_" + slug + "_knowledge",
-			Description: fmt.Sprintf("Search the knowledge gohort has ALREADY gathered about %s %q — its recorded facts, structured docs, and linked collections — for material relevant to a query, and return the best matches. Read-only and instant: it does NOT %s. Use this FIRST; only reach for investigate_%s when you need something the gathered knowledge does not already contain.", noun, name, live.searchCaveat, slug),
+			Description: fmt.Sprintf("Search the knowledge gohort has ALREADY gathered about %s %q (its recorded facts, structured docs, and linked collections) for material relevant to a query, and return the best matches. Read-only and instant: it does NOT %s. Use this FIRST; only reach for investigate_%s when you need something the gathered knowledge does not already contain.", noun, name, live.searchCaveat, slug),
 			Parameters: map[string]ToolParam{
-				"query": {Type: "string", Description: "What you're writing about — a focused topic, e.g. 'network interfaces and firewall zones'."},
+				"query": {Type: "string", Description: "What you're writing about: a focused topic, e.g. 'network interfaces and firewall zones'."},
 			},
 			Required: []string{"query"},
 			Caps:     []Capability{CapRead},
@@ -282,7 +282,7 @@ func (s servitorSource) ItemToolsWithSession(sess *ToolSession, user, itemID str
 	factsTool := AgentToolDef{
 		Tool: Tool{
 			Name:        "get_" + slug + "_facts",
-			Description: fmt.Sprintf("Return the discrete structured facts gohort has recorded about %q — versions, ports, paths, hostnames, service names — as a key/value list. Read-only and instant; no live access. Use to ground EXACT values in a guide section without re-investigating.", name),
+			Description: fmt.Sprintf("Return the discrete structured facts gohort has recorded about %q (versions, ports, paths, hostnames, service names) as a key/value list. Read-only and instant; no live access. Use to ground EXACT values in a guide section without re-investigating.", name),
 			Caps:        []Capability{CapRead},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
@@ -458,13 +458,13 @@ func refTargetWords(a Appliance) (noun string, live refLiveWords) {
 		return "the local command target", refLiveWords{
 			searchCaveat:   "run anything",
 			dispatchPhrase: "to run read-only commands against it right now",
-			safetyNote:     "Read-only — any destructive command is auto-declined.",
+			safetyNote:     "Read-only: any destructive command is auto-declined.",
 		}
 	}
 	return "the system", refLiveWords{
 		searchCaveat:   "touch the live machine",
 		dispatchPhrase: "to run read-only SSH commands on it right now",
-		safetyNote:     "It touches the real machine (read-only — any destructive command is auto-declined).",
+		safetyNote:     "It touches the real machine (read-only: any destructive command is auto-declined).",
 	}
 }
 

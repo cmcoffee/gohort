@@ -404,7 +404,7 @@ func TestPriorReportsAreNamedNotQuoted(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("expected the one report, got %d: %v", len(got), got)
 	}
-	if !strings.HasPrefix(got[0], "Daily engagement — Engagement cycle done.") {
+	if !strings.HasPrefix(got[0], "Daily engagement \u00b7 Engagement cycle done.") {
 		t.Errorf("want producer and opening line, got %q", got[0])
 	}
 	if strings.Contains(got[0], "All 201") {

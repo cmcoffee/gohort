@@ -67,7 +67,7 @@ func (T *OrchestrateApp) handlePipelineRevise(w http.ResponseWriter, r *http.Req
 	ask := "Revise this pipeline.\n\nWHAT SHOULD CHANGE:\n" + want +
 		"\n\nTHE PIPELINE AS IT STANDS:\n" + string(current) +
 		"\n\nReturn the WHOLE pipeline with that change made. Keep every stage, prompt and setting the " +
-		"change does not touch, byte for byte — an edit that rewrites what nobody asked about is a " +
+		"change does not touch, byte for byte: an edit that rewrites what nobody asked about is a " +
 		"worse answer than one that refuses. Keep the name unless the change is about the name."
 
 	revised, derr := T.draftPipelineOnce(r.Context(), ask)
@@ -244,7 +244,7 @@ func describePipelineChange(before, after PipelineDef) []string {
 		out = append(out, "now "+strconv.Itoa(len(after.Stages))+" stages")
 	}
 	if len(out) == 0 {
-		out = append(out, "nothing — the revision came back identical to what was there")
+		out = append(out, "nothing: the revision came back identical to what was there")
 	}
 	return out
 }

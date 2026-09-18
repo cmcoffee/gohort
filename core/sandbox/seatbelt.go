@@ -377,12 +377,12 @@ func seatbeltProbe(binary string, runner func(profile string) error) bool {
 		return false
 	}
 	if err := runner(seatbeltProfile(seatbeltSpec{})); err != nil {
-		nfo.Log("[sandbox] WARNING: %s is present but refused a probe profile (%v) — "+
+		nfo.Log("[sandbox] WARNING: %s is present but refused a probe profile (%v): "+
 			"falling back to unconfined execution. Shell tools run with gohort user permissions.",
 			binary, err)
 		return false
 	}
-	nfo.Debug("[sandbox] seatbelt probe passed — shell tools are OS-sandboxed")
+	nfo.Debug("[sandbox] seatbelt probe passed: shell tools are OS-sandboxed")
 	return true
 }
 

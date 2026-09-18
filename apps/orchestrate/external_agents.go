@@ -171,17 +171,17 @@ func (T *OrchestrateApp) ResolveExternalChannel(owner, key string) (ExternalChan
 	// left no trail" is its own bug.
 	ch, ok := channelForChat(owner, chatID, key)
 	if !ok {
-		Log("[external] %s: no channel bound to chat %q (and no whole-service channel covers it) — bind one, or check the id against list_chats", owner, chatID)
+		Log("[external] %s: no channel bound to chat %q (and no whole-service channel covers it), bind one, or check the id against list_chats", owner, chatID)
 		return ExternalChannelTarget{}, false
 	}
 	udb := UserDB(T.DB, owner)
 	ag, ok := loadAgent(udb, ch.AgentID)
 	if !ok {
-		Log("[external] %s: channel %q is bound to agent %q, which does not load — the agent was probably deleted; rebind the channel", owner, ch.Name, ch.AgentID)
+		Log("[external] %s: channel %q is bound to agent %q, which does not load, the agent was probably deleted; rebind the channel", owner, ch.Name, ch.AgentID)
 		return ExternalChannelTarget{}, false
 	}
 	if !ag.MCPExposed {
-		Log("[external] %s: chat %q resolves to agent %q, but it is NOT exposed — turn on \"Reachable over MCP\" on that agent to allow external surfaces to reach it", owner, chatID, ag.Name)
+		Log("[external] %s: chat %q resolves to agent %q, but it is NOT exposed, turn on \"Reachable over MCP\" on that agent to allow external surfaces to reach it", owner, chatID, ag.Name)
 		return ExternalChannelTarget{}, false
 	}
 	return ExternalChannelTarget{
@@ -240,7 +240,7 @@ func init() {
 			// Listing its internal id here disclosed the very name that design
 			// withholds, the moment the app's feature grant was on.
 			if hiddenAppAgent(a.ID) {
-				skipped = append(skipped, fmt.Sprintf("%s(%s: app-internal — reached by app name)", a.Name, a.ID))
+				skipped = append(skipped, fmt.Sprintf("%s(%s: app-internal, reached by app name)", a.Name, a.ID))
 				continue
 			}
 			if !externallyReachable(a, owner) && (granted == nil || !granted("agent:"+a.ID)) {
@@ -290,7 +290,7 @@ func init() {
 				label = id
 			}
 			if note != "" {
-				label += " — " + note
+				label += " · " + note
 			}
 			out = append(out, ExternalTarget{Value: "agent:" + id, Label: label, Group: "Agents"})
 		}
@@ -341,7 +341,7 @@ func init() {
 					label = c.ChatID
 				}
 				if c.AgentName != "" {
-					label += " — " + c.AgentName
+					label += " · " + c.AgentName
 				}
 				out = append(out, ExternalTarget{Value: "channel:" + c.ChatID, Label: label, Group: "Channels"})
 			}

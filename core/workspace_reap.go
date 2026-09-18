@@ -206,7 +206,7 @@ func init() {
 		"survey_reapable_artifacts",
 		"Survey reclaimable artifacts (dry run)",
 		"Read-only. Lists the generated images and downloaded videos the framework "+
-			"wrote into a workspace and nothing ever deleted — flat files at a workspace "+
+			"wrote into a workspace and nothing ever deleted: flat files at a workspace "+
 			"root, matching a known producer, older than the retention window. "+
 			"Subdirectories are never read, so app data is not a candidate. Deletes nothing.",
 		func(ctx context.Context) int {
@@ -225,7 +225,7 @@ func init() {
 		"Reclaim workspace artifacts (DELETES)",
 		"Removes exactly what the dry run above lists: framework-produced images and "+
 			"videos at a workspace root, past the retention window. Run the dry run first "+
-			"— it uses the same walk, so what it shows is what this removes.",
+			"· it uses the same walk, so what it shows is what this removes.",
 		func(ctx context.Context) int {
 			list := FindReapableArtifacts(RootDB, ArtifactReapAge)
 			if len(list) == 0 {

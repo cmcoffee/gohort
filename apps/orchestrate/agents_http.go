@@ -66,7 +66,7 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 			for _, d := range ListPipelineDefs(udb, user) {
 				desc := "Pipeline"
 				if s := strings.TrimSpace(d.Description); s != "" {
-					desc += " — " + s
+					desc += " · " + s
 				}
 				out = append(out, map[string]any{"id": d.ID, "name": d.Name, "description": desc})
 			}
@@ -81,7 +81,7 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				}
 				desc := "Machine"
 				if s := strings.TrimSpace(d.Description); s != "" {
-					desc += " — " + s
+					desc += " · " + s
 				}
 				out = append(out, map[string]any{"id": d.ID, "name": d.Name, "description": desc})
 			}
@@ -312,7 +312,7 @@ func (T *OrchestrateApp) patchAgent(w http.ResponseWriter, r *http.Request, udb 
 		return
 	}
 	if existing.Locked {
-		http.Error(w, "this agent is locked — unlock it (the 🔒 icon) before editing", http.StatusConflict)
+		http.Error(w, "this agent is locked: unlock it (the 🔒 icon) before editing", http.StatusConflict)
 		return
 	}
 	// Merge: start from the stored record's own JSON so untouched fields keep

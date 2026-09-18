@@ -1,4 +1,4 @@
-# Channel / Thread model — shared-log unification
+# Channel / Thread model: shared-log unification
 
 Status: design, pre-implementation. Decision locked: **shared log** (see Decisions).
 
@@ -6,9 +6,9 @@ Status: design, pre-implementation. Decision locked: **shared log** (see Decisio
 
 Today there are two half-reconciled concepts:
 
-- **Sessions** — ordinary per-agent conversations (`orchestrate_sessions:<agentID>`, keyed by
+- **Sessions**: ordinary per-agent conversations (`orchestrate_sessions:<agentID>`, keyed by
   session id, messages inline).
-- **The "channel" home thread** — a synthetic per-agent thread `channel:<agentID>` where
+- **The "channel" home thread**: a synthetic per-agent thread `channel:<agentID>` where
   background wakes (monitor fires, standing-agent reports, goal-conversation completions,
   phantom pushes) are *supposed* to land, surfaced through a separate Channel/History nav.
 
@@ -32,7 +32,7 @@ Collapse to **one primitive: a Thread** (we keep calling the shared-membership c
   log; producers post into it; participant agents can be woken to react.
 
 A session is therefore just the 2-participant special case of a channel. There is no separate
-"home thread" — the per-agent default is simply the Thread you land on, pinned to the top of
+"home thread": the per-agent default is simply the Thread you land on, pinned to the top of
 the list, openable and scrubbable like any other.
 
 ## Who the human talks to (addressing)
@@ -41,9 +41,9 @@ The human is a participant, but **a human post is always directed at an agent, n
 channel itself.** Reading is broadcast; writing is addressed.
 
 - Every channel has a **lead/host agent** that fields human input. In a 1:1 session the lead is
-  the only agent, so it is implicit — that is just normal chat.
+  the only agent, so it is implicit, that is just normal chat.
 - In a **shared** channel a human post goes to the lead (or an explicitly @-addressed
-  participant). Other agents/producers see it as context but do not all reply — no reply storm,
+  participant). Other agents/producers see it as context but do not all reply: no reply storm,
   no "which agent answers?" ambiguity.
 - The human **reads** the full shared log of any channel they are in.
 - A pure **agent↔agent** channel with no human lead is **observe-only** for the human: they
@@ -58,14 +58,14 @@ agent per channel ⇒ the lead is trivially that agent); it defines **addressing
 
 1. **Delivery: shared log (LOCKED).** A channel owns ONE message log. Participants read the
    same log; a post appends exactly once. No per-subscriber fan-out copies (which would drift).
-   Consequence: the log cannot live inside a single agent's storage bucket — it is owned by the
+   Consequence: the log cannot live inside a single agent's storage bucket, it is owned by the
    channel, user-scoped, agent-agnostic.
 
-2. **Reacting to a post — reuse existing notify semantics, per participant/subscription:**
-   - `channel` — wake the agent: it runs a turn with the channel log as context, its reply
+2. **Reacting to a post, reuse existing notify semantics, per participant/subscription:**
+   - `channel`, wake the agent: it runs a turn with the channel log as context, its reply
      appends to the same log (today's reasoning-summary behavior).
-   - `direct` — the post just appears in the log, no LLM.
-   - `text` — pushed to the owner's phone, no LLM.
+   - `direct`: the post just appears in the log, no LLM.
+   - `text`: pushed to the owner's phone, no LLM.
 
 3. **One primitive, migrated behind today's session storage.** Build toward Thread==Channel,
    but migrate lazily so nothing breaks. Existing session ids and `ReportSessionID` values keep
@@ -102,7 +102,7 @@ type Channel struct {
   cursor in `channel_read:<channelID>`. Stage 1 has a single human owner, so one cursor; the
   shape already supports per-agent cursors for Stage 3.
 - **Producers** keep their target on their own record: `StandingAgent.ReportSessionID`,
-  event-monitor target, dispatch continuity — these become channel ids (Stage 1 keeps the
+  event-monitor target, dispatch continuity: these become channel ids (Stage 1 keeps the
   field name; values are unchanged because session ids == channel ids after migration).
 
 ## Migration (lazy, verify-before-drain)
@@ -114,9 +114,9 @@ row; never blind-drain):
   **same id string** so `channelSessionID` fallbacks keep resolving.
 - Each `orchestrate_sessions:<agentID>` row -> Channel `{Participants: {owner, agentID}}`, id =
   the existing session id (UUID or `channel:<agent>`).
-- `ReportSessionID` / monitor targets need no rewrite — the ids they hold are now channel ids.
+- `ReportSessionID` / monitor targets need no rewrite: the ids they hold are now channel ids.
 
-## Stage 1 — the cut that lays the model (no storage move, no shared membership yet)
+## Stage 1: the cut that lays the model (no storage move, no shared membership yet)
 
 **Storage stays put.** A channel's log only needs to leave the per-agent bucket once a channel
 has more than one agent (shared membership), which is Stage 2. For Stage 1 every channel has
@@ -134,7 +134,7 @@ Stage 1 is the **model + UX unification** on the existing storage:
 3. **Retire the Channel/History nav split:** the home thread is just the pinned row; "Scrub a bad
    turn" becomes a per-message delete in the open thread (replaces the History nav row-delete).
    The fleet-management nav items (Enabled agents / Event monitors / Authorizations / grants /
-   Clear / Decommission) stay — they are not part of the split.
+   Clear / Decommission) stay: they are not part of the split.
 4. Producers (standing agents / monitors / dispatch) already target a session id; unchanged.
 
 Exit criterion: every conversation shows in one list with the home thread pinned; the separate
@@ -142,9 +142,9 @@ Channel/History nav is gone and turn-scrub still works per-message.
 
 Sequencing note: step 1 is pure groundwork and lands first. Steps 2-3 touch the (intricate)
 runtime session-list + alt-nav code, so they land only after the channel-nav ReferenceError fix
-is confirmed working on a redeploy — building UI changes on verified ground, not on sand.
+is confirmed working on a redeploy: building UI changes on verified ground, not on sand.
 
-## Stage 2 — turn on sharing
+## Stage 2: turn on sharing
 
 - Multiple named channels; explicit create + subscribe.
 - `post_to_channel` tool; per-subscription notify (`channel`/`direct`/`text`).
@@ -153,7 +153,7 @@ is confirmed working on a redeploy — building UI changes on verified ground, n
 - This is the natural `target` for the unified trigger engine (a trigger's action posts to a
   channel).
 
-## Stage 3 — agent ↔ agent over channels
+## Stage 3: agent ↔ agent over channels
 
 - Agents as first-class participants that post and get woken; the fleet/Operator coordination
   substrate. Multi-participant `{owner, agentA, agentB}` threads with per-agent read cursors and

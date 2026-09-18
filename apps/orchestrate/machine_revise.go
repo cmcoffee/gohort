@@ -70,7 +70,7 @@ func (T *OrchestrateApp) handleMachineRevise(w http.ResponseWriter, r *http.Requ
 	ask := "Revise this machine.\n\nWHAT SHOULD CHANGE:\n" + want +
 		"\n\nTHE MACHINE AS IT STANDS:\n" + string(current) +
 		"\n\nReturn the WHOLE machine with that change made. Keep every step, prompt, and setting the " +
-		"change does not touch, byte for byte — an edit that rewrites what nobody asked about is a " +
+		"change does not touch, byte for byte: an edit that rewrites what nobody asked about is a " +
 		"worse answer than one that refuses. Keep the name unless the change is about the name."
 
 	revised, derr := T.draftMachineOnce(r.Context(), ask)
@@ -84,7 +84,7 @@ func (T *OrchestrateApp) handleMachineRevise(w http.ResponseWriter, r *http.Requ
 	}
 	if probs := revised.Problems(); len(probs) > 0 {
 		if fixed, ferr := T.draftMachineOnce(r.Context(), ask+
-			"\n\nA previous attempt had these problems — return a corrected machine:\n- "+
+			"\n\nA previous attempt had these problems, return a corrected machine:\n- "+
 			strings.Join(probs, "\n- ")); ferr == nil && len(fixed.Problems()) < len(probs) {
 			revised = fixed
 		}
@@ -191,7 +191,7 @@ func describeMachineChange(before, after MachineDef) []string {
 		out = append(out, "it now starts in "+after.StartPhase())
 	}
 	if len(out) == 0 {
-		out = append(out, "nothing — the revision came back identical to what was there")
+		out = append(out, "nothing: the revision came back identical to what was there")
 	}
 	return out
 }

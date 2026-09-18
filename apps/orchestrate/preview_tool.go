@@ -63,7 +63,7 @@ func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "show_html",
-			Description: "Show the user a rendered HTML surface in a viewer pane beside the chat — a dashboard, report, diagram, front-end mockup, or a live preview of a gohort page. Two modes (pass exactly one): `html` = a COMPLETE, self-contained document you author, with ALL CSS and JavaScript inline (it renders sandboxed — no access to the app, its cookies, or external files); `url` = a same-origin path to preview a page this server already serves (e.g. a custom app you just created: \"/apps/<slug>/\"). Authored pages are offline snapshots by default; to make one LIVE, declare data_urls — the page then refreshes itself by calling the injected gohort.fetch(path) helper. Use this tool when the user asks for a dashboard/visualization/mockup, or to show an app/page you just built — NOT for ordinary answers, lists, or code; reply in text for those. To UPDATE an artifact you already showed, call again with the SAME id (returned by the first call) and the full revised content.",
+			Description: "Show the user a rendered HTML surface in a viewer pane beside the chat: a dashboard, report, diagram, front-end mockup, or a live preview of a gohort page. Two modes (pass exactly one): `html` = a COMPLETE, self-contained document you author, with ALL CSS and JavaScript inline (it renders sandboxed, no access to the app, its cookies, or external files); `url` = a same-origin path to preview a page this server already serves (e.g. a custom app you just created: \"/apps/<slug>/\"). Authored pages are offline snapshots by default; to make one LIVE, declare data_urls: the page then refreshes itself by calling the injected gohort.fetch(path) helper. Use this tool when the user asks for a dashboard/visualization/mockup, or to show an app/page you just built: NOT for ordinary answers, lists, or code; reply in text for those. To UPDATE an artifact you already showed, call again with the SAME id (returned by the first call) and the full revised content.",
 			Parameters: map[string]ToolParam{
 				"title": {
 					Type:        "string",
@@ -71,7 +71,7 @@ func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 				},
 				"html": {
 					Type:        "string",
-					Description: "Authored mode: the complete HTML document (doctype through </html>), fully self-contained — inline all CSS and JS, no external stylesheets/scripts/images. Keep it under ~300KB. Omit when passing url.",
+					Description: "Authored mode: the complete HTML document (doctype through </html>), fully self-contained, inline all CSS and JS, no external stylesheets/scripts/images. Keep it under ~300KB. Omit when passing url.",
 				},
 				"url": {
 					Type:        "string",
@@ -79,7 +79,7 @@ func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 				},
 				"data_urls": {
 					Type:        "array",
-					Description: "Optional, html mode only: up to 8 same-origin GET paths (each starting with \"/\", e.g. \"/apps/myapp/data/metrics\") the page may fetch LIVE while the user views it. The viewer injects window.gohort.fetch(path) — returns a Promise of {ok, status, body} (body is the response text; JSON.parse it yourself). Combine with setInterval for an auto-refreshing dashboard. Paths NOT listed here are blocked, so declare everything the page needs up front.",
+					Description: "Optional, html mode only: up to 8 same-origin GET paths (each starting with \"/\", e.g. \"/apps/myapp/data/metrics\") the page may fetch LIVE while the user views it. The viewer injects window.gohort.fetch(path): returns a Promise of {ok, status, body} (body is the response text; JSON.parse it yourself). Combine with setInterval for an auto-refreshing dashboard. Paths NOT listed here are blocked, so declare everything the page needs up front.",
 					Items:       &ToolParam{Type: "string"},
 				},
 				"id": {
@@ -98,24 +98,24 @@ func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 				return "", fmt.Errorf("pass exactly ONE of html (an authored document) or url (a same-origin path to preview)")
 			}
 			if hasHTML && len(html) > maxArtifactHTML {
-				return "", fmt.Errorf("html too large (%d bytes; cap %d) — trim the document (inline data tables are the usual culprit) and call again", len(html), maxArtifactHTML)
+				return "", fmt.Errorf("html too large (%d bytes; cap %d): trim the document (inline data tables are the usual culprit) and call again", len(html), maxArtifactHTML)
 			}
 			// The url mode renders WITHOUT a sandbox (it's this server's own
 			// page), so it must never point off-origin: require a single
 			// leading "/" — no scheme, no protocol-relative "//host". The
 			// client-side pane enforces the same rule.
 			if url != "" && (!strings.HasPrefix(url, "/") || strings.HasPrefix(url, "//")) {
-				return "", fmt.Errorf("url must be a same-origin path starting with \"/\" (got %q) — external pages can't be previewed; to show external content, author an html document instead", url)
+				return "", fmt.Errorf("url must be a same-origin path starting with \"/\" (got %q): external pages can't be previewed; to show external content, author an html document instead", url)
 			}
 			// Live-data allowlist (html mode). Same same-origin-path rule as
 			// url mode — the pane proxies these WITH the user's cookies, so
 			// off-origin or scheme-carrying entries are refused outright.
 			dataURLs := stringSliceFromArgs(args, "data_urls")
 			if len(dataURLs) > 0 && !hasHTML {
-				return "", fmt.Errorf("data_urls applies to html mode only — a url preview is already live")
+				return "", fmt.Errorf("data_urls applies to html mode only: a url preview is already live")
 			}
 			if len(dataURLs) > 8 {
-				return "", fmt.Errorf("data_urls is capped at 8 paths (got %d) — consolidate your data endpoints", len(dataURLs))
+				return "", fmt.Errorf("data_urls is capped at 8 paths (got %d): consolidate your data endpoints", len(dataURLs))
 			}
 			for _, u := range dataURLs {
 				if !strings.HasPrefix(u, "/") || strings.HasPrefix(u, "//") {
@@ -187,10 +187,10 @@ func (t *chatTurn) showHTMLToolDef() AgentToolDef {
 			// let the activity wrapper persist a second full copy in the
 			// tool-call record (args are recorded AFTER the handler runs).
 			if hasHTML {
-				args["html"] = fmt.Sprintf("(%d-byte HTML document — stored as session artifact %q)", len(html), id)
+				args["html"] = fmt.Sprintf("(%d-byte HTML document: stored as session artifact %q)", len(html), id)
 			}
 			if isUpdate {
-				return fmt.Sprintf("Artifact %q (id %q) updated in place — the user's pane refreshed.", title, id), nil
+				return fmt.Sprintf("Artifact %q (id %q) updated in place: the user's pane refreshed.", title, id), nil
 			}
 			return fmt.Sprintf("Artifact %q is now showing beside the chat (id %q). Call show_html again with this id to update it in place.", title, id), nil
 		},
@@ -210,7 +210,7 @@ func (t *chatTurn) showLinkToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "show_link",
-			Description: "Drop a clickable link card into the chat pointing the user at a page. Use it WHENEVER your reply tells the user to go somewhere or open something — an app you just created or updated (app_def returns its url), a settings/admin page, or an external site they must visit (e.g. to create an API key). A bare path in prose is not clickable; this card gives them an Open button. Pass a same-origin path starting with \"/\" (e.g. \"/apps/myapp/\") or a full http(s):// URL. NOT for rendering content — show_html displays a page or dashboard beside the chat; show_link only offers navigation.",
+			Description: "Drop a clickable link card into the chat pointing the user at a page. Use it WHENEVER your reply tells the user to go somewhere or open something: an app you just created or updated (app_def returns its url), a settings/admin page, or an external site they must visit (e.g. to create an API key). A bare path in prose is not clickable; this card gives them an Open button. Pass a same-origin path starting with \"/\" (e.g. \"/apps/myapp/\") or a full http(s):// URL. NOT for rendering content: show_html displays a page or dashboard beside the chat; show_link only offers navigation.",
 			Parameters: map[string]ToolParam{
 				"url": {
 					Type:        "string",
@@ -218,7 +218,7 @@ func (t *chatTurn) showLinkToolDef() AgentToolDef {
 				},
 				"title": {
 					Type:        "string",
-					Description: "Short human label for the destination, shown on the card (e.g. \"Hacker News dashboard\"). Name the PLACE, not the action — the card supplies its own Open button.",
+					Description: "Short human label for the destination, shown on the card (e.g. \"Hacker News dashboard\"). Name the PLACE, not the action: the card supplies its own Open button.",
 				},
 				"note": {
 					Type:        "string",
@@ -286,9 +286,9 @@ func (t *chatTurn) showLinkToolDef() AgentToolDef {
 				t.toolMu.Unlock()
 			}
 			if isUpdate {
-				return fmt.Sprintf("Link card %q → %s refreshed in place (one card per destination). Don't repeat the raw URL in your reply — the card carries it.", title, url), nil
+				return fmt.Sprintf("Link card %q → %s refreshed in place (one card per destination). Don't repeat the raw URL in your reply: the card carries it.", title, url), nil
 			}
-			return fmt.Sprintf("Link card %q → %s is now showing in the chat. Don't repeat the raw URL in your reply — the card carries it.", title, url), nil
+			return fmt.Sprintf("Link card %q → %s is now showing in the chat. Don't repeat the raw URL in your reply: the card carries it.", title, url), nil
 		},
 	}
 }

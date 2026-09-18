@@ -197,10 +197,10 @@ func dbFail(write bool, op, table, key string, err error) bool {
 	// somebody's record, so it goes where an operator looks on purpose rather
 	// than onto a status page.
 	if write {
-		Err("[database] %s %s/%s FAILED TO WRITE: %v (%d write / %d read failures so far — work is being lost)",
+		Err("[database] %s %s/%s FAILED TO WRITE: %v (%d write / %d read failures so far, work is being lost)",
 			op, table, key, err, writes, reads)
 	} else {
-		Err("[database] %s %s/%s failed: %v (%d read / %d write failures so far — this reads to the caller as 'not found')",
+		Err("[database] %s %s/%s failed: %v (%d read / %d write failures so far, this reads to the caller as 'not found')",
 			op, table, key, err, reads, writes)
 	}
 	return true

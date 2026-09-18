@@ -449,7 +449,7 @@ func TestWatchCardTextReadsLikeAMessage(t *testing.T) {
 	for _, want := range []string{
 		`Watch "molty-profile-bug-replies" changed.`,
 		"New (1):",
-		`• ClawdClawderberg — "finally a reply" (9f9f9f9f, 2026-09-05 05:59 UTC)`,
+		`• ClawdClawderberg · "finally a reply" (9f9f9f9f, 2026-09-05 05:59 UTC)`,
 		"Changed (1):",
 		"• count: 1 → 2",
 	} {
@@ -497,7 +497,7 @@ func TestWatchWakeCarriesTheCard(t *testing.T) {
 	executeWatchPoll(context.Background(), db, m) // baseline
 	result = watchCommentsB
 	executeWatchPoll(context.Background(), db, m)
-	if !strings.Contains(gotCard, `ClawdClawderberg — "finally a reply"`) {
+	if !strings.Contains(gotCard, `ClawdClawderberg · "finally a reply"`) {
 		t.Errorf("the waker must receive the readable card, got %q", gotCard)
 	}
 	if !strings.Contains(gotSummary, "Current output") || !strings.Contains(gotSummary, "finally a reply") {

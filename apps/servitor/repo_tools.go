@@ -30,7 +30,7 @@ func repoCodeTools(user, applianceID string) []AgentToolDef {
 				Name:        "search_code",
 				Description: "Search every file in the repository for a string or symbol (case-insensitive substring). Your first move for almost any question: find where a name, table, route, config key, or an exact log-line string appears. Returns matching lines with file path and line number.",
 				Parameters: map[string]ToolParam{
-					"query": {Type: "string", Description: "The text to find — a function/type/table name, a route, a config key, or an exact string from a log line."},
+					"query": {Type: "string", Description: "The text to find: a function/type/table name, a route, a config key, or an exact string from a log line."},
 				},
 				Required: []string{"query"},
 			},
@@ -51,7 +51,7 @@ func repoCodeTools(user, applianceID string) []AgentToolDef {
 					fmt.Fprintf(&b, "%s:%d: %s\n", h.Path, h.Line, h.Text)
 				}
 				if len(hits) >= repoMaxSearchHits {
-					fmt.Fprintf(&b, "(showing first %d matches — narrow the query for more)\n", repoMaxSearchHits)
+					fmt.Fprintf(&b, "(showing first %d matches: narrow the query for more)\n", repoMaxSearchHits)
 				}
 				return b.String(), nil
 			},
@@ -144,7 +144,7 @@ func linkedRepoTools(repos []linkedRepo) []AgentToolDef {
 		tools := repoCodeTools(r.Owner, r.ID)
 		for i := range tools {
 			tools[i].Tool.Description = strings.TrimSuffix(tools[i].Tool.Description, ".") +
-				fmt.Sprintf(". The repository is %q — the source code this system runs.", r.Name)
+				fmt.Sprintf(". The repository is %q: the source code this system runs.", r.Name)
 		}
 		return tools
 	}
@@ -170,7 +170,7 @@ func linkedRepoTools(repos []linkedRepo) []AgentToolDef {
 				Description: "Search the source code this system runs (repositories: " + nameList + ") for a string or symbol (case-insensitive substring). " +
 					"Your first move for tracing behavior to source: an exact log-line string, a config key, a function or table name. Returns matching lines as repo, file path, and line number.",
 				Parameters: map[string]ToolParam{
-					"query": {Type: "string", Description: "The text to find — a function/type/table name, a route, a config key, or an exact string from a log line."},
+					"query": {Type: "string", Description: "The text to find: a function/type/table name, a route, a config key, or an exact string from a log line."},
 				},
 				Required: []string{"query"},
 			},
@@ -216,7 +216,7 @@ func linkedRepoTools(repos []linkedRepo) []AgentToolDef {
 				ref, _ := args["repo"].(string)
 				r, ok := findLinked(ref)
 				if !ok {
-					return "", fmt.Errorf("no linked repository called %q — the linked repositories are: %s", ref, nameList)
+					return "", fmt.Errorf("no linked repository called %q, the linked repositories are: %s", ref, nameList)
 				}
 				path, _ := args["path"].(string)
 				content, found := readRepoFile(r.Owner, r.ID, path)
@@ -262,7 +262,7 @@ func linkedRepoTools(repos []linkedRepo) []AgentToolDef {
 				ref, _ := args["repo"].(string)
 				r, ok := findLinked(ref)
 				if !ok {
-					return "", fmt.Errorf("no linked repository called %q — the linked repositories are: %s", ref, nameList)
+					return "", fmt.Errorf("no linked repository called %q, the linked repositories are: %s", ref, nameList)
 				}
 				path, _ := args["path"].(string)
 				entries := listRepoDir(r.Owner, r.ID, path)

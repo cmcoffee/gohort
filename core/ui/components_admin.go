@@ -51,6 +51,9 @@ type Toggle struct {
 	Field string `json:"field"`
 	Label string `json:"label"`
 	Help  string `json:"help,omitempty"`
+	// Detail is the long explanation, behind an ⓘ icon beside the label.
+	// See FormField.Detail for the split between the two.
+	Detail string `json:"detail,omitempty"`
 }
 
 // MemberEditor renders an editable list of {handle, name, aliases}

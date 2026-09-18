@@ -56,7 +56,7 @@ func (T *Bridges) WebName() string { return "Bridges" }
 func (T *Bridges) WebDesc() string {
 	return "Connect messaging services (iMessage, Telegram, …) to your channel agents."
 }
-func (T *Bridges) Desc() string { return "Apps: messaging transport — services → channels." }
+func (T *Bridges) Desc() string { return "Apps: messaging transport, services → channels." }
 
 // WebOrder places Bridges right after Agency on the dashboard (Agency is
 // -1000, Knowledge is -800), ahead of the default-50 app grid.
@@ -733,7 +733,7 @@ func (T *Bridges) drainOutbox(service string) []OutboxItem {
 				total += len(v)
 			}
 		}
-		Log("[bridges.outbox] drained %d item(s) for svc=%q (%d bytes total) — handed to connector", len(out), service, total)
+		Log("[bridges.outbox] drained %d item(s) for svc=%q (%d bytes total): handed to connector", len(out), service, total)
 	}
 	return out
 }

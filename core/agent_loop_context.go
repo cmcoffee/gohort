@@ -235,7 +235,7 @@ func compactHistory(msgs []Message, systemPrompt string, contextSize int, force 
 			if len(body) <= elideMinBytes {
 				continue
 			}
-			marker := fmt.Sprintf("[earlier tool result elided to fit context — was %d bytes; re-run the tool if you still need it]", len(body))
+			marker := fmt.Sprintf("[earlier tool result elided to fit context: was %d bytes; re-run the tool if you still need it]", len(body))
 			total -= len(body)/4 - len(marker)/4
 			msgs[i].ToolResults[j].Content = marker
 			elided++
@@ -366,7 +366,7 @@ func elideOldMessageText(msgs []Message, budgetTokens, keepWhole int) (reclaimed
 		if len(body) <= 400 {
 			continue
 		}
-		marker := fmt.Sprintf("[earlier message elided to fit context — was %d bytes]", len(body))
+		marker := fmt.Sprintf("[earlier message elided to fit context: was %d bytes]", len(body))
 		total -= (len(body) - len(marker)) / 4
 		reclaimed += (len(body) - len(marker)) / 4
 		msgs[i].Content = marker
@@ -473,7 +473,7 @@ func (T *AppCore) summarizeOldHistory(ctx context.Context, msgs []Message, conte
 	}
 
 	if budgetExhausted {
-		Log("[agent_loop] context recovery: stopped after %d fold calls — the remainder falls to elision", maxFoldCalls)
+		Log("[agent_loop] context recovery: stopped after %d fold calls, the remainder falls to elision", maxFoldCalls)
 	}
 	out := make([]Message, 0, keepWhole+1)
 	out = append(out, Message{
@@ -521,7 +521,7 @@ func (T *AppCore) foldChunk(ctx context.Context, span []Message) string {
 			"---\n" + b.String(),
 	}}, WithMaxRetries(1))
 	if err != nil || resp == nil {
-		Debug("[agent_loop] context recovery: a fold call failed (%v) — falling back to elision for this span", err)
+		Debug("[agent_loop] context recovery: a fold call failed (%v), falling back to elision for this span", err)
 		return ""
 	}
 	return strings.TrimSpace(resp.Content)
@@ -678,7 +678,7 @@ func noteContextRefusal(configured, refusedTokens int) {
 			return
 		}
 	}
-	Log("[agent_loop] context ceiling: a %d-token prompt was refused under a configured %d-token window — building to %d for the next %s",
+	Log("[agent_loop] context ceiling: a %d-token prompt was refused under a configured %d-token window, building to %d for the next %s",
 		refusedTokens, configured, ceiling, observedCeilingTTL)
 	observedCeilings.Store(configured, observedCeiling{tokens: ceiling, at: time.Now()})
 }

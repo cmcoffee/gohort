@@ -54,7 +54,7 @@ func ParseTextToolCall(content string, handlers map[string]ToolHandlerFunc, tool
 				if hasRequired(tc, toolDefs) {
 					return tc
 				}
-				Debug("[agent_loop] dropping XML-style tool call '%s' — missing required args", name)
+				Debug("[agent_loop] dropping XML-style tool call '%s': missing required args", name)
 			}
 		}
 	}
@@ -76,7 +76,7 @@ func ParseTextToolCall(content string, handlers map[string]ToolHandlerFunc, tool
 		if hasRequired(tc, toolDefs) {
 			return tc
 		}
-		Debug("[agent_loop] dropping synthesized JSON tool call '%s' — missing required args", tc.Name)
+		Debug("[agent_loop] dropping synthesized JSON tool call '%s': missing required args", tc.Name)
 	}
 
 	// Last-resort: scan for a known tool name mentioned in the text.
@@ -94,7 +94,7 @@ func ParseTextToolCall(content string, handlers map[string]ToolHandlerFunc, tool
 		if hasRequired(tc, toolDefs) {
 			return tc
 		}
-		Debug("[agent_loop] dropping synthesized natural-language tool call '%s' — could not extract required args from prose", tc.Name)
+		Debug("[agent_loop] dropping synthesized natural-language tool call '%s': could not extract required args from prose", tc.Name)
 	}
 	return nil
 }
@@ -394,12 +394,12 @@ func parseNaturalToolCall(content string, handlers map[string]ToolHandlerFunc) *
 	// wherever they appear, so the looser forms below stay available.
 	if !strings.Contains(bestName, "_") {
 		if !strings.HasPrefix(rest, "(") {
-			Debug("[agent_loop] skipping tool mention %q — common-word name not in call form, treating as prose", bestName)
+			Debug("[agent_loop] skipping tool mention %q: common-word name not in call form, treating as prose", bestName)
 			return nil
 		}
 		callArgs := parseCallArgs(rest)
 		if len(callArgs) == 0 {
-			Debug("[agent_loop] skipping tool mention %q — common-word name with no parsable args, treating as prose", bestName)
+			Debug("[agent_loop] skipping tool mention %q: common-word name with no parsable args, treating as prose", bestName)
 			return nil
 		}
 		return &ToolCall{ID: fmt.Sprintf("text_%s", UUIDv4()), Name: bestName, Args: callArgs}
@@ -444,7 +444,7 @@ func parseNaturalToolCall(content string, handlers map[string]ToolHandlerFunc) *
 	// Returning nil lets the loop terminate cleanly when the model
 	// already finished its turn.
 	if len(args) == 0 {
-		Debug("[agent_loop] skipping natural-language tool mention %q — no args extractable, treating as reasoning prose", bestName)
+		Debug("[agent_loop] skipping natural-language tool mention %q: no args extractable, treating as reasoning prose", bestName)
 		return nil
 	}
 

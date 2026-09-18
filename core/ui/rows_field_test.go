@@ -460,7 +460,7 @@ func TestAValueWhoseOptionIsGoneStaysVisibleAndRemovable(t *testing.T) {
 	src := readRuntimeFile(t, "10_basics.js")
 
 	// The select shows it rather than silently selecting something else.
-	if !strings.Contains(src, "' — no longer available'") {
+	if !strings.Contains(src, "', no longer available'") {
 		t.Error("a select should show a value it no longer has an option for")
 	}
 	// The checklist keeps it in the list it SAVES from, or unticking is

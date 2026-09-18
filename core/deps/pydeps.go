@@ -91,7 +91,7 @@ func ensurePyDepsDirLocked() string {
 		if _, err := os.Stat(pyDepsDirPath); err == nil {
 			return pyDepsDirPath
 		}
-		nfo.Debug("[pydeps] cached dir %s has gone away — re-creating", pyDepsDirPath)
+		nfo.Debug("[pydeps] cached dir %s has gone away: re-creating", pyDepsDirPath)
 		pyDepsDirPath = ""
 	}
 	base := workspacesDir()
@@ -137,7 +137,7 @@ func EnsurePyDeps(ctx context.Context, specs ...string) error {
 	// under pyInstallMu — never hold pyDepsDirMu across the pip run.
 	dir := EnsurePyDepsDir()
 	if dir == "" {
-		return errors.New("pydeps: WorkspacesDir unset — cannot provision python packages")
+		return errors.New("pydeps: WorkspacesDir unset, cannot provision python packages")
 	}
 
 	pyInstallMu.Lock()
@@ -155,7 +155,7 @@ func EnsurePyDeps(ctx context.Context, specs ...string) error {
 	}
 
 	if _, err := exec.LookPath("python3"); err != nil {
-		return errors.New("pydeps: python3 not found on PATH — cannot provision packages")
+		return errors.New("pydeps: python3 not found on PATH, cannot provision packages")
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, pyInstallLimit)

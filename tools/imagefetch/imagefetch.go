@@ -182,7 +182,7 @@ func (t *ImageTool) TypicalDuration(args map[string]any, sess *ToolSession) time
 }
 
 func (t *ImageTool) Run(args map[string]any) (string, error) {
-	return "", fmt.Errorf("image requires a session context — use GetAgentToolsWithSession")
+	return "", fmt.Errorf("image requires a session context: use GetAgentToolsWithSession")
 }
 func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
 	// The action set is re-read here, not trusted from the schema: a model can
@@ -213,7 +213,7 @@ func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 		inferred, why := inferImageAction(args)
 		if inferred == "" {
 			if why != "" {
-				return "", fmt.Errorf("image was called with no \"action\" but with %s — nothing was done, and nothing was rendered. Re-call with action=\"<one>\": %s", why, strings.Join(avail.names(), " | "))
+				return "", fmt.Errorf("image was called with no \"action\" but with %s: nothing was done, and nothing was rendered. Re-call with action=\"<one>\": %s", why, strings.Join(avail.names(), " | "))
 			}
 		} else {
 			Log("[imagefetch] image called with no action; inferred %q from its arguments", inferred)
@@ -223,7 +223,7 @@ func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 	switch action {
 	case "find":
 		if !avail.find {
-			return "", fmt.Errorf("the find action is unavailable — image search needs the serper provider with an API key configured. Use fetch with a direct image URL, or ask the user to configure search")
+			return "", fmt.Errorf("the find action is unavailable: image search needs the serper provider with an API key configured. Use fetch with a direct image URL, or ask the user to configure search")
 		}
 		return (&FindImageTool{}).RunWithSession(args, sess)
 	case "fetch":
@@ -256,7 +256,7 @@ func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 		if err != nil {
 			return "", err
 		}
-		out := fmt.Sprintf("Kept as %s. That name keeps working from now on — pass it anywhere an image id goes, in this conversation or a later one.", kept.Ref)
+		out := fmt.Sprintf("Kept as %s. That name keeps working from now on: pass it anywhere an image id goes, in this conversation or a later one.", kept.Ref)
 		if kept.Caption != "" {
 			out += "\nWhat it shows: " + kept.Caption
 		}
@@ -271,7 +271,7 @@ func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 					// an identification, unmatched it is a label.
 					out += " Matched to the person you are talking to, so a request naming them resolves to this picture."
 				} else {
-					out += " Matched by name only — nobody with that name has messaged in, so this is a label rather than a confirmed identification."
+					out += " Matched by name only: nobody with that name has messaged in, so this is a label rather than a confirmed identification."
 				}
 				// Say which of the two rules applies. Promising "replaces it"
 				// unconditionally was wrong once supersession required an
@@ -280,25 +280,25 @@ func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 				if strings.TrimSpace(kept.Subject.Handle) != "" {
 					out += " This is now THE picture of them: another anchored picture of the same person replaces it."
 				} else {
-					out += " Because this is a label rather than an identification, it does NOT retire an existing picture of someone by that name — both are kept, and listed as duplicates."
+					out += " Because this is a label rather than an identification, it does NOT retire an existing picture of someone by that name: both are kept, and listed as duplicates."
 				}
 			} else {
 				out += "\nFiled as a picture of " + SubjectLabel(kept.Subject) + "."
 			}
 		}
-		out += "\nA detailed description went to your memory alongside it, so a later question can find this picture — and work from what it looks like — without you remembering the name or looking at it again."
+		out += "\nA detailed description went to your memory alongside it, so a later question can find this picture (and work from what it looks like) without you remembering the name or looking at it again."
 		// Say what keeping your own output does and does not buy. Silence here
 		// reads as "this is now a reference", which is the belief that had
 		// invented subjects standing in for real ones.
 		if kept.Origin.AgentMade() {
-			out += fmt.Sprintf("\nNote: you MADE this picture (%s), so it is kept but NOT treated as a reference — it is not evidence of what any real thing looks like, and it won't be offered as one. Reference images are the ones you were given or found.", kept.Origin)
+			out += fmt.Sprintf("\nNote: you MADE this picture (%s), so it is kept but NOT treated as a reference, it is not evidence of what any real thing looks like, and it won't be offered as one. Reference images are the ones you were given or found.", kept.Origin)
 		}
-		return out + fmt.Sprintf("\nNOT delivered — keeping only files it away. To send it, call workspace(action=\"attach\", path=%q); the kept copy stays where it is. Do NOT re-render it to make it sendable — that produces a different picture.", kept.Ref), nil
+		return out + fmt.Sprintf("\nNOT delivered: keeping only files it away. To send it, call workspace(action=\"attach\", path=%q); the kept copy stays where it is. Do NOT re-render it to make it sendable, that produces a different picture.", kept.Ref), nil
 	case "label":
 		name := StringArg(args, "name")
 		of := strings.TrimSpace(StringArg(args, "of"))
 		if of == "" {
-			return "", fmt.Errorf("label needs \"of\" — who or what the picture shows. To clear a label instead, keep the image again under the same name")
+			return "", fmt.Errorf("label needs \"of\": who or what the picture shows. To clear a label instead, keep the image again under the same name")
 		}
 		kept, conflict, err := LabelKeptImage(sess, name, ResolveKeepSubject(sess, of, BoolArg(args, "is_person")))
 		if err != nil {
@@ -309,17 +309,17 @@ func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 			if strings.TrimSpace(kept.Subject.Handle) != "" {
 				out += " Matched to the person you are talking to, so a request naming them resolves to this picture."
 			} else {
-				out += " Matched by name only — nobody with that name has messaged in, so this is a label rather than a confirmed identification."
+				out += " Matched by name only: nobody with that name has messaged in, so this is a label rather than a confirmed identification."
 			}
 		}
 		if conflict != "" {
 			// Reported, not resolved. Labelling supplies no replacement, and
 			// deleting a real photograph as a side effect of adding a word to
 			// a different one is not something to do quietly.
-			out += fmt.Sprintf(" NOTE: %s is also filed as that subject. Nothing was deleted — decide which one is right and forget the other, or a request naming them has two answers.", conflict)
+			out += fmt.Sprintf(" NOTE: %s is also filed as that subject. Nothing was deleted: decide which one is right and forget the other, or a request naming them has two answers.", conflict)
 		}
 		if kept.Origin == ImageOriginUnknown {
-			out += " Its origin is still unrecorded — labelling says WHO it shows, not where it came from, so do not start calling it a photograph on the strength of this."
+			out += " Its origin is still unrecorded: labelling says WHO it shows, not where it came from, so do not start calling it a photograph on the strength of this."
 		}
 		return out, nil
 	case "forget":
@@ -329,7 +329,7 @@ func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 			return "", err
 		}
 		if !gone {
-			return fmt.Sprintf("Nothing kept under %q — nothing was deleted. Call action=\"help\" to see what you have kept.", name), nil
+			return fmt.Sprintf("Nothing kept under %q: nothing was deleted. Call action=\"help\" to see what you have kept.", name), nil
 		}
 		return fmt.Sprintf("Forgot %q. Its id no longer resolves.", name), nil
 	case "", "help":
@@ -338,7 +338,7 @@ func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 		// picture already made, which is indistinguishable from a result to
 		// anything reading quickly — and what followed was an agent attaching
 		// old pictures as the ones it had just been asked for.
-		help := "NOTHING WAS RENDERED, FOUND OR FETCHED — this is the usage spec for the image tool, not a result. No picture was made by this call.\n\n" +
+		help := "NOTHING WAS RENDERED, FOUND OR FETCHED: this is the usage spec for the image tool, not a result. No picture was made by this call.\n\n" +
 			"image actions: " + strings.Join(avail.names(), " | ") + ". Each saves to your workspace and returns the path; deliver with workspace(action=\"attach\", path=...)."
 		if m := RecentImageManifest(sess); m != "" {
 			help += "\n\n" + m
@@ -348,7 +348,7 @@ func (t *ImageTool) RunWithSession(args map[string]any, sess *ToolSession) (stri
 		}
 		return help, nil
 	default:
-		return "", fmt.Errorf("unknown action %q for image — use %s", StringArg(args, "action"), strings.Join(avail.names(), " | "))
+		return "", fmt.Errorf("unknown action %q for image: use %s", StringArg(args, "action"), strings.Join(avail.names(), " | "))
 	}
 }
 
@@ -462,7 +462,7 @@ func checkRenderBudget(sess *ToolSession) error {
 	if total <= cap {
 		return nil
 	}
-	return fmt.Errorf("no picture was made — you have already rendered %d in this turn, which is the ceiling. "+
+	return fmt.Errorf("no picture was made: you have already rendered %d in this turn, which is the ceiling. "+
 		"Stop rendering and finish the request with what you have: attach every picture you have not delivered yet (workspace attach, one call per file), then write your reply. "+
 		"Do NOT call image again this turn, and do NOT tell the user a number you have not actually attached", cap)
 }
@@ -487,9 +487,9 @@ func inlineSetNote(sess *ToolSession, want int) string {
 	}
 	made := sess.ImageRenderCount()
 	if made < want {
-		return fmt.Sprintf("\n\nThat is picture %d of the %d you said you would make. Attach THIS one now — deliver them as you go rather than saving them all for the end, which is how a set gets announced and never sent — then call image again for the next, varying the idea rather than repeating it.", made, want)
+		return fmt.Sprintf("\n\nThat is picture %d of the %d you said you would make. Attach THIS one now (deliver them as you go rather than saving them all for the end, which is how a set gets announced and never sent), then call image again for the next, varying the idea rather than repeating it.", made, want)
 	}
-	return fmt.Sprintf("\n\nThat is the LAST of the %d you said you would make — the set is COMPLETE. Attach this one, make sure every picture in the set has actually been attached, and write your reply. Do NOT render another for this request, and do not name a count you have not attached.", want)
+	return fmt.Sprintf("\n\nThat is the LAST of the %d you said you would make: the set is COMPLETE. Attach this one, make sure every picture in the set has actually been attached, and write your reply. Do NOT render another for this request, and do not name a count you have not attached.", want)
 }
 
 // noteSeriesPiece books a finished render against a declared set and, when

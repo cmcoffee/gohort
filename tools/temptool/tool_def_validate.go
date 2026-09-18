@@ -9,7 +9,7 @@ import (
 // pathPlaceholderMsg is the authoring error for an optional PATH placeholder.
 // Shared by the single-api-tool and toolbox-action create paths so both refuse
 // the same shape with the same guidance.
-const pathPlaceholderMsg = "param(s) %v are interpolated into the url_template's PATH but are not required — url substitution has nothing to put there when they're omitted, so the call dies at dispatch with `url template: missing arg \"%s\"`. Either add them to required, or move them to the query string (\"?key={%s}\"), where an omitted placeholder legitimately drops out of the URL"
+const pathPlaceholderMsg = "param(s) %v are interpolated into the url_template's PATH but are not required, url substitution has nothing to put there when they're omitted, so the call dies at dispatch with `url template: missing arg \"%s\"`. Either add them to required, or move them to the query string (\"?key={%s}\"), where an omitted placeholder legitimately drops out of the URL"
 
 // placeholderRE matches a {param} interpolation in a URL or body template.
 // The optional ":modifier" tail is part of the placeholder syntax (see

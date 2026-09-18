@@ -384,7 +384,7 @@ func (t *chatTurn) toolLogPromptSection() string {
 	}
 	var b strings.Builder
 	b.WriteString("## Tool calls already made this turn\n")
-	b.WriteString("These calls ran in earlier steps. DO NOT repeat them — the cache short-circuits anyway, but a re-call wastes a round. Use what was already found:\n\n")
+	b.WriteString("These calls ran in earlier steps. DO NOT repeat them: the cache short-circuits anyway, but a re-call wastes a round. Use what was already found:\n\n")
 	for _, rec := range t.toolCalls {
 		b.WriteString("- ")
 		b.WriteString(formatToolCall(rec.Name, rec.Args))

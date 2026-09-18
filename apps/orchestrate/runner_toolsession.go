@@ -656,9 +656,9 @@ func (t *chatTurn) loadToolToolDef(sess *ToolSession) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "load_tool",
-			Description: "Load one or more of your custom tools so you can call them. Custom tools are listed by name + description under \"Your custom tools\" but their parameters aren't loaded until you call this. Pass ALL the tools you expect to need for the task in ONE call (names[]) — batching loads them in a single round instead of one round per tool. Returns their parameters and makes them callable on your next step. Only needed for custom tools shown as needing a load — built-in tools are always ready.",
+			Description: "Load one or more of your custom tools so you can call them. Custom tools are listed by name + description under \"Your custom tools\" but their parameters aren't loaded until you call this. Pass ALL the tools you expect to need for the task in ONE call (names[]): batching loads them in a single round instead of one round per tool. Returns their parameters and makes them callable on your next step. Only needed for custom tools shown as needing a load: built-in tools are always ready.",
 			Parameters: map[string]ToolParam{
-				"names": {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Exact names of the custom tools to load (from the \"Your custom tools\" list). Pass every tool you anticipate needing — one or many."},
+				"names": {Type: "array", Items: &ToolParam{Type: "string"}, Description: "Exact names of the custom tools to load (from the \"Your custom tools\" list). Pass every tool you anticipate needing: one or many."},
 			},
 			Required: nil, // validated in the handler (also tolerates a singular `name`)
 			Caps:     nil, // control/meta — no side effects of its own
@@ -741,13 +741,13 @@ func (t *chatTurn) loadToolToolDef(sess *ToolSession) AgentToolDef {
 			var b strings.Builder
 			if len(loaded) > 0 {
 				sb, _ := json.Marshal(schemas)
-				fmt.Fprintf(&b, "Loaded %s — now callable. Schemas:\n%s\n", strings.Join(loaded, ", "), string(sb))
+				fmt.Fprintf(&b, "Loaded %s: now callable. Schemas:\n%s\n", strings.Join(loaded, ", "), string(sb))
 			}
 			if len(already) > 0 {
 				fmt.Fprintf(&b, "Already loaded (call directly): %s\n", strings.Join(already, ", "))
 			}
 			if len(unknown) > 0 {
-				fmt.Fprintf(&b, "Unknown — check the \"Your custom tools\" list or call find_tools: %s\n", strings.Join(unknown, ", "))
+				fmt.Fprintf(&b, "Unknown, check the \"Your custom tools\" list or call find_tools: %s\n", strings.Join(unknown, ", "))
 			}
 			return strings.TrimSpace(b.String()), nil
 		},
@@ -955,7 +955,7 @@ func uploadedImageHandles(n int) string {
 	} else {
 		fmt.Fprintf(&b, "these %d images, and you can see them above. Refer to them as media#1 through media#%d, in the order they were sent", n, n)
 	}
-	b.WriteString(". Pass those ids to the image tool to edit, blend, or combine them — do NOT invent a filename, and do NOT substitute a picture you made earlier.]")
+	b.WriteString(". Pass those ids to the image tool to edit, blend, or combine them: do NOT invent a filename, and do NOT substitute a picture you made earlier.]")
 	return b.String()
 }
 

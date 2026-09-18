@@ -46,7 +46,7 @@ func agentCommandRefusal(cmd string, cat RiskCategory, reason, appliance string)
 		detail = " (" + detail + ")"
 	}
 	return fmt.Errorf("not run: %q is %s%s on %s, and you have no standing permission for that. "+
-		"Nothing was executed and nothing is waiting — say so plainly and tell the person that the owner can allow %s for you on %s, "+
+		"Nothing was executed and nothing is waiting: say so plainly and tell the person that the owner can allow %s for you on %s, "+
 		"or run it themselves from Servitor. Do NOT retry it, reword it, or try to get the same effect another way",
 		truncateCmd(cmd, 160), string(cat), detail, where, string(cat), where)
 }

@@ -48,7 +48,7 @@ func StagingRoot(owner, id string) (string, error) {
 		base = strings.TrimSpace(StagingDir())
 	}
 	if base == "" {
-		return "", fmt.Errorf("no staging directory is configured — set [paths] bundle_dir in the config and restart")
+		return "", fmt.Errorf("no staging directory is configured: set [paths] bundle_dir in the config and restart")
 	}
 	if owner == "" || id == "" {
 		return "", fmt.Errorf("owner and bundle id are both required to stage an upload")

@@ -100,8 +100,8 @@ const (
 // (In a 1:1 every inbound is "directed at the agent", so rule 2 naturally admits
 // ordinary 1:1 traffic; in a group it correctly narrows to messages aimed at the
 // agent.)
-const DefaultDMGatekeeperRule = "WAKE when the incoming message mentions or addresses the agent by name — including common nicknames or obvious typos of that name.\n" +
-	"WAKE when the incoming message is a fragment, direct reply, or continuation of a message that was directed at the agent specifically — it answers or clearly follows up on something the agent said or was asked in this thread. Otherwise — unrelated topics, or an exchange between other people the agent isn't part of — stay silent (recorded only)."
+const DefaultDMGatekeeperRule = "WAKE when the incoming message mentions or addresses the agent by name, including common nicknames or obvious typos of that name.\n" +
+	"WAKE when the incoming message is a fragment, direct reply, or continuation of a message that was directed at the agent specifically: it answers or clearly follows up on something the agent said or was asked in this thread. Otherwise (unrelated topics, or an exchange between other people the agent isn't part of), stay silent (recorded only)."
 
 // BridgeService describes a known transport. Adding a new bridge is, on the
 // gohort side, ONE entry here: the routing id is the lowercase map key (stays
@@ -153,7 +153,7 @@ func lookupBridgeService(service string) (BridgeService, bool) {
 	}
 	if id != "" {
 		if _, seen := warnedUnknownServices.LoadOrStore(id, true); !seen {
-			nfo.Warn("[channel] unknown transport service %q — falling back to raw-id display + plain-text delivery; add it to bridgeServices if it should render markdown", id)
+			nfo.Warn("[channel] unknown transport service %q: falling back to raw-id display + plain-text delivery; add it to bridgeServices if it should render markdown", id)
 		}
 	}
 	return BridgeService{}, false

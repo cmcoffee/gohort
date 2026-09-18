@@ -78,7 +78,7 @@ func foldAgentToolsIntoStore(udb Database, owner string, rec *AgentRecord) (move
 			FormerAgentName: rec.Name,
 			OrphanedAt:      time.Now(),
 		}})
-		Log("[tool_flatten] %s/%s: %q DIVERGED from the store copy — record copy stashed in Orphaned tools", owner, rec.Name, t.Name)
+		Log("[tool_flatten] %s/%s: %q DIVERGED from the store copy, record copy stashed in Orphaned tools", owner, rec.Name, t.Name)
 		orphaned++
 	}
 	rec.Tools = nil

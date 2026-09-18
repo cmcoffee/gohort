@@ -394,7 +394,7 @@ func bundleAgentToolByID(udb Database, owner, agentID string, t TempTool) error 
 	// too so no caller can bundle onto one. Removal stays open (unbundle is
 	// unguarded) so an already-mis-scoped tool can still be cleaned off.
 	if isAppAgent(rec.ID) {
-		return fmt.Errorf("cannot scope a tool onto app agent %q — app agents get their tools from the owning app, not the LLM-authored plane", rec.Name)
+		return fmt.Errorf("cannot scope a tool onto app agent %q: app agents get their tools from the owning app, not the LLM-authored plane", rec.Name)
 	}
 	// No Owner-field equality guard: the agent was loaded from the resolved user
 	// store (agentUserDB) and this is the admin-driven scope path, which scopes a
@@ -494,7 +494,7 @@ func rehomeOrphanTool(db Database, owner, toolName, target string) error {
 		if len(live.ScopeAgents) > 0 {
 			where = fmt.Sprintf("agent scope %v", live.ScopeAgents)
 		}
-		return fmt.Errorf("a live tool named %q already exists (%s) — re-homing this orphan would overwrite it with the older copy. Discard the orphan, or rename one of the two first", toolName, where)
+		return fmt.Errorf("a live tool named %q already exists (%s): re-homing this orphan would overwrite it with the older copy. Discard the orphan, or rename one of the two first", toolName, where)
 	}
 	if target == "global" {
 		if err := AdminPersistTempTool(db, owner, *def); err != nil {
@@ -631,7 +631,7 @@ func attachGlobalToolToAgent(db Database, owner, agentID, toolName string) error
 	// contradictory. Said out loud, because the alternative — accept the toggle
 	// and store nothing — is indistinguishable from the bug above.
 	if isNoToolsSentinel(rec.AllowedTools) {
-		return fmt.Errorf("%q is set to no optional tools — turn tools on in its Tools modal before granting one here", agentName(rec))
+		return fmt.Errorf("%q is set to no optional tools: turn tools on in its Tools modal before granting one here", agentName(rec))
 	}
 	changed := false
 	// 1) Re-enable an explicitly opted-out tool.

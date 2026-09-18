@@ -60,7 +60,7 @@ func appRewriteRisk(prior, next string) string {
 	}
 
 	var b strings.Builder
-	b.WriteString("that update was NOT saved — it looks like a partial rewrite rather than a revision, and the app still serves the previous revision.\n\n")
+	b.WriteString("that update was NOT saved: it looks like a partial rewrite rather than a revision, and the app still serves the previous revision.\n\n")
 	if shrank {
 		fmt.Fprintf(&b, "- The html went from %d chars to %d (%d%% of the original).\n", len(prior), len(next), len(next)*100/len(prior))
 	}
@@ -71,11 +71,11 @@ func appRewriteRisk(prior, next string) string {
 	if dropped := appDroppedFunctions(prior, next); len(dropped) > 0 {
 		fmt.Fprintf(&b, "- Functions present before and missing now: %s.\n", appNameList(dropped, 12))
 	}
-	b.WriteString("\nThis is the failure that looks like a success: the page still PARSES and still LOADS clean, so nothing downstream would have caught it — a canvas app runs no code until the user interacts, and by then the tool has already told you it worked.\n\n")
+	b.WriteString("\nThis is the failure that looks like a success: the page still PARSES and still LOADS clean, so nothing downstream would have caught it, a canvas app runs no code until the user interacts, and by then the tool has already told you it worked.\n\n")
 	b.WriteString("If you are changing PART of the app, don't send the document at all:\n")
-	b.WriteString("  · replace_function {id, function:\"<name>\", replace:\"<whole new function>\"} — rewrites one function; you never reproduce the old text.\n")
-	b.WriteString("  · patch_html {id, find, replace} — for a constant or a one-line fix.\n")
-	b.WriteString("If you really are re-authoring this app from scratch and the document you sent is COMPLETE, send it again with confirm_rewrite:true — the version it replaces is kept either way, so app_def(action=\"revert\") can put it back.")
+	b.WriteString("  · replace_function {id, function:\"<name>\", replace:\"<whole new function>\"}, rewrites one function; you never reproduce the old text.\n")
+	b.WriteString("  · patch_html {id, find, replace}, for a constant or a one-line fix.\n")
+	b.WriteString("If you really are re-authoring this app from scratch and the document you sent is COMPLETE, send it again with confirm_rewrite:true, the version it replaces is kept either way, so app_def(action=\"revert\") can put it back.")
 	return b.String()
 }
 
@@ -187,9 +187,9 @@ func appDroppedFunctionSection(prior, next []map[string]any) string {
 		if i > 0 {
 			b.WriteString("; ")
 		}
-		fmt.Fprintf(&b, "%q — %s", kind, functionalSectionKinds[kind])
+		fmt.Fprintf(&b, "%q: %s", kind, functionalSectionKinds[kind])
 	}
-	b.WriteString(".\n\nupdate REPLACES the sections array, so a section you left out is a section you deleted. The page will still render and verify will still pass — a form and a table are a valid page — but the thing the app is FOR will be gone, and the save would have reported success.\n\n")
-	b.WriteString("Send the sections you want plus the ones already there (app_def(action=\"get\") returns them in the shape update accepts). If you really do mean to remove it, send this again with confirm_rewrite:true — the version it replaces is kept either way, so app_def(action=\"revert\") can put it back.")
+	b.WriteString(".\n\nupdate REPLACES the sections array, so a section you left out is a section you deleted. The page will still render and verify will still pass (a form and a table are a valid page), but the thing the app is FOR will be gone, and the save would have reported success.\n\n")
+	b.WriteString("Send the sections you want plus the ones already there (app_def(action=\"get\") returns them in the shape update accepts). If you really do mean to remove it, send this again with confirm_rewrite:true, the version it replaces is kept either way, so app_def(action=\"revert\") can put it back.")
 	return b.String()
 }

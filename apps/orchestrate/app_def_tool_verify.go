@@ -35,7 +35,7 @@ func scriptFailureHint(output string) string {
 			name = strings.TrimPrefix(rest, "'")[:j]
 		}
 	}
-	msg := "HINT: the gohort module exports only " + strings.Join(gohortScriptHelpers, ", ") + " — that is the network/secret channel, NOT the tool catalog."
+	msg := "HINT: the gohort module exports only " + strings.Join(gohortScriptHelpers, ", ") + ", that is the network/secret channel, NOT the tool catalog."
 	if name != "" {
 		msg += " " + strconv.Quote(name) + " is a gohort TOOL, and a tool cannot be imported or subprocessed from a script."
 	}
@@ -63,10 +63,10 @@ func (t *chatTurn) appDefTest(args map[string]any) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
 	spec, ok := LoadAppSpec(t.user, key)
 	if !ok {
-		return "", errors.New("no matching app to test — check the slug (app_def action=list)")
+		return "", errors.New("no matching app to test: check the slug (app_def action=list)")
 	}
 	if len(spec.DataSources) == 0 && len(spec.Actions) == 0 {
-		return fmt.Sprintf("App %q has no script-backed components (data_sources or actions) to test — a plain form/table app uses the built-in record store and needs no script test.", spec.Name), nil
+		return fmt.Sprintf("App %q has no script-backed components (data_sources or actions) to test: a plain form/table app uses the built-in record store and needs no script test.", spec.Name), nil
 	}
 	// Optional example form data: run the chain against THESE records instead of
 	// the (often empty) live store, so the full form→record→data-source→output
@@ -111,7 +111,7 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
 	spec, ok := LoadAppSpec(t.user, key)
 	if !ok {
-		return "", errors.New("no matching app to verify — check the slug (app_def action=list)")
+		return "", errors.New("no matching app to verify: check the slug (app_def action=list)")
 	}
 	var b strings.Builder
 	failures := 0
@@ -119,7 +119,7 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 	// issued alongside an update in the same round checks the OLD
 	// revision, and without the stamp its findings read as if the fix
 	// never landed.
-	fmt.Fprintf(&b, "Verified app %q end-to-end (spec revision saved %s — if you updated the app AFTER that, this report describes the OLD revision; verify again).\n\n", spec.Name, spec.Updated)
+	fmt.Fprintf(&b, "Verified app %q end-to-end (spec revision saved %s: if you updated the app AFTER that, this report describes the OLD revision; verify again).\n\n", spec.Name, spec.Updated)
 
 	// A bound pipeline that does not resolve. The page renders fine without it
 	// — the panel does not touch the pipeline until someone presses Start — so
@@ -132,9 +132,9 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 	if ref := strings.TrimSpace(spec.PipelineID); ref != "" {
 		if def, ok := t.app.LookupAppPipeline(t.user, ref); !ok {
 			failures++
-			fmt.Fprintf(&b, "FAIL binding — pipeline_id %q resolves to nothing. The page will render and Start will fail; author the pipeline first (pipeline action=list shows yours), then update the app.\n\n", ref)
+			fmt.Fprintf(&b, "FAIL binding: pipeline_id %q resolves to nothing. The page will render and Start will fail; author the pipeline first (pipeline action=list shows yours), then update the app.\n\n", ref)
 		} else {
-			fmt.Fprintf(&b, "OK   binding — pipeline_id resolves to %q (%d stage(s)).\n\n", def.Name, len(def.Stages))
+			fmt.Fprintf(&b, "OK   binding: pipeline_id resolves to %q (%d stage(s)).\n\n", def.Name, len(def.Stages))
 		}
 	}
 
@@ -160,9 +160,9 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 	if html := appSpecHTMLText(spec); html != "" {
 		if dangling := jsDanglingCalls(html); len(dangling) > 0 {
 			failures++
-			fmt.Fprintf(&b, "Code check:\nFAIL the page calls code it never defines: %s\nThese parse fine and the page below may well load clean — the failure happens when someone actually USES the app. Restore the missing functions (app_def action=\"replace_function\") or drop the calls.\n\n", appNameList(dangling, 12))
+			fmt.Fprintf(&b, "Code check:\nFAIL the page calls code it never defines: %s\nThese parse fine and the page below may well load clean, the failure happens when someone actually USES the app. Restore the missing functions (app_def action=\"replace_function\") or drop the calls.\n\n", appNameList(dangling, 12))
 		} else {
-			b.WriteString("Code check: OK — every function the page calls is defined somewhere in it.\n\n")
+			b.WriteString("Code check: OK, every function the page calls is defined somewhere in it.\n\n")
 		}
 	}
 
@@ -198,16 +198,16 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 	rep, err := CheckPageAsUser(RootDB, t.user, "/apps/"+spec.Slug+"/", probe)
 	if err != nil {
 		failures++
-		fmt.Fprintf(&b, "Page check: COULD NOT RUN — %v\n", err)
+		fmt.Fprintf(&b, "Page check: COULD NOT RUN, %v\n", err)
 	} else {
 		b.WriteString("Page check (headless browser, JS executed):\n")
 		for _, e := range rep.PageErrors {
 			failures++
-			fmt.Fprintf(&b, "FAIL uncaught JS exception — %s\n", e)
+			fmt.Fprintf(&b, "FAIL uncaught JS exception: %s\n", e)
 		}
 		for _, e := range rep.ConsoleErrors {
 			failures++
-			fmt.Fprintf(&b, "FAIL console error — %s\n", e)
+			fmt.Fprintf(&b, "FAIL console error: %s\n", e)
 		}
 		for _, e := range rep.FailedRequests {
 			// A missing favicon is browser noise, not an app defect.
@@ -215,7 +215,7 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 				continue
 			}
 			failures++
-			fmt.Fprintf(&b, "FAIL request — %s\n", e)
+			fmt.Fprintf(&b, "FAIL request: %s\n", e)
 		}
 		// Positive per-data-source confirmation: the page must have
 		// actually FETCHED each source's live endpoint and gotten a
@@ -247,16 +247,16 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 				// the script just didn't answer inside the check window.
 				// A latency problem, not a structure problem — warn, but
 				// don't send the author chasing section config.
-				fmt.Fprintf(&b, "WARN data source %q — the page DID request %s but the response had not arrived when the check ended. The wiring is correct; the SCRIPT IS SLOW (a script that makes many sequential fetch_url calls takes that long on every page load). Reduce the calls or accept slow loads — do NOT change the section wiring.\n", ds.Name, endpoint)
+				fmt.Fprintf(&b, "WARN data source %q: the page DID request %s but the response had not arrived when the check ended. The wiring is correct; the SCRIPT IS SLOW (a script that makes many sequential fetch_url calls takes that long on every page load). Reduce the calls or accept slow loads: do NOT change the section wiring.\n", ds.Name, endpoint)
 			case status == 0:
 				failures++
-				fmt.Fprintf(&b, "FAIL data source %q — the page NEVER fetched %s; no section is wired to it. Set source_script:%q on the table/display that should render it, or — from an html section's script — call fetch(%q) (plain relative fetch; there is no client-side gohort object in app pages).\n", ds.Name, endpoint, ds.Name, "data/"+ds.Name)
+				fmt.Fprintf(&b, "FAIL data source %q: the page NEVER fetched %s; no section is wired to it. Set source_script:%q on the table/display that should render it, or (from an html section's script), call fetch(%q) (plain relative fetch; there is no client-side gohort object in app pages).\n", ds.Name, endpoint, ds.Name, "data/"+ds.Name)
 			case status >= 400:
 				// Already counted via FailedRequests above; this line
 				// just names the source for the fix.
 				fmt.Fprintf(&b, "     ^ that failing request is data source %q.\n", ds.Name)
 			default:
-				fmt.Fprintf(&b, "OK   data source %q — page fetched %s live (HTTP %d).\n", ds.Name, endpoint, status)
+				fmt.Fprintf(&b, "OK   data source %q: page fetched %s live (HTTP %d).\n", ds.Name, endpoint, status)
 			}
 		}
 		var pr struct {
@@ -273,12 +273,12 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 			switch {
 			case pr.Sections == 0:
 				failures++
-				b.WriteString("FAIL render — no sections mounted; the page is blank.\n")
+				b.WriteString("FAIL render: no sections mounted; the page is blank.\n")
 			case expected > 0 && pr.Sections < expected:
 				failures++
-				fmt.Fprintf(&b, "FAIL render — only %d of %d sections mounted; a section config is likely invalid.\n", pr.Sections, expected)
+				fmt.Fprintf(&b, "FAIL render: only %d of %d sections mounted; a section config is likely invalid.\n", pr.Sections, expected)
 			default:
-				fmt.Fprintf(&b, "OK   render — %d section(s) mounted (%d table(s)).\n", pr.Sections, pr.Tables)
+				fmt.Fprintf(&b, "OK   render: %d section(s) mounted (%d table(s)).\n", pr.Sections, pr.Tables)
 			}
 			// A canvas app draws instead of writing, so visuals count as
 			// content — and a LIVE panel (chat, pipeline, workbench) is mostly
@@ -294,20 +294,20 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 			// one.
 			if pr.BodyChars < 40 && pr.Visuals == 0 && pr.Panels == 0 && len(pr.EmptyTexts) == 0 {
 				failures++
-				fmt.Fprintf(&b, "FAIL render — page body is nearly empty (%d chars of text, nothing drawn).\n", pr.BodyChars)
+				fmt.Fprintf(&b, "FAIL render: page body is nearly empty (%d chars of text, nothing drawn).\n", pr.BodyChars)
 			}
 			if pr.Panels > 0 {
-				fmt.Fprintf(&b, "OK   %d live panel(s) mounted (chat / pipeline / workbench) — these look empty until a run or a message starts, which is correct for a fresh one.\n", pr.Panels)
+				fmt.Fprintf(&b, "OK   %d live panel(s) mounted (chat / pipeline / workbench): these look empty until a run or a message starts, which is correct for a fresh one.\n", pr.Panels)
 			}
 			if pr.Frames > 0 {
 				fmt.Fprintf(&b, "OK   %d framed document(s) rendered (an html section holding a complete page gets its own frame).\n", pr.Frames)
 			}
 			for _, txt := range pr.EmptyTexts {
-				fmt.Fprintf(&b, "NOTE a table is showing its empty state: %q — fine for a fresh store; a problem if records/data should exist.\n", txt)
+				fmt.Fprintf(&b, "NOTE a table is showing its empty state: %q, fine for a fresh store; a problem if records/data should exist.\n", txt)
 			}
 		} else {
 			failures++
-			b.WriteString("FAIL render — the DOM probe returned nothing; the page runtime likely never booted.\n")
+			b.WriteString("FAIL render: the DOM probe returned nothing; the page runtime likely never booted.\n")
 		}
 	}
 
@@ -318,13 +318,13 @@ func (t *chatTurn) appDefVerify(args map[string]any) (string, error) {
 	// lived in a tool result the next session never sees.
 	summary := "PASS"
 	if failures > 0 {
-		summary = fmt.Sprintf("FAIL — %d problem(s)", failures)
+		summary = fmt.Sprintf("FAIL: %d problem(s)", failures)
 	}
 	spec.RecordVerify(failures == 0, summary)
 	if failures > 0 {
-		fmt.Fprintf(&b, "\nVERDICT: FAIL — %d problem(s) above. Fix with app_def action=update and run verify again. Do NOT tell the user the app is ready.", failures)
+		fmt.Fprintf(&b, "\nVERDICT: FAIL, %d problem(s) above. Fix with app_def action=update and run verify again. Do NOT tell the user the app is ready.", failures)
 	} else {
-		b.WriteString("\nVERDICT: PASS — scripts run clean and the page renders in a real browser with no JS errors or failed fetches. Safe to tell the user it's ready.")
+		b.WriteString("\nVERDICT: PASS, scripts run clean and the page renders in a real browser with no JS errors or failed fetches. Safe to tell the user it's ready.")
 	}
 	b.WriteString(" (Recorded against revision " + spec.Updated + "; any later edit makes it stale.)")
 	return b.String(), nil
@@ -435,30 +435,30 @@ func (t *chatTurn) checkScripts(spec AppSpec, includeActions bool, sample []map[
 		out, err := appscript.Run(t.user, db, spec.Slug, kind, name, lang, script, caps, scriptArgs)
 		if err != nil {
 			fail++
-			fmt.Fprintf(&b, "FAIL %s — could not run: %v\n", label, err)
+			fmt.Fprintf(&b, "FAIL %s, could not run: %v\n", label, err)
 			return
 		}
 		trimmed := strings.TrimSpace(out)
 		if trimmed == "" {
 			if kind == "action" { // an action may legitimately print nothing
 				pass++
-				fmt.Fprintf(&b, "OK   %s — ran, printed nothing (no message/records).\n", label)
+				fmt.Fprintf(&b, "OK   %s: ran, printed nothing (no message/records).\n", label)
 				return
 			}
 			fail++
-			fmt.Fprintf(&b, "FAIL %s — printed nothing; a data source must print JSON to stdout.\n", label)
+			fmt.Fprintf(&b, "FAIL %s: printed nothing; a data source must print JSON to stdout.\n", label)
 			return
 		}
 		if !json.Valid([]byte(trimmed)) {
 			fail++
-			fmt.Fprintf(&b, "FAIL %s — did not print valid JSON. Output:\n%s\n", label, truncate(trimmed, 800))
+			fmt.Fprintf(&b, "FAIL %s: did not print valid JSON. Output:\n%s\n", label, truncate(trimmed, 800))
 			if hint := scriptFailureHint(trimmed); hint != "" {
 				fmt.Fprintf(&b, "     %s\n", hint)
 			}
 			if strings.Contains(trimmed, `json.loads("records")`) || strings.Contains(trimmed, "json.loads('records')") {
-				b.WriteString("     Hint: read records with json.loads(os.environ.get('records', '[]')) — json.loads(\"records\") parses the literal word, not the data.\n")
+				b.WriteString("     Hint: read records with json.loads(os.environ.get('records', '[]')), json.loads(\"records\") parses the literal word, not the data.\n")
 			} else if strings.Contains(trimmed, "KeyError") || strings.Contains(trimmed, "os.environ[") {
-				b.WriteString("     Hint: a data source runs on page load with NO query params set — read every env var with a default, e.g. os.environ.get('city', ''), never os.environ['city'].\n")
+				b.WriteString("     Hint: a data source runs on page load with NO query params set, read every env var with a default, e.g. os.environ.get('city', ''), never os.environ['city'].\n")
 			}
 			return
 		}
@@ -474,21 +474,21 @@ func (t *chatTurn) checkScripts(spec AppSpec, includeActions bool, sample []map[
 					// (os.environ.get('city')) instead of pulling the saved entries
 					// from the records env var — the "added a location, no forecast"
 					// disconnect. Pass (it's valid) but flag it loudly.
-					fmt.Fprintf(&b, "WARN %s — printed an EMPTY array though the app has %d saved record(s). The script is probably reading a query param (e.g. os.environ.get('city')) that is never set; read the saved entries from the `records` env var instead, e.g. recs = json.loads(os.environ.get('records','[]')).\n", label, len(recs))
+					fmt.Fprintf(&b, "WARN %s: printed an EMPTY array though the app has %d saved record(s). The script is probably reading a query param (e.g. os.environ.get('city')) that is never set; read the saved entries from the `records` env var instead, e.g. recs = json.loads(os.environ.get('records','[]')).\n", label, len(recs))
 				} else {
-					fmt.Fprintf(&b, "OK   %s — printed a JSON array (%d item(s)); good for a table.\n", label, len(arr))
+					fmt.Fprintf(&b, "OK   %s: printed a JSON array (%d item(s)); good for a table.\n", label, len(arr))
 				}
 			} else {
 				pass++
-				fmt.Fprintf(&b, "OK   %s — printed a JSON object; good for a display (a table section needs a JSON array).\n", label)
+				fmt.Fprintf(&b, "OK   %s: printed a JSON object; good for a display (a table section needs a JSON array).\n", label)
 			}
 		case "action":
 			if _, isObj := v.(map[string]any); isObj {
 				pass++
-				fmt.Fprintf(&b, "OK   %s — printed a JSON object {message?, records?}.\n", label)
+				fmt.Fprintf(&b, "OK   %s: printed a JSON object {message?, records?}.\n", label)
 			} else {
 				fail++
-				fmt.Fprintf(&b, "FAIL %s — an action must print a JSON OBJECT {message?, records?}, got %T.\n", label, v)
+				fmt.Fprintf(&b, "FAIL %s: an action must print a JSON OBJECT {message?, records?}, got %T.\n", label, v)
 			}
 		}
 	}

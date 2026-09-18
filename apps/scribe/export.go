@@ -49,7 +49,7 @@ func (T *Scribe) handleExport(w http.ResponseWriter, r *http.Request, udb Databa
 		brand, siteName := docBranding()
 		_, _ = w.Write([]byte(renderGuideStandaloneHTML(g, brand, siteName)))
 	default:
-		http.Error(w, "unknown format — use pdf | html | md", http.StatusBadRequest)
+		http.Error(w, "unknown format: use pdf | html | md", http.StatusBadRequest)
 	}
 }
 

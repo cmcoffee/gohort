@@ -172,7 +172,7 @@ func buildKnowledgeExport(udb Database, a Appliance) string {
 				line += " (" + svc + ")"
 			}
 			if desc := strings.TrimSpace(e.Desc); desc != "" {
-				line += " — " + desc
+				line += " · " + desc
 			}
 			b.WriteString(line + "\n")
 		}

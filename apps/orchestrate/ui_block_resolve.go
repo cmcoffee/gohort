@@ -129,7 +129,7 @@ func settleResolvedBlocks(blocks []UIBlock, owner string) []UIBlock {
 		// Drafts land disabled with no secret; enabling one is the act of
 		// finishing it. Still disabled means the card's ask stands.
 		if ok && !c.Disabled {
-			b.Resolved = "Configured — the credential is live."
+			b.Resolved = "Configured: the credential is live."
 		}
 	}
 	return blocks
@@ -171,7 +171,7 @@ func refreshPrivilegeBlocks(udb Database, blocks []UIBlock) []UIBlock {
 			// Nothing left to grant. Settling rather than hiding keeps the
 			// record of what was once decided here, without controls that
 			// would 404 on click.
-			b.Resolved = "This agent no longer exists — nothing to grant."
+			b.Resolved = "This agent no longer exists: nothing to grant."
 			continue
 		}
 		approved := map[string]bool{}

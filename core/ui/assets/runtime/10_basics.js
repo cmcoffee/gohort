@@ -36,6 +36,7 @@
           }).catch(function(err){ showToast('Save failed: ' + err.message); input.checked = !input.checked; });
         });
         var labelText = el('span', {class: 'ui-toggle-label'}, [t.label,
+          window.uiInfoIcon(t.detail),
           t.help ? el('span', {class: 'ui-toggle-help'}, [t.help]) : null]);
         var row = el('label', {class: 'ui-toggle-row'}, [labelText, input]);
         wrap.appendChild(row);
@@ -831,7 +832,7 @@
     }
     function showRevealed(rec) {
       revealed.innerHTML = '';
-      revealed.appendChild(el('div', {class: 'ui-keys-revealed-h'}, ['Key created — copy now, it will not be shown again']));
+      revealed.appendChild(el('div', {class: 'ui-keys-revealed-h'}, ['Key created: copy now, it will not be shown again']));
       if (cfg.secret_hint) revealed.appendChild(el('div', {class: 'ui-keys-revealed-hint'}, [cfg.secret_hint]));
       var secret = rec[secretF] || '';
       revealed.appendChild(el('div', {class: 'ui-keys-revealed-secret'}, [secret]));
@@ -871,7 +872,7 @@
           var metaBits = [];
           if (rec[createdF])  metaBits.push('created ' + relTime(rec[createdF]));
           if (rec[lastSeenF]) metaBits.push('last seen ' + relTime(rec[lastSeenF]));
-          var meta    = el('div', {class: 'ui-keys-row-meta'}, [metaBits.join(' · ') || '—']);
+          var meta    = el('div', {class: 'ui-keys-row-meta'}, [metaBits.join(' · ') || '·']);
           var del     = el('button', {class: 'ui-keys-row-del', title: 'Delete this key'}, ['×']);
           del.addEventListener('click', async function() {
             if (!(await window.uiConfirm('Delete this API key? Any client using it will stop working.'))) return;
@@ -1304,7 +1305,8 @@
       if (t === 'header') {
         fieldWrap.classList.add('ui-form-section');
         if (f.label) {
-          fieldWrap.appendChild(el('div', {class: 'ui-form-section-title'}, [f.label]));
+          fieldWrap.appendChild(window.uiAttachInfo(
+            el('div', {class: 'ui-form-section-title'}, [f.label]), f.detail));
         }
         if (f.help) {
           fieldWrap.appendChild(el('div', {class: 'ui-form-section-help'}, [f.help]));
@@ -1319,7 +1321,7 @@
       // and without a second component fetching the same document twice.
       // Multi-line values keep their line breaks.
       if (t === 'readonly') {
-        if (f.label) fieldWrap.appendChild(el('label', {class: 'ui-form-label'}, [f.label]));
+        if (f.label) fieldWrap.appendChild(window.uiAttachInfo(el('label', {class: 'ui-form-label'}, [f.label]), f.detail));
         var roVal = (f.field && current[f.field] !== undefined && current[f.field] !== null)
           ? String(current[f.field]) : '';
         var ro = el('div', {class: 'ui-form-readonly'}, [roVal]);
@@ -1340,7 +1342,7 @@
       // is not an affordance. The destination is the field's value on the
       // loaded record, so the server decides where it goes.
       if (t === 'link') {
-        if (f.label) fieldWrap.appendChild(el('label', {class: 'ui-form-label'}, [f.label]));
+        if (f.label) fieldWrap.appendChild(window.uiAttachInfo(el('label', {class: 'ui-form-label'}, [f.label]), f.detail));
         var href = (f.field && current[f.field]) ? String(current[f.field]) : String(f.default || '');
         if (href && /^(https?:)?\/\//.test(href) === false && href.charAt(0) !== '/') href = '';
         if (href) {
@@ -1372,7 +1374,7 @@
         return fieldWrap;
       }
 
-      if (f.label) fieldWrap.appendChild(el('label', {class: 'ui-form-label'}, [f.label]));
+      if (f.label) fieldWrap.appendChild(window.uiAttachInfo(el('label', {class: 'ui-form-label'}, [f.label]), f.detail));
 
       var input;
       // toggleHandled — set by the 'toggle' branch when it has already
@@ -1430,7 +1432,7 @@
           function refreshPreview() {
             var v = input.value || '';
             if (v.trim() === '') {
-              previewEl.textContent = f.placeholder || 'Empty — use Edit to add.';
+              previewEl.textContent = f.placeholder || 'Empty: use Edit to add.';
               previewEl.style.color = 'var(--text-mute)';
             } else {
               previewEl.textContent = v;
@@ -1512,7 +1514,7 @@
           if (multi) return;
           if (cur == null || cur === '') return;
           if ((f.options || []).some(function(o) { return String(o.value) === String(cur); })) return;
-          var gone = el('option', {value: String(cur)}, [String(cur) + ' — no longer available']);
+          var gone = el('option', {value: String(cur)}, [String(cur) + ', no longer available']);
           gone.selected = true;
           input.appendChild(gone);
         })();
@@ -1891,7 +1893,7 @@
         function renderTags() {
           input.innerHTML = '';
           if (!values.length) {
-            input.appendChild(el('div', {class: 'ui-tags-empty'}, [f.placeholder || 'No tags yet — add one below.']));
+            input.appendChild(el('div', {class: 'ui-tags-empty'}, [f.placeholder || 'No tags yet: add one below.']));
           }
           values.forEach(function(v, idx) {
             var chip = el('span', {class: 'ui-tag'});
@@ -2023,7 +2025,7 @@
         function renderRules() {
           input.innerHTML = '';
           if (!rules.length) {
-            input.appendChild(el('div', {class: 'ui-rules-empty'}, [f.placeholder || 'No rules yet — add one below.']));
+            input.appendChild(el('div', {class: 'ui-rules-empty'}, [f.placeholder || 'No rules yet: add one below.']));
           }
           rules.forEach(function(r, idx) {
             var row = el('div', {class: 'ui-rules-row'});
@@ -2195,7 +2197,7 @@
           if (v.trim() === '') {
             secPreview.classList.remove('ui-md');
             secPreview.classList.add('empty');
-            secPreview.textContent = f.placeholder || 'Empty — use Edit to add.';
+            secPreview.textContent = f.placeholder || 'Empty: use Edit to add.';
             return;
           }
           secPreview.classList.remove('empty');
@@ -2268,7 +2270,7 @@
             if (known[String(v)]) return;
             known[String(v)] = true;
             checkOpts.push({value: v, label: String(v),
-              help: 'no longer available — untick to remove it', group: 'No longer available'});
+              help: 'no longer available: untick to remove it', group: 'No longer available'});
           });
         })();
         var selected = {};
@@ -2434,6 +2436,10 @@
           lbl.appendChild(el('span', {class: 'ui-checklist-name'}, [o.label || o.value]));
           if (o.help) {
             lbl.appendChild(el('span', {class: 'ui-checklist-help'}, [o.help]));
+          }
+          if (o.detail) {
+            var oInfo = window.uiInfoIcon(o.detail);
+            if (oInfo) lbl.insertBefore(oInfo, lbl.querySelector('.ui-checklist-help'));
           }
           row.appendChild(lbl);
           if (currentGroup) {
@@ -2633,6 +2639,10 @@
       // placed the switch into a [label, input] header row above.
       if (!toggleHandled) fieldWrap.appendChild(input);
       if (f.help) fieldWrap.appendChild(el('span', {class: 'ui-form-help'}, [f.help]));
+      if (f.detail && !f.label) {
+        fieldWrap.appendChild(window.uiAttachInfo(
+          el('span', {class: 'ui-form-help'}, ['']), f.detail));
+      }
 
       // Default suggestion setter — covers text, textarea, number, and
       // anything else with a writable input.value. Branches that need
@@ -2762,7 +2772,7 @@
       var assistPrompt = (spec && spec.assist_prompt) || f.assist_prompt || '';
       var help = (spec && spec.help) || f.help || '';
       window.uiOpenAssist({
-        title: (f.label || 'Draft') + (section ? ' — ' + section : ''),
+        title: (f.label || 'Draft') + (section ? ' · ' + section : ''),
         subtitle: help || undefined,
         initial: initial,
         send: function(req, done) {
@@ -2793,7 +2803,7 @@
       // auto: the field asked for this the moment its step opened, so there is
       // nobody to answer a prompt yet — and interrupting an arrival with a
       // dialog is the opposite of what suggest_on_open is for.
-      var hint = auto ? '' : await uiPrompt('Optional guidance — what should the AI consider? Leave blank to let it decide:', '');
+      var hint = auto ? '' : await uiPrompt('Optional guidance: what should the AI consider? Leave blank to let it decide:', '');
       if (hint === null) return; // user cancelled
       if (btn) { btn.classList.add('busy'); btn.disabled = true; }
       if (suggestHosts[f.field]) {
@@ -2953,7 +2963,7 @@
 
       modal.appendChild(el('label', {class: 'ui-form-label'}, ['Personality']));
       var textIn = el('textarea', {class: 'ui-form-textarea', rows: '6',
-        placeholder: 'Type a seed name and click AI Assist below — or write your own.'});
+        placeholder: 'Type a seed name and click AI Assist below, or write your own.'});
       modal.appendChild(textIn);
 
       var actions = el('div', {class: 'ui-form-modal-actions'});
@@ -3034,7 +3044,7 @@
         var tplRow = el('div', {class: 'ui-form-field'});
         tplRow.appendChild(el('label', {class: 'ui-form-label'}, [cfg.templates_label || 'Start from template']));
         var tplSel = el('select', {class: 'ui-form-input'});
-        tplSel.appendChild(el('option', {value: ''}, [cfg.templates_label ? ('— choose ' + cfg.templates_label.toLowerCase() + ' —') : '— choose a template —']));
+        tplSel.appendChild(el('option', {value: ''}, [cfg.templates_label ? ('(choose ' + cfg.templates_label.toLowerCase() + ')') : '(choose a template)']));
         cfg.templates.forEach(function(t, i) {
           tplSel.appendChild(el('option', {value: String(i)}, [t.label || ('Template ' + (i + 1))]));
         });
@@ -3128,8 +3138,10 @@
           buttons.push(btn);
 
           var body = el('div', {class: 'ui-form-nav-body', style: 'display:none'});
-          if (g.header.help) {
-            body.appendChild(el('div', {class: 'ui-form-section-help'}, [g.header.help]));
+          if (g.header.help || g.header.detail) {
+            body.appendChild(window.uiAttachInfo(
+              el('div', {class: 'ui-form-section-help'}, [g.header.help || '']),
+              g.header.detail));
           }
           renderFieldsInto(body, g.fields);
           pane.appendChild(body);
@@ -3210,7 +3222,7 @@
           }).catch(function(err) {
             if (err && err.name === 'AbortError') {
               testResult.style.color = 'var(--text-mute)';
-              testResult.textContent = 'Cancelled after ' + Math.round((Date.now() - startedAt) / 1000) + 's — nothing was saved.';
+              testResult.textContent = 'Cancelled after ' + Math.round((Date.now() - startedAt) / 1000) + 's: nothing was saved.';
               return;
             }
             testResult.style.color = 'var(--danger,#ff7b72)';
@@ -4041,7 +4053,7 @@
         // Async clipboard API where available; fall back to
         // selectAll+execCommand on older / non-secure contexts.
         var done = function() { showToast('Copied.'); };
-        var fail = function() { showToast('Copy failed — select manually.'); };
+        var fail = function() { showToast('Copy failed: select manually.'); };
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(input.value).then(done).catch(function() {
             input.select();
@@ -4639,7 +4651,7 @@
                 showToast(r.message);
               } else if (r && typeof r === 'object') {
                 var n = r.fixed != null ? r.fixed : (r.removed != null ? r.removed : null);
-                status.textContent = n != null ? ('done — ' + n) : 'done';
+                status.textContent = n != null ? ('done \u00b7 ' + n) : 'done';
               } else {
                 status.textContent = 'done';
               }

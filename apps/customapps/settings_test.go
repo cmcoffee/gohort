@@ -269,7 +269,7 @@ func TestShareStatusLines(t *testing.T) {
 		t.Fatalf("shared = %v", l)
 	}
 	appadmin.Save(RootDB, "alice", "tally", appadmin.State{AllowedUsers: []string{"bob", "carol"}, UpdatedBy: "root"})
-	if l = shareStatusLines(spec); l[0] != "Audience: bob, carol — narrowed by root." {
+	if l = shareStatusLines(spec); l[0] != "Audience: bob, carol (narrowed by root)." {
 		t.Fatalf("narrowed = %v", l)
 	}
 

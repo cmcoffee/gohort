@@ -58,7 +58,8 @@ const scheduledFireDirective = "[This is an autonomous scheduled fire. No human 
 func init() {
 	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_orch_update_min_interval", Category: "Timeouts", Label: "Scheduled update min interval", Help: "Minimum interval allowed for a recurring orchestrate update.", Kind: KindSeconds, Default: 60, Min: 10, Max: 3600})
 	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_orch_update_max_per_session", Category: "Limits", Label: "Scheduled updates per session", Help: "Max active recurring updates a single session may hold.", Kind: KindInt, Default: 5, Min: 1, Max: 50})
-	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_orch_update_idle_days", Category: "Limits", Label: "Recurring task idle-reap (days)", Help: "Auto-cancel a recurring task that has gone this many days without a productive fire (one that called tools) or a create/edit. A productive fire or an edit renews it; 0 disables the guard. Replaces the old total fire cap, so a task set to max_fires=0 runs indefinitely.", Kind: KindInt, Default: 90, Min: 7, Max: 365})
+	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_orch_update_idle_days", Category: "Limits", Label: "Recurring task idle-reap (days)", Help: "Auto-cancel a recurring task after this many days without a productive fire or an edit.",
+		Detail: "A productive fire is one that called tools. A productive fire or an edit renews the task; 0 disables the guard. This replaces the old total fire cap, so a task set to max_fires=0 runs indefinitely.", Kind: KindInt, Default: 90, Min: 7, Max: 365})
 }
 
 // orchUpdateMinInterval is the floor on a recurring update's interval.
@@ -210,7 +211,7 @@ func registerOrchestrateScheduledUpdates(o *OrchestrateApp) {
 		if a, ok := loadAgent(UserDB(o.DB, p.Username), p.AgentID); ok && strings.TrimSpace(a.Name) != "" {
 			agent = a.Name
 		}
-		return fmt.Sprintf("%s — %s (agent: %s)", recurringDetail(p), recurringName(p), agent)
+		return fmt.Sprintf("%s, %s (agent: %s)", recurringDetail(p), recurringName(p), agent)
 	})
 }
 
@@ -295,7 +296,7 @@ func handleOrchestrateScheduledUpdate(ctx context.Context, raw json.RawMessage) 
 		if errors.Is(err, errSchedNotReady) {
 			// Same payload, no fire counted — the retry IS this occurrence.
 			if _, aerr := ScheduleTask(OrchestrateScheduledUpdateKind, p, time.Now().Add(2*time.Minute)); aerr != nil {
-				Log("[orchestrate/scheduled] %v — retry re-arm FAILED for session %s: %v", err, p.SessionID, aerr)
+				Log("[orchestrate/scheduled] %v, retry re-arm FAILED for session %s: %v", err, p.SessionID, aerr)
 				// The chain is dead: this occurrence did not run and nothing is
 				// queued to try again. The successful-retry branch below stays
 				// unrecorded on purpose — it is the ordinary boot race, it
@@ -304,7 +305,7 @@ func handleOrchestrateScheduledUpdate(ctx context.Context, raw json.RawMessage) 
 				recordScheduledDrop(p, RunFailed, fmt.Sprintf(
 					"Did not run and could not be re-queued (%v). Nothing is scheduled, so this task is stopped until it is edited.", aerr))
 			} else {
-				Log("[orchestrate/scheduled] %v — retrying in 2m (session %s)", err, p.SessionID)
+				Log("[orchestrate/scheduled] %v: retrying in 2m (session %s)", err, p.SessionID)
 			}
 			return
 		}
@@ -353,7 +354,7 @@ func (o scheduledOutcome) resolve() (RunStatus, string) {
 	}
 	if o.hitCap {
 		status = RunAttention
-		summary = fmt.Sprintf("hit round cap (%d rounds) — cycle may be incomplete. %s", o.softCap, summary)
+		summary = fmt.Sprintf("hit round cap (%d rounds): cycle may be incomplete. %s", o.softCap, summary)
 	}
 	// Applied last, so it reads first. Something this fire READ carried
 	// instructions aimed at the agent, and flagged-and-delivered is the default
@@ -399,7 +400,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	if reArm && p.FireCount >= p.effectiveMaxFires() {
 		Log("[orchestrate/scheduled] task %s reached %d fires, auto-cancelling", p.SessionID, p.effectiveMaxFires())
 		recordScheduledDrop(p, RunAttention, fmt.Sprintf(
-			"Auto-cancelled: this recurring task reached its cap of %d fires. It did not run and will not run again — recreate it if you still want it.",
+			"Auto-cancelled: this recurring task reached its cap of %d fires. It did not run and will not run again: recreate it if you still want it.",
 			p.effectiveMaxFires()))
 		return nil
 	}
@@ -413,9 +414,9 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		// Don't silently drop the chain — park it as broken so the owner sees a
 		// "needs relink" task instead of a vanished one, and can relink or delete
 		// it deliberately.
-		Log("[orchestrate/scheduled] agent %s missing for user %s — parking task as broken", p.AgentID, p.Username)
+		Log("[orchestrate/scheduled] agent %s missing for user %s: parking task as broken", p.AgentID, p.Username)
 		recordScheduledDrop(p, RunFailed, fmt.Sprintf(
-			"Did not run: its agent (id %s) no longer exists. The task is parked, not deleted — relink it to a live agent from the Scheduler to resume.",
+			"Did not run: its agent (id %s) no longer exists. The task is parked, not deleted: relink it to a live agent from the Scheduler to resume.",
 			p.AgentID))
 		if reArm {
 			parkRecurringBroken(p, fmt.Sprintf("its agent was deleted (id %s)", p.AgentID))
@@ -442,7 +443,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		if !ok {
 			// Visible where the user reads the task, not just in the log.
 			appendSessionDiag(udb, p.AgentID, p.SessionID, "recurring-retired",
-				fmt.Sprintf("Recurring task %q is retiring after this fire: %s. It will not run again — recreate it if you still want it.", recurringName(p), retireReason))
+				fmt.Sprintf("Recurring task %q is retiring after this fire: %s. It will not run again: recreate it if you still want it.", recurringName(p), retireReason))
 		}
 		defer func() {
 			if r := recover(); r != nil {
@@ -450,7 +451,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 					Log("[orchestrate/scheduled] fire panicked for session %s: %v (next fire already armed)", p.SessionID, r)
 					return
 				}
-				Log("[orchestrate/scheduled] fire panicked for session %s: %v — rescheduling", p.SessionID, r)
+				Log("[orchestrate/scheduled] fire panicked for session %s: %v, rescheduling", p.SessionID, r)
 				reschedule(p)
 			}
 		}()
@@ -511,7 +512,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// locally) and talks itself into wrong per-day totals.
 	nowLocal := time.Now().In(UserLocation(p.Username))
 	timeCtx := fmt.Sprintf(
-		"[Time context: it is now %s (= %s). Timestamps from tools/APIs are usually UTC — convert each to the LOCAL zone before deciding what happened \"today\"; the day boundary is LOCAL midnight. When counting per-day items, list each id with its local date ONCE, then count that list — do not re-count.]",
+		"[Time context: it is now %s (= %s). Timestamps from tools/APIs are usually UTC: convert each to the LOCAL zone before deciding what happened \"today\"; the day boundary is LOCAL midnight. When counting per-day items, list each id with its local date ONCE, then count that list: do not re-count.]",
 		nowLocal.Format("Mon 2006-01-02 15:04 MST"),
 		time.Now().UTC().Format("2006-01-02 15:04 UTC"))
 	// A background task's result is not a scheduled fire and must not be dressed
@@ -519,7 +520,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// directive tells the agent to go do work, when the work is already done and
 	// the only job left is to hand it over.
 	fireContent := fmt.Sprintf(
-		"[SCHEDULED UPDATE — fire %d, %s] %s\n\n%s\n%s",
+		"[SCHEDULED UPDATE: fire %d, %s] %s\n\n%s\n%s",
 		p.FireCount+1, recurringDetail(p), p.Prompt, scheduledFireDirective, timeCtx)
 	if isTaskWake(p.Prompt) {
 		fireContent = p.Prompt + "\n\n" + timeCtx
@@ -838,7 +839,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// surface collects them through the send; a plain web thread has no stored
 	// attachment channel, so this is expected there and still worth recording.
 	if carriedAttachments > 0 && !toolCallsInclude(toolTrace, "send_message") {
-		Log("[orchestrate/scheduled] WARN session=%s wake carried %d attachment(s) but the turn sent no message — they were not delivered",
+		Log("[orchestrate/scheduled] WARN session=%s wake carried %d attachment(s) but the turn sent no message: they were not delivered",
 			p.SessionID, carriedAttachments)
 	}
 	record := func(status RunStatus, summary, raw, errStr string) {
@@ -898,9 +899,9 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	}
 	if reply == "" {
 		Log("[orchestrate/scheduled] agent=%s session=%s fire %d produced no reply, skipping append", agentLabel, p.SessionID, p.FireCount+1)
-		record(RunOK, "(no output — nothing to post this cycle)", "", "")
+		record(RunOK, "(no output: nothing to post this cycle)", "", "")
 		appendSessionDiag(udb, p.AgentID, p.SessionID, "recurring-fire-empty",
-			fmt.Sprintf("Recurring task %q fire %d produced no reply — nothing was posted this cycle.", recurringName(p), p.FireCount+1))
+			fmt.Sprintf("Recurring task %q fire %d produced no reply: nothing was posted this cycle.", recurringName(p), p.FireCount+1))
 		return nil
 	}
 
@@ -923,9 +924,9 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// finished.
 	if len(toolTrace) == 0 && !isTaskWake(p.Prompt) {
 		Log("[orchestrate/scheduled] agent=%s session=%s fire %d produced text but no tool calls (preamble only), skipping append", agentLabel, p.SessionID, p.FireCount+1)
-		record(RunOK, "(no tool activity — preamble only, nothing posted)", reply, "")
+		record(RunOK, "(no tool activity: preamble only, nothing posted)", reply, "")
 		appendSessionDiag(udb, p.AgentID, p.SessionID, "recurring-fire-suppressed",
-			fmt.Sprintf("Recurring task %q fire %d produced text but called no tools — treated as a preamble stub and NOT posted. The full text is preserved in the run ledger (Activity).", recurringName(p), p.FireCount+1))
+			fmt.Sprintf("Recurring task %q fire %d produced text but called no tools: treated as a preamble stub and NOT posted. The full text is preserved in the run ledger (Activity).", recurringName(p), p.FireCount+1))
 		return nil
 	}
 
@@ -962,7 +963,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 			// ran (so a crash could not orphan the chain), which is exactly why
 			// it has to be cancelled here rather than simply not scheduled.
 			if err := CancelOrchestrateUpdate(p.SessionID, armedID); err != nil {
-				Log("[orchestrate/objective] task %q: could not cancel the armed successor: %v — it will fire once more", recurringName(p), err)
+				Log("[orchestrate/objective] task %q: could not cancel the armed successor: %v, it will fire once more", recurringName(p), err)
 			} else {
 				Log("[orchestrate/objective] task %q stopped after attempt %d: %s", recurringName(p), attempt, objLine)
 			}
@@ -975,7 +976,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 			// carrying its reason and its history, not firing. A met objective
 			// is genuinely finished and retires like any capped task.
 			if objStalled {
-				parkRecurringStalled(armed, fmt.Sprintf("objective not met after %d attempt(s) — %s", attempt, settled.Reason))
+				parkRecurringStalled(armed, fmt.Sprintf("objective not met after %d attempt(s): %s", attempt, settled.Reason))
 			}
 		}
 		kind := "objective-not-met"
@@ -994,7 +995,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		if reArm && !objStopped {
 			pacedLine = applyPacing(p, &armed, armedID, pacingAsk)
 		} else if _, _, asked := pacingAsk.Get(); asked {
-			Log("[orchestrate/pacing] task %q asked to move its next attempt, but the objective %s — the ask was dropped", recurringName(p), objLine)
+			Log("[orchestrate/pacing] task %q asked to move its next attempt, but the objective %s: the ask was dropped", recurringName(p), objLine)
 		}
 	}
 
@@ -1026,13 +1027,13 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// breadcrumb instead of looking like a set that simply ended.
 	if strings.Contains(p.Prompt, SeriesContinuationMarker) && len(toolTrace) == 0 {
 		CloseTaskSeries(p.SessionID, RenderDetachIdentity)
-		Log("[orchestrate/task] agent=%s session=%s delivered a piece but called no tool — the set stops here", agentLabel, p.SessionID)
+		Log("[orchestrate/task] agent=%s session=%s delivered a piece but called no tool: the set stops here", agentLabel, p.SessionID)
 		appendSessionDiag(udb, p.AgentID, p.SessionID, "series-abandoned",
-			"A background set was told to start its next piece and the turn made no tool call — it answered in prose only. The finished piece was delivered; the rest of the set was NOT started, and the set has been closed rather than left open. If this recurs, the continuation instruction is not reaching the model, or the model is answering before acting.")
+			"A background set was told to start its next piece and the turn made no tool call: it answered in prose only. The finished piece was delivered; the rest of the set was NOT started, and the set has been closed rather than left open. If this recurs, the continuation instruction is not reaching the model, or the model is answering before acting.")
 		detail += " · set not continued"
 	}
 	if hitCap {
-		detail += fmt.Sprintf(" · hit round cap (%d) — may be incomplete", softCap)
+		detail += fmt.Sprintf(" · hit round cap (%d): may be incomplete", softCap)
 	}
 	// The verdict rides the card this fire posts, so the person reading the
 	// thread sees where the goal stands without opening Activity.
@@ -1051,7 +1052,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// it got read. The last thing a task posts should be the fact that it is
 	// the last thing it will post.
 	if retireReason != "" {
-		detail += " · FINAL FIRE — " + retireReason + "; this task will not run again"
+		detail += " · FINAL FIRE: " + retireReason + "; this task will not run again"
 	}
 
 	// Render the fire as a scheduled-report card (ReportFrom/ReportKind), the
@@ -1124,10 +1125,10 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	}
 	status, summary := outcome.resolve()
 	if hitCap {
-		Log("[orchestrate/scheduled] agent=%s session=%s fire %d HIT ROUND CAP (%d) — likely incomplete", agentLabel, p.SessionID, p.FireCount+1, softCap)
+		Log("[orchestrate/scheduled] agent=%s session=%s fire %d HIT ROUND CAP (%d): likely incomplete", agentLabel, p.SessionID, p.FireCount+1, softCap)
 	}
 	if outcome.detections > 0 {
-		Log("[orchestrate/scheduled] agent=%s session=%s fire %d INJECTION DETECTED x%d (%d follow-up action(s) stopped) — run flagged for attention",
+		Log("[orchestrate/scheduled] agent=%s session=%s fire %d INJECTION DETECTED x%d (%d follow-up action(s) stopped): run flagged for attention",
 			agentLabel, p.SessionID, p.FireCount+1, outcome.detections, outcome.taintBlocks)
 	}
 	record(status, summary, reply, "")
@@ -1148,7 +1149,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		// reading: neither of those proves the thing is fixed.
 		armed.ConsecutiveFailures = 0
 		if !UpdateScheduledTaskPayload(armedID, armed) {
-			Log("[orchestrate/scheduled] session=%s: armed next fire already consumed — idle-clock renewal skipped", p.SessionID)
+			Log("[orchestrate/scheduled] session=%s: armed next fire already consumed, idle-clock renewal skipped", p.SessionID)
 		}
 	}
 	return nil
@@ -1162,7 +1163,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 // the payload it was armed with.
 func preArmNextFire(p orchUpdatePayload) (string, orchUpdatePayload, bool, string) {
 	if idleDays := orchUpdateIdleDays(); p.idleReapDue(time.Now(), idleDays) {
-		Log("[orchestrate/scheduled] task %q (session=%s) reaped: idle > %d days — recurring task auto-cancelled", recurringName(p), p.SessionID, idleDays)
+		Log("[orchestrate/scheduled] task %q (session=%s) reaped: idle > %d days, recurring task auto-cancelled", recurringName(p), p.SessionID, idleDays)
 		return "", p, false, fmt.Sprintf("idle for more than %d days", idleDays)
 	}
 	armed := p
@@ -1177,7 +1178,7 @@ func preArmNextFire(p orchUpdatePayload) (string, orchUpdatePayload, bool, strin
 	}
 	next, err := computeNextFire(&armed, time.Now().In(UserLocation(p.Username)))
 	if err != nil {
-		Log("[orchestrate/scheduled] cannot compute next fire for task %q (session=%s): %v — stopping after this fire", recurringName(p), p.SessionID, err)
+		Log("[orchestrate/scheduled] cannot compute next fire for task %q (session=%s): %v, stopping after this fire", recurringName(p), p.SessionID, err)
 		return "", p, false, fmt.Sprintf("no next fire could be computed (%v)", err)
 	}
 	id, err := ScheduleTask(OrchestrateScheduledUpdateKind, armed, next)
@@ -1293,9 +1294,9 @@ func reschedule(p orchUpdatePayload) {
 	// forgotten one ages out. This replaced the old flat fire cap so max_fires=0
 	// can mean "indefinite" without a task running forever unwatched.
 	if idleDays := orchUpdateIdleDays(); p.idleReapDue(time.Now(), idleDays) {
-		Log("[orchestrate/scheduled] session=%s reaped: idle > %d days — recurring task auto-cancelled", p.SessionID, idleDays)
+		Log("[orchestrate/scheduled] session=%s reaped: idle > %d days, recurring task auto-cancelled", p.SessionID, idleDays)
 		recordScheduledDrop(p, RunAttention, fmt.Sprintf(
-			"Auto-cancelled: %d days without a productive fire or an edit. It will not run again — recreate it if you still want it.", idleDays))
+			"Auto-cancelled: %d days without a productive fire or an edit. It will not run again: recreate it if you still want it.", idleDays))
 		return
 	}
 	p.FireCount++
@@ -1313,7 +1314,7 @@ func reschedule(p orchUpdatePayload) {
 	}
 	next, err := computeNextFire(&p, time.Now().In(UserLocation(p.Username)))
 	if err != nil {
-		Log("[orchestrate/scheduled] cannot compute next fire for session %s: %v — stopping", p.SessionID, err)
+		Log("[orchestrate/scheduled] cannot compute next fire for session %s: %v, stopping", p.SessionID, err)
 		recordScheduledDrop(p, RunFailed, fmt.Sprintf(
 			"The schedule stopped: its next fire time could not be computed (%v). Edit the schedule to restart it.", err))
 		return
@@ -1361,7 +1362,7 @@ func ScheduleOrchestrateUpdate(spec RecurringSpec) (string, error) {
 	switch spec.Pattern {
 	case RecurringFixed:
 		if time.Duration(spec.IntervalSeconds)*time.Second < minInterval {
-			return "", fmt.Errorf("interval too small — minimum %s", minInterval)
+			return "", fmt.Errorf("interval too small: minimum %s", minInterval)
 		}
 	case RecurringRandom:
 		// Default and floor the gap to the deployment minimum interval.
@@ -1378,7 +1379,7 @@ func ScheduleOrchestrateUpdate(spec RecurringSpec) (string, error) {
 			}
 			windowSec := (spec.WindowToMin - spec.WindowFromMin) * 60
 			if need := spec.MinGapSeconds * (spec.TimesPerDay - 1); windowSec < need {
-				return "", fmt.Errorf("window %s–%s can't hold %d fires spaced %dm apart — widen the window, lower the count, or shorten the gap",
+				return "", fmt.Errorf("window %s–%s can't hold %d fires spaced %dm apart: widen the window, lower the count, or shorten the gap",
 					fmtHHMM(spec.WindowFromMin), fmtHHMM(spec.WindowToMin), spec.TimesPerDay, spec.MinGapSeconds/60)
 			}
 		} else {
@@ -1392,17 +1393,17 @@ func ScheduleOrchestrateUpdate(spec RecurringSpec) (string, error) {
 			if spec.HasWindow {
 				windowSec := (spec.WindowToMin - spec.WindowFromMin) * 60
 				if windowSec < spec.MinGapSeconds {
-					return "", fmt.Errorf("active window %s–%s is shorter than the minimum gap (%dm) — widen it or lower the gap",
+					return "", fmt.Errorf("active window %s–%s is shorter than the minimum gap (%dm): widen it or lower the gap",
 						fmtHHMM(spec.WindowFromMin), fmtHHMM(spec.WindowToMin), spec.MinGapSeconds/60)
 				}
 			}
 		}
 	default:
-		return "", fmt.Errorf("unknown pattern %q — use fixed or random", spec.Pattern)
+		return "", fmt.Errorf("unknown pattern %q: use fixed or random", spec.Pattern)
 	}
 	active := ListOrchestrateUpdates(spec.SessionID)
 	if len(active) >= orchUpdateMaxPerSession() {
-		return "", fmt.Errorf("session %s already has %d active recurring tasks (cap %d) — cancel one first", spec.SessionID, len(active), orchUpdateMaxPerSession())
+		return "", fmt.Errorf("session %s already has %d active recurring tasks (cap %d): cancel one first", spec.SessionID, len(active), orchUpdateMaxPerSession())
 	}
 	p := orchUpdatePayload{
 		SessionID:       spec.SessionID,

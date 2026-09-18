@@ -75,12 +75,12 @@ func (T *AppCore) LeadChat(ctx context.Context, messages []Message, opts ...Chat
 		// Debug: a pin that quietly answered from the worker is exactly what the
 		// pin was set to stop, and the failure needs to be visible without
 		// anyone having debug on.
-		Log("[llm] lead chat failed after %s and this call is pinned to the lead — NOT falling back: %s",
+		Log("[llm] lead chat failed after %s and this call is pinned to the lead, NOT falling back: %s",
 			elapsed.Round(time.Millisecond), err)
 		return nil, err
 	}
 	if err != nil && T.LeadLLM != nil && T.LLM != nil && LeadIsDistinct() {
-		Debug("[llm] lead chat failed after %s: %s — falling back to primary", elapsed.Round(time.Millisecond), err)
+		Debug("[llm] lead chat failed after %s: %s, falling back to primary", elapsed.Round(time.Millisecond), err)
 		T.LeadFallback = true
 		fellBackToWorker = true
 		start = time.Now()
@@ -96,7 +96,7 @@ func (T *AppCore) LeadChat(ctx context.Context, messages []Message, opts ...Chat
 		return nil, err
 	} else if resp.OutputTokens == 0 && resp.Content == "" && T.LeadLLM != nil && T.LLM != nil && LeadIsDistinct() {
 		// Lead returned empty output (possible safety filter) — fall back to primary.
-		Debug("[llm] lead chat returned empty after %s (input: %d, thinking: %d) — falling back to primary", elapsed.Round(time.Millisecond), resp.InputTokens, len(resp.Reasoning))
+		Debug("[llm] lead chat returned empty after %s (input: %d, thinking: %d), falling back to primary", elapsed.Round(time.Millisecond), resp.InputTokens, len(resp.Reasoning))
 		T.LeadFallback = true
 		fellBackToWorker = true
 		start = time.Now()
@@ -403,7 +403,7 @@ func (T *AppCore) ChatStreamWithReport(ctx context.Context, messages []Message, 
 		// every surface that would make them look. This is the guard dropping
 		// something, and a guard that drops something leaves a breadcrumb.
 		if probe.TierOverride == LEAD && !useLead {
-			Log("[llm] route=%q pinned to LEAD but running on the WORKER — %s. Nothing is wrong with the pin; there is no lead to reach.",
+			Log("[llm] route=%q pinned to LEAD but running on the WORKER: %s. Nothing is wrong with the pin; there is no lead to reach.",
 				probe.RouteKey, leadUnavailableReason(T))
 		}
 	}
@@ -445,9 +445,9 @@ func (T *AppCore) ChatStreamWithReport(ctx context.Context, messages []Message, 
 	// errored keeps its partial resp and surfaces the error below.
 	if useLead && (resp == nil || (resp.OutputTokens == 0 && resp.Content == "")) {
 		if err != nil {
-			Debug("[llm] %s lead stream failed after %s: %s — falling back to worker", probe.RouteKey, elapsed.Round(time.Millisecond), err)
+			Debug("[llm] %s lead stream failed after %s: %s, falling back to worker", probe.RouteKey, elapsed.Round(time.Millisecond), err)
 		} else {
-			Debug("[llm] %s lead stream returned empty after %s — falling back to worker", probe.RouteKey, elapsed.Round(time.Millisecond))
+			Debug("[llm] %s lead stream returned empty after %s: falling back to worker", probe.RouteKey, elapsed.Round(time.Millisecond))
 		}
 		T.LeadFallback = true
 		tier = WORKER

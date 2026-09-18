@@ -68,10 +68,10 @@ func (h remoteMCPHandler) Validate(c Connector) error {
 			return fmt.Errorf("auth_mode secure_api requires secure_cred (a registered SecureAPI credential name)")
 		}
 		if exists, _, _ := Secure().CredentialStatus(s.SecureCred); !exists {
-			return fmt.Errorf("no credential named %q — draft it first (draft_oauth_credential) and have the admin enable it in Admin > APIs", s.SecureCred)
+			return fmt.Errorf("no credential named %q: draft it first (draft_oauth_credential) and have the admin enable it in Admin > APIs", s.SecureCred)
 		}
 	case MCPAuthBearer:
-		return fmt.Errorf("bearer auth carries a static secret — add a bearer MCP server directly in Admin > MCP Servers, not via a connector")
+		return fmt.Errorf("bearer auth carries a static secret: add a bearer MCP server directly in Admin > MCP Servers, not via a connector")
 	default:
 		return fmt.Errorf("auth_mode must be one of: none, secure_api, oauth")
 	}

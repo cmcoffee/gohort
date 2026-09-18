@@ -287,7 +287,7 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 				ref_tools = append(ref_tools, ReferenceItemTools(uid, sel.Kind, sel.ItemID)...)
 			}
 			if len(ref_tools) > 0 {
-				system_prompt += "\n\nThe attached reference source also provides tools. Use them when the reference context above doesn't answer the question, or when the user asks about the CURRENT state of the system — the investigate tool runs a live session when cached knowledge isn't enough."
+				system_prompt += "\n\nThe attached reference source also provides tools. Use them when the reference context above doesn't answer the question, or when the user asks about the CURRENT state of the system: the investigate tool runs a live session when cached knowledge isn't enough."
 			}
 		}
 	}
@@ -383,7 +383,7 @@ func formatCollectionRefs(hits []SearchHit) string {
 	// The shared hit shape (core.HitFormat): title, section, page locator
 	// and provenance kind on every passage. Whole chunks, no doc ids — the
 	// chat has no fetch tool to pass one to.
-	return "\n\nReference material from your attached collections (grounding — use what's relevant, ignore the rest):\n\n" +
+	return "\n\nReference material from your attached collections (grounding, use what's relevant, ignore the rest):\n\n" +
 		HitFormat{}.Render(hits) + "\n"
 }
 

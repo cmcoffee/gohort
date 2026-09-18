@@ -66,10 +66,10 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		// "no tool named X" there is actively misleading — the model just
 		// called it.
 		if _, owner, shared := FindSharedToolWithOwner(sess.DB, name); shared {
-			return fmt.Sprintf("Tool %q is a DEPLOYMENT-WIDE SHARED tool owned by %s, so you cannot edit it from here — an edit would change it for every user. Nothing is broken and there is nothing to report. Options: ask %s to make the change; or copy it into your own pool with action=\"create\" under a NEW name (use action=\"get\" to read its current definition first) and edit that. Do NOT re-create it under the SAME name.",
+			return fmt.Sprintf("Tool %q is a DEPLOYMENT-WIDE SHARED tool owned by %s, so you cannot edit it from here: an edit would change it for every user. Nothing is broken and there is nothing to report. Options: ask %s to make the change; or copy it into your own pool with action=\"create\" under a NEW name (use action=\"get\" to read its current definition first) and edit that. Do NOT re-create it under the SAME name.",
 				name, owner, owner), nil
 		}
-		return "", fmt.Errorf("no tool named %q to update — use action=\"create\" to make a new one, or action=\"list\" to see what exists", name)
+		return "", fmt.Errorf("no tool named %q to update: use action=\"create\" to make a new one, or action=\"list\" to see what exists", name)
 	}
 	// Scope-preserving write-back (flattened namespace): when the resolved
 	// record is AGENT-scoped, pin the write-back to a carrying agent so
@@ -100,7 +100,7 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	if existing.Mode == TempToolModeToolbox {
 		for _, f := range []string{"url_template", "command_template", "method", "body_template", "response_pipe", "script_body", "script_name", "params", "required"} {
 			if _, present := args[f]; present {
-				return "", fmt.Errorf("%q is a PER-ACTION field on a toolbox, not a top-level one — setting it at the top level does nothing. Put it INSIDE the action: actions=[{name:\"<action>\", %s:...}]. Example fixing a reply body: actions=[{name:\"reply_to_comment\", body_template:{\"parent_id\": {comment_id}, \"content\": {content}}}] (unspecified fields on that action are preserved)", f, f)
+				return "", fmt.Errorf("%q is a PER-ACTION field on a toolbox, not a top-level one: setting it at the top level does nothing. Put it INSIDE the action: actions=[{name:\"<action>\", %s:...}]. Example fixing a reply body: actions=[{name:\"reply_to_comment\", body_template:{\"parent_id\": {comment_id}, \"content\": {content}}}] (unspecified fields on that action are preserved)", f, f)
 			}
 		}
 	}
@@ -213,7 +213,7 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			cur = kept
 		}
 		if len(cur) == 0 {
-			return "", fmt.Errorf("that would leave the toolbox with no actions — delete the tool instead if you mean to remove it")
+			return "", fmt.Errorf("that would leave the toolbox with no actions: delete the tool instead if you mean to remove it")
 		}
 		merged["actions"] = cur
 	}
@@ -287,7 +287,7 @@ func deleteGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	// session copy so it can't dispatch again this turn either.
 	if sess != nil && sess.BundledToolNames[name] {
 		if sess.UnbundleTool == nil {
-			return "", fmt.Errorf("tool %q is bundled onto this agent's record; this surface can't unbundle it — remove it from the agent in its editor (Tools modal → Remove), or ask Builder to update the agent", name)
+			return "", fmt.Errorf("tool %q is bundled onto this agent's record; this surface can't unbundle it: remove it from the agent in its editor (Tools modal → Remove), or ask Builder to update the agent", name)
 		}
 		if err := sess.UnbundleTool(name); err != nil {
 			return "", fmt.Errorf("unbundle %q from the agent record: %w", name, err)
@@ -301,7 +301,7 @@ func deleteGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		if sess.DB != nil && sess.Username != "" {
 			DequeuePendingTempTool(sess.DB, sess.Username, name)
 		}
-		return fmt.Sprintf("Unbundled %q from this agent's record and dropped it from the session — it will not reload next turn.", name), nil
+		return fmt.Sprintf("Unbundled %q from this agent's record and dropped it from the session: it will not reload next turn.", name), nil
 	}
 	// Bundled to ANOTHER of the user's agents: the durable copy lives on that
 	// agent's record. update already resolves + writes back there in place
@@ -318,7 +318,7 @@ func deleteGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		!toolInUserPools(sess, name) && !toolInSessionDrafts(sess, name) {
 		if rec, ownerAgent, found := FindUserAgentTool(sess.DB, sess.Username, name); found {
 			if DetachToolFromAgent == nil {
-				return "", fmt.Errorf("tool %q lives on agent %s's record; this surface can't remove it — remove it from that agent in its editor (Tools modal → Remove)", name, ownerAgent)
+				return "", fmt.Errorf("tool %q lives on agent %s's record; this surface can't remove it: remove it from that agent in its editor (Tools modal → Remove)", name, ownerAgent)
 			}
 			for cred := range securedBindingCreds(rec) {
 				_ = Secure().ForgetToolBinding(cred, name)
@@ -332,7 +332,7 @@ func deleteGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			}
 			DequeuePendingTempTool(sess.DB, sess.Username, name)
 			Log("[temptool.scope] removed %q from agent %s's record (in-place delete)", name, ownerAgent)
-			return fmt.Sprintf("Removed %q from the owning agent's record (it lived on agent %s, not this session) — it will not reload next turn.", name, ownerAgent), nil
+			return fmt.Sprintf("Removed %q from the owning agent's record (it lived on agent %s, not this session): it will not reload next turn.", name, ownerAgent), nil
 		}
 	}
 	t := &DeleteTempToolTool{}

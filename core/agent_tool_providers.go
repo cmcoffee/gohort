@@ -58,7 +58,7 @@ func RegisterAgentToolProvider(name string, fn AgentToolProvider) {
 	agentToolProviderMu.Lock()
 	defer agentToolProviderMu.Unlock()
 	if _, dup := agentToolProviders[name]; dup {
-		Log("[tools] agent tool provider %q registered twice — replacing the earlier one", name)
+		Log("[tools] agent tool provider %q registered twice: replacing the earlier one", name)
 	}
 	agentToolProviders[name] = fn
 }
@@ -96,7 +96,7 @@ func AgentProvidedTools(sess *ToolSession, owner, agentID string) []AgentToolDef
 func safeProviderTools(name string, fn AgentToolProvider, sess *ToolSession, owner, agentID string) (defs []AgentToolDef) {
 	defer func() {
 		if r := recover(); r != nil {
-			Log("[tools] agent tool provider %q panicked (%v) — contributing nothing this turn", name, r)
+			Log("[tools] agent tool provider %q panicked (%v): contributing nothing this turn", name, r)
 			defs = nil
 		}
 	}()

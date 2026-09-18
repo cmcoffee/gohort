@@ -458,7 +458,7 @@
                   mount: function(body) {
                     var empty = data == null || (typeof data === 'object' && !Object.keys(data).length);
                     if (empty) {
-                      body.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:0.85rem'}, ['Nothing to show — this record is gone or empty.']));
+                      body.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:0.85rem'}, ['Nothing to show: this record is gone or empty.']));
                       return;
                     }
                     renderDetailValue(body, data, 0);
@@ -668,7 +668,7 @@
             if (k === 'agent') return;
             parts.push(k + ': ' + decodeURIComponent(pair.slice(eq + 1)));
           });
-          text = parts.length ? ('Filtered — ' + parts.join(', ')) : 'Filtered';
+          text = parts.length ? ('Filtered: ' + parts.join(', ')) : 'Filtered';
         }
         var back = el('button', {type: 'button', class: 'ui-row-btn',
           style: 'padding:0.15rem 0.55rem;font-size:0.74rem;flex:0 0 auto',
@@ -1376,7 +1376,7 @@
     // supplies DiagnosticsURL; entries are [{at, kind, detail}].
     if (cfg.diagnostics_url) {
       var diagBtn = el('button', {class: 'ui-row-btn', type: 'button',
-        title: 'Session diagnostics — what the framework suppressed, discarded, or retried in this conversation'}, ['⚠']);
+        title: 'Session diagnostics what the framework suppressed, discarded, or retried in this conversation'}, ['⚠']);
       diagBtn.addEventListener('click', function() {
         var sid = activeSessionId || '';
         if (!sid) { showToast('No active session yet.'); return; }
@@ -1392,7 +1392,7 @@
           // ClipboardItem dance elsewhere in this file is only needed when
           // a fetch sits between the click and the write.
           function diagAsText() {
-            var lines = ['Session diagnostics — ' + list.length + ' entr' + (list.length === 1 ? 'y' : 'ies')];
+            var lines = ['Session diagnostics: ' + list.length + ' entr' + (list.length === 1 ? 'y' : 'ies')];
             list.forEach(function(e) {
               var when = '';
               try { when = e.at ? new Date(e.at).toISOString() : ''; } catch (_) {}
@@ -1404,7 +1404,7 @@
             var text = diagAsText();
             var was = btn.textContent;
             function done() { btn.textContent = 'Copied'; setTimeout(function() { btn.textContent = was; }, 1500); }
-            function fail() { showToast('Clipboard unavailable — select the text and copy manually.'); }
+            function fail() { showToast('Clipboard unavailable: select the text and copy manually.'); }
             if (navigator.clipboard && navigator.clipboard.writeText) {
               navigator.clipboard.writeText(text).then(done).catch(function() { hostCopy(text, done, fail); });
               return;
@@ -1437,13 +1437,13 @@
           }
           window.uiOpenModal({
             title: 'Session diagnostics',
-            subtitle: 'Framework decisions in this conversation — content suppressed, discarded, or retried on your behalf. Newest first.',
+            subtitle: 'Framework decisions in this conversation: content suppressed, discarded, or retried on your behalf. Newest first.',
             width: 'min(640px, 94vw)',
             actions: modalActions,
             mount: function(body) {
               if (!list.length) {
                 body.appendChild(el('div', {style: 'color:var(--text-mute);font-size:0.85rem'},
-                  ['Nothing to report — no guard has intervened in this session.']));
+                  ['Nothing to report: no guard has intervened in this session.']));
                 return;
               }
               list.forEach(function(e) {
@@ -1808,7 +1808,7 @@
         [el('span', {text: cfg.terminal.title || 'Terminal'})]);
       var termBody = el('div', {class: 'ui-agent-terminal-body'},
         [el('div', {class: 'ui-agent-terminal-placeholder'},
-          ['(terminal pane — xterm.js wiring deferred)'])]);
+          ['(terminal pane: xterm.js wiring deferred)'])]);
       terminalPane.appendChild(termHdr);
       terminalPane.appendChild(termBody);
       rightPane.appendChild(hDivider);
@@ -1902,7 +1902,7 @@
     function makePasteMarker(text) {
       var n = ++pasteCounter;
       pasteMap[n] = text;
-      return '[Pasted text #' + n + ' — ' + text.split('\n').length + ' lines / ' + text.length + ' chars]';
+      return '[Pasted text #' + n + ' · ' + text.split('\n').length + ' lines / ' + text.length + ' chars]';
     }
     inputArea.addEventListener('paste', function(ev) {
       var clip = ev.clipboardData || window.clipboardData;
@@ -2310,7 +2310,7 @@
               btn.classList.add('active');
               btn.disabled = true;
               btn.textContent = '🔒 ' + m.label;
-              btn.title = m.label + ' is force-enabled by the operator — can\'t be toggled off.';
+              btn.title = m.label + ' is force-enabled by the operator: can\'t be toggled off.';
               btn.style.display = '';
             } else {
               btn.style.display = 'none';
@@ -2957,7 +2957,7 @@
           var said = cardText.slice(0, cut).trim();
           if (said) head += ':\n\n' + said;
         } else if (detail) {
-          head += ' — ' + detail;
+          head += ' · ' + detail;
         }
         lines.push('## Request', '', head.trim(), '');
         startBubble = bubble.previousElementSibling || bubble; // include from just before this card
@@ -3884,7 +3884,7 @@
         // lost. App can register a proper renderer later.
         if (window.console && console.warn) {
           console.warn('[ui] no block renderer for type:', d.type,
-            '— registered:', Object.keys(window.UIBlockRenderers || {}));
+            '· registered:', Object.keys(window.UIBlockRenderers || {}));
         }
         addActivity('status', id, '[' + d.type + '] ' + (d.text || d.title || ''));
         return;
@@ -4245,7 +4245,7 @@
           // textContent, never markdown: an error carries provider text and
           // sometimes a URL, and rendering it as markdown would let a failure
           // message style itself like a reply.
-          errBody.textContent = 'Could not complete this turn — ' + (ev.text || 'unknown error');
+          errBody.textContent = 'Could not complete this turn: ' + (ev.text || 'unknown error');
           errBubble.appendChild(errBody);
           convoLog.appendChild(errBubble);
           markUndeliveredInterjections('The turn failed before the agent read this. It stays in the conversation and goes with your next message.');
@@ -4692,7 +4692,7 @@
       function render() {
         wrap.innerHTML = '';
         if (!rules.length) {
-          wrap.appendChild(el('div', {class: 'ui-rules-empty'}, ['No rules yet — add one below.']));
+          wrap.appendChild(el('div', {class: 'ui-rules-empty'}, ['No rules yet: add one below.']));
         }
         rules.forEach(function(r, idx) {
           var ti = el('input', {type: 'text', class: 'ui-rules-input', placeholder: 'rule…'});
@@ -4871,7 +4871,7 @@
           ];
           // No source hooked in → the interface is inert (nothing routes yet).
           if (!ch.service) {
-            rowKids.push(el('span', {class: 'ui-channels-inert', title: 'No source hooked in — inert'}, ['inert']));
+            rowKids.push(el('span', {class: 'ui-channels-inert', title: 'No source hooked in: inert'}, ['inert']));
           }
           // Optional state mark: when the app says something feeding this row
           // has come to rest, show it here rather than making the reader open
@@ -5249,7 +5249,7 @@
           if (rec.running) {
             rowClass += ' running';
             rowKids.unshift(el('span', {class: 'ui-chat-side-running-dot',
-              title: 'Running now — open to watch'}, ['']));
+              title: 'Running now: open to watch'}, ['']));
           }
           // Active-work badge — LIVE watchers/dispatches attached to this
           // session. Distinct from the unread dot (a past append) and the
@@ -5351,7 +5351,7 @@
                   var bits = [];
                   if (wq > 0) bits.push(wq + ' active watcher' + (wq === 1 ? '' : 's'));
                   if (dq > 0) bits.push(dq + ' running dispatch' + (dq === 1 ? '' : 'es'));
-                  delMsg = 'This thread has ' + bits.join(' and ') + '. Deleting it only clears the conversation — they keep running and will re-create the thread on their next report. To stop them, use Decommission. Delete anyway?';
+                  delMsg = 'This thread has ' + bits.join(' and ') + '. Deleting it only clears the conversation: they keep running and will re-create the thread on their next report. To stop them, use Decommission. Delete anyway?';
                 }
                 if (!(await window.uiConfirm(delMsg))) return;
                 var url = substituteExtras(cfg.delete_url.replace('{id}', encodeURIComponent(sid)));

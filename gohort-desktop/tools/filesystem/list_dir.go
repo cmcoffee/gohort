@@ -50,12 +50,12 @@ func (t *list_dir_tool) Name() string {
 func (t *list_dir_tool) Desc() string {
 	return "List entries in a directory on the host filesystem of the " +
 		"connected gohort-desktop client. Returns one entry per line as " +
-		"\"<kind> <mtime> <size> <name>\" — kind is dir/file/symlink, " +
+		"\"<kind> <mtime> <size> <name>\": kind is dir/file/symlink, " +
 		"size is bytes for files (- for dirs), mtime is YYYY-MM-DD HH:MM. " +
-		"Gated by the operator's allowlist — paths outside it are refused. " +
+		"Gated by the operator's allowlist: paths outside it are refused. " +
 		"Pass path=\"\" (or omit it) to see the configured allowlist roots " +
 		"themselves; that's the safe starting point when you don't know " +
-		"what's exposed. Capped at 500 entries with a [TRUNCATED — N more] " +
+		"what's exposed. Capped at 500 entries with a [TRUNCATED: N more] " +
 		"marker if the directory is larger. Use to discover what files " +
 		"exist before calling filesystem_read_local_file."
 }
@@ -64,7 +64,7 @@ func (t *list_dir_tool) Params() map[string]core.ToolParam {
 	return map[string]core.ToolParam{
 		"path": {
 			Type:        "string",
-			Description: "Absolute path to the directory. Must resolve under one of the allowlisted roots. Omit (or pass empty / \"/\") to list the allowlist roots themselves — useful as the first call to see what's available.",
+			Description: "Absolute path to the directory. Must resolve under one of the allowlisted roots. Omit (or pass empty / \"/\") to list the allowlist roots themselves: useful as the first call to see what's available.",
 		},
 	}
 }
@@ -93,14 +93,14 @@ func (t *list_dir_tool) Handler() core.ToolHandler {
 			abs = real
 		}
 		if !core.PathAllowedOrConsent(abs) {
-			return "", fmt.Errorf("filesystem_list_directory refused: %s is not under an allowed read root (allowed: %v) — operator can add a root via the Account → Add Allowed Folder… menu in gohort-desktop", abs, core.AllowedReadRoots())
+			return "", fmt.Errorf("filesystem_list_directory refused: %s is not under an allowed read root (allowed: %v), operator can add a root via the Account → Add Allowed Folder… menu in gohort-desktop", abs, core.AllowedReadRoots())
 		}
 		info, err := os.Stat(abs)
 		if err != nil {
 			return "", fmt.Errorf("filesystem_list_directory: stat: %w", err)
 		}
 		if !info.IsDir() {
-			return "", fmt.Errorf("filesystem_list_directory: %s is a file, not a directory — use filesystem_read_local_file for files", abs)
+			return "", fmt.Errorf("filesystem_list_directory: %s is a file, not a directory, use filesystem_read_local_file for files", abs)
 		}
 		entries, err := os.ReadDir(abs)
 		if err != nil {
@@ -134,7 +134,7 @@ func (t *list_dir_tool) Handler() core.ToolHandler {
 			shown++
 		}
 		if len(entries) > MAX_LIST_ENTRIES {
-			fmt.Fprintf(&b, "\n[TRUNCATED — %d more entries; refine the path or filter caller-side]\n", len(entries)-MAX_LIST_ENTRIES)
+			fmt.Fprintf(&b, "\n[TRUNCATED: %d more entries; refine the path or filter caller-side]\n", len(entries)-MAX_LIST_ENTRIES)
 		}
 		return b.String(), nil
 	}

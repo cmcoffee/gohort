@@ -126,7 +126,7 @@ func (t *chatTurn) countGuardrailBlock(rule, hookPoint, candidate string) {
 	t.guardrailBlockTotal++
 	key := guardrailBlockKey(rule, hookPoint, candidate)
 	if t.guardrailBlockKeys[key] {
-		Debug("[orchestrate.guardrail] agent=%s repeat block (rule=%q hook=%s) — refused again, escalation counter unchanged at %d",
+		Debug("[orchestrate.guardrail] agent=%s repeat block (rule=%q hook=%s): refused again, escalation counter unchanged at %d",
 			t.agent.ID, rule, hookPoint, t.guardrailBlocks)
 		return
 	}
@@ -187,11 +187,11 @@ func (t *chatTurn) guardrailCheckHookCtx(ctx context.Context) func(hookPoint, ca
 			// a policy. The owner picks it per agent (GuardrailFailClosed);
 			// either way the gap is recorded, never silent.
 			if t.agent.GuardrailFailClosed {
-				t.turnDiag("guardrail-blocked", fmt.Sprintf("Guardrail check could not run (%v) — BLOCKED (this agent fails closed).", err))
+				t.turnDiag("guardrail-blocked", fmt.Sprintf("Guardrail check could not run (%v): BLOCKED (this agent fails closed).", err))
 				Log("[orchestrate.guardrail] agent=%s fail-closed block at %s: warden error: %v", t.agent.ID, hookPoint, err)
 				return GuardrailDecision{Blocked: true, Message: guardrailNoVerdictMessage()}
 			}
-			t.turnDiag("guardrail-error", fmt.Sprintf("Guardrail check could not run (%v) — the action proceeded unchecked.", err))
+			t.turnDiag("guardrail-error", fmt.Sprintf("Guardrail check could not run (%v): the action proceeded unchecked.", err))
 			return pass
 		}
 		// UNSURE is not compliance. parseWardenVerdicts deliberately returns
@@ -208,7 +208,7 @@ func (t *chatTurn) guardrailCheckHookCtx(ctx context.Context) func(hookPoint, ca
 		// policy for warden infrastructure trouble — but leave a breadcrumb,
 		// which is the house rule for every guard that drops something.
 		if worstVerdict(verdicts) == guardNoVerdict {
-			Log("[orchestrate.guardrail] agent=%s warden reached NO VERDICT at %s — retrying once", t.agent.ID, hookPoint)
+			Log("[orchestrate.guardrail] agent=%s warden reached NO VERDICT at %s: retrying once", t.agent.ID, hookPoint)
 			retried, rerr := t.app.runWarden(ctx, t.agent, hookPoint, candidate, who, wardenRetryOptions()...)
 			if rerr == nil && worstVerdict(retried) != guardNoVerdict {
 				verdicts = retried
@@ -219,12 +219,12 @@ func (t *chatTurn) guardrailCheckHookCtx(ctx context.Context) func(hookPoint, ca
 				}
 				if t.agent.GuardrailFailClosed {
 					t.turnDiag("guardrail-blocked", fmt.Sprintf(
-						"Guardrail check at %s could not reach a verdict (%s) — BLOCKED (this agent fails closed). Retried once.", hookPoint, reason))
+						"Guardrail check at %s could not reach a verdict (%s): BLOCKED (this agent fails closed). Retried once.", hookPoint, reason))
 					Log("[orchestrate.guardrail] agent=%s fail-closed block at %s after retry (%s)", t.agent.ID, hookPoint, reason)
 					return GuardrailDecision{Blocked: true, Message: guardrailNoVerdictMessage()}
 				}
 				t.turnDiag("guardrail-no-verdict", fmt.Sprintf(
-					"Guardrail check at %s could not reach a verdict (%s) — the action proceeded UNCHECKED. Retried once.", hookPoint, reason))
+					"Guardrail check at %s could not reach a verdict (%s): the action proceeded UNCHECKED. Retried once.", hookPoint, reason))
 				Log("[orchestrate.guardrail] agent=%s UNCHECKED at %s after retry (%s)", t.agent.ID, hookPoint, reason)
 				return pass
 			}
@@ -257,7 +257,7 @@ func (t *chatTurn) guardrailCheckHookCtx(ctx context.Context) func(hookPoint, ca
 		// protected thing to retract and scrub. So core skips the correction budget
 		// by default and hands the reply to the fresh-context rejection writer.
 		correctable := ruleIsCorrectable(t.agent, rule)
-		modeNote := " (a blocking rule — answered by a separate check, no rewrite attempted)"
+		modeNote := " (a blocking rule: answered by a separate check, no rewrite attempted)"
 		if correctable {
 			modeNote = " (one rewrite will be attempted)"
 		}
@@ -286,7 +286,7 @@ func (t *chatTurn) guardrailCheckHookCtx(ctx context.Context) func(hookPoint, ca
 			return GuardrailDecision{
 				Blocked:     true,
 				Correctable: correctable,
-				Message:     fmt.Sprintf("STOP — you have tried %d different ways past an enforced limit this turn. This turn is being terminated; the user's reply is being written by a separate check. Do NOT keep rephrasing or re-routing to slip the guardrail; the owner has been notified.", t.guardrailBlocks),
+				Message:     fmt.Sprintf("STOP: you have tried %d different ways past an enforced limit this turn. This turn is being terminated; the user's reply is being written by a separate check. Do NOT keep rephrasing or re-routing to slip the guardrail; the owner has been notified.", t.guardrailBlocks),
 			}
 		}
 		// A contestable rule adds one sentence inviting an appeal, and arms the
@@ -349,9 +349,9 @@ func guardrailBlockMessageAt(hookPoint, rule, reason string) string {
 		// instruction is about the NEXT text — including not circling back to
 		// the thing that was just refused, which is how a refused request gets
 		// answered a turn later.
-		msg += " That reply was WITHHELD and the user did not see it. Answer what was asked without touching what the rule protects, or say briefly that you can't help with that part — and do not return to it afterwards. Do not mention a rule or a restriction."
+		msg += " That reply was WITHHELD and the user did not see it. Answer what was asked without touching what the rule protects, or say briefly that you can't help with that part, and do not return to it afterwards. Do not mention a rule or a restriction."
 	default:
-		msg += " That call did not run. Do not reach the same result another way. Carry on with something that fits, or finish up and tell the user briefly that you couldn't do that part — without mentioning a rule or a restriction."
+		msg += " That call did not run. Do not reach the same result another way. Carry on with something that fits, or finish up and tell the user briefly that you couldn't do that part, without mentioning a rule or a restriction."
 	}
 	return msg
 }

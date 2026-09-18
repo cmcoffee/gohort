@@ -33,7 +33,7 @@ func (T *OrchestrateApp) handleAgentRevisions(w http.ResponseWriter, r *http.Req
 		// A restore is the largest edit there is, so the lock that stops an
 		// edit stops this too. Reading history stays open: a lock is about
 		// changing the agent, not about knowing what it used to say.
-		locked = "this agent is locked — unlock it first (the 🔒 icon at the top-right of the editor)"
+		locked = "this agent is locked: unlock it first (the 🔒 icon at the top-right of the editor)"
 	}
 	revisions.Surface{
 		Store:        udb,

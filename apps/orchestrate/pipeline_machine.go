@@ -33,14 +33,14 @@ func (T *OrchestrateApp) pipelineMachineRunner(owner string) PipelineMachineRunn
 		udb := UserDB(T.DB, owner)
 		def, ok := findMachineByNameOrID(udb, owner, ref)
 		if !ok {
-			return "", nil, Error("no machine named " + strconv.Quote(ref) + " — it was deleted, renamed, or belongs to somebody else")
+			return "", nil, Error("no machine named " + strconv.Quote(ref) + ", it was deleted, renamed, or belongs to somebody else")
 		}
 		if !def.Unattended {
 			return "", nil, Error("machine " + strconv.Quote(def.Name) +
 				" converses rather than runs: it has a step that waits for a person, and a stage has nobody waiting in it")
 		}
 		if probs := def.Problems(); len(probs) > 0 {
-			return "", nil, Error("machine " + strconv.Quote(def.Name) + " will not run yet — " + probs[0] +
+			return "", nil, Error("machine " + strconv.Quote(def.Name) + " will not run yet: " + probs[0] +
 				" (" + strconv.Itoa(len(probs)) + " outstanding)")
 		}
 

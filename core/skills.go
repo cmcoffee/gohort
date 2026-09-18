@@ -184,18 +184,18 @@ func (r PlaybookRule) Problems(path string, depth int) []string {
 	var probs []string
 	at := func(msg string) { probs = append(probs, path+": "+msg) }
 	if depth > playbookMaxDepth {
-		at("nested more than " + strconv.Itoa(playbookMaxDepth) + " levels deep — past that it is a machine, and the author should write one")
+		at("nested more than " + strconv.Itoa(playbookMaxDepth) + " levels deep, past that it is a machine, and the author should write one")
 		return probs
 	}
 	fact := strings.TrimSpace(r.Fact)
 	switch {
 	case fact == "":
-		at("fact is required — the name of what the rule establishes")
+		at("fact is required: the name of what the rule establishes")
 	case strings.ContainsAny(fact, " ."):
 		at("fact must be one word with no spaces or dots (it is a field name), got " + strconv.Quote(fact))
 	}
 	if strings.TrimSpace(r.How) == "" {
-		at("how is required — the instruction for establishing the fact")
+		at("how is required: the instruction for establishing the fact")
 	}
 	armText := func(arm string) bool { return strings.TrimSpace(arm) != "" }
 	switch r.kind() {
@@ -204,10 +204,10 @@ func (r PlaybookRule) Problems(path string, depth int) []string {
 			at("values and cases belong to a choice rule; a bool rule has then and else")
 		}
 		if armText(r.Then) && r.ThenRule != nil {
-			at("then is both prose and a rule — an arm is one or the other")
+			at("then is both prose and a rule: an arm is one or the other")
 		}
 		if armText(r.Else) && r.ElseRule != nil {
-			at("else is both prose and a rule — an arm is one or the other")
+			at("else is both prose and a rule: an arm is one or the other")
 		}
 		if !armText(r.Then) && r.ThenRule == nil && !armText(r.Else) && r.ElseRule == nil {
 			at("a bool rule needs at least one arm: then, else, then_rule or else_rule")
@@ -241,7 +241,7 @@ func (r PlaybookRule) Problems(path string, depth int) []string {
 			hasText = hasText && strings.TrimSpace(text) != ""
 			hasRule = hasRule && rule != nil
 			if hasText && hasRule {
-				at("case " + strconv.Quote(v) + " is both prose and a rule — an arm is one or the other")
+				at("case " + strconv.Quote(v) + " is both prose and a rule: an arm is one or the other")
 			}
 			if hasText || hasRule {
 				covered++
@@ -281,7 +281,7 @@ func (r PlaybookRule) Machine(skill SkillRecord) MachineDef {
 	fact := strings.TrimSpace(r.Fact)
 	field := PipelineField{Name: fact, Required: true}
 	evidence := PipelineField{Name: PlaybookEvidenceField, Type: FieldString, Required: true,
-		Desc: "the one line of what you saw that decided it — a command's output line, a number, a status — quoted, not described"}
+		Desc: "the one line of what you saw that decided it (a command's output line, a number, a status), quoted, not described"}
 	prompt := "Establish ONE thing and report it; do not answer the person's question here, and do not go past what is asked.\n\n" +
 		"What to establish: " + fact + "\n\nHow: " + strings.TrimSpace(r.How) + "\n\n"
 	switch r.kind() {
@@ -680,7 +680,7 @@ func RenderAvailableSkills(skills []SkillRecord) string {
 	}
 	var b strings.Builder
 	b.WriteString("\n\n## Available skills\n\n")
-	b.WriteString("Domain packs you can draw on in your own context: read_skill(skill) returns its approach/instructions; skill_knowledge_search(skill, query) searches its sources (and attaches its approach the first time); skill_knowledge_fetch_doc(skill, doc_id) pulls a full document.\n\nRULE: when a listed skill covers the subject in front of you, consult it FIRST — call skill_knowledge_search (or read_skill) before web_search and before answering from memory. Its sources are authoritative for its domain and override your priors, so answering a covered question without it is a mistake even when you're confident. This fires on what you DISCOVER mid-task, not just the opening request: a repo that turns out to be Go → the Go skill, a tax-law doc → the tax skill, a PDF → the PDF skill, even if the user never named the domain. On FOLLOW-UPS the skill's instructions and what you already retrieved stay in your context — answer from that skill content, not your priors, and search the skill again only if the follow-up needs material you didn't pull. Skip a skill only for what it plainly doesn't cover or fast-changing facts (current events, latest figures). When a skill's trigger matches the turn you'll see a \"Likely relevant\" hint — treat it as a strong nudge to consult that skill, not a guarantee. Format: **name** — purpose.\n\n")
+	b.WriteString("Domain packs you can draw on in your own context: read_skill(skill) returns its approach/instructions; skill_knowledge_search(skill, query) searches its sources (and attaches its approach the first time); skill_knowledge_fetch_doc(skill, doc_id) pulls a full document.\n\nRULE: when a listed skill covers the subject in front of you, consult it FIRST, call skill_knowledge_search (or read_skill) before web_search and before answering from memory. Its sources are authoritative for its domain and override your priors, so answering a covered question without it is a mistake even when you're confident. This fires on what you DISCOVER mid-task, not just the opening request: a repo that turns out to be Go → the Go skill, a tax-law doc → the tax skill, a PDF → the PDF skill, even if the user never named the domain. On FOLLOW-UPS the skill's instructions and what you already retrieved stay in your context: answer from that skill content, not your priors, and search the skill again only if the follow-up needs material you didn't pull. Skip a skill only for what it plainly doesn't cover or fast-changing facts (current events, latest figures). When a skill's trigger matches the turn you'll see a \"Likely relevant\" hint: treat it as a strong nudge to consult that skill, not a guarantee. Format: **name**, purpose.\n\n")
 	for _, s := range skills {
 		// Full description — descriptions are model-facing; show it
 		// un-truncated so the whole activation cue is visible.
@@ -690,7 +690,7 @@ func RenderAvailableSkills(skills []SkillRecord) string {
 		}
 		b.WriteString("- **")
 		b.WriteString(s.Name)
-		b.WriteString("** — ")
+		b.WriteString("** ")
 		b.WriteString(desc)
 		if trig := strings.TrimSpace(strings.Join(s.Triggers, ", ")); trig != "" {
 			b.WriteString(" (triggers: ")
@@ -703,7 +703,7 @@ func RenderAvailableSkills(skills []SkillRecord) string {
 			// than working the same thing out by hand and then being told.
 			b.WriteString(" (playbook: consulting it establishes ")
 			b.WriteString(strings.Join(facts, ", "))
-			b.WriteString(" for you and tells you what follows — consult before working it out yourself)")
+			b.WriteString(" for you and tells you what follows: consult before working it out yourself)")
 		}
 		b.WriteString("\n")
 	}
@@ -804,7 +804,7 @@ func SkillTriggerHintBlock(names []string) string {
 	for i, n := range names {
 		quoted[i] = "**" + n + "**"
 	}
-	return "\n\n[Likely relevant this turn (triggers matched): " + strings.Join(quoted, ", ") + " — consult the fitting one FIRST via skill_knowledge_search / read_skill before answering. A trigger match is a hint, not a guarantee: skip a skill that doesn't actually fit.]\n\n"
+	return "\n\n[Likely relevant this turn (triggers matched): " + strings.Join(quoted, ", ") + ", consult the fitting one FIRST via skill_knowledge_search / read_skill before answering. A trigger match is a hint, not a guarantee: skip a skill that doesn't actually fit.]\n\n"
 }
 
 // resolveAllowedSkill looks up a skill by name (case-insensitive),
@@ -870,9 +870,9 @@ func querySkillSourceHooks(skill SkillRecord, query string) string {
 		if err != nil || strings.TrimSpace(res) == "" {
 			continue
 		}
-		b.WriteString("\n\n— from ")
+		b.WriteString("\n\n, from ")
 		b.WriteString(name)
-		b.WriteString(" —\n")
+		b.WriteString(", \n")
 		b.WriteString(strings.TrimSpace(res))
 	}
 	return b.String()
@@ -893,7 +893,7 @@ func skillInstructionsBlock(skill SkillRecord, delivered map[string]bool) string
 	if body == "" {
 		return ""
 	}
-	return "Apply the \"" + skill.Name + "\" approach for the REST of this turn — it governs how you read these results AND how you reply, not just this one result:\n\n" + body + "\n\n---\n"
+	return "Apply the \"" + skill.Name + "\" approach for the REST of this turn, it governs how you read these results AND how you reply, not just this one result:\n\n" + body + "\n\n---\n"
 }
 
 // AttachDeliveredSkillTools loads the bundled Tools of every skill consulted
@@ -949,7 +949,7 @@ func BuildReadSkillTool(db Database, owner string, allowed []string, delivered m
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "read_skill",
-			Description: "Pull a named skill's instructions/approach into this turn and apply them now. Use when you want the skill's METHOD itself (how to handle a PDF, an output format, a voice) — not to search its knowledge (that's skill_knowledge_search). One-shot: it returns the instructions; there's nothing to activate or turn off. A skill with a playbook also ESTABLISHES its facts when read — the reply tells you what was found and what follows from it, so read it before working those out yourself.",
+			Description: "Pull a named skill's instructions/approach into this turn and apply them now. Use when you want the skill's METHOD itself (how to handle a PDF, an output format, a voice): not to search its knowledge (that's skill_knowledge_search). One-shot: it returns the instructions; there's nothing to activate or turn off. A skill with a playbook also ESTABLISHES its facts when read: the reply tells you what was found and what follows from it, so read it before working those out yourself.",
 			Parameters: map[string]ToolParam{
 				"skill": {Type: "string", Description: "Exact skill name from the 'Available skills' block (case-insensitive).", Enum: allowedSkillNames(db, owner, allowed)},
 			},
@@ -970,9 +970,9 @@ func BuildReadSkillTool(db Database, owner string, allowed []string, delivered m
 				resolved = strings.TrimSpace(playbook(*found))
 			}
 			if body == "" && resolved == "" {
-				return fmt.Sprintf("Skill %q has no instructions body — its value is its knowledge sources (use skill_knowledge_search).", found.Name), nil
+				return fmt.Sprintf("Skill %q has no instructions body: its value is its knowledge sources (use skill_knowledge_search).", found.Name), nil
 			}
-			out := fmt.Sprintf("Skill %q — apply this approach for the REST of this turn, including your reply:\n\n%s", found.Name, body)
+			out := fmt.Sprintf("Skill %q, apply this approach for the REST of this turn, including your reply:\n\n%s", found.Name, body)
 			if resolved != "" {
 				out += "\n\n" + resolved
 			}
@@ -991,10 +991,10 @@ func BuildSkillKnowledgeSearchTool(db Database, owner string, allowed []string, 
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "skill_knowledge_search",
-			Description: "Search a named skill's reference sources (its document collections and live source APIs, merged and ranked) for material relevant to your query. Returns excerpts plus — the first time you touch the skill this turn — the skill's approach for interpreting them. Use when the request is in the skill's domain and you need grounded evidence. Pass a doc_id from the results to skill_knowledge_fetch_doc for the full document.",
+			Description: "Search a named skill's reference sources (its document collections and live source APIs, merged and ranked) for material relevant to your query. Returns excerpts plus (the first time you touch the skill this turn), the skill's approach for interpreting them. Use when the request is in the skill's domain and you need grounded evidence. Pass a doc_id from the results to skill_knowledge_fetch_doc for the full document.",
 			Parameters: map[string]ToolParam{
 				"skill": {Type: "string", Description: "Exact skill name from the 'Available skills' block (case-insensitive).", Enum: allowedSkillNames(db, owner, allowed)},
-				"query": {Type: "string", Description: "Natural-language search query — phrase like a web search."},
+				"query": {Type: "string", Description: "Natural-language search query: phrase like a web search."},
 			},
 			Required: []string{"skill", "query"},
 			Caps:     []Capability{CapRead, CapNetwork},
@@ -1028,7 +1028,7 @@ func BuildSkillKnowledgeSearchTool(db Database, owner string, allowed []string, 
 			// Grounding reminder at the point of results (the global
 			// grounding rule covers the same ground from the system prompt;
 			// this keeps it salient right where the citations are).
-			out.WriteString("\n\n[Grounding: cite only what appears in the results above — if a specific citation, number, name, or quote isn't here, say the sources don't specify it rather than supplying one from memory.]")
+			out.WriteString("\n\n[Grounding: cite only what appears in the results above, if a specific citation, number, name, or quote isn't here, say the sources don't specify it rather than supplying one from memory.]")
 			return out.String(), nil
 		},
 	}

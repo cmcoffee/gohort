@@ -44,8 +44,9 @@ import (
 func init() {
 	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_dispatch_fanout_lanes", Category: "Limits",
 		Label: "Parallel sibling dispatch lanes",
-		Help: "How many agents(run) calls from ONE model response may execute at once. 1 (the default) runs them strictly one after another. " +
-			"Higher fans out across DISTINCT targets only — two dispatches to the same agent always stay sequential, because they share a sub-session id and would overwrite each other's continuity thread and tear down each other's session temp tools. " +
+		Help:  "How many agents(run) calls from ONE model response may execute at once.",
+		Detail: "1, the default, runs them strictly one after another. " +
+			"Higher fans out across DISTINCT targets only: two dispatches to the same agent always stay sequential, because they share a sub-session id and would overwrite each other's continuity thread and tear down each other's session temp tools. " +
 			"Raise this only when the worker LLM can actually serve concurrent requests (llama.cpp started with --parallel N and its max-parallel knob raised, Ollama likewise, or a cloud provider); against a single-slot backend the calls just queue at the LLM instead of at the tool executor.",
 		Kind: KindInt, Default: 1, Min: 1, Max: 12})
 }

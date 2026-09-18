@@ -142,7 +142,7 @@ func build_app_menu(app *App) *wails_menu.Menu {
 			sel, _ := wails_runtime.MessageDialog(app.ctx, wails_runtime.MessageDialogOptions{
 				Type:          wails_runtime.InfoDialog,
 				Title:         "Gohort-Bridge Installed",
-				Message:       "The bridge is running and set to start at login.\n\nFor iMessage it needs Full Disk Access — grant it to Gohort-Bridge under System Settings → Privacy & Security → Full Disk Access.",
+				Message:       "The bridge is running and set to start at login.\n\nFor iMessage it needs Full Disk Access: grant it to Gohort-Bridge under System Settings → Privacy & Security → Full Disk Access.",
 				Buttons:       []string{"Open Settings", "Later"},
 				DefaultButton: "Open Settings",
 			})

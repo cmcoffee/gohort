@@ -42,7 +42,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	// "Custom" sorted alphabetically. The "— select agent —"
 	// placeholder is bare (no group) so it lands above both groups.
 	agentOpts := []ui.SelectOption{
-		{Value: "", Label: "— select agent —"},
+		{Value: "", Label: "(select agent)"},
 	}
 	agents := listAgents(udb, user)
 	phases.mark(fmt.Sprintf("list %d agents", len(agents)))
@@ -345,7 +345,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 								{Label: "Delete", Method: "DELETE", URL: "api/console/agents/delete", Variant: "danger", OnlyIf: "_del_standing", Confirm: "Delete this standing agent and cancel its schedule?"},
 								// Recurring tasks.
 								{Label: "Edit schedule", Method: "client", URL: "orchestrate_edit_schedule", OnlyIf: "_edit_recurring"},
-								{Label: "Run now", Method: "POST", URL: "api/console/recurring/run", OnlyIf: "_run_recurring", Confirm: "Run this recurring task's prompt once right now? This is a one-off test — it does not change the schedule or count against the fire cap."},
+								{Label: "Run now", Method: "POST", URL: "api/console/recurring/run", OnlyIf: "_run_recurring", Confirm: "Run this recurring task's prompt once right now? This is a one-off test: it does not change the schedule or count against the fire cap."},
 								{Label: "Relink", Method: "POST", URL: "api/console/recurring/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live agent", OnlyIf: "_relink_recurring"},
 								{Label: "Resume", Method: "POST", URL: "api/console/recurring/resume", OnlyIf: "_resume_recurring", Confirm: "Put this parked task back on its schedule? A stalled objective gets a fresh attempt allowance; what it already tried is kept."},
 								{Label: "Delete", Method: "DELETE", URL: "api/console/recurring/delete", Variant: "danger", OnlyIf: "_del_recurring", Confirm: "Delete this recurring task and cancel its schedule?"},
@@ -355,7 +355,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 								{Label: "Pause", Method: "POST", URL: "api/console/monitors/pause", OnlyIf: "_pause_monitor"},
 								{Label: "Resume", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_resume_monitor"},
 								{Label: "Relink", Method: "POST", URL: "api/console/monitors/relink", PickerSource: "api/console/agent-options?with_default=1", PickerTitle: "Relink (Default agent, or pick a specific one)", OnlyIf: "_relink_monitor"},
-								{Label: "Move to…", Method: "POST", URL: "api/console/monitors/move", PickerSource: "api/console/surface-options", PickerTitle: "Move this monitor — its card, badge & wake all follow", OnlyIf: "_move_monitor"},
+								{Label: "Move to…", Method: "POST", URL: "api/console/monitors/move", PickerSource: "api/console/surface-options", PickerTitle: "Move this monitor: its card, badge & wake all follow", OnlyIf: "_move_monitor"},
 								{Label: "Delete", Method: "DELETE", URL: "api/console/monitors/delete", Variant: "danger", OnlyIf: "_del_monitor", Confirm: "Delete this event monitor?"},
 							}},
 						// Permissions — pinned ABOVE the session list (it's an action
@@ -400,7 +400,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// was two entries wide and put a third button in a bar that
 						// already has six.
 						{Label: "Compact Cortex", Menu: "Manage", Group: "Cortex", ActionURL: "api/console/channel/compact",
-							Confirm: "Compact this Cortex thread now? Older messages fold into its rolling summary (still searchable via history recall); the recent tail is kept verbatim. Runs in the background — reopen the thread to see the shorter view."},
+							Confirm: "Compact this Cortex thread now? Older messages fold into its rolling summary (still searchable via history recall); the recent tail is kept verbatim. Runs in the background: reopen the thread to see the shorter view."},
 						{Label: "Clear Cortex", Menu: "Manage", Group: "Cortex", ActionURL: "api/console/channel/clear", Variant: "warning",
 							Confirm: "Clear this Cortex thread's conversation and rolling summary? Your monitors, standing agents, and approvals are kept."},
 
@@ -461,7 +461,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							{Label: "Delete", Method: "DELETE", URL: "api/console/agents/delete", Variant: "danger", OnlyIf: "_del_standing", Confirm: "Delete this standing agent and cancel its schedule?"},
 							// Recurring tasks.
 							{Label: "Edit schedule", Method: "client", URL: "orchestrate_edit_schedule", OnlyIf: "_edit_recurring"},
-							{Label: "Run now", Method: "POST", URL: "api/console/recurring/run", OnlyIf: "_run_recurring", Confirm: "Run this recurring task's prompt once right now? This is a one-off test — it does not change the schedule or count against the fire cap."},
+							{Label: "Run now", Method: "POST", URL: "api/console/recurring/run", OnlyIf: "_run_recurring", Confirm: "Run this recurring task's prompt once right now? This is a one-off test: it does not change the schedule or count against the fire cap."},
 							{Label: "Relink", Method: "POST", URL: "api/console/recurring/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live agent", OnlyIf: "_relink_recurring"},
 							{Label: "Resume", Method: "POST", URL: "api/console/recurring/resume", OnlyIf: "_resume_recurring", Confirm: "Put this parked task back on its schedule? A stalled objective gets a fresh attempt allowance; what it already tried is kept."},
 							{Label: "Delete", Method: "DELETE", URL: "api/console/recurring/delete", Variant: "danger", OnlyIf: "_del_recurring", Confirm: "Delete this recurring task and cancel its schedule?"},
@@ -557,7 +557,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						},
 						{
 							Label:     "Clean",
-							Title:     "Suppress the Reference Memory layer for this turn — memory_save / memory_search / memory_forget stripped from the agent's catalog so it can't write to or read from its accumulated derived store. The agent answers fresh from the user's question plus the Knowledge layer (uploaded files) and Explicit Memory (facts), without prior memory_save findings coloring the response. Use when you want the agent unbiased by its own accumulated history.",
+							Title:     "Suppress the Reference Memory layer for this turn: memory_save / memory_search / memory_forget stripped from the agent's catalog so it can't write to or read from its accumulated derived store. The agent answers fresh from the user's question plus the Knowledge layer (uploaded files) and Explicit Memory (facts), without prior memory_save findings coloring the response. Use when you want the agent unbiased by its own accumulated history.",
 							GetURL:    "api/settings/memory",
 							PostURL:   "api/settings/memory/set",
 							Field:     "inferred_disabled",
@@ -598,21 +598,21 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							Method: "client", URL: "orchestrate_tools_modal"},
 						{Group: "Configure", Label: "Memory", Title: "Review and prune the active agent's learned notes",
 							Method: "client", URL: "orchestrate_memory_modal"},
-						{Group: "Configure", Label: "Knowledge", Title: "Manage what data this agent draws on — your uploaded docs + attached Document Collections.",
+						{Group: "Configure", Label: "Knowledge", Title: "Manage what data this agent draws on: your uploaded docs + attached Document Collections.",
 							Method: "client", URL: "orchestrate_knowledge_modal"},
-						{Group: "Configure", Label: "Sources", Title: "Attach what this agent can reach INTO — file stores, servitor systems, connected document services. Each attachment adds its own named tools to the agent.",
+						{Group: "Configure", Label: "Sources", Title: "Attach what this agent can reach INTO: file stores, servitor systems, connected document services. Each attachment adds its own named tools to the agent.",
 							Method: "client", URL: "orchestrate_sources_modal"},
 						{Group: "Configure", Label: "Rules", Title: "Review and edit the active agent's standing rules",
 							Method: "client", URL: "orchestrate_rules_modal"},
-						{Group: "Configure", Label: "Skills", Title: "Manage what this agent can do — allowlist skills (behavior modifications) and experts (consultable brains).",
+						{Group: "Configure", Label: "Skills", Title: "Manage what this agent can do: allowlist skills (behavior modifications) and experts (consultable brains).",
 							Method: "client", URL: "orchestrate_skills_modal"},
-						{Group: "Configure", Label: "Pipelines", Title: "Attach saved multi-stage pipelines to this agent — each becomes a callable run_<pipeline> tool.",
+						{Group: "Configure", Label: "Pipelines", Title: "Attach saved multi-stage pipelines to this agent: each becomes a callable run_<pipeline> tool.",
 							Method: "client", URL: "orchestrate_pipelines_modal"},
-						{Group: "Configure", Label: "Machines", Title: "Phase machines — give this agent a workflow it moves through and stays in, instead of re-deciding its approach every turn.",
+						{Group: "Configure", Label: "Machines", Title: "Phase machines: give this agent a workflow it moves through and stays in, instead of re-deciding its approach every turn.",
 							Method: "client", URL: "orchestrate_machines_modal"},
-						{Group: "Configure", Label: "Security & Access", Title: "Blast-radius controls — Force Private (network off), hide from the fleet, and set the dispatch policy (allow all / only / all-except / none).",
+						{Group: "Configure", Label: "Security & Access", Title: "Blast-radius controls: Force Private (network off), hide from the fleet, and set the dispatch policy (allow all / only / all-except / none).",
 							Method: "client", URL: "orchestrate_security_modal"},
-						{Group: "Session", Label: "Copy session", Title: "Copy the full session as markdown — every user message, every assistant round, every tool call/result — for pasting into a prompt-tuning chat.",
+						{Group: "Session", Label: "Copy session", Title: "Copy the full session as markdown (every user message, every assistant round, every tool call/result) for pasting into a prompt-tuning chat.",
 							Method: "client", URL: "copy_session"},
 						{Group: "Session", Label: "Save log", Title: "Download the current session as a Markdown transcript (full trace with tool calls). Useful for sharing or debugging.",
 							Method: "client", URL: "orchestrate_export_session"},
@@ -734,5 +734,5 @@ func (p *phaseTimer) report(what string) {
 	if time.Since(p.last) > time.Millisecond {
 		p.mark("remainder")
 	}
-	Log("[orchestrate.page] %s took %s — %s", what, total.Round(time.Millisecond), strings.Join(p.phases, ", "))
+	Log("[orchestrate.page] %s took %s: %s", what, total.Round(time.Millisecond), strings.Join(p.phases, ", "))
 }

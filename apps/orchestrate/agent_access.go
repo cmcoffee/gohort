@@ -151,7 +151,7 @@ func agentAccessSummary(rec AgentRecord, reach []agentReachRow) string {
 }
 
 // accessCaveat is the second register, said once rather than implied by a gap.
-const accessCaveat = "Credential-backed, custom, app-provided and MCP tools are assembled per run and are not listed here — this is what the record determines, not a transcript of one turn."
+const accessCaveat = "Credential-backed, custom, app-provided and MCP tools are assembled per run and are not listed here: this is what the record determines, not a transcript of one turn."
 
 // handleAgentAccess serves the two lists the access sections read.
 func (T *OrchestrateApp) handleAgentAccess(w http.ResponseWriter, r *http.Request) {
@@ -212,5 +212,5 @@ func agentToolsEmptyText(rec AgentRecord) string {
 	if len(rec.AllowedTools) == 0 {
 		return "No allowlist, which means the DEFAULT POOL: every read and network tool this deployment has. Narrow it above to change that."
 	}
-	return "No tools resolved from this agent's allowlist — every name on it matches nothing, so the agent cannot act."
+	return "No tools resolved from this agent's allowlist: every name on it matches nothing, so the agent cannot act."
 }

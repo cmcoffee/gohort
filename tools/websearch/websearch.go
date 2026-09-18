@@ -224,7 +224,7 @@ type FetchURLTool struct{}
 func (t *FetchURLTool) Name() string       { return "fetch_url" }
 func (t *FetchURLTool) Caps() []Capability { return []Capability{CapNetwork, CapRead} } // HTTP against live web
 func (t *FetchURLTool) Desc() string {
-	return "Fetch a URL from the live web. Defaults to GET; pass method=POST/PUT/PATCH/DELETE with optional body for write calls. Two response modes: (a) without save_to, returns up to 8000 characters of readable text (HTML stripped) — use for articles, JSON APIs, plain-text endpoints; (b) with save_to=<workspace-relative path>, streams the raw bytes straight to disk (up to 100MB) — use for binary downloads (PDF, image, audio, video, archive). Pair save_to with attach_file to deliver the saved file to the user. Binary responses without save_to return an error pointing you at the right mode.\n\nJSON endpoints: the body comes back as JSON text — read fields directly out of the text (the model handles it fluently) or, inside a script, json.loads(body). There is no separate fetch_json tool.\n\nFor credentialed endpoints, use the matching `fetch_url_<credential>` tool (e.g. fetch_url_github) — same shape (method / body / request_headers / save_to all work the same), auth injected server-side.\n\nFallback: when the response comes back blocked (403, captcha challenge page, Cloudflare interstitial, JS-required skeleton, empty body) and browse_page is in your catalog, retry the same URL through browse_page — the headless browser executes JavaScript, handles cookies, and clears most soft blocks. fetch_url is faster and the right default; browse_page is the recovery path."
+	return "Fetch a URL from the live web. Defaults to GET; pass method=POST/PUT/PATCH/DELETE with optional body for write calls. Two response modes: (a) without save_to, returns up to 8000 characters of readable text (HTML stripped), use for articles, JSON APIs, plain-text endpoints; (b) with save_to=<workspace-relative path>, streams the raw bytes straight to disk (up to 100MB), use for binary downloads (PDF, image, audio, video, archive). Pair save_to with attach_file to deliver the saved file to the user. Binary responses without save_to return an error pointing you at the right mode.\n\nJSON endpoints: the body comes back as JSON text, read fields directly out of the text (the model handles it fluently) or, inside a script, json.loads(body). There is no separate fetch_json tool.\n\nFor credentialed endpoints, use the matching `fetch_url_<credential>` tool (e.g. fetch_url_github), same shape (method / body / request_headers / save_to all work the same), auth injected server-side.\n\nFallback: when the response comes back blocked (403, captcha challenge page, Cloudflare interstitial, JS-required skeleton, empty body) and browse_page is in your catalog, retry the same URL through browse_page, the headless browser executes JavaScript, handles cookies, and clears most soft blocks. fetch_url is faster and the right default; browse_page is the recovery path."
 }
 
 func (t *FetchURLTool) Params() map[string]ToolParam {
@@ -238,7 +238,7 @@ func (t *FetchURLTool) Params() map[string]ToolParam {
 		},
 		"save_to": {
 			Type:        "string",
-			Description: "Optional. Workspace-relative path to write the response body to as raw bytes (e.g. \"report.pdf\", \"image.jpg\"). When set, response is streamed straight to disk and the tool result is a short metadata line instead of the body — use for binary content the LLM can't usefully read as text.",
+			Description: "Optional. Workspace-relative path to write the response body to as raw bytes (e.g. \"report.pdf\", \"image.jpg\"). When set, response is streamed straight to disk and the tool result is a short metadata line instead of the body: use for binary content the LLM can't usefully read as text.",
 		},
 	}
 }
@@ -314,7 +314,7 @@ func (t *FetchURLTool) runImpl(args map[string]any, sess *ToolSession) (string, 
 			if derr != nil {
 				return out, derr
 			}
-			return fmt.Sprintf("[Sent through the %q credential — authenticated for you automatically.]\n\n%s", credName, out), nil
+			return fmt.Sprintf("[Sent through the %q credential: authenticated for you automatically.]\n\n%s", credName, out), nil
 		}
 	}
 
@@ -725,9 +725,9 @@ func fetchURLDirect(sess *ToolSession, target, method, body string, customHeader
 func truncationHint(sess *ToolSession, fullLen int, savedAt string) string {
 	reader := sess.FirstAvailableTool("read_file", "shell", "python", "run_local")
 	if reader == "" {
-		return fmt.Sprintf("\n\n[Truncated — full %d chars cached at %s, but you have no tool that can read it. Work from the text above.]", fullLen, savedAt)
+		return fmt.Sprintf("\n\n[Truncated: full %d chars cached at %s, but you have no tool that can read it. Work from the text above.]", fullLen, savedAt)
 	}
-	return fmt.Sprintf("\n\n[Truncated — full %d chars cached at %s. Use %s to access the rest.]", fullLen, savedAt, reader)
+	return fmt.Sprintf("\n\n[Truncated: full %d chars cached at %s. Use %s to access the rest.]", fullLen, savedAt, reader)
 }
 
 func binaryRecoveryHint(sess *ToolSession, savedAt string) string {
@@ -743,7 +743,7 @@ func binaryRecoveryHint(sess *ToolSession, savedAt string) string {
 	if len(parts) == 0 {
 		// Say so plainly rather than leaving a bare "saved to X" that reads
 		// as though something more is possible.
-		return " You have no tool that can open it — treat the content as unavailable."
+		return " You have no tool that can open it: treat the content as unavailable."
 	}
 	return " " + strings.Join(parts, " ")
 }
@@ -785,7 +785,7 @@ func fetchURLToFile(sess *ToolSession, target, absPath, displayPath string) (str
 	}
 	mime := resp.Header.Get("Content-Type")
 	Debug("[fetch_url] %s → %d bytes → %s (%s)", target, written, displayPath, mime)
-	return fmt.Sprintf("HTTP %d %s — saved %d bytes to %s (%s).%s",
+	return fmt.Sprintf("HTTP %d %s: saved %d bytes to %s (%s).%s",
 		resp.StatusCode, http.StatusText(resp.StatusCode), written, displayPath, mime,
 		binaryRecoveryHint(sess, displayPath)), nil
 }
@@ -1394,7 +1394,7 @@ func fetchArticleInternal(target_url string, max_chars int) (string, SourceMeta,
 		if ShouldBrowserRetryResult(content_type, text) {
 			if rendered, berr := browser.Fetch(target_url, max_chars); berr == nil {
 				if rendered = strings.TrimSpace(rendered); len(rendered) > len(strings.TrimSpace(text)) {
-					Debug("[fetch] thin static result (%d chars) — recovered %d via browse_page: %s", len(text), len(rendered), target_url)
+					Debug("[fetch] thin static result (%d chars), recovered %d via browse_page: %s", len(text), len(rendered), target_url)
 					text = rendered
 				}
 			} else {
@@ -1633,7 +1633,7 @@ Strict guidance:
 - "criminal_justice" ONLY for crimes, sentencing, policing, incarceration
 - "military" for warfare, defense, weapons, international security
 - "political" for laws, policy, treaties, regulations, government action
-- "technology" only for civilian tech — military tech goes under "military"
+- "technology" only for civilian tech: military tech goes under "military"
 
 Reply with ONLY a JSON array of 1-3 category names that best fit this topic:
 ["category1", "category2"]`, topic, posFor, posAgainst, strings.Join(categories, ", "))

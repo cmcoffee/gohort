@@ -86,10 +86,10 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 	addSection := AgentToolDef{
 		Tool: Tool{
 			Name:        "add_section",
-			Description: "Append a new section to the guide the user has OPEN. Provide the section title and its BODY as markdown (sub-headings as ###, lists, fenced code — do NOT repeat the title inside the body). Use this to add content the user asks for; it lands in the document and the viewer updates. Errors if no guide is open — ask the user to select or create one.",
+			Description: "Append a new section to the guide the user has OPEN. Provide the section title and its BODY as markdown (sub-headings as ###, lists, fenced code: do NOT repeat the title inside the body). Use this to add content the user asks for; it lands in the document and the viewer updates. Errors if no guide is open: ask the user to select or create one.",
 			Parameters: map[string]ToolParam{
 				"section_title": {Type: "string", Description: "Title of the new section (shown as a numbered heading + in the table of contents)."},
-				"markdown":      {Type: "string", Description: "The section body as markdown. Substantive content, not a placeholder. No top-level heading — the title is separate."},
+				"markdown":      {Type: "string", Description: "The section body as markdown. Substantive content, not a placeholder. No top-level heading: the title is separate."},
 			},
 			Required: []string{"section_title", "markdown"},
 		},
@@ -98,11 +98,11 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
 			md := strings.TrimSpace(fmt.Sprint(args["markdown"]))
 			if md == "" {
-				return "", fmt.Errorf("markdown is required — pass the section body")
+				return "", fmt.Errorf("markdown is required: pass the section body")
 			}
 			g, ownerUDB, _, ok := openGuide()
 			if !ok {
-				return "", fmt.Errorf("no guide is open — ask the user to select or create one first")
+				return "", fmt.Errorf("no guide is open: ask the user to select or create one first")
 			}
 			g.Sections = append(g.Sections, Section{ID: newID(), Title: title, Markdown: md, Order: g.nextOrder()})
 			saveGuideRev(ownerUDB, g, "Added section: "+title)
@@ -126,11 +126,11 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			md := strings.TrimSpace(fmt.Sprint(args["markdown"]))
 			g, ownerUDB, _, ok := openGuide()
 			if !ok {
-				return "", fmt.Errorf("no guide is open — ask the user to select or create one first")
+				return "", fmt.Errorf("no guide is open: ask the user to select or create one first")
 			}
 			idx := findIdx(g, title)
 			if idx < 0 {
-				return "", fmt.Errorf("no section titled %q — existing sections: %s", title, sectionTitles(g))
+				return "", fmt.Errorf("no section titled %q, existing sections: %s", title, sectionTitles(g))
 			}
 			g.Sections[idx].Markdown = md
 			saveGuideRev(ownerUDB, g, "Edited section: "+title)
@@ -146,9 +146,9 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 	draftSection := AgentToolDef{
 		Tool: Tool{
 			Name:        "draft_section",
-			Description: "Write a section GROUNDED in the guide's own backing. Unlike add_section (where YOU write the body), this tool DETERMINISTICALLY gathers material from BOTH the guide's knowledge collections AND every attached Source on this topic, then writes the section from that material and commits it — you do NOT need to call search_knowledge or pull_reference yourself first. Use this for any section that should be backed by the guide's attached knowledge/Sources. Provide the section title and a brief of what it should cover. If the section already exists, its body is replaced. Errors if the guide has no knowledge/Sources with anything on the topic — then use `research` (web) or add_section (write it yourself).",
+			Description: "Write a section GROUNDED in the guide's own backing. Unlike add_section (where YOU write the body), this tool DETERMINISTICALLY gathers material from BOTH the guide's knowledge collections AND every attached Source on this topic, then writes the section from that material and commits it: you do NOT need to call search_knowledge or pull_reference yourself first. Use this for any section that should be backed by the guide's attached knowledge/Sources. Provide the section title and a brief of what it should cover. If the section already exists, its body is replaced. Errors if the guide has no knowledge/Sources with anything on the topic, then use `research` (web) or add_section (write it yourself).",
 			Parameters: map[string]ToolParam{
-				"section_title": {Type: "string", Description: "Title of the section to write — created if new, re-drafted if it already exists."},
+				"section_title": {Type: "string", Description: "Title of the section to write: created if new, re-drafted if it already exists."},
 				"instructions":  {Type: "string", Description: "What this section should cover: the angle, scope, and any specifics to include. The tool gathers the guide's knowledge + Sources on this topic and writes the section grounded in them."},
 			},
 			Required: []string{"section_title", "instructions"},
@@ -162,24 +162,24 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			}
 			g, ownerUDB, ownerUser, ok := openGuide()
 			if !ok {
-				return "", fmt.Errorf("no guide is open — ask the user to select or create one first")
+				return "", fmt.Errorf("no guide is open: ask the user to select or create one first")
 			}
 			query := title
 			if instr != "" {
-				query = title + " — " + instr
+				query = title + " · " + instr
 			}
 			grounding, found := gatherGroundingFor(context.Background(), ownerUser, g, query)
 			if !found {
-				return "", fmt.Errorf("no grounding found in this guide's knowledge collections or attached Sources for %q — attach a Source/collection with anything on this topic, use the `research` tool for a public/web topic, or write it yourself with add_section", title)
+				return "", fmt.Errorf("no grounding found in this guide's knowledge collections or attached Sources for %q: attach a Source/collection with anything on this topic, use the `research` tool for a public/web topic, or write it yourself with add_section", title)
 			}
 			// Deterministic grounded write: a single lead-LLM completion (no tools),
 			// strictly bounded to the gathered material.
-			sys := fmt.Sprintf("You are the Guide Author writing ONE section of a guide titled %q. Write the section body as clean markdown — sub-headings (###), lists, fenced code where useful. Do NOT repeat the section title as a heading. Ground every specific (commands, values, names, versions, paths) STRICTLY in the provided material; do not invent anything it doesn't contain. If the material is thin, write only what it supports. Output ONLY the markdown body, nothing else.", g.Title) + "\n" + BannedWordsRule
+			sys := fmt.Sprintf("You are the Guide Author writing ONE section of a guide titled %q. Write the section body as clean markdown: sub-headings (###), lists, fenced code where useful. Do NOT repeat the section title as a heading. Ground every specific (commands, values, names, versions, paths) STRICTLY in the provided material; do not invent anything it doesn't contain. If the material is thin, write only what it supports. Output ONLY the markdown body, nothing else.", g.Title) + "\n" + BannedWordsRule
 			brief := instr
 			if brief == "" {
-				brief = "(no extra instructions — cover the topic from the material)"
+				brief = "(no extra instructions: cover the topic from the material)"
 			}
-			userMsg := fmt.Sprintf("Section title: %s\n\nWhat to cover:\n%s\n\nGrounding material gathered from this guide's knowledge collections and attached Sources — write the section from THIS and nothing else:\n\n%s", title, brief, grounding)
+			userMsg := fmt.Sprintf("Section title: %s\n\nWhat to cover:\n%s\n\nGrounding material gathered from this guide's knowledge collections and attached Sources, write the section from THIS and nothing else:\n\n%s", title, brief, grounding)
 			// A Private guide's "stays off the wire" guarantee covers this
 			// completion too: the gathered grounding can carry servitor facts
 			// and private-collection text, so it must never reach the remote
@@ -211,12 +211,12 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 	listSections := AgentToolDef{
 		Tool: Tool{
 			Name:        "list_sections",
-			Description: "List the sections of the OPEN guide, in order, with their titles. Call this to see the guide's current structure before renaming, deleting, moving, or editing a section — so you use the exact existing titles and correct positions. No arguments.",
+			Description: "List the sections of the OPEN guide, in order, with their titles. Call this to see the guide's current structure before renaming, deleting, moving, or editing a section, so you use the exact existing titles and correct positions. No arguments.",
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			g, _, _, ok := openGuide()
 			if !ok {
-				return "", fmt.Errorf("no guide is open — ask the user to select or create one first")
+				return "", fmt.Errorf("no guide is open: ask the user to select or create one first")
 			}
 			secs := g.sorted()
 			if len(secs) == 0 {
@@ -245,11 +245,11 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			title := strings.TrimSpace(fmt.Sprint(args["section_title"]))
 			g, ownerUDB, _, ok := openGuide()
 			if !ok {
-				return "", fmt.Errorf("no guide is open — ask the user to select or create one first")
+				return "", fmt.Errorf("no guide is open: ask the user to select or create one first")
 			}
 			idx := findIdx(g, title)
 			if idx < 0 {
-				return "", fmt.Errorf("no section titled %q — existing sections: %s", title, sectionTitles(g))
+				return "", fmt.Errorf("no section titled %q, existing sections: %s", title, sectionTitles(g))
 			}
 			removed := g.Sections[idx].Title
 			g.Sections = append(g.Sections[:idx], g.Sections[idx+1:]...)
@@ -278,11 +278,11 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			}
 			g, ownerUDB, _, ok := openGuide()
 			if !ok {
-				return "", fmt.Errorf("no guide is open — ask the user to select or create one first")
+				return "", fmt.Errorf("no guide is open: ask the user to select or create one first")
 			}
 			idx := findIdx(g, title)
 			if idx < 0 {
-				return "", fmt.Errorf("no section titled %q — existing sections: %s", title, sectionTitles(g))
+				return "", fmt.Errorf("no section titled %q, existing sections: %s", title, sectionTitles(g))
 			}
 			g.Sections[idx].Title = newTitle
 			saveGuideRev(ownerUDB, g, "Renamed section: "+title+" → "+newTitle)
@@ -293,7 +293,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 	moveSection := AgentToolDef{
 		Tool: Tool{
 			Name:        "move_section",
-			Description: "Reorder a section: move it to a 1-based position in the open guide (1 = first). Use to rearrange the document — e.g. move \"Troubleshooting\" to the end, or move \"Overview\" to position 1. Call list_sections first to see current positions.",
+			Description: "Reorder a section: move it to a 1-based position in the open guide (1 = first). Use to rearrange the document: e.g. move \"Troubleshooting\" to the end, or move \"Overview\" to position 1. Call list_sections first to see current positions.",
 			Parameters: map[string]ToolParam{
 				"section_title": {Type: "string", Description: "Title of the section to move."},
 				"position":      {Type: "integer", Description: "Target 1-based position (1 = first). Values past the end move it last."},
@@ -306,7 +306,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			pos := coerceIntArg(args["position"])
 			g, ownerUDB, _, ok := openGuide()
 			if !ok {
-				return "", fmt.Errorf("no guide is open — ask the user to select or create one first")
+				return "", fmt.Errorf("no guide is open: ask the user to select or create one first")
 			}
 			secs := g.sorted()
 			idx := -1
@@ -317,7 +317,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 				}
 			}
 			if idx < 0 {
-				return "", fmt.Errorf("no section titled %q — existing sections: %s", title, sectionTitles(g))
+				return "", fmt.Errorf("no section titled %q, existing sections: %s", title, sectionTitles(g))
 			}
 			reordered, target := reorderSections(secs, idx, pos-1)
 			g.Sections = reordered
@@ -335,9 +335,9 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 	research := AgentToolDef{
 		Tool: Tool{
 			Name:        "research",
-			Description: "Research a topic on the web before writing about it: searches, reads sources, and returns a cited synthesis (with a Sources list). Use this for accuracy-critical content — exact commands, flags, version numbers, API details — so the section is grounded in real sources rather than your own recollection. Then write the section with add_section, carrying the citations/links through. Takes tens of seconds; call it deliberately, not for trivial sections.",
+			Description: "Research a topic on the web before writing about it: searches, reads sources, and returns a cited synthesis (with a Sources list). Use this for accuracy-critical content (exact commands, flags, version numbers, API details), so the section is grounded in real sources rather than your own recollection. Then write the section with add_section, carrying the citations/links through. Takes tens of seconds; call it deliberately, not for trivial sections.",
 			Parameters: map[string]ToolParam{
-				"topic": {Type: "string", Description: "The specific thing to research — a focused question or subject, e.g. 'RKE2 agent join command and required ports' (not just 'Kubernetes')."},
+				"topic": {Type: "string", Description: "The specific thing to research: a focused question or subject, e.g. 'RKE2 agent join command and required ports' (not just 'Kubernetes')."},
 			},
 			Required: []string{"topic"},
 		},
@@ -361,7 +361,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 				collID, _ := ensureGuideCollection(ownerUDB, ownerUser, g)
 				reportID := fmt.Sprintf("guide-research-%s-%d", collID, time.Now().UnixNano())
 				IngestReportTitled(context.Background(), VectorDB, CollectionSource(collID), reportID, topic, out, "research")
-				out += "\n\n_(Saved to this guide's research collection — you can recall it later with search_knowledge.)_"
+				out += "\n\n_(Saved to this guide's research collection: you can recall it later with search_knowledge.)_"
 			}
 			return out, nil
 		},
@@ -375,9 +375,9 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 	searchKnowledge := AgentToolDef{
 		Tool: Tool{
 			Name:        "search_knowledge",
-			Description: "Search the knowledge collections attached to the OPEN guide (the user's own curated documents) for passages relevant to a query, and return the best matches with their source labels. Use this BEFORE web research when the guide is about internal/private material the user has collected — it grounds the section in their own knowledge. If nothing is attached, it says so; then fall back to the `research` tool for public topics.",
+			Description: "Search the knowledge collections attached to the OPEN guide (the user's own curated documents) for passages relevant to a query, and return the best matches with their source labels. Use this BEFORE web research when the guide is about internal/private material the user has collected: it grounds the section in their own knowledge. If nothing is attached, it says so; then fall back to the `research` tool for public topics.",
 			Parameters: map[string]ToolParam{
-				"query": {Type: "string", Description: "What to look up — a focused question or topic, e.g. 'firewall failover configuration steps'."},
+				"query": {Type: "string", Description: "What to look up: a focused question or topic, e.g. 'firewall failover configuration steps'."},
 			},
 			Required: []string{"query"},
 		},
@@ -388,7 +388,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			}
 			g, _, ownerUser, ok := openGuide()
 			if !ok {
-				return "", fmt.Errorf("no guide is open — ask the user to select or create one first")
+				return "", fmt.Errorf("no guide is open: ask the user to select or create one first")
 			}
 			if len(g.Collections) == 0 {
 				return "No knowledge collections are attached to this guide. Ask the user to attach one with the Knowledge button on the guide toolbar, or use the `research` tool for public topics.", nil
@@ -417,7 +417,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 	listReferences := AgentToolDef{
 		Tool: Tool{
 			Name:        "list_reference_sources",
-			Description: "List the internal knowledge sources you can pull into the guide from OTHER gohort services — e.g. Systems (facts gathered about the user's own servers/appliances) and connected document sources like Confluence. Returns each source's items with their IDs. Call this to discover what's available before pull_reference, especially when the user asks to build a guide ABOUT a specific system or from internal docs. No arguments.",
+			Description: "List the internal knowledge sources you can pull into the guide from OTHER gohort services: e.g. Systems (facts gathered about the user's own servers/appliances) and connected document sources like Confluence. Returns each source's items with their IDs. Call this to discover what's available before pull_reference, especially when the user asks to build a guide ABOUT a specific system or from internal docs. No arguments.",
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			// Reader of a shared guide: only the sources the OWNER linked to this
@@ -443,7 +443,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			}
 			var b strings.Builder
 			if len(attached) > 0 {
-				b.WriteString("Internal reference sources. Items marked [attached] were selected by the user via the Sources button as this guide's sources — build the guide from those unless told otherwise. Pull any item with pull_reference:\n")
+				b.WriteString("Internal reference sources. Items marked [attached] were selected by the user via the Sources button as this guide's sources: build the guide from those unless told otherwise. Pull any item with pull_reference:\n")
 			} else {
 				b.WriteString("Internal reference sources you can pull from with pull_reference:\n")
 			}
@@ -455,7 +455,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 						mark = " [attached]"
 					}
 					if strings.TrimSpace(it.Desc) != "" {
-						fmt.Fprintf(&b, "- %s — %s [id: %s]%s\n", it.Name, it.Desc, it.ID, mark)
+						fmt.Fprintf(&b, "- %s, %s [id: %s]%s\n", it.Name, it.Desc, it.ID, mark)
 					} else {
 						fmt.Fprintf(&b, "- %s [id: %s]%s\n", it.Name, it.ID, mark)
 					}
@@ -468,7 +468,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 	pullReference := AgentToolDef{
 		Tool: Tool{
 			Name:        "pull_reference",
-			Description: "Pull the knowledge for one reference item (from list_reference_sources) into your context so you can write a guide section GROUNDED in it — e.g. build a guide from a system's gathered facts (servitor) or from connected docs (Confluence). Provide the kind and item id from list_reference_sources, and a query describing what you're writing about: every source uses it to return the most relevant material (a system/servitor source searches its gathered knowledge, docs, and facts; a document source searches its content). Omit the query only when you want the source's full picture. Then write the section with add_section using only details the reference actually contains — do not invent specifics it doesn't include.",
+			Description: "Pull the knowledge for one reference item (from list_reference_sources) into your context so you can write a guide section GROUNDED in it: e.g. build a guide from a system's gathered facts (servitor) or from connected docs (Confluence). Provide the kind and item id from list_reference_sources, and a query describing what you're writing about: every source uses it to return the most relevant material (a system/servitor source searches its gathered knowledge, docs, and facts; a document source searches its content). Omit the query only when you want the source's full picture. Then write the section with add_section using only details the reference actually contains: do not invent specifics it doesn't include.",
 			Parameters: map[string]ToolParam{
 				"kind":    {Type: "string", Description: "The source kind from list_reference_sources, e.g. \"system\" or \"mcp:confluence\"."},
 				"item_id": {Type: "string", Description: "The item id from list_reference_sources."},
@@ -480,7 +480,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			kind := strings.TrimSpace(fmt.Sprint(args["kind"]))
 			itemID := strings.TrimSpace(fmt.Sprint(args["item_id"]))
 			if kind == "" || itemID == "" {
-				return "", fmt.Errorf("kind and item_id are required — get them from list_reference_sources")
+				return "", fmt.Errorf("kind and item_id are required: get them from list_reference_sources")
 			}
 			query := ""
 			if q, ok := args["query"]; ok {
@@ -494,13 +494,13 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			if !canEdit {
 				g, _, ownerUser, ok := openGuide()
 				if !ok || !referenceAttached(g, kind, itemID) {
-					return "That source isn't linked to this guide — you can only pull the sources the guide's owner attached to it.", nil
+					return "That source isn't linked to this guide: you can only pull the sources the guide's owner attached to it.", nil
 				}
 				fetchUser = ownerUser
 			}
 			txt := FetchReference(ctx, fetchUser, kind, itemID, query)
 			if strings.TrimSpace(txt) == "" {
-				return fmt.Sprintf("No content available for %s item %q — it may be empty, or the id is wrong; re-check with list_reference_sources.", kind, itemID), nil
+				return fmt.Sprintf("No content available for %s item %q: it may be empty, or the id is wrong; re-check with list_reference_sources.", kind, itemID), nil
 			}
 			return txt, nil
 		},
@@ -708,9 +708,9 @@ func gatherLinkedSourceSnapshot(ctx context.Context, ownerUser string, g Guide) 
 // pushed content lands coherently. Honors the guide's Private (no-internet) flag.
 func (T *Scribe) runIncorporate(ctx context.Context, udb Database, orch *orchestrate.OrchestrateApp, user, guideID, suggestedTitle, content string, private bool) (string, error) {
 	udb.Set(activeTable, "current", guideID)
-	prompt := "A new finding has been pushed to this guide. Incorporate it CORRECTLY into the document — do NOT just paste it in as a raw block.\n\n" +
+	prompt := "A new finding has been pushed to this guide. Incorporate it CORRECTLY into the document: do NOT just paste it in as a raw block.\n\n" +
 		"1. Call list_sections to see the current structure.\n" +
-		"2. If the finding extends, updates, or overlaps an EXISTING section, use edit_section to weave it in so that section still reads as one coherent piece (merge and re-flow — don't tack a fragment on the end). If it's a genuinely new topic, use add_section with a fitting title"
+		"2. If the finding extends, updates, or overlaps an EXISTING section, use edit_section to weave it in so that section still reads as one coherent piece (merge and re-flow: don't tack a fragment on the end). If it's a genuinely new topic, use add_section with a fitting title"
 	if strings.TrimSpace(suggestedTitle) != "" {
 		prompt += " (a reasonable title: \"" + strings.TrimSpace(suggestedTitle) + "\")"
 	}
@@ -770,7 +770,7 @@ func describeAttachedReferences(ownerUser string, refs []ReferenceSelection) str
 			}
 			any = true
 			if strings.TrimSpace(it.Desc) != "" {
-				lines = append(lines, fmt.Sprintf("- %s — %s [kind: %s, id: %s]", it.Name, it.Desc, g.Kind, it.ID))
+				lines = append(lines, fmt.Sprintf("- %s, %s [kind: %s, id: %s]", it.Name, it.Desc, g.Kind, it.ID))
 			} else {
 				lines = append(lines, fmt.Sprintf("- %s [kind: %s, id: %s]", it.Name, g.Kind, it.ID))
 			}

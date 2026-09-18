@@ -49,8 +49,8 @@ func CheckPage(target string, cookies []PageCheckCookie, probeJS string, insecur
 	case r := <-ch:
 		return r.rep, r.err
 	case <-time.After(budget):
-		Log("[browser] page check outer budget %v exceeded for %s — Chromium likely wedged", budget, target)
-		return nil, fmt.Errorf("page check timed out after %v on %s — Chromium appears wedged; wait and retry, or restart the gohort process if it persists", budget, target)
+		Log("[browser] page check outer budget %v exceeded for %s: Chromium likely wedged", budget, target)
+		return nil, fmt.Errorf("page check timed out after %v on %s: Chromium appears wedged; wait and retry, or restart the gohort process if it persists", budget, target)
 	}
 }
 

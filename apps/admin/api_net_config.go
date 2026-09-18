@@ -153,7 +153,7 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 			return
 		}
 		if strings.TrimSpace(out) == "" {
-			writeTestResult(w, false, "", "no results returned — check provider/key/endpoint")
+			writeTestResult(w, false, "", "no results returned: check provider/key/endpoint")
 			return
 		}
 		// Trim the result to a short preview so the inline UI doesn't
@@ -162,7 +162,7 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 		if len(preview) > 80 {
 			preview = preview[:80] + "…"
 		}
-		writeTestResult(w, true, fmt.Sprintf("OK via %s — %d chars returned", req.Provider, len(out)), "")
+		writeTestResult(w, true, fmt.Sprintf("OK via %s: %d chars returned", req.Provider, len(out)), "")
 	})
 
 	// Mail / SMTP — per-key rows under MailTable. Password is masked in
@@ -328,7 +328,7 @@ func (a *AdminApp) registerNetConfigRoutes(sub *http.ServeMux) {
 func webSearchCtx(ctx context.Context, query string) (string, error) {
 	tools, err := GetAgentTools("web_search")
 	if err != nil || len(tools) == 0 {
-		return "", errors.New("no web_search tool is registered — enable a search provider first")
+		return "", errors.New("no web_search tool is registered: enable a search provider first")
 	}
 	out, err := tools[0].Handler(ctx, map[string]any{"query": query})
 	if err != nil {

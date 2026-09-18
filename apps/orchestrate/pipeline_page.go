@@ -45,7 +45,7 @@ func pipelinesExtensionSection(r *http.Request, user string) (ui.Section, bool) 
 	return ui.Section{
 		Title: "Pipelines",
 		Wide:  true,
-		Subtitle: "Workflows that run start to finish and return a result — decompose, investigate, synthesize. " +
+		Subtitle: "Workflows that run start to finish and return a result: decompose, investigate, synthesize. " +
 			"A pipeline attaches to an agent as a callable tool (run_<name>), so one that is attached to nothing is inert. " +
 			"Author them from chat with the pipeline tool; this is where you see what you have.",
 		Body: ui.Stack{Children: []ui.Component{
@@ -115,7 +115,7 @@ func pipelinesExtensionSection(r *http.Request, user string) (ui.Section, bool) 
 						Confirm:    "Delete this pipeline? Agents that call it lose the tool; runs already finished keep their results.",
 						Optimistic: true},
 				},
-				EmptyText: "No pipelines yet. A pipeline is a saved multi-step flow — decompose a question, research each part in parallel, then synthesize — that an agent can call as one tool. Ask Builder for one in chat.",
+				EmptyText: "No pipelines yet. A pipeline is a saved multi-step flow (decompose a question, research each part in parallel, then synthesize) that an agent can call as one tool. Ask Builder for one in chat.",
 			},
 		}},
 	}, true
@@ -196,7 +196,8 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 					Fields: []ui.FormField{
 						{Field: "name", Type: "text", Label: "Name"},
 						{Field: "description", Type: "textarea", Rows: 2, Label: "What it is for",
-							Help: "One line. This is what an agent sees in its tool list, and the difference between a pipeline that gets called and one that does not."},
+							Help:   "One line. This is what an agent sees in its tool list.",
+							Detail: "It is the difference between a pipeline that gets called and one that does not."},
 					},
 				},
 				ui.Toolbar{Actions: []ui.ToolbarAction{{
@@ -304,7 +305,7 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 			// stage list into twelve calls.
 			Title:    "What a run costs",
 			Wide:     true,
-			Subtitle: "Before you pay for one — worked out from the definition, not from a run.",
+			Subtitle: "Before you pay for one: worked out from the definition, not from a run.",
 			Body: ui.Card{
 				HTML:      costCardHTML(def),
 				Source:    pipelineBlockURL(def.ID, "cost"),
@@ -319,13 +320,13 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 			Title: "Assign to agents",
 			Wide:  true,
 			Subtitle: "A pipeline reaches an agent as a tool named run_" + strings.ToLower(strings.ReplaceAll(def.Name, " ", "_")) + ". " +
-				"Unlike a machine, an agent can hold several — checking one here adds this pipeline to that agent's list rather than replacing what it already has.",
+				"Unlike a machine, an agent can hold several: checking one here adds this pipeline to that agent's list rather than replacing what it already has.",
 			Body: ui.FormPanel{
 				Source:  "api/pipelines/" + url_(def.ID) + "/agents",
 				PostURL: "api/pipelines/" + url_(def.ID) + "/agents",
 				Fields: []ui.FormField{{
 					Field: "agents", Type: "checklist",
-					Placeholder: "(no agents yet — create one in the chat sidebar first)",
+					Placeholder: "(no agents yet: create one in the chat sidebar first)",
 					Options:     attachPipelineAgentOptions(udb, user),
 				}},
 			},
@@ -333,7 +334,7 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 		ui.Section{
 			Title:    "What it will do",
 			Wide:     true,
-			Subtitle: "Worked out from the definition, without running anything — the order, what each stage is handed, and what a run costs before you pay for one.",
+			Subtitle: "Worked out from the definition, without running anything: the order, what each stage is handed, and what a run costs before you pay for one.",
 			Body: ui.Card{
 				HTML:      planHTML(def),
 				Source:    pipelineBlockURL(def.ID, "plan"),
@@ -357,7 +358,7 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 	if mine {
 		page.Sections = append(page.Sections, ui.Section{
 			Title: "Share with users",
-			Subtitle: "Let specific other users read and run this pipeline. They run YOUR recipe against THEIR agents, tools and credentials — nothing of yours travels with the share, and nothing of theirs comes back. " +
+			Subtitle: "Let specific other users read and run this pipeline. They run YOUR recipe against THEIR agents, tools and credentials: nothing of yours travels with the share, and nothing of theirs comes back. " +
 				"Editing stays yours: a recipient can run it and take a copy, not change it. Empty = private to you. An admin can audit or revoke shares.",
 			Body: ui.ACLPicker(ui.ACLPickerConfig{
 				OptionsSource: "api/user-candidates",
@@ -390,7 +391,7 @@ func (T *OrchestrateApp) servePipelineDescribePage(w http.ResponseWriter, r *htt
 		Sections: []ui.Section{{
 			Title: "What should it do?",
 			Wide:  true,
-			Subtitle: "Say what the work is, start to finish — what it works out first, what it does with each piece, what it produces. " +
+			Subtitle: "Say what the work is, start to finish: what it works out first, what it does with each piece, what it produces. " +
 				"A draft opens for you to adjust. A pipeline that would not run is refused rather than saved, so an empty result means the draft failed, not that it vanished.",
 			Body: ui.FormPanel{
 				PostURL:     "/orchestrate/api/pipelines/draft",
@@ -400,7 +401,8 @@ func (T *OrchestrateApp) servePipelineDescribePage(w http.ResponseWriter, r *htt
 					Field: "description", Type: "textarea", Rows: 8,
 					Label:       "In plain words",
 					Placeholder: "Break a research question into separate sub-questions, look each one up on the web in parallel, then write one answer that cites what it found and says what it could not settle.",
-					Help:        "It runs a model, so it takes a moment. If it cannot produce something that runs it says so here rather than failing quietly.",
+					Help:        "It runs a model, so it takes a moment.",
+					Detail:      "If it cannot produce something that runs, it says so here rather than failing quietly.",
 				}},
 			},
 		}, {
@@ -482,7 +484,7 @@ func pipelineMapCard(def PipelineDef) ui.Component {
 // drift into two different blocks.
 func pipelineMapHTML(def PipelineDef) string {
 	return `<div class="machine-map">` +
-		`<div class="machine-map-cap">Map — click a stage to open it. A fanout is one box and many calls; a loop's body is drawn inside it.</div>` +
+		`<div class="machine-map-cap">Map: click a stage to open it. A fanout is one box and many calls; a loop's body is drawn inside it.</div>` +
 		`<div class="machine-map-body">` + pipelineGraphSVG(def) + `</div>` +
 		`</div>`
 }
@@ -532,7 +534,7 @@ func costCardHTML(def PipelineDef) string {
 // pipelineChecklistEmpty is written once: the page and the refresh must
 // say the same thing about an empty list, or a save that fixed the last
 // finding would look like the panel changing its mind.
-const pipelineChecklistEmpty = "Nothing — the stages read as instructions rather than specifications."
+const pipelineChecklistEmpty = "Nothing: the stages read as instructions rather than specifications."
 
 // pipelineGraphSVG draws the pipeline with each stage linking to its own
 // section.
@@ -629,14 +631,14 @@ func pipelineStageSections(def PipelineDef, cat editorCatalog) []ui.Section {
 			RedirectTarget: "_self",
 			Fields: []ui.FormField{
 				{Field: "name", Type: "text", Label: "Name",
-					Help: "Lowercase, no dots — a dot would make {stage:a.b} ambiguous between a stage called a.b and field b of stage a."},
+					Help: "Lowercase, no dots, a dot would make {stage:a.b} ambiguous between a stage called a.b and field b of stage a."},
 				{Field: "kind", Type: "select", Label: "What it does", Options: []ui.SelectOption{
-					{Value: "worker", Label: "Worker — one model call"},
-					{Value: "agent", Label: "Agent — dispatch to one of your agents"},
-					{Value: "fanout", Label: "Fanout — run once per item of an earlier list"},
-					{Value: "loop", Label: "Loop — repeat a body of stages"},
-					{Value: "branch", Label: "Branch — read a bool and skip or stop"},
-					{Value: "tool", Label: "Tool — call a tool directly"},
+					{Value: "worker", Label: "Worker: one model call"},
+					{Value: "agent", Label: "Agent: dispatch to one of your agents"},
+					{Value: "fanout", Label: "Fanout: run once per item of an earlier list"},
+					{Value: "loop", Label: "Loop: repeat a body of stages"},
+					{Value: "branch", Label: "Branch: read a bool and skip or stop"},
+					{Value: "tool", Label: "Tool: call a tool directly"},
 				}},
 				{Field: "prompt", Type: "textarea", Rows: 4, Label: "Instructions",
 					Help: "What it should DO. The rest is wired on its own panel once it exists."},
@@ -678,7 +680,7 @@ func stageDerivedHTML(s PipelineStage) string {
 		return ""
 	}
 	return `<div class="pipeline-stage-facts">` + HTMLEscape(strings.Join(facts, " · ")) +
-		` — written with the pipeline tool, which owns the shapes that nest. Editing them here would half-edit a structure.</div>`
+		`, written with the pipeline tool, which owns the shapes that nest. Editing them here would half-edit a structure.</div>`
 }
 
 // stageSubtitle says what KIND of stage this is in one line, in the
@@ -698,7 +700,7 @@ func stageSubtitle(s PipelineStage) string {
 	case StageBranch:
 		return "No model call: reads " + chFirst(s.When, "a bool") + " and " + chIf(s.SkipTo != "", "skips to "+s.SkipTo, "ends the pipeline") + " when it is true."
 	case StageTool:
-		return "Calls the " + chFirst(s.Tool, "(unnamed)") + " tool directly — no model, no tokens."
+		return "Calls the " + chFirst(s.Tool, "(unnamed)") + " tool directly: no model, no tokens."
 	}
 	return "A worker step: one model call with this stage's instructions."
 }
@@ -800,7 +802,7 @@ const pipelineStageCSS = `
 }
 .machine-map-body > svg { flex: 0 0 auto; margin: 0 auto; }
 .machine-map svg a { text-decoration: none; }
-/* You are here. The fill is what carries it — a border alone is lost
+/* You are here. The fill is what carries it: a border alone is lost
    among the boxes already drawn heavier for being the entry or the
    result. */
 .machine-map [data-node].here rect {
@@ -837,7 +839,7 @@ const pipelineMapHereJS = `(function() {
   }
   window.addEventListener('hashchange', mark);
   // The map redraws itself when a stage is saved (ui.Card + RefreshOn),
-  // and a redraw is new elements — the mark went with the old ones. All
+  // and a redraw is new elements: the mark went with the old ones. All
   // this page adds is putting it back.
   window.addEventListener('ui-card-refreshed', mark);
   mark();
@@ -923,7 +925,7 @@ func bodyStageSubtitle(parent, b PipelineStage) string {
 func planHTML(def PipelineDef) string {
 	plan := def.Plan()
 	if len(plan.Steps) == 0 {
-		return `<div class="ui-mute">No stages yet — add one and this fills in.</div>`
+		return `<div class="ui-mute">No stages yet: add one and this fills in.</div>`
 	}
 	var b strings.Builder
 	b.WriteString(`<div style="font-weight:600;margin-bottom:0.5rem">` + HTMLEscape(plan.Summary()) + `</div>`)
@@ -931,7 +933,7 @@ func planHTML(def PipelineDef) string {
 		indent := s.Depth * 18
 		b.WriteString(`<div style="margin:0.35rem 0 0.35rem ` + strconv.Itoa(indent) + `px">`)
 		b.WriteString(`<span style="font-weight:600">` + HTMLEscape(s.Name) + `</span>`)
-		b.WriteString(`<span class="ui-mute"> — ` + HTMLEscape(s.RunBy) + `</span>`)
+		b.WriteString(`<span class="ui-mute"> ` + HTMLEscape(s.RunBy) + `</span>`)
 		if s.Max > 0 {
 			calls := strconv.Itoa(s.Min)
 			if s.Max != s.Min {
@@ -943,7 +945,7 @@ func planHTML(def PipelineDef) string {
 		if len(s.Reads) == 0 && s.Kind != StageTool && s.Kind != StageBranch {
 			// The finding, stated where the shape is being read rather than
 			// filed away in a checklist somebody opens separately.
-			b.WriteString(`<span style="color:var(--danger)">reads nothing — its prompt places no {input}, {prev} or {stage:…}, so it sees only its own text</span>`)
+			b.WriteString(`<span style="color:var(--danger)">reads nothing, its prompt places no {input}, {prev} or {stage:…}, so it sees only its own text</span>`)
 		} else if len(s.Reads) > 0 {
 			b.WriteString(`reads ` + HTMLEscape(strings.Join(s.Reads, ", ")))
 		}

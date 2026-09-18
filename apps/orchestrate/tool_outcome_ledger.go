@@ -131,12 +131,12 @@ func recordToolOutcome(sess *ToolSession, tool, action string, err error) string
 	if !newlyBroken {
 		return advice
 	}
-	Log("[tool-health] %s(action=%q) has failed %d times and never succeeded — the definition is likely wrong. Last error: %s",
+	Log("[tool-health] %s(action=%q) has failed %d times and never succeeded: the definition is likely wrong. Last error: %s",
 		tool, action, rec.Fail, rec.LastError)
 	// Into the session trail too. A log line is for whoever goes looking; the ⚠
 	// reaches the person who is, right now, watching it not work.
 	appendSessionDiag(sess.DB, sess.AgentID, sess.ChatSessionID, "tool-never-worked",
-		fmt.Sprintf("%s(action=%q) has now failed %d times and has never once succeeded. That points at the tool's definition — its required params or its URL — rather than at how it is being called. Last error: %s",
+		fmt.Sprintf("%s(action=%q) has now failed %d times and has never once succeeded. That points at the tool's definition (its required params or its URL), rather than at how it is being called. Last error: %s",
 			tool, action, rec.Fail, rec.LastError))
 	return advice
 }

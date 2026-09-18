@@ -218,7 +218,7 @@ func (T *Servitor) handleBundleIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if entries, derr := os.ReadDir(stage); derr != nil || len(entries) == 0 {
-		http.Error(w, "nothing is staged for this bundle — the uploaded files were consumed by a previous ingest. Upload them again.", http.StatusBadRequest)
+		http.Error(w, "nothing is staged for this bundle: the uploaded files were consumed by a previous ingest. Upload them again.", http.StatusBadRequest)
 		return
 	}
 	rec.BundleState = bundleStateIngesting

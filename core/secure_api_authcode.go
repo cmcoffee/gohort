@@ -121,13 +121,13 @@ func (s *SecureAPI) InvalidateUserAccessToken(name, user string) {
 	}
 	if tok.RefreshToken == "" {
 		s.ClearUserToken(name, user)
-		Log("[secureapi] %q rejected %q's token and no refresh token is stored — reconnect required", name, user)
+		Log("[secureapi] %q rejected %q's token and no refresh token is stored: reconnect required", name, user)
 		return
 	}
 	tok.AccessToken = ""
 	tok.Expiry = time.Time{}
 	_ = s.SaveUserToken(name, user, tok)
-	Log("[secureapi] %q rejected %q's access token — cleared; the next call will refresh it", name, user)
+	Log("[secureapi] %q rejected %q's access token: cleared; the next call will refresh it", name, user)
 }
 
 // ClearUserToken disconnects a user from an OAuth credential.
@@ -292,8 +292,8 @@ func (s *SecureAPI) userAccessToken(ctx context.Context, c SecureCredential, use
 		// cannot work and letting it fail as something else.
 		if oauthGrantRejected(err) {
 			s.ClearUserToken(c.Name, user)
-			Log("[secureapi] %q refused %q's refresh token (%v) — cleared; reconnect required", c.Name, user, err)
-			return "", fmt.Errorf("your %q connection has expired and can't be renewed automatically — reconnect it on your Account page (Connected accounts)", c.Name)
+			Log("[secureapi] %q refused %q's refresh token (%v): cleared; reconnect required", c.Name, user, err)
+			return "", fmt.Errorf("your %q connection has expired and can't be renewed automatically: reconnect it on your Account page (Connected accounts)", c.Name)
 		}
 		// Anything else (a blip, a 500, a timeout) leaves a good refresh token.
 		// Ride the current access token out and try again on the next call.

@@ -56,7 +56,7 @@ func (T *CodeWriterAgent) handleCodeWriterPage(w http.ResponseWriter, r *http.Re
 					EmptyText:           "No snippets yet. Click + New or chat with the LLM to generate one.",
 					PlaceholderName:     "Snippet name…",
 					PlaceholderCode:     "Write or paste code here. Save it for later, or chat with the LLM to generate one.\n\nUse {{NAME}} placeholders for reusable values.",
-					PlaceholderCtx:      "Reference context — table schemas, API docs, notes. Sent to the LLM alongside the code on every chat turn.",
+					PlaceholderCtx:      "Reference context: table schemas, API docs, notes. Sent to the LLM alongside the code on every chat turn.",
 					PlaceholderChat:     "Discuss with Chat, or click Edit to apply changes.",
 				},
 			},

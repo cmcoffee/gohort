@@ -20,7 +20,7 @@ const liveRibbonCSS = `
 }
 @media (max-width: 640px) {
   #webui-live-ribbon {
-    /* Keep on the same top row as the back arrow — sub-app pages
+    /* Keep on the same top row as the back arrow: sub-app pages
        don't have an auth-bar so there's nothing to clear. The
        back arrow sits at top:12 left:12 (32x32) and the ribbon
        at top:0 right:5; they're on opposite sides and don't
@@ -39,7 +39,7 @@ const liveRibbonCSS = `
   display: inline-block; animation: pulse 2s infinite;
 }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
-/* Mirrors base.css — see there for why the label carries a flex floor
+/* Mirrors base.css: see there for why the label carries a flex floor
    instead of taking whatever the badges leave over. */
 #webui-live-ribbon .item {
   display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap;

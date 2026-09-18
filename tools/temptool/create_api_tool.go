@@ -24,7 +24,7 @@ func (t *CreateAPIToolTool) Caps() []Capability { return []Capability{CapNetwork
 func (t *CreateAPIToolTool) NeedsConfirm() bool { return true }
 
 func (t *CreateAPIToolTool) Desc() string {
-	return "Define a focused tool that calls a registered API credential. The body is a URL template (with {param} placeholders) targeting a specific credential — the credential's auth is injected server-side, you never see the secret. Use when you've discovered a useful endpoint pattern via call_<credname> and want a structured, reusable shape (e.g. get_github_issue(owner, repo, number) wrapping /repos/{owner}/{repo}/issues/{number}). Set persist=true to queue the tool for human approval and reuse across sessions."
+	return "Define a focused tool that calls a registered API credential. The body is a URL template (with {param} placeholders) targeting a specific credential: the credential's auth is injected server-side, you never see the secret. Use when you've discovered a useful endpoint pattern via call_<credname> and want a structured, reusable shape (e.g. get_github_issue(owner, repo, number) wrapping /repos/{owner}/{repo}/issues/{number}). Set persist=true to queue the tool for human approval and reuse across sessions."
 }
 
 func (t *CreateAPIToolTool) Params() map[string]ToolParam {
@@ -39,7 +39,7 @@ func (t *CreateAPIToolTool) Params() map[string]ToolParam {
 		},
 		"credential": {
 			Type:        "string",
-			Description: "Name of the registered secure-API credential to use (e.g. \"github_api\"). The credential's allowed-URL pattern is enforced — your URL template must resolve to a URL that matches.",
+			Description: "Name of the registered secure-API credential to use (e.g. \"github_api\"). The credential's allowed-URL pattern is enforced: your URL template must resolve to a URL that matches.",
 		},
 		"url_template": {
 			Type:        "string",
@@ -51,11 +51,11 @@ func (t *CreateAPIToolTool) Params() map[string]ToolParam {
 		},
 		"body_template": {
 			Type:        "string",
-			Description: "Optional JSON body template with {param} placeholders. Placeholders are JSON-encoded at call time — strings get wrapped in quotes automatically, numbers/booleans pass through, objects/arrays serialize structurally. DO NOT wrap placeholders in quotation marks yourself: write {prompt} not \"{prompt}\". The substitution layer handles the quoting and any escaping (newlines, embedded quotes) of the runtime value, so a long multi-line system prompt or any unsafe-for-JSON string passed as an arg comes out correctly. Put long literal content (system prompts, instructions) as runtime PARAMS, not baked into the template — that way you don't have to escape it inside the template string itself. Example: '{\"system_prompt\": {prompt}, \"user_message\": {msg}}'. Leave empty for GET requests.",
+			Description: "Optional JSON body template with {param} placeholders. Placeholders are JSON-encoded at call time: strings get wrapped in quotes automatically, numbers/booleans pass through, objects/arrays serialize structurally. DO NOT wrap placeholders in quotation marks yourself: write {prompt} not \"{prompt}\". The substitution layer handles the quoting and any escaping (newlines, embedded quotes) of the runtime value, so a long multi-line system prompt or any unsafe-for-JSON string passed as an arg comes out correctly. Put long literal content (system prompts, instructions) as runtime PARAMS, not baked into the template, that way you don't have to escape it inside the template string itself. Example: '{\"system_prompt\": {prompt}, \"user_message\": {msg}}'. Leave empty for GET requests.",
 		},
 		"params": {
 			Type:        "object",
-			Description: "Object describing the tool's parameters. Same shape as create_temp_tool. Each key matches a {placeholder} in url_template or body_template. OPTIONAL — omit for a no-param endpoint (a GET with no query string); don't invent a dummy placeholder.",
+			Description: "Object describing the tool's parameters. Same shape as create_temp_tool. Each key matches a {placeholder} in url_template or body_template. OPTIONAL: omit for a no-param endpoint (a GET with no query string); don't invent a dummy placeholder.",
 		},
 		"required": {
 			Type:        "array",
@@ -63,11 +63,11 @@ func (t *CreateAPIToolTool) Params() map[string]ToolParam {
 		},
 		"response_pipe": {
 			Type:        "string",
-			Description: "Optional shell command (sh -c) that receives the API response BODY on stdin and emits the LLM-visible result on stdout. The HTTP status line is stripped before piping and re-prepended to the output, so the pipe should target only the response body (no `tail -n +2` needed). Pipe is skipped on non-2xx responses so the LLM sees the raw error. Use to pre-filter noisy responses before they reach the LLM context — e.g. \"jq -c '[.items[] | {id, name, status}]'\" or \"jq -c '.[:20]'\". Runs in a tight sandbox (no network, no filesystem, /tmp tmpfs only) so it can use jq, awk, sed, grep, head, tr, etc. Leave empty if the LLM should see the raw response. Adds an exec dependency to the tool — sessions without execute capability won't be able to dispatch it.",
+			Description: "Optional shell command (sh -c) that receives the API response BODY on stdin and emits the LLM-visible result on stdout. The HTTP status line is stripped before piping and re-prepended to the output, so the pipe should target only the response body (no `tail -n +2` needed). Pipe is skipped on non-2xx responses so the LLM sees the raw error. Use to pre-filter noisy responses before they reach the LLM context: e.g. \"jq -c '[.items[] | {id, name, status}]'\" or \"jq -c '.[:20]'\". Runs in a tight sandbox (no network, no filesystem, /tmp tmpfs only) so it can use jq, awk, sed, grep, head, tr, etc. Leave empty if the LLM should see the raw response. Adds an exec dependency to the tool: sessions without execute capability won't be able to dispatch it.",
 		},
 		"persist": {
 			Type:        "boolean",
-			Description: "If true, request that this tool be saved across future sessions. Same approval flow as create_temp_tool — the tool works in this session immediately but persists only after human review.",
+			Description: "If true, request that this tool be saved across future sessions. Same approval flow as create_temp_tool: the tool works in this session immediately but persists only after human review.",
 		},
 	}
 }
@@ -127,7 +127,7 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 	// deny. See docs/secured-credential-tool-binding.md.
 	if cr.Secured {
 		if Secure().ToolBindingRevoked(credName, name) {
-			return "", fmt.Errorf("credential %q is SECURED and tool %q's binding was REVOKED by an admin — ask them to restore it in Admin > APIs", credName, name)
+			return "", fmt.Errorf("credential %q is SECURED and tool %q's binding was REVOKED by an admin: ask them to restore it in Admin > APIs", credName, name)
 		}
 		_ = Secure().ApproveToolBinding(credName, name)
 	}
@@ -178,7 +178,7 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 		return "", fmt.Errorf(pathPlaceholderMsg, missing, missing[0], missing[0])
 	}
 	if unsent := unsentWriteParams(method, urlTpl, bodyTpl, required); len(unsent) > 0 {
-		return "", fmt.Errorf("required param(s) %v are sent NOWHERE — this %s tool references them in neither url_template nor body_template, so the API never receives them (the cause of a 400 like \"content must be a string\"). Add a body_template that carries them, e.g. body_template: {\"content\": {content}}", unsent, method)
+		return "", fmt.Errorf("required param(s) %v are sent NOWHERE: this %s tool references them in neither url_template nor body_template, so the API never receives them (the cause of a 400 like \"content must be a string\"). Add a body_template that carries them, e.g. body_template: {\"content\": {content}}", unsent, method)
 	}
 
 	tool := &TempTool{

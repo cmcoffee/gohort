@@ -152,7 +152,7 @@ func (pr playbookRunner) resolve(ctx context.Context, skill SkillRecord) string 
 	if b.Len() == 0 {
 		return ""
 	}
-	return "**Playbook** (" + skill.Name + " — established for this turn; follow what applies):\n\n" + b.String()
+	return "**Playbook** (" + skill.Name + ", established for this turn; follow what applies):\n\n" + b.String()
 }
 
 // run establishes one rule's fact and renders the arm that applies, recursing
@@ -185,7 +185,7 @@ func (pr playbookRunner) run(ctx context.Context, skill SkillRecord, rule Playbo
 		}
 	}
 	if ev != "" {
-		fmt.Fprintf(&b, " — %s", excerptLine(ev, 240))
+		fmt.Fprintf(&b, " \u00b7 %s", excerptLine(ev, 240))
 	}
 	b.WriteString("\n")
 	switch {

@@ -103,7 +103,7 @@ func WatchPromptPrefix(ctx context.Context, system string, tools []Tool) {
 			}
 		}
 		prefixWatch[turn] = &prefixSnapshot{calls: 1, system: system, toolNames: names}
-		Debug("[prefix-watch] %s call 1: %d tools, %d bytes of system prompt — this is the write everything else should read",
+		Debug("[prefix-watch] %s call 1: %d tools, %d bytes of system prompt, this is the write everything else should read",
 			turn, len(names), len(system))
 		return
 	}
@@ -113,7 +113,7 @@ func WatchPromptPrefix(ctx context.Context, system string, tools []Tool) {
 		// Tools render FIRST, so a change here re-writes the system
 		// prompt and the whole conversation behind it. This is the
 		// expensive one.
-		Log("[prefix-watch] %s call %d: TOOL CATALOG CHANGED (%d → %d%s%s) — tools sit before everything, so the system prompt and the entire conversation are re-written this call",
+		Log("[prefix-watch] %s call %d: TOOL CATALOG CHANGED (%d → %d%s%s), tools sit before everything, so the system prompt and the entire conversation are re-written this call",
 			turn, prev.calls, len(prev.toolNames), len(names),
 			listPart(" +", added), listPart(" -", removed))
 		prev.toolNames = names
@@ -121,7 +121,7 @@ func WatchPromptPrefix(ctx context.Context, system string, tools []Tool) {
 
 	if prev.system != system {
 		at := firstDiff(prev.system, system)
-		Log("[prefix-watch] %s call %d: SYSTEM PROMPT CHANGED at byte %d of %d — %d bytes after it are re-written this call. Was %q, now %q",
+		Log("[prefix-watch] %s call %d: SYSTEM PROMPT CHANGED at byte %d of %d, %d bytes after it are re-written this call. Was %q, now %q",
 			turn, prev.calls, at, len(system), maxInt(len(system)-at, 0),
 			snippet(prev.system, at), snippet(system, at))
 		prev.system = system

@@ -335,5 +335,5 @@ func networkGrantMismatch(tt *TempTool) string {
 	if len(found) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("script_body uses raw-network API(s) %v but the tool has no network grant. Either (a) re-author with the hook: `from gohort import fetch` then `fetch(url)` instead of urllib.request.urlopen(url) — and declare hook_capabilities=[\"fetch\"]; or (b) declare raw_network=true (escape hatch for persistent-mode REPLs and non-HTTP TCP). Without one of these the sandbox runs --unshare-net and every outbound call fails with a DNS-resolution error", found)
+	return fmt.Sprintf("script_body uses raw-network API(s) %v but the tool has no network grant. Either (a) re-author with the hook: `from gohort import fetch` then `fetch(url)` instead of urllib.request.urlopen(url), and declare hook_capabilities=[\"fetch\"]; or (b) declare raw_network=true (escape hatch for persistent-mode REPLs and non-HTTP TCP). Without one of these the sandbox runs --unshare-net and every outbound call fails with a DNS-resolution error", found)
 }

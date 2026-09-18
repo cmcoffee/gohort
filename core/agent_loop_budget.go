@@ -70,7 +70,7 @@ func actionQuotaRefusal(cfg AgentLoopConfig, tool string, args map[string]any) (
 		}
 	}
 	return fmt.Sprintf(
-		"STOP — '%s' was NOT called. It has already run %d time(s) in the last 24 hours, which is its allowance of %d. This is enforced by the framework, not a rule you are asked to keep: further calls will be refused until the window frees up, %s. "+
+		"STOP: '%s' was NOT called. It has already run %d time(s) in the last 24 hours, which is its allowance of %d. This is enforced by the framework, not a rule you are asked to keep: further calls will be refused until the window frees up, %s. "+
 			"Do NOT try to reach the same action another way. Finish with what you have and say plainly that the allowance is spent.",
 		action, used, limit, when), action
 }

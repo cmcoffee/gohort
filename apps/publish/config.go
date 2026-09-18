@@ -77,7 +77,7 @@ func (T *PublishApp) saveConfig(c PublishConfig) {
 func credentialUsable(user, name string) (bool, string) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return false, "no credential is configured for it yet — an admin sets one in Admin > Publishing"
+		return false, "no credential is configured for it yet: an admin sets one in Admin > Publishing"
 	}
 	s := Secure()
 	if s == nil {
@@ -85,7 +85,7 @@ func credentialUsable(user, name string) (bool, string) {
 	}
 	c, ok := s.Resolve(name, user)
 	if !ok {
-		return false, "its credential (" + name + ") no longer exists — an admin needs to re-point it in Admin > Publishing"
+		return false, "its credential (" + name + ") no longer exists: an admin needs to re-point it in Admin > Publishing"
 	}
 	if c.Disabled {
 		return false, "its credential (" + name + ") is disabled"
@@ -96,7 +96,7 @@ func credentialUsable(user, name string) (bool, string) {
 	// A per-user credential with no secret for THIS user means they haven't
 	// connected their own account yet — the actionable case, so say where to go.
 	if c.IsPerUser() && !s.HasUserSecret(name, user) {
-		return false, "you haven't connected your account yet — do that on your Account page, under Connected accounts"
+		return false, "you haven't connected your account yet: do that on your Account page, under Connected accounts"
 	}
 	return true, ""
 }
@@ -171,12 +171,14 @@ func adminSection(r *http.Request) ui.Section {
 				{
 					Field: "confluence_credential", Label: "Confluence credential", Type: "text",
 					Placeholder: "name of a SecureAPI credential",
-					Help: "The credential used to create and update pages. Its Base URL should be the Confluence site (e.g. https://acme.atlassian.net) and its allowed endpoints must include /wiki/api/v2/**. Set the credential's scope to per-user if each person should publish as themselves.",
+					Help:        "The credential used to create and update pages.",
+					Detail:      "Its Base URL should be the Confluence site, for example https://acme.atlassian.net, and its allowed endpoints must include /wiki/api/v2/**. Set the credential's scope to per-user if each person should publish as themselves.",
 				},
 				{
 					Field: "confluence_base_url", Label: "Confluence site URL", Type: "text",
 					Placeholder: "https://acme.atlassian.net (optional)",
-					Help: "Only needed when page links should be built from a different host than the credential's Base URL. Leave empty to use the credential's.",
+					Help:        "Only needed when page links should be built from a different host than the credential's.",
+					Detail:      "Leave it empty to use the credential's Base URL.",
 				},
 				{
 					Field: "webhook_label", Label: "Webhook name", Type: "text",
@@ -186,7 +188,8 @@ func adminSection(r *http.Request) ui.Section {
 				{
 					Field: "webhook_credential", Label: "Webhook credential", Type: "text",
 					Placeholder: "name of a SecureAPI credential",
-					Help: "The credential that authorizes the POST. The generic destination: anything that accepts an HTTP post of a document.",
+					Help:        "The credential that authorizes the POST.",
+					Detail:      "The generic destination: anything that accepts an HTTP post of a document.",
 				},
 				{
 					Field: "webhook_url", Label: "Webhook URL", Type: "text",
@@ -205,10 +208,12 @@ func adminSection(r *http.Request) ui.Section {
 				{
 					Field: "agents", Label: "Destinations that are an agent", Type: "rows",
 					AddLabel: "Add an agent destination",
-					Help: "For a place that has no endpoint — filing a ticket, opening a pull request, handing a document to whoever owns that area. The Prompt is how THIS destination phrases the job, and is what makes the same document a different request depending on where it is going; the document is appended after it. {title} and {target} are substituted. Targets are optional: a queue, a repository, an area. Leave them empty when the destination is a single job.",
+					Help:     "For a place that has no endpoint: a ticket, a pull request, a handoff to whoever owns an area.",
+					Detail:   "The Prompt is how THIS destination phrases the job, and is what makes the same document a different request depending on where it is going. The document is appended after it, and {title} and {target} are substituted.\n\nTargets are optional: a queue, a repository, an area. Leave them empty when the destination is a single job.",
 					Columns: []ui.FormField{
 						{Field: "slug", Label: "Key", Type: "text", Placeholder: "tickets",
-							Help: "Stable identifier. Already-published records point at it, so renaming it strands them — change the Label instead."},
+							Help:   "Stable identifier. Change the Label instead of this.",
+							Detail: "Already-published records point at it, so renaming it strands them."},
 						{Field: "label", Label: "Shown as", Type: "text", Placeholder: "File a ticket"},
 						// A combo, and it offers NAMES rather than ids.
 						//

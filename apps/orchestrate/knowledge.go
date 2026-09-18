@@ -40,9 +40,10 @@ import (
 func init() {
 	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_knowledge_ingest_timeout", Category: "Timeouts", Label: "Knowledge ingest timeout", Help: "Caps any embedding round-trip during knowledge ingest/search.", Kind: KindSeconds, Default: 45, Min: 5, Max: 300})
 	RegisterTunable(TunableSpec{App: "/orchestrate", Key: tuneFindingHardCap, Category: "Limits",
-		Label: "Findings hard cap per agent (0 = off)",
-		Help:  "Max self-saved findings (memory_save / remember) one agent keeps. Past the cap, the OLDEST findings are deleted — the fact store's hard-cap parity for the Reference layer, which otherwise grows without bound (every save is a new document). Uploaded/attached documents are never touched.",
-		Kind:  KindInt, Default: 300, Min: 0, Max: 10000})
+		Label:  "Findings hard cap per agent (0 = off)",
+		Help:   "Max self-saved findings, from memory_save and remember, that one agent keeps.",
+		Detail: "Past the cap the OLDEST findings are deleted. This is the fact store's hard-cap parity for the Reference layer, which otherwise grows without bound, since every save is a new document. Uploaded and attached documents are never touched.",
+		Kind:   KindInt, Default: 300, Min: 0, Max: 10000})
 }
 
 // tuneFindingHardCap bounds the Reference-Memory layer the way
@@ -114,9 +115,10 @@ const tuneKnownTopicsMax = "tune_known_topics_max"
 
 func init() {
 	RegisterTunable(TunableSpec{App: "/orchestrate", Key: tuneKnownTopicsMax, Category: "Limits",
-		Label: "Known-topics shown",
-		Help:  "Max recently-used memory topic slugs listed in the system prompt for bucket reuse. Lower to save context; 0 = show all. Dropped slugs still work — the agent just reuses or mints them without the hint.",
-		Kind:  KindInt, Default: 12, Min: 0, Max: 100})
+		Label:  "Known-topics shown",
+		Help:   "Max recently-used memory topic slugs listed in the system prompt, for bucket reuse.",
+		Detail: "Lower it to save context; 0 shows all. Dropped slugs still work: the agent just reuses or mints them without the hint.",
+		Kind:   KindInt, Default: 12, Min: 0, Max: 100})
 }
 
 func listAgentTopics(db Database, user, agentID string) []string {
@@ -565,7 +567,7 @@ func (T *OrchestrateApp) handleAgentKnowledgeUpload(w http.ResponseWriter, r *ht
 	text = strings.TrimSpace(text)
 	const minUploadChars = 200 // matches the chat-paperclip threshold (runner.go minIngestChars)
 	if len(text) < minUploadChars {
-		http.Error(w, fmt.Sprintf("extracted text too short (%d chars) — minimum is %d", len(text), minUploadChars), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("extracted text too short (%d chars): minimum is %d", len(text), minUploadChars), http.StatusBadRequest)
 		return
 	}
 	// Use a stable reportID per upload — so the list / delete endpoints
@@ -1099,15 +1101,15 @@ const memorySaveDedupThreshold = 0.90
 // Kept as a separate function so the help action returns plain
 // markdown without re-quoting the description body.
 func memoryHelpText() string {
-	return `memory — usage:
+	return `memory, usage:
 
-  action="save"   — persist a finding to Reference Memory.
+  action="save": persist a finding to Reference Memory.
                     Required: content. Optional: topic, subject.
-  action="search" — semantic search over saved findings.
+  action="search": semantic search over saved findings.
                     Required: query. Optional: topic, k.
-  action="forget" — delete chunks. Pass id (surgical, one entry)
+  action="forget": delete chunks. Pass id (surgical, one entry)
                     OR query (+ optional topic, k for bulk).
-  action="help"   — show this spec.
+  action="help": show this spec.
 
 Findings live under snake_case topic slugs; reuse from the
 "Known topics" block when applicable, or omit topic to span all
@@ -1156,7 +1158,7 @@ func (t *chatTurn) memorySave(args map[string]any) (string, error) {
 				// related-but-not-duplicate band for the conflict rail.
 				hits := SearchChunksByPredicate(VectorDB, allow, vec, conflictScanK)
 				if len(hits) > 0 && float64(hits[0].Score) >= memorySaveDedupThreshold {
-					return fmt.Sprintf("Already saved (deduped): a near-identical finding is already in Memory (%.0f%% match). Skipping to avoid duplicate chunks — retrieve the existing one via %s.",
+					return fmt.Sprintf("Already saved (deduped): a near-identical finding is already in Memory (%.0f%% match). Skipping to avoid duplicate chunks: retrieve the existing one via %s.",
 						hits[0].Score*100, memRecallPhrase()), nil
 				}
 				// Conflict rail (opt-in): surface an existing finding this one
@@ -1171,7 +1173,7 @@ func (t *chatTurn) memorySave(args map[string]any) (string, error) {
 	// re-saving the same finding verbatim across a session. Whitespace/case-
 	// insensitive equality only; rephrasings need the semantic tier.
 	if VectorDB != nil && !semanticDedupRan && t.findingExactDuplicate(content) {
-		return fmt.Sprintf("Already saved (deduped): this exact finding is already in Memory. Skipping — retrieve it via %s.", memRecallPhrase()), nil
+		return fmt.Sprintf("Already saved (deduped): this exact finding is already in Memory. Skipping: retrieve it via %s.", memRecallPhrase()), nil
 	}
 	ingestAgentKnowledge(ctx, t.app.DB, t.user, t.agent.ID, topic, subject, content)
 	return fmt.Sprintf("Saved %d chars under topic %q in Memory. Future similar questions can retrieve this via %s.%s",
@@ -1221,7 +1223,7 @@ func (t *chatTurn) knowledgeToolDefScoped(scopeSkills []SkillRecord) AgentToolDe
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "knowledge_search",
-			Description: "Search this agent's knowledge corpus (uploaded docs, attached collections, skill self-training). Returns hits with excerpts, source_doc, section, and a doc_id — pass the doc_id to `fetch_knowledge_doc` when an excerpt isn't enough. Below-floor matches are filtered; a 'no strong matches' result means the corpus has nothing confident, not license to speculate. Topic-scoped by default; pass explicit `topic` to query a different bucket. Distinct from `memory(search)` (your own prior derived findings) and `search_facts` (Explicit Memory notes already in your prompt).",
+			Description: "Search this agent's knowledge corpus (uploaded docs, attached collections, skill self-training). Returns hits with excerpts, source_doc, section, and a doc_id: pass the doc_id to `fetch_knowledge_doc` when an excerpt isn't enough. Below-floor matches are filtered; a 'no strong matches' result means the corpus has nothing confident, not license to speculate. Topic-scoped by default; pass explicit `topic` to query a different bucket. Distinct from `memory(search)` (your own prior derived findings) and `search_facts` (Explicit Memory notes already in your prompt).",
 			Parameters: map[string]ToolParam{
 				"query": {
 					Type:        "string",
@@ -1264,9 +1266,9 @@ func (t *chatTurn) knowledgeToolDefScoped(scopeSkills []SkillRecord) AgentToolDe
 			dropped := rawHits - len(hits)
 			if len(hits) == 0 {
 				if dropped > 0 {
-					return fmt.Sprintf("No strong matches. Vector search returned %d chunk(s) but ALL scored below the relevance floor (%.2f) — they would have pulled tangentially-related content (different topic, surface-word matches only) into your context. Do NOT speculate from absent results. Either rephrase the query, widen by passing topic=\"\", or proceed without prior context and acknowledge that the Knowledge layer didn't have a confident answer.", dropped, RelevanceFloor), nil
+					return fmt.Sprintf("No strong matches. Vector search returned %d chunk(s) but ALL scored below the relevance floor (%.2f): they would have pulled tangentially-related content (different topic, surface-word matches only) into your context. Do NOT speculate from absent results. Either rephrase the query, widen by passing topic=\"\", or proceed without prior context and acknowledge that the Knowledge layer didn't have a confident answer.", dropped, RelevanceFloor), nil
 				}
-				return "No matching curated content. The Knowledge layer (uploads, shared KB, collections) has nothing on that — try " + memRecallPhrase() + " for the agent's own derived findings, or proceed without prior context.", nil
+				return "No matching curated content. The Knowledge layer (uploads, shared KB, collections) has nothing on that: try " + memRecallPhrase() + " for the agent's own derived findings, or proceed without prior context.", nil
 			}
 			// The shared hit shape (core.HitFormat), the same one every app's
 			// collection search renders. Excerpted, because this list is a
@@ -1325,7 +1327,7 @@ func (t *chatTurn) fetchKnowledgeDocScoped(scopeSkills []SkillRecord) AgentToolD
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "fetch_knowledge_doc",
-			Description: "Read the body of a document by doc_id (from a knowledge_search hit). Returns the doc text with section headers, capped at max_chars (default 10000, ceiling 30000). A truncated reply ends with the offset to pass back — call again with that offset to read the next window, as many times as it takes. Pass section to jump straight to one part of a long document instead of paging from the top. Pass grep to find lines in the document: each hit comes with its line number and @offset, and offset then reads around it — use this instead of paging through a long document looking for one thing. Gated to your accessible corpus.",
+			Description: "Read the body of a document by doc_id (from a knowledge_search hit). Returns the doc text with section headers, capped at max_chars (default 10000, ceiling 30000). A truncated reply ends with the offset to pass back: call again with that offset to read the next window, as many times as it takes. Pass section to jump straight to one part of a long document instead of paging from the top. Pass grep to find lines in the document: each hit comes with its line number and @offset, and offset then reads around it, use this instead of paging through a long document looking for one thing. Gated to your accessible corpus.",
 			Parameters: map[string]ToolParam{
 				"doc_id": {
 					Type:        "string",
@@ -1341,7 +1343,7 @@ func (t *chatTurn) fetchKnowledgeDocScoped(scopeSkills []SkillRecord) AgentToolD
 				},
 				"offset": {
 					Type:        "number",
-					Description: "Optional. Character offset to start reading from — the value a previous truncated reply told you to pass, or the @offset on a grep hit. 0 (default) reads from the top. Counted within the section when section is also given.",
+					Description: "Optional. Character offset to start reading from: the value a previous truncated reply told you to pass, or the @offset on a grep hit. 0 (default) reads from the top. Counted within the section when section is also given.",
 				},
 				"grep": {
 					Type:        "string",
@@ -1496,7 +1498,7 @@ func (t *chatTurn) fetchKnowledgeDocScoped(scopeSkills []SkillRecord) AgentToolD
 			note := fmt.Sprintf("\n\n[…truncated; this document is %d chars and you have read %d to %d. Call again with offset=%d to continue.",
 				total, offset, end, end)
 			if offset == 0 && wantSection == "" && len(headings) > 1 {
-				note += fmt.Sprintf(" Or jump straight to a part with section=\"…\" — the %d sections are:\n%s",
+				note += fmt.Sprintf(" Or jump straight to a part with section=\"…\", the %d sections are:\n%s",
 					len(headings), headingList(headings))
 			}
 			return window + note + "]", nil
@@ -1536,9 +1538,9 @@ func (t *chatTurn) memorySearch(args map[string]any) (string, error) {
 	dropped := rawHits - len(hits)
 	if len(hits) == 0 {
 		if dropped > 0 {
-			return fmt.Sprintf("No strong matches. Vector search returned %d derived chunk(s) but ALL scored below the relevance floor (%.2f) — they would have been tangentially related. Do NOT speculate from absent results. Rephrase the query, widen by passing topic=\"\", or proceed without prior context.", dropped, RelevanceFloor), nil
+			return fmt.Sprintf("No strong matches. Vector search returned %d derived chunk(s) but ALL scored below the relevance floor (%.2f): they would have been tangentially related. Do NOT speculate from absent results. Rephrase the query, widen by passing topic=\"\", or proceed without prior context.", dropped, RelevanceFloor), nil
 		}
-		return "No matching derived recollections. The Memory layer is empty for this query — try knowledge_search for curated content, or proceed without prior context and call memory(action=\"save\") after you investigate.", nil
+		return "No matching derived recollections. The Memory layer is empty for this query: try knowledge_search for curated content, or proceed without prior context and call memory(action=\"save\") after you investigate.", nil
 	}
 	var b strings.Builder
 	for i, h := range hits {
@@ -1598,7 +1600,7 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 		}
 		var c EmbeddedChunk
 		if !VectorDB.Get(EmbeddedChunks, explicitID, &c) {
-			return fmt.Sprintf("No chunk with mem_id=%q in your accessible memory — it may have already been deleted, or the id belongs to a corpus you can't access.", explicitID), nil
+			return fmt.Sprintf("No chunk with mem_id=%q in your accessible memory: it may have already been deleted, or the id belongs to a corpus you can't access.", explicitID), nil
 		}
 		agentPrefix := knowledgeSource(t.user, t.agent.ID, "")
 		exact := make(map[string]bool, len(t.agent.AttachedCollections)+4)
@@ -1616,7 +1618,7 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 		}
 		inScope := c.Source == agentPrefix || strings.HasPrefix(c.Source, agentPrefix+":") || exact[c.Source]
 		if !inScope {
-			return fmt.Sprintf("No chunk with mem_id=%q in your accessible memory — it may have already been deleted, or the id belongs to a corpus you can't access.", explicitID), nil
+			return fmt.Sprintf("No chunk with mem_id=%q in your accessible memory: it may have already been deleted, or the id belongs to a corpus you can't access.", explicitID), nil
 		}
 		// Only derived chunks are LLM-deletable. Curated content
 		// (uploads, shared KB) is admin-managed.
@@ -1630,7 +1632,7 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 		DeleteChunksByIDs(VectorDB, []string{explicitID})
 		Log("[orchestrate.memory.forget] user=%q agent=%q deleted by id=%s topic=%q",
 			t.user, t.agent.ID, explicitID, topic)
-		return fmt.Sprintf("Deleted 1 memory entry — mem_id=%s, topic=%q.", explicitID, topic), nil
+		return fmt.Sprintf("Deleted 1 memory entry: mem_id=%s, topic=%q.", explicitID, topic), nil
 	}
 
 	// Query-mode: vector-search delete.
@@ -1651,7 +1653,7 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 	// precision aligned with search.
 	hits = aboveRelevanceFloor(hits)
 	if len(hits) == 0 {
-		return "No matching derived chunks to forget — Reference Memory has nothing close enough to that query (above the relevance floor) under this agent.", nil
+		return "No matching derived chunks to forget: Reference Memory has nothing close enough to that query (above the relevance floor) under this agent.", nil
 	}
 	ids := make([]string, 0, len(hits))
 	var b strings.Builder
@@ -1666,7 +1668,7 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 		}
 		ids = append(ids, h.ID)
 		topicLabel := strings.TrimSpace(strings.TrimPrefix(h.Section, "## "))
-		fmt.Fprintf(&b, "%d. %s — mem_id=%s\n   %s\n", i+1, topicLabel, h.ID, knowledgeSearchExcerpt(h.Text))
+		fmt.Fprintf(&b, "%d. %s: mem_id=%s\n   %s\n", i+1, topicLabel, h.ID, knowledgeSearchExcerpt(h.Text))
 		Log("[orchestrate.memory.forget] user=%q agent=%q deleted chunk id=%s topic=%q score=%.3f",
 			t.user, t.agent.ID, h.ID, h.Section, h.Score)
 	}

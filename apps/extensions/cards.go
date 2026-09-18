@@ -83,7 +83,7 @@ const connectionsHTML = `<div id="acct-conns" class="acct-conns">Loading…</div
         // The lock on YOUR key: with it off, every agent you have gets a
         // generic call tool that can spend this credential. Shown only once
         // there is a key to protect, and frozen when an admin has locked it
-        // for the deployment — you may keep your own lock on, never lift
+        // for the deployment: you may keep your own lock on, never lift
         // theirs.
         if (c.connected){
           var lockWrap = el('label', {class:'acct-conn-lock'});

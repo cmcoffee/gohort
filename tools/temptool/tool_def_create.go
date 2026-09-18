@@ -57,7 +57,7 @@ func finalizeAuthoredTool(sess *ToolSession, toolName string) string {
 		}
 		DequeuePendingTempTool(sess.DB, sess.Username, toolName)
 		Log("[temptool.scope] wrote %q back in place to agent %s (in-place edit)", toolName, target)
-		return "Saved back to the owning agent's tools — edited in place, scope unchanged."
+		return "Saved back to the owning agent's tools: edited in place, scope unchanged."
 	}
 	// Global scope (Builder only): auto-persist to the user-wide pool,
 	// skipping the pending-approval queue. AdminPersistTempTool replaces
@@ -69,7 +69,7 @@ func finalizeAuthoredTool(sess *ToolSession, toolName string) string {
 			return "Available for this session; saving it to your tools failed (see server logs)."
 		}
 		Log("[temptool.scope] persisted %q to the user-wide pool (Builder authoring; no approval)", toolName)
-		return "Saved to your tools — available to all your agents and across sessions. No admin approval needed."
+		return "Saved to your tools: available to all your agents and across sessions. No admin approval needed."
 	}
 	// Agent scope (every non-Builder agent): attach to the calling
 	// agent's own record. On any failure (no bundle target, seed with no
@@ -108,7 +108,7 @@ func persistentToolLocked(sess *ToolSession, name string) bool {
 	return false
 }
 
-const lockedToolMsg = "Tool %q is LOCKED — it can't be modified or deleted. If it genuinely must change, the user unlocks it first in Extensions › Tools, then it's editable. Do NOT recreate it under a different name."
+const lockedToolMsg = "Tool %q is LOCKED: it can't be modified or deleted. If it genuinely must change, the user unlocks it first in Extensions › Tools, then it's editable. Do NOT recreate it under a different name."
 
 func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 	if name := strings.TrimSpace(StringArg(args, "name")); persistentToolLocked(sess, name) {
@@ -247,7 +247,7 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 	}
 	for _, ct := range RegisteredChatTools() {
 		if ct.Name() == name {
-			return "", fmt.Errorf("name %q collides with a registered tool — pick another", name)
+			return "", fmt.Errorf("name %q collides with a registered tool: pick another", name)
 		}
 	}
 	desc := strings.TrimSpace(StringArg(args, "description"))
@@ -266,20 +266,20 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 	// admin's explicit REVOKE is a durable deny. See docs/secured-credential-tool-binding.md.
 	if cr, ok := Secure().Load(credential); ok && cr.Secured {
 		if Secure().ToolBindingRevoked(credential, name) {
-			return "", fmt.Errorf("credential %q is SECURED and toolbox %q's binding was REVOKED by an admin — ask them to restore it in Admin > APIs", credential, name)
+			return "", fmt.Errorf("credential %q is SECURED and toolbox %q's binding was REVOKED by an admin: ask them to restore it in Admin > APIs", credential, name)
 		}
 		_ = Secure().ApproveToolBinding(credential, name)
 	}
 	rawActions, ok := args["actions"]
 	if !ok || rawActions == nil {
-		return "", fmt.Errorf("actions is required for toolbox mode — provide an array of {name, description, url_template, params, ...} sub-action objects")
+		return "", fmt.Errorf("actions is required for toolbox mode: provide an array of {name, description, url_template, params, ...} sub-action objects")
 	}
 	actionsList, ok := rawActions.([]any)
 	if !ok {
 		return "", fmt.Errorf("actions must be an array (got %T)", rawActions)
 	}
 	if len(actionsList) == 0 {
-		return "", fmt.Errorf("actions must contain at least one sub-action (a toolbox with no actions is just an unbuilt api tool — use mode=\"api\" instead)")
+		return "", fmt.Errorf("actions must contain at least one sub-action (a toolbox with no actions is just an unbuilt api tool: use mode=\"api\" instead)")
 	}
 	actions := make([]TempToolAction, 0, len(actionsList))
 	seen := make(map[string]bool, len(actionsList))
@@ -359,7 +359,7 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 		}
 		if unsent := unsentWriteParams(method, urlTpl, bodyTpl, scaffoldFrom); len(unsent) > 0 {
 			if bodyTpl != "" {
-				return "", fmt.Errorf("actions[%d] (%q): required param(s) %v are sent NOWHERE — this %s action's body_template doesn't reference them, so the API never receives them (the cause of a 400 like \"content must be a string\"). Add them to the body_template, e.g. {\"content\": {content}}", i, actName, unsent, method)
+				return "", fmt.Errorf("actions[%d] (%q): required param(s) %v are sent NOWHERE, this %s action's body_template doesn't reference them, so the API never receives them (the cause of a 400 like \"content must be a string\"). Add them to the body_template, e.g. {\"content\": {content}}", i, actName, unsent, method)
 			}
 			bodyTpl = scaffoldBodyTemplate(unsent)
 			scaffoldedActions = append(scaffoldedActions, actName)
@@ -374,11 +374,11 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 		// verbatim. Validated AFTER scaffolding so the auto-built body is
 		// covered too.
 		if err := validateTemplate(urlTpl, actParams); err != nil {
-			return "", fmt.Errorf("actions[%d] (%q): url_template: %w — every {placeholder} must name a declared param. If you removed a param, update the template in the same call", i, actName, err)
+			return "", fmt.Errorf("actions[%d] (%q): url_template: %w, every {placeholder} must name a declared param. If you removed a param, update the template in the same call", i, actName, err)
 		}
 		if bodyTpl != "" {
 			if err := validateTemplate(bodyTpl, actParams); err != nil {
-				return "", fmt.Errorf("actions[%d] (%q): body_template: %w — every {placeholder} must name a declared param. If you removed a param, update the body_template in the same call (otherwise dispatch dies substituting the template)", i, actName, err)
+				return "", fmt.Errorf("actions[%d] (%q): body_template: %w, every {placeholder} must name a declared param. If you removed a param, update the body_template in the same call (otherwise dispatch dies substituting the template)", i, actName, err)
 			}
 		}
 		actions = append(actions, TempToolAction{
@@ -420,7 +420,7 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 	msg := fmt.Sprintf("Created toolbox tool %q with %d action(s): %v. Call as %s(action=\"<sub-action>\", ...).",
 		name, len(actions), actionNames(actions), name)
 	if len(scaffoldedActions) > 0 {
-		msg += fmt.Sprintf(" NOTE: for write action(s) %v I auto-added a body_template whose JSON keys are your PARAM NAMES — that is a GUESS at the API's body schema, not a verified fact. If the API expects different field names (a common case: it wants \"parent_id\" for a comment_id value), the live call will 4xx. Override with an explicit body_template via action=\"update\", mapping each value with its {param} placeholder — e.g. body_template={\"parent_id\": {comment_id}, \"content\": {content}}. Verify the field names against the API docs before relying on these actions.", scaffoldedActions)
+		msg += fmt.Sprintf(" NOTE: for write action(s) %v I auto-added a body_template whose JSON keys are your PARAM NAMES, that is a GUESS at the API's body schema, not a verified fact. If the API expects different field names (a common case: it wants \"parent_id\" for a comment_id value), the live call will 4xx. Override with an explicit body_template via action=\"update\", mapping each value with its {param} placeholder: e.g. body_template={\"parent_id\": {comment_id}, \"content\": {content}}. Verify the field names against the API docs before relying on these actions.", scaffoldedActions)
 	}
 	return msg, nil
 }
@@ -506,7 +506,7 @@ func liveRequired(act TempToolAction) []string {
 	if len(repaired) == len(act.Required) {
 		return act.Required // every param really is load-bearing
 	}
-	Debug("[temptool] action %q: required %v was every declared param — narrowed to the %d the URL actually needs (%v); the rest are now optional",
+	Debug("[temptool] action %q: required %v was every declared param, narrowed to the %d the URL actually needs (%v); the rest are now optional",
 		act.Name, act.Required, len(repaired), repaired)
 	return repaired
 }

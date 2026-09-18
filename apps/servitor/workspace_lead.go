@@ -125,22 +125,22 @@ func buildWorkspaceLeadPrompt(ws Appliance, scouts []memberScout, missing []stri
 	}
 	fmt.Fprintf(&b, "You are the investigation lead for **%s**, a workspace spanning %d system(s) and repositor(ies).\n\n", name, len(scouts))
 	b.WriteString("You have NO direct access to any of them. Everything you report must come from a tool result in this session:\n\n")
-	b.WriteString("- `investigate_member` — dispatch a member's own investigator (its credentials, its accumulated map, its worker). This is the deep tool: it runs real commands on a live system or reads real code in a repo. It is also the expensive one.\n")
-	b.WriteString("- `investigate_cluster` — send ONE identical question to several members at once and get their answers side by side. Use it to survey a set of machines in one step: where something lives, which node handles a request, whether a setting matches. When the members are supposed to be configured identically, set `expect_match` and differing values are reported as drift.\n")
-	b.WriteString("- `search_code` — grep a repo member's ingested source. Cheap and immediate; prefer it over a full investigation when you only need to find where something is written.\n")
+	b.WriteString("- `investigate_member`: dispatch a member's own investigator (its credentials, its accumulated map, its worker). This is the deep tool: it runs real commands on a live system or reads real code in a repo. It is also the expensive one.\n")
+	b.WriteString("- `investigate_cluster`: send ONE identical question to several members at once and get their answers side by side. Use it to survey a set of machines in one step: where something lives, which node handles a request, whether a setting matches. When the members are supposed to be configured identically, set `expect_match` and differing values are reported as drift.\n")
+	b.WriteString("- `search_code`: grep a repo member's ingested source. Cheap and immediate; prefer it over a full investigation when you only need to find where something is written.\n")
 	if hasCollections {
-		b.WriteString("- `search_knowledge` — search the curated collections linked to this workspace (runbooks, vendor docs, guides). Reference material, not evidence about these systems: use it to interpret what you find, never as a substitute for finding it.\n")
+		b.WriteString("- `search_knowledge`: search the curated collections linked to this workspace (runbooks, vendor docs, guides). Reference material, not evidence about these systems: use it to interpret what you find, never as a substitute for finding it.\n")
 	}
 	b.WriteString("\n")
 
 	b.WriteString("## How to work\n\n")
 	b.WriteString("1. **Read the roster below first.** The cheap pass already searched every repo member and read every system member's accumulated map. Members with matches are your starting points; a member with no matches is not necessarily irrelevant, but it needs a reason before you spend an investigation on it.\n")
 	b.WriteString("2. **Cross the boundary deliberately.** The value of a workspace is that a live system knows WHAT is happening and a repository knows WHY. A log line found on a host is half an answer until you find the code that emits it; a suspicious function in a repo is half an answer until you confirm what the running system actually does with it.\n")
-	b.WriteString("3. **Route by role before you fan out.** The members of a cluster are not interchangeable — a scheduler, a primary database, or a queue consumer commonly lives on exactly ONE node, while other functions run on several. The roster's **Role** and **Known to run** lines say which is which. When a function belongs to one member, `investigate_member` on that member is the right call; fanning out asks two nodes a question they cannot answer and burns the budget doing it.\n")
-	b.WriteString("4. **Use `investigate_cluster` to survey, and `expect_match` only for genuine peers.** One call beats three separate dispatches when you are asking every node the same thing. Set `expect_match=true` only for members the roster shows in the SAME role — for nodes with different roles, differences are the design, and reporting them as drift is noise that buries the real answer.\n")
+	b.WriteString("3. **Route by role before you fan out.** The members of a cluster are not interchangeable: a scheduler, a primary database, or a queue consumer commonly lives on exactly ONE node, while other functions run on several. The roster's **Role** and **Known to run** lines say which is which. When a function belongs to one member, `investigate_member` on that member is the right call; fanning out asks two nodes a question they cannot answer and burns the budget doing it.\n")
+	b.WriteString("4. **Use `investigate_cluster` to survey, and `expect_match` only for genuine peers.** One call beats three separate dispatches when you are asking every node the same thing. Set `expect_match=true` only for members the roster shows in the SAME role, for nodes with different roles, differences are the design, and reporting them as drift is noise that buries the real answer.\n")
 	b.WriteString("5. **A member reporting \"not found\" is not the end of a search.** On a role-split cluster it usually means you asked the wrong node. Re-read the roster and ask the member whose role owns that function before concluding the thing does not exist.\n")
-	b.WriteString("6. **One objective per dispatch.** 'Read /etc/nginx/nginx.conf and report the upstream block' — not 'look into nginx'. Pass what you already know so the member's worker does not re-derive it.\n")
-	b.WriteString("7. **Escalate to a plan when the question needs several findings that build on each other** — call `set_plan`, work the steps, then answer. Skip the plan when one dispatch settles it.\n\n")
+	b.WriteString("6. **One objective per dispatch.** 'Read /etc/nginx/nginx.conf and report the upstream block': not 'look into nginx'. Pass what you already know so the member's worker does not re-derive it.\n")
+	b.WriteString("7. **Escalate to a plan when the question needs several findings that build on each other**: call `set_plan`, work the steps, then answer. Skip the plan when one dispatch settles it.\n\n")
 
 	b.WriteString("## Reporting\n\n")
 	b.WriteString("- **Attribute every fact to the member it came from.** In a workspace the same filename, service name, or port exists on several members; an unattributed fact is unusable. Write 'on node-2' or 'in the orchestrator repo', every time.\n")
@@ -190,13 +190,13 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 		Tool: Tool{
 			Name: "investigate_member",
 			Description: "Dispatch a full investigation into ONE member of this workspace, using that member's own credentials, accumulated map, and worker. " +
-				"For a live system the worker runs commands on it; for a repo it searches and reads the code. Read-only — destructive commands are refused. " +
+				"For a live system the worker runs commands on it; for a repo it searches and reads the code. Read-only: destructive commands are refused. " +
 				"Slow and expensive: use search_code first when you only need to locate something.",
 			Parameters: map[string]ToolParam{
 				"member": {Type: "string", Description: "Member ID (or exact name) from the roster."},
 				"task":   {Type: "string", Description: "One clear objective: find X, read Y, verify Z. Not a topic."},
 				"context": {Type: "string",
-					Description: "What you already know that is relevant — paths, ports, service names, findings from other members — so the worker does not re-derive it."},
+					Description: "What you already know that is relevant (paths, ports, service names, findings from other members), so the worker does not re-derive it."},
 			},
 			Required: []string{"member", "task"},
 		},
@@ -211,7 +211,7 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 				return "", fmt.Errorf("task is required")
 			}
 			if err := claimDrill(m.ID); err != nil {
-				emit(id, probeEvent{Kind: "status", Text: "Drill cap reached — refusing further investigations this question."})
+				emit(id, probeEvent{Kind: "status", Text: "Drill cap reached: refusing further investigations this question."})
 				return "[REFUSED] " + err.Error(), nil
 			}
 			if extra, _ := args["context"].(string); strings.TrimSpace(extra) != "" {
@@ -225,7 +225,7 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 			})
 			if err != nil {
 				emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("%s: %s", m.Name(), err)})
-				return fmt.Sprintf("[%s — NO FINDINGS] %v", m.Name(), err), nil
+				return fmt.Sprintf("[%s: NO FINDINGS] %v", m.Name(), err), nil
 			}
 			result = capText(result, 12000)
 			emit(id, probeEvent{Kind: "output", Text: result})
@@ -238,16 +238,16 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 		Tool: Tool{
 			Name: "investigate_cluster",
 			Description: "Ask SEVERAL members the SAME question at once and get their answers side by side. " +
-				"Use it to survey a set of machines in one step — where something lives, which node handles a request, whether a setting matches. " +
+				"Use it to survey a set of machines in one step, where something lives, which node handles a request, whether a setting matches. " +
 				"Identical wording across members is what makes the answers comparable: pass one question, not one per node. " +
 				"Set expect_match when the members are supposed to be configured identically and you want differences reported as drift.",
 			Parameters: map[string]ToolParam{
 				"members": {Type: "array", Description: "Member IDs (or exact names) to ask. Two or more.", Items: &ToolParam{Type: "string"}},
 				"task":    {Type: "string", Description: "The single question to put to every listed member, worded so it means the same thing on each."},
-				"context": {Type: "string", Description: "Shared context for all of them — what you already know."},
+				"context": {Type: "string", Description: "Shared context for all of them: what you already know."},
 				"expect_match": {Type: "boolean",
 					Description: "True when these members should be configured identically, so values missing from some are worth flagging as drift. " +
-						"False (default) when they have different roles — there, differences are the design and flagging them is noise. Check the roster's Role lines before setting this."},
+						"False (default) when they have different roles: there, differences are the design and flagging them is noise. Check the roster's Role lines before setting this."},
 			},
 			Required: []string{"members", "task"},
 		},
@@ -287,7 +287,7 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 			}
 			if len(targets) == 0 {
 				if len(refused) > 0 {
-					emit(id, probeEvent{Kind: "status", Text: "Drill cap reached — fan-out refused."})
+					emit(id, probeEvent{Kind: "status", Text: "Drill cap reached: fan-out refused."})
 					return fmt.Sprintf("[REFUSED] Drill cap reached before any of these members could be queried: %s. Answer from what you already have, and say which members you did not reach.", strings.Join(refused, ", ")), nil
 				}
 				return "", fmt.Errorf("none of %q match a member of this workspace. Valid members: %s",
@@ -325,7 +325,7 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 			for i, m := range targets {
 				fmt.Fprintf(&b, "## %s (`%s`)\n\n", m.Name(), m.ID)
 				if errs[i] != nil {
-					fmt.Fprintf(&b, "NO FINDINGS — %v\n\n", errs[i])
+					fmt.Fprintf(&b, "NO FINDINGS: %v\n\n", errs[i])
 					continue
 				}
 				text := capText(strings.TrimSpace(results[i]), 8000)
@@ -340,7 +340,7 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 				}
 				if len(refused) > 0 {
 					fmt.Fprintf(&b, "- Drill cap reached before reaching: %s\n", strings.Join(refused, ", "))
-					emit(id, probeEvent{Kind: "status", Text: "Drill cap reached — skipped " + strings.Join(refused, ", ")})
+					emit(id, probeEvent{Kind: "status", Text: "Drill cap reached: skipped " + strings.Join(refused, ", ")})
 				}
 				b.WriteString("\nThe comparison below covers only the members that answered.\n\n")
 			}
@@ -353,7 +353,7 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 			if expectMatch {
 				b.WriteString(divergence_report(perNode))
 			} else if len(perNode) > 1 {
-				b.WriteString("\n---\n\nThese members were not declared to be identical, so no drift comparison was run — differences between them are expected. Compare their answers against each member's Role in the roster: a difference is only a finding when it contradicts what that member is FOR. If you do believe these members should match, call again with expect_match=true.\n")
+				b.WriteString("\n---\n\nThese members were not declared to be identical, so no drift comparison was run: differences between them are expected. Compare their answers against each member's Role in the roster: a difference is only a finding when it contradicts what that member is FOR. If you do believe these members should match, call again with expect_match=true.\n")
 			}
 			out := b.String()
 			emit(id, probeEvent{Kind: "output", Text: out})
@@ -365,10 +365,10 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 	search_code := AgentToolDef{
 		Tool: Tool{
 			Name:        "search_code",
-			Description: "Search a repo member's ingested source for a literal string and return matching lines with file paths. Immediate and cheap — use it to locate code before deciding whether a full investigation is warranted.",
+			Description: "Search a repo member's ingested source for a literal string and return matching lines with file paths. Immediate and cheap: use it to locate code before deciding whether a full investigation is warranted.",
 			Parameters: map[string]ToolParam{
 				"member": {Type: "string", Description: "Repo member ID (or exact name) from the roster."},
-				"query":  {Type: "string", Description: "Literal text to find — a log string, function name, config key. Not a question."},
+				"query":  {Type: "string", Description: "Literal text to find: a log string, function name, config key. Not a question."},
 			},
 			Required: []string{"member", "query"},
 		},
@@ -383,7 +383,7 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 				if m.Kind() == "evidence" {
 					alt = "search_evidence"
 				}
-				return "", fmt.Errorf("%s is a %s member, not a repo — use %s for it", m.Name(), m.Kind(), alt)
+				return "", fmt.Errorf("%s is a %s member, not a repo: use %s for it", m.Name(), m.Kind(), alt)
 			}
 			query, _ := args["query"].(string)
 			if strings.TrimSpace(query) == "" {
@@ -392,12 +392,12 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 			hits := searchRepo(m.Owner, m.ID, query, 40)
 			emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("search_code %s %q: %d hit(s)", m.Name(), query, len(hits))})
 			if len(hits) == 0 {
-				return fmt.Sprintf("No matches for %q in %s. The string is not present in the ingested source — do not infer that it is there anyway.", query, m.Name()), nil
+				return fmt.Sprintf("No matches for %q in %s. The string is not present in the ingested source: do not infer that it is there anyway.", query, m.Name()), nil
 			}
 			var b strings.Builder
 			fmt.Fprintf(&b, "%d match(es) for %q in %s (`%s`):\n\n", len(hits), query, m.Name(), m.ID)
 			for _, h := range hits {
-				fmt.Fprintf(&b, "- `%s:%d` — %s\n", h.Path, h.Line, h.Text)
+				fmt.Fprintf(&b, "- `%s:%d`, %s\n", h.Path, h.Line, h.Text)
 			}
 			return b.String(), nil
 		},
@@ -412,10 +412,10 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 	search_evidence := AgentToolDef{
 		Tool: Tool{
 			Name:        "search_evidence",
-			Description: "Search an evidence member's ingested logs for a regular expression and return matching lines with file paths and line numbers. Immediate and cheap — use it to check whether a dump even mentions something before dispatching a full investigation.",
+			Description: "Search an evidence member's ingested logs for a regular expression and return matching lines with file paths and line numbers. Immediate and cheap: use it to check whether a dump even mentions something before dispatching a full investigation.",
 			Parameters: map[string]ToolParam{
 				"member":  {Type: "string", Description: "Evidence member ID (or exact name) from the roster."},
-				"pattern": {Type: "string", Description: "Regular expression to find — an error string, a request id, a hostname. Not a question."},
+				"pattern": {Type: "string", Description: "Regular expression to find: an error string, a request id, a hostname. Not a question."},
 				"since":   {Type: "string", Description: "Optional earliest timestamp, e.g. \"2026-03-14 02:00:00\"."},
 				"until":   {Type: "string", Description: "Optional latest timestamp, same format."},
 			},
@@ -428,7 +428,7 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 				return "", fmt.Errorf("no member %q in this workspace. Valid members: %s", ref, memberRefList(members))
 			}
 			if m.Kind() != "evidence" {
-				return "", fmt.Errorf("%s is a %s member, not an evidence bundle — use search_code for a repo, or investigate_member otherwise", m.Name(), m.Kind())
+				return "", fmt.Errorf("%s is a %s member, not an evidence bundle: use search_code for a repo, or investigate_member otherwise", m.Name(), m.Kind())
 			}
 			pattern, _ := args["pattern"].(string)
 			if strings.TrimSpace(pattern) == "" {
@@ -448,15 +448,15 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 			}
 			emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("search_evidence %s %q: %d hit(s)", m.Name(), pattern, len(res.Hits))})
 			if len(res.Hits) == 0 {
-				return fmt.Sprintf("No matches for %q in %s across %d file(s) scanned. The bundle does not contain that text — but say whether the file that WOULD carry it is even in the bundle before concluding it did not happen.", pattern, m.Name(), res.Scanned), nil
+				return fmt.Sprintf("No matches for %q in %s across %d file(s) scanned. The bundle does not contain that text, but say whether the file that WOULD carry it is even in the bundle before concluding it did not happen.", pattern, m.Name(), res.Scanned), nil
 			}
 			var b strings.Builder
 			fmt.Fprintf(&b, "%d match(es) for %q in %s (`%s`):\n\n", len(res.Hits), pattern, m.Name(), m.ID)
 			for _, h := range res.Hits {
-				fmt.Fprintf(&b, "- `%s:%d` — %s\n", h.Path, h.Line, h.Text)
+				fmt.Fprintf(&b, "- `%s:%d`, %s\n", h.Path, h.Line, h.Text)
 			}
 			if res.Truncated {
-				b.WriteString("\nTRUNCATED — there are more matches than shown. Treat this as a lower bound, not a count.\n")
+				b.WriteString("\nTRUNCATED: there are more matches than shown. Treat this as a lower bound, not a count.\n")
 			}
 			return b.String(), nil
 		},
@@ -469,7 +469,7 @@ func (T *Servitor) workspaceLeadTools(ctx context.Context, id, userID string, ws
 		tools = append(tools, AgentToolDef{
 			Tool: Tool{
 				Name:        "search_knowledge",
-				Description: "Search the curated knowledge collections linked to this workspace (runbooks, vendor documentation, guides). Reference material only — it says nothing about the current state of these systems.",
+				Description: "Search the curated knowledge collections linked to this workspace (runbooks, vendor documentation, guides). Reference material only: it says nothing about the current state of these systems.",
 				Parameters: map[string]ToolParam{
 					"query": {Type: "string", Description: "What to look for."},
 				},

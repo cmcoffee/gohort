@@ -33,6 +33,11 @@ type TemplateField struct {
 	Default  any      `json:"default,omitempty"`
 	Advanced bool     `json:"advanced,omitempty"`
 
+	// Detail is the long explanation, rendered behind an ⓘ icon beside the
+	// label rather than as more text under the input. Help stays one
+	// scannable sentence; see ui.FormField.Detail for the reasoning.
+	Detail string `json:"detail,omitempty"`
+
 	// File-picker wiring (Type "file"). The picked file is read in the BROWSER
 	// and its text dropped into the field named by Into, so the user reviews it
 	// before saving. The picker itself never becomes a value — it only fills

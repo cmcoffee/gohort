@@ -1,21 +1,21 @@
-# Servitor Workspaces — cross-appliance investigation (MVP)
+# Servitor Workspaces: cross-appliance investigation (MVP)
 
 Status: **slices 1–3 built** (v0.5.823). A "master" appliance that queries
-several existing appliances — repos *and* SSH boxes — at once. Builds directly
+several existing appliances (repos *and* SSH boxes) at once. Builds directly
 on the per-appliance machinery (ingest, docs, scoped graph, refresh/staleness)
 already in `apps/servitor/`.
 
 What shipped, and where it differs from the design below:
 
-- `workspace.go` — member resolution, the scout, and the cross-node divergence
-  report. `workspace_lead.go` — the coordinator's prompt and tools.
-  `workspace_session.go` — the turn runner, entered from `runSession`.
+- `workspace.go`: member resolution, the scout, and the cross-node divergence
+  report. `workspace_lead.go`: the coordinator's prompt and tools.
+  `workspace_session.go`: the turn runner, entered from `runSession`.
 - **Cluster fan-out was promoted out of "deferred v2."** Scout-then-drill picks
   the *relevant* member, which is the wrong shape for a set of machines that
   should agree: there, you want one identical question put to all of them and
   the answers compared. `investigate_cluster` runs the members in parallel
   (bounded by `tune_servitor_workspace_parallel`) and appends a report of the
-  concrete values — paths, ports, IPs, versions — that did not appear in every
+concrete values (paths, ports, IPs, versions) that did not appear in every
   member's answer. Framed as leads to verify, not conclusions: a value missing
   from a report means that worker didn't mention it.
 - **Drills are read-only.** A member investigation dispatched by the coordinator
@@ -24,7 +24,7 @@ What shipped, and where it differs from the design below:
   something is done by opening that member directly.
 - **The risk gate learned about writes.** Investigations legitimately need
   somewhere to stage scripts and spool output, and the gate used to block the
-  *cleanup* (`rm /tmp/probe.sh`) while waving through the write — so a
+  *cleanup* (`rm /tmp/probe.sh`) while waving through the write, so a
   "read-only" run left more behind than a normal one. Every run now gets a
   scratch directory (`scratch.go`); writes and deletes inside it are ungated,
   redirects onto real files outside it are classified as overwrites, and
@@ -36,7 +36,7 @@ What shipped, and where it differs from the design below:
   exactly one node, and every role difference then reads as drift. So the record
   carries `MemberRoles` (member ID → short operator role), the scout derives a
   capability line from each member's own `services`/`apps`/`overview` doc, and
-  **both render for every member on every question** — a roster filtered by
+  **both render for every member on every question**: a roster filtered by
   question-match makes single-node functions invisible. Role outranks the derived
   line because it states what a node is *for*, which still routes correctly when
   a service is stopped or the map is stale. `investigate_cluster` takes
@@ -53,7 +53,7 @@ persistent cross-domain graph.
 Today every servitor appliance is investigated in isolation: one repo, or one
 SSH box, per session. Real questions cross that boundary:
 
-> "This log line is showing up on the lab box — which repo's code emits it, and
+> "This log line is showing up on the lab box, which repo's code emits it, and
 > what triggers it?"
 
 The box knows *what's running* (grep the live log, find the process, read the
@@ -62,7 +62,7 @@ builds that string, who calls it, what config path reaches it). Neither alone
 answers "who and why."
 
 A **workspace** is a new appliance whose configuration is a checkbox list of
-existing appliances. It owns no store of its own — it references members and
+existing appliances. It owns no store of its own: it references members and
 adds a coordinator layer that fans a question out to the relevant members and
 stitches the answers together.
 
@@ -83,7 +83,7 @@ Servitor already runs SSH appliances and repo appliances through the **same
 investigation shell**: `buildLeadSystemPrompt` (`web.go`) delegates to
 `buildRepoLeadPrompt` for repos, and both share `leadStaticGuidance`, the
 lead→worker dispatch loop, and the scoped-memory tail. The only real difference
-is the worker's verb — an SSH member's worker *runs commands*, a repo member's
+is the worker's verb: an SSH member's worker *runs commands*, a repo member's
 worker *searches code*. Both workers already exist.
 
 So a workspace is a coordinator over machinery that is already built. It is not
@@ -138,7 +138,7 @@ A workspace is a new `Type` on the existing `Appliance` record (`web.go`), so it
 flows through the same create/edit/list/share plumbing:
 
 - `Type == "workspace"`
-- `Members []string` — member appliance IDs (new field, `json:"members,omitempty"`)
+- `Members []string`: member appliance IDs (new field, `json:"members,omitempty"`)
 - reuses `Name`, `Instructions`, `PersonaName`/`PersonaPrompt`, `Shared`, `Owner`
 
 No `Host`/`RepoURL`/creds of its own. On create/edit, the member picker lists the
@@ -182,7 +182,7 @@ member the user can no longer see is skipped with a note, not an error.
    else yet. Verifies the data model end-to-end.
 2. **Union scout.** Multi-member code search over repo members + a map-read for
    SSH members; a scout that returns "relevant members" for a question. No drill
-   yet — surface the scout result so we can eyeball relevance quality.
+   yet: surface the scout result so we can eyeball relevance quality.
 3. **Coordinator drill + synthesis.** `buildWorkspaceLeadPrompt` + the member
    dispatch tool; sequential drill into relevant members; stitch at synthesis.
    This is the first end-to-end answer to the log-line question.
@@ -199,16 +199,16 @@ Slices 1–3 are the MVP. Each is independently shippable and testable.
   is qualitative. How does the coordinator compare "repo hit at 0.7" against
   "box map mentions this subsystem" to pick drill targets? MVP: drill any member
   above a code-score floor OR whose map the lead judges relevant, and let the
-  lead decide — tune later.
+  lead decide: tune later.
 - **Drill budget.** Cap on how many members a single question drills into, to
   bound cost on large workspaces.
 - **Staleness surfacing.** The scout leans on each member's map; a workspace is a
-  natural place to show "3 of 5 members have stale overviews — re-map?" (reuses
+  natural place to show "3 of 5 members have stale overviews: re-map?" (reuses
   the repo `repoOverviewStale` signal and the SSH doc age).
 
 ## References
 
-- `apps/servitor/` — per-appliance investigation shell this builds on
+- `apps/servitor/`: per-appliance investigation shell this builds on
 - doc-staleness + refresh: `repoOverviewStale` (`repo_prompts.go`), the
   commit-relative flag added alongside this work
 - orchestrate graph-index scale notes (deferred v2 cross-domain graph)

@@ -28,7 +28,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 		Group:    "Files",
 		Title:    "File stores",
 		Wide:     true,
-		Subtitle: "Folders on this server an agent can SEARCH and READ, never write. Attach a store to an agent (Sources) and it gets tools to list what is there, search it by regular expression, and read a window around a hit — never a whole file. Subfolders are optional: a parent whose subfolders are per-ticket or per-run works, and so does a flat folder of files. Logs are the obvious case, but anything you would grep rather than embed belongs here: config trees, exports, source dumps. To RUN commands against a folder (unpack an archive, run an extractor), add a servitor appliance of type \"command\" with its Work Dir set to the same path — that path already mints approved command tools, and this one deliberately does not duplicate it.",
+		Subtitle: "Folders on this server an agent can SEARCH and READ, never write. Attach a store to an agent (Sources) and it gets tools to list what is there, search it by regular expression, and read a window around a hit: never a whole file. Subfolders are optional: a parent whose subfolders are per-ticket or per-run works, and so does a flat folder of files. Logs are the obvious case, but anything you would grep rather than embed belongs here: config trees, exports, source dumps. To RUN commands against a folder (unpack an archive, run an extractor), add a servitor appliance of type \"command\" with its Work Dir set to the same path, that path already mints approved command tools, and this one deliberately does not duplicate it.",
 		Body: ui.Stack{Children: []ui.Component{
 			ui.Table{
 				Source: "/filestore/api/stores",
@@ -66,7 +66,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 					// these were parts of one thing.
 					ui.Expand("Manage", ui.Stack{Children: []ui.Component{
 						ui.Card{HTML: folderPanelHeading("Commands",
-							"Binaries registered against this folder. A person runs one from Files. Map a command and it becomes a tool as well — turn Agents on and every agent that reaches this folder can call it; turn it off and the mapping is kept but nothing can use it.")},
+							"Binaries registered against this folder. A person runs one from Files. Map a command and it becomes a tool as well: turn Agents on and every agent that reaches this folder can call it; turn it off and the mapping is kept but nothing can use it.")},
 						ui.Table{
 							Source: "/filestore/api/commands?slug={slug}",
 							RowKey: "id",
@@ -151,7 +151,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 											Prompt: "Run this command's help flag and show me exactly what it printed. Do not propose anything yet."},
 										{Label: "Refine",
 											Title:  "Check what you wrote against what the command really does, and correct it",
-											Prompt: "Check what you wrote against what the command actually does — run it again where you were guessing — and propose a corrected version."},
+											Prompt: "Check what you wrote against what the command actually does (run it again where you were guessing), and propose a corrected version."},
 									},
 									EmptyText: "Map it, and what it finds lands on this row as the actions an agent can call. " +
 										"It can run the binary to read its help and try things. " +
@@ -187,7 +187,7 @@ func (T *FileStoreApp) adminSection() ui.Section {
 							PostTo:        "/filestore/api/stores",
 							Method:        "POST",
 							Noun:          "user",
-							Intro: "Empty means EVERY user — a folder of customer captures is rarely something every account should hold, " +
+							Intro: "Empty means EVERY user: a folder of customer captures is rarely something every account should hold, " +
 								"and configuring a store is already admin-only, so without this the cheap half was gated and the reading was not. " +
 								"Applies to admins too: admin manages the list, membership decides reach.",
 							EmptyText:  "No approved users to assign yet.",
@@ -232,30 +232,38 @@ func actionFormFields() []ui.FormField {
 		{Field: "name", Type: "text", Label: "Name", Placeholder: "decrypt",
 			Help: "Short handle for the command, snake_case. It is how the endpoint names it."},
 		{Field: "label", Type: "text", Label: "Button label", Placeholder: "Decrypt bundle",
-			Help: "What the button says. Name it for what it DOES to the folder, since that is what the person clicking it is deciding."},
+			Help:   "What the button says.",
+			Detail: "Name it for what it DOES to the folder, since that is what the person clicking it is deciding."},
 		{Field: "command", Type: "text", Label: "Command", Placeholder: "/opt/bin/diag_decrypt",
-			Help: "Absolute path. It is called as `<command> <folder>`, and for a two-phase command a second time as `<command> <folder> <input>`. Run with NO shell, so quoting and metacharacters have nowhere to happen."},
+			Help:   "Absolute path. It is called as `<command> <folder>`.",
+			Detail: "For a two-phase command it is called a second time as `<command> <folder> <input>`. It runs with NO shell, so quoting and metacharacters have nowhere to happen."},
 		{Field: "two_phase", Type: "toggle", Label: "Two phases (asks for input)",
-			Help: "On: the first run prints something — a challenge, a summary, a prompt — which is shown to the person, who supplies a value; the command then runs again with it. Off: one call and the folder is ready. Use two phases when a value has to come from OUTSIDE this system and nothing here can obtain it."},
+			Help:   "Whether the command runs once, or twice with a value from the person in between.",
+			Detail: "On, the first run prints something (a challenge, a summary, a prompt) which is shown to the person, who supplies a value; the command then runs again with it. Off, one call and the folder is ready.\n\nUse two phases when a value has to come from OUTSIDE this system and nothing here can obtain it."},
 		{Field: "input_label", Type: "text", Label: "Input label", Placeholder: "Response key",
 			Help: "What the box asks for on the second phase. Only used when two phases is on."},
 		{Field: "help", Type: "textarea", Label: "Note", Rows: 2,
-			Help: "Optional. Shown beside the button — say what it does and when to reach for it."},
+			Help: "Optional. Shown beside the button: say what it does and when to reach for it."},
 	}
 }
 
 func storeFormFields() []ui.FormField {
 	return []ui.FormField{
 		{Field: "name", Type: "text", Label: "Name", Placeholder: "Support bundles",
-			Help: "Shown in the agent's Sources picker and in the tool descriptions an attached agent reads. The tool NAMES come from a handle minted from this name the first time the store is saved (\"Support bundles\" → search_support_bundles), and that handle does not change afterwards: RENAMING A STORE CHANGES THE LABEL, NOT THE TOOL NAMES. It has to work that way — the handle is what agent attachments are keyed on and what a minted command tool's frozen path_scope names, so moving it would break every approved tool pointed at this store. The Agent tools column shows the names in force."},
+			Help:   "Shown in the agent's Sources picker, and in the tool descriptions an attached agent reads.",
+			Detail: "The tool NAMES come from a handle minted from this name the first time the store is saved (\"Support bundles\" becomes search_support_bundles), and that handle does not change afterwards. RENAMING A STORE CHANGES THE LABEL, NOT THE TOOL NAMES.\n\nIt has to work that way: the handle is what agent attachments are keyed on and what a minted command tool's frozen path_scope names, so moving it would break every approved tool pointed at this store. The Agent tools column shows the names in force."},
 		{Field: "path", Type: "text", Label: "Folder", Placeholder: "/var/log/bundles",
-			Help: "Absolute path on this server. The folder itself is what an agent attaches to; its subfolders (if any) are what a search can be scoped to. Read-only: nothing here ever writes to it."},
+			Help:   "Absolute path on this server. Read-only: nothing here ever writes to it.",
+			Detail: "The folder itself is what an agent attaches to; its subfolders, if any, are what a search can be scoped to."},
 		{Field: "allow_uploads", Type: "toggle", Label: "Let assigned users upload",
-			Help: "Off by default. Reaching a store and WRITING into it are different grants: the common case is a log directory something else fills, and pointing at it should not let every account with an agent add files to it. Turn this on for a drop store people are meant to feed. An admin can upload either way."},
+			Help:   "Whether an agent may write into this store, as well as read it. Off by default.",
+			Detail: "Reaching a store and WRITING into it are different grants. The common case is a log directory something else fills, and pointing at it should not let every account with an agent add files to it. Turn this on for a drop store people are meant to feed. An admin can upload either way."},
 		{Field: "retention_days", Type: "number", Label: "Delete folders older than (days)", Min: 0,
-			Help: "0 keeps everything forever, which is the default. A number makes a subfolder ELIGIBLE for deletion once nothing in it has changed for that long — nothing is deleted on a timer. An admin runs the sweep from Maintenance, where a dry run lists exactly what the delete would remove. Age is read from the folder and its immediate contents, so a write buried deep inside may not refresh it: leave headroom rather than setting this to the exact age you care about."},
+			Help:   "0 keeps everything forever, which is the default.",
+			Detail: "A number makes a subfolder ELIGIBLE for deletion once nothing in it has changed for that long. Nothing is deleted on a timer: an admin runs the sweep from Maintenance, where a dry run lists exactly what the delete would remove.\n\nAge is read from the folder and its immediate contents, so a write buried deep inside may not refresh it. Leave headroom rather than setting this to the exact age you care about."},
 		{Field: "description", Type: "textarea", Label: "What lands here", Rows: 2,
-			Help: "Optional, and worth writing: it is pasted into the agent's tool descriptions, so it is what tells the agent when to reach for THIS store rather than another. \"Customer support bundles, one folder per ticket, uploaded by the support team.\""},
+			Help:   "Optional, and worth writing: it tells the agent when to reach for THIS store.",
+			Detail: "It is pasted into the agent's tool descriptions. For example: \"Customer support bundles, one folder per ticket, uploaded by the support team.\""},
 		{Field: "slug", Type: "hidden"},
 	}
 }

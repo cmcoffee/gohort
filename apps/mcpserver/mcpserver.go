@@ -170,7 +170,7 @@ func (T *MCPServer) handleStatus(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"endpoint":  scheme + "://" + r.Host + "/mcp/",
 		"transport": "Streamable HTTP (GET opens an SSE stream, POST carries JSON-RPC)",
-		"auth":      "X-API-Key header — a personal access token (create one on your Account page: /account)",
+		"auth":      "X-API-Key header, a personal access token (create one on your Account page: /account)",
 		"tools":     strings.Join(names, ", "),
 		"agent":     defaultAgent,
 	})
@@ -279,20 +279,20 @@ func (T *MCPServer) handleRPC(w http.ResponseWriter, r *http.Request) {
 		// client that cached an old list from a key narrowed to fewer, and
 		// those need opposite fixes — reconnect the client, or retick the
 		// scope. Names, because the question is always about one tool.
-		scopeNote := "unauthenticated request — full list"
+		scopeNote := "unauthenticated request: full list"
 		if tok := AccountTokenFromRequest(r); tok != nil {
 			before := len(defs)
 			defs = allowedToolDefs(defs, tok)
 			switch {
 			case tok.Scope == nil:
-				scopeNote = "key predates scoping — full list"
+				scopeNote = "key predates scoping: full list"
 			case tok.Scope.Tools == nil:
-				scopeNote = "key has no tool list — not narrowed, full list"
+				scopeNote = "key has no tool list: not narrowed, full list"
 			default:
 				scopeNote = fmt.Sprintf("key narrowed to %d tool(s): %s", len(*tok.Scope.Tools), strings.Join(*tok.Scope.Tools, ", "))
 			}
 			if len(defs) != before {
-				scopeNote += fmt.Sprintf(" — %d of %d hidden", before-len(defs), before)
+				scopeNote += fmt.Sprintf(", %d of %d hidden", before-len(defs), before)
 			}
 		}
 		names := make([]string, 0, len(defs))
@@ -309,7 +309,7 @@ func (T *MCPServer) handleRPC(w http.ResponseWriter, r *http.Request) {
 		// won't surface) when it's missing/unrecognized.
 		owner := DesktopBridgeUserOf(r)
 		if owner == "" {
-			Log("[mcpserver] tools/call REJECTED — no valid X-API-Key (mint a bridge key in Bridges admin)")
+			Log("[mcpserver] tools/call REJECTED: no valid X-API-Key (mint a bridge key in Bridges admin)")
 			resp.Result = toolText("Unauthorized: this endpoint needs a valid gohort personal access token in the X-API-Key header. Create one on your Account page (/account) and put it in the connector config.", true)
 			break
 		}
@@ -321,12 +321,12 @@ func (T *MCPServer) handleRPC(w http.ResponseWriter, r *http.Request) {
 		// skips tier 2 — those are the user themselves / an admin-minted
 		// bridge key, not a scoped personal token.
 		if !FeatureAllowedForUser(T.DB, MCPFeatureKey, owner) {
-			Log("[mcpserver] tools/call REJECTED — admin policy denies MCP for user=%s", owner)
+			Log("[mcpserver] tools/call REJECTED: admin policy denies MCP for user=%s", owner)
 			resp.Result = toolText("Forbidden: an admin has not enabled MCP access for your account (Admin > Feature Access).", true)
 			break
 		}
 		if tok := AccountTokenFromRequest(r); tok != nil && !tok.AllowsFeature(MCPFeatureKey) {
-			Log("[mcpserver] tools/call REJECTED — key %q lacks the mcp feature (owner=%s)", tok.Name, owner)
+			Log("[mcpserver] tools/call REJECTED: key %q lacks the mcp feature (owner=%s)", tok.Name, owner)
 			resp.Result = toolText("Forbidden: this access token is not allowed to use the MCP endpoint. On your Account page, open this key's Configure access and enable \"MCP endpoint\".", true)
 			break
 		}
@@ -393,7 +393,7 @@ func toolResult(text string, images []string) map[string]any {
 		// Say what did not come. A silent drop reads as the agent claiming an
 		// image it never sent, which is the failure this whole channel exists
 		// to avoid.
-		content[0]["text"] = fmt.Sprintf("%s\n\n[%d image(s) attached; %d not included (too large, or past the %d-image limit for one reply) — they remain in the agent's workspace and can be re-sent]",
+		content[0]["text"] = fmt.Sprintf("%s\n\n[%d image(s) attached; %d not included (too large, or past the %d-image limit for one reply): they remain in the agent's workspace and can be re-sent]",
 			text, sent, skipped, maxMCPImages)
 	}
 	return map[string]any{"content": content, "isError": false}
@@ -426,7 +426,7 @@ func toolDefs() []map[string]any {
 		},
 		{
 			"name":        "list_agents",
-			"description": "List the gohort agents you can send messages to, with what each one is for. Call this before ask_agent when you don't already know which agent to use, or when the user names an agent you haven't seen — the `id` on each row is what ask_agent's `agent` argument takes. Only agents the account has made reachable from outside appear here.",
+			"description": "List the gohort agents you can send messages to, with what each one is for. Call this before ask_agent when you don't already know which agent to use, or when the user names an agent you haven't seen: the `id` on each row is what ask_agent's `agent` argument takes. Only agents the account has made reachable from outside appear here.",
 			"inputSchema": map[string]any{
 				"type":       "object",
 				"properties": map[string]any{},
@@ -488,7 +488,7 @@ func (T *MCPServer) callTool(ctx context.Context, owner string, token *AccountTo
 	// Enforced here as well as in the listing, because a client can call a name
 	// it learned somewhere else — a filtered list is a courtesy, not a gate.
 	if !token.AllowsTool(p.Name) {
-		return "", nil, fmt.Errorf("this key may not call %q — enable it on the key under Account → API keys → Configure access", p.Name)
+		return "", nil, fmt.Errorf("this key may not call %q: enable it on the key under Account → API keys → Configure access", p.Name)
 	}
 	switch p.Name {
 	case "ask_agent":
@@ -506,7 +506,7 @@ func (T *MCPServer) callTool(ctx context.Context, owner string, token *AccountTo
 		// filter, since a client could call a name it learned elsewhere).
 		if spec, ok := LookupMCPTool(p.Name); ok {
 			if !MCPAppToolExposed(p.Name) {
-				return "", nil, fmt.Errorf("tool %q is not exposed over MCP — enable it in Admin → MCP Tools", p.Name)
+				return "", nil, fmt.Errorf("tool %q is not exposed over MCP: enable it in Admin → MCP Tools", p.Name)
 			}
 			text, err := spec.Handler(ctx, owner, p.Arguments)
 			return text, nil, err
@@ -521,7 +521,7 @@ func (T *MCPServer) callTool(ctx context.Context, owner string, token *AccountTo
 				have = append(have, n)
 			}
 		}
-		return "", nil, fmt.Errorf("unknown tool %q — this server exposes: %s. An agent's own tools (image, web_search, …) are not callable here; ask the agent to use them via ask_agent", p.Name, strings.Join(have, ", "))
+		return "", nil, fmt.Errorf("unknown tool %q, this server exposes: %s. An agent's own tools (image, web_search, …) are not callable here; ask the agent to use them via ask_agent", p.Name, strings.Join(have, ", "))
 	}
 }
 
@@ -557,7 +557,7 @@ func (T *MCPServer) listAgents(owner string, token *AccountToken) (string, error
 		// the toggle — but a caller should know it normally works through its
 		// parent, so asking the parent may be the better route.
 		if a.ParentID != "" {
-			fmt.Fprintf(&b, "  note: sub-agent of %s — usually reached by asking that agent instead\n", a.ParentID)
+			fmt.Fprintf(&b, "  note: sub-agent of %s, usually reached by asking that agent instead\n", a.ParentID)
 		}
 	}
 	b.WriteString("\nPass one of these ids as ask_agent's `agent` argument. Omitting it uses the account's main agent.")
@@ -592,11 +592,11 @@ func (T *MCPServer) askAgent(ctx context.Context, owner string, token *AccountTo
 		}
 		id, ok := ResolveExternalAgentFn(T.DB, owner, agent, granted)
 		if !ok {
-			return "", nil, fmt.Errorf("agent %q is not reachable over MCP — for your own agents, turn on \"Reachable over MCP\" (agent editor → Access & visibility); for an app's agents (Servitor, Guides, …), an admin enables the app under Feature Access", agent)
+			return "", nil, fmt.Errorf("agent %q is not reachable over MCP, for your own agents, turn on \"Reachable over MCP\" (agent editor → Access & visibility); for an app's agents (Servitor, Guides, …), an admin enables the app under Feature Access", agent)
 		}
 		agent = id
 	} else if !MCPAgentExposed(owner, agent) {
-		return "", nil, fmt.Errorf("agent %q is not reachable over MCP — turn on \"Reachable over MCP\" in its settings (agent editor → Access & visibility)", agent)
+		return "", nil, fmt.Errorf("agent %q is not reachable over MCP: turn on \"Reachable over MCP\" in its settings (agent editor → Access & visibility)", agent)
 	}
 	// Per-APP feature gate: dispatching an app-owned agent (Servitor, Guides, …)
 	// needs the app enabled for this user (admin) AND on this key (user scope).

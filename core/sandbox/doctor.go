@@ -88,7 +88,7 @@ func requestedSuffix() string {
 	if pick == activeSandbox().name() {
 		return " (requested)"
 	}
-	return " — " + pick + " was requested and is NOT what is running; see the log for why"
+	return " · " + pick + " was requested and is NOT what is running; see the log for why"
 }
 
 func located(bin string) string {
@@ -114,7 +114,7 @@ func selinuxNote() string {
 	if relabelMounts() {
 		return " (bind mounts are relabeled shared; restorecon -R reverses it)"
 	}
-	return " (relabeling is OFF — a container will likely not read its workspace)"
+	return " (relabeling is OFF: a container will likely not read its workspace)"
 }
 
 // cgroupVersion distinguishes v1 from v2 by the file only v2 has.
@@ -159,7 +159,7 @@ func subuidState() string {
 	case uid || gid:
 		return "INCOMPLETE for " + u.Username + " (needs both subuid and subgid)"
 	default:
-		return "NOT delegated to " + u.Username + " — rootless podman cannot map a user namespace"
+		return "NOT delegated to " + u.Username + ", rootless podman cannot map a user namespace"
 	}
 }
 
@@ -292,7 +292,7 @@ func pythonSkewAdvice(maj, min int) []string {
 	}
 	return []string{
 		"the default image runs a much newer Python, so COMPILED wheels (numpy, lxml,",
-		fmt.Sprintf("pillow) will not import — they are built here for %d.%d. Pure Python is fine.", maj, min),
+		fmt.Sprintf("pillow) will not import: they are built here for %d.%d. Pure Python is fine.", maj, min),
 		"pin a matching image via GOHORT_SANDBOX_IMAGE (a vendor image for this OS, e.g.",
 		"registry.access.redhat.com/ubi8/python-36), or accept the loss.",
 	}

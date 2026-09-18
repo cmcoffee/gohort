@@ -519,7 +519,7 @@ func warnMissingDependencies(db Database, res *ArtifactImportResult, imported []
 // post-import warning pass and the import preview so a preview reads
 // identically to the import result it predicts.
 func missingDepWarning(s, dep ArtifactSel) string {
-	return fmt.Sprintf("%s %q references %s %q, which isn't present on this install — add it before this %s can be used.",
+	return fmt.Sprintf("%s %q references %s %q, which isn't present on this install: add it before this %s can be used.",
 		s.Type, s.Name, dep.Type, dep.Name, s.Type)
 }
 

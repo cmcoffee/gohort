@@ -22,11 +22,11 @@ func (t *chatTurn) appDefRevisions(args map[string]any) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
 	spec, ok := LoadAppSpec(t.user, key)
 	if !ok {
-		return "", errors.New("no matching app — check the slug (app_def action=list)")
+		return "", errors.New("no matching app: check the slug (app_def action=list)")
 	}
 	revs := ListAppRevisions(t.user, spec.Slug)
 	if len(revs) == 0 {
-		return fmt.Sprintf("No earlier revisions of %q are kept yet — history starts at its next edit. The version serving now was saved %s (%s).",
+		return fmt.Sprintf("No earlier revisions of %q are kept yet: history starts at its next edit. The version serving now was saved %s (%s).",
 			spec.Name, spec.Updated, appRevisionShape(spec)), nil
 	}
 	var b strings.Builder
@@ -53,7 +53,7 @@ func (t *chatTurn) appDefRevisions(args map[string]any) (string, error) {
 			line += "  " + strconv.Quote(note)
 		}
 		if r.Reason != "" {
-			line += "  — replaced by " + r.Reason
+			line += ", replaced by " + r.Reason
 		}
 		b.WriteString(line + "\n")
 	}
@@ -67,11 +67,11 @@ func (t *chatTurn) appDefRevert(args map[string]any) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
 	current, ok := LoadAppSpec(t.user, key)
 	if !ok {
-		return "", errors.New("no matching app — check the slug (app_def action=list)")
+		return "", errors.New("no matching app: check the slug (app_def action=list)")
 	}
 	revs := ListAppRevisions(t.user, current.Slug)
 	if len(revs) == 0 {
-		return "", fmt.Errorf("no earlier revisions of %q are kept — nothing to revert to. History begins at the app's next edit", current.Name)
+		return "", fmt.Errorf("no earlier revisions of %q are kept: nothing to revert to. History begins at the app's next edit", current.Name)
 	}
 
 	ref := strings.TrimSpace(firstNonEmptyStr(stringArg(args, "to"), stringArg(args, "stamp"), stringArg(args, "revision"), numArgString(args, "to")))
@@ -81,12 +81,12 @@ func (t *chatTurn) appDefRevert(args map[string]any) (string, error) {
 		for _, r := range revs {
 			ids = append(ids, "#"+strconv.Itoa(r.Seq))
 		}
-		return "", fmt.Errorf("no kept revision of %q matches %q. It keeps: %s — list them with app_def(action=\"revisions\", id=%q)",
+		return "", fmt.Errorf("no kept revision of %q matches %q. It keeps: %s, list them with app_def(action=\"revisions\", id=%q)",
 			current.Name, ref, strings.Join(ids, ", "), current.Slug)
 	}
 	prior, ok := LoadAppRevision(t.user, current.Slug, strconv.Itoa(target.Seq))
 	if !ok {
-		return "", fmt.Errorf("revision #%d of %q could not be read back — it may have been stored by an older version. Try another (app_def action=\"revisions\")", target.Seq, current.Name)
+		return "", fmt.Errorf("revision #%d of %q could not be read back: it may have been stored by an older version. Try another (app_def action=\"revisions\")", target.Seq, current.Name)
 	}
 
 	// Restore the DOCUMENT, not the deployment. Whether an app is disabled,
@@ -119,7 +119,7 @@ func (t *chatTurn) appDefRevert(args map[string]any) (string, error) {
 		saved.Name, target.Seq, target.Stamp, saved.Updated, appRevisionShape(saved), appRevisionShape(current))
 	if len(appSpecHTMLText(saved)) > 0 {
 		if errs := appPageRuntimeErrors(t.user, saved.Slug); len(errs) > 0 {
-			return msg + fmt.Sprintf("\n\nHEADS UP — the restored revision has problems of its own in a real browser:\n- %s\n\nIt is serving; revert again to a different revision (app_def action=\"revisions\") if this one isn't the good copy.", strings.Join(errs, "\n- ")) + undo, nil
+			return msg + fmt.Sprintf("\n\nHEADS UP, the restored revision has problems of its own in a real browser:\n- %s\n\nIt is serving; revert again to a different revision (app_def action=\"revisions\") if this one isn't the good copy.", strings.Join(errs, "\n- ")) + undo, nil
 		}
 		msg += " It was loaded in a real browser after restoring and came up clean."
 	}

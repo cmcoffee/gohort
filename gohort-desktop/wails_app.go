@@ -76,14 +76,14 @@ func NewApp(cfg *core.Config, cookies *core.PersistentCookieJar) *App {
 // arrive in later tool packages.
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	core.Log("[gohort-desktop] startup — %d local tool(s) registered", len(core.RegisteredTools()))
+	core.Log("[gohort-desktop] startup: %d local tool(s) registered", len(core.RegisteredTools()))
 	for _, t := range core.RegisteredTools() {
 		core.Debug("[gohort-desktop]   • %s", t.Name())
 	}
 	if url := a.config.ServerURL(); url != "" {
 		core.Log("[gohort-desktop] server URL: %s", url)
 	} else {
-		core.Log("[gohort-desktop] no server URL set — first-run configure page will render")
+		core.Log("[gohort-desktop] no server URL set: first-run configure page will render")
 	}
 	// Auto-negotiate the daemon's bridge key from the viewer's session.
 	a.startBridgeKeyProvisioning()
@@ -280,7 +280,7 @@ func (a *App) SaveSettings(server_url, api_key string) save_result {
 	changed := server_url != a.config.ServerURL()
 	if changed {
 		if err := probe_gohort(parsed.String()); err != nil {
-			return save_result{Error: fmt.Sprintf("Couldn't reach %s — %v", parsed.Host, err)}
+			return save_result{Error: fmt.Sprintf("Couldn't reach %s: %v", parsed.Host, err)}
 		}
 		if a.cookies != nil {
 			a.cookies.Clear() // new host → old session cookie is stale
@@ -334,7 +334,7 @@ func (a *App) ResetSettings() save_result {
 	if err := a.config.ClearServerURL(); err != nil {
 		return save_result{Error: err.Error()}
 	}
-	core.Log("[gohort-desktop] settings + cookies cleared — first-run configure will render")
+	core.Log("[gohort-desktop] settings + cookies cleared: first-run configure will render")
 	return save_result{OK: true}
 }
 
@@ -354,7 +354,7 @@ func (a *App) LogOut() save_result {
 	if a.cookies != nil {
 		a.cookies.Clear()
 	}
-	core.Log("[gohort-desktop] logged out — cookie jar cleared")
+	core.Log("[gohort-desktop] logged out: cookie jar cleared")
 	return save_result{OK: true}
 }
 

@@ -125,7 +125,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 		},
 		{
 			Title:    "Bridges",
-			Subtitle: "Credential-polling bridges agents have created (poll an API on a schedule via a registered credential, wake an agent when the response changes) — across ALL users. Pause is the kill switch: a paused bridge stops polling and agents cannot resume it themselves; only this table and the owner's console can. Which SERVICES a bridge may call is governed separately, per credential, under APIs (\"Require confirm before each call\" escalates every call to an in-chat approval).",
+			Subtitle: "Credential-polling bridges agents have created (poll an API on a schedule via a registered credential, wake an agent when the response changes), across ALL users. Pause is the kill switch: a paused bridge stops polling and agents cannot resume it themselves; only this table and the owner's console can. Which SERVICES a bridge may call is governed separately, per credential, under APIs (\"Require confirm before each call\" escalates every call to an in-chat approval).",
 			Body: ui.Table{
 				Source: "/orchestrate/api/console/bridges",
 				RowKey: "name",
@@ -161,7 +161,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 		},
 		{
 			Title:    "Extensions",
-			Subtitle: "Every capability you can add from a template — connectors (service bridges) and tools (model-callable actions) — in one catalog. Pick one to author it from its fields; it lands in its own section for approval (a connector under Connectors, a tool under Persistent Tools). Templates ease authoring — they grant no new power: the same credential binding and approval still apply.",
+			Subtitle: "Every capability you can add from a template, connectors (service bridges) and tools (model-callable actions), in one catalog. Pick one to author it from its fields; it lands in its own section for approval (a connector under Connectors, a tool under Persistent Tools). Templates ease authoring, they grant no new power: the same credential binding and approval still apply.",
 			Body: ui.Table{
 				Source: "api/extensions",
 				RowKey: "name",
@@ -275,7 +275,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 		},
 		{
 			Title:    "Catalog",
-			Subtitle: "Ready-made connectors, tools, API credentials, and agents you can install with one click. Installing runs the SAME import as a bundle file: everything lands as a DRAFT for review — connectors unapproved, tools pending, credentials inert — so nothing goes live until you approve it in the sections above.",
+			Subtitle: "Ready-made connectors, tools, API credentials, and agents you can install with one click. Installing runs the SAME import as a bundle file: everything lands as a DRAFT for review (connectors unapproved, tools pending, credentials inert), so nothing goes live until you approve it in the sections above.",
 			Body: ui.Table{
 				Source: "api/catalog",
 				RowKey: "id",
@@ -295,7 +295,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 						// next thing you do — the file-import path has said
 						// so since it existed, and this one did not.
 						Invalidate: []string{"api/connectors", "api/persistent-tools", "api/secure-api", "api/skills"},
-						Confirm:    "Install this catalog entry? Its artifacts are added as drafts (pending review) in the sections above — nothing goes live until you approve it."},
+						Confirm:    "Install this catalog entry? Its artifacts are added as drafts (pending review) in the sections above: nothing goes live until you approve it."},
 				},
 				EmptyText: "The catalog is empty.",
 			},
@@ -324,17 +324,21 @@ func mcpServerFormFields() []ui.FormField {
 		{Field: "token", Label: "Bearer token", Type: "password", ShowWhen: "auth_mode:bearer", Help: "Stored encrypted. Leave blank when editing to keep the existing token."},
 		{Field: "secure_cred", Label: "SecureAPI credential name", Placeholder: "confluence_oauth", ShowWhen: "auth_mode:secure_api", Help: "An OAuth2 credential configured under API Credentials. Its bearer token is minted/refreshed per request."},
 		{Field: "oauth_note", Type: "header", Label: "Hosted login: Save first, then click Connect on the server's row to authorize. Each user connects their own account, from here or from Extensions → Connections. The callback host must be https or localhost. With a pre-registered client, register both redirect URIs listed under Client ID below.", ShowWhen: "auth_mode:oauth"},
-		{Field: "oauth_client_id", Label: "Client ID (only if no auto-registration)", ShowWhen: "auth_mode:oauth", Help: "Leave BLANK for the normal flow: gohort auto-registers a client (Dynamic Client Registration). Fill this ONLY when the provider doesn't support auto-registration — pre-register an OAuth app at the provider and paste the issued client_id here. Register BOTH redirect URIs on it: <this host>/admin/api/mcp-servers/oauth/callback for the Connect button on this page, and <this host>/account/mcp/callback for every user connecting their own account from Extensions or a chat prompt. They are different paths because the admin area is admin-only — a non-admin cannot complete a consent that lands there — and a provider that has only the first will reject the second with \"the app's callback URL is invalid\"."},
-		{Field: "oauth_client_secret", Label: "Client secret (optional)", Type: "password", ShowWhen: "auth_mode:oauth", Help: "Only for a manual Client ID that the provider made confidential. Stored encrypted; leave blank to keep the existing one (and blank for public PKCE clients)."},
+		{Field: "oauth_client_id", Label: "Client ID (only if no auto-registration)", ShowWhen: "auth_mode:oauth", Help: "Leave it BLANK for the normal flow, where gohort auto-registers a client.",
+			Detail: "That is Dynamic Client Registration. Fill this in ONLY when the provider does not support auto-registration: pre-register an OAuth app at the provider and paste the issued client_id here.\n\nRegister BOTH redirect URIs on it. <this host>/admin/api/mcp-servers/oauth/callback serves the Connect button on this page, and <this host>/account/mcp/callback serves every user connecting their own account from Extensions or a chat prompt.\n\nThey are different paths because the admin area is admin-only, so a non-admin cannot complete a consent that lands there. A provider that has only the first will reject the second with \"the app's callback URL is invalid\"."},
+		{Field: "oauth_client_secret", Label: "Client secret (optional)", Type: "password", ShowWhen: "auth_mode:oauth", Help: "Only for a manual Client ID that the provider made confidential.",
+			Detail: "Stored encrypted. Leave it blank to keep the existing one, and blank for public PKCE clients."},
 		{Field: "oauth_authorize_url", Label: "Authorize URL (only if no discovery)", Placeholder: "https://provider/oauth/authorize", ShowWhen: "auth_mode:oauth", Help: "Leave blank to auto-discover. Set only for a provider that doesn't publish .well-known OAuth metadata."},
 		{Field: "oauth_token_url", Label: "Token URL (only if no discovery)", Placeholder: "https://provider/oauth/token", ShowWhen: "auth_mode:oauth", Help: "Leave blank to auto-discover. Pair with Authorize URL."},
 		{Field: "oauth_scopes", Label: "Scopes (optional)", Placeholder: "files.read folders.read", ShowWhen: "auth_mode:oauth", Help: "Space-separated OAuth scopes. Leave blank to use what discovery advertises."},
-		{Field: "oauth_audience", Label: "Audience (Auth0/Okta providers)", Placeholder: "api.atlassian.com", ShowWhen: "auth_mode:oauth", Help: "For Auth0/Okta-style servers (e.g. Atlassian needs api.atlassian.com). When set it is sent instead of the RFC 8707 resource indicator, which those providers ignore. Leave blank for normal MCP servers."},
+		{Field: "oauth_audience", Label: "Audience (Auth0/Okta providers)", Placeholder: "api.atlassian.com", ShowWhen: "auth_mode:oauth", Help: "For Auth0 and Okta-style servers. Leave it blank for normal MCP servers.",
+			Detail: "Atlassian, for example, needs api.atlassian.com. When set it is sent instead of the RFC 8707 resource indicator, which those providers ignore."},
 
 		{Field: "expose_hdr", Type: "header", Label: "Exposure"},
 		{Field: "expose_tools", Label: "Expose tools to agents", Type: "toggle", Help: "Register the server's tools as <name>.<tool> in the agent catalog."},
 		{Field: "expose_reference", Label: "Expose as a reference source", Type: "toggle", Help: "Make the server selectable in writer/research source pickers (uses the Search tool below)."},
-		{Field: "search_tool", Label: "Search tool name", Placeholder: "search", Help: "MCP tool called for reference lookups. Only used when 'Expose as a reference source' is on. Defaults to 'search'."},
+		{Field: "search_tool", Label: "Search tool name", Placeholder: "search", Help: "MCP tool called for reference lookups. Defaults to 'search'.",
+			Detail: "Only used when 'Expose as a reference source' is on."},
 
 		{Field: "enabled", Label: "Enabled", Type: "toggle", Help: "Connect on startup and on save. Disable to suspend without deleting."},
 	}

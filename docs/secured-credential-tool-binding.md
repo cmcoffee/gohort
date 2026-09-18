@@ -4,7 +4,7 @@
 `project_secured_credentials`, `project_credential_ownership`.
 
 > History: this started as an approval-gated model (a new tool binding a secured
-> cred needed admin sign-off). That was reverted — the approval step duplicated
+> cred needed admin sign-off). That was reverted: the approval step duplicated
 > protections already in place and added friction. The current model auto-resolves
 > access from the tool's declaration; an explicit revoke is the only admin gate.
 
@@ -14,15 +14,15 @@ Securing a credential moves access control from the **credential** plane to the
 **tool** plane:
 
 - A secured cred is reachable **only** through tools that DECLARE it (`fetch_via:`
-  / api-mode `credential=` / a toolbox credential) — never the ambient auto-route,
+  / api-mode `credential=` / a toolbox credential): never the ambient auto-route,
   never a direct `fetch_url_<cred>`. The secret is injected server-side; the tool
   and agent never see it.
-- **Declaring the cred auto-binds the tool** — no approval step. Access is
+- **Declaring the cred auto-binds the tool**: no approval step. Access is
   auto-resolved from the declaration; the tool's own scope decides which agents
   can use it. "The tool is the access unit; scope the tool, and its holders get
   the cred."
 - **`secret:<cred>` is always hard-blocked.** Handing the raw secret to a script
-  violates securing's contract — that's not a binding and never is.
+  violates securing's contract: that's not a binding and never is.
 - **Revoke is the exception.** An admin can DENY a specific tool from the Bindings
   UI. A revoke is a **durable tombstone**: it refuses the tool at dispatch, blocks
   a same-name (re)author, and survives edits + delete/recreate. Re-approve to undo.
@@ -37,9 +37,9 @@ was redundant.
 
 Two states, tracked on the credential:
 
-- `ApprovedToolBindings` — bound (auto-resolved on declaration, or an admin
+- `ApprovedToolBindings`: bound (auto-resolved on declaration, or an admin
   un-revoke). Shown as **Bound** in the admin UI.
-- `RevokedToolBindings` — a durable admin deny (tombstone). Shown as **Revoked**.
+- `RevokedToolBindings`: a durable admin deny (tombstone). Shown as **Revoked**.
 
 `EnforceSecuredBinding(cred, tool)` at dispatch: revoked → refuse; otherwise allow
 (and record the binding). A declaring-but-unrecorded tool is auto-bound on first
@@ -54,7 +54,7 @@ hook's fetch_via grant) aren't binding-enforced.
 - **Dispatch**: the fetch_via sandbox hook (via `SandboxHook.ToolName`) and the
   api/toolbox chokepoint `dispatchTempToolUncached` call `EnforceSecuredBinding`.
 - **Edit**: a `tool_def(update)` just re-resolves (no re-review). A revoked tool
-  can't be edited back into service — the guard respects the deny.
+  can't be edited back into service: the guard respects the deny.
 - **Delete**: `ForgetToolBinding` drops the approval but KEEPS a revoke tombstone,
   so a deny survives delete + same-name recreate.
 

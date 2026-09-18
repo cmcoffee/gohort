@@ -41,7 +41,7 @@ type SandboxProbeTool struct{}
 func (t *SandboxProbeTool) Name() string { return "sandbox_probe" }
 
 func (t *SandboxProbeTool) Desc() string {
-	return "Check whether a binary is available in the shell-mode tool sandbox. Returns the path if found, or a 'not available' message if not. Use this BEFORE authoring a shell-mode tool that depends on a non-POSIX binary (ImageMagick's `convert`, `ffmpeg`, `yt-dlp`, etc.) — if the probe says not available, the tool will fail at dispatch, so pivot to a different design. Safe and cheap; no user confirmation required."
+	return "Check whether a binary is available in the shell-mode tool sandbox. Returns the path if found, or a 'not available' message if not. Use this BEFORE authoring a shell-mode tool that depends on a non-POSIX binary (ImageMagick's `convert`, `ffmpeg`, `yt-dlp`, etc.): if the probe says not available, the tool will fail at dispatch, so pivot to a different design. Safe and cheap; no user confirmation required."
 }
 
 // Caps: probing only reads system state (which binary is at /usr/bin/X).
@@ -81,7 +81,7 @@ func (t *SandboxProbeTool) RunWithSession(args map[string]any, sess *ToolSession
 		return "", fmt.Errorf("name is required")
 	}
 	if !validProbeName.MatchString(name) {
-		return "", fmt.Errorf("invalid binary name %q — must be identifier characters only (letters, digits, _, -, +, .)", name)
+		return "", fmt.Errorf("invalid binary name %q: must be identifier characters only (letters, digits, _, -, +, .)", name)
 	}
 
 	// Run in a tight ephemeral sandbox. Path-only workspace doesn't
@@ -102,12 +102,12 @@ func (t *SandboxProbeTool) RunWithSession(args map[string]any, sess *ToolSession
 	// where every probe would otherwise report every binary absent.
 	if res.Err != nil {
 		return fmt.Sprintf("The probe for %q could not run, so nothing is known about whether it exists: %v "+
-			"This is a fault in the execution path, not an answer about the binary — do not redesign the tool around it.",
+			"This is a fault in the execution path, not an answer about the binary: do not redesign the tool around it.",
 			name, res.Err), nil
 	}
 	output := strings.TrimSpace(res.Output)
 	if output == "" {
-		return fmt.Sprintf("%q is NOT available in the sandbox. Pivot your design — either use a different binary or switch the tool's mode (api / pipeline / different shell tool).", name), nil
+		return fmt.Sprintf("%q is NOT available in the sandbox. Pivot your design: either use a different binary or switch the tool's mode (api / pipeline / different shell tool).", name), nil
 	}
 	return fmt.Sprintf("%q is available at %s. Safe to use in shell-mode tools.", name, output), nil
 }

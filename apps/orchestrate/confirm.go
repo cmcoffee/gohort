@@ -256,9 +256,9 @@ type toolConfirmRequest struct {
 // viewer is attached, on timeout, or on an explicit Deny.
 func (t *chatTurn) escalateToolConfirm(req toolConfirmRequest) bool {
 	if t == nil || t.sse == nil {
-		Log("[orchestrate.confirm] %s stopped: %s, and this run has no interactive viewer — denied (fail closed)", req.tool, req.because)
+		Log("[orchestrate.confirm] %s stopped: %s, and this run has no interactive viewer, denied (fail closed)", req.tool, req.because)
 		if t != nil {
-			t.turnDiag("tool-denied", fmt.Sprintf("%s was not run: %s, and this run had no interactive viewer to ask — denied fail-closed.", req.tool, req.because))
+			t.turnDiag("tool-denied", fmt.Sprintf("%s was not run: %s, and this run had no interactive viewer to ask, denied fail-closed.", req.tool, req.because))
 		}
 		return false
 	}
@@ -312,13 +312,13 @@ func (t *chatTurn) escalateToolConfirm(req toolConfirmRequest) bool {
 		t.sendConfirmResolved(id, true)
 		return true
 	case <-time.After(toolConfirmTimeout):
-		Log("[orchestrate.confirm] approval for %s (%s) timed out after %s — denied", req.tool, req.because, toolConfirmTimeout)
+		Log("[orchestrate.confirm] approval for %s (%s) timed out after %s: denied", req.tool, req.because, toolConfirmTimeout)
 		// Breadcrumb + a persistent in-conversation note. The silent version
 		// of this deny is exactly the "said 'go for it', got one sentence,
 		// then five minutes of dead air" incident: the approval card sat
 		// unanswered, the timeout killed the call, and nothing on screen
 		// said why. The user should never have to ask "what happened?".
-		t.turnDiag("tool-denied", fmt.Sprintf("Approval for %s (%s) timed out after %s — the call was denied. Re-ask to retry; the approval card must be answered within the window.", req.tool, req.because, toolConfirmTimeout))
+		t.turnDiag("tool-denied", fmt.Sprintf("Approval for %s (%s) timed out after %s: the call was denied. Re-ask to retry; the approval card must be answered within the window.", req.tool, req.because, toolConfirmTimeout))
 		t.sse.Send(map[string]any{"kind": "status_note",
 			"text": fmt.Sprintf("⏱ Approval for %s timed out after %s, so the call was denied.", req.tool, toolConfirmTimeout)})
 		t.sendConfirmResolvedLabel(id, "deny", "Timed out")

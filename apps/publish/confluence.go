@@ -86,12 +86,12 @@ func (d *confluenceDest) Targets(ctx context.Context, user string) ([]docs.Publi
 		// picking a space can see the list is partial instead of concluding a
 		// missing space doesn't exist.
 		if resp.Links.Next != "" && len(out) == len(resp.Results)-1 {
-			desc += " — showing the first " + strconv.Itoa(len(resp.Results)) + " spaces; this site has more"
+			desc += ", showing the first " + strconv.Itoa(len(resp.Results)) + " spaces; this site has more"
 		}
 		out = append(out, docs.PublishTarget{ID: s.ID, Title: s.Name, Desc: desc, Group: "Spaces"})
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("the credential reached Confluence but no spaces came back — check that its allowed endpoints include /wiki/api/v2/**")
+		return nil, fmt.Errorf("the credential reached Confluence but no spaces came back: check that its allowed endpoints include /wiki/api/v2/**")
 	}
 	return out, nil
 }
@@ -105,7 +105,7 @@ func (d *confluenceDest) Publish(ctx context.Context, user string, req docs.Publ
 	cfg := d.app.config()
 	storage := MarkdownToConfluence(req.Doc.Markdown)
 	if strings.TrimSpace(storage) == "" {
-		return docs.PublishResult{}, fmt.Errorf("the document is empty — there's nothing to publish")
+		return docs.PublishResult{}, fmt.Errorf("the document is empty: there's nothing to publish")
 	}
 
 	if strings.TrimSpace(req.ExternalID) != "" {
@@ -137,7 +137,7 @@ func (d *confluenceDest) update(user string, cfg PublishConfig, req docs.Publish
 		// The page is gone (someone deleted it in Confluence) — say so plainly,
 		// because the useful next move is publishing it as a new page, not
 		// retrying the update.
-		return docs.PublishResult{}, fmt.Errorf("could not read the existing page %s (it may have been deleted in Confluence — publish it as a new page instead): %w", id, err)
+		return docs.PublishResult{}, fmt.Errorf("could not read the existing page %s (it may have been deleted in Confluence, publish it as a new page instead): %w", id, err)
 	}
 	payload, err := json.Marshal(map[string]any{
 		"id":     id,

@@ -120,7 +120,7 @@
               formInputs[f.upload_set_field].value = f.upload_set_value || '';
             }
             var n = tgt ? String(tgt.value).length : 0;
-            fileStatus.textContent = 'Extracted ' + n + ' characters — review below, then submit.';
+            fileStatus.textContent = 'Extracted ' + n + ' characters: review below, then submit.';
           }).catch(function(err) {
             fileStatus.textContent = 'Extraction failed: ' + err.message;
             fileStatus.classList.add('is-error');
@@ -1340,7 +1340,7 @@
               // markdown patterns). Only logs on big shrinks so
               // normal markdown doesn't spam the console.
               if (window.console && rec.body.textContent.length < content.length * 0.6) {
-                console.warn('[ui] block body renders shorter than source —',
+                console.warn('[ui] block body renders shorter than source',
                   'raw chars:', content.length,
                   'rendered chars:', rec.body.textContent.length,
                   'block:', bid);

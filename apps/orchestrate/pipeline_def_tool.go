@@ -33,7 +33,7 @@ func (t *chatTurn) pipelineGroupedToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "pipeline",
-			Description: "Author and run multi-stage pipelines — reusable workflows that chain stages (decompose → investigate → synthesize, etc.), where each stage is a worker LLM step or a dispatch to one of your agents, and outputs thread forward. Actions: create (author a new pipeline), update (revise one), list (see yours), get (read one's stages), run (execute on an input and get the result), delete. Pick the action that matches the intent.\n\nUse a pipeline when the work is a repeatable multi-step shape worth saving — not for a one-off question (answer that directly) and not for a single specialist task (dispatch to an agent). A pipeline pays off when the same staged flow runs more than once.\n\n**When building a pipeline FOR a specific agent, pass `attach_to_agents` in the same call** — that's the one-shot wire-up. Forgetting to attach is the classic failure mode: the pipeline exists in storage but the agent can't see it in the next session.",
+			Description: "Author and run multi-stage pipelines: reusable workflows that chain stages (decompose → investigate → synthesize, etc.), where each stage is a worker LLM step or a dispatch to one of your agents, and outputs thread forward. Actions: create (author a new pipeline), update (revise one), list (see yours), get (read one's stages), run (execute on an input and get the result), delete. Pick the action that matches the intent.\n\nUse a pipeline when the work is a repeatable multi-step shape worth saving: not for a one-off question (answer that directly) and not for a single specialist task (dispatch to an agent). A pipeline pays off when the same staged flow runs more than once.\n\n**When building a pipeline FOR a specific agent, pass `attach_to_agents` in the same call**: that's the one-shot wire-up. Forgetting to attach is the classic failure mode: the pipeline exists in storage but the agent can't see it in the next session.",
 			Parameters: map[string]ToolParam{
 				"action":      {Type: "string", Description: "One of: create | update | list | get | run | delete | help."},
 				"name":        {Type: "string", Description: "Pipeline name. Required for create/update/get/run/delete (get/run/delete also accept the id)."},
@@ -43,22 +43,22 @@ func (t *chatTurn) pipelineGroupedToolDef() AgentToolDef {
 				"input":       {Type: "string", Description: "(run) The input fed to the pipeline's first stage and available as {input} in every stage prompt."},
 				"stages": {
 					Type:        "array",
-					Description: "(create/update) Ordered stages, each an object. Common shape: {\"name\": unique label, \"kind\": \"worker\"|\"agent\"|\"fanout\"|\"panel\"|\"loop\"|\"branch\"|\"tool\", \"prompt\": instruction}. Kinds: worker = a plain LLM step (the default); agent = dispatch to one of your agents (set \"agent\"); fanout = run the prompt once per element of an earlier list, in parallel (set \"fan_over\", use {item}); panel = put SEVERAL voices on the SAME question, in parallel, over \"count\" rounds where each round reads the last (set \"panel\": [names], use {voice} and {panel}) — that is what disagreement is for, and it is NOT a fanout: a fanout's branches never meet; loop = repeat a nested \"body\" of stages, each pass seeing the last (set \"count\" as the ceiling, \"until\" to stop early); a panel's rounds or a loop's passes may come from the RUN instead of the recipe with \"count_from\": \"{field}\" (a submit-form field) or \"{stage:NAME.field}\" (a number an earlier stage decided), with \"count\" as the fallback; a fanout may ALSO take a \"body\", run once per item, when each item needs several steps rather than one prompt. WHEN THE NUMBER OF REPETITIONS IS NOT KNOWN AS YOU WRITE THE PIPELINE — \"keep going until the critic is satisfied\", \"until they agree\", \"up to five rounds\" — that is kind=loop, NOT five hand-written copies of the same two stages. The copies cannot stop early, cannot say which pass they are, and silently become a fixed-length pipeline the user was not promised; machine = run a stored machine as this stage (set \"machine\"), for work that carries state between its own steps; branch = no LLM call, read a bool and stop or skip (set \"when\"); tool = call one of your tools directly with \"args\" you write (no LLM, no tokens). Templating: {input}, {prev}, {stage:NAME}, {stage:NAME.field}, {item}, {iteration}, {voice}, {panel} — plus {field_name} for every field of the submit form when this pipeline backs an app (that is how a run takes parameters, not just a question). Any stage may declare \"output\": [{name,type,desc,required}] to return validated JSON whose fields later stages read as {stage:NAME.field} — that is what makes fan_over-a-field, loop \"until\", and branch \"when\" possible. Worker stages inherit the calling agent's tools; set \"reach\" (\"\"|\"read\"|\"none\") to restrict — prefer it to naming tools, since it survives a different caller — \"think\" for deliberation, \"model\":\"lead\" for the precision tier on the stages that earn it. **Call action=\"help\" for the full spec** — every field, the caps, and the canonical shapes.",
+					Description: "(create/update) Ordered stages, each an object. Common shape: {\"name\": unique label, \"kind\": \"worker\"|\"agent\"|\"fanout\"|\"panel\"|\"loop\"|\"branch\"|\"tool\", \"prompt\": instruction}. Kinds: worker = a plain LLM step (the default); agent = dispatch to one of your agents (set \"agent\"); fanout = run the prompt once per element of an earlier list, in parallel (set \"fan_over\", use {item}); panel = put SEVERAL voices on the SAME question, in parallel, over \"count\" rounds where each round reads the last (set \"panel\": [names], use {voice} and {panel}), that is what disagreement is for, and it is NOT a fanout: a fanout's branches never meet; loop = repeat a nested \"body\" of stages, each pass seeing the last (set \"count\" as the ceiling, \"until\" to stop early); a panel's rounds or a loop's passes may come from the RUN instead of the recipe with \"count_from\": \"{field}\" (a submit-form field) or \"{stage:NAME.field}\" (a number an earlier stage decided), with \"count\" as the fallback; a fanout may ALSO take a \"body\", run once per item, when each item needs several steps rather than one prompt. WHEN THE NUMBER OF REPETITIONS IS NOT KNOWN AS YOU WRITE THE PIPELINE (\"keep going until the critic is satisfied\", \"until they agree\", \"up to five rounds\") that is kind=loop, NOT five hand-written copies of the same two stages. The copies cannot stop early, cannot say which pass they are, and silently become a fixed-length pipeline the user was not promised; machine = run a stored machine as this stage (set \"machine\"), for work that carries state between its own steps; branch = no LLM call, read a bool and stop or skip (set \"when\"); tool = call one of your tools directly with \"args\" you write (no LLM, no tokens). Templating: {input}, {prev}, {stage:NAME}, {stage:NAME.field}, {item}, {iteration}, {voice}, {panel}, plus {field_name} for every field of the submit form when this pipeline backs an app (that is how a run takes parameters, not just a question). Any stage may declare \"output\": [{name,type,desc,required}] to return validated JSON whose fields later stages read as {stage:NAME.field}, that is what makes fan_over-a-field, loop \"until\", and branch \"when\" possible. Worker stages inherit the calling agent's tools; set \"reach\" (\"\"|\"read\"|\"none\") to restrict (prefer it to naming tools, since it survives a different caller), \"think\" for deliberation, \"model\":\"lead\" for the precision tier on the stages that earn it. **Call action=\"help\" for the full spec**: every field, the caps, and the canonical shapes.",
 					Items:       &ToolParam{Type: "object"},
 				},
 				"session_meta": {
 					Type:        "array",
-					Description: "(create/update) Declared output fields to promote onto each RUN's sidebar row, as \"<stage>.<field>\" references — e.g. [\"judge.winner\", \"judge.confidence\"]. A run history is browsed rather than read: titles and timestamps answer \"when did I run this\", while what a reader scans for is the ANSWER, and without this the only route to it is opening runs one at a time. The field must be one that stage declares in its \"output\" contract, and it must be a TOP-LEVEL stage (a loop body holds a different value every pass). An app built on this pipeline then draws them with the pipeline section's `meta` key. Names must be unique and may not be ID, Title or Date.",
+					Description: "(create/update) Declared output fields to promote onto each RUN's sidebar row, as \"<stage>.<field>\" references: e.g. [\"judge.winner\", \"judge.confidence\"]. A run history is browsed rather than read: titles and timestamps answer \"when did I run this\", while what a reader scans for is the ANSWER, and without this the only route to it is opening runs one at a time. The field must be one that stage declares in its \"output\" contract, and it must be a TOP-LEVEL stage (a loop body holds a different value every pass). An app built on this pipeline then draws them with the pipeline section's `meta` key. Names must be unique and may not be ID, Title or Date.",
 					Items:       &ToolParam{Type: "string"},
 				},
 				"attach_to_agents": {
 					Type:        "array",
-					Description: "(create/update) Optional list of agent names or IDs. After the pipeline saves, it's added to each named agent's attached_pipelines so the agent can call it as `run_<pipeline>` from its next session onward. Idempotent — already-attached pipelines aren't double-added. Unknown agent names get reported back in the result; the pipeline still saves. Use this whenever the pipeline is being built as part of an agent's surface so you don't have to remember a separate update_agent call.",
+					Description: "(create/update) Optional list of agent names or IDs. After the pipeline saves, it's added to each named agent's attached_pipelines so the agent can call it as `run_<pipeline>` from its next session onward. Idempotent: already-attached pipelines aren't double-added. Unknown agent names get reported back in the result; the pipeline still saves. Use this whenever the pipeline is being built as part of an agent's surface so you don't have to remember a separate update_agent call.",
 					Items:       &ToolParam{Type: "string"},
 				},
 				"replaces": {
 					Type:        "string",
-					Description: "(create) Optional name or id of an old pipeline this one supersedes. When set, every agent currently attaching the old pipeline gets it swapped out for the new one, and the old pipeline is then deleted. Atomic retire-and-replace — prevents the failure mode of writing a v2 pipeline and leaving v1 attached as dead weight. Use ONLY when the new pipeline has a different name/design than the old; for in-place edits use action=update instead (same ID, new stages, attachments stay automatically).",
+					Description: "(create) Optional name or id of an old pipeline this one supersedes. When set, every agent currently attaching the old pipeline gets it swapped out for the new one, and the old pipeline is then deleted. Atomic retire-and-replace: prevents the failure mode of writing a v2 pipeline and leaving v1 attached as dead weight. Use ONLY when the new pipeline has a different name/design than the old; for in-place edits use action=update instead (same ID, new stages, attachments stay automatically).",
 				},
 			},
 			Required: []string{"action"},
@@ -82,29 +82,29 @@ func (t *chatTurn) pipelineGroupedToolDef() AgentToolDef {
 			case "help", "":
 				return pipelineHelpText, nil
 			default:
-				return "", fmt.Errorf("unknown action %q — use create | update | list | get | run | delete | help", action)
+				return "", fmt.Errorf("unknown action %q: use create | update | list | get | run | delete | help", action)
 			}
 		},
 	}
 }
 
 const pipelineHelpText = `pipeline actions:
-- create  {name, description, stages:[...], attach_to_agents?:[names], replaces?:name|id} — author a pipeline.
-- update  {name|id, ..., attach_to_agents?:[names]} — revise in place (same id, attachments stay).
-- list    — your pipelines: [{id, name, description, stages}].
-- get     {name|id, full?:true} — one pipeline's definition.
-- run     {name|id, input} — execute it, returns the final stage's output.
+- create  {name, description, stages:[...], attach_to_agents?:[names], replaces?:name|id}, author a pipeline.
+- update  {name|id..., attach_to_agents?:[names]}, revise in place (same id, attachments stay).
+- list, your pipelines: [{id, name, description, stages}].
+- get     {name|id, full?:true}, one pipeline's definition.
+- run     {name|id, input}: execute it, returns the final stage's output.
 - delete  {name|id}.
 
-When building a pipeline FOR an agent, pass attach_to_agents in the same call — that wires it so future sessions see it as run_<pipeline>.
+When building a pipeline FOR an agent, pass attach_to_agents in the same call, that wires it so future sessions see it as run_<pipeline>.
 
-In-place edit vs retire-and-replace: use action=update when iterating on the SAME pipeline (attachments stay). Use action=create with replaces=<old-name|id> when the new pipeline has a different name/design and the old should be retired. Don't create a v2 without replaces — that leaves v1 attached as dead weight.
+In-place edit vs retire-and-replace: use action=update when iterating on the SAME pipeline (attachments stay). Use action=create with replaces=<old-name|id> when the new pipeline has a different name/design and the old should be retired. Don't create a v2 without replaces, that leaves v1 attached as dead weight.
 
 === STAGE FIELDS ===
 name       unique label; also the key later stages read as {stage:NAME}. No dots.
 kind       worker (default) | agent | fanout | loop | branch | tool
 prompt     the instruction (not used by branch or tool)
-agent      agent name/id — for kind=agent, optionally for kind=fanout
+agent      agent name/id, for kind=agent, optionally for kind=fanout
 panel      [voices] for kind="panel": who answers. A name that matches one of your agents IS that
            agent (its persona, memory and tools); one that does not is a ROLE the worker answers
            as, which is what lets "the pessimist" / "the customer" work without authoring agents
@@ -113,22 +113,22 @@ reach      how much of the caller's catalog a worker stage may touch: "" = all o
            only tools that read (nothing that writes, runs a command, or reaches the network),
            "none" = nothing, which is right for a synthesizer that should not go and fetch.
            PREFER THIS over naming tools. A pipeline is invoked by whichever agent attached it,
-           so the catalog it inherits differs between callers — and an MCP server publishes its
+           so the catalog it inherits differs between callers, and an MCP server publishes its
            tools when it connects, a credential mints its own per session. A name list describes
            one caller at one moment; a capability is true for all of them.
 tools      restrict a worker stage BY NAME, on top of what reach allowed. An EMPTY list inherits
-           (it does not mean none — say none with reach). Names must match the catalog exactly.
+           (it does not mean none: say none with reach). Names must match the catalog exactly.
 think      true on stages that genuinely reason (synthesis, verification, decomposition)
-model      "worker" (default) | "lead" — the precision tier
-output     [{name, type, desc, required, enum?, from?}] — declare a validated JSON result.
+model      "worker" (default) | "lead": the precision tier
+output     [{name, type, desc, required, enum?, from?}]: declare a validated JSON result.
            "enum": [values] constrains a string field to a fixed set, checked where the decoder can
            still repair it. "from": "{input}" | "{prev}" | "{stage:NAME.field}" FILLS the field from
-           a value the pipeline already holds instead of asking the model for it — it is left out of
+           a value the pipeline already holds instead of asking the model for it: it is left out of
            the contract entirely and merged into the result, so later stages read it the same way.
            A value you already have is not worth a model's attention, and asking invites a paraphrase
 fan_over   (fanout) an earlier stage, or one of its list fields: "plan.queries"
 body       (loop) nested stage list, repeated
-count      (loop) required, 1-25 — the hard ceiling
+count      (loop) required, 1-25: the hard ceiling
 until      (loop) a body stage's bool field; stops early when true
 collect    (loop) "last" (default) | "all" (passes joined as ## Pass N)
 when       (branch) required bool field on an EARLIER stage
@@ -142,45 +142,45 @@ args       (tool) {param: template}
 Every reference is checked when the pipeline is SAVED, so a typo is an authoring error, not a mid-run surprise.
 
 === STRUCTURED OUTPUT ===
-Give a stage "output": [{"name": lowercase_key, "type": "string"|"number"|"bool"|"list"|"object", "desc": what goes in it, "required": bool}] and it is asked for JSON with those keys, validated, and each field becomes {stage:NAME.field} downstream. Use it when a later stage needs ONE PIECE of an earlier result — a list to fan over, a count, a verdict, a title. This is what makes fan_over-a-field, loop until, and branch when possible. A stage that declares output renders its own {stage:NAME} as JSON, so point fan_over at the field ("plan.queries"). Nested fields go one level deep. Not valid on fanout, loop, or branch. Skip it for prose stages (a draft, a summary) — wrapping prose in a JSON envelope buys nothing. NEVER ask for JSON in the prompt as well: declaring the fields IS the mechanism, so a prompt that also specifies a format is two sets of formatting rules, and the usual result is a JSON string nested inside a JSON field. Say what to FIND; the framework handles the shape.
+Give a stage "output": [{"name": lowercase_key, "type": "string"|"number"|"bool"|"list"|"object", "desc": what goes in it, "required": bool}] and it is asked for JSON with those keys, validated, and each field becomes {stage:NAME.field} downstream. Use it when a later stage needs ONE PIECE of an earlier result: a list to fan over, a count, a verdict, a title. This is what makes fan_over-a-field, loop until, and branch when possible. A stage that declares output renders its own {stage:NAME} as JSON, so point fan_over at the field ("plan.queries"). Nested fields go one level deep. Not valid on fanout, loop, or branch. Skip it for prose stages (a draft, a summary): wrapping prose in a JSON envelope buys nothing. NEVER ask for JSON in the prompt as well: declaring the fields IS the mechanism, so a prompt that also specifies a format is two sets of formatting rules, and the usual result is a JSON string nested inside a JSON field. Say what to FIND; the framework handles the shape.
 
 HOW MANY TIMES (count, count_from)
-A panel's "count" is its rounds and a loop's is its passes, and both are fixed when you write the pipeline. Set "count_from" when the number belongs to the QUESTION rather than to the recipe: "{rounds}" reads a submit-form field, "{stage:plan.rounds}" reads a number an earlier stage decided (that is how "as many rounds as this deserves" works). "count" stays the fallback and the guarantee — a reference nobody filled falls back to it quietly, one that resolves to something that is not a number falls back and says so, and anything over the ceiling is clamped and says so. Only panel and loop repeat; count_from is refused anywhere else rather than ignored.
+A panel's "count" is its rounds and a loop's is its passes, and both are fixed when you write the pipeline. Set "count_from" when the number belongs to the QUESTION rather than to the recipe: "{rounds}" reads a submit-form field, "{stage:plan.rounds}" reads a number an earlier stage decided (that is how "as many rounds as this deserves" works). "count" stays the fallback and the guarantee: a reference nobody filled falls back to it quietly, one that resolves to something that is not a number falls back and says so, and anything over the ceiling is clamped and says so. Only panel and loop repeat; count_from is refused anywhere else rather than ignored.
 
 SUMMARIZING A RUN (session_meta)
-Pass session_meta:["<stage>.<field>", ...] to promote declared output fields onto every RUN's row in the sidebar — the verdict, the winning side, a confidence level. A run history is BROWSED, not read: the title and the date answer "when did I run this", and the thing a reader is actually scanning for is the answer, which otherwise means opening runs one at a time until the right one appears. The field must be declared in that stage's "output", the stage must be top-level (a loop body holds a different value every pass), names must be unique, and ID/Title/Date are taken. The values are filled as each stage finishes, so a run that fails halfway still carries what it had established. An app built on the pipeline renders them with the pipeline section's "meta" key, which is where the label, the style (text/badge/pill) and the per-value colors are chosen.
+Pass session_meta:["<stage>.<field>"...] to promote declared output fields onto every RUN's row in the sidebar, the verdict, the winning side, a confidence level. A run history is BROWSED, not read: the title and the date answer "when did I run this", and the thing a reader is actually scanning for is the answer, which otherwise means opening runs one at a time until the right one appears. The field must be declared in that stage's "output", the stage must be top-level (a loop body holds a different value every pass), names must be unique, and ID/Title/Date are taken. The values are filled as each stage finishes, so a run that fails halfway still carries what it had established. An app built on the pipeline renders them with the pipeline section's "meta" key, which is where the label, the style (text/badge/pill) and the per-value colors are chosen.
 
 === FANOUT (breadth) ===
 === PANEL ===
-Puts SEVERAL voices on ONE question, in parallel, for "count" rounds. Round 1 is a poll — nobody has replied to anybody yet. Round 2 is where a voice can say "that is wrong because", which is the whole reason to run a panel instead of asking one worker for three opinions in one call. Within a round the voices are blind to each other, so nobody answers first and sets the frame; across rounds each voice reads everything said so far ({panel}, placed for you at the end if you do not place it yourself).
+Puts SEVERAL voices on ONE question, in parallel, for "count" rounds. Round 1 is a poll: nobody has replied to anybody yet. Round 2 is where a voice can say "that is wrong because", which is the whole reason to run a panel instead of asking one worker for three opinions in one call. Within a round the voices are blind to each other, so nobody answers first and sets the frame; across rounds each voice reads everything said so far ({panel}, placed for you at the end if you do not place it yourself).
 A voice that names one of your agents IS that agent; one that does not is a ROLE the worker answers as. Mix them freely. {voice} is who is answering, {iteration}/{iterations} are the round and the total.
-The product is the labeled transcript of EVERY round — no verdict, because judging is the next stage's job and how disagreement resolves is yours to write. Canonical: frame -> panel(count=2, panel=["Optimist","Skeptic","Cost"]) -> synthesize (reach="none", think, declares its output).
+The product is the labeled transcript of EVERY round: no verdict, because judging is the next stage's job and how disagreement resolves is yours to write. Canonical: frame -> panel(count=2, panel=["Optimist","Skeptic","Cost"]) -> synthesize (reach="none", think, declares its output).
 Caps: 8 voices, 4 rounds. Voices times rounds is model calls, and the stage says the multiplication before it pays it.
 
 === FANOUT ===
 Runs its prompt once PER ELEMENT of an earlier list, in parallel, then collects into one labeled block. Point fan_over at the stage (whose prompt emits a JSON array) or at a declared list field, and use {item}. A branch runs as a worker over the stage's tools by default; name an agent to dispatch each one instead. Capped at 12 items / 6 concurrent; per-branch errors are non-fatal. Canonical: decompose (emits JSON list) -> fanout (worker[web_search,fetch_url], "Research: {item}") -> synthesize (reach="none", think).
-A fanout may instead carry a "body" of stages, run ONCE PER ITEM in its own scope — for when each item needs several steps rather than one prompt ("search it, read it, then judge it"). Body stages see {item}, {branch}, {branches}, everything established BEFORE the fan, and each other WITHIN their own branch; two branches running a stage of the same name never see each other's value, and nothing after the fanout may reference a body stage by name. Body OR agent, not both. Bodies do not nest (no loop or fanout inside one). When the LAST body stage declares output, the fanout also carries the per-branch results as {stage:NAME.items} — one object per branch plus "branch" and "item" — which is how you rank what came back, or fan over the survivors with fan_over:"NAME.items". Mind the multiplication: 12 items x a 4-stage body is 48 model calls.
+A fanout may instead carry a "body" of stages, run ONCE PER ITEM in its own scope, for when each item needs several steps rather than one prompt ("search it, read it, then judge it"). Body stages see {item}, {branch}, {branches}, everything established BEFORE the fan, and each other WITHIN their own branch; two branches running a stage of the same name never see each other's value, and nothing after the fanout may reference a body stage by name. Body OR agent, not both. Bodies do not nest (no loop or fanout inside one). When the LAST body stage declares output, the fanout also carries the per-branch results as {stage:NAME.items} (one object per branch plus "branch" and "item"), which is how you rank what came back, or fan over the survivors with fan_over:"NAME.items". Mind the multiplication: 12 items x a 4-stage body is 48 model calls.
 
 === LOOP (depth) ===
-Repeats "body", each pass seeing the last via {prev}. count is required and is the hard ceiling (1-25) — a pipeline runs unattended, so the model does not get to decide when to stop. until is an early exit reading a body stage's bool. collect="all" joins every pass, which is what you want when building a transcript. Loops do not nest. Body stage names are per-pass and CANNOT be referenced after the loop — read the loop's own name.
+Repeats "body", each pass seeing the last via {prev}. count is required and is the hard ceiling (1-25): a pipeline runs unattended, so the model does not get to decide when to stop. until is an early exit reading a body stage's bool. collect="all" joins every pass, which is what you want when building a transcript. Loops do not nest. Body stage names are per-pass and CANNOT be referenced after the loop: read the loop's own name.
 
 === BRANCH (control flow, no LLM call) ===
-when = a bool field an EARLIER stage declared. True takes the branch: skip_to jumps to a LATER stage, or omit skip_to to end the pipeline (returning the last stage's output, so a screening stage's rejection IS the answer). Jumps are forward-only; repeating work is what loop is for. Inside a loop body a branch may only skip within the pass — use the loop's until to stop early.
+when = a bool field an EARLIER stage declared. True takes the branch: skip_to jumps to a LATER stage, or omit skip_to to end the pipeline (returning the last stage's output, so a screening stage's rejection IS the answer). Jumps are forward-only; repeating work is what loop is for. Inside a loop body a branch may only skip within the pass: use the loop's until to stop early.
 
 === MACHINE (a whole run as a stage) ===
 machine = the name of a stored MACHINE, which runs with its own steps and its own working set,
 and its last step's result becomes this stage's. The machine must be marked "this RUNS instead of
-converses" — a stage has nobody waiting in it. Depth is capped: a machine already running this
+converses": a stage has nobody waiting in it. Depth is capped: a machine already running this
 pipeline cannot start another. Use it when the work is a smaller version of the same shape, and
-put it in a FANOUT BODY when there is one per item — that is how N gaps get filled at once rather
+put it in a FANOUT BODY when there is one per item, that is how N gaps get filled at once rather
 than one after another. When the machine's last step declares the fields this stage declares, they
 come straight across with nothing re-read out of prose.
 
 === TOOL (no LLM call, no tokens) ===
-tool = one of the invoking agent's tools; args = {param: template}. For computation rather than judgment: arithmetic, dedup, normalization, a formatting pass, one specific API call. Asking a worker stage to do arithmetic is the classic waste — call the calculator. May declare output to decode a JSON-returning tool, with no repair retry (there is no model to ask again). A missing tool is a run-time error listing what the caller does have.
+tool = one of the invoking agent's tools; args = {param: template}. For computation rather than judgment: arithmetic, dedup, normalization, a formatting pass, one specific API call. Asking a worker stage to do arithmetic is the classic waste: call the calculator. May declare output to decode a JSON-returning tool, with no repair retry (there is no model to ask again). A missing tool is a run-time error listing what the caller does have.
 
 === TIERS + TOOLS ===
-Worker stages INHERIT the calling agent's catalog — a pipeline invoked from an agent with web_search/fetch_url has them automatically. Set "reach" to restrict: "read" for a stage that gathers, "none" for a synthesis stage that should not fetch. (tools=[] does NOT do that — an empty list inherits. Naming tools narrows further, but names describe one caller's catalog and a reach describes every caller's.) model="lead" puts a stage on the precision tier; use it on decompose / synthesize / judge and leave transforms on worker, because lead everywhere is how a cheap pipeline stops being cheap. think defaults false — turn it on selectively, not everywhere.`
+Worker stages INHERIT the calling agent's catalog: a pipeline invoked from an agent with web_search/fetch_url has them automatically. Set "reach" to restrict: "read" for a stage that gathers, "none" for a synthesis stage that should not fetch. (tools=[] does NOT do that: an empty list inherits. Naming tools narrows further, but names describe one caller's catalog and a reach describes every caller's.) model="lead" puts a stage on the precision tier; use it on decompose / synthesize / judge and leave transforms on worker, because lead everywhere is how a cheap pipeline stops being cheap. think defaults false: turn it on selectively, not everywhere.`
 
 // pipelineCreateOrUpdate parses the stages array and saves a PipelineDef.
 // On update, loads the existing def (by id or name) and overwrites the
@@ -219,7 +219,7 @@ func (t *chatTurn) pipelineCreateOrUpdate(args map[string]any, isUpdate bool) (s
 		default:
 			// A partial patch with nothing to patch is still an error: there is
 			// no definition here to save, only edits to one that doesn't exist.
-			return "", errors.New("no matching pipeline to update — nothing is stored under that name/id, and this call carries no stages to store as a new one. pipeline(action=\"list\") shows what you actually have")
+			return "", errors.New("no matching pipeline to update: nothing is stored under that name/id, and this call carries no stages to store as a new one. pipeline(action=\"list\") shows what you actually have")
 		}
 	} else {
 		def = PipelineDef{Name: name, Owner: t.user}
@@ -396,11 +396,11 @@ func (t *chatTurn) pipelineCreateOrUpdate(args map[string]any, isUpdate bool) (s
 	// stage list said one thing, the tool's DESCRIPTION promised five rounds,
 	// and the summary repeated the description.
 	if len(saved.Stages) == 1 && saved.Stages[0].Kind == StageTool {
-		msg += " WARNING: this pipeline is ONE tool stage — it composes nothing and does exactly what " +
-			strconv.Quote(saved.Stages[0].Tool) + " already does, no more. A tool stage is a STEP (arithmetic, a lookup, one API call), not a whole pipeline. If the user asked for rounds, passes or multi-step work, that work belongs in stages here — read the tool's script body, not its description, before trusting it to do it for you."
+		msg += " WARNING: this pipeline is ONE tool stage, it composes nothing and does exactly what " +
+			strconv.Quote(saved.Stages[0].Tool) + " already does, no more. A tool stage is a STEP (arithmetic, a lookup, one API call), not a whole pipeline. If the user asked for rounds, passes or multi-step work, that work belongs in stages here: read the tool's script body, not its description, before trusting it to do it for you."
 	}
 	if len(currentAttachments) == 0 {
-		msg += " WARNING: this pipeline is not attached to ANY agent — if it's meant for one, call pipeline(action=\"update\", name=" + saved.Name + ", attach_to_agents=[\"<agent_name>\"]) to wire it up."
+		msg += " WARNING: this pipeline is not attached to ANY agent, if it's meant for one, call pipeline(action=\"update\", name=" + saved.Name + ", attach_to_agents=[\"<agent_name>\"]) to wire it up."
 	} else {
 		msg += fmt.Sprintf(" Currently attached to: %s.", strings.Join(currentAttachments, ", "))
 	}
@@ -442,7 +442,7 @@ func (t *chatTurn) pipelineList() (string, error) {
 func (t *chatTurn) pipelineGet(args map[string]any) (string, error) {
 	def, ok := t.findPipeline(args)
 	if !ok {
-		return "", errors.New("no matching pipeline — check the name/id (pipeline action=list)")
+		return "", errors.New("no matching pipeline: check the name/id (pipeline action=list)")
 	}
 	// Default compact, full on demand — same posture as agents(get): a
 	// full def echoes every stage's prompt, and the author→get→update→get
@@ -471,7 +471,7 @@ func pipelineAdviceNote(udb Database, user string, def PipelineDef) string {
 	if len(adv) == 0 {
 		return ""
 	}
-	return "\n\nWorth a look — none of this stopped the save, and none of it is certain:\n- " +
+	return "\n\nWorth a look, none of this stopped the save, and none of it is certain:\n- " +
 		strings.Join(adv, "\n- ")
 }
 
@@ -484,7 +484,7 @@ func slimPipelineJSON(def PipelineDef) []byte {
 		if len(s) <= n {
 			return s
 		}
-		return s[:n] + fmt.Sprintf("…[%d chars total — previewed; re-send the full stage prompt to change it, or get full=true to read it]", len(s))
+		return s[:n] + fmt.Sprintf("…[%d chars total: previewed; re-send the full stage prompt to change it, or get full=true to read it]", len(s))
 	}
 	type stageSummary struct {
 		Name    string            `json:"name"`
@@ -528,7 +528,7 @@ func (t *chatTurn) pipelineDelete(args map[string]any) (string, error) {
 func (t *chatTurn) pipelineRun(args map[string]any) (string, error) {
 	def, ok := t.findPipeline(args)
 	if !ok {
-		return "", errors.New("no matching pipeline to run — check the name/id (pipeline action=list)")
+		return "", errors.New("no matching pipeline to run: check the name/id (pipeline action=list)")
 	}
 	input := strings.TrimSpace(stringArg(args, "input"))
 	if input == "" {

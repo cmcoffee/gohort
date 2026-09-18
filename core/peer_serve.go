@@ -114,7 +114,7 @@ func peerManifestRefusal(r *http.Request) string {
 		return "no peer key presented"
 	}
 	if k, known := LookupPeerKey(secret); known && strings.TrimSpace(k.Paired) != "" {
-		return "that pairing code was already exchanged, on " + k.Paired + " — it is single use, and the peer that spent it holds the credentials. " +
+		return "that pairing code was already exchanged, on " + k.Paired + ", it is single use, and the peer that spent it holds the credentials. " +
 			"If that peer has lost them, re-issue this key here (Resource Sharing → Re-issue key) and give it the new one; nothing else can re-pair it"
 	}
 	return "unrecognized or disabled peer key"
@@ -145,7 +145,7 @@ func peerAuthorize(w http.ResponseWriter, r *http.Request, capability string) (P
 		peerNoteAuthFailure(r)
 		if peerIsPairingCode(r) {
 			peerDeny(w, http.StatusUnauthorized,
-				"this key is a pairing code, not a credential — POST it to /api/peer/v1/token as "+
+				"this key is a pairing code, not a credential: POST it to /api/peer/v1/token as "+
 					`{"grant_type":"pairing_code","pairing_code":"..."} and use the access token it returns`)
 			return PeerKey{}, false
 		}
@@ -272,7 +272,7 @@ func HandlePeerManifest(w http.ResponseWriter, r *http.Request) {
 		case !e.Served && name == PeerCapModels:
 			// Distinguished from the generic case: this one is a configuration
 			// fact the operator can act on, not a missing feature.
-			e.Note = "this instance has no local model to lend — inference sharing serves llama.cpp and ollama only"
+			e.Note = "this instance has no local model to lend: inference sharing serves llama.cpp and ollama only"
 		case !e.Served:
 			e.Note = "not implemented by this instance yet"
 		case e.Served && !e.Granted:
@@ -280,9 +280,9 @@ func HandlePeerManifest(w http.ResponseWriter, r *http.Request) {
 		case name == PeerCapInvestigate && len(k.Appliances) == 0:
 			// Granted the capability and no appliances reaches nothing. Said
 			// plainly, because the capability list otherwise reads as working.
-			e.Note = "granted, but this key names no appliances — it can reach none"
+			e.Note = "granted, but this key names no appliances: it can reach none"
 		case name == PeerCapInvestigate && strings.TrimSpace(k.Owner) == "":
-			e.Note = "granted, but this key has no owner — an investigation runs as a user and there is none"
+			e.Note = "granted, but this key has no owner: an investigation runs as a user and there is none"
 		}
 		m.Capabilities = append(m.Capabilities, e)
 	}
@@ -406,7 +406,7 @@ func HandlePeerEmbeddings(w http.ResponseWriter, r *http.Request) {
 	if want := strings.TrimSpace(req.Model); want != "" && cfg.Model != "" && want != cfg.Model {
 		peerDeny(w, http.StatusBadRequest,
 			"this instance embeds with "+cfg.Model+", not "+want+
-				" — vectors from two models are not comparable, so the request is refused rather than answered from the wrong space")
+				", vectors from two models are not comparable, so the request is refused rather than answered from the wrong space")
 		return
 	}
 

@@ -52,7 +52,8 @@ func llmVisionRequestTimeout() time.Duration { return TuneDuration("tune_llm_vis
 func init() {
 	RegisterTunable(TunableSpec{Key: "tune_llm_connect_timeout", Category: "Timeouts", Label: "LLM connect timeout", Help: "Dial + TLS handshake cap for LLM API connections.", Kind: KindSeconds, Default: 10, Min: 2, Max: 60})
 	RegisterTunable(TunableSpec{Key: "tune_llm_request_timeout", Category: "Timeouts", Label: "LLM request timeout (fallback)", Help: "Fallback per-request timeout for LLM endpoints when request_timeout_seconds is unset.", Kind: KindMinutes, Default: 12, Min: 1, Max: 60})
-	RegisterTunable(TunableSpec{Key: "tune_llm_vision_request_timeout", Category: "Timeouts", Label: "LLM vision request timeout", Help: "Total budget for a single non-streaming vision call (prompt contains images or video frames). Vision rounds skip thinking and normally answer in seconds; a hung one otherwise burns the caller's whole turn budget before a retry can happen. Only tightens the general request timeout, never extends it.", Kind: KindSeconds, Default: 120, Min: 15, Max: 1800})
+	RegisterTunable(TunableSpec{Key: "tune_llm_vision_request_timeout", Category: "Timeouts", Label: "LLM vision request timeout", Help: "Total budget for a single non-streaming vision call, one whose prompt contains images.",
+		Detail: "Video frames count too. Vision rounds skip thinking and normally answer in seconds; a hung one otherwise burns the caller's whole turn budget before a retry can happen. It only tightens the general request timeout, never extends it.", Kind: KindSeconds, Default: 120, Min: 15, Max: 1800})
 }
 
 const (
@@ -916,7 +917,7 @@ func applyVisionDefaults(cfg *ChatConfig, messages []Message) {
 		t := 0.0
 		cfg.Temperature = &t
 	}
-	cfg.SystemPrompt += "\n\nWhen an image's [image_context] block contains a `location:` field, that field is the authoritative source of where the photo was taken. Do not infer a different location from the `gps:` coordinates, the `taken:` timestamp, or your training data — the resolved name comes from a geocoding service and supersedes coordinate-based recall."
+	cfg.SystemPrompt += "\n\nWhen an image's [image_context] block contains a `location:` field, that field is the authoritative source of where the photo was taken. Do not infer a different location from the `gps:` coordinates, the `taken:` timestamp, or your training data, the resolved name comes from a geocoding service and supersedes coordinate-based recall."
 }
 
 // oaiVisionContent creates a Content field with text + base64 images
@@ -1091,7 +1092,7 @@ func (c *openAIClient) buildMessages(cfg ChatConfig, messages []Message) []oaiMe
 						Debug("[vision] sampled %d frame(s) across %d video(s)", len(frames), len(m.Videos))
 						images = append(images, frames...)
 					} else {
-						Debug("[vision] no frames extracted from %d video(s) — ffmpeg missing or unreadable", len(m.Videos))
+						Debug("[vision] no frames extracted from %d video(s): ffmpeg missing or unreadable", len(m.Videos))
 					}
 				}
 
@@ -2291,7 +2292,7 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 	// the body cleanly from here — and what had arrived was returned as a
 	// finished answer, delivered with nothing to say it stopped short.
 	if finishReason == "" && !sawDone && (full.Len() > 0 || len(toolCalls) > 0) {
-		Warn("[%s]: stream ended before finish_reason or [DONE] — returning %d chars as an interrupted reply", c.provider(), full.Len())
+		Warn("[%s]: stream ended before finish_reason or [DONE], returning %d chars as an interrupted reply", c.provider(), full.Len())
 		finishReason = stopInterrupted
 	}
 

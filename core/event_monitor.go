@@ -495,7 +495,7 @@ func init() {
 		Category: "Limits",
 		Label:    "Watch monitor idle-pause (days)",
 		Help: "Pause a watch monitor that has gone this many days with no change to report. " +
-			"Nothing is broken when this fires — the watched source stopped moving — so the monitor is PAUSED and kept, not deleted, and one click resumes it. " +
+			"Nothing is broken when this fires (the watched source stopped moving), so the monitor is PAUSED and kept, not deleted, and one click resumes it. " +
 			"The clock runs from the last real change, or from creation for a watch that has never seen one. 0 disables the guard.",
 		Kind:    KindInt,
 		Default: 30,
@@ -546,7 +546,7 @@ func pauseIdleWatch(db Database, m EventMonitor, days int) {
 	cur.NextCheck = time.Time{}
 	SaveEventMonitor(db, cur)
 	reason := fmt.Sprintf(
-		"Paused: %d days with no change to report. Nothing is broken — the watched source simply stopped moving, so it is no longer being polled. Resume it if you still want it watched, or delete it.", days)
+		"Paused: %d days with no change to report. Nothing is broken: the watched source simply stopped moving, so it is no longer being polled. Resume it if you still want it watched, or delete it.", days)
 	Log("[event] watch %s/%s paused: no change in %d days", m.Owner, m.Name, days)
 	RecordRun(db, RunRecord{
 		Owner: m.Owner, Agent: m.Name, Trigger: "watch", Task: m.Name,
@@ -574,13 +574,13 @@ func noteStuckMonitor(db Database, m EventMonitor) {
 	if !m.LastFired.IsZero() {
 		when = m.LastFired.Local().Format("Jan 2 3:04 PM")
 	}
-	Log("[event] %s %s/%s has matched every check since %s — it cannot fire again until one does not match",
+	Log("[event] %s %s/%s has matched every check since %s: it cannot fire again until one does not match",
 		m.Kind, m.Owner, m.Name, when)
 	RecordRun(db, RunRecord{
 		Owner: m.Owner, Agent: m.Name, Trigger: m.Kind, Task: m.Name,
 		Status: RunAttention,
 		Summary: "Fired once, and its condition has been true at every check since " + when +
-			". It will NOT fire again until a check finds the condition false — that is what re-arms it. If the condition cannot go false (a checker told to always answer the match word, a threshold that will never recover), this monitor has nothing left to detect, and work that should simply repeat on a clock is a scheduled run rather than a monitor.",
+			". It will NOT fire again until a check finds the condition false, that is what re-arms it. If the condition cannot go false (a checker told to always answer the match word, a threshold that will never recover), this monitor has nothing left to detect, and work that should simply repeat on a clock is a scheduled run rather than a monitor.",
 		Started: time.Now(), Ended: time.Now(),
 	}.AboutMonitor(m.Name))
 }
@@ -596,7 +596,7 @@ func (m EventMonitor) StuckLabel() string {
 	if !m.LastFired.IsZero() {
 		when = m.LastFired.Local().Format("Jan 2 3:04 PM")
 	}
-	return "armed but silent — matched every check since " + when
+	return "armed but silent: matched every check since " + when
 }
 
 // --- why a monitor is at rest ------------------------------------------------
@@ -642,22 +642,22 @@ func (m EventMonitor) StopLabel() string {
 	case MonitorStopOwner:
 		return "paused"
 	case MonitorStopFinished:
-		return "finished — it fired the number of times it was created with"
+		return "finished: it fired the number of times it was created with"
 	case MonitorStopMet:
-		return "finished — what it was watching for happened"
+		return "finished: what it was watching for happened"
 	case MonitorStopIdle:
-		return "stopped — nothing to report for long enough that it stopped watching"
+		return "stopped: nothing to report for long enough that it stopped watching"
 	case MonitorStopBroken:
 		// A missing dependency is the one case a relink actually fixes.
 		if r := strings.TrimSpace(m.BrokenReason); r != "" {
-			return "needs relink — " + r
+			return "needs relink: " + r
 		}
 		return "needs relink"
 	case MonitorStopFailing:
 		// Nothing is unlinked: the target is failing. Pointing this monitor at
 		// a different agent would not touch the hostname that will not resolve.
 		if r := strings.TrimSpace(m.BrokenReason); r != "" {
-			return "needs attention — " + r
+			return "needs attention: " + r
 		}
 		return "needs attention"
 	}
@@ -741,7 +741,7 @@ func StopEventMonitor(db Database, owner, name, cause, reason string) bool {
 // stopFiredOutMonitor ends a monitor that has spent its fire allowance.
 func stopFiredOutMonitor(db Database, m EventMonitor) {
 	reason := fmt.Sprintf(
-		"Stopped: fired %d time(s), which is the limit it was created with. Nothing is broken — it reached its bound and stopped watching. Resume it for another %d, or delete it.",
+		"Stopped: fired %d time(s), which is the limit it was created with. Nothing is broken: it reached its bound and stopped watching. Resume it for another %d, or delete it.",
 		m.FiresUsed(), m.MaxFires)
 	// A monitor that also had a condition to watch for ran out of fires
 	// WITHOUT reaching it. Said here because the two stops look identical from
@@ -973,7 +973,7 @@ func StartEventMonitorScheduler() {
 		// happened during the check.
 		defer func() {
 			if r := recover(); r != nil {
-				Log("[event] monitor %s/%s check PANICKED: %v — re-arming next tick anyway", p.Owner, p.Name, r)
+				Log("[event] monitor %s/%s check PANICKED: %v, re-arming next tick anyway", p.Owner, p.Name, r)
 			}
 			if cur, ok := GetEventMonitor(RootDB, p.Owner, p.Name); ok && !cur.Paused && isScheduledKind(cur.Kind) {
 				if err := ScheduleEventMonitor(RootDB, cur); err != nil {
@@ -1051,7 +1051,7 @@ func RunEventMonitorCheck(ctx context.Context, db Database, owner, name string) 
 		return fmt.Errorf("no such event monitor")
 	}
 	if !isScheduledKind(m.Kind) {
-		return fmt.Errorf("this monitor is push-triggered — it has no check to run")
+		return fmt.Errorf("this monitor is push-triggered: it has no check to run")
 	}
 	m.LastChecked = time.Now()
 	SaveEventMonitor(db, m)
@@ -1223,7 +1223,7 @@ func notePollFailure(db Database, m EventMonitor, reason string) bool {
 	RecordRun(db, RunRecord{
 		Owner: m.Owner, Agent: m.Name, Trigger: cur.Kind, Task: m.Name,
 		Status: RunAttention,
-		Summary: fmt.Sprintf("Stopped checking after %d consecutive failures — %s. The monitor is paused and needs attention; fix what it points at, then resume it.",
+		Summary: fmt.Sprintf("Stopped checking after %d consecutive failures: %s. The monitor is paused and needs attention; fix what it points at, then resume it.",
 			cur.ConsecutiveFailures, reason),
 		Started: time.Now(), Ended: time.Now(),
 	}.AboutMonitor(m.Name))
@@ -1320,7 +1320,7 @@ func executeWatchPoll(ctx context.Context, db Database, m EventMonitor) {
 	// own outbound) is absorbed silently and the NEXT change is still watched —
 	// exactly the "wake only on Alex's reply, not on every group message" case.
 	if strings.TrimSpace(cur.MatchNew) != "" && !addedLinesContain(prior, body, cur.MatchNew) {
-		Debug("[event] watch %s/%s: change detected but no new line matched %q — baseline advanced, no wake", m.Owner, m.Name, cur.MatchNew)
+		Debug("[event] watch %s/%s: change detected but no new line matched %q, baseline advanced, no wake", m.Owner, m.Name, cur.MatchNew)
 		SaveEventMonitor(db, cur)
 		return
 	}
@@ -1341,7 +1341,7 @@ func executeWatchPoll(ctx context.Context, db Database, m EventMonitor) {
 		SaveEventMonitor(db, cur)
 		return
 	}
-	Debug("[event] watch %s/%s: change detected — firing (%s)", m.Owner, m.Name, m.Notify)
+	Debug("[event] watch %s/%s: change detected, firing (%s)", m.Owner, m.Name, m.Notify)
 	cur.LastFired = time.Now()
 	SaveEventMonitor(db, cur)
 	// The summary is for the model: diff plus payload. The card is for the
@@ -1611,7 +1611,7 @@ func describeWatchObject(obj map[string]any) string {
 			return "a record with no readable fields"
 		}
 	}
-	out := strings.Join(parts, " — ")
+	out := strings.Join(parts, " · ")
 	var tail []string
 	if id != "" {
 		tail = append(tail, id)
@@ -1700,13 +1700,13 @@ func formatWatchAlert(ctx context.Context, owner, name, formatScript, prior, cur
 		res := RunSandboxedScript(sctx, "python3", formatScript, string(payload))
 		cancel()
 		if res.Err != nil {
-			Log("[event] watch %s/%s format_script error: %v (stderr=%q) — using built-in summary",
+			Log("[event] watch %s/%s format_script error: %v (stderr=%q), using built-in summary",
 				owner, name, res.Err, truncateEvent(res.Stderr, 200))
 		} else if out := strings.TrimSpace(res.Stdout); isSkipSentinel(out) {
 			// EXPLICIT suppression: the script asked to drop this change (it emitted
 			// the skip sentinel). This is the ONLY way a format_script suppresses —
 			// so an intentional skip is unmistakable and can't be confused with a bug.
-			Debug("[event] watch %s/%s: format_script emitted the skip sentinel — dropping this change", owner, name)
+			Debug("[event] watch %s/%s: format_script emitted the skip sentinel, dropping this change", owner, name)
 			return "", true
 		} else if out != "" {
 			return out, false
@@ -1718,7 +1718,7 @@ func formatWatchAlert(ctx context.Context, owner, name, formatScript, prior, cur
 			// through to the built-in diff so a change is always delivered as
 			// SOMETHING (ugly-but-visible beats silent). To intentionally drop a
 			// change, a script emits the skip sentinel (see isSkipSentinel).
-			Log("[event] watch %s/%s: format_script printed nothing — delivering the built-in summary (emit \"SKIP\" to intentionally drop a change)", owner, name)
+			Log("[event] watch %s/%s: format_script printed nothing, delivering the built-in summary (emit \"SKIP\" to intentionally drop a change)", owner, name)
 		}
 	}
 	// Direct/no-LLM delivery: post the tool's output verbatim, no diagnostic
@@ -2015,7 +2015,7 @@ func fireWake(ctx context.Context, db Database, owner, name, summary, trigger st
 		// nothing errored, the event simply reached nobody, and the owner is the
 		// one who can fix that.
 		rec.Status = RunAttention
-		rec.Summary = "Event fired but was not delivered — " + detail
+		rec.Summary = "Event fired but was not delivered: " + detail
 	}
 	rec.Prompt = promptDigest()
 	rec.Ended = time.Now()
@@ -2032,7 +2032,7 @@ func fireWake(ctx context.Context, db Database, owner, name, summary, trigger st
 	}
 	if cur.OneShot {
 		DeleteEventMonitor(db, owner, name)
-		Debug("[event] one-shot await %s/%s fired once — removed", owner, name)
+		Debug("[event] one-shot await %s/%s fired once: removed", owner, name)
 		return
 	}
 	// The fire is spent whether or not it reached anybody. Counting only

@@ -172,7 +172,7 @@ func (h botFrameworkHandler) Validate(c Connector) error {
 	// author with a typo hears about the typo instead of being sent off to
 	// create a credential first and told about it on the way back.
 	if exists, _, _ := Secure().CredentialStatus(s.Credential); !exists {
-		return fmt.Errorf("no credential named %q — draft it first (draft_oauth_credential) and have the admin enable it", s.Credential)
+		return fmt.Errorf("no credential named %q: draft it first (draft_oauth_credential) and have the admin enable it", s.Credential)
 	}
 	return h.checkOutboundReach(s)
 }
@@ -193,7 +193,7 @@ func (botFrameworkHandler) checkOutboundReach(s BotFrameworkSpec) error {
 	if botFrameworkOutboundReachable(cred, s.ServiceHost) {
 		return nil
 	}
-	return fmt.Errorf("credential %q is not allowed to reach %s — set its base URL to %q and leave its endpoint list empty, so every region (/amer/, /emea/, /apac/, …) is covered",
+	return fmt.Errorf("credential %q is not allowed to reach %s: set its base URL to %q and leave its endpoint list empty, so every region (/amer/, /emea/, /apac/, …) is covered",
 		s.Credential, botFrameworkProbeURL(s.ServiceHost), s.ServiceHost)
 }
 
@@ -276,7 +276,7 @@ func RegisterBotBridge(fn func(c Connector, start bool) error) { botBridge = fn 
 func startBotBridge(c Connector, start bool) error {
 	if botBridge == nil {
 		if start {
-			Warn("[connector] no bot bridge registered — bot_framework %q inert until the bridges app loads", c.Name)
+			Warn("[connector] no bot bridge registered: bot_framework %q inert until the bridges app loads", c.Name)
 		}
 		return nil
 	}

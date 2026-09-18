@@ -97,7 +97,7 @@ func (t *chatTurn) runGapCheck(userMsg string, steps []PlanStep, nextID int) []P
 			Intent: "Fill a gap detected after the initial plan finished.",
 			WorkerBrief: fmt.Sprintf(
 				"Focused gap-fill. Answer this question concretely, naming specific examples (named programs, dates, numbers, sources): %s\n\n"+
-					"Prefer a single targeted web_search with a query that would surface a named case. If you can't find evidence, say so explicitly — do not generalize.",
+					"Prefer a single targeted web_search with a query that would surface a named case. If you can't find evidence, say so explicitly: do not generalize.",
 				q,
 			),
 			Status: StepPending,
@@ -137,18 +137,18 @@ func buildGapCheckPrompt(userMsg string, steps []PlanStep) string {
 	b.WriteString("---\n\n")
 	b.WriteString("## Your task\n\n")
 	b.WriteString("Scan the worker output above for STRUCTURAL gaps the synthesis pass will inherit if you don't catch them now. Failure modes:\n\n")
-	b.WriteString("1. **Abstract sections** — claims framed only in capability/tendency language (\"can disrupt\", \"may mitigate\", \"tends to create\") without a named country, program, institution, person, or historical case as evidence. A targeted question asking for a specific named example would make it concrete.\n")
-	b.WriteString("2. **Evidence asymmetry** — one side of an argument has named, quantitative facts (e.g. \"Sweden 33% employment drop\") while the opposing side has only abstract claims. A question that would produce named evidence for the weaker side.\n")
-	b.WriteString("3. **Mechanism gaps** — the output argues a conclusion but never names HOW it happens — no specific program, policy, court ruling, or historical incident. A question asking for the mechanism in action.\n\n")
+	b.WriteString("1. **Abstract sections**: claims framed only in capability/tendency language (\"can disrupt\", \"may mitigate\", \"tends to create\") without a named country, program, institution, person, or historical case as evidence. A targeted question asking for a specific named example would make it concrete.\n")
+	b.WriteString("2. **Evidence asymmetry**: one side of an argument has named, quantitative facts (e.g. \"Sweden 33% employment drop\") while the opposing side has only abstract claims. A question that would produce named evidence for the weaker side.\n")
+	b.WriteString("3. **Mechanism gaps** (the output argues a conclusion but never names HOW it happens), no specific program, policy, court ruling, or historical incident. A question asking for the mechanism in action.\n\n")
 	b.WriteString("Output format:\n")
 	b.WriteString("- If everything looks solid, reply with the single word NONE.\n")
 	b.WriteString(fmt.Sprintf("- Otherwise, reply with %d or fewer gap questions, one per line, each starting with '- '. Each question must be self-contained (no \"this section\" / \"the above\") and phrased so a worker can answer it with one focused web_search.\n", maxGapsPerCheck()))
-	b.WriteString("\nBe stingy. A turn that's already concrete and well-cited gets NONE — don't manufacture gaps to look thorough.")
+	b.WriteString("\nBe stingy. A turn that's already concrete and well-cited gets NONE: don't manufacture gaps to look thorough.")
 	return b.String()
 }
 
 func gapCheckSystemPrompt() string {
-	return "You are a structural-gap detector for a research pipeline. Your only job is to identify weaknesses in the assembled findings that targeted follow-up questions could fix. You do NOT answer the user's question, you do NOT critique style, you do NOT suggest reorganizations. You produce 0-3 gap questions (or NONE) and stop. Be conservative — most outputs need NONE."
+	return "You are a structural-gap detector for a research pipeline. Your only job is to identify weaknesses in the assembled findings that targeted follow-up questions could fix. You do NOT answer the user's question, you do NOT critique style, you do NOT suggest reorganizations. You produce 0-3 gap questions (or NONE) and stop. Be conservative: most outputs need NONE."
 }
 
 // parseGapQuestions extracts bullet-prefixed questions from the

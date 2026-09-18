@@ -590,7 +590,7 @@ func deleteAgentReporting(db Database, id, owner string) ([]string, error) {
 	revisions.Delete(db, revisions.KindAgent, id)
 	dropAgentSideData(db, owner, id)
 	if len(orphaned) > 0 {
-		Warn("[orchestrate.agents] deleting %q left %d tool(s) callable by NO agent — %s. Re-home them in Admin › Orphaned Tools or they stay dark.",
+		Warn("[orchestrate.agents] deleting %q left %d tool(s) callable by NO agent: %s. Re-home them in Admin › Orphaned Tools or they stay dark.",
 			a.Name, len(orphaned), strings.Join(orphaned, ", "))
 	}
 	return orphaned, nil

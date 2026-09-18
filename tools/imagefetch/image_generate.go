@@ -23,7 +23,7 @@ func (t *GenerateImageTool) Caps() []Capability { return []Capability{CapNetwork
 
 // image-gen API call
 func (t *GenerateImageTool) Desc() string {
-	return "Generate a NEW image from a text description (DALL·E / Stable Diffusion / whichever image-gen backend is wired up) and save it into your session workspace. Returns the saved path. Does NOT deliver — call workspace(action=\"attach\", path=..., cleanup=true) to ship the file. USE ONLY when the user explicitly asks to CREATE / DRAW / MAKE / GENERATE a fresh image. NOT for finding existing images (use find_image), downloading a known URL (use fetch_image), or page screenshots (use screenshot_page). Generation makes things up — wrong tool for real-world reference."
+	return "Generate a NEW image from a text description (DALL·E / Stable Diffusion / whichever image-gen backend is wired up) and save it into your session workspace. Returns the saved path. Does NOT deliver: call workspace(action=\"attach\", path=..., cleanup=true) to ship the file. USE ONLY when the user explicitly asks to CREATE / DRAW / MAKE / GENERATE a fresh image. NOT for finding existing images (use find_image), downloading a known URL (use fetch_image), or page screenshots (use screenshot_page). Generation makes things up: wrong tool for real-world reference."
 }
 
 func (t *GenerateImageTool) Params() map[string]ToolParam {
@@ -35,7 +35,7 @@ func (t *GenerateImageTool) Params() map[string]ToolParam {
 func (t *GenerateImageTool) IsInternetTool() bool { return true }
 
 func (t *GenerateImageTool) Run(args map[string]any) (string, error) {
-	return "", fmt.Errorf("generate_image requires a session context — use GetAgentToolsWithSession")
+	return "", fmt.Errorf("generate_image requires a session context: use GetAgentToolsWithSession")
 }
 
 func (t *GenerateImageTool) RunWithSession(args map[string]any, sess *ToolSession) (string, error) {
@@ -73,7 +73,7 @@ func checkGeneratePrompt(sess *ToolSession, args map[string]any) error {
 // ImageTool.Preflight.
 func planGenerate(sess *ToolSession, args map[string]any, avail imageActions) (string, error) {
 	if !avail.generate {
-		return "", fmt.Errorf("the generate action is unavailable — no image-generation provider is configured. Tell the user image generation isn't set up; do NOT retry")
+		return "", fmt.Errorf("the generate action is unavailable: no image-generation provider is configured. Tell the user image generation isn't set up; do NOT retry")
 	}
 	if err := checkGeneratePrompt(sess, args); err != nil {
 		return "", err
@@ -91,7 +91,7 @@ func planGenerate(sess *ToolSession, args map[string]any, avail imageActions) (s
 	// reason: reachability is the broadest failure, so running it first
 	// reports every mistake as a permissions problem.
 	if backend != "" && !isGenerator(avail, backend) {
-		return "", fmt.Errorf("image backend %q works from source pictures and can't create from text alone — use one of: %s, or pass the pictures to work from in images", backend, strings.Join(generatorNames(avail), ", "))
+		return "", fmt.Errorf("image backend %q works from source pictures and can't create from text alone, use one of: %s, or pass the pictures to work from in images", backend, strings.Join(generatorNames(avail), ", "))
 	}
 	// ENFORCEMENT. The filtered enum is a hint to the model; nothing stops
 	// it naming a backend that isn't in it, so reachability is re-checked
@@ -101,7 +101,7 @@ func planGenerate(sess *ToolSession, args map[string]any, avail imageActions) (s
 		if len(names) == 0 {
 			return "", fmt.Errorf("image backend %q is not available to you; omit backend to use the configured default", backend)
 		}
-		return "", fmt.Errorf("image backend %q is not available to you — use one of: %s (or omit backend for the default)", backend, strings.Join(names, ", "))
+		return "", fmt.Errorf("image backend %q is not available to you, use one of: %s (or omit backend for the default)", backend, strings.Join(names, ", "))
 	}
 	return backend, nil
 }
@@ -175,7 +175,7 @@ func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note str
 	// detached call's attachments is the framework's job from here on.
 	if sess != nil && sess.Detached {
 		sess.AppendImage(base64.StdEncoding.EncodeToString(data))
-		msg := fmt.Sprintf("The finished picture (%d bytes) IS ATTACHED to this result and will be delivered with the message you send about it. Do NOT call workspace(action=\"attach\") for it — that would send it twice. Just say what it is.", len(data))
+		msg := fmt.Sprintf("The finished picture (%d bytes) IS ATTACHED to this result and will be delivered with the message you send about it. Do NOT call workspace(action=\"attach\") for it, that would send it twice. Just say what it is.", len(data))
 		if ref, stable := RecordRecentImageStable(sess, data, note, origin); ref != "" {
 			// The STABLE id only, and deliberately no position. This render
 			// finished in the background, between rounds — naming a position
@@ -186,10 +186,10 @@ func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note str
 			// (see core.SnapshotImageRefs); the id is what works meanwhile,
 			// and it works afterwards too.
 			if stable != "" {
-				msg += fmt.Sprintf(" Refer to it as %s — that id always means this picture. It has no image#N position yet:"+
+				msg += fmt.Sprintf(" Refer to it as %s, that id always means this picture. It has no image#N position yet:"+
 					" it finished in the background, after the list you were last shown.", stable)
 			} else {
-				msg += fmt.Sprintf(" It is %s right now — a POSITION, which moves when the next picture is saved.%s", ref, stableRefNote(stable))
+				msg += fmt.Sprintf(" It is %s right now: a POSITION, which moves when the next picture is saved.%s", ref, stableRefNote(stable))
 			}
 		}
 		// Show it, on the round that writes the line about it.
@@ -203,18 +203,18 @@ func saveImageResult(sess *ToolSession, result *ImageGenResult, prefix, note str
 		// case with no self-check. The view channel is separate from the
 		// delivery channel, so this cannot send the image twice.
 		sess.AppendViewImageAs(data, "the finished render (the AFTER picture)")
-		msg += " LOOK AT IT FIRST: the picture is included with this result. Describe what is actually there, not what was asked for — if the render came back wrong (blank, garbled, the wrong number of things, an edit that did nothing), say so plainly instead of announcing it as a match."
+		msg += " LOOK AT IT FIRST: the picture is included with this result. Describe what is actually there, not what was asked for: if the render came back wrong (blank, garbled, the wrong number of things, an edit that did nothing), say so plainly instead of announcing it as a match."
 		return msg, nil
 	}
 
-	msg := fmt.Sprintf("Stored at %q (%d bytes). This is normally meant for delivery — call workspace(action=\"attach\", path=%q, cleanup=true) and then write a short line describing it. (Skip the attach only if the user explicitly asked you NOT to send it — rare.)", name, len(data), name)
+	msg := fmt.Sprintf("Stored at %q (%d bytes). This is normally meant for delivery: call workspace(action=\"attach\", path=%q, cleanup=true) and then write a short line describing it. (Skip the attach only if the user explicitly asked you NOT to send it: rare.)", name, len(data), name)
 	// Spell out that the workspace copy is one-shot. Saying "do not delete it"
 	// next to a path the model is told to clean up reads as a contradiction, and
 	// what it did instead was attach with cleanup and then try to attach the
 	// same path AGAIN — which errors, because the file is gone. From there it
 	// regenerated the picture and delivered the wrong one.
 	if ref, stable := RecordRecentImageStable(sess, data, note, origin); ref != "" {
-		msg += fmt.Sprintf(" The workspace copy is consumed by that attach and the path stops working. This picture is %s RIGHT NOW, and that is a POSITION: whatever is saved next becomes image#1 and this one moves down.%s Never re-attach the workspace path after a cleanup — it is already delivered.", ref, stableRefNote(stable))
+		msg += fmt.Sprintf(" The workspace copy is consumed by that attach and the path stops working. This picture is %s RIGHT NOW, and that is a POSITION: whatever is saved next becomes image#1 and this one moves down.%s Never re-attach the workspace path after a cleanup, it is already delivered.", ref, stableRefNote(stable))
 	}
 	// A render is a guess at the prompt, not a rendering of it: the wrong
 	// number of people, the text unreadable, the edit applied to nothing. The

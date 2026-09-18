@@ -104,7 +104,7 @@ func getOfflineGeocoder() (*offlineGeocoder, error) {
 		}
 		offlineGeoInstance, offlineGeoLoadError = loadOfflineGeocoder(geocodeDir)
 		if offlineGeoLoadError != nil {
-			nfo.Debug("[geocode] offline DB unavailable: %s — Nominatim fallback only", offlineGeoLoadError)
+			nfo.Debug("[geocode] offline DB unavailable: %s, Nominatim fallback only", offlineGeoLoadError)
 		}
 	})
 	return offlineGeoInstance, offlineGeoLoadError
@@ -280,7 +280,7 @@ func ensureGeoFiles(dir string) error {
 				nfo.Log("[geocode] downloading %s (attempt %d, %s) …", j.filename, attempt, url)
 				if err := downloadGeo(dir, j.filename, url); err != nil {
 					lastErr = err
-					nfo.Debug("[geocode] %s failed: %v — trying next mirror", url, err)
+					nfo.Debug("[geocode] %s failed: %v, trying next mirror", url, err)
 					continue
 				}
 				ok = true
@@ -293,7 +293,7 @@ func ensureGeoFiles(dir string) error {
 			}
 		}
 		if !ok {
-			nfo.Log("[geocode] FAILED to download %s — last error: %v", j.filename, lastErr)
+			nfo.Log("[geocode] FAILED to download %s, last error: %v", j.filename, lastErr)
 			nfo.Log("[geocode] manual fallback: place the file in %s by running:", dir)
 			for _, url := range j.mirrors {
 				nfo.Log("[geocode]   curl -o %s %s", filepath.Join(dir, j.filename), url)

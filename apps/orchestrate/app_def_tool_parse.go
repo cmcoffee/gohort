@@ -163,18 +163,18 @@ func appDataSources(raw any) (out []AppDataSource, notes []string) {
 	for i, item := range arr {
 		m, ok := item.(map[string]any)
 		if !ok {
-			notes = append(notes, fmt.Sprintf("data_sources entry %d IGNORED — not an object", i+1))
+			notes = append(notes, fmt.Sprintf("data_sources entry %d IGNORED: not an object", i+1))
 			continue
 		}
 		given := strings.TrimSpace(mapStr(m, "name"))
 		name := slugify(given)
 		script := mapStr(m, "script")
 		if name == "" || strings.TrimSpace(script) == "" {
-			notes = append(notes, fmt.Sprintf("data_sources entry %d IGNORED — needs both a name and a script", i+1))
+			notes = append(notes, fmt.Sprintf("data_sources entry %d IGNORED: needs both a name and a script", i+1))
 			continue
 		}
 		if name != given {
-			notes = append(notes, fmt.Sprintf("data source %q is registered as %q (names are slugified: lowercase, non-alphanumerics → \"-\") — reference it by the slugified name in source_script and in any fetch of data/%s", given, name, name))
+			notes = append(notes, fmt.Sprintf("data source %q is registered as %q (names are slugified: lowercase, non-alphanumerics → \"-\"), reference it by the slugified name in source_script and in any fetch of data/%s", given, name, name))
 		}
 		out = append(out, AppDataSource{
 			Name:         name,
@@ -197,18 +197,18 @@ func appActionDefs(raw any) (out []AppAction, notes []string) {
 	for i, item := range arr {
 		m, ok := item.(map[string]any)
 		if !ok {
-			notes = append(notes, fmt.Sprintf("actions entry %d IGNORED — not an object", i+1))
+			notes = append(notes, fmt.Sprintf("actions entry %d IGNORED: not an object", i+1))
 			continue
 		}
 		given := strings.TrimSpace(mapStr(m, "name"))
 		name := slugify(given)
 		script := mapStr(m, "script")
 		if name == "" || strings.TrimSpace(script) == "" {
-			notes = append(notes, fmt.Sprintf("actions entry %d IGNORED — needs both a name and a script", i+1))
+			notes = append(notes, fmt.Sprintf("actions entry %d IGNORED: needs both a name and a script", i+1))
 			continue
 		}
 		if name != given {
-			notes = append(notes, fmt.Sprintf("action %q is registered as %q (names are slugified: lowercase, non-alphanumerics → \"-\") — its endpoint is action/%s", given, name, name))
+			notes = append(notes, fmt.Sprintf("action %q is registered as %q (names are slugified: lowercase, non-alphanumerics → \"-\"), its endpoint is action/%s", given, name, name))
 		}
 		act := AppAction{
 			Name:         name,
@@ -248,15 +248,15 @@ func appSchedule(raw any, action string) (*AppSchedule, []string) {
 	// Cron and interval are mutually exclusive at the engine (cron wins); make the
 	// stored spec unambiguous and say so.
 	if sch.Cron != "" && sch.IntervalSeconds > 0 {
-		notes = append(notes, fmt.Sprintf("action %q schedule sets both cron and interval_seconds — using cron, ignoring the interval", action))
+		notes = append(notes, fmt.Sprintf("action %q schedule sets both cron and interval_seconds: using cron, ignoring the interval", action))
 		sch.IntervalSeconds = 0
 	}
 	if sch.IntervalSeconds > 0 && sch.IntervalSeconds < MinAppScheduleSeconds {
-		notes = append(notes, fmt.Sprintf("action %q schedule interval_seconds %d is below the %d-second minimum for unattended updates — it will run every %d seconds", action, sch.IntervalSeconds, MinAppScheduleSeconds, MinAppScheduleSeconds))
+		notes = append(notes, fmt.Sprintf("action %q schedule interval_seconds %d is below the %d-second minimum for unattended updates: it will run every %d seconds", action, sch.IntervalSeconds, MinAppScheduleSeconds, MinAppScheduleSeconds))
 		sch.IntervalSeconds = MinAppScheduleSeconds
 	}
 	if !sch.Scheduled() {
-		notes = append(notes, fmt.Sprintf("action %q has a schedule object with no cron or interval_seconds — it will NOT self-update (add interval_seconds or cron)", action))
+		notes = append(notes, fmt.Sprintf("action %q has a schedule object with no cron or interval_seconds: it will NOT self-update (add interval_seconds or cron)", action))
 		return nil, notes
 	}
 	return sch, notes
@@ -440,20 +440,20 @@ func appSettings(raw any) (out []AppSetting, notes []string) {
 	for i, item := range arr {
 		m, ok := item.(map[string]any)
 		if !ok {
-			notes = append(notes, fmt.Sprintf("settings entry %d IGNORED — not an object", i+1))
+			notes = append(notes, fmt.Sprintf("settings entry %d IGNORED: not an object", i+1))
 			continue
 		}
 		given := strings.TrimSpace(mapStr(m, "name"))
 		name := strings.ReplaceAll(slugify(given), "-", "_")
 		if name == "" {
-			notes = append(notes, fmt.Sprintf("settings entry %d IGNORED — needs a name", i+1))
+			notes = append(notes, fmt.Sprintf("settings entry %d IGNORED: needs a name", i+1))
 			continue
 		}
 		if name != given {
-			notes = append(notes, fmt.Sprintf("setting %q is registered as %q (a setting is an env var: lowercase, non-alphanumerics → \"_\") — read os.environ.get(%q) in scripts", given, name, name))
+			notes = append(notes, fmt.Sprintf("setting %q is registered as %q (a setting is an env var: lowercase, non-alphanumerics → \"_\"), read os.environ.get(%q) in scripts", given, name, name))
 		}
 		if seen[name] {
-			notes = append(notes, fmt.Sprintf("setting %q declared twice — the later one IGNORED", name))
+			notes = append(notes, fmt.Sprintf("setting %q declared twice: the later one IGNORED", name))
 			continue
 		}
 		seen[name] = true
@@ -462,7 +462,7 @@ func appSettings(raw any) (out []AppSetting, notes []string) {
 			typ = "string"
 		}
 		if !appSettingTypes[typ] {
-			notes = append(notes, fmt.Sprintf("setting %q has unknown type %q — treated as string (types: string, number, toggle, choice)", name, typ))
+			notes = append(notes, fmt.Sprintf("setting %q has unknown type %q, treated as string (types: string, number, toggle, choice)", name, typ))
 			typ = "string"
 		}
 		st := AppSetting{
@@ -482,22 +482,22 @@ func appSettings(raw any) (out []AppSetting, notes []string) {
 		switch st.Scope {
 		case "", "owner", "user":
 		default:
-			notes = append(notes, fmt.Sprintf("setting %q has unknown scope %q — treated as owner (scopes: owner, user)", name, st.Scope))
+			notes = append(notes, fmt.Sprintf("setting %q has unknown scope %q, treated as owner (scopes: owner, user)", name, st.Scope))
 			st.Scope = ""
 		}
 		switch typ {
 		case "choice":
 			if len(st.Options) == 0 {
-				notes = append(notes, fmt.Sprintf("setting %q is a choice with no options — it renders as free text until options are given", name))
+				notes = append(notes, fmt.Sprintf("setting %q is a choice with no options: it renders as free text until options are given", name))
 				st.Type = "string"
 			} else if st.Default != "" && !containsString(st.Options, st.Default) {
-				notes = append(notes, fmt.Sprintf("setting %q defaults to %q, which is not one of its options (%s) — the first option is the default", name, st.Default, strings.Join(st.Options, ", ")))
+				notes = append(notes, fmt.Sprintf("setting %q defaults to %q, which is not one of its options (%s): the first option is the default", name, st.Default, strings.Join(st.Options, ", ")))
 				st.Default = st.Options[0]
 			}
 		case "number":
 			if st.Default != "" {
 				if _, err := strconv.ParseFloat(st.Default, 64); err != nil {
-					notes = append(notes, fmt.Sprintf("setting %q is a number but defaults to %q — default cleared", name, st.Default))
+					notes = append(notes, fmt.Sprintf("setting %q is a number but defaults to %q: default cleared", name, st.Default))
 					st.Default = ""
 				}
 			}

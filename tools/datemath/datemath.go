@@ -34,8 +34,8 @@ func (t *DateMathTool) Params() map[string]ToolParam {
 	return map[string]ToolParam{
 		"operation": {Type: "string", Description: `"diff" for days between two dates, or "add" for offset from a date.`},
 		"date1":     {Type: "string", Description: "First date (for diff) or base date (for add). YYYY-MM-DD or common formats."},
-		"date2":     {Type: "string", Description: "Second date — diff only."},
-		"days":      {Type: "integer", Description: "Days to add — add only. Negative subtracts."},
+		"date2":     {Type: "string", Description: "Second date: diff only."},
+		"days":      {Type: "integer", Description: "Days to add: add only. Negative subtracts."},
 	}
 }
 

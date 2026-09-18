@@ -100,7 +100,7 @@ func downloadImageTo(rawURL string, sess *ToolSession) (string, error) {
 		return "", fmt.Errorf("save image: %w", err)
 	}
 	Log("[imagefetch/fetch_image] fetched %d bytes from %s → %s", len(data), rawURL, name)
-	msg := fmt.Sprintf("NOT sent yet — this only SAVED the image to your workspace as %q (%s, %d bytes). It is NOT delivered, and your reply text alone will NOT include it. To actually send it, call workspace(action=\"attach\", path=%q, cleanup=true) — do that BEFORE you write a reply claiming you sent it. Skip the attach ONLY if the user just wants info about what's in it.",
+	msg := fmt.Sprintf("NOT sent yet: this only SAVED the image to your workspace as %q (%s, %d bytes). It is NOT delivered, and your reply text alone will NOT include it. To actually send it, call workspace(action=\"attach\", path=%q, cleanup=true): do that BEFORE you write a reply claiming you sent it. Skip the attach ONLY if the user just wants info about what's in it.",
 		name, ct, len(data), name)
 	// Downloaded images join the space as well — this is also the path a model
 	// is told to use when it tries to pass a URL straight to edit.
@@ -164,7 +164,7 @@ func showToModel(sess *ToolSession, data []byte, what, caveat string) string {
 	// mistaken for evidence of a wrong picture.
 	return fmt.Sprintf(" LOOK AT IT: the picture is included with this result so you can see it on this round. %s."+
 		" Looking settles whether it is the right KIND of thing, whether it is blank, broken or garbled, and whether an edit did what was asked."+
-		" Looking does NOT settle WHO someone is: you do not know this person's face, so a face you don't recognize is not evidence of a wrong picture — where it came from is the evidence you have, and you should not overrule it from the pixels."+
+		" Looking does NOT settle WHO someone is: you do not know this person's face, so a face you don't recognize is not evidence of a wrong picture, where it came from is the evidence you have, and you should not overrule it from the pixels."+
 		" Deliver it unless you can point at something concretely wrong; if you can, say what that is rather than presenting it as a match.", caveat)
 }
 
@@ -179,7 +179,7 @@ func stableRefNote(stable string) string {
 	if strings.TrimSpace(stable) == "" {
 		return " If you will need it after any other image call, keep it under a name first: image(action=\"keep\", name=\"…\")."
 	}
-	return fmt.Sprintf(" Use %s instead whenever you refer to it later — that one always means THIS picture, however many others are saved after it."+
+	return fmt.Sprintf(" Use %s instead whenever you refer to it later, that one always means THIS picture, however many others are saved after it."+
 		" (For a name you will recognise months from now, image(action=\"keep\", name=\"…\") still gives image#<name>.)", stable)
 }
 
@@ -196,7 +196,7 @@ func stableRefNote(stable string) string {
 // So the filename leads: it means this picture and no other, for as long as the
 // file is there. image#N follows, with what it actually means.
 func editHandleHint(name, ref string) string {
-	return fmt.Sprintf(" To change or blend it rather than send it, pass %q in images on your next image call — that filename keeps meaning THIS picture. It also entered your recent images as %s, but those are positional: whatever is saved next becomes image#1 and this one moves down, so don't hold onto that number across another image call.", name, ref)
+	return fmt.Sprintf(" To change or blend it rather than send it, pass %q in images on your next image call, that filename keeps meaning THIS picture. It also entered your recent images as %s, but those are positional: whatever is saved next becomes image#1 and this one moves down, so don't hold onto that number across another image call.", name, ref)
 }
 
 // extForMime returns a file extension matching a mime type. Used to
@@ -232,21 +232,21 @@ func extForMime(mime string) string {
 		// than no extension; bridge / browser will still mime-detect
 		// from content. Log for diagnosis so we can extend this
 		// switch when a new format surfaces in the wild.
-		Log("[imagefetch] unknown image mime %q — falling back to .img", mime)
+		Log("[imagefetch] unknown image mime %q: falling back to .img", mime)
 		return ".img"
 	case strings.HasPrefix(mime, "video/mp4"):
 		return ".mp4"
 	case strings.HasPrefix(mime, "video/webm"):
 		return ".webm"
 	case strings.HasPrefix(mime, "video/"):
-		Log("[imagefetch] unknown video mime %q — falling back to .mp4", mime)
+		Log("[imagefetch] unknown video mime %q: falling back to .mp4", mime)
 		return ".mp4"
 	case strings.HasPrefix(mime, "audio/mpeg"):
 		return ".mp3"
 	case strings.HasPrefix(mime, "audio/wav"), strings.HasPrefix(mime, "audio/x-wav"):
 		return ".wav"
 	case strings.HasPrefix(mime, "audio/"):
-		Log("[imagefetch] unknown audio mime %q — falling back to .m4a", mime)
+		Log("[imagefetch] unknown audio mime %q: falling back to .m4a", mime)
 		return ".m4a"
 	default:
 		// Non-media content (HTML error page, plaintext error, etc.) —

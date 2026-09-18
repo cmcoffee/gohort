@@ -91,20 +91,20 @@ func maybeSpillToolResult(sess *ToolSession, toolName, body string) (string, boo
 		// don't pre-mint a workspace would lose the guard.
 		dir, err := EnsureSessionWorkspace(sess)
 		if err != nil {
-			Log("[spill] no workspace for %s and auto-mint failed: %v — returning body as-is (%d bytes)", toolName, err, len(body))
+			Log("[spill] no workspace for %s and auto-mint failed: %v, returning body as-is (%d bytes)", toolName, err, len(body))
 			return "", false
 		}
 		wsDir = dir
 	}
 	spillDir := filepath.Join(wsDir, spillDirName)
 	if err := os.MkdirAll(spillDir, 0700); err != nil {
-		Log("[spill] mkdir %s failed: %v — returning body as-is", spillDir, err)
+		Log("[spill] mkdir %s failed: %v, returning body as-is", spillDir, err)
 		return "", false
 	}
 	fname := spillFilename(toolName, body)
 	abs := filepath.Join(spillDir, fname)
 	if err := os.WriteFile(abs, []byte(body), 0600); err != nil {
-		Log("[spill] write %s failed: %v — returning body as-is", abs, err)
+		Log("[spill] write %s failed: %v, returning body as-is", abs, err)
 		return "", false
 	}
 	rel := filepath.Join(spillDirName, fname)
@@ -128,7 +128,7 @@ func renderSpillStub(toolName, rel, body string) string {
 		tail = body[len(body)-spillTailBytes:]
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "[Tool %q returned %d bytes — too large to inline. Full body saved to workspace as %q.]\n",
+	fmt.Fprintf(&b, "[Tool %q returned %d bytes: too large to inline. Full body saved to workspace as %q.]\n",
 		toolName, len(body), rel)
 	fmt.Fprintf(&b, "\n--- first %d bytes ---\n%s\n", min2(len(body), spillHeadBytes), head)
 	if tail != "" {
@@ -141,7 +141,7 @@ func renderSpillStub(toolName, rel, body string) string {
 	fmt.Fprintf(&b, "  workspace(action=\"tail\", path=%q, lines=N)      → last N lines\n", rel)
 	fmt.Fprintf(&b, "  workspace(action=\"read_lines\", path=%q, start=A, end=B) → lines A–B\n", rel)
 	fmt.Fprintf(&b, "  workspace(action=\"grep\", path=%q, pattern=\"…\")  → matching lines (RE2)\n", rel)
-	b.WriteString("Pick the action that matches what you need. Don't re-call the original tool — its full output is already on disk.")
+	b.WriteString("Pick the action that matches what you need. Don't re-call the original tool: its full output is already on disk.")
 	return b.String()
 }
 
@@ -239,20 +239,20 @@ func buildAttachmentPreamble(sess *ToolSession, name, mime, text string) string 
 	if wsDir == "" {
 		dir, err := EnsureSessionWorkspace(sess)
 		if err != nil {
-			Log("[attachment_spill] no workspace for %q and auto-mint failed: %v — inlining %d bytes", name, err, len(text))
+			Log("[attachment_spill] no workspace for %q and auto-mint failed: %v, inlining %d bytes", name, err, len(text))
 			return FormatAttachmentPreamble(name, mime, text)
 		}
 		wsDir = dir
 	}
 	spillDir := filepath.Join(wsDir, attachmentSpillDirName)
 	if err := os.MkdirAll(spillDir, 0700); err != nil {
-		Log("[attachment_spill] mkdir %s failed: %v — inlining", spillDir, err)
+		Log("[attachment_spill] mkdir %s failed: %v, inlining", spillDir, err)
 		return FormatAttachmentPreamble(name, mime, text)
 	}
 	fname := attachmentSpillFilename(name)
 	abs := filepath.Join(spillDir, fname)
 	if err := os.WriteFile(abs, []byte(text), 0600); err != nil {
-		Log("[attachment_spill] write %s failed: %v — inlining", abs, err)
+		Log("[attachment_spill] write %s failed: %v, inlining", abs, err)
 		return FormatAttachmentPreamble(name, mime, text)
 	}
 	rel := filepath.Join(attachmentSpillDirName, fname)
@@ -283,7 +283,7 @@ func renderAttachmentStub(name, mime, rel, text string) string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "## Attached document: %s%s\n\n", name, pageHint)
-	fmt.Fprintf(&b, "[Document text is %d characters — too large to inline. Full extracted text saved to workspace as %q.]\n",
+	fmt.Fprintf(&b, "[Document text is %d characters: too large to inline. Full extracted text saved to workspace as %q.]\n",
 		len(text), rel)
 	fmt.Fprintf(&b, "\n--- first %d characters ---\n%s\n", min2(len(text), spillHeadBytes), head)
 	if tail != "" {
@@ -295,7 +295,7 @@ func renderAttachmentStub(name, mime, rel, text string) string {
 	fmt.Fprintf(&b, "  workspace(action=\"tail\", path=%q, lines=N)      → last N lines\n", rel)
 	fmt.Fprintf(&b, "  workspace(action=\"read_lines\", path=%q, start=A, end=B) → lines A–B\n", rel)
 	fmt.Fprintf(&b, "  workspace(action=\"grep\", path=%q, pattern=\"…\")  → matching lines (RE2)\n", rel)
-	b.WriteString("Reach for grep when looking for a specific section; head/tail for orientation; read_lines once you know roughly where the answer is. Don't pull the whole document in — pull the slice that answers the question.\n\n---\n\n")
+	b.WriteString("Reach for grep when looking for a specific section; head/tail for orientation; read_lines once you know roughly where the answer is. Don't pull the whole document in: pull the slice that answers the question.\n\n---\n\n")
 	return b.String()
 }
 

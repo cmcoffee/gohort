@@ -84,8 +84,8 @@ func (wr WriterRecord) sourceBlock() string {
 		name = "this writer"
 	}
 	return "\n\n## What " + name + " writes against\n\n" +
-		"This work draws on an established body of knowledge, attached to this writer and read live. Treat what it says as AUTHORITATIVE: where it and your general knowledge of the language, library or ecosystem disagree, follow it — it describes how things actually are here, and your general knowledge describes how they usually are elsewhere. Say so when they disagree, in a line, so a stale source can be corrected; silently picking one leaves the reader unable to tell a choice was made.\n\n" +
-		"Its tools are in your catalog. ASK before writing anything whose correctness turns on a detail you would otherwise guess — an exact table or column name, a type, a unit, a required parameter, an existing helper. Guessing produces work that looks right and is wrong, which is the expensive kind. If the answer isn't there, say which part is missing rather than filling it in.\n"
+		"This work draws on an established body of knowledge, attached to this writer and read live. Treat what it says as AUTHORITATIVE: where it and your general knowledge of the language, library or ecosystem disagree, follow it, it describes how things actually are here, and your general knowledge describes how they usually are elsewhere. Say so when they disagree, in a line, so a stale source can be corrected; silently picking one leaves the reader unable to tell a choice was made.\n\n" +
+		"Its tools are in your catalog. ASK before writing anything whose correctness turns on a detail you would otherwise guess: an exact table or column name, a type, a unit, a required parameter, an existing helper. Guessing produces work that looks right and is wrong, which is the expensive kind. If the answer isn't there, say which part is missing rather than filling it in.\n"
 }
 
 // loadWriter reads one writer, or false.

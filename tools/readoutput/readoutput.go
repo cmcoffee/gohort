@@ -31,7 +31,7 @@ func (t *ReadOutputTool) Name() string { return "read_output" }
 func (t *ReadOutputTool) IsFrameworkTool() bool { return true }
 
 func (t *ReadOutputTool) Desc() string {
-	return "Read the rest of a result that was truncated. When a tool's reply ends with an output_id, pass it here to continue: offset reads the next window, grep returns only the matching lines (each with its line number and @offset, so offset then reads around a hit). Nothing is re-run — the full result was kept when it overflowed."
+	return "Read the rest of a result that was truncated. When a tool's reply ends with an output_id, pass it here to continue: offset reads the next window, grep returns only the matching lines (each with its line number and @offset, so offset then reads around a hit). Nothing is re-run: the full result was kept when it overflowed."
 }
 
 func (t *ReadOutputTool) Caps() []Capability { return []Capability{CapRead} }
@@ -39,7 +39,7 @@ func (t *ReadOutputTool) Caps() []Capability { return []Capability{CapRead} }
 func (t *ReadOutputTool) Params() map[string]ToolParam {
 	return map[string]ToolParam{
 		"output_id": {Type: "string", Description: "The output_id from a truncated reply."},
-		"offset":    {Type: "number", Description: "Character offset to read from — the value the truncated reply told you to pass, or the @offset on a grep hit. 0 (default) starts at the beginning."},
+		"offset":    {Type: "number", Description: "Character offset to read from: the value the truncated reply told you to pass, or the @offset on a grep hit. 0 (default) starts at the beginning."},
 		"grep":      {Type: "string", Description: "Return only the lines matching this pattern (case-insensitive; a regular expression when it compiles as one, else a substring) instead of a window. Use this to find one thing in a long result rather than paging through it."},
 		"context":   {Type: "number", Description: "With grep: lines of context before and after each match (default 0)."},
 		"max_chars": {Type: "number", Description: "Window size (default 10000, ceiling 30000)."},
@@ -56,7 +56,7 @@ const (
 func (t *ReadOutputTool) Run(args map[string]any) (string, error) {
 	id := strings.TrimSpace(fmt.Sprint(args["output_id"]))
 	if id == "" || id == "<nil>" {
-		return "", fmt.Errorf("output_id is required — it is printed at the end of the truncated reply you are continuing")
+		return "", fmt.Errorf("output_id is required: it is printed at the end of the truncated reply you are continuing")
 	}
 	offset := 0
 	if v, ok := args["offset"].(float64); ok && v > 0 {

@@ -125,12 +125,12 @@ func removeFromBody(parent *PipelineStage, name string) error {
 // prompt to go with it.
 func bodyKindOptions() []ui.SelectOption {
 	return []ui.SelectOption{
-		{Value: "worker", Label: "Worker — one model call"},
-		{Value: "agent", Label: "Agent — dispatch to one of your agents"},
-		{Value: "machine", Label: "Machine — run a whole machine for this item"},
-		{Value: "branch", Label: "Branch — read a bool and skip ahead (no model call)"},
-		{Value: "tool", Label: "Tool — call a tool directly (no model, no tokens)"},
-		{Value: "synthesize", Label: "Synthesize — combine what earlier stages produced"},
+		{Value: "worker", Label: "Worker: one model call"},
+		{Value: "agent", Label: "Agent: dispatch to one of your agents"},
+		{Value: "machine", Label: "Machine: run a whole machine for this item"},
+		{Value: "branch", Label: "Branch: read a bool and skip ahead (no model call)"},
+		{Value: "tool", Label: "Tool: call a tool directly (no model, no tokens)"},
+		{Value: "synthesize", Label: "Synthesize: combine what earlier stages produced"},
 	}
 }
 
@@ -145,7 +145,7 @@ func (T *OrchestrateApp) savePipelineBodyStage(w http.ResponseWriter, udb Databa
 	if parent == nil {
 		var ok bool
 		if parent, ok = resolveBodyOwner(&def, parentRef); !ok {
-			http.Error(w, "no stage called "+strconv.Quote(parentRef)+" to add a step to — it was renamed or removed; reload the page",
+			http.Error(w, "no stage called "+strconv.Quote(parentRef)+" to add a step to: it was renamed or removed; reload the page",
 				http.StatusNotFound)
 			return Error("no parent")
 		}

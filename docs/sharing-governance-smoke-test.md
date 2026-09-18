@@ -1,8 +1,8 @@
-# Sharing & Governance — post-deploy smoke test
+# Sharing & Governance: post-deploy smoke test
 
 A walkthrough for the UI + dispatch behavior shipped in the phase-5
 sharing/governance batch (see `sharing-governance.md` for the design). None of
-this was runtime-tested during development — it's declarative UI + access wiring —
+this was runtime-tested during development (it's declarative UI + access wiring)
 so verify it against a running server after deploy. Work top to bottom; later
 sections reuse fixtures from earlier ones.
 
@@ -10,8 +10,8 @@ sections reuse fixtures from earlier ones.
 
 Create three accounts (Admin → Users):
 
-- `admin` — an administrator.
-- `alice`, `bob` — two ordinary (non-admin) users, both approved.
+- `admin`: an administrator.
+- `alice`, `bob`: two ordinary (non-admin) users, both approved.
 
 Have at least one **global credential** and one **user's own tool** to exercise
 things:
@@ -26,30 +26,30 @@ things:
 ## A. Dashboard clustering + Agents rename
 
 - [ ] The dashboard shows an **"Orchestrator"** cluster (a titled, bordered block)
-      containing **Agents, Bridges, Knowledge, Extensions** — not scattered among the
+      containing **Agents, Bridges, Knowledge, Extensions**: not scattered among the
       other app cards.
 - [ ] The **Agents** card is the full-width **lead** card *inside* that cluster
-      (not a separate hero above it), and it reads **"Agents"** — the word
+      (not a separate hero above it), and it reads **"Agents"**: the word
       "Agency" appears nowhere user-facing (card, page title, help text).
 - [ ] Non-family apps (custom apps, etc.) sit below the cluster; **Administrator**
       is the wide card at the bottom.
 - [ ] On a narrow window the cluster grid collapses to one column.
 
-## B. Admin credential access — tier 1 (which users)
+## B. Admin credential access: tier 1 (which users)
 
 As `admin`, Admin → API Credentials, on the `demo_api` row:
 
 - [ ] There is an **"Access"** button. Opening it shows a user picker (from the
       approved users), NOT a per-agent list.
-- [ ] Add `alice` to the list and save. Reopen — `alice` persists.
-- [ ] **Edit** (the expand) shows only the config form now — no inline
+- [ ] Add `alice` to the list and save. Reopen: `alice` persists.
+- [ ] **Edit** (the expand) shows only the config form now: no inline
       allowed-users editor (that moved to the Access button).
 - [ ] Flip the credential to **🔒 Secured** (the segmented pill). The **Access
-      button disappears** (secured creds defer access to their bound tools —
+      button disappears** (secured creds defer access to their bound tools
       the "Bindings" expand is their access surface). Flip back to **Open** →
       Access returns.
 
-## C. Agent editor — tier 2 (which of my agents)
+## C. Agent editor: tier 2 (which of my agents)
 
 As `admin`, open any agent in the editor (Agents → a row → Edit):
 
@@ -57,30 +57,30 @@ As `admin`, open any agent in the editor (Agents → a row → Edit):
       granted (includes `demo_api` if you're allowed it), **all checked by
       default**.
 - [ ] Secured credentials are **not** listed here (access follows their bindings).
-- [ ] Uncheck `demo_api`, reload the editor — it stays unchecked (persisted to the
-      agent's opt-out). Re-check it — persists.
+- [ ] Uncheck `demo_api`, reload the editor: it stays unchecked (persisted to the
+      agent's opt-out). Re-check it: persists.
 
-## D. Global tools access — symmetric with credentials
+## D. Global tools access: symmetric with credentials
 
 As `admin`, Admin → Global Tools:
 
 - [ ] `alice_tool` appears (owner `alice`). **Share** it.
 - [ ] On the shared row, an **"Access"** button opens the same kind of user
-      picker — "which users may adopt this tool." (Non-shared rows show no Access
+      picker: "which users may adopt this tool." (Non-shared rows show no Access
       button.) There is **no** per-agent scope pill on this section anymore.
 - [ ] Restrict adoption to `bob` only, save.
 
 ## E. Admin governance console (the user-plane view)
 
-As `admin`, Admin page — three sections near API Credentials:
+As `admin`, Admin page, three sections near API Credentials:
 
-- [ ] **User-owned credentials** — after alice creates a credential on her
+- [ ] **User-owned credentials**, after alice creates a credential on her
       Extensions page (section F), it appears here with owner `alice`, and
       **Disable** / **Enable** / **Delete** work (disable = revoke without delete).
-- [ ] **Global-tool adoptions** — after a user adopts a shared tool (section F),
+- [ ] **Global-tool adoptions**, after a user adopts a shared tool (section F),
       one row per (tool, adopter) shows here, with **Remove**; a **⚠ tool
       unshared** badge appears if you later unshare a tool someone adopted.
-- [ ] **User-owned agents** — see section G/H.
+- [ ] **User-owned agents**: see section G/H.
 
 ## F. Extensions (as a user) + tool promotion
 
@@ -88,10 +88,10 @@ As `admin`, Admin page — three sections near API Credentials:
 
 As `alice`, open **Extensions**:
 
-- [ ] **My credentials** — create one (`alice_cred`). Confirm it then appears in
+- [ ] **My credentials**: create one (`alice_cred`). Confirm it then appears in
       the admin **User-owned credentials** governance section (E).
-- [ ] **My tools** — `alice_tool` is listed. It has a **"Request to publish"**
-      action (a modal with a note field) — visible only while the tool isn't
+- [ ] **My tools**: `alice_tool` is listed. It has a **"Request to publish"**
+      action (a modal with a note field): visible only while the tool isn't
       shared and has no request pending.
 - [ ] Send a publish request. The row now shows a **"Publish requested"** badge
       and the request action is gone.
@@ -114,7 +114,7 @@ As `admin` (agent owner), open an agent in the editor:
 - [ ] A **"Share with users"** section (a user picker). Add `bob`. Save.
 - [ ] As `bob`, on the **dashboard**: a card for that agent appears (at
       `/agents/<slug>`).
-- [ ] `bob` opens it and chats — it responds. Crucially, the session is **bob's**
+- [ ] `bob` opens it and chats: it responds. Crucially, the session is **bob's**
       (his session list, his memory), and any credential the agent uses resolves
       in **bob's** namespace (not the owner's secret).
 - [ ] As `alice` (NOT in the share list), the agent card does **not** appear, and
@@ -130,19 +130,19 @@ As `admin`, Admin → **User-owned agents** (the governance table):
 - [ ] Click **Publish** (the "delegate to users" action). Confirm. The row now
       shows a **Published** badge and the Publish button is gone.
 - [ ] The owner's share is intact (Shared-with still shows `bob`).
-- [ ] The agent is now a normal published app — grant its `/agents/<slug>` path to
+- [ ] The agent is now a normal published app: grant its `/agents/<slug>` path to
       more users via Admin → Users → app access, and confirm they see it.
 - [ ] **Revoke share** clears the recipient list (bob loses peer access) but the
       agent itself survives (and stays Published if you published it).
 
-## I. Dispatch enforcement (behavioral — the access model)
+## I. Dispatch enforcement (behavioral: the access model)
 
 Harder to see in the UI; verify by using a tool that dispatches through a
 credential.
 
 - [ ] **Open cred, restricted:** give `demo_api` an Access list of `[alice]`
       only. Have `bob` run an agent whose tool dispatches through `demo_api`
-      (e.g. a `fetch_via` tool). The call is **refused** ("not shared with you") —
+      (e.g. a `fetch_via` tool). The call is **refused** ("not shared with you")
       tier-1 is enforced at dispatch, not just at tool-build.
 - [ ] **Open cred, same tool, alice:** alice runs it → the call **succeeds**.
 - [ ] **Secured cred defers to tools:** secure `demo_api`. Now a **bound** tool

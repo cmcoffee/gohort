@@ -506,7 +506,7 @@ func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []inject
 	if nb := notesContextBlock(notes); nb != "" {
 		body.WriteString(nb)
 	}
-	body.WriteString("## Worker findings for this turn (internal context — the user can't see this)\n\n")
+	body.WriteString("## Worker findings for this turn (internal context: the user can't see this)\n\n")
 	for _, s := range steps {
 		fmt.Fprintf(&body, "### Step %d: %s\n%s\n\n", s.ID, s.Title, strings.TrimSpace(s.Output))
 	}

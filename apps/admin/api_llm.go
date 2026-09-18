@@ -51,7 +51,7 @@ func (a *AdminApp) registerLLMRoutes(sub *http.ServeMux) {
 			// (thinking). Tested by TIER, not by one literal, so a new lead
 			// value can't slip past this guard.
 			if PrivateStageEnforced(req.Key) && RouteValueIsLead(req.Value) {
-				http.Error(w, "private stage — cannot route to lead", http.StatusForbidden)
+				http.Error(w, "private stage: cannot route to lead", http.StatusForbidden)
 				return
 			}
 			if a.db != nil {
@@ -121,7 +121,7 @@ func (a *AdminApp) registerLLMRoutes(sub *http.ServeMux) {
 			// holding SSH credentials and system data may reach the lead tier.
 			// An audit asking "when did servitor start using the lead model"
 			// needs to find an answer.
-			Log("[admin] user %q set all-LLMs-private=%v — private stages %s escalate to the lead tier",
+			Log("[admin] user %q set all-LLMs-private=%v: private stages %s escalate to the lead tier",
 				AuthCurrentUser(r), req.AllPrivate,
 				map[bool]string{true: "MAY now", false: "may no longer"}[req.AllPrivate])
 			w.WriteHeader(http.StatusNoContent)
@@ -141,14 +141,14 @@ func (a *AdminApp) registerLLMRoutes(sub *http.ServeMux) {
 			if v.Endpoint != "" {
 				where += " at " + v.Endpoint
 			}
-			lines = append(lines, v.Tier+": "+where+" — "+p+" ("+v.Reason+")")
+			lines = append(lines, v.Tier+": "+where+" · "+p+" ("+v.Reason+")")
 		}
 		advice := strings.Join(lines, "\n")
 		if recommended {
 			advice += "\n\nBoth tiers look local, so turning this on is consistent with how the deployment is configured."
 		} else {
-			advice += "\n\nAt least one tier reaches a third party. Turning this on anyway would send private-stage data — " +
-				"including SSH credentials and log contents — to it."
+			advice += "\n\nAt least one tier reaches a third party. Turning this on anyway would send private-stage data: " +
+				"including SSH credentials and log contents, to it."
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]any{

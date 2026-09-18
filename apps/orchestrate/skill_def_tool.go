@@ -27,7 +27,7 @@ type skillDefImpl struct{}
 
 func (skillDefImpl) Name() string { return "skill_def" }
 func (skillDefImpl) Desc() string {
-	return "Manage skills — saved domain packs (instructions + optional knowledge + tools) a host agent can draw on. Actions: list (every skill in the user's pool), get (one skill by name), create (author a skill with description, triggers, instructions, optional allowed_tools), update (patch an existing skill — only the fields you pass change, the rest are preserved), delete (drop a skill), help (full usage). Activation is model-driven: the host LLM reads each skill's description in its available-skills list and decides whether to consult the skill (via read_skill / skill_knowledge_search) — so the description is the activation signal. Triggers, when set, are an optional precision nudge (substring/glob match on the message/attachments): a match surfaces a 'likely relevant this turn' hint to the host LLM, which still decides whether to consult."
+	return "Manage skills: saved domain packs (instructions + optional knowledge + tools) a host agent can draw on. Actions: list (every skill in the user's pool), get (one skill by name), create (author a skill with description, triggers, instructions, optional allowed_tools), update (patch an existing skill, only the fields you pass change, the rest are preserved), delete (drop a skill), help (full usage). Activation is model-driven: the host LLM reads each skill's description in its available-skills list and decides whether to consult the skill (via read_skill / skill_knowledge_search), so the description is the activation signal. Triggers, when set, are an optional precision nudge (substring/glob match on the message/attachments): a match surfaces a 'likely relevant this turn' hint to the host LLM, which still decides whether to consult."
 }
 func (skillDefImpl) Params() map[string]ToolParam {
 	return map[string]ToolParam{
@@ -39,35 +39,35 @@ func (skillDefImpl) Params() map[string]ToolParam {
 		},
 		"triggers": {
 			Type:        "array",
-			Description: "(create / update) Optional precision nudge. Plain substrings, case-insensitive, matched against the user message (and inlined attachment header); a glob like *.pdf matches attachment filenames. A match surfaces a 'likely relevant this turn' hint to the host LLM — it does NOT force injection; the LLM still decides. Use disambiguating phrases (gh pr, SELECT ), not standalone words. Empty triggers = the skill activates purely when the LLM picks it from the description. Triggers supplement the description; they don't replace it.",
+			Description: "(create / update) Optional precision nudge. Plain substrings, case-insensitive, matched against the user message (and inlined attachment header); a glob like *.pdf matches attachment filenames. A match surfaces a 'likely relevant this turn' hint to the host LLM: it does NOT force injection; the LLM still decides. Use disambiguating phrases (gh pr, SELECT ), not standalone words. Empty triggers = the skill activates purely when the LLM picks it from the description. Triggers supplement the description; they don't replace it.",
 			Items:       &ToolParam{Type: "string"},
 		},
 		"allowed_tools": {
 			Type:        "array",
-			Description: "(create / update) Optional tool names tied to the skill. A name that matches a tool you authored this session (or the user's persistent pool) is SNAPSHOTTED into the skill — it ships with the skill and becomes callable whenever the skill is consulted (the skill's own executable code, e.g. a calculator or screener). A name that matches a source hook is used by skill_knowledge_search to query that source. Author the script first with tool_def(mode=\"shell\"), then list its name here to bundle it.",
+			Description: "(create / update) Optional tool names tied to the skill. A name that matches a tool you authored this session (or the user's persistent pool) is SNAPSHOTTED into the skill: it ships with the skill and becomes callable whenever the skill is consulted (the skill's own executable code, e.g. a calculator or screener). A name that matches a source hook is used by skill_knowledge_search to query that source. Author the script first with tool_def(mode=\"shell\"), then list its name here to bundle it.",
 			Items:       &ToolParam{Type: "string"},
 		},
 		"attached_collections": {
 			Type:        "array",
-			Description: rewriteMemoryToolNames("(create / update) Optional collection IDs whose corpus becomes searchable via knowledge_search when this skill is active. Use to ship domain reference material with the skill — e.g. a Kubernetes skill carries the k8s reference + an instructions section about \"in k8s contexts, prefer X.\" Active path only: when the skill isn't in use this turn, its collections stay out of scope, so heavy reference docs don't leak into unrelated turns. Pass collection IDs from collections(action=list)."),
+			Description: rewriteMemoryToolNames("(create / update) Optional collection IDs whose corpus becomes searchable via knowledge_search when this skill is active. Use to ship domain reference material with the skill: e.g. a Kubernetes skill carries the k8s reference + an instructions section about \"in k8s contexts, prefer X.\" Active path only: when the skill isn't in use this turn, its collections stay out of scope, so heavy reference docs don't leak into unrelated turns. Pass collection IDs from collections(action=list)."),
 			Items:       &ToolParam{Type: "string"},
 		},
 		"attach_to_agents": {
 			Type:        "array",
-			Description: "(create / update) Agent names or IDs to add this skill to, by appending it to each one's allowed_skills. A skill an agent does not allow is invisible to it — creating one without attaching it leaves it in the user's pool doing nothing. Same argument the machine and pipeline tools take.",
+			Description: "(create / update) Agent names or IDs to add this skill to, by appending it to each one's allowed_skills. A skill an agent does not allow is invisible to it: creating one without attaching it leaves it in the user's pool doing nothing. Same argument the machine and pipeline tools take.",
 			Items:       &ToolParam{Type: "string"},
 		},
 		"create_collection": {
 			Type:        "boolean",
-			Description: "(create) When true, mint a NEW empty knowledge collection named after the skill and auto-attach it (added to attached_collections). Use when the skill needs its own reference corpus and one doesn't exist yet — you get back the collection ID; tell the user to populate it via the Knowledge surface (upload docs or Auto-fill). To link an EXISTING collection instead, pass its ID in attached_collections and leave this off.",
+			Description: "(create) When true, mint a NEW empty knowledge collection named after the skill and auto-attach it (added to attached_collections). Use when the skill needs its own reference corpus and one doesn't exist yet: you get back the collection ID; tell the user to populate it via the Knowledge surface (upload docs or Auto-fill). To link an EXISTING collection instead, pass its ID in attached_collections and leave this off.",
 		},
 		"instructions": {
 			Type:        "string",
-			Description: "(create / update) Markdown body that gets appended to the active agent's system prompt when this skill activates. Write it as additive guidance — \"when this kind of task comes up, also do X, Y, Z.\" The framework prepends an `## Skill: <name>` H2 header automatically.",
+			Description: "(create / update) Markdown body that gets appended to the active agent's system prompt when this skill activates. Write it as additive guidance, \"when this kind of task comes up, also do X, Y, Z.\" The framework prepends an `## Skill: <name>` H2 header automatically.",
 		},
 		"playbook": {
 			Type:        "string",
-			Description: "(create / update) Optional. The skill's CONDITIONAL behaviour as a JSON array of rules, each \"establish Y; if Y then Z, else U\". When the skill is consulted the framework ESTABLISHES each rule's fact itself — a step with the skill's tools and a declared output — and hands the host agent only the arm that applies, so the condition is settled before either branch can start. Rule shape: {\"fact\": \"queue_draining\", \"how\": \"Read the consumer lag for the orders queue over the last five minutes.\", \"then\": \"Look at the consumer: its log, restart count, lag trend.\", \"else\": \"Look at the broker: connectivity from the consumer host, partition state, disk.\"}. Optional: \"when\": [triggers] to apply the rule only on matching turns; \"type\": \"choice\" with \"values\": [...] and \"cases\": {value: arm} for a many-way branch; \"then_rule\" / \"else_rule\" / \"case_rules\" to nest another rule (two levels max). A playbook skill FIRES ON ITS OWN when the skill's triggers or a rule's when match the message — the facts are established before the agent's first round — so give a playbook skill triggers; without them it runs only when the agent chooses to consult the skill. Put prose that does not branch in instructions, not here. Pass \"[]\" to clear.",
+			Description: "(create / update) Optional. The skill's CONDITIONAL behaviour as a JSON array of rules, each \"establish Y; if Y then Z, else U\". When the skill is consulted the framework ESTABLISHES each rule's fact itself (a step with the skill's tools and a declared output), and hands the host agent only the arm that applies, so the condition is settled before either branch can start. Rule shape: {\"fact\": \"queue_draining\", \"how\": \"Read the consumer lag for the orders queue over the last five minutes.\", \"then\": \"Look at the consumer: its log, restart count, lag trend.\", \"else\": \"Look at the broker: connectivity from the consumer host, partition state, disk.\"}. Optional: \"when\": [triggers] to apply the rule only on matching turns; \"type\": \"choice\" with \"values\": [...] and \"cases\": {value: arm} for a many-way branch; \"then_rule\" / \"else_rule\" / \"case_rules\" to nest another rule (two levels max). A playbook skill FIRES ON ITS OWN when the skill's triggers or a rule's when match the message (the facts are established before the agent's first round), so give a playbook skill triggers; without them it runs only when the agent chooses to consult the skill. Put prose that does not branch in instructions, not here. Pass \"[]\" to clear.",
 		},
 	}
 }
@@ -100,7 +100,7 @@ func (s skillDefImpl) RunWithSession(args map[string]any, sess *ToolSession) (st
 }
 
 func skillDefHelpText() string {
-	return `skill_def — usage
+	return `skill_def: usage
 
 action="list"
   Return every skill in the user's pool as JSON
@@ -114,7 +114,7 @@ action="create", name=..., description=..., instructions=...,
                  attached_collections=[...]?, create_collection=true?
   Upsert a skill. If a skill with this name already exists in the
   user's pool, it gets replaced (same record, new content).
-  attached_collections ships domain corpus alongside the skill —
+  attached_collections ships domain corpus alongside the skill
   searchable via knowledge_search only when the skill is active.
   create_collection=true mints a fresh empty collection named
   "<skill> Knowledge" and auto-links it; the user then fills it via
@@ -123,7 +123,7 @@ action="create", name=..., description=..., instructions=...,
 
 action="update", name=..., [description / instructions / triggers /
                  allowed_tools / attached_collections]
-  PATCH an existing skill — only the fields you pass are overwritten;
+  PATCH an existing skill: only the fields you pass are overwritten;
   everything else is preserved. Use to tweak one thing (e.g. add "war"
   to a geopolitics skill's description) without re-supplying the whole
   record. Errors if no skill with that name exists.
@@ -137,16 +137,16 @@ action="help"
 What skills do: every allowed skill's name + description is listed in
 the host agent's prompt. The LLM reads that list and, when a skill's
 domain fits the task, consults it (read_skill / skill_knowledge_search)
-— activation is the model's call, and the description is what it judges
+· activation is the model's call, and the description is what it judges
 against. If a skill has triggers, a substring/glob match on the message
 or an attachment filename surfaces a "likely relevant this turn" hint to
-the host LLM — a nudge toward consulting, not a forced injection.
+the host LLM: a nudge toward consulting, not a forced injection.
 A consulted skill's BUNDLED tools (scripts snapshotted from allowed_tools at
-author time) join the catalog for that turn — its own executable code, callable
+author time) join the catalog for that turn: its own executable code, callable
 without spending context tokens.
 
 Think of skills as dynamic personas: "if the user is doing X, also
-know Y." Keep them focused — one skill, one capability. Multiple small
+know Y." Keep them focused: one skill, one capability. Multiple small
 skills compose better than one giant catch-all.`
 }
 
@@ -197,11 +197,11 @@ func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	description := strings.TrimSpace(stringArg(args, "description"))
 	if description == "" {
-		return "", errors.New("description is required — the host LLM reads it to decide whether to consult this skill")
+		return "", errors.New("description is required: the host LLM reads it to decide whether to consult this skill")
 	}
 	instructions := stringArg(args, "instructions")
 	if strings.TrimSpace(instructions) == "" {
-		return "", errors.New("instructions is required — that's the markdown body that gets injected when the skill activates")
+		return "", errors.New("instructions is required: that's the markdown body that gets injected when the skill activates")
 	}
 	triggers := stringSliceFromArgs(args, "triggers")
 	allowedTools := stringSliceFromArgs(args, "allowed_tools")
@@ -269,11 +269,11 @@ func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 	attached, unknown := attachSkillToAgents(sess, args["attach_to_agents"], saved.ID)
 	collNote := ""
 	if mintedCollection != "" {
-		collNote = fmt.Sprintf(" Created and linked an empty knowledge collection %q Knowledge (id=%s) — it has no documents yet, so tell the user to populate it via the Knowledge surface (upload docs or Auto-fill) before the skill's knowledge_search returns anything.", saved.Name, mintedCollection)
+		collNote = fmt.Sprintf(" Created and linked an empty knowledge collection %q Knowledge (id=%s): it has no documents yet, so tell the user to populate it via the Knowledge surface (upload docs or Auto-fill) before the skill's knowledge_search returns anything.", saved.Name, mintedCollection)
 	}
 	toolNote := ""
 	if copiedTools > 0 {
-		toolNote = fmt.Sprintf(" Bundled %d tool(s) INTO the skill — they ship with it and become callable whenever the skill is consulted.", copiedTools)
+		toolNote = fmt.Sprintf(" Bundled %d tool(s) INTO the skill: they ship with it and become callable whenever the skill is consulted.", copiedTools)
 	}
 	return fmt.Sprintf("Skill %q %s.%s%s %s%s", saved.Name, verb, toolNote,
 		attachNote(attached, unknown), activationNote(saved), collNote), nil
@@ -289,7 +289,7 @@ func attachNote(attached, unknown []string) string {
 	case len(attached) > 0:
 		fmt.Fprintf(&b, " Attached to %s.", strings.Join(attached, ", "))
 	case len(unknown) == 0:
-		b.WriteString(" NOT attached to any agent, so no agent can see it — pass attach_to_agents, or add it to an agent's allowed_skills.")
+		b.WriteString(" NOT attached to any agent, so no agent can see it: pass attach_to_agents, or add it to an agent's allowed_skills.")
 	}
 	if len(unknown) > 0 {
 		fmt.Fprintf(&b, " No agent found named: %s.", strings.Join(unknown, ", "))
@@ -305,7 +305,7 @@ func activationNote(s SkillRecord) string {
 		if len(s.Triggers) > 0 {
 			return "It carries a playbook, so on a turn matching its triggers the framework establishes its facts BEFORE the agent's first round and hands the agent only the arm that applies."
 		}
-		return "It carries a playbook but NO triggers, so it fires only when the agent chooses to consult it — give it triggers if it should fire on its own."
+		return "It carries a playbook but NO triggers, so it fires only when the agent chooses to consult it: give it triggers if it should fire on its own."
 	}
 	return "Host agents activate it by reading its description in their skill list; a trigger match adds a \"likely relevant\" hint on matching turns."
 }
@@ -414,7 +414,7 @@ func skillDefUpdate(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	existing, ok := FindSkillByName(sess.DB, sess.Username, name)
 	if !ok {
-		return "", fmt.Errorf("skill %q not found — use action=create to make a new one", name)
+		return "", fmt.Errorf("skill %q not found: use action=create to make a new one", name)
 	}
 	rec := existing
 	var changed []string
@@ -454,7 +454,7 @@ func skillDefUpdate(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	attached, unknown := attachSkillToAgents(sess, args["attach_to_agents"], rec.ID)
 	if len(changed) == 0 && len(attached) == 0 && len(unknown) == 0 {
-		return "", errors.New("nothing to update — pass at least one of description, instructions, triggers, allowed_tools, attached_collections, playbook, attach_to_agents")
+		return "", errors.New("nothing to update: pass at least one of description, instructions, triggers, allowed_tools, attached_collections, playbook, attach_to_agents")
 	}
 	saved, err := SaveSkill(sess.DB, sess.Username, rec)
 	if err != nil {

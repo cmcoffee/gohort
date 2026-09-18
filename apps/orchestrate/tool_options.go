@@ -376,7 +376,7 @@ func (t *chatTurn) buildAttachedSourceToolDefs(sess *ToolSession) []AgentToolDef
 			Log("[orchestrate.tools] agent=%s: attached source %s/%s resolved to no tools (removed or no longer shared?)",
 				t.agent.ID, kind, item)
 			t.turnDiag("attached_source_empty", "the attached source "+kind+"/"+item+
-				" gave this turn no tools — it was removed, is no longer shared, or was re-created with a "+
+				" gave this turn no tools: it was removed, is no longer shared, or was re-created with a "+
 				"different id on the far side. Detach and re-attach it (Configure → Sources) to point at "+
 				"what is there now.")
 			continue
@@ -411,7 +411,7 @@ func referenceSelectionsFromArgs(args map[string]any, key string) []ReferenceSel
 		kind, item, found := strings.Cut(strings.TrimSpace(raw), ":")
 		kind, item = strings.TrimSpace(kind), strings.TrimSpace(item)
 		if !found || kind == "" || item == "" {
-			Log("[orchestrate.agents] ignoring attached source %q — expected \"<kind>:<item_id>\"", raw)
+			Log("[orchestrate.agents] ignoring attached source %q, expected \"<kind>:<item_id>\"", raw)
 			continue
 		}
 		if seen[kind+":"+item] {
@@ -431,7 +431,7 @@ func listReferenceSourcesToolDef(user string) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name: "list_reference_sources",
-			Description: "List the cross-app knowledge sources an agent can be attached to (attached_sources) — servitor systems, evidence bundles, tool-backed services, whole servitor workspaces, registered file-store folders, connected document spaces. " +
+			Description: "List the cross-app knowledge sources an agent can be attached to (attached_sources): servitor systems, evidence bundles, tool-backed services, whole servitor workspaces, registered file-store folders, connected document spaces. " +
 				"Returns each source's kind and its items with ids, ready to pass as \"<kind>:<item_id>\". " +
 				"Attaching one gives the agent named tools for it, shaped by the source: instant search over what has already been gathered, its recorded facts and a live read-only investigation for a system; list/search/read for a folder of files. No arguments.",
 		},
@@ -451,7 +451,7 @@ func renderReferenceSources(user string) string {
 	for _, g := range groups {
 		fmt.Fprintf(&b, "## %s (kind: %s)\n", g.Label, g.Kind)
 		for _, it := range g.Items {
-			fmt.Fprintf(&b, "- %s:%s — %s", g.Kind, it.ID, it.Name)
+			fmt.Fprintf(&b, "- %s:%s, %s", g.Kind, it.ID, it.Name)
 			if strings.TrimSpace(it.Desc) != "" {
 				fmt.Fprintf(&b, " (%s)", it.Desc)
 			}
@@ -604,7 +604,7 @@ func frameworkPhaseToolOptions() []ui.SelectOption {
 			Value: name,
 			Label: name,
 			Group: "Framework (provided automatically)",
-			Help: "Provided by the framework rather than by the agent's tool list — it arrives when the condition behind it holds " +
+			Help: "Provided by the framework rather than by the agent's tool list: it arrives when the condition behind it holds " +
 				"(a corpus attached, for knowledge_search / fetch_knowledge_doc). A step that names ANY tools drops the ones it does not name, " +
 				"including this one, so tick it here if this step's prompt calls for it.",
 		})

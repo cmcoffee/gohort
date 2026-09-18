@@ -93,7 +93,7 @@ func (t *CreateTempToolTool) Caps() []Capability { return []Capability{CapExecut
 func (t *CreateTempToolTool) NeedsConfirm() bool { return true }
 
 func (t *CreateTempToolTool) Desc() string {
-	return "Define a new tool for this session. The tool runs a shell command template you supply; placeholders like {arg_name} are filled with the caller's arguments (shell-quoted to prevent injection). The tool appears in your catalog on the next round and stays available for the rest of this session. Use this when you find yourself re-issuing the same shell command pattern with different inputs (e.g. resizing many images, batch-converting files, scraping a series of URLs). Runs in the same workspace sandbox as run_local — cannot reach files outside the workspace. Requires user confirmation."
+	return "Define a new tool for this session. The tool runs a shell command template you supply; placeholders like {arg_name} are filled with the caller's arguments (shell-quoted to prevent injection). The tool appears in your catalog on the next round and stays available for the rest of this session. Use this when you find yourself re-issuing the same shell command pattern with different inputs (e.g. resizing many images, batch-converting files, scraping a series of URLs). Runs in the same workspace sandbox as run_local: cannot reach files outside the workspace. Requires user confirmation."
 }
 
 func (t *CreateTempToolTool) Params() map[string]ToolParam {
@@ -108,7 +108,7 @@ func (t *CreateTempToolTool) Params() map[string]ToolParam {
 		},
 		"params": {
 			Type:        "object",
-			Description: "Object describing the tool's parameters. Each key is a param name and its value is an object {type, description, [required]}. Type must be \"string\", \"integer\", \"number\", or \"boolean\". E.g. {\"input\": {\"type\": \"string\", \"description\": \"Input file path\"}, \"size\": {\"type\": \"string\", \"description\": \"Target dimensions like 800x600\"}}. OPTIONAL — omit for a tool that takes no params; don't invent a dummy placeholder.",
+			Description: "Object describing the tool's parameters. Each key is a param name and its value is an object {type, description, [required]}. Type must be \"string\", \"integer\", \"number\", or \"boolean\". E.g. {\"input\": {\"type\": \"string\", \"description\": \"Input file path\"}, \"size\": {\"type\": \"string\", \"description\": \"Target dimensions like 800x600\"}}. OPTIONAL: omit for a tool that takes no params; don't invent a dummy placeholder.",
 		},
 		"command_template": {
 			Type:        "string",
@@ -124,7 +124,7 @@ func (t *CreateTempToolTool) Params() map[string]ToolParam {
 		},
 		"script_body": {
 			Type:        "string",
-			Description: "Optional. The full source of a script to ship with the tool — Python, Bash, awk, jq, whatever. Written into the tool's sandbox at registration time as `script_name` (default \"script.py\"). Use this for any tool whose logic is more than a one-liner. Reference it from command_template as {workspace_dir}/<script_name>. Auto-mints a sandbox if none exists; no need to set up a workspace first.",
+			Description: "Optional. The full source of a script to ship with the tool: Python, Bash, awk, jq, whatever. Written into the tool's sandbox at registration time as `script_name` (default \"script.py\"). Use this for any tool whose logic is more than a one-liner. Reference it from command_template as {workspace_dir}/<script_name>. Auto-mints a sandbox if none exists; no need to set up a workspace first.",
 		},
 		"script_name": {
 			Type:        "string",
@@ -152,14 +152,14 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	// shadow a real tool with a temp one and confuse later dispatch.
 	for _, ct := range RegisteredChatTools() {
 		if ct.Name() == name {
-			return "", fmt.Errorf("name %q collides with a registered tool — pick another", name)
+			return "", fmt.Errorf("name %q collides with a registered tool: pick another", name)
 		}
 	}
 	// Also reject DYNAMIC per-agent built-ins (channel/operator tools) that aren't
 	// in the static catalog — a temp tool named e.g. send_message would otherwise
 	// shadow the real, delivering tool with a stub that fakes success.
 	if IsReservedToolName(name) {
-		return "", fmt.Errorf("name %q is a built-in tool (channel/operator) — pick another; don't recreate it", name)
+		return "", fmt.Errorf("name %q is a built-in tool (channel/operator): pick another; don't recreate it", name)
 	}
 	// And reject a name an existing toolbox action already publishes.
 	if err := CheckCatalogNameCollision(sess, name, nil); err != nil {
@@ -188,7 +188,7 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 		return "", err
 	}
 	if cmd == "" {
-		return "", fmt.Errorf("command_template is required (or supply script_body for a recognized extension — .py/.sh/.bash/.js/.jq/.rb — and the framework will infer python3 {workspace_dir}/script.py; declared params reach the script as ENVIRONMENT VARIABLES, not positional argv — read them with os.environ['name'])")
+		return "", fmt.Errorf("command_template is required (or supply script_body for a recognized extension.py/.sh/.bash/.js/.jq/.rb, and the framework will infer python3 {workspace_dir}/script.py; declared params reach the script as ENVIRONMENT VARIABLES, not positional argv, read them with os.environ['name'])")
 	}
 	if scriptBody == "" && strings.Contains(cmd, "{workspace_dir}") {
 		// command_template references {workspace_dir} but no script_body
@@ -209,7 +209,7 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 		// that reference workspace_dir as a scratch path for output
 		// files (data.json, screenshot.png) aren't false-positives.
 		if missing := missingWorkspaceScriptRefs(cmd, sess.WorkspaceDir); len(missing) > 0 {
-			return "", fmt.Errorf("command_template references script file(s) %v in {workspace_dir} that don't exist on disk. Either (a) pass script_body so the framework ships the script with the tool record (preferred — survives workspace wipes), OR (b) call local(action=\"write\", path=\"<exact-filename>\", content=\"...\") BEFORE this tool_def call, with the path matching what command_template expects", missing)
+			return "", fmt.Errorf("command_template references script file(s) %v in {workspace_dir} that don't exist on disk. Either (a) pass script_body so the framework ships the script with the tool record (preferred: survives workspace wipes), OR (b) call local(action=\"write\", path=\"<exact-filename>\", content=\"...\") BEFORE this tool_def call, with the path matching what command_template expects", missing)
 		}
 		// CAPTURE-INTO-RECORD: the LLM authored via local(write) + a
 		// command_template reference rather than the script_body param.
@@ -366,9 +366,9 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 				if cr, ok := Secure().Load(name); ok && cr.Secured {
 					switch {
 					case method == "secret":
-						return "", fmt.Errorf("credential %q is SECURED — a tool cannot take its raw secret (secret:%s). Route the call through the credential with fetch_via:%s instead — the secret stays server-side and the binding is automatic", name, name, name)
+						return "", fmt.Errorf("credential %q is SECURED, a tool cannot take its raw secret (secret:%s). Route the call through the credential with fetch_via:%s instead, the secret stays server-side and the binding is automatic", name, name, name)
 					case Secure().ToolBindingRevoked(name, tool.Name):
-						return "", fmt.Errorf("credential %q is SECURED and tool %q's binding was REVOKED by an admin — ask them to restore it in Admin > APIs, or use a different tool name", name, tool.Name)
+						return "", fmt.Errorf("credential %q is SECURED and tool %q's binding was REVOKED by an admin: ask them to restore it in Admin > APIs, or use a different tool name", name, tool.Name)
 					default:
 						// Auto-resolve: record the binding so it shows in the admin
 						// effective-access view; access is governed by the tool's scope.
@@ -382,7 +382,7 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 					// Bare qualified-form methods are intentionally
 					// not honored — every credential grant must be
 					// explicit.
-					return "", fmt.Errorf("hook_capabilities entry %q is too broad — declare specific credentials as %q instead", c, c+":<credential_name>")
+					return "", fmt.Errorf("hook_capabilities entry %q is too broad: declare specific credentials as %q instead", c, c+":<credential_name>")
 				}
 				if !bareKnown[c] {
 					bad = append(bad, c)
@@ -396,7 +396,7 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 			clean = append(clean, c)
 		}
 		if len(bad) > 0 {
-			return "", fmt.Errorf("hook_capabilities lists unknown entry/entries %v — known forms: \"fetch\", \"log\", \"secret:<credential_name>\", \"fetch_via:<credential_name>\"", bad)
+			return "", fmt.Errorf("hook_capabilities lists unknown entry/entries %v, known forms: \"fetch\", \"log\", \"secret:<credential_name>\", \"fetch_via:<credential_name>\"", bad)
 		}
 		tool.HookCapabilities = clean
 	}
@@ -431,7 +431,7 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 		if missing := findUngrantedCredentialCalls(scriptBody, tool.HookCapabilities); missing.calls != "" {
 			return "", fmt.Errorf(
 				"script_body uses %s but hook_capabilities doesn't grant the credential(s). "+
-					"Add %s to hook_capabilities — the framework won't auto-grant credential names. "+
+					"Add %s to hook_capabilities: the framework won't auto-grant credential names. "+
 					"Register the credential via the admin UI first if it doesn't exist yet.",
 				missing.calls, missing.suggest)
 		}
@@ -442,7 +442,7 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 		// rewrite path is closed off entirely.
 		if forbidden := detectForbiddenNetworkPatterns(scriptBody); forbidden != "" {
 			return "", fmt.Errorf(
-				"script_body uses %s — that's BLOCKED. Any network-doing standard library (urllib / requests / curl / wget / http.client / socket) is blocked in the script sandbox. All HTTP goes through gohort: `from gohort import fetch_url; data = fetch_url(url)`. If gohort.fetch_url is returning a 4xx, the fix is NOT a different HTTP client — diagnose the URL itself, escalate to gohort.browse_page for JS-heavy / anti-bot hosts, or add hook_capabilities=[\"fetch_via:<credential_name>\"] for authenticated endpoints.",
+				"script_body uses %s: that's BLOCKED. Any network-doing standard library (urllib / requests / curl / wget / http.client / socket) is blocked in the script sandbox. All HTTP goes through gohort: `from gohort import fetch_url; data = fetch_url(url)`. If gohort.fetch_url is returning a 4xx, the fix is NOT a different HTTP client, diagnose the URL itself, escalate to gohort.browse_page for JS-heavy / anti-bot hosts, or add hook_capabilities=[\"fetch_via:<credential_name>\"] for authenticated endpoints.",
 				forbidden)
 		}
 	}

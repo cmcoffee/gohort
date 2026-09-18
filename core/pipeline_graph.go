@@ -210,7 +210,7 @@ func pipelineLegend(d PipelineDef) []string {
 	for _, s := range d.Stages {
 		if strings.TrimSpace(string(s.Kind)) == string(StageBranch) && strings.TrimSpace(s.SkipTo) == "" {
 			out = append(out, "Branch "+strconv.Quote(strings.TrimSpace(s.Name))+
-				" ENDS the pipeline when it fires — its arrow onward is the case where it does not.")
+				" ENDS the pipeline when it fires: its arrow onward is the case where it does not.")
 		}
 	}
 	return out

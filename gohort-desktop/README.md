@@ -5,14 +5,14 @@ Native desktop host for gohort + the local-capability tool bridge.
 Shipped as **two separate apps** (one Go module, two `package main` build
 targets):
 
-- **Gohort.app** — the viewer. A Wails window that reverse-proxies the
+- **Gohort.app**: the viewer. A Wails window that reverse-proxies the
   gohort web UI (orchestrate / Agency / etc.). Dock icon, no special
   permissions, quittable. Knows nothing about tools or iMessage.
-- **Gohort-Bridge.app** — the bridge. An always-on **menu-bar** daemon
+- **Gohort-Bridge.app**: the bridge. An always-on **menu-bar** daemon
   (`LSUIElement`, no dock icon) that owns every OS-level permission and
   capability. It hosts the WebSocket tool bridge to the gohort server, the
-  local tool catalog (filesystem, contacts), an MCP host, and —
-  on macOS — the iMessage relay. Launches the viewer via its tray menu.
+  local tool catalog (filesystem, contacts), an MCP host, and
+  on macOS: the iMessage relay. Launches the viewer via its tray menu.
 
 The split exists because Wails and the system-tray library can't share one
 process (`fyne.io/systray` claims the `NSApplication` delegate, which Wails
@@ -44,7 +44,7 @@ user / tray opens ──── Gohort.app (Wails viewer; quittable, no perms)
 - **One API key** authenticates **both** `/bridges/api/*` and the tool
   bridge `/api/desktop/ws` (server side: `core.RegisterAPIKeyValidator` +
   the bridge key's `Owner`). Set it once in the viewer.
-- **Config is a lock-free JSON sidecar** — `core.BridgeConfig`
+- **Config is a lock-free JSON sidecar**: `core.BridgeConfig`
   (`server_url`, `api_key`, allowed read/write roots, …) at
   `<app-support>/gohort-desktop/bridge-config.json` (0600). The viewer
   writes it; the bridge re-reads it live, so edits apply without a restart.
@@ -139,7 +139,7 @@ only fill argument values, so there is no shell-injection surface.
 | Reload (⌘R) | Reload the current proxied page |
 | Log Out (⌘⇧L) | Clear the local cookie jar + hit gohort `/logout` |
 
-> Menu callbacks drive the webview via `runtime.WindowExecJS` — proxy-served
+> Menu callbacks drive the webview via `runtime.WindowExecJS`: proxy-served
 > pages don't carry the Wails JS runtime (`window.go` / `window.runtime`),
 > so anything that reaches the page from Go must execute JS, not rely on
 > bindings. Page-side config posts to Go-handled `/__desktop/*` endpoints.

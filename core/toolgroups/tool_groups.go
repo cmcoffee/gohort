@@ -230,7 +230,7 @@ func builtinToolGroups() []ToolGroup {
 		{
 			ID:          "builtin-web-media",
 			Name:        "Web Media",
-			Description: "Tools for rich web content and media beyond plain text fetching: rendering JavaScript-heavy pages, capturing screenshots, finding and downloading images, downloading and viewing videos. Expand when the user's request genuinely involves page interaction or image/video handling. For text-only research keep using web_search and fetch_url at the top level — those stay outside the toolbox because they're called every research turn.",
+			Description: "Tools for rich web content and media beyond plain text fetching: rendering JavaScript-heavy pages, capturing screenshots, finding and downloading images, downloading and viewing videos. Expand when the user's request genuinely involves page interaction or image/video handling. For text-only research keep using web_search and fetch_url at the top level: those stay outside the toolbox because they're called every research turn.",
 			Members: []string{
 				"browse_page",
 				"screenshot_page",

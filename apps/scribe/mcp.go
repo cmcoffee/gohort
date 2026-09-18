@@ -86,17 +86,17 @@ func guidesMCPList(_ context.Context, owner string, _ map[string]any) (string, e
 	}
 	var b strings.Builder
 	for _, g := range guides {
-		fmt.Fprintf(&b, "- %s — %q", g.ID, g.Title)
+		fmt.Fprintf(&b, "- %s: %q", g.ID, g.Title)
 		if g.Subtitle != "" {
 			fmt.Fprintf(&b, " (%s)", g.Subtitle)
 		}
 		if g.isArticle() {
 			// Said plainly, because the write tool behaves differently here:
 			// an article is one body, so guides_add_section refuses it.
-			fmt.Fprintf(&b, " — article, %d word(s)\n", len(strings.Fields(g.body())))
+			fmt.Fprintf(&b, ", article, %d word(s)\n", len(strings.Fields(g.body())))
 			continue
 		}
-		fmt.Fprintf(&b, " — guide, %d section(s)\n", len(g.Sections))
+		fmt.Fprintf(&b, ", guide, %d section(s)\n", len(g.Sections))
 	}
 	return strings.TrimRight(b.String(), "\n"), nil
 }
@@ -141,7 +141,7 @@ func guidesMCPAddSection(_ context.Context, owner string, args map[string]any) (
 		return "", fmt.Errorf("no guide with id %q (use guides_list)", gid)
 	}
 	if g.isArticle() {
-		return "", fmt.Errorf("%q is an article — one body, not sections. Edit it in Scribe, or create a guide with guides_create and add sections to that", g.Title)
+		return "", fmt.Errorf("%q is an article: one body, not sections. Edit it in Scribe, or create a guide with guides_create and add sections to that", g.Title)
 	}
 	title := strings.TrimSpace(mcpStr(args, "title"))
 	if title == "" {

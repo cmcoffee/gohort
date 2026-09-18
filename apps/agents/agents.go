@@ -274,7 +274,7 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 	if agent.AllowPrivateMode && !agent.ForcePrivate {
 		modes = append(modes, ui.ChatMode{
 			Label:     "Private",
-			Title:     "Mask network-capability tools (web_search, fetch_url, …) — keeps this turn local.",
+			Title:     "Mask network-capability tools (web_search, fetch_url, …): keeps this turn local.",
 			GetURL:    "api/settings/private",
 			PostURL:   "api/settings/private/set",
 			Field:     "private_mode",
@@ -288,7 +288,7 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 	if !agent.DisableInferred {
 		modes = append(modes, ui.ChatMode{
 			Label:     "Clean",
-			Title:     "Suppress the Reference Memory layer for this turn — no memory_save / memory_search / memory_forget tools, no synthesis auto-ingest, no derived chunks in auto-injection. The agent answers fresh from your question plus the Knowledge layer (uploaded files) and Explicit Memory (facts), without its own prior derived findings coloring the response.",
+			Title:     "Suppress the Reference Memory layer for this turn: no memory_save / memory_search / memory_forget tools, no synthesis auto-ingest, no derived chunks in auto-injection. The agent answers fresh from your question plus the Knowledge layer (uploaded files) and Explicit Memory (facts), without its own prior derived findings coloring the response.",
 			GetURL:    "api/settings/memory",
 			PostURL:   "api/settings/memory/set",
 			Field:     "inferred_disabled",
@@ -311,7 +311,7 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 		ui.ToolbarAction{Label: "Knowledge", Group: "⋯", Method: "client", URL: "agents_knowledge_modal",
 			Title: "Manage your private documents for this agent, review the agent's shared knowledge base, and wipe your accumulated corpus."},
 		ui.ToolbarAction{Label: "Copy session", Group: "⋯", Method: "client", URL: "copy_session",
-			Title: "Copy the full session as markdown — every user message, every assistant round, every tool call/result — for pasting into a prompt-tuning chat."},
+			Title: "Copy the full session as markdown (every user message, every assistant round, every tool call/result) for pasting into a prompt-tuning chat."},
 	)
 	panel := ui.AgentLoopPanel{
 		ListURL:     "api/sessions",
@@ -445,7 +445,7 @@ const intakeFormAssets = `<style>
 .ui-orch-intake-actions {
   display: flex; justify-content: flex-end; margin-top: 0.5rem;
 }
-/* Button-type intake field — row of clickable buttons that each
+/* Button-type intake field: row of clickable buttons that each
  * submit the form immediately with their label as the value. */
 .ui-orch-intake-button-row {
   display: flex; flex-wrap: wrap; gap: 0.4rem;
@@ -469,7 +469,7 @@ const intakeFormAssets = `<style>
 .ui-orch-intake-button.selected:disabled {
   opacity: 0.9;
 }
-/* Button-only intake form (no typed fields, only buttons) — center
+/* Button-only intake form (no typed fields, only buttons): center
  * the buttons so the form reads as a tidy "pick one" panel rather
  * than a left-aligned form row. */
 .ui-orch-intake-button-only .ui-orch-intake-button-row {
@@ -478,7 +478,7 @@ const intakeFormAssets = `<style>
 .ui-orch-intake-button-only .ui-orch-intake-header {
   text-align: center;
 }
-/* No visible actions row in button-only mode — the submit button is
+/* No visible actions row in button-only mode: the submit button is
  * hidden and there's nothing else to render. display:none on the
  * wrapper kills the margin-top that would otherwise leave a gap at
  * the bottom of the form. The hidden submit button stays findable
@@ -525,7 +525,7 @@ const intakeFormAssets = `<style>
   }
   // setInputRowHidden flips the chat-input row off (form active) or
   // back on (form submitted/cleared). The user shouldn't be able to
-  // bypass the intake form by typing freeform text — hide the input
+  // bypass the intake form by typing freeform text: hide the input
   // and send button for the duration the form is up. Per-bubble edit
   // form path is unaffected (it operates on a bubble, not the
   // bottom-of-pane input).
@@ -577,7 +577,7 @@ const intakeFormAssets = `<style>
         // Button-type field renders the f.options as a row of
         // buttons. Clicking any one stores its value on the input's
         // dataset.value and triggers the form's primary submit
-        // immediately — no separate submit click needed.
+        // immediately: no separate submit click needed.
         // In disabled mode (history-view bubble), buttons are
         // greyed out and the previously-selected one gets a
         // .selected class so the user can see which they picked.
@@ -638,7 +638,7 @@ const intakeFormAssets = `<style>
   }
   // collect pulls (label, value) pairs out of an inputs map, in
   // field order, skipping empty entries. File fields are NOT packed
-  // into entries — they ride as attachments via uiAddPendingAttachment.
+  // into entries: they ride as attachments via uiAddPendingAttachment.
   // Returns null when a required field is empty (caller alerts user).
   function collect(fields, inputs) {
     var missing = [];
@@ -746,7 +746,7 @@ const intakeFormAssets = `<style>
     header.className = 'ui-orch-intake-header';
     header.textContent = buttonOnly
       ? 'Pick a starting point.'
-      : 'Tell me about it — fill these in to get started.';
+      : 'Tell me about it, fill these in to get started.';
     intakeWrap.insertBefore(header, intakeWrap.firstChild);
     var actions = document.createElement('div');
     actions.className = 'ui-orch-intake-actions';
@@ -754,7 +754,7 @@ const intakeFormAssets = `<style>
     submitBtn.type = 'button';
     submitBtn.className = 'ui-row-btn primary';
     submitBtn.textContent = 'Start session';
-    // Hidden when the form is button-only — buttons trigger submit
+    // Hidden when the form is button-only: buttons trigger submit
     // themselves. Kept in the DOM so the button click handlers can
     // still .click() it programmatically.
     if (buttonOnly) submitBtn.style.display = 'none';
@@ -765,7 +765,7 @@ const intakeFormAssets = `<style>
       var values = valuesByNameFromEntries(entries);
       submitBtn.disabled = true;
       // Stage any file fields onto the framework's attachment queue
-      // FIRST — sendMessage reads pendingAttachments synchronously
+      // FIRST: sendMessage reads pendingAttachments synchronously
       // on click, so the files must be in place before we click.
       stageIntakeFiles(entries).then(function(){
         clearIntake();
@@ -789,7 +789,7 @@ const intakeFormAssets = `<style>
   }
   // Register the per-bubble Edit override. When the framework's
   // beginUserEdit sees an intake bubble, this fires instead of the
-  // default textarea path — inputs flip enabled, Save/Cancel show
+  // default textarea path: inputs flip enabled, Save/Cancel show
   // beneath the form.
   function registerEditor() {
     if (!window.uiRegisterMessageEditor) { setTimeout(registerEditor, 50); return; }
@@ -931,7 +931,7 @@ const docsModalScript = `<script>
       // only needs a Close button, so we let uiOpenModal supply it.
       var body = window.uiOpenModal({ title: 'Knowledge', width: '640px' }).body;
 
-      // (Shared / admin-curated docs removed — the agent's reference
+      // (Shared / admin-curated docs removed: the agent's reference
       // corpus now lives in Collections attached via the editor.)
 
       // --- Your documents (editable) ---
@@ -943,7 +943,7 @@ const docsModalScript = `<script>
       ownWrap.appendChild(oh);
       var ohHelp = document.createElement('div');
       ohHelp.style.cssText = 'font-size:0.74rem;color:var(--text-mute);line-height:1.45;margin-bottom:0.5rem';
-      ohHelp.textContent = 'Files you’ve uploaded for this agent. Private to you — other users on the same agent don’t see them. Searched in RAG alongside any collections this agent has attached.';
+      ohHelp.textContent = 'Files you’ve uploaded for this agent. Private to you: other users on the same agent don’t see them. Searched in RAG alongside any collections this agent has attached.';
       ownWrap.appendChild(ohHelp);
       var upRow = document.createElement('div');
       upRow.style.cssText = 'display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;flex-wrap:wrap';
@@ -1037,7 +1037,7 @@ const docsModalScript = `<script>
         reader.readAsDataURL(f);
       };
 
-      // (Auto-inferred section moved to the Memory modal — that
+      // (Auto-inferred section moved to the Memory modal, that
       // surface owns Reference Memory pruning, per-entry and bulk.
       // Knowledge modal stays focused on uploaded files.)
 

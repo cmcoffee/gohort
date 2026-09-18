@@ -77,15 +77,15 @@ func LowYieldNote(text string) string {
 	switch {
 	case n < emptyishMaxChars:
 		if marker != "" {
-			return fmt.Sprintf("this is %d characters and is mostly a %s notice — the page's real content did not load. "+
+			return fmt.Sprintf("this is %d characters and is mostly a %s notice: the page's real content did not load. "+
 				"It almost certainly renders client-side or sits behind a consent gate. Look for an API endpoint on this host, "+
 				"or a tool that serves it, rather than fetching the page again", n, marker)
 		}
-		return fmt.Sprintf("this is only %d characters — too little to be the page's content. "+
+		return fmt.Sprintf("this is only %d characters: too little to be the page's content. "+
 			"It likely renders client-side. Look for an API endpoint on this host, or a tool that serves it, "+
 			"rather than fetching the page again", n)
 	case n < boilerplateMaxChars && marker != "":
-		return fmt.Sprintf("this is %d characters and is dominated by a %s notice — what came back is the wall, not the page. "+
+		return fmt.Sprintf("this is %d characters and is dominated by a %s notice: what came back is the wall, not the page. "+
 			"Look for an API endpoint on this host, or a tool that serves it, rather than fetching the page again", n, marker)
 	}
 	return ""

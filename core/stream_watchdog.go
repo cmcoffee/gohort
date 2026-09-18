@@ -125,7 +125,7 @@ func (w *streamWatchdog) watch() {
 				// looks at the server log, this is the marker that says
 				// "the client gave up on a stalled stream." Keep the
 				// message stable enough to grep for.
-				Err("[%s] stream idle timeout fired: no bytes for %v (budget %v) — closing body to force the read to abort",
+				Err("[%s] stream idle timeout fired: no bytes for %v (budget %v), closing body to force the read to abort",
 					w.provider, elapsed.Round(time.Second), w.timeout)
 				_ = w.closer.Close()
 				return

@@ -136,13 +136,13 @@ type RequestCapabilityArgs struct {
 func RequestCapability(ctx context.Context, udb Database, chat FactChatFunc, owner, agentID string, in RequestCapabilityArgs) (string, error) {
 	appliance, ok := findAppliance(udb, in.System)
 	if !ok {
-		return "", fmt.Errorf("no system called %q — list the systems first and use one of those names exactly", in.System)
+		return "", fmt.Errorf("no system called %q: list the systems first and use one of those names exactly", in.System)
 	}
 	if !applianceEnabledForAgent(udb, agentID, appliance.ID) {
 		// Same wording whether the machine exists or not would be better for
 		// secrecy, but worse for the person: this is the owner's own fleet and
 		// the agent needs to be able to tell them what to switch on.
-		return "", fmt.Errorf("you are not enabled for %s. Nothing was requested — tell the person that the owner has to connect you to that system in Servitor before you can ask for capabilities on it",
+		return "", fmt.Errorf("you are not enabled for %s. Nothing was requested: tell the person that the owner has to connect you to that system in Servitor before you can ask for capabilities on it",
 			applianceLabel(appliance.Name, appliance.ID))
 	}
 	tool, err := MintApplianceTool(ctx, chat, appliance, factsForAppliance(udb, appliance.ID), in.Intent, agentID, owner)
@@ -151,7 +151,7 @@ func RequestCapability(ctx context.Context, udb Database, chat FactChatFunc, own
 	}
 	if existing, found := LoadApplianceTool(udb, appliance.ID, tool.Name); found {
 		if existing.Approved {
-			return "", fmt.Errorf("%q already exists on %s and is approved, running: %s. It was NOT changed — an approved tool keeps the command the owner read. If this needs to do something different, ask for it under a different name, or have the owner delete the existing one first",
+			return "", fmt.Errorf("%q already exists on %s and is approved, running: %s. It was NOT changed: an approved tool keeps the command the owner read. If this needs to do something different, ask for it under a different name, or have the owner delete the existing one first",
 				existing.Name, applianceLabel(appliance.Name, appliance.ID), existing.Template)
 		}
 		// Replacing an unapproved proposal is fine — nobody has agreed to it.
@@ -162,7 +162,7 @@ func RequestCapability(ctx context.Context, udb Database, chat FactChatFunc, own
 		return "", fmt.Errorf("could not record that capability: %w", err)
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Requested %q for %s — WAITING FOR APPROVAL, nothing has run.\n\n", saved.Name, applianceLabel(appliance.Name, appliance.ID))
+	fmt.Fprintf(&b, "Requested %q for %s: WAITING FOR APPROVAL, nothing has run.\n\n", saved.Name, applianceLabel(appliance.Name, appliance.ID))
 	fmt.Fprintf(&b, "It would run: %s\n", saved.Template)
 	if saved.Risk != RiskNone {
 		fmt.Fprintf(&b, "Classified as: %s\n", string(saved.Risk))
@@ -171,7 +171,7 @@ func RequestCapability(ctx context.Context, udb Database, chat FactChatFunc, own
 		fmt.Fprintf(&b, "Values you would supply: %s\n", strings.Join(sortedParamNames(saved.Params), ", "))
 	}
 	b.WriteString("\nTell the person what you asked for and that it needs their approval in Servitor. " +
-		"Do NOT wait for it, do NOT ask again, and do NOT try to achieve the same thing another way — if they approve it, you will simply have the tool next time.")
+		"Do NOT wait for it, do NOT ask again, and do NOT try to achieve the same thing another way: if they approve it, you will simply have the tool next time.")
 	return b.String(), nil
 }
 
@@ -201,10 +201,10 @@ func sortedParamNames(p map[string]ToolParam) []string {
 // a machine is an LLM round-trip, and a stopped turn should not leave one
 // in flight. Nil-safe.
 func RequestCapabilityToolDef(sess *ToolSession, udb Database, chat FactChatFunc, owner, agentID string, connected []Appliance) AgentToolDef {
-	desc := "Ask for a new ability on one of the owner's systems, described in plain words — \"restart the web server\", \"tail the app log\", \"deploy a given version\". " +
+	desc := "Ask for a new ability on one of the owner's systems, described in plain words: \"restart the web server\", \"tail the app log\", \"deploy a given version\". " +
 		"Servitor works out the exact command for THAT machine and stores it as a proposal for the owner to approve. " +
 		"Nothing runs now, and nothing runs later without their approval. " +
-		"Use this when you need to do something on a system and have no tool for it; do not use it to run something once — it exists to create a lasting, named ability. " +
+		"Use this when you need to do something on a system and have no tool for it; do not use it to run something once: it exists to create a lasting, named ability. " +
 		"After calling it, tell the person what you asked for and move on."
 	if list := connectedSystemList(connected, nil); list != "" {
 		desc += " Systems you are connected to and may ask about: " + list + "."
@@ -215,7 +215,7 @@ func RequestCapabilityToolDef(sess *ToolSession, udb Database, chat FactChatFunc
 			Description: desc,
 			Parameters: map[string]ToolParam{
 				"system": {Type: "string", Description: "Which machine, by the exact name or id from the connected-systems list in this tool's description."},
-				"intent": {Type: "string", Description: "What the tool should DO, in prose. Describe the job, not a command — \"restart the web server\", not \"sudo systemctl restart nginx\". Say what varies between runs (a version, a filename, a service) so it becomes a value you can supply each time."},
+				"intent": {Type: "string", Description: "What the tool should DO, in prose. Describe the job, not a command: \"restart the web server\", not \"sudo systemctl restart nginx\". Say what varies between runs (a version, a filename, a service) so it becomes a value you can supply each time."},
 			},
 			Required: []string{"system", "intent"},
 			Caps:     []Capability{CapWrite},

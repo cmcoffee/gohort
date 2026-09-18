@@ -51,7 +51,7 @@ func TestBuilderPromptRequiresHonestSummaries(t *testing.T) {
 	if !strings.Contains(p, "DESCRIBE ONLY WHAT YOU BUILT") {
 		t.Fatal("nothing bounds the summary to what was actually stored")
 	}
-	if !strings.Contains(p, "STORED —") {
+	if !strings.Contains(p, "STORED:") {
 		t.Error("the rule must point at the inventory line, or it is an instruction with no evidence attached")
 	}
 	// The escape hatch matters as much as the prohibition: an author that

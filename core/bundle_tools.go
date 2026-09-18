@@ -37,7 +37,7 @@ func BundleTools(ctx context.Context, owner, bundleID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "bundle_summary",
-				Description: "Overview of the whole evidence bundle: how many files, what period they cover, which files are noisiest, and which are present but unread (binaries, archives nothing could open). ALWAYS call this first — it tells you what you are looking at and which file to search, without reading any log content.",
+				Description: "Overview of the whole evidence bundle: how many files, what period they cover, which files are noisiest, and which are present but unread (binaries, archives nothing could open). ALWAYS call this first: it tells you what you are looking at and which file to search, without reading any log content.",
 			},
 			Handler: func(ctx context.Context, args map[string]any) (string, error) {
 				files := bundle.Open(owner, bundleID).Index()
@@ -69,7 +69,7 @@ func BundleTools(ctx context.Context, owner, bundleID string) []AgentToolDef {
 						continue
 					}
 					if shown >= bundleListCap {
-						fmt.Fprintf(&b, "(%d more files not shown — narrow the glob)\n", len(files)-shown)
+						fmt.Fprintf(&b, "(%d more files not shown: narrow the glob)\n", len(files)-shown)
 						break
 					}
 					b.WriteString(renderBundleFileLine(bf))
@@ -122,11 +122,11 @@ func BundleTools(ctx context.Context, owner, bundleID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "read_bundle_file",
-				Description: "Read a line range from one file in the bundle (paths as shown by list_bundle / search_bundle). Use it to read around a hit — the lines a search returned are rarely the whole story.",
+				Description: "Read a line range from one file in the bundle (paths as shown by list_bundle / search_bundle). Use it to read around a hit: the lines a search returned are rarely the whole story.",
 				Parameters: map[string]ToolParam{
 					"path":       {Type: "string", Description: "Bundle-relative file path, e.g. \"var/log/scheduler.log\"."},
 					"start_line": {Type: "integer", Description: "1-based first line (default 1)."},
-					"end_line":   {Type: "integer", Description: "1-based last line. Defaults to start_line + 200; a range wider than 2000 lines is refused — search instead."},
+					"end_line":   {Type: "integer", Description: "1-based last line. Defaults to start_line + 200; a range wider than 2000 lines is refused: search instead."},
 				},
 				Required: []string{"path"},
 			},
@@ -144,7 +144,7 @@ func BundleTools(ctx context.Context, owner, bundleID string) []AgentToolDef {
 					end = start + 200
 				}
 				if end-start+1 > bundle.SliceLines {
-					return "", fmt.Errorf("that range is %d lines — read at most %d at a time, or use search_bundle to find the part that matters", end-start+1, bundle.SliceLines)
+					return "", fmt.Errorf("that range is %d lines: read at most %d at a time, or use search_bundle to find the part that matters", end-start+1, bundle.SliceLines)
 				}
 				lines, bf, err := bundle.Open(owner, bundleID).ReadRange(path, start, end)
 				if err != nil {
@@ -164,7 +164,7 @@ func BundleTools(ctx context.Context, owner, bundleID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "bundle_timeline",
-				Description: "Merge lines from SEVERAL files into one time-ordered sequence. This is what no per-file read can give you: what happened across the whole system in a window, in order. Narrow it with a time window — an unbounded timeline over a large bundle is truncated and tells you little.",
+				Description: "Merge lines from SEVERAL files into one time-ordered sequence. This is what no per-file read can give you: what happened across the whole system in a window, in order. Narrow it with a time window: an unbounded timeline over a large bundle is truncated and tells you little.",
 				Parameters: map[string]ToolParam{
 					"glob":      {Type: "string", Description: "Optional path filter limiting which files are merged. Empty merges every file that carries timestamps."},
 					"since":     {Type: "string", Description: "Earliest timestamp, e.g. \"2026-03-14 02:00:00\". Strongly recommended."},
@@ -200,9 +200,9 @@ func BundleTools(ctx context.Context, owner, bundleID string) []AgentToolDef {
 func renderBundleFileLine(bf bundle.File) string {
 	switch bf.Format {
 	case bundle.FormatArchive:
-		return fmt.Sprintf("%s  [archive — no built-in expander; contents NOT ingested] %s\n", bf.Path, HumanSize(bf.Bytes))
+		return fmt.Sprintf("%s  [archive: no built-in expander; contents NOT ingested] %s\n", bf.Path, HumanSize(bf.Bytes))
 	case bundle.FormatBinary:
-		return fmt.Sprintf("%s  [binary — present, not ingested as text] %s\n", bf.Path, HumanSize(bf.Bytes))
+		return fmt.Sprintf("%s  [binary: present, not ingested as text] %s\n", bf.Path, HumanSize(bf.Bytes))
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s  %s lines, %s, %s", bf.Path, HumanCount(bf.Lines), HumanSize(bf.Bytes), bf.Format)
@@ -333,7 +333,7 @@ func RenderBundleSummary(files []bundle.File) string {
 		listed++
 	}
 	if archives > 0 {
-		b.WriteString("\nSome archives could not be opened by the built-in expanders (xz, 7z, zst, encrypted blobs). Their contents are NOT in the store — if the answer might be inside one, say so rather than concluding from what is here.\n")
+		b.WriteString("\nSome archives could not be opened by the built-in expanders (xz, 7z, zst, encrypted blobs). Their contents are NOT in the store: if the answer might be inside one, say so rather than concluding from what is here.\n")
 	}
 	return b.String()
 }
@@ -347,7 +347,7 @@ func renderBundleSearch(res bundle.SearchResult, q bundle.Query) string {
 			fmt.Fprintf(&b, "%d files were excluded by the path filter or the time window.\n", res.Skipped)
 		}
 		if res.TimeUnknown > 0 {
-			fmt.Fprintf(&b, "%d files were excluded because they carry no parseable timestamps and a time window was set — re-run without since/until to include them.\n", res.TimeUnknown)
+			fmt.Fprintf(&b, "%d files were excluded because they carry no parseable timestamps and a time window was set: re-run without since/until to include them.\n", res.TimeUnknown)
 		}
 		return b.String()
 	}
@@ -368,7 +368,7 @@ func renderBundleSearch(res bundle.SearchResult, q bundle.Query) string {
 	}
 	fmt.Fprintf(&b, "\n%d matches across %d files scanned.\n", len(res.Hits), res.Scanned)
 	if res.Truncated {
-		b.WriteString("TRUNCATED — there are more matches than shown. Narrow the pattern, the glob, or the time window before drawing a conclusion about how often this happens.\n")
+		b.WriteString("TRUNCATED: there are more matches than shown. Narrow the pattern, the glob, or the time window before drawing a conclusion about how often this happens.\n")
 	}
 	if res.TimeUnknown > 0 {
 		fmt.Fprintf(&b, "%d files were skipped because they carry no parseable timestamps and a time window was set.\n", res.TimeUnknown)
@@ -398,7 +398,7 @@ func renderBundleTimeline(entries []bundle.TimelineEntry, unmergeable []string) 
 		if len(unmergeable) > len(shown) {
 			fmt.Fprintf(&b, " and %d more", len(unmergeable)-len(shown))
 		}
-		b.WriteString("\nThose files may still contain the answer — search them directly.\n")
+		b.WriteString("\nThose files may still contain the answer: search them directly.\n")
 	}
 	return b.String()
 }
@@ -454,5 +454,5 @@ func ParseBundleArgTime(s string) (time.Time, error) {
 			return t.UTC(), nil
 		}
 	}
-	return time.Time{}, fmt.Errorf("could not read %q as a time — use \"2026-03-14\", \"2026-03-14 02:00:00\", or a full RFC3339 timestamp", s)
+	return time.Time{}, fmt.Errorf("could not read %q as a time, use \"2026-03-14\", \"2026-03-14 02:00:00\", or a full RFC3339 timestamp", s)
 }

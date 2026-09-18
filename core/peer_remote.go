@@ -146,7 +146,7 @@ func ProbeRemotePeer(ctx context.Context, baseURL, key string) (PeerManifest, er
 		return PeerManifest{}, fmt.Errorf("the address must start with http:// or https:// (got %q)", baseURL)
 	}
 	if strings.TrimSpace(key) == "" {
-		return PeerManifest{}, fmt.Errorf("a peer key is required — mint one in the OTHER instance's Resource Sharing settings")
+		return PeerManifest{}, fmt.Errorf("a peer key is required: mint one in the OTHER instance's Resource Sharing settings")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+"/api/peer/manifest", nil)
 	if err != nil {
@@ -169,9 +169,9 @@ func ProbeRemotePeer(ctx context.Context, baseURL, key string) (PeerManifest, er
 		if why := peerErrorBody(resp.Body); why != "" {
 			return PeerManifest{}, fmt.Errorf("%s refused that key: %s", base, why)
 		}
-		return PeerManifest{}, fmt.Errorf("%s did not recognize that key — check it was not revoked, and that it came from THAT instance", base)
+		return PeerManifest{}, fmt.Errorf("%s did not recognize that key: check it was not revoked, and that it came from THAT instance", base)
 	case http.StatusNotFound:
-		return PeerManifest{}, fmt.Errorf("%s has no peer endpoint — it may be an older build, or the address may point at something else", base)
+		return PeerManifest{}, fmt.Errorf("%s has no peer endpoint: it may be an older build, or the address may point at something else", base)
 	default:
 		return PeerManifest{}, fmt.Errorf("%s answered HTTP %d", base, resp.StatusCode)
 	}
@@ -197,7 +197,7 @@ func ProbeRemotePeer(ctx context.Context, baseURL, key string) (PeerManifest, er
 func adoptPeerTokenFlow(p RemotePeer, m PeerManifest) bool {
 	if m.Token != nil && m.Token.Required {
 		if !p.UseTokens {
-			Log("[peer] %q now requires credential exchange — switching to rotating tokens", p.Name)
+			Log("[peer] %q now requires credential exchange: switching to rotating tokens", p.Name)
 			// The refresh that fixes it clears the warning that named it, so
 			// an operator who followed the instruction sees it stop rather
 			// than having to infer that it worked.
@@ -251,7 +251,7 @@ func refreshedCaps(prev []string, m PeerManifest) []string {
 			// Still ours to use; that instance just is not answering for it
 			// this second.
 			out = append(out, e.Name)
-			Debug("[peer] %s reports %q granted but not currently served — keeping it, it worked before", m.Instance, e.Name)
+			Debug("[peer] %s reports %q granted but not currently served: keeping it, it worked before", m.Instance, e.Name)
 		}
 	}
 	sort.Strings(out)
@@ -286,7 +286,7 @@ func SaveRemotePeer(ctx context.Context, name, baseURL, key string) (RemotePeer,
 	}
 	caps := usableCaps(m)
 	if len(caps) == 0 {
-		return RemotePeer{}, fmt.Errorf("%s reachable, but this key can use nothing there — "+
+		return RemotePeer{}, fmt.Errorf("%s reachable, but this key can use nothing there: "+
 			"grant it a capability in that instance's Resource Sharing settings", NormalizePeerBaseURL(baseURL))
 	}
 	p := RemotePeer{
@@ -632,7 +632,7 @@ func ResolveEmbeddingProvider(cfg EmbeddingConfig) (EmbeddingConfig, error) {
 	}
 	p, ok := PeerFromProvider(provider)
 	if !ok {
-		return cfg, fmt.Errorf("no peer named %q is registered — add it under Peers first",
+		return cfg, fmt.Errorf("no peer named %q is registered: add it under Peers first",
 			strings.TrimPrefix(provider, peerProviderPrefix))
 	}
 	if !p.Offers(PeerCapEmbeddings) {
@@ -776,13 +776,13 @@ func resolveEmbeddingPeer(cfg EmbeddingConfig) EmbeddingConfig {
 	p, ok := lookupPeerCached(name)
 	if !ok {
 		warnPeerResolveOnce(name, fmt.Sprintf(
-			"embeddings are configured against peer %q, which is no longer registered — "+
+			"embeddings are configured against peer %q, which is no longer registered: "+
 				"still using its last known endpoint %s", name, cfg.Endpoint))
 		return cfg
 	}
 	if !p.Offers(PeerCapEmbeddings) {
 		warnPeerResolveOnce(name, fmt.Sprintf(
-			"peer %q no longer offers embeddings (it offers: %s) — "+
+			"peer %q no longer offers embeddings (it offers: %s): "+
 				"still using its last known endpoint %s", name, strings.Join(p.Caps, ", "), cfg.Endpoint))
 		return cfg
 	}

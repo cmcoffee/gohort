@@ -171,7 +171,7 @@ func (T *HelloAgent) handleAgentPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	page := ui.Page{
-		Title:     "Hello — Agent Loop Demo",
+		Title:     "Hello: Agent Loop Demo",
 		ShowTitle: true,
 		BackURL:   ".",
 		MaxWidth:  "100%",

@@ -30,7 +30,7 @@ func TestPlaybookHandsBackOnlyTheArmThatApplies(t *testing.T) {
 		return map[string]any{"queue_draining": false, "evidence": "lag is 40k and climbing"}, `{"queue_draining": false}`, nil
 	}}
 	out := pr.resolve(context.Background(), playbookSkill())
-	for _, want := range []string{"**Playbook** (Orders", "**Established:** queue_draining = false — lag is 40k and climbing", "**So:** Look at the broker."} {
+	for _, want := range []string{"**Playbook** (Orders", "**Established:** queue_draining = false \u00b7 lag is 40k and climbing", "**So:** Look at the broker."} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in:\n%s", want, out)
 		}

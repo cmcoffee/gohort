@@ -33,7 +33,7 @@ func (t *chatTurn) appDefPatchHTML(args map[string]any) (string, error) {
 	key := slugify(firstNonEmptyStr(stringArg(args, "id"), stringArg(args, "slug"), stringArg(args, "name")))
 	spec, ok := LoadAppSpec(t.user, key)
 	if !ok {
-		return "", errors.New("no matching app — check the slug (app_def action=list)")
+		return "", errors.New("no matching app: check the slug (app_def action=list)")
 	}
 	// A named script is the other edit surface (app_patch_script.go).
 	if strings.TrimSpace(stringArg(args, "script")) != "" {
@@ -49,11 +49,11 @@ func (t *chatTurn) appDefPatchHTML(args map[string]any) (string, error) {
 		if fn := strings.TrimSpace(stringArg(args, "function")); fn != "" {
 			return t.appDefReplaceFunction(args)
 		}
-		return "", errors.New("find is required — the EXACT text to replace, copied from the app's current html (app_def action=get). Include enough surrounding lines to be unique. If what you have is a rewritten FUNCTION, use action=\"replace_function\" with function=\"<name>\" and replace=\"<the whole new function>\" instead — it finds the old one for you, so you don't have to reproduce any of it")
+		return "", errors.New("find is required: the EXACT text to replace, copied from the app's current html (app_def action=get). Include enough surrounding lines to be unique. If what you have is a rewritten FUNCTION, use action=\"replace_function\" with function=\"<name>\" and replace=\"<the whole new function>\" instead: it finds the old one for you, so you don't have to reproduce any of it")
 	}
 	replace := stringArg(args, "replace")
 	if find == replace {
-		return "", errors.New("find and replace are identical — nothing to do")
+		return "", errors.New("find and replace are identical: nothing to do")
 	}
 
 	// The authoring sections are the edit surface. A spec written before they
@@ -72,7 +72,7 @@ func (t *chatTurn) appDefPatchHTML(args map[string]any) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	summary := fmt.Sprintf("Patched html section %%d of %%q (revision %%s) — replaced %d chars with %d.", len(find), len(replace))
+	summary := fmt.Sprintf("Patched html section %%d of %%q (revision %%s): replaced %d chars with %d.", len(find), len(replace))
 	return t.saveHTMLSectionEdit(spec, sections, idx, prior, patched, summary, "patch", "patch_html", stringArg(args, "note"))
 }
 
@@ -91,10 +91,10 @@ func (t *chatTurn) saveHTMLSectionEdit(spec AppSpec, sections []map[string]any, 
 	sections[idx]["html"] = next
 
 	if problems, checked := htmlScriptSyntaxProblems(t.sandboxCallerCtx(), next); checked && len(problems) > 0 {
-		return "", fmt.Errorf("that %s would break the page's JavaScript, so it was NOT applied — the app still serves the previous revision:\n- %s\n\nFix the replacement text and try again", verb, strings.Join(problems, "\n- "))
+		return "", fmt.Errorf("that %s would break the page's JavaScript, so it was NOT applied, the app still serves the previous revision:\n- %s\n\nFix the replacement text and try again", verb, strings.Join(problems, "\n- "))
 	}
 	if broke := jsNewDanglingCalls(prior, next); len(broke) > 0 {
-		return "", fmt.Errorf("that %s was NOT applied — it removes code the rest of the page still calls, which parses fine and then dies the moment the app runs. Nothing now defines: %s\n\nEither keep those definitions in your replacement text, or remove the calls to them as well. The app still serves the previous revision.",
+		return "", fmt.Errorf("that %s was NOT applied: it removes code the rest of the page still calls, which parses fine and then dies the moment the app runs. Nothing now defines: %s\n\nEither keep those definitions in your replacement text, or remove the calls to them as well. The app still serves the previous revision.",
 			verb, strings.Join(broke, ", "))
 	}
 
@@ -124,7 +124,7 @@ func (t *chatTurn) saveHTMLSectionEdit(spec AppSpec, sections []map[string]any, 
 	// milliseconds and is not a version anyone would want back.
 	if errs := appPageRuntimeErrors(t.user, saved.Slug); len(errs) > 0 {
 		SaveAppSpecAs(before, AppSaveNoHistory)
-		return "", fmt.Errorf("that %s broke the page in a real browser, so it was ROLLED BACK — the app is serving the previous revision again:\n- %s\n\nFix the replacement text and try again",
+		return "", fmt.Errorf("that %s broke the page in a real browser, so it was ROLLED BACK, the app is serving the previous revision again:\n- %s\n\nFix the replacement text and try again",
 			verb, strings.Join(errs, "\n- "))
 	}
 	return fmt.Sprintf(summary, htmlSectionOrdinal(sections, idx), saved.Name, saved.Updated) +
@@ -141,9 +141,9 @@ func applyHTMLPatch(sections []map[string]any, idx int, find, replace, slug stri
 	html := mapStr(sections[idx], "html")
 	switch n := strings.Count(html, find); {
 	case n == 0:
-		return "", fmt.Errorf("that text does not appear in html section %d — you may be patching a version the app no longer has. Call app_def(action=\"get\", id=%q) to read the CURRENT html, copy the exact text from it (whitespace included), and patch again", htmlSectionOrdinal(sections, idx), slug)
+		return "", fmt.Errorf("that text does not appear in html section %d: you may be patching a version the app no longer has. Call app_def(action=\"get\", id=%q) to read the CURRENT html, copy the exact text from it (whitespace included), and patch again", htmlSectionOrdinal(sections, idx), slug)
 	case n > 1:
-		return "", fmt.Errorf("that text appears %d times in html section %d — a patch has to identify ONE place. Extend the find text with the surrounding lines until it is unique", n, htmlSectionOrdinal(sections, idx))
+		return "", fmt.Errorf("that text appears %d times in html section %d: a patch has to identify ONE place. Extend the find text with the surrounding lines until it is unique", n, htmlSectionOrdinal(sections, idx))
 	}
 	return strings.Replace(html, find, replace, 1), nil
 }
@@ -159,7 +159,7 @@ func appAuthoringSections(spec AppSpec) ([]map[string]any, error) {
 	}
 	secs, _ := authoringSectionsFromPage(spec.Page)
 	if len(secs) == 0 {
-		return nil, errors.New("this app's sections could not be read back for editing — revise it with action=\"update\" instead")
+		return nil, errors.New("this app's sections could not be read back for editing: revise it with action=\"update\" instead")
 	}
 	return secs, nil
 }
@@ -176,11 +176,11 @@ func pickHTMLSection(sections []map[string]any, sectionArg any) (int, error) {
 	}
 	switch {
 	case len(htmlIdx) == 0:
-		return 0, errors.New("this app has no html section to patch — patch_html edits a raw html canvas; use action=\"update\" for form/table/chart sections")
+		return 0, errors.New("this app has no html section to patch: patch_html edits a raw html canvas; use action=\"update\" for form/table/chart sections")
 	case sectionArg == nil && len(htmlIdx) == 1:
 		return htmlIdx[0], nil
 	case sectionArg == nil:
-		return 0, fmt.Errorf("this app has %d html sections — pass `section` (1-%d) to say which one to patch", len(htmlIdx), len(htmlIdx))
+		return 0, fmt.Errorf("this app has %d html sections: pass `section` (1-%d) to say which one to patch", len(htmlIdx), len(htmlIdx))
 	}
 	n := 0
 	switch v := sectionArg.(type) {
@@ -196,13 +196,13 @@ func pickHTMLSection(sections []map[string]any, sectionArg any) (int, error) {
 				if strings.EqualFold(strings.TrimSpace(mapStr(sections[i], "kind")), "html") {
 					return i, nil
 				}
-				return 0, fmt.Errorf("section %q is a %s section, not html — patch_html/replace_function edit html; use update_section for it", strings.TrimSpace(v), mapStr(sections[i], "kind"))
+				return 0, fmt.Errorf("section %q is a %s section, not html: patch_html/replace_function edit html; use update_section for it", strings.TrimSpace(v), mapStr(sections[i], "kind"))
 			}
-			return 0, fmt.Errorf("no section with id %q — app_def action=get lists each section's id", strings.TrimSpace(v))
+			return 0, fmt.Errorf("no section with id %q: app_def action=get lists each section's id", strings.TrimSpace(v))
 		}
 	}
 	if n < 1 || n > len(htmlIdx) {
-		return 0, fmt.Errorf("section %d is out of range — this app has %d html section(s)", n, len(htmlIdx))
+		return 0, fmt.Errorf("section %d is out of range: this app has %d html section(s)", n, len(htmlIdx))
 	}
 	return htmlIdx[n-1], nil
 }

@@ -168,7 +168,7 @@ func capabilitiesSection() ui.Section {
 		Subtitle: "Commands an agent asked to be able to run, and the ones you have already allowed. " +
 			"Read the command before approving: an approved capability runs whenever the agent decides to use it, " +
 			"without asking again, subject to the risk categories you have granted that agent. " +
-			"The Arguments column says what constrains each parameter — a value is always quoted, so it cannot " +
+			"The Arguments column says what constrains each parameter: a value is always quoted, so it cannot " +
 			"add shell syntax, but quoting does not stop a path pointing somewhere it should not. A parameter " +
 			"marked UNCHECKED PATH accepts any value; scope it to a file store if it is meant to name a folder.",
 		Body: ui.Table{
@@ -224,7 +224,7 @@ func toolChecksText(t ApplianceTool) string {
 	var parts []string
 	if len(unchecked) > 0 {
 		parts = append(parts, "UNCHECKED PATH: "+strings.Join(unchecked, ", ")+
-			" — any value is accepted, including one pointing outside the intended folder")
+			", any value is accepted, including one pointing outside the intended folder")
 	}
 	if len(scoped) > 0 {
 		parts = append(parts, "checked: "+strings.Join(scoped, ", "))

@@ -152,7 +152,7 @@ func (T *OrchestrateApp) handleRunsCancel(w http.ResponseWriter, r *http.Request
 	}
 	// Honest about the runs that cannot be stopped — see the console handler.
 	if !run.Cancel() {
-		http.Error(w, "this run cannot be cancelled — it is not running under a stoppable context", http.StatusConflict)
+		http.Error(w, "this run cannot be cancelled: it is not running under a stoppable context", http.StatusConflict)
 		return
 	}
 	w.WriteHeader(http.StatusOK)

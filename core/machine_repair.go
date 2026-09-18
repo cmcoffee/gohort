@@ -99,7 +99,7 @@ func (d *MachineDef) Repair(kind string) []MachineRepair {
 			if first != "" {
 				d.Start = first
 				out = append(out, MachineRepair{Step: "start",
-					What: "start names " + strconv.Quote(s) + ", which is not a step — begin at " + strconv.Quote(first) + " instead"})
+					What: "start names " + strconv.Quote(s) + ", which is not a step: begin at " + strconv.Quote(first) + " instead"})
 			}
 		}
 	}
@@ -115,13 +115,13 @@ func repairPhaseRefs(p *MachinePhase, name string, real func(string) bool) []Mac
 
 	if t := strings.TrimSpace(p.Next); t != "" && !real(t) {
 		p.Next = ""
-		add("next names " + strconv.Quote(t) + ", which is not a step — clear it")
+		add("next names " + strconv.Quote(t) + ", which is not a step: clear it")
 	}
 	// A guard with nowhere to send the turn falls back to the machine's
 	// start, which is what an empty guard_to means.
 	if t := strings.TrimSpace(p.GuardTo); t != "" && !real(t) {
 		p.GuardTo = ""
-		add("guard_to names " + strconv.Quote(t) + ", which is not a step — fall back to the start")
+		add("guard_to names " + strconv.Quote(t) + ", which is not a step: fall back to the start")
 	}
 	for _, l := range []struct {
 		list *[]string
@@ -133,7 +133,7 @@ func repairPhaseRefs(p *MachinePhase, name string, real func(string) bool) []Mac
 	} {
 		for _, gone := range danglingIn(*l.list, real) {
 			dropFromList(l.list, gone)
-			add(strconv.Quote(gone) + " is not a step in this machine — drop it from what it " + l.what)
+			add(strconv.Quote(gone) + " is not a step in this machine: drop it from what it " + l.what)
 		}
 	}
 	// The targets a routing field may return. Same rule: a name the
@@ -144,7 +144,7 @@ func repairPhaseRefs(p *MachinePhase, name string, real func(string) bool) []Mac
 		for _, gone := range danglingIn(fields[i].Enum, real) {
 			dropFromList(&fields[i].Enum, gone)
 			changed = true
-			add(fields[i].Name + " may return " + strconv.Quote(gone) + ", which is not a step — drop it")
+			add(fields[i].Name + " may return " + strconv.Quote(gone) + ", which is not a step: drop it")
 		}
 	}
 	if changed {
@@ -172,7 +172,7 @@ func repairFilledFieldTypes(p *MachinePhase, name string) []MachineRepair {
 		changed = true
 		out = append(out, MachineRepair{Step: name, Advice: true,
 			What: "step " + name + ": " + f.Name + " is filled from " + f.From +
-				" and declared " + was + " — everything a variable holds is text, so declare it text"})
+				" and declared " + was + ", everything a variable holds is text, so declare it text"})
 	}
 	if changed {
 		p.Output = fields

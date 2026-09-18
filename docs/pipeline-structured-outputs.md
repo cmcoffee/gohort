@@ -13,7 +13,7 @@ field of a prior result*.
 This spec adds one thing: **a stage may declare the shape of its output, and
 later stages may reference a single field of it.** Nothing else. `loop`,
 `branch`, a `tool` stage kind, and per-stage model tier are follow-on work that
-all depend on this landing first — which is why it goes first. Retrofitting
+all depend on this landing first, which is why it goes first. Retrofitting
 typed values under an already-shipped `loop` means rewriting `loop`.
 
 ## Why this is the enabling change
@@ -56,7 +56,7 @@ type PipelineField struct {
 }
 ```
 
-`Type` is a closed set — `string`, `number`, `bool`, `list`, `object`. A bare
+`Type` is a closed set: `string`, `number`, `bool`, `list`, `object`. A bare
 `list` (no `Fields`) is a list of strings, which is exactly what `fan_over` and
 `DecodeJSONList` already consume.
 
@@ -73,15 +73,15 @@ Both live on the shared `PipelineField`, so machines get them too.
     From string `json:"from,omitempty"`
 ```
 
-`from` takes the same vocabulary a prompt does — `{input}`, `{prev}`,
-`{stage:NAME.field}` — and changes what the model is asked for, not just what
+`from` takes the same vocabulary a prompt does: `{input}`, `{prev}`,
+`{stage:NAME.field}`, and changes what the model is asked for, not just what
 the result contains. A filled field is left out of the contract **entirely**
 (`ModelOutput` excludes it; `StaticFields` is the other half) and merged into
 the result after the call, so later stages read it exactly like one the model
 answered. Two reasons it exists rather than "just template it into the prompt":
 
 - A value you already hold is not worth a model's attention, and asking for it
-  back invites a paraphrase — the returned "question" is subtly not the question.
+  back invites a paraphrase: the returned "question" is subtly not the question.
 - It gives an existing value YOUR field name, so `{stage:triage.asked}` reads
   the same whether the value was decided or carried.
 
@@ -141,7 +141,7 @@ declared field. `{stage:plan}` does not match inside `{stage:plan.queries}`
 no scanner is needed.
 
 **Unknown placeholders are still left untouched.** A typo'd field degrades to a
-visible artifact in the prompt rather than a silently blanked one — the
+visible artifact in the prompt rather than a silently blanked one: the
 existing rule, unchanged.
 
 ## `fan_over` gains field access
@@ -149,7 +149,7 @@ existing rule, unchanged.
 `FanOver` accepts `NAME` (today: the whole stage output, parsed as a list) or
 `NAME.field` (new: that field, which must be declared `list`).
 
-This is not optional politeness — it is required for structured stages to be
+This is not optional politeness: it is required for structured stages to be
 usable with fanout at all. Once a planning stage declares
 `{queries: list, calcs: list}`, its `Text` is a JSON *object*, and today's
 `DecodeJSONList(src, 0)` would fail on it and fall through to prose-scraping
@@ -159,7 +159,7 @@ the JSON. `fan_over: "plan.queries"` is the correct reference.
 
 In `executePipelineDef`, for a stage with non-empty `Output`:
 
-1. **Prompt.** Append a rendered contract to the resolved prompt — the field
+1. **Prompt.** Append a rendered contract to the resolved prompt: the field
    list in *declared order* (not map order; the payload must stay
    byte-identical across runs for cache reuse), each with name, type, and
    `Desc`. Ends with an instruction to reply with that JSON object and nothing
@@ -169,11 +169,11 @@ In `executePipelineDef`, for a stage with non-empty `Output`:
    `response_format: {"type":"json_object"}`.
 3. **Decode.** `DecodeJSON` (`core/search.go:73`) into `map[string]any`. It
    already strips code fences, finds the outermost object, and sanitizes
-   trailing commas and stray comments — the three things local models actually
+   trailing commas and stray comments: the three things local models actually
    get wrong.
 4. **Validate.** Every `Required` field present and type-compatible. Coerce
    leniently in the obvious directions (a `number` returned as `"42"`, a `list`
-   returned as a single string becomes a one-element list) — same posture as
+   returned as a single string becomes a one-element list): same posture as
    `parseParamsArg` in `tool_def` (`project_tool_def_param_coercion`), which
    coerces rather than hard-rejecting.
 5. **Repair once.** On decode or validation failure, re-run the stage once with
@@ -191,7 +191,7 @@ declared a shape and did not produce it breaks every downstream
 `{stage:X.field}` reference anyway; the degrade path would be a prompt
 containing the literal text `{stage:plan.queries}` three stages later. Failing
 at the source, after one repair attempt, is the debuggable behavior. The
-breadcrumb rule is still honored — both the repair and the failure land on the
+breadcrumb rule is still honored: both the repair and the failure land on the
 status line.
 
 **Agent stages get the same treatment.** An agent stage that declares `Output`
@@ -204,12 +204,12 @@ retry. Worth stating explicitly so the behavior is not a surprise.
 
 New checks:
 
-- Stage names must not contain `.` — otherwise `{stage:a.b}` is ambiguous
+- Stage names must not contain `.`: otherwise `{stage:a.b}` is ambiguous
   between a stage named `a.b` and field `b` of stage `a`.
 - Field names: non-empty, unique within a stage, `[a-z0-9_]+`.
 - A nested `PipelineField` may not itself declare `Fields` (one level).
 - `Type` is one of the five known values.
-- `fan_over: "NAME.field"` — `NAME` is an earlier stage, `field` is declared on
+- `fan_over: "NAME.field"`: `NAME` is an earlier stage, `field` is declared on
   it, and its type is `list`.
 - **`{stage:NAME}` and `{stage:NAME.field}` references in prompts resolve** to
   an earlier stage, and the field is declared.
@@ -220,10 +220,10 @@ LLM call.
 
 > Note a pre-existing gap this closes. `Validate`'s doc comment already claims
 > it checks "`{stage:NAME}` references point at earlier stages (no forward refs
-> or cycles)" — the implementation never did; it only checks `FanOver`. The
+> or cycles)": the implementation never did; it only checks `FanOver`. The
 > comment is aspirational today. This change makes it true.
 
-The surfaces that show and edit all of this — the list, the page, the per-stage form, the picture —
+The surfaces that show and edit all of this (the list, the page, the per-stage form, the picture)
 are described in [pipeline-surfaces.md](pipeline-surfaces.md).
 
 ## Advice (`PipelineDef.Advice`, v0.6.211)
@@ -236,7 +236,7 @@ One rule, and it exists because declaring output fields IS this feature: the fra
 those keys, encodes them, and validates what comes back. A stage whose prompt ALSO specifies a
 format leaves two sets of formatting rules, and the usual result is a JSON string nested inside a
 JSON field. `AsksForRawJSON` spots the phrasings ("as json", "valid json", "respond only with", …)
-and fires only when the stage already declares model-facing fields — a stage whose subject happens
+and fires only when the stage already declares model-facing fields: a stage whose subject happens
 to be JSON declares nothing and is left alone, and so is one whose only declarations are FILLED
 from variables, since the model is never asked for those.
 
@@ -246,11 +246,11 @@ findings by VALUE to decide which line carries its Rewrite button, so a second c
 would strand the button the day the two drifted.
 
 What did NOT come across: a machine warns about a step told to go looking with no tools. Wrong
-here — a worker stage inherits the calling agent's whole catalog unless it narrows, so an empty
+here: a worker stage inherits the calling agent's whole catalog unless it narrows, so an empty
 tools list means everything rather than nothing.
 
 Surfaced by the `pipeline` tool on create/update (after the save, because it never refuses one), on
-`get`, and as a `worth_a_look` count on `list` — a pipeline written before the rule existed will
+`get`, and as a `worth_a_look` count on `list`: a pipeline written before the rule existed will
 never see a create reply again, so `get` and `list` are the only places its findings can reach
 anybody. Loop bodies are walked and located (`round › critique`).
 
@@ -259,7 +259,7 @@ anybody. Loop bodies are walked and located (`round › critique`).
 "Nothing reads this declared field" looked like the obvious companion: a declared field is asked of
 the model, validated, and repaired when it comes back wrong, on every run, so an unread one is paid
 for and spends the contract's attention on nothing. It was built with what seemed like the right
-exemptions — the last stage of each scope (its output IS the result), a whole-stage `{stage:NAME}`
+exemptions: the last stage of each scope (its output IS the result), a whole-stage `{stage:NAME}`
 reference, and `fan_over` / `until` / `when`, which read a field no prompt mentions.
 
 Then it was run against the three pipelines this repo ships. It fired on all three and was wrong
@@ -268,11 +268,11 @@ every time:
 | stage | "unread" field | what it actually is |
 |---|---|---|
 | `debate.audit` | `verdict` | one sentence grading the evidence, written beside `clean`/`issues` |
-| `image-find.locate` | `found` | the read half is `nothing_found` — "set exactly one" is deliberate |
+| `image-find.locate` | `found` | the read half is `nothing_found`: "set exactly one" is deliberate |
 | `research.classify` | `reason` | one clause saying why, beside the `complex`/`simple` decision |
 
 Two things the design missed. `{prev}` renders the previous stage's **whole JSON**, so the default
-way stages chain already reads every field — the exemption list would have had to include the next
+way stages chain already reads every field: the exemption list would have had to include the next
 stage's prompt, which is most of them. And a field that genuinely is unreferenced is usually doing
 work anyway: a rationale next to a decision improves the decision, and the unread half of a paired
 bool is what forces an explicit commitment.
@@ -288,12 +288,12 @@ person to have the idea can skip the build.
 - New `PipelineDef` field is `omitempty`; old defs deserialize unchanged and
   `ExportPipeline` / `ImportPipeline` need no changes.
 - `outputs` type change is confined to `pipeline_interp.go`
-  (`executePipelineDef`, `runFanoutStage`, `resolveStageTemplate` — all
+  (`executePipelineDef`, `runFanoutStage`, `resolveStageTemplate`: all
   unexported).
 - `apps/orchestrate` touches: the pipeline editor UI and `pipeline_def_tool.go`
   need to accept and round-trip `output`. Per
   `reference_temptool_update_roundtrip`, wire **both** the create and the update
-  paths, and have the parser accept native types — dropping the field on update
+  paths, and have the parser accept native types: dropping the field on update
   is the exact bug that shape has produced before.
 
 ## Follow-on: `loop` (SHIPPED v0.5.554)
@@ -306,11 +306,11 @@ paid off in one feature.
 | Field | Meaning |
 |---|---|
 | `body` | ordered stage list, repeated each pass; one level (loops don't nest) |
-| `count` | required, 1–25 — the hard ceiling, since a pipeline runs unattended |
+| `count` | required, 1–25: the hard ceiling, since a pipeline runs unattended |
 | `until` | optional `NAME.field` bool on a **body** stage; stops early when true |
 | `collect` | `last` (default) or `all` (passes joined as `## Pass N`) |
 
-`{prev}` carries each pass into the next — that carry is what separates loop
+`{prev}` carries each pass into the next, that carry is what separates loop
 (depth) from fanout (breadth), and is why the two can't be one primitive.
 `{iteration}` / `{iterations}` template inside the body.
 
@@ -318,7 +318,7 @@ Two scope rules that Validate enforces rather than leaving to run time: body
 stage names are invisible after the loop (a reference from outside would
 silently mean "whatever the last pass left"), and `until` must point INSIDE the
 loop (an outer field can't change between passes, so the loop would run once or
-all N times — never what the author meant).
+all N times: never what the author meant).
 
 Implementation note: the per-stage execution was extracted from
 `executePipelineDef` into `pipelineRun.runStage`, so a loop body runs the exact
@@ -340,33 +340,33 @@ Ending returns the last stage's output, so a screening stage's rejection *is*
 the pipeline's answer without a stage to restate it.
 
 **Jumps are forward-only.** A backward jump is iteration, and iteration belongs
-to `loop` where `count` bounds it — allowing one here would reintroduce
+to `loop` where `count` bounds it: allowing one here would reintroduce
 unbounded looping past the ceiling loops exist to enforce. Rejected at save
 time, along with a `skip_to` naming an unknown stage or the branch itself.
 
 **Inside a loop body a branch may only skip within the pass.** Ending the
 *pipeline* from inside a pass is ambiguous (stop the pass, the loop, or the
-run?), and the loop already has `until` for stopping early — so that case is
+run?), and the loop already has `until` for stopping early, so that case is
 rejected with an error pointing at `until`.
 
-**A missing source reads as FALSE** — fall through and run the stages. Validate
+**A missing source reads as FALSE**: fall through and run the stages. Validate
 already proved the reference is a declared bool, so this only covers a stage
 skipped by an *earlier* branch; falling through risks doing redundant work,
 while the other direction risks silently skipping real work.
 
-Control flow lives in `pipelineRun.runList`, not `runStage` — only the walk can
+Control flow lives in `pipelineRun.runList`, not `runStage`: only the walk can
 skip ahead or end the run, and keeping `runStage` as "execute one stage" is what
 lets a loop body reuse it unchanged.
 
 ## Follow-on: per-stage model tier (SHIPPED v0.5.556)
 
-`model: "worker"` (default) or `"lead"` — the declarative equivalent of the
+`model: "worker"` (default) or `"lead"`: the declarative equivalent of the
 `RouteStage` keys compiled apps register. A pipeline's decompose and judge
 stages want the stronger model; its transforms do not, and paying lead rates on
 every stage is how a cheap pipeline stops being cheap.
 
-Wired through **both** worker paths — `LeadChat` vs `WorkerChat` on the
-tool-less path, `AgentLoopConfig.Tier` on the tool-equipped one — and a
+Wired through **both** worker paths: `LeadChat` vs `WorkerChat` on the
+tool-less path, `AgentLoopConfig.Tier` on the tool-equipped one, and a
 worker-mode fanout passes its tier down to every branch. `LeadChat` already
 degrades to worker when no separate lead is configured, so no availability check
 is needed.
@@ -374,7 +374,7 @@ is needed.
 **Rejected rather than ignored** on the kinds it can't apply to: an agent stage
 (the dispatched agent's own config decides), a branch (no LLM call), the loop
 itself (set it on the body stages), and an agent-dispatching fanout. A tier
-silently dropped would read as "I asked for lead and got worker" — indis-
+silently dropped would read as "I asked for lead and got worker": indis-
 tinguishable from a routing bug, and exactly the silent-drop class this codebase
 keeps producing.
 
@@ -382,15 +382,15 @@ keeps producing.
 
 The escape hatch, and the reason the stage vocabulary can stop growing. A
 `tool` stage calls one of the caller's tools directly with arguments the
-**author** wrote — no model in the loop, no tokens spent.
+**author** wrote: no model in the loop, no tokens spent.
 
 | Field | Meaning |
 |---|---|
 | `tool` | required; resolved at run time against the same catalog a worker stage sees |
 | `args` | `{param: template}`, full templating vocabulary |
 
-Without this, every app needing deterministic work — arithmetic, dedup,
-normalization, a cache lookup — argues for a new stage kind of its own. With it,
+Without this, every app needing deterministic work (arithmetic, dedup,
+normalization, a cache lookup) argues for a new stage kind of its own. With it,
 the answer is always "write a tool." It also removes the worst reason to ask an
 LLM to do arithmetic: `Debate`'s `runKeyCalculations` is a tool stage.
 
@@ -398,7 +398,7 @@ LLM to do arithmetic: `Debate`'s `runKeyCalculations` is a tool stage.
 from a saved definition a human wrote and reviewed, rather than from whatever
 the model decided to pass this run.
 
-A tool stage may declare `output` to decode a JSON-returning tool into fields —
+A tool stage may declare `output` to decode a JSON-returning tool into fields
 but with **no repair retry**, since there is no model to ask again. A mismatch
 means the tool's contract is wrong, and that should surface rather than loop.
 
@@ -424,7 +424,7 @@ separate change on top of this one.
 
 `apps/orchestrate/pipelines_http.go` needed no change: it decodes the request
 body straight into a `PipelineDef`, so the new field rides along. There is no
-field-by-field stage editor in the web UI to update — pipelines are authored
+field-by-field stage editor in the web UI to update: pipelines are authored
 through the `pipeline` tool or as raw JSON.
 
 ## Bugs this closed on the way past

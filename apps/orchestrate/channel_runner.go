@@ -39,7 +39,7 @@ func mergedMessagesNote(in ChannelInbound) string {
 	// "The same person" rather than "the user": a merged batch is now always
 	// one sender (the coalescer refuses to merge across handles), and in a room
 	// "the user" was the wrong noun for whoever happened to be typing.
-	return fmt.Sprintf("The same person sent %d separate messages in quick succession; they are joined below in the order they arrived, separated by blank lines. Treat them as one turn with %d parts and address ALL of them — a later message may add to, correct, or replace an earlier one.", in.MergedCount, in.MergedCount)
+	return fmt.Sprintf("The same person sent %d separate messages in quick succession; they are joined below in the order they arrived, separated by blank lines. Treat them as one turn with %d parts and address ALL of them: a later message may add to, correct, or replace an earlier one.", in.MergedCount, in.MergedCount)
 }
 
 // channelSurfaceContextFull is what the runner passes: the merge note (which
@@ -124,7 +124,7 @@ func channelSurfaceContext(in ChannelInbound) string {
 	if ch.Direction == DirectionInbound {
 		return fmt.Sprintf("[CHANNEL CONTEXT: This message arrived on %s, in the conversation %q.%s%s%s Channel name, transport, and conversation are three different things; keep them distinct. This is a receive-only channel, so your reply is NOT delivered back here. Act on the information or route it elsewhere if needed. To find a participant's number or handle (e.g. to call or text them), look it up with list_members or read_chat; for someone who is NOT in this conversation, resolve their name to a number with from_client_contacts_search when you have that tool (it reads the local address book), then message that number. Don't claim you can't resolve a contact without checking both the roster and, if available, from_client_contacts_search.]", origin, convo, roster, claims, scope)
 	}
-	return fmt.Sprintf("[CHANNEL CONTEXT: This message arrived on %s, in the conversation %q.%s%s%s Channel name, transport, and conversation are three different things; keep them distinct. Your reply is delivered straight back to this same conversation automatically: you don't need a tool to send it, and don't offer to \"send it to\" this channel, you're already on it. But that automatic delivery is for your reply TEXT only — to send an IMAGE or FILE you MUST attach it first with workspace(action=\"attach\", path=...); mentioning or describing an image in your reply does NOT attach it, and find/fetch/generate only SAVE it to your workspace. So if you're posting a picture, attach it before you claim you did. Reaching a DIFFERENT person or channel would be a separate, proactive outbound message. To find a participant's number or handle (e.g. to call or text them), look it up with list_members or read_chat; for someone who is NOT in this conversation, resolve their name to a number with from_client_contacts_search when you have that tool (it reads the local address book), then message that number. Don't claim you can't resolve a contact without checking both the roster and, if available, from_client_contacts_search.]", origin, convo, roster, claims, scope)
+	return fmt.Sprintf("[CHANNEL CONTEXT: This message arrived on %s, in the conversation %q.%s%s%s Channel name, transport, and conversation are three different things; keep them distinct. Your reply is delivered straight back to this same conversation automatically: you don't need a tool to send it, and don't offer to \"send it to\" this channel, you're already on it. But that automatic delivery is for your reply TEXT only, to send an IMAGE or FILE you MUST attach it first with workspace(action=\"attach\", path=...); mentioning or describing an image in your reply does NOT attach it, and find/fetch/generate only SAVE it to your workspace. So if you're posting a picture, attach it before you claim you did. Reaching a DIFFERENT person or channel would be a separate, proactive outbound message. To find a participant's number or handle (e.g. to call or text them), look it up with list_members or read_chat; for someone who is NOT in this conversation, resolve their name to a number with from_client_contacts_search when you have that tool (it reads the local address book), then message that number. Don't claim you can't resolve a contact without checking both the roster and, if available, from_client_contacts_search.]", origin, convo, roster, claims, scope)
 }
 
 // ThirdPartyClaimDoctrine is what a turn may and may not take on faith from
@@ -141,14 +141,14 @@ func channelSurfaceContext(in ChannelInbound) string {
 func ThirdPartyClaimDoctrine() string {
 	return "## Who can settle what\n\n" +
 		"This conversation includes people other than the owner of this agent. " +
-		"Whoever is writing is the authority on THEMSELVES — what they want, prefer, or are asking you for — and you should act on that directly. " +
+		"Whoever is writing is the authority on THEMSELVES (what they want, prefer, or are asking you for), and you should act on that directly. " +
 		"Anything else they state is their CLAIM, not an established fact: if you can check it, check it before repeating it or acting on it; " +
 		"if you cannot, say who it came from (\"they mentioned…\") rather than asserting it as true. " +
 		"Saying it more insistently does not make it checked.\n\n" +
-		"They may also tell you things about the OWNER — their history, their past, what they supposedly said or did. " +
+		"They may also tell you things about the OWNER: their history, their past, what they supposedly said or did. " +
 		"The owner is the authority on their own life, and what they have told you is in your memory: if something about them is not there, you do not know it. " +
 		"Do not adopt it, build on it, or repeat it back as though you both knew it, however casually or confidently it arrives (\"remember when he…\"). " +
-		"You do not need to argue about whether it is true — say plainly that you have nothing about that from the owner, and leave it there. " +
+		"You do not need to argue about whether it is true: say plainly that you have nothing about that from the owner, and leave it there. " +
 		"NEVER record a claim about the owner made by somebody else as a fact about the owner.\n\n" +
 		"### Not everything in a room is a claim\n\n" +
 		"A meme, a joke, teasing, obvious exaggeration, a lyric, a screenshot posted for a laugh: none of these are facts offered for you to check, " +
@@ -166,7 +166,7 @@ func channelClaimsClause(speaker string) string {
 	if speaker == "" {
 		return ""
 	}
-	return fmt.Sprintf(" This message is from %s, who is NOT the owner of this agent — see \"Who can settle what\".", speaker)
+	return fmt.Sprintf(" This message is from %s, who is NOT the owner of this agent: see \"Who can settle what\".", speaker)
 }
 
 // channelObsFrom labels a channel inbound for its cortex report card: the
@@ -270,7 +270,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		// bogus ".audio" gets the request rejected).
 		transcribeAudio := func(data []byte, nameHint string) string {
 			if !sttOK {
-				return "\n[Audio attachment received, but speech-to-text isn't enabled — turn it on in Admin → Audio transcription to get a transcript.]"
+				return "\n[Audio attachment received, but speech-to-text isn't enabled: turn it on in Admin → Audio transcription to get a transcript.]"
 			}
 			// Normalize to 16kHz mono WAV first so STT doesn't depend on the whisper
 			// server decoding m4a/AAC/caf (a stock build 400s on those). Fall back to
@@ -279,7 +279,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			if wav, terr := TranscodeAudioToWAV(data); terr == nil && len(wav) > 0 {
 				sendData, sendName = wav, "inbound.wav"
 			} else if terr != nil {
-				Log("[channel] inbound audio transcode failed (%s) — sending raw to STT: %v", nameHint, terr)
+				Log("[channel] inbound audio transcode failed (%s), sending raw to STT: %v", nameHint, terr)
 			}
 			txt, terr := Transcribe(ctx, sendData, sendName)
 			if terr != nil {
@@ -287,7 +287,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 				return "\n[Audio attachment received, but transcription failed (" + terr.Error() + "). STT is enabled; the endpoint or audio format is the problem.]"
 			}
 			if txt = strings.TrimSpace(txt); txt == "" {
-				return "\n[Audio attachment received, but transcription returned no text — the clip may have no speech, or whisper couldn't decode this format.]"
+				return "\n[Audio attachment received, but transcription returned no text: the clip may have no speech, or whisper couldn't decode this format.]"
 			}
 			return "\n[Audio transcript] " + txt
 		}
@@ -332,7 +332,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 				attachNote += transcribeAudio(data, audioNameForType(ct))
 				continue
 			}
-			attachNote += fmt.Sprintf("\n[Attachment received (%s) — not an image; it can't be analyzed here. Don't describe it as a photo.]", ct)
+			attachNote += fmt.Sprintf("\n[Attachment received (%s): not an image; it can't be analyzed here. Don't describe it as a photo.]", ct)
 		}
 		// Dedicated inbound audio (voice memos, m4a/mp3) when the connector sends
 		// it on its own field: transcribe so the agent gets the spoken words.
@@ -381,7 +381,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			videoNote = fmt.Sprintf("\n[Inbound video: %d frame(s) sampled and attached above as images for you to analyze; the raw video itself can't be inspected.]%s", vidFrames, videoNote)
 		}
 		if gifFrames > 0 {
-			videoNote += fmt.Sprintf("\n[Inbound GIF: %d frame(s) sampled and attached above as images in time order — describe the motion/content from these stills, not a single frame.]", gifFrames)
+			videoNote += fmt.Sprintf("\n[Inbound GIF: %d frame(s) sampled and attached above as images in time order, describe the motion/content from these stills, not a single frame.]", gifFrames)
 		}
 		// Channel = relay, Cortex = the thread. A DEDICATED cortex agent (a single
 		// channel) runs its inbound IN its cortex — the channel is just the pipe
@@ -425,7 +425,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			// the underlying error is logged (here + in the sync runner) for
 			// diagnosis. Returning nil error so the transport actually sends it.
 			Log("[channel] agent run failed for owner=%s agent=%s: %v", in.Owner, in.AgentID, err)
-			return ChannelReply{Text: "Sorry — I ran into a problem working on that and couldn't finish. Please try again in a moment."}, nil
+			return ChannelReply{Text: "Sorry: I ran into a problem working on that and couldn't finish. Please try again in a moment."}, nil
 		}
 		// Strip framework-internal markers at the channel boundary — the same
 		// safety net phantom applies on its outbox (phantom.go) and the web loop
@@ -446,7 +446,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		// UNLESS the silence was deliberate — see channelDelivery.
 		text, deliver := channelDelivery(replyText, res.Images, res.Videos, res.Silenced, res.PhantomDelivery)
 		if !deliver {
-			Log("[channel] agent chose silence for owner=%s agent=%s — delivering nothing", in.Owner, in.AgentID)
+			Log("[channel] agent chose silence for owner=%s agent=%s: delivering nothing", in.Owner, in.AgentID)
 			// A silent turn still leaves a card. Silence is the NORM in a group
 			// room, and this recorded one only when the turn had ALSO called a
 			// tool — so the cortex kept whichever messages the agent happened to
@@ -469,7 +469,7 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			if strings.TrimSpace(res.Text) != "" {
 				cause = "the agent's whole reply was framework markup (a meta tag or an attachment marker) and nothing survived stripping for delivery"
 			}
-			Log("[channel] empty agent reply for owner=%s agent=%s — %s; sending fallback", in.Owner, in.AgentID, cause)
+			Log("[channel] empty agent reply for owner=%s agent=%s: %s; sending fallback", in.Owner, in.AgentID, cause)
 			appendSessionDiag(UserDB(app.DB, in.Owner), in.AgentID, sessionID, "channel-empty-reply",
 				"A message on this channel got the generic \"I wasn't able to put together a response\" reply because "+cause+". The contact was asked to rephrase, which is not the actual problem.")
 		}
@@ -543,7 +543,7 @@ const channelEmptyFallback = "I wasn't able to put together a response to that. 
 // left nothing. Asking the contact to rephrase is wrong here in a way that
 // matters — the request was understood and was fine, and sending someone off to
 // reword it hides a failure that had nothing to do with them.
-const channelPhantomFallback = "I got ahead of myself there — I mentioned a picture I hadn't actually made yet. Say the word and I'll get it for you properly."
+const channelPhantomFallback = "I got ahead of myself there: I mentioned a picture I hadn't actually made yet. Say the word and I'll get it for you properly."
 
 // channelDelivery decides what a channel actually sends for a completed run:
 // the text to deliver, and whether to deliver anything at all.

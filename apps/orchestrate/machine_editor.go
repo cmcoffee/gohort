@@ -124,7 +124,7 @@ func metaPanel(def MachineDef, base string) ui.FormPanel {
 				Help: "OFF: a conversation. Somebody talks to it, and one step waits for their replies. " +
 					"ON: a job, started once, with nobody watching. Two things change, and they are the inverse of a conversation: " +
 					"NO step may wait for the person (turn off \"the conversation waits here\" on every one), and ONE step must finish it " +
-					"by handing off nowhere — that step's result is the run's result. " +
+					"by handing off nowhere, that step's result is the run's result. " +
 					"An existing conversational machine will not simply flip: its waiting steps are what a run cannot use. " +
 					"Use it for work that takes many steps and no input: an overnight investigation, a nightly report."},
 		},
@@ -229,13 +229,13 @@ func phasePanels(def MachineDef, base string, cat editorCatalog) []ui.Component 
 			// which is where you put something nobody needs twice.
 			ui.Toolbar{Actions: []ui.ToolbarAction{{
 				Label:  "↑ Move up",
-				Title:  "Move " + p.Name + " one place earlier. Order is the reading order and which waiting step catches a step that hands off nowhere. In the map it only swaps steps that sit at the same depth AND come from the same step — everything else is placed under whatever leads to it.",
+				Title:  "Move " + p.Name + " one place earlier. Order is the reading order and which waiting step catches a step that hands off nowhere. In the map it only swaps steps that sit at the same depth AND come from the same step: everything else is placed under whatever leads to it.",
 				Method: "client",
 				URL:    "machine_move_step",
 				Data:   p.Name + "|up",
 			}, {
 				Label:  "↓ Move down",
-				Title:  "Move " + p.Name + " one place later. Order is the reading order and which waiting step catches a step that hands off nowhere. In the map it only swaps steps that sit at the same depth AND come from the same step — everything else is placed under whatever leads to it.",
+				Title:  "Move " + p.Name + " one place later. Order is the reading order and which waiting step catches a step that hands off nowhere. In the map it only swaps steps that sit at the same depth AND come from the same step: everything else is placed under whatever leads to it.",
 				Method: "client",
 				URL:    "machine_move_step",
 				Data:   p.Name + "|down",
@@ -326,7 +326,7 @@ func withoutName(names []string, drop string) []string {
 func phaseOptions(def MachineDef, withNone bool) []ui.SelectOption {
 	var out []ui.SelectOption
 	if withNone {
-		out = append(out, ui.SelectOption{Value: "", Label: "— nowhere —"})
+		out = append(out, ui.SelectOption{Value: "", Label: "(nowhere)"})
 	}
 	for _, p := range def.Phases {
 		out = append(out, ui.SelectOption{Value: p.Name, Label: p.Name})
@@ -343,13 +343,13 @@ func phaseOptions(def MachineDef, withNone bool) []ui.SelectOption {
 // step and its field, which is a picker with two dependent levels rather
 // than a wheel, and typing one into "from" stays available.
 func fieldKindOptions() []ui.SelectOption {
-	out := []ui.SelectOption{{Value: "", Label: "— choose —"}}
+	out := []ui.SelectOption{{Value: "", Label: "(choose)"}}
 	for _, v := range MachineVars() {
 		if v.Ref == "{established}" {
 			continue // a whole block is not one field's value
 		}
 		name := BuiltinFieldName(v.Ref)
-		out = append(out, ui.SelectOption{Value: name, Label: name + " — " + v.Means})
+		out = append(out, ui.SelectOption{Value: name, Label: name + " · " + v.Means})
 	}
 	// Last, and named plainly: this is the ordinary case, and the word
 	// for it should be the one an author would use to a colleague. The
@@ -368,7 +368,7 @@ const customFieldKind = "custom"
 // tool — this step runs".
 func toolRunnerOptions(pool []ui.SelectOption) []ui.SelectOption {
 	out := make([]ui.SelectOption, 0, len(pool)+1)
-	out = append(out, ui.SelectOption{Value: "", Label: "— this step runs, and decides —"})
+	out = append(out, ui.SelectOption{Value: "", Label: "(this step runs, and decides)"})
 	for _, o := range pool {
 		if o.Value == noToolsSentinel {
 			continue // a runner cannot be "nothing"; that is what empty means
@@ -455,18 +455,18 @@ func toolsHelp(p MachinePhase) string {
 	// where the control is beats leaving somebody to find it in a
 	// findings list two sections down.
 	if strings.TrimSpace(p.Agent) != "" {
-		return "This step is delegated, so these do nothing — the delegate works from its own catalog. " +
+		return "This step is delegated, so these do nothing: the delegate works from its own catalog. " +
 			"Untick them, or clear the delegate above to let this step do the work itself."
 	}
 	if p.Resident {
 		return "Check tools to narrow the agent's catalog while the conversation waits here; none checked = everything it normally has. " +
-			"What the agent's attached SOURCES grant comes along either way — attaching is what granted those, and this list picks from the worker pool. " +
+			"What the agent's attached SOURCES grant comes along either way: attaching is what granted those, and this list picks from the worker pool. " +
 			"Tick one of a source's tools and this list governs them too, so you can say \"that source, not the others\". " +
 			"Note this changes the tool list mid-conversation, which re-writes the cached prompt prefix."
 	}
 	return "Check tools to narrow what this step may reach; none checked = everything the agent normally has, the same rule a step that waits here follows. " +
 		"What the agent's attached SOURCES grant comes along either way, unless you tick one of their tools and take charge of them here. " +
-		"For a step that only decides or reshapes what it was given, tick \"No tools at all\" — it runs before the turn has a catalog, so that also spares it the cost of building one. " +
+		"For a step that only decides or reshapes what it was given, tick \"No tools at all\": it runs before the turn has a catalog, so that also spares it the cost of building one. " +
 		"For work that needs a whole different reach, delegate the step to an agent instead (above)."
 }
 
@@ -521,7 +521,7 @@ func builtinFieldNames() []string {
 func builtinVarHelp() string {
 	var parts []string
 	for _, v := range MachineVars() {
-		part := v.Ref + " — " + v.Means
+		part := v.Ref + " · " + v.Means
 		if v.Auto != "" {
 			part += " (" + v.Auto + ")"
 		}
@@ -557,7 +557,7 @@ func stateRefsAvailableTo(def MachineDef, phase string) []string {
 // The shared form could only offer every field in the machine and hope;
 // a per-phase form can offer exactly the ones that are legal here.
 func ownFieldOptions(p MachinePhase) []ui.SelectOption {
-	out := []ui.SelectOption{{Value: "", Label: "— always the same phase —"}}
+	out := []ui.SelectOption{{Value: "", Label: "(always the same phase)"}}
 	for _, f := range p.Output {
 		if f.Name == "" {
 			continue
@@ -599,9 +599,9 @@ func attachAgentOptions(udb Database, user string, def MachineDef) []ui.SelectOp
 		opt := ui.SelectOption{Value: a.ID, Label: chFirst(a.Name, a.ID)}
 		if a.Machine != "" && a.Machine != def.ID {
 			if n := names[a.Machine]; n != "" {
-				opt.Help = "runs “" + n + "” today — checking this moves it here"
+				opt.Help = "runs “" + n + "” today: checking this moves it here"
 			} else {
-				opt.Help = "points at a machine that no longer exists — checking this repairs it"
+				opt.Help = "points at a machine that no longer exists: checking this repairs it"
 			}
 		}
 		out = append(out, opt)
@@ -612,7 +612,7 @@ func attachAgentOptions(udb Database, user string, def MachineDef) []ui.SelectOp
 // agentOptions lists the user's agents, so delegation is a choice rather
 // than a remembered name.
 func agentOptions(udb Database, user string) []ui.SelectOption {
-	out := []ui.SelectOption{{Value: "", Label: "— this agent runs the step —"}}
+	out := []ui.SelectOption{{Value: "", Label: "(this agent runs the step)"}}
 	for _, a := range listAgents(udb, user) {
 		if isAppAgent(a.ID) || a.Hidden {
 			continue
@@ -627,7 +627,7 @@ func agentOptions(udb Database, user string) []ui.SelectOption {
 // machine is portable and an exported recipe should name the pipeline
 // somebody wrote, not the row it happened to live in here.
 func pipelineOptions(udb Database, user string) []ui.SelectOption {
-	out := []ui.SelectOption{{Value: "", Label: "— this agent runs the step —"}}
+	out := []ui.SelectOption{{Value: "", Label: "(this agent runs the step)"}}
 	for _, d := range ListPipelineDefs(udb, user) {
 		out = append(out, ui.SelectOption{Value: d.Name, Label: chFirst(d.Name, d.ID), Help: firstLine(d.Description)})
 	}
@@ -642,7 +642,7 @@ func pipelineOptions(udb Database, user string) []ui.SelectOption {
 // The machine being edited is excluded. Depth is capped at one, so a
 // machine running itself is a run that could never complete.
 func childMachineOptions(udb Database, user string, self MachineDef) []ui.SelectOption {
-	out := []ui.SelectOption{{Value: "", Label: "— this agent runs the step —"}}
+	out := []ui.SelectOption{{Value: "", Label: "(this agent runs the step)"}}
 	for _, d := range ListMachineDefs(udb, user) {
 		if !d.Unattended || d.ID == self.ID {
 			continue
@@ -658,27 +658,27 @@ func childMachineOptions(udb Database, user string, self MachineDef) []ui.Select
 func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.FormField {
 	refs := stateRefsAvailableTo(def, p.Name)
 	promptLabel := "How to go about it"
-	promptHelp := "The METHOD, not the output. What each field below should contain is already an instruction — the framework sends every field you declare, with the description you gave it — so this is for what a list of fields cannot say: where to look first, what a good answer requires, and the mistake this step tends to make. " +
+	promptHelp := "The METHOD, not the output. What each field below should contain is already an instruction (the framework sends every field you declare, with the description you gave it), so this is for what a list of fields cannot say: where to look first, what a good answer requires, and the mistake this step tends to make. " +
 		"\"Read enough to have a real hypothesis rather than a plausible one\" belongs here; \"return a hypothesis field\" does not. " +
 		"Open \"What this step actually receives\" below to read exactly what it gets."
 	if p.Resident {
 		promptLabel = "Instructions for this step"
 		promptHelp = "What the agent should be doing HERE, layered on top of its own persona. Write the JOB, not the identity, and write it to a person. " +
-			"What earlier steps established and where else the conversation can go are composed for you — do not paste them in. " +
+			"What earlier steps established and where else the conversation can go are composed for you: do not paste them in. " +
 			"Open \"What this step actually receives\" below to read exactly what it gets."
 	} else if len(p.Output) == 0 {
-		promptHelp = "What this step should do. It declares no fields yet, so this text is the whole instruction — " +
+		promptHelp = "What this step should do. It declares no fields yet, so this text is the whole instruction: " +
 			"once you add fields below, each one becomes an instruction of its own and this can shrink to the method: where to look, what a good answer requires, what usually goes wrong."
 	}
 	if p.Resident {
-		promptHelp += " This prompt is pinned across turns, so {input}, {prev} and {now} do not exist here — the person's message is already in the conversation, and what earlier steps established is composed for you. The stable variables work: {original_input}, {user}, {agent}, {step}, {machine}."
+		promptHelp += " This prompt is pinned across turns, so {input}, {prev} and {now} do not exist here: the person's message is already in the conversation, and what earlier steps established is composed for you. The stable variables work: {original_input}, {user}, {agent}, {step}, {machine}."
 	} else {
 		promptHelp += " You do not have to ask for the person's message or for what earlier steps worked out: both are handed to this step whether you mention them or not. " +
 			"Place a variable only when you want the value INSIDE a sentence. " + builtinVarHelp()
 	}
 	if len(refs) > 0 {
 		promptHelp += " One field at a time, if you need it that way: " + strings.Join(refs, "  ") +
-			" — but the same values already arrive pinned, so reach for one only when the phrasing genuinely matters."
+			", but the same values already arrive pinned, so reach for one only when the phrasing genuinely matters."
 	}
 
 	fields := []ui.FormField{
@@ -686,7 +686,8 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 		// reloads the page: the rail, the other steps' selects and this
 		// form's own post URL all carry the old name until it does.
 		{Field: "name", Type: "text", Label: "Name", ReloadOnChange: true,
-			Help: "Short handle, lowercase. It is how other steps point here. Renaming updates every step that refers to this one."},
+			Help:   "Short handle, lowercase. It is how other steps point here.",
+			Detail: "Renaming updates every step that refers to this one."},
 		{Field: "desc", Type: "text", Label: "What this step does",
 			Help: "One line, for whoever reads the machine later. Not shown to the agent."},
 		// The ✨ opens the shared assist workbench: a draft beside a
@@ -696,7 +697,8 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 		// composes around it, and what the other steps already establish.
 		// The endpoint knows all of that (machine_suggest.go).
 		{Type: "header", Label: "What kind of step is this?",
-			Help: "The one answer everything below depends on. A step the conversation WAITS in replies to the person and cannot record fields — its reply goes to them, not to a decoder. A step that passes through records what it worked out and hands to the next one."},
+			Help:   "The one answer everything below depends on.",
+			Detail: "A step the conversation WAITS in replies to the person and cannot record fields: its reply goes to them, not to a decoder. A step that passes through records what it worked out and hands to the next one."},
 		// The sections below are built from this answer, server-side, so
 		// the promise in the help text ("the sections below change to
 		// match") is only true if the page rebuilds. Toggling it left a
@@ -706,7 +708,8 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 		// appears. A toggle saves on change, never on a debounce, so
 		// reloading here costs nothing typed.
 		{Field: "resident", Type: "toggle", Label: "The conversation waits here", ReloadOnChange: true,
-			Help: "ON: a turn ENDS here and the person replies into it — this is where a conversation lives, and the sections below change to match. OFF: the step runs, records what it establishes, and passes straight on within the same turn. A machine needs at least one step with this on, or a turn has nowhere to finish."},
+			Help:   "Whether a turn ends here and the person replies into it.",
+			Detail: "On, this is where a conversation lives, and the sections below change to match. Off, the step runs, records what it establishes, and passes straight on within the same turn.\n\nA machine needs at least one step with this on, or a turn has nowhere to finish."},
 	}
 	if !p.Resident {
 		// Filed WITH the kind toggle, because it is the same class of
@@ -733,7 +736,7 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 			ui.FormField{Field: "tool", Type: "select", Label: "Or just call a tool",
 				Options: toolRunnerOptions(cat.tools), ShowWhen: keepWhileSet(p.Tool, "!agent;!pipeline;!machine"),
 				Help: "No model, no tokens: the step calls this tool with the arguments below and hands the result on. " +
-					"For the steps that fetch one thing, post one thing, or check one thing — where a model call would only " +
+					"For the steps that fetch one thing, post one thing, or check one thing, where a model call would only " +
 					"decide to do the only thing it could do. A step that has to CHOOSE which tool, or read the result and " +
 					"judge it, is not this: leave it empty and let the step run."},
 			ui.FormField{Field: "args", Type: "rows", Label: "Arguments",
@@ -742,10 +745,12 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 					{Field: "name", Type: "text", Label: "Name", Width: 4, Placeholder: "e.g. url"},
 					{Field: "value", Type: "text", Label: "Value", Width: 8, Placeholder: "e.g. {state:plan.url}"},
 				},
-				Help: "One row per argument the tool takes. A value may template what earlier steps produced — {input}, {prev}, {state:STEP.field} — " +
-					"and a placeholder fills a VALUE only: the names are yours, and nothing a model wrote upstream can add or rename one."},
+				Help: "One row per argument the tool takes.",
+				Detail: "A value may template what earlier steps produced: {input}, {prev}, {state:STEP.field}. " +
+					"A placeholder fills a VALUE only: the names are yours, and nothing a model wrote upstream can add or rename one."},
 			ui.FormField{Field: "agent", Type: "select", Label: "Who runs this step", Options: cat.agents,
-				Help: "Leave it with this agent, or give it to another one — with its own persona, tools and memory. A delegate gets the instructions below, works, and reports back; what it reports is recorded further down. Use it when the work needs different REACH, not different wording. How the step runs — model, reasoning, tools — becomes the delegate's own configuration."},
+				Help:   "Leave it with this agent, or hand it to another one.",
+				Detail: "A delegate has its own persona, tools and memory. It gets the instructions below, works, and reports back; what it reports is recorded further down. Use it when the work needs different REACH, not different wording. How the step runs, meaning model, reasoning and tools, becomes the delegate's own configuration."},
 		)
 	}
 	// The instructions come AFTER the two questions that decide what they
@@ -766,15 +771,18 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 			// word, which reads as a bug — the rule is worth a sentence
 			// exactly where the thing it removed used to be.
 			ui.FormField{Type: "header", Label: "What this step establishes",
-				Help: "Nothing, and that is the rule rather than an omission. A step the conversation waits in replies to the PERSON, " +
-					"so there is no decoder to hand fields to, and its reply is never pinned to the blackboard — that would paste it into every later step's prompt, forever. " +
+				Help: "Nothing, and that is the rule rather than an omission.",
+				Detail: "A step the conversation waits in replies to the PERSON, so there is no decoder to hand fields to. " +
+					"Its reply is never pinned to the blackboard either, which would paste it into every later step's prompt, forever. " +
 					"Anything later steps need has to be worked out by the step that feeds this one."},
 			ui.FormField{Field: "next", Type: "select", Label: "After one turn, go to", Options: phaseOptions(def, true),
-				Help: "Leave empty for the usual case — the conversation stays here. Set it to make this a ONE-turn step: it replies once, then moves on. That is how an intake beat asks its questions and continues."},
+				Help:   "Leave it empty for the usual case: the conversation stays here.",
+				Detail: "Set it to make this a ONE-turn step: it replies once, then moves on. That is how an intake beat asks its questions and continues."},
 			ui.FormField{Type: "header", Label: "Leaving early"},
 			ui.FormField{Field: "guard", Type: "textarea", Rows: 2, Label: "Leave this step when…",
 				Placeholder: "the person has moved to a different problem",
-				Help:        "Plain words, judged on each new turn that arrives here. Empty means the conversation stays until something else moves it. Costs one model call per turn, so say something worth checking."},
+				Help:        "Plain words, judged on each new turn that arrives here.",
+				Detail:      "Empty means the conversation stays until something else moves it. It costs one model call per turn, so say something worth checking."},
 			ui.FormField{Field: "guard_to", Type: "select", Label: "…and go to", Options: phaseOptions(def, true),
 				Help: "Empty means back to the start."},
 			// Both ways a conversation leaves on the AGENT's initiative —
@@ -785,15 +793,17 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 			// a step that passes on it would be a control that could never
 			// apply.
 			ui.FormField{Field: "exits_to", Type: "checklist", Label: "It may move the conversation to", Options: otherPhaseOptions(def, p.Name),
-				Help: "Leave every box empty and the conversation can be moved to any step — right for most machines. Tick some and the agent may only move it to those, which is how the two arms of a branch stay separate. " +
-					"It bounds what the AGENT decides on its own, by either door: change_phase mid-turn, and the guard above naming somewhere to go. Where this step hands off itself, and the target you set above, are your wiring and always allowed."},
+				Help: "Leave every box empty and the conversation can be moved to any step.",
+				Detail: "That is right for most machines. Tick some and the agent may only move it to those, which is how the two arms of a branch stay separate." +
+					"\n\nIt bounds what the AGENT decides on its own, by either door: change_phase mid-turn, and the guard above naming somewhere to go. Where this step hands off itself, and the target you set above, are your wiring and always allowed."},
 		)
 	} else {
 		fields = append(fields,
 			ui.FormField{Type: "header", Label: "What this step establishes",
-				Help: "The things it works out — and, between them, most of the instruction. Each field is sent to the model with the description you write here, so a description is a directive: \"the single best explanation, stated so it could be wrong\" does more work than \"the hypothesis\". " +
+				Help: "The things it works out, and between them most of the instruction.",
+				Detail: "Each field is sent to the model with the description you write here, so a description is a directive: \"the single best explanation, stated so it could be wrong\" does more work than \"the hypothesis\". " +
 					"Each one is validated on its own and arrives in every later step under \"Established earlier in this conversation\", labelled with this step's name. A step that decides something should record WHAT it decided, or the next step has to guess. " +
-					"Name a field after a built-in and it is FILLED instead of asked for: the model never sees it, its description goes unused, and it holds text — everything a variable carries is words."},
+					"Name a field after a built-in and it is FILLED instead of asked for: the model never sees it, its description goes unused, and it holds text, everything a variable carries is words."},
 			ui.FormField{Field: "output", Type: "rows", Label: "", AddLabel: "+ Add field",
 				Placeholder: "(nothing yet)",
 				Columns: []ui.FormField{
@@ -820,7 +830,8 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 					// just asks the reader why hypothesis.
 					{Field: "name", Type: "text", Label: "Name", Width: 3, HideWhen: builtinOrUnansweredExpr(),
 						Placeholder: "short_lowercase_name",
-						Help:        "What to call this value. Later steps read it as {state:<step>.<name>}, and it is the label it appears under in what they are handed."},
+						Help:        "What to call this value.",
+						Detail:      "Later steps read it as {state:<step>.<name>}, and it is the label it appears under in what they are handed."},
 					// The columns below are the STEP's work to configure. A
 					// field filled from a built-in has none of it: its type
 					// is text, it is always present, and there is nothing
@@ -839,25 +850,25 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 					// with the short cells meant either it was too narrow
 					// to write in or they were too narrow to read.
 					{Field: "desc", Type: "textarea", Rows: 3, OwnLine: true, HideWhen: builtinOrUnansweredExpr(),
-						Label:       "What to work out — write it as the instruction for this field",
+						Label:       "What to work out: write it as the instruction for this field",
 						Placeholder: "e.g. the single best explanation, stated so it could be wrong. Not three ranked possibilities: one, committed to."},
 				}},
 
 			ui.FormField{Type: "header", Label: "What it adds to the running lists", Collapsed: true,
-				Help: "Most steps decide something and hand it on. Some CONTRIBUTE to a list the whole run is building — " +
+				Help: "Most steps decide something and hand it on. Some CONTRIBUTE to a list the whole run is building: " +
 					"the answers so far, the sources, the questions still open. A list lives under its own name, so several steps can add to one, " +
 					"and it survives coming back here (\"keep only\" prunes step findings, never the lists). Read one in a prompt with {state:LIST}."},
 			ui.FormField{Field: "accumulates", Type: "rows", Label: "", AddLabel: "+ Add to a list",
 				Placeholder: "(this step adds to nothing)",
 				Columns: []ui.FormField{
 					{Field: "name", Type: "text", Label: "List", Width: 3,
-						Help: "The list's own name, e.g. answers. Not the same as any step name — they share the blackboard."},
+						Help: "The list's own name, e.g. answers. Not the same as any step name: they share the blackboard."},
 					{Field: "from", Type: "select", Label: "Takes", Width: 3, Options: ownFieldOptions(p),
 						Help: "One of THIS step's own output fields. A list field adds its elements; a single value adds itself."},
 					{Field: "mode", Type: "select", Label: "How", Width: 3, Options: []ui.SelectOption{
-						{Value: "", Label: "Append — add to the end"},
-						{Value: "union", Label: "Union — skip what is already there"},
-						{Value: "replace", Label: "Replace — this becomes the list"},
+						{Value: "", Label: "Append: add to the end"},
+						{Value: "union", Label: "Union: skip what is already there"},
+						{Value: "replace", Label: "Replace: this becomes the list"},
 					}},
 					{Field: "by", Type: "text", Label: "Same when", Width: 3,
 						Placeholder: "e.g. id",
@@ -878,7 +889,8 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 			// on and this goes away under your hand.
 			ui.FormField{Field: "choices", Type: "checklist", Label: "…or let this step choose between", ShowWhen: routingShowWhen(p, "!next_from"),
 				Options: otherPhaseOptions(def, p.Name),
-				Help:    "Tick the steps it may send the conversation to and it decides at run time. You do not declare a field for the decision: the framework adds next_step to what this step returns, writes the instruction naming each destination and what that step is for, draws those arrows, and refuses to save a name that is not a step. \"Then go to\" is the fallback if the choice does not resolve."},
+				Help:    "Tick the steps it may send the conversation to, and it decides at run time.",
+				Detail:  "You do not declare a field for the decision. The framework adds next_step to what this step returns, writes the instruction naming each destination and what that step is for, draws those arrows, and refuses to save a name that is not a step. \"Then go to\" is the fallback if the choice does not resolve."},
 		)
 		// The hand-wired form, kept because machines that use it exist and
 		// because a routing value that is ALSO a real finding is worth
@@ -894,13 +906,16 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 			fields = append(fields,
 				ui.FormField{Type: "header", Label: "Routing by hand", ShowWhen: routingShowWhen(p, "!choices"),
 					Collapsed: strings.TrimSpace(p.NextFrom) == "",
-					Help:      "Only if the destination is also a finding worth naming — \"severity\", say, where the value routes AND means something. Otherwise use the list above."},
+					Help:      "Only if the destination is also a finding worth naming.",
+					Detail:    "\"Severity\", say, where the value routes AND means something. Otherwise use the list above."},
 				ui.FormField{Field: "next_from", Type: "select", Label: "Route on the field", ShowWhen: routingShowWhen(p, "!choices"),
 					Options: ownFieldOptions(p),
-					Help:    "One of this step's own text fields, whose value is a step NAME. A step can route ONE way: picking a field here hides the list above, and ticking that list hides this."},
+					Help:    "One of this step's own text fields, whose value is a step NAME.",
+					Detail:  "A step can route ONE way: picking a field here hides the list above, and ticking that list hides this."},
 				ui.FormField{Field: "targets", Type: "checklist", Label: "…which may name", ShowWhen: routingShowWhen(p, "!choices"),
 					Options: otherPhaseOptions(def, p.Name),
-					Help:    "The steps that field is allowed to name. Leave empty and anything the step returns is tried, with \"Then go to\" as the fallback."},
+					Help:    "The steps that field is allowed to name.",
+					Detail:  "Leave it empty and anything the step returns is tried, with \"Then go to\" as the fallback."},
 			)
 		}
 	}
@@ -910,7 +925,8 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 		// were leftovers, and it made "How this step runs" mean two things.
 		ui.FormField{Type: "header", Label: "Coming back to this step"},
 		ui.FormField{Field: "keep", Type: "checklist", Label: "On re-entry, keep only", Options: otherPhaseOptions(def, p.Name),
-			Help: "Steps whose findings survive coming BACK here a second time. Choose none to keep everything, which is the safe default — a re-route that silently wipes what earlier steps established is the expensive mistake."},
+			Help:   "Steps whose findings survive coming BACK here a second time.",
+			Detail: "Choose none to keep everything, which is the safe default. A re-route that silently wipes what earlier steps established is the expensive mistake."},
 		// NOT collapsed. Which model answers here is a routing decision an
 		// author makes deliberately and re-reads constantly; behind a shut
 		// accordion it reads as a setting nobody has touched. The one thing
@@ -923,14 +939,14 @@ func phaseFieldsFor(def MachineDef, p MachinePhase, cat editorCatalog) []ui.Form
 		// built-in field rows follow.
 		ui.FormField{Field: "model", Type: "select", Label: "Which model", ShowWhen: delegatedShowWhen(p.Model), Options: []ui.SelectOption{
 			{Value: "", Label: "Inherit the agent's routing"},
-			{Value: "worker", Label: "Worker — the cheap, local one"},
-			{Value: "lead", Label: "Lead — the precise, remote one"},
+			{Value: "worker", Label: "Worker: the cheap, local one"},
+			{Value: "lead", Label: "Lead: the precise, remote one"},
 		},
 			Help: "A routing decision or a transform is worker work; a step that commits to an explanation is usually lead."},
 		ui.FormField{Field: "think", Type: "select", Label: "Reasoning", ShowWhen: delegatedShowWhen(p.Think), Options: []ui.SelectOption{
 			{Value: "", Label: "Inherit the agent's setting"},
-			{Value: "on", Label: "On — this step is a judgement"},
-			{Value: "off", Label: "Off — this step is a transform"},
+			{Value: "on", Label: "On: this step is a judgement"},
+			{Value: "off", Label: "Off: this step is a transform"},
 		}},
 	)
 	return fields
@@ -956,17 +972,17 @@ func phaseToolFields(p MachinePhase, cat editorCatalog) []ui.FormField {
 	label := toolsLabel(p)
 	switch {
 	case PhaseReach(p) == ReachNone:
-		label += " — nothing"
+		label += ", nothing"
 	case PhaseReach(p) == ReachRead:
-		label += " — read-only"
+		label += ", read-only"
 	case len(p.Tools) > 0:
-		label += " — " + strconv.Itoa(len(p.Tools)) + " named"
+		label += " · " + strconv.Itoa(len(p.Tools)) + " named"
 	}
 	// Reached only with something stored (see phaseShowsTools), so this says
 	// what is kept and that it is doing nothing, rather than hiding it.
 	inert := strings.TrimSpace(p.Tool) != ""
 	if inert {
-		label += " — NOT IN EFFECT: this step calls " + p.Tool + " directly"
+		label += ", NOT IN EFFECT: this step calls " + p.Tool + " directly"
 	}
 	fields := []ui.FormField{
 		ui.FormField{Type: "header", Label: label, Collapsed: true},
@@ -977,12 +993,14 @@ func phaseToolFields(p MachinePhase, cat editorCatalog) []ui.FormField {
 			Options: []ui.SelectOption{
 				{Value: ReachAll, Label: "Everything the agent has",
 					Help: "The default. What the agent carries is what this step can use."},
-				{Value: ReachRead, Label: "Read-only — nothing that writes or reaches the network",
+				{Value: ReachRead, Label: "Read-only: nothing that writes or reaches the network",
 					Help: "For a step that gathers and reports. Searching, listing and reading stay; posting, running and fetching go."},
-				{Value: ReachNone, Label: "Nothing — this step only decides",
-					Help: "For a step that routes, classifies, or reshapes what it was handed. Also spares it building a catalog it will not use."},
+				{Value: ReachNone, Label: "Nothing: this step only decides",
+					Help:   "For a step that routes, classifies, or reshapes what it was handed.",
+					Detail: "It also spares the step building a catalog it will not use."},
 			},
-			Help: "Says what KIND of thing this step may do. Prefer it to naming tools: a catalog is assembled fresh every turn — an MCP server publishes its tools when it connects, a credential mints its own per session, an attachment mints more per agent — so a name can stop resolving without anybody changing this machine."},
+			Help:   "Says what KIND of thing this step may do.",
+			Detail: "Prefer it to naming tools. A catalog is assembled fresh every turn: an MCP server publishes its tools when it connects, a credential mints its own per session, an attachment mints more per agent. So a name can stop resolving without anybody changing this machine."},
 		// The precise instrument, below the coarse one and shown only
 		// where it can act: with the reach set to nothing there is
 		// nothing left to narrow, and a control that cannot do anything
@@ -1013,7 +1031,8 @@ func phaseToolFields(p MachinePhase, cat editorCatalog) []ui.FormField {
 			ShowWhen:    "reach:!none",
 			Options:     toolChecklistOptions(cat.tools, p.Deny),
 			Placeholder: "(no tools to offer)",
-			Help:        "Subtracted last, after everything above. Ticking one here keeps the step current with the agent's catalog while holding back just this tool — which is what you want when a step should do its ordinary work but must not, say, search the public web. The workflow controls cannot be denied."},
+			Help:        "Subtracted last, after everything above.",
+			Detail:      "Ticking one here keeps the step current with the agent's catalog while holding back just this tool, which is what you want when a step should do its ordinary work but must not, say, search the public web. The workflow controls cannot be denied."},
 	}
 	if !inert {
 		return fields
@@ -1045,7 +1064,7 @@ func denyHeaderLabel(p MachinePhase) string {
 // about this step that can be read without opening anything.
 func nameNarrowingLabel(p MachinePhase) string {
 	if n := len(p.Tools); n > 0 {
-		return "Narrow by name — " + strconv.Itoa(n) + " named"
+		return "Narrow by name: " + strconv.Itoa(n) + " named"
 	}
 	return "Narrow by name (advanced)"
 }
@@ -1090,12 +1109,13 @@ func phaseShowsTools(p MachinePhase) bool {
 func phaseFormFields(def MachineDef) []ui.FormField {
 	return []ui.FormField{
 		{Field: "name", Type: "text", Label: "Name", Placeholder: "short_lowercase_name",
-			Help: "Short handle, lowercase — triage, hunch, verify. It is how other steps point here."},
+			Help: "Short handle, lowercase: triage, hunch, verify. It is how other steps point here."},
 		{Field: "desc", Type: "text", Label: "What this step does",
 			Placeholder: "e.g. Work out whether there is something to explain",
 			Help:        "One line, for whoever reads the machine later. Not shown to the agent."},
 		{Field: "prompt", Type: "textarea", Rows: 8, Label: "Instructions for this step",
-			Help: "What the agent should be doing here. Write the JOB, not the identity, and write it to a person. Do not ask for JSON: declare fields in the step's own section afterwards and the framework encodes them."},
+			Help:   "What the agent should be doing here. Write the JOB, not the identity.",
+			Detail: "Write it to a person. Do not ask for JSON: declare fields in the step's own section afterwards and the framework encodes them."},
 		{Field: "resident", Type: "toggle", Label: "The conversation waits here",
 			Help: "ON: a turn ENDS here and the person replies into it. OFF: it runs and hands straight on within the same turn."},
 	}
@@ -1260,7 +1280,7 @@ func (T *OrchestrateApp) handleMachinePhases(w http.ResponseWriter, r *http.Requ
 		// resurrect the old step next to the new one — the kind of ghost
 		// nobody notices until the router starts offering both.
 		if idx < 0 && name != "" {
-			http.Error(w, "no step called "+strconv.Quote(name)+" — it was renamed or removed; reload the editor", http.StatusNotFound)
+			http.Error(w, "no step called "+strconv.Quote(name)+", it was renamed or removed; reload the editor", http.StatusNotFound)
 			return
 		}
 		// And the mirror image: the ADD form naming a step that already
@@ -1268,7 +1288,7 @@ func (T *OrchestrateApp) handleMachinePhases(w http.ResponseWriter, r *http.Requ
 		// this exact collision, and a create that half-overwrites a step
 		// someone built is worse than either.
 		if idx >= 0 && name == "" {
-			http.Error(w, "a step called "+strconv.Quote(target)+" already exists — edit it in its own section, or pick another name", http.StatusBadRequest)
+			http.Error(w, "a step called "+strconv.Quote(target)+" already exists: edit it in its own section, or pick another name", http.StatusBadRequest)
 			return
 		}
 		var ph MachinePhase
@@ -1293,7 +1313,7 @@ func (T *OrchestrateApp) handleMachinePhases(w http.ResponseWriter, r *http.Requ
 			// those.
 			if ph.Name != target {
 				if _, taken := def.Phase(ph.Name); taken {
-					http.Error(w, "a step called "+strconv.Quote(ph.Name)+" already exists — renaming this one onto it would point its references somewhere else", http.StatusBadRequest)
+					http.Error(w, "a step called "+strconv.Quote(ph.Name)+" already exists: renaming this one onto it would point its references somewhere else", http.StatusBadRequest)
 					return
 				}
 				def.Phases[idx] = ph
@@ -1570,7 +1590,7 @@ func phaseRow(p MachinePhase) map[string]any {
 	case p.NextFrom != "":
 		goes = "decided by " + p.NextFrom
 	case p.Resident && p.Next == "":
-		goes = "—"
+		goes = "·"
 	case goes == "":
 		goes = "nowhere yet"
 	}
@@ -1580,7 +1600,7 @@ func phaseRow(p MachinePhase) map[string]any {
 	}
 	establishes := strings.Join(names, ", ")
 	if establishes == "" {
-		establishes = "—"
+		establishes = "·"
 	}
 	return map[string]any{
 		"name": p.Name, "kind": kind, "goes": goes, "establishes": establishes,

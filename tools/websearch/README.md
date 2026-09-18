@@ -60,13 +60,13 @@ domains := DiscoverDomains(topic, posFor, posAgainst, classifyFunc)
 
 Classifies topics into categories and returns domain lists:
 
-- **legal** — scholar.google.com, courtlistener.com, law.cornell.edu, supremecourt.gov
-- **medical** — pubmed, WHO, CDC, Cochrane, FDA
-- **economic** — BLS, Census, NBER, CBO, IMF, World Bank
-- **scientific** — Nature, Science, arXiv, PNAS, NIH
-- **criminal_justice** — BJS, Sentencing Commission, NIJ
-- **environmental** — EPA, IPCC, NOAA, IEA
-- **technology** — arXiv, ACM, IEEE, NIST, FTC, EFF
-- **education** — Dept of Ed, NCES, OECD
-- **military** — DoD, SIPRI, RAND, CBO, IISS
-- **political** — Congress.gov, GAO, Brookings, RAND, Pew
+- **legal**: scholar.google.com, courtlistener.com, law.cornell.edu, supremecourt.gov
+- **medical**: pubmed, WHO, CDC, Cochrane, FDA
+- **economic**: BLS, Census, NBER, CBO, IMF, World Bank
+- **scientific**: Nature, Science, arXiv, PNAS, NIH
+- **criminal_justice**: BJS, Sentencing Commission, NIJ
+- **environmental**: EPA, IPCC, NOAA, IEA
+- **technology**: arXiv, ACM, IEEE, NIST, FTC, EFF
+- **education**: Dept of Ed, NCES, OECD
+- **military**: DoD, SIPRI, RAND, CBO, IISS
+- **political**: Congress.gov, GAO, Brookings, RAND, Pew

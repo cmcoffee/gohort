@@ -161,7 +161,7 @@ func (T *Scribe) handleRepublish(w http.ResponseWriter, r *http.Request, udb Dat
 	}
 	prev, ok := docs.FindPublishRecord(g.Published, kind)
 	if !ok {
-		http.Error(w, "This guide has not been published there yet — use Publish to choose where it should go.", http.StatusBadRequest)
+		http.Error(w, "This guide has not been published there yet: use Publish to choose where it should go.", http.StatusBadRequest)
 		return
 	}
 	res, err := docs.PublishDocument(r.Context(), user, kind, docs.PublishRequest{

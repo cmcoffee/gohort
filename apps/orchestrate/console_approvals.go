@@ -47,7 +47,7 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 	// switch-on. Async, like the delegate approval below.
 	if a.Action == buildAgentAction {
 		go RunDelegation(context.Background(), RootDB, a.Owner, "builder", a.Brief, a.FromAgent)
-		Log("[operator.approval] build_agent approved — dispatching Builder for owner=%s requester=%s", a.Owner, a.FromAgent)
+		Log("[operator.approval] build_agent approved: dispatching Builder for owner=%s requester=%s", a.Owner, a.FromAgent)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}

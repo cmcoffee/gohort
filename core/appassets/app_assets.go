@@ -132,7 +132,7 @@ func appAssetDir(owner, slug string, create bool) (string, error) {
 // name. Returns the relative URL path the app should reference.
 func SaveAppAsset(owner, slug, name string, data []byte) (string, error) {
 	if !ValidAppAssetName(name) {
-		return "", fmt.Errorf("invalid asset name %q — use a flat filename with one of these extensions: %s", name, allowedAppAssetExts())
+		return "", fmt.Errorf("invalid asset name %q, use a flat filename with one of these extensions: %s", name, allowedAppAssetExts())
 	}
 	if len(data) == 0 {
 		return "", fmt.Errorf("asset %q is empty", name)
@@ -146,7 +146,7 @@ func SaveAppAsset(owner, slug, name string, data []byte) (string, error) {
 	}
 	existing, _ := ListAppAssets(owner, slug)
 	if len(existing) >= MaxAppAssets && !containsName(existing, name) {
-		return "", fmt.Errorf("app already holds %d assets (the limit) — delete one before adding another", MaxAppAssets)
+		return "", fmt.Errorf("app already holds %d assets (the limit): delete one before adding another", MaxAppAssets)
 	}
 	if err := os.WriteFile(filepath.Join(dir, name), data, 0o644); err != nil {
 		return "", fmt.Errorf("write asset: %w", err)

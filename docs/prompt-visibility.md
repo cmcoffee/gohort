@@ -33,19 +33,19 @@ source says we intend to send*.
 
 More than expected, which turns most of this from invention into migration.
 
-- `core/prompts.PromptBlock` — a registry of operator-visible fragments
+- `core/prompts.PromptBlock`: a registry of operator-visible fragments
   (`Key`, `Title`, `Category`, `Gate`, `Text`). Its own doc already states the
   intent: *"Read-only for now, this is the 'make the hidden prompts visible'
   step; editing/toggling layers on later, at which point this registry becomes
   the source the assembler reads instead of in-code constants."*
-- `apps/prompts` — an admin section rendering that registry. Reached from admin
+- `apps/prompts`: an admin section rendering that registry. Reached from admin
   only: `WebHidden`, no `HubTab`, self-registered via `RegisterAdminSection`.
-- `apps/orchestrate/framework_prompts_registry.go` — registers **10** blocks,
+- `apps/orchestrate/framework_prompts_registry.go`: registers **10** blocks,
   all `framework.*`, all from orchestrate.
 - `core` already imports `core/prompts` (`core.go:25`), so registration from
   core needs no new dependency.
 
-## The gap (CLOSED — see Stage 1 below)
+## The gap (CLOSED: see Stage 1 below)
 
 `core/agent_loop.go` has 14 `systemPrompt +=` sites: one is the tool digest
 (`BuildToolPrompt`, line 1940) and the other **13 are bracketed behaviour
@@ -76,7 +76,7 @@ saying so. **A partial list is worse than no list**, because it reads as
 complete. An operator checking "what are my agents told?" today gets a
 confident, wrong answer.
 
-## Stage 1 — register core's clauses (single source, no copies) — BUILT
+## Stage 1, register core's clauses (single source, no copies), BUILT
 
 > **Built v0.6.562.** `core/prompts/agent_loop_clauses.go` holds the twelve
 > clauses as consts, registers each with its real `Gate`, and exposes one
@@ -92,7 +92,7 @@ confident, wrong answer.
 > than a format verb: `{lookup}` (volatile facts, expanded to the web-tool or
 > the use-what-you-have branch) and `{rounds}` (round budget). The page then
 > shows the shape actually sent, and `expandClause` falls back to the shipped
-> wording — breadcrumbed once per key — when an edit has dropped the
+> wording (breadcrumbed once per key), when an edit has dropped the
 > placeholder. That guard is not hypothetical: the Prompts page offers an LLM
 > rewrite over every block at once, and a rewrite that tidies `{rounds}` away
 > leaves the model told it has "up to tool-execution rounds" in prose nothing
@@ -118,7 +118,7 @@ is exactly what confused us.
 tools exist. Register the template and say so in `Gate`, or register both
 variants. Do not register a string that is never sent verbatim.
 
-## Stage 2 — the per-turn prompt record — BUILT (digest half)
+## Stage 2 (the per-turn prompt record), BUILT (digest half)
 
 > **Built v0.6.564.** `PromptDigest` (core/agent_loop.go) records one turn's
 > prompt shape: system bytes and tokens, the clause keys that were live, tool
@@ -126,7 +126,7 @@ variants. Do not register a string that is never sent verbatim.
 > chars and tokens, the window, the compaction budget, the provider's own
 > `InputTokens` / prefill split, and `Headroom` with a `Tight` flag when the
 > prompt came within a tenth of the window. `buildPromptDigest` measures the
-> prompt AFTER compaction on round 1 — the prompt actually sent — and
+> prompt AFTER compaction on round 1 (the prompt actually sent), and
 > `emitPromptDigest` logs it (Debug normally, a loud `HEADROOM:` Log line when
 > tight) and hands it to `AgentLoopConfig.OnPromptDigest`, once per turn.
 >
@@ -136,28 +136,28 @@ variants. Do not register a string that is never sent verbatim.
 > its history as 4,635 and 151,251 tokens because each had its own copy of the
 > measurement.
 >
-> Storage is `RunRecord.Prompt`, in the metadata table — it carries sizes and
+> Storage is `RunRecord.Prompt`, in the metadata table: it carries sizes and
 > keys, never prompt text, so it needs none of the encrypted side-table
 > handling `Raw` and `Steps` get. Surfaced on `inspect_run`, which prints the
 > digest line only when one was recorded.
 >
 > **Two ways to collect it, because there are two kinds of caller.**
 > `AgentLoopConfig.OnPromptDigest` serves the caller that builds the loop
-> config — the recurring fire uses it. Every other caller is several frames
+> config: the recurring fire uses it. Every other caller is several frames
 > above a prompt it never sees: a standing fire reaches its through the shared
 > `runAgentSyncConfirm`, which already returns four values, and an
 > event-monitor wake calls an opaque registered waker and writes the RunRecord
 > itself. For those, `core.WithPromptDigest(ctx)` returns a context that
 > collects the turn's digest and a reader for it; the loop writes there as well
 > as to the hook. One name, its reader returned as a closure and its writer
-> unexported, and it reaches every path that runs an agent loop — including
+> unexported, and it reaches every path that runs an agent loop, including
 > ones written later, which a per-call-site hook could never promise.
 >
 > First digest under a context wins (a fanout stage dispatches its branches
 > concurrently and the run is about the prompt that opened it), tracked with an
 > explicit "has one arrived" flag so a genuinely empty measurement is not
-> overwritten by a later one. A wake that runs no turn at all — a direct notify
-> straight to the owner's phone — records the zero digest rather than a
+> overwritten by a later one. A wake that runs no turn at all: a direct notify
+> straight to the owner's phone: records the zero digest rather than a
 > half-filled one.
 >
 > The export ceiling went 2139 -> 2141 across the two additions; see the notes
@@ -276,7 +276,7 @@ the schema should leave room for them (key the store by scope, with `""`
 meaning global), but shipping global-only avoids inventing a per-agent
 override UI before anyone has asked for one.
 
-## Stage 3 — editing, deferred on purpose
+## Stage 3: editing, deferred on purpose
 
 Not now, and the bar for later should be high.
 

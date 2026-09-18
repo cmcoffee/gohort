@@ -145,7 +145,7 @@ func dispatchPersistentShellTempTool(sess *ToolSession, tt *TempTool, args map[s
 		}
 		ps := lookupPersistentShell(sess, tt.Name)
 		if ps == nil {
-			return "", errors.New("read: shell is not open — call action=\"send\" or action=\"open\" first")
+			return "", errors.New("read: shell is not open, call action=\"send\" or action=\"open\" first")
 		}
 		return ps.read(timeout)
 	case "interrupt":
@@ -326,7 +326,7 @@ func startSandboxedShell(ctx context.Context, workspaceDir, openCmd string) (*sa
 		// (GOHORT_ALLOW_UNSANDBOXED). core/sandbox has already logged the
 		// warning once; this names the shell that took the exemption, because
 		// a long-lived one is the one worth being able to find later.
-		Log("[temptool/persistent] WARNING: opening persistent shell UNCONFINED (backend=%s) — the deployment permits it", built.Backend)
+		Log("[temptool/persistent] WARNING: opening persistent shell UNCONFINED (backend=%s), the deployment permits it", built.Backend)
 	}
 	c := built.Cmd
 	stdin, err := c.StdinPipe()
@@ -564,16 +564,16 @@ func formatShellOutput(captured string, complete bool) string {
 // the LLM when it calls action="help" (or omits action).
 func persistentShellHelp(tt *TempTool) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s — persistent shell. State (env vars, cwd, login session) persists across calls.\n\n", tt.Name)
+	fmt.Fprintf(&b, "%s: persistent shell. State (env vars, cwd, login session) persists across calls.\n\n", tt.Name)
 	b.WriteString("ACTIONS:\n")
 	b.WriteString("  send       Run a command. Args: input (the command). Returns output + [status: complete|running].\n")
 	b.WriteString("  read       Drain more output when a prior send returned status=running. Args: timeout (optional, seconds).\n")
 	b.WriteString("  interrupt  Send Ctrl-C to the current command (recovers from `vim`, kills a hung process).\n")
-	b.WriteString("  open       Pre-open the shell. Optional — first send auto-opens.\n")
+	b.WriteString("  open       Pre-open the shell. Optional: first send auto-opens.\n")
 	b.WriteString("  close      Tear down. Also fires automatically when the session ends.\n")
 	b.WriteString("\n")
 	b.WriteString("STATUS FLAG: [status: complete] means the shell is ready for the next command.\n")
-	b.WriteString("            [status: running] means the previous command is still producing output — call action=read to drain more.\n")
+	b.WriteString("            [status: running] means the previous command is still producing output, call action=read to drain more.\n")
 	return b.String()
 }
 

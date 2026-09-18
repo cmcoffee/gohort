@@ -40,16 +40,16 @@ func (t *chatTurn) presentBuildPlanToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "present_build_plan",
-			Description: "Show the user a visible checklist of your build plan as a card. The PREFERRED Phase-2 shape is passing `plan` on ask_user (one call paints the checklist AND asks for approval) — reach for present_build_plan only when there's no question to ask (plan already approved) or to UPDATE the plan mid-build (user requested edits; re-call with the full step list — same id, replaces the visible card in place). The card renders with all steps \"pending\"; subsequent mark_step_done calls flip individual rows to \"done\" as you execute. Each step is {title, detail?}: title is the one-line summary (\"Create Reddit Researcher shell\"), detail is the brief tool-call info (\"create_agent\").",
+			Description: "Show the user a visible checklist of your build plan as a card. The PREFERRED Phase-2 shape is passing `plan` on ask_user (one call paints the checklist AND asks for approval), reach for present_build_plan only when there's no question to ask (plan already approved) or to UPDATE the plan mid-build (user requested edits; re-call with the full step list, same id, replaces the visible card in place). The card renders with all steps \"pending\"; subsequent mark_step_done calls flip individual rows to \"done\" as you execute. Each step is {title, detail?}: title is the one-line summary (\"Create Reddit Researcher shell\"), detail is the brief tool-call info (\"create_agent\").",
 			Parameters: map[string]ToolParam{
 				"steps": {
 					Type:        "array",
-					Description: "Ordered list of step objects. Each step: {title: \"Create agent shell\", detail: \"create_agent\"} — keep titles short (1 line) and details to the tool/arg summary.",
+					Description: "Ordered list of step objects. Each step: {title: \"Create agent shell\", detail: \"create_agent\"}, keep titles short (1 line) and details to the tool/arg summary.",
 					Items: &ToolParam{
 						Type: "object",
 						Properties: map[string]ToolParam{
 							"title":  {Type: "string", Description: "One-line step title shown in the card. Example: \"Add search_reddit tool\"."},
-							"detail": {Type: "string", Description: "Optional one-line detail under the title — typically the tool name + key args. Example: \"add_tool(api, no credential)\"."},
+							"detail": {Type: "string", Description: "Optional one-line detail under the title: typically the tool name + key args. Example: \"add_tool(api, no credential)\"."},
 						},
 						Required: []string{"title"},
 					},
@@ -111,7 +111,7 @@ func (t *chatTurn) presentBuildPlanToolDef() AgentToolDef {
 			}
 			Log("[orchestrate.build_plan] plan presented: %d step(s), round budget lifted to %d (at round %d)",
 				len(steps), t.planBudgetCap, t.currentRound)
-			return fmt.Sprintf("Build plan presented (%d step%s) — round budget extended to %d for execution. The user sees the checklist; each step will flip to ✓ as you call mark_step_done during execution.",
+			return fmt.Sprintf("Build plan presented (%d step%s): round budget extended to %d for execution. The user sees the checklist; each step will flip to ✓ as you call mark_step_done during execution.",
 				len(steps), plural(len(steps)), t.planBudgetCap), nil
 		},
 	}
@@ -144,14 +144,14 @@ func (t *chatTurn) markStepDoneToolDef() AgentToolDef {
 			// stale/out-of-range step number, or the model burns the turn in an
 			// apology loop instead of doing the actual work. Soft-note and move on.
 			if t.session == nil || t.session.BuildPlan == nil {
-				return "No active build plan, so there's nothing to mark — the checklist is optional. Just keep doing the actual work.", nil
+				return "No active build plan, so there's nothing to mark: the checklist is optional. Just keep doing the actual work.", nil
 			}
 			step := intFromArgs(args, "step")
 			summary := strings.TrimSpace(stringArg(args, "summary"))
 			plan := t.session.BuildPlan
 			idx := step - 1
 			if step < 1 || idx >= len(plan.Steps) {
-				return fmt.Sprintf("There's no step %d (the plan has %d step(s)) — nothing to update. The checklist is cosmetic; don't re-plan to fix numbering, just continue the real work.", step, len(plan.Steps)), nil
+				return fmt.Sprintf("There's no step %d (the plan has %d step(s)): nothing to update. The checklist is cosmetic; don't re-plan to fix numbering, just continue the real work.", step, len(plan.Steps)), nil
 			}
 			plan.Steps[idx].Status = "done"
 			plan.Steps[idx].Findings = summary
@@ -163,7 +163,7 @@ func (t *chatTurn) markStepDoneToolDef() AgentToolDef {
 				}
 			}
 			if remaining == 0 {
-				return fmt.Sprintf("Step %d marked done. All %d steps complete — end the turn with a one-line summary; no more tool calls.",
+				return fmt.Sprintf("Step %d marked done. All %d steps complete: end the turn with a one-line summary; no more tool calls.",
 					step, len(plan.Steps)), nil
 			}
 			return fmt.Sprintf("Step %d marked done (%d remaining). Continue executing the next step.", step, remaining), nil
@@ -243,7 +243,7 @@ func (t *chatTurn) markStepInProgressToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "mark_step_in_progress",
-			Description: "Mark a step of the current build plan as in_progress before starting its worker. Pass step=N (1-indexed). If another step was still in_progress it's auto-completed (forward progress) — you don't have to close it first. Updates the visible plan card so the user sees which step is actively running.",
+			Description: "Mark a step of the current build plan as in_progress before starting its worker. Pass step=N (1-indexed). If another step was still in_progress it's auto-completed (forward progress): you don't have to close it first. Updates the visible plan card so the user sees which step is actively running.",
 			Parameters: map[string]ToolParam{
 				"step": {Type: "integer", Description: "1-indexed step number, matching present_build_plan's numbering."},
 			},
@@ -253,13 +253,13 @@ func (t *chatTurn) markStepInProgressToolDef() AgentToolDef {
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			// Cosmetic checklist update — tolerant by design (see mark_step_done).
 			if t.session == nil || t.session.BuildPlan == nil {
-				return "No active build plan, so there's nothing to mark — the checklist is optional. Just keep doing the actual work.", nil
+				return "No active build plan, so there's nothing to mark: the checklist is optional. Just keep doing the actual work.", nil
 			}
 			step := intFromArgs(args, "step")
 			plan := t.session.BuildPlan
 			idx := step - 1
 			if step < 1 || idx >= len(plan.Steps) {
-				return fmt.Sprintf("There's no step %d (the plan has %d step(s)) — nothing to update. The checklist is cosmetic; don't re-plan to fix numbering, just continue the real work.", step, len(plan.Steps)), nil
+				return fmt.Sprintf("There's no step %d (the plan has %d step(s)): nothing to update. The checklist is cosmetic; don't re-plan to fix numbering, just continue the real work.", step, len(plan.Steps)), nil
 			}
 			// Auto-advance a stale in_progress step instead of refusing: the model
 			// has clearly moved on, and the old "close it first" error was the
@@ -301,17 +301,17 @@ func (t *chatTurn) markStepBlockedToolDef() AgentToolDef {
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			if t.session == nil || t.session.BuildPlan == nil {
-				return "No active build plan, so there's nothing to mark — the checklist is optional. Just keep doing the actual work.", nil
+				return "No active build plan, so there's nothing to mark: the checklist is optional. Just keep doing the actual work.", nil
 			}
 			step := intFromArgs(args, "step")
 			reason := strings.TrimSpace(stringArg(args, "reason"))
 			if reason == "" {
-				return "", errors.New("reason is required — describe what blocked the step in one line")
+				return "", errors.New("reason is required: describe what blocked the step in one line")
 			}
 			plan := t.session.BuildPlan
 			idx := step - 1
 			if step < 1 || idx >= len(plan.Steps) {
-				return fmt.Sprintf("There's no step %d (the plan has %d step(s)) — nothing to update. The checklist is cosmetic; note the blocker in your reply instead of re-planning.", step, len(plan.Steps)), nil
+				return fmt.Sprintf("There's no step %d (the plan has %d step(s)): nothing to update. The checklist is cosmetic; note the blocker in your reply instead of re-planning.", step, len(plan.Steps)), nil
 			}
 			plan.Steps[idx].Status = "blocked"
 			plan.Steps[idx].BlockedReason = reason
@@ -330,7 +330,7 @@ func (t *chatTurn) reviseBuildPlanToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "revise_build_plan",
-			Description: fmt.Sprintf("Revise the current build plan when findings reveal something the original plan missed. action=\"add\" appends new pending steps, action=\"remove\" drops pending steps by step number (done / blocked steps refuse removal — they're durable history), action=\"reorder\" rearranges the full step list. Capped at %d revisions per session — use deliberately, not reflexively. Re-emits the plan card so the user sees the updated checklist.", BuildPlanRevisionLimit),
+			Description: fmt.Sprintf("Revise the current build plan when findings reveal something the original plan missed. action=\"add\" appends new pending steps, action=\"remove\" drops pending steps by step number (done / blocked steps refuse removal: they're durable history), action=\"reorder\" rearranges the full step list. Capped at %d revisions per session: use deliberately, not reflexively. Re-emits the plan card so the user sees the updated checklist.", BuildPlanRevisionLimit),
 			Parameters: map[string]ToolParam{
 				"action": {Type: "string", Description: "One of \"add\" | \"remove\" | \"reorder\"."},
 				"steps": {
@@ -352,7 +352,7 @@ func (t *chatTurn) reviseBuildPlanToolDef() AgentToolDef {
 				},
 				"order": {
 					Type:        "array",
-					Description: "(reorder) New ordering of step numbers. Must be a permutation of all current step numbers — no missing, no extra.",
+					Description: "(reorder) New ordering of step numbers. Must be a permutation of all current step numbers: no missing, no extra.",
 					Items:       &ToolParam{Type: "integer"},
 				},
 			},
@@ -361,11 +361,11 @@ func (t *chatTurn) reviseBuildPlanToolDef() AgentToolDef {
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			if t.session == nil || t.session.BuildPlan == nil {
-				return "", errors.New("revise_build_plan: no active build plan — call present_build_plan first")
+				return "", errors.New("revise_build_plan: no active build plan, call present_build_plan first")
 			}
 			plan := t.session.BuildPlan
 			if plan.RevisionCount >= BuildPlanRevisionLimit {
-				return "", fmt.Errorf("revise_build_plan: revision cap reached (%d) — execute the plan you have rather than re-shuffling", BuildPlanRevisionLimit)
+				return "", fmt.Errorf("revise_build_plan: revision cap reached (%d), execute the plan you have rather than re-shuffling", BuildPlanRevisionLimit)
 			}
 			action := strings.TrimSpace(stringArg(args, "action"))
 			switch action {
@@ -415,7 +415,7 @@ func (t *chatTurn) reviseBuildPlanToolDef() AgentToolDef {
 				}
 				plan.Steps = out
 				if len(refused) > 0 {
-					return "", fmt.Errorf("revise_build_plan(remove): refused step(s) %v — only pending steps can be removed (done / blocked steps stay as durable history)", refused)
+					return "", fmt.Errorf("revise_build_plan(remove): refused step(s) %v, only pending steps can be removed (done / blocked steps stay as durable history)", refused)
 				}
 			case "reorder":
 				raw, _ := args["order"].([]any)
@@ -478,7 +478,7 @@ func (t *chatTurn) reportBuildGapsToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "report_build_gaps",
-			Description: "BEFORE your final reply, call this to surface every gap in the build: blocked or still-pending steps, AND any tool you authored that does not currently stand verified (never tested, failed its test, or edited since it last passed). Returns a structured summary you MUST address in the reply — either explain the gap to the user, or fix it (verify the tool, or call revise_build_plan within the revision cap) and re-call this. Marking a step done is your OWN claim and does not make its tool verified; only a passing test does. When every step is done and every authored tool is verified, this reports no gaps and you may write the reply. Works with NO build plan too — on a repair it grades just the tools you touched, so call it before claiming a fix worked. Takes no arguments.",
+			Description: "BEFORE your final reply, call this to surface every gap in the build: blocked or still-pending steps, AND any tool you authored that does not currently stand verified (never tested, failed its test, or edited since it last passed). Returns a structured summary you MUST address in the reply: either explain the gap to the user, or fix it (verify the tool, or call revise_build_plan within the revision cap) and re-call this. Marking a step done is your OWN claim and does not make its tool verified; only a passing test does. When every step is done and every authored tool is verified, this reports no gaps and you may write the reply. Works with NO build plan too, on a repair it grades just the tools you touched, so call it before claiming a fix worked. Takes no arguments.",
 			Parameters:  map[string]ToolParam{},
 			Caps:        []Capability{CapRead},
 		},
@@ -540,9 +540,9 @@ func (t *chatTurn) reportBuildGapsToolDef() AgentToolDef {
 			}
 			if len(rep.Blocked) == 0 && len(rep.Skipped) == 0 && len(rep.Unverified) == 0 {
 				if plan == nil {
-					return "No build plan is active (a repair, not a build) and every tool you touched this session stands verified — no gaps to report. You may write the final reply.", nil
+					return "No build plan is active (a repair, not a build) and every tool you touched this session stands verified: no gaps to report. You may write the final reply.", nil
 				}
-				return "All steps completed and every authored tool verified — no gaps to report. You may write the final reply.", nil
+				return "All steps completed and every authored tool verified: no gaps to report. You may write the final reply.", nil
 			}
 			data, err := json.Marshal(rep)
 			if err != nil {

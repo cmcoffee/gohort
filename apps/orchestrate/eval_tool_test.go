@@ -72,7 +72,7 @@ func TestTheRunResultGivesFailuresInFullAndPassesByName(t *testing.T) {
 	}
 	out := renderEvalRunForTool(suite, run)
 
-	if !strings.HasPrefix(out, "Support bot — 1/2") {
+	if !strings.HasPrefix(out, "Support bot: 1/2") {
 		t.Errorf("the headline number goes first, for a caller that reads one line: %q", firstLine(out))
 	}
 	for _, want := range []string{"refund_policy", "14 days", "search_kb", "You can return most items."} {

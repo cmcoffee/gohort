@@ -85,7 +85,7 @@ func (T *CustomApps) adminSections(r *http.Request) []AdminSectionEntry {
 		body := appadmin.For(adminAppView(spec, rw.owner))
 		if len(body) == 0 {
 			body = []ui.Component{ui.EmptyState{
-				Icon: "—", Title: "Nothing to set", Hint: "This app has no operator controls that apply to it.",
+				Icon: "·", Title: "Nothing to set", Hint: "This app has no operator controls that apply to it.",
 			}}
 		}
 		out = append(out, AdminSectionEntry{Section: ui.Section{
@@ -187,7 +187,7 @@ func (T *CustomApps) registerAdminControls() {
 				NameField:     "name",
 				Intro: "Narrows this ONE app. Leave every chip off and it stays open to everyone who can " +
 					"reach My Apps at all; turning any on restricts it to those people regardless of what " +
-					"they have been granted. This is ANDed with the app grant in Users — that one says whether " +
+					"they have been granted. This is ANDed with the app grant in Users, that one says whether " +
 					"somebody uses My Apps, this one says who gets into this app. The owner always has access.",
 				EmptyText: "This deployment has no other users to grant.",
 			}
@@ -443,7 +443,7 @@ func (T *CustomApps) handleAdmin(w http.ResponseWriter, r *http.Request, user st
 		// act and an unrecorded one is indistinguishable from a quiet look.
 		Log("[customapps] admin %q read the scripts of %q/%q", user, owner, slug)
 		var b strings.Builder
-		fmt.Fprintf(&b, "%s — %s\nowner: %s\nscripts run in the owner's sandbox, as the owner\n",
+		fmt.Fprintf(&b, "%s, %s\nowner: %s\nscripts run in the owner's sandbox, as the owner\n",
 			spec.Name, spec.Slug, owner)
 		for _, d := range spec.DataSources {
 			fmt.Fprintf(&b, "\n=== data source: %s (%s) ===\ncapabilities: %s\n\n%s\n",

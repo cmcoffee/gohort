@@ -90,7 +90,7 @@ func (T *Servitor) handleSaveSnippet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sysPrompt := "You are a code assistant. Extract the primary code snippet from the provided content. " +
-		"Respond with a JSON object only — no other text — with three fields: " +
+		"Respond with a JSON object only (no other text) with three fields: " +
 		`"name" (a short descriptive name for the snippet), "lang" (language, e.g. sql/bash/python/go), and "code" (the code only, no markdown fences).`
 	userMsg := "Extract the code snippet:\n\n" + req.Text
 	resp, err := T.WorkerChat(r.Context(),

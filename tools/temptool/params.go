@@ -97,11 +97,11 @@ func checkMisplacedActionFields(loose map[string]any) error {
 	if len(bad) == 1 {
 		k := bad[0]
 		if k == "required" {
-			return fmt.Errorf(`"required" here is a list of mandatory param NAMES, which belongs to the tool/action rather than inside params — move it out alongside params: {name: …, params: {…}, required: ["a","b"]}`)
+			return fmt.Errorf(`"required" here is a list of mandatory param NAMES, which belongs to the tool/action rather than inside params, move it out alongside params: {name: …, params: {…}, required: ["a","b"]}`)
 		}
-		return fmt.Errorf("%q is %s for the tool/action itself, not one of its params — it is nested one level too deep. Move it out alongside params: {name: …, params: {…}, %s: …}. params maps each PARAMETER name to {type, description}", k, actionOnlyFields[k], k)
+		return fmt.Errorf("%q is %s for the tool/action itself, not one of its params: it is nested one level too deep. Move it out alongside params: {name: …, params: {…}, %s: …}. params maps each PARAMETER name to {type, description}", k, actionOnlyFields[k], k)
 	}
-	return fmt.Errorf("%s are fields of the tool/action itself, not its params — they are nested one level too deep. Move ALL of them out alongside params in one edit: {name: …, params: {…}, %s: …}. params maps each PARAMETER name to {type, description}",
+	return fmt.Errorf("%s are fields of the tool/action itself, not its params: they are nested one level too deep. Move ALL of them out alongside params in one edit: {name: …, params: {…}, %s: …}. params maps each PARAMETER name to {type, description}",
 		quotedList(bad), strings.Join(bad, ": …, "))
 }
 
@@ -155,7 +155,7 @@ func parseParamsArg(v any) (map[string]ToolParam, error) {
 	// "cannot unmarshal bool into ToolParam"), so coerce each value instead.
 	var loose map[string]any
 	if err := json.Unmarshal(b, &loose); err != nil {
-		return nil, fmt.Errorf("params must be an object mapping each name to {type, description} (a type or description string, or true, also works) — could not read it as an object: %w", err)
+		return nil, fmt.Errorf("params must be an object mapping each name to {type, description} (a type or description string, or true, also works), could not read it as an object: %w", err)
 	}
 	// Report EVERY misplaced field at once, sorted. Reporting the first
 	// offender meant a caller with three of them needed three round
@@ -289,7 +289,7 @@ func validateTemplate(cmd string, params map[string]ToolParam) error {
 		}
 		name, modifier := splitPlaceholder(cmd[i+1 : i+1+end])
 		if modifier != "" && isPlaceholderIdent(name) && !urlEncodeModifiers[modifier] {
-			return fmt.Errorf("unknown placeholder modifier %q in {%s:%s} — the only one is \"encoded\" (\"segment\" is a synonym)", modifier, name, modifier)
+			return fmt.Errorf("unknown placeholder modifier %q in {%s:%s}, the only one is \"encoded\" (\"segment\" is a synonym)", modifier, name, modifier)
 		}
 		if !isPlaceholderIdent(name) {
 			// Not identifier-shaped — treat as a literal brace

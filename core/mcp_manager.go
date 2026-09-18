@@ -615,7 +615,7 @@ func (m *MCPManager) callToolForUser(ctx context.Context, user, server, rawName 
 	if errors.Is(err, mcpclient.ErrUnauthorized) {
 		if cfg, ok := m.Load(server); ok && cfg.AuthMode == MCPAuthOAuth && user != "" {
 			m.invalidateOAuthToken(server, user)
-			return out, fmt.Errorf("%s rejected the stored credential; it has been renewed — run this call again", server)
+			return out, fmt.Errorf("%s rejected the stored credential; it has been renewed: run this call again", server)
 		}
 	}
 	if mcpConnectionLost(err) {
@@ -624,7 +624,7 @@ func (m *MCPManager) callToolForUser(ctx context.Context, user, server, rawName 
 		// re-dialing is also what picks up a rotated bearer token, since the
 		// authorizer reads it when the connection is built.
 		conn.alive.Store(false)
-		Warn("[mcp] %q: connection lost on %s (%v) — the next call will reconnect", server, rawName, err)
+		Warn("[mcp] %q: connection lost on %s (%v), the next call will reconnect", server, rawName, err)
 	}
 	return out, err
 }
@@ -897,7 +897,7 @@ func (m *MCPManager) validOAuthToken(user, server string) (string, error) {
 			if m.ready() {
 				m.db.Unset(mcpServersTable, mcpOAuthTokKey(server, user))
 			}
-			Log("[mcp] %q refused %q's refresh token (%v) — cleared; reconnect required", server, user, err)
+			Log("[mcp] %q refused %q's refresh token (%v): cleared; reconnect required", server, user, err)
 			return "", MCPNotConnectedError{Server: server}
 		}
 		if tok.AccessToken != "" && (tok.Expiry.IsZero() || time.Now().Before(tok.Expiry)) {
@@ -1013,13 +1013,13 @@ func (m *MCPManager) invalidateOAuthToken(server, user string) {
 		if m.ready() {
 			m.db.Unset(mcpServersTable, mcpOAuthTokKey(server, user))
 		}
-		Log("[mcp] %q rejected %q's token and no refresh token is stored — reconnect required", server, user)
+		Log("[mcp] %q rejected %q's token and no refresh token is stored: reconnect required", server, user)
 		return
 	}
 	tok.AccessToken = ""
 	tok.Expiry = time.Time{}
 	m.saveOAuthToken(server, user, tok)
-	Log("[mcp] %q rejected %q's access token — cleared; the next call will refresh it", server, user)
+	Log("[mcp] %q rejected %q's access token: cleared; the next call will refresh it", server, user)
 }
 
 func (m *MCPManager) saveOAuthToken(server, user string, t mcpOAuthToken) {
@@ -1066,9 +1066,9 @@ func (m *MCPManager) StartOAuth(user, server, redirectURI string) (string, error
 		}
 		if disc.AuthEndpoint == "" || disc.TokenEndpoint == "" {
 			if discErr != nil {
-				return "", fmt.Errorf("discovery failed (%w) — set Authorize URL + Token URL on the server for a provider without OAuth discovery", discErr)
+				return "", fmt.Errorf("discovery failed (%w): set Authorize URL + Token URL on the server for a provider without OAuth discovery", discErr)
 			}
-			return "", fmt.Errorf("no authorize/token endpoint found — set them on the server (Admin -> MCP Servers)")
+			return "", fmt.Errorf("no authorize/token endpoint found: set them on the server (Admin -> MCP Servers)")
 		}
 		// Client: a manually pre-registered client_id wins (the non-DCR path);
 		// otherwise fall back to Dynamic Client Registration.
@@ -1079,7 +1079,7 @@ func (m *MCPManager) StartOAuth(user, server, redirectURI string) (string, error
 			all := MCPRedirectURIs(redirectURI)
 			clientID, clientSecret, err := mcpRegisterClient(ctx, disc.RegistrationEndpoint, all...)
 			if err != nil {
-				return "", fmt.Errorf("client registration: %w — or set a Client ID on the server (Admin -> MCP Servers) to use a pre-registered OAuth app", err)
+				return "", fmt.Errorf("client registration: %w, or set a Client ID on the server (Admin -> MCP Servers) to use a pre-registered OAuth app", err)
 			}
 			disc.ClientID = clientID
 			disc.ClientSecret = clientSecret
@@ -1366,7 +1366,7 @@ func mcpToolGroupDescription(cfg MCPServerConfig) string {
 		fmt.Fprintf(&b, " (%s)", host)
 	}
 	b.WriteString(". Expand this when the request concerns the systems that server front-ends; each tool carries its own description from the server. ")
-	b.WriteString("This summary was generated when the server was first connected — edit it to describe what this server is actually for, which is what the model reads when deciding whether to look inside.")
+	b.WriteString("This summary was generated when the server was first connected: edit it to describe what this server is actually for, which is what the model reads when deciding whether to look inside.")
 	return b.String()
 }
 
@@ -1415,7 +1415,7 @@ func (t *mcpProxyTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	var nc MCPNotConnectedError
 	if errors.As(err, &nc) && sess != nil && sess.ConnectPrompt != nil {
 		sess.ConnectPrompt(nc.Server)
-		return "", fmt.Errorf("you are not connected to %q. A Connect button has been shown to the user — ask them to click it, authorize their own %s account, then try again", nc.Server, nc.Server)
+		return "", fmt.Errorf("you are not connected to %q. A Connect button has been shown to the user: ask them to click it, authorize their own %s account, then try again", nc.Server, nc.Server)
 	}
 	return out, err
 }

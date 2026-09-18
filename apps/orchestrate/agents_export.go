@@ -175,7 +175,7 @@ func foldImportedTools(udb Database, owner string, saved *AgentRecord, tools []T
 	carrier.Tools = tools
 	moved, merged, orphaned := foldAgentToolsIntoStore(udb, owner, &carrier)
 	if orphaned > 0 {
-		Log("[orchestrate.agents] import %q: %d tool(s) diverged from your existing tools — imported copies are in Orphaned tools", saved.Name, orphaned)
+		Log("[orchestrate.agents] import %q: %d tool(s) diverged from your existing tools, imported copies are in Orphaned tools", saved.Name, orphaned)
 	}
 	_ = moved
 	_ = merged

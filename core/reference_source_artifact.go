@@ -130,13 +130,13 @@ func (referenceSourceArtifact) ImportArtifact(_ Database, recipe json.RawMessage
 		label = name
 	}
 	if refSourceExists(strings.TrimSpace(owner), rec.Kind, rec.ItemID) {
-		return name, "already here — the agent's attachment resolves against your own " + label, nil
+		return name, "already here: the agent's attachment resolves against your own " + label, nil
 	}
 	what := strings.TrimSpace(rec.Source)
 	if what == "" {
 		what = "source"
 	}
-	reason := "a source cannot travel — create a " + what + " here with the handle " + strconv.Quote(rec.ItemID) +
+	reason := "a source cannot travel: create a " + what + " here with the handle " + strconv.Quote(rec.ItemID) +
 		" (it was called " + strconv.Quote(label) + ")"
 	if len(rec.Tools) > 0 {
 		reason += ", which is what mints " + strings.Join(rec.Tools, ", ")

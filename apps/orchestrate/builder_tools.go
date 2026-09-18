@@ -246,7 +246,7 @@ func draftOAuthCredentialToolDef(t *chatTurn) AgentToolDef {
 				OAuthGrantPassword:          "the client secret AND the user's password (two separate fields)",
 			}[c.Grant]
 			t.emitCredentialSetupCard(c.Name, SecureCredOAuth2, c.Grant, secretNeeded, false)
-			return fmt.Sprintf("Drafted OAuth2 credential %q (grant=%s), created DISABLED. A setup card is now showing in the chat — an admin can paste %s and enable it right there (Admin > APIs works too), then hit Test. It goes live as fetch_url_%s.",
+			return fmt.Sprintf("Drafted OAuth2 credential %q (grant=%s), created DISABLED. A setup card is now showing in the chat: an admin can paste %s and enable it right there (Admin > APIs works too), then hit Test. It goes live as fetch_url_%s.",
 				c.Name, c.Grant, secretNeeded, c.Name), nil
 		},
 	}
@@ -262,7 +262,7 @@ func draftAPICredentialToolDef(t *chatTurn) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "draft_api_credential",
-			Description: "Scaffold a NON-OAuth API credential (plain API key, bearer token, custom header, or HTTP basic-auth) for the admin to finish. Use this for any authenticated API that is NOT OAuth2 — e.g. OPNsense (basic_auth), a service with an X-API-Key header, or a bearer token. YOU research from the docs HOW the API authenticates (which mechanism, which header/param name, the URL space it covers) and fill the config; the credential is created DISABLED and the admin pastes the SECRET in Admin > APIs and enables it. You never see or handle the secret. After drafting, tell the user exactly WHICH value the admin must paste (the API key, the bearer token, or the username:password pair for basic_auth — for OPNsense that's key:secret). Then build the tool with tool_def(mode=\"api\", credential=\"<name>\") — NEVER take the key/secret/host as tool parameters.",
+			Description: "Scaffold a NON-OAuth API credential (plain API key, bearer token, custom header, or HTTP basic-auth) for the admin to finish. Use this for any authenticated API that is NOT OAuth2: e.g. OPNsense (basic_auth), a service with an X-API-Key header, or a bearer token. YOU research from the docs HOW the API authenticates (which mechanism, which header/param name, the URL space it covers) and fill the config; the credential is created DISABLED and the admin pastes the SECRET in Admin > APIs and enables it. You never see or handle the secret. After drafting, tell the user exactly WHICH value the admin must paste (the API key, the bearer token, or the username:password pair for basic_auth, for OPNsense that's key:secret). Then build the tool with tool_def(mode=\"api\", credential=\"<name>\"): NEVER take the key/secret/host as tool parameters.",
 			Parameters: map[string]ToolParam{
 				"name":        {Type: "string", Description: "Short lowercase id (letters/digits/underscores), e.g. \"opnsense\". Becomes fetch_url_<name> once live."},
 				"type":        {Type: "string", Enum: []string{"bearer", "header", "query", "basic_auth"}, Description: "How the API authenticates: bearer = Authorization: Bearer <token>; header = a custom header (set param_name, e.g. X-API-Key); query = key in a query param (set param_name); basic_auth = HTTP Basic (secret is username:password; OPNsense uses key:secret)."},
@@ -288,7 +288,7 @@ func draftAPICredentialToolDef(t *chatTurn) AgentToolDef {
 					if enabled {
 						state = "enabled and in use"
 					}
-					return fmt.Sprintf("Credential %q %s — NOT re-drafting it. A re-draft overwrites the config AND disables the credential, wiping its working state and forcing the user to paste their secret again. Never delete or re-create a live credential to change a setting, and never ask the user to delete one. If a setting like base_url genuinely must change, use update_api_credential(name=%q, base_url=...) — it shows the user an old→new diff to approve and preserves the secret + enabled state. To simply USE the credential, pass credential=%q to tool_def; you do not need to re-draft it.", credName, state, credName, credName), nil
+					return fmt.Sprintf("Credential %q %s: NOT re-drafting it. A re-draft overwrites the config AND disables the credential, wiping its working state and forcing the user to paste their secret again. Never delete or re-create a live credential to change a setting, and never ask the user to delete one. If a setting like base_url genuinely must change, use update_api_credential(name=%q, base_url=...): it shows the user an old→new diff to approve and preserves the secret + enabled state. To simply USE the credential, pass credential=%q to tool_def; you do not need to re-draft it.", credName, state, credName, credName), nil
 				}
 			}
 			c := SecureCredential{
@@ -316,7 +316,7 @@ func draftAPICredentialToolDef(t *chatTurn) AgentToolDef {
 				secretNeeded = "the secret value"
 			}
 			t.emitCredentialSetupCard(c.Name, c.Type, "", secretNeeded, true)
-			return fmt.Sprintf("Drafted %s credential %q in the user's OWN API credentials, created DISABLED. A setup card is showing in the chat — the USER pastes %s and enables it in Extensions › API credentials (no admin needed). It goes live as fetch_url_%s for their agents. Now build the tool with tool_def(mode=\"api\", credential=%q) — do NOT take the key/secret/host as tool params, and author url_template as a PATH (e.g. \"/api/v1/posts\"): it resolves against the credential's Base URL so the host can never drift.",
+			return fmt.Sprintf("Drafted %s credential %q in the user's OWN API credentials, created DISABLED. A setup card is showing in the chat: the USER pastes %s and enables it in Extensions › API credentials (no admin needed). It goes live as fetch_url_%s for their agents. Now build the tool with tool_def(mode=\"api\", credential=%q): do NOT take the key/secret/host as tool params, and author url_template as a PATH (e.g. \"/api/v1/posts\"): it resolves against the credential's Base URL so the host can never drift.",
 				c.Type, c.Name, secretNeeded, c.Name, c.Name), nil
 		},
 	}
@@ -370,7 +370,7 @@ func updateAPICredentialToolDef(t *chatTurn) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "update_api_credential",
-			Description: "Propose a CONFIG change to an EXISTING api credential the user owns — e.g. correct its base_url. This never deletes, re-creates, or disables the credential and never touches the secret: it shows the user an old→new diff with an Approve button, and on approval ONLY the config changes (the secret + enabled state are preserved). Use this instead of re-drafting or asking the user to delete a credential when a working credential's setting is wrong. You cannot change the secret (the user does that) and cannot edit a global/admin credential (an admin does that in Admin > APIs).",
+			Description: "Propose a CONFIG change to an EXISTING api credential the user owns: e.g. correct its base_url. This never deletes, re-creates, or disables the credential and never touches the secret: it shows the user an old→new diff with an Approve button, and on approval ONLY the config changes (the secret + enabled state are preserved). Use this instead of re-drafting or asking the user to delete a credential when a working credential's setting is wrong. You cannot change the secret (the user does that) and cannot edit a global/admin credential (an admin does that in Admin > APIs).",
 			Parameters: map[string]ToolParam{
 				"name":        {Type: "string", Description: "The existing credential to update (in the user's own API credentials)."},
 				"base_url":    {Type: "string", Description: "(optional) New base URL, e.g. https://p188-caldav.icloud.com/195178399. Omit to leave unchanged."},
@@ -396,10 +396,10 @@ func updateAPICredentialToolDef(t *chatTurn) AgentToolDef {
 				changes = append(changes, credConfigChange{Field: "description", Label: "Description", Old: cur.Description, New: nv})
 			}
 			if len(changes) == 0 {
-				return fmt.Sprintf("No config changes to propose for %q — the provided values already match the credential (or none were given).", name), nil
+				return fmt.Sprintf("No config changes to propose for %q: the provided values already match the credential (or none were given).", name), nil
 			}
 			t.emitCredentialUpdateCard(name, changes)
-			return fmt.Sprintf("Proposed %d config change(s) to credential %q — an approval card is showing in the chat with the old→new diff. It applies ONLY on the user's approval, and the secret + enabled state are preserved. Do NOT re-draft or delete the credential; wait for the user to approve, then continue.", len(changes), name), nil
+			return fmt.Sprintf("Proposed %d config change(s) to credential %q: an approval card is showing in the chat with the old→new diff. It applies ONLY on the user's approval, and the secret + enabled state are preserved. Do NOT re-draft or delete the credential; wait for the user to approve, then continue.", len(changes), name), nil
 		},
 	}
 }
@@ -417,10 +417,10 @@ func storeCredentialSecretToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "store_credential_secret",
-			Description: "Store an API key/token you just RECEIVED during a flow (a self-registration response, a key rotation) straight into an existing credential's encrypted vault — INSTEAD of printing it in chat or asking the user to copy-paste it. Overwrites any previously stored secret (that is how a rotation lands). Does NOT enable the credential; a new one still needs the admin to enable it. After storing: verify with check_credential, then dispatch through the credential (fetch_url_<name> / fetch_via) — never keep using the raw key inline, and NEVER echo the value into your reply.",
+			Description: "Store an API key/token you just RECEIVED during a flow (a self-registration response, a key rotation) straight into an existing credential's encrypted vault: INSTEAD of printing it in chat or asking the user to copy-paste it. Overwrites any previously stored secret (that is how a rotation lands). Does NOT enable the credential; a new one still needs the admin to enable it. After storing: verify with check_credential, then dispatch through the credential (fetch_url_<name> / fetch_via), never keep using the raw key inline, and NEVER echo the value into your reply.",
 			Parameters: map[string]ToolParam{
-				"name":   {Type: "string", Description: "The credential to store into (must already exist — draft_api_credential / draft_oauth_credential first)."},
-				"secret": {Type: "string", Description: "The secret value exactly as received. Stored encrypted, write-only — it cannot be read back."},
+				"name":   {Type: "string", Description: "The credential to store into (must already exist: draft_api_credential / draft_oauth_credential first)."},
+				"secret": {Type: "string", Description: "The secret value exactly as received. Stored encrypted, write-only: it cannot be read back."},
 			},
 			Required: []string{"name", "secret"},
 		},
@@ -431,13 +431,13 @@ func storeCredentialSecretToolDef() AgentToolDef {
 			}
 			// Keep the raw value out of the persisted tool-call record
 			// (args are recorded after the handler runs).
-			args["secret"] = "(stored server-side — write-only)"
+			args["secret"] = "(stored server-side: write-only)"
 			_, enabled, _ := Secure().CredentialStatus(name)
 			status := "The credential still needs the admin to ENABLE it (setup card / Admin > APIs) before dispatch works."
 			if enabled {
-				status = "The credential is enabled — dispatch through it now (fetch_url_" + name + " or your wrapped tool)."
+				status = "The credential is enabled: dispatch through it now (fetch_url_" + name + " or your wrapped tool)."
 			}
-			return fmt.Sprintf("Secret stored encrypted on credential %q — do NOT repeat the value in chat. %s Verify with check_credential(%q).", name, status, name), nil
+			return fmt.Sprintf("Secret stored encrypted on credential %q: do NOT repeat the value in chat. %s Verify with check_credential(%q).", name, status, name), nil
 		},
 	}
 }
@@ -455,10 +455,10 @@ func checkCredentialToolDef(t *chatTurn) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "check_credential",
-			Description: "Verify a credential you DRAFTED is now configured BEFORE you call a build done, and read its ACTUAL config. Returns whether it exists, is ENABLED, has its SECRET set (never the secret itself), plus the configured base_url / allowed endpoints / allowed methods. Resolves in the user's OWN namespace too, so a credential the user set up in Extensions > API credentials is found (not just admin globals). Call this after telling the user to paste the secret, and ALSO whenever a dispatch is refused with \"url not allowed\" — the config it returns is authoritative; reconcile your tools against IT rather than telling the admin to change settings to match your research. If it is not enabled-with-secret, the build is NOT finished: tell the user exactly what's left and do NOT declare success or wire a tool/agent to it yet.",
+			Description: "Verify a credential you DRAFTED is now configured BEFORE you call a build done, and read its ACTUAL config. Returns whether it exists, is ENABLED, has its SECRET set (never the secret itself), plus the configured base_url / allowed endpoints / allowed methods. Resolves in the user's OWN namespace too, so a credential the user set up in Extensions > API credentials is found (not just admin globals). Call this after telling the user to paste the secret, and ALSO whenever a dispatch is refused with \"url not allowed\": the config it returns is authoritative; reconcile your tools against IT rather than telling the admin to change settings to match your research. If it is not enabled-with-secret, the build is NOT finished: tell the user exactly what's left and do NOT declare success or wire a tool/agent to it yet.",
 			Parameters: map[string]ToolParam{
 				"name":           {Type: "string", Description: "The credential name you drafted (draft_api_credential / draft_oauth_credential)."},
-				"all_dispatches": {Type: "boolean", Description: "Include SUCCESSFUL (2xx) calls in the Recent dispatches list. Default false shows only FAILURES (non-2xx + errors) — the signal when you're debugging a wiring problem; the 2xx rows are hidden with a count. The full audit is always recorded regardless; this only filters what's shown."},
+				"all_dispatches": {Type: "boolean", Description: "Include SUCCESSFUL (2xx) calls in the Recent dispatches list. Default false shows only FAILURES (non-2xx + errors): the signal when you're debugging a wiring problem; the 2xx rows are hidden with a count. The full audit is always recorded regardless; this only filters what's shown."},
 			},
 			Required: []string{"name"},
 		},
@@ -470,7 +470,7 @@ func checkCredentialToolDef(t *chatTurn) AgentToolDef {
 			}
 			exists, enabled, hasSecret := Secure().CredentialStatusOwned(owner, name)
 			if !exists {
-				return fmt.Sprintf("Credential %q does not exist — draft it first (draft_api_credential / draft_oauth_credential). NOT READY.", name), nil
+				return fmt.Sprintf("Credential %q does not exist: draft it first (draft_api_credential / draft_oauth_credential). NOT READY.", name), nil
 			}
 			// Sanitized config readout — never the secret. This is what the
 			// credential ACTUALLY enforces, so Builder can reconcile a
@@ -494,7 +494,7 @@ func checkCredentialToolDef(t *chatTurn) AgentToolDef {
 				// Render empty-list SEMANTICS inline — "allowed_endpoints=[]"
 				// reliably gets misread as "nothing is allowed" no matter
 				// what a rules sentence elsewhere says.
-				eps := "(empty — every path under base_url is ALLOWED)"
+				eps := "(empty: every path under base_url is ALLOWED)"
 				if len(c.AllowedEndpoints) > 0 {
 					eps = fmt.Sprintf("%v (ONLY these paths)", c.AllowedEndpoints)
 				}
@@ -505,7 +505,7 @@ func checkCredentialToolDef(t *chatTurn) AgentToolDef {
 				if len(c.AllowedMethods) > 0 {
 					cfg += fmt.Sprintf(" allowed_methods=%v", c.AllowedMethods)
 				}
-				cfg += "\nRules: a path-only tool url_template (e.g. \"/v1/posts\") is resolved against base_url; empty allowed_endpoints = everything under base_url is allowed. If base_url disagrees with the host YOUR research produced, re-verify the provider's real domain from its own site — the admin's config wins until you have proof, so do not ask them to change it to match your notes."
+				cfg += "\nRules: a path-only tool url_template (e.g. \"/v1/posts\") is resolved against base_url; empty allowed_endpoints = everything under base_url is allowed. If base_url disagrees with the host YOUR research produced, re-verify the provider's real domain from its own site: the admin's config wins until you have proof, so do not ask them to change it to match your notes."
 			}
 			// Recent dispatch ledger — what was ACTUALLY sent through this
 			// credential (auth attached), newest first. This is the ground
@@ -537,7 +537,7 @@ func checkCredentialToolDef(t *chatTurn) AgentToolDef {
 					if allDispatches {
 						label = "Recent dispatches"
 					}
-					cfg += fmt.Sprintf("\n%s (newest first, %d of %d recorded — every row was SENT with auth attached):", label, n, len(audit))
+					cfg += fmt.Sprintf("\n%s (newest first, %d of %d recorded, every row was SENT with auth attached):", label, n, len(audit))
 					for _, e := range shown[:n] {
 						line := fmt.Sprintf("\n  %s %s %s → %d", e.Timestamp.Local().Format("Jan 2 15:04"), e.Method, e.URL, e.Status)
 						if e.Error != "" {
@@ -547,12 +547,12 @@ func checkCredentialToolDef(t *chatTurn) AgentToolDef {
 					}
 				}
 				if hidden > 0 {
-					cfg += fmt.Sprintf("\n  (%d successful 2xx call(s) hidden — pass all_dispatches=true to include them)", hidden)
+					cfg += fmt.Sprintf("\n  (%d successful 2xx call(s) hidden: pass all_dispatches=true to include them)", hidden)
 				} else if n == 0 {
-					cfg += fmt.Sprintf("\nRecent dispatches: %d recorded, all succeeded (2xx) — pass all_dispatches=true to list them.", len(audit))
+					cfg += fmt.Sprintf("\nRecent dispatches: %d recorded, all succeeded (2xx), pass all_dispatches=true to list them.", len(audit))
 				}
 			} else if cfg != "" {
-				cfg += "\nRecent dispatches: none recorded — nothing has been sent through this credential yet."
+				cfg += "\nRecent dispatches: none recorded, nothing has been sent through this credential yet."
 			}
 			// Tools ALREADY wired to this credential — the canonical working
 			// endpoint shapes. When authoring a NEW tool against a credential
@@ -572,10 +572,10 @@ func checkCredentialToolDef(t *chatTurn) AgentToolDef {
 				if m == "" {
 					m = "GET"
 				}
-				siblings = append(siblings, fmt.Sprintf("\n  %s — %s %s", tt.Name, m, tt.CommandTemplate))
+				siblings = append(siblings, fmt.Sprintf("\n  %s: %s %s", tt.Name, m, tt.CommandTemplate))
 			}
 			if len(siblings) > 0 {
-				cfg += "\nTools ALREADY wired to this credential — REUSE these endpoint shapes (they work); do NOT re-guess paths or ask the user for endpoints these already prove:"
+				cfg += "\nTools ALREADY wired to this credential, REUSE these endpoint shapes (they work); do NOT re-guess paths or ask the user for endpoints these already prove:"
 				for _, s := range siblings {
 					cfg += s
 				}
@@ -585,8 +585,8 @@ func checkCredentialToolDef(t *chatTurn) AgentToolDef {
 				// probe. The failure to break: the model guesses ONE path, gets a
 				// 4xx, and asks the user (or concludes "no API exists") instead of
 				// TRYING more paths. Tell it to map the API by probing first.
-				cfg += fmt.Sprintf("\nNeed an endpoint you don't have yet? MAP IT YOURSELF — this credential is LIVE. Probe candidate paths with fetch_url_%s(url=\"/try/this\") and read what returns 2xx; a 4xx just means THAT path is wrong, so try another (/x, /1/x, /serverinfo, list a base path, …). Discover the working endpoints AND the response shape by TRYING them before you ask the user or conclude anything — only ask for what a probe genuinely can't reveal (which instance/account, what the built thing should do).", name)
-				return fmt.Sprintf("Credential %q is READY — enabled and its secret is set. Safe to wire the tool/agent to it and finish.%s", name, cfg), nil
+				cfg += fmt.Sprintf("\nNeed an endpoint you don't have yet? MAP IT YOURSELF: this credential is LIVE. Probe candidate paths with fetch_url_%s(url=\"/try/this\") and read what returns 2xx; a 4xx just means THAT path is wrong, so try another (/x, /1/x, /serverinfo, list a base path, …). Discover the working endpoints AND the response shape by TRYING them before you ask the user or conclude anything: only ask for what a probe genuinely can't reveal (which instance/account, what the built thing should do).", name)
+				return fmt.Sprintf("Credential %q is READY: enabled and its secret is set. Safe to wire the tool/agent to it and finish.%s", name, cfg), nil
 			}
 			var missing []string
 			if !hasSecret {
@@ -595,7 +595,7 @@ func checkCredentialToolDef(t *chatTurn) AgentToolDef {
 			if !enabled {
 				missing = append(missing, "still disabled")
 			}
-			return fmt.Sprintf("Credential %q is NOT READY (%s). Tell the user to open Admin > APIs, finish it (paste the secret, enable it), then come back — do NOT declare the build complete or wire anything to it yet.%s", name, strings.Join(missing, "; "), cfg), nil
+			return fmt.Sprintf("Credential %q is NOT READY (%s). Tell the user to open Admin > APIs, finish it (paste the secret, enable it), then come back: do NOT declare the build complete or wire anything to it yet.%s", name, strings.Join(missing, "; "), cfg), nil
 		},
 	}
 }
@@ -619,7 +619,7 @@ func surveyWorkspaceToolDef(t *chatTurn) AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "survey",
-			Description: "ORIENT before you build: return a compact map of everything that already exists in this user's gohort — agents (+ their tool surface), tools (mode + credential), credentials (+ the tools wired to each), apps, pipelines, event monitors, standing agents. This is your 'read the repo' move — call it FIRST when a request could reuse or must stay consistent with existing work (a new tool on a credential others already use, an app like one that exists, an agent with a similar job). Reuse what it shows instead of re-guessing or re-building. Read-only; takes no arguments.",
+			Description: "ORIENT before you build: return a compact map of everything that already exists in this user's gohort, agents (+ their tool surface), tools (mode + credential), credentials (+ the tools wired to each), apps, pipelines, event monitors, standing agents. This is your 'read the repo' move: call it FIRST when a request could reuse or must stay consistent with existing work (a new tool on a credential others already use, an app like one that exists, an agent with a similar job). Reuse what it shows instead of re-guessing or re-building. Read-only; takes no arguments.",
 			Parameters:  map[string]ToolParam{},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
@@ -636,7 +636,7 @@ func surveyWorkspace(owner string) string {
 	const cap = 60
 	udb := agentUserDB(RootDB, owner)
 	var b strings.Builder
-	fmt.Fprintf(&b, "gohort workspace for %s — orient before you build; REUSE what already exists rather than re-guessing or rebuilding.\n", owner)
+	fmt.Fprintf(&b, "gohort workspace for %s: orient before you build; REUSE what already exists rather than re-guessing or rebuilding.\n", owner)
 
 	// Map credential -> the api tools already wired to it, so both the TOOLS
 	// and CREDENTIALS sections can show the working endpoint shapes.
@@ -690,7 +690,7 @@ func surveyWorkspace(owner string) string {
 				surface = fmt.Sprintf("%d tools", len(a.AllowedTools))
 			}
 		}
-		fmt.Fprintf(&b, "  • %s%s (id %s) — %s | tools: %s\n", a.Name, tags, a.ID, oneLine(a.Description, 80), surface)
+		fmt.Fprintf(&b, "  • %s%s (id %s), %s | tools: %s\n", a.Name, tags, a.ID, oneLine(a.Description, 80), surface)
 	}
 	capNote(len(agents))
 
@@ -725,7 +725,7 @@ func surveyWorkspace(owner string) string {
 	// Credentials: user-owned + globals the user may use, deduped by name.
 	creds := surveyCredentials(owner)
 	section("CREDENTIALS", len(creds))
-	fmt.Fprintf(&b, "  (draft_api_credential / draft_oauth_credential; a READY one is a LIVE API — PROBE it with fetch_url_<name>)\n")
+	fmt.Fprintf(&b, "  (draft_api_credential / draft_oauth_credential; a READY one is a LIVE API: PROBE it with fetch_url_<name>)\n")
 	for i, c := range creds {
 		if i >= cap {
 			break
@@ -752,7 +752,7 @@ func surveyWorkspace(owner string) string {
 		if a.AgentID != "" {
 			agentNote = " agent=" + a.AgentID
 		}
-		fmt.Fprintf(&b, "  • %s (/apps/%s/)%s — %s\n", a.Name, a.Slug, agentNote, oneLine(a.Desc, 70))
+		fmt.Fprintf(&b, "  • %s (/apps/%s/)%s: %s\n", a.Name, a.Slug, agentNote, oneLine(a.Desc, 70))
 	}
 	capNote(len(apps))
 
@@ -762,7 +762,7 @@ func surveyWorkspace(owner string) string {
 		if i >= cap {
 			break
 		}
-		fmt.Fprintf(&b, "  • %s (%d stages) — %s\n", p.Name, len(p.Stages), oneLine(p.Description, 70))
+		fmt.Fprintf(&b, "  • %s (%d stages): %s\n", p.Name, len(p.Stages), oneLine(p.Description, 70))
 	}
 	capNote(len(pipes))
 
@@ -779,7 +779,7 @@ func surveyWorkspace(owner string) string {
 		}
 		state := ""
 		if m.Broken {
-			state = " [BROKEN — needs relink: " + m.BrokenReason + "]"
+			state = " [BROKEN, needs relink: " + m.BrokenReason + "]"
 		} else if m.Paused {
 			state = " [paused]"
 		}
@@ -998,43 +998,43 @@ func orchestratorRouteKey(agentID string, leadModel bool) string {
 //
 // Kept tight — same rules, no narrative, fits at the end of the
 // system prompt without bloating it.
-const builderWorkerDirectives = `## Worker discipline — sandbox + script rules
+const builderWorkerDirectives = `## Worker discipline: sandbox + script rules
 
 You're a Builder-spawned worker executing one focused step (research / draft / smoke-test). When you write scripts or run shell commands, the following constraints apply:
 
-- **Network goes through gohort.** All HTTP from inside a script flows through ` + "gohort.fetch_url" + ` / ` + "gohort.browse_page" + `, available by default — no ` + "hook_capabilities" + ` declaration needed for the bare set. Canonical: ` + "from gohort import fetch_url; data = fetch_url(url)" + `. ` + "fetch_url" + ` auto-routes JS-heavy hosts through ` + "browse_page" + ` so the same URL that worked for your LLM-tool probe works in the script. **For binary downloads (image, PDF, audio, video, archive)**: pass ` + "save_to=" + ` and the response streams to a workspace file — never try to write ` + "result['body']" + ` to disk for binary data (the string conversion mangles bytes). Example: ` + "r = fetch_url(image_url, save_to='meme.png'); if r['status'] != 200: return f'fetch failed: {r[\"status\"]}'; # file is now at <workspace>/meme.png" + `. **Any network-doing standard library is BLOCKED**: curl, wget, urllib (network parts), requests, http.client, socket — the framework refuses tool_def calls that use them.
+- **Network goes through gohort.** All HTTP from inside a script flows through ` + "gohort.fetch_url" + ` / ` + "gohort.browse_page" + `, available by default: no ` + "hook_capabilities" + ` declaration needed for the bare set. Canonical: ` + "from gohort import fetch_url; data = fetch_url(url)" + `. ` + "fetch_url" + ` auto-routes JS-heavy hosts through ` + "browse_page" + ` so the same URL that worked for your LLM-tool probe works in the script. **For binary downloads (image, PDF, audio, video, archive)**: pass ` + "save_to=" + ` and the response streams to a workspace file: never try to write ` + "result['body']" + ` to disk for binary data (the string conversion mangles bytes). Example: ` + "r = fetch_url(image_url, save_to='meme.png'); if r['status'] != 200: return f'fetch failed: {r[\"status\"]}'; # file is now at <workspace>/meme.png" + `. **Any network-doing standard library is BLOCKED**: curl, wget, urllib (network parts), requests, http.client, socket, the framework refuses tool_def calls that use them.
 
-- **For credentialed endpoints, declare the credential.** ` + "secret:<name>" + ` returns the decrypted value (script injects it itself); ` + "fetch_via:<name>" + ` routes the request through that credential's secure dispatch (auth applied server-side, URL allow-list enforced, script never sees the secret — prefer this). Example: ` + "hook_capabilities=[\"fetch_via:openweather\"]" + `, then ` + "from gohort import fetch_via; data = fetch_via(\"openweather\", url)" + `. If the credential isn't registered, tell the user to register it via the admin UI; don't invent a credential name.
+- **For credentialed endpoints, declare the credential.** ` + "secret:<name>" + ` returns the decrypted value (script injects it itself); ` + "fetch_via:<name>" + ` routes the request through that credential's secure dispatch (auth applied server-side, URL allow-list enforced, script never sees the secret: prefer this). Example: ` + "hook_capabilities=[\"fetch_via:openweather\"]" + `, then ` + "from gohort import fetch_via; data = fetch_via(\"openweather\", url)" + `. If the credential isn't registered, tell the user to register it via the admin UI; don't invent a credential name.
 
-- **Params arrive as ENV VARS, not sys.argv.** When a tool declares ` + "params={\"count\": ..., \"subreddit\": ...}" + ` and the LLM calls it with ` + "count=3, subreddit=\"memes\"" + `, your script reads them with ` + "os.environ['count']" + ` (Python) / ` + "$count" + ` (bash) / ` + "process.env.count" + ` (node). Do NOT use ` + "sys.argv" + ` / ` + "argparse" + ` — the auto-inferred command_template adds no positional placeholders, so sys.argv[1] doesn't exist and ordering becomes a footgun (alphabetical? insertion?) the framework deliberately sidesteps. Canonical Python: ` + "import os; count = int(os.environ['count']); sub = os.environ['subreddit']" + `. Bash: ` + "count=\"$count\"; sub=\"$subreddit\"" + `. If you absolutely need positional argv (third-party tool that doesn't read env), supply your own command_template with explicit ` + "{placeholder}" + ` args — but you almost never need this.
+- **Params arrive as ENV VARS, not sys.argv.** When a tool declares ` + "params={\"count\": ..., \"subreddit\": ...}" + ` and the LLM calls it with ` + "count=3, subreddit=\"memes\"" + `, your script reads them with ` + "os.environ['count']" + ` (Python) / ` + "$count" + ` (bash) / ` + "process.env.count" + ` (node). Do NOT use ` + "sys.argv" + ` / ` + "argparse" + `, the auto-inferred command_template adds no positional placeholders, so sys.argv[1] doesn't exist and ordering becomes a footgun (alphabetical? insertion?) the framework deliberately sidesteps. Canonical Python: ` + "import os; count = int(os.environ['count']); sub = os.environ['subreddit']" + `. Bash: ` + "count=\"$count\"; sub=\"$subreddit\"" + `. If you absolutely need positional argv (third-party tool that doesn't read env), supply your own command_template with explicit ` + "{placeholder}" + ` args, but you almost never need this.
 
-- **URL encoding is mandatory.** Stitching user values into URLs via f-strings without encoding is the #1 source of "works for Seattle, breaks for Santa Cruz" bugs. Always: ` + "from urllib.parse import quote; url = f\"...?q={quote(city)}\"" + `. The hook refuses URLs with raw whitespace and returns a directive error pointing at this fix — don't make Builder iterate to discover it.
+- **URL encoding is mandatory.** Stitching user values into URLs via f-strings without encoding is the #1 source of "works for Seattle, breaks for Santa Cruz" bugs. Always: ` + "from urllib.parse import quote; url = f\"...?q={quote(city)}\"" + `. The hook refuses URLs with raw whitespace and returns a directive error pointing at this fix: don't make Builder iterate to discover it.
 
 - **When a fetch returns a non-2xx, the FIRST check is the URL itself, not the fetch mechanism.** Look at the hook log line for that call (` + "[hook/fetch] start GET ..." + `). Compare the URL on the wire to the URL you intended to send. Common shapes:
-  - ` + "%7Bplaceholder%7D" + ` in the URL = unsubstituted ` + "{placeholder}" + ` — your f-string or .format() never ran. Fix the templating, NOT the fetch.
+  - ` + "%7Bplaceholder%7D" + ` in the URL = unsubstituted ` + "{placeholder}" + `, your f-string or .format() never ran. Fix the templating, NOT the fetch.
   - Raw whitespace = unencoded user value (see URL-encoding rule above).
   - Trailing/leading whitespace in path = stray ` + "\\n" + ` from input parsing.
-  Do NOT switch from gohort.fetch_url to curl, requests, urllib, or shell commands as a "fresh start" — none of those would behave differently because the bug is in the URL, not the transport. They also CAN'T work — the sandbox runs --unshare-net; the only network path is the gohort hook. The 403/404/400 is the server telling you the URL is bad. Read the URL. Fix the URL. One-line fix beats a rewrite every time.
+  Do NOT switch from gohort.fetch_url to curl, requests, urllib, or shell commands as a "fresh start": none of those would behave differently because the bug is in the URL, not the transport. They also CAN'T work: the sandbox runs --unshare-net; the only network path is the gohort hook. The 403/404/400 is the server telling you the URL is bad. Read the URL. Fix the URL. One-line fix beats a rewrite every time.
 
 - **JSON parsing: standard Python, no special method.** ` + "gohort.fetch_url" + ` returns ` + "{status, headers, body}" + `. To parse JSON, check status then ` + "json.loads(body)" + `. Canonical shape:
   ` + "result = fetch_url(url)" + `
   ` + "if result['status'] != 200: return f\"upstream {result['status']}: {result['body'][:200]}\"" + `
   ` + "data = json.loads(result['body'])" + `
-  There is no separate fetch_json tool — script-side OR LLM-callable. ` + "fetch_url" + ` returns the body as a string in every case; if you need parsed data, ` + "json.loads()" + ` it. Probing an API endpoint inline (LLM-level)? Same shape — read the JSON text in the tool result and reason about it.
+  There is no separate fetch_json tool: script-side OR LLM-callable. ` + "fetch_url" + ` returns the body as a string in every case; if you need parsed data, ` + "json.loads()" + ` it. Probing an API endpoint inline (LLM-level)? Same shape: read the JSON text in the tool result and reason about it.
 
-- **403 from anti-bot ⇒ ` + "gohort.browse_page" + `**. ` + "fetch_url" + ` already auto-routes JS-heavy hosts (Reddit, Twitter/X, etc.) through Chromium for you, but if a non-listed host returns 403 / captcha / Cloudflare interstitial / a JS-skeleton, fall through manually: ` + "if result['status'] == 403: result = browse_page(url)" + `. browse_page runs real headless Chromium server-side — executes JS, handles cookies, beats most soft blocks. 5-20s per call so it's the recovery path, not the default.
+- **403 from anti-bot ⇒ ` + "gohort.browse_page" + `**. ` + "fetch_url" + ` already auto-routes JS-heavy hosts (Reddit, Twitter/X, etc.) through Chromium for you, but if a non-listed host returns 403 / captcha / Cloudflare interstitial / a JS-skeleton, fall through manually: ` + "if result['status'] == 403: result = browse_page(url)" + `. browse_page runs real headless Chromium server-side: executes JS, handles cookies, beats most soft blocks. 5-20s per call so it's the recovery path, not the default.
 
 - **Stdlib only in scripts.** No requests, no Pillow, no numpy/pandas, no bs4. Stdlib: json, urllib.parse (for encoding, not for fetching), re, datetime, math, statistics, base64, hashlib, html, sys, os, argparse. If the design needs a third-party lib, pivot conceptually (different approach via stdlib + hook).
 
-- **Your catalog includes authoring tools (tool_def, create_agent, add_tool, skill_def) alongside research tools.** Use whichever fits the step's brief — if the step is "create the X tool with this spec," call tool_def yourself and return confirmation + the saved record. If the step is "research / draft / probe," return findings as text for Builder to assemble. Don't dispatch ` + "agents(action=\"run\", agent=\"Builder\")" + ` to ask Builder to do something — you have the same tools Builder does. If you authored an artifact, INCLUDE the artifact's name/id in your report so Builder can mention it in the final user-facing summary.
+- **Your catalog includes authoring tools (tool_def, create_agent, add_tool, skill_def) alongside research tools.** Use whichever fits the step's brief: if the step is "create the X tool with this spec," call tool_def yourself and return confirmation + the saved record. If the step is "research / draft / probe," return findings as text for Builder to assemble. Don't dispatch ` + "agents(action=\"run\", agent=\"Builder\")" + ` to ask Builder to do something: you have the same tools Builder does. If you authored an artifact, INCLUDE the artifact's name/id in your report so Builder can mention it in the final user-facing summary.
 
 - **Documented APIs only, with hard search caps.** When asked to probe a specific named provider:
-  - **2 web_searches max** to find the provider's documentation URL (try "<provider> API documentation", "<provider> OpenAPI spec"). If two searches don't surface OFFICIAL documentation (the provider's own docs site, not forum posts, not third-party blogs, not GitHub mirrors of unofficial reverse-engineering), STOP and report back "no public documentation found for <provider>." Don't search a third time hoping to find it — if it's not in the first two searches, it's not public.
+  - **2 web_searches max** to find the provider's documentation URL (try "<provider> API documentation", "<provider> OpenAPI spec"). If two searches don't surface OFFICIAL documentation (the provider's own docs site, not forum posts, not third-party blogs, not GitHub mirrors of unofficial reverse-engineering), STOP and report back "no public documentation found for <provider>." Don't search a third time hoping to find it: if it's not in the first two searches, it's not public.
   - **2 fetch_url calls max** on the documentation site itself once located (a docs index + the specific endpoint reference page is enough for shape). Don't read the entire docs site.
-  - **NEVER probe endpoints directly to map shapes.** Hitting the actual API surface with fetch_url to "see what comes back" is the failure mode — it produces fragile tools and burns rounds. The docs are the source of truth.
+  - **NEVER probe endpoints directly to map shapes.** Hitting the actual API surface with fetch_url to "see what comes back" is the failure mode: it produces fragile tools and burns rounds. The docs are the source of truth.
 - **Auth errors are a STOP signal, not a "try harder" signal.** If a probe returns HTTP 401 / 403 / 407, OR if fetch_url returns an upstream error explicitly demanding auth (the response body says "invalid api key", "authentication required", "401 Unauthorized"), STOP on the FIRST one. Don't retry the endpoint, don't try a "different auth shape," don't probe a sibling endpoint hoping it's open. Report back: "endpoint <URL> requires <provider> API credentials; the user needs to supply an API key before this tool can be built."
 
-- **Be compact in your report-back.** You return COMPONENTS to Builder for assembly. Builder's context is finite. If you're returning a drafted script_body, return JUST the script content — no commentary above/below unless it's truly necessary for assembly. If you're returning an API shape from a PROBE step, return the structured summary (endpoint + fields + sample response), not the raw blob.
+- **Be compact in your report-back.** You return COMPONENTS to Builder for assembly. Builder's context is finite. If you're returning a drafted script_body, return JUST the script content: no commentary above/below unless it's truly necessary for assembly. If you're returning an API shape from a PROBE step, return the structured summary (endpoint + fields + sample response), not the raw blob.
 
 - **Named unit conversions.** If your script does any unit math, each conversion is its own function naming BOTH units (c_to_f, mph_to_kmh, kmh_to_mph, m_to_ft). Never cross-applied. When the upstream API supports unit query params (temperature_unit, wind_speed_unit), use them and skip the conversion.
 
@@ -1042,9 +1042,9 @@ You're a Builder-spawned worker executing one focused step (research / draft / s
 
 - **No quote-wrapping placeholders.** When writing command_template or url_template (if you're drafting these for Builder), {placeholders} are auto-quoted/encoded by the framework. NEVER wrap them in your own quote characters.
 
-- **Capture mistakes and gotchas via store_fact.** When you make a mistake the framework or test_args catches (forgot URL encoding, wrote a wrapper around gohort.fetch without importing it, tried urllib in the sandbox, used a library not present) — store_fact with the FAILURE PATH as a rule. When you discover an API quirk worth knowing (200 + empty body on missing key, User-Agent required, weird pagination shape) — store_fact that too. Same namespace as Builder, so the lesson surfaces in Builder's next session. NO permission needed for operational knowledge.
+- **Capture mistakes and gotchas via store_fact.** When you make a mistake the framework or test_args catches (forgot URL encoding, wrote a wrapper around gohort.fetch without importing it, tried urllib in the sandbox, used a library not present): store_fact with the FAILURE PATH as a rule. When you discover an API quirk worth knowing (200 + empty body on missing key, User-Agent required, weird pagination shape): store_fact that too. Same namespace as Builder, so the lesson surfaces in Builder's next session. NO permission needed for operational knowledge.
 
-  Frame as a RULE not a story: "When using gohort.fetch, import gohort first or get NameError" (rule) — not "I wrote def fetch and forgot import" (story). Skip when the finding is specific to one tool (a particular endpoint URL, a credential name) — that's a detail, not a lesson, and it bloats Builder's prompt without value.`
+  Frame as a RULE not a story: "When using gohort.fetch, import gohort first or get NameError" (rule), not "I wrote def fetch and forgot import" (story). Skip when the finding is specific to one tool (a particular endpoint URL, a credential name): that's a detail, not a lesson, and it bloats Builder's prompt without value.`
 
 // registerLazyAuthoringTools holds an Author-flagged agent's authoring catalog
 // out of the inline tool list and behind load_tool, returning the prompt index
@@ -1069,14 +1069,14 @@ func registerLazyAuthoringTools(t *chatTurn, tools []AgentToolDef) string {
 	t.deferredAuthoringLoaded = map[string]bool{}
 	var b strings.Builder
 	b.WriteString("\n\n## Authoring tools (load before use)\n")
-	b.WriteString("You can build things — agents, tools, skills, credentials, bridges, connectors. These tools exist but their parameters aren't loaded yet. When a request calls for one, first call `load_tool(names=[\"<name>\", ...])` with EVERY tool you expect to need in that one call; it returns their parameters and makes them callable. Then use them normally.\n\n")
+	b.WriteString("You can build things: agents, tools, skills, credentials, bridges, connectors. These tools exist but their parameters aren't loaded yet. When a request calls for one, first call `load_tool(names=[\"<name>\", ...])` with EVERY tool you expect to need in that one call; it returns their parameters and makes them callable. Then use them normally.\n\n")
 	for _, td := range tools {
 		t.deferredAuthoringDefs[td.Tool.Name] = td
 		desc := strings.TrimSpace(td.Tool.Description)
 		if len(desc) > 200 {
 			desc = desc[:200] + "…"
 		}
-		b.WriteString("- `" + td.Tool.Name + "` — " + desc + "\n")
+		b.WriteString("- `" + td.Tool.Name + "` " + desc + "\n")
 	}
 	return b.String()
 }

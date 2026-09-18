@@ -1,9 +1,9 @@
-# Custom App Administration — one tab, one app per row
+# Custom App Administration: one tab, one app per row
 
 Status: **design / target** (not built).
 
 Custom apps are the only apps an operator cannot administer. A compiled app
-registers its dials at startup — a route stage, a tunable, an admin section —
+registers its dials at startup (a route stage, a tunable, an admin section)
 and the admin page renders them. A custom app registers nothing, because it
 does not exist at startup: it is a record somebody wrote at runtime, under
 their own name, and the two registries it would need are keyed by constants
@@ -24,8 +24,8 @@ different owners:
 
 | | belongs to | lives on |
 |---|---|---|
-| what the app DOES — an endpoint, a threshold, a default | the author | the app's own page |
-| what the app is ALLOWED — tier, spend, reach, enabled, public | the operator | this tab |
+| what the app DOES: an endpoint, a threshold, a default | the author | the app's own page |
+| what the app is ALLOWED: tier, spend, reach, enabled, public | the operator | this tab |
 
 On a single-operator deployment that reads as ceremony, since one person is
 both. The split still holds, for the same reason the rest of the framework is
@@ -99,7 +99,7 @@ A cross-user list is the part to get right before any of it is built.
    list does not do it by accident.
 4. **Nothing here edits the app's definition.** Every control writes to
    operator-owned storage keyed by `(owner, slug)`, never into the `AppSpec`
-   the author edits — with the single exception of `Disabled`, which is
+   the author edits, with the single exception of `Disabled`, which is
    discussed below because it is the one genuine collision.
 
 ## The controls, as a registry
@@ -125,8 +125,8 @@ func RegisterCustomAppControl(c CustomAppControl)
 The reason is the reason `RegisterTunable` and `RegisterAdminSection` exist: a
 hand-assembled pane is a place where every future control has to be wired in by
 hand, in a file that grows a case per feature. A registry means the app that
-owns a concern registers the control for it — the publish surface registers
-link revocation, orchestrate registers the tier dials — and admin stays
+owns a concern registers the control for it: the publish surface registers
+link revocation, orchestrate registers the tier dials, and admin stays
 ignorant of all of them.
 
 A `Render` that returns nil renders nothing. That is how a control that does
@@ -138,7 +138,7 @@ codebase keeps finding: a dial that is present and moves nothing.
 **Access.** Who may reach this app. Today this lives in the per-user grants
 picker, where the axis is a user and the app is one checkbox among many.
 Per-app is the natural axis for the question "who can get at this", and this is
-the same underlying grant read from the other end — not a second mechanism.
+the same underlying grant read from the other end: not a second mechanism.
 
 **Exposure.** The public capability link: whether one is live, and a revoke
 that clears the token and its index entry. The owner can already do this from
@@ -182,7 +182,7 @@ The obvious move is to register a route stage per pipeline stage and call
 `RouteToLead(key)`. That is wrong in a way that is expensive and quiet.
 `routeEffectiveVal` falls back to the registry's `Default` and then to the
 empty string, and `RouteValueIsLead` treats everything outside the closed set
-of worker values — the empty string included — as **lead**. A key that is not
+of worker values (the empty string included) as **lead**. A key that is not
 registered, or is registered too late, therefore routes to the precision tier.
 Pipeline stages default to worker today. Wiring it the obvious way silently
 promotes every stage of every custom app to the expensive model, and nothing
@@ -219,7 +219,7 @@ func stageTierFor(pipelineID string, stage PipelineStage) LLMTier {
 defaults this must not have).
 
 The registry then has one job: populating the admin UI's list of dials. And it
-does not need to be a registry at all — the admin pane enumerates the stages of
+does not need to be a registry at all: the admin pane enumerates the stages of
 the app's bound pipeline when it renders, which is stored data that survives a
 restart by construction. **The dials are derived from the definition; only the
 overrides are stored.** A stage renamed in the pipeline drops its dial and its
@@ -241,13 +241,13 @@ author's page.
 
 **Per-app tunables in the `RegisterTunable` sense.** Those are deployment-wide
 singletons with one value per key. A custom app is per-owner, so the key would
-have to carry the owner, and at that point it is not a tunable — it is the
+have to carry the owner, and at that point it is not a tunable: it is the
 control registry above.
 
 ## Tests
 
 - the section SOURCE is called per render, and a newly authored app appears
-  without a restart — the whole reason it is a source and not a registration
+  without a restart: the whole reason it is a source and not a registration
 - zero custom apps renders the empty-state section, not an empty rail
 - an app with no bound pipeline renders no tier dials, and no empty Cost group
 - a tier override changes the resolved tier; REMOVING it returns the stage to

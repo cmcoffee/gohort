@@ -112,7 +112,7 @@ func FindExpiredBundles(db Database) []ExpiredBundle {
 		cutoff := time.Now().AddDate(0, 0, -st.RetentionDays)
 		entries, err := os.ReadDir(st.Path)
 		if err != nil {
-			Log("[filestore.retention] %s: cannot read %s (%v) — skipped", st.Name, st.Path, err)
+			Log("[filestore.retention] %s: cannot read %s (%v), skipped", st.Name, st.Path, err)
 			continue
 		}
 		for _, e := range entries {
@@ -125,7 +125,7 @@ func FindExpiredBundles(db Database) []ExpiredBundle {
 			// be listed here.
 			dir, err := SubRoot(st.Path, e.Name())
 			if err != nil {
-				Log("[filestore.retention] %s/%s did not resolve inside the store (%v) — skipped", st.Name, e.Name(), err)
+				Log("[filestore.retention] %s/%s did not resolve inside the store (%v): skipped", st.Name, e.Name(), err)
 				continue
 			}
 			newest, err := bundleNewest(dir)
@@ -156,7 +156,7 @@ func FormatExpiredBundles(list []ExpiredBundle) string {
 	var total int64
 	for _, c := range list {
 		total += c.Bytes
-		fmt.Fprintf(&b, "  %s / %s — %s, last touched %s ago\n",
+		fmt.Fprintf(&b, "  %s / %s: %s, last touched %s ago\n",
 			c.Store, c.Folder, HumanSize(c.Bytes), c.Age().Round(time.Hour))
 	}
 	fmt.Fprintf(&b, "  %d folder(s), %s total", len(list), HumanSize(total))
@@ -193,7 +193,7 @@ func registerRetentionMaintenance(app *FileStoreApp) {
 		"list_expired_bundles",
 		"List expired file-store folders (dry run)",
 		"Shows which bundle folders are past their store's retention window. Deletes nothing. "+
-			"A store with no window set never appears here — that is the default, and it means "+
+			"A store with no window set never appears here, that is the default, and it means "+
 			"nothing in it is ever eligible.",
 		func(ctx context.Context) int {
 			list := FindExpiredBundles(app.DB)
@@ -209,7 +209,7 @@ func registerRetentionMaintenance(app *FileStoreApp) {
 		"reap_expired_bundles",
 		"Delete expired file-store folders (DELETES)",
 		"Removes exactly what the dry run above lists: folders directly under a store root whose "+
-			"newest content is past that store's retention window. Run the dry run first — it uses "+
+			"newest content is past that store's retention window. Run the dry run first: it uses "+
 			"the same walk, so what it shows is what this removes. Not recoverable.",
 		func(ctx context.Context) int {
 			list := FindExpiredBundles(app.DB)

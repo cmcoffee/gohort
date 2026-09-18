@@ -314,7 +314,7 @@ func StatFileWS(sess *ToolSession, rel string) (string, error) {
 	if len(firstLine) > 200 {
 		firstLine = firstLine[:200] + "…"
 	}
-	lineCountStr := "(unknown — file too large to count cheaply)"
+	lineCountStr := "(unknown: file too large to count cheaply)"
 	if lineCount >= 0 {
 		lineCountStr = fmt.Sprintf("%d", lineCount)
 	}

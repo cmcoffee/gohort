@@ -61,7 +61,7 @@ func RegisterBridgeProvisioner(fn BridgeProvisioner) { bridgeProvisioner = fn }
 
 func provisionServiceBridge(owner, service string, enabled bool) error {
 	if bridgeProvisioner == nil {
-		Warn("[connector] no bridge provisioner registered — skipping server-side %s bridge key for %s", service, owner)
+		Warn("[connector] no bridge provisioner registered: skipping server-side %s bridge key for %s", service, owner)
 		return nil
 	}
 	return bridgeProvisioner(owner, service, enabled)

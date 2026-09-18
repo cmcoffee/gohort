@@ -105,7 +105,7 @@ func (T *OrchestrateApp) handleAgentImages(w http.ResponseWriter, r *http.Reques
 func librarySubject(k KeptImage) string {
 	label := SubjectLabel(k.Subject)
 	if label == "" {
-		return "— not labelled"
+		return "· not labelled"
 	}
 	if k.Subject.Person && strings.TrimSpace(k.Subject.Handle) == "" {
 		// A name with no handle is a label somebody typed, not an
@@ -137,7 +137,7 @@ func libraryShows(k KeptImage) string {
 	out := strings.TrimSpace(k.Note)
 	if c := strings.TrimSpace(k.Caption); c != "" {
 		if out != "" {
-			out += " — "
+			out += " · "
 		}
 		out += c
 	}
@@ -237,7 +237,7 @@ func (T *OrchestrateApp) handleAgentImageAction(w http.ResponseWriter, r *http.R
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"conflict": conflict,
-				"message":  conflict + " is also filed as that subject. Nothing was deleted — forget whichever is wrong, or a request naming them has two answers.",
+				"message":  conflict + " is also filed as that subject. Nothing was deleted: forget whichever is wrong, or a request naming them has two answers.",
 			})
 			return
 		}
@@ -259,7 +259,7 @@ window.uiRegisterClientAction('agent_image_label', function(ctx) {
   // Pre-filled with the current label so a correction is an edit rather than a
   // retype, and empty for the unlabelled rows that are the reason this exists.
   var current = (rec.subject || '').replace(/ \(name only\)$/, '');
-  if (current.charAt(0) === '—') current = '';
+  if (current.charAt(0) === ': ') current = '';
   Promise.resolve(window.uiPrompt('Who or what is this a picture of?', current)).then(function(of) {
     if (of === null) return;
     of = String(of).trim();
@@ -269,7 +269,7 @@ window.uiRegisterClientAction('agent_image_label', function(ctx) {
     fetch(url, {method: 'POST'}).then(function(r) {
       if (!r.ok) { return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); }); }
       // 204 on a clean label; a body means another entry already holds this
-      // subject, which is worth saying out loud — the label DID apply, so this
+      // subject, which is worth saying out loud: the label DID apply, so this
       // is information, not a failure.
       if (r.status === 204) return null;
       return r.json();

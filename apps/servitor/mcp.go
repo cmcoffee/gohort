@@ -22,13 +22,13 @@ import (
 func registerServitorMCPTools() {
 	RegisterMCPTool(MCPToolSpec{
 		Name:        "servitor_list_systems",
-		Description: "List the user's Servitor systems (id, name, host, type) — the appliances Servitor has knowledge about. Read-only; never returns credentials.",
+		Description: "List the user's Servitor systems (id, name, host, type): the appliances Servitor has knowledge about. Read-only; never returns credentials.",
 		InputSchema: map[string]any{"type": "object"},
 		Handler:     servitorMCPListSystems,
 	})
 	RegisterMCPTool(MCPToolSpec{
 		Name:        "servitor_search_facts",
-		Description: "Search the facts Servitor has gathered about the user's systems (keys, values, tags). This is Servitor's accumulated knowledge — use it to answer questions about how a system is configured. Optionally narrow to one system by name or id.",
+		Description: "Search the facts Servitor has gathered about the user's systems (keys, values, tags). This is Servitor's accumulated knowledge: use it to answer questions about how a system is configured. Optionally narrow to one system by name or id.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -94,9 +94,9 @@ func servitorMCPListSystems(_ context.Context, owner string, _ map[string]any) (
 		}
 		// Only safe, non-credential fields.
 		if typ == "command" {
-			fmt.Fprintf(&b, "- %s — %q (command)\n", a.ID, a.Name)
+			fmt.Fprintf(&b, "- %s: %q (command)\n", a.ID, a.Name)
 		} else {
-			fmt.Fprintf(&b, "- %s — %q (%s @ %s)\n", a.ID, a.Name, typ, a.Host)
+			fmt.Fprintf(&b, "- %s: %q (%s @ %s)\n", a.ID, a.Name, typ, a.Host)
 		}
 	}
 	if n == 0 {

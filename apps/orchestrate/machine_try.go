@@ -168,13 +168,13 @@ func tryReach(udb Database, user string, def MachineDef, cur *MachineCursor, lan
 		// A tool step reaches exactly one thing, whatever the reach says —
 		// there is no model to give a catalog to.
 		if tool := strings.TrimSpace(ph.Tool); tool != "" {
-			row["summary"] = "calls " + tool + " directly — no model, nothing else"
+			row["summary"] = "calls " + tool + " directly: no model, nothing else"
 			out = append(out, row)
 			continue
 		}
 		switch PhaseReach(ph) {
 		case ReachNone:
-			row["summary"] = "nothing — it answers from what it was handed"
+			row["summary"] = "nothing: it answers from what it was handed"
 		default:
 			names := make([]string, 0, 16)
 			for _, td := range PhaseTools(ph, catalog) {
@@ -262,7 +262,7 @@ func namesNotIn(asked []string, got []string) []string {
 // worth saying so: they are judged by the driver, before the step runs,
 // so a rehearsal does exercise them.
 func tryCaveat(def MachineDef) string {
-	base := "A dry run has no tools and does not run the step it lands in — it shows where a turn would GO, not what it would say. " +
+	base := "A dry run has no tools and does not run the step it lands in: it shows where a turn would GO, not what it would say. " +
 		"What each step WOULD have reached is resolved separately, above."
 	bounded := false
 	for _, p := range def.Phases {
@@ -382,7 +382,7 @@ const machineTryJS = `function(ctx) {
   var msg = (box.value || '').trim();
   if (!msg) { box.focus(); return; }
   // The rehearsal's position rides on the element, so a second message
-  // CONTINUES the conversation — which is the only way to watch a guard
+  // CONTINUES the conversation, which is the only way to watch a guard
   // fire or a re-entry keep its state. Start over clears it.
   var cursor = null;
   try { cursor = out.dataset.cursor ? JSON.parse(out.dataset.cursor) : null; } catch (e) {}
@@ -406,7 +406,7 @@ const machineTryJS = `function(ctx) {
   function render(d, turn) {
     if (d.cursor) out.dataset.cursor = JSON.stringify(d.cursor);
     turn.textContent = '';
-    turn.appendChild(el('div', 'Turn ' + turnNo + ' — “' + msg + '”',
+    turn.appendChild(el('div', 'Turn ' + turnNo + ': “' + msg + '”',
       'font-size:0.8rem;color:var(--text-mute);margin-bottom:0.25rem'));
     if (d.blocked) {
       turn.appendChild(el('div', d.note, 'font-weight:600'));
@@ -417,7 +417,7 @@ const machineTryJS = `function(ctx) {
       turn.appendChild(el('div', 'It stopped: ' + d.failed, 'font-weight:600;color:var(--danger)'));
     } else {
       var where = 'It ended in ' + d.landed;
-      if (d.landed_desc) where += ' — ' + d.landed_desc;
+      if (d.landed_desc) where += ': ' + d.landed_desc;
       turn.appendChild(el('div', where, 'font-weight:600'));
     }
 
@@ -429,7 +429,7 @@ const machineTryJS = `function(ctx) {
       })));
     } else if (!d.failed) {
       turn.appendChild(el('div', turnNo > 1
-        ? 'It stayed where it was parked — nothing judged this message as a new job.'
+        ? 'It stayed where it was parked: nothing judged this message as a new job.'
         : 'It went nowhere: the machine starts in a step the conversation waits in, so the first turn lands there directly.',
         MUTE + ';margin-top:0.5rem'));
     }
@@ -458,7 +458,7 @@ const machineTryJS = `function(ctx) {
     if (reach.length || d.reach_note) {
       turn.appendChild(el('div', 'What each step would reach', HEAD));
       reach.forEach(function(r) {
-        var head = r.step + ' — ' + (r.summary ? r.summary
+        var head = r.step + ': ' + (r.summary ? r.summary
           : (r.reach === 'read' ? 'read-only, ' : '') + r.count + ' tool' + (r.count === 1 ? '' : 's'));
         turn.appendChild(el('div', head, 'font-weight:600;margin-top:0.4rem;font-size:0.85rem'));
         if ((r.tools || []).length) {
@@ -483,7 +483,7 @@ const machineTryJS = `function(ctx) {
 
   var btn = ctx && ctx.button, label = btn && btn.textContent;
   if (btn) { btn.disabled = true; btn.textContent = 'Running…'; }
-  // Each message gets its own block, appended — the rehearsal reads as
+  // Each message gets its own block, appended: the rehearsal reads as
   // the conversation it is, and turn 4 firing a guard sits under the
   // three turns that led to it.
   var turn = el('div', null, 'margin-top:0.9rem;padding-top:0.6rem;border-top:1px solid var(--border)');

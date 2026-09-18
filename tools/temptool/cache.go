@@ -38,7 +38,7 @@ func lookupTempToolCache(sess *ToolSession, tt *TempTool, args map[string]any) (
 	}
 	rendered, err := renderCacheKey(tt, args)
 	if err != nil {
-		Debug("[temptool] %q cache key render failed: %v — skipping cache", tt.Name, err)
+		Debug("[temptool] %q cache key render failed: %v, skipping cache", tt.Name, err)
 		return "", false
 	}
 	marker, ok := cacheScopeMarker(sess, tt.Cache.Scope)
@@ -51,13 +51,13 @@ func lookupTempToolCache(sess *ToolSession, tt *TempTool, args map[string]any) (
 		return "", false
 	}
 	if ttl, hasTTL := parseCacheTTL(tt.Cache.TTL); hasTTL && ttl > 0 && time.Since(rec.StoredAt) > ttl {
-		Debug("[temptool] %q cache hit expired (age=%s, ttl=%s) — dropping", tt.Name, time.Since(rec.StoredAt), ttl)
+		Debug("[temptool] %q cache hit expired (age=%s, ttl=%s): dropping", tt.Name, time.Since(rec.StoredAt), ttl)
 		RootDB.Unset(tempToolCacheTable, storeKey)
 		return "", false
 	}
 	for _, expr := range tt.Cache.InvalidateWhen {
 		if !cacheInvalidateCheckPasses(sess, tt, args, expr) {
-			Debug("[temptool] %q cache invalidated by %q — dropping", tt.Name, expr)
+			Debug("[temptool] %q cache invalidated by %q: dropping", tt.Name, expr)
 			RootDB.Unset(tempToolCacheTable, storeKey)
 			return "", false
 		}

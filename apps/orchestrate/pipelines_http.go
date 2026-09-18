@@ -477,7 +477,7 @@ func pipelineOwnerOnly(w http.ResponseWriter, mine bool, owner, verb string) boo
 	if mine {
 		return true
 	}
-	http.Error(w, "this pipeline is shared with you by "+owner+", so you can run and copy it but not "+verb+" it — ask "+owner+" to make the change, or duplicate it and edit your copy", http.StatusForbidden)
+	http.Error(w, "this pipeline is shared with you by "+owner+", so you can run and copy it but not "+verb+" it: ask "+owner+" to make the change, or duplicate it and edit your copy", http.StatusForbidden)
 	return false
 }
 

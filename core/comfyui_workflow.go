@@ -180,7 +180,7 @@ func ApplyComfyWorkflow(s *RestImageSpec, apiJSON, saveNodeOverride string) ([]s
 			save = findComfyNode(graph, func(class string) bool { return strings.Contains(class, "SaveImage") })
 		}
 		if save == "" {
-			return nil, fmt.Errorf("no SaveImage node found — add one in ComfyUI, or set the output node in the config panel")
+			return nil, fmt.Errorf("no SaveImage node found: add one in ComfyUI, or set the output node in the config panel")
 		}
 	}
 	m.OutputNode = save
@@ -216,7 +216,7 @@ func ApplyComfyWorkflow(s *RestImageSpec, apiJSON, saveNodeOverride string) ([]s
 	// with neither has no way to produce anything.
 	sampler := findComfySampler(graph)
 	if sampler == "" && len(m.ImageNodes) == 0 {
-		return nil, fmt.Errorf("no KSampler (or node with a positive input) found, and no LoadImage node either — this graph has no prompt and no image to work from")
+		return nil, fmt.Errorf("no KSampler (or node with a positive input) found, and no LoadImage node either: this graph has no prompt and no image to work from")
 	}
 
 	var sIn map[string]any
@@ -226,7 +226,7 @@ func ApplyComfyWorkflow(s *RestImageSpec, apiJSON, saveNodeOverride string) ([]s
 			m.PromptNodes = []string{pid}
 			m.TextKeys = comfyTextKeys(comfyInputs(graph, pid))
 		} else if len(m.ImageNodes) == 0 {
-			return nil, fmt.Errorf("couldn't trace the sampler's conditioning to a text node — set the prompt node in the config panel")
+			return nil, fmt.Errorf("couldn't trace the sampler's conditioning to a text node: set the prompt node in the config panel")
 		} else {
 			warnings = append(warnings, "no text node reached from the sampler; this backend takes images but no prompt")
 		}
@@ -236,7 +236,7 @@ func ApplyComfyWorkflow(s *RestImageSpec, apiJSON, saveNodeOverride string) ([]s
 			warnings = append(warnings, "negative conditioning didn't lead to a text node; the negative prompt won't apply")
 		}
 	} else {
-		warnings = append(warnings, "no sampler in this graph — it processes the input image(s) directly and takes no prompt")
+		warnings = append(warnings, "no sampler in this graph: it processes the input image(s) directly and takes no prompt")
 	}
 
 	// 4. Seed + steps on the sampler (absent on a promptless processing graph).
@@ -342,7 +342,7 @@ func ApplyComfyWorkflow(s *RestImageSpec, apiJSON, saveNodeOverride string) ([]s
 	// warns where the person configuring it will read it rather than failing.
 	if s.MaxInputImages > 0 && s.MaxInputImages < len(m.ImageNodes) {
 		warnings = append(warnings, fmt.Sprintf(
-			"max_input_images is %d but %d image node(s) are mapped — the other %d will render whatever placeholder the workflow was saved with. Trim image_nodes to the ones this graph actually uses, or raise the cap",
+			"max_input_images is %d but %d image node(s) are mapped: the other %d will render whatever placeholder the workflow was saved with. Trim image_nodes to the ones this graph actually uses, or raise the cap",
 			s.MaxInputImages, len(m.ImageNodes), len(m.ImageNodes)-s.MaxInputImages))
 	}
 	return warnings, nil
@@ -387,7 +387,7 @@ func ComfyGraphNodes(apiJSON string) ([]ComfyNodeChoice, error) {
 		class := comfyClass(graph, id)
 		label := id
 		if title := comfyNodeTitle(graph, id); title != "" && title != class {
-			label += " — " + title
+			label += " · " + title
 		}
 		if class != "" {
 			label += " [" + class + "]"
@@ -647,7 +647,7 @@ func BuildComfyBody(workflow string, m ComfyNodeMap, in ComfyBuildInput) (string
 	// back as the article's subject composited with a leftover source photo,
 	// once a day, for as long as that backend was the configured provider.
 	if len(m.ImageNodes) > 0 && len(in.Images) == 0 {
-		return "", fmt.Errorf("this backend composes SOURCE PHOTOS (%d image input%s) and was asked for a text-only render — it would draw against whatever placeholder its workflow was saved with. Use a text-to-image backend for this, or supply the source image(s)", len(m.ImageNodes), map[bool]string{true: "s", false: ""}[len(m.ImageNodes) != 1])
+		return "", fmt.Errorf("this backend composes SOURCE PHOTOS (%d image input%s) and was asked for a text-only render: it would draw against whatever placeholder its workflow was saved with. Use a text-to-image backend for this, or supply the source image(s)", len(m.ImageNodes), map[bool]string{true: "s", false: ""}[len(m.ImageNodes) != 1])
 	}
 	// PARTIAL fill is the same failure as none, and it shipped for the same
 	// reason: only as many nodes are written as there are images, so a graph
@@ -665,7 +665,7 @@ func BuildComfyBody(workflow string, m ComfyNodeMap, in ComfyBuildInput) (string
 		want = len(m.ImageNodes)
 	}
 	if len(in.Images) < want {
-		return "", fmt.Errorf("this backend composes %d source photos and got %d — the unfilled input(s) would render against whatever placeholder the workflow was saved with, so this would silently blend a picture from some earlier session. Supply %d image(s), or map fewer image_nodes in the backend config",
+		return "", fmt.Errorf("this backend composes %d source photos and got %d: the unfilled input(s) would render against whatever placeholder the workflow was saved with, so this would silently blend a picture from some earlier session. Supply %d image(s), or map fewer image_nodes in the backend config",
 			want, len(in.Images), want)
 	}
 	for i, img := range in.Images {
@@ -675,7 +675,7 @@ func BuildComfyBody(workflow string, m ComfyNodeMap, in ComfyBuildInput) (string
 	}
 	if in.Mask != nil {
 		if len(m.MaskNodes) == 0 {
-			return "", fmt.Errorf("this backend has no mask node — remove the mask, or map one in the config panel")
+			return "", fmt.Errorf("this backend has no mask node: remove the mask, or map one in the config panel")
 		}
 		if err := setComfyImage(graph, m.MaskNodes[0], imageKey, *in.Mask); err != nil {
 			return "", err
@@ -694,10 +694,10 @@ func BuildComfyBody(workflow string, m ComfyNodeMap, in ComfyBuildInput) (string
 func setComfyImage(graph map[string]map[string]any, node, key string, img ComfyUploadedImage) error {
 	inputs := comfyInputs(graph, node)
 	if inputs == nil {
-		return fmt.Errorf("image node %q is not in the workflow — fix the image node mapping in the config panel", node)
+		return fmt.Errorf("image node %q is not in the workflow: fix the image node mapping in the config panel", node)
 	}
 	if !hasKey(inputs, key) {
-		return fmt.Errorf("image node %q has no %q input — set the image key in the config panel", node, key)
+		return fmt.Errorf("image node %q has no %q input: set the image key in the config panel", node, key)
 	}
 	inputs[key] = img.Ref()
 	return nil

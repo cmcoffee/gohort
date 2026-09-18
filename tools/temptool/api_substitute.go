@@ -49,7 +49,7 @@ func substituteURL(tmpl string, params map[string]ToolParam, required []string, 
 			// keeps "{path:enc}" in the URL produces a 404 from the
 			// far end, which is the hardest kind of wrong answer to
 			// trace back to a typo in a template.
-			return "", fmt.Errorf("unknown placeholder modifier %q in {%s:%s} — the only one is \"encoded\" (\"segment\" is a synonym), which percent-encodes the value WHOLE, slashes included, for an API that wants a nested path as one segment",
+			return "", fmt.Errorf("unknown placeholder modifier %q in {%s:%s}, the only one is \"encoded\" (\"segment\" is a synonym), which percent-encodes the value WHOLE, slashes included, for an API that wants a nested path as one segment",
 				modifier, name, modifier)
 		}
 		val, ok := args[name]

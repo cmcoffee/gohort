@@ -142,7 +142,7 @@ const documentsListAssets = `<style>
 
     draftBtn.addEventListener('click', function() {
       var name = inpN.value.trim();
-      if (!name) { window.uiAlert('Enter a name first — that\'s what the AI uses to draft.'); return; }
+      if (!name) { window.uiAlert('Enter a name first, that\'s what the AI uses to draft.'); return; }
       draftBtn.disabled = true;
       draftStatus.style.color = 'var(--text-mute)';
       draftStatus.textContent = 'Drafting…';
@@ -206,9 +206,9 @@ const documentsListAssets = `<style>
 const documentsDetailBody = `
 <div class="docs-detail">
   <div class="docs-detail-hdr">
-    <div class="docs-detail-name"><span id="docs-name">Loading...</span><button id="docs-rename" class="ui-row-btn">Rename</button><button id="docs-export" class="ui-row-btn" title="Download this collection as a portable bundle — document text travels, embeddings are rebuilt on import">Export</button><button id="docs-delete" class="ui-row-btn" style="color:var(--danger,#ff7b72)">Delete</button></div>
+    <div class="docs-detail-name"><span id="docs-name">Loading...</span><button id="docs-rename" class="ui-row-btn">Rename</button><button id="docs-export" class="ui-row-btn" title="Download this collection as a portable bundle, document text travels, embeddings are rebuilt on import">Export</button><button id="docs-delete" class="ui-row-btn" style="color:var(--danger,#ff7b72)">Delete</button></div>
     <div class="docs-desc-wrap">
-      <textarea id="docs-desc" class="docs-detail-desc-edit" placeholder="Describe what this collection should contain. The description steers Auto-fill's search queries — be specific (e.g. &quot;Official Kubernetes API reference, operator best practices, and our cluster runbook&quot;)."></textarea>
+      <textarea id="docs-desc" class="docs-detail-desc-edit" placeholder="Describe what this collection should contain. The description steers Auto-fill's search queries: be specific (e.g. &quot;Official Kubernetes API reference, operator best practices, and our cluster runbook&quot;)."></textarea>
       <div class="docs-desc-actions">
         <button id="docs-desc-save" class="ui-row-btn" disabled>Save</button>
         <button id="docs-desc-suggest" class="ui-row-btn">Suggest with AI</button>
@@ -260,7 +260,7 @@ const documentsDetailBody = `
       <span id="docs-autofill-status"></span>
     </div>
     <div class="docs-upload-row" style="margin-top:0.8rem;align-items:center;gap:0.5rem;padding-top:0.6rem;border-top:1px solid var(--border);flex-wrap:wrap">
-      <input id="docs-research-topic" type="text" placeholder="Research a topic (cited synthesis) — e.g. RKE2 agent join + ports"
+      <input id="docs-research-topic" type="text" placeholder="Research a topic (cited synthesis): e.g. RKE2 agent join + ports"
         style="flex:1;min-width:16rem;background:var(--bg-0);color:var(--text);border:1px solid var(--border);border-radius:4px;padding:0.3rem 0.5rem;font:inherit;font-size:0.85rem">
       <button id="docs-research" class="ui-row-btn">Research &amp; add</button>
       <span id="docs-research-status"></span>
@@ -329,7 +329,7 @@ const documentsDetailAssets = `<style>
   function parseID() {
     var path = window.location.pathname;
     // Accept both /knowledge/c/<id> (current) and /documents/c/<id>
-    // (legacy back-compat — the redirect normally handles this but
+    // (legacy back-compat: the redirect normally handles this but
     // accept it directly too in case the redirect is bypassed).
     var m = path.match(/\/(?:knowledge|documents)\/c\/([^/]+)/);
     return m ? decodeURIComponent(m[1]) : '';
@@ -346,10 +346,10 @@ const documentsDetailAssets = `<style>
     fetch(api('/api/collections/' + encodeURIComponent(cid)), {credentials: 'same-origin'})
       .then(function(r){ if (!r.ok) return r.text().then(function(t){ throw new Error(t); }); return r.json(); })
       .then(function(c) {
-        document.title = (c.name || 'Collection') + ' — Documents';
+        document.title = (c.name || 'Collection') + ': Documents';
         $('#docs-name').textContent = c.name || '(unnamed)';
         loadedDescription = c.description || '';
-        // Don't blow away an in-progress edit — only refill the textarea
+        // Don't blow away an in-progress edit: only refill the textarea
         // when its current value matches the previously-loaded value.
         var ta = $('#docs-desc');
         if (ta && (ta.value === '' || ta.value === ta.dataset.lastLoaded)) {
@@ -388,7 +388,7 @@ const documentsDetailAssets = `<style>
     if (items.length === 0) {
       var emp = document.createElement('div');
       emp.style.cssText = 'font-size:0.78rem;color:var(--text-mute);font-style:italic';
-      emp.textContent = '(no rules yet — judge will decide purely from the collection description)';
+      emp.textContent = '(no rules yet: judge will decide purely from the collection description)';
       host.appendChild(emp);
       return;
     }
@@ -542,7 +542,7 @@ const documentsDetailAssets = `<style>
       ta.value = (out && out.description) || '';
       $('#docs-desc-save').disabled = (ta.value === loadedDescription);
       st.style.color = 'var(--text-mute)';
-      st.textContent = 'Suggestion ready — edit and Save when you\'re happy.';
+      st.textContent = 'Suggestion ready: edit and Save when you\'re happy.';
       btn.disabled = false;
     }).catch(function(err){
       st.style.color = 'var(--danger,#ff7b72)';
@@ -577,11 +577,11 @@ const documentsDetailAssets = `<style>
         var sources = (d && d.sources) || [];
         if (sources.length === 0) {
           var emp = document.createElement('div'); emp.className = 'docs-empty';
-          emp.textContent = '(no documents yet — upload one above)';
+          emp.textContent = '(no documents yet: upload one above)';
           box.appendChild(emp);
           return;
         }
-        // Select-all header — checkbox toggles every row's
+        // Select-all header: checkbox toggles every row's
         // checked state. Reflects partial selection by going
         // unchecked when any row is unchecked, fully checked
         // only when all rows are in selectedSources.
@@ -637,7 +637,7 @@ const documentsDetailAssets = `<style>
           del.textContent = 'Remove';
           del.onclick = async function() {
             if (!(await window.uiConfirm('Remove ' + nm.textContent + ' from this collection?'))) return;
-            // Optimistic UI — hide the row immediately so the
+            // Optimistic UI: hide the row immediately so the
             // click feels instant. Restore if the DELETE fails.
             var displayWas = row.style.display;
             row.style.display = 'none';
@@ -648,7 +648,7 @@ const documentsDetailAssets = `<style>
               .then(function(r){
                 if (!r.ok) return r.text().then(function(t){ throw new Error(t); });
                 // Refresh in the background to pick up chunk-count
-                // changes on the metadata line — the row is already
+                // changes on the metadata line: the row is already
                 // gone, so this is just for the counts header.
                 loadDetail();
               })
@@ -710,7 +710,7 @@ const documentsDetailAssets = `<style>
         }
       }
     });
-    // Clear selection state immediately — the user committed.
+    // Clear selection state immediately: the user committed.
     var capturedIds = ids.slice();
     var capturedLabels = {};
     capturedIds.forEach(function(id){ capturedLabels[id] = selectedSources[id]; });
@@ -864,7 +864,7 @@ const documentsDetailAssets = `<style>
     var st = $('#docs-autofill-status');
     var origLabel = btn.textContent;
     btn.disabled = true;
-    // Braille-dot spinner — same pattern as the agent backfill button.
+    // Braille-dot spinner: same pattern as the agent backfill button.
     // Visible cue that the multi-minute autofill is in flight, in
     // addition to the status-text update next to the button.
     var spinFrames = ['⠋','⠙','⠹','⠸','⠼','⠴','⠦','⠧','⠇','⠏'];
@@ -936,7 +936,7 @@ const documentsDetailAssets = `<style>
         loadSources(); loadDetail();
       } else {
         st.style.color = 'var(--danger,#ff7b72)';
-        st.textContent = 'Research produced nothing to add — try a more specific topic.';
+        st.textContent = 'Research produced nothing to add: try a more specific topic.';
       }
     }).catch(function(err) {
       clearInterval(timer); btn.textContent = orig; btn.disabled = false;
@@ -957,7 +957,7 @@ const documentsDetailAssets = `<style>
     var fi = 0;
     var timer = setInterval(function(){ btn.textContent = frames[fi] + ' Auditing…'; fi = (fi+1)%frames.length; }, 100);
     st.style.color = 'var(--text-mute)';
-    st.textContent = 'Checking the oldest documents — this can take a minute…';
+    st.textContent = 'Checking the oldest documents: this can take a minute…';
     fetch(api('/api/collections/' + encodeURIComponent(cid) + '/audit'), {
       method: 'POST', credentials: 'same-origin',
     }).then(function(r){
@@ -996,11 +996,11 @@ const documentsDetailAssets = `<style>
         }
         hits.forEach(function(h) {
           var card = document.createElement('div'); card.className = 'docs-hit';
-          // Same label shape as a tool reply: title — section (locator) [kind].
+          // Same label shape as a tool reply: title, section (locator) [kind].
           var sec = document.createElement('div'); sec.className = 'docs-hit-section';
           var section = (h.section || '').replace(/^#+\s*/, '');
           var label = h.title || section;
-          if (h.title && section && section !== h.title) label += ' — ' + section;
+          if (h.title && section && section !== h.title) label += ': ' + section;
           if (h.locator) label += ' (' + h.locator + ')';
           if (h.kind) label += ' [' + h.kind + ']';
           sec.textContent = label;
@@ -1037,7 +1037,7 @@ const documentsDetailAssets = `<style>
 
   $('#docs-delete').addEventListener('click', async function() {
     if (!(await window.uiConfirm('Delete this collection? All documents in it will be removed and detached from any agents using it.'))) return;
-    // Fire-and-forget the DELETE so navigation feels instant —
+    // Fire-and-forget the DELETE so navigation feels instant
     // wiping a many-chunk collection can take several seconds and
     // the detail page is already useless. The list page re-fetches
     // on load, so a ghost row only shows briefly in the rare case

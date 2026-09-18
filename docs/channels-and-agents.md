@@ -7,7 +7,7 @@ surfaces into orchestrate Agents, so the decisions are settled before code.
 
 Today phantom runs a second agent engine. `processMessage` does its own
 persona, memory, knowledge, skills, dispatch, scheduling, and gatekeeping
-— all of which an orchestrate Agent already does, in one place. We
+· all of which an orchestrate Agent already does, in one place. We
 maintain two brains.
 
 The direction: a **Channel** is an inbound/outbound messaging surface
@@ -37,15 +37,15 @@ An agent can have up to three kinds of conversational surface, and they are
 
 - **Cortex** (zero or one): the agent's persistent home thread and mind.
   Where the owner directs it, where event-monitor wakes and standing-agent
-  reports land, and the cross-channel command center — read across all the
+  reports land, and the cross-channel command center: read across all the
   agent's channels, or message one or all of them. Bounded by rolling-
   summary compaction.
 - **Channels** (zero or many): the rooms. Each is a connection from the
-  transport (phantom) to the agent representing one place it talks — a
+  transport (phantom) to the agent representing one place it talks: a
   linked iMessage chat (a person or a group), later a Telegram/Slack room.
   Inbound from a contact runs the agent in that channel's thread. A Channel
   *is* the room; there is no separate "conversation" concept.
-- **Sessions** (zero or many): ad-hoc direct web chats — the classic Agency
+- **Sessions** (zero or many): ad-hoc direct web chats, the classic Agency
   conversation where the owner sits down and works with the agent.
 
 Combinations:
@@ -66,7 +66,7 @@ sessions.
 So the full vocabulary: **Service** is the wire, a **Channel** is a room on
 it, the **Cortex** is the mind across the rooms, and **Sessions** are the
 front door. Context/compaction controls are not specific to any one surface
-— they bound any persistent thread the agent runs (Cortex threads and
+· they bound any persistent thread the agent runs (Cortex threads and
 Channel threads alike), driven by per-agent settings.
 
 ## The attach model
@@ -84,7 +84,7 @@ inbound to that agent.
   makes one-channel-one-agent an invariant rather than a convention.)
 - **One agent can have many channels.** The same agent answers on
   iMessage and Telegram; each is a separate Channel record bound to it.
-- A Channel record carries: `id`, `service` (imessage/telegram/slack —
+- A Channel record carries: `id`, `service` (imessage/telegram/slack
   the Slice 1 transport id), the binding/address scope (whole service,
   or a specific handle/room), `owner` (gohort user), and `agent_id`.
 
@@ -102,7 +102,7 @@ phantom; thinking concerns move to the agent.
 | Alias routing (multiple addresses → one thread) | Channel layer |
 | Coalescing rapid messages into one turn | Channel layer |
 | Per-service delivery formatting (markdown, chunking, attachment stagger) | Transport layer: markdown strip shipped via the Bridges `bridgeServices` registry (`RendersMarkdown`); chunking / stagger still TODO |
-| Gatekeeper ("should this even wake the agent") | **Boundary** — see below |
+| Gatekeeper ("should this even wake the agent") | **Boundary**: see below |
 | Persona / system prompt | Agent |
 | Memory (per-(user, thread)) | Agent |
 | Knowledge / collections | Agent |
@@ -125,7 +125,7 @@ expensive agent run.
   that owner (the agent's existing per-user memory/knowledge apply).
 - Phantom is single-tenant today (the device owner); orchestrate agents
   are already per-user. The binding is therefore `(channel, owner,
-  agent)`. Multi-tenant is the same shape with more than one owner — the
+  agent)`. Multi-tenant is the same shape with more than one owner: the
   Slice 1 key→service→owner model already carries owner.
 - A thread on a channel maps to an agent **session** (orchestrate
   already has per-agent threads). Each contact/room is its own session
@@ -153,20 +153,20 @@ Most become "the agent already does this":
   just messaged you skips the approval gate (in-thread reply, not a proactive
   send).
 
-## Naming: resolved — Cortex
+## Naming: resolved, Cortex
 
 `AgentRecord.Channel bool` USED to mean the home thread, which collided
 with the messaging-surface "Channel" we want. **Resolved (done):** the
-home-thread concept is now **Cortex** — the agent's mind. The rename
+home-thread concept is now **Cortex**: the agent's mind. The rename
 landed: `AgentRecord.Cortex` (the JSON/storage key stays `"channel"` so
 existing records load without a migration), `cortexSessionID` /
 `CortexSessionID` (the stored session-id prefix stays `"channel:"` for the
 same reason), and the user-facing "Master Control" label is now "Cortex".
 
 So the vocabulary is settled:
-- **Service** — a transport/platform id (imessage / telegram / slack).
-- **Cortex** — an agent's persistent home thread (its mind).
-- **Channel** — a messaging surface (a Service + binding) attached to an
+- **Service**: a transport/platform id (imessage / telegram / slack).
+- **Cortex**: an agent's persistent home thread (its mind).
+- **Channel**: a messaging surface (a Service + binding) attached to an
   agent. The word is now free for exactly this.
 
 (Left as legacy internal keys, invisible to users: the `"channel"` JSON
@@ -177,15 +177,15 @@ collide with the new Channel records.)
 ## Migration path
 
 - **Phase 0 (done):** phantom multi-service foundation + bridge contract.
-- **Phase 1 — the binding:** a `Channel` record (`service`, address
+- **Phase 1, the binding:** a `Channel` record (`service`, address
   scope, `owner`, `agent_id`) + `AttachedChannels` on the agent editor +
   the channel→agent lookup. No behavior change yet; just the data model
   and UI.
-- **Phase 2 — route inbound to the agent:** the channel layer, on
+- **Phase 2, route inbound to the agent:** the channel layer, on
   inbound, runs the bound agent's loop instead of `processMessage`'s
   persona path, and delivers the reply through the outbox with the
   service's formatting policy. This is the big one.
-- **Phase 3 — retire phantom's parallel engine:** once routing is
+- **Phase 3, retire phantom's parallel engine:** once routing is
   proven, fold phantom's persona/memory/knowledge/skills/scheduling onto
   the agent and delete the duplicates. Phantom is then purely transport.
 
@@ -200,4 +200,4 @@ collide with the new Channel records.)
   agent.
 - The desktop bridge (gohort-desktop) exposing multiple services maps to
   multiple Channel records sharing one bridge. Confirm the key→service
-  model covers it (it does — one key per service).
+  model covers it (it does: one key per service).

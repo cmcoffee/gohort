@@ -69,11 +69,11 @@ func sectionGuidance(field, section string) string {
 func fieldGuidance(field string) string {
 	switch field {
 	case "name":
-		return "FIVE candidate names, one per line, nothing else — no numbering, no commentary. Each 1-3 words, the kind of name someone would actually call this agent. Draw on its character and its job: a dry technical assistant that watches deploys earns a different name from a warm one that keeps track of a family calendar. Mix registers — a human first name, something descriptive, something with a bit of wit. Never repeat the user's own words back as the name. Examples of the FORM only: \"Ada\", \"Scout\", \"Deploy Watch\". Original examples: \"Research Helper\", \"Code Reviewer\", \"Travel Planner\"."
+		return "FIVE candidate names, one per line, nothing else: no numbering, no commentary. Each 1-3 words, the kind of name someone would actually call this agent. Draw on its character and its job: a dry technical assistant that watches deploys earns a different name from a warm one that keeps track of a family calendar. Mix registers: a human first name, something descriptive, something with a bit of wit. Never repeat the user's own words back as the name. Examples of the FORM only: \"Ada\", \"Scout\", \"Deploy Watch\". Original examples: \"Research Helper\", \"Code Reviewer\", \"Travel Planner\"."
 	case "description":
 		return "One sentence summarizing what this agent is for. Examples: \"Decomposes research questions into subquestions, drafts factual answers, synthesizes.\""
 	case "orchestrator_prompt":
-		return "System prompt for the THINKING LLM that talks to the user, decomposes work into plan steps, AUTHORS A WORKER BRIEF for each step, and synthesizes the final reply. 4-10 sentences. Cover: persona, decomposition approach, how to brief workers well (be specific about deliverable, format, tools to prefer, what to avoid), and synthesis style. Do not include tool lists — the framework appends those. Do not mention plan_set/ask_user by name — the framework wires those automatically. There is NO separate worker_prompt; the orchestrator owns worker behavior per-step via worker_brief."
+		return "System prompt for the THINKING LLM that talks to the user, decomposes work into plan steps, AUTHORS A WORKER BRIEF for each step, and synthesizes the final reply. 4-10 sentences. Cover: persona, decomposition approach, how to brief workers well (be specific about deliverable, format, tools to prefer, what to avoid), and synthesis style. Do not include tool lists: the framework appends those. Do not mention plan_set/ask_user by name: the framework wires those automatically. There is NO separate worker_prompt; the orchestrator owns worker behavior per-step via worker_brief."
 	case "rules":
 		return "Non-negotiable operating-policy rules, one per line. Apply to both orchestrator AND worker at the very top of the prompt. Use for hard constraints (\"always cite a URL\", \"never quote prices from training, fetch live\", \"output code in code blocks\"). Each line a single rule, no numbering or bullets needed."
 	case "plan_guidance":
@@ -276,7 +276,7 @@ func buildAssistSystemPrompt(field, section, draft, assistPrompt string, record 
 
 	b.WriteString("## Current draft\n\n")
 	if strings.TrimSpace(draft) == "" {
-		b.WriteString("(empty — nothing written yet)\n\n")
+		b.WriteString("(empty: nothing written yet)\n\n")
 	} else {
 		b.WriteString(draft)
 		b.WriteString("\n\n")
@@ -306,7 +306,7 @@ func buildAssistSystemPrompt(field, section, draft, assistPrompt string, record 
 	return b.String()
 }
 
-const suggestSystemPrompt = `You are an editor helping a user fill in one field of an AI agent definition. The user shows you the current state of the agent (some fields filled, some blank) plus the field they want help with. You return ONLY the new value for that field — no commentary, no explanation, no markdown headers, no quotes around the value.
+const suggestSystemPrompt = `You are an editor helping a user fill in one field of an AI agent definition. The user shows you the current state of the agent (some fields filled, some blank) plus the field they want help with. You return ONLY the new value for that field: no commentary, no explanation, no markdown headers, no quotes around the value.
 
 Be concise. The user is configuring a tool, not asking for an essay.`
 
@@ -345,7 +345,7 @@ func buildSuggestPrompt(field, section, hint string, record map[string]any) stri
 			b.WriteString("\n\n")
 		}
 		b.WriteString("## Your reply\n\n")
-		fmt.Fprintf(&b, "Return ONLY the body of the %q section — no heading, no preamble, no explanation, no surrounding quotes. Do not restate what other sections already cover. If the section is a list of constraints or steps, return one per line and nothing else.", section)
+		fmt.Fprintf(&b, "Return ONLY the body of the %q section: no heading, no preamble, no explanation, no surrounding quotes. Do not restate what other sections already cover. If the section is a list of constraints or steps, return one per line and nothing else.", section)
 		return b.String()
 	}
 	b.WriteString("## Field to suggest\n\n")
@@ -379,7 +379,7 @@ func buildSuggestPrompt(field, section, hint string, record map[string]any) stri
 			"Omit a heading entirely rather than writing a placeholder under it. No preamble, no explanation, no surrounding quotes or code fences.\n")
 		return b.String()
 	}
-	b.WriteString("Return ONLY the new value for the field — no preamble, no explanation, no surrounding quotes. Just the value as it should appear in the form input.")
+	b.WriteString("Return ONLY the new value for the field: no preamble, no explanation, no surrounding quotes. Just the value as it should appear in the form input.")
 	return b.String()
 }
 

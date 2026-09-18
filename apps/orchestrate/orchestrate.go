@@ -169,7 +169,7 @@ func (T *OrchestrateApp) runsRegistry() *RunRegistry {
 func (T *OrchestrateApp) Name() string         { return "orchestrate" }
 func (T *OrchestrateApp) SystemPrompt() string { return "" }
 func (T *OrchestrateApp) Desc() string {
-	return "Apps: Agents — define and run plan-driven AI agents."
+	return "Apps: Agents, define and run plan-driven AI agents."
 }
 
 func (T *OrchestrateApp) Init() error { return T.Flags.Parse() }

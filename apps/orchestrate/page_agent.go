@@ -23,17 +23,20 @@ import (
 var orchestratorPromptSections = []ui.SectionSpec{
 	{Title: "Role & voice", Mode: "prose", Required: true,
 		Placeholder: "You are a…",
-		Help:        "Who this agent is, what it's accountable for, and how it sounds. Two or three sentences. Tone lives here rather than in its own slot: nobody writes a persona and then a separate paragraph about its tone, and splitting them just leaves one box empty."},
+		Help:        "Who this agent is, what it's accountable for, and how it sounds. Two or three sentences.",
+		Detail:      "Tone lives here rather than in its own slot: nobody writes a persona and then a separate paragraph about its tone, and splitting them just leaves one box empty."},
 	{Title: "Approach", Mode: "prose",
 		Help: "How it works a request: what it does first, how it decomposes, when it asks instead of assuming."},
 	{Title: "Rules", Mode: "list",
 		Placeholder: "always cite a source URL",
 		Help:        "Hard constraints, one per line. Stated as instructions the agent can check itself against."},
 	{Title: "Failure modes", Mode: "list",
-		Placeholder: "no results found — say so, don't guess",
-		Help:        "What commonly goes wrong in this domain and what to do about it. The highest-value section: defaults rarely fit."},
+		Placeholder: "no results found: say so, don't guess",
+		Help:        "What commonly goes wrong in this domain, and what to do about it.",
+		Detail:      "The highest-value section. Defaults rarely fit."},
 	{Title: "Output format", Mode: "prose",
-		Help: "The shape of the reply: length, structure, whether to cite, when to use code blocks or tables. Distinct from voice — this is what the answer looks like, not what the agent sounds like."},
+		Help:   "The shape of the reply: length, structure, citations, code blocks or tables.",
+		Detail: "Distinct from voice: this is what the answer looks like, not what the agent sounds like."},
 }
 
 // handleAgentPage routes the agent editor.
@@ -61,11 +64,11 @@ var orchestratorPromptSections = []ui.SectionSpec{
 func agentTypeTemplates() []ui.FormTemplate {
 	return []ui.FormTemplate{
 		{
-			Label:  "Assistant — a conversational agent that works with people",
+			Label:  "Assistant: a conversational agent that works with people",
 			Values: map[string]any{"channel": true, "memory_mode": "chatbot", "fleet": false, "recall_hints": true},
 		},
 		{
-			Label:  "Specialist — a focused agent for one job, used directly or by dispatch",
+			Label:  "Specialist: a focused agent for one job, used directly or by dispatch",
 			Values: map[string]any{"channel": false, "memory_mode": "agent", "fleet": false, "recall_hints": true},
 		},
 	}
@@ -189,16 +192,18 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		{Field: "description", Type: "text", Label: "Description", Placeholder: "What this agent is for.",
 			SuggestURL: "../api/agents/suggest"},
 		{Field: "triggers", Type: "tags", Label: "Dispatch triggers (optional)",
-			Help: "Patterns that, when matched in the user's message, nudge the host to dispatch to THIS agent FIRST that turn — a salient per-turn hint, stronger than the description alone for domains the host has priors in (law, medicine, finance). A pattern with * or ? matches attachment filenames; anything else is a case-insensitive substring of the message. Author SPECIFIC patterns the domain's questions actually contain (a criminal-law agent: \"penal code\", \"PC \", \"felony\", \"misdemeanor\", \"charged with\") — loose ones over-fire and get tuned out. Empty = no per-turn nudge (the agent is still in the catalog)."},
+			Help:   "Words in a message that push this agent to the front of the queue that turn.",
+			Detail: "A pattern with * or ? matches attachment filenames; anything else is a case-insensitive substring of the message. It is a per-turn hint, stronger than the description alone for domains the host already has priors in (law, medicine, finance).\n\nAuthor SPECIFIC patterns the domain's questions actually contain. A criminal-law agent wants \"penal code\", \"PC \", \"felony\", \"misdemeanor\", \"charged with\". Loose ones over-fire and get tuned out. Empty means no per-turn nudge; the agent is still in the catalog."},
 		{Type: "header", Label: "Persona",
 			Help: "How the agent thinks and decomposes work."},
 		{Field: "orchestrator_prompt", Type: "sections", Label: "Orchestrator prompt", Rows: 12,
-			Help:       "Voice, decomposition style, and synthesis approach. The orchestrator also briefs the worker per step, so spell out how to handle this agent's common failure modes (ambiguous matches, empty results, conflicting sources) — defaults rarely fit.",
+			Help:       "Voice, decomposition style, and synthesis approach.",
+			Detail:     "The orchestrator also briefs the worker per step, so spell out how to handle this agent's common failure modes: ambiguous matches, empty results, conflicting sources. Defaults rarely fit.",
 			SuggestURL: "../api/agents/suggest",
 			AssistPrompt: "You are writing the system prompt for an AI agent, which the user will run. " +
 				"Write in the second person, addressing the agent directly (\"You are…\", \"When a request is ambiguous, ask…\"). " +
 				"Be concrete about behavior rather than aspirational about quality: \"cite the URL you read it from\" beats \"be accurate\". " +
-				"Do not list tools, mention plan_set or ask_user, or describe the orchestration machinery — the framework supplies all of that around your text.",
+				"Do not list tools, mention plan_set or ask_user, or describe the orchestration machinery: the framework supplies all of that around your text.",
 			// The outline is a suggestion, not a schema: the prompt is
 			// still one markdown string, an existing free-form prompt
 			// opens intact in the Intro block above these slots, and the
@@ -207,7 +212,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			SectionsAllowFree: true,
 			Sections:          orchestratorPromptSections},
 		{Field: "plan_guidance", Type: "textarea", Label: "Plan guidance", Rows: 3,
-			Help:       "Optional. Appended to the orchestrator prompt — nudges decomposition style.",
+			Help:       "Optional. Appended to the orchestrator prompt: nudges decomposition style.",
 			SuggestURL: "../api/agents/suggest"},
 		// Sits under Persona because that is what it changes: the persona
 		// above stays the agent's identity, and the machine supplies the
@@ -221,24 +226,27 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			SuggestURL:  "../api/agents/suggest"},
 		{Field: "max_worker_rounds", Type: "number", Label: "Max worker rounds per step", Min: 1, Max: maxWorkerRoundsCeiling,
 			Placeholder: fmt.Sprintf("%d", defaultMaxWorkerRounds),
-			Help:        fmt.Sprintf("How many LLM call + tool-execution cycles the worker may use for a single step. Each round is one model call. Leave blank for the default (%d); raise when the worker chains many tool calls (research with cross-references, or surveying a command before writing it down); lower for fast single-tool answers. Anything under %d is raised to %d — a cap too low to finish an action is worse than no cap.", defaultMaxWorkerRounds, minWorkerRounds, minWorkerRounds),
+			Help:        fmt.Sprintf("How many LLM call + tool-execution cycles the worker may use for a single step. Each round is one model call. Leave blank for the default (%d); raise when the worker chains many tool calls (research with cross-references, or surveying a command before writing it down); lower for fast single-tool answers. Anything under %d is raised to %d: a cap too low to finish an action is worse than no cap.", defaultMaxWorkerRounds, minWorkerRounds, minWorkerRounds),
 			SuggestURL:  "../api/agents/suggest"},
 		{Field: "gap_check", Type: "toggle", Label: "Gap detection",
 			Help: "Post-plan review pass that fills structural gaps before synthesis. Worth it for research; off for chat."},
 		{Field: "work_plan", Type: "toggle", Label: "Tracked plan",
-			Help: "The agent commits to a visible checklist and works it: each step is started, then closed with findings or marked blocked with a reason, and anything left unfinished is stated in the answer instead of quietly dropped. The checklist survives the turn, so a plan begun in one message is still the plan in the next. Replaces this agent's plan_set (which fans a single turn out to workers and ends the round) — worth it for work with several results that build on each other, overhead for questions one call answers."},
+			Help:   "The agent commits to a visible checklist and works it.",
+			Detail: "Each step is started, then closed with findings or marked blocked with a reason, and anything left unfinished is stated in the answer instead of quietly dropped. The checklist survives the turn, so a plan begun in one message is still the plan in the next.\n\nReplaces this agent's plan_set, which fans a single turn out to workers and ends the round. Worth it for work with several results that build on each other, overhead for questions one call answers."},
 		{Type: "header", Label: "Reasoning", Collapsed: true,
 			Help: "Override the LLM's reasoning mode for this agent's turns."},
 		{Field: "think", Type: "select", Label: "Think mode",
 			Options: []ui.SelectOption{
-				{Value: "auto", Label: "Auto — follow the deployment routing (" + currentAutoThinkLabel() + ")"},
-				{Value: "on", Label: "On — force reasoning for every turn"},
-				{Value: "off", Label: "Off — force no reasoning (faster)"},
+				{Value: "auto", Label: "Auto: follow the deployment routing (" + currentAutoThinkLabel() + ")"},
+				{Value: "on", Label: "On: force reasoning for every turn"},
+				{Value: "off", Label: "Off: force no reasoning (faster)"},
 			},
-			Help: "Top-level conversational agents default On (reasoning helps planners / synthesizers). Sub-agent specialists default Off (faster lookups). Pick Auto only when you want the framework route to decide."},
+			Help:   "Whether this agent reasons before it answers.",
+			Detail: "Top-level conversational agents default On, because reasoning helps planners and synthesizers. Sub-agent specialists default Off, for faster lookups. Pick Auto only when you want the framework route to decide."},
 		{Field: "think_budget", Type: "number", Label: "Think budget (tokens)", Min: 0, Max: 32768,
 			Placeholder: "0",
-			Help:        "Max thinking tokens per LLM call for this agent. 0 = inherit the deployment default (4096). The admin global budget is a hard ceiling — this can only LOWER the budget (snappier turns); a value above the admin ceiling is clamped. Only applies when Think is on."},
+			Help:        "Max thinking tokens per LLM call. 0 inherits the deployment default (4096).",
+			Detail:      "The admin global budget is a hard ceiling, so this can only LOWER the budget, for snappier turns. A value above the ceiling is clamped. Only applies when Think is on."},
 		// Which MODEL does the reasoning — a Reasoning setting, not an
 		// Autonomous-runs one. It sat under Autonomous runs purely by
 		// position (a header owns the fields until the next header), so it
@@ -258,12 +266,14 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		// nine before reporting the cap as reached.
 		{Field: "action_quotas", Type: "tags", Label: "Action limits (per 24 hours)",
 			Placeholder: "moltbook/create_post = 6",
-			Help: "How often one action may run in a rolling 24 hours, one per line as `action = number`. Name a grouped tool's action (`moltbook/create_post`) or a whole tool (`send_email`), the action winning where both are set. " +
-				"Counted here, not by the agent: it is refused when the allowance is spent, and told when it frees up. Only SUCCESSFUL calls count, so an outage never spends the day. Empty = no limit."},
+			Help:        "How often one action may run in a rolling 24 hours, one per line as `action = number`.",
+			Detail: "Name a grouped tool's action (moltbook/create_post) or a whole tool (send_email). The action wins where both are set." +
+				"\n\nCounted here, not by the agent: it is refused when the allowance is spent, and told when it frees up. Only SUCCESSFUL calls count, so an outage never spends the day. Empty = no limit."},
 		{Field: "daily_spend_usd", Type: "number", Label: "Spend limit (US$ per 24 hours)", Min: 0, Max: 1000,
 			Placeholder: "0",
-			Help: "What this agent may cost in a rolling 24 hours. 0 = no limit. A turn already running is never cut off: crossing the line drops the rest of it to the local worker model, and the NEXT turn is declined until the window frees up. " +
-				"Priced from what the provider reports, so it does nothing on a deployment with no cost rates configured. Worth setting on anything scheduled against a paid model — one unattended turn can cost more than a day of chat."},
+			Help:        "What this agent may cost in a rolling 24 hours. 0 = no limit.",
+			Detail: "A turn already running is never cut off. Crossing the line drops the rest of it to the local worker model, and the NEXT turn is declined until the window frees up." +
+				"\n\nPriced from what the provider reports, so it does nothing on a deployment with no cost rates configured. Worth setting on anything scheduled against a paid model: one unattended turn can cost more than a day of chat."},
 		// Ticked, not typed. A misspelling here grants nothing and looks
 		// exactly like a grant: the tool is refused on the first unattended
 		// fire, at whatever hour that run is scheduled for, and the list in
@@ -275,7 +285,8 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		{Field: "auto_approve_tools", Type: "checklist", Label: "Pre-approved tools",
 			Options:     approvableToolOptions(user),
 			Placeholder: "(nothing here prompts for approval)",
-			Help:        "What this agent — and its sub-agents, by inheritance — may call on a SCHEDULED or standing run WITHOUT a per-call approval prompt. Tick the consequential tools you trust it to run unattended (a credential-backed tool, a channel send). Anything unticked is refused on the first unattended fire and queued in the Permissions pane, and approving it there ticks it here. Read-only tools never prompt and are not listed."},
+			Help:        "What this agent may call on a scheduled or standing run without asking first.",
+			Detail:      "Sub-agents inherit it. Tick the consequential tools you trust it to run unattended: a credential-backed tool, a channel send. Anything unticked is refused on the first unattended fire and queued in the Permissions pane, and approving it there ticks it here. Read-only tools never prompt and are not listed."},
 	}
 	// Sub-agent create flow (chat-toolbar Create → "sub-agent of X")
 	// bakes the parent ID into the form via a hidden field so the POST
@@ -294,7 +305,8 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	if !subAgent {
 		fields = append(fields,
 			ui.FormField{Field: "capture_prompt", Type: "toggle", Label: "Capture prompt text",
-				Help: "Keeps each run's round-1 prompt as text, readable with inspect_run. For answering \"what was actually in the prompt\" — switch it off again afterwards: it stores the whole conversation, once per turn."},
+				Help:   "Keeps each run's round-1 prompt as text, readable with inspect_run.",
+				Detail: "For answering \"what was actually in the prompt\". Switch it off again afterwards: it stores the whole conversation, once per turn."},
 			ui.FormField{Field: "allow_explorer", Type: "toggle", Label: "Allow explorer mode",
 				Help: "Lets the worker lift its round budget mid-turn. For agents mapping unfamiliar APIs."},
 			ui.FormField{Field: "explorer_hard_cap", Type: "number", Label: "Explorer ceiling",
@@ -303,14 +315,17 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				Help: "What the agent remembers across turns. Knowledge (uploaded files) is always available."},
 			ui.FormField{Field: "memory_mode", Type: "select", Label: "Memory mode",
 				Options: []ui.SelectOption{
-					{Value: "agent", Label: "Agent — generalized lessons only"},
-					{Value: "chatbot", Label: "Chatbot — lessons + user personalization"},
+					{Value: "agent", Label: "Agent: generalized lessons only"},
+					{Value: "chatbot", Label: "Chatbot: lessons + user personalization"},
 				},
-				Help: "Shapes what the agent pins with remember (pin=true). Agent (default): generalized lessons only — specifics go to remember (pin=false), which is searchable rather than always in prompt. Chatbot: same + user personalization + conversation notes."},
+				Help:   "Shapes what the agent pins with remember (pin=true).",
+				Detail: "Agent, the default, pins generalized lessons only; specifics go to remember (pin=false), which is searchable rather than always in prompt. Chatbot pins the same, plus user personalization and conversation notes."},
 			ui.FormField{Field: "disable_explicit", Type: "toggle", Label: "Disable Explicit Memory",
-				Help: "Strips the pinned-notes half of remember / forget and the pre-injected facts block. For impersonal / stateless agents."},
+				Help:   "Strips the pinned-notes half of remember and forget, and the pre-injected facts block.",
+				Detail: "For impersonal or stateless agents."},
 			ui.FormField{Field: "disable_inferred", Type: "toggle", Label: "Disable Reference Memory",
-				Help: "Strips the searchable half of remember / recall / forget and excludes derived chunks from recall. For agents that should answer from authoritative sources only. Per-turn Clean toggle = same, scoped to one turn."},
+				Help:   "Strips the searchable half of remember, recall and forget, and drops derived chunks from recall.",
+				Detail: "For agents that should answer from authoritative sources only. The per-turn Clean toggle does the same thing, scoped to one turn."},
 			// The Memory PANE has always had a Working-notes editor and has always
 			// told a disabled one to "enable them in the agent editor" — which
 			// had no such control, so the instruction pointed at a door that did
@@ -320,44 +335,58 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			// not worth flipping a stored field's polarity over: the label says
 			// what the switch is, and the help says what ON does.
 			ui.FormField{Field: "enable_notes", Type: "toggle", Label: "Working notes (running-state scratchpad)",
-				Help: "ON gives the agent one bounded, rewritable block of CURRENT state, always in prompt, plus the update_notes tool to rewrite it. Different from the memory above: facts accumulate, notes get replaced wholesale as the work moves. For long-running project or conversational agents; most task agents have no running state worth carrying. Edit the text itself under Configure → Memory."},
+				Help:   "Gives the agent one rewritable block of current state, always in prompt.",
+				Detail: "It also gets the update_notes tool to rewrite that block. Different from the memory above: facts accumulate, notes get replaced wholesale as the work moves.\n\nFor long-running project or conversational agents. Most task agents have no running state worth carrying. Edit the text itself under Configure, then Memory."},
 			ui.FormField{Field: "recall_hints", Type: "toggle", Label: "Recall hints",
-				Help: "Each turn, surface a short scored list of knowledge you already have that looks relevant to the message — pointers (title + relevance), not the content. The agent pulls one with recall only if it fits, so it stops missing material it should look up. Best for agents with a real corpus (attached collections / uploaded docs). Thresholds are deployment tunables."},
+				Help:   "Each turn, surface a scored list of knowledge that looks relevant to the message.",
+				Detail: "Pointers only, a title plus a relevance, not the content. The agent pulls one with recall if it fits, so it stops missing material it should look up. Best for agents with a real corpus: attached collections, uploaded docs. The thresholds are deployment tunables."},
 			// (disable_skills toggle removed — redundant: skills only fire when a
 			// skill is ATTACHED (AllowedSkills), so "no skills" = attach none; the
 			// per-turn Clean toggle covers ad-hoc suppression. Field kept for the
 			// CRUD tools.)
 
 			ui.FormField{Type: "header", Label: "Context", Collapsed: true,
-				Help: "How much of a persistent thread (the Cortex home thread, each Channel room) the agent carries into the prompt. Storage always keeps the full thread; these only bound the run-view."},
+				Help:   "How much of a persistent thread the agent carries into the prompt.",
+				Detail: "A persistent thread is the Cortex home thread, or each Channel room. Storage always keeps the full thread; these only bound the run-view."},
 			ui.FormField{Field: "context_depth", Type: "number", Label: "Context depth (recent messages)", Min: 0, Max: 200,
 				Placeholder: "0",
-				Help:        "How many recent messages are kept verbatim. 0 = framework default (12). Older messages fold into a rolling summary unless that's disabled below."},
+				Help:        "How many recent messages are kept verbatim. 0 = framework default (12).",
+				Detail:      "Older messages fold into a rolling summary unless that is disabled below."},
 			ui.FormField{Field: "disable_compaction", Type: "toggle", Label: "Disable rolling summary",
-				Help: "Off (default) summarizes older messages into a running summary; on drops them to the context-depth tail instead. Both stay bounded — this just chooses summarize-old vs forget-old."},
+				Help:   "Whether older messages are summarized or simply dropped.",
+				Detail: "Off, the default, summarizes older messages into a running summary. On drops them to the context-depth tail instead. Both stay bounded; this only chooses summarize-old over forget-old."},
 
 			ui.FormField{Type: "header", Label: "Cortex & capability", Collapsed: true,
-				Help: "Standing behaviors and capability GRANTS: whether the agent keeps a Cortex thread, plus the two toolsets it may hold — conductor (scheduling, monitors, delegate) and authoring (build agents, tools, apps). These add TOOLS; they do not govern who the agent may call. That is the Delegation section further down, which is open by default because its target list sits directly beneath it." + appGrantHelp(user, id)},
+				Help:   "Standing behaviors and capability grants.",
+				Detail: "Whether the agent keeps a Cortex thread, plus the two toolsets it may hold: conductor (scheduling, monitors, delegate) and authoring (build agents, tools, apps).\n\nThese add TOOLS; they do not govern who the agent may call. That is the Delegation section further down, which is open by default because its target list sits directly beneath it." + appGrantHelp(user, id)},
 			ui.FormField{Field: "channel", Type: "toggle", Label: "Maintain a Cortex thread",
-				Help: "Gives the agent a persistent Cortex thread (its mind — the 🧠 row pinned at the top of the rail, above its ordinary sessions) where event-monitor wakes and standing-agent reports land, kept bounded by a rolling summary. It also surfaces the Permissions queue and the Manage menu in the topbar. Reached only from Agents. When published to the dashboard, granted users don't see the Cortex thread — they get ordinary chat sessions, each seeded read-only from the agent's standing awareness so it shows up already aware (publishing + granting access is the consent to share that). Publishable as long as the delegation & management tools (below) are off."},
+				Help:   "Gives the agent a persistent Cortex thread: its mind, pinned above its ordinary sessions.",
+				Detail: "The 🧠 row at the top of the rail is where event-monitor wakes and standing-agent reports land, kept bounded by a rolling summary. It also surfaces the Permissions queue and the Manage menu in the topbar, and is reached only from Agents.\n\nWhen the agent is published to the dashboard, granted users do not see the Cortex thread. They get ordinary chat sessions, each seeded read-only from the agent's standing awareness, so it shows up already aware; publishing and granting access is the consent to share that. Publishable as long as the delegation and management tools below are off."},
 			ui.FormField{Field: "fleet", Type: "toggle", Label: "Conductor tools (scheduling, monitors, delegate)",
-				Help: "Grants the conductor toolset: the delegate tool + standing-agent scheduling + event-monitors + run-ledger + history-recall. This is DISTINCT from \"the fleet\" (the collection of all your agents — every agent is in that), and it is NOT the master switch for agent-to-agent calls: every non-sub agent can call peers via agents(action=\"run\") regardless, governed by the Dispatch policy below (set it to \"Allow none\" to fully ground this agent). It does NOT stop the agent doing work itself; it just adds the tools. An agent carrying these tools is never published publicly, since they reach owner-only management endpoints."},
+				Help:   "Grants the conductor toolset: delegate, scheduling, monitors, run-ledger, history-recall.",
+				Detail: "This is DISTINCT from \"the fleet\", the collection of all your agents, which every agent is in. It is also NOT the master switch for agent-to-agent calls: every non-sub agent can call peers via agents(action=\"run\") regardless, governed by the Dispatch policy below. Set that to \"Allow none\" to fully ground this agent.\n\nIt does not stop the agent doing work itself, it just adds the tools. An agent carrying these tools is never published publicly, since they reach owner-only management endpoints."},
 			authorCapabilityField(id),
 			ui.FormField{Field: "tag_name", Type: "toggle", Label: "Sign outbound messages with this agent's name",
-				Help: "Prefixes every message this agent sends over a messaging channel/bridge with its name — e.g. \"[Assistant] on my way\". Lets the recipient tell the agent's texts apart from your own messages in the same thread. Off by default; turn it on for agents that reply in conversations you also text in."},
+				Help:   "Prefixes every message this agent sends over a channel with its name.",
+				Detail: "For example, \"[Assistant] on my way\". Lets the recipient tell the agent's texts apart from your own messages in the same thread. Off by default; turn it on for agents that reply in conversations you also text in."},
 
 			ui.FormField{Type: "header", Label: "Access & visibility", Collapsed: true,
-				Help: "Who can use this agent, fleet visibility, and Private-mode policy. (The edit/delete lock is the 🔒 icon at the top-right.)"},
+				Help:   "Who can use this agent, fleet visibility, and Private-mode policy.",
+				Detail: "The edit and delete lock is the 🔒 icon at the top-right."},
 			ui.FormField{Field: "exposed", Type: "toggle", Label: "Publish App to Dashboard",
-				Help: "Adds this agent to the dashboard as its own app (its own card + URL). NOT open to everyone — a user only sees and can use it once you grant them access (per-app permissions); admins always have access. Each user gets their own private sessions + data under the agent."},
+				Help:   "Adds this agent to the dashboard as its own app, with its own card and URL.",
+				Detail: "NOT open to everyone. A user only sees and can use it once you grant them access through per-app permissions; admins always have access. Each user gets their own private sessions and data under the agent."},
 			ui.FormField{Field: "mcp_exposed", Type: "toggle", Label: "Reachable over MCP",
-				Help: "Lets an external MCP client (e.g. Claude Desktop, with a bridge key) dispatch to this agent via the ask_agent tool on gohort's /mcp/ endpoint. Off by default — turn on only the agents you want reachable from outside. Independent of publishing to the dashboard."},
+				Help:   "Lets an external MCP client dispatch to this agent over gohort's /mcp/ endpoint.",
+				Detail: "For example Claude Desktop, with a bridge key, calling the ask_agent tool. Off by default: turn on only the agents you want reachable from outside. Independent of publishing to the dashboard."},
 			ui.FormField{Field: "public_name", Type: "text", Label: "Published app name",
 				Placeholder: "(uses the agent name above when blank)",
-				Help:        "Optional. Name shown on the dashboard card + URL slug. Set when the internal name reads awkwardly as an app title.",
+				Help:        "Optional. Name shown on the dashboard card and URL slug.",
+				Detail:      "Set it when the internal name reads awkwardly as an app title.",
 				SuggestURL:  "../api/agents/suggest"},
 			ui.FormField{Field: "allow_private_mode", Type: "toggle", Label: "Allow Private mode",
-				Help: "Shows a Private toggle on the public chat — drops network tools per turn. Off for Research-style agents that need network."},
+				Help:   "Shows a Private toggle on the public chat, which drops network tools per turn.",
+				Detail: "Leave it off for Research-style agents that need network."},
 			ui.FormField{Field: "force_private", Type: "toggle", Label: "Force Private mode (network locked off)",
 				Help: "Permanently drops network + sub-agent dispatch tools. For compliance / confidential / family-facing agents."},
 			// (Dispatch policy lives in the "Cortex & delegation" section above,
@@ -387,23 +416,29 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			// reading the grant first states a permission the next field can
 			// take away.
 			ui.FormField{Type: "header", Label: "Delegation",
-				Help: "Both directions of agent-to-agent calling. Who may call THIS agent (fleet visibility), and who this agent may call (dispatch policy + the target list below, which is only consulted in the two \"selected\" modes)."},
+				Help:   "Both directions of agent-to-agent calling.",
+				Detail: "Who may call THIS agent (fleet visibility), and who this agent may call (dispatch policy plus the target list below, which is only consulted in the two \"selected\" modes)."},
 			ui.FormField{Field: "hidden", Type: "toggle", Label: "Hide from agent fleet",
-				Help: "Off (default) = globally callable: appears in every other agent's Available Agents block and is dispatchable via agents(action=\"run\"). On = dropped from the fleet block and dispatch refused, UNLESS a specific caller has this agent's ID on its Allowed Dispatch Targets list. Affects FLEET visibility only — the agent still appears in your own Agents picker and stays reachable at its dashboard URL when Published. Use for personal agents or Builder-authored sub-agents you don't want the fleet routing to."},
+				Help:   "Off (default) = globally callable. On drops the agent from the fleet and refuses dispatch.",
+				Detail: "Globally callable means it appears in every other agent's Available Agents block and is dispatchable via agents(action=\"run\"). Hidden, it is dropped from that block and dispatch is refused, UNLESS a specific caller has this agent's ID on its Allowed Dispatch Targets list.\n\nThis affects FLEET visibility only. The agent still appears in your own Agents picker and stays reachable at its dashboard URL when published. Use it for personal agents, or Builder-authored sub-agents you do not want the fleet routing to."},
 
 			ui.FormField{Field: "dispatch_mode", Type: "select", Label: "Dispatch policy",
 				Options: dispatchModeOptions(dispatchModeFirst),
-				Help:    "Which OTHER agents this one may call via agents(action=\"run\") — this governs ordinary agent-to-agent calls whether or not the conductor tools above are on. Allow all = any non-hidden agent (default). Only allow / Allow all except draw from the target list directly below. Allow none blocks all dispatch — the actual delegation kill switch. Same control as the in-chat Configure → Security & Access modal."},
+				Help:    "Which other agents this one may call via agents(action=\"run\").",
+				Detail:  "This governs ordinary agent-to-agent calls whether or not the conductor tools above are on. Allow all means any non-hidden agent, and is the default. Only allow, and Allow all except, draw from the target list directly below. Allow none blocks all dispatch and is the actual delegation kill switch. Same control as the in-chat Configure, then Security & Access modal."},
 			ui.FormField{Field: "allow_builder_dispatch", Type: "toggle", Label: "Can dispatch Builder",
-				Help: "Lets this agent hand work to Builder — agents(action=\"run\", agent=\"builder\") — to author an agent, tool, or app on its behalf. Off by default and normally reserved to conductor agents (Chat), because authoring expects a human in the loop: the intake conversation, its clarifying pauses, and your review of the draft. Turning it on trades that for reach; whatever Builder creates on a dispatch still lands held for your approval rather than going live. This is a separate grant from \"Authoring tools\" above — that one has the agent build things ITSELF, this one has it ask Builder to. Builder appears in this agent's Available Agents block only while it's on, and it's overridden by Dispatch policy = Allow none."},
+				Help:   "Lets this agent hand work to Builder, to author an agent, tool or app on its behalf.",
+				Detail: "The call is agents(action=\"run\", agent=\"builder\"). Off by default and normally reserved to conductor agents (Chat), because authoring expects a human in the loop: the intake conversation, its clarifying pauses, and your review of the draft. Turning it on trades that for reach; whatever Builder creates on a dispatch still lands held for your approval rather than going live.\n\nThis is a separate grant from \"Authoring tools\" above. That one has the agent build things ITSELF, this one has it ask Builder to. Builder appears in this agent's Available Agents block only while it is on, and it is overridden by Dispatch policy = Allow none."},
 			ui.FormField{Type: "header", Label: "Intake & evals", Collapsed: true,
 				Help: "Optional structured input form + saved test cases."},
 			ui.FormField{Field: "evals", Type: "textarea", Label: "Eval cases (JSON)", Rows: 6,
-				Help:        "Optional. Saved test cases for the eval harness. Run via POST /api/agents/<id>/eval to grade the agent against each case. POST /api/agents/<id>/eval-suite copies them into a standalone eval SUITE, which is the same cases plus the things a field cannot have: a run history, a fingerprint of the version each run graded, and a surface to watch a long run on. The copy leaves these cases exactly as they are. Format: a JSON array of {name, prompt, must_include, must_not_include, judge_prompt, notes}. must_include / must_not_include are case-insensitive substring checks; judge_prompt is an optional LLM-as-judge criterion. Use to lock in expected behavior before editing the orchestrator_prompt so regressions are visible.",
+				Help:        "Optional. Saved test cases for the eval harness.",
+				Detail:      "Run them via POST /api/agents/<id>/eval to grade the agent against each case. POST /api/agents/<id>/eval-suite copies them into a standalone eval SUITE: the same cases plus the things a field cannot have, namely a run history, a fingerprint of the version each run graded, and a surface to watch a long run on. The copy leaves these cases exactly as they are.\n\nFormat: a JSON array of {name, prompt, must_include, must_not_include, judge_prompt, notes}. must_include and must_not_include are case-insensitive substring checks; judge_prompt is an optional LLM-as-judge criterion. Use it to lock in expected behavior before editing the orchestrator_prompt, so regressions are visible.",
 				Placeholder: "[\n  {\"name\": \"asks_clarifying\", \"prompt\": \"I want to compare these products\",\n   \"judge_prompt\": \"the reply asks at least one clarifying question rather than guessing which products\"},\n  {\"name\": \"cites_sources\", \"prompt\": \"What's TS3's default port?\",\n   \"must_include\": [\"10080\"], \"judge_prompt\": \"the reply cites the source URL\"}\n]",
 				SuggestURL:  "../api/agents/suggest"},
 			ui.FormField{Field: "intake_form", Type: "textarea", Label: "Intake form (JSON)", Rows: 6,
-				Help:        "Optional. When set, the chat shows this form INSTEAD of the text input on the first turn of every new session. Submitting packs the values into a markdown user message + uploads any file fields as attachments (PDFs/DOCX get text-extracted server-side, images go to vision). Leave blank for a normal chat-first agent. Format: a JSON array of {name, label, type, placeholder, help, required, options}. type: \"text\" (default), \"textarea\", \"select\" (single-choice dropdown), \"checklist\" (multi-pick checkboxes — selected values get comma-joined in the packed markdown), \"number\", \"file\", \"button\" (self-submitting). options: array of strings, used by select / checklist / button.",
+				Help:        "Optional. A form shown instead of the text input on the first turn of a new session.",
+				Detail:      "Submitting packs the values into a markdown user message and uploads any file fields as attachments. PDFs and DOCX get text-extracted server-side, images go to vision. Leave it blank for a normal chat-first agent.\n\nFormat: a JSON array of {name, label, type, placeholder, help, required, options}. type is \"text\" (the default), \"textarea\", \"select\" (single-choice dropdown), \"checklist\" (multi-pick checkboxes, whose selected values get comma-joined into the packed markdown), \"number\", \"file\", or \"button\" (self-submitting). options is an array of strings, used by select, checklist and button.",
 				Placeholder: "[\n  {\"name\": \"company\", \"label\": \"Company name\", \"type\": \"text\", \"required\": true},\n  {\"name\": \"audience\", \"label\": \"Target audience\", \"type\": \"textarea\"},\n  {\"name\": \"deadline\", \"label\": \"Deadline\", \"type\": \"select\", \"options\": [\"This week\", \"This month\", \"No rush\"]},\n  {\"name\": \"topics\", \"label\": \"Topics of interest\", \"type\": \"checklist\", \"options\": [\"AI\", \"Healthcare\", \"Finance\", \"Education\"]}\n]",
 				SuggestURL:  "../api/agents/suggest"},
 		)
@@ -447,7 +482,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	if subAgent {
 		agentSection.Title = "Sub-agent"
 		if parentName != "" {
-			agentSection.Subtitle = "Owned by parent agent: " + parentName + ". Sub-agents are focused capability components called by their parent via dispatch — public surfaces, intake form, memory, and explorer mode are structurally off and hidden from this editor."
+			agentSection.Subtitle = "Owned by parent agent: " + parentName + ". Sub-agents are focused capability components called by their parent via dispatch: public surfaces, intake form, memory, and explorer mode are structurally off and hidden from this editor."
 		} else {
 			agentSection.Subtitle = "Sub-agent owned by another agent. Public surfaces, intake form, memory, and explorer mode are structurally off and hidden from this editor."
 		}
@@ -548,7 +583,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	if id != "" && !subAgent {
 		sections = append(sections, ui.Section{
 			Title:    "Credentials this agent may use",
-			Subtitle: "The APIs you've been granted. All are available to this agent by default; uncheck any this agent shouldn't reach — that drops the tools that dispatch through them from its kit. Secured credentials aren't listed: their access follows their tool bindings, not per-agent scope.",
+			Subtitle: "The APIs you've been granted. All are available to this agent by default; uncheck any this agent shouldn't reach, that drops the tools that dispatch through them from its kit. Secured credentials aren't listed: their access follows their tool bindings, not per-agent scope.",
 			Body: ui.ChipPicker{
 				Mode:          "attach",
 				OptionsSource: "../api/agent-credentials?id=" + id,
@@ -575,7 +610,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	if id != "" {
 		sections = append(sections, ui.Section{
 			Title:    "Picture library",
-			Subtitle: "Every picture this agent has kept for reuse. Look at them: a name, a caption and an origin can all be confidently wrong together, and only the picture settles it. \"Unrecorded\" origin means nobody captured where it came from — it may be something the agent made, so don't trust it as a likeness until you've looked. Forget what shouldn't be here; label anyone the agent hasn't identified, so a request naming them finds the right face. If two rows show the same person, both are flagged: the agent will pick one and you won't know which, so forget whichever is wrong.",
+			Subtitle: "Every picture this agent has kept for reuse. Look at them: a name, a caption and an origin can all be confidently wrong together, and only the picture settles it. \"Unrecorded\" origin means nobody captured where it came from: it may be something the agent made, so don't trust it as a likeness until you've looked. Forget what shouldn't be here; label anyone the agent hasn't identified, so a request naming them finds the right face. If two rows show the same person, both are flagged: the agent will pick one and you won't know which, so forget whichever is wrong.",
 			Body: ui.Table{
 				Source:    "../api/agent-images?id=" + id,
 				RowKey:    "name",
@@ -619,7 +654,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	if id != "" && !subAgent && !isSeedID(id) {
 		sections = append(sections, ui.Section{
 			Title:    "Share with users",
-			Subtitle: "Let specific other users run this agent. They run your agent, but its credentials and tools resolve in THEIR namespace — your secrets never travel with the share. Empty = private to you. An admin can audit or revoke shares.",
+			Subtitle: "Let specific other users run this agent. They run your agent, but its credentials and tools resolve in THEIR namespace: your secrets never travel with the share. Empty = private to you. An admin can audit or revoke shares.",
 			Body: ui.ACLPicker(ui.ACLPickerConfig{
 				OptionsSource: "../api/user-candidates",
 				RecordSource:  source,
@@ -683,7 +718,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	if id != "" && !isSeedID(id) {
 		sections = append(sections, ui.Section{
 			Title:    "Delete agent",
-			Subtitle: "Permanently remove this agent — its sessions, memory, knowledge, and any sub-agents it owns. Channels, monitors, and standing agents bound to it are cleaned up too. This can't be undone.",
+			Subtitle: "Permanently remove this agent: its sessions, memory, knowledge, and any sub-agents it owns. Channels, monitors, and standing agents bound to it are cleaned up too. This can't be undone.",
 			Body: ui.DisplayPanel{
 				Source: "../api/agents/" + id,
 				Pairs:  []ui.DisplayPair{},
@@ -748,7 +783,7 @@ func agentLockIconHTML(id string, locked bool) string {
 #agent-lock{cursor:pointer;border:none;background:none;font-size:1.2rem;line-height:1;opacity:.85;padding:0 .2rem}
 #agent-lock:hover{opacity:1;transform:scale(1.1)}
 #agent-lock[disabled]{opacity:.4;cursor:wait}
-/* Greyed controls when the record is locked — non-interactive + visibly dimmed,
+/* Greyed controls when the record is locked: non-interactive + visibly dimmed,
    but readable. The lock button itself is excluded so it stays clickable. */
 .agent-locked-ctl{opacity:.5;pointer-events:none}
 </style>
@@ -759,7 +794,7 @@ func agentLockIconHTML(id string, locked bool) string {
   b.id='agent-lock'; b.type='button';
   function draw(){
     b.textContent=locked?'🔒':'🔓';
-    b.title=locked?'Locked — only you can edit or delete (click to unlock)':'Unlocked — click to lock so other agents cannot edit or delete';
+    b.title=locked?'Locked, only you can edit or delete (click to unlock)':'Unlocked, click to lock so other agents cannot edit or delete';
   }
   // Grey out (or restore) every change control on the page when locked. Covers
   // inputs/selects/textareas/buttons across ALL editor sections (the section
@@ -787,7 +822,7 @@ func agentLockIconHTML(id string, locked bool) string {
   var tries=0;
   function mount(){
     if(document.getElementById('agent-lock')){ applyLock(); return; }
-    // FIRST section card's header-right slot — the lock belongs on the record,
+    // FIRST section card's header-right slot: the lock belongs on the record,
     // not on the page banner. Falls back to the page title only if the section
     // hasn't rendered (it always does, but keep the loop honest).
     var slot=document.querySelector('.ui-section .ui-section-h-r');
@@ -961,22 +996,22 @@ func dispatchTargetSubtitle(mode string) string {
 	// says. A pipeline you don't tick in Only mode is one this agent can't run.
 	switch mode {
 	case dispatchOnly:
-		return "Currently **Only allow selected** — this agent may call ONLY the agents and pipelines ticked here, including any Hidden agents you pick." + where
+		return "Currently **Only allow selected**: this agent may call ONLY the agents and pipelines ticked here, including any Hidden agents you pick." + where
 	case dispatchExcept:
-		return "Currently **Allow all except selected** — this agent may call any non-hidden agent, and any pipeline, EXCEPT the ones ticked here." + where
+		return "Currently **Allow all except selected**: this agent may call any non-hidden agent, and any pipeline, EXCEPT the ones ticked here." + where
 	case dispatchNone:
-		return "Currently **Allow none** — this agent dispatches to nobody, agents and pipelines alike, so this list has no effect until you change the policy." + where
+		return "Currently **Allow none**: this agent dispatches to nobody, agents and pipelines alike, so this list has no effect until you change the policy." + where
 	default:
-		return "Currently **Allow all** — this agent may call any non-hidden agent and any of your pipelines, so this list has no effect. It applies only in \"Only allow selected\" or \"Allow all except selected\" mode." + where
+		return "Currently **Allow all**: this agent may call any non-hidden agent and any of your pipelines, so this list has no effect. It applies only in \"Only allow selected\" or \"Allow all except selected\" mode." + where
 	}
 }
 
 func dispatchModeOptions(first string) []ui.SelectOption {
 	all := []ui.SelectOption{
-		{Value: dispatchAll, Label: "Allow all — any non-hidden agent (default)"},
+		{Value: dispatchAll, Label: "Allow all: any non-hidden agent (default)"},
 		{Value: dispatchOnly, Label: "Only allow selected (target list below)"},
 		{Value: dispatchExcept, Label: "Allow all except selected (target list below)"},
-		{Value: dispatchNone, Label: "Allow none — no dispatch at all"},
+		{Value: dispatchNone, Label: "Allow none: no dispatch at all"},
 	}
 	out := make([]ui.SelectOption, 0, len(all))
 	for _, o := range all {
@@ -1029,13 +1064,13 @@ func appGrantHelp(user, agentID string) string {
 	// toggles below it. The text belongs beside the other capability grants,
 	// not in a section of its own.
 	var b strings.Builder
-	b.WriteString("\n\nGRANTED BY OTHER APPS — read-only here; the framework knows WHICH app granted what, and only the app knows what its permission means, so the detail stays where it can be edited honestly.\n")
+	b.WriteString("\n\nGRANTED BY OTHER APPS: read-only here; the framework knows WHICH app granted what, and only the app knows what its permission means, so the detail stays where it can be edited honestly.\n")
 	for _, s := range summaries {
 		fmt.Fprintf(&b, "%s: %s", s.Label, s.Text)
 		var detail []string
 		for _, g := range s.Grants {
 			if g.Detail != "" {
-				detail = append(detail, g.Label+" — "+g.Detail)
+				detail = append(detail, g.Label+" · "+g.Detail)
 			}
 		}
 		if len(detail) > 0 {
@@ -1053,13 +1088,15 @@ func authorCapabilityField(agentID string) ui.FormField {
 	if isBuilderAgent(agentID) {
 		return ui.FormField{
 			Type:  "header",
-			Label: "Authoring tools — always on for Builder",
-			Help: "Builder holds the authoring catalog (survey, create/update/clone agents, tool_def, app_def, skill_def, credential drafting, bridge/connector) as its IDENTITY, not as a grant, so there is nothing to switch here. To have an agent that builds without being Builder, turn this capability on for that agent instead. " +
-				"Note: authoring is owner-only at runtime — if a turn runs as someone other than this agent's owner, the catalog is withheld and the reason is recorded in the session diagnostics.",
+			Label: "Authoring tools: always on for Builder",
+			Help:  "Builder holds the authoring catalog as its IDENTITY, not as a grant, so there is nothing to switch here.",
+			Detail: "The catalog is survey, create/update/clone agents, tool_def, app_def, skill_def, credential drafting, and bridge/connector. To have an agent that builds without being Builder, turn this capability on for that agent instead." +
+				"\n\nAuthoring is owner-only at runtime: if a turn runs as someone other than this agent's owner, the catalog is withheld and the reason is recorded in the session diagnostics.",
 		}
 	}
 	return ui.FormField{Field: "author", Type: "toggle", Label: "Authoring tools (build agents, tools, apps)",
-		Help: "Grants the full authoring toolset — the SAME catalog the Builder agent holds: survey (map what already exists), create/update/clone agents, tool_def, app_def, skill_def, the credential draft + probe tools, bridge/connector, and (when you own the agent, plus the conductor tools) scheduling/monitors to wire a built tool live. This is the de-silo of Builder: authoring is a capability any capable agent can hold, so it can BUILD new agents/tools/apps on the gohort framework the way Builder does — not just run pre-built ones. Independent of the conductor tools above. Like them, an authoring agent reaches owner-only endpoints, so it is never published publicly."}
+		Help:   "Grants the full authoring toolset: the same catalog the Builder agent holds.",
+		Detail: "That is survey (map what already exists), create/update/clone agents, tool_def, app_def, skill_def, the credential draft and probe tools, bridge/connector, and, when you own the agent and it also holds the conductor tools, scheduling and monitors to wire a built tool live.\n\nThis is the de-silo of Builder: authoring is a capability any capable agent can hold, so it can BUILD new agents, tools and apps on the gohort framework the way Builder does, not just run pre-built ones. Independent of the conductor tools above. Like them, an authoring agent reaches owner-only endpoints, so it is never published publicly."}
 }
 
 // splitAgentFormSections turns one long form into page-level sections, split
@@ -1146,7 +1183,8 @@ func leadModelField(show bool) ui.FormField {
 	}
 	return ui.FormField{
 		Field: "lead_model", Type: "toggle", Label: "Use Lead model for reasoning",
-		Help: "Run this agent's orchestrator + synthesis turns on the lead (precision) model instead of the local worker. The lead model is remote and costs more per turn; the worker is local and free. The dispatched per-step worker phases still run on the worker. Off by default. Automatically ignored on a Private turn — the conversation stays local, unless Admin \u2192 LLMs \u2192 Model Privacy says every model is private, in which case escalating keeps it local too.\n\nUsually you do not need this: an agent holding the `consult` tool already asks the lead ONE self-contained question when it hits a wall, at a fraction of the cost of escalating every round. Reach for this toggle when the agent's own reasoning — not one hard question — is what needs the stronger model.",
+		Help:   "Run this agent's orchestrator and synthesis turns on the lead model, not the local worker.",
+		Detail: "The lead model is remote and costs more per turn; the worker is local and free. The dispatched per-step worker phases still run on the worker. Off by default.\n\nAutomatically ignored on a Private turn, where the conversation stays local. The exception is Admin, LLMs, Model Privacy saying every model is private, in which case escalating keeps it local too.\n\nUsually you do not need this. An agent holding the consult tool already asks the lead ONE self-contained question when it hits a wall, at a fraction of the cost of escalating every round. Reach for this toggle when the agent's own reasoning, rather than one hard question, is what needs the stronger model.",
 	}
 }
 
@@ -1169,25 +1207,26 @@ func machineSelectField(udb Database, user string) ui.FormField {
 	if len(defs) == 0 {
 		return ui.FormField{Field: "machine", Type: "hidden"}
 	}
-	opts := []ui.SelectOption{{Value: "", Label: "None — the persona above governs every turn"}}
+	opts := []ui.SelectOption{{Value: "", Label: "None: the persona above governs every turn"}}
 	for _, d := range defs {
 		label := d.Name + " (" + strconv.Itoa(len(d.Phases)) + " phases)"
 		if desc := strings.TrimSpace(d.Description); desc != "" {
-			label += " — " + desc
+			label += " · " + desc
 		}
 		opts = append(opts, ui.SelectOption{Value: d.ID, Label: label})
 	}
 	return ui.FormField{
 		Field: "machine", Type: "select", Label: "Phase machine", Options: opts,
-		Help: "Optional. A machine gives this agent PHASES it moves through and stays in: it works out what is being asked once, picks an approach once, then answers in that frame for the rest of the thread instead of re-deciding every turn. The persona above still supplies identity and voice — the machine supplies procedure. Sessions already open keep the machine they started with; this applies to new ones. " +
+		Help: "Optional. A machine gives this agent phases it moves through and stays in.",
+		Detail: "It works out what is being asked once, picks an approach once, then answers in that frame for the rest of the thread instead of re-deciding every turn. The persona above still supplies identity and voice; the machine supplies procedure. Sessions already open keep the machine they started with, so this applies to new ones." +
 			// The shape people ask for by name and cannot find, because it is
 			// not a setting anywhere: an agent that goes and LOOKS before it
 			// answers. It is a two-phase machine, and the reason it is not a
 			// checkbox here is that what \"look\" means — which tools, what
 			// counts as determined — is different for every subject, and a
 			// checkbox has nowhere to say it.
-			"This is also how you make an agent that INVESTIGATES before it answers: a first phase that goes and looks (set its reach to read-only, so it can inspect and never act), then a phase that answers only from what it found. Its probes never enter the conversation, so the thread stays small. " +
-			"Author machines from chat with the `machine` tool, or describe one in plain words at Extensions → Machines → Describe one.",
+			"\n\nThis is also how you make an agent that INVESTIGATES before it answers: a first phase that goes and looks (set its reach to read-only, so it can inspect and never act), then a phase that answers only from what it found. Its probes never enter the conversation, so the thread stays small. " +
+			"\n\nAuthor machines from chat with the `machine` tool, or describe one in plain words at Extensions, Machines, Describe one.",
 	}
 }
 

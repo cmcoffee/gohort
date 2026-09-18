@@ -119,7 +119,7 @@ func dispatchCapDecision(counts map[string]int, targetID, targetName, msg string
 	loopKey := "call\x00" + targetID + "\x00" + msg
 	counts[loopKey]++
 	if counts[loopKey] > maxSameTargetDispatch {
-		return fmt.Sprintf("STOP — you have already dispatched %q with the SAME message %d times this turn; re-running the identical call won't produce a new result. Use what it already returned, or dispatch a DIFFERENT message (e.g. exercise another tool/action). If you're done verifying, reply to the user directly with what you found.", targetName, maxSameTargetDispatch)
+		return fmt.Sprintf("STOP: you have already dispatched %q with the SAME message %d times this turn; re-running the identical call won't produce a new result. Use what it already returned, or dispatch a DIFFERENT message (e.g. exercise another tool/action). If you're done verifying, reply to the user directly with what you found.", targetName, maxSameTargetDispatch)
 	}
 	totalCeiling := maxTotalTargetDispatch
 	if isBuilder {
@@ -128,7 +128,7 @@ func dispatchCapDecision(counts map[string]int, targetID, targetName, msg string
 	totalKey := "total\x00" + targetID
 	counts[totalKey]++
 	if counts[totalKey] > totalCeiling {
-		return fmt.Sprintf("STOP — you've dispatched %q %d times this turn across varying messages, past the per-turn ceiling. Summarize what you've verified so far and continue any remaining checks on the user's NEXT message.", targetName, totalCeiling)
+		return fmt.Sprintf("STOP: you've dispatched %q %d times this turn across varying messages, past the per-turn ceiling. Summarize what you've verified so far and continue any remaining checks on the user's NEXT message.", targetName, totalCeiling)
 	}
 	return ""
 }
@@ -383,7 +383,7 @@ func applyForcePrivateToDispatch(ctx context.Context, subSess *ToolSession, tool
 		filtered = append(filtered, td)
 	}
 	if len(dropped) > 0 {
-		Log("[orchestrate.dispatch] ForcePrivate active on %s — dropped %d network-capable tool(s): %v",
+		Log("[orchestrate.dispatch] ForcePrivate active on %s, dropped %d network-capable tool(s): %v",
 			target.ID, len(dropped), dropped)
 	}
 	return ctx, filtered
@@ -1311,7 +1311,8 @@ func init() {
 		App:      "/orchestrate",
 		Category: "Limits",
 		Label:    "Event card kept in the thread (characters)",
-		Help: "How much of an event's text stays in the thread after the agent has reacted to it — a monitor fire, a scheduled wake. " +
+		Help:     "How much of an event's text stays in the thread after the agent has reacted to it.",
+		Detail: "An event is a monitor fire or a scheduled wake. " +
 			"The agent still receives the WHOLE thing when it fires; this bounds only the record left behind. " +
 			"A watch monitor's payload is evidence for one turn and the agent's reply is the record: the raw diff is worth little the moment it has been read, and on a Cortex thread it is worth it forever, because every fire is replayed into every later prompt. " +
 			"Raise it if you find yourself opening a card and wanting the part that was cut; 0 stores the event whole.",
@@ -1670,7 +1671,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// irreversible; older turns are not preserved elsewhere.
 	if freshSession {
 		deleteChatSession(runtimeDB, target.ID, subSessionID)
-		Log("[orchestrate.RunAgentSyncContinuing] fresh_session wipe — runtime=%s target=%s sub=%s",
+		Log("[orchestrate.RunAgentSyncContinuing] fresh_session wipe: runtime=%s target=%s sub=%s",
 			runtimeUser, target.ID, subSessionID)
 	}
 	// Load prior session (if any) and build history.
@@ -1791,7 +1792,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 			for _, n := range drained {
 				out = append(out, Message{
 					Role:    "user",
-					Content: "[MID-FLIGHT NOTE — submitted by the user while this run was in progress] " + n.Text,
+					Content: "[MID-FLIGHT NOTE: submitted by the user while this run was in progress] " + n.Text,
 				})
 			}
 			return out
@@ -2056,11 +2057,11 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 			phantomDelivery = true
 			Log("[orchestrate.dispatch] reply carried %d delivery marker(s) that resolve to nothing: %v", len(missing), missing)
 			appendSessionDiag(runtimeDB, target.ID, subSessionID, "attach-marker-unresolved",
-				fmt.Sprintf("The reply asked to send %v, but no such file was in the workspace — most often because an earlier attach already delivered it with cleanup=true. Nothing was attached; the framework recovered the most recent staged file where it could.", missing))
+				fmt.Sprintf("The reply asked to send %v, but no such file was in the workspace: most often because an earlier attach already delivered it with cleanup=true. Nothing was attached; the framework recovered the most recent staged file where it could.", missing))
 		}
 		if staged := recoverStagedDeliverable(subSess, cleanReply, turnProducedDeliverable(turnToolCalls)); staged != "" {
 			if b64 := resolveWorkspaceImages(subSess, []string{staged}); len(b64) > 0 {
-				Log("[orchestrate.dispatch] reply claimed a delivery but attached nothing — backstop attaching staged %q", staged)
+				Log("[orchestrate.dispatch] reply claimed a delivery but attached nothing: backstop attaching staged %q", staged)
 				if isVideoAttachment(staged) {
 					vids = append(vids, b64...)
 				} else {
@@ -2090,7 +2091,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 // behavior. Agents that don't care about delegation context can
 // ignore the marker — the brief still reads naturally below.
 func markAsDelegated(msg string) string {
-	return "[DELEGATED INVOCATION] Headless one-shot run — no back-and-forth; work from the brief as a self-contained spec, making reasonable defaults for anything unspecified.\n\nBrief: " + msg
+	return "[DELEGATED INVOCATION] Headless one-shot run, no back-and-forth; work from the brief as a self-contained spec, making reasonable defaults for anything unspecified.\n\nBrief: " + msg
 }
 
 // attributeSender prefixes a user message with its author's name so the LLM
@@ -2137,7 +2138,7 @@ func llmHistoryContent(m ChatMessage) string {
 		// Fenced through textutil.FenceMeta rather than by hand: the producer
 		// name is not ours, and a name carrying a closer would end the fence
 		// early and put the rest of itself back in the model's plain input.
-		return textutil.FenceMeta(fmt.Sprintf("automated report from %q — context, not user input",
+		return textutil.FenceMeta(fmt.Sprintf("automated report from %q: context, not user input",
 			strings.TrimSpace(m.ReportFrom))) + "\n" + fenceObservationMarkers(m.Content)
 	}
 	return attributeSender(m.Role, m.Sender, m.Content)

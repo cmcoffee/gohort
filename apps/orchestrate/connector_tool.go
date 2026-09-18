@@ -32,49 +32,49 @@ func connectorDefTool() ChatTool {
 A connector is a reusable "bridge type": a declared external capability that
 lives in one governed surface (Admin > Connectors). Six kinds ship:
 
-  remote_mcp — a remote Model Context Protocol server. Many services publish one
+  remote_mcp: a remote Model Context Protocol server. Many services publish one
   (calendars, ticketing, CRMs). Its tools register as <name>.<tool>. Created
-  UNAPPROVED (it adds new external reach) — an admin approves it before it goes
+  UNAPPROVED (it adds new external reach): an admin approves it before it goes
   live.
 
-  rest_poll — poll ONE authenticated URL every N minutes and wake an agent when
+  rest_poll: poll ONE authenticated URL every N minutes and wake an agent when
   the response changes (same as the bridge tool). It uses an already-approved
   credential, so it goes LIVE on create; an admin can still unapprove/delete it.
 
-  desktop_mcp — run a LOCAL MCP server (a subprocess: command + args) on the
+  desktop_mcp, run a LOCAL MCP server (a subprocess: command + args) on the
   user's OWN machine via their gohort desktop app; its tools register as
-  <name>.<tool>. Created UNAPPROVED (it runs code on the user's machine) — an
+  <name>.<tool>. Created UNAPPROVED (it runs code on the user's machine): an
   admin approves it, and the user's desktop then asks the user to confirm before
   it applies. The user's desktop app must be running.
 
-  desktop_command — run a FIXED local command as one tool on the user's machine
+  desktop_command: run a FIXED local command as one tool on the user's machine
   (command + args, with optional {placeholder} params). The lightweight option
   when a full MCP server is overkill. Same UNAPPROVED + user-consent gates as
   desktop_mcp; the user's desktop app must be running.
 
-  messaging_bridge — turn on a BUILT-IN messaging relay on the user's OWN device
+  messaging_bridge: turn on a BUILT-IN messaging relay on the user's OWN device
   (today: iMessage, macOS-only) so their conversations route to agents through
   channels. Two-sided: it ensures the server-side routing key AND enables the
   device relay. Created UNAPPROVED (it enables a capability on the user's
-  machine) — an admin approves it, and the user's desktop then confirms. No
+  machine): an admin approves it, and the user's desktop then confirms. No
   secret travels; the daemon auto-negotiates its own key. The user's desktop app
   must be running for the device half to apply.
 
-  rest_messaging — a SERVER-SIDE, two-sided messaging bridge for any REST-pollable
+  rest_messaging: a SERVER-SIDE, two-sided messaging bridge for any REST-pollable
   chat service (Microsoft Teams, Slack, Discord). It polls the service's API
   through a SecureAPI credential, routes each new message to the bound channel
-  agent, and delivers replies back — no user device, no public webhook. Use a
+  agent, and delivers replies back: no user device, no public webhook. Use a
   preset so you supply only the credential + a couple of vars:
-    - preset="teams" — Graph channel-message delta; needs an oauth2 credential
+    - preset="teams": Graph channel-message delta; needs an oauth2 credential
       (draft_oauth_credential) and vars {team_id, channel_id}. Corporate Teams
       requires the tenant admin to grant the credential the Graph channel-read
       permission (a Microsoft-side gate).
-    - preset="slack" — Slack Web API; needs a BEARER credential holding a bot
+    - preset="slack": Slack Web API; needs a BEARER credential holding a bot
       token (xoxb-…) with channels:history + chat:write, the bot added to the
       channel, and var {channel_id}.
   Or author poll_url + map (dot-paths) + cursor + send_url by hand for any other
   service. Created UNAPPROVED (it routes external messages to agents and sends
-  replies) — an admin approves it in Admin > Connectors. Run
+  replies): an admin approves it in Admin > Connectors. Run
   connector(action="test") to preview the mapping before approval.
 
   REAL-TIME instead of polling: add webhook_provider="slack" to receive Slack
@@ -90,7 +90,7 @@ lives in one governed surface (Admin > Connectors). Six kinds ship:
   needs this deployment's public URL reachable by Graph (validated at creation)
   and the tenant's Teams change-notification licensing.
 
-  bot_framework — gohort as a real Microsoft Teams BOT rather than a reader of
+  bot_framework: gohort as a real Microsoft Teams BOT rather than a reader of
   one channel. It answers 1:1 DMs, group chats and channel @mentions, and
   replies under the bot's own identity. Reach for this when rest_messaging's
   teams preset cannot deliver: Microsoft Graph's application permissions can
@@ -101,11 +101,11 @@ lives in one governed surface (Admin > Connectors). Six kinds ship:
   whose Messaging endpoint points at /bridges/api/bot/<connector-name> on this
   deployment's PUBLIC https URL, its Teams channel enabled, and a Teams app
   manifest naming the same app id installed in the tenant. The Azure resources
-  are a registration, not hosting — gohort still runs where it runs — and the
+are a registration, not hosting (gohort still runs where it runs), and the
   free tier covers Teams.
 
   Needs, here: app_id (the registration's application id; public, it is the
-  token audience) and credential — a SecureAPI oauth2 credential using the
+  token audience) and credential: a SecureAPI oauth2 credential using the
   client_credentials grant, token url
   https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token, scope
   https://api.botframework.com/.default, and a BASE URL of
@@ -119,7 +119,7 @@ lives in one governed surface (Admin > Connectors). Six kinds ship:
   to thread channel replies, tenant_id to pin a single-tenant bot. Inbound is
   authenticated per request against Microsoft's published signing keys; there is
   no shared secret to set and no subscription to renew, unlike webhook_provider
-  ="graph". Created UNAPPROVED — an admin approves it in Admin > Connectors.
+  ="graph". Created UNAPPROVED: an admin approves it in Admin > Connectors.
 
 Governance for remote_mcp: create leaves it UNAPPROVED and inert. Tell the user
 an admin must approve it in Admin > Connectors (there they confirm the endpoint +
@@ -130,7 +130,7 @@ auth). You NEVER handle a secret:
   - auth_mode="oauth" is per-user hosted login (each user connects their own
     account);
   - auth_mode="none" for a public server.
-A static bearer token is a secret — those servers are added by the admin
+A static bearer token is a secret: those servers are added by the admin
 directly in Admin > MCP Servers, not via a connector.
 
 Typical flow for a calendar:
@@ -143,7 +143,7 @@ Typical flow for a calendar:
 	gt.AddAction("create", &GroupedToolAction{
 		Description: "Declare a new connector (bridge type). remote_mcp is created UNAPPROVED (admin approves in Admin > Connectors); rest_poll goes live immediately (it uses an already-approved credential).",
 		Params: map[string]ToolParam{
-			"kind":                 {Type: "string", Enum: []string{RemoteMCPConnectorKind, RestPollConnectorKind, DesktopMCPConnectorKind, DesktopCommandConnectorKind, MessagingBridgeConnectorKind, RestMessagingConnectorKind, BotFrameworkConnectorKind, RestImageConnectorKind}, Description: "The bridge type. remote_mcp = a remote MCP server whose tools register as <name>.<tool>. rest_poll = poll one authenticated URL every N minutes and wake an agent when it changes. desktop_mcp = run a LOCAL MCP server (subprocess) on the user's OWN machine. desktop_command = run a fixed local command (with {placeholder} args) as one tool on the user's machine — the lightweight option. messaging_bridge = enable a built-in messaging relay (iMessage) on the user's device so their chats route to agents. rest_messaging = a server-side two-sided messaging bridge for a REST-pollable service (Teams/Slack/Discord) via a SecureAPI credential — use preset=\"teams\" for the canned Graph mapping. bot_framework = gohort as a real Microsoft Teams BOT (Azure Bot registration): answers DMs, group chats and channel @mentions and replies under its own identity — the one that works when Graph app-only sending does not. rest_image = an image-GENERATION backend (ComfyUI / Automatic1111 / hosted diffusion) declared from a spec — use preset=\"a1111\" (turnkey) or preset=\"comfyui\" with vars={\"base_url\":\"http://localhost:7860\"}; materializes a generate_image_<name> tool. Created UNAPPROVED."},
+			"kind":                 {Type: "string", Enum: []string{RemoteMCPConnectorKind, RestPollConnectorKind, DesktopMCPConnectorKind, DesktopCommandConnectorKind, MessagingBridgeConnectorKind, RestMessagingConnectorKind, BotFrameworkConnectorKind, RestImageConnectorKind}, Description: "The bridge type. remote_mcp = a remote MCP server whose tools register as <name>.<tool>. rest_poll = poll one authenticated URL every N minutes and wake an agent when it changes. desktop_mcp = run a LOCAL MCP server (subprocess) on the user's OWN machine. desktop_command = run a fixed local command (with {placeholder} args) as one tool on the user's machine: the lightweight option. messaging_bridge = enable a built-in messaging relay (iMessage) on the user's device so their chats route to agents. rest_messaging = a server-side two-sided messaging bridge for a REST-pollable service (Teams/Slack/Discord) via a SecureAPI credential: use preset=\"teams\" for the canned Graph mapping. bot_framework = gohort as a real Microsoft Teams BOT (Azure Bot registration): answers DMs, group chats and channel @mentions and replies under its own identity, the one that works when Graph app-only sending does not. rest_image = an image-GENERATION backend (ComfyUI / Automatic1111 / hosted diffusion) declared from a spec, use preset=\"a1111\" (turnkey) or preset=\"comfyui\" with vars={\"base_url\":\"http://localhost:7860\"}; materializes a generate_image_<name> tool. Created UNAPPROVED."},
 			"name":                 {Type: "string", Description: "Short unique id (letters/digits/underscore/dash), e.g. \"gcal\". Namespaces the capability's tools."},
 			"url":                  {Type: "string", Description: "(remote_mcp) the MCP server's https endpoint. (rest_poll) the full URL to poll each interval."},
 			"auth_mode":            {Type: "string", Enum: []string{"none", "secure_api", "oauth"}, Description: "(remote_mcp) How the server authenticates. none = public; secure_api = mint a bearer from a registered SecureAPI credential (set secure_cred); oauth = per-user hosted login. NEVER pass a static token."},
@@ -151,13 +151,13 @@ Typical flow for a calendar:
 			"credential":           {Type: "string", Description: "(rest_poll) Name of a registered SecureAPI credential to call the URL through (becomes call_<name>). Draft it first if needed."},
 			"wake_agent":           {Type: "string", Description: "(rest_poll) Name or id of the agent to wake when the polled response changes."},
 			"interval_minutes":     {Type: "number", Description: "(rest_poll) How often to poll, in minutes (minimum 1)."},
-			"wake_brief":           {Type: "string", Description: "(rest_poll, optional) Guidance handed to the woken agent on each change — what the data means and what to do about it."},
+			"wake_brief":           {Type: "string", Description: "(rest_poll, optional) Guidance handed to the woken agent on each change: what the data means and what to do about it."},
 			"method":               {Type: "string", Description: "(rest_poll, optional) HTTP method; defaults to GET."},
 			"body":                 {Type: "string", Description: "(rest_poll, optional) request body for POST/PUT."},
 			"command":              {Type: "string", Description: "(desktop_mcp / desktop_command) the executable the desktop runs, e.g. \"npx\" or an absolute path."},
 			"args":                 {Type: "array", Description: "(desktop_mcp / desktop_command, optional) command arguments as a list of strings. For desktop_command, an arg may contain a {placeholder} filled from the tool call, e.g. [\"--query\", \"{q}\"]."},
-			"params":               {Type: "object", Description: "(desktop_command, optional) the tool's parameters as {name: description} — each becomes a required string arg the caller supplies and can be referenced as {name} in args. Omit for a fixed command with no inputs."},
-			"service":              {Type: "string", Description: "(messaging_bridge) the built-in service to bridge — only \"imessage\" today. (rest_messaging) a name that namespaces the bridge, e.g. \"teams\" (the preset sets it)."},
+			"params":               {Type: "object", Description: "(desktop_command, optional) the tool's parameters as {name: description}, each becomes a required string arg the caller supplies and can be referenced as {name} in args. Omit for a fixed command with no inputs."},
+			"service":              {Type: "string", Description: "(messaging_bridge) the built-in service to bridge: only \"imessage\" today. (rest_messaging) a name that namespaces the bridge, e.g. \"teams\" (the preset sets it)."},
 			"poll_secs":            {Type: "number", Description: "(messaging_bridge, optional) how often the device relay polls for new messages, in seconds (default 5)."},
 			"preset":               {Type: "string", Description: "(rest_messaging, optional) a canned service template that fills poll_url/map/cursor/send_url. \"teams\" (Graph, needs an oauth2 credential) or \"slack\" (Web API, needs a bearer credential holding a bot token). Explicit fields still override the preset."},
 			"vars":                 {Type: "object", Description: "(rest_messaging) values substituted into {token}s in the preset's URLs/chat id. teams: {\"team_id\":\"...\",\"channel_id\":\"...\"}. slack: {\"channel_id\":\"C...\"}."},
@@ -175,10 +175,10 @@ Typical flow for a calendar:
 			"more_url_path":        {Type: "string", Description: "(rest_messaging, optional) response dot-path to a complete next-page URL followed within a tick until absent (Graph \"@odata.nextLink\")."},
 			"app_id":               {Type: "string", Description: "(bot_framework) the Entra application (client) id of the Azure Bot registration. Public, not a secret: it is the audience every inbound activity token must carry, which is what separates this deployment's traffic from every other bot the same issuer signs for."},
 			"tenant_id":            {Type: "string", Description: "(bot_framework, optional) pin a single-tenant bot to one tenant. Omit for a multi-tenant bot."},
-			"service_host":         {Type: "string", Description: "(bot_framework, optional) the host replies are sent to (default https://smba.trafficmanager.net, which covers every public-cloud region — the region is a path segment). Set only for a sovereign cloud. The connector's credential must be allowed to reach it, which is checked at approval."},
+			"service_host":         {Type: "string", Description: "(bot_framework, optional) the host replies are sent to (default https://smba.trafficmanager.net, which covers every public-cloud region, the region is a path segment). Set only for a sovereign cloud. The connector's credential must be allowed to reach it, which is checked at approval."},
 			"reply_in_thread":      {Type: "boolean", Description: "(bot_framework, optional) thread a channel reply under the message that triggered it instead of posting at the conversation root."},
 			"accept_channel_types": {Type: "array", Description: "(bot_framework, optional) limit which Teams surfaces route inbound: any of \"personal\" (1:1 DM), \"channel\", \"groupChat\". Omit to accept all three. The Teams app manifest is the real gate; this is a second one an admin can tighten without a manifest re-upload."},
-			"webhook_provider":     {Type: "string", Enum: []string{"slack", "graph"}, Description: "(rest_messaging, optional) switch inbound from POLL to real-time PUSH. \"slack\" (Slack Events API — turnkey: paste the webhook URL into the Slack app, admin sets the signing secret) or \"graph\". The poll fields become unused; send_url/credential still deliver replies."},
+			"webhook_provider":     {Type: "string", Enum: []string{"slack", "graph"}, Description: "(rest_messaging, optional) switch inbound from POLL to real-time PUSH. \"slack\" (Slack Events API, turnkey: paste the webhook URL into the Slack app, admin sets the signing secret) or \"graph\". The poll fields become unused; send_url/credential still deliver replies."},
 			"image_spec":           {Type: "object", Description: "(rest_image, optional) explicit backend fields overriding/extending the preset: submit_url, submit_method, submit_body (a JSON template with {prompt}/{negative}/{width}/{height}/{steps}/{seed} tokens), image_b64_path or image_url_path (synchronous result), or the poll set submit_id_path/poll_url/poll_ready_path/poll_b64_path/poll_url_path/poll_url_template/poll_fields (async). Omit when a preset + vars is enough. For rest_image, `credential` names the SecureAPI credential (or \"no_auth\" for a local endpoint) and `vars` fills preset tokens like {\"base_url\":\"http://localhost:7860\"}."},
 			"description":          {Type: "string", Description: "(optional) What this connector is for. For desktop_command it is also the tool's description shown to callers."},
 		},
@@ -186,7 +186,7 @@ Typical flow for a calendar:
 		Handler:  connectorCreate,
 	})
 	gt.AddAction("update", &GroupedToolAction{
-		Description: "Change an EXISTING connector's fields WITHOUT recreating it — use when a preset value or mapping needs fixing later. Only the fields you pass change; the rest are kept. The kind can't change. If the connector is already approved (live), it re-materializes immediately (a rest_messaging poller restarts with the new spec, resuming from its cursor); an unapproved one just updates its draft. To CLEAR a field or switch preset/kind, delete and recreate instead.",
+		Description: "Change an EXISTING connector's fields WITHOUT recreating it: use when a preset value or mapping needs fixing later. Only the fields you pass change; the rest are kept. The kind can't change. If the connector is already approved (live), it re-materializes immediately (a rest_messaging poller restarts with the new spec, resuming from its cursor); an unapproved one just updates its draft. To CLEAR a field or switch preset/kind, delete and recreate instead.",
 		Params: map[string]ToolParam{
 			"name":             {Type: "string", Description: "The connector to update."},
 			"description":      {Type: "string", Description: "(optional) New description."},
@@ -244,23 +244,23 @@ Typical flow for a calendar:
 		Handler:     connectorDelete,
 	})
 	gt.AddAction("export", &GroupedToolAction{
-		Description: "Export connector(s) as a portable, SECRET-FREE JSON pack the user can save, back up, or share. Omit name to export ALL connectors as one pack; pass name for a single one. Auth travels by credential NAME only — no secret is included.",
+		Description: "Export connector(s) as a portable, SECRET-FREE JSON pack the user can save, back up, or share. Omit name to export ALL connectors as one pack; pass name for a single one. Auth travels by credential NAME only: no secret is included.",
 		Params:      map[string]ToolParam{"name": {Type: "string", Description: "(optional) A single connector to export. Omit to export every connector as one pack."}},
 		Handler:     connectorExport,
 	})
 	gt.AddAction("import", &GroupedToolAction{
 		Description: "Import a connector pack (the JSON produced by export) as new DRAFT connectors owned by the user. Governance still applies: remote_mcp / desktop_* land UNAPPROVED (an admin must approve them); rest_poll goes live if its credential exists. A name that already exists is SKIPPED, never overwritten. Referenced credentials must exist (or be drafted) on this install.",
-		Params:      map[string]ToolParam{"pack": {Type: "string", Description: "The connector pack JSON — a full pack {\"bundle\":...,\"connectors\":[...]}, a single connector object, or an array of connectors."}},
+		Params:      map[string]ToolParam{"pack": {Type: "string", Description: "The connector pack JSON, a full pack {\"bundle\":...,\"connectors\":[...]}, a single connector object, or an array of connectors."}},
 		Required:    []string{"pack"},
 		Handler:     connectorImport,
 	})
 	gt.AddAction("import_comfyui", &GroupedToolAction{
-		Description: "Set up a ComfyUI image backend from a workflow the user pastes — the easy path for “make my ComfyUI the image generator.” Give the ComfyUI base URL and (optionally) the user's exported workflow JSON (ComfyUI “Save (API Format)”, needs Dev Mode). The framework AUTO-WIRES the graph — detects the prompt node and the SaveImage output node and injects the {prompt}/{negative}/{seed} tokens — so you paste the workflow VERBATIM; do NOT hand-edit or tokenize it yourself. Omit workflow for a built-in default SD1.5 graph. Drafts a rest_image connector UNAPPROVED; tell the user to approve it in Admin > Connectors (or that Admin > Image Generation > “Add image backend” does create+approve in one step). For Automatic1111, use action=create with kind=rest_image, preset=a1111.",
+		Description: "Set up a ComfyUI image backend from a workflow the user pastes: the easy path for “make my ComfyUI the image generator.” Give the ComfyUI base URL and (optionally) the user's exported workflow JSON (ComfyUI “Save (API Format)”, needs Dev Mode). The framework AUTO-WIRES the graph (detects the prompt node and the SaveImage output node and injects the {prompt}/{negative}/{seed} tokens), so you paste the workflow VERBATIM; do NOT hand-edit or tokenize it yourself. Omit workflow for a built-in default SD1.5 graph. Drafts a rest_image connector UNAPPROVED; tell the user to approve it in Admin > Connectors (or that Admin > Image Generation > “Add image backend” does create+approve in one step). For Automatic1111, use action=create with kind=rest_image, preset=a1111.",
 		Params: map[string]ToolParam{
 			"name":        {Type: "string", Description: "Connector id (letters/digits/underscore/dash), e.g. \"comfyui\". Becomes the image-provider name and the generate_image_<name> tool."},
 			"base_url":    {Type: "string", Description: "The ComfyUI server URL, e.g. http://localhost:8188."},
-			"workflow":    {Type: "string", Description: "(optional) The user's ComfyUI workflow in API format (from ComfyUI's “Save (API Format)”). Paste it verbatim — the framework auto-detects and tokenizes the prompt + output nodes. Omit for a default SD1.5 graph."},
-			"node_id":     {Type: "string", Description: "(optional) Override the auto-detected SaveImage output node id — only if detection picks the wrong node."},
+			"workflow":    {Type: "string", Description: "(optional) The user's ComfyUI workflow in API format (from ComfyUI's “Save (API Format)”). Paste it verbatim: the framework auto-detects and tokenizes the prompt + output nodes. Omit for a default SD1.5 graph."},
+			"node_id":     {Type: "string", Description: "(optional) Override the auto-detected SaveImage output node id: only if detection picks the wrong node."},
 			"credential":  {Type: "string", Description: "(optional) SecureAPI credential name for an authenticated/hosted ComfyUI. Omit or \"no_auth\" for a local LAN server."},
 			"description": {Type: "string", Description: "(optional) What this backend is for."},
 		},
@@ -352,7 +352,7 @@ func connectorCreate(args map[string]any, sess *ToolSession) (string, error) {
 		return "", fmt.Errorf("name is required")
 	}
 	if _, exists := GetConnector(RootDB, name); exists {
-		return "", fmt.Errorf("a connector named %q already exists — pick another name or delete it first", name)
+		return "", fmt.Errorf("a connector named %q already exists: pick another name or delete it first", name)
 	}
 
 	c := Connector{
@@ -367,7 +367,7 @@ func connectorCreate(args map[string]any, sess *ToolSession) (string, error) {
 		// Don't stomp an MCP server an admin authored under the same name —
 		// the connector materializes into a server of the same name.
 		if _, ok := MCP().Load(name); ok {
-			return "", fmt.Errorf("an MCP server named %q already exists (Admin > MCP Servers) — choose a different connector name", name)
+			return "", fmt.Errorf("an MCP server named %q already exists (Admin > MCP Servers): choose a different connector name", name)
 		}
 		spec := RemoteMCPSpec{
 			URL:        strings.TrimSpace(stringArg(args, "url")),
@@ -383,12 +383,12 @@ func connectorCreate(args map[string]any, sess *ToolSession) (string, error) {
 		wantAgent := strings.TrimSpace(stringArg(args, "wake_agent"))
 		wakeAgent := resolveCheckAgent(sess, owner, wantAgent, "")
 		if wakeAgent == "" {
-			return "", fmt.Errorf("no agent named %q to wake — pass a real agent name or id for wake_agent", wantAgent)
+			return "", fmt.Errorf("no agent named %q to wake: pass a real agent name or id for wake_agent", wantAgent)
 		}
 		// Don't clobber an existing bridge/monitor of the same name (the
 		// connector materializes into an owner-scoped EventMonitor).
 		if _, exists := GetEventMonitor(RootDB, owner, name); exists {
-			return "", fmt.Errorf("a bridge or monitor named %q already exists for you — pick another name", name)
+			return "", fmt.Errorf("a bridge or monitor named %q already exists for you: pick another name", name)
 		}
 		spec := RestPollSpec{
 			Credential:      strings.TrimSpace(stringArg(args, "credential")),
@@ -523,7 +523,7 @@ func connectorCreate(args map[string]any, sess *ToolSession) (string, error) {
 		return fmt.Sprintf("Connector %q (kind=%s) created and LIVE. %s\nManage it in Admin > Connectors.", name, kind, ConnectorSummary(saved)), nil
 	}
 	return fmt.Sprintf(
-		"Drafted connector %q (kind=%s), created UNAPPROVED. %s\nTo go live: an admin opens Admin > Connectors, reviews it, and clicks Approve — then its tools register for agents. Nothing runs until then.",
+		"Drafted connector %q (kind=%s), created UNAPPROVED. %s\nTo go live: an admin opens Admin > Connectors, reviews it, and clicks Approve, then its tools register for agents. Nothing runs until then.",
 		name, kind, ConnectorSummary(saved)), nil
 }
 
@@ -560,7 +560,7 @@ func connectorUpdate(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	prev, ok := GetConnector(RootDB, name)
 	if !ok {
-		return "", fmt.Errorf("no connector named %q — create it first", name)
+		return "", fmt.Errorf("no connector named %q: create it first", name)
 	}
 	owner := bridgeOwner(sess)
 	c := prev
@@ -704,7 +704,7 @@ func connectorUpdate(args map[string]any, sess *ToolSession) (string, error) {
 		}
 		c.Spec, _ = json.Marshal(merged)
 	default:
-		return "", fmt.Errorf("update not supported for kind %q — delete and recreate instead", prev.Kind)
+		return "", fmt.Errorf("update not supported for kind %q: delete and recreate instead", prev.Kind)
 	}
 
 	if err := SaveConnector(RootDB, c); err != nil {
@@ -728,7 +728,7 @@ func connectorImportComfyUI(args map[string]any, sess *ToolSession) (string, err
 		return "", fmt.Errorf("name and base_url are required")
 	}
 	if _, exists := GetConnector(RootDB, name); exists {
-		return "", fmt.Errorf("a connector named %q already exists — pick another name or delete it first", name)
+		return "", fmt.Errorf("a connector named %q already exists: pick another name or delete it first", name)
 	}
 	cred := strings.TrimSpace(stringArg(args, "credential"))
 	spec, warns, err := NewComfyImageSpec(base, cred, stringArg(args, "workflow"), strings.TrimSpace(stringArg(args, "node_id")))
@@ -789,7 +789,7 @@ func connectorGet(args map[string]any, sess *ToolSession) (string, error) {
 	if c.Approved {
 		b.WriteString("  status:   approved (live)\n")
 	} else {
-		b.WriteString("  status:   UNAPPROVED — an admin must approve it in Admin > Connectors\n")
+		b.WriteString("  status:   UNAPPROVED, an admin must approve it in Admin > Connectors\n")
 	}
 	if c.Owner != "" {
 		fmt.Fprintf(&b, "  drafted by: %s\n", c.Owner)
@@ -854,7 +854,7 @@ func connectorExport(args map[string]any, sess *ToolSession) (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf(
-		"Exported %d connector(s) as a portable, secret-free pack (auth is referenced by credential name only — no secrets included). Save this JSON, or import it on another install with connector(action=\"import\"):\n\n```json\n%s\n```",
+		"Exported %d connector(s) as a portable, secret-free pack (auth is referenced by credential name only: no secrets included). Save this JSON, or import it on another install with connector(action=\"import\"):\n\n```json\n%s\n```",
 		len(pack.Connectors), string(raw)), nil
 }
 
@@ -865,7 +865,7 @@ func connectorImport(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	raw := strings.TrimSpace(stringArg(args, "pack"))
 	if raw == "" {
-		return "", fmt.Errorf("pack is required — paste the JSON produced by connector(action=\"export\")")
+		return "", fmt.Errorf("pack is required: paste the JSON produced by connector(action=\"export\")")
 	}
 	res, err := ImportConnectorPack(RootDB, []byte(raw), owner)
 	if err != nil {
@@ -876,7 +876,7 @@ func connectorImport(args map[string]any, sess *ToolSession) (string, error) {
 		b.WriteString("No connectors imported.")
 	} else {
 		fmt.Fprintf(&b, "Imported %d connector(s): %s.\n", len(res.Imported), strings.Join(res.Imported, ", "))
-		b.WriteString("remote_mcp / desktop_* land UNAPPROVED — an admin approves them in Admin > Connectors before their tools go live. rest_poll goes live if its credential is already registered.")
+		b.WriteString("remote_mcp / desktop_* land UNAPPROVED: an admin approves them in Admin > Connectors before their tools go live. rest_poll goes live if its credential is already registered.")
 	}
 	if len(res.Skipped) > 0 {
 		b.WriteString("\nSkipped:")

@@ -19,13 +19,13 @@ import (
 // article. It carries the writing conventions TechWriter's users relied on:
 // commands kept verbatim in code blocks, warnings on their own line, short
 // sentences, citations preserved.
-const articleModePrompt = "\n\nARTICLE MODE — the open document is an ARTICLE (one markdown body under a title), so the section tools are absent and read_article / write_article / draft_article stand in for them. " +
+const articleModePrompt = "\n\nARTICLE MODE: the open document is an ARTICLE (one markdown body under a title), so the section tools are absent and read_article / write_article / draft_article stand in for them. " +
 	"Write it as documentation for people who need to do something: numbered steps for procedures, bullets for lists, fenced code blocks for every command, with a line before each command saying what it does and what to expect. " +
 	"Warnings, prerequisites and notes go on their own line as a blockquote (> **WARNING:** …), never buried in a paragraph. " +
-	"Keep sentences short — one idea each; break anything past about 120 characters. " +
+	"Keep sentences short: one idea each; break anything past about 120 characters. " +
 	"Use ## headings for the main parts and ### for sub-parts; do not write a table of contents, the page has none. " +
 	"Preserve every citation ([1], [2], a ## Sources section) exactly as it appears. " +
-	"Before revising, read_article; when writing, send the complete body — the viewer shows what you write, not what you say."
+	"Before revising, read_article; when writing, send the complete body: the viewer shows what you write, not what you say."
 
 // articleTools swaps the guide kit's section tools for the article kit, keeping
 // every tool that is not about sections (research, knowledge, references,
@@ -57,13 +57,13 @@ func (T *Scribe) articleTools(udb Database, user, pinned string, guideKit []Agen
 	readArticle := AgentToolDef{
 		Tool: Tool{
 			Name:        "read_article",
-			Description: "Return the OPEN article's current markdown body. Call this before any revision so you work from what is there now — the user may have edited it directly since you last saw it. No arguments.",
+			Description: "Return the OPEN article's current markdown body. Call this before any revision so you work from what is there now: the user may have edited it directly since you last saw it. No arguments.",
 			Parameters:  map[string]ToolParam{},
 		},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			g, _, _, ok := openGuide()
 			if !ok {
-				return "", fmt.Errorf("no article is open — ask the user to select or create one first")
+				return "", fmt.Errorf("no article is open: ask the user to select or create one first")
 			}
 			body := strings.TrimSpace(g.body())
 			if body == "" {
@@ -76,9 +76,9 @@ func (T *Scribe) articleTools(udb Database, user, pinned string, guideKit []Agen
 	writeArticle := AgentToolDef{
 		Tool: Tool{
 			Name:        "write_article",
-			Description: "Replace the OPEN article's whole body with new markdown. Send the COMPLETE article every time — this is a replacement, not an append — keeping every command, fact and citation the user gave unless asked to change it. The viewer updates and the previous body is kept in History.",
+			Description: "Replace the OPEN article's whole body with new markdown. Send the COMPLETE article every time (this is a replacement, not an append), keeping every command, fact and citation the user gave unless asked to change it. The viewer updates and the previous body is kept in History.",
 			Parameters: map[string]ToolParam{
-				"markdown": {Type: "string", Description: "The full article body as markdown (## headings, fenced code, lists). No top-level # title — the title is separate."},
+				"markdown": {Type: "string", Description: "The full article body as markdown (## headings, fenced code, lists). No top-level # title: the title is separate."},
 			},
 			Required: []string{"markdown"},
 		},
@@ -86,11 +86,11 @@ func (T *Scribe) articleTools(udb Database, user, pinned string, guideKit []Agen
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
 			md := strings.TrimSpace(fmt.Sprint(args["markdown"]))
 			if md == "" {
-				return "", fmt.Errorf("markdown is required — pass the article body")
+				return "", fmt.Errorf("markdown is required: pass the article body")
 			}
 			g, ownerUDB, _, ok := openGuide()
 			if !ok {
-				return "", fmt.Errorf("no article is open — ask the user to select or create one first")
+				return "", fmt.Errorf("no article is open: ask the user to select or create one first")
 			}
 			if cleaned, changed := sanitizeGuideArtifacts(md); changed {
 				md = cleaned
@@ -104,7 +104,7 @@ func (T *Scribe) articleTools(udb Database, user, pinned string, guideKit []Agen
 	draftArticle := AgentToolDef{
 		Tool: Tool{
 			Name:        "draft_article",
-			Description: "Write the OPEN article GROUNDED in its own backing. Deterministically gathers material from the article's knowledge collections AND every attached Source on the topic, then writes the whole body from that material and commits it — you do not gather first, it does. Give it a brief of what the article should cover. Errors if nothing attached has anything on the topic — then use `research` (web) or write it yourself with write_article.",
+			Description: "Write the OPEN article GROUNDED in its own backing. Deterministically gathers material from the article's knowledge collections AND every attached Source on the topic, then writes the whole body from that material and commits it: you do not gather first, it does. Give it a brief of what the article should cover. Errors if nothing attached has anything on the topic, then use `research` (web) or write it yourself with write_article.",
 			Parameters: map[string]ToolParam{
 				"instructions": {Type: "string", Description: "What the article should cover: the angle, scope, audience, and any specifics to include."},
 			},
@@ -118,14 +118,14 @@ func (T *Scribe) articleTools(udb Database, user, pinned string, guideKit []Agen
 			}
 			g, ownerUDB, ownerUser, ok := openGuide()
 			if !ok {
-				return "", fmt.Errorf("no article is open — ask the user to select or create one first")
+				return "", fmt.Errorf("no article is open: ask the user to select or create one first")
 			}
-			grounding, found := gatherGroundingFor(context.Background(), ownerUser, g, g.Title+" — "+instr)
+			grounding, found := gatherGroundingFor(context.Background(), ownerUser, g, g.Title+" · "+instr)
 			if !found {
-				return "", fmt.Errorf("no grounding found in this article's knowledge collections or attached Sources — attach a Source/collection with anything on this topic, use the `research` tool for a public/web topic, or write it yourself with write_article")
+				return "", fmt.Errorf("no grounding found in this article's knowledge collections or attached Sources: attach a Source/collection with anything on this topic, use the `research` tool for a public/web topic, or write it yourself with write_article")
 			}
-			sys := fmt.Sprintf("You are the Guide Author writing an ARTICLE titled %q. Write the whole body as clean markdown — ## headings, numbered steps for procedures, fenced code for every command, warnings as their own blockquote line. Do NOT write the title as a heading. Ground every specific (commands, values, names, versions, paths) STRICTLY in the provided material; do not invent anything it doesn't contain. If the material is thin, write only what it supports. Output ONLY the markdown body, nothing else.", g.Title) + "\n" + BannedWordsRule
-			userMsg := fmt.Sprintf("What to cover:\n%s\n\nGrounding material gathered from this article's knowledge collections and attached Sources — write from THIS and nothing else:\n\n%s", instr, grounding)
+			sys := fmt.Sprintf("You are the Guide Author writing an ARTICLE titled %q. Write the whole body as clean markdown: ## headings, numbered steps for procedures, fenced code for every command, warnings as their own blockquote line. Do NOT write the title as a heading. Ground every specific (commands, values, names, versions, paths) STRICTLY in the provided material; do not invent anything it doesn't contain. If the material is thin, write only what it supports. Output ONLY the markdown body, nothing else.", g.Title) + "\n" + BannedWordsRule
+			userMsg := fmt.Sprintf("What to cover:\n%s\n\nGrounding material gathered from this article's knowledge collections and attached Sources, write from THIS and nothing else:\n\n%s", instr, grounding)
 			// A Private article stays off the wire, this completion included.
 			chat := T.LeadChat
 			if g.Private {
@@ -158,7 +158,7 @@ func (T *Scribe) articleTools(udb Database, user, pinned string, guideKit []Agen
 func generateHeaderImage(ctx context.Context, title string) (string, error) {
 	prompt := `A wide banner-style header image evoking the topic: "` + strings.TrimSpace(title) + `". ` +
 		"Visual style: clean, professional, editorial / magazine quality, suitable as a top-of-article banner. " +
-		"Wide aspect ratio (around 3:1). Do NOT render any text, words, letters, captions, or typography in the image — purely visual."
+		"Wide aspect ratio (around 3:1). Do NOT render any text, words, letters, captions, or typography in the image: purely visual."
 	result, err := GenerateImageLandscape(ctx, "", prompt)
 	if err != nil {
 		return "", err

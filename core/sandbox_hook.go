@@ -188,7 +188,7 @@ func hookSocketPath(workspaceDir, token string) (string, error) {
 	p := filepath.Join(workspaceDir, ".gohort_hook_"+name)
 	if len(p) > maxUnixSocketPath {
 		return "", fmt.Errorf("no usable socket path: %q is %d bytes and a unix socket cannot exceed %d. "+
-			"The short path under %s could not be created either — check that the temp dir is writable",
+			"The short path under %s could not be created either: check that the temp dir is writable",
 			p, len(p), maxUnixSocketPath, os.TempDir())
 	}
 	return p, nil
@@ -305,8 +305,8 @@ func (h *SandboxHook) handleConn(conn net.Conn) {
 	// network so they stay available (reading a stored credential is
 	// not an outbound call; it's a DB read).
 	if (req.Method == "fetch" || req.Method == "fetch_via" || req.Method == "browse_page") && h.Sess != nil && !h.Sess.NetworkAllowed() {
-		Log("[hook/%s] DENIED — session network blocked (privacy mode)", req.Method)
-		writeHookError(conn, fmt.Sprintf("hook %q refused — session network blocked (privacy mode is on)", req.Method))
+		Log("[hook/%s] DENIED: session network blocked (privacy mode)", req.Method)
+		writeHookError(conn, fmt.Sprintf("hook %q refused: session network blocked (privacy mode is on)", req.Method))
 		return
 	}
 	dispatchStart := time.Now()
@@ -330,7 +330,7 @@ func (h *SandboxHook) handleConn(conn net.Conn) {
 	// for a workload pattern; if this fires repeatedly for a method,
 	// the deadline may need raising.
 	if elapsed := time.Since(dispatchStart); elapsed > (methodDeadline*8)/10 {
-		Log("[hook] SLOW handler method=%s elapsed=%s budget=%s (>80%% used — operation near deadline)",
+		Log("[hook] SLOW handler method=%s elapsed=%s budget=%s (>80%% used: operation near deadline)",
 			req.Method, elapsed.Round(time.Millisecond), methodDeadline)
 	}
 }
@@ -460,7 +460,7 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 	for i := 0; i < len(rawURL); i++ {
 		c := rawURL[i]
 		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
-			writeHookError(conn, fmt.Sprintf("fetch refused: URL contains unescaped whitespace at position %d (%q) — likely an unencoded f-string param. Wrap user-supplied values with urllib.parse.quote() before stitching them into the URL: from urllib.parse import quote; url = f\"...?q={quote(city)}\"", i, rawURL))
+			writeHookError(conn, fmt.Sprintf("fetch refused: URL contains unescaped whitespace at position %d (%q), likely an unencoded f-string param. Wrap user-supplied values with urllib.parse.quote() before stitching them into the URL: from urllib.parse import quote; url = f\"...?q={quote(city)}\"", i, rawURL))
 			return
 		}
 	}
@@ -535,7 +535,7 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 	// .internal target is a genuine SSRF attempt and is refused, same rule as
 	// the LLM-callable fetch_url tool.
 	if host := parsed.Hostname(); host != "" && IsNonPublicHost(host) {
-		writeHookError(conn, fmt.Sprintf("fetch refused: refusing to reach non-public host %s — same rule as the LLM-callable fetch_url tool", host))
+		writeHookError(conn, fmt.Sprintf("fetch refused: refusing to reach non-public host %s, same rule as the LLM-callable fetch_url tool", host))
 		return
 	}
 
@@ -559,7 +559,7 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 		// JSON (often 50-100KB for 25 posts).
 		out, runErr := BrowserFetchFunc(rawURL, 10*1024*1024)
 		if runErr != nil {
-			Log("[hook/fetch] browse_page auto-route failed for %s: %v (elapsed=%s) — falling through to plain HTTP", rawURL, runErr, time.Since(callStart).Round(time.Millisecond))
+			Log("[hook/fetch] browse_page auto-route failed for %s: %v (elapsed=%s), falling through to plain HTTP", rawURL, runErr, time.Since(callStart).Round(time.Millisecond))
 		} else {
 			Log("[hook/fetch] browse_page auto-route done elapsed=%s chars=%d", time.Since(callStart).Round(time.Millisecond), len(out))
 			writeHookResult(conn, map[string]interface{}{
@@ -662,7 +662,7 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 			wsDir = strings.TrimSpace(h.Sess.WorkspaceDir)
 		}
 		if wsDir == "" {
-			writeHookError(conn, "save_to requires a workspace — call from a tool that has WorkspaceDir set")
+			writeHookError(conn, "save_to requires a workspace: call from a tool that has WorkspaceDir set")
 			return
 		}
 		// Resolve save_to into a workspace path. Accept either:
@@ -787,7 +787,7 @@ func (h *SandboxHook) handleBrowsePage(conn net.Conn, params map[string]interfac
 		return
 	}
 	if err := RefuseNonPublicHost(rawURL); err != nil {
-		writeHookError(conn, "browse_page refused: "+err.Error()+" — same rule as the LLM-callable browse_page tool")
+		writeHookError(conn, "browse_page refused: "+err.Error()+", same rule as the LLM-callable browse_page tool")
 		return
 	}
 	// Same whitespace guard as fetch — almost always an unencoded
@@ -796,7 +796,7 @@ func (h *SandboxHook) handleBrowsePage(conn net.Conn, params map[string]interfac
 	for i := 0; i < len(rawURL); i++ {
 		c := rawURL[i]
 		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
-			writeHookError(conn, fmt.Sprintf("browse_page refused: URL contains unescaped whitespace at position %d (%q) — likely an unencoded f-string param. Wrap user-supplied values with urllib.parse.quote() before stitching them into the URL.", i, rawURL))
+			writeHookError(conn, fmt.Sprintf("browse_page refused: URL contains unescaped whitespace at position %d (%q), likely an unencoded f-string param. Wrap user-supplied values with urllib.parse.quote() before stitching them into the URL.", i, rawURL))
 			return
 		}
 	}
@@ -876,7 +876,7 @@ func (h *SandboxHook) handleSecret(conn net.Conn, params map[string]interface{})
 	}
 	if !h.grantedSecret(name) {
 		Log("[hook/secret] DENIED %q (not in capabilities=%v)", name, h.Capabilities)
-		writeHookError(conn, fmt.Sprintf("secret %q not granted to this tool — add \"secret:%s\" to hook_capabilities", name, name))
+		writeHookError(conn, fmt.Sprintf("secret %q not granted to this tool, add \"secret:%s\" to hook_capabilities", name, name))
 		return
 	}
 	sec := Secure()
@@ -889,7 +889,7 @@ func (h *SandboxHook) handleSecret(conn net.Conn, params map[string]interface{})
 	}
 	cred, ok := sec.Resolve(name, owner)
 	if !ok {
-		writeHookError(conn, fmt.Sprintf("no credential named %q registered — register it via Extensions > API credentials (or Admin > APIs) first", name))
+		writeHookError(conn, fmt.Sprintf("no credential named %q registered: register it via Extensions > API credentials (or Admin > APIs) first", name))
 		return
 	}
 	if cred.Secured {
@@ -898,12 +898,12 @@ func (h *SandboxHook) handleSecret(conn net.Conn, params map[string]interface{})
 		// dispatch only: use fetch_via, which applies auth on the server and
 		// returns just the response. (A tool that used secret:<name> before the
 		// credential was secured must be reworked to fetch_via to keep working.)
-		Log("[hook/secret] DENIED %q — credential is SECURED (fetch_via-only)", name)
-		writeHookError(conn, fmt.Sprintf("credential %q is SECURED — the raw secret is never returned. Use fetch_via:%s (server-side dispatch: auth is applied on the server and the script never sees the secret) instead of secret:%s", name, name, name))
+		Log("[hook/secret] DENIED %q: credential is SECURED (fetch_via-only)", name)
+		writeHookError(conn, fmt.Sprintf("credential %q is SECURED: the raw secret is never returned. Use fetch_via:%s (server-side dispatch: auth is applied on the server and the script never sees the secret) instead of secret:%s", name, name, name))
 		return
 	}
 	if cred.Type == SecureCredNone {
-		writeHookError(conn, fmt.Sprintf("credential %q is no_auth — it has no stored secret to return", name))
+		writeHookError(conn, fmt.Sprintf("credential %q is no_auth: it has no stored secret to return", name))
 		return
 	}
 	secret, ok := sec.loadSecret(credStoreKey(cred.Owner, cred.Name))
@@ -943,7 +943,7 @@ func (h *SandboxHook) handleFetchVia(conn net.Conn, params map[string]interface{
 	}
 	if !h.grantedFetchVia(credName) {
 		Log("[hook/fetch_via] DENIED credential=%q (not in capabilities=%v)", credName, h.Capabilities)
-		writeHookError(conn, fmt.Sprintf("fetch_via credential %q not granted to this tool — add \"fetch_via:%s\" to hook_capabilities", credName, credName))
+		writeHookError(conn, fmt.Sprintf("fetch_via credential %q not granted to this tool, add \"fetch_via:%s\" to hook_capabilities", credName, credName))
 		return
 	}
 	// Secured-credential enforcement: a secured cred is reachable only by the users
@@ -1053,14 +1053,14 @@ func IsNonPublicHost(host string) bool {
 func writeHookResult(conn net.Conn, result interface{}) {
 	b, _ := json.Marshal(map[string]interface{}{"result": result})
 	if _, err := conn.Write(append(b, '\n')); err != nil {
-		Log("[hook] write result failed: %v (response_bytes=%d) — script side may have hung or disconnected", err, len(b)+1)
+		Log("[hook] write result failed: %v (response_bytes=%d), script side may have hung or disconnected", err, len(b)+1)
 	}
 }
 
 func writeHookError(conn net.Conn, msg string) {
 	b, _ := json.Marshal(map[string]string{"error": msg})
 	if _, err := conn.Write(append(b, '\n')); err != nil {
-		Log("[hook] write error failed: %v (orig_error=%q) — script side may have hung or disconnected", err, msg)
+		Log("[hook] write error failed: %v (orig_error=%q), script side may have hung or disconnected", err, msg)
 	}
 }
 
@@ -1350,7 +1350,7 @@ func EnsureGohortLibDir() string {
 			gohortLibUnavailable("cannot write %s (%v)", path, err)
 			return ""
 		}
-		Debug("[hook/helpers] deployed gohort package (%dB) at %s (host) — mounted RO at %s (sandbox)", len(SandboxHookPythonShim), path, SandboxGohortLibMountPath)
+		Debug("[hook/helpers] deployed gohort package (%dB) at %s (host): mounted RO at %s (sandbox)", len(SandboxHookPythonShim), path, SandboxGohortLibMountPath)
 	}
 	ensureGohortShims(libBase)
 	gohortLibDirPath = libBase
@@ -1400,11 +1400,11 @@ func ensureGohortShims(libBase string) {
 // All three shapes resolve against this one file. There is no
 // gohort_hook.py — old back-compat was retired since the small
 // number of approved tools using it will be re-authored.
-const SandboxHookPythonShim = `# gohort.py — script-side helper for sandboxed tool dispatches.
+const SandboxHookPythonShim = `# gohort.py: script-side helper for sandboxed tool dispatches.
 #
 # Provides a narrow callback channel back to gohort for capabilities
 # the tool was granted (fetch, log, secret, fetch_via). The sandbox
-# runs with --unshare-net by default — raw HTTP from urllib / curl
+# runs with --unshare-net by default: raw HTTP from urllib / curl
 # fails. Use this module's fetch() to do HTTP through gohort instead.
 #
 # Every reasonable Python import shape works:
@@ -1418,12 +1418,12 @@ const SandboxHookPythonShim = `# gohort.py — script-side helper for sandboxed 
 #   import gohort                                     # module dot access
 #   data = gohort.fetch_url("https://api.example.com/x")
 #
-# fetch is a back-compat alias for fetch_url — older authored tools
+# fetch is a back-compat alias for fetch_url: older authored tools
 # still work; new scripts should use fetch_url to match the
 # LLM-callable tool of the same name.
 #
 # If GOHORT_HOOK_PATH isn't set in env, the tool wasn't granted hook
-# capabilities — calls raise HookError with a clear remediation hint.
+# capabilities: calls raise HookError with a clear remediation hint.
 
 import json
 import os
@@ -1441,7 +1441,7 @@ class _Gohort:
     def _call(self, method, params=None):
         if not self._path:
             raise HookError(
-                "GOHORT_HOOK_PATH not set — this tool was not granted hook "
+                "GOHORT_HOOK_PATH not set: this tool was not granted hook "
                 "capabilities. Re-author the tool with "
                 "hook_capabilities=[\"fetch\", ...] to enable."
             )
@@ -1475,12 +1475,12 @@ class _Gohort:
             raise HookError(resp["error"])
         if "result" not in resp:
             # A response carrying neither key used to return None, and None then
-            # failed somewhere else entirely — json.loads(None) raises a
+            # failed somewhere else entirely: json.loads(None) raises a
             # TypeError about NoneType with nothing pointing back here. Fail at
             # the call instead, naming the method.
             raise HookError(
                 method + ": the host returned no result and no error. This is a "
-                "framework fault, not a problem with your script — report it "
+                "framework fault, not a problem with your script: report it "
                 "rather than working around it."
             )
         return resp["result"]
@@ -1497,7 +1497,7 @@ class _Gohort:
         save_to: workspace-relative path OR an absolute path inside the
         workspace. When set, the response body streams straight to that
         file instead of being returned as a string. Right shape for
-        binary downloads (images, PDFs, audio, video, archives) —
+        binary downloads (images, PDFs, audio, video, archives)
         strings mangle binary content. The returned dict's "body"
         becomes a short metadata line; "path" and "bytes" carry the
         saved (always workspace-relative) location and size.
@@ -1524,7 +1524,7 @@ class _Gohort:
             "save_to": save_to or "",
         })
 
-    # fetch — back-compat alias for fetch_url. Older tools authored
+    # fetch: back-compat alias for fetch_url. Older tools authored
     # before the rename still work. New scripts should use fetch_url
     # so the name matches the LLM-callable tool of the same name.
     def fetch(self, url, method="GET", headers=None, body=None, timeout=30):
@@ -1551,7 +1551,7 @@ class _Gohort:
         request_headers is accepted as an alias for headers (the name
         api-mode tools use), so either spelling works.
 
-        Returns {status, status_line, body} — status is the NUMERIC code,
+        Returns {status, status_line, body}: status is the NUMERIC code,
         the same shape fetch_url returns, so the standard guard works:
 
             r = fetch_via("apple_caldav", url, method="PROPFIND",
@@ -1572,13 +1572,13 @@ class _Gohort:
         })
 
     def browse_page(self, url):
-        """Load url in a real headless browser (Chromium) — JavaScript
-        executed, cookies handled — and return dict {status, headers,
+        """Load url in a real headless browser (Chromium): JavaScript
+        executed, cookies handled, and return dict {status, headers,
         body}, same shape as fetch_url(). body is the rendered page's
         readable text (up to ~10000 chars). Tool must declare
         "browse_page" in hook_capabilities.
 
-        Same return shape and same SSRF guards as fetch_url() — only
+        Same return shape and same SSRF guards as fetch_url(): only
         the underlying fetch engine differs (Chromium vs raw HTTP).
         Standard guard:
 
@@ -1587,7 +1587,7 @@ class _Gohort:
             text = result["body"]
 
         Use directly when you KNOW the page needs JS (Reddit, Twitter/X,
-        SPA news) — gohort.fetch_url already auto-routes these hosts
+        SPA news): gohort.fetch_url already auto-routes these hosts
         through browse_page transparently, so you usually don't need to
         reach for browse_page yourself. Slow (5-20s) and heavier than
         fetch_url, so prefer fetch_url when the page might be static."""
@@ -1597,7 +1597,7 @@ class _Gohort:
 gohort = _Gohort()
 
 
-# Module-level function aliases — same operations, function-call style.
+# Module-level function aliases: same operations, function-call style.
 # Every method on the singleton has a matching free function here so
 # the "from gohort import X" import shape works for any X the
 # singleton exposes.

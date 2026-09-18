@@ -105,7 +105,7 @@ func set_agent_llm(agent Agent) {
 		// thing appearing broken. This was a Debug line, which is off by
 		// default, so the one fact that explains everything else was the one
 		// fact nobody could see.
-		Warn("[llm] worker LLM (%s/%s) could not be initialized: %s — this deployment has NO working model until it is fixed (Admin → LLMs).",
+		Warn("[llm] worker LLM (%s/%s) could not be initialized: %s, this deployment has NO working model until it is fixed (Admin → LLMs).",
 			cfg.Provider, cfg.Model, err)
 		return
 	}
@@ -133,7 +133,7 @@ func set_agent_llm(agent Agent) {
 			// Credentials are the usual cause and are environment-dependent (an
 			// expired AWS SSO session, a profile the service user cannot read),
 			// so this can start failing with no config change at all.
-			Warn("[llm] lead LLM (%s/%s) could not be initialized: %s — every escalation will run on the WORKER until this is fixed (Admin → LLMs).",
+			Warn("[llm] lead LLM (%s/%s) could not be initialized: %s, every escalation will run on the WORKER until this is fixed (Admin → LLMs).",
 				lead_cfg.Provider, lead_cfg.Model, err)
 			SetLeadInitError(lead_cfg.Provider, lead_cfg.Model, err)
 		} else {

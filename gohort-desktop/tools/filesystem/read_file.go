@@ -50,10 +50,10 @@ func (t *read_file_tool) Name() string {
 
 func (t *read_file_tool) Desc() string {
 	return "Read a text file from the host filesystem of the connected " +
-		"gohort-desktop client. Gated by the operator's allowlist — paths " +
+		"gohort-desktop client. Gated by the operator's allowlist: paths " +
 		"outside it are refused. Symlink-safe (resolves the real path " +
 		"before checking). Files larger than 10MiB return truncated " +
-		"content with a [TRUNCATED — file is N bytes] marker. Use for " +
+		"content with a [TRUNCATED: file is N bytes] marker. Use for " +
 		"reading log files, configuration files, recent output captured " +
 		"by other tools, anything the operator has authorized the " +
 		"desktop to expose. Returns the file contents as a string. " +
@@ -91,7 +91,7 @@ func (t *read_file_tool) Handler() core.ToolHandler {
 			abs = real
 		}
 		if !core.PathAllowedOrConsent(abs) {
-			return "", fmt.Errorf("filesystem_read_local_file refused: %s is not under an allowed read root (allowed: %v) — operator can add a root via the Account → Add Allowed Folder… menu in gohort-desktop", abs, core.AllowedReadRoots())
+			return "", fmt.Errorf("filesystem_read_local_file refused: %s is not under an allowed read root (allowed: %v), operator can add a root via the Account → Add Allowed Folder… menu in gohort-desktop", abs, core.AllowedReadRoots())
 		}
 		f, err := os.Open(abs)
 		if err != nil {
@@ -103,7 +103,7 @@ func (t *read_file_tool) Handler() core.ToolHandler {
 			return "", fmt.Errorf("filesystem_read_local_file: stat: %w", err)
 		}
 		if info.IsDir() {
-			return "", fmt.Errorf("filesystem_read_local_file: %s is a directory, not a file — use filesystem_list_directory for directories", abs)
+			return "", fmt.Errorf("filesystem_read_local_file: %s is a directory, not a file, use filesystem_list_directory for directories", abs)
 		}
 		// Hard-stop for files larger than the inline cap. Truncating
 		// silently and returning a partial body is the worst of both
@@ -118,7 +118,7 @@ func (t *read_file_tool) Handler() core.ToolHandler {
 				"  filesystem_tail_file(path=%q, lines=N)               → last N lines\n"+
 				"  filesystem_read_file_range(path=%q, start=A, end=B)  → lines A–B\n"+
 				"  filesystem_grep_file(path=%q, pattern=\"…\")           → matching lines\n"+
-				"Pick the one matching what you need — the whole file never has to cross the WS bridge.",
+				"Pick the one matching what you need: the whole file never has to cross the WS bridge.",
 				abs, info.Size(), MAX_READ_BYTES, abs, abs, abs, abs, abs)
 		}
 		buf, err := io.ReadAll(io.LimitReader(f, MAX_READ_BYTES))

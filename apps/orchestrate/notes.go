@@ -165,7 +165,7 @@ func (t *chatTurn) updateNotesToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "update_notes",
-			Description: fmt.Sprintf("REWRITE your always-in-prompt \"Working notes\" block — a compact scratchpad of the CURRENT state of your work (what you're mid-way through, the shape of the task, transient context). This REPLACES the whole block; it does NOT append. Re-state the complete current note each time, trimming what's now stale. Use it for running state that changes turn to turn (\"drafting section 3 of the guide\", \"user wants the terse version\", \"waiting on the export to finish\"). Do NOT use it for durable rules or preferences — those go in store_fact — and NOT to record a tool/API bug (that gets fixed in the tool, not remembered). NEVER park a tool call here to make later (\"pending task: some_tool with x=y\"): a note cannot call a tool, and the invocation outlives the tool — next session its schema may not be loaded, and a remembered call you have no way to make becomes an improvised workaround. Record the GOAL (\"user wants a news roundup\"), not the call.\n\nPass `section` to update ONE named part and leave the rest alone — your own register, named by you, created the first time you write it. Use it when only that part changed; rewrite the whole block (text alone) when the shape of the work changes. Keep the WHOLE block under %d characters; sections share that budget rather than adding to it, so if it won't fit, COMPRESS — the limit exists to force a summary, not a log. Pass empty text to clear the block, or empty text WITH a section to remove just that section.", OperatingNotesCap),
+			Description: fmt.Sprintf("REWRITE your always-in-prompt \"Working notes\" block: a compact scratchpad of the CURRENT state of your work (what you're mid-way through, the shape of the task, transient context). This REPLACES the whole block; it does NOT append. Re-state the complete current note each time, trimming what's now stale. Use it for running state that changes turn to turn (\"drafting section 3 of the guide\", \"user wants the terse version\", \"waiting on the export to finish\"). Do NOT use it for durable rules or preferences (those go in store_fact), and NOT to record a tool/API bug (that gets fixed in the tool, not remembered). NEVER park a tool call here to make later (\"pending task: some_tool with x=y\"): a note cannot call a tool, and the invocation outlives the tool, next session its schema may not be loaded, and a remembered call you have no way to make becomes an improvised workaround. Record the GOAL (\"user wants a news roundup\"), not the call.\n\nPass `section` to update ONE named part and leave the rest alone: your own register, named by you, created the first time you write it. Use it when only that part changed; rewrite the whole block (text alone) when the shape of the work changes. Keep the WHOLE block under %d characters; sections share that budget rather than adding to it, so if it won't fit, COMPRESS: the limit exists to force a summary, not a log. Pass empty text to clear the block, or empty text WITH a section to remove just that section.", OperatingNotesCap),
 			Parameters: map[string]ToolParam{
 				"text": {
 					Type:        "string",
@@ -173,7 +173,7 @@ func (t *chatTurn) updateNotesToolDef() AgentToolDef {
 				},
 				"section": {
 					Type:        "string",
-					Description: "Optional. The name of the part to update — a short label you choose (\"in flight\", \"deployment quirks\"). Creates it the first time, replaces it in place afterwards, and leaves every other part of the block untouched. Matching ignores case and spacing, so write the same register the same way and it lands in the same place. Omit to rewrite the whole block.",
+					Description: "Optional. The name of the part to update: a short label you choose (\"in flight\", \"deployment quirks\"). Creates it the first time, replaces it in place afterwards, and leaves every other part of the block untouched. Matching ignores case and spacing, so write the same register the same way and it lands in the same place. Omit to rewrite the whole block.",
 				},
 			},
 			Required: []string{"text"},
@@ -200,10 +200,10 @@ func (t *chatTurn) updateNotesToolDef() AgentToolDef {
 					if advice := notes.OverCapAdvice(next); advice != "" {
 						msg += ". " + advice
 					}
-					return "", fmt.Errorf("%s Trim one and retry — this block injects into every turn", msg)
+					return "", fmt.Errorf("%s Trim one and retry: this block injects into every turn", msg)
 				}
 				if _, over := SaveOperatingNotes(t.udb, ns, next); over {
-					return "", fmt.Errorf("over the %d character limit — trim and retry", OperatingNotesCap)
+					return "", fmt.Errorf("over the %d character limit: trim and retry", OperatingNotesCap)
 				}
 				if text == "" {
 					return fmt.Sprintf("Removed the %q section from your Working notes. The rest of the block is unchanged.", section), nil
@@ -212,16 +212,16 @@ func (t *chatTurn) updateNotesToolDef() AgentToolDef {
 					section, len([]rune(next)), OperatingNotesCap), nil
 			}
 			if n := len([]rune(text)); n > OperatingNotesCap {
-				return "", fmt.Errorf("notes are %d characters, over the %d limit — trim or summarize and try again (this block injects into every turn, so it must stay compact)", n, OperatingNotesCap)
+				return "", fmt.Errorf("notes are %d characters, over the %d limit: trim or summarize and try again (this block injects into every turn, so it must stay compact)", n, OperatingNotesCap)
 			}
 			_, over := SaveOperatingNotes(t.udb, ns, text)
 			if over {
-				return "", fmt.Errorf("over the %d character limit — trim and retry", OperatingNotesCap)
+				return "", fmt.Errorf("over the %d character limit: trim and retry", OperatingNotesCap)
 			}
 			if text == "" {
 				return "Working notes cleared.", nil
 			}
-			return "Working notes updated — this block now appears in full at the top of every future turn.", nil
+			return "Working notes updated: this block now appears in full at the top of every future turn.", nil
 		},
 	}
 }
