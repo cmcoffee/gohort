@@ -341,3 +341,28 @@ func TestTheEditorWarnsAboutAProvenanceClause(t *testing.T) {
 		t.Error("the warning does not offer the deterministic alternative")
 	}
 }
+
+// TestTheEchoWarningFiresOnlyOnAnEmptyCarveOut pins the narrowing that cost a
+// second evening. The first version warned whenever the condition shared a word
+// with its rule, which is every carve-out that names the rule's subject, so the
+// one warning the editor has fired on correct input. What it must catch is a
+// condition that adds NOTHING of its own: under a rule about the same subject
+// that is not a carve-out, it is a repeal.
+func TestTheEchoWarningFiresOnlyOnAnEmptyCarveOut(t *testing.T) {
+	src, err := os.ReadFile("assets/web_assets.html")
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	page := string(src)
+	// The subset test: a word of the exception's own is what silences it.
+	if !strings.Contains(page, "if (ruleWords.indexOf(words[k]) < 0) { adds = true; break; }") {
+		t.Error("the detector no longer asks whether the condition adds words of its own")
+	}
+	if !strings.Contains(page, "if (!adds) { return true; }") {
+		t.Error("the detector does not warn on the condition that adds nothing")
+	}
+	// The old any-word-shared form must not come back.
+	if strings.Contains(page, "if (ruleWords.indexOf(words[k]) >= 0) { return true; }") {
+		t.Error("the detector is back to warning on any shared word, which fires on correct carve-outs")
+	}
+}

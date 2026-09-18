@@ -4907,6 +4907,23 @@
               'in his own words', 'in her own words', 'his own voice', 'her own voice',
             ].some(function(p) { return t.indexOf(p) >= 0; });
           }
+          // gExcEchoesRule reports whether a condition says nothing its linked
+          // rule does not already say.
+          //
+          // The trap is NOT shared wording, which is what this used to look
+          // for. A carve-out about a rule's subject has to name that subject,
+          // so "shares a word with the rule" fires on every exception worth
+          // writing: it warned on "when quoting a document Craig himself
+          // wrote" as loudly as on the real failure, and a warning that fires
+          // on the correct thing is a nag the author learns to scroll past.
+          //
+          // What actually goes wrong is a condition that contributes no words
+          // of its OWN. There is then nothing in it naming a narrower case,
+          // so under a rule about the same subject it reads as "the rule does
+          // not concern this" and lifts the rule for everybody. A bare
+          // "Craig" under "nobody may refer to Craig as X" is the whole bug:
+          // it looks in the editor like a carve-out for one person and
+          // reaches the check as a repeal.
           function gExcEchoesRule(ex) {
             var name = gExcSlug(ex);
             if (!name) { return false; }
@@ -4920,9 +4937,11 @@
               }
               if (!linked) { continue; }
               var ruleWords = gExcWords(gBody(grules[i]));
+              var adds = false;
               for (var k = 0; k < words.length; k++) {
-                if (ruleWords.indexOf(words[k]) >= 0) { return true; }
+                if (ruleWords.indexOf(words[k]) < 0) { adds = true; break; }
               }
+              if (!adds) { return true; }
             }
             return false;
           }
@@ -5923,7 +5942,7 @@
                 } else if (gExcEchoesRule(ex)) {
                   var warn = document.createElement('div');
                   warn.style.cssText = 'color:var(--warning,#d29922);margin-top:0.15rem';
-                  warn.textContent = 'This repeats wording from a rule it is linked to, so the check may read it as "the rule does not apply here" rather than "this applies in one narrow case". If you meant "this PERSON may bypass it", do not write it here at all: add them to Authorized people and mark the rule itself as yielding to them, which gohort settles without showing any of it to the model.';
+                  warn.textContent = 'This says nothing the rule it is linked to does not already say, so there is no narrower case in it for the check to find. Read underneath that rule it lands as "the rule does not concern this" and lifts it for everyone. Give the condition its own words for WHEN it applies. If you meant "this PERSON may bypass it", do not write it here at all: add them to Authorized people and mark the rule itself as yielding to them, which gohort settles without showing any of it to the model.';
                   note.appendChild(warn);
                 }
                 excList.appendChild(note);
