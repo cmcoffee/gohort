@@ -952,8 +952,15 @@
           // queue has pending items (set in refreshChannelBadges).
           var pAccent = '#58a6ff';
           var plabel = el('span', {style: 'font-weight:700;overflow:hidden;text-overflow:ellipsis;min-width:0'}, [item.label || ('View ' + (i + 1))]);
-          badge = el('span', {class: 'ui-channel-badge', style: 'display:none;min-width:1.3rem;text-align:center;padding:0.05rem 0.45rem;border-radius:999px;font-size:0.7rem;font-weight:700;background:' + pAccent + ';color:#fff;flex:0 0 auto'}, ['']);
-          var ptitle = el('div', {style: 'display:flex;align-items:center;gap:0.4rem;white-space:nowrap;overflow:hidden'}, [plabel, badge]);
+          // margin-left:auto parks the count on the RIGHT EDGE of the row
+          // rather than letting it trail the label. Hugging the text means it
+          // sits in a different place for every label length, which reads as
+          // part of the title instead of as a count of what is inside; against
+          // the edge it lines up with the other rows and can be scanned down
+          // the column. The gap stays as a minimum for a label long enough to
+          // reach it.
+          badge = el('span', {class: 'ui-channel-badge', style: 'display:none;min-width:1.3rem;text-align:center;padding:0.05rem 0.45rem;border-radius:999px;font-size:0.7rem;font-weight:700;background:' + pAccent + ';color:#fff;flex:0 0 auto;margin-left:auto'}, ['']);
+          var ptitle = el('div', {style: 'display:flex;align-items:center;gap:0.4rem;white-space:nowrap;overflow:hidden;width:100%'}, [plabel, badge]);
           var pbody = [ptitle];
           if (item.subtitle) {
             pbody.push(el('div', {style: 'font-size:0.74rem;color:var(--text-mute, #999);margin-top:0.1rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap'}, [item.subtitle]));
