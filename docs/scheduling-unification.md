@@ -1,6 +1,6 @@
 # Scheduling unification (stage 3): what to merge, and what turned out not to be the merge
 
-Status: **slices 1 and 2 done; 3 next.** Stages 0–2 shipped in 0.4.15 (2026-06-11) and built
+Status: **complete.** Slices 1 and 2 built; 3 and 4 examined and deliberately not built — see below. Stages 0–2 shipped in 0.4.15 (2026-06-11) and built
 `core.ScheduledTrigger` — the `{when, gate, action, target}` record — plus the `schedule` tool on
 phantom. Stage 3 was deferred with a one-line brief: *fold standing agents and recurring tasks onto
 ScheduledTrigger, migrate the console, absorb create_event_monitor, add a reconciler, retire the old
@@ -94,17 +94,60 @@ Two things it did NOT do, both deliberate:
   Not worth it for one string. The monitor's own answer to the relink question now says so where it
   is asked.
 
-**Slice 3 — one cadence type.** `Cron`, `IntervalSeconds`, `StartAt`, and the random-pattern fields
-become a `Cadence` value with one `Next(after time.Time)`. Today three files answer "when next" and
-only one of them knows about windows. This is what makes a later record fold mechanical rather than
-a rewrite.
+**Slice 3 — one cadence type. NOT DOING, and the reason retires slice 4 with it.**
 
-**Slice 4 — the fold, if it is still worth it.** With 1–3 done, standing and recurring differ only
-in what they run and where the answer goes. That is a two-field difference and a shared record
-becomes obvious — or obviously unnecessary, which is an acceptable outcome. Decide with the code in
-front of you, not now.
+The plan said: `Cron`, `IntervalSeconds`, `StartAt` and the random-pattern fields become a `Cadence`
+with one `Next(after)`, because "three files answer when-next and only one knows about windows".
+Reading the three, that sentence is true and the conclusion does not follow. Here is all three:
 
-**Slice 5 — retire what is drained.** Only after 4, and only for a store nothing writes.
+```
+nextStandingRun  cron → NextCronOccurrence; else interval, floored by StartAt; else an error
+nextPoll         interval, floored by the deployment minimum
+computeNextFire  random → two planners; else interval, deferred into the daily window
+```
+
+The arithmetic they share is `from.Add(interval * time.Second)`. One line. Everything else is each
+surface's own policy — cron and a start date, a minimum poll interval, windows and random planning —
+and a `Cadence` holding all of it would carry about eleven fields where `Next()` switches on which
+subset applies. That is the same "every reader must know which third is theirs" that this document
+rejects for the record fold, rebuilt smaller. A type is not worth having to unify one `Add`.
+
+The other candidate looked better and turned out the same. All three arm identically — compute the
+cadence, let a pacing ask override it, consume the ask, schedule — and the override differs on each:
+
+| | an ask wins when | why |
+|---|---|---|
+| standing | it is in the future | the deployment minimum is the only floor a standing agent has |
+| monitor | it is later than the next poll | a snooze is by definition later; core must never poll faster than its owner set it to |
+| recurring | (stored as a string, applied in the app) | window and reap ceiling apply too |
+
+Three floors, three reasons, all three written down in `docs/objective-pacing.md` before I looked.
+Not drift.
+
+**Slice 4 — the fold — goes with it.** It was contingent on 1–3 leaving standing and recurring
+differing "only in what they run and where the answer goes". They do not: they also differ in what a
+cadence MEANS, and that is not a field, it is the behaviour. A shared record would have to carry all
+three cadence policies and a discriminator saying which applies, which is the union again.
+
+## Where this actually lands
+
+Stage 3 is finished, and the answer is that the merge was the wrong instinct.
+
+Three times this document went looking for divergence between these surfaces — two objective state
+machines, three parking readers, three cadences — and three times found deliberate, documented
+difference. The duplication that was real (the boilerplate around the objective judge, the parked-
+state reader) is gone, in slices 1 and 2. What is left apart is apart on purpose.
+
+The complaint that started this was "aren't these just different names for the same thing", and the
+honest answer is no — they are three things that were PRESENTED as though the reader should already
+know which was which. That was fixed at the surface in 0.6.838–0.6.839: one Scheduler page, one rail
+retired, section headings naming each kind. The confusion was real and the cure was cosmetic, which
+is an unsatisfying sentence and appears to be the true one.
+
+If something here is still worth doing later, it is not a merge. It is the vocabulary: monitors say
+`broken` where standing and recurring say `dependency` for the same state, and reconciling that
+costs a migration on stored `StopReason` values. Worth it only if a third surface ever needs to read
+all three, which nothing does today.
 
 ## What is NOT in scope
 
