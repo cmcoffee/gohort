@@ -1446,6 +1446,49 @@ func (pr *planRun) restoreWithheldLeadIn(question, shown string) {
 	pr.t.captureMidTurnBubble(held)
 }
 
+// guardAskText judges a question the agent is about to put to the user, and
+// reports whether it may be asked.
+//
+// The loop's own pre_output check never sees this text: ask_user carries it in
+// the tool's ARGUMENTS, so what reaches core is a tool call, and the exit funnel
+// judges Response.Content — which is empty on that path. The text is read here,
+// by the app, and delivered here, so this is where it has to be judged.
+//
+// No revision pass. The loop has already finished by the time a captured ask is
+// unpacked, so there is no round to revise in, and the choice is the same one
+// the round-cap door faces: ask it or decline. It declines.
+func (pr *planRun) guardAskText(q string) (string, bool) {
+	enforce := pr.t.guardrailEnforcer()
+	if enforce.Check == nil || strings.TrimSpace(q) == "" {
+		return q, true
+	}
+	if dec := enforce.Check(GuardHookPreOutput, q); !dec.Blocked {
+		return q, true
+	}
+	Log("[orchestrate.guardrail] agent=%s blocked a question the agent was about to ask — declining instead of asking", pr.t.agent.ID)
+	pr.t.turnDiag("guardrail-ask-blocked",
+		"The agent was about to ask the user a question that violated an enforced guardrail. It declined instead, and the turn is NOT waiting on an answer.")
+	// The same fresh-context writer the loop uses for a blocked reply, so a
+	// declined ask reads like every other decline rather than like a new voice.
+	if enforce.Reject != nil {
+		if reply := strings.TrimSpace(enforce.Reject("pre_output", lastUserText(pr.msgs))); reply != "" {
+			return reply, false
+		}
+	}
+	return "I can't help with that one.", false
+}
+
+// lastUserText is the most recent thing the person actually said, for the
+// rejection writer to answer.
+func lastUserText(msgs []ChatMessage) string {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role == "user" {
+			return msgs[i].Content
+		}
+	}
+	return ""
+}
+
 // emitCapturedAsBubble produces a new bubble for captured
 // control-tool text (respond_directly's text, ask_user's
 // question). Dedup keys on lastFinalizedText (the LAST shown
@@ -1843,6 +1886,22 @@ func (pr *planRun) finish() (steps []PlanStep, question, directReply string, err
 		return nil, fmt.Sprintf("(form with %d question%s)", len(pr.capturedFormSteps), plural(len(pr.capturedFormSteps))), "", nil
 	}
 	if pr.capturedQuest != "" {
+		// A QUESTION is output too, and until now it was the one kind that
+		// left unjudged. ask_user's text rides in the tool's arguments, so the
+		// loop's exit funnel cannot see it — core is handed a tool call, not a
+		// reply — and both branches below deliver it straight to the user.
+		//
+		// A rule is as easily broken by asking as by answering: "never mention
+		// salary" is violated by "should I tell them Dana earns 90k?" exactly
+		// as it is by saying so.
+		if decline, ok := pr.guardAskText(pr.capturedQuest); !ok {
+			// A blocked ask does NOT park the turn. AwaitingUserConfirm would
+			// leave the session waiting on an answer to a question nobody was
+			// shown, and the next turn's gated tools would unlock on the
+			// strength of a confirmation that never happened.
+			pr.emitBubble(decline)
+			return nil, "", decline, nil
+		}
 		// A bare question — no options — renders as PROSE, not a card. The card
 		// used to render always ("consistent affordance"), but with no buttons
 		// its only control is a textarea floating directly above the composer,

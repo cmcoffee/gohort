@@ -459,3 +459,57 @@ func TestPreInputDirectiveDoesNotInvalidateThePrefix(t *testing.T) {
 		t.Fatalf("the request must remain last; got %+v", last)
 	}
 }
+
+// A QUESTION is output too, and it was the one kind that left unjudged.
+//
+// ask_user carries its text in the tool's ARGUMENTS, so what reaches the loop
+// is a tool call and Response.Content is empty — the exit funnel has nothing to
+// look at. The text is read and delivered by the app, which is where it now
+// gets judged. A rule is as easily broken by asking as by answering: "never
+// mention salary" is violated by "should I tell them Dana earns 90k?" exactly
+// as it is by saying so.
+func TestAQuestionIsJudgedBeforeItIsAsked(t *testing.T) {
+	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never mention salary","status":"violate","reason":"the question names a wage"}]}`}
+	turn := guardTurn(t, stub, AgentRecord{
+		Name: "Wren", Guardrails: "never mention salary", GuardrailHooks: []string{"pre_output"},
+	})
+	pr := &planRun{t: turn, msgs: []ChatMessage{{Role: "user", Content: "sort out the payroll note"}}}
+
+	got, ok := pr.guardAskText("Should I tell them Dana earns 90k?")
+	if ok {
+		t.Fatal("a question that breaks a rule must not be asked")
+	}
+	if strings.Contains(got, "90k") {
+		t.Errorf("the blocked question was handed back as the decline: %q", got)
+	}
+	if strings.TrimSpace(got) == "" {
+		t.Error("a blocked ask still has to say something — silence reads as the turn dying")
+	}
+}
+
+// A question that breaks nothing is asked unchanged.
+func TestAnOrdinaryQuestionIsAskedUntouched(t *testing.T) {
+	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"never mention salary","status":"comply","reason":"nothing about pay"}]}`}
+	turn := guardTurn(t, stub, AgentRecord{
+		Name: "Wren", Guardrails: "never mention salary", GuardrailHooks: []string{"pre_output"},
+	})
+	pr := &planRun{t: turn}
+	const q = "Which of these two dates suits you?"
+	got, ok := pr.guardAskText(q)
+	if !ok || got != q {
+		t.Errorf("an innocent question must pass through unchanged: ok=%v got=%q", ok, got)
+	}
+}
+
+// An agent with no rules pays nothing — the enforcer is inert and the question
+// is not sent to a warden that has nothing to judge it against.
+func TestAnAgentWithoutRulesAsksFreely(t *testing.T) {
+	turn := guardTurn(t, &wardenStubLLM{}, AgentRecord{Name: "X"})
+	pr := &planRun{t: turn}
+	if got, ok := pr.guardAskText("anything at all"); !ok || got != "anything at all" {
+		t.Errorf("no rules, no check: ok=%v got=%q", ok, got)
+	}
+	if seen := (&wardenStubLLM{}).seen(); seen != "" {
+		t.Errorf("a warden was consulted for an agent with no rules: %q", seen)
+	}
+}
