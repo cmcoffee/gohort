@@ -1,12 +1,14 @@
 package orchestrate
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/revisions"
 )
 
 const (
@@ -179,7 +181,54 @@ func enforceSubAgentPosture(a AgentRecord) AgentRecord {
 // Enforced here now, so the rule holds for every caller that exists and every
 // caller that does not yet. setAgentLocked is the one door through it.
 func saveAgent(db Database, a AgentRecord) (AgentRecord, error) {
-	return writeAgent(db, a, false)
+	return saveAgentAs(db, a, "update")
+}
+
+// saveAgentAs is saveAgent with a note about what is doing the writing, filed
+// against the version being REPLACED so an owner reading the history sees
+// "edited instructions" or "rolled back to #4" next to each entry instead of a
+// column of timestamps. Pass revisions.NoHistory to suppress the snapshot.
+//
+// Two functions rather than a reason on saveAgent, because saveAgent has ~50
+// call sites and every one of them would otherwise have to have an opinion.
+// Same split as core's SaveAppSpec / SaveAppSpecAs, for the same reason.
+func saveAgentAs(db Database, a AgentRecord, reason string) (AgentRecord, error) {
+	return writeAgent(db, a, false, reason)
+}
+
+// rollbackAgent restores a kept version of an agent. ref is a revision id
+// ("4" or "#4"), a stamp, or empty for the most recent.
+//
+// A rollback is an ordinary save of an old value, which means the version it
+// REPLACES is filed like any other. That is what keeps going back reversible:
+// undo a rollback by rolling back again. Suppressing the snapshot here would
+// make the first rollback the one edit nobody can undo, which is the wrong
+// edit to make final.
+//
+// What comes back is the stored ROW, so a seed shadow returns as the overlay
+// it was rather than as a resolved agent, and the save path recomputes
+// overrides against the seed as it stands today. The invariants run too: an
+// agent restored from before a framework rule existed comes back obeying it.
+func rollbackAgent(db Database, id, ref string) (AgentRecord, error) {
+	if db == nil || strings.TrimSpace(id) == "" {
+		return AgentRecord{}, fmt.Errorf("rollback needs an agent")
+	}
+	rev, ok := revisions.Find(db, revisions.KindAgent, id, ref)
+	if !ok {
+		if ref = strings.TrimSpace(ref); ref != "" {
+			return AgentRecord{}, fmt.Errorf("no kept version %q for this agent", ref)
+		}
+		return AgentRecord{}, fmt.Errorf("this agent has no kept versions yet")
+	}
+	var restored AgentRecord
+	if err := json.Unmarshal(rev.Body, &restored); err != nil {
+		return AgentRecord{}, fmt.Errorf("kept version #%d could not be read: %w", rev.Seq, err)
+	}
+	// The id travels with the body, but a ring is only ever written under the
+	// id it belongs to, so trust the argument over the payload: a body that
+	// somehow names another agent must not become a write to that agent.
+	restored.ID = id
+	return saveAgentAs(db, restored, fmt.Sprintf("rolled back to #%d", rev.Seq))
 }
 
 // setAgentLocked is the ONLY way to change an agent's lock. Separate function
@@ -187,12 +236,15 @@ func saveAgent(db Database, a AgentRecord) (AgentRecord, error) {
 // to reach for by name — grep for it and the answer is the lock handler.
 func setAgentLocked(db Database, a AgentRecord, locked bool) (AgentRecord, error) {
 	a.Locked = locked
-	return writeAgent(db, a, true)
+	// No snapshot: a lock is a one-bit toggle with its own explicit setter, so
+	// filing it would spend a slot in a ring six deep on something that is
+	// already trivially reversible, and evict an actual edit to do it.
+	return writeAgent(db, a, true, revisions.NoHistory)
 }
 
 // writeAgent is the single store write. maySetLocked is false for everything
 // except setAgentLocked.
-func writeAgent(db Database, a AgentRecord, maySetLocked bool) (AgentRecord, error) {
+func writeAgent(db Database, a AgentRecord, maySetLocked bool, reason string) (AgentRecord, error) {
 	if db == nil {
 		return a, fmt.Errorf("db not initialized")
 	}
@@ -264,6 +316,22 @@ func writeAgent(db Database, a AgentRecord, maySetLocked bool) (AgentRecord, err
 		a.Created = now
 	}
 	a.Updated = now
+	// Keep the version this save replaces. Read RAW rather than through
+	// loadAgent: that one RESOLVES a seed shadow into the seed wearing this
+	// record's overrides, and filing the resolved agent would mean a later
+	// rollback wrote a resolved snapshot back as the overlay row, freezing
+	// every framework-owned field at the value it happened to have today.
+	// The row is what a rollback has to put back, so the row is what is kept.
+	//
+	// After the invariants above, not before: they are part of what a save
+	// produces, and comparing a pre-invariant record against a stored
+	// post-invariant one would report a change on every single write.
+	if reason != revisions.NoHistory && a.ID != "" {
+		var prior AgentRecord
+		if db.Get(agentsTable, a.ID, &prior) && revisions.Differs(prior, a, "updated") {
+			revisions.Push(db, revisions.KindAgent, a.ID, prior, prior.Updated, reason)
+		}
+	}
 	db.Set(agentsTable, a.ID, a)
 	// Hand back what a load would now give, not the row that went to storage.
 	// For a seed shadow those differ: the row is a full snapshot, while the
@@ -517,6 +585,9 @@ func deleteAgentReporting(db Database, id, owner string) ([]string, error) {
 	}
 	dropChatSessionBucket(db, id)
 	db.Unset(agentsTable, id)
+	// The history goes with the agent. Left behind it is a ring nothing can
+	// name again, and an agent that later reused the id would inherit it.
+	revisions.Delete(db, revisions.KindAgent, id)
 	dropAgentSideData(db, owner, id)
 	if len(orphaned) > 0 {
 		Warn("[orchestrate.agents] deleting %q left %d tool(s) callable by NO agent — %s. Re-home them in Admin › Orphaned Tools or they stay dark.",

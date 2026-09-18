@@ -23,6 +23,9 @@ package core
 import (
 	"context"
 	"fmt"
+
+	"github.com/cmcoffee/gohort/core/revisions"
+
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -481,6 +484,18 @@ func FindSkillByName(db Database, username, name string) (SkillRecord, bool) {
 // Same-ID skills replace; matched-by-ID upserts atomically rewrite
 // the per-user slice.
 func SaveSkill(db Database, username string, s SkillRecord) (SkillRecord, error) {
+	return SaveSkillAs(db, username, s, "update")
+}
+
+// SaveSkillAs is SaveSkill with a note about what is doing the writing, filed
+// against the version being REPLACED so an owner reading the history sees what
+// happened next to each entry instead of a column of timestamps. Pass
+// revisions.NoHistory to suppress the snapshot.
+//
+// Two functions rather than a reason on SaveSkill, for the same reason
+// SaveAppSpec and SaveAppSpecAs are two: the callers that just want to store a
+// skill should not each have to have an opinion about history.
+func SaveSkillAs(db Database, username string, s SkillRecord, reason string) (SkillRecord, error) {
 	store := skillStore(db)
 	if store == nil || username == "" {
 		return SkillRecord{}, errString("save skill requires user")
@@ -506,15 +521,72 @@ func SaveSkill(db Database, username string, s SkillRecord) (SkillRecord, error)
 	// dead weight on disk.
 	existing := LoadSkills(db, username)
 	rest := existing[:0]
+	var prior SkillRecord
+	hadPrior := false
 	for i := range existing {
 		if existing[i].ID == s.ID {
+			// Copied by value before the rewrite below can reach this index.
+			prior, hadPrior = existing[i], true
 			continue
 		}
 		rest = append(rest, existing[i])
 	}
+	// Keep the version this save replaces. The record being dropped from the
+	// slice IS the stored row, so there is nothing rawer to read.
+	if hadPrior && reason != revisions.NoHistory && revisions.Differs(prior, s, "updated") {
+		revisions.Push(store, revisions.KindSkill, skillRingKey(username, s.ID), prior, prior.Updated, reason)
+	}
 	rest = append(rest, s)
 	store.Set(skillsTable, username, rest)
 	return s, nil
+}
+
+// SkillRevisionRing names where a skill's kept versions live: the store the
+// skills themselves are in, and the ring key.
+//
+// Exported because a skill's history is served from another package, and both
+// halves are things that package must not have to work out for itself. The
+// store is not the handle the caller passes (skillStore prefers RootDB), and
+// the key is not the skill id (see skillRingKey). Getting either wrong reads
+// as "this skill has no history" rather than as an error.
+func SkillRevisionRing(db Database, username, id string) (Database, string) {
+	return skillStore(db), skillRingKey(username, id)
+}
+
+// skillRingKey names one skill's history.
+//
+// The username is IN THE KEY because skills are the odd one out: agents,
+// machines and pipelines live in a per-user store, where the database is
+// already the tenancy boundary and a bare id is enough. Skills live in RootDB
+// keyed by username, so a bare skill id would put two users' histories in the
+// same ring and hand one of them the other's definitions.
+func skillRingKey(username, id string) string { return username + ":" + id }
+
+// RollbackSkill restores a kept version. ref is a revision id ("4" or "#4"),
+// a stamp, or empty for the most recent.
+//
+// The restore is an ordinary save, so the version it REPLACES is filed like
+// any other and going back is itself reversible.
+func RollbackSkill(db Database, username, id, ref string) (SkillRecord, error) {
+	store := skillStore(db)
+	if store == nil || username == "" || id == "" {
+		return SkillRecord{}, errString("rollback needs a user and a skill")
+	}
+	key := skillRingKey(username, id)
+	rev, ok := revisions.Find(store, revisions.KindSkill, key, ref)
+	if !ok {
+		return SkillRecord{}, errString("this skill has no such kept version")
+	}
+	var restored SkillRecord
+	if !revisions.Load(store, revisions.KindSkill, key, ref, &restored) {
+		return SkillRecord{}, errString("that kept version could not be read")
+	}
+	// Trust the arguments over the payload: the ring is keyed by owner AND id,
+	// so a body naming another skill or another owner must not become a write
+	// to it.
+	restored.ID = id
+	restored.Owner = username
+	return SaveSkillAs(db, username, restored, fmt.Sprintf("rolled back to #%d", rev.Seq))
 }
 
 // DeleteSkill removes a skill by ID. Returns true when an entry was
@@ -544,6 +616,8 @@ func DeleteSkill(db Database, username, id string) bool {
 	} else {
 		store.Set(skillsTable, username, rest)
 	}
+	// The history goes with the skill, the way a deleted pipeline's does.
+	revisions.Delete(store, revisions.KindSkill, skillRingKey(username, id))
 	// Drop the skill's corpus chunks from its dedicated store.
 	if chunksDB := SkillChunksDB(username); chunksDB != nil {
 		if n := WipeChunksBySourcePrefix(chunksDB, SkillSource(id)); n > 0 {

@@ -42,11 +42,13 @@
 package core
 
 import (
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/revisions"
 	"github.com/cmcoffee/gohort/core/toolrules"
 )
 
@@ -1339,6 +1341,19 @@ func stateRefs(tmpl string) []string {
 // SaveMachineDef writes a machine def to the user's store, minting an ID
 // on first save and stamping Updated. Returns the saved record.
 func SaveMachineDef(udb Database, d MachineDef) MachineDef {
+	return SaveMachineDefAs(udb, d, "update")
+}
+
+// SaveMachineDefAs is SaveMachineDef with a note about what is doing the
+// writing, filed against the version being REPLACED so an owner reading the
+// history sees what happened next to each entry instead of a column of
+// timestamps. Pass revisions.NoHistory to suppress the snapshot.
+//
+// Two functions rather than a reason on SaveMachineDef, because every save
+// path funnels through it — the editor, the machine tool, revise, undo,
+// import, duplicate, repair, move — and none of them would otherwise have an
+// opinion. Same split as SaveAppSpec / SaveAppSpecAs.
+func SaveMachineDefAs(udb Database, d MachineDef, reason string) MachineDef {
 	if udb == nil {
 		return d
 	}
@@ -1349,6 +1364,27 @@ func SaveMachineDef(udb Database, d MachineDef) MachineDef {
 		d.Created = time.Now()
 	}
 	d.Updated = time.Now()
+	// Keep the version this save replaces. Read RAW rather than through
+	// LoadMachineDef, because what a rollback has to put back is the stored
+	// row, not a record some reader has already folded or repaired on the way
+	// out.
+	//
+	// This sits in front of the one store write, which is the same reason the
+	// share-index hook does: a save path that files no history is a save path
+	// whose edits cannot be undone, and there are eight of them.
+	if reason != revisions.NoHistory && d.ID != "" {
+		var prior MachineDef
+		// Previous is left out of BOTH halves. It is the one-deep undo snapshot
+		// the describe-a-change door stashes on the record, so keeping it would
+		// store a second whole machine inside every ring entry, and stashing it
+		// would count as an edit on a save that changed nothing else. The ring
+		// is the history now; Previous is that door's own affordance.
+		if udb.Get(MachineDefsTable, d.ID, &prior) && revisions.Differs(prior, d, "updated", "previous") {
+			snapshot := prior
+			snapshot.Previous = nil
+			revisions.Push(udb, revisions.KindMachine, d.ID, snapshot, prior.Updated, reason)
+		}
+	}
 	udb.Set(MachineDefsTable, d.ID, d)
 	// Every save path funnels through here — the editor, the machine tool,
 	// revise, undo, import, duplicate, repair — which is why the share
@@ -1359,6 +1395,27 @@ func SaveMachineDef(udb Database, d MachineDef) MachineDef {
 		MachineSavedHook(d)
 	}
 	return d
+}
+
+// RollbackMachineDef restores a kept version. ref is a revision id ("4" or
+// "#4"), a stamp, or empty for the most recent.
+//
+// The restore is an ordinary save, so the version it REPLACES is filed like
+// any other and going back is itself reversible.
+func RollbackMachineDef(udb Database, id, ref string) (MachineDef, error) {
+	if udb == nil || id == "" {
+		return MachineDef{}, fmt.Errorf("rollback needs a machine")
+	}
+	rev, ok := revisions.Find(udb, revisions.KindMachine, id, ref)
+	if !ok {
+		return MachineDef{}, fmt.Errorf("this machine has no kept version %q", ref)
+	}
+	var restored MachineDef
+	if !revisions.Load(udb, revisions.KindMachine, id, ref, &restored) {
+		return MachineDef{}, fmt.Errorf("kept version #%d could not be read", rev.Seq)
+	}
+	restored.ID = id
+	return SaveMachineDefAs(udb, restored, fmt.Sprintf("rolled back to #%d", rev.Seq)), nil
 }
 
 // MachineSavedHook, when set by an app that keeps an index over machines,
@@ -1411,6 +1468,9 @@ func DeleteMachineDef(udb Database, id string) {
 	}
 	def, existed := LoadMachineDef(udb, "", id)
 	udb.Unset(MachineDefsTable, id)
+	// The history goes with the definition, for the reason deleting a pipeline
+	// drops its ring: left behind it is a ring nothing can name again.
+	revisions.Delete(udb, revisions.KindMachine, id)
 	// Tell whoever depends on it, exactly as deleting a pipeline does. A
 	// schedule can target a machine and so can an agent's dispatch list,
 	// and without this their only notice is the next fire.

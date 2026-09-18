@@ -1,8 +1,11 @@
 package core
 
 import (
+	"fmt"
 	"sort"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/revisions"
 )
 
 // --- storage (per-user) ---------------------------------------------
@@ -10,6 +13,18 @@ import (
 // SavePipelineDef writes a pipeline def to the user's store, minting
 // an ID on first save and stamping Updated. Returns the saved record.
 func SavePipelineDef(udb Database, d PipelineDef) PipelineDef {
+	return SavePipelineDefAs(udb, d, "update")
+}
+
+// SavePipelineDefAs is SavePipelineDef with a note about what is doing the
+// writing, filed against the version being REPLACED so an owner reading the
+// history sees what happened next to each entry instead of a column of
+// timestamps. Pass revisions.NoHistory to suppress the snapshot.
+//
+// Two functions rather than a reason on SavePipelineDef, because every save
+// path funnels through it and none of them would otherwise have an opinion.
+// Same split as SaveAppSpec / SaveAppSpecAs.
+func SavePipelineDefAs(udb Database, d PipelineDef, reason string) PipelineDef {
 	if udb == nil {
 		return d
 	}
@@ -24,6 +39,24 @@ func SavePipelineDef(udb Database, d PipelineDef) PipelineDef {
 	// cleared here, so a record migrates permanently the first time it is
 	// saved rather than being folded on every read forever.
 	normalizeStageThink(d.Stages)
+	// Keep the version this save replaces. Read RAW rather than through
+	// LoadPipelineDef, because what a rollback has to put back is the stored
+	// row, not a record some reader has already folded or repaired on the way
+	// out. After normalizeStageThink for the same reason: comparing an
+	// un-normalized record against a stored normalized one would report a
+	// change on every write.
+	if reason != revisions.NoHistory && d.ID != "" {
+		var prior PipelineDef
+		// Previous is left out of BOTH halves, for the reason it is on a
+		// machine: it is a one-deep undo snapshot living on the record, so
+		// keeping it would store a second whole pipeline inside every ring
+		// entry and stashing it would read as an edit on its own.
+		if udb.Get(PipelineDefsTable, d.ID, &prior) && revisions.Differs(prior, d, "updated", "previous") {
+			snapshot := prior
+			snapshot.Previous = nil
+			revisions.Push(udb, revisions.KindPipeline, d.ID, snapshot, prior.Updated, reason)
+		}
+	}
 	udb.Set(PipelineDefsTable, d.ID, d)
 	// Every save path funnels through here — the HTTP editor, the pipeline
 	// tool, revise, undo, import, duplicate — which is why the share index is
@@ -84,6 +117,31 @@ func ListPipelineDefs(udb Database, owner string) []PipelineDef {
 	return out
 }
 
+// RollbackPipelineDef restores a kept version. ref is a revision id ("4" or
+// "#4"), a stamp, or empty for the most recent.
+//
+// The restore is an ordinary save, so the version it REPLACES is filed like
+// any other and going back is itself reversible. Suppressing that would make
+// the first rollback the one edit nobody can undo.
+func RollbackPipelineDef(udb Database, id, ref string) (PipelineDef, error) {
+	if udb == nil || id == "" {
+		return PipelineDef{}, fmt.Errorf("rollback needs a pipeline")
+	}
+	rev, ok := revisions.Find(udb, revisions.KindPipeline, id, ref)
+	if !ok {
+		return PipelineDef{}, fmt.Errorf("this pipeline has no kept version %q", ref)
+	}
+	var restored PipelineDef
+	if !revisions.Load(udb, revisions.KindPipeline, id, ref, &restored) {
+		return PipelineDef{}, fmt.Errorf("kept version #%d could not be read", rev.Seq)
+	}
+	// Trust the argument over the payload: a ring is only ever written under
+	// the id it belongs to, so a body naming another record must not become a
+	// write to that record.
+	restored.ID = id
+	return SavePipelineDefAs(udb, restored, fmt.Sprintf("rolled back to #%d", rev.Seq)), nil
+}
+
 // DeletePipelineDef removes a pipeline def by ID.
 func DeletePipelineDef(udb Database, id string) {
 	if udb == nil || id == "" {
@@ -91,6 +149,10 @@ func DeletePipelineDef(udb Database, id string) {
 	}
 	def, existed := LoadPipelineDef(udb, "", id)
 	udb.Unset(PipelineDefsTable, id)
+	// The history goes with the definition. Left behind it is a ring nothing
+	// can name again, and a definition that later reused the id would inherit
+	// somebody else's past.
+	revisions.Delete(udb, revisions.KindPipeline, id)
 	// Tell whoever depends on it, the way deleting a credential does
 	// (CredentialDeletedHook). A schedule can target a pipeline, and
 	// without this its only notice is the next fire — the agent path
