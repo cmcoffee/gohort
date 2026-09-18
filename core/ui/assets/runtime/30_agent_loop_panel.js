@@ -320,6 +320,22 @@
       var orchBadges = [];
       function renderOrchTable(rows, item, reload) {
         orchView.innerHTML = '';
+        // Buttons that act on the LIST rather than on a row — creating a new
+        // entry being the obvious one. Drawn BEFORE the empty check, because an
+        // empty list is exactly when "add one" matters most: without it the
+        // page that shows nothing also offers no way to change that, and the
+        // control ends up in a navigation menu instead, which is to say
+        // somewhere other than the thing it acts on.
+        var vactions = (item && item.view_actions) || [];
+        if (vactions.length) {
+          var vbar = el('div', {style: 'display:flex;gap:0.4rem;flex-wrap:wrap;margin:0 0 0.7rem'});
+          vactions.forEach(function(a) {
+            var vb = el('button', {class: 'ui-row-btn' + (a.variant === 'danger' ? ' danger' : ''), type: 'button',
+              onclick: function() { fireViewAction(a, reload); }}, [a.label || 'Go']);
+            vbar.appendChild(vb);
+          });
+          orchView.appendChild(vbar);
+        }
         if (!rows || !rows.length) {
           orchView.appendChild(el('div', {style: 'color:var(--text-mute, #999);padding:0.5rem'}, ['Nothing here yet.']));
           return;
@@ -332,6 +348,27 @@
         // {value,label} choices and show them in a modal; picking one POSTs the
         // action URL with the chosen value, then reloads. Shared by the cards +
         // table renderers below.
+        // fireViewAction runs a list-level button. Same vocabulary as a row
+        // action and deliberately a separate function: there is no row, so
+        // anything that appends an id or reads a field would be wrong here
+        // rather than merely unused.
+        function fireViewAction(a, reload) {
+          if (!a || !a.url) { return; }
+          var agent = window.GOHORT_AGENT_ID || '';
+          if (a.method === 'client') {
+            var fn = (window.UIClientActions || {})[a.url];
+            if (typeof fn !== 'function') { console.error('client action not registered: ' + a.url); return; }
+            fn({reload: reload, agent: agent});
+            return;
+          }
+          (async function() {
+            if (a.confirm && !(await window.uiConfirm(a.confirm))) { return; }
+            var u = a.url + (a.url.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(agent);
+            fetch(u, {method: a.method || 'POST'})
+              .then(function() { if (reload) reload(); })
+              .catch(function(err) { console.error('view action failed: ' + err.message); });
+          })();
+        }
         function openRowPicker(a, row) {
           var agent = window.GOHORT_AGENT_ID || '';
           var src = a.picker_source + (a.picker_source.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(agent);

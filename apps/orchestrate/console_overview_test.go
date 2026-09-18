@@ -31,12 +31,10 @@ func TestNavMenusAreNamedAndScoped(t *testing.T) {
 	// agent does on its own.
 	want := []struct{ label, menu string }{
 		{"Overview", agentMenu},
-		{"Scheduler", agentMenu},
-		// Creating a schedule. These were buttons at the top of the Scheduler
-		// rail modal; the modal is gone and a list view has no page-level
-		// button, so they are entries beside the page they add to.
-		{"New recurring task", agentMenu},
-		{"New machine run", agentMenu},
+		// The per-agent Scheduler is NOT here: it is pinned as a button of its
+		// own, and the two creators are view actions on the page it opens. The
+		// fleet-wide one below stays in its menu, which is a different question
+		// ("what is everything doing") asked far less often.
 		{"Compact Cortex", agentMenu},
 		{"Clear Cortex", agentMenu},
 		{"Overview", "Fleet"},
@@ -85,11 +83,19 @@ func TestNavMenusAreNamedAndScoped(t *testing.T) {
 	// Overview is deliberately NOT in this list: its two entries read different
 	// sources (api/console/overview vs api/console/fleet) because a fleet
 	// summary is a different question, not the same one asked wider.
-	for _, label := range []string{"Scheduler"} {
-		mine, fleet := entryIn(t, entries, label, agentMenu), entryIn(t, entries, label, "Fleet")
-		if src := sourceOf(mine); src == "" || src != sourceOf(fleet) {
-			t.Errorf("%q reads %q per-agent and %q fleet-wide; a shared label must mean a shared view",
-				label, src, sourceOf(fleet))
+	// Scheduler is the case, and it is now asserted across a menu entry and a
+	// PINNED one rather than two menu entries: the per-agent view is a button
+	// of its own, the fleet-wide view stays in its menu, and both must still
+	// read the same source or the shared label is a lie.
+	{
+		page := readFile(t, "page_chat.go")
+		pinned := strings.Contains(page, `{Label: "Scheduler", Pinned: true,`) &&
+			strings.Contains(page, `Pinned: true, AllAgents: true, Source: "api/console/scheduler"`)
+		if !pinned {
+			t.Error(`the per-agent Scheduler is not pinned on "api/console/scheduler"`)
+		}
+		if src := sourceOf(entryIn(t, entries, "Scheduler", "Fleet")); src != "api/console/scheduler" {
+			t.Errorf("the fleet Scheduler reads %q; a shared label must mean a shared view", src)
 		}
 	}
 	// And the fleet Scheduler has to be able to act, or it is a report where a

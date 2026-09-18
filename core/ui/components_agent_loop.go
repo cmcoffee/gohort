@@ -406,6 +406,16 @@ type OrchestratorNavItem struct {
 	// target in a hidden "_id" field (e.g. a Delete button, or an
 	// Approve / Deny pair).
 	RowActions []OrchestratorRowAction `json:"row_actions,omitempty"`
+	// ViewActions render as buttons ABOVE this item's list, for the things
+	// that act on the LIST rather than on a row in it — creating a new entry
+	// being the obvious one.
+	//
+	// Without them, "add one" has nowhere to live but the navigation menu,
+	// which puts the button to create a thing somewhere other than the page
+	// showing that thing. They reuse the row-action shape because the vocabulary
+	// is the same (a method, a url or a client action, an optional confirm); the
+	// only difference is that no row id is appended, since there is no row.
+	ViewActions []OrchestratorRowAction `json:"view_actions,omitempty"`
 	// ActionURL makes this item a BUTTON that POSTs to the URL (with the
 	// current agent id appended as ?agent=<id>) after an optional Confirm,
 	// instead of opening a chat or table view — for channel-level operations

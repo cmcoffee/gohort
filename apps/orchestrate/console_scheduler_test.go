@@ -161,23 +161,32 @@ func TestRetiringTheRailKeptWhatItCouldDo(t *testing.T) {
 	if n := strings.Count(page, `Label: "Edit schedule"`); n != 6 {
 		t.Errorf("expected three kinds × two menus of Edit schedule, found %d", n)
 	}
-	// Creating. These were buttons at the top of the retired modal, and are
-	// now nav entries of their own. Checked end to end — the nav names the
-	// action and this app's JS registers it — because either half alone is a
-	// button that does nothing.
+	// Creating. These were buttons at the top of the retired modal, then nav
+	// entries of their own, and are now VIEW ACTIONS on the Scheduler page —
+	// the button that adds a schedule sitting on the page that lists them
+	// rather than in a menu somewhere else. Checked end to end, because the
+	// nav naming an action and this app's JS registering it are each a button
+	// that does nothing on their own.
 	assets := readFile(t, "assets/web_assets.html")
 	for _, create := range []string{"orchestrate_new_recurring", machineRunCreatorAction} {
 		if !strings.Contains(assets, `uiRegisterClientAction('`+create+`'`) {
-			t.Errorf("%s is not registered, so the nav entry opens nothing", create)
+			t.Errorf("%s is not registered, so the button opens nothing", create)
 		}
 	}
-	for _, named := range []string{`ActionURL: "orchestrate_new_recurring"`, "ActionURL: machineRunCreatorAction"} {
-		if !strings.Contains(page, named) {
-			t.Errorf("no way to create a schedule from the UI any more: %s is not in the nav", named)
+	viewActions := page[strings.Index(page, "ViewActions: []ui.OrchestratorRowAction{"):]
+	viewActions = viewActions[:strings.Index(viewActions, "RowActions:")]
+	for _, named := range []string{`URL: "orchestrate_new_recurring"`, "URL: machineRunCreatorAction"} {
+		if !strings.Contains(viewActions, named) {
+			t.Errorf("no way to create a schedule from the page that lists them: %s is not a view action", named)
 		}
 	}
-	if n := strings.Count(page, `ActionMethod: "client"`); n < 2 {
-		t.Errorf("the create entries must invoke their form rather than POST: found %d", n)
+	if n := strings.Count(viewActions, `Method: "client"`); n < 2 {
+		t.Errorf("the create buttons must invoke their form rather than POST: found %d", n)
+	}
+	// And the page they sit on is reachable in one click, not through a menu —
+	// which is what the rail was for and why it was missed.
+	if !strings.Contains(page, `{Label: "Scheduler", Pinned: true,`) {
+		t.Error("the Scheduler is back in a dropdown; it is the answer to \"what will this do on its own\" and earns a button")
 	}
 	// And the rail itself is gone, endpoint included.
 	if strings.Contains(page, "SchedulesURL") {
