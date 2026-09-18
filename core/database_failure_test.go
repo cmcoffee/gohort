@@ -8,6 +8,7 @@ package core
 // binary that exits mid-run reports nothing.
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -245,5 +246,51 @@ func TestTryKeysSeparatesEmptyFromUnreadable(t *testing.T) {
 	// empty case GRANTS something have to use TryKeys.
 	if got := brokenDB(errors.New("disk gone")).Keys("t"); got != nil {
 		t.Errorf("Keys returned %v on a failed read", got)
+	}
+}
+
+// flakyOnce fails the first N reads and then works, which is the shape of the
+// blip this whole degraded-store design exists for.
+type flakyOnce struct {
+	kvlite.Store
+	failFirst int
+	n         int
+}
+
+func (f *flakyOnce) Keys(table string) ([]string, error) {
+	f.n++
+	if f.n <= f.failFirst {
+		return nil, errors.New("i/o timeout")
+	}
+	return f.Store.Keys(table)
+}
+
+// A store blip must not become an empty corpus that outlives it.
+//
+// Keys returns nil on error and the rebuild used to install that as the
+// snapshot, evicted only by the next WRITE — so on a read-mostly corpus one
+// timeout meant semantic recall returned nothing until somebody wrote or the
+// process restarted, with no error the caller could see.
+func TestAFailedChunkReadIsNotCachedAsAnEmptyCorpus(t *testing.T) {
+	resetDBHealth(t)
+	inner := kvlite.MemStore()
+
+	// Written through a HEALTHY handle, so the ingest's own reads do not spend
+	// the scripted failure — the point of the test is what a read does after
+	// the data is safely there.
+	IngestDocument(context.Background(), &DBase{Store: inner}, "src", "r1", "Title", "a durable fact worth recalling")
+
+	// The same store, now blipping, and a handle the cache has never seen.
+	db := &DBase{Store: &flakyOnce{Store: inner, failFirst: 1}}
+	invalidateChunkCache()
+
+	// The blip: this call degrades to nothing.
+	if got := snapshotChunks(db); len(got) != 0 {
+		t.Fatalf("the failed read returned %d chunk(s); it should degrade", len(got))
+	}
+	// And the NEXT one is right, which only happens if nothing was cached.
+	got := snapshotChunks(db)
+	if len(got) == 0 {
+		t.Fatal("the corpus is still empty after the store recovered — the failure was cached")
 	}
 }

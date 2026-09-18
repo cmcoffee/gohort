@@ -49,6 +49,14 @@ func (c *countingDB) Keys(table string) []string {
 	return c.Database.Keys(table)
 }
 
+// TryKeys counts too, and must: the rebuild reads through the error-returning
+// form so a failed listing is never cached as an empty corpus, and a counter
+// that only watched Keys would report zero rebuilds however many happened.
+func (c *countingDB) TryKeys(table string) ([]string, error) {
+	c.keysCalls++
+	return c.Database.TryKeys(table)
+}
+
 func TestChunkCache_NoThrashAcrossDatabases(t *testing.T) {
 	invalidateChunkCache()
 	t.Cleanup(invalidateChunkCache)

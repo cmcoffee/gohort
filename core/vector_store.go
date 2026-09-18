@@ -92,10 +92,33 @@ func rebuildChunkCache(db Database) []EmbeddedChunk {
 		e.lastUsed = chunkCache.tick
 		return e.chunks
 	}
+	// A read that FAILED must not be cached as a corpus that is empty.
+	//
+	// Keys returns nil on error and Get returns false on one, so a store blip
+	// used to produce a short-or-empty snapshot that was then installed against
+	// this handle — and only ever dropped by the next WRITE to the store. On a
+	// read-mostly corpus that is semantic recall silently returning nothing
+	// until somebody writes or the process restarts, with no error anywhere the
+	// caller can see it.
+	//
+	// So: degrade this ONE call and cache nothing. The next call retries and
+	// gets a real answer the moment the store is well again, which is the
+	// difference between a blip and an outage that outlives itself.
+	keys, err := db.TryKeys(EmbeddedChunks)
+	if err != nil {
+		return nil
+	}
 	var chunks []EmbeddedChunk
-	for _, key := range db.Keys(EmbeddedChunks) {
+	for _, key := range keys {
 		var c EmbeddedChunk
-		if db.Get(EmbeddedChunks, key, &c) {
+		found, err := db.TryGet(EmbeddedChunks, key, &c)
+		if err != nil {
+			// Partway through is the same problem wearing a smaller hat: a
+			// snapshot missing the chunks that happened to fail reads as a
+			// corpus that no longer contains them.
+			return nil
+		}
+		if found {
 			chunks = append(chunks, c)
 		}
 	}
