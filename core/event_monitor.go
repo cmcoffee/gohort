@@ -1346,7 +1346,8 @@ func executeWatchPoll(ctx context.Context, db Database, m EventMonitor) {
 	SaveEventMonitor(db, cur)
 	// The summary is for the model: diff plus payload. The card is for the
 	// thread the wake lands in, where the same text read as a wall of JSON.
-	fireWake(withWatchCard(ctx, watchCardText(m.Name, prior, body)), db, m.Owner, m.Name, summary, "watch")
+	fireWake(withWatchStep(withWatchCard(ctx, watchCardText(m.Name, prior, body)), m, body, nil),
+		db, m.Owner, m.Name, summary, "watch")
 }
 
 // A watch fire has two readers. The model gets the summary — the diff and the
@@ -1364,6 +1365,62 @@ func withWatchCard(ctx context.Context, card string) context.Context {
 		return ctx
 	}
 	return context.WithValue(ctx, watchCardKey{}, card)
+}
+
+// The CHECK is a tool call, and it is the only thing that ran.
+//
+// A watch polls by invoking one captured tool — "the check itself is a poll
+// with no turn in it" — so a direct fire, which deliberately runs no LLM,
+// leaves a card saying WHAT changed and nothing about what was asked. The
+// owner reads "the price moved" with no way to see which endpoint was called
+// or what came back, on the one surface where nobody was watching it happen.
+//
+// Carried as []RunStep, the shape the run ledger already uses for a tool
+// trace, so the app side converts it with the same helper it uses for a
+// standing run rather than inventing a second mapping. Rides the context for
+// the same reason the card does: the waker lives in another package.
+type watchStepKey struct{}
+
+func withWatchStep(ctx context.Context, m EventMonitor, body string, err error) context.Context {
+	name := strings.TrimSpace(m.ToolName)
+	if name == "" {
+		return ctx // an http_poll or a plain poll has no captured tool
+	}
+	step := RunStep{Name: name}
+	if len(m.ToolArgs) > 0 {
+		if b, jerr := json.Marshal(m.ToolArgs); jerr == nil {
+			step.Args = string(b)
+		}
+	}
+	if err != nil {
+		step.Err = err.Error()
+	} else {
+		// Bounded: the card is a trace, and a watch body is routinely the
+		// whole of an API response. The card's own text already carries what
+		// CHANGED; this says what was asked and roughly what came back.
+		step.Result = truncateWatchStep(body)
+	}
+	return context.WithValue(ctx, watchStepKey{}, []RunStep{step})
+}
+
+// WatchStepsFromContext returns the check a watch fire ran, or nil for a fire
+// that ran none.
+func WatchStepsFromContext(ctx context.Context) []RunStep {
+	if ctx == nil {
+		return nil
+	}
+	steps, _ := ctx.Value(watchStepKey{}).([]RunStep)
+	return steps
+}
+
+// truncateWatchStep bounds a check's result for the card.
+func truncateWatchStep(s string) string {
+	s = strings.TrimSpace(s)
+	const max = 200
+	if len([]rune(s)) > max {
+		return string([]rune(s)[:max]) + "…"
+	}
+	return s
 }
 
 // EventCardFromContext returns the readable card a watch fire attached for

@@ -181,6 +181,13 @@ func registerOperatorWake(app *OrchestrateApp) {
 						Created:    time.Now(),
 						ReportFrom: monitorName,
 						ReportKind: cortexKindMonitor,
+						// The check, as a tool call. A direct fire runs no LLM
+						// turn, so this is the ONLY thing that ran — and without
+						// it the card says what changed while staying silent
+						// about what was asked and what came back. The wake path
+						// needs nothing here: it persists through the ordinary
+						// dispatch, which has carried its trace all along.
+						ToolCalls: persistedToolCallsFromSteps(WatchStepsFromContext(ctx)),
 					}); err != nil {
 					Log("[operator.wake] %s/%s record monitor card failed: %v", owner, monitorName, err)
 					return false
