@@ -102,3 +102,61 @@ func TestSweepIsRegisteredAsMaintenance(t *testing.T) {
 	}
 	t.Fatal("the sweep is not registered, so nobody can run it")
 }
+
+// The sweep must not quietly remove the carve-out it is migrating.
+//
+// A rule written "@craig" parses to a named LINK; only a bare "@" sets
+// ExceptAuthorized. Moving craig onto the roster without touching the rule
+// leaves the link naming nothing, and a dangling link excepts nobody — so the
+// person who WAS excepted silently becomes subject to the rule.
+func TestSweepRepointsRulesThatLinkedAMovedPerson(t *testing.T) {
+	rules := "@craig never mention salary\nnever delete records"
+	got := rewriteMovedPersonLinks(rules, []string{"craig"}, nil)
+
+	want := "@ never mention salary\nnever delete records"
+	if got != want {
+		t.Fatalf("rewrote to %q, want %q", got, want)
+	}
+	// And the rewritten rule actually excepts an authorized requester, which is
+	// the property the text change exists for.
+	r := parseGuardrailRule("@ never mention salary")
+	if !ruleExemptsRequester(r, requesterIdentity{Authorized: true}) {
+		t.Error("the rewritten rule does not except an authorized person")
+	}
+}
+
+// A link switched OFF for one rule meant "this rule applies to them anyway".
+// Turning that into a bare "@" would invert the owner's decision, so it is
+// dropped instead.
+func TestSweepDropsASwitchedOffLinkRatherThanWideningIt(t *testing.T) {
+	got := rewriteMovedPersonLinks("@-craig never mention salary", []string{"craig"}, nil)
+	if got != "never mention salary" {
+		t.Fatalf("rewrote to %q", got)
+	}
+	if r := parseGuardrailRule(got); r.ExceptAuthorized {
+		t.Error("a switched-off link became a whole-roster exception")
+	}
+}
+
+// Only the moved name, and only as a whole marker.
+func TestSweepLeavesOtherLinksAlone(t *testing.T) {
+	// A surviving CONDITION keeps its link: it resolves to a real carve-out.
+	got := rewriteMovedPersonLinks("@craig @confirmed never send money", []string{"craig"},
+		[]GuardrailException{{Name: "confirmed", Text: "the user has already confirmed"}})
+	if got != "@ @confirmed never send money" {
+		t.Fatalf("rewrote to %q", got)
+	}
+	// A name that merely starts with the moved one is not the moved one.
+	if got := rewriteMovedPersonLinks("@craigslist never post", []string{"craig"}, nil); got != "@craigslist never post" {
+		t.Errorf("matched inside a longer name: %q", got)
+	}
+	// A name still used by a surviving condition is left alone entirely.
+	if got := rewriteMovedPersonLinks("@craig never x", []string{"craig"},
+		[]GuardrailException{{Name: "craig", Text: "the request is routine"}}); got != "@craig never x" {
+		t.Errorf("repointed a link that still resolves: %q", got)
+	}
+	// Nothing to move, nothing to do.
+	if got := rewriteMovedPersonLinks("@craig never x", nil, nil); got != "@craig never x" {
+		t.Errorf("changed a rule with no moved people: %q", got)
+	}
+}

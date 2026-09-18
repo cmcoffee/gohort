@@ -54,6 +54,23 @@ func guardrailItems(agent AgentRecord) []guardrailItem {
 	var out []guardrailItem
 	seenName := map[string]bool{}
 	for _, e := range agent.GuardrailExceptions {
+		// A record still marked as a person is NOT a condition, and must not be
+		// treated as one just because the kind stopped being read.
+		//
+		// Its Text is an identity — an account, an address, a handle. Rendered
+		// under a rule as "Except: craig@example.com" it reaches the judge for
+		// EVERY requester, which both leaks the identity and hands the judge
+		// the unresolvable "except <the rule's subject>" that this whole
+		// redesign existed to remove. Between deploying and running the sweep
+		// there would otherwise be a window where the old records do exactly
+		// the thing they were rewritten to stop doing.
+		//
+		// Skipped rather than converted: a rule linked to one goes back to full
+		// strength, which is the direction every unresolvable thing here fails
+		// in, and guardrail_sweep.go moves it onto the roster for good.
+		if strings.EqualFold(strings.TrimSpace(e.Kind), "person") {
+			continue
+		}
 		name := slugifyExceptionName(e.Name)
 		text := strings.TrimSpace(e.Text)
 		if name == "" || text == "" || seenName[name] {

@@ -61,6 +61,13 @@ func sweepPersonExceptions(ctx context.Context) int {
 			}
 			a.GuardrailExceptions = kept
 			a.AuthorizedIdentities = roster
+			// And the RULES that linked those people. A rule written "@craig"
+			// parses to a named LINK; only a bare "@" sets ExceptAuthorized.
+			// Moving craig to the roster without touching the rule leaves the
+			// link naming nothing, and a dangling link excepts nobody — so the
+			// sweep would quietly subject him to the very rule he was excepted
+			// from, with nothing on screen saying it had changed.
+			a.Guardrails = rewriteMovedPersonLinks(a.Guardrails, moved, a.GuardrailExceptions)
 			// Through the normal save, so the change files a revision and is
 			// one rollback away rather than a restore.
 			if _, err := saveAgentAs(udb, a, "person exceptions moved to the roster"); err != nil {
@@ -75,6 +82,88 @@ func sweepPersonExceptions(ctx context.Context) int {
 	}
 	ReportMaintenanceOutcome(ctx, fmt.Sprintf("%d agent(s) changed", changed))
 	return changed
+}
+
+// rewriteMovedPersonLinks repoints every rule that linked a moved person at the
+// roster marker.
+//
+// "@craig" becomes a bare "@" — the rule now yields to anyone the framework
+// established as authorized, which after the move includes craig. That is a
+// WIDENING for an agent with several people on its roster, and it is the
+// honest one available: per-person exemption is what the redesign gave up, so
+// the choice is between excepting the whole roster and excepting nobody, and
+// silently excepting nobody would remove a carve-out the owner wrote.
+//
+// "@-craig" — the link explicitly switched OFF for that rule — is removed
+// instead. Off meant "this rule applies to them anyway", and turning that into
+// a bare "@" would invert the owner's decision.
+func rewriteMovedPersonLinks(rules string, moved []string, kept []GuardrailException) string {
+	if strings.TrimSpace(rules) == "" || len(moved) == 0 {
+		return rules
+	}
+	// The NAMES the moved entries answered to, which is what a rule links by.
+	// Derived the same way the item list derives them, so a rule written
+	// against a derived name is matched too.
+	names := map[string]bool{}
+	for _, m := range moved {
+		if n := slugifyExceptionName(m); n != "" {
+			names[n] = true
+		}
+	}
+	// A name still in use by a surviving CONDITION is left alone: the link
+	// resolves to that condition now, which is a real carve-out rather than a
+	// dangling one.
+	for _, e := range kept {
+		if n := slugifyExceptionName(e.Name); n != "" {
+			delete(names, n)
+		}
+	}
+	if len(names) == 0 {
+		return rules
+	}
+	lines := strings.Split(rules, "\n")
+	for i, line := range lines {
+		lines[i] = rewriteLineLinks(line, names)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// rewriteLineLinks does one rule line. Scans for the marker rather than doing a
+// string replace, so "@craig" is not matched inside "@craigslist".
+func rewriteLineLinks(line string, names map[string]bool) string {
+	var b strings.Builder
+	i := 0
+	for i < len(line) {
+		if line[i] != guardrailAuthorizedMarker[0] {
+			b.WriteByte(line[i])
+			i++
+			continue
+		}
+		rest := line[i+1:]
+		off := strings.HasPrefix(rest, guardrailLinkOffMarker)
+		if off {
+			rest = rest[len(guardrailLinkOffMarker):]
+		}
+		name := leadingExceptionName(rest)
+		if name == "" || !names[strings.ToLower(name)] {
+			b.WriteByte(line[i])
+			i++
+			continue
+		}
+		consumed := 1 + len(name)
+		if off {
+			consumed += len(guardrailLinkOffMarker)
+			// A switched-off link is dropped entirely, along with one
+			// following space so the rule text does not gain a double gap.
+			if consumed < len(line) && line[i+consumed] == ' ' {
+				consumed++
+			}
+		} else {
+			b.WriteString(guardrailAuthorizedMarker) // the whole-roster marker
+		}
+		i += consumed
+	}
+	return b.String()
 }
 
 // splitPersonExceptions reports the person entries to move, the exceptions that

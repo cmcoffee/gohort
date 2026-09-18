@@ -830,11 +830,13 @@ type AgentRecord struct {
 	// its own exceptions could write itself out of every rule it has.
 	GuardrailExceptions []GuardrailException `json:"guardrail_exceptions,omitempty"`
 
-	// AuthorizedIdentities is the LEGACY roster: a bare list of people, excepted
-	// from any rule marked with a plain "@". Superseded by GuardrailExceptions
-	// entries of kind "person", which can be linked to rules individually — but
-	// still read, and surfaced as person items, so a roster typed before that
-	// existed keeps working and keeps showing. Entries are
+	// AuthorizedIdentities is THE roster: the people a rule marked with a plain
+	// "@" yields to. It briefly shared that job with exceptions of kind
+	// "person", which could be linked to one rule at a time; that split is gone
+	// (two lists for one question, one name that could mean either, and a link
+	// that reached whichever was stored first), and this is the only place an
+	// identity lives now. Per-rule exemption went with it: "@" is the whole
+	// roster or nobody. Entries are
 	// identities the FRAMEWORK can verify: a gohort account name (matched
 	// against the authenticated acting identity) or a messaging handle — phone,
 	// email, chat-id — matched by the bridge's own comparison.

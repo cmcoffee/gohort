@@ -204,12 +204,12 @@ func isSyntheticRequester(user string) bool {
 	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(user)), "phantom:")
 }
 
-// authorizedIdentities returns the roster entries that can currently confer
-// authorization: trimmed, de-blanked, and minus anything switched off.
+// authorizedIdentities returns the roster entries that can confer
+// authorization: trimmed and de-blanked.
 //
-// A switched-off entry stays on the roster and stops counting, so every rule
-// marked "@" applies to that person again. Same direction as a disabled
-// exception and a dangling link: off means the rule APPLIES.
+// There is no off state to honour. The roster is a plain list of identities;
+// removing somebody is how you stop them counting, and every rule marked "@"
+// applies to them again from that moment.
 func authorizedIdentities(agent AgentRecord) []string {
 	var out []string
 	for _, id := range agent.AuthorizedIdentities {
