@@ -1143,13 +1143,19 @@ type AgentSyncResult struct {
 	// empty output use this to say something TRUE about why — the generic
 	// "could you rephrase it" blames the request, and the request was fine.
 	PhantomDelivery bool
-	// ToolsUsed names the tools the turn actually called, in first-use order and
-	// deduped. A channel turn's whole record in the standing thread was its
-	// inbound text and its reply, so anything it DID on the owner's behalf —
-	// searched, edited a picture, messaged someone, armed a monitor — left no
-	// trace there at all. Names only: the standing thread is bounded by a
-	// rolling summary, and arguments would crowd out the awareness it exists for.
-	ToolsUsed []string
+	// ToolCalls is every tool the turn ran, paired call-to-result. A channel
+	// turn's whole record in the standing thread was its inbound text and its
+	// reply, so anything it DID on the owner's behalf — searched, edited a
+	// picture, messaged someone, armed a monitor — left no trace there at all.
+	//
+	// Structured rather than the names-only list this replaced, because the
+	// names were being formatted into the card's BODY as prose. That is the one
+	// shape the thread cannot use: the panel renders a persisted trace as the
+	// same expandable tool-runs section every other surface has, and
+	// toLLMMessages rebuilds it into proper call-and-result protocol — so a
+	// later turn reading its own thread gets the outcomes, not a truncated
+	// bullet list, and the reader gets chips instead of a paragraph.
+	ToolCalls []PersistedToolCall
 	// Silenced reports that the model DELIBERATELY chose to say nothing —
 	// stay_silent fired. Distinct from Text being empty by accident, which is a
 	// failure. Callers that substitute a fallback for empty output must not do
@@ -2067,120 +2073,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	if len(imgs) > 0 || len(vids) > 0 {
 		phantomDelivery = false // the backstop recovered something after all
 	}
-	return AgentSyncResult{Text: cleanReply, Images: imgs, Videos: vids, HitRoundCap: resp.HitRoundCap, PhantomDelivery: phantomDelivery, ToolsUsed: toolNamesFromTranscript(transcript), Silenced: subSess != nil && subSess.Silenced}, nil
-}
-
-// toolNamesFromTranscript reads the tools a run called out of the transcript
-// the loop already returns — no new plumbing, and it cannot drift from what
-// actually ran. First-use order, deduped: "searched twice then sent one
-// message" is the same awareness as "searched, sent a message", and the
-// standing thread pays for every line it keeps.
-func toolNamesFromTranscript(msgs []Message) []string {
-	var out []string
-	seen := map[string]bool{}
-	for _, m := range msgs {
-		for _, tc := range m.ToolCalls {
-			brief := toolCallBrief(tc)
-			if brief == "" || seen[brief] {
-				continue
-			}
-			seen[brief] = true
-			out = append(out, brief)
-		}
-	}
-	return out
-}
-
-// toolCallBriefKeys are the argument names worth showing, in priority order.
-// A tool call's identity lives in one or two of these: for a shell call it is
-// the command, for a search the query, for a grouped tool the action. Ordered
-// rather than alphabetical because "which of these is the interesting one" is
-// a judgement, not a sort.
-var toolCallBriefKeys = []string{
-	"command", "cmd", "script", "query", "q", "url", "path", "file",
-	"action", "prompt", "message", "to", "name", "id",
-}
-
-// toolCallBrief renders one call as "name(salient args)".
-//
-// The names alone were what the cortex card recorded, and "used: shell" tells
-// the owner nothing — the command IS the content of a shell call, and a
-// standing thread reading its own history could not see what it had already
-// done. Two arguments at most and every value clipped: this is a pointer to
-// what happened, in a feed whose whole design rule is pointers rather than
-// bodies.
-func toolCallBrief(tc ToolCall) string {
-	name := strings.TrimSpace(tc.Name)
-	if name == "" {
-		return ""
-	}
-	if len(tc.Args) == 0 {
-		return name
-	}
-	var parts []string
-	used := map[string]bool{}
-	add := func(k string) {
-		v, ok := tc.Args[k]
-		if !ok || len(parts) >= 2 || used[k] {
-			return
-		}
-		if sv := briefArgValue(v); sv != "" {
-			used[k] = true
-			// The key is noise when it is already implied by the tool ("shell",
-			// "command"); keep it when it disambiguates ("action").
-			if k == "command" || k == "cmd" || k == "script" || k == "query" || k == "q" || k == "prompt" {
-				parts = append(parts, sv)
-			} else {
-				parts = append(parts, k+"="+sv)
-			}
-		}
-	}
-	for _, k := range toolCallBriefKeys {
-		add(k)
-	}
-	// Nothing recognized — fall back to a stable pick so the brief is still
-	// more than a bare name.
-	if len(parts) == 0 {
-		keys := make([]string, 0, len(tc.Args))
-		for k := range tc.Args {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			add(k)
-		}
-	}
-	if len(parts) == 0 {
-		return name
-	}
-	return name + "(" + strings.Join(parts, ", ") + ")"
-}
-
-// briefArgValue renders one argument compactly, or "" for something not worth
-// showing (an empty value, or a nested structure that would swamp the line).
-func briefArgValue(v any) string {
-	var s string
-	switch t := v.(type) {
-	case string:
-		s = t
-	case bool, int, int64, float64:
-		s = fmt.Sprint(t)
-	case []any:
-		return fmt.Sprintf("[%d items]", len(t))
-	case map[string]any:
-		return fmt.Sprintf("{%d fields}", len(t))
-	default:
-		return ""
-	}
-	s = strings.Join(strings.Fields(s), " ") // collapse newlines: one card line
-	if s == "" {
-		return ""
-	}
-	const max = 60
-	if len(s) > max {
-		s = s[:max] + "…"
-	}
-	return s
+	return AgentSyncResult{Text: cleanReply, Images: imgs, Videos: vids, HitRoundCap: resp.HitRoundCap, PhantomDelivery: phantomDelivery, ToolCalls: turnToolCalls, Silenced: subSess != nil && subSess.Silenced}, nil
 }
 
 // markAsDelegated wraps an incoming user message with a delegated-

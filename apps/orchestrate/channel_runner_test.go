@@ -1,114 +1,124 @@
 package orchestrate
 
 import (
-	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/cmcoffee/snugforge/kvlite"
 
 	. "github.com/cmcoffee/gohort/core"
 )
 
 // The cortex card is the standing thread's only record of what a channel turn
-// DID. Names alone were not enough: "used: shell" says nothing when the command
-// is the entire content of the call, which is why an owner could not tell what
-// an agent had already done on their behalf.
-func TestToolCallBriefCarriesTheSalientArgument(t *testing.T) {
-	for name, tc := range map[string]struct {
-		call ToolCall
-		want string
-	}{
-		"shell shows the command": {
-			ToolCall{Name: "shell", Args: map[string]any{"command": "systemctl status gohort"}},
-			"shell(systemctl status gohort)",
-		},
-		"search shows the query": {
-			ToolCall{Name: "web_search", Args: map[string]any{"query": "acme release notes"}},
-			"web_search(acme release notes)",
-		},
-		"grouped tool shows the action": {
-			ToolCall{Name: "archetype", Args: map[string]any{"action": "read", "slug": "kb"}},
-			"archetype(action=read)",
-		},
-		"no args stays a bare name": {
-			ToolCall{Name: "survey"}, "survey",
-		},
-		// No recognized key: fall back to a STABLE pick (sorted) so the brief
-		// is still more than a bare name and does not vary run to run.
-		"unrecognized keys still say something": {
-			ToolCall{Name: "custom", Args: map[string]any{"zeta": "last", "alpha": "first"}},
-			"custom(alpha=first, zeta=last)",
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if got := toolCallBrief(tc.call); got != tc.want {
-				t.Errorf("brief = %q, want %q", got, tc.want)
-			}
-		})
+// DID, and it used to say so as prose in the body — "↳ ran: shell(uptime)".
+// That is the one shape neither reader can use: the panel has a renderer for a
+// persisted trace (the expandable tool-runs section every other card has) and
+// toLLMMessages rebuilds one into call-and-result protocol. A line of text is
+// invisible to both.
+
+func cortexCard(t *testing.T, db Database, agentID string) ChatMessage {
+	t.Helper()
+	sess, ok := loadChatSession(db, agentID, cortexSessionID(agentID))
+	if !ok || len(sess.Messages) == 0 {
+		t.Fatal("no cortex card was written")
 	}
+	return sess.Messages[len(sess.Messages)-1]
 }
 
-// Long values and newlines must not wreck the card — it is a pointer, not a body.
-func TestToolCallBriefClipsAndFlattens(t *testing.T) {
-	long := strings.Repeat("x", 200)
-	got := toolCallBrief(ToolCall{Name: "shell", Args: map[string]any{"command": "echo\n" + long}})
-	if strings.Contains(got, "\n") {
-		t.Errorf("a brief must be one line: %q", got)
+func cortexAgent(t *testing.T) (Database, string) {
+	t.Helper()
+	db := &DBase{Store: kvlite.MemStore()}
+	ag := AgentRecord{ID: "a1", Name: "Wren", Owner: "alice", Cortex: true,
+		OrchestratorPrompt: "you are Wren"}
+	if _, err := saveAgent(db, ag); err != nil {
+		t.Fatal(err)
 	}
-	if len(got) > 90 {
-		t.Errorf("brief not clipped (%d chars): %q", len(got), got)
-	}
+	return db, ag.ID
 }
 
-// With arguments present the card goes one per line; three name(arg) briefs
-// comma-joined are unreadable.
-func TestToolsUsedNoteFormatting(t *testing.T) {
-	out := toolsUsedNote([]string{"shell(uptime)", "web_search(acme)"})
-	if !strings.Contains(out, "↳ ran:") || !strings.Contains(out, "\n   • shell(uptime)") {
-		t.Errorf("expected a per-line list:\n%s", out)
+// What a turn ran reaches the card as structure, so the panel can render it the
+// way it renders every other turn's tools.
+func TestAChannelCardCarriesItsTraceStructurally(t *testing.T) {
+	db, agentID := cortexAgent(t)
+	appendCortexObs(db, agentID, "iPhone", cortexKindMessage, "what's happening?\n↳ replied: a lot",
+		PersistedToolCall{Name: "web_search", Args: map[string]any{"q": "world news"}, Result: "3 results"},
+		PersistedToolCall{Name: "arm_monitor", Args: map[string]any{"name": "inbox"}, Err: "already armed"},
+	)
+	card := cortexCard(t, db, agentID)
+	if len(card.ToolCalls) != 2 {
+		t.Fatalf("the trace must ride the card: %+v", card.ToolCalls)
 	}
-	// Bare names keep the compact one-line form.
-	out = toolsUsedNote([]string{"survey", "recall"})
-	if out != "↳ used: survey, recall" {
-		t.Errorf("bare names should stay on one line: %q", out)
+	if card.ToolCalls[0].Name != "web_search" || card.ToolCalls[0].Args["q"] != "world news" {
+		t.Errorf("name and args must survive: %+v", card.ToolCalls[0])
 	}
-	// Overflow is reported, never silently dropped.
-	many := make([]string, 12)
-	for i := range many {
-		many[i] = fmt.Sprintf("t%d(a)", i)
+	if card.ToolCalls[1].Err != "already armed" {
+		t.Errorf("a failure is part of the record: %+v", card.ToolCalls[1])
 	}
-	if out = toolsUsedNote(many); !strings.Contains(out, "and 4 more") {
-		t.Errorf("overflow must be stated:\n%s", out)
-	}
-}
-
-// Silence is the norm in a group room, and the silent path returned before the
-// cortex append — so a turn that ran tools and then said nothing left no record
-// anywhere the owner looks. That is precisely the turn worth recording: an
-// action with no reply attached to explain it.
-func TestSilentTurnStillCardsWhatItRan(t *testing.T) {
-	// The note is what the card carries; assert it survives the silent shape.
-	note := toolsUsedNote([]string{"web_search(world news)", "arm_monitor(name=inbox)"})
-	if note == "" {
-		t.Fatal("tools note must render for a silent turn")
-	}
-	obs := strings.TrimSpace("what's happening?" + "\n" + note + "\n↳ stayed silent (nothing sent to the channel)")
-
-	for _, want := range []string{
-		"what's happening?",       // what came in
-		"web_search(world news)",  // what it ran, with the argument
-		"arm_monitor(name=inbox)", // and the second call
-		"stayed silent",           // and that nothing went out
-	} {
-		if !strings.Contains(obs, want) {
-			t.Errorf("card missing %q:\n%s", want, obs)
+	// ...and NOT as prose in the body, or the card says it twice.
+	for _, gone := range []string{"↳ ran:", "web_search(", "arm_monitor("} {
+		if strings.Contains(card.Content, gone) {
+			t.Errorf("the body still formats the trace as text (%q):\n%s", gone, card.Content)
 		}
 	}
+	// The body keeps what only it can say.
+	if !strings.Contains(card.Content, "what's happening?") || !strings.Contains(card.Content, "↳ replied:") {
+		t.Errorf("the inbound and the reply must stay in the body:\n%s", card.Content)
+	}
 }
 
-// A silent turn that ran NOTHING should not manufacture a card — the feed is
-// pointers to things that happened, not a log of every inbound message.
-func TestSilentTurnWithNoToolsWritesNothing(t *testing.T) {
-	if note := toolsUsedNote(nil); note != "" {
-		t.Errorf("no tools should mean no note, got %q", note)
+// A silent turn is the one most worth recording — an action with no reply
+// attached to explain it — and the trace is the whole of what it has to say.
+func TestASilentTurnStillRecordsWhatItRan(t *testing.T) {
+	db, agentID := cortexAgent(t)
+	appendCortexObs(db, agentID, "iPhone", cortexKindMessage,
+		"what's happening?\n↳ stayed silent (nothing sent to the channel)",
+		PersistedToolCall{Name: "web_search", Args: map[string]any{"q": "world news"}, Result: "3 results"},
+	)
+	card := cortexCard(t, db, agentID)
+	if len(card.ToolCalls) != 1 {
+		t.Fatalf("a silent turn's actions must still be recorded: %+v", card.ToolCalls)
+	}
+	if !strings.Contains(card.Content, "stayed silent") {
+		t.Errorf("and that nothing went out:\n%s", card.Content)
+	}
+}
+
+// A turn that ran nothing carries no trace — the feed is pointers to things
+// that happened, not an empty section on every card.
+func TestATurnThatRanNothingCarriesNoTrace(t *testing.T) {
+	db, agentID := cortexAgent(t)
+	appendCortexObs(db, agentID, "iPhone", cortexKindMessage, "just saying hi")
+	if card := cortexCard(t, db, agentID); len(card.ToolCalls) != 0 {
+		t.Errorf("no tools should mean no trace: %+v", card.ToolCalls)
+	}
+}
+
+// The standing thread is read back whole every turn and is kept lean on
+// purpose, so the copy that lands here is bounded — unlike the per-contact
+// thread, which keeps the full version.
+func TestTheCortexCopyOfATraceIsBounded(t *testing.T) {
+	long := strings.Repeat("x", 4000)
+	var many []PersistedToolCall
+	for i := 0; i < 30; i++ {
+		many = append(many, PersistedToolCall{Name: "read", Result: long})
+	}
+	got := cortexToolTrace(many)
+	if len(got) >= len(many) {
+		t.Errorf("an unbounded trace crowds out the awareness the thread exists for: %d", len(got))
+	}
+	for _, c := range got {
+		if len([]rune(c.Result)) > 260 {
+			t.Errorf("result not bounded: %d chars", len([]rune(c.Result)))
+		}
+	}
+	// Names and arguments survive intact — they are what says WHAT was done.
+	kept := cortexToolTrace([]PersistedToolCall{
+		{Name: "shell", Args: map[string]any{"command": "uptime"}, Result: "ok"},
+	})
+	if kept[0].Name != "shell" || kept[0].Args["command"] != "uptime" || kept[0].Result != "ok" {
+		t.Errorf("a short call must pass through untouched: %+v", kept[0])
+	}
+	if cortexToolTrace(nil) != nil {
+		t.Error("no calls, no trace")
 	}
 }

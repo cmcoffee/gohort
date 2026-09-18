@@ -174,54 +174,6 @@ func channelClaimsClause(speaker string) string {
 // e.g. "iPhone (iMessage)"), so the standing thread — and any session that
 // forks from it — records which channel a message came in on, not just who
 // sent it. Falls back to the bare sender when no channel resolves.
-// toolsUsedNote renders the tools a turn called for the standing thread.
-// Bounded: a turn that called fifteen things says so without spending fifteen
-// lines of a thread that is kept by rolling summary.
-// toolsUsedNote renders what a turn actually ran, for the cortex card.
-//
-// The entries are briefs (see toolCallBrief), so they carry the salient
-// argument rather than only the tool name — "used: shell" was unactionable
-// when the command IS the content of the call, and it left the owner unable to
-// say what an agent had done on their behalf.
-//
-// One per line once arguments are present: a comma-joined run of
-// name(arg) briefs is unreadable at three or more, and this card is the only
-// record of the turn's actions.
-func toolsUsedNote(calls []string) string {
-	if len(calls) == 0 {
-		return ""
-	}
-	const max = 8
-	shown, extra := calls, 0
-	if len(calls) > max {
-		shown, extra = calls[:max], len(calls)-max
-	}
-	// No arguments anywhere: the old one-line form is still the clearest.
-	multi := false
-	for _, c := range shown {
-		if strings.Contains(c, "(") {
-			multi = true
-			break
-		}
-	}
-	if !multi {
-		if extra == 0 {
-			return "↳ used: " + strings.Join(shown, ", ")
-		}
-		return fmt.Sprintf("↳ used: %s and %d more", strings.Join(shown, ", "), extra)
-	}
-	var b strings.Builder
-	b.WriteString("↳ ran:")
-	for _, c := range shown {
-		b.WriteString("\n   • ")
-		b.WriteString(c)
-	}
-	if extra > 0 {
-		fmt.Fprintf(&b, "\n   • …and %d more", extra)
-	}
-	return b.String()
-}
-
 func channelObsFrom(in ChannelInbound) string {
 	who := chFirst(in.SenderName, in.ConversationName, "someone")
 	ch, ok := channelForChat(in.Owner, in.ChatID, in.Handle)
@@ -262,11 +214,11 @@ func channelObsFrom(in ChannelInbound) string {
 // So: cortex agents that fan several channels into one standing thread get the
 // card (it is the only trace they'd have); the agent whose thread already holds
 // the real, attributed message gets nothing added on top of it.
-func (app *OrchestrateApp) observeChannelInbound(in ChannelInbound, sessionID, obs string) {
+func (app *OrchestrateApp) observeChannelInbound(in ChannelInbound, sessionID, obs string, trace ...PersistedToolCall) {
 	if sessionID == cortexSessionID(in.AgentID) {
 		return
 	}
-	app.AppendCortexObservation(in.Owner, in.AgentID, channelObsFrom(in), cortexKindMessage, obs)
+	app.AppendCortexObservation(in.Owner, in.AgentID, channelObsFrom(in), cortexKindMessage, obs, trace...)
 }
 
 // effectiveChannelSession resolves the session id a channel inbound actually
@@ -504,11 +456,8 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 			// a gappy record is worse than a quiet one: it is a sample the agent
 			// then reasons over as though it were the whole room.
 			obs := strings.TrimSpace(in.Text)
-			if used := toolsUsedNote(res.ToolsUsed); used != "" {
-				obs = strings.TrimSpace(obs + "\n" + used)
-			}
 			obs = strings.TrimSpace(obs + "\n↳ stayed silent (nothing sent to the channel)")
-			app.observeChannelInbound(in, sessionID, obs)
+			app.observeChannelInbound(in, sessionID, obs, res.ToolCalls...)
 			return ChannelReply{AgentName: agentNameTag(in.Owner, in.AgentID), Silenced: true}, nil
 		}
 		if text != replyText {
@@ -531,18 +480,15 @@ func registerChannelAgentRunner(app *OrchestrateApp) {
 		// agent has Cortex off. The agent ALSO replied in its per-contact thread
 		// (above); this is just awareness, not a second run.
 		obs := strings.TrimSpace(in.Text)
-		// What it DID, not only what it said. Without this the standing thread
-		// recorded a question and an answer while the turn might have searched
-		// the web, edited a photo, messaged a third party or armed a monitor —
-		// so a later turn reading its own thread could not see what it had
-		// already done on the owner's behalf.
-		if used := toolsUsedNote(res.ToolsUsed); used != "" {
-			obs = strings.TrimSpace(obs + "\n" + used)
-		}
 		if rt := strings.TrimSpace(replyText); rt != "" {
 			obs = strings.TrimSpace(obs + "\n↳ replied: " + truncateObs(rt, 200))
 		}
-		app.observeChannelInbound(in, sessionID, obs)
+		// What it DID travels STRUCTURED, not as a line in the body. Without it
+		// the standing thread recorded a question and an answer while the turn
+		// might have searched the web, edited a photo, messaged a third party or
+		// armed a monitor — and with it as prose the card said so in a shape no
+		// renderer and no history builder could use.
+		app.observeChannelInbound(in, sessionID, obs, res.ToolCalls...)
 		// Carry the bound agent's display name so the transport can prefix an
 		// outbound name tag (opt-in) — lets the recipient tell the agent's reply
 		// apart from the owner's own texts in the same thread.

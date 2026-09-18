@@ -34,17 +34,17 @@ const (
 // distinct report card (ReportFrom + kind) and bumps LastAt only — NOT LastSeen —
 // so the cortex reads "unread" (new activity) until the user opens it. Never runs
 // the agent; this is awareness, not a turn. kind is one of the cortexKind* values.
-func (T *OrchestrateApp) AppendCortexObservation(owner, agentID, from, kind, text string) {
+func (T *OrchestrateApp) AppendCortexObservation(owner, agentID, from, kind, text string, trace ...PersistedToolCall) {
 	if T == nil || T.DB == nil || owner == "" {
 		return
 	}
-	appendCortexObs(UserDB(T.DB, owner), agentID, from, kind, text)
+	appendCortexObs(UserDB(T.DB, owner), agentID, from, kind, text, trace...)
 }
 
 // appendCortexObs is the db-level core of AppendCortexObservation — usable both
 // from the app method (channel feed) and from tools that already hold the agent
 // owner's db (the deliverable pointer).
-func appendCortexObs(db Database, agentID, from, kind, text string) {
+func appendCortexObs(db Database, agentID, from, kind, text string, trace ...PersistedToolCall) {
 	if db == nil || agentID == "" || strings.TrimSpace(text) == "" {
 		return
 	}
@@ -73,6 +73,14 @@ func appendCortexObs(db Database, agentID, from, kind, text string) {
 			ReportKind: strings.TrimSpace(kind),
 			Content:    strings.TrimSpace(text),
 			Created:    now,
+			// What the turn DID, structured. It used to be formatted into the
+			// body above as prose ("↳ ran: …"), which is the one shape neither
+			// reader can use well: the panel has a renderer for a persisted
+			// trace — the expandable tool-runs section every other card has —
+			// and toLLMMessages rebuilds one into call-and-result protocol, so
+			// a later turn reading this thread gets outcomes rather than a
+			// bullet list of names.
+			ToolCalls: cortexToolTrace(trace),
 		})
 		// Length backstop for observation-ONLY cortexes: a real turn runs the
 		// compaction + trim pipeline, but an agent that only receives
@@ -92,6 +100,33 @@ func appendCortexObs(db Database, agentID, from, kind, text string) {
 			Log("[orchestrate.cortex] observation append failed for agent=%s: %v", agentID, err)
 		}
 	})
+}
+
+// cortexToolTrace bounds a turn's trace for the standing thread.
+//
+// The thread it lands on is kept lean on purpose — "cortex holds pointers, not
+// bodies" — and it is read back whole on every turn, so an unbounded trace
+// would crowd out the awareness it exists to provide. The per-contact thread
+// keeps the full version; this is the copy that has to earn its room.
+//
+// Names and arguments survive intact because they are what says WHAT was done.
+// Results are cut to a line, which is enough to tell "it worked" from "it came
+// back 404" — the distinction the card is for.
+func cortexToolTrace(calls []PersistedToolCall) []PersistedToolCall {
+	if len(calls) == 0 {
+		return nil
+	}
+	const maxCalls, maxResult = 12, 200
+	if len(calls) > maxCalls {
+		calls = calls[:maxCalls]
+	}
+	out := make([]PersistedToolCall, 0, len(calls))
+	for _, c := range calls {
+		c.Result = truncateObs(c.Result, maxResult)
+		c.Err = truncateObs(c.Err, maxResult)
+		out = append(out, c)
+	}
+	return out
 }
 
 // cortexDeliverableTools gives a Cortex-enabled agent the file_deliverable tool —
