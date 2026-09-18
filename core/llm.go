@@ -1745,3 +1745,198 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 
 	return &retryLLM{inner: inner, maxRetries: 5, peer: peerName}, nil
 }
+
+// --- a scripted LLM, for tests -------------------------------------------------
+//
+// Every behaviour in the agent loop is a function of what the model said, so
+// testing any of it means being able to say it on demand. Nineteen test files
+// had each written their own stub to do that, all implementing the same two
+// methods, each covering exactly what its own test needed and nothing more.
+// The cost of that is not duplication — it is what does NOT get tested, because
+// a scenario that needs one more capability than the local stub has means
+// writing a twentieth stub, and the easier path is to test something else.
+//
+// It lives in package core, not a subpackage, because Go refuses an internal
+// test file that imports a package which imports the package under test, and
+// most of those nineteen are internal tests of core. It ships in the binary, in
+// the same way httptest ships in the standard library: the alternative is
+// carrying the same type in every package that needs it.
+//
+// Two things it does that the hand-rolled stubs mostly did not. It STREAMS —
+// almost every stub made ChatStream call Chat, so the chunked path was never
+// exercised by any of them, and chunk boundaries are where a class of real bugs
+// lives. And it RECORDS what it was asked, so a test can assert on the prompt
+// that was actually built rather than only on what came back.
+
+// FakeTurn is one scripted reply. The zero value is a model that said nothing,
+// which is itself a case worth testing.
+type FakeTurn struct {
+	// Content is the reply text.
+	Content string
+	// Chunks is how Content arrives when streamed. Empty means it arrives in
+	// one piece. Set it to place a boundary exactly where a test needs one —
+	// mid-sentence, inside a marker, between a word and its punctuation — which
+	// is where streaming bugs live and what a stub that forwards ChatStream to
+	// Chat can never reach. When set, Content is ignored for streaming and the
+	// joined chunks are what the response carries.
+	Chunks []string
+	// ToolCalls make this a tool round rather than an answer.
+	ToolCalls []ToolCall
+	// Reasoning is the thinking channel, populated but not promoted.
+	Reasoning string
+	// StopReason is the provider's terminal signal ("end_turn", "max_tokens",
+	// "refusal"). Empty is the common case; set it to test the guards that read
+	// a truncation or a refusal apart from a clean finish.
+	StopReason string
+	// Err makes this call fail. The loop's error paths are as much of its
+	// behaviour as its happy ones.
+	Err error
+	// Repeat makes this turn answer every remaining call, for a test that
+	// cares what the model says but not how many times it is asked.
+	Repeat bool
+	// Token counts, for the accounting paths. Zero unless a test is about them.
+	InputTokens, OutputTokens int
+}
+
+// fakeCall is one thing the fake was asked.
+type fakeCall struct {
+	messages []Message
+	opts     []ChatOption
+	streamed bool
+}
+
+// FakeLLM is a scripted LLM: it answers with the turns it was given, in order,
+// and remembers what it was asked.
+//
+// Running past the end of the script is an ERROR rather than a default reply.
+// A loop that asks more times than a test scripted is either a runaway or a
+// test that has drifted from what it is checking, and both are worth failing
+// on. Set Repeat on the last turn where the count genuinely does not matter.
+type FakeLLM struct {
+	// Turns are consumed in order.
+	Turns []FakeTurn
+
+	mu    sync.Mutex
+	calls []fakeCall
+}
+
+// Chat implements LLM.
+func (f *FakeLLM) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
+	return f.answer(ctx, messages, nil, opts)
+}
+
+// ChatStream implements LLM, delivering the turn's chunks through handler
+// before returning.
+func (f *FakeLLM) ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
+	return f.answer(ctx, messages, handler, opts)
+}
+
+func (f *FakeLLM) answer(ctx context.Context, messages []Message, handler StreamHandler, opts []ChatOption) (*Response, error) {
+	f.mu.Lock()
+	n := len(f.calls)
+	// The messages are COPIED. The loop reuses and appends to its history
+	// slice between rounds, so keeping the caller's slice would leave every
+	// recorded call pointing at whatever the last one ended up being.
+	f.calls = append(f.calls, fakeCall{
+		messages: append([]Message(nil), messages...),
+		opts:     opts,
+		streamed: handler != nil,
+	})
+	turn, ok := f.turnFor(n)
+	f.mu.Unlock()
+
+	if !ok {
+		return nil, fmt.Errorf("FakeLLM: call %d has no scripted turn (%d scripted) — the loop asked more times than this test expects", n+1, len(f.Turns))
+	}
+	if turn.Err != nil {
+		return nil, turn.Err
+	}
+	// Cancellation is checked after the call is recorded, so a test can still
+	// see that the call was made before the context went.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	content := turn.Content
+	if len(turn.Chunks) > 0 {
+		content = strings.Join(turn.Chunks, "")
+	}
+	if handler != nil {
+		for _, c := range turn.Chunks {
+			handler(c)
+		}
+		if len(turn.Chunks) == 0 && content != "" {
+			handler(content)
+		}
+	}
+	return &Response{
+		Content:      content,
+		Reasoning:    turn.Reasoning,
+		ToolCalls:    turn.ToolCalls,
+		StopReason:   turn.StopReason,
+		InputTokens:  turn.InputTokens,
+		OutputTokens: turn.OutputTokens,
+	}, nil
+}
+
+// turnFor picks the turn for call n. Caller holds the lock.
+func (f *FakeLLM) turnFor(n int) (FakeTurn, bool) {
+	if n < len(f.Turns) {
+		return f.Turns[n], true
+	}
+	if len(f.Turns) > 0 {
+		if last := f.Turns[len(f.Turns)-1]; last.Repeat {
+			return last, true
+		}
+	}
+	return FakeTurn{}, false
+}
+
+// Calls reports how many times the model was asked.
+func (f *FakeLLM) Calls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.calls)
+}
+
+// Sent returns the messages the i'th call received, or nil when there was no
+// such call. This is the half that makes a prompt testable: what the loop
+// BUILT, rather than only what it did with the reply.
+func (f *FakeLLM) Sent(i int) []Message {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if i < 0 || i >= len(f.calls) {
+		return nil
+	}
+	return f.calls[i].messages
+}
+
+// LastSent returns the messages of the most recent call.
+func (f *FakeLLM) LastSent() []Message {
+	f.mu.Lock()
+	n := len(f.calls)
+	f.mu.Unlock()
+	return f.Sent(n - 1)
+}
+
+// Prompt returns the i'th call's messages flattened to text, for asserting
+// that something reached the model without caring which message carried it.
+func (f *FakeLLM) Prompt(i int) string {
+	var b strings.Builder
+	for _, m := range f.Sent(i) {
+		b.WriteString(m.Role)
+		b.WriteString(": ")
+		b.WriteString(m.Content)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// Streamed reports whether the i'th call came through ChatStream. Which path a
+// surface takes is itself behaviour: a reply that streams and one that does not
+// reach the user through different code.
+func (f *FakeLLM) Streamed(i int) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return i >= 0 && i < len(f.calls) && f.calls[i].streamed
+}
