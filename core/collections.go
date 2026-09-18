@@ -118,12 +118,37 @@ type Collection struct {
 	// the autofill flow's query generator + LLM judge. Format is
 	// freeform but bullet lists read best.
 	FilterRules string `json:"filter_rules,omitempty"`
+	// CuratedFrom names the source items this collection is a COPY of, and is
+	// what makes it a curated collection rather than a hand-filled one.
+	//
+	// A list because one collection can mirror several places (two wiki
+	// spaces), and fields on the record rather than a binding table because a
+	// curated collection is not a second noun — it is a collection with a
+	// source named on it. Empty is the normal case: most collections are
+	// filled by hand or by autofill and are nobody's copy.
+	CuratedFrom []CuratedSource `json:"curated_from,omitempty"`
 	// ClassifyOnAutofill enables the LLM judge pass during
 	// autofill. When true, every fetched + extracted candidate
 	// goes through a non-thinking worker call that decides
 	// keep/drop. Default false. Autofill-specific; ignored by
 	// other consumers of Collection.
 	ClassifyOnAutofill bool `json:"classify_on_autofill,omitempty"`
+}
+
+// CuratedSource names one source item a collection is kept in step with:
+// which reference source, and which of its items.
+//
+// Kind matches ReferenceSource.Kind and Item matches a ReferenceItem.ID from
+// that source's List. Both are stored rather than resolved, because a source
+// that goes away must leave a legible "this collection was a copy of something
+// that is no longer connected" rather than a collection that silently stops
+// being maintained.
+type CuratedSource struct {
+	Kind string `json:"kind"`
+	Item string `json:"item"`
+	// Label is what the item was called when it was attached, for showing in a
+	// listing without having to reach the source to find out.
+	Label string `json:"label,omitempty"`
 }
 
 // CollectionSource returns the chunk-source tag for a collection's

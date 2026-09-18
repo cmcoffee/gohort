@@ -64,6 +64,57 @@ type ReferenceSource interface {
 	Fetch(ctx context.Context, user, itemID, query string) string
 }
 
+// ReferenceDoc is one document a source holds, described by the source itself.
+//
+// This is deliberately not a document: it is what you need to decide WHETHER to
+// fetch one. An enumeration runs over everything an item holds, so making it
+// carry bodies would mean pulling a whole space to find out that nothing in it
+// changed.
+type ReferenceDoc struct {
+	// ID is the source's own identifier, stable across edits to the document.
+	// It is what a later sync matches on, so a source that mints a new id when
+	// a page is edited will read as "deleted and replaced" every time.
+	ID string
+	// Title is for a person reading a log or a listing.
+	Title string
+	// URL is where a person opens the original, when there is such a place.
+	URL string
+	// Version is the source's own change marker: a version number, an etag, a
+	// content hash, whatever it has. Compared as an OPAQUE string, never
+	// ordered — "is this the same as last time" is the only question asked of
+	// it. Empty means the source cannot say, and then Updated decides.
+	Version string
+	// Updated is the fallback change marker for a source with no version of
+	// its own. Zero when unknown, which forces a re-pull on every sync.
+	Updated time.Time
+}
+
+// ReferenceEnumerator is an OPTIONAL interface a ReferenceSource may ALSO
+// implement, for sources whose items hold a KNOWABLE SET of documents.
+//
+// Fetch cannot serve this. It answers "what in here is relevant to this
+// query" with prose, which is right for grounding a turn and useless for
+// keeping a copy in step: it cannot say what exists, cannot say what changed,
+// and above all cannot say what is GONE. Something maintaining a local copy of
+// a remote body of documents needs the full remote set or it can only ever
+// add, never retire.
+//
+// Implement it when the source can answer both questions cheaply. Leaving it
+// unimplemented is not a defect — a search endpoint genuinely cannot enumerate
+// — and a consumer is expected to fall back to pulling what it is given.
+type ReferenceEnumerator interface {
+	// Documents lists everything itemID currently holds. The list is taken as
+	// AUTHORITATIVE: a caller keeping a copy in step is entitled to conclude
+	// that a document it knows about and this list omits has been deleted at
+	// the source. A source that cannot guarantee completeness must return an
+	// error rather than a partial list, because a partial list read as
+	// authoritative is a deletion of everything it left out.
+	Documents(ctx context.Context, user, itemID string) ([]ReferenceDoc, error)
+	// DocumentBody returns one document's text, as written. Empty with no
+	// error means the document exists but has nothing to copy.
+	DocumentBody(ctx context.Context, user, itemID, docID string) (string, error)
+}
+
 // ReferenceToolProvider is an OPTIONAL interface a ReferenceSource may ALSO
 // implement to contribute source-specific TOOLS for a selected item — instead of
 // leaving a consumer only the flat Fetch reached through a generic
@@ -263,6 +314,20 @@ func ReferenceSourceKnown(kind string) bool {
 	defer refSourcesMu.RUnlock()
 	_, ok := refSources[kind]
 	return ok
+}
+
+// ReferenceSourceByKind returns the registered source for a kind.
+//
+// Most consumers want FetchReference below, which resolves and fetches in one
+// step. This is for the ones that need the SOURCE rather than its text —
+// something keeping a copy in step has to ask whether it can enumerate
+// (ReferenceEnumerator), which is a question about the source, not about any
+// one item of it.
+func ReferenceSourceByKind(kind string) (ReferenceSource, bool) {
+	refSourcesMu.RLock()
+	defer refSourcesMu.RUnlock()
+	s, ok := refSources[kind]
+	return s, ok
 }
 
 // FetchReference resolves (kind, itemID) to the owning source and returns its
