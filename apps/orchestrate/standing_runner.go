@@ -332,6 +332,12 @@ func registerStandingRunner(app *OrchestrateApp) {
 				Created:    time.Now(),
 				ReportFrom: sa.Name,
 				ReportKind: cortexKindScheduled,
+				// What it actually DID, not just what it concluded. The card is
+				// the only account of a run nobody watched, and the recurring
+				// fire's card has carried its trace all along — two surfaces
+				// showing the same kind of run, one of them silent about six
+				// tool calls, is the asymmetry rather than a policy.
+				ToolCalls: persistedToolCallsFromSteps(rec.Steps),
 			}); err != nil {
 			Log("[standing] report append failed for %s/%s: %v", sa.Owner, sa.Name, err)
 		}

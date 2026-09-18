@@ -1557,6 +1557,39 @@ func runStepsFromToolCalls(calls []PersistedToolCall) []RunStep {
 	return out
 }
 
+// persistedToolCallsFromSteps is runStepsFromToolCalls inverted: the ledger's
+// trace turned back into the card's, so a run that only ever existed as a
+// ledger entry can still show its tool chips on the thread.
+//
+// It exists because the two directions serve different readers. A RunStep is
+// what inspect_run shows an operator; a PersistedToolCall is what the chat
+// panel replays as chips under a message. A standing run produces the first
+// and its report card needs the second, and without the conversion the card
+// was the one surface that said what happened without saying what was done.
+//
+// Args come back through JSON because that is how the forward direction
+// serialized them. A trace whose args will not parse keeps the call and drops
+// the arguments: the NAME is the load-bearing half — it is what tells the
+// reader a write ran rather than a read — and losing the chip over an
+// unreadable argument blob would throw away the answer to keep the footnote.
+func persistedToolCallsFromSteps(steps []RunStep) []PersistedToolCall {
+	if len(steps) == 0 {
+		return nil
+	}
+	out := make([]PersistedToolCall, 0, len(steps))
+	for _, st := range steps {
+		pc := PersistedToolCall{Name: st.Name, Result: st.Result, Err: st.Err}
+		if a := strings.TrimSpace(st.Args); a != "" {
+			var args map[string]any
+			if err := json.Unmarshal([]byte(a), &args); err == nil {
+				pc.Args = args
+			}
+		}
+		out = append(out, pc)
+	}
+	return out
+}
+
 // quoteAll wraps each entry in quotes for a human-readable list — guardrail
 // rules are user-authored sentences, and an unquoted join of them reads as one
 // run-on rule rather than several.

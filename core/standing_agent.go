@@ -710,15 +710,25 @@ func executeStandingRun(ctx context.Context, db Database, sa StandingAgent, trig
 	rec.Prompt = res.Prompt
 	rec.Err = res.Err
 	rec.Ended = time.Now()
-	fullOutput := rec.Raw // capture before RecordRun moves Raw to the encrypted side table
+	// Captured before RecordRun, which moves BOTH to encrypted side tables and
+	// returns a record carrying neither.
+	fullOutput, fullSteps := rec.Raw, rec.Steps
 	rec = RecordRun(db, rec)
 
 	// Report EVERY run back to the channel/session it was created from. Pass the
-	// full output explicitly — RecordRun stores Raw in the encrypted side table
-	// and the returned record no longer carries it.
+	// full output and the tool trace explicitly, for the same reason and by the
+	// same mechanism: the returned record no longer carries either.
+	//
+	// Raw was restored here from the start and Steps was not, so a reporter
+	// could say what the run CONCLUDED and never what it DID. The card it
+	// writes is the only account of an unattended run, which is exactly where
+	// nobody watched the tools go by — and the sibling recurring card has
+	// carried its trace all along, so the two surfaces disagreed about the same
+	// kind of run.
 	if rpt != nil {
 		forReport := rec
 		forReport.Raw = fullOutput
+		forReport.Steps = fullSteps
 		rpt(ctx, sa, forReport)
 	}
 
