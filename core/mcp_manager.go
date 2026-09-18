@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -81,6 +82,20 @@ type MCPServerConfig struct {
 	ExposeReference bool        `json:"expose_reference"` // expose as a ReferenceSource (Stage 5)
 	SearchTool      string      `json:"search_tool"`      // MCP tool used for reference Fetch (default "search")
 	Enabled         bool        `json:"enabled"`
+
+	// ListTool and DocTool make this server ENUMERABLE, which is what lets a
+	// collection be kept as a COPY of it rather than only searched. ListTool
+	// must return the FULL set of documents an item holds; DocTool returns one
+	// body. Both empty (the default) means this server can be searched but not
+	// mirrored, which is the honest state for a search endpoint.
+	ListTool string `json:"list_tool,omitempty"`
+	DocTool  string `json:"doc_tool,omitempty"`
+	// ListArgs is a JSON object of fixed arguments for ListTool, for a server
+	// whose listing needs scoping ({"space":"ENG"}). Empty sends none.
+	ListArgs string `json:"list_args,omitempty"`
+	// DocArgKey is the argument name DocTool takes the document id under.
+	// Defaults to "id".
+	DocArgKey string `json:"doc_arg_key,omitempty"`
 	// Manual OAuth client (oauth mode) — the fallback when the authorization
 	// server does NOT support Dynamic Client Registration (RFC 7591). The admin
 	// pre-registers an OAuth app at the provider and supplies its client_id here
@@ -1544,4 +1559,345 @@ func mcpCompactSchema(p map[string]any) string {
 		return ""
 	}
 	return string(b)
+}
+
+// --- enumeration (ReferenceEnumerator) ---------------------------------------
+//
+// A search endpoint can ground a turn. Only an enumerable one can be COPIED,
+// because keeping a copy in step needs the full remote set — without it you can
+// add and update forever and never discover that something was deleted.
+//
+// The parsing below is the awkward part and cannot be avoided: MCP tools return
+// text, every server shapes its listing differently, and the shape is not
+// declared anywhere a client can read. So this accepts the shapes that actually
+// occur and REFUSES what it cannot vouch for, which matters more here than
+// anywhere else: ReferenceEnumerator.Documents is authoritative by contract, so
+// a list this returns with half the pages missing is read as a deletion of the
+// other half.
+
+// Asserted rather than left to the registry to discover at runtime: the
+// enumerator is an OPTIONAL interface, so a signature that drifts out of step
+// would simply stop being detected, and a collection built on this source would
+// quietly go back to never noticing a deletion.
+var _ ReferenceEnumerator = mcpReferenceSource{}
+
+// mcpDocListLimit bounds how many documents one listing may describe. A reply
+// far past this is a tool that is streaming a whole corpus rather than listing
+// it, and treating it as authoritative would be a guess about the rest.
+const mcpDocListLimit = 5000
+
+// Documents implements ReferenceEnumerator. Errors rather than returning a
+// partial list, always.
+func (s mcpReferenceSource) Documents(ctx context.Context, user, itemID string) ([]ReferenceDoc, error) {
+	cfg, ok := s.mgr.Load(s.server)
+	if !ok || !cfg.ExposeReference {
+		return nil, fmt.Errorf("%s is not exposed as a reference source", s.server)
+	}
+	tool := strings.TrimSpace(cfg.ListTool)
+	if tool == "" {
+		return nil, fmt.Errorf("%s has no listing tool configured, so it can be searched but not copied — an admin names one in Admin > MCP", s.server)
+	}
+	args := map[string]any{}
+	if raw := strings.TrimSpace(cfg.ListArgs); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &args); err != nil {
+			return nil, fmt.Errorf("%s's listing arguments are not valid JSON: %w", s.server, err)
+		}
+	}
+	out, err := s.mgr.callToolForUser(ctx, user, s.server, tool, args)
+	if err != nil {
+		return nil, fmt.Errorf("%s's %s failed: %w", s.server, tool, err)
+	}
+	docs, err := mcpParseDocList(out)
+	if err != nil {
+		return nil, fmt.Errorf("%s's %s returned something this cannot read as a list of documents: %w", s.server, tool, err)
+	}
+	return docs, nil
+}
+
+// DocumentBody implements ReferenceEnumerator.
+func (s mcpReferenceSource) DocumentBody(ctx context.Context, user, itemID, docID string) (string, error) {
+	cfg, ok := s.mgr.Load(s.server)
+	if !ok || !cfg.ExposeReference {
+		return "", fmt.Errorf("%s is not exposed as a reference source", s.server)
+	}
+	tool := strings.TrimSpace(cfg.DocTool)
+	if tool == "" {
+		return "", fmt.Errorf("%s has no document tool configured — an admin names one in Admin > MCP", s.server)
+	}
+	key := strings.TrimSpace(cfg.DocArgKey)
+	if key == "" {
+		key = "id"
+	}
+	out, err := s.mgr.callToolForUser(ctx, user, s.server, tool, map[string]any{key: docID})
+	if err != nil {
+		return "", err
+	}
+	return mcpDocumentText(out), nil
+}
+
+// mcpParseDocList turns a listing tool's reply into documents.
+//
+// Accepts a bare array, or an object holding one — servers wrap their results
+// under whatever noun they favour ("results", "pages", "items"), and demanding
+// one of them would fail on the next server for no reason. The first array of
+// OBJECTS wins, since a sibling array of strings is a facet list, not the
+// answer.
+func mcpParseDocList(out string) ([]ReferenceDoc, error) {
+	raw, ok := mcpJSONSpan(out)
+	if !ok {
+		return nil, errors.New("no JSON in the reply")
+	}
+	var any1 any
+	if err := json.Unmarshal(raw, &any1); err != nil {
+		return nil, err
+	}
+	rows, container := mcpRowsFrom(any1)
+	if rows == nil {
+		return nil, errors.New("no array of documents in the reply")
+	}
+	// Truncation is the one failure that must never pass as success. A caller
+	// keeping a copy in step reads this list as everything that exists, so a
+	// first page returned as the whole set retires every document on page two.
+	if more, where := mcpLooksPaginated(container); more {
+		return nil, fmt.Errorf("the reply says there is more to come (%s) — a partial listing cannot be used to decide what has been deleted, so configure the tool to return everything", where)
+	}
+	if len(rows) > mcpDocListLimit {
+		return nil, fmt.Errorf("the reply describes %d documents, past the %d this will treat as a complete listing", len(rows), mcpDocListLimit)
+	}
+	out2 := make([]ReferenceDoc, 0, len(rows))
+	for _, r := range rows {
+		m, isMap := r.(map[string]any)
+		if !isMap {
+			continue
+		}
+		d := mcpDocFrom(m)
+		if strings.TrimSpace(d.ID) == "" {
+			// No id means nothing can match this document on the next sync, so
+			// it would be added and retired forever. Refuse the whole listing
+			// rather than silently dropping rows out of an authoritative set.
+			return nil, errors.New("a document in the reply has no id field this recognises (id, key, page_id, uuid)")
+		}
+		out2 = append(out2, d)
+	}
+	if len(out2) == 0 && len(rows) > 0 {
+		return nil, errors.New("the reply's array holds no document objects")
+	}
+	return out2, nil
+}
+
+// mcpRowsFrom finds the array of documents and the object that held it (which
+// is where pagination markers live).
+func mcpRowsFrom(v any) ([]any, map[string]any) {
+	switch t := v.(type) {
+	case []any:
+		return t, nil
+	case map[string]any:
+		// Deterministic order: the same reply must resolve the same way every
+		// time, and Go's map iteration would make it a coin toss between two
+		// candidate arrays.
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if arr, isArr := t[k].([]any); isArr && mcpHoldsObjects(arr) {
+				return arr, t
+			}
+		}
+	}
+	return nil, nil
+}
+
+func mcpHoldsObjects(arr []any) bool {
+	for _, v := range arr {
+		if _, ok := v.(map[string]any); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// mcpLooksPaginated reports whether a listing says it is incomplete.
+func mcpLooksPaginated(container map[string]any) (bool, string) {
+	if container == nil {
+		return false, ""
+	}
+	for _, k := range []string{"next", "next_cursor", "nextCursor", "next_page", "nextPage", "cursor", "has_more", "hasMore", "is_last_page"} {
+		v, present := container[k]
+		if !present {
+			continue
+		}
+		switch t := v.(type) {
+		case bool:
+			// is_last_page is the inverse of the others: TRUE means complete.
+			if k == "is_last_page" {
+				if !t {
+					return true, k
+				}
+				continue
+			}
+			if t {
+				return true, k
+			}
+		case string:
+			if strings.TrimSpace(t) != "" {
+				return true, k
+			}
+		case float64:
+			if t != 0 {
+				return true, k
+			}
+		case map[string]any, []any:
+			return true, k
+		}
+	}
+	return false, ""
+}
+
+// mcpDocFrom maps one row onto a ReferenceDoc, accepting the field names that
+// occur in the wild rather than insisting on one spelling.
+func mcpDocFrom(m map[string]any) ReferenceDoc {
+	d := ReferenceDoc{
+		ID:      mcpFirstString(m, "id", "key", "page_id", "pageId", "documentId", "document_id", "uuid"),
+		Title:   mcpFirstString(m, "title", "name", "subject", "heading"),
+		URL:     mcpFirstString(m, "url", "link", "webui", "href", "web_url", "webUrl"),
+		Version: mcpVersionOf(m),
+	}
+	if ts := mcpFirstString(m, "updated", "updated_at", "updatedAt", "modified", "last_modified", "lastModified", "when"); ts != "" {
+		for _, layout := range []string{time.RFC3339, time.RFC3339Nano, "2006-01-02T15:04:05.000Z0700", "2006-01-02 15:04:05", "2006-01-02"} {
+			if t, err := time.Parse(layout, ts); err == nil {
+				d.Updated = t
+				break
+			}
+		}
+	}
+	return d
+}
+
+// mcpVersionOf reads a change marker, which servers express as a number, a
+// string, or an object with the number inside it (Confluence's {"number": 7}).
+func mcpVersionOf(m map[string]any) string {
+	for _, k := range []string{"version", "versionNumber", "version_number", "rev", "etag", "hash", "sha"} {
+		v, ok := m[k]
+		if !ok {
+			continue
+		}
+		switch t := v.(type) {
+		case string:
+			if strings.TrimSpace(t) != "" {
+				return strings.TrimSpace(t)
+			}
+		case float64:
+			return strconv.FormatFloat(t, 'f', -1, 64)
+		case map[string]any:
+			for _, inner := range []string{"number", "value", "id"} {
+				switch iv := t[inner].(type) {
+				case string:
+					if strings.TrimSpace(iv) != "" {
+						return strings.TrimSpace(iv)
+					}
+				case float64:
+					return strconv.FormatFloat(iv, 'f', -1, 64)
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func mcpFirstString(m map[string]any, keys ...string) string {
+	for _, k := range keys {
+		if s, ok := m[k].(string); ok && strings.TrimSpace(s) != "" {
+			return strings.TrimSpace(s)
+		}
+	}
+	return ""
+}
+
+// mcpJSONSpan finds the JSON in a tool's reply: the whole thing, what a fenced
+// block holds, or the first balanced object/array in prose around it.
+func mcpJSONSpan(out string) ([]byte, bool) {
+	s := strings.TrimSpace(out)
+	if s == "" {
+		return nil, false
+	}
+	if json.Valid([]byte(s)) {
+		return []byte(s), true
+	}
+	if fenced, ok := mcpFencedBlock(s); ok && json.Valid([]byte(fenced)) {
+		return []byte(fenced), true
+	}
+	// Prose around a payload. Scan from the first opener to the last closer of
+	// the same shape and check it parses, rather than counting brackets, which
+	// a brace inside a string would defeat.
+	for _, pair := range [][2]byte{{'{', '}'}, {'[', ']'}} {
+		start := strings.IndexByte(s, pair[0])
+		end := strings.LastIndexByte(s, pair[1])
+		if start >= 0 && end > start {
+			if span := s[start : end+1]; json.Valid([]byte(span)) {
+				return []byte(span), true
+			}
+		}
+	}
+	return nil, false
+}
+
+func mcpFencedBlock(s string) (string, bool) {
+	i := strings.Index(s, "```")
+	if i < 0 {
+		return "", false
+	}
+	rest := s[i+3:]
+	if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
+		rest = rest[nl+1:] // drop the language tag
+	}
+	j := strings.Index(rest, "```")
+	if j < 0 {
+		return "", false
+	}
+	return strings.TrimSpace(rest[:j]), true
+}
+
+// mcpDocumentText reduces a document tool's reply to the text worth copying. A
+// server that answers with JSON gets its longest string field taken as the
+// body, which is what "the document" means in every shape seen so far; anything
+// else is already text.
+func mcpDocumentText(out string) string {
+	raw, ok := mcpJSONSpan(out)
+	if !ok {
+		return out
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return out
+	}
+	m, isMap := v.(map[string]any)
+	if !isMap {
+		return out
+	}
+	// Named fields first, so a document with a short body and a long changelog
+	// does not come back as the changelog.
+	if s := mcpFirstString(m, "body", "content", "markdown", "text", "value"); s != "" {
+		return s
+	}
+	best := ""
+	for _, k := range mcpSortedKeys(m) {
+		if s, isStr := m[k].(string); isStr && len(s) > len(best) {
+			best = s
+		}
+	}
+	if best != "" {
+		return best
+	}
+	return out
+}
+
+func mcpSortedKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }

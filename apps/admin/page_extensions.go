@@ -335,6 +335,10 @@ func mcpServerFormFields() []ui.FormField {
 		{Field: "expose_tools", Label: "Expose tools to agents", Type: "toggle", Help: "Register the server's tools as <name>.<tool> in the agent catalog."},
 		{Field: "expose_reference", Label: "Expose as a reference source", Type: "toggle", Help: "Make the server selectable in writer/research source pickers (uses the Search tool below)."},
 		{Field: "search_tool", Label: "Search tool name", Placeholder: "search", Help: "MCP tool called for reference lookups. Only used when 'Expose as a reference source' is on. Defaults to 'search'."},
+		{Field: "list_tool", Label: "Listing tool name (optional)", Placeholder: "list_pages", ShowWhen: "expose_reference:true", Help: "MCP tool that lists EVERY document this server holds. Naming one makes the server copyable: a collection can be kept in step with it, which means noticing edits and deletions, not just adding what a search turns up. It must return the complete set — a tool that pages its results is refused rather than treated as the whole, because a partial listing would read as a deletion of everything it left out."},
+		{Field: "doc_tool", Label: "Document tool name", Placeholder: "get_page", ShowWhen: "expose_reference:true", Help: "MCP tool that returns ONE document's text, given its id. Required alongside the listing tool."},
+		{Field: "doc_arg_key", Label: "Document id argument", Placeholder: "id", ShowWhen: "expose_reference:true", Help: "The argument name the document tool takes the id under. Defaults to 'id'."},
+		{Field: "list_args", Label: "Listing arguments (optional JSON)", Placeholder: `{"space":"ENG"}`, ShowWhen: "expose_reference:true", Help: "Fixed arguments sent with every listing call, for a server whose listing needs scoping to a space or folder."},
 
 		{Field: "enabled", Label: "Enabled", Type: "toggle", Help: "Connect on startup and on save. Disable to suspend without deleting."},
 	}
