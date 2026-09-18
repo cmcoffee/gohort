@@ -43,6 +43,13 @@ type PublishConfig struct {
 	// "Team wiki" or "Docs pipeline" — the one place a generic destination gets
 	// to say what it actually is.
 	WebhookLabel string `json:"webhook_label,omitempty"`
+
+	// Agents are the destinations that are an AGENT rather than an endpoint.
+	// SEVERAL, unlike the two above, because the reason to have this kind at
+	// all is to have several named places, and each one costs a label, an
+	// agent and a sentence — no credential, no endpoint, nothing that would
+	// need the instance-naming scheme the one-per-kind rule is avoiding.
+	Agents []AgentDestination `json:"agents,omitempty"`
 }
 
 // config loads the deployment's publish configuration. A missing record is the
@@ -116,7 +123,12 @@ func (T *PublishApp) handleConfig(w http.ResponseWriter, r *http.Request) {
 		in.WebhookURL = strings.TrimSpace(in.WebhookURL)
 		in.WebhookFormat = strings.TrimSpace(in.WebhookFormat)
 		in.WebhookLabel = strings.TrimSpace(in.WebhookLabel)
+		in.Agents = normalizeAgentDestinations(in.Agents)
 		T.saveConfig(in)
+		// Re-register, so a destination added here appears in the Publish
+		// dialog without a restart. Registration is keyed by kind and replaces,
+		// so re-running it is how an edit lands rather than a duplicate.
+		T.registerAgentDestinations()
 		writeJSON(w, map[string]any{"ok": true})
 		return
 	}
@@ -183,6 +195,19 @@ func adminSection() ui.Section {
 						{Value: "html", Label: "HTML — the rendered document"},
 					},
 					Help: "What gets posted. JSON carries the title, markdown, html, and the source document's id.",
+				},
+				{
+					Field: "agents", Label: "Destinations that are an agent", Type: "rows",
+					AddLabel: "Add an agent destination",
+					Help:     "For a place that has no endpoint — filing a ticket, opening a pull request, handing a document to whoever owns that area. The Prompt is how THIS destination phrases the job, and is what makes the same document a different request depending on where it is going; the document is appended after it. {title} and {target} are substituted. Targets are optional: a queue, a repository, an area. Leave them empty when the destination is a single job.",
+					Columns: []ui.FormField{
+						{Field: "slug", Label: "Key", Type: "text", Placeholder: "tickets",
+							Help: "Stable identifier. Already-published records point at it, so renaming it strands them — change the Label instead."},
+						{Field: "label", Label: "Shown as", Type: "text", Placeholder: "File a ticket"},
+						{Field: "agent", Label: "Agent", Type: "text", Placeholder: "Tickets"},
+						{Field: "prompt", Label: "How to put it", Type: "textarea", Rows: 2,
+							Placeholder: "File {title} as a documentation task for the area owner."},
+					},
 				},
 			},
 		},

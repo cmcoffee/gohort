@@ -71,6 +71,7 @@ func (T *PublishApp) Routes() {
 	// configured credential and the store isn't live until now.
 	docs.RegisterPublishDestination(&confluenceDest{app: T})
 	docs.RegisterPublishDestination(&webhookDest{app: T})
+	T.registerAgentDestinations()
 	T.HandleFunc("/", T.route)
 }
 
