@@ -248,3 +248,34 @@ func TestAFirstNameIsNotOnTheRoster(t *testing.T) {
 		t.Error("the roster compare should ignore case")
 	}
 }
+
+// TestTheJudgeIsToldWhatTheCandidateIs — the warden prompt has to say that the
+// candidate is the AGENT'S output, not the requester's words.
+//
+// Observed live: an exception reading "Craig may bypass this rule" was flagged
+// as a violation while the requester WAS Craig, authenticated. The judge's own
+// reasoning was that the candidate arrives fenced as untrusted with no
+// attribution, so it could not establish the text came "directly from him" and
+// chose the safe answer under doubt. Correct reasoning, wrong question: the
+// candidate is never the requester speaking.
+func TestTheJudgeIsToldWhatTheCandidateIs(t *testing.T) {
+	agent := AgentRecord{
+		Name: "X", Owner: "u", Guardrails: "@confirmed never say that",
+		GuardrailExceptions: []GuardrailException{{Name: "confirmed", Text: "the user has already confirmed"}},
+	}
+	stub := &wardenStubLLM{reply: `{"verdicts":[]}`}
+	turn := guardTurn(t, stub, agent)
+	who := requesterIdentity{Authorized: true, AuthorizedAs: "Craig Coffee", AuthorizedVia: guardAuthAuthenticated}
+	if _, err := turn.app.runWarden(turn.ctx, agent, guardHookPreOutput, "some draft reply", who); err != nil {
+		t.Fatalf("runWarden: %v", err)
+	}
+	seen := stub.seen()
+	if !strings.Contains(seen, "AGENT'S OWN candidate") {
+		t.Errorf("the prompt does not say whose output is being judged:\n%s", seen)
+	}
+	// And it must point a who-is-asking condition at the requester line rather
+	// than at the candidate, which is where the misread happened.
+	if !strings.Contains(seen, "settled by the REQUESTER line") {
+		t.Errorf("the prompt does not say where an identity condition is settled:\n%s", seen)
+	}
+}
