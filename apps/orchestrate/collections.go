@@ -212,7 +212,10 @@ func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Requ
 
 	switch {
 	case action == "curate":
-		T.handleCollectionCurate(w, r, user, c)
+		T.handleCollectionCurate(w, r, user, c, false)
+		return
+	case action == "curate/run":
+		T.handleCollectionCurate(w, r, user, c, true)
 		return
 	case action == "":
 		switch r.Method {

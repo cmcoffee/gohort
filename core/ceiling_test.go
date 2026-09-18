@@ -260,7 +260,25 @@ const (
 	// the resolver in orchestrate, so it cannot be unexported. What did NOT
 	// get exported is the firing rule: PlaybookApplies is a method on
 	// SkillRecord, which the count excludes.
-	coreExportCeiling = 2208
+	//
+	// 2208 -> 2234 (v0.6.858). The band filled with a real subsystem's worth
+	// of API, which is what it is meant to catch rather than absorb: revision
+	// history for the four authored definitions (SaveSkillAs /
+	// SaveMachineDefAs / SavePipelineDefAs, the three RollbackX, and
+	// SkillRevisionRing, whose store and key are both un-guessable from
+	// outside), then keeping a collection in step with a source
+	// (ReferenceEnumerator + ReferenceDoc, the optional interface and its
+	// row; ReferenceSourceByKind, because a caller needs the SOURCE to ask
+	// whether it enumerates, not its text; CuratedSource, a field on
+	// Collection; CuratableSourceOptions, read by the app that RENDERS the
+	// picker, which is not the app that owns collections).
+	//
+	// What did NOT get exported is as much of it as would go: the ring itself
+	// is a subpackage (core/revisions), and the curation binding's encode and
+	// decode are methods — CuratedSource.Value and Collection.BindCuratedFrom
+	// — which the count excludes. That pass is what took this from 2237 to
+	// 2234, and it is the pass to make again before raising this further.
+	coreExportCeiling = 2234
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

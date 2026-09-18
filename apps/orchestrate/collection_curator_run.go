@@ -13,6 +13,7 @@ package orchestrate
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -155,28 +156,174 @@ func (T *OrchestrateApp) curatedStatusFor(user string, c Collection) []curatedSt
 
 // handleCollectionCurate serves the curated-source routes for one collection:
 //
-//	GET  .../curate  → what it is bound to, and how the last sync went
-//	POST .../curate  → sync now
+//	GET  .../curate      → the binding, as a form record, plus a status line
+//	POST .../curate      → save the binding
+//	POST .../curate/run  → sync now, answering the shape a Test button reads
 //
-// The sync runs on a context DETACHED from the request. A sync over a large
-// space outlives the click that started it, and one that dies when the browser
-// gives up would leave the ledger half-written and the next run re-pulling
-// everything it had already copied.
-func (T *OrchestrateApp) handleCollectionCurate(w http.ResponseWriter, r *http.Request, user string, c Collection) {
+// The binding travels as ONE value per row ("kind\x1fitem") rather than two
+// fields. A source and an item within it are not independent choices — picking
+// a space from another server's list would name nothing — so offering them as
+// two controls would invite exactly one wrong answer and nothing else.
+func (T *OrchestrateApp) handleCollectionCurate(w http.ResponseWriter, r *http.Request, user string, c Collection, run bool) {
+	if run {
+		T.handleCollectionCurateRun(w, r, user, c)
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
+		rows := make([]map[string]string, 0, len(c.CuratedFrom))
+		for _, b := range c.CuratedFrom {
+			rows = append(rows, map[string]string{"source": b.Value()})
+		}
 		writeJSON(w, map[string]any{
-			"sources": T.curatedStatusFor(user, c),
-			"every":   curatorIntervalMin(),
+			"curated_from": rows,
+			"status":       T.curatedStatusLine(user, c),
 		})
 	case http.MethodPost:
-		if len(c.CuratedFrom) == 0 {
-			http.Error(w, "this collection is not a copy of anything — attach a source to curate it from first", http.StatusBadRequest)
+		var body struct {
+			CuratedFrom []struct {
+				Source string `json:"source"`
+			} `json:"curated_from"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad json: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		lines := T.curateCollectionAll(context.WithoutCancel(r.Context()), user, c)
-		writeJSON(w, map[string]any{"ok": true, "results": lines})
+		values := make([]string, 0, len(body.CuratedFrom))
+		for _, row := range body.CuratedFrom {
+			values = append(values, row.Source)
+		}
+		c.BindCuratedFrom(user, values)
+		saveCollection(UserDB(T.DB, user), c)
+		writeJSON(w, map[string]any{"ok": true})
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleCollectionCurateRun syncs now and answers in the shape a Test button
+// reads: {ok, message} or {ok:false, error}.
+//
+// The sync runs on a context DETACHED from the request. A sync over a large
+// space outlives the click that started it, and one that died when the browser
+// gave up would leave the ledger half-written and the next run re-pulling
+// everything it had already copied.
+func (T *OrchestrateApp) handleCollectionCurateRun(w http.ResponseWriter, r *http.Request, user string, c Collection) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if len(c.CuratedFrom) == 0 {
+		writeJSON(w, map[string]any{"ok": false, "error": "this collection is not a copy of anything yet — pick a source above and save"})
+		return
+	}
+	lines := T.curateCollectionAll(context.WithoutCancel(r.Context()), user, c)
+	// Every line, not a count. A sync over two sources where one worked and one
+	// could not reach its server is the case this exists to make visible, and a
+	// tally of "1 of 2" says which half only by arithmetic.
+	writeJSON(w, map[string]any{"ok": true, "message": strings.Join(lines, "\n")})
+}
+
+// curatedStatusLine renders the sync state for the form to print back.
+func (T *OrchestrateApp) curatedStatusLine(user string, c Collection) string {
+	st := T.curatedStatusFor(user, c)
+	if len(st) == 0 {
+		return "Not a copy of anything yet. Pick a source below, and this collection is kept in step with it: edits re-pulled, deletions retired."
+	}
+	var b strings.Builder
+	for i, s := range st {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(s.Label + " — " + pluralDocs(s.Docs))
+		if s.LastSync.IsZero() {
+			b.WriteString(", never synced")
+		} else {
+			b.WriteString(", last synced " + s.LastSync.In(UserLocation(user)).Format("2 Jan 15:04"))
+			if s.Outcome != "" {
+				b.WriteString(" (" + s.Outcome + ")")
+			}
+		}
+	}
+	return b.String()
+}
+
+func pluralDocs(n int) string {
+	if n == 1 {
+		return "1 document"
+	}
+	return fmt.Sprintf("%d documents", n)
+}
+
+// --- the interval sweep ------------------------------------------------------
+
+// curatorSweepOnce guards the loop so it starts exactly once, whatever else
+// calls Routes.
+var curatorSweepOnce sync.Once
+
+// curatorSweepTick is how often the sweep WAKES, not how often a collection
+// syncs. Short enough that a changed interval takes effect soon, long enough
+// that waking costs nothing.
+const curatorSweepTick = 5 * time.Minute
+
+// startCuratorSweep runs the interval. Each tick syncs every curated collection
+// whose last sync is older than the configured interval.
+//
+// The tick is a fixed short period and the DECISION is per collection, rather
+// than a ticker set to the interval itself. The interval is a tunable an admin
+// can change at any time, and a ticker built once at startup would keep the old
+// period until a restart — which is the shape of bug where somebody sets it to
+// an hour, sees nothing happen for six, and concludes the feature is broken.
+func startCuratorSweep(app *OrchestrateApp) {
+	curatorSweepOnce.Do(func() {
+		go func() {
+			ticker := time.NewTicker(curatorSweepTick)
+			defer ticker.Stop()
+			for range ticker.C {
+				app.sweepCuratedCollections(context.Background())
+			}
+		}()
+	})
+}
+
+// lastCuratedSync tracks per-collection interval firing in memory.
+//
+// Deliberately not persisted, matching the ledger's own LastSync being a RECORD
+// rather than a schedule: after a restart the worst case is one extra sync,
+// which fetches only what actually changed and is therefore nearly free, and a
+// persisted timestamp would add a write to a path whose whole job is to be
+// cheap when there is nothing to do.
+var lastCuratedSync sync.Map // collection id -> time.Time
+
+func (T *OrchestrateApp) sweepCuratedCollections(ctx context.Context) {
+	every := curatorIntervalMin()
+	if every <= 0 {
+		return // scheduled syncing is off; the manual run still works
+	}
+	cutoff := time.Now().Add(-time.Duration(every) * time.Minute)
+	for _, u := range AuthListUsers(AuthDB()) {
+		if u.Username == "" {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		udb := UserDB(T.DB, u.Username)
+		for _, c := range ListCollections(udb, u.Username) {
+			if len(c.CuratedFrom) == 0 {
+				continue
+			}
+			if last, ok := lastCuratedSync.Load(c.ID); ok {
+				if at, isTime := last.(time.Time); isTime && at.After(cutoff) {
+					continue
+				}
+			}
+			// Stamped BEFORE the run, not after. A sync that takes longer than
+			// the interval would otherwise be due again the moment it finished,
+			// and the per-collection lock would turn that into a queue of
+			// waiting syncs rather than a skipped one.
+			lastCuratedSync.Store(c.ID, time.Now())
+			T.curateCollectionAll(ctx, u.Username, c)
+		}
 	}
 }

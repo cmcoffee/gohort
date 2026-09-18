@@ -27,6 +27,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/ui"
 )
 
 // CollectionsTable is the per-user metadata table for user-scoped
@@ -149,6 +151,72 @@ type CuratedSource struct {
 	// Label is what the item was called when it was attached, for showing in a
 	// listing without having to reach the source to find out.
 	Label string `json:"label,omitempty"`
+}
+
+// Value encodes a binding as the single value a picker offers.
+//
+// A method rather than a function, and one value rather than two fields,
+// because a source and an item within it are not independent choices: picking
+// a space from another server's list would name nothing, so offering them as
+// two controls invites exactly one wrong answer and nothing else.
+func (b CuratedSource) Value() string { return b.Kind + "\x1f" + b.Item }
+
+// BindCuratedFrom replaces this collection's bindings from what a picker sent
+// back, resolving each one's label as it goes.
+//
+// The label is resolved HERE, at binding time, and stored. A source that later
+// goes away must leave a legible "this was a copy of something no longer
+// connected" rather than a row naming a kind nobody can read.
+//
+// Unknown or duplicate values are dropped rather than refused: a picker that
+// offered a source which has since gone away should not make the rest of the
+// form unsaveable.
+func (c *Collection) BindCuratedFrom(user string, values []string) {
+	var bound []CuratedSource
+	seen := map[string]bool{}
+	for _, v := range values {
+		kind, item, found := strings.Cut(v, "\x1f")
+		if !found || strings.TrimSpace(kind) == "" || strings.TrimSpace(item) == "" || seen[v] {
+			continue
+		}
+		seen[v] = true
+		b := CuratedSource{Kind: kind, Item: item}
+		if src, ok := ReferenceSourceByKind(kind); ok {
+			b.Label = src.Label() + " · " + referenceItemName(src, user, item)
+		}
+		bound = append(bound, b)
+	}
+	c.CuratedFrom = bound
+}
+
+// CuratableSourceOptions lists the source items a collection can be kept in
+// step with: every registered source that can ENUMERATE, and its items.
+//
+// Search-only sources are left out rather than offered and refused later.
+// Binding to one would produce a collection that can never sync, and the place
+// to say so is the picker that would otherwise have offered it.
+func CuratableSourceOptions(user string) []ui.SelectOption {
+	var out []ui.SelectOption
+	for _, g := range ReferenceGroups(user) {
+		src, ok := ReferenceSourceByKind(g.Kind)
+		if !ok {
+			continue
+		}
+		if _, enumerable := src.(ReferenceEnumerator); !enumerable {
+			continue
+		}
+		for _, item := range g.Items {
+			name := strings.TrimSpace(item.Name)
+			if name == "" {
+				name = item.ID
+			}
+			out = append(out, ui.SelectOption{
+				Value: CuratedSource{Kind: g.Kind, Item: item.ID}.Value(),
+				Label: g.Label + " · " + name,
+			})
+		}
+	}
+	return out
 }
 
 // CollectionSource returns the chunk-source tag for a collection's

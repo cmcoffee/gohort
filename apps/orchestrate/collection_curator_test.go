@@ -6,7 +6,9 @@ package orchestrate
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -340,5 +342,169 @@ func TestCurateAllKeepsGoingAfterOneBindingFails(t *testing.T) {
 	}
 	if !strings.Contains(lines[1], "1 added") {
 		t.Errorf("second line = %q — the working binding must still run", lines[1])
+	}
+}
+
+// The sweep decides per collection against the CURRENT interval, so an admin
+// who changes it does not have to restart to see the new cadence.
+func TestSweepSkipsACollectionSyncedInsideTheInterval(t *testing.T) {
+	app, _, udb := authedApp(t)
+	prev := VectorDB
+	VectorDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { VectorDB = prev })
+
+	src := &fakeSource{
+		docs:   []ReferenceDoc{{ID: "a", Title: "A", Version: "1"}},
+		bodies: map[string]string{"a": "body"},
+	}
+	RegisterReferenceSource(src)
+	c := Collection{ID: "col-sweep", Owner: "alice", Name: "Runbooks",
+		CuratedFrom: []CuratedSource{{Kind: "fake", Item: "space", Label: "Wiki"}}}
+	saveCollection(udb, c)
+	t.Cleanup(func() { lastCuratedSync.Delete(c.ID) })
+
+	// First sweep syncs it.
+	app.sweepCuratedCollections(context.Background())
+	if len(loadCuratedLedger(udb, c.ID, "fake", "space").Docs) != 1 {
+		t.Fatal("the first sweep did not sync")
+	}
+	// A second sweep straight away must not: the interval has not elapsed.
+	src.docs = append(src.docs, ReferenceDoc{ID: "b", Title: "B", Version: "1"})
+	src.bodies["b"] = "second"
+	app.sweepCuratedCollections(context.Background())
+	if n := len(loadCuratedLedger(udb, c.ID, "fake", "space").Docs); n != 1 {
+		t.Errorf("the second sweep ran inside the interval (%d docs)", n)
+	}
+
+	// Once the last sync is older than the interval, it runs again.
+	lastCuratedSync.Store(c.ID, time.Now().Add(-24*time.Hour))
+	app.sweepCuratedCollections(context.Background())
+	if n := len(loadCuratedLedger(udb, c.ID, "fake", "space").Docs); n != 2 {
+		t.Errorf("the sweep did not run after the interval elapsed (%d docs)", n)
+	}
+}
+
+// A collection bound to nothing is not a curated collection, and the sweep must
+// not spend anything on it.
+func TestSweepIgnoresAnUnboundCollection(t *testing.T) {
+	app, _, udb := authedApp(t)
+	c := Collection{ID: "col-plain", Owner: "alice", Name: "Hand-filled"}
+	saveCollection(udb, c)
+	app.sweepCuratedCollections(context.Background())
+	if _, ok := lastCuratedSync.Load(c.ID); ok {
+		t.Error("the sweep stamped a collection that is nobody's copy")
+	}
+}
+
+// The binding round-trips through the form: what the GET hands a picker is
+// what the POST accepts back.
+func TestCurationBindingRoundTripsThroughTheForm(t *testing.T) {
+	app, req, udb := authedApp(t)
+	src := &fakeSource{docs: []ReferenceDoc{{ID: "a", Version: "1"}}, bodies: map[string]string{"a": "b"}}
+	RegisterReferenceSource(src)
+	c := Collection{ID: "col-bind", Owner: "alice", Name: "Runbooks"}
+	saveCollection(udb, c)
+
+	// The picker offers the source, encoded as one value per row.
+	choices := CuratableSourceOptions("alice")
+	var picked string
+	for _, o := range choices {
+		if strings.HasPrefix(o.Value, "fake\x1f") {
+			picked = o.Value
+		}
+	}
+	if picked == "" {
+		t.Fatalf("the enumerable source was not offered: %+v", choices)
+	}
+
+	w := httptest.NewRecorder()
+	app.handleCollectionOne(w, req("POST", "/api/collections/col-bind/curate",
+		map[string]any{"curated_from": []map[string]string{{"source": picked}}}))
+	if w.Code != 200 {
+		t.Fatalf("save status %d: %s", w.Code, w.Body.String())
+	}
+
+	saved, _ := loadCollection(udb, "alice", "col-bind")
+	if len(saved.CuratedFrom) != 1 || saved.CuratedFrom[0].Kind != "fake" || saved.CuratedFrom[0].Item != "space" {
+		t.Fatalf("binding = %+v", saved.CuratedFrom)
+	}
+	// The label is resolved at binding time, so a source that later goes away
+	// still reads as something rather than as a bare kind.
+	if !strings.Contains(saved.CuratedFrom[0].Label, "Fake wiki") {
+		t.Errorf("label = %q", saved.CuratedFrom[0].Label)
+	}
+
+	// And the GET hands it back in the shape the form reads.
+	w = httptest.NewRecorder()
+	app.handleCollectionOne(w, req("GET", "/api/collections/col-bind/curate", nil))
+	var form struct {
+		CuratedFrom []struct{ Source string } `json:"curated_from"`
+		Status      string                    `json:"status"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &form); err != nil {
+		t.Fatalf("decode: %v — %s", err, w.Body.String())
+	}
+	if len(form.CuratedFrom) != 1 || form.CuratedFrom[0].Source != picked {
+		t.Errorf("form = %+v", form.CuratedFrom)
+	}
+	if !strings.Contains(form.Status, "never synced") {
+		t.Errorf("status = %q", form.Status)
+	}
+}
+
+// A source that can only be SEARCHED is never offered. Binding to one would
+// make a collection that can be added to forever and never find out something
+// was deleted.
+func TestOnlyEnumerableSourcesAreOffered(t *testing.T) {
+	RegisterReferenceSource(searchOnlySource{})
+	for _, o := range CuratableSourceOptions("alice") {
+		if strings.HasPrefix(o.Value, "search-only\x1f") {
+			t.Fatalf("a search-only source was offered: %+v", o)
+		}
+	}
+}
+
+// Sync now answers in the shape the Test button reads, and says what happened
+// per binding rather than as a tally.
+func TestSyncNowAnswersWhatTheTestButtonReads(t *testing.T) {
+	app, req, udb := authedApp(t)
+	prev := VectorDB
+	VectorDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { VectorDB = prev })
+	RegisterReferenceSource(&fakeSource{
+		docs:   []ReferenceDoc{{ID: "a", Title: "A", Version: "1"}},
+		bodies: map[string]string{"a": "body"},
+	})
+	c := Collection{ID: "col-run", Owner: "alice", Name: "Runbooks",
+		CuratedFrom: []CuratedSource{{Kind: "fake", Item: "space", Label: "Fake wiki"}}}
+	saveCollection(udb, c)
+
+	w := httptest.NewRecorder()
+	app.handleCollectionOne(w, req("POST", "/api/collections/col-run/curate/run", nil))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	var res struct {
+		OK      bool   `json:"ok"`
+		Message string `json:"message"`
+		Error   string `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !res.OK || !strings.Contains(res.Message, "1 added") {
+		t.Errorf("res = %+v", res)
+	}
+
+	// A collection bound to nothing says so rather than reporting a clean run.
+	plain := Collection{ID: "col-plain2", Owner: "alice", Name: "Hand-filled"}
+	saveCollection(udb, plain)
+	w = httptest.NewRecorder()
+	app.handleCollectionOne(w, req("POST", "/api/collections/col-plain2/curate/run", nil))
+	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if res.OK || !strings.Contains(res.Error, "not a copy of anything") {
+		t.Errorf("res = %+v", res)
 	}
 }
