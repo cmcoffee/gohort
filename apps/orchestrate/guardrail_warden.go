@@ -118,6 +118,10 @@ func (T *OrchestrateApp) runWardenWithFinding(ctx context.Context, agent AgentRe
 	// prompt weight AND an invitation to flag the wrong thing.
 	rules = rulesForTool(rules, wardenToolInPlay(hookPoint, candidate))
 	if len(rules) == 0 {
+		// Said out loud for the same reason a passing check is: a narrowing
+		// that leaves nothing to ask looks exactly like a guard that is not
+		// wired.
+		Debug("[orchestrate.warden] agent=%s %s: no rule applies here — the warden was not asked", agent.ID, hookPoint)
 		// Either nothing was authored, or every authored rule is exempt for this
 		// person. Both mean there is nothing to judge — and skipping the call
 		// entirely is the point of resolving the marker here rather than asking

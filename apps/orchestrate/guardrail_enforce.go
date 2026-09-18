@@ -230,6 +230,12 @@ func (t *chatTurn) guardrailCheckHookCtx(ctx context.Context) func(hookPoint, ca
 			}
 		}
 		if worstVerdict(verdicts) != guardViolate {
+			// Logged, because a check that RAN and passed used to be
+			// indistinguishable from one that never ran: the block path logs
+			// and comply says nothing. "Why did that get through" could not be
+			// answered from the log at all, which cost an evening to establish
+			// that a guard had even been consulted.
+			Debug("[orchestrate.guardrail] agent=%s %s check PASSED (%d rule(s) judged)", t.agent.ID, hookPoint, len(verdicts))
 			return pass
 		}
 		rule, reason := firstViolation(verdicts)
