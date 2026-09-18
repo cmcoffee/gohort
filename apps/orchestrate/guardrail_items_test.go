@@ -12,6 +12,7 @@ package orchestrate
 // disturbing the others that share it.
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -277,5 +278,66 @@ func TestTheJudgeIsToldWhatTheCandidateIs(t *testing.T) {
 	// than at the candidate, which is where the misread happened.
 	if !strings.Contains(seen, "settled by the REQUESTER line") {
 		t.Errorf("the prompt does not say where an identity condition is settled:\n%s", seen)
+	}
+}
+
+// TestPreInputIsToldTheCandidateIsTheRequestersOwnWords — the same line, the
+// opposite fact, and getting it wrong is worse than saying nothing.
+//
+// pre_input judges the REQUESTER'S incoming message; every other hook judges
+// what the agent is about to say. Telling the judge "this is the agent's
+// output" at pre_input would assert that the person's own words were the
+// agent's, which inverts the question any exception about who is asking
+// depends on.
+func TestPreInputIsToldTheCandidateIsTheRequestersOwnWords(t *testing.T) {
+	agent := AgentRecord{Name: "X", Owner: "u", Guardrails: "never say that"}
+	stub := &wardenStubLLM{reply: `{"verdicts":[]}`}
+	turn := guardTurn(t, stub, agent)
+	who := requesterIdentity{Authorized: true, AuthorizedAs: "Craig Coffee", AuthorizedVia: guardAuthAuthenticated}
+	if _, err := turn.app.runWarden(turn.ctx, agent, guardHookPreInput, "what did you call me?", who); err != nil {
+		t.Fatalf("runWarden: %v", err)
+	}
+	seen := stub.seen()
+	if !strings.Contains(seen, "REQUESTER'S OWN incoming message") {
+		t.Errorf("pre_input does not say whose words these are:\n%s", seen)
+	}
+	if strings.Contains(seen, "AGENT'S OWN candidate") {
+		t.Errorf("pre_input was told the requester's own message is the agent's output:\n%s", seen)
+	}
+}
+
+// A PROVENANCE clause is what the check cannot answer, so the editor says so
+// before it ships. Narrow on purpose: naming the person resolves fine most of
+// the time, because who is asking sits in the trusted block. What does not
+// resolve is "only if it is directly from him" — the candidate is the agent's
+// own draft and is never the requester speaking, so the judge hunts for an
+// attribution that cannot be there.
+//
+// The live case reached "comply" three times, reversed each time, and settled
+// on violate for want of proof. The rest of that exception was working.
+//
+// Asserted on the SOURCE because the detector lives in the editor's script and
+// there is no JS runtime here. The phrase list is the point: if it stops
+// covering the clause that cost an evening, this should fail.
+func TestTheEditorWarnsAboutAProvenanceClause(t *testing.T) {
+	src, err := os.ReadFile("assets/web_assets.html")
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	page := string(src)
+	if !strings.Contains(page, "function gExcAsksForProvenance(") {
+		t.Fatal("the provenance check is gone")
+	}
+	if !strings.Contains(page, "'directly from'") {
+		t.Error("the detector no longer covers the exact clause this exists for")
+	}
+	// It must NOT fire on naming somebody, which works.
+	for _, tooBroad := range []string{"'bypass'", "'is allowed to'"} {
+		if strings.Contains(page, "              "+tooBroad+",") {
+			t.Errorf("the detector warns on %s, which resolves fine and would be a nag", tooBroad)
+		}
+	}
+	if !strings.Contains(page, "Authorized people") {
+		t.Error("the warning does not offer the deterministic alternative")
 	}
 }

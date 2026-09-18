@@ -4883,6 +4883,30 @@
               return w && !gExcCommonWord(w);
             });
           }
+          // gExcAsksForProvenance reports whether a condition asks WHERE the
+          // candidate came from.
+          //
+          // Narrow on purpose. "Craig is allowed to bypass this rule" resolves
+          // fine most of the time: the requester is named in the trusted block
+          // and the judge weighs it there. What does NOT resolve is a clause
+          // about the candidate's origin — "only if it is directly from him" —
+          // because the candidate is the agent's own draft output and is never
+          // the requester speaking. The judge then hunts for an attribution
+          // that cannot be there.
+          //
+          // Observed: that one clause produced eight hundred words of
+          // deliberation which reached "comply" three times, reversed each
+          // time, and settled on violate for want of proof. The rest of the
+          // sentence was doing its job.
+          function gExcAsksForProvenance(text) {
+            var t = String(text || '').toLowerCase();
+            if (!t.trim()) { return false; }
+            return [
+              'directly from', 'comes from', 'coming from', 'came from',
+              'from him', 'from her', 'from them', 'from me',
+              'in his own words', 'in her own words', 'his own voice', 'her own voice',
+            ].some(function(p) { return t.indexOf(p) >= 0; });
+          }
           function gExcEchoesRule(ex) {
             var name = gExcSlug(ex);
             if (!name) { return false; }
@@ -5799,8 +5823,28 @@
           var excList = document.createElement('div');
           excList.className = 'ui-orch-list';
           excWrap.appendChild(excList);
+          // The rows currently on screen, so a keystroke can update the
+          // duplicate marks WITHOUT rebuilding the list.
+          //
+          // Rebuilding on input replaces the very input being typed into: the
+          // caret goes with it and you get one letter per focus. Learned the
+          // hard way — the first version of the duplicate check called renderE
+          // from oninput and made the name field unusable.
+          var excRows = [];
+          function refreshDupeMarks() {
+            var dupes = gExcDupIndexes();
+            excRows.forEach(function(r, i) {
+              var dup = !!dupes[i];
+              r.nameIn.style.borderColor = dup ? 'var(--warning,#d29922)' : '';
+              r.nameIn.title = dup
+                ? 'Another exception answers to this same name. A rule links by name, so it can only reach one of them — rename this one to say which.'
+                : '';
+              r.dupNote.style.display = dup ? '' : 'none';
+            });
+          }
           function renderE() {
             excList.innerHTML = '';
+            excRows = [];
             var dupes = gExcDupIndexes();
             gexceptions.forEach(function(ex, idx) {
               var row = document.createElement('div');
@@ -5812,7 +5856,13 @@
               if (dupes[idx]) {
                 nameIn.title = 'Another exception answers to this same name. A rule links by name, so it can only reach one of them — rename this one to say which.';
               }
-              nameIn.oninput = function() { gexceptions[idx].name = nameIn.value; renderE(); nameIn.focus(); renderG(); };
+              // Model + marks only. renderG() repaints the rule list, which
+              // does not contain this input, so it is safe here.
+              nameIn.oninput = function() {
+                gexceptions[idx].name = nameIn.value;
+                refreshDupeMarks();
+                renderG();
+              };
               var textIn = document.createElement('input');
               textIn.type = 'text'; textIn.value = ex.text || '';
               textIn.placeholder = 'the condition, e.g. the user has already confirmed…';
@@ -5840,12 +5890,12 @@
               del.onclick = function() { gexceptions.splice(idx, 1); renderE(); renderG(); };
               row.appendChild(nameIn); row.appendChild(textIn); row.appendChild(del);
               excList.appendChild(row);
-              if (dupes[idx]) {
-                var dup = document.createElement('div');
-                dup.style.cssText = 'font-size:0.72rem;color:var(--warning,#d29922);margin:0.15rem 0 0.4rem 0;padding-left:0.2rem';
-                dup.textContent = 'Two exceptions share this name. A rule links by name and reaches only one of them; the other stays in the list looking just as active. Give this one a name of its own.';
-                excList.appendChild(dup);
-              }
+              var dupNote = document.createElement('div');
+              dupNote.style.cssText = 'font-size:0.72rem;color:var(--warning,#d29922);margin:0.15rem 0 0.4rem 0;padding-left:0.2rem';
+              dupNote.textContent = 'Two exceptions share this name. A rule links by name and reaches only one of them; the other stays in the list looking just as active. Give this one a name of its own.';
+              dupNote.style.display = dupes[idx] ? '' : 'none';
+              excList.appendChild(dupNote);
+              excRows.push({nameIn: nameIn, dupNote: dupNote});
               // A CONDITION is prose a model reads under the rule, so show it
               // exactly as the check will see it. The trap this exists for:
               // an exception meant as "this person may bypass" gets written as
@@ -5865,7 +5915,12 @@
                 // The specific misfire, named when it is detectable: the
                 // condition repeats a word the rule already uses, which is
                 // when "except <name>" stops meaning "when <name> asks".
-                if (gExcEchoesRule(ex)) {
+                if (gExcAsksForProvenance(ex.text)) {
+                  var who = document.createElement('div');
+                  who.style.cssText = 'color:var(--warning,#d29922);margin-top:0.15rem';
+                  who.textContent = 'This asks where the candidate came from, and the check cannot answer that: what it judges is the agent\u2019s own draft output, never the requester speaking. Naming the person is fine \u2014 who is asking is in the trusted block \u2014 but a clause like \u201conly if it is directly from him\u201d sends it looking for an attribution that is not there, and it fails closed. Drop that clause, or put the person on Authorized people and mark the rule as yielding to them, which is settled before the check runs.';
+                  note.appendChild(who);
+                } else if (gExcEchoesRule(ex)) {
                   var warn = document.createElement('div');
                   warn.style.cssText = 'color:var(--warning,#d29922);margin-top:0.15rem';
                   warn.textContent = 'This repeats wording from a rule it is linked to, so the check may read it as "the rule does not apply here" rather than "this applies in one narrow case". If you meant "this PERSON may bypass it", do not write it here at all: add them to Authorized people and mark the rule itself as yielding to them, which gohort settles without showing any of it to the model.';
