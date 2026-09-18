@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cmcoffee/snugforge/kvlite"
 )
@@ -17,6 +18,11 @@ type Database interface {
 	Set(table, key string, value interface{})
 	Unset(table, key string)
 	Get(table, key string, output interface{}) bool
+	// TryGet and TrySet are the error-returning forms, for the callers that
+	// can act on a failure. The plain forms above absorb it — see the store
+	// failures section below for what that costs and why the signatures stay.
+	TryGet(table, key string, output interface{}) (bool, error)
+	TrySet(table, key string, value interface{}) error
 	Keys(table string) []string
 	CountKeys(table string) int
 	Tables() []string
@@ -81,6 +87,117 @@ func OpenDB(filename string, padlock ...byte) (Database, error) {
 	return &DBase{db}, nil
 }
 
+// --- store failures -----------------------------------------------------------
+//
+// Every operation below used to end in Critical(err), which is Fatal, which is
+// os.Exit(1). One error from the store — any error, on any table, for any user
+// — took the whole multi-tenant server down with it.
+//
+// That is the wrong trade twice over. The motivating failures are transient:
+// this deployment's database has lived on network storage, where a blip is a
+// blip and not a diagnosis. And the trigger was never only disk trouble — Get
+// returns an error when a stored value does not fit the type the caller asked
+// for, so an admin probing a key in the DB browser could end the process by
+// guessing a type wrong. That surface had to reach around this wrapper to be
+// written at all (see the comment it left in apps/admin), which is the clearest
+// statement of the problem there is: a feature that has to avoid the framework
+// to be safe.
+//
+// So a failure degrades and SHOUTS instead of exiting. It does not exit even
+// when the store is properly gone, which is the deliberate half of this:
+// exiting takes away the page an operator would read to find out what is wrong,
+// and a supervisor restarting into the same broken store is a crash loop rather
+// than a recovery. A server that fails closed and says so is the recoverable
+// shape.
+//
+// THE HAZARD THIS ACCEPTS, stated plainly. A failed read returns "not found",
+// because false is the only thing the signature can say. A caller that reads,
+// finds nothing, and writes a default will therefore overwrite a record that
+// was there but unreadable. It cannot be fixed under these signatures, and
+// changing them is 2907 call sites; TryGet exists for the callers where that
+// matters, and the failure is logged distinctly so it is never a silent one.
+// A failed WRITE is worse in a quieter way: the caller believes it persisted.
+// Both are counted separately, because "reads are failing" and "writes are
+// being lost" call for different urgency.
+
+// DBFailureReport is what the store has been failing at lately. Zero values
+// throughout mean it has not failed at all.
+type DBFailureReport struct {
+	// Reads and Writes count failed operations by kind since startup. Split
+	// because a store that cannot be read is degraded and one that cannot be
+	// written is losing work.
+	Reads  int `json:"reads"`
+	Writes int `json:"writes"`
+	// Last is the most recent failure, with the operation that hit it.
+	Last   string    `json:"last,omitempty"`
+	LastOp string    `json:"last_op,omitempty"`
+	LastAt time.Time `json:"last_at,omitempty"`
+	// Since is when the current run of failures began: the first failure after
+	// the last quiet stretch. A wide Since-to-LastAt span is an outage; a
+	// narrow one is a blip.
+	Since time.Time `json:"since,omitempty"`
+}
+
+var (
+	dbFailMu     sync.Mutex
+	dbFailState  DBFailureReport
+	dbFailLastAt time.Time
+)
+
+// dbQuietGap is how long without a failure ends a run of them. A new failure
+// after this restarts Since rather than extending a span that describes
+// something that already got better.
+const dbQuietGap = 5 * time.Minute
+
+// DBHealth reports what the store has been failing at. Safe to call at any
+// time, including from a handler that is itself reading a broken store.
+func DBHealth() DBFailureReport {
+	dbFailMu.Lock()
+	defer dbFailMu.Unlock()
+	return dbFailState
+}
+
+// dbFail records one store failure and reports whether there was one, so a
+// caller reads as `if dbFail(...) { return zero }`.
+//
+// Only the failing path takes the lock. Successes are the hot path — thousands
+// of call sites, many per request — and must not pay for bookkeeping that only
+// matters when something is wrong.
+func dbFail(write bool, op, table, key string, err error) bool {
+	if err == nil {
+		return false
+	}
+	now := time.Now()
+	dbFailMu.Lock()
+	if dbFailState.Since.IsZero() || now.Sub(dbFailLastAt) > dbQuietGap {
+		dbFailState.Since = now
+	}
+	if write {
+		dbFailState.Writes++
+	} else {
+		dbFailState.Reads++
+	}
+	dbFailState.Last = err.Error()
+	dbFailState.LastOp = op + " " + table
+	dbFailState.LastAt = now
+	dbFailLastAt = now
+	writes, reads := dbFailState.Writes, dbFailState.Reads
+	dbFailMu.Unlock()
+
+	// The key is in the log and not in the report: it is the thing that makes a
+	// failure reproducible, and it is also the thing most likely to name
+	// somebody's record, so it goes where an operator looks on purpose rather
+	// than onto a status page.
+	if write {
+		Err("[database] %s %s/%s FAILED TO WRITE: %v (%d write / %d read failures so far — work is being lost)",
+			op, table, key, err, writes, reads)
+	} else {
+		Err("[database] %s %s/%s failed: %v (%d read / %d write failures so far — this reads to the caller as 'not found')",
+			op, table, key, err, reads, writes)
+	}
+	return true
+}
+
 // DBase is a database wrapper around kvlite.Store.
 type DBase struct {
 	Store kvlite.Store
@@ -93,7 +210,7 @@ type Table struct {
 
 // Drop deletes the underlying table.
 func (t Table) Drop() {
-	Critical(t.table.Drop())
+	dbFail(true, "drop", "", "", t.table.Drop())
 }
 
 // GetString retrieves a string value from the table by key.
@@ -106,36 +223,42 @@ func (T Table) GetString(key string) string {
 // Get retrieves a value from the table by key.
 func (t Table) Get(key string, value interface{}) bool {
 	found, err := t.table.Get(key, value)
-	Critical(err)
+	if dbFail(false, "get", "", key, err) {
+		return false
+	}
 	return found
 }
 
 // Set sets the value for the given key in the table.
 func (t Table) Set(key string, value interface{}) {
-	Critical(t.table.Set(key, value))
+	dbFail(true, "set", "", key, t.table.Set(key, value))
 }
 
 // CryptSet encrypts and sets the given value for the given key.
 func (t Table) CryptSet(key string, value interface{}) {
-	Critical(t.table.CryptSet(key, value))
+	dbFail(true, "cryptset", "", key, t.table.CryptSet(key, value))
 }
 
 // Unset removes the key from the table.
 func (t Table) Unset(key string) {
-	Critical(t.table.Unset(key))
+	dbFail(true, "unset", "", key, t.table.Unset(key))
 }
 
 // Keys returns a slice of strings representing the keys in the table.
 func (t Table) Keys() []string {
 	keys, err := t.table.Keys()
-	Critical(err)
+	if dbFail(false, "keys", "", "", err) {
+		return nil
+	}
 	return keys
 }
 
 // CountKeys returns the number of keys in the table.
 func (t Table) CountKeys() int {
 	count, err := t.table.CountKeys()
-	Critical(err)
+	if dbFail(false, "countkeys", "", "", err) {
+		return 0
+	}
 	return count
 }
 
@@ -280,24 +403,47 @@ func (d *DBase) Sub(table string) Database {
 
 // Drop deletes the specified table.
 func (d DBase) Drop(table string) {
-	Critical(d.Store.Drop(table))
+	dbFail(true, "drop", table, "", d.Store.Drop(table))
 }
 
 // CryptSet saves an encrypted value to the specified table and key.
 func (d DBase) CryptSet(table, key string, value interface{}) {
-	Critical(d.Store.CryptSet(table, key, value))
+	dbFail(true, "cryptset", table, key, d.Store.CryptSet(table, key, value))
 }
 
 // Set saves a value to the specified table and key.
 func (d DBase) Set(table, key string, value interface{}) {
-	Critical(d.Store.Set(table, key, value))
+	dbFail(true, "set", table, key, d.Store.Set(table, key, value))
+}
+
+// TrySet is Set for a caller that can do something about a failure — report it
+// to the person whose work it was, refuse to continue, retry later. Set stays
+// the common form because most callers genuinely cannot, and making 2907 of
+// them pretend otherwise would be noise standing where a real check should be.
+func (d DBase) TrySet(table, key string, value interface{}) error {
+	err := d.Store.Set(table, key, value)
+	dbFail(true, "set", table, key, err)
+	return err
 }
 
 // Get retrieves a value from the specified table by key.
 func (d DBase) Get(table, key string, output interface{}) bool {
 	found, err := d.Store.Get(table, key, output)
-	Critical(err)
+	if dbFail(false, "get", table, key, err) {
+		return false
+	}
 	return found
+}
+
+// TryGet is Get for a caller that must tell "there is nothing here" apart from
+// "something is here and I could not read it". Get collapses both to false,
+// which is what invites a caller to write a default over a record that was
+// only unreadable; this is the way out of that for the callers where it
+// matters.
+func (d DBase) TryGet(table, key string, output interface{}) (bool, error) {
+	found, err := d.Store.Get(table, key, output)
+	dbFail(false, "get", table, key, err)
+	return found, err
 }
 
 // Table returns a table object for the given table name.
@@ -308,21 +454,27 @@ func (d DBase) Table(table string) Table {
 // Keys returns a list of keys for the specified table.
 func (d DBase) Keys(table string) []string {
 	keylist, err := d.Store.Keys(table)
-	Critical(err)
+	if dbFail(false, "keys", table, "", err) {
+		return nil
+	}
 	return keylist
 }
 
 // CountKeys returns the number of keys in the specified table.
 func (d DBase) CountKeys(table string) int {
 	count, err := d.Store.CountKeys(table)
-	Critical(err)
+	if dbFail(false, "countkeys", table, "", err) {
+		return 0
+	}
 	return count
 }
 
 // Tables returns a list of all table names in the database.
 func (d DBase) Tables() []string {
 	tables, err := d.Store.Tables()
-	Critical(err)
+	if dbFail(false, "tables", "", "", err) {
+		return nil
+	}
 	return tables
 }
 
@@ -330,13 +482,15 @@ func (d DBase) Tables() []string {
 // scopes Tables() hides). Used by maintenance sweeps that drop a whole scope.
 func (d DBase) AllTables() []string {
 	tables, err := d.Store.AllTables()
-	Critical(err)
+	if dbFail(false, "alltables", "", "", err) {
+		return nil
+	}
 	return tables
 }
 
 // Unset removes the value associated with the given key from the table.
 func (d DBase) Unset(table, key string) {
-	Critical(d.Store.Unset(table, key))
+	dbFail(true, "unset", table, key, d.Store.Unset(table, key))
 }
 
 // Close closes the underlying store.

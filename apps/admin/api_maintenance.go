@@ -345,16 +345,12 @@ func (a *AdminApp) handleDBRecord(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// DBase.Get calls Critical(err) on decode failure, which kills the server.
-	// Bypass the wrapper by accessing the underlying kvlite.Store directly so
-	// we can probe multiple concrete types without a fatal on type mismatch.
-	dbase, ok := a.db.(*DBase)
-	if !ok {
-		http.Error(w, "unsupported database type", http.StatusInternalServerError)
-		return
-	}
-
-	val, found := dbProbeRecord(dbase.Store, table, key)
+	// Probing means guessing a type and being wrong most times. That used to
+	// have to reach past the Database wrapper, because a decode failure inside
+	// it called Critical and ended the process — a browser that could kill the
+	// server by looking at the wrong key. TryGet reports the mismatch instead,
+	// so this reads the framework's own store like everything else does.
+	val, found := dbProbeRecord(a.db, table, key)
 	if !found {
 		http.Error(w, "not found", http.StatusNotFound)
 		return
@@ -370,9 +366,11 @@ func (a *AdminApp) handleDBRecord(w http.ResponseWriter, r *http.Request) {
 
 // dbProbeRecord tries to decode a kvlite record into the first matching
 // primitive type. For complex/struct values it returns a descriptive
-// placeholder. Uses Store.Get directly to avoid the Critical(err) wrapper.
+// placeholder. TryGet rather than Get, because a wrong guess has to come back
+// as a mismatch to try the next type against — Get would report it as absent
+// and stop the probe on its first miss.
 func dbProbeRecord(store interface {
-	Get(table, key string, output interface{}) (bool, error)
+	TryGet(table, key string, output interface{}) (bool, error)
 }, table, key string) (interface{}, bool) {
 	// Ordered by how commonly these appear in settings/routing/config tables.
 	probes := []interface{}{
@@ -385,7 +383,7 @@ func dbProbeRecord(store interface {
 		new([]byte),
 	}
 	for _, ptr := range probes {
-		found, err := store.Get(table, key, ptr)
+		found, err := store.TryGet(table, key, ptr)
 		if !found {
 			return nil, false
 		}

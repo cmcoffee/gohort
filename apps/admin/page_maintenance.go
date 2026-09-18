@@ -1,14 +1,24 @@
 package admin
 
 import (
+	"fmt"
+	"html"
 	"net/url"
+	"strings"
+	"time"
 
+	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
 // maintenanceSections is the maintenance part of the admin page: Scheduled Tasks, the maintenance groups, Migrations, Vector Index (with its repairs), Database Browser.
 func (a *AdminApp) maintenanceSections() []ui.Section {
 	return []ui.Section{
+		// First, and only when there is something to say. A store that has
+		// been failing is the fact that explains every other oddity on this
+		// page, and it used to be unreportable: the process ended at the first
+		// failure, so there was never an "after" in which to show it.
+		storeHealthSection(),
 		{
 			Title:    "Scheduled Tasks",
 			Subtitle: "Pending background work — proactive messages, scheduled updates. Expand a row for the full record + payload.",
@@ -242,4 +252,47 @@ func databaseBrowserCard() ui.Card {
 })();
 </script>
 `}
+}
+
+// storeHealthSection reports store failures, and renders as nothing at all
+// while there have been none.
+//
+// Not a green tick. A panel that says "healthy" on every visit is a panel
+// people stop reading, and the one time it matters it has to compete with its
+// own history of saying nothing was wrong.
+func storeHealthSection() ui.Section {
+	h := DBHealth()
+	if h.Reads == 0 && h.Writes == 0 {
+		return ui.Section{}
+	}
+	title := "The database has been failing"
+	if h.Writes > 0 {
+		// Said differently on purpose: a read that fails degrades an answer, a
+		// write that fails loses somebody's work, and the second deserves the
+		// louder heading.
+		title = "The database has been losing writes"
+	}
+	return ui.Section{
+		Title: title,
+		Subtitle: "The server stayed up and kept serving, which is why you are reading this rather than finding it in a crash log. " +
+			"A failed read reaches its caller as 'not found', so missing records and empty lists elsewhere on this page may be this and not the truth.",
+		Body: ui.Card{HTML: html.EscapeString(storeHealthLine(h))},
+	}
+}
+
+func storeHealthLine(h DBFailureReport) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d failed write(s), %d failed read(s).", h.Writes, h.Reads)
+	if !h.Since.IsZero() {
+		fmt.Fprintf(&b, " First in this run %s ago", time.Since(h.Since).Round(time.Second))
+		if !h.LastAt.IsZero() {
+			fmt.Fprintf(&b, ", most recent %s ago", time.Since(h.LastAt).Round(time.Second))
+		}
+		b.WriteString(".")
+	}
+	if h.LastOp != "" {
+		fmt.Fprintf(&b, " Last: %s — %s", h.LastOp, h.Last)
+	}
+	b.WriteString(" The key each failure hit is in the server log; it is left out here because it names somebody's record.")
+	return b.String()
 }
