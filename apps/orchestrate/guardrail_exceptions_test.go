@@ -158,13 +158,15 @@ func TestSanitizeGuardrailExceptions(t *testing.T) {
 		{Name: "night shift", Text: "collides after slugging"},
 		{Name: "  Confirmed!  ", Text: "already confirmed"},
 	})
-	// Kind defaults to condition: an unspecified kind must never promote an
-	// item to "person", which the framework treats as proof of identity.
+	// Suffixed, not dropped. A typed collision is REFUSED at the door (see
+	// checkExceptionNames); by the time a name reaches here the owner is past
+	// that check, and quietly merging two conditions under one handle would be
+	// the worse failure.
 	want := []GuardrailException{
-		{Name: "night-shift", Text: "outside business hours", Kind: guardrailKindCondition},
-		{Name: "the-user-has-already", Text: "the user has already confirmed", Kind: guardrailKindCondition},
-		{Name: "night-shift-2", Text: "collides after slugging", Kind: guardrailKindCondition},
-		{Name: "confirmed", Text: "already confirmed", Kind: guardrailKindCondition},
+		{Name: "night-shift", Text: "outside business hours"},
+		{Name: "the-user-has-already", Text: "the user has already confirmed"},
+		{Name: "night-shift-2", Text: "collides after slugging"},
+		{Name: "confirmed", Text: "already confirmed"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("kept %+v, want %+v", got, want)

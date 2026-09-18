@@ -4857,6 +4857,51 @@
           function gSlug(s) {
             return String(s || '').toLowerCase().replace(/[^a-z0-9_]+/g, '-').replace(/^-+|-+$/g, '');
           }
+          // gExcEchoesRule reports whether a CONDITION repeats a distinctive
+          // word from a rule it is linked to.
+          //
+          // That overlap is the one misreading this editor exists to prevent. A
+          // rule about Craig, excepted by a condition saying "Craig", gives the
+          // judge the same name in both halves and no way to tell which role it
+          // plays — so "Craig may bypass this" becomes "this rule does not
+          // concern Craig", and one person's carve-out silently becomes
+          // everybody's.
+          //
+          // Short and common words are ignored: an overlap on "the" says
+          // nothing, and a warning that fires on every exception is one nobody
+          // reads.
+          function gExcCommonWord(w) {
+            return w.length < 4 || [
+              'this', 'that', 'when', 'with', 'from', 'they', 'them', 'their',
+              'have', 'has', 'been', 'only', 'user', 'users', 'unless', 'about',
+              'asks', 'asking', 'request', 'requests', 'requested', 'never',
+              'always', 'must', 'not', 'and', 'for', 'any', 'all', 'can',
+            ].indexOf(w) >= 0;
+          }
+          function gExcWords(text) {
+            return String(text || '').toLowerCase().split(/[^a-z0-9]+/).filter(function(w) {
+              return w && !gExcCommonWord(w);
+            });
+          }
+          function gExcEchoesRule(ex) {
+            var name = gExcSlug(ex);
+            if (!name) { return false; }
+            var words = gExcWords(ex.text);
+            if (!words.length) { return false; }
+            for (var i = 0; i < grules.length; i++) {
+              var linked = false;
+              var links = gLinks(grules[i]);
+              for (var j = 0; j < links.length; j++) {
+                if (!links[j].off && links[j].name === name) { linked = true; break; }
+              }
+              if (!linked) { continue; }
+              var ruleWords = gExcWords(gBody(grules[i]));
+              for (var k = 0; k < words.length; k++) {
+                if (ruleWords.indexOf(words[k]) >= 0) { return true; }
+              }
+            }
+            return false;
+          }
           // Declared up here, not beside its editor below, because renderG()
           // reads it while drawing each rule's link button.
           // Filled by the guardrails fetch below. Empty until it lands, which
@@ -4864,21 +4909,6 @@
           // for a moment — never that a binding is dropped.
           var gToolChoices = [];
           var gexceptions = (agent.guardrail_exceptions || []).slice();
-          // Legacy roster entries surface as person items, matching what the
-          // server does on read — so an owner who typed a roster before items
-          // existed sees it in the one list rather than losing track of it.
-          (function () {
-            var have = {};
-            gexceptions.forEach(function(e) {
-              if ((e.kind || 'condition') === 'person') { have[String(e.text || '').trim().toLowerCase()] = true; }
-            });
-            (agent.authorized_identities || []).forEach(function(id) {
-              var v = String(id || '').trim();
-              if (!v || have[v.toLowerCase()]) { return; }
-              have[v.toLowerCase()] = true;
-              gexceptions.push({name: gSlug(v) || 'person', text: v, kind: 'person'});
-            });
-          })();
           // The link handle for one exception, matching what the SERVER will
           // store: its name slugged, or derived from the condition's opening
           // words when the name is still blank. Never falls back to '' — an
@@ -4891,6 +4921,25 @@
             if (s) { return s; }
             var words = String(ex.text || '').split(/\s+/).filter(Boolean).slice(0, 4);
             return gSlug(words.join(' '));
+          }
+          // gExcDupIndexes returns the positions of every exception sharing a
+          // name with another.
+          //
+          // A collision is not cosmetic: a rule links by NAME, so two
+          // exceptions answering to "craig" mean the link binds to one of them
+          // and the other sits in the list looking equally in force. The server
+          // used to settle it by suffixing the loser to "craig-2" on save,
+          // which is silent at exactly the moment the author is deciding which
+          // carve-out a rule gets.
+          function gExcDupIndexes() {
+            var byName = {}, dupes = {};
+            gexceptions.forEach(function(ex, i) {
+              var n = gExcSlug(ex);
+              if (!n) { return; }
+              if (byName[n] !== undefined) { dupes[byName[n]] = true; dupes[i] = true; }
+              else { byName[n] = i; }
+            });
+            return dupes;
           }
           function gLinkExists(name) {
             for (var i = 0; i < gexceptions.length; i++) {
@@ -4943,7 +4992,6 @@
                   cb.onchange = function() { opts.onLink(cb.checked); };
                   var txt = document.createElement('div');
                   txt.style.cssText = 'flex:1 1 auto;min-width:0';
-                  if (opts.linked && opts.off) { txt.style.opacity = '0.55'; }
                   var head = document.createElement('div');
                   head.style.cssText = 'font-size:0.85rem;display:flex;gap:0.4rem;align-items:baseline;flex-wrap:wrap';
                   var name = document.createElement('span');
@@ -4963,26 +5011,13 @@
                     txt.appendChild(sub);
                   }
                   wrap.appendChild(cb); wrap.appendChild(txt);
-                  if (opts.onToggle) {
-                    var pill = document.createElement('button');
-                    pill.type = 'button'; pill.className = 'ui-orch-list-del';
-                    pill.textContent = (opts.linked && opts.off) ? 'off' : 'on';
-                    pill.style.cssText = 'width:auto;padding:0 0.5rem;font-size:0.7rem;align-self:center;' +
-                      ((opts.linked && opts.off)
-                        ? 'color:var(--text-mute);opacity:0.7'
-                        : 'color:var(--accent,#6366f1);border-color:var(--accent,#6366f1);font-weight:600');
-                    // Always clickable. Requiring the tick first meant "switch
-                    // this off for this rule" — the commonest thing you want —
-                    // took two clicks on two different controls, and looked
-                    // broken until you found the first one.
-                    pill.title = (opts.linked && opts.off)
-                      ? 'Switched off for THIS rule. Click to apply it here again.'
-                      : (opts.linked
-                        ? 'Applying to this rule. Click to switch it off here only — the link is kept.'
-                        : 'Not on this rule. Click to attach it switched OFF, so it is visible here without applying.');
-                    pill.onclick = function() { opts.onToggle(); };
-                    wrap.appendChild(pill);
-                  }
+                  // One control, deliberately. There used to be a tick AND an
+                  // on/off pill, which offered three states where the record
+                  // has two that differ: unlinked and linked-but-off both leave
+                  // the rule at full strength, so the pill's own "off" was a
+                  // note to self dressed as a setting. An existing off link
+                  // still parses and still means the rule applies; unticking
+                  // now clears it rather than leaving it behind switched off.
                   rows.appendChild(wrap);
                 }
 
@@ -4992,7 +5027,7 @@
                     drawRow({
                       label: 'Anyone on the authorized list',
                       hint: 'The older whole-list carve-out. Untick it and link people individually for finer control.',
-                      badge: 'checked by gohort', linked: true, off: false,
+                      badge: 'checked by gohort', linked: true,
                       onLink: function(on) { builtin = on; commit(); redraw(); },
                     });
                   }
@@ -5011,7 +5046,7 @@
                     drawRow({
                       label: l.name,
                       hint: 'This no longer exists, so it applies to nothing and the rule is at full strength. Untick to clear it off the rule.',
-                      badge: 'missing', linked: true, off: false,
+                      badge: 'missing', linked: true,
                       onLink: function() {
                         var i = findLink(l.name);
                         if (i >= 0) { chosen.splice(i, 1); }
@@ -5032,19 +5067,13 @@
                     drawRow({
                       label: ex.name || slug,
                       hint: ex.text,
-                      badge: (ex.kind === 'person') ? 'checked by gohort' : 'judged',
-                      linked: at >= 0,
-                      off: at >= 0 ? chosen[at].off : false,
+                      badge: 'judged',
+                      linked: at >= 0 && !chosen[at].off,
                       onLink: function(on) {
                         var i = findLink(slug);
                         if (on && i < 0) { chosen.push({name: slug, off: false}); }
+                        if (on && i >= 0) { chosen[i].off = false; }
                         if (!on && i >= 0) { chosen.splice(i, 1); }
-                        commit(); redraw();
-                      },
-                      onToggle: function() {
-                        var i = findLink(slug);
-                        if (i < 0) { chosen.push({name: slug, off: true}); }
-                        else { chosen[i].off = !chosen[i].off; }
                         commit(); redraw();
                       },
                     });
@@ -5772,34 +5801,21 @@
           excWrap.appendChild(excList);
           function renderE() {
             excList.innerHTML = '';
+            var dupes = gExcDupIndexes();
             gexceptions.forEach(function(ex, idx) {
               var row = document.createElement('div');
               row.className = 'ui-orch-list-row';
               var nameIn = document.createElement('input');
-              var kind = (ex.kind === 'person') ? 'person' : 'condition';
-              var kindBtn = document.createElement('button');
-              kindBtn.type = 'button';
-              kindBtn.className = 'ui-orch-list-del';
-              kindBtn.textContent = kind;
-              kindBtn.style.cssText = 'width:auto;padding:0 0.5rem;font-size:0.7rem;letter-spacing:0.03em;' +
-                (kind === 'person'
-                  ? 'color:var(--accent,#6366f1);border-color:var(--accent,#6366f1)'
-                  : 'color:var(--text-mute)');
-              kindBtn.title = kind === 'person'
-                ? 'A PERSON: gohort checks this itself against who is asking (a signed-in account, or a handle your messaging channel verified). A linked rule is skipped for them before the check even runs. Click to make it a condition.'
-                : 'A CONDITION: the check reads it under the rule and decides whether it holds. Prose, judged by a model. Click to make it a person.';
-              kindBtn.onclick = function() {
-                gexceptions[idx].kind = (kind === 'person') ? 'condition' : 'person';
-                renderE(); renderG();
-              };
               nameIn.type = 'text'; nameIn.value = ex.name || ''; nameIn.placeholder = 'name…';
-              nameIn.style.cssText = 'flex:0 0 8rem';
-              nameIn.oninput = function() { gexceptions[idx].name = nameIn.value; };
+              nameIn.style.cssText = 'flex:0 0 8rem' +
+                (dupes[idx] ? ';border-color:var(--warning,#d29922)' : '');
+              if (dupes[idx]) {
+                nameIn.title = 'Another exception answers to this same name. A rule links by name, so it can only reach one of them — rename this one to say which.';
+              }
+              nameIn.oninput = function() { gexceptions[idx].name = nameIn.value; renderE(); nameIn.focus(); renderG(); };
               var textIn = document.createElement('input');
               textIn.type = 'text'; textIn.value = ex.text || '';
-              textIn.placeholder = kind === 'person'
-                ? 'account, phone, or email…'
-                : 'the condition, e.g. the user has already confirmed…';
+              textIn.placeholder = 'the condition, e.g. the user has already confirmed…';
               textIn.className = 'ui-orch-list-input';
               textIn.oninput = function() { gexceptions[idx].text = textIn.value; };
               // Name the condition for them if they didn't. The server derives
@@ -5822,11 +5838,52 @@
               // hole in a rule the owner still believes is absolute.
               del.title = 'Delete. Rules linked to it go back to applying in full. To turn it off temporarily, use the on/off button instead — that keeps the wording and the links.';
               del.onclick = function() { gexceptions.splice(idx, 1); renderE(); renderG(); };
-              row.appendChild(kindBtn); row.appendChild(nameIn); row.appendChild(textIn); row.appendChild(del);
+              row.appendChild(nameIn); row.appendChild(textIn); row.appendChild(del);
               excList.appendChild(row);
+              if (dupes[idx]) {
+                var dup = document.createElement('div');
+                dup.style.cssText = 'font-size:0.72rem;color:var(--warning,#d29922);margin:0.15rem 0 0.4rem 0;padding-left:0.2rem';
+                dup.textContent = 'Two exceptions share this name. A rule links by name and reaches only one of them; the other stays in the list looking just as active. Give this one a name of its own.';
+                excList.appendChild(dup);
+              }
+              // A CONDITION is prose a model reads under the rule, so show it
+              // exactly as the check will see it. The trap this exists for:
+              // an exception meant as "this person may bypass" gets written as
+              // a bare name, and rendered under a rule that is ABOUT that same
+              // person it reads as "this rule does not concern them" — a
+              // universal bypass that looks, in the editor, like a carve-out
+              // for one user. Rendered here, the two readings are visibly the
+              // same words and the author can see what they are shipping.
+              if (String(ex.text || '').trim()) {
+                var note = document.createElement('div');
+                note.style.cssText = 'font-size:0.72rem;color:var(--text-mute);margin:0.15rem 0 0.4rem 0;padding-left:0.2rem';
+                var shown = document.createElement('code');
+                shown.textContent = 'Except: ' + String(ex.text).trim();
+                shown.style.cssText = 'font-size:0.72rem';
+                note.appendChild(document.createTextNode('The check reads this under each linked rule, and decides: '));
+                note.appendChild(shown);
+                // The specific misfire, named when it is detectable: the
+                // condition repeats a word the rule already uses, which is
+                // when "except <name>" stops meaning "when <name> asks".
+                if (gExcEchoesRule(ex)) {
+                  var warn = document.createElement('div');
+                  warn.style.cssText = 'color:var(--warning,#d29922);margin-top:0.15rem';
+                  warn.textContent = 'This repeats wording from a rule it is linked to, so the check may read it as "the rule does not apply here" rather than "this applies in one narrow case". If you meant "this PERSON may bypass it", do not write it here at all: add them to Authorized people and mark the rule itself as yielding to them, which gohort settles without showing any of it to the model.';
+                  note.appendChild(warn);
+                }
+                excList.appendChild(note);
+              }
             });
             var addE = document.createElement('button');
             addE.type = 'button'; addE.className = 'ui-orch-list-add'; addE.textContent = '+ Add exception';
+            // A new exception starts as a PERSON, and the failure directions are
+            // why. Guess person wrongly and the text matches no account or
+            // handle, so nothing is exempt and the rule stays in force. Guess
+            // condition wrongly and the text is handed to the judge as prose —
+            // and a name that also appears in the rule reads as the rule's own
+            // subject, which turns "Craig may bypass this" into "this does not
+            // apply to Craig" and neutralizes the rule for everybody. One
+            // mistake costs an exemption; the other costs the rule.
             addE.onclick = function() { gexceptions.push({name: '', text: ''}); renderE(); };
             excList.appendChild(addE);
           }
@@ -5938,10 +5995,12 @@
             }
             opt('', 'as you (the owner)');
             opt('__stranger__', 'as an outside contact');
-            gexceptions.forEach(function(ex) {
-              if (ex.kind !== 'person') { return; }
-              var slug = gExcSlug(ex);
-              if (slug) { opt(slug, 'as ' + (ex.name || slug) + ' — ' + (ex.text || '')); }
+            // The roster, because that is what the check matches against — and
+            // it is matched WHOLE, so offering the entries verbatim is also the
+            // only way to stand in as somebody the live path would recognize.
+            (agent.authorized_identities || []).forEach(function(id) {
+              var v = String(id || '').trim();
+              if (v) { opt(v, 'as ' + v); }
             });
             testWho.value = keep;
             if (!testWho.value) { testWho.selectedIndex = 0; }

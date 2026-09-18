@@ -136,15 +136,19 @@ func sanitizeGuardrailExceptions(in []GuardrailException) []GuardrailException {
 		if name == "" {
 			name = deriveExceptionName(text)
 		}
-		// A collision after slugging would silently merge two different
-		// conditions under one handle, so suffix instead of dropping.
+		// A collision on a name the owner TYPED is refused by the caller, not
+		// quietly renamed here — see checkExceptionNames. Reaching this with a
+		// duplicate means the name was DERIVED, where suffixing is right: the
+		// owner never chose it, two conditions opening with the same four words
+		// is ordinary, and refusing a save over a handle they did not type
+		// would be a puzzle.
 		base, n := name, 2
 		for seen[name] {
 			name = base + "-" + strconv.Itoa(n)
 			n++
 		}
 		seen[name] = true
-		out = append(out, GuardrailException{Name: name, Text: text, Kind: normalizeExceptionKind(raw.Kind)})
+		out = append(out, GuardrailException{Name: name, Text: text})
 		if len(out) >= maxGuardrailExceptions {
 			break
 		}
@@ -222,4 +226,34 @@ func sanitizeAuthorizedIdentities(in []string) []string {
 		}
 	}
 	return out
+}
+
+// checkExceptionNames reports the first name the owner TYPED twice, or "" when
+// every typed name is its own.
+//
+// Refused at the door rather than settled quietly, because a rule links an
+// exception by NAME. Two exceptions answering to "craig" mean the link reaches
+// one of them and the other sits in the editor looking equally in force — which
+// is how a carve-out that was never consulted gets mistaken for one that was,
+// and then rewritten into something more permissive to make it "work".
+//
+// Only typed names. A derived one is the framework's own guess and it suffixes
+// those instead, since an owner cannot be asked to resolve a collision between
+// two handles they never chose.
+func checkExceptionNames(in []GuardrailException) string {
+	seen := map[string]bool{}
+	for _, raw := range in {
+		if strings.TrimSpace(raw.Text) == "" {
+			continue
+		}
+		name := slugifyExceptionName(raw.Name)
+		if name == "" {
+			continue
+		}
+		if seen[name] {
+			return name
+		}
+		seen[name] = true
+	}
+	return ""
 }

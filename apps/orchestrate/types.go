@@ -49,9 +49,10 @@ import (
 type GuardrailException struct {
 	Name string `json:"name"`
 	Text string `json:"text"`
-	// Kind is "person" or "condition". Empty means condition — that was the
-	// only kind when this field did not exist, so an older record reads back
-	// as what it was.
+	// Kind is DEAD and exists only so the one-time sweep in guardrail_sweep.go
+	// can still recognize the person entries it has to move onto the roster.
+	// An exception is a condition now; identity belongs to
+	// AuthorizedIdentities. Delete this field together with that sweep.
 	Kind string `json:"kind,omitempty"`
 }
 

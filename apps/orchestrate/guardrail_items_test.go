@@ -1,9 +1,14 @@
 package orchestrate
 
-// One carve-out list, linked per rule.
+// One carve-out list of CONDITIONS, linked per rule.
 //
-// The two properties that matter: a rule can be excepted for ONE person rather
-// than the whole roster, and a link can be switched off on ONE rule without
+// Identity is not in here. A rule yields to a person through the roster and the
+// "@" marker, which the framework settles itself; an exception is prose the
+// check reads. Keeping the two apart is the point: when both lived in this list
+// a rule linking by name could reach either, and a name that appeared in the
+// rule as well read to the judge as the rule's own subject.
+//
+// The property that remains: a link can be switched off on ONE rule without
 // disturbing the others that share it.
 
 import (
@@ -14,10 +19,10 @@ import (
 func itemAgent(rules string) AgentRecord {
 	return AgentRecord{
 		Name: "X", Owner: "u", Guardrails: rules,
+		AuthorizedIdentities: []string{"dana", "sam"},
 		GuardrailExceptions: []GuardrailException{
-			{Name: "dana", Kind: guardrailKindPerson, Text: "dana"},
-			{Name: "sam", Kind: guardrailKindPerson, Text: "sam"},
-			{Name: "confirmed", Kind: guardrailKindCondition, Text: "the user has already confirmed"},
+			{Name: "confirmed", Text: "the user has already confirmed"},
+			{Name: "night", Text: "it is outside business hours"},
 		},
 	}
 }
@@ -62,29 +67,28 @@ func TestLinkOffMarkerParses(t *testing.T) {
 
 // TestRuleExceptedForOnePersonOnly — the reason the roster stopped being
 // all-or-nothing.
-func TestRuleExceptedForOnePersonOnly(t *testing.T) {
-	agent := itemAgent("@dana never send money")
-	rule := parseGuardrailRule("@dana never send money")
-
-	dana := requesterIdentity{Authorized: true, AuthorizedNames: []string{"dana"}}
-	if !ruleExemptsRequester(rule, dana) {
-		t.Error("the rule should be excepted for the person it names")
+func TestOnlyTheRosterMarkerExceptsAPerson(t *testing.T) {
+	// "@" yields to anyone the framework established as authorized.
+	authorized := requesterIdentity{Authorized: true}
+	if !ruleExemptsRequester(parseGuardrailRule("@ never send money"), authorized) {
+		t.Error("the roster marker should except an authorized requester")
 	}
-	sam := requesterIdentity{Authorized: true, AuthorizedNames: []string{"sam"}}
-	if ruleExemptsRequester(rule, sam) {
-		t.Error("a rule naming dana must NOT except sam")
+	if ruleExemptsRequester(parseGuardrailRule("never delete records"), authorized) {
+		t.Error("an unmarked rule must apply to everyone, authorized or not")
 	}
-	stranger := requesterIdentity{}
-	if ruleExemptsRequester(rule, stranger) {
+	if ruleExemptsRequester(parseGuardrailRule("@ never send money"), requesterIdentity{}) {
 		t.Error("an unauthorized requester is never excepted")
 	}
-	// And the whole set behaves the same way through rulesInPlayFor.
-	rules := guardrailRules(agent)
-	if got := rulesInPlayFor(rules, sam); len(got) != 1 {
-		t.Errorf("sam should still face the rule, got %d", len(got))
+
+	// A link to a CONDITION never exempts anybody deterministically — that is
+	// the judge's call, and the whole reason conditions render as text.
+	linked := itemAgent("@confirmed never send money")
+	rule := parseGuardrailRule("@confirmed never send money")
+	if ruleExemptsRequester(rule, authorized) {
+		t.Error("a condition link skipped the check instead of being judged")
 	}
-	if got := rulesInPlayFor(rules, dana); len(got) != 0 {
-		t.Errorf("dana should face nothing, got %+v", got)
+	if got := rulesInPlayFor(guardrailRules(linked), authorized); len(got) != 1 {
+		t.Errorf("the rule should still be asked about, got %+v", got)
 	}
 }
 
@@ -101,20 +105,14 @@ func TestLinkOffIsPerRule(t *testing.T) {
 	if got := ruleConditionTexts(agent, rules[1]); len(got) != 0 {
 		t.Errorf("the switched-off link must not apply: %v", got)
 	}
-	// A person link switched off likewise stops excepting that ONE rule.
-	off := parseGuardrailRule("@-dana never send money")
-	dana := requesterIdentity{Authorized: true, AuthorizedNames: []string{"dana"}}
-	if ruleExemptsRequester(off, dana) {
-		t.Error("a switched-off person link still excepted the rule")
-	}
 }
 
-// TestPersonLinkNeverReachesTheWarden — a person is settled by the framework;
-// putting the identity on an Except line would both leak it and ask the warden
-// to decide something it cannot verify.
-func TestPersonLinkNeverReachesTheWarden(t *testing.T) {
-	agent := itemAgent("@dana @confirmed never send money")
-	rule := parseGuardrailRule("@dana @confirmed never send money")
+// TestTheRosterNeverReachesTheWarden — identity is settled by the framework;
+// putting it on an Except line would both leak it and ask the warden to decide
+// something it cannot verify.
+func TestTheRosterNeverReachesTheWarden(t *testing.T) {
+	agent := itemAgent("@ @confirmed never send money")
+	rule := parseGuardrailRule("@ @confirmed never send money")
 	texts := ruleConditionTexts(agent, rule)
 	if len(texts) != 1 || texts[0] != "the user has already confirmed" {
 		t.Fatalf("only the CONDITION should render: %v", texts)
@@ -126,141 +124,127 @@ func TestPersonLinkNeverReachesTheWarden(t *testing.T) {
 	if _, err := turn.app.runWarden(turn.ctx, agent, guardHookPreOutput, "hi", requesterIdentity{}); err != nil {
 		t.Fatalf("runWarden: %v", err)
 	}
-	if strings.Contains(stub.seen(), "dana") {
-		t.Errorf("a person link leaked into the warden prompt:\n%s", stub.seen())
+	// Nobody on the roster is named in the prompt. This is the property the
+	// whole redesign rests on: a name the judge can read is a name it can
+	// misread, and "dana" under a rule ABOUT dana reads as the rule's subject.
+	for _, who := range []string{"dana", "sam"} {
+		if strings.Contains(strings.ToLower(stub.seen()), who) {
+			t.Errorf("a roster identity leaked into the warden prompt:\n%s", stub.seen())
+		}
 	}
 	if !strings.Contains(stub.seen(), "the user has already confirmed") {
 		t.Errorf("the condition should still render:\n%s", stub.seen())
 	}
 }
 
-// TestLegacyRosterStillWorks — an owner who typed a roster before items existed
-// keeps their exemptions, and the entries show up as person items.
-func TestLegacyRosterStillWorks(t *testing.T) {
+// TestTheRosterConfersAuthorizationOnItsOwn — the roster is an identity list
+// and nothing else now. It used to also materialize as person items on every
+// read, which is what made a deleted exception come back: the item went, the
+// roster entry behind it did not, and the next read rebuilt it.
+func TestTheRosterConfersAuthorizationOnItsOwn(t *testing.T) {
 	agent := AgentRecord{
 		Name: "X", Owner: "u",
 		Guardrails:           "@ never send money",
 		AuthorizedIdentities: []string{"dana@example.com"},
 	}
-	items := guardrailItems(agent)
-	if len(items) != 1 || items[0].Kind != guardrailKindPerson || !items[0].Legacy {
-		t.Fatalf("legacy roster did not surface as a person item: %+v", items)
+	// It contributes no carve-outs.
+	if items := guardrailItems(agent); len(items) != 0 {
+		t.Fatalf("the roster materialized as carve-outs again: %+v", items)
 	}
-	if items[0].Text != "dana@example.com" {
-		t.Errorf("legacy identity lost: %+v", items[0])
+	// And it still confers authorization, which is what "@" consults.
+	if got := authorizedIdentities(agent); len(got) != 1 || got[0] != "dana@example.com" {
+		t.Fatalf("roster = %v", got)
 	}
-	// The bare "@" still means "any of them".
 	rule := parseGuardrailRule("@ never send money")
 	if !ruleExemptsRequester(rule, requesterIdentity{Authorized: true}) {
-		t.Error("the legacy whole-roster marker stopped working")
+		t.Error("the roster marker stopped working")
 	}
 }
 
-// TestAuthoredItemWinsOverLegacyDuplicate — the same person listed both ways is
-// one item, not two, or a rule linked to one spelling would miss the other.
-func TestAuthoredItemWinsOverLegacyDuplicate(t *testing.T) {
+// TestADeletedExceptionStaysDeleted — the bug this redesign came from. An
+// exception removed from the authored list must not be rebuilt from anywhere.
+func TestADeletedExceptionStaysDeleted(t *testing.T) {
 	agent := AgentRecord{
 		Name: "X", Owner: "u",
-		GuardrailExceptions:  []GuardrailException{{Name: "dana", Kind: guardrailKindPerson, Text: "dana@example.com"}},
-		AuthorizedIdentities: []string{"Dana@Example.com"},
+		AuthorizedIdentities: []string{"craig@example.com"},
+		GuardrailExceptions:  []GuardrailException{{Name: "confirmed", Text: "already confirmed"}},
 	}
-	items := guardrailItems(agent)
-	if len(items) != 1 {
-		t.Fatalf("the same identity produced %d items: %+v", len(items), items)
-	}
-	if items[0].Legacy {
-		t.Error("the authored item should win over the legacy entry")
+	agent.GuardrailExceptions = nil // the owner deletes it
+	if items := guardrailItems(agent); len(items) != 0 {
+		t.Fatalf("a deleted exception came back: %+v", items)
 	}
 }
 
-// TestUnknownAndMistypedLinksFailClosed — a link to a deleted item, and an item
-// with an unrecognized kind, both leave the rule at full strength.
-func TestUnknownAndMistypedLinksFailClosed(t *testing.T) {
+// TestUnknownLinksFailClosed — a link to a deleted exception leaves the rule at
+// full strength, which is the direction every unresolvable thing here fails in.
+func TestUnknownLinksFailClosed(t *testing.T) {
 	agent := itemAgent("@ghost never send money")
 	rule := parseGuardrailRule("@ghost never send money")
 	if got := ruleConditionTexts(agent, rule); len(got) != 0 {
-		t.Errorf("a link to a missing item resolved to %v", got)
+		t.Errorf("a link to a missing exception resolved to %v", got)
 	}
-	if ruleExemptsRequester(rule, requesterIdentity{Authorized: true, AuthorizedNames: []string{"dana"}}) {
-		t.Error("a link to a missing item excepted the rule")
-	}
-	// An unrecognized kind must land on "condition" — the judged, weaker side.
-	if got := normalizeExceptionKind("PERSONNEL"); got != guardrailKindCondition {
-		t.Errorf("a mistyped kind became %q; it must not be promoted to person", got)
-	}
-	if got := normalizeExceptionKind("  Person "); got != guardrailKindPerson {
-		t.Errorf("a valid kind was not recognized: %q", got)
+	if ruleExemptsRequester(rule, requesterIdentity{Authorized: true}) {
+		t.Error("a link to a missing exception excepted the rule")
 	}
 }
 
 // TestTestRequesterMirrorsProduction — the dry-run check must build the same
-// identity the live path does, or it reports blocks that production would not
-// produce. It used to set Owner:true and nothing else, leaving AuthorizedNames
-// empty, so a person-linked rule was never skipped in a test.
+// identity the live path does, or it reports blocks production would not
+// produce. It matches the ROSTER the same way, with the same whole-string
+// compare, so a first name that is not on the roster resolves to nobody here
+// exactly as it does live.
 func TestTestRequesterMirrorsProduction(t *testing.T) {
-	agent := itemAgent("@dana never send money")
+	agent := itemAgent("@ never send money")
 
 	owner := testRequester(agent, "", "")
 	if !owner.Owner || !owner.Authorized {
 		t.Fatalf("owner identity is wrong: %+v", owner)
 	}
-	// The owner satisfies every person item, exactly as requester() gives them.
-	if len(owner.AuthorizedNames) != 2 {
-		t.Errorf("owner should satisfy both person items, got %v", owner.AuthorizedNames)
-	}
 	if got := rulesInPlayFor(guardrailRules(agent), owner); len(got) != 0 {
 		t.Errorf("the rule is excepted for the owner live; the test must agree: %+v", got)
 	}
 
-	// Standing in as one person excepts only the rules naming them.
+	// Standing in as somebody ON the roster.
 	dana := testRequester(agent, "dana", "")
 	if !dana.Authorized || dana.Owner {
-		t.Fatalf("person stand-in is wrong: %+v", dana)
-	}
-	if len(dana.AuthorizedNames) != 1 || dana.AuthorizedNames[0] != "dana" {
-		t.Errorf("stand-in matched the wrong items: %v", dana.AuthorizedNames)
+		t.Fatalf("roster stand-in is wrong: %+v", dana)
 	}
 	if got := rulesInPlayFor(guardrailRules(agent), dana); len(got) != 0 {
-		t.Errorf("dana is excepted from her own rule: %+v", got)
-	}
-	sam := testRequester(agent, "sam", "")
-	if got := rulesInPlayFor(guardrailRules(agent), sam); len(got) != 1 {
-		t.Errorf("sam is NOT excepted from a rule naming dana: %+v", got)
+		t.Errorf("an authorized person faces an @-marked rule: %+v", got)
 	}
 
 	// An outside contact establishes nothing — the name is self-reported.
 	stranger := testRequester(agent, "", "Mallory")
-	if stranger.Authorized || stranger.Owner || len(stranger.AuthorizedNames) != 0 {
+	if stranger.Authorized || stranger.Owner {
 		t.Errorf("a stranger must establish nothing: %+v", stranger)
 	}
 	if stranger.Name != "Mallory" {
 		t.Errorf("the self-reported name should still be carried: %+v", stranger)
 	}
-	// An unknown stand-in name must not silently become the owner.
+	// An unknown stand-in must not silently become the owner, who is excepted
+	// from everything — that would report "nothing blocks" for a person who
+	// does not exist.
 	ghost := testRequester(agent, "nobody-by-that-name", "")
-	if ghost.Owner {
-		t.Error("an unknown stand-in fell through to the owner, who is excepted from everything")
+	if ghost.Owner || ghost.Authorized {
+		t.Error("an unknown stand-in was treated as somebody")
+	}
+	if got := rulesInPlayFor(guardrailRules(agent), ghost); len(got) != 1 {
+		t.Errorf("an unknown stand-in should face every rule: %+v", got)
 	}
 }
 
-// TestStandInMatchesEverySpellingOfOnePerson — one human listed as an account
-// AND a phone must satisfy both items, as the live path does.
-func TestStandInMatchesEverySpellingOfOnePerson(t *testing.T) {
+// TestAFirstNameIsNotOnTheRoster — the trap behind the bug report. The roster
+// is matched whole, so "Craig" is not "Craig Coffee" and an exemption written
+// that way silently does nothing.
+func TestAFirstNameIsNotOnTheRoster(t *testing.T) {
 	agent := AgentRecord{
-		Name: "X", Owner: "u",
-		GuardrailExceptions: []GuardrailException{
-			{Name: "dana-acct", Kind: guardrailKindPerson, Text: "dana@example.com"},
-			{Name: "dana-phone", Kind: guardrailKindPerson, Text: "dana@example.com"},
-			{Name: "sam", Kind: guardrailKindPerson, Text: "sam"},
-		},
+		Name: "X", Owner: "u", Guardrails: "@ never say that",
+		AuthorizedIdentities: []string{"Craig Coffee"},
 	}
-	who := testRequester(agent, "dana-acct", "")
-	if len(who.AuthorizedNames) != 2 {
-		t.Errorf("both spellings of one person should match, got %v", who.AuthorizedNames)
+	if who := testRequester(agent, "Craig", ""); who.Authorized {
+		t.Error("a first name matched a full account — the compare is whole-string on purpose")
 	}
-	for _, n := range who.AuthorizedNames {
-		if n == "sam" {
-			t.Error("a different person was matched")
-		}
+	if who := testRequester(agent, "craig coffee", ""); !who.Authorized {
+		t.Error("the roster compare should ignore case")
 	}
 }

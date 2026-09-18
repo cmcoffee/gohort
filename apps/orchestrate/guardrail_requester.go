@@ -52,12 +52,6 @@ type requesterIdentity struct {
 	// the logs. Empty for the owner (Account already names them).
 	AuthorizedAs string
 
-	// AuthorizedNames are the carve-out item names this requester satisfies —
-	// the link between "who is asking" and "which rules name them". Computed
-	// here, from the same server-side facts as Authorized, so a rule linked to
-	// one person can be excepted for them and nobody else.
-	AuthorizedNames []string
-
 	// AuthorizedVia records HOW the match was made, because the two are not
 	// equally strong: an authenticated session proves an account, while a
 	// transport handle is configured trust — the owner wrote a number down and
@@ -153,20 +147,10 @@ func (t *chatTurn) requester() requesterIdentity {
 		// obvious way for them without their having to list themselves.
 		who.Authorized = true
 		who.AuthorizedVia = guardAuthAuthenticated
-		// The owner satisfies every person item, so a rule excepted "for Dana"
-		// is also excepted for the person who wrote that rule. Anything else
-		// would let an owner lock themselves out of their own agent by naming
-		// somebody else.
-		for _, it := range guardrailItems(t.agent) {
-			if it.Kind == guardrailKindPerson {
-				who.AuthorizedNames = append(who.AuthorizedNames, it.Name)
-			}
-		}
 		return who
 	}
-	if names, as, via := t.resolveAuthorization(); via != "" {
+	if as, via := t.resolveAuthorization(); via != "" {
 		who.Authorized, who.AuthorizedAs, who.AuthorizedVia = true, as, via
-		who.AuthorizedNames = names
 	}
 	return who
 }
@@ -179,48 +163,38 @@ func (t *chatTurn) requester() requesterIdentity {
 // the message to, compared by the bridge's own rule. Nothing the requester
 // writes is consulted — in particular NOT the self-reported display name, which
 // is the field an attacker would set to a roster entry's name.
-func (t *chatTurn) resolveAuthorization() (names []string, as, via string) {
-	var people []guardrailItem
-	for _, it := range guardrailItems(t.agent) {
-		if it.Kind == guardrailKindPerson && strings.TrimSpace(it.Text) != "" {
-			people = append(people, it)
-		}
-	}
+func (t *chatTurn) resolveAuthorization() (as, via string) {
+	people := authorizedIdentities(t.agent)
 	if len(people) == 0 {
-		return nil, "", ""
+		return "", ""
 	}
-	// EVERY matching item is collected, not just the first. One person can be
-	// listed more than once — an account and a phone are the same human — and a
-	// rule linked to either spelling has to except them.
+	// The FIRST match wins and names the requester. One person can be on the
+	// roster more than once — an account and a phone are the same human — and
+	// which spelling matched is only reported, never acted on: authorization
+	// is now all-or-nothing, so a second match would say the same thing twice.
 	//
 	// An authenticated account. A channel inbound runs as a synthetic per-chat
 	// user, which authenticates nobody, so it is excluded by name.
 	if acct := strings.TrimSpace(t.user); acct != "" && !isSyntheticRequester(acct) {
 		for _, p := range people {
-			if strings.EqualFold(p.Text, acct) {
-				names = append(names, p.Name)
-				if as == "" {
-					as, via = p.Text, guardAuthAuthenticated
-				}
+			if strings.EqualFold(p, acct) {
+				return p, guardAuthAuthenticated
 			}
 		}
 	}
 	// A handle the transport attributed the message to. Weaker, and labelled as
 	// such wherever it is reported — so an account match, if there was one,
-	// keeps its stronger label.
+	// keeps its stronger label by being checked first.
 	if handle := strings.TrimSpace(t.requesterHandle); handle != "" {
 		if link, ok := ActiveMessagingLink(); ok {
 			for _, p := range people {
-				if link.SameHandle(t.agent.Owner, p.Text, handle) {
-					names = append(names, p.Name)
-					if as == "" {
-						as, via = p.Text, guardAuthHandle
-					}
+				if link.SameHandle(t.agent.Owner, p, handle) {
+					return p, guardAuthHandle
 				}
 			}
 		}
 	}
-	return names, as, via
+	return "", ""
 }
 
 // isSyntheticRequester reports whether an acting identity is a framework-minted
@@ -238,9 +212,9 @@ func isSyntheticRequester(user string) bool {
 // exception and a dangling link: off means the rule APPLIES.
 func authorizedIdentities(agent AgentRecord) []string {
 	var out []string
-	for _, it := range guardrailItems(agent) {
-		if it.Kind == guardrailKindPerson && strings.TrimSpace(it.Text) != "" {
-			out = append(out, it.Text)
+	for _, id := range agent.AuthorizedIdentities {
+		if s := strings.TrimSpace(id); s != "" {
+			out = append(out, s)
 		}
 	}
 	return out

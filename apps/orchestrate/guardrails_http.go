@@ -149,6 +149,13 @@ func (T *OrchestrateApp) handleAgentGuardrails(w http.ResponseWriter, r *http.Re
 			agent.AuthorizedIdentities = sanitizeAuthorizedIdentities(*body.Authorized)
 		}
 		if body.Exceptions != nil {
+			// Refused, not renamed. A rule links an exception by name, so two
+			// answering to one name means the link reaches whichever was stored
+			// first and the other looks just as live in the editor.
+			if dup := checkExceptionNames(*body.Exceptions); dup != "" {
+				http.Error(w, "Two exceptions are named \""+dup+"\". A rule links an exception by its name and can only reach one of them, so give each a name of its own.", http.StatusBadRequest)
+				return
+			}
 			agent.GuardrailExceptions = sanitizeGuardrailExceptions(*body.Exceptions)
 		}
 		if body.Scan != nil {

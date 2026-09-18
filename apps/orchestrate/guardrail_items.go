@@ -26,74 +26,41 @@ package orchestrate
 // "any of them".
 
 import (
-	"strconv"
 	"strings"
 )
 
-// Item kinds.
-const (
-	guardrailKindPerson    = "person"
-	guardrailKindCondition = "condition"
-)
-
-// guardrailItem is one resolved carve-out.
+// guardrailItem is one resolved carve-out: a CONDITION the check reads under
+// every rule that links it.
+//
+// There used to be a second kind, a person, which the framework resolved itself
+// against who was asking. It is gone, and the roster it duplicated
+// (AgentRecord.AuthorizedIdentities) does that job alone now. Two mechanisms for
+// "this person is exempt" meant two lists that could disagree, one name that
+// could mean either of them, and — because a rule links by NAME — a link that
+// silently reached whichever one was stored first.
 type guardrailItem struct {
 	Name string
-	Kind string
-	Text string // the condition's wording, or the person's identity
-	// Legacy is set on an item materialized from the old AuthorizedIdentities
-	// roster rather than authored as an item. It behaves identically; the flag
-	// exists so the editor can say where it came from instead of presenting a
-	// migration as something the owner typed.
-	Legacy bool
+	Text string // the condition's wording
 }
 
-// guardrailItems returns the agent's carve-outs: the authored list, plus any
-// legacy roster entry that has no item of its own yet.
+// guardrailItems returns the agent's authored carve-outs.
 //
-// Merged on READ rather than migrated on write. A migration that rewrites the
-// record needs every save path to be holding the new shape already, and this
-// session has spent enough on fields that saved perfectly and read back empty.
-// Reading both means the old field keeps working untouched and the new one wins
-// wherever it exists.
+// The authored list and NOTHING else. It used to merge legacy roster entries in
+// on every read, which is what made a deleted exception come back: the item was
+// removed, the roster entry behind it was not, and the next read rebuilt it.
+// The roster is now only ever an identity list, and the one-time sweep in
+// guardrail_sweep.go moved anything that was pulling double duty.
 func guardrailItems(agent AgentRecord) []guardrailItem {
 	var out []guardrailItem
 	seenName := map[string]bool{}
-	seenText := map[string]bool{}
 	for _, e := range agent.GuardrailExceptions {
 		name := slugifyExceptionName(e.Name)
 		text := strings.TrimSpace(e.Text)
 		if name == "" || text == "" || seenName[name] {
 			continue
 		}
-		kind := strings.ToLower(strings.TrimSpace(e.Kind))
-		if kind != guardrailKindPerson {
-			kind = guardrailKindCondition
-		}
 		seenName[name] = true
-		if kind == guardrailKindPerson {
-			seenText[strings.ToLower(text)] = true
-		}
-		out = append(out, guardrailItem{Name: name, Kind: kind, Text: text})
-	}
-	// Legacy roster entries that were never turned into items.
-	for _, id := range agent.AuthorizedIdentities {
-		id = strings.TrimSpace(id)
-		if id == "" || seenText[strings.ToLower(id)] {
-			continue
-		}
-		name := slugifyExceptionName(id)
-		if name == "" {
-			name = "person"
-		}
-		base, n := name, 2
-		for seenName[name] {
-			name = base + "-" + strconv.Itoa(n)
-			n++
-		}
-		seenName[name] = true
-		seenText[strings.ToLower(id)] = true
-		out = append(out, guardrailItem{Name: name, Kind: guardrailKindPerson, Text: id, Legacy: true})
+		out = append(out, guardrailItem{Name: name, Text: text})
 	}
 	return out
 }
@@ -126,7 +93,7 @@ func ruleConditionTexts(agent AgentRecord, r guardrailRule) []string {
 			continue
 		}
 		it, ok := byName[link.Name]
-		if !ok || it.Kind != guardrailKindCondition {
+		if !ok {
 			continue
 		}
 		seen[link.Name] = true
@@ -145,22 +112,7 @@ func ruleConditionTexts(agent AgentRecord, r guardrailRule) []string {
 //
 // A bare "@" (the legacy whole-roster marker) means any person item at all.
 func ruleExemptsRequester(r guardrailRule, req requesterIdentity) bool {
-	if r.ExceptAuthorized && req.Authorized {
-		return true
-	}
-	if len(r.Links) == 0 || len(req.AuthorizedNames) == 0 {
-		return false
-	}
-	matched := map[string]bool{}
-	for _, n := range req.AuthorizedNames {
-		matched[n] = true
-	}
-	for _, link := range r.Links {
-		if !link.Off && matched[link.Name] {
-			return true
-		}
-	}
-	return false
+	return r.ExceptAuthorized && req.Authorized
 }
 
 // rulesInPlayFor drops the rules this requester is exempt from, leaving the set
@@ -177,17 +129,6 @@ func rulesInPlayFor(rules []guardrailRule, req requesterIdentity) []guardrailRul
 	return out
 }
 
-// normalizeExceptionKind folds a submitted kind to one of the two values.
-// Anything unrecognized becomes a condition — the judged kind, which is the
-// weaker claim: a mistyped kind must not silently promote an item to something
-// the framework treats as proof of identity.
-func normalizeExceptionKind(kind string) string {
-	if strings.EqualFold(strings.TrimSpace(kind), guardrailKindPerson) {
-		return guardrailKindPerson
-	}
-	return guardrailKindCondition
-}
-
 // testRequester builds the identity a dry-run check should judge against.
 //
 // It mirrors chatTurn.requester() rather than hand-rolling a struct, which is
@@ -200,50 +141,25 @@ func normalizeExceptionKind(kind string) string {
 // the authenticated owner of the record, and the worst they can do is run a dry
 // check against their own rules.
 func testRequester(agent AgentRecord, as, sender string) requesterIdentity {
-	if name := slugifyExceptionName(as); name != "" {
-		// A stand-in that names nobody must NOT fall through to the owner, who
-		// is excepted from everything — the test would answer "nothing blocks"
-		// for a person who does not exist, which is the most misleading result
-		// available. It resolves to a nobody instead: every rule in force.
-		found := false
-		for _, it := range guardrailItems(agent) {
-			if it.Name == name && it.Kind == guardrailKindPerson {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return requesterIdentity{Name: strings.TrimSpace(sender), Channel: "channel"}
-		}
-		for _, it := range guardrailItems(agent) {
-			if it.Name != name || it.Kind != guardrailKindPerson {
-				continue
-			}
-			// Every item this identity satisfies, not just the one named — the
-			// same person can be listed twice (an account and a phone), and the
-			// live path matches both.
-			who := requesterIdentity{
-				Authorized: true, AuthorizedAs: it.Text,
-				AuthorizedVia: guardAuthAuthenticated, Channel: "channel",
-			}
-			for _, other := range guardrailItems(agent) {
-				if other.Kind == guardrailKindPerson && strings.EqualFold(other.Text, it.Text) {
-					who.AuthorizedNames = append(who.AuthorizedNames, other.Name)
+	if want := strings.TrimSpace(as); want != "" {
+		// Matched against the ROSTER, exactly as the live path does — the same
+		// whole-string compare, so a dry run cannot report an exemption that
+		// production would not give. A first name that is not on the roster
+		// resolves to nobody, which is the honest answer: every rule in force.
+		for _, id := range authorizedIdentities(agent) {
+			if strings.EqualFold(id, want) {
+				return requesterIdentity{
+					Authorized: true, AuthorizedAs: id,
+					AuthorizedVia: guardAuthAuthenticated, Channel: "channel",
 				}
 			}
-			return who
 		}
+		return requesterIdentity{Name: want, Channel: "channel"}
 	}
 	if s := strings.TrimSpace(sender); s != "" {
 		// An outside contact: a self-reported name and nothing established.
 		return requesterIdentity{Name: s, Channel: "channel"}
 	}
-	// The owner, who satisfies every person item — as they do live.
-	who := requesterIdentity{Owner: true, Authorized: true, AuthorizedVia: guardAuthAuthenticated}
-	for _, it := range guardrailItems(agent) {
-		if it.Kind == guardrailKindPerson {
-			who.AuthorizedNames = append(who.AuthorizedNames, it.Name)
-		}
-	}
-	return who
+	// The owner, authorized over their own agent — as they are live.
+	return requesterIdentity{Owner: true, Authorized: true, AuthorizedVia: guardAuthAuthenticated}
 }

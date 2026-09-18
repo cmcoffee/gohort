@@ -1901,7 +1901,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		// Matched the same way guardrails match, so there is ONE roster. A
 		// second list would drift from the first, and the two would disagree
 		// about who is trusted with nothing to say which is right.
-		if _, _, via := subTurn.resolveAuthorization(); via != "" {
+		if _, via := subTurn.resolveAuthorization(); via != "" {
 			loopCfg.LiveClaimTrusted = true
 		}
 	}
