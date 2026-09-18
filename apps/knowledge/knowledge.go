@@ -110,7 +110,7 @@ func (T *KnowledgeApp) handleDetailPage(w http.ResponseWriter, r *http.Request) 
 			Body:     ui.Card{HTML: documentsDetailBody + documentsDetailAssets},
 		},
 	}
-	if s, ok := curationSection(user, collectionIDFromPath(r.URL.Path)); ok {
+	if s, ok := stewardSection(user, collectionIDFromPath(r.URL.Path)); ok {
 		sections = append(sections, s)
 	}
 	page := ui.Page{
@@ -142,43 +142,49 @@ func collectionIDFromPath(path string) string {
 	return id
 }
 
-// curationSection is the binding editor: which source this collection is a
-// copy of, how the last sync went, and a way to run one now.
+// stewardSection names the agent in charge of this collection.
 //
-// Rendered only when there is somewhere to bind TO. A deployment with no
-// enumerable source would otherwise get a control whose picker is empty and
-// whose explanation is a sentence about a feature it cannot use.
-func curationSection(user, collectionID string) (ui.Section, bool) {
+// Its own section, and deliberately NOT inside the one below. Being in charge
+// of a corpus is about this collection and the agent that keeps it current: the
+// agent goes and gets things with whatever tools it has, and gets the four
+// corpus actions bound to this collection and nothing else. None of that needs
+// the collection to be a copy of anywhere.
+//
+// It used to live in the section below, which renders only when something in
+// the deployment can be ENUMERATED — an MCP server with a listing tool, admin
+// only. So the ordinary case, "an agent looks after this collection", was
+// reachable only after standing up infrastructure it has no use for, and on a
+// deployment with none it was not reachable at all.
+func stewardSection(user, collectionID string) (ui.Section, bool) {
 	if strings.TrimSpace(collectionID) == "" {
 		return ui.Section{}, false
 	}
-	choices := CuratableSourceOptions(user)
-	if len(choices) == 0 {
-		return ui.Section{}, false
-	}
-	base := "/orchestrate/api/collections/" + url.PathEscape(collectionID) + "/curate"
+	base := "/orchestrate/api/collections/" + url.PathEscape(collectionID) + "/steward"
 	return ui.Section{
-		Title:    "Kept in step with",
-		Subtitle: "Make this collection a copy of somewhere else. What the source has is pulled in, what it changes is re-pulled, and what it deletes is retired here too — which is the part filling a collection by hand or from the web cannot do.",
+		Title:    "In charge of this collection",
+		Subtitle: "An agent can look after this collection: go and find material, add it, and prune what no longer belongs. Every other agent reads the collection as usual, unchanged.",
 		Body: ui.FormPanel{
 			Source:  base,
 			PostURL: base,
-			// Sync now, through the Test affordance: it posts, prints what came
-			// back, and is cancellable while it runs, which a sync over a large
-			// space needs and a bespoke button would have to be given.
-			TestURL:   base + "/run",
-			TestLabel: "Sync now",
 			Fields: []ui.FormField{
-				{Field: "status", Type: "readonly", Label: "Last sync"},
 				{
-					Field: "curated_from", Type: "rows", Label: "Sources",
-					AddLabel: "Add a source",
-					Help:     "Only sources that can list everything they hold are offered. One that can only be searched is left out: a collection bound to it could be added to forever and would never find out that something had been deleted.",
-					Columns: []ui.FormField{
-						{Field: "source", Type: "select", Label: "Source", Options: choices},
-					},
+					// A select, although the save accepts any string. The
+					// stored value is an agent ID and the label is its name,
+					// and those are not the same — a free-text box would make
+					// a person type the id they can see the name of. An id
+					// also survives a rename; what it does not survive is the
+					// agent being deleted, and the toolkit's select already
+					// handles a stored value whose option has gone rather than
+					// silently showing the first one.
+					Field: "curator_agent", Type: "select", Label: "Maintained by",
+					Options: append([]ui.SelectOption{{Value: "", Label: "(nobody; this collection is filled by hand)"}},
+						AgentNameOptions(user)...),
+					Help: "That agent may add documents to THIS collection and remove them from it.",
+					Detail: "It cannot touch any other collection you own, and it gets no other new powers: it cannot create or change agents, tools or apps.\n\n" +
+						"Reading is unaffected. Any agent with this collection attached still searches it exactly as before.",
 				},
 			},
 		},
 	}, true
 }
+

@@ -153,7 +153,13 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 // --- admin section -----------------------------------------------------------
 
-func adminSection() ui.Section {
+// adminSection is the publishing settings surface.
+//
+// Takes a request rather than nothing, because one of its controls is built
+// from runtime data: the agents an admin can pick as a destination. Registered
+// through RegisterAdminSectionSource for that reason — a list of agents fixed
+// at startup is a list that is wrong as soon as somebody builds one.
+func adminSection(r *http.Request) ui.Section {
 	return ui.Section{
 		Group:    "Apps",
 		Title:    "Publishing",
@@ -165,12 +171,12 @@ func adminSection() ui.Section {
 				{
 					Field: "confluence_credential", Label: "Confluence credential", Type: "text",
 					Placeholder: "name of a SecureAPI credential",
-					Help:        "The credential used to create and update pages. Its Base URL should be the Confluence site (e.g. https://acme.atlassian.net) and its allowed endpoints must include /wiki/api/v2/**. Set the credential's scope to per-user if each person should publish as themselves.",
+					Help: "The credential used to create and update pages. Its Base URL should be the Confluence site (e.g. https://acme.atlassian.net) and its allowed endpoints must include /wiki/api/v2/**. Set the credential's scope to per-user if each person should publish as themselves.",
 				},
 				{
 					Field: "confluence_base_url", Label: "Confluence site URL", Type: "text",
 					Placeholder: "https://acme.atlassian.net (optional)",
-					Help:        "Only needed when page links should be built from a different host than the credential's Base URL. Leave empty to use the credential's.",
+					Help: "Only needed when page links should be built from a different host than the credential's Base URL. Leave empty to use the credential's.",
 				},
 				{
 					Field: "webhook_label", Label: "Webhook name", Type: "text",
@@ -180,7 +186,7 @@ func adminSection() ui.Section {
 				{
 					Field: "webhook_credential", Label: "Webhook credential", Type: "text",
 					Placeholder: "name of a SecureAPI credential",
-					Help:        "The credential that authorizes the POST. The generic destination: anything that accepts an HTTP post of a document.",
+					Help: "The credential that authorizes the POST. The generic destination: anything that accepts an HTTP post of a document.",
 				},
 				{
 					Field: "webhook_url", Label: "Webhook URL", Type: "text",
@@ -190,21 +196,39 @@ func adminSection() ui.Section {
 				{
 					Field: "webhook_format", Label: "Webhook body", Type: "select",
 					Options: []ui.SelectOption{
-						{Value: "json", Label: "JSON — the whole document as an object"},
-						{Value: "markdown", Label: "Markdown — the document body only"},
-						{Value: "html", Label: "HTML — the rendered document"},
+						{Value: "json", Label: "JSON: the whole document as an object"},
+						{Value: "markdown", Label: "Markdown: the document body only"},
+						{Value: "html", Label: "HTML: the rendered document"},
 					},
 					Help: "What gets posted. JSON carries the title, markdown, html, and the source document's id.",
 				},
 				{
 					Field: "agents", Label: "Destinations that are an agent", Type: "rows",
 					AddLabel: "Add an agent destination",
-					Help:     "For a place that has no endpoint — filing a ticket, opening a pull request, handing a document to whoever owns that area. The Prompt is how THIS destination phrases the job, and is what makes the same document a different request depending on where it is going; the document is appended after it. {title} and {target} are substituted. Targets are optional: a queue, a repository, an area. Leave them empty when the destination is a single job.",
+					Help: "For a place that has no endpoint — filing a ticket, opening a pull request, handing a document to whoever owns that area. The Prompt is how THIS destination phrases the job, and is what makes the same document a different request depending on where it is going; the document is appended after it. {title} and {target} are substituted. Targets are optional: a queue, a repository, an area. Leave them empty when the destination is a single job.",
 					Columns: []ui.FormField{
 						{Field: "slug", Label: "Key", Type: "text", Placeholder: "tickets",
 							Help: "Stable identifier. Already-published records point at it, so renaming it strands them — change the Label instead."},
 						{Field: "label", Label: "Shown as", Type: "text", Placeholder: "File a ticket"},
-						{Field: "agent", Label: "Agent", Type: "text", Placeholder: "Tickets"},
+						// A combo, and it offers NAMES rather than ids.
+						//
+						// An agent id is a UUID minted inside ONE user's
+						// store, and this destination is resolved again in the
+						// store of whoever presses Publish. An id picked here
+						// would resolve for the admin who picked it and for
+						// nobody else — findAgentByNameOrID falling through to
+						// a name match is what makes a shared destination work
+						// at all, so the name is the portable key and the id
+						// would be a silent per-user breakage.
+						//
+						// Open to typing for the same reason: these are the
+						// ADMIN's agents, which is a good guess at what exists
+						// elsewhere and not a guarantee, and the right answer
+						// may be an agent only other people have.
+						{Field: "agent", Label: "Agent", Type: "combo", Placeholder: "Tickets",
+							Options: agentNameChoices(AuthCurrentUser(r)),
+							Help:    "Resolved in the store of whoever publishes, so this is a NAME, not a pick from one person's agents.",
+							Detail:  "The list is what you have; anything typed is accepted."},
 						{Field: "prompt", Label: "How to put it", Type: "textarea", Rows: 2,
 							Placeholder: "File {title} as a documentation task for the area owner."},
 					},
@@ -212,4 +236,24 @@ func adminSection() ui.Section {
 			},
 		},
 	}
+}
+
+// agentNameChoices offers the requesting admin's agents, keyed by NAME.
+//
+// AgentNameOptions is keyed by id, which is right for a field stored and read
+// back in one person's store and wrong here; see the Agent column above. The
+// label is kept as the value so the control shows and saves the same string,
+// which is also the only form a person could have typed themselves.
+func agentNameChoices(user string) []ui.SelectOption {
+	var out []ui.SelectOption
+	seen := map[string]bool{}
+	for _, o := range AgentNameOptions(user) {
+		name := strings.TrimSpace(o.Label)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, ui.SelectOption{Value: name, Label: name})
+	}
+	return out
 }

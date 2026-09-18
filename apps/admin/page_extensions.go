@@ -44,7 +44,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 								Field: "connected", Type: "badge", Label: "Conn",
 								Badges: []ui.BadgeMapping{
 									{Value: true, Label: "Connected", Color: "success"},
-									{Value: false, Label: "—", Color: "mute"},
+									{Value: false, Label: "·", Color: "mute"},
 								},
 							},
 						},
@@ -102,7 +102,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 		},
 		{
 			Title:    "MCP Tools (exposed to external clients)",
-			Subtitle: "App-contributed tools on gohort's OWN inbound MCP endpoint (/mcp/) — what an external MCP client (e.g. Claude Desktop, authenticated with a bridge key) can call to drive your apps. Each tool is OFF by default; expose only the ones you want reachable from outside. The built-in ask_agent / recent_results tools are always available.",
+			Subtitle: "App-contributed tools on gohort's OWN inbound MCP endpoint (/mcp/): what an external MCP client (e.g. Claude Desktop, authenticated with a bridge key) can call to drive your apps. Each tool is OFF by default; expose only the ones you want reachable from outside. The built-in ask_agent / recent_results tools are always available.",
 			Body: ui.Stack{
 				Children: []ui.Component{
 					ui.Table{
@@ -186,7 +186,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 		},
 		{
 			Title:    "Templates",
-			Subtitle: "Ready-made blueprints for connectors and tools — declare “what options are needed” and the framework builds the rest. “Add” opens a form to fill in your specifics; the result lands as a draft connector or a pending tool for review. New backends/tools of a known shape are just declarations (no code).",
+			Subtitle: "Ready-made blueprints for connectors and tools: declare “what options are needed” and the framework builds the rest. “Add” opens a form to fill in your specifics; the result lands as a draft connector or a pending tool for review. New backends/tools of a known shape are just declarations (no code).",
 			Body: ui.Table{
 				Source: "api/all-templates",
 				RowKey: "id",
@@ -207,7 +207,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 		},
 		{
 			Title:    "Connectors",
-			Subtitle: "Bridge types drafted by the assistant (via the connector tool) and awaiting your approval — e.g. a calendar or CRM exposed through its MCP server. Approve to MATERIALIZE the capability: its tools register for agents (a remote_mcp connector becomes an enabled MCP server, which also appears under MCP Servers above). The assistant never handles a secret — auth is a referenced API credential or per-user OAuth. Nothing runs until you approve; Delete tears the capability down.",
+			Subtitle: "Bridge types drafted by the assistant (via the connector tool) and awaiting your approval: e.g. a calendar or CRM exposed through its MCP server. Approve to MATERIALIZE the capability: its tools register for agents (a remote_mcp connector becomes an enabled MCP server, which also appears under MCP Servers above). The assistant never handles a secret: auth is a referenced API credential or per-user OAuth. Nothing runs until you approve; Delete tears the capability down.",
 			Body: ui.Stack{
 				Children: []ui.Component{
 					ui.Table{
@@ -335,10 +335,6 @@ func mcpServerFormFields() []ui.FormField {
 		{Field: "expose_tools", Label: "Expose tools to agents", Type: "toggle", Help: "Register the server's tools as <name>.<tool> in the agent catalog."},
 		{Field: "expose_reference", Label: "Expose as a reference source", Type: "toggle", Help: "Make the server selectable in writer/research source pickers (uses the Search tool below)."},
 		{Field: "search_tool", Label: "Search tool name", Placeholder: "search", Help: "MCP tool called for reference lookups. Only used when 'Expose as a reference source' is on. Defaults to 'search'."},
-		{Field: "list_tool", Label: "Listing tool name (optional)", Placeholder: "list_pages", ShowWhen: "expose_reference:true", Help: "MCP tool that lists EVERY document this server holds. Naming one makes the server copyable: a collection can be kept in step with it, which means noticing edits and deletions, not just adding what a search turns up. It must return the complete set — a tool that pages its results is refused rather than treated as the whole, because a partial listing would read as a deletion of everything it left out."},
-		{Field: "doc_tool", Label: "Document tool name", Placeholder: "get_page", ShowWhen: "expose_reference:true", Help: "MCP tool that returns ONE document's text, given its id. Required alongside the listing tool."},
-		{Field: "doc_arg_key", Label: "Document id argument", Placeholder: "id", ShowWhen: "expose_reference:true", Help: "The argument name the document tool takes the id under. Defaults to 'id'."},
-		{Field: "list_args", Label: "Listing arguments (optional JSON)", Placeholder: `{"space":"ENG"}`, ShowWhen: "expose_reference:true", Help: "Fixed arguments sent with every listing call, for a server whose listing needs scoping to a space or folder."},
 
 		{Field: "enabled", Label: "Enabled", Type: "toggle", Help: "Connect on startup and on save. Disable to suspend without deleting."},
 	}

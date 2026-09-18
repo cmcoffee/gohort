@@ -24,6 +24,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/ui"
 )
 
 const (
@@ -203,6 +205,47 @@ var (
 	standingMu        sync.RWMutex
 	standingStarted   bool
 )
+
+// AgentNamerFunc lists one user's agents as picker options, most useful first.
+//
+// Options rather than names, because every caller of this is building a
+// control: the Value is what gets stored and the Label is what a person reads,
+// and a list of bare ids would make each caller re-derive the second from the
+// first, differently.
+type AgentNamerFunc func(user string) []ui.SelectOption
+
+var agentNamer AgentNamerFunc
+
+// RegisterAgentNamer installs the agent-listing closure. Call once at startup
+// from the agent-aware package (orchestrate).
+//
+// The seam exists for the reason the runner above it does: core cannot reach
+// AgentRecord, and the apps that need to OFFER a choice of agent — a knowledge
+// collection picking a curator, an admin naming a publish destination's agent —
+// are not agent-aware either. Without it each of them falls back to a free-text
+// box, which is how a config field ends up holding a name nobody ever checked.
+func RegisterAgentNamer(fn AgentNamerFunc) {
+	standingMu.Lock()
+	agentNamer = fn
+	standingMu.Unlock()
+}
+
+// AgentNameOptions lists the agents a user can pick from, or nothing at all
+// when no agent-aware package has registered.
+//
+// Returning empty rather than erroring is what lets a caller use this without
+// branching: a picker built from no options is a picker with no suggestions,
+// which is exactly the right degradation for a field that accepts a typed name
+// anyway.
+func AgentNameOptions(user string) []ui.SelectOption {
+	standingMu.RLock()
+	fn := agentNamer
+	standingMu.RUnlock()
+	if fn == nil || strings.TrimSpace(user) == "" {
+		return nil
+	}
+	return fn(user)
+}
 
 // RegisterStandingRunner installs the agent-execution closure. Call once at
 // startup from the agent-aware package (orchestrate).
@@ -804,7 +847,7 @@ func (sa StandingAgent) ValidateTarget() error {
 	}
 	switch {
 	case len(named) > 1:
-		return Error("a schedule names " + strings.Join(named, " and ") + " — it fires ONE of them, " +
+		return Error("a schedule names " + strings.Join(named, " and ") + ", it fires ONE of them " +
 			"and whichever the runner happened to check first would be the one that ran. Drop the others.")
 	case len(named) == 0:
 		return Error("a schedule needs something to run: an agent_id, a pipeline_id, or a machine_id")

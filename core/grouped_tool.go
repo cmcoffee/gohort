@@ -198,6 +198,44 @@ func (g *GroupedTool) AddAction(action string, def *GroupedToolAction) {
 	g.actions[action] = def
 }
 
+// Action returns a COPY of one registered action, or false when this tool has
+// no such action.
+//
+// A copy, deeply, because the only reason to reach for this is to derive a
+// NARROWER tool from a broad one — the same actions with a parameter removed,
+// a value forced, or a handler wrapped in a check. Handing back the live
+// definition would let that derivation edit the tool it derived from, so the
+// broad tool would quietly acquire the narrow one's restrictions and every
+// caller of it would get them too.
+func (g *GroupedTool) Action(name string) (GroupedToolAction, bool) {
+	a, ok := g.actions[name]
+	if !ok || a == nil {
+		return GroupedToolAction{}, false
+	}
+	out := *a
+	if a.Params != nil {
+		out.Params = make(map[string]ToolParam, len(a.Params))
+		for k, v := range a.Params {
+			out.Params[k] = v
+		}
+	}
+	out.Required = append([]string(nil), a.Required...)
+	out.Caps = append([]Capability(nil), a.Caps...)
+	return out, true
+}
+
+// ActionNames lists the actions this tool carries, sorted, so a derivation can
+// be checked against what actually exists rather than against a list somebody
+// kept in their head.
+func (g *GroupedTool) ActionNames() []string {
+	out := make([]string, 0, len(g.actions))
+	for k := range g.actions {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // --- ChatTool interface ---
 
 func (g *GroupedTool) Name() string { return g.name }
@@ -354,7 +392,7 @@ func (g *GroupedTool) RunWithSession(args map[string]any, sess *ToolSession) (ou
 		hint := ""
 		if isRunLikeAction(action) {
 			hint = " NOTE: to RUN a tool you do not go through " + g.name +
-				" — call the tool DIRECTLY by its own name with its own params, even if you do not see it listed in your catalog."
+				", call the tool DIRECTLY by its own name with its own params, even if you do not see it listed in your catalog."
 		}
 		return "", fmt.Errorf("unknown action %q for tool %q. Available: %s.%s Call with action=\"help\" for the full usage spec",
 			action, g.name, strings.Join(g.sortedActionNames(), ", "), hint)
@@ -407,7 +445,7 @@ func (g *GroupedTool) RunWithSession(args map[string]any, sess *ToolSession) (ou
 		if hint := def.typoHint(args); hint != "" {
 			parts = append(parts, hint)
 		}
-		return "", fmt.Errorf("action %q %s (call %q with action=\"help\" for the full param list; re-send the COMPLETE call — every required param in one go)", action, strings.Join(parts, " — "), g.name)
+		return "", fmt.Errorf("action %q %s (call %q with action=\"help\" for the full param list; re-send the COMPLETE call: every required param in one go)", action, strings.Join(parts, " · "), g.name)
 	}
 	return def.Handler(args, sess)
 }

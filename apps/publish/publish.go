@@ -34,7 +34,16 @@ func init() {
 	registeredApp = app
 	RegisterApp(app)
 	registerPublisherAgent()
-	RegisterAdminSection(AdminSectionEntry{Section: adminSection(), App: "/publish"})
+	// A SOURCE rather than a fixed section: the Agent column's suggestions are
+	// the requesting admin's agents, which is runtime data. Registered the same
+	// way custom apps register theirs, and gated the same way — a source that
+	// trusts its caller leaks the moment somebody renders it elsewhere.
+	RegisterAdminSectionSource(func(r *http.Request) []AdminSectionEntry {
+		if !AuthIsAdmin(AuthDB(), r) {
+			return nil
+		}
+		return []AdminSectionEntry{{Section: adminSection(r), App: "/publish"}}
+	})
 }
 
 // PublishApp carries the framework boilerplate and the deployment's destination

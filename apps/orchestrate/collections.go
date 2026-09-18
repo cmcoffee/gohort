@@ -211,11 +211,8 @@ func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Requ
 	}
 
 	switch {
-	case action == "curate":
-		T.handleCollectionCurate(w, r, user, c, false)
-		return
-	case action == "curate/run":
-		T.handleCollectionCurate(w, r, user, c, true)
+	case action == "steward":
+		T.handleCollectionSteward(w, r, user, c)
 		return
 	case action == "":
 		switch r.Method {
@@ -408,7 +405,7 @@ func (T *OrchestrateApp) handleCollectionAudit(w http.ResponseWriter, r *http.Re
 	total := len(docs)
 	if total == 0 {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"report": "_This collection has no documents yet — nothing to audit._"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"report": "_This collection has no documents yet: nothing to audit._"})
 		return
 	}
 	ordered := make([]*doc, 0, total)

@@ -274,6 +274,28 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 			}
 		}
 	}
+	// An agent IN CHARGE of a collection gets the four corpus actions for that
+	// collection, and only for that one.
+	//
+	// Deliberately outside the authoring gate above. Keeping a corpus current
+	// is not authoring: it writes documents, never agents, tools or apps, so
+	// requiring the Author capability to do it would hand an agent the power to
+	// rewrite the fleet in exchange for the power to file a document. The grant
+	// is the collection's own CuratorAgent field, which is the same answer the
+	// collection page shows.
+	//
+	// Owner-only for the reason the rest of this function is: the actions reach
+	// the owner's corpus, and an agent run by a granted non-owner must not
+	// write to collections that are not theirs.
+	if ownerRun {
+		if cols := curatedCollectionsFor(UserDB(t.app.DB, t.user), t.user, t.agent.ID, t.agent.Name); len(cols) > 0 {
+			if st := collectionStewardTool(cols); st != nil {
+				tools = append(tools, ChatToolToAgentToolDefWithSession(st, sess))
+				toolNames = append(toolNames, st.Name())
+				Log("[orchestrate.tools] agent=%s: steward of %d collection(s), scoped corpus tools attached", t.agent.ID, len(cols))
+			}
+		}
+	}
 	// Fleet agents get the exclusive fleet-management catalog on their
 	// conversational turn — delegate + create/list/run/pause standing
 	// agents + read the run-ledger + event-monitor management + history

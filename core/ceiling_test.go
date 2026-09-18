@@ -278,6 +278,19 @@ const (
 	// decode are methods — CuratedSource.Value and Collection.BindCuratedFrom
 	// — which the count excludes. That pass is what took this from 2237 to
 	// 2234, and it is the pass to make again before raising this further.
+	//
+	// Note for anyone reading the paragraph above: the SECOND half of that
+	// raise no longer exists. Keeping a collection in step with a source was
+	// removed, taking ReferenceEnumerator, ReferenceDoc, ReferenceSourceByKind,
+	// CuratedSource and CuratableSourceOptions with it. The number is
+	// deliberately NOT lowered to match — ordinary growth since has taken the
+	// count back above this line, and it sits inside the slack band, which is
+	// what the band is for. What replaced the subsystem is much smaller: the
+	// agent-listing seam (AgentNamerFunc, RegisterAgentNamer, AgentNameOptions)
+	// for pickers built in packages that cannot see an AgentRecord. The
+	// scoped-corpus grant beside it added NO exports at all — GroupedTool.Action
+	// and ActionNames are methods, and being in charge of a collection is a
+	// field on Collection.
 	coreExportCeiling = 2234
 
 	// coreExportSlack is a small band on the export count only. A file here

@@ -27,8 +27,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/cmcoffee/gohort/core/ui"
 )
 
 // CollectionsTable is the per-user metadata table for user-scoped
@@ -80,7 +78,7 @@ func EnsureDeploymentKnowledgeCollection() {
 		ID:          DeploymentKnowledgeCollectionID,
 		Owner:       "", // deployment-scoped; no individual owner
 		Name:        "Deployment Knowledge",
-		Description: "Auto-populated cross-cutting knowledge base — every research report, debate verdict, and answered question this deployment has produced. Searched via knowledge_search on any agent (auto-attached when the agent has no curated collections of its own).",
+		Description: "Auto-populated cross-cutting knowledge base: every research report, debate verdict, and answered question this deployment has produced. Searched via knowledge_search on any agent (auto-attached when the agent has no curated collections of its own).",
 		Scope:       CollectionScopeDeployment,
 		Created:     now,
 		Updated:     now,
@@ -120,103 +118,25 @@ type Collection struct {
 	// the autofill flow's query generator + LLM judge. Format is
 	// freeform but bullet lists read best.
 	FilterRules string `json:"filter_rules,omitempty"`
-	// CuratedFrom names the source items this collection is a COPY of, and is
-	// what makes it a curated collection rather than a hand-filled one.
+	// CuratorAgent names an agent that is IN CHARGE of this collection: it
+	// keeps the corpus current, and is granted the four corpus actions bound
+	// to this collection and nothing else.
 	//
-	// A list because one collection can mirror several places (two wiki
-	// spaces), and fields on the record rather than a binding table because a
-	// curated collection is not a second noun — it is a collection with a
-	// source named on it. Empty is the normal case: most collections are
-	// filled by hand or by autofill and are nobody's copy.
-	CuratedFrom []CuratedSource `json:"curated_from,omitempty"`
+	// A field beside the rest rather than a record of its own, because this
+	// does not describe a new thing, it describes this collection. One agent
+	// may look after several collections and carries nothing per-collection
+	// that a name cannot express.
+	//
+	// Empty is the normal case: a collection filled by hand, by upload or by
+	// auto-fill has nobody in charge of it, and reading it is unaffected
+	// either way.
+	CuratorAgent string `json:"curator_agent,omitempty"`
 	// ClassifyOnAutofill enables the LLM judge pass during
 	// autofill. When true, every fetched + extracted candidate
 	// goes through a non-thinking worker call that decides
 	// keep/drop. Default false. Autofill-specific; ignored by
 	// other consumers of Collection.
 	ClassifyOnAutofill bool `json:"classify_on_autofill,omitempty"`
-}
-
-// CuratedSource names one source item a collection is kept in step with:
-// which reference source, and which of its items.
-//
-// Kind matches ReferenceSource.Kind and Item matches a ReferenceItem.ID from
-// that source's List. Both are stored rather than resolved, because a source
-// that goes away must leave a legible "this collection was a copy of something
-// that is no longer connected" rather than a collection that silently stops
-// being maintained.
-type CuratedSource struct {
-	Kind string `json:"kind"`
-	Item string `json:"item"`
-	// Label is what the item was called when it was attached, for showing in a
-	// listing without having to reach the source to find out.
-	Label string `json:"label,omitempty"`
-}
-
-// Value encodes a binding as the single value a picker offers.
-//
-// A method rather than a function, and one value rather than two fields,
-// because a source and an item within it are not independent choices: picking
-// a space from another server's list would name nothing, so offering them as
-// two controls invites exactly one wrong answer and nothing else.
-func (b CuratedSource) Value() string { return b.Kind + "\x1f" + b.Item }
-
-// BindCuratedFrom replaces this collection's bindings from what a picker sent
-// back, resolving each one's label as it goes.
-//
-// The label is resolved HERE, at binding time, and stored. A source that later
-// goes away must leave a legible "this was a copy of something no longer
-// connected" rather than a row naming a kind nobody can read.
-//
-// Unknown or duplicate values are dropped rather than refused: a picker that
-// offered a source which has since gone away should not make the rest of the
-// form unsaveable.
-func (c *Collection) BindCuratedFrom(user string, values []string) {
-	var bound []CuratedSource
-	seen := map[string]bool{}
-	for _, v := range values {
-		kind, item, found := strings.Cut(v, "\x1f")
-		if !found || strings.TrimSpace(kind) == "" || strings.TrimSpace(item) == "" || seen[v] {
-			continue
-		}
-		seen[v] = true
-		b := CuratedSource{Kind: kind, Item: item}
-		if src, ok := ReferenceSourceByKind(kind); ok {
-			b.Label = src.Label() + " · " + referenceItemName(src, user, item)
-		}
-		bound = append(bound, b)
-	}
-	c.CuratedFrom = bound
-}
-
-// CuratableSourceOptions lists the source items a collection can be kept in
-// step with: every registered source that can ENUMERATE, and its items.
-//
-// Search-only sources are left out rather than offered and refused later.
-// Binding to one would produce a collection that can never sync, and the place
-// to say so is the picker that would otherwise have offered it.
-func CuratableSourceOptions(user string) []ui.SelectOption {
-	var out []ui.SelectOption
-	for _, g := range ReferenceGroups(user) {
-		src, ok := ReferenceSourceByKind(g.Kind)
-		if !ok {
-			continue
-		}
-		if _, enumerable := src.(ReferenceEnumerator); !enumerable {
-			continue
-		}
-		for _, item := range g.Items {
-			name := strings.TrimSpace(item.Name)
-			if name == "" {
-				name = item.ID
-			}
-			out = append(out, ui.SelectOption{
-				Value: CuratedSource{Kind: g.Kind, Item: item.ID}.Value(),
-				Label: g.Label + " · " + name,
-			})
-		}
-	}
-	return out
 }
 
 // CollectionSource returns the chunk-source tag for a collection's
@@ -630,7 +550,7 @@ func (f HitFormat) Render(hits []SearchHit) string {
 		}
 		fmt.Fprintf(&b, "%d. %s", i+1, docName)
 		if section != "" && section != docName {
-			fmt.Fprintf(&b, " — %s", section)
+			fmt.Fprintf(&b, " \u00b7 %s", section)
 		}
 		if h.Locator != "" {
 			fmt.Fprintf(&b, " (%s)", h.Locator)
