@@ -326,10 +326,15 @@ func (T *OrchestrateApp) handleConsoleAgents(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	// Scope to the agent this pane is for — see standingAgentOnRailOf — so a
-	// pane shows the schedules that are this agent's business and not everyone
-	// else's.
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
+	writeJSON(w, consoleAgentRows(user, udb, agentID))
+}
+
+// consoleAgentRows builds the rows for this view. Split off the handler so the
+// merged Scheduler page (console_scheduler.go) renders THESE rows rather than
+// its own copy of the same logic — a second builder is how the two views
+// come to disagree about what is scheduled.
+func consoleAgentRows(user string, udb Database, agentID string) []consoleAgentRow {
 	rows := []consoleAgentRow{}
 	for _, sa := range ListStandingAgents(RootDB, user) {
 		// Both the agent that runs it and the one that manages it — see
@@ -367,7 +372,7 @@ func (T *OrchestrateApp) handleConsoleAgents(w http.ResponseWriter, r *http.Requ
 		}
 		rows = append(rows, row)
 	}
-	writeJSON(w, rows)
+	return rows
 }
 
 // standingNameCollision reports the agent whose Name is the same as this

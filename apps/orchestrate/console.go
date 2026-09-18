@@ -214,6 +214,9 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// Delete a recurring task (the `recurring` tool's session updates) from the
 	// schedules rail. Owner-checked against the task payload before unscheduling.
 	T.HandleFunc("/api/console/recurring", g(T.handleConsoleRecurring))
+	// The merged view the Scheduler nav entry reads — the three lists above in
+	// one page, grouped. See console_scheduler.go.
+	T.HandleFunc("/api/console/scheduler", g(T.handleConsoleScheduler))
 	T.HandleFunc("/api/console/recurring/run", gw(T.handleConsoleRecurringRun))
 	T.HandleFunc("/api/console/recurring/delete", gw(T.handleConsoleRecurringDelete))
 	T.HandleFunc("/api/console/recurring/relink", gw(T.handleConsoleRecurringRelink))

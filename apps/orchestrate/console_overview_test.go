@@ -24,17 +24,18 @@ func TestNavMenusAreNamedAndScoped(t *testing.T) {
 	page := readFile(t, "page_chat.go")
 	entries := navEntries(t, page)
 
+	// Scheduler is ONE entry per menu where there were three — scheduled
+	// agents, recurring tasks and event monitors now share a page with a
+	// section heading each (console_scheduler.go). They are still three
+	// records; they are no longer three lists to open before you know what an
+	// agent does on its own.
 	want := []struct{ label, menu string }{
 		{"Overview", agentMenu},
-		{"Enabled agents", agentMenu},
-		{"Event monitors", agentMenu},
-		{"Recurring tasks", agentMenu},
+		{"Scheduler", agentMenu},
 		{"Compact Cortex", agentMenu},
 		{"Clear Cortex", agentMenu},
 		{"Overview", "Fleet"},
-		{"Enabled agents", "Fleet"},
-		{"Event monitors", "Fleet"},
-		{"Recurring tasks", "Fleet"},
+		{"Scheduler", "Fleet"},
 		{"Runs", "Fleet"},
 		{"Spend", "Fleet"},
 		{"Guardrail blocks", "Fleet"},
@@ -74,18 +75,25 @@ func TestNavMenusAreNamedAndScoped(t *testing.T) {
 		}
 	}
 
-	// The three panes that appear twice must be the SAME view both times, or
-	// the shared label is a lie. Same source, differing only in scope.
-	for _, label := range []string{"Enabled agents", "Event monitors", "Recurring tasks"} {
+	// The panes that appear twice must be the SAME view both times, or the
+	// shared label is a lie. Same source, differing only in scope.
+	// Overview is deliberately NOT in this list: its two entries read different
+	// sources (api/console/overview vs api/console/fleet) because a fleet
+	// summary is a different question, not the same one asked wider.
+	for _, label := range []string{"Scheduler"} {
 		mine, fleet := entryIn(t, entries, label, agentMenu), entryIn(t, entries, label, "Fleet")
 		if src := sourceOf(mine); src == "" || src != sourceOf(fleet) {
 			t.Errorf("%q reads %q per-agent and %q fleet-wide; a shared label must mean a shared view",
 				label, src, sourceOf(fleet))
 		}
-		// And the fleet copy has to be able to act, or it is a report where a
-		// teardown used to be.
-		if !strings.Contains(fleet.body, `{Label: "Delete"`) {
-			t.Errorf("the fleet %q pane lists standing work but cannot remove any of it", label)
+	}
+	// And the fleet Scheduler has to be able to act, or it is a report where a
+	// teardown used to be. One Delete per kind now that the three lists are
+	// one: a row offers only its own (console_scheduler.go composes the flags).
+	fleetSched := entryIn(t, entries, "Scheduler", "Fleet")
+	for _, gate := range []string{"_del_standing", "_del_recurring", "_del_monitor"} {
+		if !strings.Contains(fleetSched.body, gate) {
+			t.Errorf("the fleet Scheduler lists standing work but cannot remove a %s row", strings.TrimPrefix(gate, "_del_"))
 		}
 	}
 

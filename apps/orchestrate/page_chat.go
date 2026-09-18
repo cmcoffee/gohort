@@ -315,63 +315,39 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 								// on the whole fleet's failures.
 								{Label: "Show failures", View: "Fleet/Runs", Query: "status=failed&agent={agent}", Note: "Showing this agent's failed runs", OnlyIf: "_failed"},
 							}},
-						// Cards layout so each agent's mission (the standing brief it
-						// runs with — "what it's told to do") renders as a detail line
-						// under the name, alongside its schedule / status / next run.
-						{Label: "Enabled agents", Menu: "Manage", AllAgents: true, Source: "api/console/agents", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
-							// Run now is hidden on a broken row — there's no live agent
-							// to run. Resume stays visible as the gated recovery button
-							// (its handler refuses while the dependency is still gone).
-							{Label: "Run now", Method: "POST", URL: "api/console/agents/run", HideIf: "_broken", Confirm: "Run this agent's mission once right now? This is a one-off test and does not change its schedule."},
-							{Label: "Pause", Method: "POST", URL: "api/console/agents/pause", HideIf: "_paused"},
-							{Label: "Resume", Method: "POST", URL: "api/console/agents/resume", OnlyIf: "_paused"},
-							// Relink shows only where relinking is the repair — a row
-							// parked because something it needs is GONE. A stalled
-							// objective is parked too, and offering it a picker of
-							// live agents describes a problem it does not have; it
-							// gets Resume (a fresh attempt allowance) instead.
-							// "target" rather than "agent": this column holds
-							// schedules, and a schedule can run a pipeline. The
-							// source answers for the row it is asked about, so
-							// the list is agents or pipelines accordingly.
-							{Label: "Relink", Method: "POST", URL: "api/console/agents/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live target", OnlyIf: "_relinkable"},
-							{Label: "Move to…", Method: "POST", URL: "api/console/agents/move", PickerSource: "api/console/surface-options", PickerTitle: "Where the per-run report lands (cortex / session / background)"},
-							{Label: "Delete", Method: "DELETE", URL: "api/console/agents/delete", Variant: "danger", Confirm: "Delete this standing agent and cancel its schedule?"},
-						}},
-						{Label: "Event monitors", Menu: "Manage", AllAgents: true, Source: "api/console/monitors", RowActions: []ui.OrchestratorRowAction{
-							// Test = run the check once now. Only scheduled kinds
-							// (poll / http_poll / watch) have a check to run — a
-							// webhook is push-only, so gate on _schedulable; and not on
-							// a broken monitor (no dependency to check).
-							{Label: "Test", Method: "POST", URL: "api/console/monitors/run", OnlyIf: "_schedulable", HideIf: "_broken", Confirm: "Run this monitor's check once right now? If its condition matches, it will fire (wake/notify) as it would on a normal poll."},
-							{Label: "Pause", Method: "POST", URL: "api/console/monitors/pause", HideIf: "_paused"},
-							{Label: "Resume", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_paused"},
-							{Label: "Relink", Method: "POST", URL: "api/console/monitors/relink", PickerSource: "api/console/agent-options?with_default=1", PickerTitle: "Relink (Default agent, or pick a specific one)", OnlyIf: "_relinkable"},
-							{Label: "Move to…", Method: "POST", URL: "api/console/monitors/move", PickerSource: "api/console/surface-options", PickerTitle: "Move this monitor — its card, badge & wake all follow"},
-							{Label: "Delete", Method: "DELETE", URL: "api/console/monitors/delete", Variant: "danger", Confirm: "Delete this event monitor?"},
-						}},
-						// Cards layout so each recurring task shows its cadence, fire
-						// count, and next run alongside the name — the status-card
-						// sibling of Enabled agents / Event monitors. Recurring tasks
-						// have no pause concept, so Delete is the only row action.
-						{Label: "Recurring tasks", Menu: "Manage", AllAgents: true, Source: "api/console/recurring", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
-							// Run now is hidden on a parked task: a parked payload
-							// short-circuits at the top of the fire, so the button
-							// would do nothing. Parked rows get Relink (the agent is
-							// gone) or Resume (the cause is fixed — a stalled
-							// objective's usual path) instead.
-							{Label: "Run now", Method: "POST", URL: "api/console/recurring/run", HideIf: "_broken", Confirm: "Run this recurring task's prompt once right now? This is a one-off test — it does not change the schedule or count against the fire cap."},
-							// Relink (a task whose agent is GONE): pick a live agent —
-							// recurring has no pause, so this resumes it on its
-							// cadence. A stalled objective is parked without anything
-							// missing, so it gets Resume rather than this.
-							{Label: "Relink", Method: "POST", URL: "api/console/recurring/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live agent", OnlyIf: "_relinkable"},
-							// Resume (parked rows only): the owner believes whatever
-							// parked it is fixed. A stalled objective gets a FRESH
-							// attempt allowance; its history and fire count are kept.
-							{Label: "Resume", Method: "POST", URL: "api/console/recurring/resume", OnlyIf: "_broken", Confirm: "Put this parked task back on its schedule? A stalled objective gets a fresh attempt allowance; what it already tried is kept."},
-							{Label: "Move to…", Method: "POST", URL: "api/console/recurring/move", PickerSource: "api/console/surface-options", PickerTitle: "Where the recurring conversation runs (cortex / session / background)"},
-							{Label: "Delete", Method: "DELETE", URL: "api/console/recurring/delete", Variant: "danger", Confirm: "Delete this recurring task and cancel its schedule?"},
+						// ONE entry for everything that runs on a clock. It was three
+						// — Enabled agents, Recurring tasks, Event monitors — which is
+						// three lists to open before you know what an agent will do on
+						// its own, and the honest answer to "aren't these the same
+						// thing" is nearly yes: two are a clock and an agent, the third
+						// is a clock and a condition.
+						//
+						// They stay three RECORDS, so the rows still differ (a mission,
+						// a fire count, an interval) and each keeps its own actions. The
+						// section headings say which is which; the server composes one
+						// flag per action so a row shows only its own (see
+						// console_scheduler.go), which is why the same label appears
+						// several times below pointing at different endpoints.
+						{Label: "Scheduler", Menu: "Manage", AllAgents: true, Source: "api/console/scheduler", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
+							// Scheduled agents.
+							{Label: "Run now", Method: "POST", URL: "api/console/agents/run", OnlyIf: "_run_standing", Confirm: "Run this agent's mission once right now? This is a one-off test and does not change its schedule."},
+							{Label: "Pause", Method: "POST", URL: "api/console/agents/pause", OnlyIf: "_pause_standing"},
+							{Label: "Resume", Method: "POST", URL: "api/console/agents/resume", OnlyIf: "_resume_standing"},
+							{Label: "Relink", Method: "POST", URL: "api/console/agents/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live target", OnlyIf: "_relink_standing"},
+							{Label: "Move to…", Method: "POST", URL: "api/console/agents/move", PickerSource: "api/console/surface-options", PickerTitle: "Where the per-run report lands (cortex / session / background)", OnlyIf: "_move_standing"},
+							{Label: "Delete", Method: "DELETE", URL: "api/console/agents/delete", Variant: "danger", OnlyIf: "_del_standing", Confirm: "Delete this standing agent and cancel its schedule?"},
+							// Recurring tasks.
+							{Label: "Run now", Method: "POST", URL: "api/console/recurring/run", OnlyIf: "_run_recurring", Confirm: "Run this recurring task's prompt once right now? This is a one-off test — it does not change the schedule or count against the fire cap."},
+							{Label: "Relink", Method: "POST", URL: "api/console/recurring/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live agent", OnlyIf: "_relink_recurring"},
+							{Label: "Resume", Method: "POST", URL: "api/console/recurring/resume", OnlyIf: "_resume_recurring", Confirm: "Put this parked task back on its schedule? A stalled objective gets a fresh attempt allowance; what it already tried is kept."},
+							{Label: "Delete", Method: "DELETE", URL: "api/console/recurring/delete", Variant: "danger", OnlyIf: "_del_recurring", Confirm: "Delete this recurring task and cancel its schedule?"},
+							// Event monitors.
+							{Label: "Test", Method: "POST", URL: "api/console/monitors/run", OnlyIf: "_test_monitor", Confirm: "Run this monitor's check once right now? If its condition matches, it will fire (wake/notify) as it would on a normal poll."},
+							{Label: "Pause", Method: "POST", URL: "api/console/monitors/pause", OnlyIf: "_pause_monitor"},
+							{Label: "Resume", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_resume_monitor"},
+							{Label: "Relink", Method: "POST", URL: "api/console/monitors/relink", PickerSource: "api/console/agent-options?with_default=1", PickerTitle: "Relink (Default agent, or pick a specific one)", OnlyIf: "_relink_monitor"},
+							{Label: "Move to…", Method: "POST", URL: "api/console/monitors/move", PickerSource: "api/console/surface-options", PickerTitle: "Move this monitor — its card, badge & wake all follow", OnlyIf: "_move_monitor"},
+							{Label: "Delete", Method: "DELETE", URL: "api/console/monitors/delete", Variant: "danger", OnlyIf: "_del_monitor", Confirm: "Delete this event monitor?"},
 						}},
 						// Permissions — pinned ABOVE the session list (it's an action
 						// queue, not browse-config), and combines BOTH pending
@@ -453,24 +429,33 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// clean slate it promised left a third of the standing work
 						// still firing. Everything it did is here, per row, in front
 						// of the thing it acts on.
-						{Label: "Enabled agents", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/agents", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
-							{Label: "Run now", Method: "POST", URL: "api/console/agents/run", HideIf: "_broken", Confirm: "Run this agent's mission once right now? This is a one-off test and does not change its schedule."},
-							{Label: "Pause", Method: "POST", URL: "api/console/agents/pause", HideIf: "_paused"},
-							{Label: "Resume", Method: "POST", URL: "api/console/agents/resume", OnlyIf: "_paused"},
-							{Label: "Relink", Method: "POST", URL: "api/console/agents/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live target", OnlyIf: "_relinkable"},
-							{Label: "Delete", Method: "DELETE", URL: "api/console/agents/delete", Variant: "danger", Confirm: "Delete this standing agent and cancel its schedule?"},
-						}},
-						{Label: "Event monitors", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/monitors", RowActions: []ui.OrchestratorRowAction{
-							{Label: "Pause", Method: "POST", URL: "api/console/monitors/pause", HideIf: "_paused"},
-							{Label: "Resume", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_paused"},
-							{Label: "Relink", Method: "POST", URL: "api/console/monitors/relink", PickerSource: "api/console/agent-options?with_default=1", PickerTitle: "Relink (Default agent, or pick a specific one)", OnlyIf: "_relinkable"},
-							{Label: "Delete", Method: "DELETE", URL: "api/console/monitors/delete", Variant: "danger", Confirm: "Delete this event monitor?"},
-						}},
-						{Label: "Recurring tasks", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/recurring", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
-							{Label: "Run now", Method: "POST", URL: "api/console/recurring/run", HideIf: "_broken", Confirm: "Run this recurring task's prompt once right now? This is a one-off test — it does not change the schedule or count against the fire cap."},
-							{Label: "Relink", Method: "POST", URL: "api/console/recurring/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live agent", OnlyIf: "_relinkable"},
-							{Label: "Resume", Method: "POST", URL: "api/console/recurring/resume", OnlyIf: "_broken", Confirm: "Put this parked task back on its schedule? A stalled objective gets a fresh attempt allowance; what it already tried is kept."},
-							{Label: "Delete", Method: "DELETE", URL: "api/console/recurring/delete", Variant: "danger", Confirm: "Delete this recurring task and cancel its schedule?"},
+						// The same one entry, fleet-wide. Scope "fleet" sends no agent
+						// parameter, so the handler answers for everything the owner
+						// has rather than for the agent whose pane this is — the only
+						// difference between this and the Manage entry above, and the
+						// reason both exist.
+						//
+						// Its action set stays narrower than Manage's, as it was when
+						// these were three entries: no Move to…, which relocates where
+						// a report lands and belongs where you are looking at one
+						// agent's arrangements rather than sweeping the fleet.
+						{Label: "Scheduler", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/scheduler", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
+							// Scheduled agents.
+							{Label: "Run now", Method: "POST", URL: "api/console/agents/run", OnlyIf: "_run_standing", Confirm: "Run this agent's mission once right now? This is a one-off test and does not change its schedule."},
+							{Label: "Pause", Method: "POST", URL: "api/console/agents/pause", OnlyIf: "_pause_standing"},
+							{Label: "Resume", Method: "POST", URL: "api/console/agents/resume", OnlyIf: "_resume_standing"},
+							{Label: "Relink", Method: "POST", URL: "api/console/agents/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live target", OnlyIf: "_relink_standing"},
+							{Label: "Delete", Method: "DELETE", URL: "api/console/agents/delete", Variant: "danger", OnlyIf: "_del_standing", Confirm: "Delete this standing agent and cancel its schedule?"},
+							// Recurring tasks.
+							{Label: "Run now", Method: "POST", URL: "api/console/recurring/run", OnlyIf: "_run_recurring", Confirm: "Run this recurring task's prompt once right now? This is a one-off test — it does not change the schedule or count against the fire cap."},
+							{Label: "Relink", Method: "POST", URL: "api/console/recurring/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live agent", OnlyIf: "_relink_recurring"},
+							{Label: "Resume", Method: "POST", URL: "api/console/recurring/resume", OnlyIf: "_resume_recurring", Confirm: "Put this parked task back on its schedule? A stalled objective gets a fresh attempt allowance; what it already tried is kept."},
+							{Label: "Delete", Method: "DELETE", URL: "api/console/recurring/delete", Variant: "danger", OnlyIf: "_del_recurring", Confirm: "Delete this recurring task and cancel its schedule?"},
+							// Event monitors.
+							{Label: "Pause", Method: "POST", URL: "api/console/monitors/pause", OnlyIf: "_pause_monitor"},
+							{Label: "Resume", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_resume_monitor"},
+							{Label: "Relink", Method: "POST", URL: "api/console/monitors/relink", PickerSource: "api/console/agent-options?with_default=1", PickerTitle: "Relink (Default agent, or pick a specific one)", OnlyIf: "_relink_monitor"},
+							{Label: "Delete", Method: "DELETE", URL: "api/console/monitors/delete", Variant: "danger", OnlyIf: "_del_monitor", Confirm: "Delete this event monitor?"},
 						}},
 						// The durable record behind the live view: every scheduled,
 						// standing, monitor and dispatched run this user owns, newest

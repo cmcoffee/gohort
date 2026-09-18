@@ -166,6 +166,14 @@ func (T *OrchestrateApp) handleConsoleRecurring(w http.ResponseWriter, r *http.R
 		return
 	}
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
+	writeJSON(w, consoleRecurringRows(user, agentID))
+}
+
+// consoleRecurringRows builds the rows for this view. Split off the handler so the
+// merged Scheduler page (console_scheduler.go) renders THESE rows rather than
+// its own copy of the same logic — a second builder is how the two views
+// come to disagree about what is scheduled.
+func consoleRecurringRows(user, agentID string) []consoleRecurringRow {
 	rows := []consoleRecurringRow{}
 	for _, rt := range listAgentRecurringTasks(user, agentID) {
 		label := firstLineLabel(rt.Payload.Prompt)
@@ -206,7 +214,7 @@ func (T *OrchestrateApp) handleConsoleRecurring(w http.ResponseWriter, r *http.R
 		}
 		rows = append(rows, row)
 	}
-	writeJSON(w, rows)
+	return rows
 }
 
 // handleConsoleRecurringResume puts a PARKED task back on its cadence.

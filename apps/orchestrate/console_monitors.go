@@ -174,10 +174,15 @@ func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	// Scope to the agent this pane is for — a monitor belongs to the agent it
-	// wakes (WakeAgent, set on create), so without this every agent's pane shows
-	// every agent's monitors.
 	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
+	writeJSON(w, consoleMonitorRows(user, agentID))
+}
+
+// consoleMonitorRows builds the rows for this view. Split off the handler so the
+// merged Scheduler page (console_scheduler.go) renders THESE rows rather than
+// its own copy of the same logic — a second builder is how the two views
+// come to disagree about what is scheduled.
+func consoleMonitorRows(user, agentID string) []consoleMonitorRow {
 	rows := []consoleMonitorRow{}
 	for _, m := range ListEventMonitors(RootDB, user) {
 		// A monitor belongs to the agent it wakes. An empty WakeAgent means the
@@ -299,7 +304,7 @@ func (T *OrchestrateApp) handleConsoleMonitors(w http.ResponseWriter, r *http.Re
 		rows = append(rows, consoleMonitorRow{Name: m.Name, Kind: m.Kind, State: state, Detail: detail, Script: script, Checked: checked, Seen: seen, Last: last, ID: m.Name, Paused: m.Paused, Schedulable: IsScheduledEventKind(m.Kind), Broken: m.Broken,
 			Relinkable: m.StopCause() == MonitorStopBroken})
 	}
-	writeJSON(w, rows)
+	return rows
 }
 
 func (T *OrchestrateApp) handleConsoleMonitorDelete(w http.ResponseWriter, r *http.Request) {
