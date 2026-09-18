@@ -371,4 +371,4 @@ var configureBackendPickAction = `function(ctx){
 
 // (credentialScopeManageAction removed — the per-agent credential scope pill is
 // gone: tier-1 "which users" is the credential's Access button, and tier-2
-// per-agent scope moved to the agent editor's "Credentials this agent may use".)
+// per-agent scope moved to the agent editor's "External credentials".)

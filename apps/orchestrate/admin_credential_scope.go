@@ -7,7 +7,7 @@
 //
 // The EDITING surfaces live elsewhere now: tier-1 "which users" on the admin
 // credential page (Access button → AllowedUsers); tier-2 per-agent scope on the
-// agent editor ("Credentials this agent may use", handleAgentCredentials). This
+// agent editor ("External credentials", handleAgentCredentials). This
 // file is enforcement only — it no longer registers a scope-pill provider.
 package orchestrate
 

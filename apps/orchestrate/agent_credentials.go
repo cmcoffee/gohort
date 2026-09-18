@@ -52,8 +52,8 @@ func userScopableCredentials(user string) []SecureCredential {
 	return out
 }
 
-// handleAgentCredentials serves the agent editor's "Credentials this agent may
-// use" picker. GET returns the candidate creds + the currently-enabled subset;
+// handleAgentCredentials serves the agent editor's "External
+// credentials" picker. GET returns the candidate creds + the currently-enabled subset;
 // POST {enabled_credentials:[...]} rewrites the agent's opt-out for exactly those
 // candidates (opt-outs for creds NOT in the candidate set are preserved).
 func (T *OrchestrateApp) handleAgentCredentials(w http.ResponseWriter, r *http.Request) {

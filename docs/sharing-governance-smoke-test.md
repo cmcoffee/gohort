@@ -53,7 +53,7 @@ As `admin`, Admin → API Credentials, on the `demo_api` row:
 
 As `admin`, open any agent in the editor (Agents → a row → Edit):
 
-- [ ] A **"Credentials this agent may use"** section lists the credentials you're
+- [ ] A **"External credentials"** section lists the credentials you're
       granted (includes `demo_api` if you're allowed it), **all checked by
       default**.
 - [ ] Secured credentials are **not** listed here (access follows their bindings).

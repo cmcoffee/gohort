@@ -139,8 +139,8 @@ func (a *AdminApp) credentialsSections() []ui.Section {
 							}),
 							// Access — tier-1 user ACL: which USERS may use this
 							// credential. (Tier 2 — which of a user's OWN agents may
-							// use it — is on the agent editor, "Credentials this agent
-							// may use", so each user scopes their own fleet instead of
+							// use it — is on the agent editor, "External
+							// credentials", so each user scopes their own fleet instead of
 							// the admin managing an unbounded per-agent list here.)
 							// HIDDEN when Secured: a secured cred has no user ACL — its
 							// access is deferred to the tools bound to it (see Bindings),
