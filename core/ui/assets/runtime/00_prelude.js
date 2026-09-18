@@ -163,6 +163,7 @@
   //
   // Generic by construction: it renders whatever string it is handed and
   // knows nothing about who handed it over.
+  var infoSeq = 0;
   function uiInfoIcon(detail, opts) {
     detail = String(detail == null ? '' : detail).trim();
     if (!detail) return null;
@@ -172,18 +173,21 @@
       class: 'ui-info' + (opts.className ? ' ' + opts.className : ''),
       'aria-label': opts.label || 'More information',
       'aria-expanded': 'false',
-      // The native tooltip is the fallback that always works: if the
-      // popover's script or styling ever fails, the text is still
-      // reachable rather than locked behind a dead glyph.
-      title: detail,
+      // Deliberately NO title attribute. It was here as a no-JS fallback,
+      // which is a fallback for a case that cannot happen: the button is
+      // created by this function, so if it exists the popover code exists
+      // too. What it actually did was give every icon TWO tooltips, the
+      // panel at 120ms and the browser's own about a second later, on top
+      // of each other.
     }, ['ⓘ']);
 
-    var pop = null;
+    var pop = null, popID = '';
     function close() {
       if (!pop) return;
       pop.remove();
       pop = null;
       btn.setAttribute('aria-expanded', 'false');
+      btn.removeAttribute('aria-describedby');
       document.removeEventListener('click', onDocClick, true);
       window.removeEventListener('keydown', onInfoKey, true);
       window.removeEventListener('resize', close);
@@ -204,7 +208,9 @@
     }
     function open() {
       if (pop) return;
-      pop = el('div', {class: 'ui-info-pop', role: 'tooltip'});
+      popID = popID || ('ui-info-' + (++infoSeq));
+      pop = el('div', {class: 'ui-info-pop', role: 'tooltip', id: popID});
+      btn.setAttribute('aria-describedby', popID);
       // Paragraph breaks survive: a detail long enough to need the icon is
       // often long enough to have two thoughts in it.
       detail.split(/\n\s*\n/).forEach(function(para) {

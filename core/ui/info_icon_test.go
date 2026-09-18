@@ -22,16 +22,22 @@ func TestTheInfoIconIsAPrimitiveAppsCanReach(t *testing.T) {
 			t.Errorf("the runtime does not export %q, so an app cannot reach it", want)
 		}
 	}
-	// The native tooltip is the fallback that always works. Without it a
-	// styling or scripting failure leaves the text locked behind a dead glyph.
 	at := strings.Index(js, "function uiInfoIcon(")
 	end := strings.Index(js, "window.uiInfoIcon = uiInfoIcon;")
 	if at < 0 || end < at {
 		t.Fatal("uiInfoIcon moved")
 	}
 	block := js[at:end]
-	if !strings.Contains(block, "title: detail") {
-		t.Error("the icon carries no title attribute, so a failed popover hides the text entirely")
+	// A title attribute here gives every icon TWO tooltips: the panel at
+	// 120ms and the browser's own about a second later, drawn over it. It
+	// was added as a no-JS fallback for a case that cannot happen, since
+	// the button is built by this same function. The popover describes the
+	// button instead, which is the part a screen reader needs.
+	if strings.Contains(block, "title: detail") {
+		t.Error("the icon sets a native title, so the browser tooltip doubles up with the popover")
+	}
+	if !strings.Contains(block, "aria-describedby") {
+		t.Error("the popover is not tied to the button, so a screen reader gets the label and nothing else")
 	}
 	// Hover alone is not an affordance on a touch device, and not reachable
 	// from a keyboard at all.
