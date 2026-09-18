@@ -1291,7 +1291,54 @@ func (lr *loopRun) finish() (*Response, []Message, error) {
 	if lr.lastResp != nil {
 		lr.lastResp.HitRoundCap = true
 	}
+	// ...which is exactly why the output guardrail has to run HERE too. The
+	// final-round guard chain lives inside the loop, so this door bypasses it
+	// — including the forced-final-answer rescue just above, which generates a
+	// brand new reply and hands it straight back.
+	lr.roundCapOutputGuardrail()
 	return lr.lastResp, lr.history, nil
+}
+
+// roundCapOutputGuardrail is finalRoundOutputGuardrail for the one exit that
+// never reaches it: the turn that ran out of rounds.
+//
+// finalRoundOutputGuardrail states that the budget-spent case is precisely what
+// it covers — "once the budget is spent and the reply STILL violates, the draft
+// is NOT released ... so a determined push can't leak on the attempt after the
+// budget runs out (the old escape hatch)". It could not deliver that. Its chain
+// runs inside the loop, and a turn that exhausts its rounds leaves by the
+// return below, carrying whatever the last round produced.
+//
+// Observed on a busy group chat. finalRoundJudges returns early to drain
+// mid-turn injections — before the guardrail, which is last in the chain — so
+// every message landing while the agent is thinking costs a round AND skips the
+// check. A lively conversation spends the budget that way and then delivers
+// through this door, unchecked. The reply that prompted this fix carried a
+// nickname a standing rule forbids, and no guardrail line was logged at all.
+//
+// No revision here, whatever the rule's severity: there are no rounds left to
+// revise in, so the choice is release or decline, and declining is the whole
+// contract. Mid-turn prose that was already painted is not this function's
+// problem — interimGuardrail judges every round that narrates.
+func (lr *loopRun) roundCapOutputGuardrail() {
+	if lr.cfg.GuardrailCheck == nil || lr.lastResp == nil {
+		return
+	}
+	if strings.TrimSpace(lr.lastResp.Content) == "" {
+		return
+	}
+	dec := lr.cfg.GuardrailCheck(GuardHookPreOutput, lr.lastResp.Content)
+	if !dec.Blocked {
+		return
+	}
+	Debug("[agent_loop] guardrail pre-output on the round-cap exit (correctable=%v) — no rounds left to revise in, substituting the decline", dec.Correctable)
+	lr.emitDiag("guardrail-output-substituted",
+		"The turn ran out of rounds and the reply it was about to send violated an enforced guardrail. A neutral decline was substituted so nothing protected was released.")
+	fallback := guardrailRejectionReply(lr.cfg, "pre_output", lr.history)
+	lr.replaceBlockedDraft(fallback)
+	lr.lastResp.Content = fallback + guardrailClosedNote
+	lr.lastResp.Reasoning = ""
+	lr.lastResp.ToolCalls = nil
 }
 
 func (lr *loopRun) roundHead() loopAction {

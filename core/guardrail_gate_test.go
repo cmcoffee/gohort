@@ -7,6 +7,7 @@ import (
 
 	"github.com/cmcoffee/gohort/core/textutil"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -814,4 +815,82 @@ func TestZeroValueDecisionIsNotCorrectable(t *testing.T) {
 // or they are testing the internal copy.
 func deliveredReply(s string) string {
 	return strings.TrimSpace(textutil.StripMetaTags(s))
+}
+
+// The round-cap exit used to leave without ever asking the output guardrail.
+//
+// finalRoundOutputGuardrail claims the budget-spent case is exactly what it
+// covers — "a determined push can't leak on the attempt after the budget runs
+// out (the old escape hatch)". It could not: its chain runs inside the loop,
+// and a turn that exhausts its rounds returns from below it, carrying whatever
+// the last round produced.
+//
+// Observed on a live group chat: a reply carrying a nickname a standing rule
+// forbids went out with no guardrail line logged at all. Messages landing
+// mid-turn make finalRoundJudges return early to drain them — before the
+// guardrail, which is last in the chain — so a lively conversation spends its
+// rounds skipping the check and then delivers through this door.
+func TestRoundCapExitStillAsksTheOutputGuardrail(t *testing.T) {
+	// A model that never stops calling tools burns the budget and leaves by the
+	// exhaustion path rather than by a natural final answer.
+	// MaxRounds 2 with no grace (grace only defaults on for MaxRounds >= 10),
+	// so the loop makes two calls and leaves by exhaustion. Call 3 is the
+	// forced-final-answer rescue AFTER the loop: it gets no tool calls back and
+	// so produces the text that would be delivered.
+	// The counter is the TEST's, not the stub's: withTierStubs builds a lead
+	// and a worker stub with independent counts, and the rescue runs on the
+	// worker whichever tier served the rounds — so a per-stub count restarts
+	// under it and the rescue gets tool calls back instead of text.
+	var calls int32
+	app, _ := withTierStubs(t, "test.capguard", func(int) []ToolCall {
+		if n := atomic.AddInt32(&calls, 1); n >= 3 {
+			return nil // the rescue: answer in words
+		}
+		return []ToolCall{{ID: fmt.Sprint(atomic.LoadInt32(&calls)), Name: "noop", Args: map[string]any{}}}
+	})
+	noop := AgentToolDef{
+		Tool:    Tool{Name: "noop", Description: "does nothing"},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) { return "ok", nil },
+	}
+
+	asked := map[string]int{}
+	var mu sync.Mutex
+	resp, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "go"}}, AgentLoopConfig{
+		Tools:     []AgentToolDef{noop},
+		MaxRounds: 2,
+		RouteKey:  "test.capguard",
+		GuardrailCheck: func(hook, candidate string) GuardrailDecision {
+			mu.Lock()
+			asked[hook]++
+			mu.Unlock()
+			if hook == GuardHookPreOutput {
+				return GuardrailDecision{Blocked: true, Message: "that name is forbidden"}
+			}
+			return GuardrailDecision{}
+		},
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	mu.Lock()
+	outputChecks := asked[GuardHookPreOutput]
+	mu.Unlock()
+	if outputChecks == 0 {
+		t.Fatalf("the turn ran out of rounds and delivered without the output guardrail ever being asked (hooks asked: %v, resp=%#v)", asked, resp)
+	}
+	if resp == nil {
+		t.Fatal("no response")
+	}
+	// Blocked means the draft is NOT what goes out. There are no rounds left to
+	// revise in, so the only safe answer is the decline.
+	if strings.Contains(resp.Content, "done") {
+		t.Errorf("the blocked draft was released on the round-cap exit: %q", resp.Content)
+	}
+	if strings.TrimSpace(resp.Content) == "" {
+		t.Error("something has to be delivered — a blocked reply becomes a decline, not silence")
+	}
+	// And whatever is delivered carries no framework marker to the reader.
+	if strings.Contains(textutil.StripMetaTags(resp.Content), "<gohort-meta") {
+		t.Errorf("a meta marker survived delivery: %q", resp.Content)
+	}
 }
