@@ -386,17 +386,49 @@ func StandingStopNote(sa StandingAgent) string {
 	return sa.StopNote
 }
 
-// StandingParkCause is why a parked schedule is parked, or empty for one that
-// is running. Records written before the split carry no cause and read as a
+// ParkCauseOf is why a parked schedule is parked, or empty for one that is
+// running. Records written before the cause existed carry none and read as a
 // dependency, which is the only thing that used to park one.
-func StandingParkCause(sa StandingAgent) string {
-	if !sa.Broken {
+//
+// Takes the two FIELDS rather than a record, and that is deliberate. They sit
+// on three different types (a standing agent, a recurring payload, a monitor),
+// and the obvious tidy — fold them into one embedded struct — would change what
+// every armed schedule decodes to: gob NESTS an embedded struct, and these are
+// already stored flat. A shared reader costs nothing; a shared field layout
+// would cost a migration on records that are firing.
+//
+// Slice 2 of docs/scheduling-unification.md.
+func ParkCauseOf(broken bool, storedCause string) string {
+	if !broken {
 		return ""
 	}
-	if c := strings.TrimSpace(sa.BrokenCause); c != "" {
+	if c := strings.TrimSpace(storedCause); c != "" {
 		return c
 	}
 	return ParkedByDependency
+}
+
+// RelinkFixesIt reports whether re-pointing the schedule at a live target is
+// the repair for this park.
+//
+// One predicate because it is one question, asked at three row builders that
+// each used to spell the comparison themselves. A stalled objective is parked
+// too, and offering it a picker of live agents describes a problem it does not
+// have — it needs attempts, not a new target.
+//
+// Event monitors answer the same question against their OWN vocabulary
+// (MonitorStopBroken), which is richer: a monitor distinguishes "the thing it
+// needs is gone" from "everything resolves and the checks keep failing", and
+// only the first is a relink. Unifying the two vocabularies means rewriting a
+// stored StopReason on every monitor, which is the migration this slice exists
+// to avoid.
+func RelinkFixesIt(parkCause string) bool {
+	return parkCause == ParkedByDependency
+}
+
+// StandingParkCause is ParkCauseOf for a standing agent.
+func StandingParkCause(sa StandingAgent) string {
+	return ParkCauseOf(sa.Broken, sa.BrokenCause)
 }
 
 // StandingAgentDependencyError, when set by the orchestrate app at startup,

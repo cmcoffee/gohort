@@ -1,6 +1,6 @@
 # Scheduling unification (stage 3): what to merge, and what turned out not to be the merge
 
-Status: **slice 1 done; 2 next.** Stages 0–2 shipped in 0.4.15 (2026-06-11) and built
+Status: **slices 1 and 2 done; 3 next.** Stages 0–2 shipped in 0.4.15 (2026-06-11) and built
 `core.ScheduledTrigger` — the `{when, gate, action, target}` record — plus the `schedule` tool on
 phantom. Stage 3 was deferred with a one-line brief: *fold standing agents and recurring tasks onto
 ScheduledTrigger, migrate the console, absorb create_event_monitor, add a reconciler, retire the old
@@ -76,8 +76,23 @@ Each slice ships on its own and none moves data while a schedule is armed.
 judge that is already shared. Touches no storage. Worth doing for the leverage it gives slices 3 and
 4 rather than for a bug it fixes — see the note above; both implementations are currently correct.
 
-**Slice 2 — one parking mechanism.** Same treatment for `Broken` / `BrokenReason` / `BrokenCause`
-across all three records, so "the thing this needs is gone" is decided and described once.
+**Slice 2 — one parking mechanism.** DONE. `core.ParkCauseOf(broken, storedCause)` and
+`core.RelinkFixesIt(cause)`; the standing and recurring readers collapsed onto them and the three
+row builders stopped spelling the comparison themselves.
+
+Two things it did NOT do, both deliberate:
+
+- **The fields stay where they are.** The tidy version folds `Broken` / `BrokenReason` /
+  `BrokenCause` into one embedded struct. gob NESTS an embedded struct, and these records are stored
+  flat, so that changes what every armed schedule decodes to — a migration, on records that are
+  firing. The shared reader takes the two fields as arguments instead and costs nothing.
+- **Monitors keep their own vocabulary.** It is RICHER, not divergent: a monitor separates "the
+  thing it needs is gone" (`MonitorStopBroken`, a relink) from "everything resolves and the checks
+  keep failing" (`MonitorStopFailing`, not a relink), which standing and recurring do not
+  distinguish. `owner` and `met` already share strings across all three by accident; `broken` versus
+  `dependency` do not, and reconciling them means rewriting a stored `StopReason` on every monitor.
+  Not worth it for one string. The monitor's own answer to the relink question now says so where it
+  is asked.
 
 **Slice 3 — one cadence type.** `Cron`, `IntervalSeconds`, `StartAt`, and the random-pattern fields
 become a `Cadence` value with one `Next(after time.Time)`. Today three files answer "when next" and

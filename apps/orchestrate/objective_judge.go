@@ -286,13 +286,7 @@ func objectiveAttemptNumber(p orchUpdatePayload) int {
 // before the split carry no cause and read as a dependency, which is the only
 // thing that used to park one.
 func recurringParkCause(p orchUpdatePayload) string {
-	if !p.Broken {
-		return ""
-	}
-	if c := strings.TrimSpace(p.BrokenCause); c != "" {
-		return c
-	}
-	return ParkedByDependency
+	return ParkCauseOf(p.Broken, p.BrokenCause)
 }
 
 // objectiveStateLabel says where an objective stands, for the console row and

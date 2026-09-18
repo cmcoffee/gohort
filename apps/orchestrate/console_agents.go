@@ -360,7 +360,7 @@ func consoleAgentRows(user string, udb Database, agentID string) []consoleAgentR
 			row.State = parkedStateLabel(StandingParkCause(sa), sa.BrokenReason)
 			// Relink is offered only where relinking is the repair. A stalled
 			// objective keeps Resume, which gives it a fresh allowance.
-			row.Relinkable = StandingParkCause(sa) == ParkedByDependency
+			row.Relinkable = RelinkFixesIt(StandingParkCause(sa))
 		}
 		if !sa.NextRun.IsZero() {
 			row.NextRun = sa.NextRun.UTC().Format(time.RFC3339)

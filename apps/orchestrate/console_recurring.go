@@ -81,7 +81,7 @@ func consoleRecurringRows(user, agentID string) []consoleRecurringRow {
 		if rt.Payload.Broken {
 			row.Broken = true
 			row.State = parkedStateLabel(recurringParkCause(rt.Payload), rt.Payload.BrokenReason)
-			row.Relinkable = recurringParkCause(rt.Payload) == ParkedByDependency
+			row.Relinkable = RelinkFixesIt(recurringParkCause(rt.Payload))
 			row.NextRun = "" // parked: the dormant re-check isn't a real next run
 		}
 		rows = append(rows, row)

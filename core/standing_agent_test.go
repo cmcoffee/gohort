@@ -226,3 +226,50 @@ func TestClearStandingAgentBrokenRestartsTheObjectiveAllowance(t *testing.T) {
 		t.Error("Paused must stay: resuming a parked schedule is a separate, explicit action")
 	}
 }
+
+// Slice 2 of docs/scheduling-unification.md. Three records carried the same
+// "stopped and kept" state and each read it back itself; they read it through
+// one pair of functions now.
+func TestParkCauseOfReadsEveryRecordTheSameWay(t *testing.T) {
+	if got := ParkCauseOf(false, ""); got != "" {
+		t.Errorf("a running schedule is not parked: %q", got)
+	}
+	if got := ParkCauseOf(false, ParkedByObjective); got != "" {
+		t.Errorf("a stale cause on a running schedule means nothing: %q", got)
+	}
+	if got := ParkCauseOf(true, ParkedByObjective); got != ParkedByObjective {
+		t.Errorf("a stored cause wins: %q", got)
+	}
+	// Records written before the cause existed carry none, and the only thing
+	// that used to park one was a missing dependency.
+	if got := ParkCauseOf(true, ""); got != ParkedByDependency {
+		t.Errorf("an old parked record reads as a dependency: %q", got)
+	}
+	if got := ParkCauseOf(true, "   "); got != ParkedByDependency {
+		t.Errorf("blank is not a cause: %q", got)
+	}
+}
+
+// Relink is the repair for exactly one park. A stalled objective is parked too,
+// and offering it a picker of live agents describes a problem it does not have.
+func TestRelinkFixesOnlyAMissingDependency(t *testing.T) {
+	if !RelinkFixesIt(ParkedByDependency) {
+		t.Error("a schedule whose target is gone is what Relink is for")
+	}
+	for _, other := range []string{ParkedByObjective, StoppedByOwner, StoppedByMet, ""} {
+		if RelinkFixesIt(other) {
+			t.Errorf("%q is not repaired by re-pointing anything", other)
+		}
+	}
+}
+
+// The standing reader is now that shared one, so the two cannot drift.
+func TestStandingParkCauseIsTheSharedReader(t *testing.T) {
+	sa := StandingAgent{Broken: true, BrokenCause: ParkedByObjective}
+	if StandingParkCause(sa) != ParkCauseOf(sa.Broken, sa.BrokenCause) {
+		t.Error("the standing reader has grown a rule of its own again")
+	}
+	if StandingParkCause(StandingAgent{}) != "" {
+		t.Error("a running agent reads as unparked")
+	}
+}

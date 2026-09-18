@@ -302,6 +302,10 @@ func consoleMonitorRows(user, agentID string) []consoleMonitorRow {
 		// click-to-expand toggle, so send it whole rather than truncating here.
 		script := strings.TrimSpace(m.FormatScript)
 		rows = append(rows, consoleMonitorRow{Name: m.Name, Kind: m.Kind, State: state, Detail: detail, Script: script, Checked: checked, Seen: seen, Last: last, ID: m.Name, Paused: m.Paused, Schedulable: IsScheduledEventKind(m.Kind), Broken: m.Broken,
+			// The monitor vocabulary's own answer to core.RelinkFixesIt: a
+			// monitor separates "the thing it needs is gone" (relink) from
+			// "everything resolves and the checks keep failing" (does not), and
+			// only the first is repaired by re-pointing it. See ParkCauseOf.
 			Relinkable: m.StopCause() == MonitorStopBroken})
 	}
 	return rows
