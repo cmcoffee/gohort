@@ -884,10 +884,10 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				); err != nil {
 					return "", err
 				}
-				if IsDelegationBlocked(RootDB, owner, agent) {
+				if IsDelegationBlocked(RootDB, owner, controllerAgentID, agent) {
 					return fmt.Sprintf("Delegation to %q is blocked in the user's permission settings: not run.", agent), nil
 				}
-				if IsDelegationPreAuthorized(RootDB, owner, agent) {
+				if IsDelegationPreAuthorized(RootDB, owner, controllerAgentID, agent) {
 					// Root the delegation in the PARENT TURN'S context (sess.Context())
 					// so a Stop / cancel of the chat turn also cancels this outgoing
 					// agent call — previously it ran on context.Background() and kept

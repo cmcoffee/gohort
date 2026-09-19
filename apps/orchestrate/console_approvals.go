@@ -227,7 +227,12 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	if always {
-		SetDelegationPreAuthorized(RootDB, user, a.Agent, true)
+		// Granted to the agent that ASKED (a.FromAgent), not to every agent the
+		// owner has. NOT approvalRequester: on a delegation, a.Agent is the
+		// TARGET, so the contact path's fallback would write a grant scoped to
+		// the very agent being delegated to. A legacy record with no requester
+		// falls back to all agents rather than losing the owner's yes.
+		SetDelegationPreAuthorized(RootDB, user, strings.TrimSpace(a.FromAgent), a.Agent, true)
 	}
 	// a.FromAgent (captured when the delegation was queued) keeps an approved
 	// delegation's channel reach identical to a pre-authorized one's. Empty on

@@ -234,7 +234,7 @@ func (t *chatTurn) computeDispatchableFleet() []AgentRecord {
 		// agent in those keeps nudging the model into calls the gate then
 		// refuses, a wedge of pure refusal noise. Drop it here so every
 		// steering surface goes quiet together.
-		if IsDelegationBlocked(RootDB, fleetUser, a.Name) || IsDelegationBlocked(RootDB, fleetUser, a.ID) {
+		if IsDelegationBlocked(RootDB, fleetUser, t.agent.ID, a.Name) || IsDelegationBlocked(RootDB, fleetUser, t.agent.ID, a.ID) {
 			continue
 		}
 		// A sub-agent owned by ANOTHER agent is private to its owner — never surface

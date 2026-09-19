@@ -123,28 +123,47 @@ func DeleteAuthorization(db Database, owner, id string) {
 	}
 }
 
+// preauthKey is the ALL-AGENTS key for a delegation target, and it keeps the
+// shape the table has always had: a grant made before delegation was scoped
+// says "any agent of mine may hand work to this one", which is what it meant.
 func preauthKey(owner, agent string) string { return owner + ":" + agent }
+
+// delegationScopeKey is the per-REQUESTER key: which agent is doing the
+// delegating, not which one is being delegated to.
+//
+// The same reasoning as contacts, one layer in. An agent that may hand work to
+// the agent that files invoices is a decision about that pairing; a grant the
+// whole fleet shares is one any agent can spend, and the careful routing the
+// owner set up holds nothing.
+//
+// A block written WITHOUT a scope still means what it has always meant, and the
+// dispatch surfaces still read it that way: off limits to everyone, whatever
+// route is taken to reach it.
+func delegationScopeKey(owner, from, target string) string {
+	from = strings.TrimSpace(from)
+	if from == "" {
+		return preauthKey(owner, target)
+	}
+	return owner + ":" + from + "\x00" + strings.TrimSpace(target)
+}
 
 // IsDelegationPreAuthorized reports whether the user has granted standing
 // authorization for the Operator to delegate to this agent (model A: authorize
 // the pattern). When true, a delegation runs immediately instead of queuing.
-func IsDelegationPreAuthorized(db Database, owner, agent string) bool {
-	if db == nil {
-		return false
-	}
-	var on bool
-	db.Get(delegationPreauthTable, preauthKey(owner, agent), &on)
-	return on
+func IsDelegationPreAuthorized(db Database, owner, from, agent string) bool {
+	return DelegationPolicy(db, owner, from, agent) == PolicyAllow
 }
 
-func SetDelegationPreAuthorized(db Database, owner, agent string, on bool) {
+// SetDelegationPreAuthorized grants or clears the legacy allow flag for one
+// scope. from "" is every agent.
+func SetDelegationPreAuthorized(db Database, owner, from, agent string, on bool) {
 	if db == nil {
 		return
 	}
 	if on {
-		db.Set(delegationPreauthTable, preauthKey(owner, agent), true)
+		db.Set(delegationPreauthTable, delegationScopeKey(owner, from, agent), true)
 	} else {
-		db.Unset(delegationPreauthTable, preauthKey(owner, agent))
+		db.Unset(delegationPreauthTable, delegationScopeKey(owner, from, agent))
 	}
 }
 
@@ -234,8 +253,8 @@ func SetContactPreAuthorized(db Database, owner, agent, handle string, on bool) 
 type PolicyEntry struct {
 	Target string
 	Policy string
-	// Scope is the agent this decision is for, or "" for every agent. Only
-	// contacts are scoped today; a delegation row always reports "".
+	// Scope is the agent this decision is FOR: the one messaging the contact,
+	// or the one doing the delegating. "" is every agent.
 	Scope string
 }
 
@@ -246,20 +265,27 @@ func normPolicy(p string) string {
 	return PolicyAsk
 }
 
-// DelegationPolicy resolves the standing policy for delegating to this agent.
-// An explicit policy record wins; otherwise a legacy "Always allow" grant reads
-// as allow, and the default is ask.
-func DelegationPolicy(db Database, owner, agent string) string {
+// DelegationPolicy answers whether agent `from` may hand work to `agent`.
+//
+// The requester's own decision wins in both directions; where it has none, the
+// all-agents row answers, and where that is absent the default is ask. Same
+// precedence as contacts, and for the same reason: a promoted decision must not
+// silently overrule one the owner already made about a particular agent.
+//
+// from "" asks the all-agents question directly, which is what the dispatch
+// surfaces that only know a TARGET still do, and what the settings page does
+// when it renders the promoted row.
+func DelegationPolicy(db Database, owner, from, agent string) string {
 	if db == nil {
 		return PolicyAsk
 	}
-	var p string
-	if db.Get(delegationPolicyTable, preauthKey(owner, agent), &p) && p != "" {
-		return normPolicy(p)
+	if from = strings.TrimSpace(from); from != "" {
+		if p, ok := storedDelegationPolicy(db, delegationScopeKey(owner, from, agent)); ok {
+			return p
+		}
 	}
-	var on bool
-	if db.Get(delegationPreauthTable, preauthKey(owner, agent), &on) && on {
-		return PolicyAllow
+	if p, ok := storedDelegationPolicy(db, preauthKey(owner, agent)); ok {
+		return p
 	}
 	return PolicyAsk
 }
@@ -267,33 +293,35 @@ func DelegationPolicy(db Database, owner, agent string) string {
 // SetDelegationPolicy records the standing policy and keeps the legacy preauth
 // flag in sync (so ListDelegationPreAuthorizations / IsDelegationPreAuthorized
 // stay correct without every caller learning about policies).
-func SetDelegationPolicy(db Database, owner, agent, policy string) {
+func SetDelegationPolicy(db Database, owner, from, agent, policy string) {
 	if db == nil || strings.TrimSpace(agent) == "" {
 		return
 	}
 	policy = normPolicy(policy)
-	db.Set(delegationPolicyTable, preauthKey(owner, agent), policy)
+	key := delegationScopeKey(owner, from, agent)
+	db.Set(delegationPolicyTable, key, policy)
 	if policy == PolicyAllow {
-		db.Set(delegationPreauthTable, preauthKey(owner, agent), true)
+		db.Set(delegationPreauthTable, key, true)
 	} else {
-		db.Unset(delegationPreauthTable, preauthKey(owner, agent))
+		db.Unset(delegationPreauthTable, key)
 	}
 }
 
 // RemoveDelegationPolicy forgets this agent entirely — back to the ask default
 // with no record, so it drops out of the Permissions list.
-func RemoveDelegationPolicy(db Database, owner, agent string) {
+func RemoveDelegationPolicy(db Database, owner, from, agent string) {
 	if db == nil {
 		return
 	}
-	db.Unset(delegationPolicyTable, preauthKey(owner, agent))
-	db.Unset(delegationPreauthTable, preauthKey(owner, agent))
+	key := delegationScopeKey(owner, from, agent)
+	db.Unset(delegationPolicyTable, key)
+	db.Unset(delegationPreauthTable, key)
 }
 
 // IsDelegationBlocked reports whether delegations to this agent are blocked
 // (auto-deny at the gate).
-func IsDelegationBlocked(db Database, owner, agent string) bool {
-	return DelegationPolicy(db, owner, agent) == PolicyBlock
+func IsDelegationBlocked(db Database, owner, from, agent string) bool {
+	return DelegationPolicy(db, owner, from, agent) == PolicyBlock
 }
 
 // ListDelegationPolicies returns every agent with an explicit policy record,
@@ -329,20 +357,28 @@ func ContactPolicy(db Database, owner, agent, handle string) string {
 	return PolicyAsk
 }
 
-// storedContactPolicy reads one key, explicit record first and the legacy allow
-// flag second, and says whether anything was there at all. The distinction is
-// what lets the caller fall through to the next scope instead of stopping at a
+// storedPolicy reads one key, explicit record first and the legacy allow flag
+// second, and says whether anything was there at all. The distinction is what
+// lets the caller fall through to the next scope instead of stopping at a
 // default that was never written down.
-func storedContactPolicy(db Database, key string) (string, bool) {
+func storedPolicy(db Database, policyTable, preauthTable, key string) (string, bool) {
 	var p string
-	if db.Get(contactPolicyTable, key, &p) && p != "" {
+	if db.Get(policyTable, key, &p) && p != "" {
 		return normPolicy(p), true
 	}
 	var on bool
-	if db.Get(contactPreauthTable, key, &on) && on {
+	if db.Get(preauthTable, key, &on) && on {
 		return PolicyAllow, true
 	}
 	return "", false
+}
+
+func storedContactPolicy(db Database, key string) (string, bool) {
+	return storedPolicy(db, contactPolicyTable, contactPreauthTable, key)
+}
+
+func storedDelegationPolicy(db Database, key string) (string, bool) {
+	return storedPolicy(db, delegationPolicyTable, delegationPreauthTable, key)
 }
 
 // SetContactPolicy records a decision for one scope. agent "" is all agents.

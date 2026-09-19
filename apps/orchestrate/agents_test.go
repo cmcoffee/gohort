@@ -52,7 +52,10 @@ func TestPermissionBlockRefusesAgentsRun(t *testing.T) {
 	saved := RootDB
 	RootDB = &DBase{Store: kvlite.MemStore()}
 	t.Cleanup(func() { RootDB = saved })
-	SetDelegationPolicy(RootDB, "u", target.Name, PolicyBlock)
+	// Scope "" is the owner-wide block, which is what this table has always
+	// held and what the dispatch surfaces have always read: off limits to
+	// everyone, whatever route reaches it.
+	SetDelegationPolicy(RootDB, "u", "", target.Name, PolicyBlock)
 
 	out, err := turn.agentsRunAction(map[string]any{"agent": "Comedian", "message": "tell a joke"})
 	if err == nil {

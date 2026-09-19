@@ -102,3 +102,40 @@ func TestListingCarriesTheScope(t *testing.T) {
 		t.Errorf("expected one row per scope, got all=%d scoped=%d", all, scoped)
 	}
 }
+
+// Delegation is the same question one layer in: which agent may hand work to
+// which. A grant the whole fleet shares is one any agent can spend, and the
+// careful routing an owner set up holds nothing.
+func TestDelegationGrantsAreScopedToTheAgentDelegating(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	SetDelegationPolicy(db, "alice", "conductor", "invoices", PolicyAllow)
+
+	if !IsDelegationPreAuthorized(db, "alice", "conductor", "invoices") {
+		t.Error("the agent that was granted cannot delegate")
+	}
+	if IsDelegationPreAuthorized(db, "alice", "stranger", "invoices") {
+		t.Error("another agent spent a delegation grant it was never given")
+	}
+}
+
+// The behaviour every dispatch surface already had, and the one most worth not
+// breaking: an owner-wide block is about the TARGET, not the route taken to
+// reach it. It refuses whoever asks.
+func TestAnUnscopedDelegationBlockStillStopsEveryone(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	SetDelegationPolicy(db, "alice", "", "comedian", PolicyBlock)
+
+	for _, from := range []string{"conductor", "stranger", ""} {
+		if !IsDelegationBlocked(db, "alice", from, "comedian") {
+			t.Errorf("agent %q could still delegate to a blocked target", from)
+		}
+	}
+	// And one agent can be carved out of it, which is the point of scoping.
+	SetDelegationPolicy(db, "alice", "conductor", "comedian", PolicyAllow)
+	if IsDelegationBlocked(db, "alice", "conductor", "comedian") {
+		t.Error("an agent's own exception did not survive the general block")
+	}
+	if !IsDelegationBlocked(db, "alice", "stranger", "comedian") {
+		t.Error("carving out one agent lifted the block for everybody")
+	}
+}

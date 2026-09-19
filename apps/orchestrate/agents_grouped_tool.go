@@ -898,7 +898,7 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 	// One user intent, enforced at every dispatch surface; checked before
 	// the ownership carve-outs because a Block is about the TARGET, not the
 	// route taken to reach it.
-	if IsDelegationBlocked(RootDB, fleetUser, target.Name) || IsDelegationBlocked(RootDB, fleetUser, target.ID) {
+	if IsDelegationBlocked(RootDB, fleetUser, t.agent.ID, target.Name) || IsDelegationBlocked(RootDB, fleetUser, t.agent.ID, target.ID) {
 		return AgentRecord{}, "", fmt.Errorf("agents(run): delegation to %q is BLOCKED in the user's permission settings, the call was refused. Do NOT retry and do NOT route around it; only the user can change this in the Permissions pane", target.Name)
 	}
 	// A hidden app agent is refused OUTRIGHT, before any carve-out — including

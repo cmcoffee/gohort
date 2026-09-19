@@ -151,12 +151,26 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 	out = append(out, suggested...)
 	// Zone 2 — standing permission policy per subject (Always allow / Needs
 	// approval / Blocked, + Remove).
+	// Agent delegation, scoped to the agent doing the delegating. A row with no
+	// scope is the one the dispatch surfaces have always read: off limits (or
+	// open) to everyone, whatever route is taken to reach the target.
 	for _, e := range ListDelegationPolicies(RootDB, user) {
-		name := e.Target
-		if rec, found := loadAgent(udb, e.Target); found && rec.Name != "" {
-			name = rec.Name
+		agentLabel := func(id string) string {
+			if rec, found := loadAgent(udb, id); found && rec.Name != "" {
+				return rec.Name
+			}
+			return id
 		}
-		out = append(out, permRow{Who: name, Detail: "Agent delegation", ID: "agent:" + e.Target, Managed: true, Policy: e.Policy})
+		row := permRow{
+			Who: agentLabel(e.Target), Detail: "Agent delegation: from every agent",
+			ID: "agent:" + e.Target, Managed: true, Policy: e.Policy,
+		}
+		if e.Scope != "" {
+			row.Detail = "Agent delegation: from " + agentLabel(e.Scope)
+			row.ID = "agentfor:" + e.Scope + ":" + e.Target
+			row.Promotable = true
+		}
+		out = append(out, row)
 	}
 	// Contact messaging, per agent. A grant says WHICH agent may reach this
 	// person, because an agent carries a persona and its own rules about what
@@ -409,7 +423,11 @@ func (T *OrchestrateApp) handleConsolePermissionPolicy(w http.ResponseWriter, r 
 	}
 	switch kind {
 	case "agent":
-		SetDelegationPolicy(RootDB, user, target, value)
+		SetDelegationPolicy(RootDB, user, "", target, value)
+	case "agentfor":
+		if from, tgt, ok := strings.Cut(target, ":"); ok && tgt != "" {
+			SetDelegationPolicy(RootDB, user, from, tgt, value)
+		}
 	case "contact":
 		SetContactPolicy(RootDB, user, "", target, value)
 	case "contactfor":
@@ -450,7 +468,11 @@ func (T *OrchestrateApp) handleConsolePermissionRemove(w http.ResponseWriter, r 
 	}
 	switch kind {
 	case "agent":
-		RemoveDelegationPolicy(RootDB, user, target)
+		RemoveDelegationPolicy(RootDB, user, "", target)
+	case "agentfor":
+		if from, tgt, ok := strings.Cut(target, ":"); ok && tgt != "" {
+			RemoveDelegationPolicy(RootDB, user, from, tgt)
+		}
 	case "contact":
 		RemoveContactPolicy(RootDB, user, "", target)
 	case "contactfor":
@@ -468,8 +490,8 @@ func (T *OrchestrateApp) handleConsolePermissionRemove(w http.ResponseWriter, r 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleConsolePermissionPromote widens one agent's contact grant to every
-// agent the owner has.
+// handleConsolePermissionPromote widens one agent's grant, contact or
+// delegation, to every agent the owner has.
 //
 // The scoped row is the default because a permission and a guardrail have to
 // share a scope, and this is the escape hatch for when that distinction is not
@@ -491,18 +513,25 @@ func (T *OrchestrateApp) handleConsolePermissionPromote(w http.ResponseWriter, r
 		return
 	}
 	kind, target, found := strings.Cut(strings.TrimSpace(r.URL.Query().Get("id")), ":")
-	if !found || kind != "contactfor" {
-		http.Error(w, "only a contact grant scoped to one agent can be promoted", http.StatusBadRequest)
+	if !found || (kind != "contactfor" && kind != "agentfor") {
+		http.Error(w, "only a grant scoped to one agent can be promoted", http.StatusBadRequest)
 		return
 	}
-	aid, handle, ok := strings.Cut(target, ":")
-	if !ok || handle == "" {
+	aid, subject, ok := strings.Cut(target, ":")
+	if !ok || subject == "" {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return
 	}
-	policy := ContactPolicy(RootDB, user, aid, handle)
-	SetContactPolicy(RootDB, user, "", handle, policy)
-	RemoveContactPolicy(RootDB, user, aid, handle)
+	if kind == "agentfor" {
+		policy := DelegationPolicy(RootDB, user, aid, subject)
+		SetDelegationPolicy(RootDB, user, "", subject, policy)
+		RemoveDelegationPolicy(RootDB, user, aid, subject)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	policy := ContactPolicy(RootDB, user, aid, subject)
+	SetContactPolicy(RootDB, user, "", subject, policy)
+	RemoveContactPolicy(RootDB, user, aid, subject)
 	w.WriteHeader(http.StatusNoContent)
 }
 

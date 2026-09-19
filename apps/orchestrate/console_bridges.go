@@ -267,7 +267,7 @@ func (T *OrchestrateApp) handleGrantRevoke(w http.ResponseWriter, r *http.Reques
 	}
 	switch kind {
 	case "agent":
-		SetDelegationPreAuthorized(RootDB, user, target, false)
+		SetDelegationPreAuthorized(RootDB, user, "", target, false)
 	case "contact":
 		SetContactPreAuthorized(RootDB, user, "", target, false)
 	default:
