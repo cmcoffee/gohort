@@ -357,14 +357,21 @@ type consoleAgentRow struct {
 	// ordinary case — an agent running its own mission, which the name already
 	// says. Lifted off the Schedules rail when that was retired; it was the
 	// one thing the rail's rows said that these did not.
-	Runs     string `json:"runs,omitempty"`
-	State    string `json:"state"` // active | paused
-	Schedule string `json:"schedule"`
-	Status   string `json:"status"`
-	NextRun  string `json:"next_run"`
-	ID       string `json:"_id"`               // hidden; row-action target (the agent name)
-	Paused   bool   `json:"_paused"`           // hidden; gates Pause vs Resume per row
-	Broken   bool   `json:"_broken,omitempty"` // hidden; parked and kept — see State for which kind
+	Runs  string `json:"runs,omitempty"`
+	State string `json:"state"` // active | paused
+	// Objective is where this schedule's goal stands, in the judge's own words,
+	// and Failing is whether it is in trouble. Both were readable on the other
+	// two scheduling surfaces and on neither of the standing agent's — so the
+	// one kind whose whole point is to run unattended was the one that said
+	// least about how that was going. See schedule_row_state.go.
+	Objective string `json:"objective,omitempty"`
+	Failing   string `json:"failing,omitempty"`
+	Schedule  string `json:"schedule"`
+	Status    string `json:"status"`
+	NextRun   string `json:"next_run"`
+	ID        string `json:"_id"`               // hidden; row-action target (the agent name)
+	Paused    bool   `json:"_paused"`           // hidden; gates Pause vs Resume per row
+	Broken    bool   `json:"_broken,omitempty"` // hidden; parked and kept — see State for which kind
 	// Relinkable gates the Relink row action: true only when something the
 	// schedule needs is GONE. An objective that stalled needs attempts, not a
 	// new target, and offering it a picker of live agents describes a problem
@@ -410,6 +417,12 @@ func consoleAgentRows(user string, udb Database, agentID string) []consoleAgentR
 		if !sa.NextRun.IsZero() {
 			row.NextRun = sa.NextRun.UTC().Format(time.RFC3339)
 		}
+		// Where the goal stands, and whether the runs are working. A standing
+		// agent has no park bound on a failing streak — it backs off instead,
+		// so the label carries the time it backed off TO rather than a count to
+		// stop at.
+		row.Objective = objectiveStateLabel(standingObjective(sa))
+		row.Failing = scheduleFailingLabel(sa.ConsecutiveFailures, 0, sa.NextAttemptAt, UserLocation(user))
 		// By identity, with the display name as the legacy fallback for runs
 		// recorded before subjects existed (see RunFilter.Subject).
 		if latest := ListRuns(RootDB, user, RunFilter{Limit: 1}.AboutStanding(sa.Name)); len(latest) > 0 {

@@ -23,6 +23,7 @@ package orchestrate
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -56,7 +57,69 @@ func (T *OrchestrateApp) handleConsoleScheduler(w http.ResponseWriter, r *http.R
 	for _, row := range consoleMonitorRows(user, agentID) {
 		out = appendSchedulerRow(out, row, schedSectionMonitors, schedKindMonitor)
 	}
+	sortSchedulerRows(out)
 	writeJSON(w, out)
+}
+
+// sortSchedulerRows puts each section in the order it will happen.
+//
+// The page answers "what is this going to do on its own", and a list in store
+// order answers it for one row at a time: to find out what fires next you read
+// every date on the page. Soonest first, then the ones with no next fire at all
+// — paused, parked, push-triggered — because the things that WILL happen, in
+// the order they will happen, and then the things that will not, is how a
+// schedule reads out loud.
+//
+// Sorting only WITHIN a section: the cards layout draws a heading each time
+// _section changes, so a global sort by time would scatter the three kinds and
+// redraw the headings on nearly every row. The section's own position leads the
+// comparison rather than being a special case inside it — a comparator that
+// calls two rows from different sections "equal" is not an ordering at all, and
+// a sort given one is entitled to produce anything.
+//
+// Ties break on the name, so the order is stable across refreshes rather than
+// shuffling rows somebody is aiming at.
+//
+// Every kind reports its next fire under next_run, in RFC3339 UTC, which sorts
+// correctly as text — a fixed offset and a fixed width being the whole point of
+// that format.
+func sortSchedulerRows(rows []map[string]any) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		if ri, rj := schedSectionRank(rows[i]), schedSectionRank(rows[j]); ri != rj {
+			return ri < rj
+		}
+		ni, nj := schedString(rows[i], "next_run"), schedString(rows[j], "next_run")
+		if (ni == "") != (nj == "") {
+			return ni != "" // a row with a next fire outranks one without
+		}
+		if ni != nj {
+			return ni < nj
+		}
+		return schedString(rows[i], "name") < schedString(rows[j], "name")
+	})
+}
+
+// schedSectionRank is where a row's section sits on the page. An unknown
+// section sorts last rather than first, so a section added later without a rank
+// appears at the bottom instead of displacing the ones people came for.
+func schedSectionRank(m map[string]any) int {
+	switch schedString(m, "_section") {
+	case schedSectionStanding:
+		return 0
+	case schedSectionRecurring:
+		return 1
+	case schedSectionMonitors:
+		return 2
+	}
+	return 3
+}
+
+// schedString reads a converted row's string field; absent or of another type
+// reads as empty, which is what an omitempty field that was blank looks like on
+// the way back.
+func schedString(m map[string]any, key string) string {
+	s, _ := m[key].(string)
+	return s
 }
 
 // The three kinds a row can be. Used only to pick which action flags to

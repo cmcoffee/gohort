@@ -3,6 +3,7 @@ package orchestrate
 import (
 	"strings"
 	"testing"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -251,5 +252,140 @@ func TestEveryMonitorRowOffersTheEditor(t *testing.T) {
 		if got := row["_test_monitor"] == true; got != schedulable {
 			t.Errorf("schedulable=%v: _test_monitor=%v", schedulable, got)
 		}
+	}
+}
+
+// --- what a row says about itself ---------------------------------------
+
+// A streak that is invisible until it parks or backs off leaves a row reading
+// "active", a next run well off its cadence, and nothing joining the two.
+func TestAFailingScheduleSaysSoWhileItIsStillFailing(t *testing.T) {
+	loc := time.UTC
+	if got := scheduleFailingLabel(0, 3, time.Time{}, loc); got != "" {
+		t.Errorf("a healthy row gained a line: %q", got)
+	}
+	// A monitor parks at a bound, so the count has something to count towards.
+	got := scheduleFailingLabel(2, MonitorFailureThreshold(), time.Time{}, loc)
+	if !strings.Contains(got, "2 time(s)") || !strings.Contains(got, "stops at 3") {
+		t.Errorf("a monitor's streak does not say what it is counting towards: %q", got)
+	}
+	// A standing agent or a recurring task backs off instead, so the label
+	// carries where the next attempt went rather than a bound.
+	at := time.Date(2026, 9, 18, 21, 30, 0, 0, time.UTC)
+	got = scheduleFailingLabel(4, 0, at, loc)
+	if strings.Contains(got, "stops at") {
+		t.Errorf("a backing-off schedule claims a park bound it does not have: %q", got)
+	}
+	if !strings.Contains(got, "next try") || !strings.Contains(got, "2026-09-18") {
+		t.Errorf("a backed-off row does not say when to expect the next word: %q", got)
+	}
+}
+
+// A paused, parked or push-triggered monitor has a stale NextCheck on the
+// record. Reporting it would be a promise it is not going to keep.
+func TestOnlyALiveMonitorClaimsANextCheck(t *testing.T) {
+	due := time.Now().Add(time.Hour)
+	live := EventMonitor{Kind: EventKindPoll, NextCheck: due}
+	if monitorNextRun(live) == "" {
+		t.Error("a running monitor reports no next check, so it sorts with the stopped ones")
+	}
+	for _, c := range []struct {
+		name string
+		mon  EventMonitor
+	}{
+		{"paused", EventMonitor{Kind: EventKindPoll, NextCheck: due, Paused: true}},
+		{"parked", EventMonitor{Kind: EventKindPoll, NextCheck: due, Broken: true}},
+		{"push-triggered", EventMonitor{Kind: EventKindWebhook, NextCheck: due}},
+		{"never armed", EventMonitor{Kind: EventKindPoll}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			if got := monitorNextRun(c.mon); got != "" {
+				t.Errorf("claims a next check of %q", got)
+			}
+		})
+	}
+}
+
+// The page answers "what is this going to do on its own". In store order that
+// takes reading every date on it.
+func TestEachSectionReadsInTheOrderItWillHappen(t *testing.T) {
+	row := func(section, name, next string) map[string]any {
+		return map[string]any{"_section": section, "name": name, "next_run": next}
+	}
+	rows := []map[string]any{
+		row(schedSectionStanding, "later", "2026-09-18T21:00:00Z"),
+		row(schedSectionStanding, "paused", ""),
+		row(schedSectionStanding, "soonest", "2026-09-18T09:00:00Z"),
+		row(schedSectionMonitors, "watcher", "2026-09-18T08:00:00Z"),
+		row(schedSectionRecurring, "task", "2026-09-18T23:00:00Z"),
+	}
+	sortSchedulerRows(rows)
+	var got []string
+	for _, r := range rows {
+		got = append(got, r["name"].(string))
+	}
+	want := []string{"soonest", "later", "paused", "task", "watcher"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("order is %v, want %v", got, want)
+	}
+}
+
+// A monitor's 08:00 check is earlier than a standing agent's 09:00 run, and
+// must still be drawn under its own heading: the cards layout starts a section
+// every time _section changes, so a global sort by time would redraw the
+// headings on nearly every row.
+func TestSortingNeverScattersTheSections(t *testing.T) {
+	rows := []map[string]any{
+		{"_section": schedSectionStanding, "name": "a", "next_run": "2026-09-18T09:00:00Z"},
+		{"_section": schedSectionMonitors, "name": "b", "next_run": "2026-09-18T08:00:00Z"},
+		{"_section": schedSectionStanding, "name": "c", "next_run": "2026-09-18T10:00:00Z"},
+	}
+	sortSchedulerRows(rows)
+	seen := map[string]int{}
+	last := ""
+	for _, r := range rows {
+		s := r["_section"].(string)
+		if s != last {
+			seen[s]++
+			last = s
+		}
+	}
+	for section, runs := range seen {
+		if runs != 1 {
+			t.Errorf("%s is drawn %d times, so its heading repeats down the page", section, runs)
+		}
+	}
+}
+
+// Sorting a list somebody is aiming at must not shuffle it between refreshes.
+func TestTwoRowsDueAtTheSameMomentKeepAFixedOrder(t *testing.T) {
+	at := "2026-09-18T09:00:00Z"
+	first := []map[string]any{
+		{"_section": schedSectionStanding, "name": "zulu", "next_run": at},
+		{"_section": schedSectionStanding, "name": "alpha", "next_run": at},
+	}
+	second := []map[string]any{
+		{"_section": schedSectionStanding, "name": "alpha", "next_run": at},
+		{"_section": schedSectionStanding, "name": "zulu", "next_run": at},
+	}
+	sortSchedulerRows(first)
+	sortSchedulerRows(second)
+	if first[0]["name"] != "alpha" || second[0]["name"] != "alpha" {
+		t.Errorf("the same two rows came back in two different orders: %v then %v", first, second)
+	}
+}
+
+// A stamp that will not parse must read as "no next attempt", not as the epoch
+// — which would sort a healthy task to the very top of its section.
+func TestAnUnreadableStampIsNoStampAtAll(t *testing.T) {
+	if got := parseSchedTime("not a time"); !got.IsZero() {
+		t.Errorf("parsed junk as %v", got)
+	}
+	if got := parseSchedTime(""); !got.IsZero() {
+		t.Errorf("parsed empty as %v", got)
+	}
+	want := time.Date(2026, 9, 18, 21, 30, 0, 0, time.UTC)
+	if got := parseSchedTime("2026-09-18T21:30:00Z"); !got.Equal(want) {
+		t.Errorf("parsed %v, want %v", got, want)
 	}
 }

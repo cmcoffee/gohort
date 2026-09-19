@@ -20,8 +20,14 @@ type consoleRecurringRow struct {
 	Fires   string `json:"fires,omitempty"`    // "<fired> / <cap>" so far
 	NextRun string `json:"next_run,omitempty"` // RFC3339 next fire (matches consoleAgentRow)
 	State   string `json:"state,omitempty"`    // visible only when broken ("⚠ needs relink — …")
-	ID      string `json:"_id"`                // hidden; row-action target (the scheduler task id)
-	Broken  bool   `json:"_broken,omitempty"`  // hidden gate (Delete-only on a broken row)
+	// Objective and Failing are the same two lines the other scheduled kinds
+	// carry (schedule_row_state.go). The objective used to live in State,
+	// which meant a task that had both a goal and a park could only say one of
+	// them — and State is the cell that answers "is it running".
+	Objective string `json:"objective,omitempty"`
+	Failing   string `json:"failing,omitempty"`
+	ID        string `json:"_id"`               // hidden; row-action target (the scheduler task id)
+	Broken    bool   `json:"_broken,omitempty"` // hidden gate (Delete-only on a broken row)
 	// Relinkable gates the Relink row action: only a schedule whose target is
 	// GONE has anything to relink. A stalled objective gets Resume instead.
 	Relinkable bool `json:"_relinkable,omitempty"`
@@ -65,15 +71,15 @@ func consoleRecurringRows(user, agentID string) []consoleRecurringRow {
 			NextRun: rt.RunAt,
 			ID:      rt.TaskID,
 		}
-		// Where an objective stands, for the rows that have a goal. Broken wins
-		// below: a parked task's reason is the more urgent thing to read, and
-		// for a stalled objective it already names the goal's last verdict.
-		row.State = objectiveStateLabel(rt.Payload.objective())
-		// A task with no objective has no state line, but it can still have a
-		// next run that is not on its cadence — an attempt that asked to wait, or
-		// a backoff after repeated failures. Either way the row says why, because
-		// the alternative is a time nobody chose and nothing explains.
-		if row.State == "" {
+		// Where an objective stands, for the rows that have a goal.
+		row.Objective = objectiveStateLabel(rt.Payload.objective())
+		// A next run that is not on the cadence needs a reason, or it is a time
+		// nobody chose and nothing explains. Two things move one: a failing
+		// streak, which Failing reports with its count, and an attempt that
+		// asked to wait, which only shows up here when there is no objective
+		// line already carrying it.
+		row.Failing = scheduleFailingLabel(rt.Payload.ConsecutiveFailures, 0, parseSchedTime(rt.Payload.NextAttemptAt), UserLocation(user))
+		if row.Objective == "" && row.Failing == "" {
 			if w := strings.TrimSpace(rt.Payload.NextAttemptWhy); w != "" {
 				row.State = "waiting: " + truncateObs(w, 120)
 			}

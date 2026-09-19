@@ -1191,6 +1191,11 @@ func executeHTTPPoll(ctx context.Context, db Database, m EventMonitor) {
 // self-heals on the next successful check.
 const monitorFailureThreshold = 3
 
+// MonitorFailureThreshold is that bound, for the surfaces that report a streak.
+// A count of failed checks with nothing to count towards says a monitor is
+// unhappy without saying whether it is about to stop.
+func MonitorFailureThreshold() int { return monitorFailureThreshold }
+
 // notePollFailure records one failed check and parks the monitor when the
 // streak reaches the threshold. It reports whether it parked.
 //

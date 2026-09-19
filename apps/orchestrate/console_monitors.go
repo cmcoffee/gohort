@@ -350,13 +350,26 @@ func sortedKeys(m map[string]*string) []string {
 }
 
 type consoleMonitorRow struct {
-	Name    string `json:"name"`
-	Kind    string `json:"kind"`
-	State   string `json:"state"`
-	Detail  string `json:"detail"`
-	Script  string `json:"format_script"` // the watch format_script, if any (so you can SEE it)
-	Checked string `json:"last_checked"`  // when the poll last ran (liveness)
-	Seen    string `json:"last_seen"`     // last response/value it hashed/observed
+	Name  string `json:"name"`
+	Kind  string `json:"kind"`
+	State string `json:"state"`
+	// Objective and Failing are the same two lines the other scheduled kinds
+	// carry (schedule_row_state.go). The objective used to be appended to
+	// Detail, where it sat behind the url, the operator and the threshold —
+	// the one part of that string that changes on its own, at the end of the
+	// part that never does.
+	Objective string `json:"objective,omitempty"`
+	Failing   string `json:"failing,omitempty"`
+	Detail    string `json:"detail"`
+	Script    string `json:"format_script"` // the watch format_script, if any (so you can SEE it)
+	// NextRun is when the next check is due, under the same key the other two
+	// scheduled kinds use: a monitor's check IS its scheduled run, and the
+	// merged Scheduler page orders every section by this one field. Empty for
+	// a push-triggered monitor and for one at rest, neither of which has a
+	// next anything.
+	NextRun string `json:"next_run,omitempty"`
+	Checked string `json:"last_checked"` // when the poll last ran (liveness)
+	Seen    string `json:"last_seen"`    // last response/value it hashed/observed
 	Last    string `json:"last_fired"`
 	ID      string `json:"_id"`     // hidden; row-action target (the monitor name)
 	Paused  bool   `json:"_paused"` // hidden; gates Pause vs Resume per row
@@ -477,11 +490,6 @@ func consoleMonitorRows(user, agentID string) []consoleMonitorRow {
 			if lbl := m.FireLabel(); lbl != "" {
 				detail += " · " + lbl
 			}
-			// And where its stopping condition stands, in the checker's own
-			// words — the same label the other two scheduling surfaces show.
-			if lbl := objectiveStateLabel(monitorObjective(m)); lbl != "" {
-				detail += " · " + lbl
-			}
 			// A monitor that has fired and whose condition never went false
 			// again is running without being able to do anything. It is not
 			// stopped, so it gets no stop mark — it gets told.
@@ -505,6 +513,13 @@ func consoleMonitorRows(user, agentID string) []consoleMonitorRow {
 		// click-to-expand toggle, so send it whole rather than truncating here.
 		script := strings.TrimSpace(m.FormatScript)
 		rows = append(rows, consoleMonitorRow{Name: m.Name, Kind: m.Kind, State: state, Detail: detail, Script: script, Checked: checked, Seen: seen, Last: last, ID: m.Name, Paused: m.Paused, Schedulable: IsScheduledEventKind(m.Kind), Broken: m.Broken,
+			// Where its stopping condition stands, in the checker's own words.
+			Objective: objectiveStateLabel(monitorObjective(m)),
+			// A monitor does not back off, it PARKS: the streak counts towards
+			// a bound, so the label says what it is counting towards rather
+			// than leaving a rising number to mean whatever the reader guesses.
+			Failing: scheduleFailingLabel(m.ConsecutiveFailures, MonitorFailureThreshold(), time.Time{}, nil),
+			NextRun: monitorNextRun(m),
 			// The monitor vocabulary's own answer to core.RelinkFixesIt: a
 			// monitor separates "the thing it needs is gone" (relink) from
 			// "everything resolves and the checks keep failing" (does not), and
