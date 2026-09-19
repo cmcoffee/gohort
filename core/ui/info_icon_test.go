@@ -8,6 +8,7 @@ package ui
 
 import (
 	"encoding/json"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -66,6 +67,8 @@ func TestEveryHelpSurfaceCarriesItsDetail(t *testing.T) {
 		"a checklist option":    "if (o.detail) {",
 		"a sections slot":       "[s.spec.help || '']), s.spec.detail)",
 		"a field with no label": "if (f.detail && !f.label) {",
+		"a page section":        "window.uiInfoIcon(s.detail)",
+		"a no-chrome section":   "s.title ? s.detail : ''",
 	} {
 		if !strings.Contains(js, want) {
 			t.Errorf("%s drops its detail: %q missing", what, want)
@@ -98,5 +101,37 @@ func TestDetailRidesTheWire(t *testing.T) {
 	b, _ := json.Marshal(FormField{Field: "f"})
 	if strings.Contains(string(b), "detail") {
 		t.Errorf("an empty Detail should be omitted, got %s", b)
+	}
+}
+
+// Section is not marshalled directly — it is copied into the page config the
+// browser parses — so the field is only real if that copy carries it.
+func TestASectionsDetailReachesThePage(t *testing.T) {
+	render := func(p Page) string {
+		w := httptest.NewRecorder()
+		if err := p.Render(w); err != nil {
+			t.Fatalf("render: %v", err)
+		}
+		return w.Body.String()
+	}
+	html := render(Page{
+		Title: "T",
+		Sections: []Section{{
+			Title:    "External credentials",
+			Subtitle: "The APIs you've been granted.",
+			Detail:   "The long half, behind the icon.",
+		}},
+	})
+	if !strings.Contains(html, "The long half, behind the icon.") {
+		t.Fatal("a Section's Detail never reaches the page config, so the icon has nothing to show")
+	}
+	if !strings.Contains(html, `"detail"`) {
+		t.Error("Detail is not serialized under the key the runtime reads")
+	}
+	// Absent by default: a page of ordinary sections should not gain a key per
+	// section for a field none of them set.
+	plain := render(Page{Title: "T", Sections: []Section{{Title: "Plain"}}})
+	if strings.Contains(plain, `"detail"`) {
+		t.Error("an empty Detail should be omitted from the page config")
 	}
 }

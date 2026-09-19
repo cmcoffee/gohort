@@ -206,6 +206,7 @@ func (p Page) ConfigJSON() (json.RawMessage, error) {
 		cfg.Sections = append(cfg.Sections, sectionConfig{
 			Title:     s.Title,
 			Subtitle:  s.Subtitle,
+			Detail:    s.Detail,
 			Body:      marshalComponent(s.Body),
 			NoChrome:  s.NoChrome,
 			Collapsed: s.Collapsed,
@@ -318,6 +319,10 @@ type Section struct {
 	Subtitle string
 	Body     Component
 	NoChrome bool
+	// Detail is the long explanation, behind an ⓘ icon on the section's
+	// title (or its subtitle, when it has no title). Subtitle stays one
+	// scannable line; see FormField.Detail for the split and why.
+	Detail string
 	// Collapsed renders the section closed by default, showing just
 	// its title bar with a click-to-expand caret. Use for long
 	// reference sections (LLM Routing, Cost Sources) that an operator
@@ -386,6 +391,7 @@ type navLinkConfig struct {
 type sectionConfig struct {
 	Title     string          `json:"title"`
 	Subtitle  string          `json:"subtitle,omitempty"`
+	Detail    string          `json:"detail,omitempty"`
 	Body      json.RawMessage `json:"body,omitempty"`
 	NoChrome  bool            `json:"no_chrome,omitempty"`
 	Collapsed bool            `json:"collapsed,omitempty"`

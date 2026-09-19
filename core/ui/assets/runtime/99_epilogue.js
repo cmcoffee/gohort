@@ -621,8 +621,17 @@
     function bareSectionHead(s, into) {
       if (!s.title && !s.subtitle) return;
       var head = el('div', {class: 'ui-section-bare-head'});
-      if (s.title) head.appendChild(el('div', {class: 'ui-section-h'}, [el('span', {text: s.title})]));
-      if (s.subtitle) head.appendChild(el('div', {class: 'ui-section-sub'}, [s.subtitle]));
+      if (s.title) {
+        head.appendChild(window.uiAttachInfo(
+          el('div', {class: 'ui-section-h'}, [el('span', {text: s.title})]),
+          s.title ? s.detail : ''));
+      }
+      if (s.subtitle) {
+        // The icon goes on the TITLE when there is one. A section with only a
+        // subtitle has nowhere else to put it.
+        head.appendChild(window.uiAttachInfo(
+          el('div', {class: 'ui-section-sub'}, [s.subtitle]), s.title ? '' : s.detail));
+      }
       into.appendChild(head);
     }
     // markMounted stamps every element a section mounted with data-ui-section,
@@ -683,6 +692,7 @@
       if (s.title) {
         var headerWrap = el('div', {class: 'ui-section-h'}, [
           el('span', {text: s.title}),
+          window.uiInfoIcon(s.detail),
           el('span', {class: 'ui-section-h-r'}),
         ]);
         if (collapsed) {
@@ -705,7 +715,11 @@
           });
         }
       }
-      if (s.subtitle) inner.appendChild(el('div', {class: 'ui-section-sub'}, [s.subtitle]));
+      if (s.subtitle || (s.detail && !s.title)) {
+        inner.appendChild(window.uiAttachInfo(
+          el('div', {class: 'ui-section-sub'}, [s.subtitle || '']),
+          s.title ? '' : s.detail));
+      }
       if (s.body) mountComponent(s.body, inner);
       if (collapsed) inner.style.display = 'none';
       section.appendChild(inner);

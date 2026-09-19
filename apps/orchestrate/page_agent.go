@@ -583,7 +583,8 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	if id != "" && !subAgent {
 		sections = append(sections, ui.Section{
 			Title:    "External credentials",
-			Subtitle: "The APIs you've been granted. All are available to this agent by default; uncheck any this agent shouldn't reach, that drops the tools that dispatch through them from its kit. Secured credentials aren't listed: their access follows their tool bindings, not per-agent scope.",
+			Subtitle: "The APIs you've been granted. All are on by default.",
+			Detail:   "Uncheck any this agent should not reach; that drops the tools which dispatch through them from its kit.\n\nSecured credentials are not listed. Their access follows their tool bindings, not per-agent scope.",
 			Body: ui.ChipPicker{
 				Mode:          "attach",
 				OptionsSource: "../api/agent-credentials?id=" + id,
