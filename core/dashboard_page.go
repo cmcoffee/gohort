@@ -12,10 +12,15 @@ import (
 
 // notifyPanelHTML is the bell's dropdown and the script that fills it.
 //
-// Plain markup and a fetch, not a component: the dashboard is served before any
-// app's runtime exists and has no bundle to hang a component on. It polls on
-// the same timer the live badge already uses, so a bell that lights up while
-// you are looking at the page does so without a second clock.
+// Plain markup and a fetch, not a component: the dashboard is hand-rolled HTML
+// and does not load the ui runtime, so it has no bundle to hang one on.
+//
+// This is therefore a SECOND presentation of the same thing the shared page
+// header renders (core/ui/assets/runtime/71_notice_bell.js), and the two will
+// drift. What they must not drift on lives in neither of them: the store, the
+// fold-with-a-count rule and the read semantics are all in core/notices, and
+// both of these only render what /api/notifications returns. Keep it that way,
+// and a difference between them stays cosmetic.
 const notifyPanelHTML = `<div class="notify-panel" id="notify-panel">
   <div class="notify-head"><span>Notifications</span><button type="button" id="notify-all">Mark all read</button></div>
   <div id="notify-list"><div class="notify-empty">Nothing yet.</div></div>

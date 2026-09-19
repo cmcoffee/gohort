@@ -5659,3 +5659,50 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
 }
 .ui-suggest-pick:hover { border-color: var(--accent, #6366f1); }
 .ui-suggest-pick.chosen { background: var(--accent, #6366f1); color: #fff; border-color: transparent; }
+
+/* Notifications bell — shares the header row with the live pill, and stays as
+ * quiet as it does. Muted until there is something unread; the count appears
+ * only then, so a quiet bell reads as quiet rather than as broken. */
+.ui-bell-wrap { position: relative; }
+.ui-bell {
+  display: inline-flex; align-items: center;
+  background: none; border: 0; padding: 0.2rem 0.3rem;
+  color: var(--text-mute); opacity: 0.55; cursor: pointer;
+  font-size: 0.95rem; font-family: inherit; line-height: 1;
+  -webkit-tap-highlight-color: transparent;
+}
+.ui-bell:hover { opacity: 0.85; }
+.ui-bell.unread { opacity: 1; }
+.ui-bell-count {
+  display: none; margin-left: 0.2rem; min-width: 1.05rem; padding: 0 0.28rem;
+  border-radius: 999px; background: var(--accent); color: #fff;
+  font-size: 0.65rem; font-weight: 700; line-height: 1.05rem; text-align: center;
+}
+.ui-bell.unread .ui-bell-count { display: inline-block; }
+.ui-bell-panel {
+  position: absolute; right: 0; top: calc(100% + 0.4rem); z-index: 60;
+  width: min(26rem, calc(100vw - 2rem)); max-height: 60vh; overflow-y: auto;
+  background: var(--bg-1); border: 1px solid var(--border);
+  border-radius: 0.5rem; box-shadow: 0 8px 24px rgba(0,0,0,0.28);
+  text-align: left;
+}
+.ui-bell-head {
+  display: flex; justify-content: space-between; align-items: center; gap: 0.6rem;
+  padding: 0.45rem 0.65rem; border-bottom: 1px solid var(--border);
+  font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em;
+  color: var(--text-mute); text-transform: uppercase;
+}
+.ui-bell-empty { padding: 0.9rem 0.65rem; color: var(--text-mute); font-size: 0.82rem; }
+.ui-bell-item { padding: 0.55rem 0.65rem; border-bottom: 1px solid var(--border); }
+.ui-bell-item:last-child { border-bottom: 0; }
+.ui-bell-item.unread { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.ui-bell-title { font-size: 0.84rem; color: var(--text-hi); }
+.ui-bell-body { font-size: 0.78rem; color: var(--text-mute); margin-top: 0.2rem; }
+.ui-bell-meta {
+  display: flex; gap: 0.6rem; align-items: center; margin-top: 0.3rem;
+  font-size: 0.7rem; color: var(--text-mute);
+}
+.ui-bell-act {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  color: var(--accent); font-size: 0.7rem; font-family: inherit;
+}

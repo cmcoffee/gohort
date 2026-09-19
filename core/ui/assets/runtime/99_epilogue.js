@@ -337,6 +337,15 @@
       liveWrap.appendChild(liveBtn);
       liveWrap.appendChild(liveMenu);
       header.appendChild(liveWrap);
+      // Notifications — the same shape as the pill beside it, and beside it for
+      // the same reason: what is happening now, and what happened while you
+      // were not here. Deployment-wide rather than one app's, so it rides the
+      // shared header on every page the framework renders.
+      //
+      // Muted until there is something unread. A bell that is always lit is one
+      // nobody reads, and the whole value of this is that the quiet state is
+      // informative.
+      header.appendChild(uiNoticeBell());
       var liveItems = [];
       // The server resolves each entry's destination and applies the
       // viewer's app access, so an empty href here means "no way back" —
