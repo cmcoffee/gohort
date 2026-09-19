@@ -57,7 +57,8 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Message bridges",
-				Subtitle: "PUSH sources: a messaging connector delivers inbound into a channel. iMessage runs as the gohort-desktop daemon; others (Telegram, Slack) are server-side. Toggle one off to pause just that bridge; status shows the last check-in.",
+				Subtitle: "PUSH sources: a messaging connector delivers inbound into a channel.",
+				Detail:   "iMessage runs as the gohort-desktop daemon; others, Telegram and Slack, are server-side. Toggle one off to pause just that bridge; status shows the last check-in.",
 				Body: ui.Table{
 					Source: "/bridges/api/bridges",
 					RowKey: "id",
@@ -87,7 +88,8 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 				// storage. (Poll → CHANNEL target and unified creation are
 				// Stages B/C; today a poll bridge wakes its agent's thread.)
 				Title:    "Polling bridges",
-				Subtitle: "POLL sources: gohort calls an API on a schedule (through a saved credential) and, when the response changes, delivers into the target, a channel (its agent reacts in that conversation) or an agent's own thread. Agents create these with the bridge tool; pause or delete one here. Zero LLM cost until something changes.",
+				Subtitle: "POLL sources: gohort calls an API on a schedule and delivers what changed.",
+				Detail:   "The call goes through a saved credential, and when the response changes it delivers into the target: a channel, where its agent reacts in that conversation, or an agent's own thread.\n\nAgents create these with the bridge tool; pause or delete one here. Zero LLM cost until something changes.",
 				Body: ui.Table{
 					Source: "/orchestrate/api/console/bridges",
 					RowKey: "name",
@@ -147,7 +149,8 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "Conversations",
-				Subtitle: "The chats you're managing. Use Add conversation to pick a contact who's messaged you (or enter a number), then Connect it to an agent to have it answered.",
+				Subtitle: "The chats you're managing.",
+				Detail:   "Use Add conversation to pick a contact who has messaged you, or enter a number, then Connect it to an agent to have it answered.",
 				Body: ui.Stack{Children: []ui.Component{
 					// Add lives in the conversations menu, not a section below. The
 					// modal offers two paths: pick an incoming contact (with their
@@ -276,7 +279,8 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "API keys",
-				Subtitle: "Bridge keys authenticate connectors and the MCP server. Minting one shows the secret ONCE: copy it then. Put a key in a connector's config or the MCP client's X-API-Key header. (The iMessage desktop daemon auto-registers its own key, so you don't mint one for it here.)",
+				Subtitle: "Bridge keys authenticate connectors and the MCP server.",
+				Detail:   "Minting one shows the secret ONCE, so copy it then. Put a key in a connector's config or the MCP client's X-API-Key header. The iMessage desktop daemon auto-registers its own key, so you do not mint one for it here.",
 				Body: ui.KeyManager{
 					ListURL:   "/bridges/api/keys",
 					CreateURL: "/bridges/api/keys",
@@ -287,7 +291,8 @@ func (T *Bridges) handleDashboard(w http.ResponseWriter, r *http.Request) {
 			},
 			{
 				Title:    "MCP Server",
-				Subtitle: "Lets an external MCP client (e.g. Claude Desktop) reach your agents over a JSON-RPC endpoint, a tool-API, not a messaging bridge: the client calls tools/call to dispatch to an agent. It authenticates with one of the bridge keys above in the X-API-Key header.",
+				Subtitle: "Lets an external MCP client reach your agents over a JSON-RPC endpoint.",
+				Detail:   "A tool-API, not a messaging bridge: the client, say Claude Desktop, calls tools/call to dispatch to an agent. It authenticates with one of the bridge keys above, in the X-API-Key header.",
 				Body: ui.DisplayPanel{
 					Source: "/mcp/status",
 					Pairs: []ui.DisplayPair{

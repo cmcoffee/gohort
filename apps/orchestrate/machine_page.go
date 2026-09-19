@@ -89,7 +89,7 @@ func machinesExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 				ui.ModalButton{
 					Label:    "Import…",
 					Title:    "Bring in a machine somebody exported",
-					Subtitle: "Pick a .machine.json recipe. It lands as a machine of your own (a copy, with its own id), and opens in the editor.",
+					Subtitle: "Pick a .machine.json recipe. It lands as a machine of your own, a copy with its own id, and opens in the editor.",
 					Width:    "480px",
 					Body: ui.FormPanel{
 						PostURL:        "/orchestrate/api/machines/import",
@@ -376,7 +376,8 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 		{
 			Title:    "Try it",
 			Wide:     true,
-			Subtitle: "Hold a rehearsal conversation with it: send a message, watch where it goes, then keep sending, later turns resume the parked step, so you can watch a guard fire or a handoff happen. Real driver, no tools, and the step it lands in is not run: it shows the PATH, not the answer.",
+			Subtitle: "Hold a rehearsal conversation with it: send a message and watch where it goes.",
+			Detail:   "Keep sending and later turns resume the parked step, so you can watch a guard fire or a handoff happen.\n\nReal driver, no tools, and the step it lands in is not run: it shows the PATH, not the answer.",
 			Body:     machineTryPanel(def),
 		},
 		// The real thing, next to the rehearsal, and only for a machine
@@ -396,9 +397,10 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 		// page the form is just a form: its errors render inline,
 		// next to the box you typed in.
 		{
-			Title: "Describe a change",
-			Wide:  true,
-			Subtitle: "Say what should be different and the machine is redrafted with that change made, keeping every step and prompt it does not touch. " +
+			Title:    "Describe a change",
+			Wide:     true,
+			Subtitle: "Say what should be different and the machine is redrafted with that change made.",
+			Detail: "Every step and prompt it does not touch is kept." +
 				"The version you have now is kept, so you can put it back.",
 			Body: ui.Stack{Children: []ui.Component{
 				ui.FormPanel{
@@ -486,8 +488,9 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 	// Share with users — the owner's decision, so the section exists only on
 	// the owner's page. A recipient gets the note on theirs instead.
 	page.Sections = append(page.Sections, ui.Section{
-		Title: "Share with users",
-		Subtitle: "Let specific other users read and run this machine. They run YOUR procedure against THEIR agents, tools and credentials: nothing of yours travels with the share, and nothing of theirs comes back. " +
+		Title:    "Share with users",
+		Subtitle: "Let specific other users read and run this machine.",
+		Detail: "They run YOUR procedure against THEIR agents, tools and credentials: nothing of yours travels with the share, and nothing of theirs comes back." +
 			"Editing stays yours: a recipient can run it, put it on a timetable, hand it to their agents, and take a copy, not change it. Empty = private to you. An admin can audit or revoke shares.",
 		Body: ui.ACLPicker(ui.ACLPickerConfig{
 			OptionsSource: "api/user-candidates",
@@ -567,7 +570,8 @@ func (T *OrchestrateApp) serveSharedMachinePage(w http.ResponseWriter, r *http.R
 	page.Sections = append(page.Sections, ui.Section{
 		Title:    "Try it",
 		Wide:     true,
-		Subtitle: "Hold a rehearsal conversation with it: send a message and watch where it goes. Real driver, no tools, and the step it lands in is not run: it shows the PATH, not the answer.",
+		Subtitle: "Hold a rehearsal conversation with it: send a message and watch where it goes.",
+		Detail:   "Real driver, no tools, and the step it lands in is not run: it shows the PATH, not the answer.",
 		Body:     machineTryPanel(def),
 	})
 	page.Sections = append(page.Sections, unattendedRunSection(def))
@@ -632,9 +636,10 @@ func (T *OrchestrateApp) serveMachineDescribePage(w http.ResponseWriter, r *http
 		BackURL:   "/extensions",
 		Nav:       HubNav("/extensions"),
 		Sections: []ui.Section{{
-			Title: "What should it do?",
-			Wide:  true,
-			Subtitle: "Say what kinds of turns arrive and what should happen to each: what the conversation works out first, what it decides between, where it settles. " +
+			Title:    "What should it do?",
+			Wide:     true,
+			Subtitle: "Say what kinds of turns arrive and what should happen to each.",
+			Detail: "What the conversation works out first, what it decides between, where it settles." +
 				"A draft machine opens in the editor for you to adjust; anything the draft got wrong is waiting in its checklist, which beats an empty editor.",
 			Body: ui.FormPanel{
 				PostURL:     "/orchestrate/api/machines/draft",

@@ -9,7 +9,8 @@ func (a *AdminApp) llmSections() []ui.Section {
 	return []ui.Section{
 		{
 			Title:    "Worker LLM",
-			Subtitle: "The primary / local model most work runs on. Applies immediately on save (the live LLM is rebuilt: no restart). API key is stored encrypted; leave it blank to keep the current one.",
+			Subtitle: "The primary, local model most work runs on.",
+			Detail:   "Applies immediately on save, because the live LLM is rebuilt and nothing restarts. The API key is stored encrypted; leave it blank to keep the current one.",
 			Body: ui.FormPanel{
 				Source: "api/worker-llm",
 				Fields: []ui.FormField{
@@ -61,7 +62,8 @@ func (a *AdminApp) llmSections() []ui.Section {
 		},
 		{
 			Title:    "Lead LLM",
-			Subtitle: "The precision / remote model for high-stakes stages (routing sends \"lead\" stages here). Provider \"(use primary)\" reuses the worker. Applies immediately on save (no restart); key stored encrypted, blank keeps current.",
+			Subtitle: "The precision, remote model for high-stakes stages.",
+			Detail:   "Routing sends \"lead\" stages here. Provider \"(use primary)\" reuses the worker. Applies immediately on save with no restart; the key is stored encrypted, and blank keeps the current one.",
 			Body: ui.FormPanel{
 				Source: "api/lead-llm",
 				Fields: []ui.FormField{
@@ -102,8 +104,9 @@ func (a *AdminApp) llmSections() []ui.Section {
 			},
 		},
 		{
-			Title: "Model Privacy",
-			Subtitle: "Some stages handle material that must not reach a third-party model (SSH credentials, log contents, system facts), so they are pinned to the worker tier and cannot escalate. " +
+			Title:    "Model Privacy",
+			Subtitle: "Some stages are pinned to the worker tier and cannot escalate.",
+			Detail: "They handle material that must not reach a third-party model: SSH credentials, log contents, system facts." +
 				"That pin exists because the lead is normally remote. If it is not, the pin costs you the better reasoner on exactly the work that needs it most.",
 			Body: ui.FormPanel{
 				Source: "api/llm-privacy",
@@ -120,7 +123,8 @@ func (a *AdminApp) llmSections() []ui.Section {
 		},
 		{
 			Title:    "LLM Routing",
-			Subtitle: "Pick which tier handles each pipeline stage, and whether it reasons. \"lead\" uses the precision (remote) LLM; \"worker\" uses the local model; the \"(thinking)\" variant of either enables extended reasoning on that tier. Tier and thinking are independent: a stage escalated to lead keeps thinking only if you pick \"lead (thinking)\". Budget caps thinking tokens for that stage (0 = stage default). Private stages cannot route to lead unless Model Privacy is turned on above.",
+			Subtitle: "Pick which tier handles each pipeline stage, and whether it reasons.",
+			Detail:   "\"lead\" uses the precision (remote) LLM; \"worker\" uses the local model; the \"(thinking)\" variant of either enables extended reasoning on that tier.\n\nTier and thinking are independent: a stage escalated to lead keeps thinking only if you pick \"lead (thinking)\". Budget caps thinking tokens for that stage, where 0 is the stage default.\n\nA private stage cannot route to lead unless Model Privacy is turned on above.",
 			Body: ui.Table{
 				Source: "api/routing",
 				RowKey: "key",
@@ -170,7 +174,8 @@ func (a *AdminApp) llmSections() []ui.Section {
 		},
 		{
 			Title:    "Ollama Proxy",
-			Subtitle: "Expose gohort as a fair-queued Ollama endpoint. Point Ollama clients at gohort's port instead of Ollama's; they share the local model scheduler. This is a separate listener on its own port: it is not behind the dashboard login, the admin IP allowlist, or TLS, so what it is bound to is what decides who can reach it. Requires restart when the port or interface changes.",
+			Subtitle: "Expose gohort as a fair-queued Ollama endpoint.",
+			Detail:   "Point Ollama clients at gohort's port instead of Ollama's and they share the local model scheduler.\n\nThis is a separate listener on its own port. It is not behind the dashboard login, the admin IP allowlist, or TLS, so what it is bound to is what decides who can reach it. Changing the port or interface requires a restart.",
 			Body: ui.FormPanel{
 				Source: "api/settings",
 				Fields: []ui.FormField{
@@ -194,7 +199,8 @@ func (a *AdminApp) llmSections() []ui.Section {
 		},
 		{
 			Title:    "Agent Loop Tuning",
-			Subtitle: "Per-round behavior of the agent loop. Lower the history budget when long sessions push prefill latency or thrash the LLM's prompt cache; raise it when you need the model to remember more context across rounds.",
+			Subtitle: "Per-round behavior of the agent loop.",
+			Detail:   "Lower the history budget when long sessions push prefill latency or thrash the LLM's prompt cache; raise it when you need the model to remember more context across rounds.",
 			Body: ui.FormPanel{
 				Source: "api/agent-loop-tuning",
 				Fields: []ui.FormField{
@@ -207,7 +213,8 @@ func (a *AdminApp) llmSections() []ui.Section {
 		},
 		{
 			Title:    "Local Model Scheduler",
-			Subtitle: "Concurrent-request caps for local LLM backends. Default 1 (strict serial). Raise only when the backend supports parallel requests. Applies immediately on save (the live LLM is rebuilt).",
+			Subtitle: "Concurrent-request caps for local LLM backends. Default 1, strictly serial.",
+			Detail:   "Raise it only when the backend supports parallel requests. Applies immediately on save, because the live LLM is rebuilt.",
 			Body: ui.FormPanel{
 				Source: "api/local-scheduler",
 				Fields: []ui.FormField{

@@ -182,7 +182,8 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 		Sections: []ui.Section{{
 			Title:    "The pipeline",
 			Wide:     true,
-			Subtitle: "Its name and what it is for. Both are what an agent reads when deciding whether to call it, so the description is not decoration.",
+			Subtitle: "Its name and what it is for.",
+			Detail:   "Both are what an agent reads when deciding whether to call it, so the description is not decoration.",
 			Body: ui.Stack{Children: []ui.Component{
 				ui.FormPanel{
 					Source:  "/orchestrate/api/pipelines/" + url_(def.ID),
@@ -280,9 +281,10 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 		// door that cannot show you why is the wrong door for it
 		// (v0.6.220).
 		ui.Section{
-			Title: "Describe a change",
-			Wide:  true,
-			Subtitle: "Say what should be different and the pipeline is redrafted with that change made, keeping every stage and prompt it does not touch. " +
+			Title:    "Describe a change",
+			Wide:     true,
+			Subtitle: "Say what should be different and the pipeline is redrafted with that change made.",
+			Detail: "Every stage and prompt it does not touch is kept." +
 				"A revision that would not run is refused rather than saved, and the version you have now is kept either way.",
 			Body: ui.Stack{Children: []ui.Component{
 				ui.FormPanel{
@@ -334,7 +336,8 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 		ui.Section{
 			Title:    "What it will do",
 			Wide:     true,
-			Subtitle: "Worked out from the definition, without running anything: the order, what each stage is handed, and what a run costs before you pay for one.",
+			Subtitle: "Worked out from the definition, without running anything.",
+			Detail:   "The order, what each stage is handed, and what a run costs before you pay for one.",
 			Body: ui.Card{
 				HTML:      planHTML(def),
 				Source:    pipelineBlockURL(def.ID, "plan"),
@@ -357,8 +360,9 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 	// picker you cannot use is a page that has to explain itself twice.
 	if mine {
 		page.Sections = append(page.Sections, ui.Section{
-			Title: "Share with users",
-			Subtitle: "Let specific other users read and run this pipeline. They run YOUR recipe against THEIR agents, tools and credentials: nothing of yours travels with the share, and nothing of theirs comes back. " +
+			Title:    "Share with users",
+			Subtitle: "Let specific other users read and run this pipeline.",
+			Detail: "They run YOUR recipe against THEIR agents, tools and credentials: nothing of yours travels with the share, and nothing of theirs comes back." +
 				"Editing stays yours: a recipient can run it and take a copy, not change it. Empty = private to you. An admin can audit or revoke shares.",
 			Body: ui.ACLPicker(ui.ACLPickerConfig{
 				OptionsSource: "api/user-candidates",
@@ -389,9 +393,10 @@ func (T *OrchestrateApp) servePipelineDescribePage(w http.ResponseWriter, r *htt
 		BackURL:   "/extensions",
 		Nav:       HubNav("/extensions"),
 		Sections: []ui.Section{{
-			Title: "What should it do?",
-			Wide:  true,
-			Subtitle: "Say what the work is, start to finish: what it works out first, what it does with each piece, what it produces. " +
+			Title:    "What should it do?",
+			Wide:     true,
+			Subtitle: "Say what the work is, start to finish.",
+			Detail: "What it works out first, what it does with each piece, what it produces." +
 				"A draft opens for you to adjust. A pipeline that would not run is refused rather than saved, so an empty result means the draft failed, not that it vanished.",
 			Body: ui.FormPanel{
 				PostURL:     "/orchestrate/api/pipelines/draft",

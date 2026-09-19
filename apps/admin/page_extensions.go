@@ -9,7 +9,8 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 	return []ui.Section{
 		{
 			Title:    "MCP Servers",
-			Subtitle: "Remote Model Context Protocol servers (e.g. Confluence) the gohort SERVER connects to over HTTP. \"Expose tools\" registers each server's tools as <name>.<tool> for agents; \"Expose as a reference source\" makes it selectable in writer/research source pickers. Bearer tokens are stored encrypted; secure_api mode mints + refreshes an OAuth2 bearer per request from an API Credential. Test verifies reachability + auth before you enable.",
+			Subtitle: "Remote Model Context Protocol (MCP) servers this server connects to, such as Confluence.",
+			Detail:   "The gohort SERVER connects to them over HTTP.\n\n\"Expose tools\" registers each server's tools as <name>.<tool> for agents. \"Expose as a reference source\" makes it selectable in writer and research source pickers.\n\nBearer tokens are stored encrypted; secure_api mode mints and refreshes an OAuth2 bearer per request from an API Credential. Test verifies reachability and auth before you enable.",
 			Body: ui.Stack{
 				Children: []ui.Component{
 					ui.Table{
@@ -102,7 +103,8 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 		},
 		{
 			Title:    "MCP Tools (exposed to external clients)",
-			Subtitle: "App-contributed tools on gohort's OWN inbound MCP endpoint (/mcp/): what an external MCP client (e.g. Claude Desktop, authenticated with a bridge key) can call to drive your apps. Each tool is OFF by default; expose only the ones you want reachable from outside. The built-in ask_agent / recent_results tools are always available.",
+			Subtitle: "App-contributed tools on gohort's own inbound MCP endpoint (/mcp/).",
+			Detail:   "This is what an external MCP client, say Claude Desktop authenticated with a bridge key, can call to drive your apps. Each tool is OFF by default: expose only the ones you want reachable from outside. The built-in ask_agent and recent_results tools are always available.",
 			Body: ui.Stack{
 				Children: []ui.Component{
 					ui.Table{
@@ -125,7 +127,8 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 		},
 		{
 			Title:    "Bridges",
-			Subtitle: "Credential-polling bridges agents have created (poll an API on a schedule via a registered credential, wake an agent when the response changes), across ALL users. Pause is the kill switch: a paused bridge stops polling and agents cannot resume it themselves; only this table and the owner's console can. Which SERVICES a bridge may call is governed separately, per credential, under APIs (\"Require confirm before each call\" escalates every call to an in-chat approval).",
+			Subtitle: "Credential-polling bridges agents have created, across ALL users.",
+			Detail:   "A bridge polls an API on a schedule via a registered credential and wakes an agent when the response changes.\n\nPause is the kill switch: a paused bridge stops polling and agents cannot resume it themselves; only this table and the owner's console can. Which SERVICES a bridge may call is governed separately, per credential, under APIs, where \"Require confirm before each call\" escalates every call to an in-chat approval.",
 			Body: ui.Table{
 				Source: "/orchestrate/api/console/bridges",
 				RowKey: "name",
@@ -161,7 +164,8 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 		},
 		{
 			Title:    "Extensions",
-			Subtitle: "Every capability you can add from a template, connectors (service bridges) and tools (model-callable actions), in one catalog. Pick one to author it from its fields; it lands in its own section for approval (a connector under Connectors, a tool under Persistent Tools). Templates ease authoring, they grant no new power: the same credential binding and approval still apply.",
+			Subtitle: "Every capability you can add from a template, in one catalog.",
+			Detail:   "That is connectors (service bridges) and tools (model-callable actions). Pick one to author it from its fields; it lands in its own section for approval, a connector under Connectors and a tool under Persistent Tools.\n\nTemplates ease authoring, they grant no new power: the same credential binding and approval still apply.",
 			Body: ui.Table{
 				Source: "api/extensions",
 				RowKey: "name",
@@ -186,7 +190,8 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 		},
 		{
 			Title:    "Templates",
-			Subtitle: "Ready-made blueprints for connectors and tools: declare “what options are needed” and the framework builds the rest. “Add” opens a form to fill in your specifics; the result lands as a draft connector or a pending tool for review. New backends/tools of a known shape are just declarations (no code).",
+			Subtitle: "Ready-made blueprints for connectors and tools.",
+			Detail:   "A blueprint declares “what options are needed” and the framework builds the rest. “Add” opens a form to fill in your specifics; the result lands as a draft connector or a pending tool for review. New backends and tools of a known shape are just declarations, with no code.",
 			Body: ui.Table{
 				Source: "api/all-templates",
 				RowKey: "id",
@@ -207,7 +212,8 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 		},
 		{
 			Title:    "Connectors",
-			Subtitle: "Bridge types drafted by the assistant (via the connector tool) and awaiting your approval: e.g. a calendar or CRM exposed through its MCP server. Approve to MATERIALIZE the capability: its tools register for agents (a remote_mcp connector becomes an enabled MCP server, which also appears under MCP Servers above). The assistant never handles a secret: auth is a referenced API credential or per-user OAuth. Nothing runs until you approve; Delete tears the capability down.",
+			Subtitle: "Bridge types the assistant drafted and left awaiting your approval.",
+			Detail:   "For example a calendar or CRM exposed through its MCP server. Approve to MATERIALIZE the capability: its tools register for agents, and a remote_mcp connector becomes an enabled MCP server, which also appears under MCP Servers above.\n\nThe assistant never handles a secret: auth is a referenced API credential or per-user OAuth. Nothing runs until you approve, and Delete tears the capability down.",
 			Body: ui.Stack{
 				Children: []ui.Component{
 					ui.Table{
@@ -275,7 +281,8 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 		},
 		{
 			Title:    "Catalog",
-			Subtitle: "Ready-made connectors, tools, API credentials, and agents you can install with one click. Installing runs the SAME import as a bundle file: everything lands as a DRAFT for review (connectors unapproved, tools pending, credentials inert), so nothing goes live until you approve it in the sections above.",
+			Subtitle: "Ready-made connectors, tools, API credentials and agents, installable in one click.",
+			Detail:   "Installing runs the SAME import as a bundle file: everything lands as a DRAFT for review, with connectors unapproved, tools pending and credentials inert. Nothing goes live until you approve it in the sections above.",
 			Body: ui.Table{
 				Source: "api/catalog",
 				RowKey: "id",

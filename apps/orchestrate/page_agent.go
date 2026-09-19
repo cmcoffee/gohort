@@ -466,7 +466,8 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	// new agent needs its fields submitted together with the templates picker.
 	agentSection := ui.Section{
 		Title:    "Agent",
-		Subtitle: "Identity, prompts, and behavior. Clone an existing agent from the landing page if you want a quick copy to tweak.",
+		Subtitle: "Identity, prompts, and behavior.",
+		Detail:   "Clone an existing agent from the landing page if you want a quick copy to tweak.",
 		Body: ui.FormPanel{
 			Source:         source,
 			PostURL:        "../api/agents",
@@ -611,7 +612,8 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	if id != "" {
 		sections = append(sections, ui.Section{
 			Title:    "Picture library",
-			Subtitle: "Every picture this agent has kept for reuse. Look at them: a name, a caption and an origin can all be confidently wrong together, and only the picture settles it. \"Unrecorded\" origin means nobody captured where it came from: it may be something the agent made, so don't trust it as a likeness until you've looked. Forget what shouldn't be here; label anyone the agent hasn't identified, so a request naming them finds the right face. If two rows show the same person, both are flagged: the agent will pick one and you won't know which, so forget whichever is wrong.",
+			Subtitle: "Every picture this agent has kept for reuse. Look at them.",
+			Detail:   "A name, a caption and an origin can all be confidently wrong together, and only the picture settles it.\n\n\"Unrecorded\" origin means nobody captured where it came from. It may be something the agent made, so do not trust it as a likeness until you have looked.\n\nForget what should not be here, and label anyone the agent has not identified, so a request naming them finds the right face. If two rows show the same person, both are flagged: the agent will pick one and you will not know which, so forget whichever is wrong.",
 			Body: ui.Table{
 				Source:    "../api/agent-images?id=" + id,
 				RowKey:    "name",
@@ -655,7 +657,8 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	if id != "" && !subAgent && !isSeedID(id) {
 		sections = append(sections, ui.Section{
 			Title:    "Share with users",
-			Subtitle: "Let specific other users run this agent. They run your agent, but its credentials and tools resolve in THEIR namespace: your secrets never travel with the share. Empty = private to you. An admin can audit or revoke shares.",
+			Subtitle: "Let specific other users run this agent. Empty means private to you.",
+			Detail:   "They run your agent, but its credentials and tools resolve in THEIR namespace: your secrets never travel with the share. An admin can audit or revoke shares.",
 			Body: ui.ACLPicker(ui.ACLPickerConfig{
 				OptionsSource: "../api/user-candidates",
 				RecordSource:  source,
@@ -719,7 +722,8 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	if id != "" && !isSeedID(id) {
 		sections = append(sections, ui.Section{
 			Title:    "Delete agent",
-			Subtitle: "Permanently remove this agent: its sessions, memory, knowledge, and any sub-agents it owns. Channels, monitors, and standing agents bound to it are cleaned up too. This can't be undone.",
+			Subtitle: "Permanently remove this agent. This cannot be undone.",
+			Detail:   "Its sessions, memory, knowledge and any sub-agents it owns go with it. Channels, monitors and standing agents bound to it are cleaned up too.",
 			Body: ui.DisplayPanel{
 				Source: "../api/agents/" + id,
 				Pairs:  []ui.DisplayPair{},

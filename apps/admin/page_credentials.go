@@ -9,7 +9,8 @@ func (a *AdminApp) credentialsSections() []ui.Section {
 	return []ui.Section{
 		{
 			Title:    "API Credentials",
-			Subtitle: "Secure-API credentials the LLM can call via tools. The LLM never sees the secret: it's injected server-side, and the Allowed URL pattern rejects off-target requests before the secret is attached. \"Secure\" hides the direct call_<name> tool but leaves wrapped temp tools working; \"Disable\" suspends the credential entirely. OAuth2 credentials mint + refresh their own bearer token; a \"Needs secret\" badge marks a Builder-authored draft awaiting its client secret.",
+			Subtitle: "Secure-API credentials the LLM can call via tools, never seeing the secret.",
+			Detail:   "The secret is injected server-side, and the Allowed URL pattern rejects off-target requests before it is attached.\n\n\"Secure\" hides the direct call_<name> tool but leaves wrapped temp tools working; \"Disable\" suspends the credential entirely. OAuth2 credentials mint and refresh their own bearer token, and a \"Needs secret\" badge marks a Builder-authored draft awaiting its client secret.",
 			Body: ui.Stack{
 				Children: []ui.Component{
 					ui.Table{
@@ -204,7 +205,7 @@ func (a *AdminApp) credentialsSections() []ui.Section {
 					ui.ModalButton{
 						Label:    "Add credential",
 						Title:    "Add API credential",
-						Subtitle: "Pick a type. Bearer / header / query / basic attach a static secret; OAuth2 mints + refreshes a bearer token from a grant.",
+						Subtitle: "Pick a type. Bearer, header, query and basic attach a static secret; OAuth2 mints and refreshes one from a grant.",
 						Variant:  "primary",
 						Width:    "640px",
 						Body: ui.FormPanel{

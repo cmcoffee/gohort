@@ -10,7 +10,8 @@ func (a *AdminApp) sourceHooksSections() []ui.Section {
 	return []ui.Section{
 		{
 			Title:    "Source Hooks",
-			Subtitle: "Curated external sources (PubMed, OpenAlex, EDGAR, custom API/RAG endpoints). Flip \"Expose to LLM\" and the hook becomes a per-hook agent tool (e.g. pubmed_search) any orchestrate agent can call directly; otherwise it's reachable only by the research/debate pipelines via topic routing.",
+			Subtitle: "Curated external sources: PubMed, OpenAlex, EDGAR, custom API and RAG endpoints.",
+			Detail:   "Flip \"Expose to LLM\" and the hook becomes a per-hook agent tool, say pubmed_search, that any orchestrate agent can call directly. Otherwise it is reachable only by the research and debate pipelines, via topic routing.",
 			Body: ui.Stack{
 				Children: []ui.Component{
 					ui.Table{

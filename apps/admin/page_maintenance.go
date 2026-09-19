@@ -73,7 +73,8 @@ func (a *AdminApp) maintenanceSections() []ui.Section {
 		// day that had not come.
 		{
 			Title:     "Reclaim space",
-			Subtitle:  "Each dry run lists exactly what the delete beneath it would remove. Run the dry run first; deletes are permanent.",
+			Subtitle:  "Each dry run lists exactly what the delete beneath it would remove.",
+			Detail:    "Run the dry run first: deletes are permanent.",
 			Collapsed: true,
 			Body:      maintenanceList("Reclaim space", "Nothing to reclaim is registered."),
 		},
@@ -85,13 +86,15 @@ func (a *AdminApp) maintenanceSections() []ui.Section {
 		},
 		{
 			Title:     "Housekeeping",
-			Subtitle:  "One-shot operations that fix stale state or run a scheduled job now. Each runs in the background and reports the number of records touched.",
+			Subtitle:  "One-shot operations that fix stale state, or run a scheduled job now.",
+			Detail:    "Each runs in the background and reports the number of records touched.",
 			Collapsed: true,
 			Body:      maintenanceList("Housekeeping", "No housekeeping functions registered."),
 		},
 		{
 			Title:     "Migrations",
-			Subtitle:  "Schema / data migrations the apps have run on this deployment. Auto-fire on app init when triggered (no manual button) and never run twice for the same (app, name, owner). An error column indicates a panic during the run: clear the marker in the DB to retry after a fix.",
+			Subtitle:  "Schema and data migrations the apps have run on this deployment.",
+			Detail:    "They auto-fire on app init when triggered, with no manual button, and never run twice for the same (app, name, owner). An error column indicates a panic during the run: clear the marker in the DB to retry after a fix.",
 			Collapsed: true,
 			Body: ui.Table{
 				Source: "api/migrations",
@@ -109,7 +112,8 @@ func (a *AdminApp) maintenanceSections() []ui.Section {
 		},
 		{
 			Title:    "Vector Index",
-			Subtitle: "Snapshot of the semantic-search index. Chunks are written automatically as records (research / debate / answer) are produced. A chunk whose embedding failed at ingest, or was embedded under a different model or document prefix, is still stored and still found by keyword but invisible to semantic search: the counts below say how many, and Repair below them fixes it. A chunk with no TEXT is counted apart: Repair cannot fix it (nothing to embed) and search cannot return it, so it is dead weight, remove it.",
+			Subtitle: "Snapshot of the semantic-search index.",
+			Detail:   "Chunks are written automatically as records are produced, whether research, debate or answer.\n\nA chunk whose embedding failed at ingest, or was embedded under a different model or document prefix, is still stored and still found by keyword but invisible to semantic search. The counts below say how many, and Repair below them fixes it.\n\nA chunk with no TEXT is counted apart. Repair cannot fix it, there being nothing to embed, and search cannot return it, so it is dead weight; remove it.",
 			Body: ui.Stack{Children: []ui.Component{
 				ui.DisplayPanel{
 					Source: "api/vector-stats",
@@ -273,8 +277,9 @@ func storeHealthSection() ui.Section {
 		title = "The database has been losing writes"
 	}
 	return ui.Section{
-		Title: title,
-		Subtitle: "The server stayed up and kept serving, which is why you are reading this rather than finding it in a crash log. " +
+		Title:    title,
+		Subtitle: "The server stayed up and kept serving.",
+		Detail: "Which is why you are reading this rather than finding it in a crash log." +
 			"A failed read reaches its caller as 'not found', so missing records and empty lists elsewhere on this page may be this and not the truth.",
 		Body: ui.Card{HTML: html.EscapeString(storeHealthLine(h))},
 	}

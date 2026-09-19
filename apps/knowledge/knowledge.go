@@ -162,7 +162,8 @@ func stewardSection(user, collectionID string) (ui.Section, bool) {
 	base := "/orchestrate/api/collections/" + url.PathEscape(collectionID) + "/steward"
 	return ui.Section{
 		Title:    "In charge of this collection",
-		Subtitle: "An agent can look after this collection: go and find material, add it, and prune what no longer belongs. Every other agent reads the collection as usual, unchanged.",
+		Subtitle: "An agent can look after this collection.",
+			Detail: "It goes and finds material, adds it, and prunes what no longer belongs. Every other agent reads the collection as usual, unchanged.",
 		Body: ui.FormPanel{
 			Source:  base,
 			PostURL: base,

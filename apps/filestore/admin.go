@@ -28,7 +28,8 @@ func (T *FileStoreApp) adminSection() ui.Section {
 		Group:    "Files",
 		Title:    "File stores",
 		Wide:     true,
-		Subtitle: "Folders on this server an agent can SEARCH and READ, never write. Attach a store to an agent (Sources) and it gets tools to list what is there, search it by regular expression, and read a window around a hit: never a whole file. Subfolders are optional: a parent whose subfolders are per-ticket or per-run works, and so does a flat folder of files. Logs are the obvious case, but anything you would grep rather than embed belongs here: config trees, exports, source dumps. To RUN commands against a folder (unpack an archive, run an extractor), add a servitor appliance of type \"command\" with its Work Dir set to the same path, that path already mints approved command tools, and this one deliberately does not duplicate it.",
+		Subtitle: "Folders on this server an agent can SEARCH and READ, never write.",
+		Detail:   "Attach a store to an agent, under Sources, and it gets tools to list what is there, search it by regular expression, and read a window around a hit, never a whole file.\n\nSubfolders are optional: a parent whose subfolders are per-ticket or per-run works, and so does a flat folder of files. Logs are the obvious case, but anything you would grep rather than embed belongs here: config trees, exports, source dumps.\n\nTo RUN commands against a folder, to unpack an archive or run an extractor, add a servitor appliance of type \"command\" with its Work Dir set to the same path. That path already mints approved command tools, and this one deliberately does not duplicate it.",
 		Body: ui.Stack{Children: []ui.Component{
 			ui.Table{
 				Source: "/filestore/api/stores",

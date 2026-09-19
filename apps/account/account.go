@@ -472,7 +472,8 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 	sections = append(sections,
 		ui.Section{
 			Title:    "API keys (personal access)",
-			Subtitle: "Tokens for connecting an external client: e.g. Claude Desktop over MCP, or a voice platform over the OpenAI /v1 endpoint, to your own gohort agents. Send it as the client's X-API-Key header, or as \"Authorization: Bearer <token>\". Shown once at creation; revoke any time. Each key is SCOPED: a new key reaches nothing until you grant it features and targets (Configure access). Keys created before scoping existed are marked Unrestricted: set a scope to lock them down.",
+			Subtitle: "Tokens for connecting an external client to your own gohort agents.",
+			Detail:   "For example Claude Desktop over MCP, or a voice platform over the OpenAI /v1 endpoint. Send it as the client's X-API-Key header, or as \"Authorization: Bearer <token>\". It is shown once at creation and can be revoked any time.\n\nEach key is SCOPED: a new key reaches nothing until you grant it features and targets, under Configure access. Keys created before scoping existed are marked Unrestricted; set a scope to lock them down.",
 			Body:     ui.Card{HTML: tokensHTML},
 		},
 	)

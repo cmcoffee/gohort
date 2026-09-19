@@ -152,7 +152,8 @@ func (T *MonitorApp) handlePage(w http.ResponseWriter, r *http.Request) {
 		agents.EmptyText = "That task has finished: it is no longer running, and finished runs are kept only briefly."
 		sections = []ui.Section{{
 			Title:    "This task",
-			Subtitle: "The run you followed, and any sub-agents it started. Refreshes every 3 seconds; it disappears shortly after it finishes.",
+			Subtitle: "The run you followed, and any sub-agents it started.",
+			Detail:   "It refreshes every 3 seconds, and disappears shortly after it finishes.",
 			Body:     agents,
 		}}
 	}

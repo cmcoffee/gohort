@@ -9,7 +9,8 @@ func (a *AdminApp) toolsSections() []ui.Section {
 	return []ui.Section{
 		{
 			Title:    "Persistent Tools (Pending)",
-			Subtitle: "LLM-discovered API patterns awaiting your approval. Approve to make permanent; reject to discard. The description is the LLM's own summary of what the tool does.",
+			Subtitle: "LLM-discovered API patterns awaiting your approval.",
+			Detail:   "Approve to make one permanent; reject to discard. The description is the LLM's own summary of what the tool does.",
 			Body: ui.Table{
 				Source:       "api/persistent-tools",
 				RecordsField: "pending",
@@ -78,7 +79,8 @@ func (a *AdminApp) toolsSections() []ui.Section {
 		},
 		{
 			Title:    "Global Tools",
-			Subtitle: "User-wide tools: available to ALL of the owner's agents. \"Access\" opens the pill editor: descope a tool down to specific agents, or disable it per agent. Share publishes the tool to the deployment-wide catalog, where each user OPTS IN from their Extensions page (it no longer auto-loads for everyone); Unshare pulls it from the catalog. Delete revokes immediately. Export a tool (or all) as a portable bundle. A ⚠ badge marks a tool whose credential dependency is missing.",
+			Subtitle: "User-wide tools, available to ALL of the owner's agents.",
+			Detail:   "\"Access\" opens the pill editor: descope a tool down to specific agents, or disable it per agent.\n\nShare publishes the tool to the deployment-wide catalog, where each user OPTS IN from their Extensions page; it no longer auto-loads for everyone. Unshare pulls it from the catalog, and Delete revokes immediately. Export a tool, or all of them, as a portable bundle. A ⚠ badge marks a tool whose credential dependency is missing.",
 			Body: ui.Stack{Children: []ui.Component{
 				ui.Table{
 					Source:       "api/persistent-tools",
@@ -193,7 +195,8 @@ func (a *AdminApp) toolsSections() []ui.Section {
 		},
 		{
 			Title:    "Agent-Scoped Tools",
-			Subtitle: "Tools that live on a single agent's record: authored by that agent for itself, or built for it by the Builder. Scoped to the agent(s) shown: a tool on several agents is listed once, with all of them; they don't appear in the shared pool. \"Promote to Global\" moves one into its owner's user-wide pool, where it can be shared and its per-USER access set. Which of a user's own agents load a tool is their choice in the agent editor, not an admin control. A ⚠ badge marks a missing credential dependency.",
+			Subtitle: "Tools that live on a single agent's record.",
+			Detail:   "Authored by that agent for itself, or built for it by the Builder. Scoped to the agents shown: a tool on several is listed once with all of them, and they do not appear in the shared pool.\n\n\"Promote to Global\" moves one into its owner's user-wide pool, where it can be shared and its per-USER access set. Which of a user's own agents load a tool is their choice in the agent editor, not an admin control. A ⚠ badge marks a missing credential dependency.",
 			Body: ui.Table{
 				Source:       "api/persistent-tools",
 				RecordsField: "bundled",
@@ -245,7 +248,8 @@ func (a *AdminApp) toolsSections() []ui.Section {
 		},
 		{
 			Title:    "Orphaned Tools",
-			Subtitle: "Formerly agent-scoped tools whose owning agent was deleted. They were captured so they aren't silently lost. Promote one to your user-wide pool to keep it (then use \"Access\" on Global Tools to place it), or Delete to discard. A ⚠ badge marks a missing credential dependency.",
+			Subtitle: "Formerly agent-scoped tools whose owning agent was deleted.",
+			Detail:   "They were captured so they are not silently lost. Promote one to your user-wide pool to keep it, then use \"Access\" on Global Tools to place it, or Delete to discard. A ⚠ badge marks a missing credential dependency.",
 			Body: ui.Table{
 				Source:       "api/persistent-tools",
 				RecordsField: "orphaned",
@@ -291,7 +295,8 @@ func (a *AdminApp) toolsSections() []ui.Section {
 		},
 		{
 			Title:    "Categories",
-			Subtitle: "Give a group of tools a named category: the heading they appear under in the tool picker and each app's tool list. Tools CLAIM a category themselves (custom tools via their own setting in Gateways/Builder; built-in tools are framework-assigned). Define the name + description here, and use Members to stamp the claim onto your custom tools as pills instead of editing each tool by hand.",
+			Subtitle: "Give a group of tools a named category.",
+			Detail:   "A category is the heading they appear under in the tool picker and each app's tool list. Tools CLAIM a category themselves: custom tools via their own setting in Gateways or Builder, built-in tools by framework assignment.\n\nDefine the name and description here, and use Members to stamp the claim onto your custom tools as pills instead of editing each tool by hand.",
 			Body: ui.Stack{
 				Children: []ui.Component{
 					// Table of existing groups with per-row editor + delete.

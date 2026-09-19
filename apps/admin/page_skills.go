@@ -9,7 +9,8 @@ func (a *AdminApp) skillsSections() []ui.Section {
 	return []ui.Section{
 		{
 			Title:    "Skills",
-			Subtitle: "Domain packs the assistant draws on in its own context: instructions plus optional knowledge sources (attached collections and/or source-hooks). The LLM reaches a skill via read_skill (pull its approach), skill_knowledge_search (search its sources: collections + source-hooks merged) and skill_knowledge_fetch_doc. A skill with Triggers also auto-injects its instructions when they match the turn (e.g. *.pdf). No activation, no sub-agents: stateless calls. Builder is the canonical authoring path; this surface manages what's authored. Disabled skills are hidden from the LLM. Export a skill (or all skills) as a portable bundle: instructions and bundled tool scripts travel inline, secrets never do; imports land disabled for review.",
+			Subtitle: "Domain packs the assistant draws on: instructions plus optional knowledge sources.",
+			Detail:   "The sources are attached collections and source-hooks. The LLM reaches a skill via read_skill (pull its approach), skill_knowledge_search (search its sources, collections and source-hooks merged) and skill_knowledge_fetch_doc.\n\nA skill with Triggers also auto-injects its instructions when they match the turn, for example *.pdf. No activation and no sub-agents: stateless calls.\n\nBuilder is the canonical authoring path; this surface manages what is authored. Disabled skills are hidden from the LLM. Export a skill, or all of them, as a portable bundle: instructions and bundled tool scripts travel inline, secrets never do, and imports land disabled for review.",
 			Body: ui.Stack{Children: []ui.Component{ui.Table{
 				Source: "api/skills",
 				RowKey: "id",
@@ -124,7 +125,8 @@ func (a *AdminApp) skillsSections() []ui.Section {
 		},
 		{
 			Title:    "Pipelines",
-			Subtitle: "Declarative multi-stage workflows authored in Agents (the pipeline tool, or via Builder). This surface lists every user's pipelines and lets you inspect the stages or delete a definition. Deleting one also drops it from any agent it was attached to.",
+			Subtitle: "Declarative multi-stage workflows authored in Agents.",
+			Detail:   "Written with the pipeline tool, or via Builder. This surface lists every user's pipelines and lets you inspect the stages or delete a definition. Deleting one also drops it from any agent it was attached to.",
 			Body: ui.Table{
 				Source:       "api/pipelines",
 				RecordsField: "pipelines",
@@ -153,7 +155,8 @@ func (a *AdminApp) skillsSections() []ui.Section {
 		},
 		{
 			Title:    "Agent Capabilities: Outward & Spending",
-			Subtitle: "The blast radius of each agent: what it can do that reaches REAL PEOPLE or COSTS MONEY. Read-only, derived live from each agent's bound channels, its messaging tools, and the paid credentials its attached tools dispatch through. Agents with no outward or spending reach are omitted, so this list IS the surface to watch.",
+			Subtitle: "The blast radius of each agent: what it can do that reaches REAL PEOPLE or COSTS MONEY.",
+			Detail:   "Read-only, derived live from each agent's bound channels, its messaging tools, and the paid credentials its attached tools dispatch through. Agents with no outward or spending reach are omitted, so this list IS the surface to watch.",
 			Body: ui.Table{
 				Source: "/orchestrate/api/capabilities",
 				RowKey: "agent_id",

@@ -136,7 +136,8 @@ func (T *MCPServer) handleStatusPage(w http.ResponseWriter, r *http.Request) {
 		MaxWidth:  "800px",
 		Sections: []ui.Section{{
 			Title:    "Inbound MCP endpoint",
-			Subtitle: "Point an MCP client (Streamable HTTP transport) at the endpoint below and authenticate with a personal access token (create one on your Account page) in the X-API-Key header. The client can then dispatch to your agents via tools/call.",
+			Subtitle: "Point an MCP client at the endpoint below and authenticate with an access token.",
+			Detail:   "The transport is Streamable HTTP. Create a personal access token on your Account page and send it in the X-API-Key header. The client can then dispatch to your agents via tools/call.",
 			Body: ui.DisplayPanel{
 				Source: "status",
 				Pairs: []ui.DisplayPair{

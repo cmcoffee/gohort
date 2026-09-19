@@ -13,7 +13,8 @@ func (a *AdminApp) costSections() []ui.Section {
 		// retained for compatibility but no longer surfaced here.
 		{
 			Title:    "Cost History (Last 30 Days)",
-			Subtitle: "Daily LLM + search spend across all pipelines. Hover any bar for the per-day breakdown of runs, tokens, searches, and images. The \"in\" figures are the whole prompt; the cached / written rows beneath each are the share of it billed at the cache weights rather than the full input rate.",
+			Subtitle: "Daily LLM and search spend across all pipelines.",
+			Detail:   "Hover any bar for the per-day breakdown of runs, tokens, searches and images.\n\nThe \"in\" figures are the whole prompt; the cached and written rows beneath each are the share of it billed at the cache weights rather than the full input rate.",
 			Body: ui.BarChart{
 				Source:    costHistorySource,
 				XField:    "date",
@@ -48,7 +49,8 @@ func (a *AdminApp) costSections() []ui.Section {
 		},
 		{
 			Title:    "Cost by source",
-			Subtitle: "Metered source-hook + credential spend over the last 30 days (a \"cost hook\" per source). Set a per-call cost on a source hook or API credential to track it here; it also folds into the chart total above.",
+			Subtitle: "Metered source-hook and credential spend over the last 30 days.",
+			Detail:   "One \"cost hook\" per source. Set a per-call cost on a source hook or API credential to track it here; it also folds into the chart total above.",
 			Body: ui.Table{
 				Source:    costBySourceSource,
 				RowKey:    "source_id",
@@ -62,7 +64,8 @@ func (a *AdminApp) costSections() []ui.Section {
 		},
 		{
 			Title:    "Prices",
-			Subtitle: "Per-token and per-call dollar rates that feed the dollar estimate above. Worker = local LLM, Lead = remote LLM. Set to 0 for free tiers. Saved automatically as you edit. The two cached-prompt weights at the bottom are multipliers on the input rates, not dollar figures, with prompt caching on, most of a prompt is billed through them rather than at the full input rate.",
+			Subtitle: "Per-token and per-call dollar rates that feed the dollar estimate above.",
+			Detail:   "Worker is the local LLM, Lead the remote one. Set 0 for free tiers. Saved automatically as you edit.\n\nThe two cached-prompt weights at the bottom are multipliers on the input rates, not dollar figures. With prompt caching on, most of a prompt is billed through them rather than at the full input rate.",
 			Body: ui.FormPanel{
 				Source: "api/cost-rates",
 				Method: "PUT",

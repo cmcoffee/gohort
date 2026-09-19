@@ -147,7 +147,8 @@ func (a *AdminApp) setupWizardPage() ui.Page {
 		MaxWidth:  "760px",
 		Sections: []ui.Section{{
 			Title:    "Connect a language model",
-			Subtitle: "Nothing works without one, so it is the only thing first-run setup asks for. Everything else has a working default you can tune afterward.",
+			Subtitle: "Nothing works without one, so it is the only thing first-run setup asks for.",
+			Detail:   "Everything else has a working default you can tune afterward.",
 			Body: ui.FormPanel{
 				// Relative: resolved by the browser against /admin/setup, so
 				// they land on /admin/api/... regardless of where the app is

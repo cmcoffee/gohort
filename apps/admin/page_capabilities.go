@@ -10,7 +10,8 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 	return []ui.Section{
 		{
 			Title:    "Embeddings",
-			Subtitle: "Vector store ingestion + semantic search. Endpoint is an Ollama-compatible /api/embed server: typically the same host as the worker LLM. Disabling makes ingestion and search no-ops.",
+			Subtitle: "Vector store ingestion and semantic search.",
+			Detail:   "The endpoint is an Ollama-compatible /api/embed server, typically the same host as the worker LLM. Disabling it makes ingestion and search no-ops.",
 			Body: ui.FormPanel{
 				Source:    "api/embeddings",
 				TestURL:   "api/embeddings/test",
@@ -20,7 +21,8 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		},
 		{
 			Title:    "Audio Transcription (STT)",
-			Subtitle: "OpenAI-compatible /audio/transcriptions endpoint used for video / audio attachment transcription. Endpoint includes the API version prefix; gohort appends /audio/transcriptions.",
+			Subtitle: "Transcription for video and audio attachments.",
+			Detail:   "An OpenAI-compatible /audio/transcriptions endpoint. The endpoint you give includes the API version prefix; gohort appends /audio/transcriptions.",
 			Body: ui.FormPanel{
 				Source:    "api/transcribe",
 				TestURL:   "api/transcribe/test",
@@ -30,7 +32,8 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		},
 		{
 			Title:    "System Dependencies",
-			Subtitle: "External tools gohort shells out to for media + document handling. A missing one disables the feature it gates (e.g. no ffmpeg → inbound voice memos can't be transcribed). Date-versioned tools like yt-dlp are flagged when they go stale (its extractors rot fast, so a stale yt-dlp silently breaks video downloads). Install or update on the gohort host and restart; this list refreshes on reload.",
+			Subtitle: "External tools gohort shells out to for media and document handling.",
+			Detail:   "A missing one disables the feature it gates: no ffmpeg means inbound voice memos cannot be transcribed.\n\nDate-versioned tools like yt-dlp are flagged when they go stale. Its extractors rot fast, so a stale yt-dlp silently breaks video downloads. Install or update on the gohort host and restart; this list refreshes on reload.",
 			Body: ui.Table{
 				Source: "api/dependencies",
 				RowKey: "name",
@@ -52,7 +55,8 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		},
 		{
 			Title:    "Image Generation",
-			Subtitle: "Image generation provider used by tools that produce illustrations or thumbnails. Choose a built-in provider (leave API key blank to reuse the matching LLM provider's key), or an approved rest_image connector: a local ComfyUI / Automatic1111 or any spec-declared backend. Use “Add image backend” to stand up a local ComfyUI / A1111 in one step.",
+			Subtitle: "Image generation for tools that produce illustrations or thumbnails.",
+			Detail:   "Choose a built-in provider, leaving the API key blank to reuse the matching LLM provider's key, or an approved rest_image connector: a local ComfyUI or Automatic1111, or any spec-declared backend.\n\nUse “Add image backend” to stand up a local ComfyUI or A1111 in one step.",
 			Body: ui.Stack{
 				Children: []ui.Component{
 					ui.FormPanel{
@@ -76,7 +80,8 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		},
 		{
 			Title:    "Web Search",
-			Subtitle: "Provider for the web_search tool. DuckDuckGo and a SearXNG instance require no key; Brave / Google / Serper need one.",
+			Subtitle: "Provider for the web_search tool.",
+			Detail:   "DuckDuckGo and a SearXNG instance require no key; Brave, Google and Serper need one.",
 			Body: ui.FormPanel{
 				Source:    "api/web-search",
 				TestURL:   "api/web-search/test",
@@ -86,7 +91,8 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		},
 		{
 			Title:    "Page Rendering (Browser)",
-			Subtitle: "Where browse_page and the page-render escalations run. A headless Chromium is a heavyweight dependency to install on every machine; borrowing a peer's lets a laptop skip it entirely. Public web only either way.",
+			Subtitle: "Where browse_page and the page-render escalations run.",
+			Detail:   "A headless Chromium is a heavyweight dependency to install on every machine; borrowing a peer's lets a laptop skip it entirely. Public web only either way.",
 			Body: ui.FormPanel{
 				Source: "api/browse",
 				Fields: browseFormFields(),
@@ -94,7 +100,8 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		},
 		{
 			Title:    "Mail (SMTP)",
-			Subtitle: "Outbound SMTP for notification emails: signup approvals, scheduled deliveries, watcher alerts. Leave Server blank for localhost:25.",
+			Subtitle: "Outbound SMTP for notification emails.",
+			Detail:   "Signup approvals, scheduled deliveries and watcher alerts. Leave Server blank for localhost:25.",
 			Body: ui.FormPanel{
 				Source:    "api/mail",
 				TestURL:   "api/mail/test",
@@ -119,7 +126,8 @@ func (a *AdminApp) capabilitiesSections() []ui.Section {
 		},
 		{
 			Title:    "Network Timeouts",
-			Subtitle: "Outbound HTTP timeouts for source hooks and search APIs. Raise when working against slow upstreams; lower to fail fast in a tight loop.",
+			Subtitle: "Outbound HTTP timeouts for source hooks and search APIs.",
+			Detail:   "Raise them when working against slow upstreams; lower them to fail fast in a tight loop.",
 			Body: ui.FormPanel{
 				Source: "api/network",
 				Fields: []ui.FormField{

@@ -48,8 +48,9 @@ func (T *OrchestrateApp) handleEvalsPage(w http.ResponseWriter, r *http.Request)
 		BackURL:   "/orchestrate/",
 		Sections: []ui.Section{
 			{
-				Title: "Suites",
-				Subtitle: "A suite grades one thing (an agent, a pipeline, a tool, a machine), and keeps every score it has ever given it. " +
+				Title:    "Suites",
+				Subtitle: "A suite grades one thing, and keeps every score it has ever given it.",
+				Detail: "That one thing is an agent, a pipeline, a tool or a machine." +
 					"The number to watch is the one that moves after an edit.",
 				Wide: true,
 				Body: ui.Table{

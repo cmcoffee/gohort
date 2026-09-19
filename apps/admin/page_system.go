@@ -88,7 +88,8 @@ func (a *AdminApp) systemSections() []ui.Section {
 		},
 		{
 			Title:    "Channel Wake Rules",
-			Subtitle: "Master gatekeeper applied to every channel before an inbound message wakes its agent. One rule per line; rules are OR'd (a message that matches ANY rule wakes the agent). These merge on top of each channel's own per-channel rules (set in the channel rail). Leave blank to apply no global rule.",
+			Subtitle: "Master gatekeeper applied to every channel before an inbound message wakes its agent.",
+			Detail:   "One rule per line, and rules are OR'd: a message matching ANY rule wakes the agent. These merge on top of each channel's own per-channel rules, set in the channel rail. Leave it blank to apply no global rule.",
 			Body: ui.FormPanel{
 				Source: "api/settings",
 				Fields: []ui.FormField{
@@ -101,12 +102,14 @@ func (a *AdminApp) systemSections() []ui.Section {
 		},
 		{
 			Title:    "Add account",
-			Subtitle: "Invite a new user by email (they click a link and set their own password), or set a password directly. To reset an existing user's password, use the Reset password button on their row below.",
+			Subtitle: "Invite a new user by email, or set a password directly.",
+			Detail:   "An invited user clicks a link and sets their own password. To reset an existing user's password, use the Reset password button on their row below.",
 			Body:     ui.Card{HTML: userAdminHTML},
 		},
 		{
 			Title:    "Users",
-			Subtitle: "Approve pending signups, grant or revoke admin, manage app access, sign someone out of every browser, or delete accounts. Deleting revokes every credential the account holds: sessions, access tokens, desktop and bridge keys, connected accounts. Pending users see a placeholder page until approved.",
+			Subtitle: "Approve pending signups, manage access, sign someone out everywhere, or delete accounts.",
+			Detail:   "Granting or revoking admin is here too. Deleting revokes every credential the account holds: sessions, access tokens, desktop and bridge keys, connected accounts. Pending users see a placeholder page until approved.",
 			Body: ui.Table{
 				Source: "api/users",
 				RowKey: "username",
@@ -200,7 +203,8 @@ func (a *AdminApp) systemSections() []ui.Section {
 		},
 		{
 			Title:    "Feature Access",
-			Subtitle: "Which users may expose outward-facing surfaces through their own personal access tokens. Reaching the OpenAI /v1 endpoint bypasses cookie auth (it's guarded only by a token), so this is the gate on who may use it at all. Empty = every user (the surface's own per-key scope still applies); listing users restricts it to them. Each feature is declared by its app.",
+			Subtitle: "Which users may expose outward-facing surfaces through their own access tokens.",
+			Detail:   "Reaching the OpenAI /v1 endpoint bypasses cookie auth, being guarded only by a token, so this is the gate on who may use it at all.\n\nEmpty means every user, and the surface's own per-key scope still applies; listing users restricts it to them. Each feature is declared by its app.",
 			Body: ui.Table{
 				Source: "api/feature-access",
 				RowKey: "feature",
@@ -243,7 +247,8 @@ func (a *AdminApp) systemSections() []ui.Section {
 		},
 		{
 			Title:    "App Groups",
-			Subtitle: "Bundle apps under one name (e.g. \"Writers\", \"Ops\"), then assign a whole group to a user from the Groups picker above: access resolves the group to its apps, so editing a group instantly re-provisions everyone assigned to it.",
+			Subtitle: "Bundle apps under one name, then assign a whole group to a user.",
+			Detail:   "For example \"Writers\" or \"Ops\", assigned from the Groups picker above. Access resolves the group to its apps, so editing a group instantly re-provisions everyone assigned to it.",
 			Body: ui.Stack{
 				Children: []ui.Component{
 					// Create a new group (name + optional description). The

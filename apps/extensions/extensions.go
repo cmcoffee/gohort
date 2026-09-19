@@ -1222,9 +1222,10 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 	}
 	sections := []ui.Section{
 		{
-			Title: "API credentials",
-			Wide:  true,
-			Subtitle: "API keys you own and manage yourself. They live in your namespace: no other user can reach them, and they never appear on the admin page. " +
+			Title:    "API credentials",
+			Wide:     true,
+			Subtitle: "API keys you own and manage yourself.",
+			Detail: "They live in your namespace: no other user can reach them, and they never appear on the admin page." +
 				"By default every one of your agents gets a fetch_url_<name> tool for each; turn on \"Only tools that declare it\" to narrow a credential to the tools you build for it. " +
 				"Secrets are stored encrypted and never shown to the assistant.",
 			Body: ui.Stack{Children: []ui.Component{
@@ -1289,12 +1290,14 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 		{
 			Title:    "Connected accounts",
 			Wide:     true,
-			Subtitle: "Integrations you authorize with your own account (read or write as you). Your key is stored encrypted and never shown to the assistant.",
+			Subtitle: "Integrations you authorize with your own account, reading or writing as you.",
+			Detail:   "Your key is stored encrypted and is never shown to the assistant.",
 			Body:     ui.Card{HTML: connectionsHTML},
 		},
 		{
 			Title:    "Tools",
-			Subtitle: "Everything built for you, grouped by category: the same heading a tool appears under in the tool picker and each app's tool list. Categories are assigned from the Categories list directly below this table (open one and tick its tools); tools that haven't claimed one sit under \"Uncategorized\". The Agents column says who can use each tool (blank = your global pool, every agent), and Access is where you change that. Tools the assistant authored but nobody has vouched for are badged Unconfirmed and are dropped automatically if left that way. \"Orphaned Tools\" lost their agent when it was deleted. Filter the list with the box above.",
+			Subtitle: "Everything built for you, grouped by category.",
+			Detail:   "The category is the same heading a tool appears under in the tool picker and each app's tool list. Categories are assigned from the Categories list directly below this table: open one and tick its tools. Tools that have not claimed one sit under \"Uncategorized\".\n\nThe Agents column says who can use each tool, where blank means your global pool and every agent, and Access is where you change that.\n\nTools the assistant authored but nobody has vouched for are badged Unconfirmed, and are dropped automatically if left that way. \"Orphaned Tools\" lost their agent when it was deleted. Filter the list with the box above.",
 			// Tools first, then the categories that head them. Categories used to
 			// be their own rail section, which put the fix one navigation away
 			// from the problem: you read "Uncategorized" in this table and had to
@@ -1535,7 +1538,8 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 		},
 		{
 			Title:    "Skills",
-			Subtitle: "Behavior packs your agents draw on: instructions the assistant applies when a skill's triggers or description match the turn. Author or edit one right here (name, triggers, instructions, the tools it may call and the collections it may search), or ask Builder in Agents for skills that ship their own code. Open a skill to give it a playbook: conditional rules (\"establish Y first; if yes do Z, if no do U\") that the framework runs and settles before the assistant answers. Disable to mute a skill without losing it; delete to retire it.",
+			Subtitle: "Behavior packs your agents draw on.",
+			Detail:   "A skill is instructions the assistant applies when its triggers or description match the turn. Author or edit one right here (name, triggers, instructions, the tools it may call and the collections it may search), or ask Builder in Agents for skills that ship their own code.\n\nOpen a skill to give it a playbook: conditional rules (\"establish Y first; if yes do Z, if no do U\") that the framework runs and settles before the assistant answers. Disable to mute a skill without losing it; delete to retire it.",
 			Body: ui.Stack{Children: []ui.Component{
 				ui.Table{
 					Source: "api/skills",
@@ -1630,7 +1634,8 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 		},
 		{
 			Title:    "Global tools",
-			Subtitle: "Shared tools your deployment publishes. Add the ones you want and they become available to your agents; remove any you don't use.",
+			Subtitle: "Shared tools your deployment publishes.",
+			Detail:   "Add the ones you want and they become available to your agents; remove any you do not use.",
 			Body: ui.Table{
 				Source: "api/global-tools",
 				RowKey: "name",

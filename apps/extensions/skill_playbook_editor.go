@@ -83,7 +83,8 @@ func skillPlaybookPage(skill SkillRecord) ui.Page {
 	}
 	sections = append(sections, ui.Section{
 		Title:    "Add a rule",
-		Subtitle: "A rule is one condition: establish a fact, then do one thing if it holds and another if it does not. The prose that does not branch belongs in the skill's instructions.",
+		Subtitle: "A rule is one condition: establish a fact, then branch on whether it holds.",
+		Detail:   "Do one thing if it holds and another if it does not. The prose that does not branch belongs in the skill's instructions.",
 		Body: ui.FormPanel{
 			Source:         base + "new",
 			PostURL:        base + "add",
