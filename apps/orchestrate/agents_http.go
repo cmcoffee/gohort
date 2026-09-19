@@ -226,7 +226,7 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(saved)
 	case http.MethodPatch:
-		T.patchAgent(w, r, udb, user)
+		T.patchAgent(w, r, udb, user, "")
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
@@ -285,16 +285,22 @@ var patchAgentFields = map[string]bool{
 // names are the ones the form already speaks, and re-marshalling the stored
 // record means every field the caller did NOT send keeps exactly the value it
 // had, including ones no form knows about.
-func (T *OrchestrateApp) patchAgent(w http.ResponseWriter, r *http.Request, udb Database, user string) {
+// pathID is the agent named in the URL PATH, for the RESTful spelling
+// (PATCH /api/agents/<id>). Empty falls back to the query then the body, which
+// is what the collection route has always done.
+func (T *OrchestrateApp) patchAgent(w http.ResponseWriter, r *http.Request, udb Database, user, pathID string) {
 	var patch map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	// The id may come in the body OR the query. A FormPanel's PATCH body is
-	// exactly {changed_field: value} with no record id in it, so a form names
-	// its target in the URL instead.
-	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	// The id may come in the PATH, the query, or the body. A FormPanel's PATCH
+	// body is exactly {changed_field: value} with no record id in it, so a form
+	// names its target in the URL instead.
+	id := strings.TrimSpace(pathID)
+	if id == "" {
+		id = strings.TrimSpace(r.URL.Query().Get("id"))
+	}
 	if id == "" && patch["id"] != nil {
 		id = strings.TrimSpace(fmt.Sprint(patch["id"]))
 	}
@@ -647,6 +653,21 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(saved)
+	case http.MethodPatch:
+		// PATCH /api/agents/<id> — the RESTful spelling of the collection's
+		// PATCH /api/agents?id=<id>, and the one any client writes first.
+		// It used to fall to default and answer 405, which is how the
+		// agent assistant's Apply button spent its whole life: the panel
+		// shipped asking for this URL, this route has never served it, and
+		// nothing fails until somebody presses the button.
+		//
+		// The SAME patchAgent, so the same patchAgentFields allowlist
+		// applies: guardrails and the injection-scan settings stay absent
+		// by name, and a second spelling of an operation must never be a
+		// second set of rules for it. Deliberately not routed to the POST
+		// branch below, which merges a whole record with no allowlist at
+		// all.
+		T.patchAgent(w, r, udb, user, id)
 	case http.MethodDelete:
 		if err := deleteAgent(udb, id, user); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
