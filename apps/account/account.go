@@ -334,6 +334,7 @@ func (T *Account) handlePrefs(w http.ResponseWriter, r *http.Request) {
 			"private_mode":      AuthGetPrivateMode(db, user),
 			"inferred_disabled": AuthGetInferredDisabled(db, user),
 			"timezone":          AuthGetUserTimezone(db, user),
+			"notify_forward":    AuthGetNotifyForward(db, user),
 		})
 	case http.MethodPost:
 		var req struct {
@@ -341,10 +342,14 @@ func (T *Account) handlePrefs(w http.ResponseWriter, r *http.Request) {
 			PrivateMode      *bool   `json:"private_mode,omitempty"`
 			InferredDisabled *bool   `json:"inferred_disabled,omitempty"`
 			Timezone         *string `json:"timezone,omitempty"`
+			NotifyForward    *string `json:"notify_forward,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
+		}
+		if req.NotifyForward != nil {
+			AuthSetNotifyForward(db, user, *req.NotifyForward)
 		}
 		if req.Notify != nil {
 			AuthSetNotifyDefault(db, user, *req.Notify)
@@ -434,6 +439,15 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 					{Field: "inferred_disabled", Label: "Clean mode by default", Type: "toggle",
 						Help:   "Suppress the Reference Memory layer by default.",
 						Detail: "Agents then answer fresh from your question and knowledge, without prior derived findings. Per-agent overrides still apply."},
+					{Field: "notify_forward", Label: "Forward notifications", Type: "select",
+						Options: []ui.SelectOption{
+							{Value: "", Label: "Nowhere (keep them in the bell)"},
+							{Value: "email", Label: "Email"},
+							{Value: "phone", Label: "Phone"},
+							{Value: "both", Label: "Email and phone"},
+						},
+						Help:   "Notifications are always kept. This is whether they also reach you somewhere else.",
+						Detail: "Only the FIRST time something happens is forwarded; a repeat raises the count on the notice instead, because a surface that texts you twenty-four times a day is one you switch off before it is ever useful. Email needs mail configured and an account that is an email address; phone needs the messaging bridge."},
 					{Field: "timezone", Label: "Timezone", Type: "select",
 						Options: TimezoneSelectOptions("System default"),
 						Help:    "Your personal timezone. Blank uses the system default.",

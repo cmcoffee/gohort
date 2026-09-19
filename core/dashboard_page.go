@@ -10,6 +10,62 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
+// notifyPanelHTML is the bell's dropdown and the script that fills it.
+//
+// Plain markup and a fetch, not a component: the dashboard is served before any
+// app's runtime exists and has no bundle to hang a component on. It polls on
+// the same timer the live badge already uses, so a bell that lights up while
+// you are looking at the page does so without a second clock.
+const notifyPanelHTML = `<div class="notify-panel" id="notify-panel">
+  <div class="notify-head"><span>Notifications</span><button type="button" id="notify-all">Mark all read</button></div>
+  <div id="notify-list"><div class="notify-empty">Nothing yet.</div></div>
+</div>
+<script>
+(function() {
+  var bell = document.getElementById('bell');
+  var panel = document.getElementById('notify-panel');
+  var list = document.getElementById('notify-list');
+  var count = document.getElementById('bell-count');
+  if (!bell || !panel) { return; }
+  function esc(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
+  function post(url) { return fetch(url, {method: 'POST'}).then(load); }
+  function load() {
+    return fetch('/api/notifications').then(function(r) { return r.json(); }).then(function(d) {
+      var n = d.unread || 0;
+      bell.classList.toggle('unread', n > 0);
+      count.textContent = n > 99 ? '99+' : String(n);
+      var items = d.notices || [];
+      if (!items.length) { list.innerHTML = '<div class="notify-empty">Nothing yet.</div>'; return; }
+      list.innerHTML = items.map(function(it) {
+        // The count is stated only when it is more than one: "1 time" on every
+        // row is noise, and the chronic ones are what a reader is scanning for.
+        var times = it.count > 1 ? ' &middot; ' + it.count + ' times' : '';
+        return '<div class="notify-item' + (it.read ? '' : ' unread') + '">' +
+          '<div class="notify-title">' + esc(it.title) + '</div>' +
+          (it.body ? '<div class="notify-body">' + esc(it.body) + '</div>' : '') +
+          '<div class="notify-meta"><span>' + esc(it.when) + times + '</span>' +
+          (it.read ? '' : '<button type="button" data-read="' + esc(it.id) + '">Mark read</button>') +
+          '<button type="button" data-dismiss="' + esc(it.id) + '">Dismiss</button></div></div>';
+      }).join('');
+    }).catch(function() { /* a dashboard that cannot reach its own API still has to render */ });
+  }
+  bell.onclick = function() { panel.classList.toggle('open'); if (panel.classList.contains('open')) { load(); } };
+  document.addEventListener('click', function(e) {
+    if (!panel.contains(e.target) && e.target !== bell) { panel.classList.remove('open'); }
+  });
+  list.addEventListener('click', function(e) {
+    var id = e.target && (e.target.getAttribute('data-read') || e.target.getAttribute('data-dismiss'));
+    if (!id) { return; }
+    post(e.target.hasAttribute('data-read')
+      ? '/api/notifications/read?id=' + encodeURIComponent(id)
+      : '/api/notifications/dismiss?id=' + encodeURIComponent(id));
+  });
+  document.getElementById('notify-all').onclick = function() { post('/api/notifications/read'); };
+  load();
+  setInterval(load, 30000);
+})();
+</script>`
+
 func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, notices []DashboardNotice) {
 	renderCard := func(b *strings.Builder, a dashApp, extraCls string) {
 		fmt.Fprintf(b, `<a class="card%s" href="%s/">
@@ -74,8 +130,16 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
 	username := AuthCurrentUser(r)
 	auth_html := ""
 	if username != "" {
+		// The bell sits with the account controls because it is about the
+		// VIEWER, not about the deployment: the notices below it are what an
+		// admin has to fix, these are what somebody's own agents had to say.
+		// It renders muted and changes only when there is something unread, so
+		// a quiet bell is as informative as a loud one.
 		auth_html = fmt.Sprintf(
-			`<div class="auth-bar"><span class="auth-user">%s</span><a class="auth-link" href="/account">Account</a><form class="auth-logout" method="POST" action="/logout"><button type="submit" class="auth-link">Logout</button></form></div>`,
+			`<div class="auth-bar"><span class="auth-user">%s</span>`+
+				`<button type="button" class="auth-link bell" id="bell" title="Notifications" aria-label="Notifications">🔔<span class="bell-count" id="bell-count"></span></button>`+
+				`<a class="auth-link" href="/account">Account</a><form class="auth-logout" method="POST" action="/logout"><button type="submit" class="auth-link">Logout</button></form></div>`+
+				notifyPanelHTML,
 			username)
 	}
 
@@ -315,6 +379,34 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
   .auth-link:hover { color: var(--text-hi); }
   .live-badge.running { background: var(--success); }
   .ascii-logo { background: linear-gradient(180deg, var(--text-hi) 0%, var(--border) 100%); -webkit-background-clip: text; background-clip: text; }
+  /* A bell that is always lit is a bell nobody reads. Muted until there is
+     something unread, and then it carries the number. */
+  .bell { position: relative; background: none; border: 0; cursor: pointer; font-size: 1rem; opacity: 0.55; }
+  .bell.unread { opacity: 1; }
+  .bell-count {
+    display: none; position: absolute; top: -0.35rem; right: -0.55rem;
+    min-width: 1.05rem; padding: 0 0.25rem; border-radius: 0.6rem;
+    background: var(--accent, #6366f1); color: #fff;
+    font-size: 0.65rem; line-height: 1.05rem; text-align: center;
+  }
+  .bell.unread .bell-count { display: inline-block; }
+  .notify-panel {
+    display: none; position: absolute; right: 1rem; top: 2.6rem; z-index: 40;
+    width: min(26rem, calc(100vw - 2rem)); max-height: 60vh; overflow-y: auto;
+    background: var(--bg-elev, #1b1b1f); border: 1px solid var(--border);
+    border-radius: 0.5rem; padding: 0.4rem; text-align: left;
+  }
+  .notify-panel.open { display: block; }
+  .notify-empty { padding: 0.9rem; color: var(--text-mute, #999); font-size: 0.85rem; }
+  .notify-item { padding: 0.55rem 0.6rem; border-bottom: 1px solid var(--border); }
+  .notify-item:last-child { border-bottom: 0; }
+  .notify-item.unread { background: color-mix(in srgb, var(--accent, #6366f1) 8%, transparent); }
+  .notify-title { font-size: 0.85rem; color: var(--text-hi); }
+  .notify-body { font-size: 0.78rem; color: var(--text-mute, #999); margin-top: 0.2rem; }
+  .notify-meta { font-size: 0.7rem; color: var(--text-mute, #999); margin-top: 0.25rem; display: flex; gap: 0.5rem; }
+  .notify-meta button { background: none; border: 0; color: var(--accent, #6366f1); cursor: pointer; font-size: 0.7rem; padding: 0; }
+  .notify-head { display: flex; justify-content: space-between; align-items: center; padding: 0.35rem 0.6rem; }
+  .notify-head button { background: none; border: 0; color: var(--accent, #6366f1); cursor: pointer; font-size: 0.72rem; padding: 0; }
 </style>
 </head>
 <body>

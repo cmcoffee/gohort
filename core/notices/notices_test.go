@@ -166,3 +166,22 @@ func TestAnUnaddressedNoticeIsNotStored(t *testing.T) {
 		t.Errorf("%d rows written anyway", got)
 	}
 }
+
+// The bell is chrome: a deployment with no storage wired still has to render
+// one, and a signed-out viewer has to get an empty list rather than an error.
+// A notifications surface that can take a page down is worse than no surface.
+func TestAMissingStoreIsQuiet(t *testing.T) {
+	if got := List(nil, "alice"); got != nil {
+		t.Errorf("a nil store listed %d notices", len(got))
+	}
+	if got := Unread(nil, "alice"); got != 0 {
+		t.Errorf("a nil store counted %d unread", got)
+	}
+	if _, isNew := Record(nil, Notice{Owner: "alice", Title: "something"}); isNew {
+		t.Error("a nil store reported a first occurrence, which would forward it")
+	}
+	// And the mutators do not panic on one either.
+	MarkRead(nil, "alice", "x")
+	MarkAllRead(nil, "alice")
+	Remove(nil, "alice", "x")
+}

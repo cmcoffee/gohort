@@ -260,6 +260,10 @@ func (T *OrchestrateApp) Routes() {
 	// with a deny-by-default confirm so unattended runs never auto-approve
 	// high-consequence tools).
 	registerStandingRunner(T)
+	// Notifications are core's: the store, the bell and the preference live
+	// there so any app can tell an owner something. What lives here is how the
+	// telling gets out, which is the half that knows about bridges.
+	registerNoticeTransports()
 
 	// Register "agent" as a portable artifact type so agents export/import via
 	// the unified bundle (Admin > /api/artifacts/*). Holds the app because

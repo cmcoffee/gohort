@@ -48,42 +48,69 @@ func (T *OrchestrateApp) notify(owner string, n notices.Notice) {
 // the notice is already stored, and a bridge being down is not a reason for a
 // scheduled run to report an error it did not have.
 func (T *OrchestrateApp) forwardNotice(n notices.Notice) {
-	// AuthDB is a hook, and a hook can be unset: during boot, in a test, in any
-	// host that wires the agent runtime without the auth surface. Forwarding is
-	// the optional half of this feature and must never be the reason a refusal
-	// takes the process down with it.
-	if AuthDB == nil {
-		return
-	}
-	where := AuthGetNotifyForward(AuthDB(), n.Owner)
-	if where == "" {
-		return
-	}
-	subject := n.Title
 	body := n.Title
 	if strings.TrimSpace(n.Body) != "" {
 		body += "\n\n" + n.Body
 	}
+	forwardNoticeTo(n.Owner, n.Title, body)
+}
+
+// forwardNoticeTo is registered as core's NoticeForwarder, so a notice written
+// by ANY app reaches the owner the same way. Core owns the store, the bell and
+// the preference; this owns the transports, because knowing what a phantom
+// bridge is does not belong in the hub.
+func forwardNoticeTo(owner, subject, body string) {
+	// AuthDB is a hook, and a hook can be unset: during boot, in a test, in any
+	// host that wires the runtime without the auth surface. Forwarding is the
+	// optional half of this feature and must never be the reason a refusal
+	// takes the process down with it.
+	if AuthDB == nil {
+		return
+	}
+	where := AuthGetNotifyForward(AuthDB(), owner)
+	if where == "" {
+		return
+	}
 	if where == "email" || where == "both" {
 		// NotifyUser is a no-op unless the username is itself an address and
 		// mail is configured, which is the existing contract everywhere else.
-		NotifyUser(n.Owner, ServiceName()+": "+subject, body)
+		NotifyUser(owner, ServiceName()+": "+subject, body)
 	}
 	if where == "phone" || where == "both" {
 		link, ok := ActiveMessagingLink()
 		if !ok {
-			Log("[orchestrate.notify] %s wants phone forwarding but no messaging bridge is active", n.Owner)
+			Log("[orchestrate.notify] %s wants phone forwarding but no messaging bridge is active", owner)
 			return
 		}
-		self, ok := link.OwnerHandle(n.Owner)
+		self, ok := link.OwnerHandle(owner)
 		if !ok {
-			Log("[orchestrate.notify] %s wants phone forwarding but no owner handle is configured", n.Owner)
+			Log("[orchestrate.notify] %s wants phone forwarding but no owner handle is configured", owner)
 			return
 		}
-		if err := link.SendToChat(n.Owner, self, body); err != nil {
-			Log("[orchestrate.notify] forwarding to %s failed: %v", n.Owner, err)
+		if err := link.SendToChat(owner, self, body); err != nil {
+			Log("[orchestrate.notify] forwarding to %s failed: %v", owner, err)
 		}
 	}
+}
+
+// noticePhoneReady answers core's one question about the phone transport: can
+// this user be reached by text at all. Registered as NoticePhoneReady so the
+// forwarding chooser can say which options actually deliver, without core
+// learning what a bridge is.
+func noticePhoneReady(user string) bool {
+	link, ok := ActiveMessagingLink()
+	if !ok {
+		return false
+	}
+	_, ok = link.OwnerHandle(user)
+	return ok
+}
+
+// registerNoticeTransports wires this app's transports into core's hooks. Call
+// once at startup.
+func registerNoticeTransports() {
+	NoticeForwarder = forwardNoticeTo
+	NoticePhoneReady = noticePhoneReady
 }
 
 // notifyToolWithheld is the refusal that is the owner's own standing decision.

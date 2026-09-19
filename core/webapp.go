@@ -132,6 +132,19 @@ type DashboardNoticeSource interface {
 	DashboardNotices(r *http.Request) []DashboardNotice
 }
 
+// NoticePhoneReady reports whether this user can be reached by text. Set by
+// whatever owns the messaging bridge; nil means nobody can, which is the right
+// answer for a deployment that has no bridge.
+//
+// A hook rather than an import because core must not know what a phantom bridge
+// is, and the one question it needs answered is a boolean.
+var NoticePhoneReady func(user string) bool
+
+// NoticeForwarder delivers one notice out over the transports the owner chose.
+// Set by the app that owns those transports. Nil means notices are kept and not
+// forwarded, which is also the default preference.
+var NoticeForwarder func(user, title, body string)
+
 // GrantableApp is one entry in the admin user-apps permission picker.
 // Dynamic apps (like exposed agents under /agents/<slug>) implement
 // GrantableAppListSource to surface their per-slug paths as grantable

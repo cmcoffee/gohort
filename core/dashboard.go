@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/cmcoffee/gohort/core/ui"
+
+	"github.com/cmcoffee/gohort/core/notices"
 )
 
 // ServeDashboard starts the unified web dashboard on the given address.
@@ -119,6 +121,13 @@ func ServeDashboard(addr string) error {
 	mux.HandleFunc("/api/live", host.handleLive)
 	mux.HandleFunc("/debug/pprof/", handlePprof)
 	mux.HandleFunc("/api/notify-preference", handleNotifyPreference)
+	// Notifications are deployment-wide, not one app's: anything that runs on
+	// its own can have something to tell the owner, and the place to find that
+	// out must not be inside whichever app happened to write it.
+	mux.HandleFunc("/api/notifications", handleNotifications)
+	mux.HandleFunc("/api/notifications/read", handleNotificationRead)
+	mux.HandleFunc("/api/notifications/dismiss", handleNotificationDismiss)
+	mux.HandleFunc("/api/notifications/forward", handleNotificationForward)
 	mux.HandleFunc("/api/access", host.handleAccess)
 
 	// Mount the shared declarative-UI runtime (CSS + JS at /_ui/*).
@@ -424,6 +433,119 @@ func handleNotifyPreference(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]bool{"notify": AuthGetNotifyDefault(db, username)})
+}
+
+// --- Notifications ---------------------------------------------------------
+//
+// One-way: what something told the owner while they were not watching. The
+// store is core/notices; these are the deployment-wide endpoints behind the
+// dashboard's bell, deliberately NOT inside an app. An app writes a notice with
+// whatever it knows; the owner reads them all in one place.
+
+// noticeDB is where notices live. RootDB when a host has set one, which every
+// real deployment does; nil is a host that never wired storage, and reading
+// nothing is the right answer there rather than a panic.
+func noticeDB() notices.Store {
+	if RootDB == nil {
+		return nil
+	}
+	return RootDB
+}
+
+func handleNotifications(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	user := AuthCurrentUser(r)
+	if user == "" {
+		json.NewEncoder(w).Encode(map[string]any{"unread": 0, "notices": []any{}})
+		return
+	}
+	list := notices.List(noticeDB(), user)
+	unread := 0
+	type row struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+		Body  string `json:"body,omitempty"`
+		Kind  string `json:"kind"`
+		Count int    `json:"count"`
+		When  string `json:"when"`
+		Read  bool   `json:"read"`
+	}
+	out := make([]row, 0, len(list))
+	for _, n := range list {
+		if !n.Read {
+			unread++
+		}
+		out = append(out, row{
+			ID: n.ID, Title: n.Title, Body: n.Body, Kind: n.Kind, Count: n.Count,
+			When: n.Last.In(UserLocation(user)).Format("Jan 2 3:04 PM"), Read: n.Read,
+		})
+	}
+	json.NewEncoder(w).Encode(map[string]any{"unread": unread, "notices": out})
+}
+
+// handleNotificationRead marks one read, or all of them when no id is given.
+// Reading never resets a count: how often a thing has happened stays true after
+// you have read about it, and that number is the only evidence that says
+// chronic rather than one-off.
+func handleNotificationRead(w http.ResponseWriter, r *http.Request) {
+	user := AuthCurrentUser(r)
+	if user == "" {
+		http.Error(w, "not signed in", http.StatusUnauthorized)
+		return
+	}
+	if id := strings.TrimSpace(r.URL.Query().Get("id")); id != "" {
+		notices.MarkRead(noticeDB(), user, id)
+	} else {
+		notices.MarkAllRead(noticeDB(), user)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleNotificationDismiss deletes one. It comes back if the thing happens
+// again, which is right for a condition and is why this is not a mute.
+func handleNotificationDismiss(w http.ResponseWriter, r *http.Request) {
+	user := AuthCurrentUser(r)
+	if user == "" {
+		http.Error(w, "not signed in", http.StatusUnauthorized)
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" {
+		http.Error(w, "id required", http.StatusBadRequest)
+		return
+	}
+	notices.Remove(noticeDB(), user, id)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleNotificationForward reads or sets where notices go beyond being kept.
+//
+// It reports whether each transport can actually deliver, because an option
+// that silently does nothing is worse than one that is not offered: the owner
+// turns it on, believes they will be told, and is not.
+func handleNotificationForward(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	user := AuthCurrentUser(r)
+	if user == "" || AuthDB == nil {
+		json.NewEncoder(w).Encode(map[string]any{"where": ""})
+		return
+	}
+	if r.Method == http.MethodPost {
+		AuthSetNotifyForward(AuthDB(), user, strings.TrimSpace(r.URL.Query().Get("where")))
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	phoneOK := false
+	if NoticePhoneReady != nil {
+		phoneOK = NoticePhoneReady(user)
+	}
+	json.NewEncoder(w).Encode(map[string]any{
+		"where": AuthGetNotifyForward(AuthDB(), user),
+		// Mail only reaches a username that IS an address, the existing
+		// contract of NotifyUser everywhere else.
+		"email_ok": EmailConfigured() && strings.Contains(user, "@"),
+		"phone_ok": phoneOK,
+	})
 }
 
 // handleAccess is the per-request access flags. Apps implement WebAppAccess
