@@ -30,9 +30,24 @@
     function render(items) {
       panel.innerHTML = '';
       var head = el('div', {class: 'ui-bell-head'}, ['Notifications']);
-      var allBtn = el('button', {class: 'ui-bell-act', type: 'button',
-        onclick: function() { post('/api/notifications/read'); }}, ['Mark all read']);
-      head.appendChild(allBtn);
+      if (items.length) {
+        // Only when there is something to act on. Two dead buttons over an
+        // empty list is the same fault as a control offering a state its row
+        // cannot hold.
+        head.appendChild(el('button', {class: 'ui-bell-act', type: 'button',
+          onclick: function() { post('/api/notifications/read'); }}, ['Mark all read']));
+        // Clear is safe to offer because nothing here is the only record of
+        // anything: a condition that is still true says so again on its next
+        // occurrence. Confirmed anyway, since it acts on rows the reader may
+        // not have scrolled to.
+        head.appendChild(el('button', {class: 'ui-bell-act', type: 'button',
+          onclick: function() {
+            Promise.resolve(window.uiConfirm
+              ? window.uiConfirm('Clear all notifications? Anything still happening will tell you again.')
+              : window.confirm('Clear all notifications? Anything still happening will tell you again.')
+            ).then(function(okd) { if (okd) { post('/api/notifications/dismiss'); } });
+          }}, ['Clear all']));
+      }
       panel.appendChild(head);
       if (!items.length) {
         panel.appendChild(el('div', {class: 'ui-bell-empty'}, ['Nothing yet.']));

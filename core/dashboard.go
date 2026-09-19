@@ -509,12 +509,13 @@ func handleNotificationDismiss(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not signed in", http.StatusUnauthorized)
 		return
 	}
-	id := strings.TrimSpace(r.URL.Query().Get("id"))
-	if id == "" {
-		http.Error(w, "id required", http.StatusBadRequest)
-		return
+	// No id clears the list, mirroring read: the two bulk actions take the same
+	// shape so neither needs its own endpoint or its own argument to remember.
+	if id := strings.TrimSpace(r.URL.Query().Get("id")); id != "" {
+		notices.Remove(noticeDB(), user, id)
+	} else {
+		notices.RemoveAll(noticeDB(), user)
 	}
-	notices.Remove(noticeDB(), user, id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

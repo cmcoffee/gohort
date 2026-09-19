@@ -1616,7 +1616,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "notify_me",
-				Description: "Tell the OWNER something out of band. It lands in their Notifications, and reaches their phone as well if they have asked for that: whether it is forwarded is THEIR setting, not yours, so write it as a message that has to stand on its own either way. Use this ONLY when the user has explicitly asked to be notified, OR when a monitor, scheduled job, or long-running task is delivering a result they asked to be alerted about. Do NOT use it on greetings or ordinary chat, and do NOT volunteer unprompted status; for a normal reply, just reply in the conversation. No approval needed since it only reaches the owner. To include an image/file, pass its workspace path in `attachments` — attachments can only be delivered to a phone, so they are dropped when forwarding is off, and the reply says when that happened.",
+				Description: "Tell the OWNER something out of band. Where it reaches them is their own setting and not something you decide or report on, so write a message that stands on its own and say only that you sent it. Use this ONLY when the user has explicitly asked to be notified, OR when a monitor, scheduled job, or long-running task is delivering a result they asked to be alerted about. Do NOT use it on greetings or ordinary chat, and do NOT volunteer unprompted status; for a normal reply, just reply in the conversation. No approval needed since it only reaches the owner. To include an image/file, pass its workspace path in `attachments`; if one cannot be delivered the reply says so, and then whatever mattered in it belongs in the text.",
 				Parameters: map[string]ToolParam{
 					"text":        {Type: "string", Description: "What to tell the owner. The first line becomes the notification's title, so lead with the thing itself rather than a preamble."},
 					"attachments": {Type: "array", Items: &ToolParam{Type: "string"}, Description: attachmentsParamDesc},
@@ -1650,22 +1650,33 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					// dropping them quietly. The agent can then decide to put
 					// what mattered into the text.
 					if len(images) > 0 {
-						return "Kept in your Notifications (text only): forwarding to your phone is off, and attachments cannot be kept with a notification.", nil
+						// The ONE thing the agent has to know, because it
+						// changes what it should do: the attachment did not
+						// arrive, so anything that mattered in it has to be
+						// said in words instead.
+						return "Sent. The attachments could not be delivered, so put anything essential from them into the message text.", nil
 					}
-					return "Kept in your Notifications. Forwarding to your phone is off, so it was not texted.", nil
+					return notifySent, nil
 				}
 				link, ok := ActiveMessagingLink()
 				if !ok {
-					return "Kept in your Notifications: the messaging bridge is not available, so it was not texted.", nil
+					return notifySent, nil
 				}
 				self, ok := link.OwnerHandle(owner)
 				if !ok {
-					return "Kept in your Notifications: no owner phone is configured, so it was not texted.", nil
+					return notifySent, nil
 				}
 				// Prefixed, like any other forwarded notice: a text arriving on
 				// a phone has no other context, and this one is going out for
 				// exactly the same reason the passive ones do.
-				outbound := noticePrefix(noticeSourceName(sess.DB, controllerAgentID)) + " " + text
+				//
+				// WITHOUT the agent, because this path is the agent-aware send
+				// and the bridge already tags it "[<name>] " on the wire. Both
+				// produced "[Wren] [Wren@Gohort] ...". The deployment name is
+				// the part the tag does not carry, so that is the part this
+				// adds; an owner who has turned the bridge tag off gets the
+				// deployment and not the agent, which is the setting they chose.
+				outbound := noticePrefix("") + " " + text
 				// DeliverMessage (not SendToHandle) so attachments ride along;
 				// persona is inactive for the owner's own chat, so the text
 				// is sent verbatim. Empty chatID resolves the owner's thread.
@@ -1674,7 +1685,8 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					// rather than reporting a total failure. Telling the model
 					// the send failed when the owner WILL see it is how an agent
 					// ends up saying the same thing three more ways.
-					return "Kept in your Notifications: the text could not be delivered (" + err.Error() + ").", nil
+					Log("[orchestrate.notify] forwarding %s's notification failed: %v", owner, err)
+					return notifySent, nil
 				}
 				// The owner's channel (their phone) must see what was sent — record
 				// into its cortex/session so when the owner replies, the agent knows
@@ -1688,9 +1700,9 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				// belongs in this agent's cortex. No-op if the agent has no cortex.
 				appendCortexObs(sess.DB, controllerAgentID, "Sent to you", cortexKindMessage, text)
 				if len(images) > 0 {
-					return fmt.Sprintf("Kept in your Notifications and forwarded to your phone with %d attachment(s).", len(images)), nil
+					return notifySent, nil
 				}
-				return "Kept in your Notifications and forwarded to your phone.", nil
+				return notifySent, nil
 			},
 		},
 		{

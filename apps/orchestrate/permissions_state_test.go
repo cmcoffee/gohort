@@ -328,7 +328,7 @@ func TestWhatAnAgentSaysIsKept(t *testing.T) {
 // preference decides whether it also chases you. The prefix is what makes a
 // forwarded copy usable, because a text on a phone has no other context.
 func TestAForwardedNoticeSaysWhereItCameFrom(t *testing.T) {
-	if got := noticePrefix("Nightly digest"); got != "["+"Nightly digest@"+ServiceName()+"]" {
+	if got := noticePrefix("Nightly digest"); got != "[Nightly digest@"+ServiceName()+"]:" {
 		t.Errorf("an agent's notice does not name the agent and the deployment: %q", got)
 	}
 	// No agent: still names the deployment, because somebody with two gohorts
@@ -336,6 +336,14 @@ func TestAForwardedNoticeSaysWhereItCameFrom(t *testing.T) {
 	got := noticePrefix("")
 	if !strings.HasPrefix(got, "[") || !strings.Contains(got, ServiceName()) || strings.Contains(got, "@") {
 		t.Errorf("a sourceless notice has the wrong shape: %q", got)
+	}
+
+	// The agent-aware send is the one the bridge already tags "[<name>] " on
+	// the wire, so notify_me asks for the sourceless form. Both together read
+	// "[Wren] [Wren@Gohort] ...", which is the duplication this pins against.
+	src := readFile(t, "operator_tools.go")
+	if !strings.Contains(src, `outbound := noticePrefix("") + " " + text`) {
+		t.Error("notify_me is naming the agent again, which the bridge tag already does")
 	}
 }
 
@@ -383,5 +391,37 @@ func TestNeverChosenIsNotTheSameAsOff(t *testing.T) {
 	AuthSetNotifyForward(db, "alice", "")
 	if got := AuthGetNotifyForward(db, "alice"); got != "off" {
 		t.Errorf("choosing nowhere stored %q, which reads as never having been asked", got)
+	}
+}
+
+// A tool result that hands the model implementation detail gets it narrated
+// back at the owner. notify_me used to report which transport it had used, and
+// an agent duly answered "it's in your Notifications, forwarding to your phone
+// is off, want me to turn that on?" — reporting on plumbing and offering to
+// change a preference it does not own.
+func TestNotifyMeDoesNotTellTheAgentWhereItWent(t *testing.T) {
+	src := readFile(t, "operator_tools.go")
+	start := strings.Index(src, `Name:        "notify_me"`)
+	if start < 0 {
+		t.Fatal("notify_me is gone")
+	}
+	body := src[start:]
+	if end := strings.Index(body, "\n\t\t},\n"); end > 0 {
+		body = body[:end]
+	}
+	// Every success path returns the same sentence, so there is nothing to
+	// narrate and no branch that can drift into describing one.
+	for _, leak := range []string{"forwarded to your phone", "was not texted", "Forwarding to your phone", "messaging bridge is not available"} {
+		if strings.Contains(body, leak) {
+			t.Errorf("notify_me's result still describes the transport: %q", leak)
+		}
+	}
+	if !strings.Contains(body, "return notifySent, nil") {
+		t.Error("the shared success result is gone; every path returning its own sentence is how this came back")
+	}
+	// The one exception earns its place: an undelivered attachment changes what
+	// the agent should DO, rather than describing what happened.
+	if !strings.Contains(body, "put anything essential from them into the message text") {
+		t.Error("an undelivered attachment no longer tells the agent to say it in words")
 	}
 }

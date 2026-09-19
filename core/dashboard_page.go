@@ -22,7 +22,7 @@ import (
 // both of these only render what /api/notifications returns. Keep it that way,
 // and a difference between them stays cosmetic.
 const notifyPanelHTML = `<div class="notify-panel" id="notify-panel">
-  <div class="notify-head"><span>Notifications</span><button type="button" id="notify-all">Mark all read</button></div>
+  <div class="notify-head"><span>Notifications</span><span><button type="button" id="notify-all">Mark all read</button> <button type="button" id="notify-clear">Clear all</button></span></div>
   <div id="notify-list"><div class="notify-empty">Nothing yet.</div></div>
 </div>
 <script>
@@ -66,6 +66,14 @@ const notifyPanelHTML = `<div class="notify-panel" id="notify-panel">
       : '/api/notifications/dismiss?id=' + encodeURIComponent(id));
   });
   document.getElementById('notify-all').onclick = function() { post('/api/notifications/read'); };
+  // Safe to offer: nothing here is the only record of anything, and a condition
+  // that is still true says so again on its next occurrence. Confirmed anyway,
+  // since it acts on rows the reader may not have scrolled to.
+  document.getElementById('notify-clear').onclick = function() {
+    if (window.confirm('Clear all notifications? Anything still happening will tell you again.')) {
+      post('/api/notifications/dismiss');
+    }
+  };
   load();
   setInterval(load, 30000);
 })();

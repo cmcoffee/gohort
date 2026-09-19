@@ -185,3 +185,30 @@ func TestAMissingStoreIsQuiet(t *testing.T) {
 	MarkAllRead(nil, "alice")
 	Remove(nil, "alice", "x")
 }
+
+// Clearing is safe to offer because nothing here is the only record of
+// anything: a condition that is still true says so again on its next
+// occurrence. Without it, the honest thing to do with a long list is nothing,
+// and a list you cannot end is one you stop opening.
+func TestClearingIsNotSilencing(t *testing.T) {
+	db := newStore(t)
+	recurring := Notice{Owner: "alice", Agent: "nightly", Kind: KindStopped, Title: "send_email was not run"}
+	Record(db, recurring)
+	Record(db, Notice{Owner: "alice", Agent: "weekly", Kind: KindReport, Title: "the export finished"})
+	Record(db, Notice{Owner: "bob", Agent: "nightly", Kind: KindReport, Title: "not alice's"})
+
+	RemoveAll(db, "alice")
+	if got := len(List(db, "alice")); got != 0 {
+		t.Errorf("%d notices survived a clear", got)
+	}
+	// One owner's clear does not reach another's.
+	if got := len(List(db, "bob")); got != 1 {
+		t.Errorf("clearing one owner's list emptied another's: %d", got)
+	}
+	// And the thing that is still happening comes back, as a first occurrence,
+	// so it forwards again rather than being silently suppressed.
+	back, isNew := Record(db, recurring)
+	if !isNew || back.Count != 1 {
+		t.Errorf("a cleared condition did not return as new: new=%v count=%d", isNew, back.Count)
+	}
+}

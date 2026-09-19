@@ -69,18 +69,25 @@ func (T *OrchestrateApp) noticeSource(owner, agentID string) string {
 // phone or in an inbox it is the difference between a message you can act on
 // and one you have to go and identify.
 //
-// "[<agent>@<service>]" when there is an agent, "[<service>]" when there is
+// "[<agent>@<service>]:" when there is an agent, "[<service>]:" when there is
 // not, so the shape is always the same and the deployment is always named: a
 // person with two gohorts needs to know which one is talking.
+//
+// The source is passed as EMPTY on any path whose transport already names the
+// agent. The bridge tags an agent-aware send with "[<name>] " of its own
+// (apps/bridges/bridges.go), which is per-channel configurable and the owner's
+// to turn off, so repeating it here produced "[Wren] [Wren@Gohort] ...". The
+// caller decides, rather than this function re-deriving the bridge's tagging
+// rules and drifting from them the first time one of those options changes.
 func noticePrefix(source string) string {
 	service := strings.TrimSpace(ServiceName())
 	if service == "" {
 		service = "gohort"
 	}
 	if source = strings.TrimSpace(source); source != "" {
-		return "[" + source + "@" + service + "]"
+		return "[" + source + "@" + service + "]:"
 	}
-	return "[" + service + "]"
+	return "[" + service + "]:"
 }
 
 // forwardNoticeTo is registered as core's NoticeForwarder, so a notice written
@@ -219,3 +226,18 @@ func noticeSourceName(udb Database, agentID string) string {
 	}
 	return agentID
 }
+
+// notifySent is what notify_me tells the agent, on every path that worked.
+//
+// One sentence, and deliberately no routing. WHERE a notification went is the
+// owner's setting and none of the agent's business, and a result that hands the
+// model those mechanics gets them narrated straight back at the owner: the tool
+// description says the routing is not the agent's concern, and then the result
+// used to describe it in detail, so an agent answered "it's in your
+// Notifications, forwarding to your phone is off, want me to turn that on?" —
+// reporting on plumbing and offering to change a preference it does not own.
+//
+// The one exception is an attachment that could not be delivered, because that
+// changes what the agent should do next rather than merely describing what
+// happened.
+const notifySent = "Sent."

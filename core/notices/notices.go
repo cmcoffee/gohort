@@ -213,3 +213,19 @@ func Remove(db Store, owner, id string) {
 		db.Unset(Table, key(owner, id))
 	}
 }
+
+// RemoveAll empties one owner's list.
+//
+// Safe to offer, for the same reason Remove is: nothing here is the only record
+// of anything. A condition that is still true says so again on its next
+// occurrence, and what this clears is the accumulated evidence that somebody
+// has already seen. Without it the honest thing to do with a long list is
+// nothing, and a list you cannot end is one you stop opening.
+func RemoveAll(db Store, owner string) {
+	if db == nil {
+		return
+	}
+	for _, n := range List(db, owner) {
+		db.Unset(Table, key(owner, n.ID))
+	}
+}
