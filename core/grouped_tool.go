@@ -46,7 +46,13 @@ type GroupedToolAction struct {
 	Required     []string
 	Caps         []Capability
 	NeedsConfirm bool
-	Handler      func(args map[string]any, sess *ToolSession) (string, error)
+	// OwnModelReach marks an action whose network reach is the
+	// deployment's own inference endpoint and nothing else. Keep
+	// CapNetwork beside it: the result is still outside content and still
+	// needs fencing. See OwnModelReachTool for what this does and does
+	// not claim.
+	OwnModelReach bool
+	Handler       func(args map[string]any, sess *ToolSession) (string, error)
 }
 
 // typoHint scans supplied args for keys that are NOT known params of this
@@ -280,6 +286,18 @@ func (g *GroupedTool) ActionCaps() map[string][]Capability {
 			continue
 		}
 		out[name] = append([]Capability(nil), a.Caps...)
+	}
+	return out
+}
+
+// OwnModelReach names the actions whose only outside reach is the deployment's
+// own model, for the tainted-action gate. See OwnModelReachTool.
+func (g *GroupedTool) OwnModelReach() map[string]bool {
+	out := map[string]bool{}
+	for name, a := range g.actions {
+		if a != nil && a.OwnModelReach {
+			out[name] = true
+		}
 	}
 	return out
 }

@@ -198,6 +198,11 @@ type Tool struct {
 	// CALL through it actually does.
 	ActionCaps map[string][]Capability `json:"-"`
 
+	// OwnModelReach names the calls whose only outside reach is the
+	// deployment's own inference endpoint — keyed by action, or by the
+	// tool's own name for a tool with no actions. See OwnModelReachTool.
+	OwnModelReach map[string]bool `json:"-"`
+
 	// Prompt is an optional system-prompt fragment that gets appended
 	// when this tool is loaded into an agent. Most tools (web_search,
 	// fetch_url, calculate, …) don't need one — name + description in

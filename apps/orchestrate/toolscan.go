@@ -791,7 +791,7 @@ func (t *chatTurn) guardrailActionGate() func(string, map[string]any) bool {
 // tool. When it is present, only the actions that carry CapNetwork count as
 // outbound; when it is absent the whole tool does, which is the behaviour every
 // non-grouped tool had and keeps.
-func (t *chatTurn) noteOutboundTool(name string, actionCaps map[string][]Capability) {
+func (t *chatTurn) noteOutboundTool(name string, actionCaps map[string][]Capability, ownModel map[string]bool) {
 	if t == nil || strings.TrimSpace(name) == "" {
 		return
 	}
@@ -799,6 +799,14 @@ func (t *chatTurn) noteOutboundTool(name string, actionCaps map[string][]Capabil
 	defer t.scanMu.Unlock()
 	if t.outboundTools == nil {
 		t.outboundTools = map[string]bool{}
+	}
+	// A whole tool whose only reach is the deployment's own model is not a way
+	// out. Its result is still fenced and still scanned — that is decided by
+	// the caller and is a different question — but there is nothing an
+	// injection gains by steering an agent into telling its own model something
+	// that model just read.
+	if ownModel[name] && len(actionCaps) == 0 {
+		return
 	}
 	t.outboundTools[name] = true
 	if len(actionCaps) == 0 {
@@ -819,6 +827,13 @@ func (t *chatTurn) noteOutboundTool(name string, actionCaps map[string][]Capabil
 				outbound = true
 				break
 			}
+		}
+		// Reaching only our own model is not reaching OUT. The action keeps
+		// CapNetwork, because its result is outside content and still has to be
+		// fenced; what it does not have is a destination an injection could
+		// choose. That is the property this gate is actually about.
+		if ownModel[action] {
+			outbound = false
 		}
 		per[action] = outbound
 	}

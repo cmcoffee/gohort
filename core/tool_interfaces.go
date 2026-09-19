@@ -121,6 +121,53 @@ func ChatToolActionCaps(ct ChatTool) map[string][]Capability {
 	return nil
 }
 
+// OwnModelReachTool is an optional interface for a tool whose network reach is
+// the deployment's OWN inference endpoint and nothing else — image description,
+// summarisation, embedding: work done by asking the model that is already
+// reading this turn.
+//
+// CapNetwork stays on such a tool and must: its RESULT is still outside
+// content (a description of a fetched page is a description of a fetched
+// page), so the untrusted fence and the injection scan are exactly as right as
+// they were. What changes is the separate question of whether the call can
+// carry data to an ATTACKER, and it cannot — not because it is harmless, but
+// because the only party it reaches already has the entire conversation. There
+// is nothing a page could gain by steering an agent into telling its own model
+// something its own model just read.
+//
+// This is the distinction the tainted-action gate actually needs. "Reaches a
+// network" and "can be pointed somewhere the injection chose" are different
+// properties, and the second is what makes a fetch of
+// somewhere-else.example/?q=the-secret the dangerous call.
+//
+// Keyed by ACTION name for a grouped tool; a tool with no actions answers under
+// its own name. Deliberately NOT a Capability: capsAllowed requires every
+// declared tier to be granted, so a new tier would quietly hide these tools
+// from every session that had not been updated to allow it.
+//
+// THE BOUNDARY, because the obvious next step is wrong. This says the recipient
+// ALREADY HAS the conversation, which is why sending it more of the same costs
+// nothing. It does NOT say "the destination is fixed by configuration". Those
+// come apart on a tool like transcribe: its endpoint is configured rather than
+// supplied by the caller, so an injection cannot redirect it either — but it is
+// a separate service that did not already have the data, and the reasoning
+// above does not reach it. Such a tool stays gated, and the judge decides.
+// Widening this to "not redirectable" is a real question with a real answer;
+// it is just a different question, and it must not be answered by quietly
+// reusing this name.
+type OwnModelReachTool interface {
+	OwnModelReach() map[string]bool
+}
+
+// ChatToolOwnModelReach returns the calls whose only outside reach is the
+// deployment's own model, or nil for a tool that claims none.
+func ChatToolOwnModelReach(ct ChatTool) map[string]bool {
+	if c, ok := ct.(OwnModelReachTool); ok {
+		return c.OwnModelReach()
+	}
+	return nil
+}
+
 func ToolCategory(t ChatTool) string {
 	if c, ok := t.(CategorizedTool); ok {
 		return strings.TrimSpace(c.Category())

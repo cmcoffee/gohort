@@ -285,7 +285,14 @@ func init() {
 		},
 		Required: []string{"path"},
 		Caps:     []Capability{CapRead, CapNetwork},
-		Handler:  handleViewImage,
+		// The network it reaches is this deployment's OWN vision model, the
+		// one already reading every turn: sess.LLM.Chat below. CapNetwork
+		// stays because the DESCRIPTION is of outside content and must be
+		// fenced and scanned like any fetched page. What it is not is a way
+		// out, and on a turn holding an injection that distinction is the
+		// difference between judging a call and judging a local file read.
+		OwnModelReach: true,
+		Handler:       handleViewImage,
 	})
 
 	RegisterChatTool(gt)

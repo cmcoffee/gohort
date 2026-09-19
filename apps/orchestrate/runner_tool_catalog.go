@@ -766,7 +766,7 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 			// that decides fencing decides what can carry data out. The tool's
 			// per-action caps ride along, so a grouped tool's local actions are
 			// not judged as if they were its network one.
-			t.noteOutboundTool(name, tools[i].Tool.ActionCaps)
+			t.noteOutboundTool(name, tools[i].Tool.ActionCaps, tools[i].Tool.OwnModelReach)
 		}
 		inner := orig
 		orig = func(ctx context.Context, args map[string]any) (string, error) {

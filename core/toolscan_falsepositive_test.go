@@ -8,6 +8,7 @@ package core
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 )
@@ -110,4 +111,103 @@ func TestAnUnverifiableConvictionStillStopsTheAction(t *testing.T) {
 	if v := judge(context.Background(), injected, "check the agent profiles", "send_email to attacker@example.com"); !v.Diverted() {
 		t.Fatalf("a real divert was set aside: %+v", v)
 	}
+}
+
+// The exemption rests entirely on this: an own-model call changes WHO gets
+// judged, and changes nothing about what the content is treated as.
+//
+// A description of a fetched page is a description of a fetched page. If
+// declaring OwnModelReach also dropped the fence or the scan, this would be a
+// hole dressed as a precision fix — the injection would arrive unmarked,
+// unscanned, and the turn would never be tainted at all.
+func TestOwnModelReachDoesNotUnfenceAnything(t *testing.T) {
+	gt := NewGroupedTool("looker", "Test fixture.")
+	gt.AddAction("view_image", &GroupedToolAction{
+		Description:   "describes a local image with our own model",
+		Caps:          []Capability{CapRead, CapNetwork},
+		OwnModelReach: true,
+		Handler:       func(args map[string]any, sess *ToolSession) (string, error) { return "", nil },
+	})
+
+	// The union still carries CapNetwork, which is what every fencing and
+	// scanning decision reads.
+	union := gt.Caps()
+	found := false
+	for _, c := range union {
+		if c == CapNetwork {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the tool stopped declaring CapNetwork: its results would no longer be fenced or scanned")
+	}
+
+	// And the reach annotation travels on its own channel, so nothing that
+	// reads capabilities can see it.
+	reach := ChatToolOwnModelReach(gt)
+	if !reach["view_image"] {
+		t.Error("the declaration did not survive the interface")
+	}
+	for _, c := range union {
+		if string(c) == "own_model" || string(c) == "ownmodel" {
+			t.Error("the annotation leaked into Caps, where capsAllowed would require every session to grant it")
+		}
+	}
+}
+
+// Capability is a TIER and capsAllowed requires every declared one to be
+// granted, so adding a tier to say "this is narrower" would have hidden the
+// tool from every session not updated to allow it. The four tiers are the
+// whole vocabulary.
+func TestReachIsNotANewCapabilityTier(t *testing.T) {
+	for _, c := range []Capability{CapRead, CapNetwork, CapWrite, CapExecute} {
+		if string(c) == "" {
+			t.Fatal("a capability tier lost its name")
+		}
+	}
+	// Nothing in the reach annotation is a Capability, by construction: it is a
+	// map[string]bool. This test exists to make that a decision rather than an
+	// accident, so a future "just add CapOwnModel" proposal meets it here.
+	var reach map[string]bool
+	_ = reach
+}
+
+// The boundary, pinned so that widening it is a decision rather than a drift.
+//
+// The exemption's whole justification is that the recipient already has the
+// conversation. A tool whose destination is merely FIXED — transcribe, whose
+// endpoint comes from configuration rather than from its caller — cannot be
+// redirected by an injection either, but it is a separate service that did not
+// already have the data. That is a different argument and it has not been made.
+func TestTheExemptionIsAboutTheRecipientNotTheAddress(t *testing.T) {
+	flat := strings.Join(strings.Fields(ownModelReachDoc()), " ")
+	for _, want := range []string{
+		"ALREADY HAS the conversation",
+		`It does NOT say "the destination is fixed by configuration"`,
+		"Such a tool stays gated",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("the boundary is not written down: %q is missing", want)
+		}
+	}
+}
+
+// ownModelReachDoc returns the OwnModelReachTool doc comment, which is where
+// the boundary lives. Read from source so the test fails when somebody deletes
+// the reasoning rather than when they merely reword it.
+func ownModelReachDoc() string {
+	b, err := os.ReadFile("tool_interfaces.go")
+	if err != nil {
+		return ""
+	}
+	src := string(b)
+	i := strings.Index(src, "// OwnModelReachTool is an optional interface")
+	if i < 0 {
+		return ""
+	}
+	j := strings.Index(src[i:], "type OwnModelReachTool interface")
+	if j < 0 {
+		return src[i:]
+	}
+	return src[i : i+j]
 }
