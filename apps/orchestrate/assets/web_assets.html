@@ -6707,6 +6707,82 @@
         });
       });
 
+      // Where notifications go beyond being kept.
+      //
+      // Each option says whether it can actually deliver. An option that
+      // silently does nothing is worse than one that is not offered: the owner
+      // turns it on, believes they will be told, and is not.
+      window.uiRegisterClientAction('orchestrate_notify_forward', function(ctx) {
+        var m = openOrchModal('Forward notifications');
+        var help = document.createElement('div');
+        help.className = 'ui-orch-modal-help';
+        help.textContent = 'Notifications are always kept here. This is whether they also reach you somewhere else. Only the first time something happens is forwarded; a repeat raises the count on the row instead.';
+        m.body.appendChild(help);
+
+        var chosen = '';
+        var rows = [];
+        function option(value, label, note, ok) {
+          var wrap = document.createElement('label');
+          wrap.style.cssText = 'display:flex;gap:0.5rem;align-items:flex-start;padding:0.35rem 0';
+          var radio = document.createElement('input');
+          radio.type = 'radio';
+          radio.name = 'notify_forward';
+          radio.value = value;
+          radio.disabled = !ok;
+          radio.onchange = function() { if (radio.checked) { chosen = value; } };
+          var text = document.createElement('div');
+          var strong = document.createElement('div');
+          strong.textContent = label + (ok ? '' : ' (not set up)');
+          var small = document.createElement('div');
+          small.className = 'ui-orch-modal-help';
+          small.style.margin = '0';
+          small.textContent = note;
+          text.appendChild(strong);
+          text.appendChild(small);
+          wrap.appendChild(radio);
+          wrap.appendChild(text);
+          m.body.appendChild(wrap);
+          rows.push({value: value, radio: radio});
+        }
+
+        fetch('api/console/notifications/forward').then(function(r) {
+          if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
+          return r.json();
+        }).then(function(d) {
+          chosen = d.where || '';
+          option('', 'Nowhere', 'Kept here only. Check the page when you want to know.', true);
+          option('email', 'Email', d.email_ok ? 'Sent to your account address.' : 'Needs mail configured and an account that is an email address.', !!d.email_ok);
+          option('phone', 'Phone', d.phone_ok ? 'Texted through the messaging bridge.' : 'Needs the messaging bridge and an owner handle.', !!d.phone_ok);
+          option('both', 'Both', 'Email and phone.', !!d.email_ok && !!d.phone_ok);
+          rows.forEach(function(row) { if (row.value === chosen) { row.radio.checked = true; } });
+        }).catch(function(err) {
+          window.uiAlert('Could not read the setting: ' + (err && err.message || err));
+        });
+
+        var cancelBtn = document.createElement('button');
+        cancelBtn.className = 'ui-orch-modal-btn';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.onclick = m.close;
+        m.footer.appendChild(cancelBtn);
+
+        var saveBtn = document.createElement('button');
+        saveBtn.className = 'ui-orch-modal-btn primary';
+        saveBtn.textContent = 'Save';
+        saveBtn.onclick = function() {
+          saveBtn.disabled = true;
+          fetch('api/console/notifications/forward?where=' + encodeURIComponent(chosen), {method: 'POST'})
+            .then(function(r) {
+              if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
+              m.close();
+              if (ctx && ctx.reload) { ctx.reload(); }
+            }).catch(function(err) {
+              saveBtn.disabled = false;
+              window.uiAlert('Save failed: ' + (err && err.message || err));
+            });
+        };
+        m.footer.appendChild(saveBtn);
+      });
+
       // One task's working notes, from its row on the Scheduler.
       //
       // The agent-wide Working-notes block went seven hundred versions with no

@@ -269,6 +269,15 @@ type AuthUser struct {
 	PrivateModePerAgent      map[string]bool `json:"private_mode_per_agent,omitempty"`
 	InferredDisabledPerAgent map[string]bool `json:"inferred_disabled_per_agent,omitempty"`
 
+	// NotifyForward is where Notifications are FORWARDED, beyond being kept:
+	// "" (nowhere, the default), "email", "phone", or "both". The notice is
+	// recorded either way; this only decides whether it also goes out.
+	//
+	// Off by default deliberately. A notification surface earns the right to
+	// interrupt somebody by being useful first, and one that starts by texting
+	// gets silenced before it has been read twice.
+	NotifyForward string `json:"notify_forward,omitempty"`
+
 	// Timezone is the user's personal IANA zone (e.g. "America/New_York").
 	// Empty = fall back to the deployment zone. Resolved via UserLocation;
 	// used for the user's turn stamp and the day boundaries of schedules they
@@ -328,6 +337,33 @@ func AuthSetUserTimezone(db Database, username, iana string) {
 		return
 	}
 	user.Timezone = strings.TrimSpace(iana)
+	db.Set(AuthTable, "user:"+username, user)
+}
+
+// AuthGetNotifyForward returns where this user's notifications are forwarded:
+// "", "email", "phone" or "both".
+func AuthGetNotifyForward(db Database, username string) string {
+	var user AuthUser
+	if db == nil || !db.Get(AuthTable, "user:"+username, &user) {
+		return ""
+	}
+	return strings.TrimSpace(user.NotifyForward)
+}
+
+// AuthSetNotifyForward stores it. Anything unrecognized clears back to nowhere,
+// so a typo in a hand-written call reads as OFF rather than as a guess about
+// which way somebody wanted to be interrupted.
+func AuthSetNotifyForward(db Database, username, where string) {
+	var user AuthUser
+	if db == nil || !db.Get(AuthTable, "user:"+username, &user) {
+		return
+	}
+	switch strings.TrimSpace(where) {
+	case "email", "phone", "both":
+		user.NotifyForward = strings.TrimSpace(where)
+	default:
+		user.NotifyForward = ""
+	}
 	db.Set(AuthTable, "user:"+username, user)
 }
 

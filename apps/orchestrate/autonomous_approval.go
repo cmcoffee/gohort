@@ -280,6 +280,10 @@ func (g *autonomousGate) confirm(name, args string) bool {
 	if g.noUnattended[name] {
 		g.withheld = append(g.withheld, name)
 		Log("[orchestrate/autonomous] agent=%s withheld %q: marked never unattended", g.agentID, name)
+		// The only durable owner-facing trace this refusal gets. There is no
+		// queue entry and no badge, by design, so without this the schedule
+		// quietly does three quarters of its job forever.
+		g.app.notifyToolWithheld(g.owner, g.agentID, name)
 		return false
 	}
 	g.queue(name, args)
@@ -333,6 +337,9 @@ func (g *autonomousGate) queue(name, args string) {
 		Brief:  name,
 		Text:   truncateObs(args, 200),
 	})
+	// And a notice, so the fact can leave the building. The pane owns the
+	// decision and the badge; this is how a 5am fire is news before 9am.
+	g.app.notifyToolQueued(g.owner, g.agentID, name)
 	// Best-effort awareness card (no-op if the agent has cortex off; the
 	// Authorizations pane is the primary surface either way).
 	appendCortexObs(UserDB(g.app.DB, g.owner), g.agentID, "Approval needed",

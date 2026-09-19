@@ -19,6 +19,8 @@ import (
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/snugforge/kvlite"
+
+	"github.com/cmcoffee/gohort/core/notices"
 )
 
 // The round trip, driven: choosing "Needs approval" has to leave something
@@ -235,4 +237,52 @@ func TestAnInertGrantIsNotAPermission(t *testing.T) {
 	// because they are currently inert is a data change made on a guess: if the
 	// credential is ever set back to confirming, the grant means something
 	// again and should be there.
+}
+
+// A withheld tool is the refusal with nothing waiting on it: no queue entry, no
+// badge, and a run line nobody reads unless they already suspect something. So
+// it has to leave a durable trace, or a schedule quietly does three quarters of
+// its job forever. A queued one gets a notice too, so a 5am fire is news before
+// 9am rather than a pane nobody opened.
+func TestBothRefusalsReachTheOwner(t *testing.T) {
+	root := pinRootDB(t)
+	app := &OrchestrateApp{}
+
+	app.notifyToolWithheld("alice", "nightly", "send_email")
+	app.notifyToolQueued("alice", "nightly", "call_billing")
+
+	list := notices.List(root, "alice")
+	if len(list) != 2 {
+		t.Fatalf("expected a notice for each refusal kind, got %d: %+v", len(list), list)
+	}
+	var stopped, blocked int
+	for _, n := range list {
+		switch n.Kind {
+		case notices.KindStopped:
+			stopped++
+			if !strings.Contains(n.Body, "Nothing is waiting on you") {
+				t.Errorf("a settled decision reads as though it needs action: %q", n.Body)
+			}
+		case notices.KindBlocked:
+			blocked++
+			if !strings.Contains(n.Body, "Permissions pane") {
+				t.Errorf("a pending decision does not say where to go: %q", n.Body)
+			}
+		}
+	}
+	if stopped != 1 || blocked != 1 {
+		t.Errorf("the two refusals were not kept apart: stopped=%d blocked=%d", stopped, blocked)
+	}
+
+	// Every fire after the first folds in. Twenty-four alerts a day is how a
+	// notification surface gets turned off before it is ever useful.
+	for i := 0; i < 5; i++ {
+		app.notifyToolWithheld("alice", "nightly", "send_email")
+	}
+	if got := len(notices.List(root, "alice")); got != 2 {
+		t.Errorf("repeats did not fold: %d rows", got)
+	}
+	if got := notices.Unread(root, "alice"); got != 2 {
+		t.Errorf("badge counts occurrences rather than notices: %d", got)
+	}
 }

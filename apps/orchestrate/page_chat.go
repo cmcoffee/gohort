@@ -398,6 +398,23 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// (Deny / Allow once / Always allow); standing-policy rows
 						// render with a segmented Always allow · Needs approval ·
 						// Blocked control + Remove. _pending vs _managed picks which.
+						// Notifications sits beside Permissions because the two
+						// answer neighbouring questions: what is waiting on you,
+						// and what happened while you were not there. Its badge
+						// counts UNREAD notices, which is a number about the
+						// owner, not about the world: a row that has happened
+						// forty times is one thing they have not looked at.
+						{Label: "Notifications", Icon: "🔔", Source: "api/console/notifications", Topbar: true, AllAgents: true, BadgeField: "_unread", Layout: "cards",
+							SearchPlaceholder: "Search what your agents reported",
+							ViewActions: []ui.OrchestratorRowAction{
+								{Label: "Mark all read", Method: "POST", URL: "api/console/notifications/read"},
+								{Label: "Forwarding", Method: "client", URL: "orchestrate_notify_forward"},
+							},
+							RowActions: []ui.OrchestratorRowAction{
+								{Label: "Mark read", Method: "POST", URL: "api/console/notifications/read", OnlyIf: "_unread"},
+								{Label: "Dismiss", Method: "POST", URL: "api/console/notifications/dismiss",
+									Confirm: "Dismiss this? It comes back if it happens again."},
+							}},
 						{Label: "Permissions", Icon: "🔑", Source: "api/console/permissions", Topbar: true, AllAgents: true, BadgeField: "_pending", Layout: "cards",
 							StateField: "_policy",
 							StateOptions: []ui.OrchestratorStateOption{

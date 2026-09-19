@@ -172,6 +172,12 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/runs", g(T.handleConsoleRuns))
 	T.HandleFunc("/api/console/run-detail", g(T.handleConsoleRunDetail))
 	T.HandleFunc("/api/console/approvals", g(T.handleConsoleApprovals))
+	// Notifications: what the agents needed to say, kept whether or not the
+	// owner was there to hear it. See notifications.go.
+	T.HandleFunc("/api/console/notifications", g(T.handleConsoleNotifications))
+	T.HandleFunc("/api/console/notifications/read", gw(T.handleConsoleNotificationRead))
+	T.HandleFunc("/api/console/notifications/dismiss", gw(T.handleConsoleNotificationDismiss))
+	T.HandleFunc("/api/console/notifications/forward", g(T.handleConsoleNotificationForward))
 	T.HandleFunc("/api/console/permissions", g(T.handleConsolePermissions))
 	// Widen one agent's contact grant to every agent. See
 	// handleConsolePermissionPromote for why the scoped row is the default.
