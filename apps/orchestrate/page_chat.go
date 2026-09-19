@@ -362,6 +362,15 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 								// listing its goal, its attempts and its next fire is where
 								// somebody reading them already is.
 								{Label: "Notes", Method: "client", URL: "orchestrate_task_notes", OnlyIf: "_notes"},
+								// What larger piece of work this one belongs to.
+								// On every row because the decomposition people
+								// actually do crosses the three kinds: a goal
+								// checked by a standing agent, gathered by a
+								// recurring task, watched by a monitor is one
+								// piece of work in three shapes.
+								{Label: "Part of…", Method: "POST", URL: "api/console/scheduler/parent",
+									PickerSource: "api/console/scheduler/parent-options",
+									PickerTitle:  "Part of which larger piece of work?", OnlyIf: "_notes"},
 								// Scheduled agents. "Edit schedule" is a CLIENT action: the
 								// modal that changes a cron or an interval lives in this app's
 								// own JS, which is where anything knowing what a cron is

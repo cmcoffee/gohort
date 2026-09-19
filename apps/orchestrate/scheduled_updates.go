@@ -86,6 +86,22 @@ type orchUpdatePayload struct {
 	// the pair that has always been carried forward untouched.
 	UID string `json:"uid,omitempty"`
 
+	// Parent names another schedule this one exists to serve, as
+	// "<surface>:<id>" (see taskParentRef). Empty is a schedule that stands on
+	// its own, which is almost all of them.
+	//
+	// A LINK, not a container. An objective is a schedule with a completion
+	// check and never its own table (docs/loop-objectives.md), and that holds:
+	// nothing here creates a record that does not fire. What it adds is the one
+	// thing missing when somebody breaks a piece of work into pieces, which is
+	// any way to say that the pieces belong together.
+	//
+	// It carries no authority. A child is not paused, judged, or retired by its
+	// parent, and a parent is not met because its children are. Those would each
+	// be a policy, and a policy invented alongside the link it needs is how a
+	// link becomes a container. See docs/task-containment.md.
+	Parent string `json:"parent,omitempty"`
+
 	SessionID string `json:"session_id"`
 	AgentID   string `json:"agent_id"`
 	Username  string `json:"username"`
@@ -1443,6 +1459,7 @@ func ScheduleOrchestrateUpdate(spec RecurringSpec) (string, error) {
 		// it would orphan the notes the task had built up, which is the one
 		// thing this id exists to prevent.
 		UID:             firstNonEmptyStr(strings.TrimSpace(spec.UID), UUIDv4()),
+		Parent:          strings.TrimSpace(spec.Parent),
 		SessionID:       spec.SessionID,
 		AgentID:         spec.AgentID,
 		Username:        spec.Username,

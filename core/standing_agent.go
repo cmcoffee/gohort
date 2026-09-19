@@ -57,6 +57,22 @@ type StandingAgent struct {
 	// lives here") and PipelineID ("a multi-stage RUN lives here") side
 	// by side, for the same reason.
 	PipelineID string `json:"pipeline_id,omitempty"`
+
+	// Parent names another schedule this one exists to serve, as
+	// "<surface>:<id>" (see taskParentRef). Empty is a schedule that stands on
+	// its own, which is almost all of them.
+	//
+	// A LINK, not a container. An objective is a schedule with a completion
+	// check and never its own table (docs/loop-objectives.md), and that holds:
+	// nothing here creates a record that does not fire. What it adds is the one
+	// thing missing when somebody breaks a piece of work into pieces, which is
+	// any way to say that the pieces belong together.
+	//
+	// It carries no authority. A child is not paused, judged, or retired by its
+	// parent, and a parent is not met because its children are. Those would each
+	// be a policy, and a policy invented alongside the link it needs is how a
+	// link becomes a container. See docs/task-containment.md.
+	Parent string `json:"parent,omitempty"`
 	// MachineID targets a stored MachineDef, for the third shape: a RUN
 	// that carries state between its steps. A pipeline is dataflow and a
 	// machine holds a working set, so "gather every night, keep what is

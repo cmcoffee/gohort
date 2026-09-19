@@ -25,9 +25,13 @@ type consoleRecurringRow struct {
 	// which meant a task that had both a goal and a park could only say one of
 	// them — and State is the cell that answers "is it running".
 	Objective string `json:"objective,omitempty"`
-	Failing   string `json:"failing,omitempty"`
-	ID        string `json:"_id"`               // hidden; row-action target (the scheduler task id)
-	Broken    bool   `json:"_broken,omitempty"` // hidden gate (Delete-only on a broken row)
+	// PartOf names the schedule this one exists to serve, when it has one.
+	// A link and nothing more: see task_parent.go for why it carries no
+	// authority over this row.
+	PartOf  string `json:"part_of,omitempty"`
+	Failing string `json:"failing,omitempty"`
+	ID      string `json:"_id"`               // hidden; row-action target (the scheduler task id)
+	Broken  bool   `json:"_broken,omitempty"` // hidden gate (Delete-only on a broken row)
 	// Relinkable gates the Relink row action: only a schedule whose target is
 	// GONE has anything to relink. A stalled objective gets Resume instead.
 	Relinkable bool `json:"_relinkable,omitempty"`
@@ -73,6 +77,7 @@ func consoleRecurringRows(user, agentID string) []consoleRecurringRow {
 		}
 		// Where an objective stands, for the rows that have a goal.
 		row.Objective = objectiveStateLabel(rt.Payload.objective())
+		row.PartOf = taskParentLabel(user, rt.Payload.Parent)
 		// A next run that is not on the cadence needs a reason, or it is a time
 		// nobody chose and nothing explains. Two things move one: a failing
 		// streak, which Failing reports with its count, and an attempt that
@@ -409,6 +414,7 @@ func (T *OrchestrateApp) handleConsoleRecurringUpdate(w http.ResponseWriter, r *
 		FireCount: found.FireCount,          // preserve run history across an edit (don't reset the budget)
 		CreatedAt: found.CreatedAt,          // keep the original creation time, not "now"
 		UID:       recurringTaskUID(*found), // the task's identity, so its notes survive the edit
+		Parent:    found.Parent,             // and the work it is part of
 		// The objective travels too. An edit rebuilds the payload from this
 		// spec, so a goal left out of it is a goal DELETED by a retime: the
 		// task silently becomes an unbounded cadence that will never stop at

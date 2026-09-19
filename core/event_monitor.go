@@ -90,6 +90,22 @@ type EventMonitor struct {
 	Notify      string `json:"notify,omitempty"`       // delivery: EventNotifyChannel (default) wakes the agent in-thread; EventNotifyText texts the owner (no LLM)
 	Token       string `json:"token,omitempty"`        // webhook secret (URL path segment)
 
+	// Parent names another schedule this one exists to serve, as
+	// "<surface>:<id>" (see taskParentRef). Empty is a schedule that stands on
+	// its own, which is almost all of them.
+	//
+	// A LINK, not a container. An objective is a schedule with a completion
+	// check and never its own table (docs/loop-objectives.md), and that holds:
+	// nothing here creates a record that does not fire. What it adds is the one
+	// thing missing when somebody breaks a piece of work into pieces, which is
+	// any way to say that the pieces belong together.
+	//
+	// It carries no authority. A child is not paused, judged, or retired by its
+	// parent, and a parent is not met because its children are. Those would each
+	// be a policy, and a policy invented alongside the link it needs is how a
+	// link becomes a container. See docs/task-containment.md.
+	Parent string `json:"parent,omitempty"`
+
 	// DeliverChatID is the phantom conversation a notify=direct alert posts into
 	// (the chat the watcher was created in — e.g. a group). Empty for a monitor
 	// created in the Agency console, where direct posts to the channel thread.

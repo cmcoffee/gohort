@@ -50,7 +50,12 @@ type consoleGoalRow struct {
 	// Stands is the judge's own words on the last attempt, through the same
 	// objectiveStateLabel the other three surfaces render, so a goal reads the
 	// same here as it does on its own row.
-	Stands   string `json:"stands,omitempty"`
+	Stands string `json:"stands,omitempty"`
+	// PartOf names the larger piece of work this goal belongs to, when it has
+	// one. The Goals page is where this matters most: it is the surface that
+	// asks "what am I still waiting on", and three rows that are one piece of
+	// work decomposed read as three problems without it.
+	PartOf   string `json:"part_of,omitempty"`
 	Attempts string `json:"attempts,omitempty"`
 	NextRun  string `json:"next_run,omitempty"`
 	State    string `json:"state,omitempty"`
@@ -92,6 +97,7 @@ func (T *OrchestrateApp) handleConsoleGoals(w http.ResponseWriter, r *http.Reque
 			Stands:   objectiveStateLabel(standingObjective(sa)),
 			Attempts: goalAttemptLabel(sa.UnmetCount, sa.MaxAttempts),
 			ID:       sa.Name,
+			PartOf:   taskParentLabel(user, sa.Parent),
 			Kind:     schedKindStanding,
 			Notes:    true,
 		}
@@ -120,6 +126,7 @@ func (T *OrchestrateApp) handleConsoleGoals(w http.ResponseWriter, r *http.Reque
 			Attempts: goalAttemptLabel(objectiveAttemptNumber(p)-1, p.MaxAttempts),
 			NextRun:  rt.RunAt,
 			ID:       rt.TaskID,
+			PartOf:   taskParentLabel(user, p.Parent),
 			Kind:     schedKindRecurring,
 			Notes:    true,
 		}
@@ -152,6 +159,7 @@ func (T *OrchestrateApp) handleConsoleGoals(w http.ResponseWriter, r *http.Reque
 			Attempts: m.FireLabel(),
 			NextRun:  monitorNextRun(m),
 			ID:       m.Name,
+			PartOf:   taskParentLabel(user, m.Parent),
 			Kind:     schedKindMonitor,
 			Notes:    true,
 		}

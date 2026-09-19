@@ -224,6 +224,10 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// (kind, id) from the row, and only for tasks this user owns. See
 	// task_notes.go and docs/task-notes.md.
 	T.HandleFunc("/api/console/scheduler/notes", g(T.handleTaskNotes))
+	// Containment: one schedule saying it exists to serve another. A link and
+	// nothing more; see task_parent.go for why it carries no authority.
+	T.HandleFunc("/api/console/scheduler/parent", gw(T.handleConsoleSchedulerParent))
+	T.HandleFunc("/api/console/scheduler/parent-options", g(T.handleConsoleSchedulerParentOptions))
 	T.HandleFunc("/api/console/goals", g(T.handleConsoleGoals))
 	T.HandleFunc("/api/console/recurring/run", gw(T.handleConsoleRecurringRun))
 	T.HandleFunc("/api/console/recurring/delete", gw(T.handleConsoleRecurringDelete))

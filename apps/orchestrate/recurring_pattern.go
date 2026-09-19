@@ -76,6 +76,10 @@ type RecurringSpec struct {
 	// belongs to the task rather than to the schedule, so re-minting it on a
 	// retime would orphan what the task had accumulated. Empty = mint one.
 	UID string
+	// Parent travels for the same reason UID does: it belongs to the TASK, not
+	// to the schedule, so a retime that dropped it would quietly detach the
+	// task from the work it is part of.
+	Parent string
 	// The objective's history travels under the same carry-over rule.
 	// Until and MaxAttempts alone would re-arm the goal with a CLEAN
 	// record: every verdict the judge had reached would be gone, and the

@@ -372,13 +372,17 @@ type consoleAgentRow struct {
 	// one kind whose whole point is to run unattended was the one that said
 	// least about how that was going. See schedule_row_state.go.
 	Objective string `json:"objective,omitempty"`
-	Failing   string `json:"failing,omitempty"`
-	Schedule  string `json:"schedule"`
-	Status    string `json:"status"`
-	NextRun   string `json:"next_run"`
-	ID        string `json:"_id"`               // hidden; row-action target (the agent name)
-	Paused    bool   `json:"_paused"`           // hidden; gates Pause vs Resume per row
-	Broken    bool   `json:"_broken,omitempty"` // hidden; parked and kept — see State for which kind
+	// PartOf names the schedule this one exists to serve, when it has one.
+	// A link and nothing more: see task_parent.go for why it carries no
+	// authority over this row.
+	PartOf   string `json:"part_of,omitempty"`
+	Failing  string `json:"failing,omitempty"`
+	Schedule string `json:"schedule"`
+	Status   string `json:"status"`
+	NextRun  string `json:"next_run"`
+	ID       string `json:"_id"`               // hidden; row-action target (the agent name)
+	Paused   bool   `json:"_paused"`           // hidden; gates Pause vs Resume per row
+	Broken   bool   `json:"_broken,omitempty"` // hidden; parked and kept — see State for which kind
 	// Relinkable gates the Relink row action: true only when something the
 	// schedule needs is GONE. An objective that stalled needs attempts, not a
 	// new target, and offering it a picker of live agents describes a problem
@@ -413,7 +417,7 @@ func consoleAgentRows(user string, udb Database, agentID string) []consoleAgentR
 		if lbl := scheduleStopLabel(StandingStopCause(sa), StandingStopNote(sa)); lbl != "" {
 			state = lbl
 		}
-		row := consoleAgentRow{Name: sa.Name, Mission: sa.Mission, State: state, Schedule: StandingScheduleLabel(sa), Runs: standingRunsLabel(user, sa), ID: sa.Name, Paused: sa.Paused}
+		row := consoleAgentRow{Name: sa.Name, Mission: sa.Mission, State: state, Schedule: StandingScheduleLabel(sa), Runs: standingRunsLabel(user, sa), ID: sa.Name, Paused: sa.Paused, PartOf: taskParentLabel(user, sa.Parent)}
 		if sa.Broken {
 			row.Broken = true
 			row.State = parkedStateLabel(StandingParkCause(sa), sa.BrokenReason)
