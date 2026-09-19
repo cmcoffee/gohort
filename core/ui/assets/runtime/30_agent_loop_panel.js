@@ -992,11 +992,21 @@
       // that aren't rendered. Keyed on the flag alone, not on placement: a menu
       // entry marked all_agents renders off the alt nav too, and testing for a
       // pinned/topbar placement left its badge permanently empty.
-      function refreshChannelBadges(onlyAllAgents) {
+      //
+      // onlyQueues narrows further to the items that declare a badge_field —
+      // the ones whose count means "there is something for you to do". A badge
+      // WITHOUT one counts every row, which is a size, not a queue: it changes
+      // when anything is added and says nothing about whether you are needed.
+      // A deployment can declare many all_agents items and few queues among
+      // them, so refreshing every badge on a timer means re-reading each of
+      // those sources in full, every tick, to keep numbers nobody is waiting
+      // on. Navigation can afford that; a clock cannot.
+      function refreshChannelBadges(onlyAllAgents, onlyQueues) {
         (cfg.orchestrator_nav || []).forEach(function(item, i) {
           var badge = orchBadges[i];
           if (!item.source || !badge) return;
           if (onlyAllAgents && !item.all_agents) return;
+          if (onlyQueues && !item.badge_field) return;
           fetch(orchSourceURL(item.source, item)).then(function(r) { return r.ok ? r.json() : []; })
             .then(function(rows) {
               // BadgeField counts only matching rows (e.g. _pending on a page
@@ -1271,7 +1281,18 @@
         setInterval(function() {
           if (document.hidden) return;
           if (bulkState && bulkState.mode) return;
-          if (!isAltNavAgent(window.GOHORT_AGENT_ID)) return;
+          if (!isAltNavAgent(window.GOHORT_AGENT_ID)) {
+            // Not a channel agent: there is no session list to reload, which is
+            // what this tick was written for. But an approval queue belongs to
+            // the USER, not to whichever agent is on screen — that is what
+            // all_agents means — so it goes stale while you sit on an agent
+            // that does not poll, and the button that is supposed to light up
+            // when a decision is waiting does not, until you navigate.
+            //
+            // Queues only, not every all_agents badge: see refreshChannelBadges.
+            if (hasAllAgentNav) refreshChannelBadges(true, true);
+            return;
+          }
           loadSessions();
           refreshChannelBadges();
         }, 30000);
