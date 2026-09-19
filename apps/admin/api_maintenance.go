@@ -417,7 +417,18 @@ func dbProbeRecord(store interface {
 // maintenanceGroups are the admin sections maintenance buttons are laid out
 // under, in page order. A registrant names one of these (MaintenanceFunc.Group);
 // anything else is shown under the last.
-var maintenanceGroups = []string{"Vector index", "Reclaim space", "Reports", "Housekeeping"}
+// The groups the admin page lays out. A registrant naming anything else is
+// folded into maintenanceGroupOther below, so no button can vanish — which is
+// the right safety net and also a very quiet one: the function appears, just
+// not where its author said to look.
+//
+// "Migrations" was missing here while a note told operators to find the
+// guardrail sweep under Migrations. The net caught it and put it in
+// Housekeeping, so it was reachable the whole time and the note sent people to
+// the wrong section. Adding a maintenanceList for a group is only half of it;
+// the name has to be known here too, or the new list asks for a group the
+// endpoint has already renamed and renders empty.
+var maintenanceGroups = []string{"Vector index", "Reclaim space", "Reports", "Housekeeping", "Migrations"}
 
 const maintenanceGroupOther = "Housekeeping"
 
