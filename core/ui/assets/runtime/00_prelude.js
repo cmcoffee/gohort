@@ -484,6 +484,34 @@
   // browser-side actions (window.print, copy-to-clipboard with
   // custom shape, etc.) without needing a server round-trip.
   if (!window.UIClientActions) window.UIClientActions = {};
+  // uiGoTo navigates to dest, or REFRESHES when dest is the page already open.
+  //
+  // A form that saves and redirects back to itself is the common shape for an
+  // editor with several independent parts — the playbook editor posts one rule
+  // and comes back for the next. Done with location.href that is a NAVIGATION,
+  // so every save pushes another history entry for the same URL, and the back
+  // arrow then walks them one at a time: you press ‹ and stay exactly where you
+  // were, once per edit you made.
+  //
+  // The arrow cannot fix this from its end. It jumps past this page's own
+  // sub-navigation by counting in-page steps it recorded itself, and a
+  // server-side redirect creates a fresh document that recorded nothing, so the
+  // count reads zero however many saves are stacked behind it.
+  //
+  // Compared without the hash, which addresses a section of this page rather
+  // than another page.
+  window.uiGoTo = function(dest) {
+    try {
+      var probe = document.createElement('a');
+      probe.href = dest;
+      if (probe.pathname + probe.search === location.pathname + location.search) {
+        location.replace(dest);
+        return;
+      }
+    } catch (_) {}
+    location.href = dest;
+  };
+
   window.uiRegisterClientAction = function(name, fn) {
     if (typeof fn === 'function') window.UIClientActions[name] = fn;
   };

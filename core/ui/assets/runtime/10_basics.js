@@ -492,7 +492,7 @@
               if (act.redirect_url) {
                 var dest = substitute(act.redirect_url, resp || {});
                 var target = act.redirect_target || '_blank';
-                if (target === '_self') window.location.href = dest;
+                if (target === '_self') window.uiGoTo(dest);
                 else window.open(dest, target);
                 reload(true);
                 return;
@@ -3437,7 +3437,7 @@
             if (cfg.redirect_url) {
               var dest = substitute(cfg.redirect_url, resp || {});
               var target = cfg.redirect_target || '_self';
-              if (target === '_self') window.location.href = dest;
+              if (target === '_self') window.uiGoTo(dest);
               else window.open(dest, target);
             } else if (ctx && typeof ctx.__closeModal === 'function') {
               // A submit-mode form inside a ModalButton: the submit button IS the
