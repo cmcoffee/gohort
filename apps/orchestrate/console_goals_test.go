@@ -207,3 +207,35 @@ func TestTheGoalsViewOwnsNoVerbs(t *testing.T) {
 		t.Fatalf("found %d Goals entries, want one per menu (Manage and Fleet)", found)
 	}
 }
+
+// The boundary the two halves of the row builder now express in their names.
+//
+// A goal row is SHAPING plus this page's own fields. It must not pick up the
+// Scheduler's action flags (they would light up buttons this page does not
+// declare) or its filter fields (nothing here reads them, and a row carrying
+// answers to questions nobody asks is how the next reader learns the wrong
+// rule). It carries its own _kind, which is the field the empty-kind sentinel
+// used to overwrite.
+func TestAGoalRowCarriesNoSchedulerFlags(t *testing.T) {
+	m := goalRow(consoleGoalRow{
+		Goal: "the backlog is empty", Where: "Scheduled agent · nightly",
+		ID: "nightly", Kind: schedKindStanding, Notes: true,
+	}, false, false)
+	if m == nil {
+		t.Fatal("no row")
+	}
+	for _, gone := range []string{
+		"_run_standing", "_pause_standing", "_del_standing", "_edit_recurring",
+		"_test_monitor", "_attention", "_at_rest",
+	} {
+		if _, present := m[gone]; present {
+			t.Errorf("a goal row carries %s, which belongs to the page that owns the verbs", gone)
+		}
+	}
+	if m["_kind"] != schedKindStanding {
+		t.Errorf("a goal row lost the kind its notes action resolves by: %v", m["_kind"])
+	}
+	if m["_section"] != goalSectionInFlight {
+		t.Errorf("a goal row is not filed under a section: %v", m["_section"])
+	}
+}

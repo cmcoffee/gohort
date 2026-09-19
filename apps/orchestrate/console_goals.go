@@ -187,11 +187,9 @@ func goalRow(row consoleGoalRow, broken, met bool) map[string]any {
 	default:
 		row.InFlight = true
 	}
-	m := schedulerRow(row, section, "")
-	if m == nil {
-		return nil
-	}
-	return m
+	// The shaping only. This page carries its own _kind and its own filter
+	// fields, and none of the Scheduler's verbs: see consoleRow.
+	return consoleRow(row, section)
 }
 
 // objectiveMet reports whether the last judged attempt met the goal. Newest

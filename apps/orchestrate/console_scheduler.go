@@ -111,14 +111,21 @@ func appendSchedulerRow(out []map[string]any, row any, section, kind string) []m
 	return append(out, m)
 }
 
-// schedulerRow re-shapes a typed console row into the merged one: its own
-// fields, its section, and the per-action flags.
+// consoleRow is the SHAPING half, and it is all the Goals page wants: a typed
+// console row as its own JSON, plus the section it files under.
 //
-// Through JSON rather than a hand-written field copy, so the merged view
-// renders EXACTLY what the single view renders — including the omitempty rules
-// — and a field added to one of the three row types appears here without
-// anybody remembering to add it.
-func schedulerRow(row any, section, kind string) map[string]any {
+// Through JSON rather than a hand-written field copy, so a merged view renders
+// EXACTLY what the single view renders, including the omitempty rules, and a
+// field added to one of the row types appears without anybody remembering to
+// add it here.
+//
+// Split from the flagging below because two pages compose these rows and only
+// one of them wants the Scheduler's verbs. That used to be expressed by passing
+// an empty kind, which is a sentinel doing the job of a function boundary: it
+// silently put an empty _kind over the one the Goals page had set, and a row
+// carrying an id whose surface nobody can name looks entirely normal in the
+// JSON. A caller now asks for what it wants by name.
+func consoleRow(row any, section string) map[string]any {
 	b, err := json.Marshal(row)
 	if err != nil {
 		return nil
@@ -128,20 +135,25 @@ func schedulerRow(row any, section, kind string) map[string]any {
 		return nil
 	}
 	m["_section"] = section
-	// The kind, for the one action whose URL is the same on all three and whose
-	// TARGET is not: a task's notes are keyed per surface, and a name shared by
-	// a monitor and a standing agent would otherwise resolve to whichever the
-	// server guessed. Everything else gates on a per-kind flag instead.
-	//
-	// Only when there IS a kind. The Goals page reuses this marshaller with an
-	// empty one, because it wants the JSON shaping and none of the Scheduler's
-	// verbs, and it sets its own _kind on the row: writing an empty string over
-	// that left every goal carrying an id whose surface nobody could name, which
-	// looks identical in the JSON and resolves to nothing.
-	if kind != "" {
-		m["_kind"] = kind
-		m["_notes"] = true
+	return m
+}
+
+// schedulerRow is the shaping plus everything that makes a row ACTIONABLE on
+// the Scheduler: which surface it belongs to, and one flag per button.
+//
+// _kind is here rather than on the three row types because it answers a
+// question only this page's actions ask: the notes action has one URL for all
+// three kinds and a different target per kind, and a name shared by a monitor
+// and a standing agent would otherwise resolve to whichever the server guessed.
+// Every other action gates on a per-kind flag, which an absent field answers
+// for free.
+func schedulerRow(row any, section, kind string) map[string]any {
+	m := consoleRow(row, section)
+	if m == nil {
+		return nil
 	}
+	m["_kind"] = kind
+	m["_notes"] = true
 	addSchedulerActionFlags(m, kind)
 	addSchedulerFilterFlags(m)
 	return m
