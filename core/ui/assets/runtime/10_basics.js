@@ -227,7 +227,28 @@
           // javascript:/data: URL in the data can't become a clickable link.
           var href = col.link ? lookup(rec, col.link) : null;
           if (href != null && /^(https?:\/\/|\/)/.test(String(href))) {
-            var a = el('a', {href: String(href), target: '_blank', rel: 'noopener', class: 'ui-table-link'});
+            var a = el('a', {href: String(href), class: 'ui-table-link'});
+            // A link INTO this deployment navigates in place; only one that
+            // leaves it opens a tab.
+            //
+            // It used to force _blank on both, which made every in-app cell
+            // link a new tab: the tab paints white while it loads, the list
+            // you came from is still open behind it, and the header's back
+            // chevron has nothing to go back TO — history.length is 1, so it
+            // falls through to the declared parent and lands you somewhere
+            // you never were. "Back is broken" is the symptom; a second tab
+            // nobody asked for is the cause.
+            //
+            // A bare anchor already does the rest better than window.open
+            // could: cmd/ctrl-click opens a tab, middle-click opens it in the
+            // background, and both keep working here. This is what RowLink
+            // has always done for a whole row — the same component was
+            // answering "where does a link go" two different ways depending
+            // on whether you clicked the row or the cell.
+            if (uiLeavesTheApp(String(href))) {
+              a.target = '_blank';
+              a.rel = 'noopener';
+            }
             a.textContent = fmt(v, col.format);
             cell.appendChild(a);
           } else {

@@ -99,9 +99,18 @@ type Col struct {
 	Badges []BadgeMapping `json:"badges,omitempty"` // for type="badge" + type="dot" (Label ignored for "dot"; only Color used)
 	// Link names another field holding a URL; when set the cell renders as a
 	// clickable anchor (text = this column's Field value, href = the Link field's
-	// value, opened in a new tab). The framework builds the anchor safely — set
-	// this instead of embedding raw <a> HTML in a cell value (which is escaped and
-	// shows as literal markup). Only http(s)/relative hrefs render as links.
+	// value). The framework builds the anchor safely — set this instead of
+	// embedding raw <a> HTML in a cell value (which is escaped and shows as
+	// literal markup). Only http(s)/relative hrefs render as links.
+	//
+	// A destination INSIDE this deployment navigates in place; only one that
+	// leaves it opens a new tab. Forcing a tab on an in-app link strands the
+	// back chevron — a fresh tab has no history, so it falls through to the
+	// declared parent and lands somewhere the reader never was — and leaves the
+	// list they came from open behind it. Matches RowLink, which has always
+	// navigated in place. Cmd/ctrl-click and middle-click still open a tab,
+	// because this is a real anchor and the browser handles that better than
+	// the framework can.
 	Link string `json:"link,omitempty"`
 }
 

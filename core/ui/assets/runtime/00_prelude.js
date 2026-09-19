@@ -484,6 +484,23 @@
   // browser-side actions (window.print, copy-to-clipboard with
   // custom shape, etc.) without needing a server round-trip.
   if (!window.UIClientActions) window.UIClientActions = {};
+  // uiLeavesTheApp reports whether a destination is off this deployment.
+  //
+  // The test for whether a link should open a new tab. Leaving is the case
+  // where a tab earns its keep, because the app stays where it was; going
+  // somewhere else INSIDE the app is ordinary navigation, and making a tab for
+  // it strands the back button and leaves the previous page open behind.
+  //
+  // An unparseable href is treated as internal: the fallback is a same-tab
+  // navigation, which is recoverable, rather than a tab that cannot be.
+  window.uiLeavesTheApp = function(href) {
+    try {
+      return new URL(href, location.href).origin !== location.origin;
+    } catch (_) {
+      return false;
+    }
+  };
+
   // uiGoTo navigates to dest, or REFRESHES when dest is the page already open.
   //
   // A form that saves and redirects back to itself is the common shape for an
