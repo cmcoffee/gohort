@@ -95,21 +95,33 @@ func (a *AdminApp) maintenanceSections() []ui.Section {
 		},
 		{
 			Title:    "Migrations",
-			Subtitle: "Schema and data migrations the apps have run on this deployment.",
-			Detail:   "They auto-fire on app init when triggered, with no manual button, and never run twice for the same (app, name, owner). An error column indicates a panic during the run: clear the marker in the DB to retry after a fix.",
-			Body: ui.Table{
-				Source: "api/migrations",
-				RowKey: "key",
-				Columns: []ui.Col{
-					{Field: "app", Label: "App", Flex: 1},
-					{Field: "name", Label: "Migration", Flex: 2},
-					{Field: "owner", Label: "Owner", Mute: true},
-					{Field: "ran_at", Label: "Ran", Format: "reltime", Mute: true},
-					{Field: "changed", Label: "Changed", Mute: true},
-					{Field: "error", Label: "Error", Mute: true},
+			Subtitle: "Schema and data migrations the apps have run on this deployment, and the ones an operator runs by hand.",
+			Detail:   "Most auto-fire on app init when triggered, with no manual button, and never run twice for the same (app, name, owner). An error column indicates a panic during the run: clear the marker in the DB to retry after a fix.\n\nThe ones listed beneath the table are the exception: a migration that has to be run deliberately, because it rewrites records an operator should be watching when it happens.",
+			Body: ui.Stack{Children: []ui.Component{
+				ui.Table{
+					Source: "api/migrations",
+					RowKey: "key",
+					Columns: []ui.Col{
+						{Field: "app", Label: "App", Flex: 1},
+						{Field: "name", Label: "Migration", Flex: 2},
+						{Field: "owner", Label: "Owner", Mute: true},
+						{Field: "ran_at", Label: "Ran", Format: "reltime", Mute: true},
+						{Field: "changed", Label: "Changed", Mute: true},
+						{Field: "error", Label: "Error", Mute: true},
+					},
+					EmptyText: "No migrations have run on this deployment yet.",
 				},
-				EmptyText: "No migrations have run on this deployment yet.",
-			},
+				// The hand-run ones, under the record of the automatic ones.
+				//
+				// This was missing, and nothing said so. A maintenance function
+				// registers itself under a GROUP, and the group only reaches a
+				// screen if some section calls maintenanceList for it — so the
+				// one registered under "Migrations" had no button anywhere, and
+				// the note telling an operator to go and click it described a
+				// path that did not exist. It sat unrun for a fortnight while
+				// the exemptions it was meant to move stayed inert.
+				maintenanceList("Migrations", "No migrations need to be run by hand."),
+			}},
 		},
 		{
 			Title:    "Vector Index",
