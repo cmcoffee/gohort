@@ -405,7 +405,16 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 								// need a Confirm.
 								{Label: "Scope it", Method: "POST", URL: "api/console/approvals/approve", Variant: "success", OnlyIf: "_suggestion"},
 								{Label: "Dismiss", Method: "POST", URL: "api/console/approvals/deny", OnlyIf: "_suggestion"},
-								{Label: "Remove", Method: "POST", URL: "api/console/permissions/remove", Variant: "danger", OnlyIf: "_managed", Confirm: "Forget this permission entirely? It returns to the default (needs approval)."},
+								{Label: "Remove", Method: "POST", URL: "api/console/permissions/remove", Variant: "danger", OnlyIf: "_managed", HideIf: "_autotool", Confirm: "Forget this permission entirely? It returns to the default (needs approval)."},
+								// An autonomous-tool grant is BINARY, so revoking it is the
+								// only thing to do with it and the row goes when it does.
+								// Said in the confirm, because a row leaving the page is the
+								// one outcome a click here has and it should not be a
+								// surprise. The tri-state control these rows used to carry
+								// offered a middle state they could not hold: picking it
+								// revoked the grant, and the row disappeared as if the click
+								// had failed.
+								{Label: "Revoke", Method: "POST", URL: "api/console/permissions/remove", Variant: "danger", OnlyIf: "_autotool", Confirm: "Revoke this standing grant? The row leaves this page, and the tool queues for your approval the next time it runs unattended."},
 							}},
 						// The Cortex commands are the agent's, so they belong in the
 						// agent's menu — but they act on its THREAD rather than on

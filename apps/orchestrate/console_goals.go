@@ -146,7 +146,7 @@ func (T *OrchestrateApp) handleConsoleGoals(w http.ResponseWriter, r *http.Reque
 		out = append(out, goalRow(row, m.Broken, m.StopCause() == MonitorStopMet || objectiveMet(m.Attempts)))
 	}
 
-	sortRowsBySection(out, []string{goalSectionStalled, goalSectionInFlight, goalSectionMet})
+	ui.SortRowsBySection(out, []string{goalSectionStalled, goalSectionInFlight, goalSectionMet})
 	writeJSON(w, out)
 }
 

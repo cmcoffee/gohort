@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/ui"
 )
 
 // A schedule without an Until is a cadence, not a goal. The page exists because
@@ -137,7 +138,7 @@ func TestEachPageChoosesItsOwnSectionOrder(t *testing.T) {
 		{"_section": goalSectionInFlight, "name": "b"},
 		{"_section": goalSectionStalled, "name": "a"},
 	}
-	sortRowsBySection(rows, []string{goalSectionStalled, goalSectionInFlight, goalSectionMet})
+	ui.SortRowsBySection(rows, []string{goalSectionStalled, goalSectionInFlight, goalSectionMet})
 	var got []string
 	for _, r := range rows {
 		got = append(got, r["_section"].(string))

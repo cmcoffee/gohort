@@ -111,7 +111,11 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 		Requested string `json:"Requested,omitempty"`
 		ID        string `json:"_id"`
 		Pending   bool   `json:"_pending,omitempty"`
-		Managed   bool   `json:"_managed,omitempty"`    // a standing policy row (segmented control + Remove)
+		Managed   bool   `json:"_managed,omitempty"` // a standing policy row (Remove; segmented control when it has a Policy)
+		// AutoTool marks a row whose underlying state is BINARY: the tool is in
+		// the agent's AutoApproveTools or it is not. Such a row carries no
+		// Policy, so it gets no segmented control — see the comment at Zone 3.
+		AutoTool  bool   `json:"_autotool,omitempty"`
 		Policy    string `json:"_policy,omitempty"`     // allow | ask | block (the segmented state)
 		OneShot   bool   `json:"_oneshot,omitempty"`    // one-time decision (Approve/Deny only) — no "Always" grant makes sense (e.g. activating a drafted sub-agent, which the approval consumes)
 		Suggested bool   `json:"_suggestion,omitempty"` // an OFFER, not a request: nothing is blocked on it (see approvalIsSuggestion)
@@ -158,15 +162,29 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 	}
 	// Zone 3 — autonomous-run tool grants: the tools you "Always allowed" a
 	// scheduled/standing agent to run unattended (AutoApproveTools). Surfaced so
-	// the grant isn't invisible after approval — Remove (or "Needs approval")
-	// revokes it, and the tool re-queues on its next unattended fire.
+	// the grant isn't invisible after approval; Remove revokes it, and the tool
+	// re-queues on its next unattended fire.
+	//
+	// NO Policy, deliberately, so these get no segmented control.
+	//
+	// They used to carry Policy "allow" and so rendered the same three-way
+	// Always allow / Needs approval / Blocked control the agent and contact rows
+	// get. On those the middle option is a real stored state and the row stays,
+	// showing it. Here there is no such state to store: the grant is the tool's
+	// presence in AutoApproveTools and nothing else, so choosing "Needs
+	// approval" revoked it and the row vanished — the control offering a state
+	// its own row cannot hold, and a click reading as the setting being lost
+	// rather than as the deliberate revoke it was.
+	//
+	// Remove already says what it does and asks first. That is the honest
+	// control for a binary grant.
 	for _, ag := range listAgents(udb, user) {
 		for _, tool := range ag.AutoApproveTools {
 			out = append(out, permRow{
 				Who:     firstNonEmptyStr(ag.Name, ag.ID),
 				Detail:  "Autonomous tool: " + tool,
 				ID:      "autotool:" + ag.ID + ":" + tool,
-				Managed: true, Policy: "allow",
+				Managed: true, AutoTool: true,
 			})
 		}
 	}

@@ -23,7 +23,6 @@ package orchestrate
 import (
 	"encoding/json"
 	"net/http"
-	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -84,54 +83,12 @@ func (T *OrchestrateApp) handleConsoleScheduler(w http.ResponseWriter, r *http.R
 // Every kind reports its next fire under next_run, in RFC3339 UTC, which sorts
 // correctly as text — a fixed offset and a fixed width being the whole point of
 // that format.
+// sortSchedulerRows puts each section of the Scheduler in the order it will
+// happen. The ORDERING is ui.SortRowsBySection — the "_section" convention is
+// core/ui's, so the sorter that serves it lives there. What belongs to this app
+// is the order of the sections themselves.
 func sortSchedulerRows(rows []map[string]any) {
-	sortRowsBySection(rows, []string{schedSectionStanding, schedSectionRecurring, schedSectionMonitors})
-}
-
-// sortRowsBySection is the same ordering for any page that draws sections: the
-// caller names the section order, and within each the soonest fire leads.
-//
-// The order is a PARAMETER rather than a table here, because a second page
-// composing the same records asks a different question and wants a different
-// order — the Scheduler leads with what runs next, the goals view leads with
-// what is stuck. A shared table would have made the second page's sections all
-// rank the same, and rows from different sections would interleave: the cards
-// layout starts a section every time the value changes, so that draws each
-// heading over and over down the page.
-func sortRowsBySection(rows []map[string]any, order []string) {
-	rank := make(map[string]int, len(order))
-	for i, name := range order {
-		rank[name] = i
-	}
-	// An unlisted section sorts last rather than first, so one added later
-	// appears at the bottom instead of displacing the ones people came for.
-	rankOf := func(m map[string]any) int {
-		if r, ok := rank[schedString(m, "_section")]; ok {
-			return r
-		}
-		return len(order)
-	}
-	sort.SliceStable(rows, func(i, j int) bool {
-		if ri, rj := rankOf(rows[i]), rankOf(rows[j]); ri != rj {
-			return ri < rj
-		}
-		ni, nj := schedString(rows[i], "next_run"), schedString(rows[j], "next_run")
-		if (ni == "") != (nj == "") {
-			return ni != "" // a row with a next fire outranks one without
-		}
-		if ni != nj {
-			return ni < nj
-		}
-		return schedString(rows[i], "name") < schedString(rows[j], "name")
-	})
-}
-
-// schedString reads a converted row's string field; absent or of another type
-// reads as empty, which is what an omitempty field that was blank looks like on
-// the way back.
-func schedString(m map[string]any, key string) string {
-	s, _ := m[key].(string)
-	return s
+	ui.SortRowsBySection(rows, []string{schedSectionStanding, schedSectionRecurring, schedSectionMonitors})
 }
 
 // The three kinds a row can be. Used only to pick which action flags to
