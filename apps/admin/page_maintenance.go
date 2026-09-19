@@ -183,8 +183,12 @@ func maintenanceList(group, empty string) ui.ActionList {
 		DescField:  "Desc",
 		PostTo:     "api/maintenance?key={Key}",
 		Method:     "POST",
-		ButtonText: "Run",
-		EmptyText:  empty,
+		// When it last ran, and by whom. The question to settle before any
+		// question about cadence: a schedule for a pass whose staleness nobody
+		// can see is a guess with a cron on it.
+		HistoryField: "History",
+		ButtonText:   "Run",
+		EmptyText:    empty,
 		// A pass that walks the whole store takes minutes; this is where it
 		// says how far along it is (see core.ReportMaintenanceProgress).
 		ProgressSource: "api/maintenance/progress?key={Key}",

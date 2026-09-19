@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -70,8 +71,19 @@ func (a *AdminApp) registerMaintenanceRoutes(sub *http.ServeMux) {
 					out = append(out, f)
 				}
 			}
+			// Each item carries what happened to it last time. Built here
+			// rather than in the registry because the record is admin's and so
+			// is the identity in it.
+			rows := make([]map[string]any, 0, len(out))
+			for _, f := range out {
+				run, ok := a.lastMaintenanceRun(f.Key)
+				rows = append(rows, map[string]any{
+					"Group": f.Group, "Key": f.Key, "Label": f.Label, "Desc": f.Desc,
+					"History": maintenanceHistoryLine(run, ok),
+				})
+			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(out)
+			json.NewEncoder(w).Encode(rows)
 			return
 		}
 		if r.Method != http.MethodPost {
@@ -89,11 +101,17 @@ func (a *AdminApp) registerMaintenanceRoutes(sub *http.ServeMux) {
 		// which is exactly what the progress spinner invites you to do.
 		// WithoutCancel keeps the request's values (deadlines and identity
 		// for anything downstream) and drops only its cancellation.
+		started := time.Now()
 		count := RunMaintenanceFunc(context.WithoutCancel(r.Context()), key)
 		if count < 0 {
 			http.Error(w, "unknown maintenance function", http.StatusNotFound)
 			return
 		}
+		// Recorded after it returns, so a pass that panicked leaves the
+		// previous record standing rather than claiming a run that did not
+		// finish. RunMaintenanceFunc blocks for the whole pass; the progress
+		// endpoint is what the page watches meanwhile.
+		a.recordMaintenanceRun(key, AuthCurrentUser(r), count, time.Since(started))
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]int{"fixed": count})
 	})

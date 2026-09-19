@@ -16,11 +16,23 @@ type ActionList struct {
 	Source     string `json:"source"`
 	LabelField string `json:"label_field,omitempty"` // default "Label"
 	DescField  string `json:"desc_field,omitempty"`  // default "Desc"
-	PostTo     string `json:"post_to"`               // e.g. "api/maintenance?key={Label}"
-	Method     string `json:"method,omitempty"`      // default POST
-	Confirm    string `json:"confirm,omitempty"`
-	ButtonText string `json:"button_text,omitempty"` // default "Run"
-	EmptyText  string `json:"empty_text,omitempty"`
+	// HistoryField names a field holding what happened LAST time — "ran 3
+	// days ago, 12 changed", or "never run". Rendered as a muted line under
+	// the description, and kept apart from it on purpose: the description
+	// is what this action IS and never changes, while this changes every
+	// time it is pressed. Concatenating them makes a static sentence look
+	// volatile and buries the part that is news.
+	//
+	// Distinct from ProgressSource, which is polled and answers "what is
+	// happening now". This one ships with the item and answers "when did
+	// this last happen", which is the question an action nobody has pressed
+	// in a month needs answered before anybody decides whether to press it.
+	HistoryField string `json:"history_field,omitempty"`
+	PostTo       string `json:"post_to"`          // e.g. "api/maintenance?key={Label}"
+	Method       string `json:"method,omitempty"` // default POST
+	Confirm      string `json:"confirm,omitempty"`
+	ButtonText   string `json:"button_text,omitempty"` // default "Run"
+	EmptyText    string `json:"empty_text,omitempty"`
 	// ProgressSource is polled while an action is in flight, and whatever it
 	// returns as {"progress": "..."} is shown beside the spinner. For an
 	// action that takes minutes: the spinner says it is alive, this says how

@@ -4569,6 +4569,7 @@
     var wrap = el('div', {class: 'ui-actionlist'}, ['Loading…']);
     var labelField = cfg.label_field || 'Label';
     var descField  = cfg.desc_field  || 'Desc';
+    var histField  = cfg.history_field || '';
     var btnText    = cfg.button_text || 'Run';
     function load() {
       fetchJSON(cfg.source).then(function(items) {
@@ -4691,6 +4692,11 @@
               // a literal '?' placeholder reads as broken.
               item[labelField] ? el('div', {class: 'ui-actionlist-label'}, [item[labelField]]) : null,
               item[descField] ? el('div', {class: 'ui-actionlist-desc'}, [item[descField]]) : null,
+              // What happened last time, under what this action is. Muted and
+              // separate: the description never changes and this changes every
+              // press, so running them together makes the fixed part look
+              // volatile and hides the part that is news.
+              (histField && item[histField]) ? el('div', {class: 'ui-actionlist-history'}, [item[histField]]) : null,
             ]),
             status, btn,
           ]);

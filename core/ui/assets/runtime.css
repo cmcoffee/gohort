@@ -832,6 +832,13 @@ select:-webkit-autofill {
 .ui-row-btn:active { background: var(--bg-0); transform: scale(0.96); }
 .ui-row-toggle-pair { display: inline-flex; align-items: center; gap: 0.4rem; flex-shrink: 0; }
 .ui-row-toggle-label { font-size: 0.78rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; }
+/* What an action did last time: quieter than its description, which is already
+   quieter than its label. Three tiers, because the eye should reach the label
+   first and this last. */
+.ui-actionlist-history {
+  font-size: 0.72rem; color: var(--text-mute); opacity: 0.85;
+  margin-top: 0.15rem;
+}
 .ui-row-select, .ui-row-number, .ui-filter-search {
   flex-shrink: 0;
   padding: 0.35rem 0.45rem;
