@@ -228,6 +228,9 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// nothing more; see task_parent.go for why it carries no authority.
 	T.HandleFunc("/api/console/scheduler/parent", gw(T.handleConsoleSchedulerParent))
 	T.HandleFunc("/api/console/scheduler/parent-options", g(T.handleConsoleSchedulerParentOptions))
+	// Whether a parent finishes when everything under it has. Opt-in: see
+	// task_rollup.go for why it cannot be inferred from the link alone.
+	T.HandleFunc("/api/console/scheduler/rollup", gw(T.handleConsoleSchedulerRollup))
 	T.HandleFunc("/api/console/goals", g(T.handleConsoleGoals))
 	// The shape of the work: what is part of what, drawn as a tree. A third
 	// question that neither of the other two pages can answer without giving up

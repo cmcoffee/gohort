@@ -369,7 +369,10 @@ type consoleMonitorRow struct {
 	// PartOf names the schedule this one exists to serve, when it has one.
 	// A link and nothing more: see task_parent.go for why it carries no
 	// authority over this row.
-	PartOf  string `json:"part_of,omitempty"`
+	PartOf string `json:"part_of,omitempty"`
+	// RollUp says this one finishes when everything under it does, and what it
+	// is still waiting for. Empty unless the owner turned it on.
+	RollUp  string `json:"roll_up,omitempty"`
 	Failing string `json:"failing,omitempty"`
 	Detail  string `json:"detail"`
 	Script  string `json:"format_script"` // the watch format_script, if any (so you can SEE it)
@@ -527,6 +530,7 @@ func consoleMonitorRows(user, agentID string) []consoleMonitorRow {
 			// Where its stopping condition stands, in the checker's own words.
 			Objective: objectiveStateLabel(monitorObjective(m)),
 			PartOf:    taskParentLabel(user, m.Parent),
+			RollUp:    rollUpStateLabel(user, schedKindMonitor, m.Name),
 			// A monitor does not back off, it PARKS: the streak counts towards
 			// a bound, so the label says what it is counting towards rather
 			// than leaving a rising number to mean whatever the reader guesses.

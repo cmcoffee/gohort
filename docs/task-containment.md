@@ -91,13 +91,54 @@ that this work was ever part of something, and the broken-dependency posture
 everywhere else in this console is to keep the thing, say what is wrong, and let
 a person decide.
 
-## Open, and worth having on purpose
+## Rollup (built, v0.6.922)
 
-- **Rollup.** A parent whose children are all met has no way to notice. Today it
-  is judged on its own fires like anything else, which is correct if the parent
-  is a real check and wrong if it is a bare heading. Living with it is what
-  tells us which.
-- **Rollup**, still. See above.
+The open question was whether a parent finishes when its children do. The answer
+is that it depends on which kind of parent it is, and the link cannot tell:
+
+- a **real check** ("the newsletter went out") is not met because its pieces
+  are. Finishing it on their evidence declares something true that nobody
+  verified.
+- a **heading** ("Q4 launch") is nothing BUT its pieces, and its own check is
+  either vacuous or absent.
+
+So `RollUp` is opt-in per parent. With it set, a parent with no completion check
+of its own is the cleanest shape here: a goal that IS the sum of its pieces,
+still a schedule with a completion check, where the check is its children rather
+than a judge.
+
+**Event-driven, not polled.** It runs when a child records a met objective and
+walks up. A parent that had to fire to notice would cost an LLM turn per check
+and would notice late; this costs nothing, notices immediately, and means a
+heading parent needs no meaningful cadence.
+
+**The conservative direction throughout is DO NOT FINISH:**
+
+- a child with **no completion check blocks** its parent, named on the row,
+  rather than being skipped. Skipping it marks work finished while it is still
+  running, which is the failure nobody goes looking for.
+- a **stalled** child is not a finished one. A parent does not complete because a
+  piece of it gave up.
+- a parent with **no children** does not roll up. "Everything under it is done"
+  is vacuously true of nothing, and a heading that finishes the moment it is
+  created is the most confusing possible behaviour.
+
+**It climbs.** Finishing one parent can be the last thing its own parent was
+waiting for. It stops at the first one that is not ready, since nothing above
+that can be, and is depth-bounded as a backstop against data written before the
+cycle guard existed.
+
+**It finishes a parent the way each surface already finishes one**, so a rolled
+up completion is indistinguishable from any other on the console: the same
+pause, the same cause, the same visible reason, with "rolled up" in the note.
+Inventing a fourth stopped state would mean a schedule that stopped for a reason
+no existing screen knows how to explain.
+
+Turning it ON checks immediately, because everything underneath may already be
+finished, and a setting that waits for the next child to complete would look
+broken in exactly the case where somebody enabled it because the work was done.
+
+## Open, and worth having on purpose
 
 ## The tree view (built, v0.6.921)
 

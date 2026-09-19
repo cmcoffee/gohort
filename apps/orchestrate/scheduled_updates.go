@@ -102,6 +102,24 @@ type orchUpdatePayload struct {
 	// link becomes a container. See docs/task-containment.md.
 	Parent string `json:"parent,omitempty"`
 
+	// RollUp makes this schedule finish when everything under it has finished,
+	// instead of only on its own completion check.
+	//
+	// Opt-in because a parent is one of two very different things and the link
+	// cannot tell them apart. Some parents are a REAL CHECK ("the newsletter
+	// went out"), and for those the children being done is not the same claim
+	// at all. Others are a HEADING ("Q4 launch"), and for those the children
+	// being done is the entire meaning. Rolling up by default would quietly
+	// declare the first kind finished on somebody else's evidence.
+	//
+	// A parent with no completion check of its own and RollUp set is the
+	// cleanest shape this supports: a goal that IS the sum of its pieces. It is
+	// still a schedule with a completion check, as the objectives build
+	// requires; the check is just its children rather than a judge.
+	//
+	// See docs/task-containment.md.
+	RollUp bool `json:"roll_up,omitempty"`
+
 	SessionID string `json:"session_id"`
 	AgentID   string `json:"agent_id"`
 	Username  string `json:"username"`
@@ -1034,6 +1052,12 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		}
 		appendSessionDiag(udb, p.AgentID, p.SessionID, kind,
 			fmt.Sprintf("Recurring task %q, attempt %d: %s (goal: %s)", recurringName(p), attempt, objLine, truncateObs(objective, 200)))
+		// A met goal may have been the last thing something larger was waiting
+		// for. Only on met, never on stalled: a parent does not get to finish
+		// because a piece of it gave up. See task_rollup.go.
+		if objStopped && !objStalled {
+			rollUpFrom(p.Username, schedKindRecurring, recurringTaskUID(p))
+		}
 		// Pacing, last: it moves the successor the stand-down above may just
 		// have cancelled. A met objective has nothing left to move, and a
 		// stalled one is parked and must stay parked — an attempt does not get

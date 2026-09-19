@@ -293,6 +293,11 @@ func registerStandingRunner(app *OrchestrateApp) {
 				cur.StopNote = reason
 				SaveStandingAgent(RootDB, cur)
 				Log("[orchestrate/objective] standing %s/%s met its objective on attempt %d: %s", sa.Owner, sa.Name, attempt, reason)
+				// This may have been the last thing something larger was
+				// waiting for. Event-driven rather than polled: a parent that
+				// had to fire to notice would cost a turn per check and would
+				// notice late. See task_rollup.go.
+				rollUpFrom(sa.Owner, schedKindStanding, sa.Name)
 			default:
 				SaveStandingAgent(RootDB, cur)
 			}

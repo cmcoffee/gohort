@@ -106,6 +106,24 @@ type EventMonitor struct {
 	// link becomes a container. See docs/task-containment.md.
 	Parent string `json:"parent,omitempty"`
 
+	// RollUp makes this schedule finish when everything under it has finished,
+	// instead of only on its own completion check.
+	//
+	// Opt-in because a parent is one of two very different things and the link
+	// cannot tell them apart. Some parents are a REAL CHECK ("the newsletter
+	// went out"), and for those the children being done is not the same claim
+	// at all. Others are a HEADING ("Q4 launch"), and for those the children
+	// being done is the entire meaning. Rolling up by default would quietly
+	// declare the first kind finished on somebody else's evidence.
+	//
+	// A parent with no completion check of its own and RollUp set is the
+	// cleanest shape this supports: a goal that IS the sum of its pieces. It is
+	// still a schedule with a completion check, as the objectives build
+	// requires; the check is just its children rather than a judge.
+	//
+	// See docs/task-containment.md.
+	RollUp bool `json:"roll_up,omitempty"`
+
 	// DeliverChatID is the phantom conversation a notify=direct alert posts into
 	// (the chat the watcher was created in — e.g. a group). Empty for a monitor
 	// created in the Agency console, where direct posts to the channel thread.

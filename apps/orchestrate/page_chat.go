@@ -382,6 +382,14 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 								// checked by a standing agent, gathered by a
 								// recurring task, watched by a monitor is one
 								// piece of work in three shapes.
+								// Whether this one finishes when everything under
+								// it does. A toggle, and opt-in, because a parent
+								// is either a real check or a heading and the link
+								// cannot tell them apart: rolling up by default
+								// would declare the first kind finished on
+								// somebody else's evidence.
+								{Label: "Finish on children", Method: "POST", URL: "api/console/scheduler/rollup", OnlyIf: "_notes",
+									Confirm: "Toggle whether this finishes when everything under it has finished? With it on, it stops on its own and does not wait for its own check."},
 								{Label: "Part of…", Method: "POST", URL: "api/console/scheduler/parent",
 									PickerSource: "api/console/scheduler/parent-options",
 									PickerTitle:  "Part of which larger piece of work?", OnlyIf: "_notes"},

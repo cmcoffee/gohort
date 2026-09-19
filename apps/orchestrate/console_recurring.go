@@ -28,7 +28,10 @@ type consoleRecurringRow struct {
 	// PartOf names the schedule this one exists to serve, when it has one.
 	// A link and nothing more: see task_parent.go for why it carries no
 	// authority over this row.
-	PartOf  string `json:"part_of,omitempty"`
+	PartOf string `json:"part_of,omitempty"`
+	// RollUp says this one finishes when everything under it does, and what it
+	// is still waiting for. Empty unless the owner turned it on.
+	RollUp  string `json:"roll_up,omitempty"`
 	Failing string `json:"failing,omitempty"`
 	ID      string `json:"_id"`               // hidden; row-action target (the scheduler task id)
 	Broken  bool   `json:"_broken,omitempty"` // hidden gate (Delete-only on a broken row)
@@ -78,6 +81,7 @@ func consoleRecurringRows(user, agentID string) []consoleRecurringRow {
 		// Where an objective stands, for the rows that have a goal.
 		row.Objective = objectiveStateLabel(rt.Payload.objective())
 		row.PartOf = taskParentLabel(user, rt.Payload.Parent)
+		row.RollUp = rollUpStateLabel(user, schedKindRecurring, recurringTaskUID(rt.Payload))
 		// A next run that is not on the cadence needs a reason, or it is a time
 		// nobody chose and nothing explains. Two things move one: a failing
 		// streak, which Failing reports with its count, and an attempt that

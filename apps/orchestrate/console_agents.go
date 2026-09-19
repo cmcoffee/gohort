@@ -375,7 +375,10 @@ type consoleAgentRow struct {
 	// PartOf names the schedule this one exists to serve, when it has one.
 	// A link and nothing more: see task_parent.go for why it carries no
 	// authority over this row.
-	PartOf   string `json:"part_of,omitempty"`
+	PartOf string `json:"part_of,omitempty"`
+	// RollUp says this one finishes when everything under it does, and what it
+	// is still waiting for. Empty unless the owner turned it on.
+	RollUp   string `json:"roll_up,omitempty"`
 	Failing  string `json:"failing,omitempty"`
 	Schedule string `json:"schedule"`
 	Status   string `json:"status"`
@@ -417,7 +420,7 @@ func consoleAgentRows(user string, udb Database, agentID string) []consoleAgentR
 		if lbl := scheduleStopLabel(StandingStopCause(sa), StandingStopNote(sa)); lbl != "" {
 			state = lbl
 		}
-		row := consoleAgentRow{Name: sa.Name, Mission: sa.Mission, State: state, Schedule: StandingScheduleLabel(sa), Runs: standingRunsLabel(user, sa), ID: sa.Name, Paused: sa.Paused, PartOf: taskParentLabel(user, sa.Parent)}
+		row := consoleAgentRow{Name: sa.Name, Mission: sa.Mission, State: state, Schedule: StandingScheduleLabel(sa), Runs: standingRunsLabel(user, sa), ID: sa.Name, Paused: sa.Paused, PartOf: taskParentLabel(user, sa.Parent), RollUp: rollUpStateLabel(user, schedKindStanding, sa.Name)}
 		if sa.Broken {
 			row.Broken = true
 			row.State = parkedStateLabel(StandingParkCause(sa), sa.BrokenReason)

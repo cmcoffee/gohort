@@ -232,6 +232,8 @@ func (T *OrchestrateApp) settleMonitorObjective(ctx context.Context, m EventMoni
 	if met {
 		StopEventMonitor(RootDB, m.Owner, m.Name, MonitorStopMet,
 			"Stopped: the condition it was watching for is met: "+reason+" Nothing is broken; resume it to watch again.")
+		// And whatever this was part of may now be finished too.
+		rollUpFrom(m.Owner, schedKindMonitor, m.Name)
 	}
 }
 
