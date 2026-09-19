@@ -371,27 +371,26 @@ func AuthSetNotifyForward(db Database, username, where string) {
 	db.Set(AuthTable, "user:"+username, user)
 }
 
-// ResolveNotifyForward is where a user's notifications actually go, filling in
-// the default when they have never been asked.
+// ResolveNotifyForward is where a user's notifications actually go.
 //
-// Unset resolves to PHONE for anyone reachable by text. That is not a guess
-// about what people want in general: it is what this deployment already did.
-// Before notifications existed, an agent's notify_me went straight to the
-// owner's phone and left nothing behind, so a user with a handle configured has
-// been receiving exactly this. Defaulting it off would have made every one of
-// those go quiet the moment the tool started recording instead of sending, and
-// a change that silently stops delivering messages somebody relies on is the
-// worst kind of improvement.
+// Unset resolves to OFF. Notifications are kept for everyone; whether they also
+// chase you somewhere is opt-in, and nothing turns that on for you.
 //
-// An explicit "off" is honored, which is the whole reason empty and off are
-// different values.
+// An earlier version defaulted unset to PHONE for anyone reachable by text, to
+// preserve what notify_me did before notifications existed. That was the wrong
+// trade. It meant a setting nobody had touched was already sending, so the
+// first thing an owner learned about the feature could be a text they never
+// asked for, and the page they would go to stop it would say nothing had been
+// configured. A default that acts is not a default; it is a decision made on
+// somebody's behalf.
+//
+// Empty and "off" stay distinct even though they resolve the same way, because
+// "has this person ever been asked" is worth being able to answer: it is what
+// an onboarding prompt would key on, and collapsing the two now would mean
+// inventing the distinction again later against data that has lost it.
 func ResolveNotifyForward(db Database, username string) string {
-	where := AuthGetNotifyForward(db, username)
-	if where != "" {
+	if where := AuthGetNotifyForward(db, username); where != "" {
 		return where
-	}
-	if NoticePhoneReady != nil && NoticePhoneReady(username) {
-		return "phone"
 	}
 	return "off"
 }

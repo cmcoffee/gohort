@@ -362,22 +362,18 @@ func TestNeverChosenIsNotTheSameAsOff(t *testing.T) {
 		db.Set(AuthTable, "user:alice", AuthUser{Username: "alice", NotifyForward: where})
 	}
 
-	// Unset, and reachable by text: resolves to the behaviour this deployment
-	// already had, where notify_me went straight to the phone. Anything else
-	// would silently stop delivering messages somebody relies on.
+	// Unset sends nowhere, EVEN when a phone is available. Forwarding is
+	// opt-in: a setting nobody has touched must not already be interrupting
+	// somebody, or the first thing they learn about the feature is a message
+	// they never asked for.
 	NoticePhoneReady = func(string) bool { return true }
 	store("")
-	if got := ResolveNotifyForward(db, "alice"); got != "phone" {
-		t.Errorf("an unasked user with a phone lost their texts: %q", got)
-	}
-	// Unset and unreachable: nothing to forward to.
-	NoticePhoneReady = func(string) bool { return false }
 	if got := ResolveNotifyForward(db, "alice"); got != "off" {
-		t.Errorf("an unasked user with no phone: %q", got)
+		t.Errorf("an unasked user is being forwarded to: %q", got)
 	}
-	// Explicitly off is honored even when a phone IS available, which is the
-	// entire reason the two values are distinct.
-	NoticePhoneReady = func(string) bool { return true }
+	// Explicitly off reads the same way, which is correct, and the two values
+	// stay distinct in STORAGE because "has this person been asked" is a
+	// separate question from "where does it go".
 	store("off")
 	if got := ResolveNotifyForward(db, "alice"); got != "off" {
 		t.Errorf("a deliberate no was overridden by the default: %q", got)
