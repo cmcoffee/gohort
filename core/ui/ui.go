@@ -203,6 +203,21 @@ func (p Page) ConfigJSON() (json.RawMessage, error) {
 		cfg.Nav = append(cfg.Nav, navLinkConfig{Label: n.Label, URL: n.URL, Active: n.Active})
 	}
 	for _, s := range p.Sections {
+		// A section with nothing in it is not rendered at all.
+		//
+		// A builder that returns ui.Section{} to mean "there is nothing to
+		// report" is a reasonable thing to write — admin's store-health panel
+		// does exactly that, and says so — but the caller appends the result
+		// either way, so the empty one reached the page. The section rail
+		// labels an untitled section "Section N" by position, which is how a
+		// healthy database came to show up in the admin nav as a bare number.
+		//
+		// Dropped here rather than at each call site: every builder that wants
+		// a conditional section would otherwise need its own filter, and the
+		// one that forgets produces a ghost nav entry nobody can click into.
+		if s.Title == "" && s.Subtitle == "" && s.Detail == "" && s.Body == nil {
+			continue
+		}
 		cfg.Sections = append(cfg.Sections, sectionConfig{
 			Title:     s.Title,
 			Subtitle:  s.Subtitle,
@@ -373,8 +388,8 @@ type pageConfig struct {
 	// stacked, so other tabbed pages are unaffected.
 	SectionNav bool   `json:"section_nav,omitempty"`
 	Footer     string `json:"footer,omitempty"`
-	FooterURL string          `json:"footer_url,omitempty"`
-	LiveURL   string          `json:"live_url,omitempty"`
+	FooterURL  string `json:"footer_url,omitempty"`
+	LiveURL    string `json:"live_url,omitempty"`
 }
 
 // DefaultLiveURL is the fallback link target for the global live-activity pill

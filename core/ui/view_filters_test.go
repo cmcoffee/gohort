@@ -9,6 +9,7 @@ package ui
 // the wrong list.
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -220,5 +221,46 @@ func TestFilterStateIsKeyedToItsView(t *testing.T) {
 		if !strings.Contains(src, want) {
 			t.Errorf("restored filter state is not guarded by %q", want)
 		}
+	}
+}
+
+// A builder that returns ui.Section{} to mean "nothing to report" is reasonable
+// to write, but the caller appends it either way. The rail labels an untitled
+// section by POSITION — "Section 5" — so an empty one becomes a nav entry that
+// is a bare number and opens onto nothing.
+func TestAnEmptySectionIsNotRendered(t *testing.T) {
+	page := Page{Sections: []Section{
+		{Title: "First", Body: Card{HTML: "a"}},
+		{}, // the "nothing to report" shape
+		{Title: "Third", Body: Card{HTML: "c"}},
+	}}
+	blob, err := page.ConfigJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg struct {
+		Sections []struct {
+			Title string `json:"title"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(blob, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Sections) != 2 {
+		t.Fatalf("%d sections rendered, want 2: the empty one became a numbered nav entry", len(cfg.Sections))
+	}
+	for _, s := range cfg.Sections {
+		if s.Title == "" {
+			t.Error("an untitled section survived")
+		}
+	}
+
+	// A section with only a subtitle is NOT empty: some panels are one line of
+	// prose and no title, and dropping those would be a different bug.
+	page = Page{Sections: []Section{{Subtitle: "just a line"}}}
+	blob, _ = page.ConfigJSON()
+	_ = json.Unmarshal(blob, &cfg)
+	if len(cfg.Sections) != 1 {
+		t.Error("a subtitle-only section was dropped")
 	}
 }

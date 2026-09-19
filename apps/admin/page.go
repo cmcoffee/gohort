@@ -222,6 +222,24 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		"Scheduled Tasks": "Maintenance", "Maintenance": "Maintenance",
 		"Migrations": "Maintenance", "Vector Index": "Maintenance",
 		"Database Browser": "Maintenance",
+		// The three maintenance groups. They were absent from this map, so
+		// they kept the empty Group that means "General" and sat on a tab of
+		// their own away from the Maintenance ones — which also made their
+		// being collapsed read as arbitrary rather than as "the rarely-used
+		// ones are closed", which is the rule they were written under.
+		"Reclaim space": "Maintenance", "Reports": "Maintenance",
+		"Housekeeping": "Maintenance",
+		// Also unmapped, and landing in General for the same reason.
+		"Channel Wake Rules": "System", "Feature Access": "System",
+		"System Dependencies": "Capabilities", "Page Rendering (Browser)": "Capabilities",
+		"MCP Tools (exposed to external clients)": "Extensions", "Bridges": "Extensions",
+		"Categories": "Extensions",
+
+		// Who owns what, across every kind of owned thing. Six sections that
+		// are one subject, which is a tab rather than six strays in General.
+		"User-owned credentials": "Governance", "Global-tool adoptions": "Governance",
+		"User-owned agents": "Governance", "User-owned pipelines": "Governance",
+		"User-owned machines": "Governance", "Pending promotions": "Governance",
 	}
 	wideSections := map[string]bool{
 		"System Status": true, "Users": true, "LLM Routing": true,
@@ -284,7 +302,11 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 	// by this rank so the tabs read in a sensible order regardless of the
 	// section authoring order above; sections keep their relative order
 	// within each group.
-	groupRank := map[string]int{"System": 0, "Costs": 1, "LLMs": 2, "Capabilities": 3, "Agents": 4, "Extensions": 5, "Tools": 6, "Tuning": 7, "Prompts": 8, "Maintenance": 9}
+	// An unranked group sorts to 0 and ties with System, so every name used
+	// above has to appear here. "Tools" is deliberately absent now: the tool
+	// sections all live under Extensions, and a rank for a tab nothing lands on
+	// is a tab that never appears.
+	groupRank := map[string]int{"System": 0, "Costs": 1, "LLMs": 2, "Capabilities": 3, "Agents": 4, "Governance": 5, "Extensions": 6, "Apps": 7, "Tuning": 8, "Prompts": 9, "Maintenance": 10}
 	sort.SliceStable(page.Sections, func(i, j int) bool {
 		return groupRank[page.Sections[i].Group] < groupRank[page.Sections[j].Group]
 	})
