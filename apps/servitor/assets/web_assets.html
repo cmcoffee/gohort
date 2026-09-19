@@ -332,7 +332,7 @@
       var sid    = bubble.dataset.sessionId;
       var url    = bubble.dataset.injectUrl || 'api/inject';
       if (!noteID || !sid) {
-        window.uiAlert('Note has no id yet — try again in a moment.');
+        window.uiAlert('Note has no id yet: try again in a moment.');
         return;
       }
       // Lock first so the orchestrator doesn't drain it mid-edit.
@@ -619,9 +619,9 @@
         {key: 'data_mutate', label: 'Database writes',
          desc: 'INSERT / UPDATE / DELETE / DROP and other data changes (psql, mysql, redis-cli, mongo). Read-only queries never prompt.'},
         {key: 'file_delete', label: 'File deletion',
-         desc: 'rm, shred, dd, truncate, git clean/reset — removing or overwriting files.'},
+         desc: 'rm, shred, dd, truncate, git clean/reset: removing or overwriting files.'},
         {key: 'net_egress', label: 'Outbound calls',
-         desc: 'curl, wget, ssh, scp, git push — the appliance reaching out to the network.'},
+         desc: 'curl, wget, ssh, scp, git push: the appliance reaching out to the network.'},
         {key: 'sys_control', label: 'System control',
          desc: 'systemctl stop, reboot, kill, docker rm, firewall changes.'},
       ];
@@ -637,7 +637,7 @@
         listBox.innerHTML = '';
         listBox.appendChild(el('div', {class: 'ui-pl-empty',
           style: 'text-align:left;margin-bottom:10px'},
-          ['Checked categories run WITHOUT asking. Unchecked ones prompt for confirmation before each matching command. Benign work — read-only probes, writing a report to a file — never prompts.']));
+          ['Checked categories run WITHOUT asking. Unchecked ones prompt for confirmation before each matching command. Benign work (read-only probes, writing a report to a file) never prompts.']));
         cats.forEach(function(c) {
           var cb = el('input', {type: 'checkbox', style: 'margin-top:3px'});
           cb.checked = !!state[c.key];
@@ -681,7 +681,7 @@
             return;
           }
           var hdr = el('div', {class: 'ui-servitor-profile-h'},
-            [d.name || '', d.scanned ? ' — scanned ' + d.scanned : '']);
+            [d.name || '', d.scanned ? ' · scanned ' + d.scanned : '']);
           body.appendChild(hdr);
           body.appendChild(el('div', {class: 'ui-servitor-profile-body'},
             [d.profile]));
@@ -732,7 +732,7 @@
         placeholder: 'root', value: rec.user || ''});
       var passIn = el('input', {type: 'password', class: 'ui-form-input',
         placeholder: isEdit
-          ? '(unchanged — type to replace)'
+          ? '(unchanged, type to replace)'
           : 'leave blank to use server SSH key',
         value: ''});
       var sshSection = el('div', {class: 'ui-servitor-app-section'}, [
@@ -763,7 +763,7 @@
         el('label', {class: 'ui-servitor-inline'}, [toolsOnlyIn, ' Approved tools only']),
         el('div', {class: 'ui-form-hint'},
           ['Withholds the asking route: a connected agent gets this target\'s approved tools and nothing else. ' +
-           'Turn it ON when the target stands in for MANY subjects — a working directory holding many log bundles — ' +
+           'Turn it ON when the target stands in for MANY subjects (a working directory holding many log bundles), ' +
            'because asking runs the investigator, and what the investigator learns is recorded against THIS target. ' +
            'One shared memory means a technique from last week\'s bundle is in view while reading this week\'s. ' +
            'Leave it OFF for a real machine, where one box is one subject and accumulated technique is the point.']),
@@ -776,7 +776,7 @@
       var repoBranchIn = el('input', {type: 'text', class: 'ui-form-input',
         placeholder: 'default branch if blank', value: rec.repo_branch || ''});
       var repoTokenIn = el('input', {type: 'password', class: 'ui-form-input',
-        placeholder: isEdit ? '(unchanged — type to replace)' : 'for private repos (optional)',
+        placeholder: isEdit ? '(unchanged, type to replace)' : 'for private repos (optional)',
         value: ''});
       var repoSkipIn = el('input', {type: 'text', class: 'ui-form-input',
         placeholder: 'e.g. testdata, generated, docs/build',
@@ -813,7 +813,7 @@
             wsMembersBox.innerHTML = '';
             if (!list.length) {
               wsMembersBox.appendChild(el('div', {class: 'ui-form-hint'},
-                ['No repos or SSH appliances yet — create some first, then add them here.']));
+                ['No repos or SSH appliances yet: create some first, then add them here.']));
               return;
             }
             list.forEach(function(a) {
@@ -823,7 +823,7 @@
               // service gets asked of every node or of the wrong one.
               var role = el('input', {
                 type: 'text',
-                placeholder: 'role — e.g. scheduler + primary DB',
+                placeholder: 'role, e.g. scheduler + primary DB',
                 value: wsRoles[a.id] || '',
                 style: 'flex:1; min-width:12rem; font-size:0.85em; padding:0.15rem 0.4rem;'});
               role.oninput = function() { wsRoles[a.id] = role.value; };
@@ -917,12 +917,12 @@
       var workspaceSection = el('div', {class: 'ui-servitor-app-section'}, [
         el('label', {}, ['Member Appliances *']), wsMembersBox,
         el('div', {class: 'ui-form-hint'},
-          ['Pick the repos and SSH boxes this workspace investigates together. A question fans out to the relevant members and the answers are combined — e.g. trace a log line seen on a box back to the repo that emits it.']),
+          ['Pick the repos and SSH boxes this workspace investigates together. A question fans out to the relevant members and the answers are combined: e.g. trace a log line seen on a box back to the repo that emits it.']),
         el('div', {class: 'ui-form-hint'},
-          ['Give each member a short role when they are not interchangeable — "scheduler + primary DB" vs "app worker". The coordinator routes on it, so a question about a service that lives on one node goes to that node instead of being asked of all of them. Leave blank for true peers.']),
+          ['Give each member a short role when they are not interchangeable: "scheduler + primary DB" vs "app worker". The coordinator routes on it, so a question about a service that lives on one node goes to that node instead of being asked of all of them. Leave blank for true peers.']),
         el('label', {}, ['How members relate']), wsLinksBox,
         el('div', {class: 'ui-form-hint'},
-          ['Declare how the members connect — "this dump was captured from that box", "this repo is the code for that system". The coordinator reads these both ways round, so one link tells it which member to ask from either direction, and makes a correlation across two members a finding rather than a coincidence.']),
+          ['Declare how the members connect: "this dump was captured from that box", "this repo is the code for that system". The coordinator reads these both ways round, so one link tells it which member to ask from either direction, and makes a correlation across two members a finding rather than a coincidence.']),
       ]);
 
       // Linked Source Code — repo appliances whose ingested code this SYSTEM's
@@ -943,7 +943,7 @@
             lrBox.innerHTML = '';
             if (!list.length) {
               lrBox.appendChild(el('div', {class: 'ui-form-hint'},
-                ['No repositories yet — add one (New Appliance → Repo), then link it here.']));
+                ['No repositories yet: add one (New Appliance → Repo), then link it here.']));
               return;
             }
             list.forEach(function(a) {
@@ -967,7 +967,7 @@
       var linkedRepoSection = el('div', {class: 'ui-servitor-app-section'}, [
         el('label', {}, ['Linked Source Code']), lrBox,
         el('div', {class: 'ui-form-hint'},
-          ['Pick the repos whose code runs on this system. Its investigations can then search and read that code in the same probe — e.g. trace a log excerpt to the exact line that emits it while checking the live state.']),
+          ['Pick the repos whose code runs on this system. Its investigations can then search and read that code in the same probe: e.g. trace a log excerpt to the exact line that emits it while checking the live state.']),
       ]);
 
       // Evidence bundle section — uploaded logs/dumps. Nothing is configured
@@ -1016,7 +1016,7 @@
           status_error_field: 'bundle_error',
           status_labels: {
             staging: 'Receiving files…',
-            ingesting: 'Expanding and indexing — this can take a few minutes on a large dump.',
+            ingesting: 'Expanding and indexing: this can take a few minutes on a large dump.',
           },
           button_label: 'Upload and ingest',
           reload_on_done: true,
@@ -1098,7 +1098,7 @@
                 [snap, 'orientation']));
               if (t.changed) {
                 row.appendChild(el('span', {style: 'font-size:0.78rem; color:var(--danger,#d9534f);'},
-                  ['changed since approval — re-save to re-approve']));
+                  ['changed since approval: re-save to re-approve']));
               }
               if (t.desc) row.appendChild(el('div', {class: 'ui-form-hint', style: 'flex-basis:100%; margin:0;'}, [t.desc]));
               tsBox.appendChild(row);
@@ -1115,7 +1115,7 @@
           ['The tools\' own descriptions carry most of the detail. This adds what the target is as a whole, and what counts as a good answer about it.']),
         el('label', {}, ['Tools it may use']), tsBox,
         el('div', {class: 'ui-form-hint'},
-          ['Only the tools you tick are reachable — there is no shell here. "ask first" prompts you per call. "orientation" marks the one cheap tool run at the start of a mapping session to orient the investigator. Each binding records a fingerprint of the tool as approved; if the tool is edited later it is withheld until you re-save this appliance.']),
+          ['Only the tools you tick are reachable: there is no shell here. "ask first" prompts you per call. "orientation" marks the one cheap tool run at the start of a mapping session to orient the investigator. Each binding records a fingerprint of the tool as approved; if the tool is edited later it is withheld until you re-save this appliance.']),
       ]);
 
       // Remote section — a stub pointing at an appliance on another instance.
@@ -1145,7 +1145,7 @@
               return;
             }
             var sel = el('select', {class: 'ui-form-input'});
-            sel.appendChild(el('option', {value: ''}, ['— pick a system —']));
+            sel.appendChild(el('option', {value: ''}, ['(pick a system)']));
             list.forEach(function(it) {
               var v = it.peer + '\u0000' + it.id + '\u0000' + (it.kind || 'ssh');
               var label = it.peer + ' \u00b7 ' + it.name;
@@ -1307,7 +1307,7 @@
         name_field: 'id', label_field: 'name', desc_field: 'description',
         noun: 'collection',
         intro: 'Curated collections the investigator can search (via search_knowledge) to ground answers in reference material (runbooks, vendor docs, a guide) alongside what it finds on the system itself.',
-        empty_text: 'No knowledge collections yet — create some in the Knowledge app, then link them here.',
+        empty_text: 'No knowledge collections yet: create some in the Knowledge app, then link them here.',
         on_change: function(sel){ kbSelected = sel; }
       }, kbBox);
       var knowledgeSection = el('div', {class: 'ui-servitor-app-section'}, [
@@ -1363,7 +1363,7 @@
         el('label', {}, ['Tools run as']), runAsIn,
         el('div', {class: 'ui-form-hint'}, [
           "Applies to this system's bound tools when it is shared. The owner's: everyone " +
-          "uses your keys — right for a read-only service account. Each user's own: the caller " +
+          "uses your keys: right for a read-only service account. Each user's own: the caller " +
           "supplies their own credential, so writes are attributable and permissions are theirs. " +
           "A tool bound to a credential in your personal namespace cannot be used by anyone else, " +
           "and is withheld with an explanation rather than failing at call time. SSH passwords and " +
@@ -1488,14 +1488,14 @@
 
       body.appendChild(el('div', {class: 'ui-form-label'}, ['Agents that may use ' + applianceName]));
       body.appendChild(el('div', {class: 'ui-form-help'},
-        ['Adding an agent lets it ASK for commands on this system. It grants no commands by itself — each one it proposes appears below for your approval.']));
+        ['Adding an agent lets it ASK for commands on this system. It grants no commands by itself: each one it proposes appears below for your approval.']));
       body.appendChild(agentsBox);
       body.appendChild(el('div', {class: 'ui-form-label', style: 'margin-top:16px'}, ['Requested commands']));
       body.appendChild(el('div', {class: 'ui-form-help'},
         ['Read the command before approving. An approved command runs whenever the agent decides to use it, without asking again.']));
       body.appendChild(capsBox);
 
-      var m = openModal('Access — ' + applianceName, body);
+      var m = openModal('Access: ' + applianceName, body);
       m.footer(el('button', {class: 'ui-row-btn', onclick: function(){ m.close(); }}, ['Done']));
 
       // Only agents that HAVE access are listed, with a + to add one.
@@ -1579,7 +1579,7 @@
           }
           mine.forEach(function(t) {
             var head = el('div', {}, [el('strong', {}, [t.name]),
-              el('span', {class: 'ui-form-help'}, [' — ' + (t.approved ? 'approved' : 'pending') + (t.risk ? ' · ' + t.risk : '')])]);
+              el('span', {class: 'ui-form-help'}, [' · ' + (t.approved ? 'approved' : 'pending') + (t.risk ? ' · ' + t.risk : '')])]);
             // The command itself, never behind a disclosure: approving without
             // reading it is the failure this whole surface exists to prevent.
             var cmd = el('code', {class: 'ui-servitor-access-cmd'}, [t.command]);
@@ -1839,7 +1839,7 @@
           return r.text();
         })
         .then(function(text) {
-          if (!text) { window.uiAlert('Nothing to export yet — map the system first.'); return; }
+          if (!text) { window.uiAlert('Nothing to export yet: map the system first.'); return; }
           var blob = new Blob([text], {type: 'text/markdown'});
           var url = URL.createObjectURL(blob);
           var a = document.createElement('a');

@@ -827,7 +827,7 @@
       // it's joined "pick1, pick2. text". So "yes, but actually let's
       // discuss X" reads naturally either way.
       wrap.appendChild(el('span', {class: 'ui-orch-ask-extra-lbl'},
-        [opts.length ? 'Other — write your own answer, push back, or discuss' : 'Your answer']));
+        [opts.length ? 'Other: write your own answer, push back, or discuss' : 'Your answer']));
       var extra = document.createElement('textarea');
       extra.className = 'ui-orch-ask-extra';
       extra.rows = opts.length ? 2 : 3;
@@ -967,8 +967,8 @@
             window.uiAlert('Could not ' + verb + ' the sub-agent: ' + String(err && err.message || err));
           });
       }
-      approve.addEventListener('click', function() { act('approve', 'approve', 'Approved — "' + name + '" is live.'); });
-      deny.addEventListener('click', function() { act('deny', 'deny', 'Denied — the draft was discarded.'); });
+      approve.addEventListener('click', function() { act('approve', 'approve', 'Approved: "' + name + '" is live.'); });
+      deny.addEventListener('click', function() { act('deny', 'deny', 'Denied: the draft was discarded.'); });
       return {wrap: wrap, body: null};
     });
 
@@ -1022,7 +1022,7 @@
           });
       }
       approve.addEventListener('click', function() { act('approve', 'approve', 'Approved.'); });
-      deny.addEventListener('click', function() { act('deny', 'deny', 'Denied — the request was dropped.'); });
+      deny.addEventListener('click', function() { act('deny', 'deny', 'Denied: the request was dropped.'); });
       if (always) {
         always.addEventListener('click', function() {
           act('always', 'approve', 'Approved, and allowed from now on.');
@@ -1137,7 +1137,7 @@
           apply.disabled = false;
           // Settle it on the stored block too, so reopening this session
           // shows what was granted rather than re-asking for it.
-          window.uiResolveBlock(d.id, 'Applied — permissions saved for "' + name + '".');
+          window.uiResolveBlock(d.id, 'Applied: permissions saved for "' + name + '".');
         }).catch(function(err) {
           apply.disabled = false;
           note.textContent = '';
@@ -1204,13 +1204,13 @@
         fetch('api/console/credential-update/apply', {
           method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
         })
-          .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); settle('Applied — the credential was updated (secret preserved).', true); })
+          .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); settle('Applied: the credential was updated (secret preserved).', true); })
           .catch(function(err) {
             approve.disabled = false; deny.disabled = false;
             window.uiAlert('Could not apply the update: ' + String(err && err.message || err));
           });
       });
-      deny.addEventListener('click', function() { settle('Dismissed — no changes made.', true); });
+      deny.addEventListener('click', function() { settle('Dismissed: no changes made.', true); });
       return {wrap: wrap, body: null};
     });
 
@@ -1234,7 +1234,7 @@
       msg.appendChild(el('div', {class: 'ui-orch-connect-title'},
         ['API credential "' + name + '" needs its secret']));
       var sub = el('div', {class: 'ui-orch-connect-sub'},
-        ['An admin pastes ' + secretLabel + ' to finish setup — right here, or in Admin > APIs.']);
+        ['An admin pastes ' + secretLabel + ' to finish setup (right here, or in Admin > APIs).']);
       msg.appendChild(sub);
       wrap.appendChild(msg);
       var btn = el('button', {class: 'ui-orch-connect-btn', type: 'button'}, ['Set up']);
@@ -1255,7 +1255,7 @@
       // modal. Point them to their surface and stop here.
       if (data.owned === '1') {
         msg.querySelector('.ui-orch-connect-title').textContent = 'API credential "' + name + '" needs your key';
-        sub.textContent = 'It is now in your API credentials. Open Extensions > My API credentials and save ' + secretLabel + ' — it goes live automatically once you save the secret.';
+        sub.textContent = 'It is now in your API credentials. Open Extensions > My API credentials and save ' + secretLabel + ': it goes live automatically once you save the secret.';
         btn.textContent = 'Open My API credentials';
         btn.addEventListener('click', function() { window.location.href = '/gateways'; });
         return {wrap: wrap, body: null};
@@ -1273,9 +1273,9 @@
         fetch('/admin/api/secure-api?name=' + encodeURIComponent(name))
           .then(function(r) {
             if (r.status === 401 || r.status === 403) {
-              throw new Error('Admin access is required to set this up here — ask your admin to open this chat, or to finish it in Admin > APIs.');
+              throw new Error('Admin access is required to set this up here. Ask your admin to open this chat, or to finish it in Admin > APIs.');
             }
-            if (r.status === 404) { throw new Error('Credential "' + name + '" no longer exists — ask the assistant to re-draft it.'); }
+            if (r.status === 404) { throw new Error('Credential "' + name + '" no longer exists. Ask the assistant to re-draft it.'); }
             if (!r.ok) { throw new Error('HTTP ' + r.status); }
             return r.json();
           })
@@ -1283,12 +1283,12 @@
           .catch(function(err) { window.uiAlert(String(err && err.message || err)); });
       });
       function openCredSecretModal(rec) {
-        var m = openOrchModal('Set up credential — ' + name);
+        var m = openOrchModal('Set up credential: ' + name);
         var help = document.createElement('div');
         help.className = 'ui-orch-modal-help';
         var typeLine = rec.type + (rec.grant ? ' / ' + rec.grant : '');
         help.textContent = 'Type: ' + typeLine + '. Base URL: ' + (rec.base_url || '(none)') +
-          '. The secret is sent straight to the server — it never enters the conversation.';
+          '. The secret is sent straight to the server and never enters the conversation.';
         m.body.appendChild(help);
         function field(labelText, mono) {
           var lbl = document.createElement('div');
@@ -1305,7 +1305,7 @@
           m.body.appendChild(ta);
           return ta;
         }
-        var secretTa = field('Secret — paste ' + secretLabel, true);
+        var secretTa = field('Secret: paste ' + secretLabel, true);
         var pwTa = null;
         if (grant === 'password') {
           pwTa = field("The user's password (password grant needs both)", true);
@@ -1362,7 +1362,7 @@
           }).then(function() {
             m.close();
             markDone('Secret saved' + (enableCb.checked ? ' and enabled' : '') +
-              '. Tell the assistant to continue — it will verify with check_credential.');
+              '. Tell the assistant to continue. It will verify with check_credential.');
           }).catch(function(err) {
             saveBtn.disabled = false;
             status.textContent = String(err && err.message || err);
@@ -1405,14 +1405,14 @@
       function attempt() {
         if (sendBtn.disabled || sendBtn.style.display === 'none') {
           if (tries++ < 40) { setTimeout(attempt, 250); return; }
-          unblock('The agent is still finishing its turn — your answers are kept in the form; press Submit again in a moment.');
+          unblock('The agent is still finishing its turn. Your answers are kept in the form; press Submit again in a moment.');
           return;
         }
         inputArea.value = compiled;
         sendBtn.click();
         setTimeout(function() {
           if (inputArea.value === compiled) {
-            unblock('The submission did not go through — press Submit again.');
+            unblock('The submission did not go through. Press Submit again.');
             return;
           }
           lock();
@@ -1454,7 +1454,7 @@
           } else if (t === 'select') {
             input = document.createElement('select');
             input.style.cssText = inputStyle;
-            input.appendChild(el('option', {value: ''}, ['— choose —']));
+            input.appendChild(el('option', {value: ''}, ['(choose)']));
             opts.forEach(function(o) { input.appendChild(el('option', {value: o}, [o])); });
             getVal = function() { return input.value || ''; };
           } else if (t === 'choice') {
@@ -1599,7 +1599,7 @@
           var parts = [];
           if (ans.picked.length) parts.push(ans.picked.join(', '));
           if ((ans.note || '').trim()) parts.push(ans.note.trim());
-          var answer = parts.join(' — ');
+          var answer = parts.join(' · ');
           return (i + 1) + '. ' + step.question + ' → ' + (answer || '(no answer)');
         });
         var compiled = lines.join('\n');
@@ -1651,7 +1651,7 @@
       var sid    = bubble.dataset.sessionId;
       var url    = bubble.dataset.injectUrl || 'api/inject';
       if (!noteID || !sid) {
-        window.uiAlert('Note has no id yet — try again in a moment.');
+        window.uiAlert('Note has no id yet: try again in a moment.');
         return;
       }
       // Lock first so the runner doesn't drain it mid-edit.
@@ -1944,7 +1944,7 @@
         label.style.display = '';
         subSel.disabled = false;
         subSel.innerHTML = '';
-        subSel.appendChild(new Option('— main agent —', ''));
+        subSel.appendChild(new Option('(main agent)', ''));
         kids.forEach(function(k) {
           subSel.appendChild(new Option(k.name, k.id));
         });
@@ -2191,7 +2191,7 @@
         header.textContent = 'Create new agent';
         var hint = document.createElement('div');
         hint.className = 'ui-form-modal-hint';
-        hint.textContent = 'Top-level agents show on the main picker with the full surface (publishing, intake form, memory, etc.). Sub-agents are hidden specialists owned by "' + parentName + '" — they reach the chat through the parent\'s specialist picker and skip the surface a standalone agent gets.';
+        hint.textContent = 'Top-level agents show on the main picker with the full surface (publishing, intake form, memory, etc.). Sub-agents are hidden specialists owned by "' + parentName + '". They reach the chat through the parent\'s specialist picker and skip the surface a standalone agent gets.';
         var actions = document.createElement('div');
         actions.className = 'ui-form-modal-actions';
         actions.style.justifyContent = 'flex-end';
@@ -2333,7 +2333,7 @@
         var agentID = getAgentID();
         if (!agentID) { window.uiAlert('Pick an agent first.'); return; }
         var sessionID = (ctx && ctx.sessionId) || '';
-        if (!sessionID) { window.uiAlert('Open a session first — there is nothing to export yet.'); return; }
+        if (!sessionID) { window.uiAlert('Open a session first: there is nothing to export yet.'); return; }
         var url = 'api/sessions/' + encodeURIComponent(sessionID) +
                   '/export?agent_id=' + encodeURIComponent(agentID) +
                   '&format=md';
@@ -2358,7 +2358,7 @@
           return;
         }
         var sessionID = (ctx && ctx.sessionId) || '';
-        if (!sessionID) { window.uiAlert('Open a session first — there is nothing to send yet.'); return; }
+        if (!sessionID) { window.uiAlert('Open a session first: there is nothing to send yet.'); return; }
         // Ask what went wrong before sending. Without this the brief asserts a
         // reason on the user's behalf ("I had to correct it"), and Builder goes
         // looking in the transcript for a problem it has already been told
@@ -2366,7 +2366,7 @@
         // Cancel aborts the send; an empty answer sends it unexplained, and the
         // brief then says so rather than inventing a reason.
         window.uiPrompt(
-          'What should Builder fix about this agent? One or two lines is plenty — the whole session goes with it.',
+          'What should Builder fix about this agent? One or two lines is plenty. The whole session goes with it.',
           '',
           {multiline: true, rows: 4, ok: 'Send to Builder',
            placeholder: 'e.g. it kept summarising when I asked for the raw numbers'}
@@ -2644,13 +2644,13 @@
           } else {
             listed.forEach(function(n) { if (!userDisabled[n]) allowed[n] = true; });
           }
-          var m = openOrchModal('Tools — ' + (agent.name || id));
+          var m = openOrchModal('Tools: ' + (agent.name || id));
           var help = document.createElement('div');
           help.className = 'ui-orch-modal-help';
           if (isBuilder) {
-            help.textContent = "Builder's tool catalog is fixed by the framework — the lists below show what it runs with, but there's no per-agent knob here. Builder also loads every tool it can edit, including ones switched off elsewhere: a tool it couldn't run would be a tool it couldn't fix.";
+            help.textContent = "Builder's tool catalog is fixed by the framework: the lists below show what it runs with, but there's no per-agent knob here. Builder also loads every tool it can edit, including ones switched off elsewhere: a tool it couldn't run would be a tool it couldn't fix.";
           } else {
-            help.textContent = "Pick which tools this agent's worker may call. Open a category to see its tools — the first one is what is scoped to this agent, the rest is your shared catalog. Uncheck everything in the catalog categories to disable ALL optional tools (the agent will be left with only framework-blessed tools like plan_set / respond_directly).";
+            help.textContent = "Pick which tools this agent's worker may call. Open a category to see its tools: the first one is what is scoped to this agent, the rest is your shared catalog. Uncheck everything in the catalog categories to disable ALL optional tools (the agent will be left with only framework-blessed tools like plan_set / respond_directly).";
           }
           m.body.appendChild(help);
 
@@ -2736,8 +2736,8 @@
             var ci = document.createElement('div');
             ci.className = 'ui-orch-custom-tools-help';
             ci.textContent = isBuilder
-              ? 'Tools scoped to this agent. Builder always loads every tool it can edit, so there is no on/off here — turning one off elsewhere must not make it unfixable from the surface that fixes tools.'
-              : 'Tools available only to this agent. Uncheck one to stop this agent loading it — it stays scoped here and keeps working everywhere else it is scoped. Scope is where you detach it or share it with other agents; edits go through Builder.';
+              ? 'Tools scoped to this agent. Builder always loads every tool it can edit, so there is no on/off here: turning one off elsewhere must not make it unfixable from the surface that fixes tools.'
+              : 'Tools available only to this agent. Uncheck one to stop this agent loading it: it stays scoped here and keeps working everywhere else it is scoped. Scope is where you detach it or share it with other agents; edits go through Builder.';
             scopedBody.appendChild(ci);
             if (customTools.length === 0) {
               var emptyC = document.createElement('div');
@@ -2870,7 +2870,7 @@
                             // so scope cannot bind it and a pill for it would be a toggle
                             // that does nothing. Left unexplained, its absence reads as a
                             // bug ("builder is missing") — say it instead.
-                            note += ' Builder is not listed: it always sees your full tool pool (it is the authoring surface), so there is nothing here to grant or revoke. Framework seeds appear only while they hold an explicit grant — turn one off and it leaves the list.';
+                            note += ' Builder is not listed: it always sees your full tool pool (it is the authoring surface), so there is nothing here to grant or revoke. Framework seeds appear only while they hold an explicit grant: turn one off and it leaves the list.';
                             return {
                               primary: { label: 'Global (all agents)', on: !!st.global },
                               items: (st.agents || []).map(function(a){ return { key: a.id, label: a.name, on: !!a.on }; }),
@@ -3210,7 +3210,7 @@
         // disable flag is set on the agent.
         var disabledNotice = document.createElement('div');
         disabledNotice.style.cssText = 'color:var(--text-mute);font-style:italic;padding:1rem 0;text-align:center;display:none';
-        disabledNotice.textContent = 'Both Explicit and Reference Memory are disabled for this agent — nothing to manage here.';
+        disabledNotice.textContent = 'Both Explicit and Reference Memory are disabled for this agent: nothing to manage here.';
         m.body.appendChild(disabledNotice);
         fetch(agentURL).then(function(r){ return r.ok ? r.json() : null; }).then(function(a) {
           if (!a) return;
@@ -3265,7 +3265,7 @@
         auditWrap.appendChild(auditTitle);
         var auditIntro = document.createElement('p');
         auditIntro.style.cssText = 'margin:0 0 0.5rem;color:var(--text-mute);font-size:0.83rem';
-        auditIntro.textContent = 'Entries that name something no longer there, or that record work instead of state. Nothing is removed for you — fix each one in its section below.';
+        auditIntro.textContent = 'Entries that name something no longer there, or that record work instead of state. Nothing is removed for you: fix each one in its section below.';
         auditWrap.appendChild(auditIntro);
         var auditList = document.createElement('div');
         auditList.style.cssText = 'display:flex;flex-direction:column;gap:0.45rem';
@@ -3347,7 +3347,7 @@
         var searchHelp = document.createElement('div');
         searchHelp.className = 'ui-orch-modal-help';
         searchHelp.style.marginTop = '0.35rem';
-        searchHelp.textContent = 'Find memories steering this agent. “Stored text” greps every layer; “Recall preview” shows what the agent actually sees for a query — the problem memory is usually the top hit.';
+        searchHelp.textContent = 'Find memories steering this agent. “Stored text” greps every layer; “Recall preview” shows what the agent actually sees for a query: the problem memory is usually the top hit.';
         searchSection.appendChild(searchHelp);
         var searchResults = document.createElement('div');
         searchResults.className = 'ui-orch-scrolllist';
@@ -3447,7 +3447,7 @@
         var factsHelp = document.createElement('div');
         factsHelp.className = 'ui-orch-modal-help';
         factsHelp.style.marginBottom = '0.5rem';
-        factsHelp.textContent = 'Explicit Memory — short entries always injected into the system prompt. Loaded from the agent’s store_fact entries.';
+        factsHelp.textContent = 'Explicit Memory: short entries always injected into the system prompt. Loaded from the agent’s store_fact entries.';
         factsSection.appendChild(factsHelp);
         var factsList = document.createElement('div');
         factsList.className = 'ui-orch-list';
@@ -3533,7 +3533,7 @@
         var notesHelp = document.createElement('div');
         notesHelp.className = 'ui-orch-modal-help';
         notesHelp.style.marginBottom = '0.5rem';
-        notesHelp.textContent = 'The agent keeps its own running state here and rewrites it as work moves. Trim anything stale — especially a parked tool call ("pending task: some_tool with x=y"), which it cannot make from a note and will try to work around.';
+        notesHelp.textContent = 'The agent keeps its own running state here and rewrites it as work moves. Trim anything stale, especially a parked tool call ("pending task: some_tool with x=y"), which it cannot make from a note and will try to work around.';
         notesSection.appendChild(notesHelp);
         var notesArea = document.createElement('textarea');
         notesArea.rows = 5;
@@ -3623,7 +3623,7 @@
           notesCount();
           renderNotesSizes(d.sections);
           if (d.from_seed) {
-            notesStatus.textContent = 'Showing the configured seed — the agent has not written notes yet.';
+            notesStatus.textContent = 'Showing the configured seed: the agent has not written notes yet.';
           } else if (d.updated_at && String(d.updated_at).indexOf('0001-01-01') !== 0) {
             notesStatus.textContent = 'Agent last rewrote this ' + new Date(d.updated_at).toLocaleString() + '.';
           }
@@ -4034,7 +4034,7 @@
 
         body.appendChild(buildSection(
           'Your private documents',
-          'Files YOU uploaded under this agent. Scoped to your account — other users on the same agent don\'t see them.',
+          'Files YOU uploaded under this agent. Scoped to your account: other users on the same agent don\'t see them.',
           privateURL, privateUploadURL,
           'your documents'
         ));
@@ -4091,7 +4091,7 @@
           name_field: 'id', label_field: 'name', desc_field: 'description',
           meta_fields: ['documents', 'chunks'],
           noun: 'Knowledge',
-          empty_text: '(no collections yet — use + Create knowledge for this agent, or author one under Knowledge)'
+          empty_text: '(no collections yet: use + Create knowledge for this agent, or author one under Knowledge)'
         };
         function renderCollections() { collectionsList.innerHTML = ''; window.uiMountComponent(pickerCfg, collectionsList); }
         renderCollections();
@@ -4153,7 +4153,7 @@
           post_to: 'api/agents',
           name_field: 'id', label_field: 'name', desc_field: 'description',
           noun: 'Pipeline',
-          empty_text: '(no pipelines yet — author one from chat with the pipeline tool)'
+          empty_text: '(no pipelines yet: author one from chat with the pipeline tool)'
         }, pipesList);
       });
 
@@ -4177,7 +4177,7 @@
         var body = m.body;
         var help = document.createElement('div');
         help.className = 'ui-orch-modal-help';
-        help.textContent = 'What this agent can reach into. Attaching a source adds its own named tools to the agent — the "Adds:" line on each row is exactly what appears in its catalog, so you can ask for it by name.';
+        help.textContent = 'What this agent can reach into. Attaching a source adds its own named tools to the agent, and the "Adds:" line on each row is exactly what appears in its catalog, so you can ask for it by name.';
         body.appendChild(help);
 
         var list = document.createElement('div');
@@ -4194,7 +4194,7 @@
           name_field: 'id', label_field: 'name', desc_field: 'desc',
           group_by_field: 'group',
           noun: 'Source',
-          empty_text: '(nothing to attach yet — file stores are assigned by an admin under Admin \u2192 Files, systems appear once you have appliances in servitor, and document services once connected)'
+          empty_text: '(nothing to attach yet: file stores are assigned by an admin under Admin \u2192 Files, systems appear once you have appliances in servitor, and document services once connected)'
         }, list);
 
         // The same question from the SOURCE's side: which of my agents is
@@ -4229,7 +4229,7 @@
                 items.forEach(function(it){
                   var o = document.createElement('option');
                   o.value = it.id;
-                  o.textContent = (it.group ? it.group + ' — ' : '') + (it.name || it.id);
+                  o.textContent = (it.group ? it.group + ' · ' : '') + (it.name || it.id);
                   pick.appendChild(o);
                 });
                 mbody.appendChild(pick);
@@ -4286,10 +4286,10 @@
         ]).then(function(res) {
           var machines = (res[0] && res[0].machines) || [];
           var agent = res[1] || {};
-          var m = openOrchModal('Machines — ' + (agent.name || id));
+          var m = openOrchModal('Machines: ' + (agent.name || id));
           var help = document.createElement('div');
           help.className = 'ui-orch-modal-help';
-          help.textContent = 'A phase machine gives this agent a workflow it moves through and STAYS in: it works out what is being asked once, picks an approach once, then answers in that frame for the rest of the thread instead of re-deciding every turn. The agent keeps its persona — the machine supplies procedure. Author machines from chat with the machine tool.';
+          help.textContent = 'A phase machine gives this agent a workflow it moves through and STAYS in: it works out what is being asked once, picks an approach once, then answers in that frame for the rest of the thread instead of re-deciding every turn. The agent keeps its persona; the machine supplies procedure. Author machines from chat with the machine tool.';
           m.body.appendChild(help);
 
           var picked = agent.machine || '';
@@ -4320,7 +4320,7 @@
           if (!machines.length) {
             var empty = document.createElement('div');
             empty.style.cssText = 'color:var(--text-mute);font-size:0.82rem;line-height:1.5';
-            empty.textContent = 'No machines yet. New machine above starts from a working example you can edit, or ask Builder for one — say what the conversation should work out first and what it should settle into doing, and it can attach the result to this agent in the same step.';
+            empty.textContent = 'No machines yet. New machine above starts from a working example you can edit, or ask Builder for one: say what the conversation should work out first and what it should settle into doing, and it can attach the result to this agent in the same step.';
             list.appendChild(empty);
           }
 
@@ -4359,7 +4359,7 @@
             return wrap;
           }
 
-          list.appendChild(row('', 'None', 'The persona governs every turn — the agent decides its approach fresh each time.', ''));
+          list.appendChild(row('', 'None', 'The persona governs every turn: the agent decides its approach fresh each time.', ''));
 
           machines.forEach(function(mc) {
             var names = (mc.phase_names || []).join(' → ');
@@ -4443,7 +4443,7 @@
             jsonBtn.className = 'ui-orch-modal-btn';
             jsonBtn.type = 'button';
             jsonBtn.textContent = 'Edit as JSON';
-            jsonBtn.title = 'The whole recipe at once — what the machine tool writes';
+            jsonBtn.title = 'The whole recipe at once: what the machine tool writes';
             jsonBtn.style.cssText = 'font-size:0.72rem;padding:0.15rem 0.5rem;margin-top:0.4rem;margin-right:0.35rem';
             jsonBtn.onclick = function(ev) {
               ev.preventDefault();
@@ -4471,7 +4471,7 @@
           // Where deleting went, said once. Removing the row's × without
           // saying so would read as the capability going missing rather
           // than moving somewhere it cannot be hit by accident.
-          note.textContent = 'Conversations already open keep the machine they started with — this applies to new sessions. ' +
+          note.textContent = 'Conversations already open keep the machine they started with; this applies to new sessions. ' +
             'To rename, delete or build machines, go to Extensions → Machines.';
           m.body.appendChild(note);
 
@@ -4533,11 +4533,11 @@
             return r.json();
           })
           .then(function(def) {
-            var m = openOrchModal('Edit machine — ' + (machineName || machineID));
+            var m = openOrchModal('Edit machine: ' + (machineName || machineID));
             var help = document.createElement('div');
             help.className = 'ui-orch-modal-help';
             help.textContent =
-              'The machine definition. Every phase needs a name and a prompt; at least one must be resident (user turns land there). Transient phases hand off with next or next_from. Ask Builder for machine(action="help") for the full spec — or just describe the change to it instead of editing here.';
+              'The machine definition. Every phase needs a name and a prompt; at least one must be resident (user turns land there). Transient phases hand off with next or next_from. Ask Builder for machine(action="help") for the full spec, or just describe the change to it instead of editing here.';
             m.body.appendChild(help);
 
             // Storage metadata is the server's and is overwritten on save,
@@ -4618,7 +4618,7 @@
         var body = m.body;
         var help = document.createElement('div');
         help.className = 'ui-orch-modal-help';
-        help.textContent = 'Skills modify the agent\'s behavior — instructions + tools that join on activation. Strict allowlist per agent.';
+        help.textContent = 'Skills modify the agent\'s behavior: instructions + tools that join on activation. Strict allowlist per agent.';
         body.appendChild(help);
 
         // Active skills
@@ -4629,7 +4629,7 @@
         skillsWrap.appendChild(sh);
         var sHelp = document.createElement('div');
         sHelp.style.cssText = 'font-size:0.74rem;color:var(--text-mute);line-height:1.45;margin-bottom:0.5rem';
-        sHelp.textContent = 'Strict allowlist of skills the classifier may fire for this agent. Every skill is opt-in per agent — nothing activates unless toggled on. Author skills via skill_def in chat.';
+        sHelp.textContent = 'Strict allowlist of skills the classifier may fire for this agent. Every skill is opt-in per agent: nothing activates unless toggled on. Author skills via skill_def in chat.';
         skillsWrap.appendChild(sHelp);
         var skillsList = document.createElement('div');
         skillsList.style.cssText = 'display:flex;flex-direction:column;gap:0.3rem';
@@ -4644,7 +4644,7 @@
           post_to: 'api/agents',
           name_field: 'id', label_field: 'name', desc_field: 'description',
           noun: 'Skill',
-          empty_text: '(no skills authored yet — use skill_def in Builder to make one)'
+          empty_text: '(no skills authored yet: use skill_def in Builder to make one)'
         }, skillsList);
       });
 
@@ -4652,10 +4652,10 @@
         var id = getAgentID();
         if (!id) { window.uiAlert('Pick an agent first.'); return; }
         fetchAgent(id).then(function(agent) {
-          var m = openOrchModal('Rules — ' + (agent.name || id));
+          var m = openOrchModal('Rules: ' + (agent.name || id));
           var help = document.createElement('div');
           help.className = 'ui-orch-modal-help';
-          help.textContent = 'Guidance the agent follows — prepended to BOTH the orchestrator and worker every turn. Use for soft constraints like "always cite a URL" or "prefer concise replies". The agent (and Builder) can edit these; for hard limits an independent check enforces, use Enforced guardrails below.';
+          help.textContent = 'Guidance the agent follows: prepended to BOTH the orchestrator and worker every turn. Use for soft constraints like "always cite a URL" or "prefer concise replies". The agent (and Builder) can edit these; for hard limits an independent check enforces, use Enforced guardrails below.';
           m.body.appendChild(help);
           var rulesTitle = document.createElement('div');
           rulesTitle.style.cssText = 'font-weight:600;color:var(--text);margin-bottom:0.3rem';
@@ -4756,11 +4756,11 @@
           gWrap.appendChild(gTitle);
           var gHelp = document.createElement('div');
           gHelp.className = 'ui-orch-modal-help';
-          gHelp.textContent = 'Hard limits an independent check (the "warden") enforces — a separate model call, in fresh context that never saw the conversation, judges what the agent is about to do against these. Only you can set them; no agent (not even Builder) can. Leave empty and the check is off.';
+          gHelp.textContent = 'Hard limits an independent check (the "warden") enforces: a separate model call, in fresh context that never saw the conversation, judges what the agent is about to do against these. Only you can set them; no agent (not even Builder) can. Leave empty and the check is off.';
           gWrap.appendChild(gHelp);
           var gHelp2 = document.createElement('div');
           gHelp2.className = 'ui-orch-modal-help';
-          gHelp2.textContent = 'A rule here BLOCKS, which is what this band is for: a violation ends the turn and a separate model writes the refusal, with no attempt to talk the agent into a compliant version. Switch a rule to "attempt-recovery" only if it SHAPES an answer rather than forbidding it ("answer in Spanish", "no bullet lists") — those get sent back once for a rewrite, and decline if they still break the rule. Shaping rules are usually better placed in Rules above, where they cost nothing to enforce. A rule with no audience in it binds for everyone, including you.';
+          gHelp2.textContent = 'A rule here BLOCKS, which is what this band is for: a violation ends the turn and a separate model writes the refusal, with no attempt to talk the agent into a compliant version. Switch a rule to "attempt-recovery" only if it SHAPES an answer rather than forbidding it ("answer in Spanish", "no bullet lists"); those get sent back once for a rewrite, and decline if they still break the rule. Shaping rules are usually better placed in Rules above, where they cost nothing to enforce. A rule with no audience in it binds for everyone, including you.';
           gWrap.appendChild(gHelp2);
           var gHelp3 = document.createElement('div');
           gHelp3.className = 'ui-orch-modal-help';
@@ -4768,7 +4768,7 @@
           // and is given the ACCOUNT NAME — there is no separate real-name field
           // on an account, so a rule naming a person by a first name has nothing
           // verified to match. Say so instead of letting it be discovered.
-          gHelp3.textContent = 'Exceptions: the check knows whether it is you asking or an outside contact, so you can write "never discuss pay with anyone but me". Say "me", "the owner", or your account name — those resolve against something verified. A bare first name does not; there is no real-name field on an account, so the check can only guess it means you. An outside contact NEVER satisfies an exception no matter what they are called, including when they type your name in front of their message.';
+          gHelp3.textContent = 'Exceptions: the check knows whether it is you asking or an outside contact, so you can write "never discuss pay with anyone but me". Say "me", "the owner", or your account name: those resolve against something verified. A bare first name does not; there is no real-name field on an account, so the check can only guess it means you. An outside contact NEVER satisfies an exception no matter what they are called, including when they type your name in front of their message.';
           gWrap.appendChild(gHelp2);
           var gList = document.createElement('div');
           gList.className = 'ui-orch-list';
@@ -4996,7 +4996,7 @@
               for (var i = 0; i < gexceptions.length; i++) {
                 if (gExcSlug(gexceptions[i]) === l.name) { label = gexceptions[i].name || l.name; break; }
               }
-              return label + (l.off ? ' — off here' : '');
+              return label + (l.off ? ' · off here' : '');
             });
             if (gExempt(text)) { names.unshift('authorized people'); }
             return names.join(', ');
@@ -5020,7 +5020,7 @@
             }
             window.uiOpenModal({
               title: 'Exceptions for this rule',
-              subtitle: 'Tick what this rule does NOT apply to. Each one can be switched off for this rule alone — the link is kept and the other rules using it are untouched.',
+              subtitle: 'Tick what this rule does NOT apply to. Each one can be switched off for this rule alone: the link is kept and the other rules using it are untouched.',
               width: '600px',
               mount: function(body, api) {
                 var rows = document.createElement('div');
@@ -5102,7 +5102,7 @@
                     if (!slug) {
                       var blank = document.createElement('div');
                       blank.style.cssText = 'font-size:0.78rem;color:var(--text-mute);padding:0.45rem 0;opacity:0.7';
-                      blank.textContent = 'An unnamed, empty entry — give it a name or a value below before linking it.';
+                      blank.textContent = 'An unnamed, empty entry: give it a name or a value below before linking it.';
                       rows.appendChild(blank);
                       return;
                     }
@@ -5151,7 +5151,7 @@
           var gModeTitle = {};
           gModeTitle[G_BLOCK] = 'Block: a violation ends the turn and a separate model writes the refusal, with no attempt at a compliant version. The default, and what this band is for. Click to cycle.';
           gModeTitle[G_RECOVER] = 'Attempt recovery: a violation sends the reply back for one rewrite, and declines if it still breaks the rule. For a rule that SHAPES an answer rather than forbidding it. Click to cycle.';
-          gModeTitle[G_APPEAL] = 'Allow appeal: the agent may dispute the block ONCE, by quoting the user’s own words. The framework looks the quote up itself and re-checks — an explanation is not evidence. For a rule with a CONDITION the check cannot see, like "unless it’s requested twice". Click to cycle.';
+          gModeTitle[G_APPEAL] = 'Allow appeal: the agent may dispute the block ONCE, by quoting the user’s own words. The framework looks the quote up itself and re-checks: an explanation is not evidence. For a rule with a CONDITION the check cannot see, like "unless it’s requested twice". Click to cycle.';
           function renderG() {
             gList.innerHTML = '';
             grules.forEach(function(text, idx) {
@@ -5193,7 +5193,7 @@
                 (linkCount ? 'color:var(--accent,#6366f1);border-color:var(--accent,#6366f1)' : 'color:var(--text-mute);opacity:0.55');
               exempt.title = (linkCount || offLinks)
                 ? 'Exceptions on this rule: ' + gLinkSummary(text) + '. Click to change.'
-                : 'Link exceptions — people or conditions this rule does not apply to. Click to choose.';
+                : 'Link exceptions: people or conditions this rule does not apply to. Click to choose.';
               // A rule whose only carve-outs are switched off shows a plain "@"
               // (nothing is applying) but keeps the accent, so "off" is visibly
               // different from "never linked".
@@ -5223,7 +5223,7 @@
                 (boundTool ? 'color:var(--accent,#6366f1);border-color:var(--accent,#6366f1)' : 'color:var(--text-mute);opacity:0.6');
               toolSel.title = boundTool
                 ? 'This rule is judged only when the agent uses ' + boundTool + ', and it is not judged against what the agent SAYS. If it forbids every use of that tool, the tool is taken out of the agent\'s catalog entirely.'
-                : 'Applies to everything this agent does. Pick a tool to judge this rule only when that tool is used — cheaper, and it stops the rule being applied to replies that merely mention the subject.';
+                : 'Applies to everything this agent does. Pick a tool to judge this rule only when that tool is used: cheaper, and it stops the rule being applied to replies that merely mention the subject.';
               var anyOpt = document.createElement('option');
               anyOpt.value = ''; anyOpt.textContent = 'any action';
               toolSel.appendChild(anyOpt);
@@ -5242,7 +5242,7 @@
               toolSel.value = boundTool;
               if (boundTool && gToolChoices.length && gToolChoices.indexOf(boundTool) < 0) {
                 toolSel.style.cssText = 'width:auto;max-width:9rem;padding:0 0.35rem;font-size:0.7rem;color:var(--danger);border-color:var(--danger)';
-                toolSel.title = 'This rule is bound to ' + boundTool + ', which this agent cannot call — so the rule is enforced nowhere. Pick another tool, or "any action".';
+                toolSel.title = 'This rule is bound to ' + boundTool + ', which this agent cannot call, so the rule is enforced nowhere. Pick another tool, or "any action".';
               }
               toolSel.addEventListener('change', function() {
                 grules[idx] = gCompose(gBody(grules[idx]), gMode(grules[idx]), gExempt(grules[idx]), gLinks(grules[idx]), toolSel.value);
@@ -5294,11 +5294,11 @@
             {name: 'Off', hooks: [], off: true,
              desc: 'Enforcement suspended. Your rules stay exactly as written and nothing checks them \u2014 no warden calls, and live token streaming comes back. Use it to find out whether a guardrail is behind a wrong refusal, or what a turn costs without one, instead of deleting the rules to test.'},
             {name: 'Fast', hooks: ['pre_input', 'pre_action'],
-             desc: 'Checks the incoming request (with recent context) and consequential tool calls before they run. The cheapest setting that still enforces: one check per turn plus one per consequential call, and live token streaming stays on because nothing has to hold the reply back. It does NOT judge what the agent SAYS, so a rule about disclosure can be broken by a reply — pick it when latency matters more than that.'},
+             desc: 'Checks the incoming request (with recent context) and consequential tool calls before they run. The cheapest setting that still enforces: one check per turn plus one per consequential call, and live token streaming stays on because nothing has to hold the reply back. It does NOT judge what the agent SAYS, so a rule about disclosure can be broken by a reply: pick it when latency matters more than that.'},
             {name: 'Light', hooks: ['pre_input', 'pre_output'],
-             desc: 'Checks the incoming request (with recent context) and the reply before it is sent. Covers what the agent says but not what it DOES — a consequential tool call runs unjudged.'},
+             desc: 'Checks the incoming request (with recent context) and the reply before it is sent. Covers what the agent says but not what it DOES: a consequential tool call runs unjudged.'},
             {name: 'Balanced', hooks: ['pre_input', 'pre_action', 'pre_output'],
-             desc: 'Also checks consequential tool calls before they run — free unless one is actually called. The reply check is the only one that reads what is about to be SAID, so this is the first setting that covers all three ends. Where a new agent starts.'},
+             desc: 'Also checks consequential tool calls before they run, free unless one is actually called. The reply check is the only one that reads what is about to be SAID, so this is the first setting that covers all three ends. Where a new agent starts.'},
             {name: 'Strict', hooks: ['pre_input', 'pre_action', 'pre_output', 'periodic'],
              desc: 'Also judges what the agent says WHILE it works, not just its final reply \u2014 the only setting that covers mid-turn narration, which is delivered to the reader as the turn runs. One extra check per round that produces text, so cost grows with how long the turn runs.'}
           ];
@@ -5342,7 +5342,7 @@
           hookWrap.style.cssText = 'margin-top:0.6rem';
           var hookLbl = document.createElement('div');
           hookLbl.style.cssText = 'font-size:0.8rem;color:var(--text-mute);margin-bottom:0.25rem';
-          hookLbl.textContent = 'Strictness — how much of a turn the warden checks:';
+          hookLbl.textContent = 'Strictness (how much of a turn the warden checks):';
           hookWrap.appendChild(hookLbl);
 
           var slider = document.createElement('input');
@@ -5368,7 +5368,7 @@
               // what comes back when enforcement is switched on again, and the
               // checkboxes below stay honest about what WOULD run.
               var n = grules.filter(function(r) { return gBody(r).length > 0; }).length;
-              lvlDesc.textContent = 'Off — ' + lv.desc +
+              lvlDesc.textContent = 'Off: ' + lv.desc +
                 (n > 0 ? ' ' + n + ' rule' + (n === 1 ? '' : 's') + ' kept and NOT enforced.' : '');
               lvlDesc.style.color = n > 0 ? 'var(--warning)' : 'var(--text-mute)';
               return;
@@ -5376,7 +5376,7 @@
             lvlDesc.style.color = 'var(--text-mute)';
             activeHooks = {};
             lv.hooks.forEach(function(h) { activeHooks[h] = true; });
-            lvlDesc.textContent = lv.name + ' — ' + lv.desc +
+            lvlDesc.textContent = lv.name + ': ' + lv.desc +
               ' (' + lv.hooks.length + ' check' + (lv.hooks.length === 1 ? '' : 's') + ' per turn)';
           }
           slider.oninput = applyLevel;
@@ -5384,7 +5384,7 @@
             // Never silently coerce a hand-built combination into the nearest
             // preset — that would change enforcement on save without saying so.
             lvlDesc.textContent = 'Custom selection (' + (agent.guardrail_hooks || []).join(', ') +
-              ') — not one of the presets, so the slider is disabled. Use the checkboxes below, or pick a preset to replace it.';
+              '), not one of the presets, so the slider is disabled. Use the checkboxes below, or pick a preset to replace it.';
           } else {
             applyLevel();
           }
@@ -5401,7 +5401,7 @@
           adv.open = custom;
           var advSum = document.createElement('summary');
           advSum.style.cssText = 'font-size:0.78rem;color:var(--text-mute);cursor:pointer';
-          advSum.textContent = 'Advanced — choose check points individually';
+          advSum.textContent = 'Advanced: choose check points individually';
           adv.appendChild(advSum);
           var hookDefs = [
             {v: 'pre_input', label: 'On the incoming request (judges what was asked, before the model sees it)'},
@@ -5429,7 +5429,7 @@
               guardrailsOff = !anyOn;
               lvlDesc.style.color = anyOn ? 'var(--text-mute)' : 'var(--warning)';
               lvlDesc.textContent = anyOn
-                ? 'Custom selection — the slider no longer applies.'
+                ? 'Custom selection: the slider no longer applies.'
                 : 'No check points selected, so enforcement is OFF. Your rules stay exactly as written and nothing checks them. Tick one to turn it back on.';
             };
             boxes.push({def: hd, cb: cb});
@@ -5468,7 +5468,7 @@
           var failHelp = document.createElement('div');
           failHelp.className = 'ui-orch-modal-help';
           failHelp.style.cssText = 'margin-top:0.15rem';
-          failHelp.textContent = 'The warden is itself a model call, so it can fail or return something unreadable. On (where a new agent starts): no verdict means no action — right for any rule about what must not be disclosed or done, because a check that fails open stops nothing exactly when it breaks, and a persistent asker can keep pushing until it does. Off: the action proceeds unchecked and the gap is recorded in the ⚠ trail — reasonable for style and tone rules, where a wrong refusal costs more than an unchecked reply.';
+          failHelp.textContent = 'The warden is itself a model call, so it can fail or return something unreadable. On (where a new agent starts): no verdict means no action: right for any rule about what must not be disclosed or done, because a check that fails open stops nothing exactly when it breaks, and a persistent asker can keep pushing until it does. Off: the action proceeds unchecked and the gap is recorded in the ⚠ trail: reasonable for style and tone rules, where a wrong refusal costs more than an unchecked reply.';
           failWrap.appendChild(failHelp);
           gWrap.appendChild(failWrap);
 
@@ -5496,7 +5496,7 @@
           var scanHelp = document.createElement('div');
           scanHelp.className = 'ui-orch-modal-help';
           scanHelp.style.cssText = 'margin-top:0.15rem';
-          scanHelp.textContent = 'Reads what fetched pages, feeds, and connectors return BEFORE this agent sees it, and flags text that is trying to give it instructions. Works with no rules written. Flagged content is kept, not dropped — it arrives marked as hostile so the agent can tell you what it says — and every detection is recorded below. This is the one check that reads what a tool brought back mid-turn: the request check and the reply check never see it, so an agent steered at round 3 passes both while acting on it for the rest of the turn.';
+          scanHelp.textContent = 'Reads what fetched pages, feeds, and connectors return BEFORE this agent sees it, and flags text that is trying to give it instructions. Works with no rules written. Flagged content is kept, not dropped (it arrives marked as hostile, so the agent can tell you what it says), and every detection is recorded below. This is the one check that reads what a tool brought back mid-turn: the request check and the reply check never see it, so an agent steered at round 3 passes both while acting on it for the rest of the turn.';
           scanWrap.appendChild(scanHelp);
           // Coverage line + the add/skip editor, both folded away until the
           // toggle is on: a picker for a feature that is off is furniture.
@@ -5524,7 +5524,7 @@
             coversLine.appendChild(lead);
             if (scanCovers.length) {
               var eg = document.createElement('span');
-              eg.textContent = ' — e.g. ' + scanCovers.slice(0, 6).join(', ') +
+              eg.textContent = ' · e.g. ' + scanCovers.slice(0, 6).join(', ') +
                 (scanCovers.length > 6 ? ', +' + (scanCovers.length - 6) + ' more' : '');
               coversLine.appendChild(eg);
             }
@@ -5590,11 +5590,11 @@
             return box;
           }
           scanEditor.appendChild(scanListEditor('Also scan these tools:', scanAdd,
-            'For tools that carry outside content without reaching the network themselves — a file store holding uploads, a database of messages other people wrote.'));
+            'For tools that carry outside content without reaching the network themselves: a file store holding uploads, a database of messages other people wrote.'));
           scanEditor.appendChild(scanListEditor('Never scan these tools:', scanSkip,
-            'For endpoints you trust — an internal API behind your own auth. A name in both lists is skipped. Removing coverage is the one edit here that can only make things worse, so it is worth being able to see at a glance: skipped tools are listed above in full.'));
-          scanEditor.appendChild(scanListEditor('Trusted sources — never scanned:', scanTrusted,
-            'A host (wiki.internal) or a full URL prefix (https://api.example.com/v2/). Matched against the address the tool was called with, by this framework rather than by a model, so there is nothing for a page to talk its way past. A host also covers its subdomains and nothing else — example.com never matches notexample.com. A call with no address in it is scanned.'));
+            'For endpoints you trust: an internal API behind your own auth. A name in both lists is skipped. Removing coverage is the one edit here that can only make things worse, so it is worth being able to see at a glance: skipped tools are listed above in full.'));
+          scanEditor.appendChild(scanListEditor('Trusted sources, never scanned:', scanTrusted,
+            'A host (wiki.internal) or a full URL prefix (https://api.example.com/v2/). Matched against the address the tool was called with, by this framework rather than by a model, so there is nothing for a page to talk its way past. A host also covers its subdomains and nothing else: example.com never matches notexample.com. A call with no address in it is scanned.'));
           renderCovers();
 
           // What a DETECTION does. The same three bands the rules carry —
@@ -5612,8 +5612,8 @@
           var actSel = document.createElement('select');
           actSel.className = 'ui-orch-input';
           actSel.style.cssText = 'width:auto;font-size:0.82rem';
-          [['flag', 'Flag it — deliver the content marked as hostile (default)'],
-           ['block', 'Block it — withhold the content entirely']].forEach(function(o) {
+          [['flag', 'Flag it: deliver the content marked as hostile (default)'],
+           ['block', 'Block it: withhold the content entirely']].forEach(function(o) {
             var op = document.createElement('option');
             op.value = o[0]; op.textContent = o[1];
             actSel.appendChild(op);
@@ -5623,7 +5623,7 @@
           var actHelp = document.createElement('div');
           actHelp.className = 'ui-orch-modal-help';
           actHelp.style.cssText = 'margin-top:0.15rem';
-          actHelp.textContent = 'Flag is the default here, and it is the opposite of the default for a rule — on purpose. A rule is a limit you wrote and mean absolutely, so it blocks. A detection is a model reading somebody else\u2019s prose, and the page most likely to be misread is a security write-up quoting an attack string: a real page, withheld, with your agent told only that the fetch failed. Delivering it marked loses nothing and tells you something. Choose Block where a miss would cost more than a wrong refusal.';
+          actHelp.textContent = 'Flag is the default here, and it is the opposite of the default for a rule, on purpose. A rule is a limit you wrote and mean absolutely, so it blocks. A detection is a model reading somebody else\u2019s prose, and the page most likely to be misread is a security write-up quoting an attack string: a real page, withheld, with your agent told only that the fetch failed. Delivering it marked loses nothing and tells you something. Choose Block where a miss would cost more than a wrong refusal.';
           actWrap.appendChild(actHelp);
 
           // The appeal, shown only under Block. Under Flag nothing was
@@ -5646,7 +5646,7 @@
           var appHelp = document.createElement('div');
           appHelp.className = 'ui-orch-modal-help';
           appHelp.style.cssText = 'margin-top:0.15rem';
-          appHelp.textContent = 'Same channel and the same one-per-turn budget as a contestable rule, and the same hard limit: the agent must quote the user\u2019s OWN WORDS asking for the content — \u201cread me that article about prompt injection\u201d — and this framework does the looking up. An explanation is not evidence and is not read. That matters more here than for a rule: the agent appealing a detection may already be reading the text that was flagged, so an appeal it argues is an appeal the page may have written. A verified quote does not lift the flag by itself either — it goes back to the scanner, which judges the content again knowing it.';
+          appHelp.textContent = 'Same channel and the same one-per-turn budget as a contestable rule, and the same hard limit: the agent must quote the user\u2019s OWN WORDS asking for the content (\u201cread me that article about prompt injection\u201d), and this framework does the looking up. An explanation is not evidence and is not read. That matters more here than for a rule: the agent appealing a detection may already be reading the text that was flagged, so an appeal it argues is an appeal the page may have written. A verified quote does not lift the flag by itself either: it goes back to the scanner, which judges the content again knowing it.';
           appWrap.appendChild(appHelp);
           actSel.onchange = function() {
             appWrap.style.display = (actSel.value === 'block') ? 'block' : 'none';
@@ -5673,7 +5673,7 @@
           var tightHelp = document.createElement('div');
           tightHelp.className = 'ui-orch-modal-help';
           tightHelp.style.cssText = 'margin-top:0.15rem';
-          tightHelp.textContent = 'Marking content as hostile tells your agent about it; it does not stop the agent acting on it. This does. Once something is detected, every consequential action for the rest of that turn — and every call that could carry data OUT, which the ordinary action check does not cover — is judged against one question: is this doing what the injected text asked, or what you asked? Anything serving the injection is stopped. It needs no rules written and costs nothing on a turn where nothing was found. Turn it off if you would rather be told than protected.';
+          tightHelp.textContent = 'Marking content as hostile tells your agent about it; it does not stop the agent acting on it. This does. Once something is detected, every consequential action for the rest of that turn (and every call that could carry data OUT, which the ordinary action check does not cover) is judged against one question: is this doing what the injected text asked, or what you asked? Anything serving the injection is stopped. It needs no rules written and costs nothing on a turn where nothing was found. Turn it off if you would rather be told than protected.';
           scanDetail.appendChild(tightHelp);
           scanCb.onchange = function() {
             agent.scan_tool_results = scanCb.checked;
@@ -5708,7 +5708,7 @@
             if (!withheld.length) {
               var none = document.createElement('div');
               none.className = 'ui-orch-modal-help';
-              none.textContent = 'None. When a rule stops a tool call, the framework asks once whether that rule forbids EVERY use of that tool. If it does, the tool stops being offered to this agent — so it does not keep reaching for something it can never use — and it is listed here.';
+              none.textContent = 'None. When a rule stops a tool call, the framework asks once whether that rule forbids EVERY use of that tool. If it does, the tool stops being offered to this agent (so it does not keep reaching for something it can never use), and it is listed here.';
               scopeBody.appendChild(none);
               return;
             }
@@ -5724,7 +5724,7 @@
               row.appendChild(name);
               var sub = document.createElement('div');
               sub.style.cssText = 'color:var(--text-mute);margin-top:0.1rem';
-              sub.textContent = 'removed by: ' + (s.rule || '(rule)') + (s.why ? ' — ' + s.why : '');
+              sub.textContent = 'removed by: ' + (s.rule || '(rule)') + (s.why ? ' · ' + s.why : '');
               row.appendChild(sub);
               list.appendChild(row);
             });
@@ -5739,7 +5739,7 @@
               renderToolScopes([]);
               scopeBody.appendChild(Object.assign(document.createElement('div'), {
                 className: 'ui-orch-modal-help',
-                textContent: 'Will be restored when you Save. If a rule really does forbid every use of one, it will be removed again the next time this agent reaches for it — edit or delete the rule to change that for good.',
+                textContent: 'Will be restored when you Save. If a rule really does forbid every use of one, it will be removed again the next time this agent reaches for it: edit or delete the rule to change that for good.',
               }));
             });
             scopeBody.appendChild(restore);
@@ -5781,7 +5781,7 @@
               if (!recent.length) {
                 var none = document.createElement('div');
                 none.className = 'ui-orch-modal-help';
-                none.textContent = 'Nothing yet. Every time a rule stops this agent — or the scan finds instructions hidden in something a tool fetched — it is recorded here, with where it fired and what the check objected to. Nothing is sent anywhere. For an agent that runs on a schedule this list is the only place a detection is reported, because nobody was watching when it happened.';
+                none.textContent = 'Nothing yet. Every time a rule stops this agent (or the scan finds instructions hidden in something a tool fetched), it is recorded here, with where it fired and what the check objected to. Nothing is sent anywhere. For an agent that runs on a schedule this list is the only place a detection is reported, because nobody was watching when it happened.';
                 recBody.appendChild(none);
                 return;
               }
@@ -5815,7 +5815,7 @@
                 if (b.reason || where.length) {
                   var sub = document.createElement('div');
                   sub.style.cssText = 'color:var(--text-mute);margin-top:0.1rem';
-                  sub.textContent = (where.length ? where.join(' · ') + ' — ' : '') + (b.reason || '');
+                  sub.textContent = (where.length ? where.join(' · ') + ': ' : '') + (b.reason || '');
                   row.appendChild(sub);
                 }
                 list.appendChild(row);
@@ -5837,7 +5837,7 @@
           excWrap.style.cssText = 'margin-top:0.7rem';
           var excLbl = document.createElement('div');
           excLbl.style.cssText = 'font-size:0.8rem;color:var(--text-mute);margin-bottom:0.25rem';
-          excLbl.textContent = 'Exceptions — people and conditions a rule can be linked to (optional):';
+          excLbl.textContent = 'Exceptions (people and conditions a rule can be linked to, optional):';
           excWrap.appendChild(excLbl);
           var excList = document.createElement('div');
           excList.className = 'ui-orch-list';
@@ -5856,7 +5856,7 @@
               var dup = !!dupes[i];
               r.nameIn.style.borderColor = dup ? 'var(--warning,#d29922)' : '';
               r.nameIn.title = dup
-                ? 'Another exception answers to this same name. A rule links by name, so it can only reach one of them — rename this one to say which.'
+                ? 'Another exception answers to this same name. A rule links by name, so it can only reach one of them: rename this one to say which.'
                 : '';
               r.dupNote.style.display = dup ? '' : 'none';
             });
@@ -5873,7 +5873,7 @@
               nameIn.style.cssText = 'flex:0 0 8rem' +
                 (dupes[idx] ? ';border-color:var(--warning,#d29922)' : '');
               if (dupes[idx]) {
-                nameIn.title = 'Another exception answers to this same name. A rule links by name, so it can only reach one of them — rename this one to say which.';
+                nameIn.title = 'Another exception answers to this same name. A rule links by name, so it can only reach one of them: rename this one to say which.';
               }
               // Model + marks only. renderG() repaints the rule list, which
               // does not contain this input, so it is safe here.
@@ -5905,7 +5905,7 @@
               // dangling name resolves to nothing and the rule goes back to
               // full strength. Say so, because the opposite would be a quiet
               // hole in a rule the owner still believes is absolute.
-              del.title = 'Delete. Rules linked to it go back to applying in full. To turn it off temporarily, use the on/off button instead — that keeps the wording and the links.';
+              del.title = 'Delete. Rules linked to it go back to applying in full. To turn it off temporarily, use the on/off button instead: that keeps the wording and the links.';
               del.onclick = function() { gexceptions.splice(idx, 1); renderE(); renderG(); };
               row.appendChild(nameIn); row.appendChild(textIn); row.appendChild(del);
               excList.appendChild(row);
@@ -5982,7 +5982,7 @@
           decWrap.style.cssText = 'margin-top:0.7rem';
           var decLbl = document.createElement('div');
           decLbl.style.cssText = 'font-size:0.8rem;color:var(--text-mute);margin-bottom:0.25rem';
-          decLbl.textContent = 'Decline examples — voice + fallback (optional):';
+          decLbl.textContent = 'Decline examples (voice + fallback, optional):';
           decWrap.appendChild(decLbl);
           var decList = document.createElement('div');
           decList.className = 'ui-orch-list';
@@ -6112,7 +6112,7 @@
                 var askedBy = d.as_owner ? 'by you' : (d.as ? 'by ' + d.as : 'by an outside contact');
                 var lines = ['Verdict: ' + (d.status || '?').toUpperCase() + '  (asked ' + askedBy + ')'];
                 (d.verdicts || []).forEach(function(v) {
-                  lines.push('• [' + v.status + '] ' + (v.rule || '') + (v.reason ? ' — ' + v.reason : ''));
+                  lines.push('• [' + v.status + '] ' + (v.rule || '') + (v.reason ? ': ' + v.reason : ''));
                 });
                 // Rules this person is excepted from were never asked about.
                 // Said out loud, because "no verdicts" otherwise reads as
@@ -6120,7 +6120,7 @@
                 var skipped = d.excepted || [];
                 if (skipped.length) {
                   lines.push('');
-                  lines.push('Not checked — excepted for this person (' + skipped.length + '):');
+                  lines.push('Not checked, excepted for this person (' + skipped.length + '):');
                   skipped.forEach(function(rule) { lines.push('· ' + rule); });
                 }
                 if (!skipped.length && !(d.verdicts || []).length && d.checked === 0) {
@@ -6247,11 +6247,11 @@
         ]).then(function(res) {
           var agent = res[0];
           var fleet = (res[1] || []).filter(function(a) { return a.id !== id; });
-          var m = openOrchModal('Security & Access — ' + (agent.name || id));
+          var m = openOrchModal('Security & Access: ' + (agent.name || id));
 
           var help = document.createElement('div');
           help.className = 'ui-orch-modal-help';
-          help.textContent = 'Blast-radius controls — limit what this agent can reach if a prompt-injection attempt rides in on fetched or inbound content. These are the same settings as the agent editor’s Access & visibility section, surfaced here for quick access.';
+          help.textContent = 'Blast-radius controls: limit what this agent can reach if a prompt-injection attempt rides in on fetched or inbound content. These are the same settings as the agent editor’s Access & visibility section, surfaced here for quick access.';
           m.body.appendChild(help);
 
           var selected = {};
@@ -6292,20 +6292,20 @@
 
           toggleRow(
             'Force Private mode (network locked off)',
-            'Permanently drops network + sub-agent dispatch tools every turn — nothing this agent handles can leave the deployment. For compliance / confidential / family-facing agents.',
+            'Permanently drops network + sub-agent dispatch tools every turn: nothing this agent handles can leave the deployment. For compliance / confidential / family-facing agents.',
             state.force_private,
             function(v) { state.force_private = v; syncDispatch(); });
 
           toggleRow(
             'Hide from agent fleet',
-            'Drops this agent from every other agent’s Available Agents block and refuses inbound dispatch — unless a caller lists it explicitly. Affects fleet routing only; it stays in your Agency picker and its published URL.',
+            'Drops this agent from every other agent’s Available Agents block and refuses inbound dispatch, unless a caller lists it explicitly. Affects fleet routing only; it stays in your Agency picker and its published URL.',
             state.hidden,
             function(v) { state.hidden = v; });
 
           // --- Dispatch policy -----------------------------------------
           var dh = document.createElement('div');
           dh.className = 'ui-orch-sec-h';
-          dh.textContent = 'Dispatch policy — which agents this one may call';
+          dh.textContent = 'Dispatch policy: which agents this one may call';
           m.body.appendChild(dh);
           var di = document.createElement('div');
           di.className = 'ui-orch-modal-help';
@@ -6314,10 +6314,10 @@
 
           var modeSelect = document.createElement('select');
           modeSelect.className = 'ui-orch-sec-filter';
-          [['all', 'Allow all — any non-hidden agent (default)'],
+          [['all', 'Allow all: any non-hidden agent (default)'],
            ['only', 'Only allow selected agents'],
            ['except', 'Allow all except selected agents'],
-           ['none', 'Allow none — no dispatch at all']].forEach(function(o) {
+           ['none', 'Allow none: no dispatch at all']].forEach(function(o) {
             var opt = document.createElement('option');
             opt.value = o[0];
             opt.textContent = o[1];
@@ -6346,7 +6346,7 @@
 
           var dimNote = document.createElement('div');
           dimNote.className = 'ui-orch-sec-dim-note';
-          dimNote.textContent = 'Force Private is on — sub-agent dispatch tools are dropped, so this dispatch policy has no effect until you turn it off.';
+          dimNote.textContent = 'Force Private is on: sub-agent dispatch tools are dropped, so this dispatch policy has no effect until you turn it off.';
           m.body.appendChild(dimNote);
 
           function renderCount() {
@@ -6354,8 +6354,8 @@
             switch (state.dispatch_mode) {
               case 'all':    count.textContent = 'Can dispatch to any non-hidden agent.'; break;
               case 'none':   count.textContent = 'Cannot dispatch to any agent.'; break;
-              case 'only':   count.textContent = n === 0 ? 'Pick the agents this one may call.' : ('Allowed: ' + n + ' agent' + (n === 1 ? '' : 's') + ' — only these.'); break;
-              case 'except': count.textContent = n === 0 ? 'Pick the agents to block.' : ('Blocked: ' + n + ' agent' + (n === 1 ? '' : 's') + ' — all other non-hidden agents allowed.'); break;
+              case 'only':   count.textContent = n === 0 ? 'Pick the agents this one may call.' : ('Allowed: ' + n + ' agent' + (n === 1 ? '' : 's') + ', only these.'); break;
+              case 'except': count.textContent = n === 0 ? 'Pick the agents to block.' : ('Blocked: ' + n + ' agent' + (n === 1 ? '' : 's') + ', all other non-hidden agents allowed.'); break;
             }
           }
 
@@ -7776,7 +7776,7 @@
         header.className = 'ui-orch-intake-header';
         header.textContent = buttonOnly
           ? 'Pick a starting point.'
-          : 'Tell me about it — fill these in to get started.';
+          : 'Tell me about it: fill these in to get started.';
         intakeWrap.insertBefore(header, intakeWrap.firstChild);
         var actions = document.createElement('div');
         actions.className = 'ui-orch-intake-actions';
@@ -8070,7 +8070,7 @@
           var subMap = data.sub_agents || {};
           window.ORCH_SUB_AGENTS = subMap;
           sel.innerHTML = '';
-          sel.appendChild(new Option('— select agent —', ''));
+          sel.appendChild(new Option('(select agent)', ''));
           // Group by the option's group field, preserving source order across
           // groups and within (bare/no-group options first). Mirrors the runtime
           // initial optgroup render in 30_agent_loop_panel.js.
@@ -8154,7 +8154,7 @@
           if (!r.ok && r.status !== 204) {
             return r.text().then(function(t) {
               if (seed && r.status === 400 && /nothing to revert/i.test(t)) {
-                window.uiAlert('Already at framework defaults — nothing to revert.');
+                window.uiAlert('Already at framework defaults: nothing to revert.');
                 return null;
               }
               throw new Error(t || ('HTTP ' + r.status));
