@@ -1422,6 +1422,8 @@ func ScheduleOrchestrateUpdate(spec RecurringSpec) (string, error) {
 		MaxFires:        spec.MaxFires,
 		Until:           spec.Until,
 		MaxAttempts:     spec.MaxAttempts,
+		Attempts:        spec.Attempts,
+		AttemptsBase:    spec.AttemptsBase,
 		Surface:         strings.TrimSpace(spec.Surface),
 		// Preserve fire count + creation time on edit-in-place; fresh schedules
 		// pass zero/empty and start clean.

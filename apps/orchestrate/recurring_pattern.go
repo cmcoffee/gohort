@@ -23,6 +23,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	. "github.com/cmcoffee/gohort/core"
 )
 
 const (
@@ -69,6 +71,13 @@ type RecurringSpec struct {
 	// FireCount 0 = start of budget, CreatedAt "" = stamp now.
 	FireCount int    // fires already consumed (preserves max_fires progress on edit)
 	CreatedAt string // original creation time (RFC3339); empty = stamp now
+	// The objective's history travels under the same carry-over rule.
+	// Until and MaxAttempts alone would re-arm the goal with a CLEAN
+	// record: every verdict the judge had reached would be gone, and the
+	// attempt allowance would start over, so a task one attempt from
+	// stalling would get an unlimited supply of them by being retimed.
+	Attempts     []ObjectiveAttempt
+	AttemptsBase int
 }
 
 // isContinuousRandom reports the unbounded spaced-random shape: pattern=random

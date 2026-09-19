@@ -68,3 +68,32 @@ func monitorNextRun(m EventMonitor) string {
 	}
 	return m.NextCheck.UTC().Format(time.RFC3339)
 }
+
+// monitorNeedsRearm reports whether an edit has to replace the monitor's armed
+// check.
+//
+// A timing change obviously does. An edit that only changed what it watches for
+// or what it tells the agent does NOT, and re-arming anyway is not harmless:
+// ScheduleEventMonitor computes the next check as now plus the WHOLE interval,
+// so a one-word fix to a six-hourly watch would push its next look six hours
+// out. Before the editor reached the condition, an interval change was the only
+// edit there was, and resetting the clock came free with it.
+//
+// A record that is not armed re-arms regardless of what changed: a save is a
+// chance to repair one that lost its task, and it had no clock to preserve.
+func monitorNeedsRearm(before, after EventMonitor) bool {
+	if before.IntervalSeconds != after.IntervalSeconds {
+		return true
+	}
+	return after.SchedulerID == "" || after.NextCheck.IsZero() || after.NextCheck.Before(time.Now())
+}
+
+// standingNeedsRearm is the same judgement for a scheduled agent: its cron or
+// its interval moved, or it is not currently armed. A cron schedule re-arms to
+// the same instant either way, so this only really spares the interval ones.
+func standingNeedsRearm(before, after StandingAgent) bool {
+	if before.Cron != after.Cron || before.IntervalSeconds != after.IntervalSeconds {
+		return true
+	}
+	return after.SchedulerID == "" || after.NextRun.IsZero() || after.NextRun.Before(time.Now())
+}

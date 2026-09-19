@@ -308,8 +308,14 @@ func (T *OrchestrateApp) handleConsoleRecurringGet(w http.ResponseWriter, r *htt
 			pattern = RecurringFixed
 		}
 		writeJSON(w, map[string]any{
-			"id":               rt.TaskID,
-			"name":             recurringName(p),
+			"id": rt.TaskID,
+			// The STORED name, not the derived one. recurringName falls back
+			// to the directive's first line, and handing that to the editor's
+			// Name box posts it straight back as an explicit name: rewriting
+			// an unnamed task's directive would leave its card titled with the
+			// OLD first line forever. Empty here shows the placeholder that
+			// says where the label comes from.
+			"name":             strings.TrimSpace(p.Name),
 			"prompt":           p.Prompt,
 			"pattern":          pattern,
 			"interval_minutes": p.IntervalSeconds / 60,
@@ -398,9 +404,19 @@ func (T *OrchestrateApp) handleConsoleRecurringUpdate(w http.ResponseWriter, r *
 		// it or a retime would silently send the reports somewhere else. A
 		// surface the user actually chose is preserved verbatim; an unchosen one
 		// takes the agent's default (its cortex, when it has one).
-		Surface:         scheduleSurfaceDefault(found.Surface, hasCortexThread(user, found.AgentID)),
-		FireCount:       found.FireCount, // preserve run history across an edit (don't reset the budget)
-		CreatedAt:       found.CreatedAt, // keep the original creation time, not "now"
+		Surface:   scheduleSurfaceDefault(found.Surface, hasCortexThread(user, found.AgentID)),
+		FireCount: found.FireCount, // preserve run history across an edit (don't reset the budget)
+		CreatedAt: found.CreatedAt, // keep the original creation time, not "now"
+		// The objective travels too. An edit rebuilds the payload from this
+		// spec, so a goal left out of it is a goal DELETED by a retime: the
+		// task silently becomes an unbounded cadence that will never stop at
+		// the thing it was created to reach, and the judge's verdicts go with
+		// it. The Scheduler now prints that objective on the very row whose
+		// Edit button lands here, which is how this was found.
+		Until:           found.Until,
+		MaxAttempts:     found.MaxAttempts,
+		Attempts:        found.Attempts,
+		AttemptsBase:    found.AttemptsBase,
 		Pattern:         strings.ToLower(strings.TrimSpace(body.Pattern)),
 		IntervalSeconds: body.IntervalMinutes * 60,
 		TimesPerDay:     body.TimesPerDay,

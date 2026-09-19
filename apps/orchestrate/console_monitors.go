@@ -176,7 +176,7 @@ func (T *OrchestrateApp) handleConsoleMonitorUpdate(w http.ResponseWriter, r *ht
 		m.LastHash, m.LastBody, m.LastResult = "", "", ""
 		m.LastBreached, m.LastMatched = false, false
 	}
-	if m.Paused || !IsScheduledEventKind(m.Kind) {
+	if m.Paused || !IsScheduledEventKind(m.Kind) || !monitorNeedsRearm(before, m) {
 		SaveEventMonitor(RootDB, m)
 	} else if err := ScheduleEventMonitor(RootDB, m); err != nil {
 		// Put the original back, so a rejected edit does not leave the monitor
@@ -263,9 +263,16 @@ func applyMonitorUpdate(m *EventMonitor, body monitorUpdateBody) error {
 	}
 
 	if body.WakeBrief != nil {
+		// Refuse to BLANK a brief, not to save one that was already blank.
+		// An empty WakeBrief is a legal, ordinary state: create_event_monitor
+		// requires only a name and a kind, the bridge and connector paths pass
+		// whatever the caller gave, and a notify=text monitor never wakes an
+		// agent at all so its brief is unused by design. Requiring one here
+		// made every such monitor UNEDITABLE: the owner could not change a
+		// format script or an interval without inventing a brief first.
 		brief := strings.TrimSpace(*body.WakeBrief)
-		if brief == "" {
-			return Error("a monitor needs a brief: it is what the agent is told when this fires")
+		if brief == "" && strings.TrimSpace(m.WakeBrief) != "" {
+			return Error("a monitor that has a brief needs to keep one: it is what the agent is told when this fires")
 		}
 		m.WakeBrief = brief
 	}

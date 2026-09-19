@@ -6476,22 +6476,34 @@
       // one body, so the server sees a single update and a rejected edit leaves
       // nothing half-applied.
 
-      // schedHalf draws one half's heading (and its one-line note) and returns
-      // the element the fields go into.
+      // schedHalf builds one half's heading (and its one-line note) and returns
+      // the element the fields go into, DETACHED. The caller attaches it with
+      // schedAttachHalf once the half has had its say, so a kind with nothing
+      // to put in a half does not leave a heading standing over nothing.
       function schedHalf(m, title, note) {
-        var h = document.createElement('div');
-        h.className = 'ui-orch-sec-h';
-        h.textContent = title;
-        m.body.appendChild(h);
-        if (note) {
-          var n = document.createElement('div');
-          n.className = 'ui-orch-sec-pick-desc';
-          n.textContent = note;
-          m.body.appendChild(n);
-        }
         var host = document.createElement('div');
-        m.body.appendChild(host);
+        host._heading = document.createElement('div');
+        host._heading.className = 'ui-orch-sec-h';
+        host._heading.textContent = title;
+        host._note = null;
+        if (note) {
+          host._note = document.createElement('div');
+          host._note.className = 'ui-orch-sec-pick-desc';
+          host._note.textContent = note;
+        }
         return host;
+      }
+
+      // schedAttachHalf puts a built half into the modal, heading first, and
+      // only when the half actually drew something. A half may draw a read-only
+      // line and still return no collect() (a push-triggered monitor has no
+      // timing to submit but very much has something to say about why), so the
+      // test is what is IN it, not what it returned.
+      function schedAttachHalf(m, host) {
+        if (!host.children.length) return;
+        m.body.appendChild(host._heading);
+        if (host._note) m.body.appendChild(host._note);
+        m.body.appendChild(host);
       }
 
       // schedArea builds the multi-line input the "what it does" halves are
@@ -6520,8 +6532,9 @@
       //   title      — the modal heading
       //   getUrl(id) / saveUrl(id)
       //   help(rec)  — the sentence under the heading
-      //   what(host, rec) → collect() | null   (null = this kind has no
-      //                     editable "what", and the half is not drawn)
+      //   what(host, rec) → collect() | null   (null = nothing to submit from
+      //                     this half; if it also drew nothing, the heading is
+      //                     left off entirely)
       //   when(host, rec) → collect() | null
       //   whatNote / whenNote — optional one-liners under each heading
       function schedEditor(ctx, spec) {
@@ -6536,8 +6549,12 @@
             help.textContent = spec.help(rec);
             m.body.appendChild(help);
 
-            var collectWhat = spec.what(schedHalf(m, 'What it does', spec.whatNote), rec);
-            var collectWhen = spec.when(schedHalf(m, 'When it runs', spec.whenNote), rec);
+            var whatHost = schedHalf(m, 'What it does', spec.whatNote);
+            var collectWhat = spec.what(whatHost, rec);
+            schedAttachHalf(m, whatHost);
+            var whenHost = schedHalf(m, 'When it runs', spec.whenNote);
+            var collectWhen = spec.when(whenHost, rec);
+            schedAttachHalf(m, whenHost);
 
             var saveBtn = document.createElement('button');
             saveBtn.className = 'ui-orch-modal-btn primary';
@@ -6707,8 +6724,12 @@
         // The same two halves the editor draws, in the same order, so what you
         // fill in to create a task is what you come back to to change it.
         var task = {pattern: 'fixed', interval_minutes: 30};
-        var collectWhat = recurringWhatFields(schedHalf(m, 'What it does'), task);
-        var collectWhen = recurringWhenFields(schedHalf(m, 'When it runs'), task);
+        var whatHost = schedHalf(m, 'What it does');
+        var collectWhat = recurringWhatFields(whatHost, task);
+        schedAttachHalf(m, whatHost);
+        var whenHost = schedHalf(m, 'When it runs');
+        var collectWhen = recurringWhenFields(whenHost, task);
+        schedAttachHalf(m, whenHost);
         function collect() {
           var body = collectWhat(), when = collectWhen();
           Object.keys(when).forEach(function(k) { body[k] = when[k]; });
@@ -6929,6 +6950,11 @@
       // has none (a webhook — an external POST decides) simply does not draw
       // one rather than drawing an empty box.
       function monitorWhatFields(host, mon) {
+        // A brief is required only of a monitor that HAS one. Plenty are
+        // created without: create_event_monitor asks for a name and a kind, and
+        // a notify=text monitor never wakes an agent so its brief is unused.
+        // Demanding one here would make those uneditable.
+        var briefWasSet = !!(mon.wake_brief || '').trim();
         var brief = schedArea(mon.wake_brief || '', 4,
           'What the agent is handed when this fires. e.g. "the build went red: say which test and who last touched it"');
         host.appendChild(schedLabeled('Brief handed to the agent', brief));
@@ -6963,7 +6989,7 @@
         }
 
         return function() {
-          if (!brief.value.trim()) { window.uiAlert('Enter a brief: it is what the agent is told when this fires.'); return null; }
+          if (briefWasSet && !brief.value.trim()) { window.uiAlert('Keep a brief: it is what the agent is told when this fires.'); return null; }
           var body = {wake_brief: brief.value};
           if (kind === 'poll') {
             if (!check.value.trim()) { window.uiAlert('Enter a check: the question asked each interval.'); return null; }
@@ -7042,13 +7068,18 @@
       // "Mission" on a row that runs a pipeline, which reads as the wrong box.
       function standingWhatFields(host, sa) {
         var isRun = !!sa.targets_run;
+        // Required only of a schedule that HAS one. A pipeline or machine
+        // schedule may legitimately carry no mission (the runner falls back to
+        // the def's own name), and demanding one would mean its timing could
+        // not be changed without inventing an input nothing reads.
+        var missionWasSet = !!(sa.mission || '').trim();
         var mission = schedArea(sa.mission || '', 5, isRun
           ? 'What this run is given each time it starts.'
           : 'The standing brief handed to the agent on every run. e.g. "review yesterday\'s failed runs and say what broke"');
         host.appendChild(schedLabeled(isRun ? 'Input handed to the run' : 'Mission (handed over on every run)', mission));
         return function() {
-          if (!mission.value.trim()) {
-            window.uiAlert(isRun ? 'Enter the input this run is given.' : 'Enter a mission: it is what the agent is handed on every run.');
+          if (missionWasSet && !mission.value.trim()) {
+            window.uiAlert(isRun ? 'Keep the input this run is given.' : 'Keep a mission: it is what the agent is handed on every run.');
             return null;
           }
           return {mission: mission.value};

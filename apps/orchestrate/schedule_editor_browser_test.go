@@ -46,6 +46,7 @@ func TestTheScheduleEditorSendsWhatWasTypedInBothHalves(t *testing.T) {
 	var parts []string
 	for _, fn := range []string{
 		"function schedHalf(m, title, note) {",
+		"function schedAttachHalf(m, host) {",
 		"function schedArea(val, rows, placeholder) {",
 		"function schedReadOnly(labelText, value) {",
 		"function schedEditor(ctx, spec) {",
@@ -79,6 +80,10 @@ func TestTheScheduleEditorSendsWhatWasTypedInBothHalves(t *testing.T) {
 		name   string
 		action string
 		record string
+		// edit runs after the modal is built and before Save, so a case can
+		// act on the form the way a person would. global.made.textarea holds
+		// every textarea the half created, in order.
+		edit string
 		// checks runs in node with `posted` (the parsed body or null) and
 		// `alerted` (the last uiAlert message) in scope.
 		checks string
@@ -121,12 +126,36 @@ func TestTheScheduleEditorSendsWhatWasTypedInBothHalves(t *testing.T) {
 		{
 			// A half that cannot validate returns null, and the save must stop
 			// in the browser rather than posting a body the server refuses.
-			name:   "an emptied mission stops the save before it leaves",
+			name:   "emptying a mission it had stops the save before it leaves",
 			action: "orchestrate_edit_standing",
-			record: `{name: 'nightly', mission: '   ', cron: 'daily 09:00'}`,
+			record: `{name: 'nightly', mission: 'review yesterday', cron: 'daily 09:00'}`,
+			edit:   `global.made.textarea[0].value = '   ';`,
 			checks: `
-        if (posted) fail('an empty mission was posted anyway: ' + JSON.stringify(posted));
+        if (posted) fail('an emptied mission was posted anyway: ' + JSON.stringify(posted));
         if (!alerted || alerted.indexOf('mission') < 0) fail('nothing told the user why: ' + alerted);`,
+		},
+		{
+			// The mirror of it, and the reason the rule is about BLANKING
+			// rather than about having one: a schedule driving a pipeline or a
+			// machine may carry no mission at all, and it must stay editable.
+			name:   "a schedule that never had a mission still saves its timing",
+			action: "orchestrate_edit_standing",
+			record: `{name: 'nightly', mission: '', targets_run: true, runs: 'pipeline · nightly', cron: 'daily 09:00'}`,
+			checks: `
+        if (!posted) fail('a missionless pipeline schedule could not be retimed: ' + alerted);
+        if (posted.cron !== 'daily 09:00') fail('timing: ' + JSON.stringify(posted));`,
+		},
+		{
+			// Same for a monitor created without a brief, which is what
+			// create_event_monitor produces when none is given.
+			name:   "a monitor that never had a brief still saves its condition",
+			action: "orchestrate_edit_monitor",
+			record: `{name: 'feed', kind: 'watch', schedulable: true, wake_brief: '',
+			          tool_name: 'bridge_cred_x', format_script: '', interval_seconds: 3600}`,
+			checks: `
+        if (!posted) fail('a briefless monitor could not be saved: ' + alerted);
+        if (posted.wake_brief !== '') fail('brief: ' + JSON.stringify(posted.wake_brief));
+        if (posted.interval_seconds !== 3600) fail('interval: ' + posted.interval_seconds);`,
 		},
 	}
 
@@ -135,7 +164,7 @@ func TestTheScheduleEditorSendsWhatWasTypedInBothHalves(t *testing.T) {
 			harness := `
 function fail(msg) { console.log('FAIL ' + msg); process.exit(1); }
 function node(tag) {
-  return {
+  var n = {
     tagName: tag, value: '', textContent: '', className: '', disabled: false, type: '',
     style: {cssText: ''}, children: [], options: [],
     // A real <select> reports the value of whichever <option> is selected.
@@ -150,6 +179,9 @@ function node(tag) {
     setAttribute: function() {}, addEventListener: function() {},
     map: undefined,
   };
+  (global.made = global.made || {});
+  (global.made[tag] = global.made[tag] || []).push(n);
+  return n;
 }
 global.document = {createElement: node, createTextNode: function(t) { return {text: t}; }};
 var alerted = null;
@@ -180,6 +212,7 @@ setTimeout(function() {
   var save = null;
   if (!global.savedButton) fail('no modal was built');
   save = global.savedButton;
+` + c.edit + `
   save.onclick();
   setTimeout(function() {
 ` + c.checks + `

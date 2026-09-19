@@ -126,8 +126,8 @@ func TestAnEditCannotLeaveAMonitorWithNothingToDo(t *testing.T) {
 		body monitorUpdateBody
 		says string
 	}{
-		{"blank brief", EventMonitor{Kind: EventKindPoll, Check: "c", WakeBrief: "b"},
-			monitorUpdateBody{WakeBrief: strp("   ")}, "needs a brief"},
+		{"blanking a brief it has", EventMonitor{Kind: EventKindPoll, Check: "c", WakeBrief: "b"},
+			monitorUpdateBody{WakeBrief: strp("   ")}, "needs to keep one"},
 		{"blank check", EventMonitor{Kind: EventKindPoll, Check: "c", WakeBrief: "b"},
 			monitorUpdateBody{Check: strp("")}, "needs a check"},
 		{"blank url", EventMonitor{Kind: EventKindHTTP, URL: "u", CompareOp: ">", Threshold: "1", WakeBrief: "b"},
@@ -216,7 +216,7 @@ func TestAScheduledAgentsMissionIsEditableButNotErasable(t *testing.T) {
 	before := sa
 	if err := applyStandingUpdate(&sa, standingUpdateBody{IntervalMinutes: 30, Mission: strp("\n  ")}); err == nil {
 		t.Error("a scheduled agent accepted an empty mission, so it now fires on time with nothing to do")
-	} else if !strings.Contains(err.Error(), "needs a mission") {
+	} else if !strings.Contains(err.Error(), "needs to keep one") {
 		t.Errorf("the refusal does not say why: %q", err)
 	}
 	if sa.Mission != before.Mission {
@@ -387,5 +387,141 @@ func TestAnUnreadableStampIsNoStampAtAll(t *testing.T) {
 	want := time.Date(2026, 9, 18, 21, 30, 0, 0, time.UTC)
 	if got := parseSchedTime("2026-09-18T21:30:00Z"); !got.Equal(want) {
 		t.Errorf("parsed %v, want %v", got, want)
+	}
+}
+
+// The refusal is about BLANKING a field, not about having one. A schedule that
+// legitimately carries neither is common, and demanding one at the edit made
+// those records uneditable: their timing could not be changed without first
+// inventing text for something that does not read it.
+func TestASchedulePlainlyWithoutOneCanStillBeEdited(t *testing.T) {
+	// A pipeline or machine schedule: create_standing_agent defaults the
+	// mission only when neither is set, and the runner falls back to the def's
+	// own name.
+	sa := StandingAgent{Name: "nightly", PipelineID: "p1", Cron: "daily 09:00"}
+	if err := applyStandingUpdate(&sa, standingUpdateBody{IntervalMinutes: 30, Mission: strp("")}); err != nil {
+		t.Errorf("a machine/pipeline schedule with no mission could not be retimed: %v", err)
+	}
+	if sa.IntervalSeconds != 1800 {
+		t.Errorf("the retime did not take: interval=%d", sa.IntervalSeconds)
+	}
+
+	// A monitor created without a brief: create_event_monitor requires only a
+	// name and a kind, and a notify=text monitor never wakes an agent at all.
+	m := EventMonitor{Kind: EventKindWatch, ToolName: "bridge_cred_x", Notify: EventNotifyText}
+	if err := applyMonitorUpdate(&m, monitorUpdateBody{WakeBrief: strp(""), FormatScript: strp("print(1)")}); err != nil {
+		t.Errorf("a briefless monitor could not have its format script fixed: %v", err)
+	}
+	if m.FormatScript != "print(1)" {
+		t.Errorf("the edit did not take: %q", m.FormatScript)
+	}
+}
+
+// Re-arming computes the next check as now plus the WHOLE interval, so an edit
+// that changed no timing must not do it: a one-word fix to a six-hourly watch
+// would push its next look six hours out.
+func TestAnEditThatChangedNoTimingKeepsItsPlaceInTheQueue(t *testing.T) {
+	soon := time.Now().Add(4 * time.Hour)
+	armed := EventMonitor{Kind: EventKindWatch, IntervalSeconds: 6 * 3600, SchedulerID: "task-1", NextCheck: soon}
+	after := armed
+	after.FormatScript = "print(1)"
+	if monitorNeedsRearm(armed, after) {
+		t.Error("a format-script edit re-arms, so the next check jumps a full interval out")
+	}
+	retimed := armed
+	retimed.IntervalSeconds = 3600
+	if !monitorNeedsRearm(armed, retimed) {
+		t.Error("an interval change did not re-arm, so the new cadence never takes effect")
+	}
+	// A record that lost its task re-arms whatever changed: a save is the
+	// chance to repair one, and it had no clock worth preserving.
+	stranded := armed
+	stranded.SchedulerID = ""
+	if !monitorNeedsRearm(armed, stranded) {
+		t.Error("a monitor with no scheduler task was left unarmed")
+	}
+	stale := armed
+	stale.NextCheck = time.Now().Add(-time.Hour)
+	if !monitorNeedsRearm(armed, stale) {
+		t.Error("a monitor whose next check is in the past was left unarmed")
+	}
+
+	sa := StandingAgent{Cron: "daily 09:00", SchedulerID: "task-2", NextRun: soon, Mission: "m"}
+	rebriefed := sa
+	rebriefed.Mission = "something else"
+	if standingNeedsRearm(sa, rebriefed) {
+		t.Error("a mission edit re-arms an unchanged schedule")
+	}
+	moved := sa
+	moved.Cron = "daily 07:00"
+	if !standingNeedsRearm(sa, moved) {
+		t.Error("a cron change did not re-arm")
+	}
+}
+
+// An edit rebuilds a recurring task's payload from a RecurringSpec, so anything
+// left out of that spec is DELETED by a retime. The objective is the dangerous
+// one: the task silently becomes an unbounded cadence that will never stop at
+// the thing it was created to reach, and the judge's verdicts go with it. The
+// Scheduler now prints that objective on the very row whose Edit button lands
+// there, which is what makes a silent loss worth a test.
+func TestRetimingATaskDoesNotDeleteItsGoal(t *testing.T) {
+	src := readFile(t, "console_recurring.go")
+	i := strings.Index(src, "func (T *OrchestrateApp) handleConsoleRecurringUpdate")
+	if i < 0 {
+		t.Fatal("the update handler has been renamed")
+	}
+	body := src[i:]
+	if j := strings.Index(body, "\nfunc "); j > 0 {
+		body = body[:j]
+	}
+	// Whitespace-collapsed: gofmt re-aligns a struct literal's columns whenever
+	// a comment splits it, so matching on the exact spacing pins the formatter
+	// rather than the behaviour.
+	flat := strings.Join(strings.Fields(body), " ")
+	for _, field := range []string{"Until", "MaxAttempts", "Attempts", "AttemptsBase", "FireCount", "CreatedAt"} {
+		if !strings.Contains(flat, field+": found."+field+",") {
+			t.Errorf("an edit drops %s, so a retime destroys it", field)
+		}
+	}
+
+	// And the spec has somewhere to put them, or the handler could not carry
+	// them even if it tried.
+	spec := readFile(t, "recurring_pattern.go")
+	specFlat := strings.Join(strings.Fields(spec), " ")
+	for _, field := range []string{"Until string", "MaxAttempts int", "Attempts []ObjectiveAttempt", "AttemptsBase int", "FireCount int", "CreatedAt string"} {
+		if !strings.Contains(specFlat, field) {
+			t.Errorf("RecurringSpec has no %s, so an edit cannot preserve it", field)
+		}
+	}
+	// ScheduleOrchestrateUpdate has to read them back onto the payload.
+	built := readFile(t, "scheduled_updates.go")
+	flatBuilt := strings.Join(strings.Fields(built), " ")
+	for _, field := range []string{"Attempts", "AttemptsBase"} {
+		if !strings.Contains(flatBuilt, field+": spec."+field+",") {
+			t.Errorf("the payload is built without %s, so the spec carries it nowhere", field)
+		}
+	}
+}
+
+// An unnamed task's label is DERIVED from its directive's first line. Handing
+// that derived value to the editor's Name box posts it back as an explicit
+// name, so rewriting the directive would leave the card titled with the old
+// first line forever.
+func TestAnUnnamedTaskDoesNotGetNamedByBeingOpened(t *testing.T) {
+	src := readFile(t, "console_recurring.go")
+	i := strings.Index(src, "func (T *OrchestrateApp) handleConsoleRecurringGet")
+	if i < 0 {
+		t.Fatal("the get handler has been renamed")
+	}
+	body := src[i:]
+	if j := strings.Index(body, "\nfunc "); j > 0 {
+		body = body[:j]
+	}
+	if strings.Contains(body, `"name":             recurringName(p)`) {
+		t.Error("the editor is handed the DERIVED name, which it posts straight back as a stored one")
+	}
+	if !strings.Contains(body, `"name":             strings.TrimSpace(p.Name)`) {
+		t.Error("the editor is not handed the stored name")
 	}
 }

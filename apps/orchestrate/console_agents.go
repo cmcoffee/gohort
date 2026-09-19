@@ -285,7 +285,7 @@ func (T *OrchestrateApp) handleConsoleAgentUpdate(w http.ResponseWriter, r *http
 	// explicit choice (stored, including "session") is left alone.
 	sa.Surface = scheduleSurfaceDefault(sa.Surface, hasCortexThread(user, sa.ReportAgentID))
 	var err error
-	if sa.Paused {
+	if sa.Paused || !standingNeedsRearm(before, sa) {
 		SaveStandingAgent(RootDB, sa)
 	} else {
 		err = ScheduleStandingAgent(RootDB, sa)
@@ -330,8 +330,15 @@ func applyStandingUpdate(sa *StandingAgent, body standingUpdateBody) error {
 	}
 	mission := sa.Mission
 	if body.Mission != nil {
-		if mission = strings.TrimSpace(*body.Mission); mission == "" {
-			return Error("a scheduled agent needs a mission: it is what the agent is handed on every run")
+		// Refuse to BLANK a mission, not to save one that was already blank.
+		// An empty Mission is legal for a schedule that drives a pipeline or a
+		// machine: create_standing_agent defaults the mission only when neither
+		// is set, and the runner falls back to the def's own name. Requiring
+		// one here made those schedules UNEDITABLE, so their timing could not
+		// be changed without inventing an input for a run that does not read
+		// one.
+		if mission = strings.TrimSpace(*body.Mission); mission == "" && strings.TrimSpace(sa.Mission) != "" {
+			return Error("a scheduled agent that has a mission needs to keep one: it is what it is handed on every run")
 		}
 	}
 	sa.Mission = mission
