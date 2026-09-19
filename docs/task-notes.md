@@ -209,6 +209,8 @@ state, and this ordering keeps that option open without betting on it.
 
 ## Staging
 
+*(All five built, v0.6.911. See "What the build changed" above.)*
+
 1. **The namespace.** `taskNotesNamespace(surface, id)` and the resolve/save
    helpers keyed by task, plus the seed builder from `Until`. No storage change.
 2. **The render.** `[Notes: ...]` in the fire's tail beside the attempts block,
@@ -267,6 +269,53 @@ across all three surfaces, and recurring and standing both restate the work in
 their own prompt or mission while a monitor's `WakeBrief` is optional. Giving
 the block a goal line on attempt one is a change to all three and wants its own
 decision.
+
+## What the build changed (v0.6.911)
+
+Four decisions in the sketch above did not survive contact, and each is worth
+recording because the reasoning is not obvious from the code.
+
+**A recurring task has no stable id, so one had to be minted.** The namespace
+above reads `task:recurring:<id>`, and the obvious id is the one the console
+actions a row by. It cannot serve: a recurring task has no record, it lives as
+its scheduler entry, and `ScheduleTask` mints a fresh UUID on every arm. So the
+id a row carries names the next OCCURRENCE, and notes keyed on it would be
+written by one fire where no later fire could look. `orchUpdatePayload` gains a
+`UID`, minted at create and copied forward by every re-arm (an arm copies the
+whole payload), and carried on `RecurringSpec` so an edit-in-place preserves it
+the way it already preserves `CreatedAt`. Tasks armed before the field fall back
+to `SessionID|CreatedAt`, the pair that has always travelled untouched.
+
+**The owner is in the key.** `task:<surface>:<owner>:<id>`, not
+`task:<surface>:<id>`. Standing agents and monitors are keyed by name within an
+owner, so two people's schedules can share one.
+
+**No seed.** The sketch seeded a task's notes from its `Until`. The build
+renders a one-line EMPTY STATE instead, and stores nothing: notes are what runs
+wrote, never a restatement of configuration. It closes the cold start for the
+same cost (the first fire is told the register exists), and it avoids a block
+that restates a goal the objective block already carries and that drifts the
+moment a run rewrites around it.
+
+**The store is RootDB, not the owner's per-user store.** A schedule is not a
+per-user document: the records these notes belong to (`StandingAgent`,
+`EventMonitor`) live in RootDB keyed by owner, and putting the notes beside them
+means `DeleteStandingAgent` and `DeleteEventMonitor` can drop the row with the
+handle they already have, covering all nine call sites at once instead of nine
+places each remembering.
+
+### What is wired
+
+- `core/notes/tasknotes.go` — `TaskNamespace`, the surfaces, `RenderTaskNotesBlock`.
+- `apps/orchestrate/task_notes.go` — the scope, the context carry, the tool, the
+  per-surface identity, the owner's handler.
+- The write path is SHARED with the agent-wide tool (`notesWriteHandler` in
+  `notes.go`): same cap, same splice, same refusal, for the model and for the
+  owner's Save alike.
+- Mounted and rendered on all three fires: `scheduled_updates.go` (recurring),
+  `standing_runner.go` (standing), `operator_wake.go` (monitor).
+- Dropped on delete and on retirement; KEPT on park.
+- `api/console/scheduler/notes` plus a Notes action on every Scheduler row.
 
 ## Tests worth pinning
 

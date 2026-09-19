@@ -71,6 +71,11 @@ type RecurringSpec struct {
 	// FireCount 0 = start of budget, CreatedAt "" = stamp now.
 	FireCount int    // fires already consumed (preserves max_fires progress on edit)
 	CreatedAt string // original creation time (RFC3339); empty = stamp now
+	// UID is the task's own identity (orchUpdatePayload.UID). It travels for
+	// the same reason CreatedAt does, and one reason more: anything keyed on it
+	// belongs to the task rather than to the schedule, so re-minting it on a
+	// retime would orphan what the task had accumulated. Empty = mint one.
+	UID string
 	// The objective's history travels under the same carry-over rule.
 	// Until and MaxAttempts alone would re-arm the goal with a CLEAN
 	// record: every verdict the judge had reached would be gone, and the

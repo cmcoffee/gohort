@@ -128,6 +128,12 @@ func schedulerRow(row any, section, kind string) map[string]any {
 		return nil
 	}
 	m["_section"] = section
+	// The kind, for the one action whose URL is the same on all three and whose
+	// TARGET is not: a task's notes are keyed per surface, and a name shared by
+	// a monitor and a standing agent would otherwise resolve to whichever the
+	// server guessed. Everything else gates on a per-kind flag instead.
+	m["_kind"] = kind
+	m["_notes"] = true
 	addSchedulerActionFlags(m, kind)
 	addSchedulerFilterFlags(m)
 	return m

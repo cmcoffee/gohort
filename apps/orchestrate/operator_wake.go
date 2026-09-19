@@ -49,6 +49,14 @@ func monitorWakeMessage(m EventMonitor, monitorName, summary, brief string) stri
 	if block := objectiveAttemptsBlock(monitorObjective(m)); block != "" {
 		msg += "\n\n" + block
 	}
+	// What earlier wakes of this monitor left for this one: the judge's record
+	// of what was seen, then the reacting turn's own record of what it did
+	// about it. A monitor is the surface where this matters most, since it
+	// fires on a condition that keeps recurring and each wake would otherwise
+	// start from the event text alone. See task_notes.go.
+	if block := monitorTaskNotes(m).block(); block != "" {
+		msg += "\n\n" + block
+	}
 	return msg
 }
 
@@ -272,12 +280,16 @@ func registerOperatorWake(app *OrchestrateApp) {
 			// The card a watch attached (EventCardFromContext) is what the
 			// thread shows; the model still gets msg. A wake without one keeps
 			// msg as its card.
-			if _, err := app.RunAgentSyncContinuingRich(ctx, AgentSyncRun{
+			// The task's notes: mounted for the woken turn beside the pacing
+			// lever, and marked on the context so this fire carries the
+			// MONITOR's notes rather than the agent's own block.
+			tnotes := monitorTaskNotes(m)
+			if _, err := app.RunAgentSyncContinuingRich(withTaskNotes(ctx, tnotes), AgentSyncRun{
 				AgentOwner: owner, RuntimeUser: owner, AgentKey: wakeAgent,
 				SubSessionID: wakeTarget, Message: msg,
 				InputReportFrom: monitorName, InputReportKind: cortexKindMonitor,
 				InputCardText: EventCardFromContext(ctx),
-				AppTools:      monitorPacingTool(m, pacingAsk),
+				AppTools:      append(monitorPacingTool(m, pacingAsk), tnotes.tool()...),
 			}); err != nil {
 				Log("[operator.wake] %s/%s: %v", owner, monitorName, err)
 				return delivered, "the wake turn failed: " + err.Error()

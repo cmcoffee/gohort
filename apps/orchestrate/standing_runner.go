@@ -76,6 +76,15 @@ func registerStandingRunner(app *OrchestrateApp) {
 		if block := objectiveAttemptsBlock(standingObjective(sa)); block != "" {
 			mission += "\n\n" + block
 		}
+		// What earlier fires of this schedule left for this one, appended to
+		// the mission for the same reason the attempts block is: the mission IS
+		// this run's prompt. Always rendered, including the empty state, so a
+		// first fire is told the register exists rather than having to notice a
+		// tool in its catalog. See task_notes.go.
+		tnotes := standingTaskNotes(sa)
+		if block := tnotes.block(); block != "" {
+			mission += "\n\n" + block
+		}
 		// Live-activity registration: a standing fire has no HTTP client, so
 		// without this it was invisible while running — only its completed
 		// RunRecord ever surfaced. Name prefers the schedule's own label
@@ -107,8 +116,13 @@ func registerStandingRunner(app *OrchestrateApp) {
 		// rather than hung on the agent, which has no next fire to move when it
 		// is dispatched from a conversation.
 		pacingAsk := &pacing.Ask{}
+		// The task's notes ride on the context so the prompt assembler keeps the
+		// AGENT's own Working-notes block out of a fire that already carries a
+		// task's, and the tool is mounted beside the pacing lever: both are
+		// things only this turn can use.
+		ctx = withTaskNotes(ctx, tnotes)
 		run, err := app.runAgentSyncAppTools(ctx, sa.Owner, sa.Owner, sa.AgentID, mission, gate.confirm,
-			standingPacingTool(sa, pacingAsk), sa.DispatchedBy...)
+			append(standingPacingTool(sa, pacingAsk), tnotes.tool()...), sa.DispatchedBy...)
 		out, hitRoundCap, toolTrace := run.Text, run.HitRoundCap, run.Trace
 		if err != nil {
 			liveRun.Complete(RunStatusFailed)

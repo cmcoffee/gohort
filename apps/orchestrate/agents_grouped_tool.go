@@ -1234,7 +1234,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 	// the target's, which is the wrong agent's tool list to be stripping a
 	// target's persona sections against; gatedPersonaFor reads the target.
 	subFacts := ListMemoryFacts(t.udb, factsNamespace(target.ID))
-	sysPrompt := dispatchSystemPrompt(target, subFacts, subTurn.dispatchContextBlocks(), customToolPrompt, subSessID, t.udb, t.user)
+	sysPrompt := dispatchSystemPrompt(t.ctx, target, subFacts, subTurn.dispatchContextBlocks(), customToolPrompt, subSessID, t.udb, t.user)
 
 	// Ephemeral dispatch continuity: a follow-up to the SAME agent in the
 	// SAME parent session re-threads the prior exchange, so the parent can

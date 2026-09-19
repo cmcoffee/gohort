@@ -162,6 +162,7 @@ func (T *OrchestrateApp) handleConsoleRecurringDelete(w http.ResponseWriter, r *
 	for _, rt := range listAgentRecurringTasks(user, "") {
 		if rt.TaskID == id {
 			UnscheduleTask(id)
+			dropRecurringTaskNotes(rt.Payload)
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -405,8 +406,9 @@ func (T *OrchestrateApp) handleConsoleRecurringUpdate(w http.ResponseWriter, r *
 		// surface the user actually chose is preserved verbatim; an unchosen one
 		// takes the agent's default (its cortex, when it has one).
 		Surface:   scheduleSurfaceDefault(found.Surface, hasCortexThread(user, found.AgentID)),
-		FireCount: found.FireCount, // preserve run history across an edit (don't reset the budget)
-		CreatedAt: found.CreatedAt, // keep the original creation time, not "now"
+		FireCount: found.FireCount,          // preserve run history across an edit (don't reset the budget)
+		CreatedAt: found.CreatedAt,          // keep the original creation time, not "now"
+		UID:       recurringTaskUID(*found), // the task's identity, so its notes survive the edit
 		// The objective travels too. An edit rebuilds the payload from this
 		// spec, so a goal left out of it is a goal DELETED by a retime: the
 		// task silently becomes an unbounded cadence that will never stop at

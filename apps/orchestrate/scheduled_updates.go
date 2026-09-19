@@ -73,6 +73,19 @@ func orchUpdateMaxPerSession() int { return TuneInt("tune_orch_update_max_per_se
 func orchUpdateIdleDays() int { return TuneInt("tune_orch_update_idle_days") }
 
 type orchUpdatePayload struct {
+	// UID is the task's OWN identity, minted once at create and copied forward
+	// by every re-arm.
+	//
+	// The scheduler task id cannot serve: a recurring task has no record, it
+	// lives as its scheduler entry, and each fire arms a fresh entry with a
+	// fresh UUID. So the id a console row is actioned by names the next
+	// OCCURRENCE, and anything keyed on it that has to outlive a fire (this
+	// task's notes) would be written where no later fire could find it.
+	//
+	// Empty on tasks armed before this existed; recurringTaskUID falls back to
+	// the pair that has always been carried forward untouched.
+	UID string `json:"uid,omitempty"`
+
 	SessionID string `json:"session_id"`
 	AgentID   string `json:"agent_id"`
 	Username  string `json:"username"`
@@ -402,6 +415,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		recordScheduledDrop(p, RunAttention, fmt.Sprintf(
 			"Auto-cancelled: this recurring task reached its cap of %d fires. It did not run and will not run again: recreate it if you still want it.",
 			p.effectiveMaxFires()))
+		dropRecurringTaskNotes(p)
 		return nil
 	}
 
@@ -531,6 +545,15 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	if block := objectiveAttemptsBlock(p.objective()); block != "" {
 		fireContent += "\n\n" + block
 	}
+	// What earlier fires of THIS task left for this one. Beside the objective
+	// block for the same reason and in the same tail: the judge's record of
+	// what was tried, then the attempt's own record of what it learned. Always
+	// rendered, including the one-line empty state, because a first fire that
+	// is never told the register exists never starts one. See task_notes.go.
+	tnotes := recurringTaskNotes(p)
+	if block := tnotes.block(); block != "" {
+		fireContent += "\n\n" + block
+	}
 	msgs = append(msgs, Message{Role: "user", Content: fireContent})
 
 	// Assemble the SAME toolkit a live turn / standing-agent fire gets, so a
@@ -622,12 +645,19 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// for. The ask is read after the loop, in the objective block below.
 	pacingAsk := &pacing.Ask{}
 	tools = append(tools, pacingTool(p, pacingAsk, reArm)...)
+	// The other thing a fire can leave behind. Mounted here rather than on the
+	// `recurring` group for the same reason the pacing lever is: the turn that
+	// can use it is this one, and a Fleet agent never gets that group.
+	tools = append(tools, tnotes.tool()...)
+	// Marks the run as belonging to a task, which is what keeps the agent's own
+	// Working-notes block out of a prompt that already carries the task's.
+	ctx = withTaskNotes(ctx, tnotes)
 
 	// Full dispatch persona: gated prompt + facts + available blocks +
 	// customToolPrompt (so the LLM SEES the names of its lazily-loaded custom
 	// tools) + per-agent capability guidance.
 	facts := ListMemoryFacts(udb, factsNamespace(agent.ID))
-	sysPrompt := dispatchSystemPrompt(agent, facts, availableBlock, customToolPrompt, schedSessID, udb, p.Username)
+	sysPrompt := dispatchSystemPrompt(ctx, agent, facts, availableBlock, customToolPrompt, schedSessID, udb, p.Username)
 
 	started := time.Now()
 	// Think the SAME way every other surface runs this agent. resolveDispatchThink
@@ -1297,6 +1327,7 @@ func reschedule(p orchUpdatePayload) {
 		Log("[orchestrate/scheduled] session=%s reaped: idle > %d days, recurring task auto-cancelled", p.SessionID, idleDays)
 		recordScheduledDrop(p, RunAttention, fmt.Sprintf(
 			"Auto-cancelled: %d days without a productive fire or an edit. It will not run again: recreate it if you still want it.", idleDays))
+		dropRecurringTaskNotes(p)
 		return
 	}
 	p.FireCount++
@@ -1310,6 +1341,7 @@ func reschedule(p orchUpdatePayload) {
 		Log("[orchestrate/scheduled] session=%s retired: reached fire cap %d (recurring task auto-cancelled)", p.SessionID, p.effectiveMaxFires())
 		recordScheduledDrop(p, RunAttention, fmt.Sprintf(
 			"Retired: reached its cap of %d fires. This fire ran; there will not be another.", p.effectiveMaxFires()))
+		dropRecurringTaskNotes(p)
 		return
 	}
 	next, err := computeNextFire(&p, time.Now().In(UserLocation(p.Username)))
@@ -1406,6 +1438,11 @@ func ScheduleOrchestrateUpdate(spec RecurringSpec) (string, error) {
 		return "", fmt.Errorf("session %s already has %d active recurring tasks (cap %d): cancel one first", spec.SessionID, len(active), orchUpdateMaxPerSession())
 	}
 	p := orchUpdatePayload{
+		// Preserved on edit-in-place (the spec carries the existing task's
+		// fields), minted on a genuinely new schedule. An edit that re-minted
+		// it would orphan the notes the task had built up, which is the one
+		// thing this id exists to prevent.
+		UID:             firstNonEmptyStr(strings.TrimSpace(spec.UID), UUIDv4()),
 		SessionID:       spec.SessionID,
 		AgentID:         spec.AgentID,
 		Username:        spec.Username,
@@ -1462,6 +1499,7 @@ func CancelOrchestrateUpdate(sessionID, taskID string) error {
 			return errors.New("task does not belong to this session")
 		}
 		UnscheduleTask(taskID)
+		dropRecurringTaskNotes(p)
 		return nil
 	}
 	return errors.New("task not found")

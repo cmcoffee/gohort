@@ -26,6 +26,8 @@ import (
 	"time"
 
 	"github.com/cmcoffee/gohort/core/ui"
+
+	"github.com/cmcoffee/gohort/core/notes"
 )
 
 const (
@@ -325,6 +327,12 @@ func DeleteStandingAgent(db Database, owner, name string) {
 		UnscheduleTask(sa.SchedulerID)
 	}
 	db.Unset(standingAgentsTable, standingKey(owner, name))
+	// The task's notes go with the task. They describe work that no longer
+	// exists, and a notes row nobody can reach from a record is exactly the
+	// orphan the memory audit was built to hunt. Parking is different and does
+	// NOT come through here: a parked schedule is kept, and what it had worked
+	// out is most of what makes resuming different from starting over.
+	SaveOperatingNotes(db, notes.TaskNamespace(notes.TaskSurfaceStanding, owner, name), "")
 }
 
 // Why a schedule is parked. Two very different situations used to share one

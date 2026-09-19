@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"context"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -13,8 +14,16 @@ import (
 // Cortex agent answering OUTSIDE its own cortex thread — its recent cortex feed.
 // Single source of truth so adding a prompt block (as custom-tools just did)
 // can't get appended to one dispatch site and forgotten on the other.
-func dispatchSystemPrompt(target AgentRecord, subFacts []MemoryFact, availableBlock, customToolPrompt, sessID string, runtimeDB Database, user string) string {
-	sysPrompt := prependAgentContext(gatedPersonaFor(target, target.OrchestratorPrompt), target, subFacts, agentOperatingNotes(runtimeDB, target))
+func dispatchSystemPrompt(ctx context.Context, target AgentRecord, subFacts []MemoryFact, availableBlock, customToolPrompt, sessID string, runtimeDB Database, user string) string {
+	// The agent's own Working notes, unless this run is a scheduled fire that
+	// carries the TASK's notes instead. Two always-in-prompt scratchpads with
+	// no rule for choosing between them is how running state lands in the wrong
+	// one; for the duration of a fire there is exactly one. See task_notes.go.
+	agentNotes := agentOperatingNotes(runtimeDB, target)
+	if agentNotesSuppressed(ctx) {
+		agentNotes = OperatingNotes{}
+	}
+	sysPrompt := prependAgentContext(gatedPersonaFor(target, target.OrchestratorPrompt), target, subFacts, agentNotes)
 	sysPrompt += availableBlock
 	sysPrompt += customToolPrompt
 	if target.Cortex && sessID != cortexSessionID(target.ID) {

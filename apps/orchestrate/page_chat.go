@@ -346,6 +346,12 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 								{Label: "New machine run", Method: "client", URL: machineRunCreatorAction},
 							},
 							RowActions: []ui.OrchestratorRowAction{
+								// What this task's fires have left for each other. On the task
+								// rather than on the agent, because that is the whole scope of
+								// the thing: these notes end when the task does, and the card
+								// listing its goal, its attempts and its next fire is where
+								// somebody reading them already is.
+								{Label: "Notes", Method: "client", URL: "orchestrate_task_notes", OnlyIf: "_notes"},
 								// Scheduled agents. "Edit schedule" is a CLIENT action: the
 								// modal that changes a cron or an interval lives in this app's
 								// own JS, which is where anything knowing what a cron is

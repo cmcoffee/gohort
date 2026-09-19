@@ -370,6 +370,7 @@ func (t *chatTurn) recurringCancel(args map[string]any) (string, error) {
 	for _, rt := range listAgentRecurringTasks(t.user, scopeID) {
 		if rt.TaskID == id {
 			UnscheduleTask(id)
+			dropRecurringTaskNotes(rt.Payload)
 			// Names the agent: cancelling across agents must never read as
 			// having cancelled one of your own.
 			return fmt.Sprintf("CANCELLED ok. Recurring task %s on %s removed.", id, t.recurringAgentName(rt.Payload.AgentID)), nil

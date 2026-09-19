@@ -32,6 +32,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/notes"
 )
 
 // EventPollKind is the scheduler task kind for interval poll monitors. Exported
@@ -454,6 +456,12 @@ func DeleteEventMonitor(db Database, owner, name string) {
 		UnscheduleTask(m.SchedulerID)
 	}
 	db.Unset(eventMonitorsTable, eventKey(owner, name))
+	// The task's notes go with the task. They describe work that no longer
+	// exists, and a notes row nobody can reach from a record is exactly the
+	// orphan the memory audit was built to hunt. Parking is different and does
+	// NOT come through here: a parked schedule is kept, and what it had worked
+	// out is most of what makes resuming different from starting over.
+	SaveOperatingNotes(db, notes.TaskNamespace(notes.TaskSurfaceMonitor, owner, name), "")
 }
 
 // MarkEventMonitorBroken flags a monitor as no longer usable (a dependency was

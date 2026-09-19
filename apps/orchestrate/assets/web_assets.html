@@ -6707,6 +6707,120 @@
         });
       });
 
+      // One task's working notes, from its row on the Scheduler.
+      //
+      // The agent-wide Working-notes block went seven hundred versions with no
+      // owner surface, filed under the agent where nobody was looking for it,
+      // and a wrong note steered every turn with nowhere to go and read it. A
+      // task's notes are read where they were written: on the card that already
+      // says what the task is for, when it runs next and how its attempts have
+      // gone.
+      window.uiRegisterClientAction('orchestrate_task_notes', function(ctx) {
+        var row = (ctx && ctx.row) || {};
+        var kind = row._kind || '';
+        var id = (ctx && ctx.id) || row._id || '';
+        if (!kind || !id) { window.uiAlert('This row has no task to read notes for.'); return; }
+        var url = 'api/console/scheduler/notes?kind=' + encodeURIComponent(kind) + '&id=' + encodeURIComponent(id);
+
+        var m = openOrchModal('Notes: ' + (row.name || 'this task'));
+        var help = document.createElement('div');
+        help.className = 'ui-orch-modal-help';
+        help.textContent = 'What this task\'s runs have left for each other. Each run reads this and can rewrite it; it is deleted when the task is.';
+        m.body.appendChild(help);
+
+        var area = document.createElement('textarea');
+        area.className = 'ui-orch-modal-input';
+        area.rows = 12;
+        area.style.width = '100%';
+        area.placeholder = 'Nothing recorded yet. Runs of this task write here; you can too.';
+        m.body.appendChild(area);
+
+        // The counter and what each section costs, from the server rather than
+        // counted here: a second parser would disagree the first time a heading
+        // appeared inside a code fence, and then the person trimming the block
+        // and the model trimming it would read two different numbers.
+        var count = document.createElement('div');
+        count.className = 'ui-orch-modal-help';
+        m.body.appendChild(count);
+        var cap = 1500;
+        function paintCount(sections) {
+          var n = area.value.length;
+          var line = n.toLocaleString() + ' of ' + cap.toLocaleString() + ' characters';
+          if (sections && sections.length > 1) {
+            line += ' \u00b7 ' + sections.map(function(s) { return s.name + ' (' + s.size + ')'; }).join(', ');
+          }
+          count.textContent = line;
+          count.style.color = n > cap ? 'var(--danger, #c0392b)' : '';
+        }
+        var lastSections = [];
+        area.addEventListener('input', function() { paintCount(lastSections); });
+
+        var stamp = document.createElement('div');
+        stamp.className = 'ui-orch-modal-help';
+        m.body.appendChild(stamp);
+
+        function load() {
+          fetch(url).then(function(r) {
+            if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
+            return r.json();
+          }).then(function(d) {
+            cap = d.cap || cap;
+            area.value = d.text || '';
+            lastSections = d.sections || [];
+            paintCount(lastSections);
+            // Distinguishes "no run has written anything yet" from "a run wrote
+            // this and here is when", which is the difference between an empty
+            // box that is working and one that is not.
+            var when = d.updated_at && d.updated_at.slice(0, 10);
+            stamp.textContent = area.value ? ('Last rewritten ' + (when || 'recently')) : 'No run has written anything yet.';
+          }).catch(function(err) {
+            window.uiAlert('Could not read the notes: ' + (err && err.message || err));
+          });
+        }
+        load();
+
+        var cancelBtn = document.createElement('button');
+        cancelBtn.className = 'ui-orch-modal-btn';
+        cancelBtn.textContent = 'Close';
+        cancelBtn.onclick = m.close;
+        m.footer.appendChild(cancelBtn);
+
+        var clearBtn = document.createElement('button');
+        clearBtn.className = 'ui-orch-modal-btn';
+        clearBtn.textContent = 'Clear';
+        clearBtn.onclick = function() {
+          if (!area.value.trim()) { return; }
+          window.uiConfirm('Clear this task\'s notes? Its next run starts with none.').then(function(okd) {
+            if (!okd) { return; }
+            area.value = '';
+            save();
+          });
+        };
+        m.footer.appendChild(clearBtn);
+
+        var saveBtn = document.createElement('button');
+        saveBtn.className = 'ui-orch-modal-btn primary';
+        saveBtn.textContent = 'Save';
+        saveBtn.onclick = function() { save(); };
+        m.footer.appendChild(saveBtn);
+
+        function save() {
+          saveBtn.disabled = true;
+          fetch(url, {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({text: area.value})
+          }).then(function(r) {
+            if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
+            saveBtn.disabled = false;
+            load();
+            if (ctx && ctx.reload) { ctx.reload(); }
+          }).catch(function(err) {
+            saveBtn.disabled = false;
+            window.uiAlert('Save failed: ' + (err && err.message || err));
+          });
+        }
+      });
+
       // Create a NEW recurring task from the Scheduler modal's "New recurring
       // task" button (cfg.schedule_creators → this client action). The agent is
       // the rail's current agent (window.GOHORT_AGENT_ID); the task attaches to

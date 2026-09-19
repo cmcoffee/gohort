@@ -805,7 +805,7 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	if !isPhantomDispatch {
 		subFacts = ListMemoryFacts(runtimeDB, factsNamespace(target.ID))
 	}
-	sysPrompt := dispatchSystemPrompt(target, subFacts, availableBlock, customToolPrompt, subSessID, runtimeDB, runtimeUser)
+	sysPrompt := dispatchSystemPrompt(ctx, target, subFacts, availableBlock, customToolPrompt, subSessID, runtimeDB, runtimeUser)
 	// Only Builder reads the delegated marker (to skip its intake/confirm
 	// workflow); other agents ignore it. ask_user / approvals are already
 	// framework-gated off the dispatch path, so we don't add the marker for
@@ -1653,7 +1653,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	if !isPhantomDispatch {
 		subFacts = ListMemoryFacts(runtimeDB, factsNamespace(target.ID))
 	}
-	sysPrompt := dispatchSystemPrompt(target, subFacts, availableBlock, customToolPrompt, subSessionID, runtimeDB, runtimeUser)
+	sysPrompt := dispatchSystemPrompt(ctx, target, subFacts, availableBlock, customToolPrompt, subSessionID, runtimeDB, runtimeUser)
 	// The third-party doctrine goes in the SYSTEM prompt, not on every message.
 	// It names nobody, so the text is byte-identical turn after turn and caches
 	// for the life of the thread; the volatile half — which of them is writing
