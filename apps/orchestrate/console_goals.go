@@ -55,7 +55,18 @@ type consoleGoalRow struct {
 	NextRun  string `json:"next_run,omitempty"`
 	State    string `json:"state,omitempty"`
 
-	ID       string `json:"_id"`
+	ID string `json:"_id"`
+	// Kind names WHICH surface this goal lives on, and Notes offers the one
+	// action this page carries.
+	//
+	// The read-only rule above still holds: it is about the VERBS that change a
+	// record, which stay on the page that owns it. A task's notes are what its
+	// runs have worked out so far, which is the same question this page exists
+	// to answer, one row down. And it is the Scheduler's action, not a copy of
+	// it: one client action, one endpoint, one write path. A second set of
+	// rules is what the rule forbids, not a second door to the same one.
+	Kind     string `json:"_kind,omitempty"`
+	Notes    bool   `json:"_notes,omitempty"`
 	Met      bool   `json:"_met,omitempty"`
 	Stalled  bool   `json:"_stalled,omitempty"`
 	InFlight bool   `json:"_in_flight,omitempty"`
@@ -81,6 +92,8 @@ func (T *OrchestrateApp) handleConsoleGoals(w http.ResponseWriter, r *http.Reque
 			Stands:   objectiveStateLabel(standingObjective(sa)),
 			Attempts: goalAttemptLabel(sa.UnmetCount, sa.MaxAttempts),
 			ID:       sa.Name,
+			Kind:     schedKindStanding,
+			Notes:    true,
 		}
 		if !sa.NextRun.IsZero() && !sa.Paused && !sa.Broken {
 			row.NextRun = sa.NextRun.UTC().Format(rfc3339)
@@ -107,6 +120,8 @@ func (T *OrchestrateApp) handleConsoleGoals(w http.ResponseWriter, r *http.Reque
 			Attempts: goalAttemptLabel(objectiveAttemptNumber(p)-1, p.MaxAttempts),
 			NextRun:  rt.RunAt,
 			ID:       rt.TaskID,
+			Kind:     schedKindRecurring,
+			Notes:    true,
 		}
 		if p.Broken {
 			row.State = parkedStateLabel(recurringParkCause(p), p.BrokenReason)
@@ -137,6 +152,8 @@ func (T *OrchestrateApp) handleConsoleGoals(w http.ResponseWriter, r *http.Reque
 			Attempts: m.FireLabel(),
 			NextRun:  monitorNextRun(m),
 			ID:       m.Name,
+			Kind:     schedKindMonitor,
+			Notes:    true,
 		}
 		if m.Broken {
 			row.State = "⚠ " + m.StopLabel()

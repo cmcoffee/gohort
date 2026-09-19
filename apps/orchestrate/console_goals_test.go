@@ -163,9 +163,16 @@ func TestEachPageChoosesItsOwnSectionOrder(t *testing.T) {
 	}
 }
 
-// Read-only on purpose: every row here is editable from the Scheduler, and a
-// second surface with its own copies of those buttons is a second set of rules
-// for the same record.
+// Read-only about the SCHEDULE, on purpose: every row here is editable from the
+// Scheduler, and a second surface with its own copies of those buttons is a
+// second set of rules for the same record.
+//
+// One exception, and the shape of it is the rule. A task's notes are what its
+// runs have worked out so far, which is the question this page asks one row
+// down rather than a verb that changes anything; and it is the SAME client
+// action the Scheduler mounts, one endpoint and one write path, not a copy. So
+// the test stopped counting actions and started reading them: no creator, no
+// method that writes to a schedule, nothing but that one door.
 func TestTheGoalsViewOwnsNoVerbs(t *testing.T) {
 	page := readFile(t, "page_chat.go")
 	found := 0
@@ -174,8 +181,22 @@ func TestTheGoalsViewOwnsNoVerbs(t *testing.T) {
 			continue
 		}
 		found++
-		if strings.Contains(entry.body, "RowActions") || strings.Contains(entry.body, "ViewActions") {
-			t.Errorf("the %s Goals entry declares actions; the page that owns the record owns the verbs", entry.menu)
+		// A list-level button on a read-only page would be a creator, which is
+		// the Scheduler's job on the page that lists what it creates.
+		if strings.Contains(entry.body, "ViewActions") {
+			t.Errorf("the %s Goals entry declares a list-level action; creating a schedule belongs on the page that lists them", entry.menu)
+		}
+		for _, line := range strings.Split(entry.body, "\n") {
+			if !strings.Contains(line, "{Label:") || !strings.Contains(line, "URL:") {
+				continue
+			}
+			if !strings.Contains(line, `"orchestrate_task_notes"`) {
+				t.Errorf("the %s Goals entry declares an action other than Notes; the page that owns the record owns the verbs:\n  %s",
+					entry.menu, strings.TrimSpace(line))
+			}
+			if !strings.Contains(line, `Method: "client"`) {
+				t.Errorf("the %s Goals entry declares a server method; this page reads:\n  %s", entry.menu, strings.TrimSpace(line))
+			}
 		}
 		if !strings.Contains(entry.body, "goalsFilters()") {
 			t.Errorf("the %s Goals entry has no filters", entry.menu)

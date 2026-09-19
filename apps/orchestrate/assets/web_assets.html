@@ -6722,7 +6722,9 @@
         if (!kind || !id) { window.uiAlert('This row has no task to read notes for.'); return; }
         var url = 'api/console/scheduler/notes?kind=' + encodeURIComponent(kind) + '&id=' + encodeURIComponent(id);
 
-        var m = openOrchModal('Notes: ' + (row.name || 'this task'));
+        // The Scheduler names a row by its schedule; the Goals page names it by
+        // the GOAL and puts the schedule in 'where'. Same modal, either page.
+        var m = openOrchModal('Notes: ' + (row.name || row.where || 'this task'));
         var help = document.createElement('div');
         help.className = 'ui-orch-modal-help';
         help.textContent = 'What this task\'s runs have left for each other. Each run reads this and can rewrite it; it is deleted when the task is.';

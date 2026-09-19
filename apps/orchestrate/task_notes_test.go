@@ -2,6 +2,9 @@ package orchestrate
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -241,5 +244,46 @@ func TestTheOwnerAndTheAgentWriteTheSameWay(t *testing.T) {
 	}
 	if got := tn.load().Text; !strings.Contains(got, "## in flight") {
 		t.Errorf("the section did not land as a heading the owner can see: %q", got)
+	}
+}
+
+// The Goals page reaches the same notes as the Scheduler. It is read-only about
+// the schedule itself, deliberately, but what a goal's runs have worked out is
+// the question that page asks: so it carries the one action, and it has to
+// carry the kind with it for the same reason the Scheduler does.
+func TestGoalRowsCanReachTheirTasksNotes(t *testing.T) {
+	T, _, user := newTestOrchestrate(t)
+	root := pinRootDB(t)
+	SaveStandingAgent(root, StandingAgent{
+		Owner: user, Name: "nightly", AgentID: "a1", Until: "the backlog is empty",
+	})
+	SaveEventMonitor(root, EventMonitor{
+		Owner: user, Name: "pr-12", Kind: EventKindWatch, Until: "the PR is merged",
+	})
+
+	w := httptest.NewRecorder()
+	T.handleConsoleGoals(w, asUser(httptest.NewRequest(http.MethodGet, "/api/console/goals", nil), user))
+	if w.Code != http.StatusOK {
+		t.Fatalf("goals: %d %s", w.Code, w.Body.String())
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected both goals listed, got %d: %s", len(rows), w.Body.String())
+	}
+	for _, row := range rows {
+		if row["_notes"] != true {
+			t.Errorf("goal %q offers no way to read what its runs learned", row["goal"])
+		}
+		// The pair has to RESOLVE, not merely be present: a row carrying the
+		// wrong kind for its id is the failure this field exists to prevent,
+		// and it looks identical in the JSON.
+		kind, _ := row["_kind"].(string)
+		id, _ := row["_id"].(string)
+		if _, ok := taskNotesFor(user, kind, id); !ok {
+			t.Errorf("goal %q carries a kind/id pair that resolves to no notes row: %q %q", row["goal"], kind, id)
+		}
 	}
 }

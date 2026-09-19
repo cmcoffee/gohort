@@ -337,7 +337,17 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// for the same record.
 						{Label: "Goals", Menu: "Manage", Icon: "◎", AllAgents: true, Source: "api/console/goals", Layout: "cards",
 							SearchPlaceholder: goalsSearchHint,
-							Filters:           goalsFilters()},
+							Filters:           goalsFilters(),
+							// The one action this page carries, and it does not
+							// break the read-only rule above: that rule is about
+							// the verbs that CHANGE a schedule, which stay where
+							// the record lives. What a goal's runs have worked
+							// out is the same question this page asks, one row
+							// down, and this is the Scheduler's own action
+							// rather than a copy of it.
+							RowActions: []ui.OrchestratorRowAction{
+								{Label: "Notes", Method: "client", URL: "orchestrate_task_notes", OnlyIf: "_notes"},
+							}},
 						{Label: "Scheduler", Icon: "⏰", Pinned: true, AllAgents: true, Source: "api/console/scheduler", Layout: "cards",
 							SearchPlaceholder: schedulerSearchHint,
 							Filters:           schedulerFilters(),
@@ -474,7 +484,14 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// agent's arrangements rather than sweeping the fleet.
 						{Label: "Goals", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/goals", Layout: "cards",
 							SearchPlaceholder: goalsSearchHint,
-							Filters:           goalsFilters()},
+							Filters:           goalsFilters(),
+							// Same one action as the Manage entry, for the same
+							// reason: reading what a goal's runs worked out is
+							// this page's own question, and it is the
+							// Scheduler's action rather than a copy of it.
+							RowActions: []ui.OrchestratorRowAction{
+								{Label: "Notes", Method: "client", URL: "orchestrate_task_notes", OnlyIf: "_notes"},
+							}},
 						{Label: "Scheduler", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/scheduler", Layout: "cards",
 							SearchPlaceholder: schedulerSearchHint,
 							Filters:           schedulerFilters(),

@@ -132,8 +132,16 @@ func schedulerRow(row any, section, kind string) map[string]any {
 	// TARGET is not: a task's notes are keyed per surface, and a name shared by
 	// a monitor and a standing agent would otherwise resolve to whichever the
 	// server guessed. Everything else gates on a per-kind flag instead.
-	m["_kind"] = kind
-	m["_notes"] = true
+	//
+	// Only when there IS a kind. The Goals page reuses this marshaller with an
+	// empty one, because it wants the JSON shaping and none of the Scheduler's
+	// verbs, and it sets its own _kind on the row: writing an empty string over
+	// that left every goal carrying an id whose surface nobody could name, which
+	// looks identical in the JSON and resolves to nothing.
+	if kind != "" {
+		m["_kind"] = kind
+		m["_notes"] = true
+	}
 	addSchedulerActionFlags(m, kind)
 	addSchedulerFilterFlags(m)
 	return m
