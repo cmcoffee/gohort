@@ -112,9 +112,9 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 		ID        string `json:"_id"`
 		Pending   bool   `json:"_pending,omitempty"`
 		Managed   bool   `json:"_managed,omitempty"` // a standing policy row (Remove; segmented control when it has a Policy)
-		// AutoTool marks a row whose underlying state is BINARY: the tool is in
-		// the agent's AutoApproveTools or it is not. Such a row carries no
-		// Policy, so it gets no segmented control — see the comment at Zone 3.
+		// AutoTool marks a tool-grant row. It carries a Policy like the others,
+		// but only allow/ask exist for a tool — there is no block — so the
+		// Blocked segment is gated off these rows (see page_chat.go).
 		AutoTool  bool   `json:"_autotool,omitempty"`
 		Policy    string `json:"_policy,omitempty"`     // allow | ask | block (the segmented state)
 		OneShot   bool   `json:"_oneshot,omitempty"`    // one-time decision (Approve/Deny only) — no "Always" grant makes sense (e.g. activating a drafted sub-agent, which the approval consumes)
@@ -178,15 +178,41 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 	//
 	// Remove already says what it does and asks first. That is the honest
 	// control for a binary grant.
+	//
+	// Built from the UNION of the grants and the recorded decisions. A grant
+	// with no record predates this table (or was made by approving a request,
+	// which writes the list directly), and must still appear; a record with no
+	// grant is the "needs approval" state, which exists only here and is the
+	// whole reason the table does. Name resolution is per agent, so the grants
+	// are walked first and the records fill in what they did not cover.
+	seenTool := map[string]bool{}
+	agentName := map[string]string{}
 	for _, ag := range listAgents(udb, user) {
+		agentName[ag.ID] = firstNonEmptyStr(ag.Name, ag.ID)
 		for _, tool := range ag.AutoApproveTools {
+			seenTool[ag.ID+"\x00"+tool] = true
 			out = append(out, permRow{
-				Who:     firstNonEmptyStr(ag.Name, ag.ID),
+				Who:     agentName[ag.ID],
 				Detail:  "Autonomous tool: " + tool,
 				ID:      "autotool:" + ag.ID + ":" + tool,
-				Managed: true, AutoTool: true,
+				Managed: true, AutoTool: true, Policy: PolicyAllow,
 			})
 		}
+	}
+	for _, p := range listAutoToolPolicies(RootDB, user) {
+		if seenTool[p.AgentID+"\x00"+p.Tool] {
+			continue // already listed from the grant, which is the same fact
+		}
+		who, ok := agentName[p.AgentID]
+		if !ok {
+			continue // a decision about an agent that is gone is not actionable
+		}
+		out = append(out, permRow{
+			Who:     who,
+			Detail:  "Autonomous tool: " + p.Tool,
+			ID:      "autotool:" + p.AgentID + ":" + p.Tool,
+			Managed: true, AutoTool: true, Policy: p.Policy,
+		})
 	}
 	writeJSON(w, out)
 }
@@ -336,10 +362,11 @@ func (T *OrchestrateApp) handleConsolePermissionPolicy(w http.ResponseWriter, r 
 	case "contact":
 		SetContactPolicy(RootDB, user, target, value)
 	case "autotool":
-		// A tool grant is binary (granted or not) — any state other than "allow"
-		// revokes it; the tool re-queues for approval on its next unattended fire.
-		if aid, tool, ok := strings.Cut(target, ":"); ok && tool != "" && value != "allow" {
-			removeAutoApproveTool(UserDB(T.DB, user), aid, tool)
+		// Records the decision and makes the grant match it. "ask" keeps a
+		// record where the list cannot hold one, so the row stays showing the
+		// state you chose instead of disappearing as though the click failed.
+		if aid, tool, ok := strings.Cut(target, ":"); ok && tool != "" {
+			setAutoToolPolicy(RootDB, UserDB(T.DB, user), user, aid, tool, value)
 		}
 	default:
 		http.Error(w, "unknown subject", http.StatusBadRequest)
@@ -371,7 +398,7 @@ func (T *OrchestrateApp) handleConsolePermissionRemove(w http.ResponseWriter, r 
 		RemoveContactPolicy(RootDB, user, target)
 	case "autotool":
 		if aid, tool, ok := strings.Cut(target, ":"); ok && tool != "" {
-			removeAutoApproveTool(UserDB(T.DB, user), aid, tool)
+			removeAutoToolPolicy(RootDB, UserDB(T.DB, user), user, aid, tool)
 		}
 	default:
 		http.Error(w, "unknown subject", http.StatusBadRequest)

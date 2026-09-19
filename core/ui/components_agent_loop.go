@@ -560,6 +560,17 @@ type OrchestratorStateOption struct {
 	Value  string `json:"value"`            // matches StateField's row value
 	URL    string `json:"url"`              // POST <url>?id=<row._id>&agent=…&value=<Value>
 	Method string `json:"method,omitempty"` // default POST
+	// OnlyIf / HideIf gate this SEGMENT on a hidden row field, the same
+	// vocabulary row actions already use.
+	//
+	// One control serves every row that carries StateField, and the rows are
+	// not always the same kind of thing. A state that does not exist for one of
+	// them must not be offered on it: a segment that cannot be stored either
+	// silently does nothing or quietly means something else, and the reader has
+	// no way to tell which from looking. Gating is how a shared control stays
+	// honest about the row it is sitting on.
+	OnlyIf string `json:"only_if,omitempty"`
+	HideIf string `json:"hide_if,omitempty"`
 }
 
 // OrchestratorRowAction is one per-row button in an orchestrator nav view.

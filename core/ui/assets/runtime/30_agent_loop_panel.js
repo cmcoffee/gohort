@@ -529,7 +529,15 @@
               var controls = el('div', {style: 'display:flex;align-items:center;gap:0.4rem;flex:0 0 auto;flex-wrap:wrap'});
               if (item.state_field && (item.state_options || []).length && row[item.state_field] != null) {
                 var seg = el('div', {style: 'display:inline-flex;border:1px solid var(--border, rgba(127,127,127,0.35));border-radius:6px;overflow:hidden'});
-                (item.state_options || []).forEach(function(opt, oi) {
+                // Gated segments are dropped BEFORE the loop, so the one that
+                // survives first still renders without a left border and the
+                // control does not come out with a seam down its leading edge.
+                var segOpts = (item.state_options || []).filter(function(opt) {
+                  if (opt.only_if && !row[opt.only_if]) return false;
+                  if (opt.hide_if && row[opt.hide_if]) return false;
+                  return true;
+                });
+                segOpts.forEach(function(opt, oi) {
                   var active = String(row[item.state_field]) === String(opt.value);
                   var segBtn = el('button', {type: 'button',
                     style: 'padding:0.22rem 0.6rem;border:none;' + (oi ? 'border-left:1px solid var(--border, rgba(127,127,127,0.35));' : '') + 'cursor:pointer;font:inherit;font-size:0.73rem;white-space:nowrap;' +
