@@ -507,7 +507,19 @@
               // groups several kinds of thing has a different shape per section,
               // and reading the shape off row one renders the rest blank.
               var ckeys = Object.keys(row).filter(function(k) { return k.charAt(0) !== '_'; });
-              var card = el('div', {style: 'display:flex;align-items:center;gap:0.6rem;border:1px solid var(--border, rgba(127,127,127,0.25));border-radius:7px;padding:0.45rem 0.7rem;margin-bottom:0.4rem;background:var(--bg-1, rgba(127,127,127,0.03));flex-wrap:wrap'});
+              // "_depth" nests a row under the one above it. A list whose items
+              // contain other items is an ordinary shape, so this is a property
+              // of a ROW rather than a second kind of list: the server emits the
+              // rows already in order and says how deep each one sits, and the
+              // layout does not have to learn what the nesting means.
+              //
+              // Indent only, no connector glyphs. A box-drawing tree needs to
+              // know whether each ancestor has more siblings coming, which is a
+              // second model of the same data held in the renderer, and it is
+              // wrong the first time a row is filtered out of the middle.
+              var depth = Math.max(0, Math.min(6, parseInt(row._depth, 10) || 0));
+              var card = el('div', {style: 'display:flex;align-items:center;gap:0.6rem;border:1px solid var(--border, rgba(127,127,127,0.25));border-radius:7px;padding:0.45rem 0.7rem;margin-bottom:0.4rem;background:var(--bg-1, rgba(127,127,127,0.03));flex-wrap:wrap'
+                + (depth ? ';margin-left:' + (depth * 1.25) + 'rem' : '')});
               // Left: title + status pill + inline muted details, all on one line.
               var info = el('div', {style: 'flex:1 1 11rem;min-width:0;display:flex;align-items:baseline;gap:0.45rem;flex-wrap:wrap'});
               ckeys.forEach(function(k, ki) {

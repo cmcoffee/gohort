@@ -131,3 +131,66 @@ func TestTheLinkCarriesNoAuthority(t *testing.T) {
 		t.Errorf("the child does not say its parent is gone: %q", got)
 	}
 }
+
+// The Breakdown page answers "what is part of what". Only the parts of the tree
+// that ARE a tree: a schedule with no parent and no children is already on the
+// Scheduler, and listing it here would make this page the Scheduler again with
+// indentation.
+func TestBreakdownShowsOnlyWhatIsDecomposed(t *testing.T) {
+	root := pinRootDB(t)
+	seedStanding(t, root, "craig", "alone", "")
+	seedStanding(t, root, "craig", "newsletter", "")
+	seedStanding(t, root, "craig", "gather", taskParentRef(schedKindStanding, "newsletter"))
+	SaveEventMonitor(root, EventMonitor{
+		Owner: "craig", Name: "watch-feed", Kind: EventKindWatch,
+		Parent: taskParentRef(schedKindStanding, "gather"),
+	})
+
+	roots, byRef := collectBreakdown("craig")
+	if len(byRef) != 4 {
+		t.Fatalf("expected every schedule in the index, got %d", len(byRef))
+	}
+	var named []string
+	for _, r := range roots {
+		named = append(named, r.name)
+	}
+	// Both are roots; only one has children, and only that one is drawn.
+	if len(roots) != 2 {
+		t.Fatalf("expected two roots, got %v", named)
+	}
+	var drawn []string
+	var walk func(n *breakdownNode, depth int)
+	walk = func(n *breakdownNode, depth int) {
+		drawn = append(drawn, strings.Repeat("-", depth)+n.name)
+		for _, c := range n.children {
+			walk(c, depth+1)
+		}
+	}
+	for _, r := range roots {
+		if len(r.children) == 0 {
+			continue
+		}
+		walk(r, 0)
+	}
+	want := []string{"newsletter", "-gather", "--watch-feed"}
+	if strings.Join(drawn, ",") != strings.Join(want, ",") {
+		t.Errorf("the tree is not depth-first with the right depths:\n got %v\nwant %v", drawn, want)
+	}
+}
+
+// A parent that no longer resolves leaves its child a ROOT rather than dropping
+// it. A page about the shape of the work that silently omits half of it is
+// worse than one that shows a flat row.
+func TestADanglingParentDoesNotHideTheWork(t *testing.T) {
+	root := pinRootDB(t)
+	seedStanding(t, root, "craig", "orphan", taskParentRef(schedKindStanding, "long-gone"))
+	seedStanding(t, root, "craig", "child-of-orphan", taskParentRef(schedKindStanding, "orphan"))
+
+	roots, _ := collectBreakdown("craig")
+	if len(roots) != 1 || roots[0].name != "orphan" {
+		t.Fatalf("the orphan did not become a root: %+v", roots)
+	}
+	if len(roots[0].children) != 1 {
+		t.Error("the orphan's own child was lost with it")
+	}
+}

@@ -97,7 +97,48 @@ a person decide.
   is judged on its own fires like anything else, which is correct if the parent
   is a real check and wrong if it is a bare heading. Living with it is what
   tells us which.
-- **A tree view.** Rows say what they are part of; nothing draws the shape. The
-  Goals page sorts by what needs you first, and a tree fights that ordering, so
-  it wants its own decision rather than being bolted onto a page whose
-  organizing principle is different.
+- **Rollup**, still. See above.
+
+## The tree view (built, v0.6.921)
+
+It got its own page rather than being bolted onto an existing one, which is what
+"it wants its own decision" turned out to mean.
+
+Three pages, three questions, three orderings, and no two of them can share:
+
+| page | question | ordered by |
+|---|---|---|
+| Scheduler | what will happen on its own | when, within kind |
+| Goals | what am I still waiting on | what needs you first |
+| **Breakdown** | how does this decompose | alphabetically, by tree |
+
+Breakdown sorts siblings by name on purpose. A structural page that reorders
+itself by next fire time is one you cannot find the same row in twice.
+
+**It shows only the parts of the tree that ARE a tree.** A schedule with no
+parent and no children is already on the Scheduler, and including it would make
+this page the Scheduler again with indentation, which answers nothing new.
+
+**A parent that does not resolve leaves its child a ROOT** rather than dropping
+it. A page about the shape of the work that silently omits half of it is worse
+than one that shows a flat row.
+
+Read-only, like Goals, for the same reason: every row is editable one page over,
+and a second set of the same buttons is a second set of rules for one record.
+Notes is the exception, and it is the same one Goals makes: reading what a
+task's runs worked out is the question these pages ask, not a verb.
+
+### The primitive it needed
+
+`_depth` on a row, honored by the cards layout in `core/ui`. Generic, and it has
+to be: a list whose items contain other items is an ordinary shape, so nesting
+is a property of a row rather than a second kind of list. The server emits rows
+already in order and says how deep each sits; the layout never learns what the
+nesting means.
+
+Indent only, no box-drawing connectors. Those need to know whether each ancestor
+has more siblings coming, which is a second model of the same data held in the
+renderer, and it is wrong the first time a row is filtered out of the middle.
+Clamped at both ends, because a negative depth pulls a card out of the list and
+an unbounded one pushes it off the right edge, both from a number the server
+could get wrong.

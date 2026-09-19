@@ -34,6 +34,10 @@ func TestNavMenusAreNamedAndScoped(t *testing.T) {
 		// Goals — the objectives in flight, read-only, beside the Scheduler
 		// that owns the records. Not pinned: it is a question you go and ask,
 		// not a queue you work.
+		// Breakdown answers a third question the other two cannot without
+		// giving up their own ordering: what is part of what. Read-only for
+		// the same reason Goals is.
+		{"Breakdown", agentMenu},
 		{"Goals", agentMenu},
 		// The per-agent Scheduler is NOT here: it is pinned as a button of its
 		// own, and the two creators are view actions on the page it opens. The

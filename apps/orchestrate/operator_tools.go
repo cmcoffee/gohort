@@ -1624,24 +1624,42 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				Required: []string{"text"},
 			},
 			Handler: func(ctx context.Context, args map[string]any) (string, error) {
-				link, ok := ActiveMessagingLink()
-				if !ok {
-					return "", fmt.Errorf("the messaging bridge is not available")
-				}
 				text := strings.TrimSpace(oArgStr(args, "text"))
 				if text == "" {
 					return "", fmt.Errorf("text is required")
 				}
+				// Recorded BEFORE the send, and recorded either way.
+				//
+				// This tool used to be a text and nothing else: if the bridge
+				// was down, or no handle was configured, it returned an error
+				// and what the agent had to say was gone. An agent telling its
+				// owner something is the one thing Notifications exists for, so
+				// it is kept whether or not a phone was reachable.
+				//
+				// It does NOT go through the forwarding preference. That
+				// preference decides whether PASSIVE notices chase you; this
+				// call is the agent explicitly reaching out, and routing it
+				// through a setting that is off by default would turn a tool
+				// that always texted into one that usually does not.
+				recordAgentNotice(owner, controllerAgentID, text)
+				link, ok := ActiveMessagingLink()
+				if !ok {
+					return "Left in your Notifications: the messaging bridge is not available, so it was not texted.", nil
+				}
 				self, ok := link.OwnerHandle(owner)
 				if !ok {
-					return "", fmt.Errorf("no owner phone is configured (set the owner's handle in the messaging bridge settings)")
+					return "Left in your Notifications: no owner phone is configured, so it was not texted.", nil
 				}
 				images := messageImages(sess, args, text)
 				// DeliverMessage (not SendToHandle) so attachments ride along;
 				// persona is inactive for the owner's own chat, so the text
 				// is sent verbatim. Empty chatID resolves the owner's thread.
 				if _, err := operatorDeliverMessage(owner, agentID, "", self, text, images); err != nil {
-					return "", err
+					// The notice is already filed, so say what is actually true
+					// rather than reporting a total failure. Telling the model
+					// the send failed when the owner WILL see it is how an agent
+					// ends up saying the same thing three more ways.
+					return "Left in your Notifications: the text could not be delivered (" + err.Error() + ").", nil
 				}
 				// The owner's channel (their phone) must see what was sent — record
 				// into its cortex/session so when the owner replies, the agent knows
@@ -1655,9 +1673,9 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				// belongs in this agent's cortex. No-op if the agent has no cortex.
 				appendCortexObs(sess.DB, controllerAgentID, "Sent to you", cortexKindMessage, text)
 				if len(images) > 0 {
-					return fmt.Sprintf("Sent to your phone with %d attachment(s).", len(images)), nil
+					return fmt.Sprintf("Sent to your phone with %d attachment(s), and kept in your Notifications.", len(images)), nil
 				}
-				return "Sent to your phone.", nil
+				return "Sent to your phone, and kept in your Notifications.", nil
 			},
 		},
 		{

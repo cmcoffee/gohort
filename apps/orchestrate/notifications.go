@@ -146,3 +146,32 @@ func (T *OrchestrateApp) notifyToolQueued(owner, agentID, tool string) {
 			"The call was refused for that fire and queued: approve it once in the Permissions pane and later fires run it.", tool),
 	})
 }
+
+// recordAgentNotice files what an agent said to its owner in its own words.
+//
+// Kind is KindReport: no decision is implied and nothing is waiting. The title
+// is the message's first line, because a notice is a row in a list and a row
+// that is four paragraphs long is one nobody scans past.
+//
+// Stored directly rather than through notify, so it does NOT forward. The
+// caller (notify_me) is already an explicit reach-out; running it through the
+// forwarding preference as well would either double-send or, since that
+// preference is off by default, quietly turn a tool that always texted into
+// one that usually does not.
+func recordAgentNotice(owner, agentID, text string) {
+	text = strings.TrimSpace(text)
+	if text == "" || RootDB == nil {
+		return
+	}
+	title, body := text, ""
+	if line, rest, ok := strings.Cut(text, "\n"); ok && strings.TrimSpace(rest) != "" {
+		title, body = strings.TrimSpace(line), strings.TrimSpace(rest)
+	}
+	if r := []rune(title); len(r) > 120 {
+		title, body = strings.TrimSpace(string(r[:120]))+"…", text
+	}
+	notices.Record(RootDB, notices.Notice{
+		Owner: owner, Agent: agentID, Kind: notices.KindReport,
+		Title: title, Body: body,
+	})
+}

@@ -229,6 +229,10 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/scheduler/parent", gw(T.handleConsoleSchedulerParent))
 	T.HandleFunc("/api/console/scheduler/parent-options", g(T.handleConsoleSchedulerParentOptions))
 	T.HandleFunc("/api/console/goals", g(T.handleConsoleGoals))
+	// The shape of the work: what is part of what, drawn as a tree. A third
+	// question that neither of the other two pages can answer without giving up
+	// its own ordering. See console_breakdown.go.
+	T.HandleFunc("/api/console/breakdown", g(T.handleConsoleBreakdown))
 	T.HandleFunc("/api/console/recurring/run", gw(T.handleConsoleRecurringRun))
 	T.HandleFunc("/api/console/recurring/delete", gw(T.handleConsoleRecurringDelete))
 	T.HandleFunc("/api/console/recurring/relink", gw(T.handleConsoleRecurringRelink))

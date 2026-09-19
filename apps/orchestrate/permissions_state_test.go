@@ -286,3 +286,40 @@ func TestBothRefusalsReachTheOwner(t *testing.T) {
 		t.Errorf("badge counts occurrences rather than notices: %d", got)
 	}
 }
+
+// notify_me is the agent explicitly reaching out, and it used to be a text and
+// nothing else: a missing bridge returned an error and what the agent had to
+// say was gone. It is now kept either way, which is the one thing
+// Notifications exists for.
+func TestWhatAnAgentSaysIsKept(t *testing.T) {
+	root := pinRootDB(t)
+	recordAgentNotice("alice", "nightly", "The export finished.\nIt found 3 new rows and skipped 1 malformed one.")
+
+	list := notices.List(root, "alice")
+	if len(list) != 1 {
+		t.Fatalf("expected one notice, got %d", len(list))
+	}
+	n := list[0]
+	if n.Kind != notices.KindReport {
+		t.Errorf("an agent's own message implies a decision: %q", n.Kind)
+	}
+	// The title is the first line. A row four paragraphs long is one nobody
+	// scans past.
+	if n.Title != "The export finished." {
+		t.Errorf("title is not the first line: %q", n.Title)
+	}
+	if !strings.Contains(n.Body, "3 new rows") {
+		t.Errorf("the rest was dropped: %q", n.Body)
+	}
+	// A long single line is truncated for the row and kept whole in the body,
+	// so nothing an agent said is lost to the layout.
+	recordAgentNotice("alice", "nightly", strings.Repeat("x", 300))
+	for _, x := range notices.List(root, "alice") {
+		if len([]rune(x.Title)) > 130 {
+			t.Errorf("an untruncated title of %d runes would break the row", len([]rune(x.Title)))
+		}
+		if strings.HasSuffix(x.Title, "…") && len(x.Body) < 300 {
+			t.Error("the truncated text was not kept in full anywhere")
+		}
+	}
+}

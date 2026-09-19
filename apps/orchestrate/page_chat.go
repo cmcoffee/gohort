@@ -335,6 +335,20 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// deletable one entry up; a second surface with its own
 						// copies of those buttons would be a second set of rules
 						// for the same record.
+						// Breakdown: the shape of the work, drawn under what it
+						// is part of. Beside Goals because they are read from
+						// the same records, and separate because they sort by
+						// different things: Goals by what needs you first, this
+						// alphabetically, so a row stays where you last saw it.
+						//
+						// Read-only, like Goals. Every row here is editable one
+						// page over, and the arrangement is the only thing this
+						// page adds.
+						{Label: "Breakdown", Menu: "Manage", Icon: "⑂", AllAgents: true, Source: "api/console/breakdown", Layout: "cards",
+							SearchPlaceholder: "Search the work",
+							RowActions: []ui.OrchestratorRowAction{
+								{Label: "Notes", Method: "client", URL: "orchestrate_task_notes", OnlyIf: "_notes"},
+							}},
 						{Label: "Goals", Menu: "Manage", Icon: "◎", AllAgents: true, Source: "api/console/goals", Layout: "cards",
 							SearchPlaceholder: goalsSearchHint,
 							Filters:           goalsFilters(),
