@@ -142,8 +142,13 @@ var NoticePhoneReady func(user string) bool
 
 // NoticeForwarder delivers one notice out over the transports the owner chose.
 // Set by the app that owns those transports. Nil means notices are kept and not
-// forwarded, which is also the default preference.
-var NoticeForwarder func(user, title, body string)
+// forwarded.
+//
+// source is who it came from, in the owner's terms — an agent's name, a task's
+// name — or empty. It exists because a forwarded notice arrives somewhere with
+// no context: inside the app you already know where you are, and a text on a
+// phone is just a text. The forwarder turns it into a prefix.
+var NoticeForwarder func(user, source, title, body string)
 
 // GrantableApp is one entry in the admin user-apps permission picker.
 // Dynamic apps (like exposed agents under /agents/<slug>) implement

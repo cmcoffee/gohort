@@ -323,3 +323,65 @@ func TestWhatAnAgentSaysIsKept(t *testing.T) {
 		}
 	}
 }
+
+// One rule for anything an agent says out of band: it is kept, and ONE
+// preference decides whether it also chases you. The prefix is what makes a
+// forwarded copy usable, because a text on a phone has no other context.
+func TestAForwardedNoticeSaysWhereItCameFrom(t *testing.T) {
+	if got := noticePrefix("Nightly digest"); got != "["+"Nightly digest@"+ServiceName()+"]" {
+		t.Errorf("an agent's notice does not name the agent and the deployment: %q", got)
+	}
+	// No agent: still names the deployment, because somebody with two gohorts
+	// needs to know which one is talking.
+	got := noticePrefix("")
+	if !strings.HasPrefix(got, "[") || !strings.Contains(got, ServiceName()) || strings.Contains(got, "@") {
+		t.Errorf("a sourceless notice has the wrong shape: %q", got)
+	}
+}
+
+// "Never chosen" and "deliberately nowhere" are different answers, and the
+// setting has to tell them apart: the first is a default to supply, the second
+// is a decision to respect. Getting this wrong either silently stops delivering
+// messages somebody relied on, or hands them back a default they just declined.
+func TestNeverChosenIsNotTheSameAsOff(t *testing.T) {
+	savedReady, savedDB := NoticePhoneReady, AuthDB
+	t.Cleanup(func() { NoticePhoneReady, AuthDB = savedReady, savedDB })
+	db := &DBase{Store: kvlite.MemStore()}
+	AuthDB = func() Database { return db }
+
+	store := func(where string) {
+		t.Helper()
+		db.Set(AuthTable, "user:alice", AuthUser{Username: "alice", NotifyForward: where})
+	}
+
+	// Unset, and reachable by text: resolves to the behaviour this deployment
+	// already had, where notify_me went straight to the phone. Anything else
+	// would silently stop delivering messages somebody relies on.
+	NoticePhoneReady = func(string) bool { return true }
+	store("")
+	if got := ResolveNotifyForward(db, "alice"); got != "phone" {
+		t.Errorf("an unasked user with a phone lost their texts: %q", got)
+	}
+	// Unset and unreachable: nothing to forward to.
+	NoticePhoneReady = func(string) bool { return false }
+	if got := ResolveNotifyForward(db, "alice"); got != "off" {
+		t.Errorf("an unasked user with no phone: %q", got)
+	}
+	// Explicitly off is honored even when a phone IS available, which is the
+	// entire reason the two values are distinct.
+	NoticePhoneReady = func(string) bool { return true }
+	store("off")
+	if got := ResolveNotifyForward(db, "alice"); got != "off" {
+		t.Errorf("a deliberate no was overridden by the default: %q", got)
+	}
+	store("email")
+	if got := ResolveNotifyForward(db, "alice"); got != "email" {
+		t.Errorf("an explicit choice was not kept: %q", got)
+	}
+	// And saving "nowhere" from the form stores the explicit value rather than
+	// the blank, or the next read would hand the default straight back.
+	AuthSetNotifyForward(db, "alice", "")
+	if got := AuthGetNotifyForward(db, "alice"); got != "off" {
+		t.Errorf("choosing nowhere stored %q, which reads as never having been asked", got)
+	}
+}

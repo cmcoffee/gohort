@@ -52,14 +52,42 @@ func (T *OrchestrateApp) forwardNotice(n notices.Notice) {
 	if strings.TrimSpace(n.Body) != "" {
 		body += "\n\n" + n.Body
 	}
-	forwardNoticeTo(n.Owner, n.Title, body)
+	forwardNoticeTo(n.Owner, T.noticeSource(n.Owner, n.Agent), n.Title, body)
+}
+
+// noticeSource is who a notice came from, in the owner's terms: the agent's
+// NAME, not its id. An id is the right key and the wrong thing to read on a
+// phone at seven in the morning.
+func (T *OrchestrateApp) noticeSource(owner, agentID string) string {
+	return noticeSourceName(UserDB(T.DB, owner), agentID)
+}
+
+// noticePrefix stamps a forwarded notice with where it came from.
+//
+// Only on the way OUT. Inside the app the page already says which agent a row
+// belongs to, and a prefix there would be the same word on every line; on a
+// phone or in an inbox it is the difference between a message you can act on
+// and one you have to go and identify.
+//
+// "[<agent>@<service>]" when there is an agent, "[<service>]" when there is
+// not, so the shape is always the same and the deployment is always named: a
+// person with two gohorts needs to know which one is talking.
+func noticePrefix(source string) string {
+	service := strings.TrimSpace(ServiceName())
+	if service == "" {
+		service = "gohort"
+	}
+	if source = strings.TrimSpace(source); source != "" {
+		return "[" + source + "@" + service + "]"
+	}
+	return "[" + service + "]"
 }
 
 // forwardNoticeTo is registered as core's NoticeForwarder, so a notice written
 // by ANY app reaches the owner the same way. Core owns the store, the bell and
 // the preference; this owns the transports, because knowing what a phantom
 // bridge is does not belong in the hub.
-func forwardNoticeTo(owner, subject, body string) {
+func forwardNoticeTo(owner, source, subject, body string) {
 	// AuthDB is a hook, and a hook can be unset: during boot, in a test, in any
 	// host that wires the runtime without the auth surface. Forwarding is the
 	// optional half of this feature and must never be the reason a refusal
@@ -67,14 +95,18 @@ func forwardNoticeTo(owner, subject, body string) {
 	if AuthDB == nil {
 		return
 	}
-	where := AuthGetNotifyForward(AuthDB(), owner)
-	if where == "" {
+	// Resolved, not raw: an owner who has never been asked has their existing
+	// behaviour filled in rather than being silently switched off. See
+	// ResolveNotifyForward.
+	where := ResolveNotifyForward(AuthDB(), owner)
+	if where == "" || where == "off" {
 		return
 	}
+	prefix := noticePrefix(source)
 	if where == "email" || where == "both" {
 		// NotifyUser is a no-op unless the username is itself an address and
 		// mail is configured, which is the existing contract everywhere else.
-		NotifyUser(owner, ServiceName()+": "+subject, body)
+		NotifyUser(owner, prefix+" "+subject, body)
 	}
 	if where == "phone" || where == "both" {
 		link, ok := ActiveMessagingLink()
@@ -87,7 +119,7 @@ func forwardNoticeTo(owner, subject, body string) {
 			Log("[orchestrate.notify] %s wants phone forwarding but no owner handle is configured", owner)
 			return
 		}
-		if err := link.SendToChat(owner, self, body); err != nil {
+		if err := link.SendToChat(owner, self, prefix+" "+body); err != nil {
 			Log("[orchestrate.notify] forwarding to %s failed: %v", owner, err)
 		}
 	}
@@ -174,4 +206,16 @@ func recordAgentNotice(owner, agentID, text string) {
 		Owner: owner, Agent: agentID, Kind: notices.KindReport,
 		Title: title, Body: body,
 	})
+}
+
+// noticeSourceName is the db-handle form of noticeSource, for the call sites
+// that hold a store rather than the app.
+func noticeSourceName(udb Database, agentID string) string {
+	if strings.TrimSpace(agentID) == "" {
+		return ""
+	}
+	if rec, ok := loadAgent(udb, agentID); ok && strings.TrimSpace(rec.Name) != "" {
+		return rec.Name
+	}
+	return agentID
 }

@@ -334,7 +334,11 @@ func (T *Account) handlePrefs(w http.ResponseWriter, r *http.Request) {
 			"private_mode":      AuthGetPrivateMode(db, user),
 			"inferred_disabled": AuthGetInferredDisabled(db, user),
 			"timezone":          AuthGetUserTimezone(db, user),
-			"notify_forward":    AuthGetNotifyForward(db, user),
+			// RESOLVED, so the form shows what will actually happen rather than
+			// a blank that means "nobody has asked you yet". Saving from here
+			// then stores it explicitly, which is how never-chosen becomes a
+			// decision without anybody being surprised by the default.
+			"notify_forward": ResolveNotifyForward(db, user),
 		})
 	case http.MethodPost:
 		var req struct {
@@ -441,13 +445,13 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 						Detail: "Agents then answer fresh from your question and knowledge, without prior derived findings. Per-agent overrides still apply."},
 					{Field: "notify_forward", Label: "Forward notifications", Type: "select",
 						Options: []ui.SelectOption{
-							{Value: "", Label: "Nowhere (keep them in the bell)"},
+							{Value: "off", Label: "Nowhere (keep them in the bell)"},
 							{Value: "email", Label: "Email"},
 							{Value: "phone", Label: "Phone"},
 							{Value: "both", Label: "Email and phone"},
 						},
 						Help:   "Notifications are always kept. This is whether they also reach you somewhere else.",
-						Detail: "Only the FIRST time something happens is forwarded; a repeat raises the count on the notice instead, because a surface that texts you twenty-four times a day is one you switch off before it is ever useful. Email needs mail configured and an account that is an email address; phone needs the messaging bridge."},
+						Detail: "Everything an agent tells you out of band is a notification, including anything it sends with notify_me, and this is the one setting that decides where those go. Forwarded copies are prefixed [agent@service] so a text on your phone says what it came from. Only the FIRST time something happens is forwarded; a repeat raises the count on the notice instead, because a surface that texts you twenty-four times a day is one you switch off before it is ever useful. Email needs mail configured and an account that is an email address; phone needs the messaging bridge."},
 					{Field: "timezone", Label: "Timezone", Type: "select",
 						Options: TimezoneSelectOptions("System default"),
 						Help:    "Your personal timezone. Blank uses the system default.",

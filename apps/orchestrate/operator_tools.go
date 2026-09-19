@@ -1616,9 +1616,9 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 		{
 			Tool: Tool{
 				Name:        "notify_me",
-				Description: "Send a text to the USER'S OWN phone (the owner). Use this ONLY when the user has explicitly asked to be texted/notified, OR when a monitor, scheduled job, or long-running task is delivering a result the user asked to be alerted about. Do NOT use it on greetings or ordinary chat, and do NOT volunteer unprompted status, for a normal reply, just reply in the conversation. No approval needed since it only reaches the owner. To include an image/file, pass its workspace path in `attachments`.",
+				Description: "Tell the OWNER something out of band. It lands in their Notifications, and reaches their phone as well if they have asked for that: whether it is forwarded is THEIR setting, not yours, so write it as a message that has to stand on its own either way. Use this ONLY when the user has explicitly asked to be notified, OR when a monitor, scheduled job, or long-running task is delivering a result they asked to be alerted about. Do NOT use it on greetings or ordinary chat, and do NOT volunteer unprompted status; for a normal reply, just reply in the conversation. No approval needed since it only reaches the owner. To include an image/file, pass its workspace path in `attachments` — attachments can only be delivered to a phone, so they are dropped when forwarding is off, and the reply says when that happened.",
 				Parameters: map[string]ToolParam{
-					"text":        {Type: "string", Description: "The message to send to the owner."},
+					"text":        {Type: "string", Description: "What to tell the owner. The first line becomes the notification's title, so lead with the thing itself rather than a preamble."},
 					"attachments": {Type: "array", Items: &ToolParam{Type: "string"}, Description: attachmentsParamDesc},
 				},
 				Required: []string{"text"},
@@ -1628,38 +1628,53 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				if text == "" {
 					return "", fmt.Errorf("text is required")
 				}
-				// Recorded BEFORE the send, and recorded either way.
+				// This tool telling the owner something IS a notification, and
+				// there is one rule for those: they are kept, and one
+				// preference decides whether they also reach a phone or an
+				// inbox. It used to text unconditionally and leave nothing
+				// behind, which made it both a second delivery rule and a
+				// message that could be lost outright when the bridge was down.
 				//
-				// This tool used to be a text and nothing else: if the bridge
-				// was down, or no handle was configured, it returned an error
-				// and what the agent had to say was gone. An agent telling its
-				// owner something is the one thing Notifications exists for, so
-				// it is kept whether or not a phone was reachable.
-				//
-				// It does NOT go through the forwarding preference. That
-				// preference decides whether PASSIVE notices chase you; this
-				// call is the agent explicitly reaching out, and routing it
-				// through a setting that is off by default would turn a tool
-				// that always texted into one that usually does not.
+				// The preference RESOLVES rather than reading raw, so an owner
+				// who has never been asked keeps the texts they were already
+				// getting. See ResolveNotifyForward.
 				recordAgentNotice(owner, controllerAgentID, text)
+				wants := "off"
+				if AuthDB != nil {
+					wants = ResolveNotifyForward(AuthDB(), owner)
+				}
+				images := messageImages(sess, args, text)
+				toPhone := wants == "phone" || wants == "both"
+				if !toPhone {
+					// Images cannot live in a notice, so say so rather than
+					// dropping them quietly. The agent can then decide to put
+					// what mattered into the text.
+					if len(images) > 0 {
+						return "Kept in your Notifications (text only): forwarding to your phone is off, and attachments cannot be kept with a notification.", nil
+					}
+					return "Kept in your Notifications. Forwarding to your phone is off, so it was not texted.", nil
+				}
 				link, ok := ActiveMessagingLink()
 				if !ok {
-					return "Left in your Notifications: the messaging bridge is not available, so it was not texted.", nil
+					return "Kept in your Notifications: the messaging bridge is not available, so it was not texted.", nil
 				}
 				self, ok := link.OwnerHandle(owner)
 				if !ok {
-					return "Left in your Notifications: no owner phone is configured, so it was not texted.", nil
+					return "Kept in your Notifications: no owner phone is configured, so it was not texted.", nil
 				}
-				images := messageImages(sess, args, text)
+				// Prefixed, like any other forwarded notice: a text arriving on
+				// a phone has no other context, and this one is going out for
+				// exactly the same reason the passive ones do.
+				outbound := noticePrefix(noticeSourceName(sess.DB, controllerAgentID)) + " " + text
 				// DeliverMessage (not SendToHandle) so attachments ride along;
 				// persona is inactive for the owner's own chat, so the text
 				// is sent verbatim. Empty chatID resolves the owner's thread.
-				if _, err := operatorDeliverMessage(owner, agentID, "", self, text, images); err != nil {
+				if _, err := operatorDeliverMessage(owner, agentID, "", self, outbound, images); err != nil {
 					// The notice is already filed, so say what is actually true
 					// rather than reporting a total failure. Telling the model
 					// the send failed when the owner WILL see it is how an agent
 					// ends up saying the same thing three more ways.
-					return "Left in your Notifications: the text could not be delivered (" + err.Error() + ").", nil
+					return "Kept in your Notifications: the text could not be delivered (" + err.Error() + ").", nil
 				}
 				// The owner's channel (their phone) must see what was sent — record
 				// into its cortex/session so when the owner replies, the agent knows
@@ -1673,9 +1688,9 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				// belongs in this agent's cortex. No-op if the agent has no cortex.
 				appendCortexObs(sess.DB, controllerAgentID, "Sent to you", cortexKindMessage, text)
 				if len(images) > 0 {
-					return fmt.Sprintf("Sent to your phone with %d attachment(s), and kept in your Notifications.", len(images)), nil
+					return fmt.Sprintf("Kept in your Notifications and forwarded to your phone with %d attachment(s).", len(images)), nil
 				}
-				return "Sent to your phone, and kept in your Notifications.", nil
+				return "Kept in your Notifications and forwarded to your phone.", nil
 			},
 		},
 		{

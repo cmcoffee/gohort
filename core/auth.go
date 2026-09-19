@@ -270,12 +270,15 @@ type AuthUser struct {
 	InferredDisabledPerAgent map[string]bool `json:"inferred_disabled_per_agent,omitempty"`
 
 	// NotifyForward is where Notifications are FORWARDED, beyond being kept:
-	// "" (nowhere, the default), "email", "phone", or "both". The notice is
-	// recorded either way; this only decides whether it also goes out.
+	// "off", "email", "phone", or "both". Empty means NEVER CHOSEN, which is a
+	// different thing from off and resolves differently — see
+	// ResolveNotifyForward.
 	//
-	// Off by default deliberately. A notification surface earns the right to
-	// interrupt somebody by being useful first, and one that starts by texting
-	// gets silenced before it has been read twice.
+	// A tri-state string rather than a bool or an empty-means-off convention,
+	// because those cannot tell "I said no" from "nobody asked me yet", and
+	// this setting needs to: the first is a decision to respect and the second
+	// is a default to supply. (kvlite/gob also drops a *bool pointing at false,
+	// so a pointer would not survive the round trip either.)
 	NotifyForward string `json:"notify_forward,omitempty"`
 
 	// Timezone is the user's personal IANA zone (e.g. "America/New_York").
@@ -350,9 +353,10 @@ func AuthGetNotifyForward(db Database, username string) string {
 	return strings.TrimSpace(user.NotifyForward)
 }
 
-// AuthSetNotifyForward stores it. Anything unrecognized clears back to nowhere,
-// so a typo in a hand-written call reads as OFF rather than as a guess about
-// which way somebody wanted to be interrupted.
+// AuthSetNotifyForward stores it. Anything unrecognized becomes an explicit
+// "off", so a typo in a hand-written call reads as a decision to send nothing
+// rather than as never having been asked, which would hand the user back a
+// default they had just declined.
 func AuthSetNotifyForward(db Database, username, where string) {
 	var user AuthUser
 	if db == nil || !db.Get(AuthTable, "user:"+username, &user) {
@@ -362,9 +366,34 @@ func AuthSetNotifyForward(db Database, username, where string) {
 	case "email", "phone", "both":
 		user.NotifyForward = strings.TrimSpace(where)
 	default:
-		user.NotifyForward = ""
+		user.NotifyForward = "off"
 	}
 	db.Set(AuthTable, "user:"+username, user)
+}
+
+// ResolveNotifyForward is where a user's notifications actually go, filling in
+// the default when they have never been asked.
+//
+// Unset resolves to PHONE for anyone reachable by text. That is not a guess
+// about what people want in general: it is what this deployment already did.
+// Before notifications existed, an agent's notify_me went straight to the
+// owner's phone and left nothing behind, so a user with a handle configured has
+// been receiving exactly this. Defaulting it off would have made every one of
+// those go quiet the moment the tool started recording instead of sending, and
+// a change that silently stops delivering messages somebody relies on is the
+// worst kind of improvement.
+//
+// An explicit "off" is honored, which is the whole reason empty and off are
+// different values.
+func ResolveNotifyForward(db Database, username string) string {
+	where := AuthGetNotifyForward(db, username)
+	if where != "" {
+		return where
+	}
+	if NoticePhoneReady != nil && NoticePhoneReady(username) {
+		return "phone"
+	}
+	return "off"
 }
 
 // AuthGetDefaultAgent returns the user's default-agent preference, or "" when
