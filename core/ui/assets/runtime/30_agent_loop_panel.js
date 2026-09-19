@@ -350,6 +350,27 @@
           });
           orchView.appendChild(vbar);
         }
+        // fireViewAction runs a list-level button. Same vocabulary as a row
+        // action and deliberately a separate function: there is no row, so
+        // anything that appends an id or reads a field would be wrong here
+        // rather than merely unused.
+        function fireViewAction(a, reload) {
+          if (!a || !a.url) { return; }
+          var agent = window.GOHORT_AGENT_ID || '';
+          if (a.method === 'client') {
+            var fn = (window.UIClientActions || {})[a.url];
+            if (typeof fn !== 'function') { console.error('client action not registered: ' + a.url); return; }
+            fn({reload: reload, agent: agent});
+            return;
+          }
+          (async function() {
+            if (a.confirm && !(await window.uiConfirm(a.confirm))) { return; }
+            var u = a.url + (a.url.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(agent);
+            fetch(u, {method: a.method || 'POST'})
+              .then(function() { if (reload) reload(); })
+              .catch(function(err) { console.error('view action failed: ' + err.message); });
+          })();
+        }
         // paintOrchRows draws the rows themselves into a host element.
         // Split out of renderOrchTable so a filter can repaint JUST the rows,
         // leaving the view actions and the filter controls where they are: a
@@ -368,27 +389,6 @@
           // {value,label} choices and show them in a modal; picking one POSTs the
           // action URL with the chosen value, then reloads. Shared by the cards +
           // table renderers below.
-          // fireViewAction runs a list-level button. Same vocabulary as a row
-          // action and deliberately a separate function: there is no row, so
-          // anything that appends an id or reads a field would be wrong here
-          // rather than merely unused.
-          function fireViewAction(a, reload) {
-            if (!a || !a.url) { return; }
-            var agent = window.GOHORT_AGENT_ID || '';
-            if (a.method === 'client') {
-              var fn = (window.UIClientActions || {})[a.url];
-              if (typeof fn !== 'function') { console.error('client action not registered: ' + a.url); return; }
-              fn({reload: reload, agent: agent});
-              return;
-            }
-            (async function() {
-              if (a.confirm && !(await window.uiConfirm(a.confirm))) { return; }
-              var u = a.url + (a.url.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(agent);
-              fetch(u, {method: a.method || 'POST'})
-                .then(function() { if (reload) reload(); })
-                .catch(function(err) { console.error('view action failed: ' + err.message); });
-            })();
-          }
           function openRowPicker(a, row) {
             var agent = window.GOHORT_AGENT_ID || '';
             var src = a.picker_source + (a.picker_source.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(agent);
