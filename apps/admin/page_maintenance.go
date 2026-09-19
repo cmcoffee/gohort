@@ -67,35 +67,36 @@ func (a *AdminApp) maintenanceSections() []ui.Section {
 			},
 		},
 		// Maintenance buttons are laid out by the group each registrant
-		// declared, one section per group, the rarely-used ones closed. A
-		// flat list of fourteen "Run" buttons read as fourteen equal things
-		// when three were dangerous, two were reports, and most were for a
-		// day that had not come.
+		// declared, one section per group. A flat list of fourteen "Run"
+		// buttons read as fourteen equal things when three were dangerous, two
+		// were reports, and most were for a day that had not come.
+		//
+		// The GROUPING is what fixed that. These were also closed by default,
+		// on the theory that the rarely-used ones should stay out of the way;
+		// the user asked twice for them open, so they are open. A section you
+		// have to click to discover is a section you do not know is there, and
+		// the heading above each one already says what it is.
 		{
-			Title:     "Reclaim space",
-			Subtitle:  "Each dry run lists exactly what the delete beneath it would remove.",
-			Detail:    "Run the dry run first: deletes are permanent.",
-			Collapsed: true,
-			Body:      maintenanceList("Reclaim space", "Nothing to reclaim is registered."),
+			Title:    "Reclaim space",
+			Subtitle: "Each dry run lists exactly what the delete beneath it would remove.",
+			Detail:   "Run the dry run first: deletes are permanent.",
+			Body:     maintenanceList("Reclaim space", "Nothing to reclaim is registered."),
 		},
 		{
-			Title:     "Reports",
-			Subtitle:  "Read-only surveys of what is on disk and what tools depend on. Change nothing.",
-			Collapsed: true,
-			Body:      maintenanceList("Reports", "No reports registered."),
+			Title:    "Reports",
+			Subtitle: "Read-only surveys of what is on disk and what tools depend on. Change nothing.",
+			Body:     maintenanceList("Reports", "No reports registered."),
 		},
 		{
-			Title:     "Housekeeping",
-			Subtitle:  "One-shot operations that fix stale state, or run a scheduled job now.",
-			Detail:    "Each runs in the background and reports the number of records touched.",
-			Collapsed: true,
-			Body:      maintenanceList("Housekeeping", "No housekeeping functions registered."),
+			Title:    "Housekeeping",
+			Subtitle: "One-shot operations that fix stale state, or run a scheduled job now.",
+			Detail:   "Each runs in the background and reports the number of records touched.",
+			Body:     maintenanceList("Housekeeping", "No housekeeping functions registered."),
 		},
 		{
-			Title:     "Migrations",
-			Subtitle:  "Schema and data migrations the apps have run on this deployment.",
-			Detail:    "They auto-fire on app init when triggered, with no manual button, and never run twice for the same (app, name, owner). An error column indicates a panic during the run: clear the marker in the DB to retry after a fix.",
-			Collapsed: true,
+			Title:    "Migrations",
+			Subtitle: "Schema and data migrations the apps have run on this deployment.",
+			Detail:   "They auto-fire on app init when triggered, with no manual button, and never run twice for the same (app, name, owner). An error column indicates a panic during the run: clear the marker in the DB to retry after a fix.",
 			Body: ui.Table{
 				Source: "api/migrations",
 				RowKey: "key",
