@@ -31,6 +31,10 @@ func TestNavMenusAreNamedAndScoped(t *testing.T) {
 	// agent does on its own.
 	want := []struct{ label, menu string }{
 		{"Overview", agentMenu},
+		// Goals — the objectives in flight, read-only, beside the Scheduler
+		// that owns the records. Not pinned: it is a question you go and ask,
+		// not a queue you work.
+		{"Goals", agentMenu},
 		// The per-agent Scheduler is NOT here: it is pinned as a button of its
 		// own, and the two creators are view actions on the page it opens. The
 		// fleet-wide one below stays in its menu, which is a different question
@@ -38,6 +42,7 @@ func TestNavMenusAreNamedAndScoped(t *testing.T) {
 		{"Compact Cortex", agentMenu},
 		{"Clear Cortex", agentMenu},
 		{"Overview", "Fleet"},
+		{"Goals", "Fleet"},
 		{"Scheduler", "Fleet"},
 		{"Runs", "Fleet"},
 		{"Spend", "Fleet"},

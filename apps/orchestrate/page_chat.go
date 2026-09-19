@@ -326,6 +326,18 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// The two creators ride along as VIEW actions rather than
 						// separate menu items, so the button that adds a schedule sits
 						// on the page that lists them.
+						// Goals — every objective in flight, across all three
+						// scheduling surfaces. Beside the Scheduler because it
+						// lists the same records, and NOT pinned because it is a
+						// question you go and ask rather than a queue you work.
+						//
+						// Read-only. Each of these rows is editable, resumable and
+						// deletable one entry up; a second surface with its own
+						// copies of those buttons would be a second set of rules
+						// for the same record.
+						{Label: "Goals", Menu: "Manage", Icon: "◎", AllAgents: true, Source: "api/console/goals", Layout: "cards",
+							SearchPlaceholder: goalsSearchHint,
+							Filters:           goalsFilters()},
 						{Label: "Scheduler", Icon: "⏰", Pinned: true, AllAgents: true, Source: "api/console/scheduler", Layout: "cards",
 							SearchPlaceholder: schedulerSearchHint,
 							Filters:           schedulerFilters(),
@@ -450,6 +462,9 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// these were three entries: no Move to…, which relocates where
 						// a report lands and belongs where you are looking at one
 						// agent's arrangements rather than sweeping the fleet.
+						{Label: "Goals", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/goals", Layout: "cards",
+							SearchPlaceholder: goalsSearchHint,
+							Filters:           goalsFilters()},
 						{Label: "Scheduler", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/scheduler", Layout: "cards",
 							SearchPlaceholder: schedulerSearchHint,
 							Filters:           schedulerFilters(),

@@ -216,6 +216,7 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// The merged view the Scheduler nav entry reads — the three lists above in
 	// one page, grouped. See console_scheduler.go.
 	T.HandleFunc("/api/console/scheduler", g(T.handleConsoleScheduler))
+	T.HandleFunc("/api/console/goals", g(T.handleConsoleGoals))
 	T.HandleFunc("/api/console/recurring/run", gw(T.handleConsoleRecurringRun))
 	T.HandleFunc("/api/console/recurring/delete", gw(T.handleConsoleRecurringDelete))
 	T.HandleFunc("/api/console/recurring/relink", gw(T.handleConsoleRecurringRelink))

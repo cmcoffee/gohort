@@ -85,8 +85,34 @@ func (T *OrchestrateApp) handleConsoleScheduler(w http.ResponseWriter, r *http.R
 // correctly as text — a fixed offset and a fixed width being the whole point of
 // that format.
 func sortSchedulerRows(rows []map[string]any) {
+	sortRowsBySection(rows, []string{schedSectionStanding, schedSectionRecurring, schedSectionMonitors})
+}
+
+// sortRowsBySection is the same ordering for any page that draws sections: the
+// caller names the section order, and within each the soonest fire leads.
+//
+// The order is a PARAMETER rather than a table here, because a second page
+// composing the same records asks a different question and wants a different
+// order — the Scheduler leads with what runs next, the goals view leads with
+// what is stuck. A shared table would have made the second page's sections all
+// rank the same, and rows from different sections would interleave: the cards
+// layout starts a section every time the value changes, so that draws each
+// heading over and over down the page.
+func sortRowsBySection(rows []map[string]any, order []string) {
+	rank := make(map[string]int, len(order))
+	for i, name := range order {
+		rank[name] = i
+	}
+	// An unlisted section sorts last rather than first, so one added later
+	// appears at the bottom instead of displacing the ones people came for.
+	rankOf := func(m map[string]any) int {
+		if r, ok := rank[schedString(m, "_section")]; ok {
+			return r
+		}
+		return len(order)
+	}
 	sort.SliceStable(rows, func(i, j int) bool {
-		if ri, rj := schedSectionRank(rows[i]), schedSectionRank(rows[j]); ri != rj {
+		if ri, rj := rankOf(rows[i]), rankOf(rows[j]); ri != rj {
 			return ri < rj
 		}
 		ni, nj := schedString(rows[i], "next_run"), schedString(rows[j], "next_run")
@@ -98,21 +124,6 @@ func sortSchedulerRows(rows []map[string]any) {
 		}
 		return schedString(rows[i], "name") < schedString(rows[j], "name")
 	})
-}
-
-// schedSectionRank is where a row's section sits on the page. An unknown
-// section sorts last rather than first, so a section added later without a rank
-// appears at the bottom instead of displacing the ones people came for.
-func schedSectionRank(m map[string]any) int {
-	switch schedString(m, "_section") {
-	case schedSectionStanding:
-		return 0
-	case schedSectionRecurring:
-		return 1
-	case schedSectionMonitors:
-		return 2
-	}
-	return 3
 }
 
 // schedString reads a converted row's string field; absent or of another type
