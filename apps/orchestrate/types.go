@@ -49,11 +49,6 @@ import (
 type GuardrailException struct {
 	Name string `json:"name"`
 	Text string `json:"text"`
-	// Kind is DEAD and exists only so the one-time sweep in guardrail_sweep.go
-	// can still recognize the person entries it has to move onto the roster.
-	// An exception is a condition now; identity belongs to
-	// AuthorizedIdentities. Delete this field together with that sweep.
-	Kind string `json:"kind,omitempty"`
 }
 
 type AgentRecord struct {
