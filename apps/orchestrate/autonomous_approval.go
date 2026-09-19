@@ -1,16 +1,19 @@
-// Autonomous-run tool approval — the one policy that unattended fires (standing
-// agents AND recurring scheduled-updates) share for high-consequence (NeedsConfirm)
-// tools, replacing the two contradictory behaviors those surfaces used to have:
-// standing_runner DENIED every such tool (deny-by-default), while scheduled_updates
-// AUTO-APPROVED every such tool (silently bypassing the "Require confirm" contract).
+// Autonomous-run tool policy — what an agent may do when nobody is watching.
 //
-// The reconciled policy: a NeedsConfirm tool runs on an autonomous fire ONLY if the
-// agent has it in AutoApproveTools (the owner pre-authorized it). Otherwise it's
-// refused for THIS fire and queued as an "autonomous_tool" authorization — it shows
-// in the Authorizations pane and surfaces to the agent's cortex. Approving it adds
-// the tool to AutoApproveTools (console.go handleApprove), so the NEXT fire runs it.
-// No human present ≠ silent success or silent failure; it becomes a pending, visible
-// grant the owner acts on once.
+// One rule, shared by both unattended surfaces (standing agents and recurring
+// scheduled updates), because they used to do opposite things: standing DENIED
+// every NeedsConfirm tool while recurring AUTO-APPROVED every one of them.
+//
+// The rule is autonomousToolAllowed, and its default is ALLOW: a tool attached
+// to an agent is a tool that agent may use, on a timer exactly as in chat. Two
+// things stop one. The owner may mark a tool NEVER UNATTENDED, which is refused
+// outright and is not a request for permission — they already answered. Or the
+// credential it dispatches through may be set to ask before every call, which
+// IS a request: it is refused for this fire and queued as an "autonomous_tool"
+// authorization, visible in the Permissions pane and on the agent's cortex, and
+// approving it records a standing grant so the next fire runs.
+//
+// No human present is neither silent success nor silent failure.
 package orchestrate
 
 import (
@@ -65,8 +68,15 @@ type autonomousGate struct {
 	agentID  string
 	subAgent bool // OwnedBy set → runs under the parent's authority
 	auto     map[string]bool
-	sess     *ToolSession // resolves a tool call to the credential it dispatches through
-	queued   []string     // tool names refused + queued this run (for the caller's attention line)
+	// noUnattended is the owner's explicit "not without somebody watching",
+	// inherited DOWN the ownership chain (the mirror of auto, which inherits up
+	// as trust: a restriction has to travel the other way or it is optional).
+	noUnattended map[string]bool
+	sess         *ToolSession // resolves a tool call to the credential it dispatches through
+	queued       []string     // tool names refused + queued this run (for the caller's attention line)
+	// withheld is the other refusal kind, kept apart because it means something
+	// different to the owner: nothing is waiting on them, they already decided.
+	withheld []string
 }
 
 // newAutonomousGate builds the gate for an agent's autonomous run, snapshotting
@@ -85,8 +95,9 @@ func (app *OrchestrateApp) newAutonomousGate(owner, agentID string, sess *ToolSe
 	}
 	return &autonomousGate{
 		app: app, owner: owner, agentID: agentID, subAgent: sub,
-		auto: autonomousApprovedSet(udb, agentID),
-		sess: sess,
+		auto:         autonomousApprovedSet(udb, agentID),
+		noUnattended: autonomousNoUnattendedSet(udb, agentID),
+		sess:         sess,
 	}
 }
 
@@ -160,11 +171,27 @@ func credentialAlwaysConfirms(owner, cred string) bool {
 // invisible until a user is told their tool will be refused and it isn't (or
 // worse, the reverse).
 //
-// The three clauses, in the order they stop mattering: a SUB-AGENT runs under
-// its parent's authority; a PRE-AUTHORIZED tool was granted by the owner; and
-// everything else runs unless the credential it dispatches through is configured
-// to ask before each call. Attaching a tool to an agent IS the authorization.
-func autonomousToolAllowed(subAgent bool, approved map[string]bool, name string, alwaysConfirms func(string) bool) bool {
+// The clauses, in the order they stop mattering: a tool the owner marked NEVER
+// UNATTENDED is refused outright; a SUB-AGENT runs under its parent's authority;
+// a PRE-AUTHORIZED tool was granted by the owner; and everything else runs
+// unless the credential it dispatches through is configured to ask before each
+// call. Attaching a tool to an agent IS the authorization.
+//
+// The default direction is what makes the first clause worth having. When a
+// rule allows almost everything, the useful thing to write down is the
+// exception, and the exception people actually have is "not unless somebody is
+// watching who can pull the plug". Before this, the only way to say that was to
+// set Require-confirm on the CREDENTIAL: wrong scope (every agent and every user
+// of that credential), and unavailable at all to a tool that dispatches through
+// no credential, which is most of the ones worth worrying about.
+func autonomousToolAllowed(subAgent bool, approved, noUnattended map[string]bool, name string, alwaysConfirms func(string) bool) bool {
+	// The owner's own word, and it beats everything below it including the
+	// sub-agent bypass. A restriction a parent carries has to reach its
+	// children, or building a sub-agent is how you launder it: the same
+	// direction guardrails already inherit.
+	if noUnattended[name] {
+		return false
+	}
 	if subAgent || approved[name] {
 		return true
 	}
@@ -174,7 +201,7 @@ func autonomousToolAllowed(subAgent bool, approved map[string]bool, name string,
 // allows applies the rule to this gate's agent, with no side effects — the
 // predicting surfaces need the verdict without queueing anything.
 func (g *autonomousGate) allows(name string) bool {
-	return autonomousToolAllowed(g.subAgent, g.auto, name, g.alwaysConfirms)
+	return autonomousToolAllowed(g.subAgent, g.auto, g.noUnattended, name, g.alwaysConfirms)
 }
 
 // autonomousApprovedSet is the union of an agent's AutoApproveTools and every
@@ -201,6 +228,34 @@ func autonomousApprovedSet(udb Database, agentID string) map[string]bool {
 	return set
 }
 
+// autonomousNoUnattendedSet is the union of an agent's NoUnattendedTools and
+// every ancestor's, walking the SAME OwnedBy chain autonomousApprovedSet walks
+// and for the opposite reason.
+//
+// Approval inherits UP as trust: the parent vouched for the child, so what the
+// owner allowed the parent the child may do. A restriction has to inherit the
+// same way or it is advisory: an owner who says "this agent never sends mail
+// unwatched" and then watches it build a sub-agent that does has been told a
+// policy was applied that was not. Same direction guardrails already travel.
+func autonomousNoUnattendedSet(udb Database, agentID string) map[string]bool {
+	set := map[string]bool{}
+	seen := map[string]bool{}
+	for id := agentID; id != "" && !seen[id]; {
+		seen[id] = true
+		rec, ok := loadAgent(udb, id)
+		if !ok {
+			break
+		}
+		for _, t := range rec.NoUnattendedTools {
+			if t = strings.TrimSpace(t); t != "" {
+				set[t] = true
+			}
+		}
+		id = rec.OwnedBy
+	}
+	return set
+}
+
 // confirm is the ConfirmFunc the agent loop calls for a NeedsConfirm tool. Returns
 // true when the tool may run unattended, else queues an approval and denies this
 // call.
@@ -218,16 +273,48 @@ func (g *autonomousGate) confirm(name, args string) bool {
 	if g.allows(name) {
 		return true
 	}
+	// Marked never-unattended: refuse, and do NOT queue. A queue asks the owner
+	// to decide something they have already decided, and approving it would
+	// write a grant that contradicts the mark. The breadcrumb is the withheld
+	// list, which the run's attention line reports in its own words.
+	if g.noUnattended[name] {
+		g.withheld = append(g.withheld, name)
+		Log("[orchestrate/autonomous] agent=%s withheld %q: marked never unattended", g.agentID, name)
+		return false
+	}
 	g.queue(name, args)
 	return false
 }
 
-// blocked reports whether any tool was refused this run (for the RunAttention line).
+// blocked names a tool refused this run, for the RunAttention line. A QUEUED
+// one comes first: it is the kind the owner can do something about, and a run
+// that mentions the settled refusal while hiding the pending one points at the
+// wrong half of the problem.
 func (g *autonomousGate) blocked() string {
-	if len(g.queued) == 0 {
+	if len(g.queued) > 0 {
+		return g.queued[0]
+	}
+	if len(g.withheld) > 0 {
+		return g.withheld[0]
+	}
+	return ""
+}
+
+// neverUnattended is the predicate half of the mark, for the surfaces that
+// PREDICT this gate. They ask the gate rather than reading the record, for the
+// same reason they ask it about everything else: a second reader of the same
+// field is a second rule waiting to drift from this one.
+func (g *autonomousGate) neverUnattended(name string) bool { return g.noUnattended[name] }
+
+// withheldTool names a tool refused because the owner marked it never
+// unattended, as opposed to one waiting on an approval. The caller says
+// different things about the two: one is a decision already made, the other is
+// a decision waiting.
+func (g *autonomousGate) withheldTool() string {
+	if len(g.withheld) == 0 {
 		return ""
 	}
-	return g.queued[0]
+	return g.withheld[0]
 }
 
 // queue records a pending autonomous-tool authorization (deduped) and surfaces it

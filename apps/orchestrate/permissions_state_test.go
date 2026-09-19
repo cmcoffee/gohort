@@ -49,27 +49,59 @@ func TestNeedsApprovalIsAStateAToolRowCanHold(t *testing.T) {
 	}
 }
 
-// There is no block for a tool anywhere in the runtime. A segment that reads
-// "never" while the tool goes on queueing for approval is worse than no segment.
-func TestAToolRowIsNeverOfferedBlocked(t *testing.T) {
+// Block used to be withheld from tool rows because the runtime had no way to
+// honor it, and a segment reading "never" over a tool that went on queueing for
+// approval is a control lying about the state it sets. The runtime now honors
+// it, so the test inverts: the segment is offered, AND a write actually reaches
+// the runner. The second half is the one that matters, because it is the half
+// that was missing when the segment was first hidden.
+func TestBlockingAToolReachesTheRunner(t *testing.T) {
 	page := readFile(t, "page_chat.go")
 	i := strings.Index(page, `{Label: "Blocked", Value: "block"`)
 	if i < 0 {
-		t.Fatal("the Blocked segment is gone entirely; agent and contact rows need it")
+		t.Fatal("the Blocked segment is gone entirely")
 	}
 	line := page[i:]
 	if j := strings.Index(line, "\n"); j > 0 {
 		line = line[:j]
 	}
-	if !strings.Contains(line, `HideIf: "_autotool"`) {
-		t.Errorf("Blocked is offered on tool rows, which cannot store it: %s", line)
+	if strings.Contains(line, `HideIf: "_autotool"`) {
+		t.Errorf("Blocked is still hidden on tool rows, which can now store it: %s", line)
 	}
-	// And a tool policy write never stores it either, whatever arrives.
+
 	db := &DBase{Store: kvlite.MemStore()}
-	setAutoToolPolicy(db, nil, "alice", "a", "t", PolicyBlock)
+	udb := &DBase{Store: kvlite.MemStore()}
+	if _, err := saveAgent(udb, AgentRecord{ID: "a", Owner: "alice", Name: "A", OrchestratorPrompt: "do the thing"}); err != nil {
+		t.Fatalf("seed agent: %v", err)
+	}
+	setAutoToolPolicy(db, udb, "alice", "a", "send_email", PolicyBlock)
+
 	got := listAutoToolPolicies(db, "alice")
-	if len(got) != 1 || got[0].Policy != PolicyAsk {
-		t.Errorf("a block was stored as %+v, want it folded to ask", got)
+	if len(got) != 1 || got[0].Policy != PolicyBlock {
+		t.Fatalf("the decision was not recorded as a block: %+v", got)
+	}
+	// The runner reads the agent record, not this table. A block that stopped
+	// at the record would be a page telling the owner something the fire never
+	// hears, which is the exact failure the segment was hidden to avoid.
+	rec, _ := loadAgent(udb, "a")
+	if len(rec.NoUnattendedTools) != 1 || rec.NoUnattendedTools[0] != "send_email" {
+		t.Errorf("the mark never reached the agent the runner loads: %+v", rec.NoUnattendedTools)
+	}
+	if !autonomousNoUnattendedSet(udb, "a")["send_email"] {
+		t.Error("the gate's own set does not carry the mark")
+	}
+	// And it refuses, ahead of every other clause.
+	if autonomousToolAllowed(true, map[string]bool{"send_email": true},
+		autonomousNoUnattendedSet(udb, "a"), "send_email", func(string) bool { return false }) {
+		t.Error("a marked tool ran anyway; the mark has to beat both the sub-agent bypass and a standing grant")
+	}
+
+	// Moving off block clears the mark, or the two lists disagree and the
+	// runner believes the older one.
+	setAutoToolPolicy(db, udb, "alice", "a", "send_email", PolicyAllow)
+	rec, _ = loadAgent(udb, "a")
+	if len(rec.NoUnattendedTools) != 0 {
+		t.Errorf("allow left the never-unattended mark in place: %+v", rec.NoUnattendedTools)
 	}
 }
 
@@ -133,4 +165,74 @@ func TestAskIsAStoredStateNotAnAbsence(t *testing.T) {
 	if !strings.Contains(src[j:j+900], `p != ""`) {
 		t.Error("listPolicies no longer filters on a non-empty stored value; this test's premise has moved")
 	}
+}
+
+// Approval inherits UP the ownership chain, because the parent vouched for the
+// child. A restriction has to inherit DOWN, or it is advisory: an owner who
+// marks a tool never-unattended and then watches the agent build a sub-agent
+// that runs it has been told a policy applied that did not.
+func TestARestrictionInheritsDownTheChain(t *testing.T) {
+	udb := &DBase{Store: kvlite.MemStore()}
+	seed := func(id, ownedBy string, marks ...string) {
+		t.Helper()
+		if _, err := saveAgent(udb, AgentRecord{
+			ID: id, Owner: "alice", Name: id, OrchestratorPrompt: "work",
+			OwnedBy: ownedBy, NoUnattendedTools: marks,
+		}); err != nil {
+			t.Fatalf("seed %s: %v", id, err)
+		}
+	}
+	seed("parent", "", "send_email")
+	seed("child", "parent")
+	seed("grandchild", "child")
+
+	for _, id := range []string{"parent", "child", "grandchild"} {
+		if !autonomousNoUnattendedSet(udb, id)["send_email"] {
+			t.Errorf("%s does not carry the mark its parent was given", id)
+		}
+	}
+	// And the sub-agent bypass does not launder it. That bypass exists because
+	// the parent chose the child's toolset, which is precisely why a limit the
+	// parent carries has to come with it.
+	marks := autonomousNoUnattendedSet(udb, "grandchild")
+	if autonomousToolAllowed(true, nil, marks, "send_email", func(string) bool { return false }) {
+		t.Error("a sub-agent ran a tool its ancestor was marked never to run unattended")
+	}
+	// A tool nobody marked is unaffected: this is an exception list, not an
+	// allow-list wearing a different name.
+	if !autonomousToolAllowed(false, nil, marks, "web_search", func(string) bool { return false }) {
+		t.Error("an unmarked tool was refused; the default is still allow")
+	}
+}
+
+// The complaint this came from: rows in the Permissions pane naming framework
+// tools nobody had ever gated. They were grants, approved under the rule that
+// refused every NeedsConfirm tool, left behind when the rule became "a tool
+// attached to an agent is a tool it may use". The gate allows those with or
+// without the entry, so the row claimed a permission that was not being
+// withheld. A grant appears while it is load-bearing and not otherwise.
+func TestAnInertGrantIsNotAPermission(t *testing.T) {
+	udb := &DBase{Store: kvlite.MemStore()}
+	if _, err := saveAgent(udb, AgentRecord{
+		ID: "a", Owner: "alice", Name: "A", OrchestratorPrompt: "work",
+		AutoApproveTools: []string{"recall", "send_email"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// recall dispatches through no credential, so nothing was ever going to ask
+	// about it; send_email's credential is set to.
+	if toolAlwaysConfirms(udb, "alice", nil, "recall") {
+		t.Fatal("a framework tool with no credential is being treated as confirming")
+	}
+	rec, _ := loadAgent(udb, "a")
+	if !autonomousToolAllowed(false, nil, nil, "recall", func(n string) bool { return toolAlwaysConfirms(udb, "alice", nil, n) }) {
+		t.Error("recall is refused unattended, which would make its grant load-bearing after all")
+	}
+	if len(rec.AutoApproveTools) != 2 {
+		t.Errorf("the stored grants were altered: %+v", rec.AutoApproveTools)
+	}
+	// The record is left alone on purpose. Pruning somebody's stored decisions
+	// because they are currently inert is a data change made on a guess: if the
+	// credential is ever set back to confirming, the grant means something
+	// again and should be there.
 }

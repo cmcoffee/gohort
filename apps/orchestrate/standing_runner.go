@@ -169,8 +169,16 @@ func registerStandingRunner(app *OrchestrateApp) {
 		}
 		if blockedTool := gate.blocked(); blockedTool != "" {
 			res.Status = RunAttention
-			res.Summary = "Needed approval to run \"" + blockedTool +
-				"\"; queued in the Authorizations pane. Approve it to pre-authorize the tool for future runs. " + res.Summary
+			// Two refusals, two sentences. Telling an owner to go approve
+			// something they deliberately marked is advice they cannot follow,
+			// and the run would read as blocked on them when it is not.
+			if withheld := gate.withheldTool(); withheld != "" && withheld == blockedTool {
+				res.Summary = "Did not run \"" + withheld +
+					"\": it is marked never unattended, so it waits for a run you are watching. Nothing is queued. " + res.Summary
+			} else {
+				res.Summary = "Needed approval to run \"" + blockedTool +
+					"\"; queued in the Authorizations pane. Approve it to pre-authorize the tool for future runs. " + res.Summary
+			}
 		} else if hitRoundCap {
 			// The run stopped mid-task because it exhausted its worker rounds — flag
 			// it (not a silent "ok") and drop a breadcrumb in the report session's

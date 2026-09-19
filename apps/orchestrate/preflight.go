@@ -67,7 +67,7 @@ func (app *OrchestrateApp) PreflightAutonomous(owner, agentID string) []Prefligh
 		return nil
 	}
 	gate := app.newAutonomousGate(owner, agentID, nil)
-	return append(preflightToolFindings(agent, gate.allows), preflightRecipients(udb, owner, agent)...)
+	return append(preflightToolFindings(agent, gate.allows, gate.neverUnattended), preflightRecipients(udb, owner, agent)...)
 }
 
 // preflightToolFindings asks the GATE ITSELF about each of the agent's tools —
@@ -83,16 +83,30 @@ func (app *OrchestrateApp) PreflightAutonomous(owner, agentID string) []Prefligh
 // "get_weather asks for confirmation" for a tool already enabled on the agent and
 // running fine on every fire. A pre-flight that cries wolf is worse than none,
 // because the one real finding is now indistinguishable from the noise.
-func preflightToolFindings(agent AgentRecord, allows func(string) bool) []PreflightFinding {
-	// A sub-agent runs under its parent's authority — allows returns true for
-	// everything, so this is only an early out, not a second copy of that rule.
-	if strings.TrimSpace(agent.OwnedBy) != "" {
-		return nil
-	}
+func preflightToolFindings(agent AgentRecord, allows, neverUnattended func(string) bool) []PreflightFinding {
+	// No sub-agent early-out. It used to return nil here on the grounds that a
+	// sub-agent runs under its parent's authority and allows() is true for
+	// everything it has — which stopped being true the moment a restriction
+	// could inherit DOWN the chain. Letting the loop ask allows() per tool
+	// keeps this a reader of the rule rather than a second copy of it, which is
+	// the whole reason this function takes the gate's predicates at all.
 	var out []PreflightFinding
 	for _, name := range agent.AllowedTools {
 		name = strings.TrimSpace(name)
 		if name == "" || name == noToolsSentinel || allows(name) {
+			continue
+		}
+		// Two refusals that look identical in the run log and are opposite
+		// things to the owner: one is waiting on them, the other is them.
+		if neverUnattended(name) {
+			out = append(out, PreflightFinding{
+				Gate: PreflightGateTool,
+				Name: name,
+				Detail: fmt.Sprintf("%q is marked never unattended, so a scheduled fire will not run it. "+
+					"Nothing is queued and nothing is waiting on you: this is the mark doing its job.", name),
+				Fix: fmt.Sprintf("If this schedule is meant to use %q, clear the mark on this agent (or on the one that owns it, "+
+					"since the mark inherits down). Otherwise the agent should be doing this work in chat, where you are there to see it.", name),
+			})
 			continue
 		}
 		out = append(out, PreflightFinding{

@@ -13,9 +13,21 @@ import (
 // through a hand-rolled equivalent are how the pre-flight drifted from the gate
 // in the first place.
 func allowsWith(subAgent bool, approved, alwaysConfirm map[string]bool) func(string) bool {
+	return allowsWithMarks(subAgent, approved, nil, alwaysConfirm)
+}
+
+// allowsWithMarks is the same composition with the owner's never-unattended
+// marks in play, for the tests that care about the clause that beats the rest.
+func allowsWithMarks(subAgent bool, approved, noUnattended, alwaysConfirm map[string]bool) func(string) bool {
 	return func(name string) bool {
-		return autonomousToolAllowed(subAgent, approved, name, func(n string) bool { return alwaysConfirm[n] })
+		return autonomousToolAllowed(subAgent, approved, noUnattended, name, func(n string) bool { return alwaysConfirm[n] })
 	}
+}
+
+// neverWith is the pre-flight's second predicate: which refusals are the
+// owner's own decision rather than a pending approval.
+func neverWith(noUnattended map[string]bool) func(string) bool {
+	return func(name string) bool { return noUnattended[name] }
 }
 
 // The friction this exists for: an interactive dispatch auto-confirms every
@@ -25,7 +37,7 @@ func allowsWith(subAgent bool, approved, alwaysConfirm map[string]bool) func(str
 func TestConfirmingToolWithoutPreauthIsFlagged(t *testing.T) {
 	agent := AgentRecord{ID: "a", Owner: "u", Name: "A", AllowedTools: []string{"message_contact", "web_search"}}
 	allows := allowsWith(false, nil, map[string]bool{"message_contact": true})
-	got := preflightToolFindings(agent, allows)
+	got := preflightToolFindings(agent, allows, neverWith(nil))
 	if len(got) != 1 {
 		t.Fatalf("expected exactly the confirming tool to be flagged, got %+v", got)
 	}
@@ -45,7 +57,7 @@ func TestConfirmingToolWithoutPreauthIsFlagged(t *testing.T) {
 // finding stops being distinguishable from the noise.
 func TestEnabledToolWithNothingConfiguredIsNotFlagged(t *testing.T) {
 	agent := AgentRecord{ID: "a", Owner: "u", Name: "A", AllowedTools: []string{"get_weather", "post_update"}}
-	if got := preflightToolFindings(agent, allowsWith(false, nil, nil)); len(got) != 0 {
+	if got := preflightToolFindings(agent, allowsWith(false, nil, nil), neverWith(nil)); len(got) != 0 {
 		t.Errorf("a tool the gate would run must not be flagged, got %+v", got)
 	}
 }
@@ -55,7 +67,7 @@ func TestEnabledToolWithNothingConfiguredIsNotFlagged(t *testing.T) {
 func TestPreauthorizedToolIsNotFlagged(t *testing.T) {
 	agent := AgentRecord{ID: "a", Owner: "u", Name: "A", AllowedTools: []string{"message_contact"}}
 	allows := allowsWith(false, map[string]bool{"message_contact": true}, map[string]bool{"message_contact": true})
-	if got := preflightToolFindings(agent, allows); len(got) != 0 {
+	if got := preflightToolFindings(agent, allows, neverWith(nil)); len(got) != 0 {
 		t.Errorf("a pre-authorized tool must not be flagged, got %+v", got)
 	}
 }
@@ -66,7 +78,7 @@ func TestPreauthorizedToolIsNotFlagged(t *testing.T) {
 func TestSubAgentIsNotFlagged(t *testing.T) {
 	sub := AgentRecord{ID: "s", Owner: "u", Name: "S", OwnedBy: "parent", AllowedTools: []string{"message_contact"}}
 	allows := allowsWith(true, nil, map[string]bool{"message_contact": true})
-	if got := preflightToolFindings(sub, allows); len(got) != 0 {
+	if got := preflightToolFindings(sub, allows, neverWith(nil)); len(got) != 0 {
 		t.Errorf("a sub-agent runs under its parent's authority and must not be flagged, got %+v", got)
 	}
 }
@@ -76,7 +88,7 @@ func TestSubAgentIsNotFlagged(t *testing.T) {
 func TestSentinelIsNotFlagged(t *testing.T) {
 	agent := AgentRecord{ID: "a", Owner: "u", Name: "A", AllowedTools: []string{noToolsSentinel}}
 	allows := allowsWith(false, nil, map[string]bool{noToolsSentinel: true})
-	if got := preflightToolFindings(agent, allows); len(got) != 0 {
+	if got := preflightToolFindings(agent, allows, neverWith(nil)); len(got) != 0 {
 		t.Errorf("the sentinel is not a tool, got %+v", got)
 	}
 }
@@ -99,7 +111,7 @@ func TestInheritedApprovalClearsTheWarning(t *testing.T) {
 	inherited := autonomousApprovedSet(db, "child")
 	topLevel := AgentRecord{ID: "child", Owner: "u", Name: "child", AllowedTools: []string{"message_contact"}}
 	allows := allowsWith(false, inherited, map[string]bool{"message_contact": true})
-	if got := preflightToolFindings(topLevel, allows); len(got) != 0 {
+	if got := preflightToolFindings(topLevel, allows, neverWith(nil)); len(got) != 0 {
 		t.Errorf("an ancestor's grant must clear the warning, got %+v", got)
 	}
 }
@@ -108,7 +120,7 @@ func TestInheritedApprovalClearsTheWarning(t *testing.T) {
 func TestFindingsAreStablyOrdered(t *testing.T) {
 	agent := AgentRecord{ID: "a", Owner: "u", Name: "A", AllowedTools: []string{"zeta", "alpha"}}
 	allows := allowsWith(false, nil, map[string]bool{"zeta": true, "alpha": true})
-	got := preflightToolFindings(agent, allows)
+	got := preflightToolFindings(agent, allows, neverWith(nil))
 	if len(got) != 2 || got[0].Name != "alpha" || got[1].Name != "zeta" {
 		t.Errorf("findings should be name-sorted, got %+v", got)
 	}
@@ -131,7 +143,7 @@ func TestPreflightAgreesWithTheGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	gate := app.newAutonomousGate("u", "a", nil)
-	findings := preflightToolFindings(rec, gate.allows)
+	findings := preflightToolFindings(rec, gate.allows, gate.neverUnattended)
 
 	flagged := map[string]bool{}
 	for _, f := range findings {

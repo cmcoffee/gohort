@@ -111,11 +111,7 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 		Requested string `json:"Requested,omitempty"`
 		ID        string `json:"_id"`
 		Pending   bool   `json:"_pending,omitempty"`
-		Managed   bool   `json:"_managed,omitempty"` // a standing policy row (Remove; segmented control when it has a Policy)
-		// AutoTool marks a tool-grant row. It carries a Policy like the others,
-		// but only allow/ask exist for a tool — there is no block — so the
-		// Blocked segment is gated off these rows (see page_chat.go).
-		AutoTool  bool   `json:"_autotool,omitempty"`
+		Managed   bool   `json:"_managed,omitempty"`    // a standing policy row (Remove; segmented control when it has a Policy)
 		Policy    string `json:"_policy,omitempty"`     // allow | ask | block (the segmented state)
 		OneShot   bool   `json:"_oneshot,omitempty"`    // one-time decision (Approve/Deny only) — no "Always" grant makes sense (e.g. activating a drafted sub-agent, which the approval consumes)
 		Suggested bool   `json:"_suggestion,omitempty"` // an OFFER, not a request: nothing is blocked on it (see approvalIsSuggestion)
@@ -191,11 +187,34 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 		agentName[ag.ID] = firstNonEmptyStr(ag.Name, ag.ID)
 		for _, tool := range ag.AutoApproveTools {
 			seenTool[ag.ID+"\x00"+tool] = true
+			// A grant that grants nothing is not a permission, and listing it as
+			// one is how this page came to show rows for tools that were never
+			// gated: names approved under the old rule, which refused every
+			// NeedsConfirm tool, and left behind when the rule became "a tool
+			// attached to an agent is a tool it may use". The gate allows those
+			// with or without the entry. So the row appears only while the grant
+			// is load-bearing, which is while the tool would otherwise ask.
+			if !toolAlwaysConfirms(udb, user, nil, tool) {
+				continue
+			}
 			out = append(out, permRow{
 				Who:     agentName[ag.ID],
 				Detail:  "Autonomous tool: " + tool,
 				ID:      "autotool:" + ag.ID + ":" + tool,
-				Managed: true, AutoTool: true, Policy: PolicyAllow,
+				Managed: true, Policy: PolicyAllow,
+			})
+		}
+		// The other half of the same decision, and the one with nothing
+		// conditional about it: a mark the owner made, which the runner refuses
+		// on without asking. Listed whatever the tool's credential says, because
+		// unlike a grant it is never inert.
+		for _, tool := range ag.NoUnattendedTools {
+			seenTool[ag.ID+"\x00"+tool] = true
+			out = append(out, permRow{
+				Who:     agentName[ag.ID],
+				Detail:  "Never unattended: " + tool,
+				ID:      "autotool:" + ag.ID + ":" + tool,
+				Managed: true, Policy: PolicyBlock,
 			})
 		}
 	}
@@ -207,11 +226,15 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 		if !ok {
 			continue // a decision about an agent that is gone is not actionable
 		}
+		detail := "Autonomous tool: " + p.Tool
+		if p.Policy == PolicyBlock {
+			detail = "Never unattended: " + p.Tool
+		}
 		out = append(out, permRow{
 			Who:     who,
-			Detail:  "Autonomous tool: " + p.Tool,
+			Detail:  detail,
 			ID:      "autotool:" + p.AgentID + ":" + p.Tool,
-			Managed: true, AutoTool: true, Policy: p.Policy,
+			Managed: true, Policy: p.Policy,
 		})
 	}
 	writeJSON(w, out)

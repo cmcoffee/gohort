@@ -403,11 +403,14 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							StateOptions: []ui.OrchestratorStateOption{
 								{Label: "Always allow", Value: "allow", URL: "api/console/permissions/policy"},
 								{Label: "Needs approval", Value: "ask", URL: "api/console/permissions/policy"},
-								// Not on a tool row: there is no block for a tool
-								// anywhere in the runtime, so the segment would read
-								// as "never" while the tool goes on queueing for
-								// approval exactly as it would under Needs approval.
-								{Label: "Blocked", Value: "block", URL: "api/console/permissions/policy", HideIf: "_autotool"},
+								// On a tool row this now means something the runtime
+								// enforces: refused on any run with nobody watching,
+								// and not queued, because the owner is not being
+								// asked. It was hidden here while that was untrue,
+								// since a segment reading "never" over a tool that
+								// went on queueing for approval is a control lying
+								// about the state it sets.
+								{Label: "Blocked", Value: "block", URL: "api/console/permissions/policy"},
 							},
 							RowActions: []ui.OrchestratorRowAction{
 								{Label: "Deny", Method: "POST", URL: "api/console/approvals/deny", Variant: "danger", OnlyIf: "_pending"},

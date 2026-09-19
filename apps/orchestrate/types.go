@@ -219,6 +219,25 @@ type AgentRecord struct {
 	// the way the recurring path used to.
 	AutoApproveTools []string `json:"auto_approve_tools,omitempty"`
 
+	// NoUnattendedTools is the other direction, and the one an owner actually
+	// reaches for: tools this agent may use in chat but NOT on a run with
+	// nobody watching who could stop it.
+	//
+	// It exists because the rule above it defaults to allow. When a policy
+	// permits almost everything, what is worth writing down is the exception,
+	// and the exception people have is "not unless somebody is there". Until
+	// this field the only way to express it was Require-confirm on the
+	// CREDENTIAL: wrong scope (it binds every agent and every user of that
+	// credential at once) and unavailable at all to a tool that dispatches
+	// through no credential, which is most of what is worth worrying about.
+	//
+	// Refused outright rather than queued. The owner is not being asked; they
+	// already answered. And it inherits DOWN the OwnedBy chain, unlike
+	// AutoApproveTools which inherits up: trust delegates to a sub-agent, a
+	// restriction has to follow it, or building one is how the restriction gets
+	// laundered. See autonomousNoUnattendedSet.
+	NoUnattendedTools []string `json:"no_unattended_tools,omitempty"`
+
 	// DisabledPersistentTools is an explicit DENY-LIST of admin-
 	// approved persistent temp-tool names this agent should NOT see.
 	// Persistent temp tools flow into every agent's catalog by default
