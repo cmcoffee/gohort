@@ -1969,6 +1969,19 @@ func compareValues(extracted, op, threshold string) (bool, error) {
 	return false, fmt.Errorf("unknown compare_op %q (use < > <= >= == != contains)", op)
 }
 
+// ValidCompareOp reports whether op is one compareValues understands. The same
+// list was written out at every place that accepts a compare_op from a caller
+// (the create tool, the console editor), which is how one of them comes to
+// accept an operator the comparison then refuses at fire time — hours later,
+// into a log nobody is reading.
+func ValidCompareOp(op string) bool {
+	switch op {
+	case "<", ">", "<=", ">=", "==", "!=", "contains":
+		return true
+	}
+	return false
+}
+
 // FireEventMonitor wakes the Operator for a webhook event. Public so the
 // webhook HTTP handler (orchestrate) can call it.
 func FireEventMonitor(ctx context.Context, db Database, m EventMonitor, summary string) {

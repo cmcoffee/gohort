@@ -136,9 +136,14 @@ func addSchedulerActionFlags(m map[string]any, kind string) {
 		// Only poll / http_poll / watch have a check to run on demand — a
 		// webhook is push-only — and not on a broken one, which has no
 		// dependency left to check.
-		// Editing a monitor means editing its poll interval, which a webhook
-		// does not have — push-only monitors are not on a clock at all.
-		m["_edit_monitor"] = schedulable
+		//
+		// Edit is offered on EVERY monitor, including the push-triggered one.
+		// It used to be gated on schedulable because editing meant editing an
+		// interval, and a webhook has none; now it also edits what the monitor
+		// watches for and what it tells the agent when it fires, which a
+		// webhook has exactly like the rest. The modal's timing half is the
+		// part that says "push-triggered, nothing to time here".
+		m["_edit_monitor"] = true
 		m["_test_monitor"] = schedulable && !broken
 		m["_pause_monitor"] = !paused
 		m["_resume_monitor"] = paused

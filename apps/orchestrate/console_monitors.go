@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -75,9 +76,17 @@ func (T *OrchestrateApp) handleConsoleMonitorMove(w http.ResponseWriter, r *http
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleConsoleMonitorGet returns an event monitor's editable schedule for the
-// Scheduler edit modal. Only scheduled kinds (poll / http_poll / watch) carry an
-// interval; a webhook monitor is push-triggered and reports schedulable=false.
+// handleConsoleMonitorGet returns an event monitor's editable record for the
+// Scheduler edit modal: what it watches for, what it hands the agent when it
+// fires, and how often it looks. Only scheduled kinds (poll / http_poll /
+// watch) carry an interval; a webhook monitor is push-triggered and reports
+// schedulable=false — it still has a condition and a brief to edit, which is
+// why it now gets an editor at all.
+//
+// Every kind's condition fields are returned, not just the current kind's: the
+// editor shows one kind's section and the rest are absent from the record
+// anyway (omitempty on the way in), so branching here would only move the same
+// switch to the far side of the wire.
 func (T *OrchestrateApp) handleConsoleMonitorGet(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
@@ -95,13 +104,44 @@ func (T *OrchestrateApp) handleConsoleMonitorGet(w http.ResponseWriter, r *http.
 		"interval_minutes": m.IntervalSeconds / 60,
 		"schedulable":      IsScheduledEventKind(m.Kind),
 		"paused":           m.Paused,
+		// What it tells the woken agent — every kind has one, including the
+		// push-triggered webhook.
+		"wake_brief": m.WakeBrief,
+		// poll: the question put to the checker agent, and the answer that
+		// counts as a yes. check_agent is shown but not edited here; pointing a
+		// monitor at a different agent is what Relink is for.
+		"check":          m.Check,
+		"match_contains": m.MatchContains,
+		"check_agent":    m.CheckAgent,
+		// http_poll: the fetch, the extraction, and the test.
+		"url":        m.URL,
+		"json_path":  m.JSONPath,
+		"regex":      m.Regex,
+		"compare_op": m.CompareOp,
+		"threshold":  m.Threshold,
+		// watch: the source is the tool call, shown read-only — re-pointing it
+		// is a different operation from editing what it watches for. The format
+		// script IS editable: it shapes the alert, not the source.
+		"tool_name":     m.ToolName,
+		"source_kind":   m.SourceKind,
+		"format_script": m.FormatScript,
 	})
 }
 
-// handleConsoleMonitorUpdate edits an event monitor's poll interval in place and
-// re-arms it. Rejected for webhook (push-only) monitors. A paused monitor keeps
-// its new interval persisted without re-arming (it applies on resume). POST
-// ?id=<name> with {interval_minutes} (or {interval_seconds}).
+// handleConsoleMonitorUpdate edits an event monitor in place and re-arms it:
+// its poll interval, the brief handed to the woken agent, and the condition it
+// watches for. A paused monitor keeps its edit persisted without re-arming (it
+// applies on resume). POST ?id=<name>.
+//
+// Every editable field but the interval is a POINTER: absent preserves what is
+// stored. A monitor's record holds four kinds' worth of fields and the editor
+// only ever shows one kind's, so "not sent" has to mean "unchanged" or opening
+// the modal on a poll monitor would blank the http_poll half of a record that
+// had both.
+//
+// A field belonging to a different kind is REFUSED by name rather than stored.
+// It would be dead weight on the record and live weight in the reader's head:
+// a poll monitor carrying a url reads like something that fetches it.
 func (T *OrchestrateApp) handleConsoleMonitorUpdate(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
@@ -116,34 +156,197 @@ func (T *OrchestrateApp) handleConsoleMonitorUpdate(w http.ResponseWriter, r *ht
 		http.Error(w, "no such monitor", http.StatusNotFound)
 		return
 	}
-	if !IsScheduledEventKind(m.Kind) {
-		http.Error(w, "this monitor is push-triggered: it has no schedule to edit", http.StatusBadRequest)
-		return
-	}
-	var body struct {
-		IntervalSeconds int `json:"interval_seconds"`
-		IntervalMinutes int `json:"interval_minutes"`
-	}
+	var body monitorUpdateBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	secs := body.IntervalSeconds
-	if secs == 0 && body.IntervalMinutes > 0 {
-		secs = body.IntervalMinutes * 60
-	}
-	if secs < 5 {
-		http.Error(w, "interval too small: minimum 5 seconds", http.StatusBadRequest)
+	before := m
+	if err := applyMonitorUpdate(&m, body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	m.IntervalSeconds = secs
-	if m.Paused {
+	// The stored edge/baseline state describes the condition that was just
+	// replaced. Left alone, an http_poll whose threshold moved past the current
+	// value reports a RECOVERY from a breach of a threshold that never existed,
+	// and a watch whose source moved reports its first re-read as a change.
+	// Clearing it makes the next check a silent re-baseline — the same thing
+	// import does when it lands a monitor somewhere new (artifact_types.go).
+	if monitorConditionChanged(before, m) {
+		m.LastHash, m.LastBody, m.LastResult = "", "", ""
+		m.LastBreached, m.LastMatched = false, false
+	}
+	if m.Paused || !IsScheduledEventKind(m.Kind) {
 		SaveEventMonitor(RootDB, m)
 	} else if err := ScheduleEventMonitor(RootDB, m); err != nil {
+		// Put the original back, so a rejected edit does not leave the monitor
+		// holding a new condition it is not armed to check.
+		if before.Paused {
+			SaveEventMonitor(RootDB, before)
+		} else {
+			_ = ScheduleEventMonitor(RootDB, before)
+		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// monitorUpdateBody is what the Scheduler's monitor editor posts. Interval is a
+// plain int because zero has no meaning for it (a monitor polling every zero
+// seconds is not a thing to express), so absent and zero can safely mean the
+// same "leave it".
+type monitorUpdateBody struct {
+	IntervalSeconds int `json:"interval_seconds"`
+	IntervalMinutes int `json:"interval_minutes"`
+
+	WakeBrief *string `json:"wake_brief"`
+
+	// poll
+	Check         *string `json:"check"`
+	MatchContains *string `json:"match_contains"`
+
+	// http_poll
+	URL       *string `json:"url"`
+	JSONPath  *string `json:"json_path"`
+	Regex     *string `json:"regex"`
+	CompareOp *string `json:"compare_op"`
+	Threshold *string `json:"threshold"`
+
+	// watch
+	FormatScript *string `json:"format_script"`
+}
+
+// applyMonitorUpdate writes the posted fields onto m, refusing anything the
+// monitor's kind does not own and anything the fire path could not act on.
+// Validation happens BEFORE any assignment where it can, so a body that is
+// rejected leaves the caller's monitor exactly as it was.
+func applyMonitorUpdate(m *EventMonitor, body monitorUpdateBody) error {
+	secs := body.IntervalSeconds
+	if secs == 0 && body.IntervalMinutes > 0 {
+		secs = body.IntervalMinutes * 60
+	}
+	if secs != 0 {
+		if !IsScheduledEventKind(m.Kind) {
+			return Error("this monitor is push-triggered: it has no interval to set")
+		}
+		if secs < 5 {
+			return Error("interval too small: minimum 5 seconds")
+		}
+	}
+
+	// Which condition fields this kind owns. Anything else sent is a caller
+	// bug, and is named rather than dropped.
+	var owned map[string]bool
+	switch m.Kind {
+	case EventKindPoll:
+		owned = map[string]bool{"check": true, "match_contains": true}
+	case EventKindHTTP:
+		owned = map[string]bool{"url": true, "json_path": true, "regex": true, "compare_op": true, "threshold": true}
+	case EventKindWatch:
+		owned = map[string]bool{"format_script": true}
+	default: // webhook — an external POST decides when it fires; only the brief is editable
+		owned = map[string]bool{}
+	}
+	sent := map[string]*string{
+		"check": body.Check, "match_contains": body.MatchContains,
+		"url": body.URL, "json_path": body.JSONPath, "regex": body.Regex,
+		"compare_op": body.CompareOp, "threshold": body.Threshold,
+		"format_script": body.FormatScript,
+	}
+	// Sorted, so a body with two stray fields names the same one every time
+	// rather than whichever the map handed back first.
+	for _, field := range sortedKeys(sent) {
+		if sent[field] != nil && !owned[field] {
+			return Error("a " + m.Kind + " monitor has no " + field + " to edit")
+		}
+	}
+
+	if body.WakeBrief != nil {
+		brief := strings.TrimSpace(*body.WakeBrief)
+		if brief == "" {
+			return Error("a monitor needs a brief: it is what the agent is told when this fires")
+		}
+		m.WakeBrief = brief
+	}
+	switch m.Kind {
+	case EventKindPoll:
+		check := strPtrOr(body.Check, m.Check)
+		if strings.TrimSpace(check) == "" {
+			return Error("a poll monitor needs a check: the question its checker agent answers each interval")
+		}
+		m.Check = strings.TrimSpace(check)
+		if body.MatchContains != nil {
+			// Empty is legitimate here: the fire path falls back to "YES", so
+			// clearing it restores the default rather than disabling the test.
+			m.MatchContains = strings.TrimSpace(*body.MatchContains)
+		}
+	case EventKindHTTP:
+		url := strings.TrimSpace(strPtrOr(body.URL, m.URL))
+		if url == "" {
+			return Error("an http_poll monitor needs a url to fetch")
+		}
+		op := strings.TrimSpace(strPtrOr(body.CompareOp, m.CompareOp))
+		if !ValidCompareOp(op) {
+			return Error("compare_op must be one of < > <= >= == != contains")
+		}
+		threshold := strPtrOr(body.Threshold, m.Threshold)
+		if strings.TrimSpace(threshold) == "" {
+			return Error("an http_poll monitor needs a threshold: the value its extracted one is compared against")
+		}
+		m.URL, m.CompareOp, m.Threshold = url, op, threshold
+		if body.JSONPath != nil {
+			m.JSONPath = strings.TrimSpace(*body.JSONPath)
+		}
+		if body.Regex != nil {
+			m.Regex = strings.TrimSpace(*body.Regex)
+		}
+	case EventKindWatch:
+		if body.FormatScript != nil {
+			// Empty is the documented "use the built-in diff", so it clears.
+			m.FormatScript = strings.TrimSpace(*body.FormatScript)
+		}
+	}
+	if secs != 0 {
+		m.IntervalSeconds = secs
+	}
+	return nil
+}
+
+// monitorConditionChanged reports whether an edit moved what the monitor
+// watches or how it decides — as opposed to how often it looks, or what it says
+// when it fires, neither of which invalidates the baseline it has stored.
+// format_script is deliberately absent: it shapes the alert AFTER the change is
+// detected, so rewriting it must not throw away the baseline and silently eat
+// the next change.
+func monitorConditionChanged(before, after EventMonitor) bool {
+	return before.Check != after.Check ||
+		before.MatchContains != after.MatchContains ||
+		before.URL != after.URL ||
+		before.JSONPath != after.JSONPath ||
+		before.Regex != after.Regex ||
+		before.CompareOp != after.CompareOp ||
+		before.Threshold != after.Threshold
+}
+
+// strPtrOr is the "absent means unchanged" read: the posted value when one was
+// sent, the stored one when it was not.
+func strPtrOr(sent *string, stored string) string {
+	if sent == nil {
+		return stored
+	}
+	return *sent
+}
+
+// sortedKeys returns a map's keys in order, so a message built by walking one
+// reads the same on every request.
+func sortedKeys(m map[string]*string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 type consoleMonitorRow struct {

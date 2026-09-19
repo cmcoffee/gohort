@@ -6459,79 +6459,158 @@
         });
       });
 
-      // Build the shared recurring-task fields (name, directive, pattern, timing)
-      // into a modal body. Returns collect() → the JSON body the create/update
-      // endpoints accept. Shared by the edit action and the create action so the
-      // two forms never drift.
-      function buildRecurringFields(m, task) {
+      // --- The one schedule editor -----------------------------------------
+      //
+      // Three records run on a clock and all three used to get their own modal,
+      // with the same "Edit schedule" label opening nine controls, a frequency
+      // picker or a single number depending on which row you clicked. The
+      // records genuinely differ, so this is not one form; it is one FRAME worn
+      // three ways, split the way the question actually splits:
+      //
+      //   What it does — the mission, the directive, the condition.
+      //   When it runs — the cron, the pattern, the interval.
+      //
+      // An app supplies the two halves and the endpoints; everything else (the
+      // frame, the help line, the footer, save, errors) is written once here.
+      // The halves each return a collect() and the two results are merged into
+      // one body, so the server sees a single update and a rejected edit leaves
+      // nothing half-applied.
+
+      // schedHalf draws one half's heading (and its one-line note) and returns
+      // the element the fields go into.
+      function schedHalf(m, title, note) {
+        var h = document.createElement('div');
+        h.className = 'ui-orch-sec-h';
+        h.textContent = title;
+        m.body.appendChild(h);
+        if (note) {
+          var n = document.createElement('div');
+          n.className = 'ui-orch-sec-pick-desc';
+          n.textContent = note;
+          m.body.appendChild(n);
+        }
+        var host = document.createElement('div');
+        m.body.appendChild(host);
+        return host;
+      }
+
+      // schedArea builds the multi-line input the "what it does" halves are
+      // mostly made of — a mission, a directive, a question put to a checker.
+      function schedArea(val, rows, placeholder) {
+        var t = document.createElement('textarea');
+        t.className = 'ui-orch-sec-filter';
+        t.rows = rows || 5;
+        t.style.cssText = 'width:100%;white-space:pre-wrap;resize:vertical';
+        t.value = val || '';
+        t.placeholder = placeholder || '';
+        return t;
+      }
+
+      // schedReadOnly states a fact the editor will not let you change here,
+      // rather than leaving it off the page. A watch monitor's source is the
+      // clearest case: not seeing it reads as the monitor not having one.
+      function schedReadOnly(labelText, value) {
+        var d = document.createElement('div');
+        d.className = 'ui-orch-sec-pick-desc';
+        d.textContent = labelText + ': ' + value;
+        return d;
+      }
+
+      // schedEditor opens the frame for one row. spec supplies:
+      //   title      — the modal heading
+      //   getUrl(id) / saveUrl(id)
+      //   help(rec)  — the sentence under the heading
+      //   what(host, rec) → collect() | null   (null = this kind has no
+      //                     editable "what", and the half is not drawn)
+      //   when(host, rec) → collect() | null
+      //   whatNote / whenNote — optional one-liners under each heading
+      function schedEditor(ctx, spec) {
+        var id = ctx && ctx.id;
+        if (!id) return;
+        fetch(spec.getUrl(id))
+          .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+          .then(function(rec) {
+            var m = openOrchModal(spec.title);
+            var help = document.createElement('div');
+            help.className = 'ui-orch-modal-help';
+            help.textContent = spec.help(rec);
+            m.body.appendChild(help);
+
+            var collectWhat = spec.what(schedHalf(m, 'What it does', spec.whatNote), rec);
+            var collectWhen = spec.when(schedHalf(m, 'When it runs', spec.whenNote), rec);
+
+            var saveBtn = document.createElement('button');
+            saveBtn.className = 'ui-orch-modal-btn primary';
+            saveBtn.textContent = 'Save';
+            saveBtn.onclick = function() {
+              // A half that cannot validate returns null and has already said
+              // why, so the save stops without touching the server.
+              var body = {};
+              var half;
+              if (collectWhat) {
+                half = collectWhat();
+                if (!half) return;
+                Object.keys(half).forEach(function(k) { body[k] = half[k]; });
+              }
+              if (collectWhen) {
+                half = collectWhen();
+                if (!half) return;
+                Object.keys(half).forEach(function(k) { body[k] = half[k]; });
+              }
+              saveBtn.disabled = true;
+              fetch(spec.saveUrl(id), {
+                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+              }).then(function(r) {
+                if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
+                m.close();
+                if (ctx.reload) ctx.reload();
+              }).catch(function(err) {
+                saveBtn.disabled = false;
+                window.uiAlert('Update failed: ' + (err && err.message || err));
+              });
+            };
+            schedButtons(m, saveBtn);
+          })
+          .catch(function(err) { window.uiAlert('Could not load this schedule: ' + (err && err.message || err)); });
+      }
+
+      // --- Recurring task: the two halves ------------------------------------
+      //
+      // Split out of one builder so the editor and the creator compose the same
+      // fields in the same order and cannot drift, and so the halves land in the
+      // frame's two sections like every other kind's.
+
+      // What a recurring task does: its name and the directive run each fire.
+      function recurringWhatFields(host, task) {
+        task = task || {};
+        var nameInput = schedTxt(task.name || '', "(defaults to the directive's first line)");
+        host.appendChild(schedLabeled('Name', nameInput));
+        var promptInput = schedArea(task.prompt || '', 6,
+          'What the agent should do each time it fires (no timing here). e.g. "check the build, post if it is red"');
+        host.appendChild(schedLabeled('Directive (run each fire)', promptInput));
+        return function collect() {
+          return {name: nameInput.value.trim(), prompt: promptInput.value};
+        };
+      }
+
+      // When a recurring task runs: pattern, cadence, active window, fire cap.
+      function recurringWhenFields(host, task) {
         task = task || {};
         function labeled(labelText, inputEl) {
-          var wrap = document.createElement('label');
-          wrap.style.cssText = 'display:block;margin:0.4rem 0';
-          var lb = document.createElement('div');
-          lb.className = 'ui-orch-sec-toggle-help';
-          lb.textContent = labelText;
-          wrap.appendChild(lb);
-          wrap.appendChild(inputEl);
+          var wrap = schedLabeled(labelText, inputEl);
+          host.appendChild(wrap);
           return wrap;
         }
-        function num(val) {
-          var i = document.createElement('input');
-          i.type = 'number'; i.min = '0';
-          i.className = 'ui-orch-sec-filter';
-          i.value = (val ? String(val) : '');
-          return i;
-        }
-        function timeI(val) {
-          var i = document.createElement('input');
-          i.type = 'time'; i.step = '60'; i.className = 'ui-orch-sec-filter';
-          if (val) i.value = val;
-          return i;
-        }
+        var patternSel = schedSelect([['fixed', 'Fixed: every N minutes'], ['random', 'Random']], task.pattern || 'fixed');
+        labeled('Pattern', patternSel);
 
-        // Name — identifies the task on its report cards and in the rail.
-        var nameH = document.createElement('div');
-        nameH.className = 'ui-orch-sec-h';
-        nameH.textContent = 'Name';
-        m.body.appendChild(nameH);
-        var nameInput = document.createElement('input');
-        nameInput.type = 'text';
-        nameInput.className = 'ui-orch-sec-filter';
-        nameInput.value = task.name || '';
-        nameInput.placeholder = "(defaults to the directive's first line)";
-        nameInput.style.cssText = 'margin-bottom:0.6rem';
-        m.body.appendChild(nameInput);
-
-        // Directive (run each fire).
-        var ph = document.createElement('div');
-        ph.className = 'ui-orch-sec-h';
-        ph.textContent = 'Directive (run each fire)';
-        m.body.appendChild(ph);
-        var promptInput = document.createElement('textarea');
-        promptInput.className = 'ui-orch-sec-filter';
-        promptInput.rows = 6;
-        promptInput.style.cssText = 'width:100%;white-space:pre-wrap;margin-bottom:0.6rem;resize:vertical';
-        promptInput.value = task.prompt || '';
-        promptInput.placeholder = 'What the agent should do each time it fires (no timing here). e.g. "check the build, post if it is red"';
-        m.body.appendChild(promptInput);
-
-        var patternSel = document.createElement('select');
-        patternSel.className = 'ui-orch-sec-filter';
-        [['fixed', 'Fixed — every N minutes'], ['random', 'Random']].forEach(function(o) {
-          var opt = document.createElement('option');
-          opt.value = o[0]; opt.textContent = o[1];
-          if (o[0] === (task.pattern || 'fixed')) opt.selected = true;
-          patternSel.appendChild(opt);
-        });
-        m.body.appendChild(labeled('Pattern', patternSel));
-
-        var interval = num(task.interval_minutes);
-        var timesPerDay = num(task.times_per_day);
-        var minGap = num(task.min_gap_minutes);
-        var maxGap = num(task.max_gap_minutes);
-        var fromI = timeI(task.has_window ? task.active_from : '');
-        var toI = timeI(task.has_window ? task.active_to : '');
-        var maxFires = num(task.max_fires);
+        var interval = schedNum(task.interval_minutes);
+        var timesPerDay = schedNum(task.times_per_day);
+        var minGap = schedNum(task.min_gap_minutes);
+        var maxGap = schedNum(task.max_gap_minutes);
+        var fromI = schedTime(task.has_window ? task.active_from : '');
+        var toI = schedTime(task.has_window ? task.active_to : '');
+        var maxFires = schedNum(task.max_fires);
         // Indefinite is stored as max_fires = 0. That is invisible in a blank
         // number field, which reads as "unset" rather than as a decision — and
         // a cap someone else set (an agent authoring the task through the
@@ -6546,13 +6625,10 @@
         var timesRow = labeled('Times per day (blank = unlimited)', timesPerDay);
         var minGapRow = labeled('Min minutes between fires', minGap);
         var maxGapRow = labeled('Max minutes between fires (unlimited random)', maxGap);
-        [fixedRow, timesRow, minGapRow, maxGapRow].forEach(function(x) { m.body.appendChild(x); });
-        m.body.appendChild(labeled('Active window from (HH:MM, optional)', fromI));
-        m.body.appendChild(labeled('Active window to (HH:MM, optional)', toI));
-        var indefRow = labeled('Run indefinitely (no total-fire cap)', indefinite);
-        m.body.appendChild(indefRow);
+        labeled('Active window from (HH:MM, optional)', fromI);
+        labeled('Active window to (HH:MM, optional)', toI);
+        labeled('Run indefinitely (no total-fire cap)', indefinite);
         var maxFiresRow = labeled('Max total fires (stop after this many)', maxFires);
-        m.body.appendChild(maxFiresRow);
         function syncIndefinite() {
           maxFiresRow.style.display = indefinite.checked ? 'none' : '';
         }
@@ -6572,8 +6648,6 @@
         return function collect() {
           function iv(x) { var n = parseInt(x.value, 10); return isNaN(n) ? 0 : n; }
           return {
-            name: nameInput.value.trim(),
-            prompt: promptInput.value,
             pattern: patternSel.value,
             interval_minutes: iv(interval),
             times_per_day: iv(timesPerDay),
@@ -6588,83 +6662,32 @@
         };
       }
 
-      // Edit a recurring task from the Schedules rail (row click → this action).
-      // Loads the task's editable fields and posts changes to the update route,
-      // which reschedules in place (agent/session + fire history preserved).
+      // Edit a recurring task: its name and directive, then its cadence.
+      // Reschedules in place — the agent, session and fire history are
+      // preserved across the edit, so a retime does not reset the budget.
+      //
+      // Delete and Run now used to sit in this modal's footer. They are row
+      // actions on every row of the page that opens it, so the modal carrying
+      // its own copies made this one of the three footers no two of which
+      // matched. The row is where an action on a row belongs.
       window.uiRegisterClientAction('orchestrate_edit_schedule', function(ctx) {
-        var id = ctx && ctx.id;
-        if (!id) return;
-        fetch('api/console/recurring/get?id=' + encodeURIComponent(id))
-          .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-          .then(function(task) {
-            var m = openOrchModal('Recurring task');
-            var help = document.createElement('div');
-            help.className = 'ui-orch-modal-help';
-            help.textContent = 'This task runs ' + (task.cadence || '') + ' · fired ' + (task.fire_count || 0) + ' time(s). Edit its name, directive, and timing below, or run it now / delete it.';
-            m.body.appendChild(help);
-
-            var collect = buildRecurringFields(m, task);
-
-            // Delete — remove the task entirely (backend /delete). Confirmed,
-            // since it's destructive and can't be undone.
-            var delBtn = document.createElement('button');
-            delBtn.className = 'ui-orch-modal-btn';
-            delBtn.textContent = 'Delete';
-            delBtn.title = 'Remove this recurring task permanently';
-            delBtn.onclick = function() {
-              Promise.resolve(window.uiConfirm ? window.uiConfirm('Delete this recurring task? This cannot be undone.') : window.confirm('Delete this recurring task?')).then(function(ok) {
-                if (!ok) return;
-                delBtn.disabled = true;
-                fetch('api/console/recurring/delete?id=' + encodeURIComponent(id), { method: 'POST' })
-                  .then(function(r) { if (!r.ok) return r.text().then(function(t) { throw new Error(t); }); m.close(); if (ctx.reload) ctx.reload(); })
-                  .catch(function(err) { delBtn.disabled = false; window.uiAlert('Delete failed: ' + (err && err.message || err)); });
-              });
+        schedEditor(ctx, {
+          title: 'Recurring task',
+          getUrl: function(id) { return 'api/console/recurring/get?id=' + encodeURIComponent(id); },
+          saveUrl: function(id) { return 'api/console/recurring/update?id=' + encodeURIComponent(id); },
+          help: function(task) {
+            return 'Runs ' + (task.cadence || 'on a schedule') + ' · fired ' + (task.fire_count || 0) + ' time(s).';
+          },
+          what: function(host, task) {
+            var collect = recurringWhatFields(host, task);
+            return function() {
+              var body = collect();
+              if (!body.prompt.trim()) { window.uiAlert('Enter a directive for the task.'); return null; }
+              return body;
             };
-            m.footer.appendChild(delBtn);
-
-            // Run now — fire once immediately (backend /run). Does NOT touch the
-            // schedule or consume the fire budget; the reply lands in the thread.
-            var runBtn = document.createElement('button');
-            runBtn.className = 'ui-orch-modal-btn';
-            runBtn.textContent = 'Run now';
-            runBtn.title = 'Fire this task once now (does not affect its schedule)';
-            runBtn.onclick = function() {
-              runBtn.disabled = true;
-              fetch('api/console/recurring/run?id=' + encodeURIComponent(id), { method: 'POST' })
-                .then(function(r) {
-                  if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
-                  runBtn.disabled = false;
-                  window.uiAlert('Fired once — its reply will appear in the thread shortly.');
-                })
-                .catch(function(err) { runBtn.disabled = false; window.uiAlert('Run failed: ' + (err && err.message || err)); });
-            };
-            m.footer.appendChild(runBtn);
-
-            var cancelBtn = document.createElement('button');
-            cancelBtn.className = 'ui-orch-modal-btn';
-            cancelBtn.textContent = 'Cancel';
-            cancelBtn.onclick = m.close;
-            m.footer.appendChild(cancelBtn);
-
-            var saveBtn = document.createElement('button');
-            saveBtn.className = 'ui-orch-modal-btn primary';
-            saveBtn.textContent = 'Save';
-            saveBtn.onclick = function() {
-              saveBtn.disabled = true;
-              fetch('api/console/recurring/update?id=' + encodeURIComponent(id), {
-                method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(collect())
-              }).then(function(r) {
-                if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
-                m.close();
-                if (ctx.reload) ctx.reload();
-              }).catch(function(err) {
-                saveBtn.disabled = false;
-                window.uiAlert('Update failed: ' + (err && err.message || err));
-              });
-            };
-            m.footer.appendChild(saveBtn);
-          })
-          .catch(function(err) { window.uiAlert('Could not load task: ' + (err && err.message || err)); });
+          },
+          when: function(host, task) { return recurringWhenFields(host, task); }
+        });
       });
 
       // Create a NEW recurring task from the Scheduler modal's "New recurring
@@ -6681,7 +6704,16 @@
         help.textContent = 'Runs this agent on a timer, posting each result into its thread. Give it a directive and a cadence.';
         m.body.appendChild(help);
 
-        var collect = buildRecurringFields(m, {pattern: 'fixed', interval_minutes: 30});
+        // The same two halves the editor draws, in the same order, so what you
+        // fill in to create a task is what you come back to to change it.
+        var task = {pattern: 'fixed', interval_minutes: 30};
+        var collectWhat = recurringWhatFields(schedHalf(m, 'What it does'), task);
+        var collectWhen = recurringWhenFields(schedHalf(m, 'When it runs'), task);
+        function collect() {
+          var body = collectWhat(), when = collectWhen();
+          Object.keys(when).forEach(function(k) { body[k] = when[k]; });
+          return body;
+        }
 
         var cancelBtn = document.createElement('button');
         cancelBtn.className = 'ui-orch-modal-btn';
@@ -6870,195 +6902,254 @@
         m.footer.appendChild(saveBtn);
       }
 
-      // Edit an EVENT MONITOR's poll interval from the Scheduler modal. Webhook
-      // monitors are push-only and carry no edit affordance, so this always
-      // targets a schedulable (poll / http_poll / watch) monitor.
+      // Edit an EVENT MONITOR: what it watches for and what it tells the agent
+      // when it fires, then how often it looks.
+      //
+      // Offered on EVERY monitor now, including the push-triggered webhook,
+      // which has no interval but has both of the other two. The timing half
+      // says so in a line rather than the button being absent, because a
+      // missing button is indistinguishable from a monitor you are not allowed
+      // to touch.
       window.uiRegisterClientAction('orchestrate_edit_monitor', function(ctx) {
-        var id = ctx && ctx.id;
-        if (!id) return;
-        fetch('api/console/monitors/get?id=' + encodeURIComponent(id))
-          .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-          .then(function(mon) {
-            var m = openOrchModal('Event monitor');
-            var help = document.createElement('div');
-            help.className = 'ui-orch-modal-help';
-            help.textContent = '“' + (mon.name || '') + '” (' + (mon.kind || 'monitor') + ') checks on a fixed interval. Edit how often it runs.';
-            m.body.appendChild(help);
-
-            if (!mon.schedulable) {
-              var note = document.createElement('div');
-              note.className = 'ui-orch-sec-pick-desc';
-              note.textContent = 'This monitor is push-triggered — there is no interval to edit.';
-              m.body.appendChild(note);
-              return;
-            }
-
-            // Interval as a value + unit picker instead of a raw seconds box:
-            // pick "every 5 minutes" / "every 2 hours" from options, not math.
-            // Derive the friendliest unit from the stored seconds on load.
-            var storedSecs = mon.interval_seconds || 60;
-            var unit = 'seconds', val = storedSecs;
-            if (storedSecs % 3600 === 0) { unit = 'hours'; val = storedSecs / 3600; }
-            else if (storedSecs % 60 === 0) { unit = 'minutes'; val = storedSecs / 60; }
-            var everyVal = schedNum(val, 1);
-            var unitSel = schedSelect([['seconds', 'seconds'], ['minutes', 'minutes'], ['hours', 'hours']], unit);
-            var row = document.createElement('div');
-            row.style.cssText = 'display:flex;gap:0.5rem;align-items:center';
-            everyVal.style.maxWidth = '6rem';
-            row.appendChild(everyVal); row.appendChild(unitSel);
-            m.body.appendChild(schedLabeled('Check every', row));
-
-            function unitSecs(u) { return u === 'hours' ? 3600 : (u === 'minutes' ? 60 : 1); }
-            var saveBtn = document.createElement('button');
-            saveBtn.className = 'ui-orch-modal-btn primary';
-            saveBtn.textContent = 'Save';
-            saveBtn.onclick = function() {
-              var v = parseInt(everyVal.value, 10);
-              var n = (isNaN(v) ? 0 : v) * unitSecs(unitSel.value);
-              if (n < 5) { window.uiAlert('Interval must be at least 5 seconds.'); return; }
-              saveBtn.disabled = true;
-              fetch('api/console/monitors/update?id=' + encodeURIComponent(id), {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({interval_seconds: n})
-              }).then(function(r) {
-                if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
-                m.close();
-                if (ctx.reload) ctx.reload();
-              }).catch(function(err) {
-                saveBtn.disabled = false;
-                window.uiAlert('Update failed: ' + (err && err.message || err));
-              });
-            };
-            schedButtons(m, saveBtn);
-          })
-          .catch(function(err) { window.uiAlert('Could not load monitor: ' + (err && err.message || err)); });
+        schedEditor(ctx, {
+          title: 'Event monitor',
+          getUrl: function(id) { return 'api/console/monitors/get?id=' + encodeURIComponent(id); },
+          saveUrl: function(id) { return 'api/console/monitors/update?id=' + encodeURIComponent(id); },
+          help: function(mon) {
+            return '“' + (mon.name || '') + '” (' + (mon.kind || 'monitor') + ')' +
+              (mon.schedulable ? ' checks on a fixed interval.' : ' fires when something posts to it.');
+          },
+          what: monitorWhatFields,
+          when: monitorWhenFields
+        });
       });
 
-      // Edit a SCHEDULED (standing) AGENT's schedule from the Scheduler modal:
-      // a cron spec OR an interval. Cron wins when both are set (matches the
-      // server), so the modal notes that and clears the other on save.
+      // What a monitor watches for. Every kind is told something when it wakes
+      // an agent; the condition below that differs per kind, and a kind that
+      // has none (a webhook — an external POST decides) simply does not draw
+      // one rather than drawing an empty box.
+      function monitorWhatFields(host, mon) {
+        var brief = schedArea(mon.wake_brief || '', 4,
+          'What the agent is handed when this fires. e.g. "the build went red: say which test and who last touched it"');
+        host.appendChild(schedLabeled('Brief handed to the agent', brief));
+
+        var kind = mon.kind || '';
+        var check, match, url, jsonPath, regex, op, threshold, script;
+        if (kind === 'poll') {
+          check = schedArea(mon.check || '', 3, 'The question its checker agent answers each interval.');
+          host.appendChild(schedLabeled('Check (asked every interval)', check));
+          match = schedTxt(mon.match_contains || '', 'YES');
+          host.appendChild(schedLabeled('Fire when the answer contains (blank = YES)', match));
+          if (mon.check_agent) host.appendChild(schedReadOnly('Checked by', mon.check_agent));
+        } else if (kind === 'http_poll') {
+          url = schedTxt(mon.url || '', 'https://…');
+          host.appendChild(schedLabeled('URL fetched each interval', url));
+          jsonPath = schedTxt(mon.json_path || '', 'result.0.price');
+          host.appendChild(schedLabeled('Extract by JSON path (optional)', jsonPath));
+          regex = schedTxt(mon.regex || '', 'first capture group');
+          host.appendChild(schedLabeled('…or by regex (optional)', regex));
+          op = schedSelect([['<', 'is less than'], ['>', 'is greater than'], ['<=', 'is at most'],
+            ['>=', 'is at least'], ['==', 'equals'], ['!=', 'does not equal'], ['contains', 'contains']],
+            mon.compare_op || '>');
+          host.appendChild(schedLabeled('Fire when the extracted value…', op));
+          threshold = schedTxt(mon.threshold || '', 'the value compared against');
+          host.appendChild(schedLabeled('…this value', threshold));
+        } else if (kind === 'watch') {
+          if (mon.tool_name) host.appendChild(schedReadOnly('Watches', mon.tool_name));
+          host.appendChild(schedReadOnly('Fires when', 'the watched output changes'));
+          script = schedArea(mon.format_script || '', 5,
+            'Optional sandboxed python. Reads {"prior","current"} on stdin, prints the alert. Blank = the built-in diff.');
+          host.appendChild(schedLabeled('Format script (optional)', script));
+        }
+
+        return function() {
+          if (!brief.value.trim()) { window.uiAlert('Enter a brief: it is what the agent is told when this fires.'); return null; }
+          var body = {wake_brief: brief.value};
+          if (kind === 'poll') {
+            if (!check.value.trim()) { window.uiAlert('Enter a check: the question asked each interval.'); return null; }
+            body.check = check.value;
+            body.match_contains = match.value;
+          } else if (kind === 'http_poll') {
+            if (!url.value.trim()) { window.uiAlert('Enter a URL to fetch.'); return null; }
+            if (!threshold.value.trim()) { window.uiAlert('Enter the value to compare against.'); return null; }
+            body.url = url.value;
+            body.json_path = jsonPath.value;
+            body.regex = regex.value;
+            body.compare_op = op.value;
+            body.threshold = threshold.value;
+          } else if (kind === 'watch') {
+            body.format_script = script.value;
+          }
+          return body;
+        };
+      }
+
+      // How often a monitor looks — or, for a push-triggered one, the fact
+      // that it does not. Interval as a value + unit picker instead of a raw
+      // seconds box: pick "every 5 minutes" / "every 2 hours" from options, not
+      // math. The friendliest unit is derived from the stored seconds on load.
+      function monitorWhenFields(host, mon) {
+        if (!mon.schedulable) {
+          host.appendChild(schedReadOnly('Trigger', 'push, not a clock. It fires when something posts to it, so there is no interval to set.'));
+          return null;
+        }
+        var storedSecs = mon.interval_seconds || 60;
+        var unit = 'seconds', val = storedSecs;
+        if (storedSecs % 3600 === 0) { unit = 'hours'; val = storedSecs / 3600; }
+        else if (storedSecs % 60 === 0) { unit = 'minutes'; val = storedSecs / 60; }
+        var everyVal = schedNum(val, 1);
+        var unitSel = schedSelect([['seconds', 'seconds'], ['minutes', 'minutes'], ['hours', 'hours']], unit);
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;gap:0.5rem;align-items:center';
+        everyVal.style.maxWidth = '6rem';
+        row.appendChild(everyVal); row.appendChild(unitSel);
+        host.appendChild(schedLabeled('Check every', row));
+
+        return function() {
+          var secsPer = unitSel.value === 'hours' ? 3600 : (unitSel.value === 'minutes' ? 60 : 1);
+          var v = parseInt(everyVal.value, 10);
+          var n = (isNaN(v) ? 0 : v) * secsPer;
+          if (n < 5) { window.uiAlert('Interval must be at least 5 seconds.'); return null; }
+          return {interval_seconds: n};
+        };
+      }
+
+      // Edit a SCHEDULED (standing) AGENT: the mission it is handed on every
+      // run, then when it runs — a cron spec OR an interval. Cron wins when
+      // both are set (matches the server), so the modal clears the other on
+      // save.
+      //
+      // The mission belongs here. "This fires at the wrong time" and "this
+      // fires doing the wrong thing" are the same complaint arriving at the
+      // same page, and only one of them used to have an answer on it.
       window.uiRegisterClientAction('orchestrate_edit_standing', function(ctx) {
-        var id = ctx && ctx.id;
-        if (!id) return;
-        fetch('api/console/agents/get?id=' + encodeURIComponent(id))
-          .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-          .then(function(sa) {
-            var m = openOrchModal('Scheduled agent');
-            var help = document.createElement('div');
-            help.className = 'ui-orch-modal-help';
-            help.textContent = '“' + (sa.name || '') + '” runs ' + (sa.schedule_label || 'on a schedule') + '. Choose when it runs.';
-            m.body.appendChild(help);
-
-            var DAYS = [['MON', 'Mon'], ['TUE', 'Tue'], ['WED', 'Wed'], ['THU', 'Thu'], ['FRI', 'Fri'], ['SAT', 'Sat'], ['SUN', 'Sun']];
-
-            // Frequency drives which time controls show — no cron string typed.
-            var freq = schedSelect([
-              ['interval', 'Every N minutes'],
-              ['daily', 'Every day'],
-              ['weekdays', 'Weekdays (Mon–Fri)'],
-              ['weekends', 'Weekends (Sat–Sun)'],
-              ['weekly', 'Weekly on a day'],
-              ['custom', 'Specific days']
-            ], 'daily');
-            m.body.appendChild(schedLabeled('Frequency', freq));
-
-            var interval = schedNum(sa.interval_minutes || 60, 1);
-            var intervalRow = schedLabeled('Every N minutes', interval);
-            m.body.appendChild(intervalRow);
-
-            var timeInput = schedTime('');
-            var timeRow = schedLabeled('At time (local)', timeInput);
-            m.body.appendChild(timeRow);
-
-            var weekdaySel = schedSelect(DAYS, 'MON');
-            var weeklyRow = schedLabeled('On day', weekdaySel);
-            m.body.appendChild(weeklyRow);
-
-            var customWrap = document.createElement('div');
-            customWrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:0.6rem;margin:0.2rem 0';
-            var dayBoxes = DAYS.map(function(d) {
-              var lbl = document.createElement('label');
-              lbl.style.cssText = 'display:inline-flex;align-items:center;gap:0.3rem;font-size:0.85rem';
-              var cb = document.createElement('input'); cb.type = 'checkbox'; cb.value = d[0];
-              lbl.appendChild(cb); lbl.appendChild(document.createTextNode(d[1]));
-              customWrap.appendChild(lbl);
-              return cb;
-            });
-            var customRow = schedLabeled('On days', customWrap);
-            m.body.appendChild(customRow);
-
-            function show(el, on) { el.style.display = on ? '' : 'none'; }
-            function sync() {
-              var f = freq.value;
-              show(intervalRow, f === 'interval');
-              show(timeRow, f !== 'interval');
-              show(weeklyRow, f === 'weekly');
-              show(customRow, f === 'custom');
-            }
-            freq.addEventListener('change', sync);
-
-            // Prefill the controls from the agent's current schedule so an edit
-            // starts from what's set, not a blank default.
-            (function prefill() {
-              var cron = (sa.cron || '').trim();
-              if (!cron && (sa.interval_minutes || 0) > 0) { freq.value = 'interval'; return; }
-              var parts = cron.split(/\s+/);
-              if (parts.length === 2) {
-                var days = parts[0].toLowerCase(), hhmm = parts[1];
-                if (/^\d{1,2}:\d{2}$/.test(hhmm)) { timeInput.value = hhmm.length === 4 ? '0' + hhmm : hhmm; }
-                if (days === 'daily' || days === 'everyday') { freq.value = 'daily'; }
-                else if (days === 'weekdays') { freq.value = 'weekdays'; }
-                else if (days === 'weekends') { freq.value = 'weekends'; }
-                else {
-                  var toks = days.split(',').map(function(s) { return s.trim().slice(0, 3).toUpperCase(); }).filter(Boolean);
-                  if (toks.length === 1) { freq.value = 'weekly'; weekdaySel.value = toks[0]; }
-                  else { freq.value = 'custom'; dayBoxes.forEach(function(cb) { cb.checked = toks.indexOf(cb.value) >= 0; }); }
-                }
-              }
-            })();
-            if (!timeInput.value) timeInput.value = '09:00';
-            sync();
-
-            var saveBtn = document.createElement('button');
-            saveBtn.className = 'ui-orch-modal-btn primary';
-            saveBtn.textContent = 'Save';
-            saveBtn.onclick = function() {
-              var f = freq.value, cronVal = '', iv = 0;
-              if (f === 'interval') {
-                iv = parseInt(interval.value, 10);
-                if (isNaN(iv) || iv < 1) { window.uiAlert('Enter a minute interval of 1 or more.'); return; }
-              } else {
-                var hhmm = timeInput.value;
-                if (!/^\d{1,2}:\d{2}$/.test(hhmm)) { window.uiAlert('Pick a time of day.'); return; }
-                var daysTok = '';
-                if (f === 'daily') daysTok = 'daily';
-                else if (f === 'weekdays') daysTok = 'weekdays';
-                else if (f === 'weekends') daysTok = 'weekends';
-                else if (f === 'weekly') daysTok = weekdaySel.value;
-                else if (f === 'custom') {
-                  var sel = dayBoxes.filter(function(cb) { return cb.checked; }).map(function(cb) { return cb.value; });
-                  if (!sel.length) { window.uiAlert('Pick at least one day.'); return; }
-                  daysTok = sel.join(',');
-                }
-                cronVal = daysTok + ' ' + hhmm;
-              }
-              saveBtn.disabled = true;
-              fetch('api/console/agents/update?id=' + encodeURIComponent(id), {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({cron: cronVal, interval_minutes: iv})
-              }).then(function(r) {
-                if (!r.ok) return r.text().then(function(t) { throw new Error(t); });
-                m.close();
-                if (ctx.reload) ctx.reload();
-              }).catch(function(err) {
-                saveBtn.disabled = false;
-                window.uiAlert('Update failed: ' + (err && err.message || err));
-              });
-            };
-            schedButtons(m, saveBtn);
-          })
-          .catch(function(err) { window.uiAlert('Could not load agent: ' + (err && err.message || err)); });
+        schedEditor(ctx, {
+          title: 'Scheduled agent',
+          getUrl: function(id) { return 'api/console/agents/get?id=' + encodeURIComponent(id); },
+          saveUrl: function(id) { return 'api/console/agents/update?id=' + encodeURIComponent(id); },
+          help: function(sa) {
+            return '“' + (sa.name || '') + '” runs ' + (sa.schedule_label || 'on a schedule') +
+              (sa.runs ? ' · ' + sa.runs : '') + '.';
+          },
+          what: standingWhatFields,
+          when: standingWhenFields
+        });
       });
+
+      // What a scheduled agent does: its mission. When the schedule drives a
+      // pipeline or a machine rather than an agent, the same field is that
+      // run's INPUT, and the label says so — the alternative is a box labelled
+      // "Mission" on a row that runs a pipeline, which reads as the wrong box.
+      function standingWhatFields(host, sa) {
+        var isRun = !!sa.targets_run;
+        var mission = schedArea(sa.mission || '', 5, isRun
+          ? 'What this run is given each time it starts.'
+          : 'The standing brief handed to the agent on every run. e.g. "review yesterday\'s failed runs and say what broke"');
+        host.appendChild(schedLabeled(isRun ? 'Input handed to the run' : 'Mission (handed over on every run)', mission));
+        return function() {
+          if (!mission.value.trim()) {
+            window.uiAlert(isRun ? 'Enter the input this run is given.' : 'Enter a mission: it is what the agent is handed on every run.');
+            return null;
+          }
+          return {mission: mission.value};
+        };
+      }
+
+      // When a scheduled agent runs. A frequency picker drives which time
+      // controls show, so no cron string is ever typed.
+      function standingWhenFields(host, sa) {
+        var DAYS = [['MON', 'Mon'], ['TUE', 'Tue'], ['WED', 'Wed'], ['THU', 'Thu'], ['FRI', 'Fri'], ['SAT', 'Sat'], ['SUN', 'Sun']];
+
+        var freq = schedSelect([
+          ['interval', 'Every N minutes'],
+          ['daily', 'Every day'],
+          ['weekdays', 'Weekdays (Mon–Fri)'],
+          ['weekends', 'Weekends (Sat–Sun)'],
+          ['weekly', 'Weekly on a day'],
+          ['custom', 'Specific days']
+        ], 'daily');
+        host.appendChild(schedLabeled('Frequency', freq));
+
+        var interval = schedNum(sa.interval_minutes || 60, 1);
+        var intervalRow = schedLabeled('Every N minutes', interval);
+        host.appendChild(intervalRow);
+
+        var timeInput = schedTime('');
+        var timeRow = schedLabeled('At time (local)', timeInput);
+        host.appendChild(timeRow);
+
+        var weekdaySel = schedSelect(DAYS, 'MON');
+        var weeklyRow = schedLabeled('On day', weekdaySel);
+        host.appendChild(weeklyRow);
+
+        var customWrap = document.createElement('div');
+        customWrap.style.cssText = 'display:flex;flex-wrap:wrap;gap:0.6rem;margin:0.2rem 0';
+        var dayBoxes = DAYS.map(function(d) {
+          var lbl = document.createElement('label');
+          lbl.style.cssText = 'display:inline-flex;align-items:center;gap:0.3rem;font-size:0.85rem';
+          var cb = document.createElement('input'); cb.type = 'checkbox'; cb.value = d[0];
+          lbl.appendChild(cb); lbl.appendChild(document.createTextNode(d[1]));
+          customWrap.appendChild(lbl);
+          return cb;
+        });
+        var customRow = schedLabeled('On days', customWrap);
+        host.appendChild(customRow);
+
+        function show(el, on) { el.style.display = on ? '' : 'none'; }
+        function sync() {
+          var f = freq.value;
+          show(intervalRow, f === 'interval');
+          show(timeRow, f !== 'interval');
+          show(weeklyRow, f === 'weekly');
+          show(customRow, f === 'custom');
+        }
+        freq.addEventListener('change', sync);
+
+        // Prefill the controls from the agent's current schedule so an edit
+        // starts from what's set, not a blank default.
+        (function prefill() {
+          var cron = (sa.cron || '').trim();
+          if (!cron && (sa.interval_minutes || 0) > 0) { freq.value = 'interval'; return; }
+          var parts = cron.split(/\s+/);
+          if (parts.length === 2) {
+            var days = parts[0].toLowerCase(), hhmm = parts[1];
+            if (/^\d{1,2}:\d{2}$/.test(hhmm)) { timeInput.value = hhmm.length === 4 ? '0' + hhmm : hhmm; }
+            if (days === 'daily' || days === 'everyday') { freq.value = 'daily'; }
+            else if (days === 'weekdays') { freq.value = 'weekdays'; }
+            else if (days === 'weekends') { freq.value = 'weekends'; }
+            else {
+              var toks = days.split(',').map(function(s) { return s.trim().slice(0, 3).toUpperCase(); }).filter(Boolean);
+              if (toks.length === 1) { freq.value = 'weekly'; weekdaySel.value = toks[0]; }
+              else { freq.value = 'custom'; dayBoxes.forEach(function(cb) { cb.checked = toks.indexOf(cb.value) >= 0; }); }
+            }
+          }
+        })();
+        if (!timeInput.value) timeInput.value = '09:00';
+        sync();
+
+        return function() {
+          var f = freq.value, cronVal = '', iv = 0;
+          if (f === 'interval') {
+            iv = parseInt(interval.value, 10);
+            if (isNaN(iv) || iv < 1) { window.uiAlert('Enter a minute interval of 1 or more.'); return null; }
+          } else {
+            var hhmm = timeInput.value;
+            if (!/^\d{1,2}:\d{2}$/.test(hhmm)) { window.uiAlert('Pick a time of day.'); return null; }
+            var daysTok = '';
+            if (f === 'daily') daysTok = 'daily';
+            else if (f === 'weekdays') daysTok = 'weekdays';
+            else if (f === 'weekends') daysTok = 'weekends';
+            else if (f === 'weekly') daysTok = weekdaySel.value;
+            else if (f === 'custom') {
+              var sel = dayBoxes.filter(function(cb) { return cb.checked; }).map(function(cb) { return cb.value; });
+              if (!sel.length) { window.uiAlert('Pick at least one day.'); return null; }
+              daysTok = sel.join(',');
+            }
+            cronVal = daysTok + ' ' + hhmm;
+          }
+          return {cron: cronVal, interval_minutes: iv};
+        };
+      }
 
       // --- Per-agent count refresh on the Tools / Memory / Rules buttons ---
       // Find the toolbar buttons by their visible label text and append

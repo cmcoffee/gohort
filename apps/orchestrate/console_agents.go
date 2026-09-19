@@ -207,8 +207,10 @@ func (T *OrchestrateApp) handleConsoleAgentRelink(w http.ResponseWriter, r *http
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleConsoleAgentGet returns a standing agent's editable schedule for the
-// Scheduler edit modal.
+// handleConsoleAgentGet returns a standing agent's editable record for the
+// Scheduler edit modal — the mission as well as the timing, because "this runs
+// at the wrong time" and "this runs doing the wrong thing" are the same
+// complaint from the same page.
 func (T *OrchestrateApp) handleConsoleAgentGet(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
@@ -232,14 +234,28 @@ func (T *OrchestrateApp) handleConsoleAgentGet(w http.ResponseWriter, r *http.Re
 		"start_at":         startAt,
 		"schedule_label":   StandingScheduleLabel(sa),
 		"paused":           sa.Paused,
+		// What this schedule actually runs. Empty for the ordinary case (the
+		// agent's own mission); "pipeline · <name>" or "machine · <name>" when
+		// it drives one of those, where the mission is the run's INPUT rather
+		// than a brief — the editor labels the field differently for each, so
+		// it has to know which it is looking at.
+		"runs":        standingRunsLabel(user, sa),
+		"targets_run": sa.TargetsPipeline() || sa.TargetsMachine(),
 	})
 }
 
 // handleConsoleAgentUpdate edits a standing agent's schedule (a cron spec OR an
-// interval) in place and re-arms it. Cron takes precedence when set, matching
-// StandingAgent semantics. A bad schedule (e.g. unparseable cron) is rejected
-// and the original restored so an edit never strands the agent. POST ?id=<name>
-// with {cron} and/or {interval_minutes}.
+// interval) AND its mission in place, then re-arms it. Cron takes precedence
+// when set, matching StandingAgent semantics. A bad schedule (e.g. unparseable
+// cron) is rejected and the original restored so an edit never strands the
+// agent. POST ?id=<name> with {cron} and/or {interval_minutes}, and optionally
+// {mission}.
+//
+// Mission is a POINTER: absent preserves what is stored, which is what the
+// timing-only callers (and anything older than this field) send. Sent empty is
+// REFUSED rather than treated as "clear it" — a standing agent whose mission is
+// blank fires on its schedule with nothing to do, so a stray empty textarea
+// would quietly turn a working schedule into a recurring no-op.
 func (T *OrchestrateApp) handleConsoleAgentUpdate(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
@@ -254,25 +270,15 @@ func (T *OrchestrateApp) handleConsoleAgentUpdate(w http.ResponseWriter, r *http
 		http.Error(w, "no such standing agent", http.StatusNotFound)
 		return
 	}
-	var body struct {
-		Cron            string `json:"cron"`
-		IntervalMinutes int    `json:"interval_minutes"`
-	}
+	var body standingUpdateBody
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	cron := strings.TrimSpace(body.Cron)
-	secs := body.IntervalMinutes * 60
-	if cron == "" && secs <= 0 {
-		http.Error(w, "set a cron schedule or an interval (minutes)", http.StatusBadRequest)
+	before := sa
+	if err := applyStandingUpdate(&sa, body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
-	}
-	prevCron, prevInterval, prevSurface := sa.Cron, sa.IntervalSeconds, sa.Surface
-	if cron != "" {
-		sa.Cron, sa.IntervalSeconds = cron, 0
-	} else {
-		sa.Cron, sa.IntervalSeconds = "", secs
 	}
 	// A destination nobody chose takes the agent's default on edit, same as on
 	// create: a cortex controller reads its scheduled runs in its cortex. An
@@ -285,17 +291,56 @@ func (T *OrchestrateApp) handleConsoleAgentUpdate(w http.ResponseWriter, r *http
 		err = ScheduleStandingAgent(RootDB, sa)
 	}
 	if err != nil {
-		// Restore so a rejected edit doesn't strand the agent.
-		sa.Cron, sa.IntervalSeconds, sa.Surface = prevCron, prevInterval, prevSurface
-		if sa.Paused {
-			SaveStandingAgent(RootDB, sa)
+		// Restore so a rejected edit doesn't strand the agent. The whole record
+		// goes back, mission included: a schedule that would not arm must not
+		// be left half-applied, holding the new brief and the old timing.
+		if before.Paused {
+			SaveStandingAgent(RootDB, before)
 		} else {
-			_ = ScheduleStandingAgent(RootDB, sa)
+			_ = ScheduleStandingAgent(RootDB, before)
 		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// standingUpdateBody is what the Scheduler's scheduled-agent editor posts.
+type standingUpdateBody struct {
+	Cron            string `json:"cron"`
+	IntervalMinutes int    `json:"interval_minutes"`
+	// Mission is a POINTER: absent preserves what is stored, which is what the
+	// timing-only callers (and anything written before the field existed)
+	// send. Sent EMPTY is refused rather than read as "clear it" — a standing
+	// agent with a blank mission still fires on its schedule, with nothing to
+	// do, so a stray empty textarea would quietly turn a working schedule into
+	// a recurring no-op.
+	Mission *string `json:"mission"`
+}
+
+// applyStandingUpdate writes the posted schedule and mission onto sa, refusing
+// anything the fire path could not act on. Validation runs BEFORE any
+// assignment, so a rejected body leaves the caller's record untouched and the
+// handler has an original to restore.
+func applyStandingUpdate(sa *StandingAgent, body standingUpdateBody) error {
+	cron := strings.TrimSpace(body.Cron)
+	secs := body.IntervalMinutes * 60
+	if cron == "" && secs <= 0 {
+		return Error("set a cron schedule or an interval (minutes)")
+	}
+	mission := sa.Mission
+	if body.Mission != nil {
+		if mission = strings.TrimSpace(*body.Mission); mission == "" {
+			return Error("a scheduled agent needs a mission: it is what the agent is handed on every run")
+		}
+	}
+	sa.Mission = mission
+	if cron != "" {
+		sa.Cron, sa.IntervalSeconds = cron, 0
+	} else {
+		sa.Cron, sa.IntervalSeconds = "", secs
+	}
+	return nil
 }
 
 type consoleAgentRow struct {

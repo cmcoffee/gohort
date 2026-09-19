@@ -1466,9 +1466,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					); err != nil {
 						return "", err
 					}
-					switch m.CompareOp {
-					case "<", ">", "<=", ">=", "==", "!=", "contains":
-					default:
+					if !ValidCompareOp(m.CompareOp) {
 						return "", fmt.Errorf("compare_op must be one of < > <= >= == != contains")
 					}
 					extractDesc := "the response body"
