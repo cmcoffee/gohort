@@ -266,6 +266,24 @@ func (g *GroupedTool) Caps() []Capability {
 	return out
 }
 
+// ActionCaps gives each action's own capabilities, so a caller asking what a
+// particular CALL does is not answered with what the whole tool can do.
+//
+// Caps() above is the union and stays the union: it decides whether the tool is
+// offered at all, where coarse is the safe direction. This is for the questions
+// where coarse is simply wrong — whether THIS call can carry data out, most of
+// all, which decides whether a local read gets put in front of a model judge.
+func (g *GroupedTool) ActionCaps() map[string][]Capability {
+	out := make(map[string][]Capability, len(g.actions))
+	for name, a := range g.actions {
+		if a == nil {
+			continue
+		}
+		out[name] = append([]Capability(nil), a.Caps...)
+	}
+	return out
+}
+
 // isRunLikeAction reports whether an unknown action reads as "execute the
 // thing" — the intent that has no home on a management tool and sends a model
 // looking for a workaround. Kept to the words a model actually reaches for;

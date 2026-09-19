@@ -191,6 +191,13 @@ type Tool struct {
 	// system trusts the declaration, it doesn't introspect the handler.
 	Caps []Capability `json:"-"`
 
+	// ActionCaps gives the capabilities of each sub-action, for a grouped
+	// tool whose actions differ. Empty for an ordinary tool, where Caps
+	// already answers for every call. See ActionCapabilityTool: Caps is the
+	// union and decides whether the tool is offered; this decides what one
+	// CALL through it actually does.
+	ActionCaps map[string][]Capability `json:"-"`
+
 	// Prompt is an optional system-prompt fragment that gets appended
 	// when this tool is loaded into an agent. Most tools (web_search,
 	// fetch_url, calculate, …) don't need one — name + description in

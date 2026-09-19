@@ -219,6 +219,11 @@ type chatTurn struct {
 	// outboundTools names the wrapped tools that can carry data OUT. Read by
 	// the widened pre_action gate on a tainted turn; see guardrailActionGate.
 	outboundTools map[string]bool
+	// outboundActions narrows that per ACTION for a grouped tool, whose
+	// Caps are the union of its actions' and so say network-capable on
+	// every call. Present only for tools that declare per-action caps;
+	// absent means the whole tool is the unit of reach. See callIsOutbound.
+	outboundActions map[string]map[string]bool
 	// taintBlocks counts actions stopped by that check, so the diagnostic can
 	// say whether the tightening did anything.
 	taintBlocks int

@@ -758,26 +758,40 @@ func (t *chatTurn) taintedActionJudge() TaintedActionJudge {
 //
 // Two states, and the difference is the whole design. Untainted, it returns
 // nil: nothing has gone wrong, and judging every network read would be a model
-// call per read on every turn. Tainted, it adds the tools that can carry data
+// call per read on every turn. Tainted, it adds the calls that can carry data
 // OUT — because after a detection the dangerous call is not the one that looks
 // consequential, it is the plain fetch of somewhere-else.com/?q=the-secret,
 // which is an exfiltration with the shape of a read and which NeedsConfirm
 // never covered.
 //
-// The names are captured at catalog time. Resolving caps per call would mean a
-// lookup inside the loop for a set that cannot change mid-turn.
-func (t *chatTurn) guardrailActionGate() func(string) bool {
+// Per CALL, not per tool name. A grouped tool's Caps are the union of its
+// actions', which is right for deciding whether it is offered and wrong here:
+// one `workspace` covers a network fetch and a local file read, so gating by
+// name puts the read in front of a model judge holding the fetch's suspicion.
+// That is not theoretical — it is how an agent came to be stopped from looking
+// at a screenshot it had taken itself.
+//
+// Resolved at catalog time into a predicate per tool, so the per-call work is
+// one map lookup and a string compare rather than a capability walk.
+func (t *chatTurn) guardrailActionGate() func(string, map[string]any) bool {
 	if t == nil || !scanTightens(t.agent) {
 		return nil
 	}
-	return func(name string) bool { return t.turnTainted() && t.toolIsOutbound(name) }
+	return func(name string, args map[string]any) bool {
+		return t.turnTainted() && t.callIsOutbound(name, args)
+	}
 }
 
-// noteOutboundTool records that a wrapped tool can carry data out. Called from
+// noteOutboundTool records how a wrapped tool can carry data out. Called from
 // the one place every catalog passes through (wrapToolsForActivity), so the set
 // is built from what this turn was ACTUALLY given rather than from a list
 // somebody has to remember to update.
-func (t *chatTurn) noteOutboundTool(name string) {
+//
+// actionCaps is the tool's per-action capability map, empty for an ordinary
+// tool. When it is present, only the actions that carry CapNetwork count as
+// outbound; when it is absent the whole tool does, which is the behaviour every
+// non-grouped tool had and keeps.
+func (t *chatTurn) noteOutboundTool(name string, actionCaps map[string][]Capability) {
 	if t == nil || strings.TrimSpace(name) == "" {
 		return
 	}
@@ -787,16 +801,60 @@ func (t *chatTurn) noteOutboundTool(name string) {
 		t.outboundTools = map[string]bool{}
 	}
 	t.outboundTools[name] = true
+	if len(actionCaps) == 0 {
+		return
+	}
+	if t.outboundActions == nil {
+		t.outboundActions = map[string]map[string]bool{}
+	}
+	// EVERY action gets an entry, not only the outbound ones. The reader
+	// distinguishes "this turn was told about this action and it is local" from
+	// "never heard of it", and the second fails toward judging; recording only
+	// the network actions collapses the two and gates the whole tool again.
+	per := make(map[string]bool, len(actionCaps))
+	for action, caps := range actionCaps {
+		outbound := false
+		for _, c := range caps {
+			if c == CapNetwork {
+				outbound = true
+				break
+			}
+		}
+		per[action] = outbound
+	}
+	t.outboundActions[name] = per
 }
 
-// toolIsOutbound reports whether a name was noted as network-capable.
-func (t *chatTurn) toolIsOutbound(name string) bool {
+// callIsOutbound reports whether THIS call can carry data out.
+//
+// An action this turn was never told about is treated as outbound. The unknown
+// cases are a tool whose action list changed under us and a model naming
+// something that does not exist, and neither is a reason to skip the check on a
+// turn already known to be holding hostile instructions: the fail direction
+// here matches the rest of the tainted path.
+func (t *chatTurn) callIsOutbound(name string, args map[string]any) bool {
 	if t == nil {
 		return false
 	}
 	t.scanMu.Lock()
 	defer t.scanMu.Unlock()
-	return t.outboundTools[name]
+	if !t.outboundTools[name] {
+		return false
+	}
+	per, ok := t.outboundActions[name]
+	if !ok {
+		return true // not a grouped tool: the whole tool is the unit of reach
+	}
+	action := strings.TrimSpace(fmt.Sprint(args["action"]))
+	if action == "" || action == "<nil>" {
+		// No action named at all. The tool will refuse it or answer with its
+		// help text, but this is not the place to assume which.
+		return true
+	}
+	if outbound, known := per[action]; known {
+		return outbound
+	}
+	return true
 }
 
 // checkTaintedAction is the pre_action check for a tainted turn.

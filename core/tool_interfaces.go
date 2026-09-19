@@ -94,6 +94,33 @@ func ChatToolCaps(ct ChatTool) []Capability {
 	return nil
 }
 
+// ActionCapabilityTool is an optional interface a ChatTool implements when its
+// capabilities differ PER ACTION — a grouped tool whose actions are not all the
+// same shape.
+//
+// Caps() on such a tool is the UNION, which is right for deciding whether the
+// tool appears at all: an action needing CapExecute must not be reachable from
+// a session that was not granted it, and hiding the whole tool is the safe
+// coarse answer. It is the wrong answer for anything asking what THIS CALL
+// does. A grouped tool with one network action reads as network-capable on
+// every call, so a purely local read inherits the treatment its outbound
+// sibling earned.
+//
+// The map is by action name; an action absent from it has no caps of its own
+// and falls back to the union.
+type ActionCapabilityTool interface {
+	ActionCaps() map[string][]Capability
+}
+
+// ChatToolActionCaps returns the per-action capabilities of a tool that
+// declares them, or nil for one that does not.
+func ChatToolActionCaps(ct ChatTool) map[string][]Capability {
+	if c, ok := ct.(ActionCapabilityTool); ok {
+		return c.ActionCaps()
+	}
+	return nil
+}
+
 func ToolCategory(t ChatTool) string {
 	if c, ok := t.(CategorizedTool); ok {
 		return strings.TrimSpace(c.Category())

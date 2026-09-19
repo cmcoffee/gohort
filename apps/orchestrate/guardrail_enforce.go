@@ -29,7 +29,7 @@ type guardrailEnforcement struct {
 	// ActionGate widens WHICH calls reach Check at pre_action, and only while
 	// this turn is tainted. It travels with the rest because it is meaningless
 	// without them: a gate with no check behind it judges nothing.
-	ActionGate func(toolName string) bool
+	ActionGate func(toolName string, args map[string]any) bool
 }
 
 // guardrailEnforcer returns the enforcement set for this turn. Inert (zero

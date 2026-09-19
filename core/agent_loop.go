@@ -3166,7 +3166,7 @@ func (lr *loopRun) toolRoundPlanCalls() loopAction {
 		// machinery so repeated blocks settle the turn.
 		judgeThisCall := lr.needsConfirm[tc.Name]
 		if !judgeThisCall && lr.cfg.GuardrailActionGate != nil {
-			judgeThisCall = lr.cfg.GuardrailActionGate(tc.Name)
+			judgeThisCall = lr.cfg.GuardrailActionGate(tc.Name, tc.Args)
 		}
 		if lr.cfg.GuardrailCheck != nil && judgeThisCall {
 			// Decision.Correctable is deliberately ignored here: a blocked call

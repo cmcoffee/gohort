@@ -763,8 +763,10 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 		policy := toolResultPolicyFor(receiver, tools[i].Tool)
 		if policy.fence {
 			// Network-capable and not framework-authored: the same predicate
-			// that decides fencing decides what can carry data out.
-			t.noteOutboundTool(name)
+			// that decides fencing decides what can carry data out. The tool's
+			// per-action caps ride along, so a grouped tool's local actions are
+			// not judged as if they were its network one.
+			t.noteOutboundTool(name, tools[i].Tool.ActionCaps)
 		}
 		inner := orig
 		orig = func(ctx context.Context, args map[string]any) (string, error) {

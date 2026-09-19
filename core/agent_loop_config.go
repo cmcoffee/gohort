@@ -298,7 +298,12 @@ type AgentLoopConfig struct {
 	//
 	// Widening changes WHICH calls are judged, never HOW: the verdict, the
 	// block, the message, and the escalation counter are unchanged.
-	GuardrailActionGate func(toolName string) bool
+	//
+	// The ARGS come too, because on a grouped tool the name is not the unit of
+	// reach: one `workspace` covers a network fetch and a local file read, and
+	// judging by name puts the read in front of a model with the fetch's
+	// treatment. The predicate reads whichever arg selects the action.
+	GuardrailActionGate func(toolName string, args map[string]any) bool
 
 	// GuardrailHalted, when set, is consulted immediately after any blocked
 	// check. true means the app has decided this turn must END — not be
