@@ -173,6 +173,9 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/run-detail", g(T.handleConsoleRunDetail))
 	T.HandleFunc("/api/console/approvals", g(T.handleConsoleApprovals))
 	T.HandleFunc("/api/console/permissions", g(T.handleConsolePermissions))
+	// Widen one agent's contact grant to every agent. See
+	// handleConsolePermissionPromote for why the scoped row is the default.
+	T.HandleFunc("/api/console/permissions/promote", gw(T.handleConsolePermissionPromote))
 	T.HandleFunc("/api/console/permissions/policy", g(T.handleConsolePermissionPolicy))
 	T.HandleFunc("/api/console/permissions/remove", g(T.handleConsolePermissionRemove))
 	T.HandleFunc("/api/console/privileges", g(T.handleConsolePrivileges))

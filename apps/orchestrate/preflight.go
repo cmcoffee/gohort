@@ -138,13 +138,13 @@ func preflightRecipients(udb Database, owner string, agent AgentRecord) []Prefli
 		recip := operatorRecipientKey(chatID, "")
 		label := chFirst(ch.Name, chatID)
 		switch {
-		case IsContactBlocked(RootDB, owner, recip):
+		case IsContactBlocked(RootDB, owner, agent.ID, recip):
 			out = append(out, PreflightFinding{
 				Gate: PreflightGateRecipient, Name: label, Fatal: true,
 				Detail: fmt.Sprintf("%s is blocked in permission settings: a scheduled message is dropped, not queued.", label),
 				Fix:    "Unblock the contact in permission settings if this schedule is meant to reach them.",
 			})
-		case IsContactPreAuthorized(RootDB, owner, recip):
+		case IsContactPreAuthorized(RootDB, owner, agent.ID, recip):
 		case channelSenderAuthorized(udb, owner, chatID, "", agent.ID):
 		default:
 			out = append(out, PreflightFinding{

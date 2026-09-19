@@ -1691,7 +1691,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 				recip := operatorRecipientKey(rec.ChatID, rec.Handle)
 				label := operatorRecipientLabel(rec)
 				images := messageImages(sess, args, text)
-				if IsContactBlocked(RootDB, owner, recip) {
+				if IsContactBlocked(RootDB, owner, agentID, recip) {
 					return fmt.Sprintf("Messaging %s is blocked in the user's permission settings: not sent.", label), nil
 				}
 				// Replying to the conversation that just messaged us is in-thread,
@@ -1703,7 +1703,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					return fmt.Sprintf("Sent to %s (replying in-thread).", label), nil
 				}
 				// Pre-authorized recipient: send immediately, skip the queue.
-				if IsContactPreAuthorized(RootDB, owner, recip) {
+				if IsContactPreAuthorized(RootDB, owner, agentID, recip) {
 					if _, err := operatorDeliverMessage(owner, agentID, rec.ChatID, rec.Handle, text, images); err != nil {
 						return "", err
 					}

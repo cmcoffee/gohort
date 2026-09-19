@@ -413,6 +413,11 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 								{Label: "Blocked", Value: "block", URL: "api/console/permissions/policy"},
 							},
 							RowActions: []ui.OrchestratorRowAction{
+								// Widen a grant that belongs to one agent. Only on
+								// the scoped rows: the all-agents row has nowhere
+								// wider to go.
+								{Label: "All agents", Method: "POST", URL: "api/console/permissions/promote", OnlyIf: "_promotable",
+									Confirm: "Let every agent you have message this contact, with whatever persona and rules each of them carries? Any agent you have specifically blocked stays blocked."},
 								{Label: "Deny", Method: "POST", URL: "api/console/approvals/deny", Variant: "danger", OnlyIf: "_pending"},
 								// One-shot decisions (activating a drafted sub-agent): just
 								// Approve — "Allow once"/"Always" don't apply, since approving

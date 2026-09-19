@@ -181,7 +181,30 @@ func listPreauthTargets(db Database, table, owner string) []string {
 	return out
 }
 
+// contactPreauthKey is the ALL-AGENTS key, and it is deliberately the shape the
+// table has always had: every grant written before contacts were scoped reads
+// as "any agent of mine may message this person", which is exactly what it
+// meant when it was made. So there is no migration, and nothing an owner has
+// working today stops working.
 func contactPreauthKey(owner, handle string) string { return owner + ":" + strings.TrimSpace(handle) }
+
+// contactScopeKey is the per-agent key. The agent id sits between the owner and
+// the handle, separated by a byte an id cannot contain, matching autoToolKey's
+// shape in the app.
+//
+// Scoping exists because a permission and a guardrail have to share a scope or
+// the tighter one is decorative: an agent carries a persona, a tone, and its own
+// rules about what it may say to a person, and if the PERMISSION to reach that
+// person belongs to the owner instead of the agent, then handing the message to
+// a different agent walks around all of it. That is not even a bypass anybody
+// has to intend; it is an ordinary dispatch.
+func contactScopeKey(owner, agent, handle string) string {
+	agent = strings.TrimSpace(agent)
+	if agent == "" {
+		return contactPreauthKey(owner, handle)
+	}
+	return owner + ":" + agent + "\x00" + strings.TrimSpace(handle)
+}
 
 // IsContactPreAuthorized reports whether the user has granted standing
 // authorization for the Operator to message this contact handle via phantom
@@ -189,23 +212,20 @@ func contactPreauthKey(owner, handle string) string { return owner + ":" + strin
 // true, both one-shot texts and autonomous conversations to this handle run
 // immediately instead of queuing. Scope is PER CONTACT — a new handle still
 // queues. (The grant is shared across the two messaging actions by design.)
-func IsContactPreAuthorized(db Database, owner, handle string) bool {
-	if db == nil || owner == "" || strings.TrimSpace(handle) == "" {
-		return false
-	}
-	var on bool
-	db.Get(contactPreauthTable, contactPreauthKey(owner, handle), &on)
-	return on
+func IsContactPreAuthorized(db Database, owner, agent, handle string) bool {
+	return ContactPolicy(db, owner, agent, handle) == PolicyAllow
 }
 
-func SetContactPreAuthorized(db Database, owner, handle string, on bool) {
+// SetContactPreAuthorized grants or clears the legacy allow flag for one scope.
+// agent "" is the all-agents scope.
+func SetContactPreAuthorized(db Database, owner, agent, handle string, on bool) {
 	if db == nil || owner == "" || strings.TrimSpace(handle) == "" {
 		return
 	}
 	if on {
-		db.Set(contactPreauthTable, contactPreauthKey(owner, handle), true)
+		db.Set(contactPreauthTable, contactScopeKey(owner, agent, handle), true)
 	} else {
-		db.Unset(contactPreauthTable, contactPreauthKey(owner, handle))
+		db.Unset(contactPreauthTable, contactScopeKey(owner, agent, handle))
 	}
 }
 
@@ -214,6 +234,9 @@ func SetContactPreAuthorized(db Database, owner, handle string, on bool) {
 type PolicyEntry struct {
 	Target string
 	Policy string
+	// Scope is the agent this decision is for, or "" for every agent. Only
+	// contacts are scoped today; a delegation row always reports "".
+	Scope string
 }
 
 func normPolicy(p string) string {
@@ -281,44 +304,75 @@ func ListDelegationPolicies(db Database, owner string) []PolicyEntry {
 
 // ContactPolicy / SetContactPolicy / RemoveContactPolicy / IsContactBlocked /
 // ListContactPolicies mirror the delegation versions for phantom messaging.
-func ContactPolicy(db Database, owner, handle string) string {
+// ContactPolicy answers whether THIS agent may message this person.
+//
+// The agent's own decision wins, in both directions: it can be blocked from a
+// contact the owner promoted to every agent, and allowed one nobody else is.
+// An all-agents row is the answer where the agent has none of its own, never
+// an override of one — promoting a contact must not silently change an agent
+// the owner has already thought about.
+//
+// agent "" asks the all-agents question directly, which is what the settings
+// page does when it renders the promoted row.
+func ContactPolicy(db Database, owner, agent, handle string) string {
 	if db == nil || strings.TrimSpace(handle) == "" {
 		return PolicyAsk
 	}
-	var p string
-	if db.Get(contactPolicyTable, contactPreauthKey(owner, handle), &p) && p != "" {
-		return normPolicy(p)
+	if agent = strings.TrimSpace(agent); agent != "" {
+		if p, ok := storedContactPolicy(db, contactScopeKey(owner, agent, handle)); ok {
+			return p
+		}
 	}
-	var on bool
-	if db.Get(contactPreauthTable, contactPreauthKey(owner, handle), &on) && on {
-		return PolicyAllow
+	if p, ok := storedContactPolicy(db, contactPreauthKey(owner, handle)); ok {
+		return p
 	}
 	return PolicyAsk
 }
 
-func SetContactPolicy(db Database, owner, handle, policy string) {
+// storedContactPolicy reads one key, explicit record first and the legacy allow
+// flag second, and says whether anything was there at all. The distinction is
+// what lets the caller fall through to the next scope instead of stopping at a
+// default that was never written down.
+func storedContactPolicy(db Database, key string) (string, bool) {
+	var p string
+	if db.Get(contactPolicyTable, key, &p) && p != "" {
+		return normPolicy(p), true
+	}
+	var on bool
+	if db.Get(contactPreauthTable, key, &on) && on {
+		return PolicyAllow, true
+	}
+	return "", false
+}
+
+// SetContactPolicy records a decision for one scope. agent "" is all agents.
+func SetContactPolicy(db Database, owner, agent, handle, policy string) {
 	if db == nil || strings.TrimSpace(handle) == "" {
 		return
 	}
 	policy = normPolicy(policy)
-	db.Set(contactPolicyTable, contactPreauthKey(owner, handle), policy)
+	key := contactScopeKey(owner, agent, handle)
+	db.Set(contactPolicyTable, key, policy)
 	if policy == PolicyAllow {
-		db.Set(contactPreauthTable, contactPreauthKey(owner, handle), true)
+		db.Set(contactPreauthTable, key, true)
 	} else {
-		db.Unset(contactPreauthTable, contactPreauthKey(owner, handle))
+		db.Unset(contactPreauthTable, key)
 	}
 }
 
-func RemoveContactPolicy(db Database, owner, handle string) {
+// RemoveContactPolicy forgets one scope's decision. Removing an AGENT's row
+// drops it back to whatever the all-agents answer is, which may be nothing.
+func RemoveContactPolicy(db Database, owner, agent, handle string) {
 	if db == nil {
 		return
 	}
-	db.Unset(contactPolicyTable, contactPreauthKey(owner, handle))
-	db.Unset(contactPreauthTable, contactPreauthKey(owner, handle))
+	key := contactScopeKey(owner, agent, handle)
+	db.Unset(contactPolicyTable, key)
+	db.Unset(contactPreauthTable, key)
 }
 
-func IsContactBlocked(db Database, owner, handle string) bool {
-	return ContactPolicy(db, owner, handle) == PolicyBlock
+func IsContactBlocked(db Database, owner, agent, handle string) bool {
+	return ContactPolicy(db, owner, agent, handle) == PolicyBlock
 }
 
 func ListContactPolicies(db Database, owner string) []PolicyEntry {
@@ -348,9 +402,21 @@ func listPolicies(db Database, table, owner string, legacyAllow []string) []Poli
 	}
 	out := make([]PolicyEntry, 0, len(seen))
 	for t, p := range seen {
-		out = append(out, PolicyEntry{Target: t, Policy: p})
+		// A scoped key carries its agent ahead of the target. An unscoped one
+		// has no separator and reports no scope, which is how every row written
+		// before contacts were scoped reads, and what it has always meant.
+		scope, target := "", t
+		if a, h, ok := strings.Cut(t, "\x00"); ok {
+			scope, target = a, h
+		}
+		out = append(out, PolicyEntry{Target: target, Policy: p, Scope: scope})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Target < out[j].Target })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Target != out[j].Target {
+			return out[i].Target < out[j].Target
+		}
+		return out[i].Scope < out[j].Scope // all-agents first, then per agent
+	})
 	return out
 }
 

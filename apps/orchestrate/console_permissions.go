@@ -111,10 +111,15 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 		Requested string `json:"Requested,omitempty"`
 		ID        string `json:"_id"`
 		Pending   bool   `json:"_pending,omitempty"`
-		Managed   bool   `json:"_managed,omitempty"`    // a standing policy row (Remove; segmented control when it has a Policy)
-		Policy    string `json:"_policy,omitempty"`     // allow | ask | block (the segmented state)
-		OneShot   bool   `json:"_oneshot,omitempty"`    // one-time decision (Approve/Deny only) — no "Always" grant makes sense (e.g. activating a drafted sub-agent, which the approval consumes)
-		Suggested bool   `json:"_suggestion,omitempty"` // an OFFER, not a request: nothing is blocked on it (see approvalIsSuggestion)
+		Managed   bool   `json:"_managed,omitempty"` // a standing policy row (Remove; segmented control when it has a Policy)
+		// Promotable marks a row scoped to ONE agent, which can be widened to
+		// every agent. The all-agents row does not carry it: a control offering
+		// to do what is already done is the same fault as one offering a state
+		// its row cannot hold.
+		Promotable bool   `json:"_promotable,omitempty"`
+		Policy     string `json:"_policy,omitempty"`     // allow | ask | block (the segmented state)
+		OneShot    bool   `json:"_oneshot,omitempty"`    // one-time decision (Approve/Deny only) — no "Always" grant makes sense (e.g. activating a drafted sub-agent, which the approval consumes)
+		Suggested  bool   `json:"_suggestion,omitempty"` // an OFFER, not a request: nothing is blocked on it (see approvalIsSuggestion)
 	}
 	out := []permRow{}
 	// Zone 1 — live pending requests (a decision is blocked on the user), then
@@ -153,8 +158,31 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 		}
 		out = append(out, permRow{Who: name, Detail: "Agent delegation", ID: "agent:" + e.Target, Managed: true, Policy: e.Policy})
 	}
+	// Contact messaging, per agent. A grant says WHICH agent may reach this
+	// person, because an agent carries a persona and its own rules about what
+	// it may say to them: a permission the whole fleet shares is one any other
+	// agent can spend, and then those rules hold nothing. An owner who does not
+	// want the distinction promotes the row to every agent and stops thinking
+	// about it.
 	for _, e := range ListContactPolicies(RootDB, user) {
-		out = append(out, permRow{Who: e.Target, Detail: "Contact messaging", ID: "contact:" + e.Target, Managed: true, Policy: e.Policy})
+		row := permRow{
+			Who: e.Target, Detail: "Contact messaging: every agent",
+			ID: "contact:" + e.Target, Managed: true, Policy: e.Policy,
+		}
+		if e.Scope != "" {
+			who := e.Scope
+			if rec, found := loadAgent(udb, e.Scope); found && rec.Name != "" {
+				who = rec.Name
+			}
+			row.Detail = "Contact messaging: " + who
+			row.ID = "contactfor:" + e.Scope + ":" + e.Target
+			// Only a scoped row can be promoted. Offering it on the row that
+			// already covers everything is a button that does what has been
+			// done, which is the same fault as a control offering a state its
+			// row cannot hold.
+			row.Promotable = true
+		}
+		out = append(out, row)
 	}
 	// Zone 3 — autonomous-run tool grants: the tools you "Always allowed" a
 	// scheduled/standing agent to run unattended (AutoApproveTools). Surfaced so
@@ -383,7 +411,13 @@ func (T *OrchestrateApp) handleConsolePermissionPolicy(w http.ResponseWriter, r 
 	case "agent":
 		SetDelegationPolicy(RootDB, user, target, value)
 	case "contact":
-		SetContactPolicy(RootDB, user, target, value)
+		SetContactPolicy(RootDB, user, "", target, value)
+	case "contactfor":
+		// Scoped to one agent, in the shape autotool already uses: the agent
+		// leads and the subject follows, so neither has to be escaped.
+		if aid, handle, ok := strings.Cut(target, ":"); ok && handle != "" {
+			SetContactPolicy(RootDB, user, aid, handle, value)
+		}
 	case "autotool":
 		// Records the decision and makes the grant match it. "ask" keeps a
 		// record where the list cannot hold one, so the row stays showing the
@@ -418,7 +452,11 @@ func (T *OrchestrateApp) handleConsolePermissionRemove(w http.ResponseWriter, r 
 	case "agent":
 		RemoveDelegationPolicy(RootDB, user, target)
 	case "contact":
-		RemoveContactPolicy(RootDB, user, target)
+		RemoveContactPolicy(RootDB, user, "", target)
+	case "contactfor":
+		if aid, handle, ok := strings.Cut(target, ":"); ok && handle != "" {
+			RemoveContactPolicy(RootDB, user, aid, handle)
+		}
 	case "autotool":
 		if aid, tool, ok := strings.Cut(target, ":"); ok && tool != "" {
 			removeAutoToolPolicy(RootDB, UserDB(T.DB, user), user, aid, tool)
@@ -427,6 +465,44 @@ func (T *OrchestrateApp) handleConsolePermissionRemove(w http.ResponseWriter, r 
 		http.Error(w, "unknown subject", http.StatusBadRequest)
 		return
 	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleConsolePermissionPromote widens one agent's contact grant to every
+// agent the owner has.
+//
+// The scoped row is the default because a permission and a guardrail have to
+// share a scope, and this is the escape hatch for when that distinction is not
+// worth the owner's attention. It writes the all-agents row and DROPS the
+// scoped one, because leaving both would leave a row claiming to decide
+// something that the row above it already decided.
+//
+// It does not touch any OTHER agent's row. Promoting is "everyone else may too",
+// not "everyone now agrees with this one": an agent the owner has deliberately
+// blocked from this contact stays blocked, which is the precedence rule the
+// resolution follows everywhere else.
+func (T *OrchestrateApp) handleConsolePermissionPromote(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	kind, target, found := strings.Cut(strings.TrimSpace(r.URL.Query().Get("id")), ":")
+	if !found || kind != "contactfor" {
+		http.Error(w, "only a contact grant scoped to one agent can be promoted", http.StatusBadRequest)
+		return
+	}
+	aid, handle, ok := strings.Cut(target, ":")
+	if !ok || handle == "" {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	policy := ContactPolicy(RootDB, user, aid, handle)
+	SetContactPolicy(RootDB, user, "", handle, policy)
+	RemoveContactPolicy(RootDB, user, aid, handle)
 	w.WriteHeader(http.StatusNoContent)
 }
 

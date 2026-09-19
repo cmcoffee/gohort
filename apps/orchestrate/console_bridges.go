@@ -269,7 +269,7 @@ func (T *OrchestrateApp) handleGrantRevoke(w http.ResponseWriter, r *http.Reques
 	case "agent":
 		SetDelegationPreAuthorized(RootDB, user, target, false)
 	case "contact":
-		SetContactPreAuthorized(RootDB, user, target, false)
+		SetContactPreAuthorized(RootDB, user, "", target, false)
 	default:
 		http.Error(w, "unknown grant kind", http.StatusBadRequest)
 		return

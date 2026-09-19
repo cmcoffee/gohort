@@ -12,6 +12,22 @@ import (
 // resolveApproval approves a queued delegation: optionally pre-authorizes the
 // agent (always-allow), drops the pending entry, and runs the delegation async
 // (the result lands in Activity / the run-ledger).
+// approvalRequester names the agent a queued request came FROM, which is the
+// agent a standing grant should be written for.
+//
+// A send carries its requester on Agent (the agent running when it asked);
+// FromAgent is set on the paths that queue on behalf of somebody else and takes
+// precedence there, because that is the one whose rules the grant gets spent
+// under. Empty means nothing identified itself, and an unattributable grant
+// falls back to all-agents rather than being dropped: the owner said yes to
+// something, and losing the yes would re-queue it forever.
+func approvalRequester(a Authorization) string {
+	if from := strings.TrimSpace(a.FromAgent); from != "" {
+		return from
+	}
+	return strings.TrimSpace(a.Agent)
+}
+
 func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request, always bool) {
 	user, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
@@ -138,7 +154,13 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 		// autonomous conversations) to the same chat/handle send without
 		// re-queuing.
 		if always {
-			SetContactPreAuthorized(RootDB, a.Owner, recip, true)
+			// Granted to the agent that ASKED, not to every agent the owner
+			// has. An agent carries a persona and its own rules about what it
+			// may say to this person; a grant the whole fleet shares is one any
+			// other agent can spend, which would make those rules decorative.
+			// Promote it to all agents from the Permissions page when that is
+			// genuinely what is meant.
+			SetContactPreAuthorized(RootDB, a.Owner, approvalRequester(a), recip, true)
 		}
 		if _, err := operatorDeliverMessage(a.Owner, a.Agent, a.ChatID, a.Handle, a.Text, a.Images); err != nil {
 			Log("[operator.approval] send_message to %s failed: %v", recip, err)
