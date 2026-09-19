@@ -517,6 +517,41 @@ type OrchestratorNavItem struct {
 	// (segmented control) can coexist in one view.
 	StateField   string                    `json:"state_field,omitempty"`
 	StateOptions []OrchestratorStateOption `json:"state_options,omitempty"`
+	// Filters draw a row of chips above the list that narrow it in the
+	// BROWSER, over rows already fetched. "Which of these am I looking at"
+	// does not need a round trip, and a list that vanishes while it answers
+	// is worse than no filter at all.
+	//
+	// Each chip carries the count it would leave on screen, so a choice that
+	// empties the page says so before it is made, and a view with nothing
+	// wrong with it reads as such without clicking anything.
+	Filters []OrchestratorViewFilter `json:"filters,omitempty"`
+	// SearchPlaceholder adds a text box that narrows to rows containing the
+	// typed text in any VISIBLE field. Hidden fields are skipped: matching on
+	// them hides and shows rows for reasons the reader cannot see. Empty
+	// draws no box.
+	SearchPlaceholder string `json:"search_placeholder,omitempty"`
+}
+
+// OrchestratorViewFilter is one group of mutually exclusive chips. The FIRST
+// option is the default, so it is the one that shows everything.
+type OrchestratorViewFilter struct {
+	Label   string                     `json:"label,omitempty"` // drawn before the chips; empty draws none
+	Options []OrchestratorFilterOption `json:"options"`
+}
+
+// OrchestratorFilterOption is one chip.
+//
+// It names a row FIELD and how to test it, and that is the whole vocabulary:
+// core/ui never learns what any filter MEANS. Equals compares; an option with
+// a Field and no Equals matches rows where that field is merely TRUTHY, which
+// is what lets an app express "only the ones in trouble" without this package
+// knowing what trouble is. An option with no Field at all matches everything,
+// which is how the leading "All" chip is written.
+type OrchestratorFilterOption struct {
+	Label  string `json:"label"`
+	Field  string `json:"field,omitempty"`  // row field to test; empty matches every row
+	Equals string `json:"equals,omitempty"` // field must equal this; empty = field must be truthy
 }
 
 // OrchestratorStateOption is one segment of a card's state control.

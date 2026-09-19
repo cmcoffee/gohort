@@ -525,3 +525,97 @@ func TestAnUnnamedTaskDoesNotGetNamedByBeingOpened(t *testing.T) {
 		t.Error("the editor is not handed the stored name")
 	}
 }
+
+// --- filtering -----------------------------------------------------------
+
+// A chip tests ONE field, so a question that is two facts joined is answered
+// here rather than by teaching core/ui what a schedule is. Both of these are
+// composed, because neither maps onto a field that already exists.
+func TestTheTwoStateQuestionsAreAnsweredServerSide(t *testing.T) {
+	cases := []struct {
+		name          string
+		row           map[string]any
+		wantAttention bool
+		wantAtRest    bool
+	}{
+		{"healthy and running", map[string]any{}, false, false},
+		{"a live failing streak", map[string]any{"failing": "failed 2 time(s) in a row"}, true, false},
+		{"parked", map[string]any{"_broken": true}, true, true},
+		// A parked row needs attention whether or not its checks were failing:
+		// relink-needed arrives with no streak at all.
+		{"parked with no streak", map[string]any{"_broken": true, "failing": ""}, true, true},
+		// And a row at rest is not automatically a row with a problem: one that
+		// spent its fires, or met its goal, is simply done.
+		{"paused by its owner", map[string]any{"_paused": true}, false, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			addSchedulerFilterFlags(c.row)
+			if c.row["_attention"] != c.wantAttention {
+				t.Errorf("_attention=%v want %v", c.row["_attention"], c.wantAttention)
+			}
+			if c.row["_at_rest"] != c.wantAtRest {
+				t.Errorf("_at_rest=%v want %v", c.row["_at_rest"], c.wantAtRest)
+			}
+		})
+	}
+}
+
+// Every chip has to name a field the rows actually carry, or it filters to
+// nothing and looks like a page with no schedules on it.
+func TestEveryChipNamesAFieldTheRowsCarry(t *testing.T) {
+	// One row of each kind, through the same conversion the endpoint uses.
+	rows := []map[string]any{
+		schedulerRow(consoleAgentRow{Name: "a", ID: "a", Objective: "ship it"}, schedSectionStanding, schedKindStanding),
+		schedulerRow(consoleRecurringRow{Name: "t", ID: "t", Failing: "failed 1 time(s) in a row"}, schedSectionRecurring, schedKindRecurring),
+		schedulerRow(consoleMonitorRow{Name: "m", ID: "m", Paused: true}, schedSectionMonitors, schedKindMonitor),
+	}
+	for _, f := range schedulerFilters() {
+		if len(f.Options) == 0 {
+			t.Fatalf("filter %q has no options", f.Label)
+		}
+		// The first option is the default, and the default must hide nothing.
+		if first := f.Options[0]; first.Field != "" {
+			t.Errorf("filter %q opens on %q, which hides rows before anybody chose to", f.Label, first.Label)
+		}
+		for _, opt := range f.Options[1:] {
+			if opt.Field == "" {
+				t.Errorf("filter %q option %q tests nothing, so it is a second All chip", f.Label, opt.Label)
+				continue
+			}
+			matched := false
+			for _, row := range rows {
+				if _, ok := row[opt.Field]; ok {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				t.Errorf("chip %q reads %q, which no scheduler row carries: it can only ever show nothing", opt.Label, opt.Field)
+			}
+		}
+	}
+	// The section chips must spell the headings EXACTLY, or they match no row.
+	want := map[string]bool{schedSectionStanding: true, schedSectionRecurring: true, schedSectionMonitors: true}
+	for _, opt := range schedulerFilters()[0].Options[1:] {
+		if !want[opt.Equals] {
+			t.Errorf("chip %q filters on section %q, which is not one the page draws", opt.Label, opt.Equals)
+		}
+		delete(want, opt.Equals)
+	}
+	for section := range want {
+		t.Errorf("section %q has no chip, so there is no way to ask for just those", section)
+	}
+}
+
+// Both ways in to the page get them. A filter on one entry and not the other is
+// the shape the merged view was built to end.
+func TestBothSchedulerEntriesFilter(t *testing.T) {
+	page := readFile(t, "page_chat.go")
+	if n := strings.Count(page, "Filters:           schedulerFilters(),"); n != 2 {
+		t.Errorf("schedulerFilters() is wired to %d of the two Scheduler entries", n)
+	}
+	if n := strings.Count(page, "SearchPlaceholder: schedulerSearchHint,"); n != 2 {
+		t.Errorf("the search box is wired to %d of the two Scheduler entries", n)
+	}
+}

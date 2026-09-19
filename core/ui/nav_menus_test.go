@@ -104,7 +104,10 @@ func TestViewActionResolvesItsTarget(t *testing.T) {
 	if i < 0 {
 		t.Fatal("the navigating row action is gone")
 	}
-	end := strings.Index(src[i:], "\n          var rowURL")
+	// Bounded on the next statement by NAME, not by its indentation: the
+	// panel's row rendering has been nested a level deeper once already, and a
+	// slice pinned to a column count fails on a change that moved no code.
+	end := strings.Index(src[i:], "var rowURL")
 	if end < 0 {
 		t.Fatal("could not bound the view branch")
 	}

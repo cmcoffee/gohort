@@ -318,6 +318,20 @@
       side.insertBefore(channelsEl, sideHdrEl);
       var orchBtns = [];
       var orchBadges = [];
+      // orchFilterState holds the chips and search text of the view currently
+      // open, so an auto-refresh does not quietly undo them.
+      //
+      // A live view re-fetches on a timer and re-renders through this same
+      // function. Without somewhere outside it to keep the choices, a page
+      // narrowed to "the ones that need me" would silently widen back to
+      // everything a few seconds later, with the reader still looking at it.
+      //
+      // Deliberately NOT remembered across a deliberate open: coming back to a
+      // view still narrowed, by a choice made minutes ago, is a list with rows
+      // missing for a reason nobody remembers. clearOrchFilterState is called
+      // where the user asks for a view, not where the timer redraws one.
+      var orchFilterState = null;
+      function clearOrchFilterState() { orchFilterState = null; }
       function renderOrchTable(rows, item, reload) {
         orchView.innerHTML = '';
         // Buttons that act on the LIST rather than on a row — creating a new
@@ -336,276 +350,420 @@
           });
           orchView.appendChild(vbar);
         }
-        if (!rows || !rows.length) {
-          orchView.appendChild(el('div', {style: 'color:var(--text-mute, #999);padding:0.5rem'}, ['Nothing here yet.']));
-          return;
-        }
-        // Card layout (item.layout === 'cards') — a COMPACT one-row-per-entry
-        // list (like Claude Desktop's permission settings): title + inline muted
-        // details + a Status pill on the left, the segmented state control and
-        // action buttons on the right. Wraps to a second line only when narrow.
-        // openRowPicker backs a row action with a picker_source: fetch a list of
-        // {value,label} choices and show them in a modal; picking one POSTs the
-        // action URL with the chosen value, then reloads. Shared by the cards +
-        // table renderers below.
-        // fireViewAction runs a list-level button. Same vocabulary as a row
-        // action and deliberately a separate function: there is no row, so
-        // anything that appends an id or reads a field would be wrong here
-        // rather than merely unused.
-        function fireViewAction(a, reload) {
-          if (!a || !a.url) { return; }
-          var agent = window.GOHORT_AGENT_ID || '';
-          if (a.method === 'client') {
-            var fn = (window.UIClientActions || {})[a.url];
-            if (typeof fn !== 'function') { console.error('client action not registered: ' + a.url); return; }
-            fn({reload: reload, agent: agent});
+        // paintOrchRows draws the rows themselves into a host element.
+        // Split out of renderOrchTable so a filter can repaint JUST the rows,
+        // leaving the view actions and the filter controls where they are: a
+        // control row that is torn down and rebuilt on every keystroke loses
+        // the focus and the caret of the box being typed into.
+        function paintOrchRows(host, rows) {
+          if (!rows || !rows.length) {
+            host.appendChild(el('div', {style: 'color:var(--text-mute, #999);padding:0.5rem'}, ['Nothing here yet.']));
             return;
           }
-          (async function() {
-            if (a.confirm && !(await window.uiConfirm(a.confirm))) { return; }
-            var u = a.url + (a.url.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(agent);
-            fetch(u, {method: a.method || 'POST'})
-              .then(function() { if (reload) reload(); })
-              .catch(function(err) { console.error('view action failed: ' + err.message); });
-          })();
-        }
-        function openRowPicker(a, row) {
-          var agent = window.GOHORT_AGENT_ID || '';
-          var src = a.picker_source + (a.picker_source.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(agent);
-          // Which ROW the choice is for. A picker_source is one URL for a
-          // whole column of rows, and the right choices are not always the
-          // same for each of them — a schedule that runs a pipeline needs
-          // pipelines offered, not agents. The POST already carries row._id;
-          // without it here, the source has to guess, and a picker offering
-          // the wrong KIND of thing is worse than no picker: every choice in
-          // it is refused.
-          if (row && row._id) src += '&row=' + encodeURIComponent(row._id);
-          window.uiOpenSimpleModal({title: a.picker_title || a.label, width: '420px', mount: function(body, dlg) {
-            var status = el('div', {style: 'color:var(--text-mute,#999);font-size:0.85rem;padding:0.3rem 0'}, ['Loading…']);
-            var list = el('div', {style: 'display:flex;flex-direction:column;gap:0.35rem;margin-top:0.4rem'});
-            body.appendChild(status); body.appendChild(list);
-            fetch(src, {credentials: 'same-origin'})
-              .then(function(r) { return r.ok ? r.json() : r.text().then(function(t){ throw new Error(t); }); })
-              .then(function(opts) {
-                status.remove();
-                if (!opts || !opts.length) { list.appendChild(el('div', {style: 'color:var(--text-mute,#999)'}, ['No options available.'])); return; }
-                opts.forEach(function(opt) {
-                  var b = el('button', {type: 'button', class: 'ui-row-btn', style: 'text-align:left', onclick: function() {
-                    var u = a.url + '?id=' + encodeURIComponent(row._id) + '&agent=' + encodeURIComponent(agent) + '&value=' + encodeURIComponent(opt.value);
-                    b.disabled = true;
-                    fetch(u, {method: a.method || 'POST', credentials: 'same-origin'})
-                      .then(function(r) { if (!r.ok) return r.text().then(function(t){ throw new Error(t); }); })
-                      .then(function() { try { dlg.close(); } catch(e){} if (reload) reload(); })
-                      .catch(function(err) { b.disabled = false; list.appendChild(el('div', {style: 'color:var(--danger,#e5484d);font-size:0.8rem'}, ['Failed: ' + err.message])); });
-                  }}, [opt.label || opt.value]);
-                  list.appendChild(b);
-                });
-              })
-              .catch(function(err) { status.textContent = 'Failed to load: ' + err.message; });
-          }});
-        }
-        // fireRowAction runs one row action the way both layouts need: a picker
-        // opens its chooser; a show_result action GETs the record and shows it
-        // in a modal; everything else fires and reloads the view. One place, so
-        // the cards and the table cannot drift on what a button does.
-        function fireRowAction(a, row) {
-          if (a.picker_source) { openRowPicker(a, row); return; }
-          // A CLIENT action: hand the row to app-registered browser code
-          // (uiRegisterClientAction) instead of calling an endpoint. The
-          // toolbar has had this seam from the start and the schedule rail's
-          // row builder grew its own; row actions were the one surface that
-          // could not reach it, so an app with a per-row EDITOR had to keep a
-          // second list somewhere just to own the click.
-          //
-          // core/ui stays a renderer: it passes the row id, the row, and a way
-          // to re-render, and never learns what the action does.
-          if (String(a.method || '').toLowerCase() === 'client') {
-            var fn = window.UIClientActions && window.UIClientActions[a.url];
-            if (!fn) { console.error('client row action not registered: ' + a.url); return; }
-            fn({id: row._id, row: row, reload: reload});
-            return;
-          }
-          // A NAVIGATION rather than a call: open another nav view, optionally
-          // already narrowed. It exists because a summary figure had no way to
-          // reach the list it counts — the number and the rows behind it lived
-          // in different menus with nothing joining them, so "2 failed" was a
-          // dead end. The target is named "<Menu>/<Label>" because a Source can
-          // appear in two menus (the same view asked about one agent and about
-          // everyone) and picking the wrong one answers the wrong question.
-          if (a.view) {
-            var want = String(a.view);
-            var found = -1;
-            (cfg.orchestrator_nav || []).forEach(function(it, k) {
-              if (found >= 0) return;
-              if (((it.menu || DEFAULT_NAV_MENU) + '/' + (it.label || '')) === want) found = k;
-            });
-            if (found < 0) { console.error('nav view not found: ' + want); return; }
-            // {agent} resolves to the agent in view, so a per-agent summary can
-            // hand its own scope to a view that is otherwise fleet-wide.
-            var q = String(a.query || '').replace(/\{agent\}/g, encodeURIComponent(window.GOHORT_AGENT_ID || ''));
-            closeNavMenus();
-            selectOrchNav(found, q, a.note);
-            return;
-          }
-          var rowURL = a.url + '?id=' + encodeURIComponent(row._id) + '&agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '');
-          if (a.show_result) {
-            fetch(rowURL, {method: a.method || 'GET'})
-              .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-              .then(function(data) {
-                window.uiOpenModal({
-                  title: a.label,
-                  width: 'min(760px, 94vw)',
-                  mount: function(body) {
-                    var empty = data == null || (typeof data === 'object' && !Object.keys(data).length);
-                    if (empty) {
-                      body.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:0.85rem'}, ['Nothing to show: this record is gone or empty.']));
-                      return;
-                    }
-                    renderDetailValue(body, data, 0);
-                  }
-                });
-              })
-              .catch(function(err) { console.error('row detail failed: ' + err.message); });
-            return;
-          }
-          fetch(rowURL, {method: a.method || 'POST'})
-            .then(function() { if (reload) reload(); })
-            .catch(function(err) { console.error('row action failed: ' + err.message); });
-        }
-        if (item && item.layout === 'cards') {
-          var cactions = (item && item.row_actions) || [];
-          var lastSection = null;
-          rows.forEach(function(row) {
-            // A "_section" heading, drawn once each time the value changes. It
-            // is what lets ONE source render as several titled lists (a summary
-            // view) instead of one list per menu entry.
-            if (row._section && row._section !== lastSection) {
-              lastSection = row._section;
-              orchView.appendChild(el('div', {style: 'margin:0.9rem 0 0.35rem;font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-mute, #999)'}, [row._section]));
+          // Card layout (item.layout === 'cards') — a COMPACT one-row-per-entry
+          // list (like Claude Desktop's permission settings): title + inline muted
+          // details + a Status pill on the left, the segmented state control and
+          // action buttons on the right. Wraps to a second line only when narrow.
+          // openRowPicker backs a row action with a picker_source: fetch a list of
+          // {value,label} choices and show them in a modal; picking one POSTs the
+          // action URL with the chosen value, then reloads. Shared by the cards +
+          // table renderers below.
+          // fireViewAction runs a list-level button. Same vocabulary as a row
+          // action and deliberately a separate function: there is no row, so
+          // anything that appends an id or reads a field would be wrong here
+          // rather than merely unused.
+          function fireViewAction(a, reload) {
+            if (!a || !a.url) { return; }
+            var agent = window.GOHORT_AGENT_ID || '';
+            if (a.method === 'client') {
+              var fn = (window.UIClientActions || {})[a.url];
+              if (typeof fn !== 'function') { console.error('client action not registered: ' + a.url); return; }
+              fn({reload: reload, agent: agent});
+              return;
             }
-            // Each row's OWN visible keys, not the first row's: a view that
-            // groups several kinds of thing has a different shape per section,
-            // and reading the shape off row one renders the rest blank.
-            var ckeys = Object.keys(row).filter(function(k) { return k.charAt(0) !== '_'; });
-            var card = el('div', {style: 'display:flex;align-items:center;gap:0.6rem;border:1px solid var(--border, rgba(127,127,127,0.25));border-radius:7px;padding:0.45rem 0.7rem;margin-bottom:0.4rem;background:var(--bg-1, rgba(127,127,127,0.03));flex-wrap:wrap'});
-            // Left: title + status pill + inline muted details, all on one line.
-            var info = el('div', {style: 'flex:1 1 11rem;min-width:0;display:flex;align-items:baseline;gap:0.45rem;flex-wrap:wrap'});
-            ckeys.forEach(function(k, ki) {
-              var v = row[k];
-              var s = (v == null) ? '' : String(v);
-              if (!s) return;
-              if (ki === 0) {
-                info.appendChild(el('span', {style: 'font-weight:600;font-size:0.9rem'}, [s]));
-              } else if (k === 'Status') {
-                var pend = /pending/i.test(s);
-                info.appendChild(el('span', {style: 'font-size:0.56rem;text-transform:uppercase;letter-spacing:0.04em;padding:0.05rem 0.42rem;border-radius:999px;font-weight:700;align-self:center;' +
-                  (pend ? 'background:var(--accent, #4a9eff);color:#fff' : 'background:var(--bg-2, rgba(127,127,127,0.22));color:var(--text-mute, #999)')}, [s]));
-              } else {
-                info.appendChild(el('span', {style: 'color:var(--text-mute, #999);font-size:0.78rem;word-break:break-word'}, [s]));
-              }
-            });
-            card.appendChild(info);
-            // Right: segmented state control (rows that carry it) + actions.
-            var controls = el('div', {style: 'display:flex;align-items:center;gap:0.4rem;flex:0 0 auto;flex-wrap:wrap'});
-            if (item.state_field && (item.state_options || []).length && row[item.state_field] != null) {
-              var seg = el('div', {style: 'display:inline-flex;border:1px solid var(--border, rgba(127,127,127,0.35));border-radius:6px;overflow:hidden'});
-              (item.state_options || []).forEach(function(opt, oi) {
-                var active = String(row[item.state_field]) === String(opt.value);
-                var segBtn = el('button', {type: 'button',
-                  style: 'padding:0.22rem 0.6rem;border:none;' + (oi ? 'border-left:1px solid var(--border, rgba(127,127,127,0.35));' : '') + 'cursor:pointer;font:inherit;font-size:0.73rem;white-space:nowrap;' +
-                    (active ? 'background:var(--accent, #4a9eff);color:#fff;font-weight:600' : 'background:transparent;color:var(--text-mute, #999)'),
-                  onclick: function(ev) {
-                    if (ev) ev.stopPropagation();
-                    if (active) return;
-                    var u = opt.url + '?id=' + encodeURIComponent(row._id) + '&agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '') + '&value=' + encodeURIComponent(opt.value);
-                    fetch(u, {method: opt.method || 'POST'}).then(function() { if (reload) reload(); }).catch(function(err) { console.error('state set failed: ' + err.message); });
-                  }}, [opt.label]);
-                seg.appendChild(segBtn);
+            (async function() {
+              if (a.confirm && !(await window.uiConfirm(a.confirm))) { return; }
+              var u = a.url + (a.url.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(agent);
+              fetch(u, {method: a.method || 'POST'})
+                .then(function() { if (reload) reload(); })
+                .catch(function(err) { console.error('view action failed: ' + err.message); });
+            })();
+          }
+          function openRowPicker(a, row) {
+            var agent = window.GOHORT_AGENT_ID || '';
+            var src = a.picker_source + (a.picker_source.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(agent);
+            // Which ROW the choice is for. A picker_source is one URL for a
+            // whole column of rows, and the right choices are not always the
+            // same for each of them — a schedule that runs a pipeline needs
+            // pipelines offered, not agents. The POST already carries row._id;
+            // without it here, the source has to guess, and a picker offering
+            // the wrong KIND of thing is worse than no picker: every choice in
+            // it is refused.
+            if (row && row._id) src += '&row=' + encodeURIComponent(row._id);
+            window.uiOpenSimpleModal({title: a.picker_title || a.label, width: '420px', mount: function(body, dlg) {
+              var status = el('div', {style: 'color:var(--text-mute,#999);font-size:0.85rem;padding:0.3rem 0'}, ['Loading…']);
+              var list = el('div', {style: 'display:flex;flex-direction:column;gap:0.35rem;margin-top:0.4rem'});
+              body.appendChild(status); body.appendChild(list);
+              fetch(src, {credentials: 'same-origin'})
+                .then(function(r) { return r.ok ? r.json() : r.text().then(function(t){ throw new Error(t); }); })
+                .then(function(opts) {
+                  status.remove();
+                  if (!opts || !opts.length) { list.appendChild(el('div', {style: 'color:var(--text-mute,#999)'}, ['No options available.'])); return; }
+                  opts.forEach(function(opt) {
+                    var b = el('button', {type: 'button', class: 'ui-row-btn', style: 'text-align:left', onclick: function() {
+                      var u = a.url + '?id=' + encodeURIComponent(row._id) + '&agent=' + encodeURIComponent(agent) + '&value=' + encodeURIComponent(opt.value);
+                      b.disabled = true;
+                      fetch(u, {method: a.method || 'POST', credentials: 'same-origin'})
+                        .then(function(r) { if (!r.ok) return r.text().then(function(t){ throw new Error(t); }); })
+                        .then(function() { try { dlg.close(); } catch(e){} if (reload) reload(); })
+                        .catch(function(err) { b.disabled = false; list.appendChild(el('div', {style: 'color:var(--danger,#e5484d);font-size:0.8rem'}, ['Failed: ' + err.message])); });
+                    }}, [opt.label || opt.value]);
+                    list.appendChild(b);
+                  });
+                })
+                .catch(function(err) { status.textContent = 'Failed to load: ' + err.message; });
+            }});
+          }
+          // fireRowAction runs one row action the way both layouts need: a picker
+          // opens its chooser; a show_result action GETs the record and shows it
+          // in a modal; everything else fires and reloads the view. One place, so
+          // the cards and the table cannot drift on what a button does.
+          function fireRowAction(a, row) {
+            if (a.picker_source) { openRowPicker(a, row); return; }
+            // A CLIENT action: hand the row to app-registered browser code
+            // (uiRegisterClientAction) instead of calling an endpoint. The
+            // toolbar has had this seam from the start and the schedule rail's
+            // row builder grew its own; row actions were the one surface that
+            // could not reach it, so an app with a per-row EDITOR had to keep a
+            // second list somewhere just to own the click.
+            //
+            // core/ui stays a renderer: it passes the row id, the row, and a way
+            // to re-render, and never learns what the action does.
+            if (String(a.method || '').toLowerCase() === 'client') {
+              var fn = window.UIClientActions && window.UIClientActions[a.url];
+              if (!fn) { console.error('client row action not registered: ' + a.url); return; }
+              fn({id: row._id, row: row, reload: reload});
+              return;
+            }
+            // A NAVIGATION rather than a call: open another nav view, optionally
+            // already narrowed. It exists because a summary figure had no way to
+            // reach the list it counts — the number and the rows behind it lived
+            // in different menus with nothing joining them, so "2 failed" was a
+            // dead end. The target is named "<Menu>/<Label>" because a Source can
+            // appear in two menus (the same view asked about one agent and about
+            // everyone) and picking the wrong one answers the wrong question.
+            if (a.view) {
+              var want = String(a.view);
+              var found = -1;
+              (cfg.orchestrator_nav || []).forEach(function(it, k) {
+                if (found >= 0) return;
+                if (((it.menu || DEFAULT_NAV_MENU) + '/' + (it.label || '')) === want) found = k;
               });
-              controls.appendChild(seg);
+              if (found < 0) { console.error('nav view not found: ' + want); return; }
+              // {agent} resolves to the agent in view, so a per-agent summary can
+              // hand its own scope to a view that is otherwise fleet-wide.
+              var q = String(a.query || '').replace(/\{agent\}/g, encodeURIComponent(window.GOHORT_AGENT_ID || ''));
+              closeNavMenus();
+              selectOrchNav(found, q, a.note);
+              return;
             }
-            cactions.forEach(function(a) {
-              if (a.only_if && !row[a.only_if]) return;
-              if (a.hide_if && row[a.hide_if]) return;
-              var cls = 'ui-row-btn compact';
-              if (a.variant) cls += ' ' + a.variant;
-              var btn = el('button', {type: 'button', class: cls, onclick: async function(ev) {
-                if (ev) ev.stopPropagation();
-                if (a.confirm && window.uiConfirm && !(await window.uiConfirm(a.confirm))) return;
-                fireRowAction(a, row);
-              }}, [a.label]);
-              controls.appendChild(btn);
+            var rowURL = a.url + '?id=' + encodeURIComponent(row._id) + '&agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '');
+            if (a.show_result) {
+              fetch(rowURL, {method: a.method || 'GET'})
+                .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+                .then(function(data) {
+                  window.uiOpenModal({
+                    title: a.label,
+                    width: 'min(760px, 94vw)',
+                    mount: function(body) {
+                      var empty = data == null || (typeof data === 'object' && !Object.keys(data).length);
+                      if (empty) {
+                        body.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:0.85rem'}, ['Nothing to show: this record is gone or empty.']));
+                        return;
+                      }
+                      renderDetailValue(body, data, 0);
+                    }
+                  });
+                })
+                .catch(function(err) { console.error('row detail failed: ' + err.message); });
+              return;
+            }
+            fetch(rowURL, {method: a.method || 'POST'})
+              .then(function() { if (reload) reload(); })
+              .catch(function(err) { console.error('row action failed: ' + err.message); });
+          }
+          if (item && item.layout === 'cards') {
+            var cactions = (item && item.row_actions) || [];
+            var lastSection = null;
+            rows.forEach(function(row) {
+              // A "_section" heading, drawn once each time the value changes. It
+              // is what lets ONE source render as several titled lists (a summary
+              // view) instead of one list per menu entry.
+              if (row._section && row._section !== lastSection) {
+                lastSection = row._section;
+                host.appendChild(el('div', {style: 'margin:0.9rem 0 0.35rem;font-size:0.68rem;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text-mute, #999)'}, [row._section]));
+              }
+              // Each row's OWN visible keys, not the first row's: a view that
+              // groups several kinds of thing has a different shape per section,
+              // and reading the shape off row one renders the rest blank.
+              var ckeys = Object.keys(row).filter(function(k) { return k.charAt(0) !== '_'; });
+              var card = el('div', {style: 'display:flex;align-items:center;gap:0.6rem;border:1px solid var(--border, rgba(127,127,127,0.25));border-radius:7px;padding:0.45rem 0.7rem;margin-bottom:0.4rem;background:var(--bg-1, rgba(127,127,127,0.03));flex-wrap:wrap'});
+              // Left: title + status pill + inline muted details, all on one line.
+              var info = el('div', {style: 'flex:1 1 11rem;min-width:0;display:flex;align-items:baseline;gap:0.45rem;flex-wrap:wrap'});
+              ckeys.forEach(function(k, ki) {
+                var v = row[k];
+                var s = (v == null) ? '' : String(v);
+                if (!s) return;
+                if (ki === 0) {
+                  info.appendChild(el('span', {style: 'font-weight:600;font-size:0.9rem'}, [s]));
+                } else if (k === 'Status') {
+                  var pend = /pending/i.test(s);
+                  info.appendChild(el('span', {style: 'font-size:0.56rem;text-transform:uppercase;letter-spacing:0.04em;padding:0.05rem 0.42rem;border-radius:999px;font-weight:700;align-self:center;' +
+                    (pend ? 'background:var(--accent, #4a9eff);color:#fff' : 'background:var(--bg-2, rgba(127,127,127,0.22));color:var(--text-mute, #999)')}, [s]));
+                } else {
+                  info.appendChild(el('span', {style: 'color:var(--text-mute, #999);font-size:0.78rem;word-break:break-word'}, [s]));
+                }
+              });
+              card.appendChild(info);
+              // Right: segmented state control (rows that carry it) + actions.
+              var controls = el('div', {style: 'display:flex;align-items:center;gap:0.4rem;flex:0 0 auto;flex-wrap:wrap'});
+              if (item.state_field && (item.state_options || []).length && row[item.state_field] != null) {
+                var seg = el('div', {style: 'display:inline-flex;border:1px solid var(--border, rgba(127,127,127,0.35));border-radius:6px;overflow:hidden'});
+                (item.state_options || []).forEach(function(opt, oi) {
+                  var active = String(row[item.state_field]) === String(opt.value);
+                  var segBtn = el('button', {type: 'button',
+                    style: 'padding:0.22rem 0.6rem;border:none;' + (oi ? 'border-left:1px solid var(--border, rgba(127,127,127,0.35));' : '') + 'cursor:pointer;font:inherit;font-size:0.73rem;white-space:nowrap;' +
+                      (active ? 'background:var(--accent, #4a9eff);color:#fff;font-weight:600' : 'background:transparent;color:var(--text-mute, #999)'),
+                    onclick: function(ev) {
+                      if (ev) ev.stopPropagation();
+                      if (active) return;
+                      var u = opt.url + '?id=' + encodeURIComponent(row._id) + '&agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '') + '&value=' + encodeURIComponent(opt.value);
+                      fetch(u, {method: opt.method || 'POST'}).then(function() { if (reload) reload(); }).catch(function(err) { console.error('state set failed: ' + err.message); });
+                    }}, [opt.label]);
+                  seg.appendChild(segBtn);
+                });
+                controls.appendChild(seg);
+              }
+              cactions.forEach(function(a) {
+                if (a.only_if && !row[a.only_if]) return;
+                if (a.hide_if && row[a.hide_if]) return;
+                var cls = 'ui-row-btn compact';
+                if (a.variant) cls += ' ' + a.variant;
+                var btn = el('button', {type: 'button', class: cls, onclick: async function(ev) {
+                  if (ev) ev.stopPropagation();
+                  if (a.confirm && window.uiConfirm && !(await window.uiConfirm(a.confirm))) return;
+                  fireRowAction(a, row);
+                }}, [a.label]);
+                controls.appendChild(btn);
+              });
+              if (controls.childNodes.length) card.appendChild(controls);
+              host.appendChild(card);
             });
-            if (controls.childNodes.length) card.appendChild(controls);
-            orchView.appendChild(card);
-          });
-          return;
-        }
-        // Columns = the row's keys minus any "_"-prefixed (hidden, e.g. _id).
-        var cols = Object.keys(rows[0]).filter(function(k) { return k.charAt(0) !== '_'; });
-        var actions = (item && item.row_actions) || [];
-        var tbl = el('table', {style: 'width:100%;border-collapse:collapse;font-size:0.9rem'});
-        var hr = el('tr');
-        cols.forEach(function(c) {
-          hr.appendChild(el('th', {style: 'text-align:left;padding:0.35rem 0.5rem;border-bottom:1px solid var(--border, rgba(127,127,127,0.3));color:var(--text-mute, #999)'}, [c]));
-        });
-        if (actions.length) hr.appendChild(el('th', {style: 'border-bottom:1px solid var(--border, rgba(127,127,127,0.3))'}, ['']));
-        tbl.appendChild(hr);
-        rows.forEach(function(row) {
-          // Which columns hold long / multi-line content. If any, the whole ROW
-          // is click-to-expand (one expander per line, not per field): clicking
-          // it reveals a detail line below with the full content.
-          var longCols = cols.filter(function(c) {
-            var s = String(row[c] == null ? '' : row[c]);
-            return s.length > 80 || s.indexOf('\n') >= 0;
-          });
-          var tr = el('tr', longCols.length ? {style: 'cursor:pointer'} : {});
+            return;
+          }
+          // Columns = the row's keys minus any "_"-prefixed (hidden, e.g. _id).
+          var cols = Object.keys(rows[0]).filter(function(k) { return k.charAt(0) !== '_'; });
+          var actions = (item && item.row_actions) || [];
+          var tbl = el('table', {style: 'width:100%;border-collapse:collapse;font-size:0.9rem'});
+          var hr = el('tr');
           cols.forEach(function(c) {
-            var v = row[c];
-            var s = (v == null) ? '' : String(v);
-            if (s.length > 80 || s.indexOf('\n') >= 0) {
-              s = s.replace(/\n/g, ' ');
-              if (s.length > 80) s = s.slice(0, 80) + '…';
-            }
-            tr.appendChild(el('td', {style: 'padding:0.35rem 0.5rem;border-bottom:1px solid var(--border, rgba(127,127,127,0.15));vertical-align:top'}, [s]));
+            hr.appendChild(el('th', {style: 'text-align:left;padding:0.35rem 0.5rem;border-bottom:1px solid var(--border, rgba(127,127,127,0.3));color:var(--text-mute, #999)'}, [c]));
           });
-          if (actions.length) {
-            var cell = el('td', {style: 'padding:0.35rem 0.5rem;border-bottom:1px solid var(--border, rgba(127,127,127,0.15));white-space:nowrap'});
-            actions.forEach(function(a) {
-              // Conditional row actions: skip when only_if field is falsy or
-              // hide_if field is truthy (e.g. show Pause only when not paused,
-              // Resume only when paused).
-              if (a.only_if && !row[a.only_if]) return;
-              if (a.hide_if && row[a.hide_if]) return;
-              var cls = 'ui-row-btn compact';
-              if (a.variant) cls += ' ' + a.variant;
-              var btn = el('button', {type: 'button', class: cls, style: 'margin-right:0.3rem', onclick: async function(ev) {
-                if (ev) ev.stopPropagation(); // don't toggle the row expand
-                if (a.confirm && window.uiConfirm && !(await window.uiConfirm(a.confirm))) return;
-                // fireRowAction stamps the in-view agent so per-agent row actions
-                // (e.g. History turn-scrub) target the right agent's thread.
-                fireRowAction(a, row);
-              }}, [a.label]);
-              cell.appendChild(btn);
+          if (actions.length) hr.appendChild(el('th', {style: 'border-bottom:1px solid var(--border, rgba(127,127,127,0.3))'}, ['']));
+          tbl.appendChild(hr);
+          rows.forEach(function(row) {
+            // Which columns hold long / multi-line content. If any, the whole ROW
+            // is click-to-expand (one expander per line, not per field): clicking
+            // it reveals a detail line below with the full content.
+            var longCols = cols.filter(function(c) {
+              var s = String(row[c] == null ? '' : row[c]);
+              return s.length > 80 || s.indexOf('\n') >= 0;
             });
-            tr.appendChild(cell);
-          }
-          tbl.appendChild(tr);
-          if (longCols.length) {
-            var dtr = el('tr', {style: 'display:none'});
-            var dtd = el('td', {colspan: String(cols.length + (actions.length ? 1 : 0)), style: 'padding:0.3rem 0.6rem 0.7rem;border-bottom:1px solid var(--border, rgba(127,127,127,0.15));background:var(--bg-2, rgba(127,127,127,0.06))'});
-            longCols.forEach(function(c) {
-              dtd.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:0.8rem;margin:0.4rem 0 0.15rem'}, [c]));
-              dtd.appendChild(el('pre', {style: 'white-space:pre-wrap;margin:0;font-size:0.82rem;max-height:340px;overflow:auto;background:var(--bg-1, rgba(127,127,127,0.1));padding:0.45rem;border-radius:4px'}, [String(row[c] == null ? '' : row[c])]));
+            var tr = el('tr', longCols.length ? {style: 'cursor:pointer'} : {});
+            cols.forEach(function(c) {
+              var v = row[c];
+              var s = (v == null) ? '' : String(v);
+              if (s.length > 80 || s.indexOf('\n') >= 0) {
+                s = s.replace(/\n/g, ' ');
+                if (s.length > 80) s = s.slice(0, 80) + '…';
+              }
+              tr.appendChild(el('td', {style: 'padding:0.35rem 0.5rem;border-bottom:1px solid var(--border, rgba(127,127,127,0.15));vertical-align:top'}, [s]));
             });
-            dtr.appendChild(dtd);
-            tbl.appendChild(dtr);
-            tr.onclick = function() {
-              dtr.style.display = dtr.style.display === 'none' ? '' : 'none';
-            };
+            if (actions.length) {
+              var cell = el('td', {style: 'padding:0.35rem 0.5rem;border-bottom:1px solid var(--border, rgba(127,127,127,0.15));white-space:nowrap'});
+              actions.forEach(function(a) {
+                // Conditional row actions: skip when only_if field is falsy or
+                // hide_if field is truthy (e.g. show Pause only when not paused,
+                // Resume only when paused).
+                if (a.only_if && !row[a.only_if]) return;
+                if (a.hide_if && row[a.hide_if]) return;
+                var cls = 'ui-row-btn compact';
+                if (a.variant) cls += ' ' + a.variant;
+                var btn = el('button', {type: 'button', class: cls, style: 'margin-right:0.3rem', onclick: async function(ev) {
+                  if (ev) ev.stopPropagation(); // don't toggle the row expand
+                  if (a.confirm && window.uiConfirm && !(await window.uiConfirm(a.confirm))) return;
+                  // fireRowAction stamps the in-view agent so per-agent row actions
+                  // (e.g. History turn-scrub) target the right agent's thread.
+                  fireRowAction(a, row);
+                }}, [a.label]);
+                cell.appendChild(btn);
+              });
+              tr.appendChild(cell);
+            }
+            tbl.appendChild(tr);
+            if (longCols.length) {
+              var dtr = el('tr', {style: 'display:none'});
+              var dtd = el('td', {colspan: String(cols.length + (actions.length ? 1 : 0)), style: 'padding:0.3rem 0.6rem 0.7rem;border-bottom:1px solid var(--border, rgba(127,127,127,0.15));background:var(--bg-2, rgba(127,127,127,0.06))'});
+              longCols.forEach(function(c) {
+                dtd.appendChild(el('div', {style: 'color:var(--text-mute, #999);font-size:0.8rem;margin:0.4rem 0 0.15rem'}, [c]));
+                dtd.appendChild(el('pre', {style: 'white-space:pre-wrap;margin:0;font-size:0.82rem;max-height:340px;overflow:auto;background:var(--bg-1, rgba(127,127,127,0.1));padding:0.45rem;border-radius:4px'}, [String(row[c] == null ? '' : row[c])]));
+              });
+              dtr.appendChild(dtd);
+              tbl.appendChild(dtr);
+              tr.onclick = function() {
+                dtr.style.display = dtr.style.display === 'none' ? '' : 'none';
+              };
+            }
+          });
+          host.appendChild(tbl);
+        }
+
+        // --- Filters -------------------------------------------------------
+        //
+        // Declared by the app (item.filters, item.search_placeholder) and
+        // applied HERE, in the browser, over the rows already fetched: "which
+        // of these am I looking at" does not need a round trip, and a list that
+        // disappears while it answers is worse than no filter.
+        //
+        // core/ui never learns what any of them MEAN. An option names a row
+        // FIELD and how to test it: equal to a value, or merely truthy. Truthy
+        // is what lets "only the ones in trouble" be expressed by an app
+        // without this file knowing what trouble is.
+        var filters = (item && item.filters) || [];
+        var searchHint = (item && item.search_placeholder) || '';
+        var chosen = filters.map(function() { return 0; }); // first option is the default
+        var query = '';
+        // Pick up where an auto-refresh left off. Keyed on the view, so a
+        // stale state from a different one cannot be applied to these rows:
+        // the chips would not correspond to the options on screen.
+        var filterKey = (item && item.menu || '') + '\u0000' + (item && item.label || '') +
+          '\u0000' + (item && item.source || '');
+        if (orchFilterState && orchFilterState.key === filterKey &&
+            orchFilterState.chosen.length === chosen.length) {
+          chosen = orchFilterState.chosen.slice();
+          query = orchFilterState.query;
+        }
+        function rememberFilters() {
+          orchFilterState = {key: filterKey, chosen: chosen.slice(), query: query};
+        }
+
+        function optionMatches(opt, row) {
+          if (!opt || !opt.field) return true; // an option with no field matches everything
+          var v = row[opt.field];
+          if (opt.equals) return String(v == null ? '' : v) === opt.equals;
+          // Truthy, in the shapes a row field actually arrives in: a non-empty
+          // string, a true, a non-zero number. "0" and "false" are values the
+          // server chose to send, not marks of presence.
+          if (v === true) return true;
+          if (typeof v === 'number') return v !== 0;
+          var sv = String(v == null ? '' : v);
+          return sv !== '' && sv !== '0' && sv !== 'false';
+        }
+        function rowMatchesQuery(row, q) {
+          if (!q) return true;
+          for (var k in row) {
+            if (!Object.prototype.hasOwnProperty.call(row, k)) continue;
+            // Hidden plumbing is not text anybody typed at, and searching it
+            // matches rows for reasons the reader cannot see on the page.
+            if (k.charAt(0) === '_') continue;
+            var v = row[k];
+            if (v != null && String(v).toLowerCase().indexOf(q) >= 0) return true;
           }
-        });
-        orchView.appendChild(tbl);
+          return false;
+        }
+        // passesOthers is the filter test with ONE filter left out, which is
+        // what a chip's count has to be: the number of rows you would see after
+        // clicking it, not the number matching it in isolation.
+        function passesOthers(row, skip, q) {
+          for (var i = 0; i < filters.length; i++) {
+            if (i === skip) continue;
+            if (!optionMatches((filters[i].options || [])[chosen[i]], row)) return false;
+          }
+          return rowMatchesQuery(row, q);
+        }
+        function visibleRows() {
+          var q = query.trim().toLowerCase();
+          return (rows || []).filter(function(row) { return passesOthers(row, -1, q); });
+        }
+
+        var rowsHost = el('div');
+        var chipRefs = [];
+        function refreshChips() {
+          var q = query.trim().toLowerCase();
+          chipRefs.forEach(function(ref) {
+            var n = 0;
+            (rows || []).forEach(function(row) {
+              if (passesOthers(row, ref.fi, q) && optionMatches(ref.opt, row)) n++;
+            });
+            ref.btn.className = 'ui-chip' + (chosen[ref.fi] === ref.oi ? ' on' : '');
+            ref.count.textContent = ' ' + n;
+            // A choice that would empty the page says so before it is made.
+            ref.btn.style.opacity = n ? '' : '0.55';
+          });
+        }
+        function repaint() {
+          rememberFilters();
+          refreshChips();
+          rowsHost.innerHTML = '';
+          var vis = visibleRows();
+          if (!vis.length && rows && rows.length) {
+            // Distinct from "Nothing here yet": there IS something here, and
+            // the reader hid it. Say which and give the way back, or a filtered
+            // page is indistinguishable from an empty one.
+            var back = el('button', {type: 'button', class: 'ui-row-btn',
+              style: 'padding:0.15rem 0.55rem;font-size:0.74rem',
+              onclick: function() {
+                chosen = filters.map(function() { return 0; });
+                query = '';
+                if (searchBox) searchBox.value = '';
+                repaint();
+              }}, ['Show all']);
+            rowsHost.appendChild(el('div', {style: 'display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;color:var(--text-mute, #999);padding:0.5rem'}, [
+              el('span', {}, ['None of the ' + rows.length + ' here match what you have picked.']), back]));
+            return;
+          }
+          paintOrchRows(rowsHost, vis);
+        }
+
+        var searchBox = null;
+        if (filters.length || searchHint) {
+          var bar = el('div', {style: 'display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin:0 0 0.7rem'});
+          if (searchHint) {
+            searchBox = el('input', {type: 'search', class: 'ui-filter-search', placeholder: searchHint,
+              value: query, style: 'flex:0 1 15rem;min-width:9rem'});
+            // Typed into, not submitted: the list narrows as you go, and the
+            // bar itself is never rebuilt, so the caret stays where it was.
+            searchBox.addEventListener('input', function() { query = searchBox.value || ''; repaint(); });
+            bar.appendChild(searchBox);
+          }
+          filters.forEach(function(f, fi) {
+            if (f.label) {
+              bar.appendChild(el('span', {style: 'font-size:0.72rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-mute, #999)'}, [f.label]));
+            }
+            var group = el('div', {class: 'ui-chips'});
+            (f.options || []).forEach(function(opt, oi) {
+              var count = el('span', {style: 'opacity:0.7'}, ['']);
+              var btn = el('button', {type: 'button', class: 'ui-chip',
+                onclick: function() { chosen[fi] = oi; repaint(); }}, [opt.label || '?', count]);
+              chipRefs.push({fi: fi, oi: oi, opt: opt, btn: btn, count: count});
+              group.appendChild(btn);
+            });
+            bar.appendChild(group);
+          });
+          orchView.appendChild(bar);
+        }
+        orchView.appendChild(rowsHost);
+        repaint();
       }
       // orchSourceURL pins a nav source/action fetch to the agent currently
       // in view. Data views like History are per-agent on the server (they key
@@ -754,6 +912,9 @@
           // instead of leaving the stale session title.
           if (drawer && drawer.mobileTitle) drawer.mobileTitle.textContent = item.label || '';
           orchView.textContent = 'Loading…';
+          // A view the user asked for opens whole. Only the auto-refresh
+          // redraw inherits the chips, and it does not come through here.
+          clearOrchFilterState();
           var reload = function() { selectOrchNav(idx, extraQuery, note); };
           fetch(orchSourceURL(item.source, item, extraQuery)).then(function(r) { return r.ok ? r.json() : []; })
             .then(function(rows) { renderOrchTable(rows, item, reload); paintNarrowNote(idx, item, extraQuery, note); })

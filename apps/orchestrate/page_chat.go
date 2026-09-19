@@ -327,6 +327,8 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// separate menu items, so the button that adds a schedule sits
 						// on the page that lists them.
 						{Label: "Scheduler", Icon: "⏰", Pinned: true, AllAgents: true, Source: "api/console/scheduler", Layout: "cards",
+							SearchPlaceholder: schedulerSearchHint,
+							Filters:           schedulerFilters(),
 							ViewActions: []ui.OrchestratorRowAction{
 								{Label: "New recurring task", Method: "client", URL: "orchestrate_new_recurring"},
 								{Label: "New machine run", Method: "client", URL: machineRunCreatorAction},
@@ -448,30 +450,33 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// these were three entries: no Move to…, which relocates where
 						// a report lands and belongs where you are looking at one
 						// agent's arrangements rather than sweeping the fleet.
-						{Label: "Scheduler", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/scheduler", Layout: "cards", RowActions: []ui.OrchestratorRowAction{
-							// Scheduled agents. "Edit schedule" is a CLIENT action: the
-							// modal that changes a cron or an interval lives in this app's
-							// own JS, which is where anything knowing what a cron is
-							// belongs.
-							{Label: "Edit schedule", Method: "client", URL: "orchestrate_edit_standing", OnlyIf: "_edit_standing"},
-							{Label: "Run now", Method: "POST", URL: "api/console/agents/run", OnlyIf: "_run_standing", Confirm: "Run this agent's mission once right now? This is a one-off test and does not change its schedule."},
-							{Label: "Pause", Method: "POST", URL: "api/console/agents/pause", OnlyIf: "_pause_standing"},
-							{Label: "Resume", Method: "POST", URL: "api/console/agents/resume", OnlyIf: "_resume_standing"},
-							{Label: "Relink", Method: "POST", URL: "api/console/agents/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live target", OnlyIf: "_relink_standing"},
-							{Label: "Delete", Method: "DELETE", URL: "api/console/agents/delete", Variant: "danger", OnlyIf: "_del_standing", Confirm: "Delete this standing agent and cancel its schedule?"},
-							// Recurring tasks.
-							{Label: "Edit schedule", Method: "client", URL: "orchestrate_edit_schedule", OnlyIf: "_edit_recurring"},
-							{Label: "Run now", Method: "POST", URL: "api/console/recurring/run", OnlyIf: "_run_recurring", Confirm: "Run this recurring task's prompt once right now? This is a one-off test: it does not change the schedule or count against the fire cap."},
-							{Label: "Relink", Method: "POST", URL: "api/console/recurring/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live agent", OnlyIf: "_relink_recurring"},
-							{Label: "Resume", Method: "POST", URL: "api/console/recurring/resume", OnlyIf: "_resume_recurring", Confirm: "Put this parked task back on its schedule? A stalled objective gets a fresh attempt allowance; what it already tried is kept."},
-							{Label: "Delete", Method: "DELETE", URL: "api/console/recurring/delete", Variant: "danger", OnlyIf: "_del_recurring", Confirm: "Delete this recurring task and cancel its schedule?"},
-							// Event monitors.
-							{Label: "Edit schedule", Method: "client", URL: "orchestrate_edit_monitor", OnlyIf: "_edit_monitor"},
-							{Label: "Pause", Method: "POST", URL: "api/console/monitors/pause", OnlyIf: "_pause_monitor"},
-							{Label: "Resume", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_resume_monitor"},
-							{Label: "Relink", Method: "POST", URL: "api/console/monitors/relink", PickerSource: "api/console/agent-options?with_default=1", PickerTitle: "Relink (Default agent, or pick a specific one)", OnlyIf: "_relink_monitor"},
-							{Label: "Delete", Method: "DELETE", URL: "api/console/monitors/delete", Variant: "danger", OnlyIf: "_del_monitor", Confirm: "Delete this event monitor?"},
-						}},
+						{Label: "Scheduler", Menu: "Fleet", AllAgents: true, Scope: "fleet", Source: "api/console/scheduler", Layout: "cards",
+							SearchPlaceholder: schedulerSearchHint,
+							Filters:           schedulerFilters(),
+							RowActions: []ui.OrchestratorRowAction{
+								// Scheduled agents. "Edit schedule" is a CLIENT action: the
+								// modal that changes a cron or an interval lives in this app's
+								// own JS, which is where anything knowing what a cron is
+								// belongs.
+								{Label: "Edit schedule", Method: "client", URL: "orchestrate_edit_standing", OnlyIf: "_edit_standing"},
+								{Label: "Run now", Method: "POST", URL: "api/console/agents/run", OnlyIf: "_run_standing", Confirm: "Run this agent's mission once right now? This is a one-off test and does not change its schedule."},
+								{Label: "Pause", Method: "POST", URL: "api/console/agents/pause", OnlyIf: "_pause_standing"},
+								{Label: "Resume", Method: "POST", URL: "api/console/agents/resume", OnlyIf: "_resume_standing"},
+								{Label: "Relink", Method: "POST", URL: "api/console/agents/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live target", OnlyIf: "_relink_standing"},
+								{Label: "Delete", Method: "DELETE", URL: "api/console/agents/delete", Variant: "danger", OnlyIf: "_del_standing", Confirm: "Delete this standing agent and cancel its schedule?"},
+								// Recurring tasks.
+								{Label: "Edit schedule", Method: "client", URL: "orchestrate_edit_schedule", OnlyIf: "_edit_recurring"},
+								{Label: "Run now", Method: "POST", URL: "api/console/recurring/run", OnlyIf: "_run_recurring", Confirm: "Run this recurring task's prompt once right now? This is a one-off test: it does not change the schedule or count against the fire cap."},
+								{Label: "Relink", Method: "POST", URL: "api/console/recurring/relink", PickerSource: "api/console/agent-options", PickerTitle: "Relink to a live agent", OnlyIf: "_relink_recurring"},
+								{Label: "Resume", Method: "POST", URL: "api/console/recurring/resume", OnlyIf: "_resume_recurring", Confirm: "Put this parked task back on its schedule? A stalled objective gets a fresh attempt allowance; what it already tried is kept."},
+								{Label: "Delete", Method: "DELETE", URL: "api/console/recurring/delete", Variant: "danger", OnlyIf: "_del_recurring", Confirm: "Delete this recurring task and cancel its schedule?"},
+								// Event monitors.
+								{Label: "Edit schedule", Method: "client", URL: "orchestrate_edit_monitor", OnlyIf: "_edit_monitor"},
+								{Label: "Pause", Method: "POST", URL: "api/console/monitors/pause", OnlyIf: "_pause_monitor"},
+								{Label: "Resume", Method: "POST", URL: "api/console/monitors/resume", OnlyIf: "_resume_monitor"},
+								{Label: "Relink", Method: "POST", URL: "api/console/monitors/relink", PickerSource: "api/console/agent-options?with_default=1", PickerTitle: "Relink (Default agent, or pick a specific one)", OnlyIf: "_relink_monitor"},
+								{Label: "Delete", Method: "DELETE", URL: "api/console/monitors/delete", Variant: "danger", OnlyIf: "_del_monitor", Confirm: "Delete this event monitor?"},
+							}},
 						// The durable record behind the live view: every scheduled,
 						// standing, monitor and dispatched run this user owns, newest
 						// first, long after the activity registry has forgotten it.

@@ -27,6 +27,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/ui"
 )
 
 // Section headings, in the order the page draws them. Clock-driven work first,
@@ -160,7 +161,31 @@ func schedulerRow(row any, section, kind string) map[string]any {
 	}
 	m["_section"] = section
 	addSchedulerActionFlags(m, kind)
+	addSchedulerFilterFlags(m)
 	return m
+}
+
+// addSchedulerFilterFlags composes the two questions the page's filter chips
+// ask, into one field each.
+//
+// A chip tests ONE field (see ui.OrchestratorFilterOption, deliberately: a
+// filter vocabulary that can and-or fields is a query language, and core/ui
+// would then need to learn what a schedule is). So the joining happens here,
+// where the answer is already known, exactly as the row's action flags do.
+//
+// Both are composed rather than reused from an existing field because neither
+// question maps onto one. A parked row needs attention whether or not its
+// checks have been failing, and a row that has spent its fires is at rest
+// without anything being wrong with it.
+func addSchedulerFilterFlags(m map[string]any) {
+	broken := schedFlag(m, "_broken")
+	// Failing carries the streak, and is empty while nothing is wrong.
+	failing, _ := m["failing"].(string)
+	m["_attention"] = broken || failing != ""
+	// At rest: not going to fire again until somebody does something. Paused is
+	// how a standing agent and a monitor say it; a recurring task has no pause
+	// in the scheduler store, so parked is how it says the same thing.
+	m["_at_rest"] = broken || schedFlag(m, "_paused")
 }
 
 // addSchedulerActionFlags composes one flag per row action.
@@ -221,4 +246,43 @@ func addSchedulerActionFlags(m map[string]any, kind string) {
 func schedFlag(m map[string]any, key string) bool {
 	v, ok := m[key].(bool)
 	return ok && v
+}
+
+// schedulerSearchHint is the search box's placeholder. It says SCHEDULES
+// rather than "search", because the box sits on a page that also has an agent
+// picker and a thread list, and a bare magnifier is a promise about scope that
+// nothing on screen keeps.
+const schedulerSearchHint = "Search schedules"
+
+// schedulerFilters are the chips above the list.
+//
+// Two questions, because they are the two an owner actually arrives with.
+// "Show me the monitors" is about which KIND, and answers a page whose three
+// sections have grown past one screen. "Show me what needs me" is about STATE,
+// and is the reason a list of everything that runs on a clock is worth having
+// at all: a schedule is something you stop reading once it works, so the only
+// way back in is the page telling you which ones stopped working.
+//
+// The first option of each group is the default and the one that hides nothing.
+// Every chip carries the count it would leave on screen, so "Needs attention 0"
+// answers the question without being clicked, which is the state it is in on
+// almost every day.
+func schedulerFilters() []ui.OrchestratorViewFilter {
+	return []ui.OrchestratorViewFilter{
+		{Label: "Kind", Options: []ui.OrchestratorFilterOption{
+			{Label: "All"},
+			{Label: "Agents", Field: "_section", Equals: schedSectionStanding},
+			{Label: "Tasks", Field: "_section", Equals: schedSectionRecurring},
+			{Label: "Monitors", Field: "_section", Equals: schedSectionMonitors},
+		}},
+		{Label: "Show", Options: []ui.OrchestratorFilterOption{
+			{Label: "Everything"},
+			// Composed server-side; see addSchedulerFilterFlags.
+			{Label: "Needs attention", Field: "_attention"},
+			{Label: "At rest", Field: "_at_rest"},
+			// Straight off the visible column, no composition needed: a row
+			// with an objective has text there and a row without has none.
+			{Label: "With a goal", Field: "objective"},
+		}},
+	}
 }

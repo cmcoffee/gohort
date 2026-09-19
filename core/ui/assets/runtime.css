@@ -832,7 +832,7 @@ select:-webkit-autofill {
 .ui-row-btn:active { background: var(--bg-0); transform: scale(0.96); }
 .ui-row-toggle-pair { display: inline-flex; align-items: center; gap: 0.4rem; flex-shrink: 0; }
 .ui-row-toggle-label { font-size: 0.78rem; color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em; }
-.ui-row-select, .ui-row-number {
+.ui-row-select, .ui-row-number, .ui-filter-search {
   flex-shrink: 0;
   padding: 0.35rem 0.45rem;
   background: var(--bg-1); color: var(--text);
@@ -840,7 +840,7 @@ select:-webkit-autofill {
   font-size: 0.85rem; font-family: inherit; outline: none;
   -webkit-appearance: none; appearance: none;
 }
-.ui-row-select:focus, .ui-row-number:focus { border-color: var(--accent); }
+.ui-row-select:focus, .ui-row-number:focus, .ui-filter-search:focus { border-color: var(--accent); }
 .ui-row-select:disabled { opacity: 0.5; cursor: not-allowed; }
 .ui-row-number { width: 6rem; text-align: right; }
 /* Segmented pill track — single-select ladder rendered inline in a row.
