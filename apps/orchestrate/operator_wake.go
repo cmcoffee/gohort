@@ -27,6 +27,31 @@ import (
 	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
+// monitorWakeMessage is the turn a fired monitor hands its agent: the event, the
+// owner's standing guidance, what to do about it, and — for a monitor carrying a
+// goal — what the earlier fires saw.
+//
+// That last block is why this is a function. A monitor with an `until` keeps an
+// attempt history like the other two objective surfaces (settleMonitorObjective
+// appends one every cycle), and it was the only surface that never read its own
+// history back: recurring appends it to the fire prompt and standing appends it
+// to the mission, while here it reached the card and stopped. So a fifth
+// sighting arrived reading exactly like a first, and the turn was handed
+// set_next_attempt — "move the NEXT attempt at this goal" — without ever being
+// told what the goal was.
+//
+// Last, matching both other surfaces: it is volatile tail that never caches, and
+// its closing line ("do not repeat an attempt that already failed for the same
+// reason") is the one the turn should read nearest its own reply.
+func monitorWakeMessage(m EventMonitor, monitorName, summary, brief string) string {
+	msg := fmt.Sprintf("[EVENT, monitor %q fired]\n%s%s\n\nReact in this thread: report it, delegate any needed work (delegation routes through the authorization queue), or just note it.",
+		monitorName, summary, brief)
+	if block := objectiveAttemptsBlock(monitorObjective(m)); block != "" {
+		msg += "\n\n" + block
+	}
+	return msg
+}
+
 // registerOperatorWake installs the event-monitor closures and starts the poll
 // scheduler. Call once at startup (alongside registerStandingRunner).
 func registerOperatorWake(app *OrchestrateApp) {
@@ -231,8 +256,7 @@ func registerOperatorWake(app *OrchestrateApp) {
 					wakeTarget = cortexSessionID(wakeAgent)
 				}
 			}
-			msg := fmt.Sprintf("[EVENT, monitor %q fired]\n%s%s\n\nReact in this thread: report it, delegate any needed work (delegation routes through the authorization queue), or just note it.",
-				monitorName, summary, brief)
+			msg := monitorWakeMessage(m, monitorName, summary, brief)
 			// A monitor carrying a goal lets the woken agent say when the next
 			// CHECK is worth making — "still in review, don't look again until
 			// tomorrow" (docs/objective-pacing.md). This turn is the only place

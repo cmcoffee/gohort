@@ -797,3 +797,49 @@ func TestSettleObjectivePassesTheTraceThrough(t *testing.T) {
 		t.Errorf("reads-only must not satisfy a posting goal: %+v", got)
 	}
 }
+
+// The wake turn is a monitor's only turn, and it was the one objective surface
+// that never read its own attempt history back: recurring appends the block to
+// the fire prompt, standing to the mission, and here it reached the card and
+// stopped there. So a fifth sighting arrived reading exactly like a first, on
+// the surface whose whole job is a condition that keeps recurring, while the
+// turn held a lever ("move the NEXT attempt at this goal") for a goal it was
+// never told.
+func TestMonitorWakeCarriesItsObjectiveHistory(t *testing.T) {
+	m := EventMonitor{
+		Owner: "craig", Name: "pr-12", Kind: EventKindWatch, Until: "the PR is merged",
+		IntervalSeconds: 900, WakeBrief: "post it in the release thread",
+		Attempts: []ObjectiveAttempt{
+			{At: "2026-09-14T09:00:00Z", Reason: "still open, one review pending"},
+			{At: "2026-09-15T09:00:00Z", Reason: "reviewed, changes requested"},
+		},
+	}
+	msg := monitorWakeMessage(m, m.Name, "a new comment landed on PR #12", "\n\nWhat to do: "+m.WakeBrief)
+
+	for _, want := range []string{
+		"a new comment landed on PR #12", // the event
+		"post it in the release thread",  // the owner's standing guidance
+		"the PR is merged",               // the goal this turn was never told
+		"changes requested",              // what the last fire actually saw
+		"Attempts so far: 2",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the wake turn does not carry %q:\n%s", want, msg)
+		}
+	}
+	// Last, matching the other two surfaces: the block's closing line is the one
+	// about not repeating a failed attempt, and it belongs nearest the reply.
+	if strings.Index(msg, "[Objective:") < strings.Index(msg, "React in this thread") {
+		t.Errorf("the history is not last in the wake turn:\n%s", msg)
+	}
+}
+
+// A monitor with no goal is the common case, and it pays nothing: no block, no
+// mention of attempts, nothing about a lever it was not given.
+func TestMonitorWakeWithoutAGoalSaysNothingAboutAttempts(t *testing.T) {
+	m := EventMonitor{Owner: "craig", Name: "deploys", Kind: EventKindWatch}
+	msg := monitorWakeMessage(m, m.Name, "a deploy finished", "")
+	if strings.Contains(msg, "[Objective:") || strings.Contains(msg, "Attempts so far") {
+		t.Errorf("a goalless monitor's wake turn carries objective text:\n%s", msg)
+	}
+}
