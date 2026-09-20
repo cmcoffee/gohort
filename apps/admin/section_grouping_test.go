@@ -164,3 +164,62 @@ func TestNothingInAdminStartsCollapsed(t *testing.T) {
 		}
 	}
 }
+
+// The governance view answers "what reaches other people, and by whose
+// decision". A per-user ADOPTION ledger answered something else: which of the
+// tools somebody is already permitted to have they happen to want loaded.
+// That is their own preference, an admin reaching into it was taking away a
+// choice rather than a permission, and the row it produced multiplied with
+// every user.
+//
+// This pins the replacement rather than the removal: the section lists the
+// CATALOG, one row per published tool, with the two levers that actually
+// govern it.
+func TestGovernanceListsTheToolCatalogNotWhoAdoptedIt(t *testing.T) {
+	var tools *ui.Section
+	for i, s := range (&AdminApp{}).governanceSections() {
+		if s.Title == "Global tools" {
+			tools = &(&AdminApp{}).governanceSections()[i]
+		}
+		if strings.Contains(strings.ToLower(s.Title), "adoption") {
+			t.Errorf("the adoption ledger is back as %q: an admin governs permission, not preference", s.Title)
+		}
+	}
+	if tools == nil {
+		t.Fatal("the published-tool catalog is gone from governance")
+	}
+	table, ok := tools.Body.(ui.Table)
+	if !ok {
+		t.Fatalf("the catalog is not a table: %T", tools.Body)
+	}
+	if table.Source != "api/global-tools" {
+		t.Errorf("source = %q, want the catalog listing", table.Source)
+	}
+	// One row per TOOL. Keying on anything carrying a username would be the
+	// per-user ledger wearing a different name.
+	if table.RowKey != "id" {
+		t.Errorf("row key = %q", table.RowKey)
+	}
+	for _, c := range table.Columns {
+		if c.Field == "user" || c.Field == "adopted_by" {
+			t.Errorf("the catalog lists adopters again (column %q)", c.Field)
+		}
+	}
+	// The two levers that govern a published tool: who may take it, and
+	// whether it is published at all.
+	var labels []string
+	for _, a := range table.RowActions {
+		labels = append(labels, a.Label)
+	}
+	for _, want := range []string{"Access", "Unshare"} {
+		found := false
+		for _, l := range labels {
+			if l == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("the catalog row has no %q; the levers are %v", want, labels)
+		}
+	}
+}

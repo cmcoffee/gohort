@@ -237,7 +237,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 
 		// Who owns what, across every kind of owned thing. Six sections that
 		// are one subject, which is a tab rather than six strays in General.
-		"User-owned credentials": "Governance", "Global-tool adoptions": "Governance",
+		"User-owned credentials": "Governance", "Global tools": "Governance",
 		"User-owned agents": "Governance", "User-owned pipelines": "Governance",
 		"User-owned machines": "Governance", "Pending promotions": "Governance",
 	}

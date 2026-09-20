@@ -4,7 +4,7 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
-// governanceSections is the governance part of the admin page: User-owned credentials, Global-tool adoptions, User-owned agents, User-owned pipelines, User-owned machines, Pending promotions.
+// governanceSections is the governance part of the admin page: User-owned credentials, Global tools, User-owned agents, User-owned pipelines, User-owned machines, Pending promotions.
 func (a *AdminApp) governanceSections() []ui.Section {
 	return []ui.Section{
 		{
@@ -55,27 +55,45 @@ func (a *AdminApp) governanceSections() []ui.Section {
 			},
 		},
 		{
-			Title:    "Global-tool adoptions",
-			Subtitle: "Who has pulled each SHARED global tool into their fleet.",
-			Detail:   "Adoption is opt-in from their Extensions catalog. This shows a shared tool's blast radius before you revoke it, and lets you force-remove one user's adoption.\n\nA ⚠ row is a stale adoption: the tool has since left the shared catalog. Removing an adoption stops that user's agents loading the tool until they re-adopt, if its access list still permits it.",
+			Title:    "Global tools",
+			Subtitle: "What this deployment publishes, and who may take it.",
+			Detail: "A tool reaches other people on three rungs: its owner's alone, shared by them with people they name, or published here to the deployment catalog. This is the third — the one an admin grants.\n\n" +
+				"Published is not loaded. Each user opts in from their own Extensions catalog and picks which of their agents load it, which is their business and not shown here: an admin who wants somebody to stop using a tool takes away the permission rather than the preference. Access does that for one person; Unshare does it for everybody.\n\n" +
+				"Publish a tool, set its access, and inspect what it actually does on the Tools page.",
 			Body: ui.Table{
-				Source: "api/tool-adoptions",
+				Source: "api/global-tools",
 				RowKey: "id",
 				Columns: []ui.Col{
 					{Field: "tool", Flex: 1},
-					{Field: "user", Flex: 0, Label: "Adopted by"},
-					{Field: "stale", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
-						{Value: true, Label: "⚠ tool unshared", Color: "warning"},
+					{Field: "owner", Flex: 0, Label: "Published by"},
+					{Field: "access", Flex: 2, Mute: true, Label: "May be taken by"},
+					{Field: "restricted", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "Restricted", Color: "info"},
 					}},
 				},
 				RowActions: []ui.RowAction{
-					{Type: "button", Label: "Remove",
-						PostTo:  "api/tool-adoptions?action=unadopt&user={user}&name={tool}",
+					// The same door the Tools page opens, rendered where the
+					// question is asked. Who may take a published tool is the
+					// governance question about it, so answering it here saves
+					// a trip to a page about something else.
+					ui.ModalAction("Access", ui.ACLPicker(ui.ACLPickerConfig{
+						OptionsSource: "api/user-candidates",
+						RecordSource:  "api/persistent-tools?allowed_users={tool}&owner={owner}",
+						Field:         "allowed_users",
+						PostTo:        "api/persistent-tools?action=set_allowed_users&name={tool}&owner={owner}",
+						Method:        "POST",
+						Noun:          "user",
+						Intro:         "Which users may take this tool from their Extensions catalog. Empty = every user. Each of them then chooses which of their own agents load it.",
+						EmptyText:     "No other users to grant yet.",
+						Invalidate:    []string{"api/global-tools"},
+					})),
+					{Type: "button", Label: "Unshare",
+						PostTo:  "api/persistent-tools?action=unshare&name={tool}&owner={owner}",
 						Method:  "POST",
-						Confirm: "Remove this user's adoption of the tool? Their agents stop loading it until they re-adopt (if still permitted).",
+						Confirm: "Take this tool out of the shared catalog? Everyone who adopted it stops loading it, and it goes back to being its owner's alone.",
 						Variant: "danger"},
 				},
-				EmptyText: "No global-tool adoptions yet. When a user adopts a shared tool from their Extensions catalog, it appears here.",
+				EmptyText: "The deployment publishes no tools. A user asks for one to be published from their Extensions page, and it appears in Pending promotions below.",
 			},
 		},
 		{

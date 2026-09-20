@@ -357,56 +357,48 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 		}
 	})
 
-	// API: global-tool adoptions — who has pulled each shared tool into their
-	// fleet, so the admin can see blast radius before revoking one and force-remove
-	// a specific user's adoption. One row per (tool, adopter); a stale row is an
-	// adoption whose tool has since left the shared catalog.
-	sub.HandleFunc("/api/tool-adoptions", func(w http.ResponseWriter, r *http.Request) {
+	// API: the global tool catalog — what this deployment publishes, and who
+	// may take it.
+	//
+	// This replaced a per-(user, tool) ADOPTION ledger with a force-remove
+	// button. Adoption is the user's own opt-in from their Extensions catalog:
+	// which of the tools they are permitted to have they actually want loaded.
+	// An admin reaching into that was answering a question nobody asks — the
+	// governance question is whether a tool is published and to whom, and an
+	// admin who wants somebody to stop using one takes away the permission
+	// rather than the preference. Unshare and Access do that, on the row.
+	sub.HandleFunc("/api/global-tools", func(w http.ResponseWriter, r *http.Request) {
 		if !a.requireAdmin(w, r) {
 			return
 		}
 		switch r.Method {
 		case http.MethodGet:
-			shared := map[string]bool{}
-			for _, p := range LoadSharedPersistentTempTools(a.db) {
-				shared[p.Tool.Name] = true
-			}
 			type row struct {
-				ID    string `json:"id"` // tool/user — unique (RowKey)
-				Tool  string `json:"tool"`
-				User  string `json:"user"`
-				Stale bool   `json:"stale"`
+				ID     string `json:"id"`
+				Tool   string `json:"tool"`
+				Owner  string `json:"owner"`
+				Access string `json:"access"`
+				// Restricted drives the badge: "every user" and "these three"
+				// are different grants and should not read the same.
+				Restricted bool `json:"restricted"`
 			}
 			rows := []row{}
-			for _, u := range AuthListUsers(a.db) {
-				for name := range LoadAdoptedGlobalTools(a.db, u.Username) {
-					rows = append(rows, row{ID: name + "/" + u.Username, Tool: name, User: u.Username, Stale: !shared[name]})
+			// Who published each one. A catalog entry with no name behind it
+			// is one nobody is answerable for.
+			owners := SharedToolOwners(a.db)
+			for _, p := range LoadSharedPersistentTempTools(a.db) {
+				access, restricted := "Every user", false
+				if len(p.AllowedUsers) > 0 {
+					access, restricted = strings.Join(p.AllowedUsers, ", "), true
 				}
+				rows = append(rows, row{
+					ID: p.Tool.Name, Tool: p.Tool.Name, Owner: owners[p.Tool.Name],
+					Access: access, Restricted: restricted,
+				})
 			}
-			sort.Slice(rows, func(i, j int) bool {
-				if rows[i].Tool != rows[j].Tool {
-					return rows[i].Tool < rows[j].Tool
-				}
-				return rows[i].User < rows[j].User
-			})
+			sort.Slice(rows, func(i, j int) bool { return rows[i].Tool < rows[j].Tool })
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(rows)
-		case http.MethodPost:
-			user := strings.TrimSpace(r.URL.Query().Get("user"))
-			name := strings.TrimSpace(r.URL.Query().Get("name"))
-			if user == "" || name == "" {
-				http.Error(w, "user and name required", http.StatusBadRequest)
-				return
-			}
-			if r.URL.Query().Get("action") != "unadopt" {
-				http.Error(w, "action must be unadopt", http.StatusBadRequest)
-				return
-			}
-			if err := SetGlobalToolAdopted(a.db, user, name, false); err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
