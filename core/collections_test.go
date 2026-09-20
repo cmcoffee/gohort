@@ -73,7 +73,7 @@ func TestASharedCollectionReachesItsRecipient(t *testing.T) {
 
 	// Bob sees it and can resolve it.
 	var found bool
-	for _, got := range SharedCollectionsFor("bob") {
+	for _, got := range sharedCollectionsFor("bob") {
 		if got.ID == "col-1" {
 			found = true
 		}
@@ -85,7 +85,7 @@ func TestASharedCollectionReachesItsRecipient(t *testing.T) {
 		t.Error("the recipient cannot resolve it by id, so they could not attach it")
 	}
 	// Somebody not named cannot.
-	if got := SharedCollectionsFor("dana"); len(got) != 0 {
+	if got := sharedCollectionsFor("dana"); len(got) != 0 {
 		t.Errorf("an unnamed user sees it: %+v", got)
 	}
 
@@ -101,7 +101,7 @@ func TestASharedCollectionReachesItsRecipient(t *testing.T) {
 	// record in the same write.
 	c.AllowedUsers = nil
 	SaveCollection(owner, c)
-	if got := SharedCollectionsFor("bob"); len(got) != 0 {
+	if got := sharedCollectionsFor("bob"); len(got) != 0 {
 		t.Errorf("a revoked recipient still has it: %+v", got)
 	}
 }
@@ -119,7 +119,7 @@ func TestSharingIsNotOfferedWhereItCouldNotSearch(t *testing.T) {
 		t.Skip("no per-user store in this configuration")
 	}
 	SaveCollection(owner, Collection{ID: "col-2", Owner: "alice", Name: "Runbooks", AllowedUsers: []string{"bob"}})
-	if got := SharedCollectionsFor("bob"); len(got) != 0 {
+	if got := sharedCollectionsFor("bob"); len(got) != 0 {
 		t.Errorf("a collection was offered that the recipient could not search: %+v", got)
 	}
 }

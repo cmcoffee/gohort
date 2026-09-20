@@ -207,6 +207,25 @@ type SecureCredential struct {
 	// normalizes that away rather than leaving it to a lookup order.
 	SharedReadOnly  []string `json:"shared_read_only,omitempty"`
 	SharedReadWrite []string `json:"shared_read_write,omitempty"`
+	// Lending is the owner's STANDING answer to "may this key be lent at
+	// all": LendNone, LendRead, LendAny, or empty.
+	//
+	// The lists above are a decision about an occasion; this is a decision
+	// about the key. Without it the only place to say "I would never lend
+	// this one" was inside a share flow, which asked again on every share and
+	// where one careless pass lends something that should never have left.
+	//
+	// Empty means not decided, which behaves as LendAny: a policy that
+	// defaulted to refusing would silently revoke every lend already made the
+	// moment this field existed. It reads as "Not set" on the credential list
+	// so the undecided ones are visible rather than merely permissive.
+	//
+	// Enforced where the lists are WRITTEN, so the guided flow, the pickers,
+	// the fan-out and the ledger cannot each hold a different opinion. And
+	// tightening it reaches what already happened: a policy saying nobody,
+	// over a key two people hold, would be a rule about the future pretending
+	// to be a rule.
+	Lending string `json:"lending,omitempty"`
 	// ApprovedToolBindings is the authoritative "declaring tools" allowlist for a
 	// SECURED credential — the tools an admin has approved to bind (fetch_via /
 	// api-mode) and thereby dispatch through it. This is what makes access follow
@@ -592,6 +611,15 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 		// every share the moment somebody edited a base URL.
 		c.SharedReadOnly = existing.SharedReadOnly
 		c.SharedReadWrite = existing.SharedReadWrite
+		// Lending is NOT preserved: it is ordinary config the form carries,
+		// and it governs the two lists above rather than being one of them.
+		// Applied right here, so tightening the policy takes back the lends it
+		// now forbids instead of leaving a rule that contradicts the record
+		// under it.
+		if dropped := applyLendingPolicy(&c); len(dropped) > 0 {
+			Log("[secure_api] %q set credential %q to %q: %s no longer have it",
+				c.Owner, c.Name, lendingLabel(c.Lending), strings.Join(dropped, ", "))
+		}
 	} else {
 		c.CreatedAt = time.Now()
 	}
@@ -2651,6 +2679,16 @@ func (s *SecureAPI) SetCredentialShares(owner, name string, readOnly, readWrite 
 	}
 	write := cleanShareList(readWrite, owner, nil)
 	read := cleanShareList(readOnly, owner, write)
+	// The policy is enforced where the lists are WRITTEN, which is here for
+	// every door: the guided flow, both pickers, the fan-out and the ledger.
+	// A flow that merely declined to OFFER a lend would be one refusal that
+	// any other caller walks straight past.
+	if len(read)+len(write) > 0 {
+		if why := lendingRefusal(c, len(write) > 0); why != "" {
+			s.mu.Unlock()
+			return errString(why)
+		}
+	}
 	c.SharedReadWrite, c.SharedReadOnly = write, read
 	s.db.Set(secureAPITable, key, c)
 	s.mu.Unlock()
@@ -3039,4 +3077,86 @@ func init() {
 			return errString("no tool " + id + " owned by " + owner)
 		},
 	})
+}
+
+// ----------------------------------------------------------------------
+// Lending policy
+// ----------------------------------------------------------------------
+
+// What an owner will allow their own key to be lent for. Values rather than
+// two booleans: "may be lent" and "may be lent for writes" as separate flags
+// have a fourth state that means nothing, and somebody eventually sets it.
+const (
+	LendNone = "none" // never lent, whatever a share flow offers
+	LendRead = "read" // lent for reads; a write lend is refused
+	LendAny  = "any"  // lent either way, which is also what an unset one does
+)
+
+// MayLend reports whether this key may be lent at all, and whether it may be
+// lent for writes.
+//
+// Unset reads as LendAny for the reason the field says: a policy that defaulted
+// to refusing would revoke every lend already made the moment it existed.
+//
+// A method rather than a function so core's export ceiling is not spent on it:
+// the three policy VALUES have to be exported, because the form that sets them
+// and the flow that reads them both live outside this package, and duplicating
+// those strings is how two packages come to disagree about what "read" means.
+func (c SecureCredential) MayLend() (lend bool, write bool) {
+	switch c.Lending {
+	case LendNone:
+		return false, false
+	case LendRead:
+		return true, false
+	default:
+		return true, true
+	}
+}
+
+// lendingLabel is the policy in the owner's words, for a log line or a list
+// column. "read" tells a reader nothing on its own.
+func lendingLabel(policy string) string {
+	switch policy {
+	case LendNone:
+		return "lent to nobody"
+	case LendRead:
+		return "lent for reads only"
+	case LendAny:
+		return "lent either way"
+	}
+	return "not decided"
+}
+
+// applyLendingPolicy drops the lends the policy forbids and returns the names
+// it took it from, so the change can be reported rather than discovered.
+func applyLendingPolicy(c *SecureCredential) []string {
+	lend, write := c.MayLend()
+	var dropped []string
+	if !lend {
+		dropped = append(dropped, c.SharedReadOnly...)
+		dropped = append(dropped, c.SharedReadWrite...)
+		c.SharedReadOnly, c.SharedReadWrite = nil, nil
+		return dropped
+	}
+	if !write && len(c.SharedReadWrite) > 0 {
+		// Narrowed rather than revoked: they were trusted with the key, and
+		// the policy says only that they may no longer write with it.
+		dropped = append(dropped, c.SharedReadWrite...)
+		c.SharedReadOnly = cleanShareList(append(append([]string{}, c.SharedReadOnly...), c.SharedReadWrite...), c.Owner, nil)
+		c.SharedReadWrite = nil
+	}
+	return dropped
+}
+
+// lendingRefusal says why a lend cannot happen, or "" when it can.
+func lendingRefusal(c SecureCredential, wantWrite bool) string {
+	lend, write := c.MayLend()
+	switch {
+	case !lend:
+		return "\"" + c.Name + "\" is set to be lent to nobody. Change that on the credential itself if you mean to lend it."
+	case wantWrite && !write:
+		return "\"" + c.Name + "\" is set to be lent for reads only, so it cannot be lent for writes. " +
+			"Change that on the credential itself if you mean to let somebody write as you."
+	}
+	return ""
 }

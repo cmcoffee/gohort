@@ -767,35 +767,35 @@ func DeleteSkill(db Database, username, id string) bool {
 	// The history goes with the skill, the way a deleted pipeline's does.
 	revisions.Delete(store, revisions.KindSkill, skillRingKey(username, id))
 	// Drop the skill's corpus chunks from its dedicated store.
-	if chunksDB := SkillChunksDB(username); chunksDB != nil {
-		if n := WipeChunksBySourcePrefix(chunksDB, SkillSource(id)); n > 0 {
+	if chunksDB := skillChunksDB(username); chunksDB != nil {
+		if n := WipeChunksBySourcePrefix(chunksDB, skillSource(id)); n > 0 {
 			Log("[skills] dropped %d chunk(s) for deleted skill %s", n, id)
 		}
 	}
 	return true
 }
 
-// SkillSource returns the source-prefix used by the vector store
+// skillSource returns the source-prefix used by the vector store
 // for this skill's corpus. Centralized so the ingest path, the
 // activation search, and the delete-cleanup all derive the same
 // namespace from the skill ID.
-func SkillSource(skillID string) string {
+func skillSource(skillID string) string {
 	return "skill:" + skillID
 }
 
-// SkillChunksDB returns the database the skill's knowledge chunks
+// skillChunksDB returns the database the skill's knowledge chunks
 // live in: a dedicated per-user sub-store of RootDB. Separate from
 // any app's own per-(user, agent) knowledge store — skills are
 // user-scoped, not agent-scoped, so they get their own home.
 // Returns nil when RootDB isn't initialized; callers should treat
 // that as "no corpus available" and skip both ingest and search.
-func SkillChunksDB(username string) Database {
+func skillChunksDB(username string) Database {
 	if username == "" {
 		return nil
 	}
 	// Skill corpus now lives in the shared, dedicated vector store
 	// alongside all other knowledge, scoped logically by the
-	// SkillSource("skill:<id>") tag rather than by a per-user sub-store.
+	// skillSource("skill:<id>") tag rather than by a per-user sub-store.
 	// Skill IDs are globally unique, so any future skill search MUST
 	// scope to the requesting user's own skill IDs (the source tag does
 	// not by itself partition by user). No skill chunks are ingested or
@@ -814,7 +814,7 @@ func SkillChunksDB(username string) Database {
 //     attached the first time the skill is touched this turn;
 //   - skill_knowledge_fetch_doc(skill, doc_id) — a full doc.
 // Plus, when a skill's Triggers match the turn, the framework surfaces a
-// soft HINT nudging the LLM to consult it (RenderSkillTriggerHints) — a
+// soft HINT nudging the LLM to consult it (renderSkillTriggerHints) — a
 // signal, not a forced injection; consulting via the tools is what loads
 // the instructions. A per-turn `delivered` set dedupes them so the LLM
 // sees a consulted skill's instructions once.
@@ -874,7 +874,7 @@ func (s SkillRecord) playbookFacts() []string {
 // filenames; any other trigger is a case-insensitive substring test against
 // the message text. A skill with NO triggers never matches. A match is a
 // relevance SIGNAL, not a command — it surfaces a HINT nudging the LLM to
-// consult the skill (see RenderSkillTriggerHints), it does NOT force-inject
+// consult the skill (see renderSkillTriggerHints), it does NOT force-inject
 // the skill's instructions. Deterministic and framework-owned.
 func SkillTriggersMatch(s SkillRecord, message string, attachmentNames []string) bool {
 	return TriggersMatch(s.Triggers, message, attachmentNames)
@@ -912,7 +912,7 @@ func TriggersMatch(triggers []string, message string, attachmentNames []string) 
 	return false
 }
 
-// RenderSkillTriggerHints returns a soft HINT block naming the allowed,
+// renderSkillTriggerHints returns a soft HINT block naming the allowed,
 // enabled skills whose Triggers match this turn — a per-turn nudge to
 // consult them, NOT the full instruction injection. A matched trigger is a
 // relevance signal; the LLM still decides to consult (read_skill /
@@ -921,7 +921,7 @@ func TriggersMatch(triggers []string, message string, attachmentNames []string) 
 // cheap (one line the LLM ignores) while a wrong injection is expensive (a
 // wall of off-topic instructions steering the whole reply). Returns "" when
 // nothing matches.
-func RenderSkillTriggerHints(db Database, owner string, allowed []string, message string, attachmentNames []string) string {
+func renderSkillTriggerHints(db Database, owner string, allowed []string, message string, attachmentNames []string) string {
 	if owner == "" || len(allowed) == 0 {
 		return ""
 	}

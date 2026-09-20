@@ -122,6 +122,11 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			HasSecret       bool   `json:"has_secret"`
 			Disabled        bool   `json:"disabled"`
 			Secured         bool   `json:"secured"`
+			// Lending is the owner's standing answer to "may this be lent at
+			// all", as against the two lists below, which are who it is lent
+			// to today. A decision about the key, not about an occasion.
+			Lending      string `json:"lending"`
+			LendingLabel string `json:"lending_label"`
 			// The two share lists the pickers edit, plus the one-line summary
 			// the table column reads. Who a key reaches is the fact this page
 			// exists to let someone control, so it belongs in the list and not
@@ -144,6 +149,8 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 				SharedReadOnly:  nonNilList(c.SharedReadOnly),
 				SharedReadWrite: nonNilList(c.SharedReadWrite),
 				SharedSummary:   shareSummary(c),
+				Lending:         c.Lending,
+				LendingLabel:    lendingListLabel(c),
 				HandoverPending: handoverPending(user, c.Name),
 				CanHandOver:     !handoverPending(user, c.Name),
 			}
@@ -235,6 +242,7 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			Secret          string `json:"secret"`
 			RequiresConfirm bool   `json:"requires_confirm"`
 			Secured         bool   `json:"secured"`
+			Lending         string `json:"lending"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -257,6 +265,7 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			ParamName:       strings.TrimSpace(body.ParamName),
 			Description:     strings.TrimSpace(body.Description),
 			RequiresConfirm: body.RequiresConfirm,
+			Lending:         body.Lending,
 			Owner:           user,
 		}
 		// Auto-enable on finishing a draft. A draft_api_credential lands
@@ -1328,8 +1337,34 @@ func credentialFormFields() []ui.FormField {
 			Help: "OFF: every one of your agents gets a fetch_url_<name> tool for this credential and can call the API directly. " +
 				"ON: no such tool is generated, the credential is reachable only through tools you build that name it, so access follows those tools' scope rather than being open to everything you run. " +
 				"The secret is never handed to tool code either way; calls are signed server-side."},
+		{Field: "lending", Label: "May this be lent to other people?", Type: "select",
+			Options: []ui.SelectOption{
+				{Value: "", Label: "Not decided"},
+				{Value: LendNone, Label: "Nobody — never lend this key"},
+				{Value: LendRead, Label: "Readers only"},
+				{Value: LendAny, Label: "Readers and writers"},
+			},
+			Help: "Your standing answer, as against who has it today.",
+			Detail: "Sharing an agent asks about each credential it touches, and without this the answer is a decision you make afresh every time — so a key you would never lend is one careless pass through that flow away from being lent.\n\n" +
+				"Nobody removes the lend options wherever they are offered, and refuses them wherever they are written. Readers only allows GET and HEAD through your key and refuses a write lend, which is the one that matters: what somebody writes through your credential arrives at the far end as YOU.\n\n" +
+				"Tightening this takes back what it now forbids. Setting Nobody over a key two people hold takes it from both; narrowing to Readers only leaves them the key and takes the writing."},
 		{Field: "description", Label: "Description", Type: "textarea", Rows: 2, Help: "Shown to your agents as the tool description."},
 	}
+}
+
+// lendingListLabel is the policy as the credential list shows it. Blank for a
+// key nobody could lend anyway, because a column repeating "not decided" down
+// every row of a deployment that shares nothing is noise rather than a nudge.
+func lendingListLabel(c SecureCredential) string {
+	switch c.Lending {
+	case LendNone:
+		return "Never lent"
+	case LendRead:
+		return "Lent for reads"
+	case LendAny:
+		return "Lent either way"
+	}
+	return ""
 }
 
 // userSkillFormFields is the Add/Edit form for a user's own skill. BEHAVIOR
@@ -1437,6 +1472,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 							{Value: true, Label: "Tools only", Color: "success"},
 							{Value: false, Label: "All my agents", Color: "warning"},
 						}},
+						{Field: "lending_label", Label: "Lending", Mute: true},
 						{Field: "shared_summary", Label: "Shared", Mute: true},
 						{Field: "handover_pending", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
 							{Value: true, Label: "Handover pending", Color: "warning"},

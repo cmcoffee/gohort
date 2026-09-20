@@ -1432,3 +1432,90 @@ func TestHandingOverSomethingYouDoNotOwnFails(t *testing.T) {
 		t.Error("the real owner's credential was disturbed")
 	}
 }
+
+// ----------------------------------------------------------------------
+// Lending policy
+// ----------------------------------------------------------------------
+
+// Unset behaves exactly as before. A policy that defaulted to refusing would
+// have revoked every lend already made the moment the field existed.
+func TestAnUndecidedKeyLendsAsItAlwaysDid(t *testing.T) {
+	secureAPITestStore(t)
+	shareTestCred(t, "alice", "wiki", "https://wiki.example/**")
+	if err := Secure().SetCredentialShares("alice", "wiki", []string{"bob"}, []string{"carol"}); err != nil {
+		t.Fatalf("an undecided key refused a lend: %v", err)
+	}
+	c, _ := Secure().LoadUser("alice", "wiki")
+	if lend, write := c.MayLend(); !lend || !write {
+		t.Errorf("unset reads as lend=%v write=%v", lend, write)
+	}
+}
+
+// The refusal is on the SETTER, not only in the flow that offers the options.
+// A flow that merely declined to offer would be one refusal any other door
+// walks straight past.
+func TestAKeySetToNeverLendRefusesEveryDoor(t *testing.T) {
+	secureAPITestStore(t)
+	if err := Secure().Save(SecureCredential{Name: "wiki", Type: SecureCredNone, Owner: "alice",
+		AllowedURLPattern: "https://wiki.example/**", Lending: LendNone}, ""); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	err := Secure().SetCredentialShares("alice", "wiki", []string{"bob"}, nil)
+	if err == nil {
+		t.Fatal("a key set to never lend was lent anyway")
+	}
+	// The refusal says what to change, or the reader tries the same thing
+	// somewhere else.
+	if !strings.Contains(err.Error(), "credential itself") {
+		t.Errorf("the refusal does not say where to change it: %v", err)
+	}
+	// And taking a lend BACK is never refused: clearing is not lending.
+	if err := Secure().SetCredentialShares("alice", "wiki", nil, nil); err != nil {
+		t.Errorf("revoking was refused by the lending policy: %v", err)
+	}
+}
+
+// Reads-only is a narrowing, not a ban: the read lend goes through and the
+// write lend does not.
+func TestAReadsOnlyKeyRefusesOnlyTheWriteLend(t *testing.T) {
+	secureAPITestStore(t)
+	Secure().Save(SecureCredential{Name: "wiki", Type: SecureCredNone, Owner: "alice",
+		AllowedURLPattern: "https://wiki.example/**", Lending: LendRead}, "")
+
+	if err := Secure().SetCredentialShares("alice", "wiki", []string{"bob"}, nil); err != nil {
+		t.Errorf("a read lend was refused: %v", err)
+	}
+	if err := Secure().SetCredentialShares("alice", "wiki", nil, []string{"bob"}); err == nil {
+		t.Error("a write lend went through on a reads-only key")
+	}
+}
+
+// Tightening reaches what already happened. A policy saying nobody, over a key
+// two people hold, would be a rule about the future pretending to be a rule.
+func TestTighteningThePolicyTakesBackWhatItForbids(t *testing.T) {
+	secureAPITestStore(t)
+	shareTestCred(t, "alice", "wiki", "https://wiki.example/**")
+	Secure().SetCredentialShares("alice", "wiki", []string{"bob"}, []string{"carol"})
+
+	// Narrowed to reads: carol keeps the key and loses the writing.
+	Secure().Save(SecureCredential{Name: "wiki", Type: SecureCredNone, Owner: "alice",
+		AllowedURLPattern: "https://wiki.example/**", Lending: LendRead}, "")
+	c, _ := Secure().LoadUser("alice", "wiki")
+	if len(c.SharedReadWrite) != 0 {
+		t.Errorf("a write lend survived a narrowing: %+v", c.SharedReadWrite)
+	}
+	if !credSliceHas(c.SharedReadOnly, "carol") || !credSliceHas(c.SharedReadOnly, "bob") {
+		t.Errorf("narrowing took the key away rather than the writing: %+v", c.SharedReadOnly)
+	}
+
+	// Set to nobody: both lose it outright.
+	Secure().Save(SecureCredential{Name: "wiki", Type: SecureCredNone, Owner: "alice",
+		AllowedURLPattern: "https://wiki.example/**", Lending: LendNone}, "")
+	c, _ = Secure().LoadUser("alice", "wiki")
+	if len(c.SharedReadOnly)+len(c.SharedReadWrite) != 0 {
+		t.Errorf("a lend survived the policy: %+v / %+v", c.SharedReadOnly, c.SharedReadWrite)
+	}
+	if got := Secure().SharedWithUser("bob"); len(got) != 0 {
+		t.Errorf("the recipient still resolves it: %+v", got)
+	}
+}

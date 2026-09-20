@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/shareledger"
 )
 
 func guidedFixture(t *testing.T) (Database, AgentRecord) {
@@ -222,4 +223,57 @@ func TestTheManifestIsPerRecipient(t *testing.T) {
 	if need := manifestForAgent("alice", "a1", "carol"); len(need) == 0 {
 		t.Error("carol has not taken the tool and is being told nothing")
 	}
+}
+
+// The flow offers only what the key's own policy allows. Asking about a
+// credential on every share is how a key somebody would never lend ends up
+// lent by one careless pass.
+func TestTheFlowOffersOnlyWhatThePolicyAllows(t *testing.T) {
+	guidedFixture(t)
+
+	// Reads only: the write lend is gone, and the screen says why rather than
+	// quietly showing three options where there were four.
+	Secure().Save(SecureCredential{Name: "wiki", Type: SecureCredNone, Owner: "alice",
+		AllowedURLPattern: "https://wiki.example/**", Lending: LendRead}, "")
+	d := credDecisionFor(t, "alice", "a1", []string{"bob"})
+	if hasOption(d, credWrite) {
+		t.Error("a reads-only key still offers a write lend")
+	}
+	if !hasOption(d, credRead) || !hasOption(d, credOwn) {
+		t.Errorf("a reads-only key lost the answers it should keep: %+v", d.Options)
+	}
+	if !strings.Contains(d.Intro, "reads only") {
+		t.Errorf("the screen does not say why an option is missing: %q", d.Intro)
+	}
+
+	// Nobody: no lend at all, and the two answers left are theirs or none.
+	Secure().Save(SecureCredential{Name: "wiki", Type: SecureCredNone, Owner: "alice",
+		AllowedURLPattern: "https://wiki.example/**", Lending: LendNone}, "")
+	d = credDecisionFor(t, "alice", "a1", []string{"bob"})
+	if hasOption(d, credRead) || hasOption(d, credWrite) {
+		t.Errorf("a key set to never lend still offers a lend: %+v", d.Options)
+	}
+	if len(d.Options) != 2 || d.Default != credOwn {
+		t.Errorf("options = %+v default = %q", d.Options, d.Default)
+	}
+}
+
+func credDecisionFor(t *testing.T, owner, agentID string, who []string) shareledger.Decision {
+	t.Helper()
+	for _, d := range planAgentShare(owner, agentID, who) {
+		if strings.HasPrefix(d.Key, "cred:") {
+			return d
+		}
+	}
+	t.Fatal("the plan asks about no credential")
+	return shareledger.Decision{}
+}
+
+func hasOption(d shareledger.Decision, value string) bool {
+	for _, o := range d.Options {
+		if o.Value == value {
+			return true
+		}
+	}
+	return false
 }

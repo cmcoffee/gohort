@@ -143,7 +143,7 @@ type Collection struct {
 	// keyed by collection source, not in the owner's own store. On a
 	// deployment with no VectorDB the legacy split stores apply and a shared
 	// collection's chunks stay in the owner's base, where a recipient's search
-	// cannot reach them; SharedCollectionsFor says so rather than returning a
+	// cannot reach them; sharedCollectionsFor says so rather than returning a
 	// collection that silently finds nothing.
 	AllowedUsers []string  `json:"allowed_users,omitempty"`
 	Created      time.Time `json:"created"`
@@ -748,7 +748,7 @@ func ListCollections(udb Database, user string) []Collection {
 	// Shared WITH this user, before the deployment-wide ones: somebody chose to
 	// give them these, which is closer to their own than a corpus everybody
 	// has.
-	for _, c := range SharedCollectionsFor(user) {
+	for _, c := range sharedCollectionsFor(user) {
 		out = append(out, c)
 	}
 	if RootDB != nil {
@@ -776,7 +776,7 @@ func ListCollections(udb Database, user string) []Collection {
 // sharedCollectionsTable indexes peer shares: recipient -> (owner, collection).
 const sharedCollectionsTable = "shared_collections"
 
-// SharedCollectionsFor returns the collections other people have shared WITH
+// sharedCollectionsFor returns the collections other people have shared WITH
 // this user, read from each owner's own store.
 //
 // Empty when there is no VectorDB. That is not a quiet failure: without it,
@@ -785,7 +785,7 @@ const sharedCollectionsTable = "shared_collections"
 // attaches cleanly and then never matches anything. A deployment in that state
 // is mid-migration, and the honest answer is that peer sharing is not available
 // yet rather than available and empty.
-func SharedCollectionsFor(user string) []Collection {
+func sharedCollectionsFor(user string) []Collection {
 	if RootDB == nil || VectorDB == nil || strings.TrimSpace(user) == "" {
 		return nil
 	}
@@ -1025,7 +1025,7 @@ func init() {
 		},
 		ToMe: func(user string) []shareledger.Grant {
 			var out []shareledger.Grant
-			for _, c := range SharedCollectionsFor(user) {
+			for _, c := range sharedCollectionsFor(user) {
 				reach, wide := "Searchable by your agents", false
 				if IsDeploymentScope(c) {
 					reach, wide = "Published to everybody", true

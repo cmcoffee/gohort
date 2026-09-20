@@ -98,20 +98,43 @@ func dependencyDecision(it reachItem) (shareledger.Decision, bool) {
 // behalf. Four answers, and the difference between them is whose name a call
 // goes out under — which is not a thing to assume for somebody.
 func credentialDecision(it reachItem, owner string) shareledger.Decision {
-	return shareledger.Decision{
-		Key:   "cred:" + it.id,
-		Title: "Credential — " + it.Name,
-		Intro: "Whose identity should these calls go out as? This is the one dependency that is not a copy somebody is missing.",
-		Options: []shareledger.Choice{
-			{Value: credOwn, Label: "They bring their own",
-				Help: "The agent looks for a credential of this name in THEIR namespace. Their calls go out as them, which is usually what you want. If they have none, the tools that need it fail and say so."},
-			{Value: credRead, Label: "Lend them mine, reads only",
+	// The lend options are offered only where the credential's own policy
+	// allows them. A key its owner already decided never to lend should not
+	// be one careless pass through a wizard away from being lent, and asking
+	// again on every share is how that pass eventually happens.
+	//
+	// The flow only declines to OFFER. The refusal that matters is on the
+	// setter, where every other door goes through too.
+	lend, write := true, true
+	if c, ok := Secure().LoadUser(owner, it.id); ok {
+		lend, write = c.MayLend()
+	}
+	intro := "Whose identity should these calls go out as? This is the one dependency that is not a copy somebody is missing."
+	opts := []shareledger.Choice{
+		{Value: credOwn, Label: "They bring their own",
+			Help: "The agent looks for a credential of this name in THEIR namespace. Their calls go out as them, which is usually what you want. If they have none, the tools that need it fail and say so."},
+	}
+	switch {
+	case !lend:
+		intro += " You have set this key to be lent to nobody, so the only answers left are theirs or none. Change that on the credential itself if you meant to lend it."
+	case !write:
+		opts = append(opts, shareledger.Choice{Value: credRead, Label: "Lend them mine, reads only",
+			Help: "GET and HEAD through your key. Anything else is refused and the refusal is recorded against their name."})
+		intro += " You have set this key to be lent for reads only, so a write lend is not offered."
+	default:
+		opts = append(opts,
+			shareledger.Choice{Value: credRead, Label: "Lend them mine, reads only",
 				Help: "GET and HEAD through your key. Anything else is refused and the refusal is recorded against their name."},
-			{Value: credWrite, Label: "Lend them mine, reads and writes",
-				Help: "What they write arrives at the far end as YOU: the page says you edited it. The ledger is the only place the two can be told apart."},
-			{Value: shareSkip, Label: "Leave it out",
-				Help: "Turn this credential off for the agent entirely, for everybody including you."},
-		},
+			shareledger.Choice{Value: credWrite, Label: "Lend them mine, reads and writes",
+				Help: "What they write arrives at the far end as YOU: the page says you edited it. The ledger is the only place the two can be told apart."})
+	}
+	opts = append(opts, shareledger.Choice{Value: shareSkip, Label: "Leave it out",
+		Help: "Turn this credential off for the agent entirely, for everybody including you."})
+	return shareledger.Decision{
+		Key:     "cred:" + it.id,
+		Title:   "Credential — " + it.Name,
+		Intro:   intro,
+		Options: opts,
 		Default: credOwn,
 	}
 }
