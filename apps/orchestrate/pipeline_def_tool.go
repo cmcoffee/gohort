@@ -336,6 +336,10 @@ func (t *chatTurn) pipelineCreateOrUpdate(args map[string]any, isUpdate bool) (s
 			missing = append(missing, key)
 			continue
 		}
+		if msg := agentEditRefusal(agent, t.user); msg != "" {
+			missing = append(missing, key+" ("+msg+")")
+			continue
+		}
 		already := false
 		for _, pid := range agent.AttachedPipelines {
 			if pid == saved.ID {

@@ -163,6 +163,9 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 		if !ok {
 			return "", fmt.Errorf("add_tool: no agent named or id'd %q in your fleet, call agents(action=\"list\") to see the exact names", key)
 		}
+		if msg := agentEditRefusal(found, sess.Username); msg != "" {
+			return "", errors.New("add_tool: " + msg)
+		}
 		target = found
 	} else {
 		focusedID := loadAuthoringInProgress(sess.DB, sess.ChatSessionID)

@@ -179,3 +179,33 @@ func SharedAgentsFor(db Database, user string) []AgentRecord {
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
+
+// agentEditRefusal says why this user may not CHANGE this record, or "" when
+// they may.
+//
+// A share gives the run, not the record. That rule is stated at the top of this
+// file and enforced on the HTTP editor, and agent_crud_tools states it again in
+// as many words ("not yours: clone it first"). What it was not applied to were
+// the tools that attach something TO an agent by name — a skill, a machine, a
+// pipeline, a tool — each of which resolved its target with the shared-agent
+// fallback and then wrote.
+//
+// The write landed in the CALLER's own store rather than the owner's, so
+// nobody's agent was ever altered under them. What happened instead is
+// arguably worse to leave in place: a silent fork. The recipient got a copy of
+// somebody else's agent in their namespace, carrying whatever they just
+// attached; their own store shadows the shared record from then on, so the copy
+// stops following the owner's edits, and everything on screen still says the
+// agent is the owner's.
+//
+// Only another USER's record is refused. A framework seed is deliberately
+// shadow-cloned per user, and an unowned record predates ownership, so both
+// keep behaving exactly as they did.
+func agentEditRefusal(a AgentRecord, user string) string {
+	owner := strings.TrimSpace(a.Owner)
+	if owner == "" || owner == seedOwner || owner == strings.TrimSpace(user) {
+		return ""
+	}
+	return chFirst(a.Name, a.ID) + " belongs to " + owner + " and was shared with you to run, not to change. " +
+		"Duplicate it first if you want a version of your own"
+}

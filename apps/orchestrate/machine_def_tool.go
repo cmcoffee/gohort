@@ -446,6 +446,10 @@ func (t *chatTurn) attachMachineToAgents(raw any, machineID string) (attached, u
 			unknown = append(unknown, key)
 			continue
 		}
+		if msg := agentEditRefusal(ag, t.user); msg != "" {
+			unknown = append(unknown, key+" ("+msg+")")
+			continue
+		}
 		if ag.Machine == machineID {
 			attached = append(attached, chFirst(ag.Name, ag.ID))
 			continue
