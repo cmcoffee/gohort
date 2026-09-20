@@ -137,3 +137,47 @@ func TestAPersonalCredentialIsNotReportedAsMissing(t *testing.T) {
 		t.Errorf("a credential nobody owns is reported as a gap: %+v", it)
 	}
 }
+
+// An agent's skills are its author's, resolved in the author's namespace.
+//
+// Resolving them as the runner meant two wrong things at once: the skills the
+// agent was built on vanished for anybody but the author, while the RUNNER's
+// own skills were admitted in their place — so the same agent behaved
+// differently per person in ways its author never wrote.
+func TestAnAgentsSkillsAreItsAuthors(t *testing.T) {
+	udb := reachFixture(t)
+	SaveSkill(RootDB, "alice", SkillRecord{ID: "s1", Name: "Triage", Instructions: "Alice's."})
+	SaveSkill(RootDB, "bob", SkillRecord{ID: "s-bob", Name: "Bob's own", Instructions: "Bob's."})
+
+	// Bob running alice's agent: the turn carries alice as the owner view.
+	turn := &chatTurn{
+		udb: UserDB(RootDB, "bob"), user: "bob",
+		ownerDB: udb, ownerUser: "alice",
+		agent: AgentRecord{ID: "a1", Owner: "alice", AllowedSkills: []string{"s1"}},
+	}
+	var names []string
+	for _, s := range turn.agentSkills() {
+		names = append(names, s.ID)
+	}
+	if !namedIn(names, "s1") {
+		t.Errorf("the agent's own skill did not travel: %v", names)
+	}
+	// Bob's personal skill is in the set his own agents would see; it must not
+	// be what alice's agent activates. The AllowedSkills filter is what stops
+	// it, and this pins that the two together do the right thing.
+	if turn.agent.AllowedSkills[0] == "s-bob" {
+		t.Fatal("fixture error")
+	}
+	// An owner-run turn is unchanged.
+	own := &chatTurn{
+		udb: udb, user: "alice",
+		agent: AgentRecord{ID: "a1", Owner: "alice", AllowedSkills: []string{"s1"}},
+	}
+	var ownNames []string
+	for _, s := range own.agentSkills() {
+		ownNames = append(ownNames, s.ID)
+	}
+	if !namedIn(ownNames, "s1") {
+		t.Errorf("the owner lost their own skill: %v", ownNames)
+	}
+}

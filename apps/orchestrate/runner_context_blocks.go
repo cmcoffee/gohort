@@ -30,7 +30,7 @@ func (t *chatTurn) renderTriggeredSkills() string {
 		allowed[id] = true
 	}
 	var b strings.Builder
-	for _, s := range AvailableSkills(t.udb, t.user) {
+	for _, s := range t.agentSkills() {
 		if s.Disabled || !allowed[s.ID] {
 			continue
 		}
@@ -63,7 +63,7 @@ func (t *chatTurn) renderSkillTriggerHints(userMsg string) string {
 		allowed[id] = true
 	}
 	var names []string
-	for _, s := range AvailableSkills(t.udb, t.user) {
+	for _, s := range t.agentSkills() {
 		if s.Disabled || !allowed[s.ID] || t.deliveredSkills[s.ID] {
 			continue
 		}
@@ -667,4 +667,25 @@ func notesContextBlock(notes []injectionNote) string {
 	}
 	b.WriteString("\n")
 	return b.String()
+}
+
+// agentSkills is the skill set this agent CARRIES, resolved in its owner's
+// namespace rather than in the namespace of whoever is running it.
+//
+// A shared agent is its author's design. Resolving its skills as the runner
+// meant two things at once, both wrong: the skills it was built on vanished
+// for anybody but the author — the agent's instructions still described
+// behaviour that no longer loaded — and the runner's OWN skills were admitted
+// in their place, so the same agent behaved differently per person in ways its
+// author never wrote.
+//
+// Over-admitting is not possible: every caller filters by the agent's own
+// AllowedSkills, so only ids the agent names get through. What changes is
+// whose store those ids are looked up in.
+//
+// The scope is the agent. Nothing here puts a skill in the runner's own set —
+// they cannot attach it elsewhere, edit it, or see it in their skill list.
+func (t *chatTurn) agentSkills() []SkillRecord {
+	udb, user := t.ownerView()
+	return AvailableSkills(udb, user)
 }

@@ -115,47 +115,55 @@ func TestTheOwnerIsToldWhatWasWithheld(t *testing.T) {
 	}
 }
 
-// A skill's attached collections go through the SAME gate as the agent's own.
+// Every corpus source is admitted in ONE place, whatever that place currently
+// decides.
 //
-// That branch used to admit them by id with no ownership check, which was
-// survivable only while every skill in scope was the runner's own. A skill
-// shared with them, or one the deployment publishes, names somebody else's
-// documents — and an id is not a grant.
+// The RULE here has changed twice — admitted by id with no check, then
+// resolved as the runner, now resolved as the agent's owner and scoped to that
+// agent — and the guard is deliberately not about which of those is in force.
+// It is that there is exactly ONE place a collection enters the source map, so
+// the next change to the rule is a change to one function rather than a hunt
+// for the branch somebody forgot.
 //
-// Structural, because the leak is a line that writes the source map directly
-// rather than a behaviour with a seam to stand in: the guard has to be that
-// nothing in the search-source builder reaches past admit().
-func TestSkillCollectionsGoThroughTheOwnershipGate(t *testing.T) {
+// Structural, because the failure is a line that writes the map directly
+// rather than a behaviour with a seam to stand in.
+func TestEveryCorpusSourceGoesThroughTheOneBuilder(t *testing.T) {
 	raw, err := os.ReadFile("knowledge.go")
 	if err != nil {
 		t.Fatalf("reading the source: %v", err)
 	}
 	src := string(raw)
-	start := strings.Index(src, "admit := func(ids []string)")
+	start := strings.Index(src, "func agentCorpusSourceSet(")
 	if start < 0 {
-		t.Fatal("the ownership gate is gone")
+		t.Fatal("the one builder is gone")
 	}
-	// The gate itself is the one place allowed to write the map.
-	body := src[start:]
-	if end := strings.Index(body, "\n\tallow := func("); end > 0 {
-		body = body[:end]
+	end := strings.Index(src[start:], "\n}\n")
+	if end < 0 {
+		t.Fatal("cannot find the end of the builder")
 	}
-	for i, line := range strings.Split(body, "\n") {
+	inside := src[start : start+end]
+	if !strings.Contains(inside, "exact[collectionSource(cid)] = true") {
+		t.Error("the builder no longer admits anything, so everything else must be going round it")
+	}
+	rest := src[:start] + src[start+end:]
+	for _, line := range strings.Split(rest, "\n") {
 		if !strings.Contains(line, "exact[collectionSource(") {
 			continue
 		}
-		// Two legitimate writers: inside admit, and the deployment-defaults
-		// branch, whose collections are deployment-scoped by definition.
-		if strings.Contains(line, "exact[collectionSource(cid)] = true") && i < 12 {
-			continue // inside admit
-		}
-		if strings.Contains(line, "exact[collectionSource(c.ID)] = true") {
-			continue // deployment defaults, already scoped
-		}
-		t.Errorf("a search source is admitted without the ownership gate:\n  %s", strings.TrimSpace(line))
+		// One legitimate writer outside it: the deployment-defaults branch,
+		// whose collections are deployment-scoped by definition and so have
+		// nothing for a gate to decide.
+		t.Errorf("a corpus source is admitted outside the builder:\n  %s", strings.TrimSpace(line))
 	}
-	if !strings.Contains(body, "admit(sk.AttachedCollections)") {
-		t.Error("a skill's collections no longer go through the gate")
+	// And every reader goes through it rather than assembling its own. These
+	// three each had their own copy, and the copies had drifted into three
+	// different policies — so a collection the search deliberately left out
+	// could still be read by asking for a document from it directly.
+	if n := strings.Count(src, "agentCorpusSourceSet("); n < 2 {
+		t.Errorf("only %d caller reaches the builder; the others are back to building their own", n)
+	}
+	if strings.Count(src, "t.agentCorpusSources(") != 2 {
+		t.Error("the fetch paths no longer share the search path's source set")
 	}
 }
 
@@ -178,5 +186,50 @@ func TestAPublishedSkillsPrivateCorpusStaysPrivate(t *testing.T) {
 	}
 	if readable("dana", "private-1") {
 		t.Error("the author's private collection is readable by an ordinary user")
+	}
+}
+
+// A dependency travels with the agent and is scoped to it. The owner's
+// collection answers through THEIR agent, and nowhere else.
+func TestAnAgentsCorpusTravelsButDoesNotEscape(t *testing.T) {
+	scopeStores(t)
+	owner := UserDB(CollectionsDB(), "alice")
+	if owner == nil {
+		t.Skip("no per-user store in this configuration")
+	}
+	SaveCollection(owner, Collection{ID: "runbooks", Owner: "alice", Name: "Runbooks"})
+
+	// Through alice's agent, run by bob: it is in scope, which is the whole
+	// point of sharing an agent whose value is its author's documents.
+	got, withheld := agentCorpusSourceSet("bob", "alice", []string{"runbooks"}, nil)
+	if !got[collectionSource("runbooks")] {
+		t.Error("the agent's own corpus did not travel with it")
+	}
+	if len(withheld) != 0 {
+		t.Errorf("withheld = %v", withheld)
+	}
+	// Outside it, bob still cannot reach the collection: he cannot attach it
+	// to an agent of his, and resolving it as himself still fails. The scope
+	// is what makes the travelling safe.
+	if readable("bob", "runbooks") {
+		t.Error("the collection leaked into the recipient's own namespace")
+	}
+	// And an agent of bob's naming the same id gets nothing, because there is
+	// no owner to resolve it as.
+	if own, _ := agentCorpusSourceSet("bob", "", []string{"runbooks"}, nil); own[collectionSource("runbooks")] {
+		t.Error("the id resolved for an agent that was not alice's")
+	}
+}
+
+// A reference the OWNER can no longer read is a broken agent, and it still
+// reports. What changed is who the check is about, not that there is one.
+func TestABrokenReferenceIsStillReported(t *testing.T) {
+	scopeStores(t)
+	if UserDB(CollectionsDB(), "alice") == nil {
+		t.Skip("no per-user store")
+	}
+	_, withheld := agentCorpusSourceSet("bob", "alice", []string{"deleted-one"}, nil)
+	if len(withheld) != 1 || withheld[0] != "deleted-one" {
+		t.Errorf("a dangling reference was not reported: %v", withheld)
 	}
 }

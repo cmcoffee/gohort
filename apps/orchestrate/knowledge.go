@@ -925,59 +925,29 @@ func searchAgentKnowledgeVec(ctx context.Context, db Database, user, baseUser, a
 	// longer reachable from RAG; the admin can re-ingest them as a
 	// collection if they still matter.
 	exact := make(map[string]bool, len(agentAttachedCollections)+4)
-	// Agent-attached collections, gated by whether the RUNTIME USER may read
-	// each one.
+	// Agent-attached collections, resolved as the agent's OWNER, through the
+	// one builder every other path uses.
 	//
-	// They used to be in scope unconditionally, by id, with no ownership check
-	// at all — so attaching a private collection to an agent and then sharing
-	// or publishing that agent served the owner's corpus to everyone who could
-	// run it. The collection was never shared; the agent was, and nothing said
-	// the documents came with it.
+	// This reverses an earlier rule, deliberately, so it is worth saying what
+	// changed and why. Those collections were once in scope by id with no check
+	// at all, which meant attaching a private one to an agent and sharing that
+	// agent served the owner's corpus to anybody who could run it — silently,
+	// because the collection was never shared, the agent was. The fix then was
+	// to resolve them as the RUNNER, matching how a shared agent's credentials
+	// and tools resolve.
 	//
-	// The rest of gohort already resolves a shared agent's dependencies in the
-	// RECIPIENT's namespace: AgentRecord.AllowedUsers says so in as many words,
-	// "no secret travels with the share", and credentials and tools have always
-	// worked that way. Collections were the one thing that travelled. This is
-	// that rule applied to them, not a new one.
+	// That made a shared agent arrive hollow. Its author's documents were the
+	// point of it, and the recipient got an agent whose instructions described
+	// a corpus it could no longer read. The answer is not to choose between a
+	// silent leak and a hollow agent: a dependency TRAVELS with the agent and
+	// is SCOPED to it.
 	//
-	// LoadCollection is the check because it already answers exactly this
-	// question: it resolves a user's own collection, one peer-shared with them,
-	// and any deployment-scoped one. So an owner's own turn is unchanged, a
-	// recipient gets what they were actually given, and a published agent
-	// carries a corpus only when that corpus is itself deployment-wide.
-	var withheld []string
-	admit := func(ids []string) {
-		for _, cid := range ids {
-			cid = strings.TrimSpace(cid)
-			if cid == "" {
-				continue
-			}
-			if _, ok := LoadCollection(UserDB(CollectionsDB(), user), user, cid); !ok {
-				withheld = append(withheld, cid)
-				continue
-			}
-			exact[collectionSource(cid)] = true
-		}
-	}
-	admit(agentAttachedCollections)
-
-	// Active skills contribute their AttachedCollections — when the
-	// classifier picks a skill this turn, its admin-curated reference
-	// material becomes searchable alongside the agent's own corpus.
-	// When the skill isn't active, its collections stay out of scope,
-	// so heavy reference docs don't leak into unrelated turns. This
-	// is the "skills as behavior + corpus packets" path that pairs
-	// with the new pull-only retrieval model (no auto-inject =
-	// no contamination cost for ride-along docs).
-	//
-	// Through the SAME gate as the agent's own, and for the same reason. This
-	// branch used to admit a skill's collections by id with no ownership check,
-	// which was survivable only while every skill in scope was the runner's own.
-	// A skill shared with them, or one the deployment publishes, is somebody
-	// else's record naming somebody else's documents, and an id is not a grant.
-	for _, sk := range activeSkills {
-		admit(sk.AttachedCollections)
-	}
+	// The scope is what keeps that safe. Nothing here puts the collection in
+	// the runner's own namespace: they cannot attach it to an agent of theirs,
+	// search it directly, or see it in their collection list. It is readable
+	// through this agent's retrieval and nowhere else. Their own corpus under
+	// this agent stays theirs — capability travels, history does not.
+	exact, withheld := agentCorpusSourceSet(user, baseUser, agentAttachedCollections, activeSkills)
 	if len(withheld) > 0 {
 		// Never silent. A corpus that quietly stops answering is the shape that
 		// produces a confident wrong answer instead of a missing one, and the
@@ -985,20 +955,6 @@ func searchAgentKnowledgeVec(ctx context.Context, db Database, user, baseUser, a
 		Log("[orchestrate.knowledge] agent=%s run by %q: %d attached collection(s) withheld, not readable by them: %v",
 			agentID, user, len(withheld), withheld)
 		noteWithheldCollections(baseUser, user, agentID, withheld)
-	}
-	// Deployment-scoped collections auto-attach when the agent
-	// has no curated AttachedCollections (the "default = open"
-	// rule from the design discussion: empty list = "give me the
-	// defaults"; explicit list = "I picked these on purpose,
-	// leave me alone"). Agents wanting strict isolation set an
-	// explicit AttachedCollections list — even if it's just their
-	// one curated corpus — and the deployment defaults skip them.
-	if len(agentAttachedCollections) == 0 {
-		for _, c := range ListCollections(nil, "") { // empty user → deployment only
-			if IsDeploymentScope(c) {
-				exact[collectionSource(c.ID)] = true
-			}
-		}
 	}
 	allow := func(c EmbeddedChunk) bool {
 		// Source allow-list (prefix for agent corpus, exact for the rest).
@@ -1421,34 +1377,11 @@ func (t *chatTurn) fetchKnowledgeDocScoped(scopeSkills []SkillRecord) AgentToolD
 			// always in scope; active skill collections AND deployment-
 			// scope collections also feed in so a doc_id returned from
 			// knowledge_search via either path actually resolves here.
-			agentPrefix := knowledgeSource(t.user, t.agent.ID, "")
-			exact := make(map[string]bool, len(t.agent.AttachedCollections)+4)
-			for _, cid := range t.agent.AttachedCollections {
-				if cid = strings.TrimSpace(cid); cid != "" {
-					exact[collectionSource(cid)] = true
-				}
-			}
-			// Active skills contribute their AttachedCollections —
-			// mirrors searchAgentKnowledge so a doc_id surfaced via
-			// a skill's collection resolves here too. Without this,
-			// knowledge_search returns a hit from a skill collection,
-			// the LLM tries fetch_knowledge_doc(doc_id), and gets
-			// "not found" because the predicate disagrees with the
-			// search scope. Same skill scope the search used.
-			for _, sk := range scopeSkills {
-				for _, cid := range sk.AttachedCollections {
-					if cid = strings.TrimSpace(cid); cid != "" {
-						exact[collectionSource(cid)] = true
-					}
-				}
-			}
-			if len(t.agent.AttachedCollections) == 0 {
-				for _, c := range ListCollections(nil, "") {
-					if IsDeploymentScope(c) {
-						exact[collectionSource(c.ID)] = true
-					}
-				}
-			}
+			// The same set the search built, from the same function, so a
+			// doc_id knowledge_search returned resolves here and one it
+			// withheld does not.
+			agentPrefix := t.agentCorpusPrefix()
+			exact := t.agentCorpusSources(scopeSkills)
 			allowSource := func(src string) bool {
 				if src == agentPrefix || strings.HasPrefix(src, agentPrefix+":") {
 					return true
@@ -1642,20 +1575,8 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 		if !VectorDB.Get(EmbeddedChunks, explicitID, &c) {
 			return fmt.Sprintf("No chunk with mem_id=%q in your accessible memory: it may have already been deleted, or the id belongs to a corpus you can't access.", explicitID), nil
 		}
-		agentPrefix := knowledgeSource(t.user, t.agent.ID, "")
-		exact := make(map[string]bool, len(t.agent.AttachedCollections)+4)
-		for _, cid := range t.agent.AttachedCollections {
-			if cid = strings.TrimSpace(cid); cid != "" {
-				exact[collectionSource(cid)] = true
-			}
-		}
-		if len(t.agent.AttachedCollections) == 0 {
-			for _, col := range ListCollections(nil, "") {
-				if IsDeploymentScope(col) {
-					exact[collectionSource(col.ID)] = true
-				}
-			}
-		}
+		agentPrefix := t.agentCorpusPrefix()
+		exact := t.agentCorpusSources(t.skillsActive)
 		inScope := c.Source == agentPrefix || strings.HasPrefix(c.Source, agentPrefix+":") || exact[c.Source]
 		if !inScope {
 			return fmt.Sprintf("No chunk with mem_id=%q in your accessible memory: it may have already been deleted, or the id belongs to a corpus you can't access.", explicitID), nil
@@ -1780,4 +1701,79 @@ func chunksInSection(chunks []EmbeddedChunk, want string) []EmbeddedChunk {
 		}
 	}
 	return out
+}
+
+// agentCorpusSources is the ONE place a collection enters an agent's readable
+// set, for search and for every fetch beside it.
+//
+// There were three copies of this, and they had drifted into three different
+// policies. The search path resolved collections as somebody (first the runner,
+// now the agent's owner) and reported what it withheld; fetch_knowledge_doc
+// and the mem_id lookup each admitted by id with no check at all. So a
+// collection the search path deliberately left out could still be read by
+// asking for a document from it directly — the narrower rule was not narrower,
+// it was just first.
+//
+// A predicate that can disagree with the search it was written to mirror is
+// worse than no predicate: it is the one somebody reads and believes.
+func (t *chatTurn) agentCorpusSources(scopeSkills []SkillRecord) map[string]bool {
+	exact, _ := agentCorpusSourceSet(t.user, t.ownerUser, t.agent.AttachedCollections, scopeSkills)
+	return exact
+}
+
+// agentCorpusSourceSet builds it, and reports the ids it could not admit.
+//
+// A free function rather than a method because the search path is one too, and
+// two gates that agree today are two gates that disagree the next time either
+// is touched — which is precisely how the three copies this replaced came to
+// hold three different policies.
+func agentCorpusSourceSet(user, baseUser string, attached []string, scopeSkills []SkillRecord) (map[string]bool, []string) {
+	// The agent's OWNER, when it has one distinct from whoever is running it.
+	// A dependency travels with the agent and is scoped to it; see the long
+	// note at the search path for why that reverses an earlier rule.
+	corpusUser := user
+	if baseUser != "" {
+		corpusUser = baseUser
+	}
+	cdb := UserDB(CollectionsDB(), corpusUser)
+	exact := make(map[string]bool, len(attached)+4)
+	var withheld []string
+	admit := func(ids []string) {
+		for _, cid := range ids {
+			if cid = strings.TrimSpace(cid); cid == "" {
+				continue
+			}
+			// Checked, and now checking something worth checking: that the
+			// OWNER can still read what their own agent names. A reference to
+			// a deleted or un-shared collection is a broken agent, and one
+			// that answers confidently from the rest of its corpus is the
+			// failure this reports.
+			if _, ok := LoadCollection(cdb, corpusUser, cid); !ok {
+				withheld = append(withheld, cid)
+				continue
+			}
+			exact[collectionSource(cid)] = true
+		}
+	}
+	admit(attached)
+	for _, sk := range scopeSkills {
+		admit(sk.AttachedCollections)
+	}
+	// Deployment-scoped collections auto-attach when the agent curated none —
+	// "empty means give me the defaults"; an explicit list means the author
+	// picked on purpose and the defaults stay out.
+	if len(attached) == 0 {
+		for _, c := range ListCollections(nil, "") {
+			if IsDeploymentScope(c) {
+				exact[collectionSource(c.ID)] = true
+			}
+		}
+	}
+	return exact, withheld
+}
+
+// agentCorpusPrefix is the agent's own chunk namespace for this turn. The
+// RUNNER's, always: capability travels with a shared agent, history does not.
+func (t *chatTurn) agentCorpusPrefix() string {
+	return knowledgeSource(t.user, t.agent.ID, "")
 }
