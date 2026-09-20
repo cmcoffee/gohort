@@ -67,8 +67,14 @@ type reachItem struct {
 	// so somebody who has the agent would not have this.
 	Gap     bool   `json:"gap"`
 	Missing string `json:"missing,omitempty"`
+	// Fix says what would close the gap, in the words of the door that closes
+	// it. Not every gap is the owner's to close, and one that is not says so
+	// rather than offering a button that fails.
+	Fix string `json:"fix,omitempty"`
 
-	level int // reach, for comparison; not serialized
+	level int    // reach, for comparison; not serialized
+	kind  string // which store the fan-out would write to
+	id    string // the record's own id in that store
 }
 
 // agentReachMap is the whole picture for one agent.
@@ -100,6 +106,7 @@ func agentReachOf(udb Database, owner string, a AgentRecord) agentReachMap {
 		it.Gap = it.level < out.audience
 		if it.Gap {
 			it.Missing = missingFor(out.audience, out.recipients)
+			it.Fix = fixFor(it, out.audience)
 			out.Gaps++
 		}
 		out.Items = append(out.Items, it)
@@ -143,7 +150,7 @@ func agentReachOf(udb Database, owner string, a AgentRecord) agentReachMap {
 		}
 		add(reachItem{Kind: "Tool", Name: name, Reach: reach,
 			How:   "Resolved by name from the runner's own catalog, so they need a tool called this.",
-			level: level})
+			level: level, kind: "tool", id: name})
 	}
 
 	// Skills: by ID, against what the runner can actually use.
@@ -172,7 +179,7 @@ func agentReachOf(udb Database, owner string, a AgentRecord) agentReachMap {
 		}
 		add(reachItem{Kind: "Skill", Name: s.Name, Reach: reach,
 			How:   "Attached by id. A skill of their own with the same name is a different id and will not stand in.",
-			level: level})
+			level: level, kind: "skill", id: s.ID})
 	}
 
 	// Collections: by id, gated per runtime user.
@@ -196,7 +203,7 @@ func agentReachOf(udb Database, owner string, a AgentRecord) agentReachMap {
 		}
 		add(reachItem{Kind: "Knowledge", Name: c.Name, Reach: reach,
 			How:   "Resolved as whoever is running, so they see it only if it was shared with them.",
-			level: level})
+			level: level, kind: "collection", id: c.ID})
 	}
 
 	// Recipes: pipelines by id, then the one machine.
@@ -210,7 +217,8 @@ func agentReachOf(udb Database, owner string, a AgentRecord) agentReachMap {
 				level, reach = reachNamed, "Shared with "+strings.Join(def.AllowedUsers, ", ")
 			}
 			add(reachItem{Kind: "Pipeline", Name: def.Name, Reach: reach,
-				How: "Dispatched by id. It runs in the namespace of whoever started it.", level: level})
+				How:   "Dispatched by id. It runs in the namespace of whoever started it.",
+				level: level, kind: "pipeline", id: def.ID})
 		}
 	}
 	if id := strings.TrimSpace(a.Machine); id != "" {
@@ -223,7 +231,8 @@ func agentReachOf(udb Database, owner string, a AgentRecord) agentReachMap {
 				level, reach = reachNamed, "Shared with "+strings.Join(def.AllowedUsers, ", ")
 			}
 			add(reachItem{Kind: "Machine", Name: def.Name, Reach: reach,
-				How: "Run by id. It runs in the namespace of whoever started it.", level: level})
+				How:   "Run by id. It runs in the namespace of whoever started it.",
+				level: level, kind: "machine", id: def.ID})
 		}
 	}
 
@@ -296,4 +305,47 @@ func namedIn(list []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// fixFor says what would close a gap. Three answers, and the difference between
+// them is the whole reason the panel is worth reading.
+//
+// A skill, collection, pipeline or machine has a rung the OWNER controls, so
+// the gap closes by sharing it with the same people — which is what the fan-out
+// does in one action.
+//
+// A TOOL does not. A user's own tool is private to them or, once an
+// administrator has published it, in the shared catalog; there is no rung in
+// between, so one colleague cannot be handed one. That is the single asymmetry
+// left in the user plane and the panel states it rather than offering a button
+// that would fail.
+//
+// Nothing closes a gap against EVERYBODY except the deployment rung, and that
+// is an administrator's to grant whatever the kind.
+func fixFor(it reachItem, audience int) string {
+	if audience == reachDeployment {
+		return "Ask an admin to publish it deployment-wide"
+	}
+	switch it.kind {
+	case "skill", "collection", "pipeline", "machine":
+		return "Share it with the same people"
+	case "tool":
+		return "Ask an admin to publish it: a tool has no in-between rung"
+	}
+	return ""
+}
+
+// shareableGaps are the gaps this owner can close themselves, in one action.
+func (r agentReachMap) shareableGaps() []reachItem {
+	var out []reachItem
+	for _, it := range r.Items {
+		if !it.Gap {
+			continue
+		}
+		switch it.kind {
+		case "skill", "collection", "pipeline", "machine":
+			out = append(out, it)
+		}
+	}
+	return out
 }

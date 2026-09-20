@@ -697,18 +697,36 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			Detail: "Sharing an agent shares the agent. Each thing it uses is a record of its own with its own reach, and a run resolves them in the namespace of whoever started it — so a person can have this agent and still be missing what it needs.\n\n" +
 				"Nothing here changes anything. It is the list to check before you share, and the answer to \"why does it work for me and not for them\" afterwards.\n\n" +
 				"How is the part worth reading: a tool is found by NAME in the runner's own catalog, while a skill, collection, pipeline or machine is found by ID and only if it reached them. A credential resolves by name as whoever is running, which is usually what you want — their calls should go out as them.",
-			Body: ui.Table{
-				Source: source + "/reach",
-				RowKey: "name",
-				Columns: []ui.Col{
-					{Field: "kind", Label: "Kind", Flex: 0},
-					{Field: "name", Flex: 1},
-					{Field: "reach", Label: "Reach", Flex: 1},
-					{Field: "missing", Label: "", Flex: 1},
-					{Field: "how", Label: "How a run finds it", Mute: true, Flex: 3},
+			Body: ui.Stack{Children: []ui.Component{
+				ui.Table{
+					Source: source + "/reach",
+					RowKey: "name",
+					Columns: []ui.Col{
+						{Field: "kind", Label: "Kind", Flex: 0},
+						{Field: "name", Flex: 1},
+						{Field: "reach", Label: "Reach", Flex: 1},
+						{Field: "missing", Label: "", Flex: 1},
+						{Field: "fix", Label: "To close it", Flex: 2},
+						{Field: "how", Label: "How a run finds it", Mute: true, Flex: 3},
+					},
+					EmptyText: "This agent depends on nothing of yours. Anybody you share it with gets all of it.",
 				},
-				EmptyText: "This agent depends on nothing of yours. Anybody you share it with gets all of it.",
-			},
+				// One action for the one request. It only ever does what the
+				// owner could do themselves, one door at a time, to the people
+				// they already chose above.
+				ui.FormPanel{
+					PostURL:     source + "/reach",
+					SubmitLabel: "Share what this needs",
+					Fields: []ui.FormField{{Type: "header",
+						Label: "Give everything above the same people",
+						Help:  "Each thing gets the agent's own recipient list, through its own door. Nothing is copied and no new kind of grant is made.",
+						Detail: "Only what is yours to share: a skill, a collection, a pipeline or a machine you own.\n\n" +
+							"A TOOL is not, and this will say so. A tool of yours is private to you or, once an admin has published it, in the shared catalog — there is no rung in between, so one colleague cannot be handed one.\n\n" +
+							"A CREDENTIAL is not either, and that is deliberate. It is not a copy somebody is missing; it is whose identity the call goes out as, and for a team the answer is usually that each person supplies their own key of the same name.\n\n" +
+							"Taking somebody off this agent later takes back what this gave them, and only that — a share you made by hand, for your own reasons, is never clawed back."}},
+					Invalidate: []string{source + "/reach"},
+				},
+			}},
 		})
 	}
 

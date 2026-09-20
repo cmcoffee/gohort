@@ -333,6 +333,16 @@ func writeAgent(db Database, a AgentRecord, maySetLocked bool, reason string) (A
 			revisions.Push(db, revisions.KindAgent, a.ID, prior, prior.Updated, reason)
 		}
 	}
+	// Who this save takes OFF the recipient list, read before the write that
+	// replaces it. A share taken back has to take back what it enabled, and
+	// for an agent that includes whatever a fan-out granted on its behalf.
+	var dropped []string
+	if RootDB != nil && isShareableAgent(a, a.Owner) {
+		var prior AgentRecord
+		if db.Get(agentsTable, a.ID, &prior) {
+			dropped = without(prior.AllowedUsers, a.AllowedUsers)
+		}
+	}
 	db.Set(agentsTable, a.ID, a)
 	// The peer-share index follows the record in the same write, so a share and
 	// the lookup that finds it cannot disagree about who has access. Only for a
@@ -340,6 +350,15 @@ func writeAgent(db Database, a AgentRecord, maySetLocked bool, reason string) (A
 	// one would be a row nothing can act on.
 	if RootDB != nil && isShareableAgent(a, a.Owner) {
 		peershare.SetRecipients(RootDB, SharedAgentsTable, a.Owner, a.ID, a.AllowedUsers)
+	}
+	// Only what the fan-out itself granted, which is the whole reason those
+	// grants were recorded: a collection the owner shared with somebody by hand
+	// months ago, for reasons of their own, is not this write's to claw back.
+	if len(dropped) > 0 {
+		if lines := withdrawAgentShare(db, a.Owner, a, dropped); len(lines) > 0 {
+			Log("[orchestrate.share] %q left %q, so what its share had granted came back: %s",
+				strings.Join(dropped, ", "), a.Name, strings.Join(lines, "; "))
+		}
 	}
 	// Hand back what a load would now give, not the row that went to storage.
 	// For a seed shadow those differ: the row is a full snapshot, while the

@@ -547,17 +547,27 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		// and owner-only: it reports the reach of the owner's OWN tools, keys
 		// and documents, which is their business and nobody else's — a
 		// recipient reading it would be reading somebody else's configuration.
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
 		udb := UserDB(T.DB, user)
 		agent, ok := loadAgent(udb, id)
 		if !ok || (agent.Owner != "" && agent.Owner != user && agent.Owner != seedOwner) {
 			http.NotFound(w, r)
 			return
 		}
-		writeJSON(w, agentReachOf(udb, user, agent).Items)
+		switch r.Method {
+		case http.MethodGet:
+			writeJSON(w, agentReachOf(udb, user, agent).Items)
+		case http.MethodPost:
+			// Close the gaps this owner can close, by giving each dependency
+			// the agent's own recipients through that kind's own door. The
+			// report names what it did AND what it could not, because one that
+			// listed only successes is how somebody concludes their team has a
+			// working agent while a tool is still missing.
+			lines := fanOutAgentShare(udb, user, agent)
+			Log("[orchestrate.share] %q shared what %q needs: %s", user, agent.Name, strings.Join(lines, "; "))
+			writeJSON(w, map[string]any{"lines": lines})
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
 		return
 	}
 	if action == "eval-suite" {
