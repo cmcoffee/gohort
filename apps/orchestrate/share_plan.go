@@ -140,26 +140,23 @@ func shareAgentGuided(owner, id string, recipients []string, answers map[string]
 func applyCredentialAnswer(owner, agentID string, it reachItem, recipients []string, answer string) string {
 	switch answer {
 	case credRead, credWrite:
-		c, ok := Secure().LoadUser(owner, it.id)
-		if !ok {
+		if _, ok := Secure().LoadUser(owner, it.id); !ok {
 			return "Credential " + it.Name + ": not yours to lend, so they will need their own"
 		}
-		read, write := c.SharedReadOnly, c.SharedReadWrite
-		if answer == credWrite {
-			write = append(write, recipients...)
-		} else {
-			read = append(read, recipients...)
-		}
-		if err := Secure().SetCredentialShares(owner, it.id, read, write); err != nil {
+		// Scoped to THIS agent. They needed the key to run this, so this is
+		// where it works: not from an agent of their own, not from a tool they
+		// write next week. The grant is as narrow as the reason for it.
+		if err := Secure().LendForAgent(owner, it.id, agentID, recipients, answer == credWrite); err != nil {
 			return "Credential " + it.Name + ": " + err.Error()
 		}
 		// Recorded, so taking somebody off this agent takes the lend back
 		// with them — and takes back nothing the owner lent by hand.
 		recordShareLend(owner, agentID, it.id, recipients)
+		who := strings.Join(recipients, ", ")
 		if answer == credWrite {
-			return "Credential " + it.Name + " → " + strings.Join(recipients, ", ") + ", reads and writes. Their writes arrive as you."
+			return "Credential " + it.Name + " → " + who + ", reads and writes, inside this agent only. Their writes arrive as you."
 		}
-		return "Credential " + it.Name + " → " + strings.Join(recipients, ", ") + ", reads only"
+		return "Credential " + it.Name + " → " + who + ", reads only, inside this agent only"
 	case shareSkip:
 		udb := UserDB(orchestrateBaseDB, owner)
 		if a, ok := loadAgent(udb, agentID); ok && a.Owner == owner {

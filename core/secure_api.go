@@ -207,6 +207,22 @@ type SecureCredential struct {
 	// normalizes that away rather than leaving it to a lookup order.
 	SharedReadOnly  []string `json:"shared_read_only,omitempty"`
 	SharedReadWrite []string `json:"shared_read_write,omitempty"`
+	// SharedForAgents narrows a lend to the agents it was made FOR: recipient
+	// -> agent ids. Absent, or absent for one recipient, means the lend is
+	// unscoped, which is what every lend made before this was.
+	//
+	// A lend made because somebody needed to run one agent should not be a key
+	// they can spend from anywhere. Without this it was: lend "wiki" to a
+	// colleague so your troubleshooting agent works for them, and they could
+	// dispatch through your key from any agent of their own, or from a tool
+	// they wrote that afternoon. The grant was far wider than the reason for
+	// it, and nothing said so.
+	//
+	// Enforced at RESOLUTION, and it fails closed: a scoped lend consulted
+	// with no agent in context does not resolve. A caller that cannot say
+	// which agent it is running is outside the scope by definition, and the
+	// whole point of the field is that outside is where it does not work.
+	SharedForAgents map[string][]string `json:"shared_for_agents,omitempty"`
 	// Lending is the owner's STANDING answer to "may this key be lent at
 	// all": LendNone, LendRead, LendAny, or empty.
 	//
@@ -786,6 +802,12 @@ func (s *SecureAPI) SetDisabledOwned(owner, name string, disabled bool) error {
 // `user`: the user's OWN credential shadows a global one of the same name (their
 // namespace wins), else the global credential. Empty user → global only.
 func (s *SecureAPI) Resolve(name, user string) (SecureCredential, bool) {
+	return s.ResolveIn(name, user, "")
+}
+
+// ResolveIn is Resolve for a caller that knows which agent it is running. A
+// lend narrowed to one agent resolves there and nowhere else.
+func (s *SecureAPI) ResolveIn(name, user, agentID string) (SecureCredential, bool) {
 	if strings.TrimSpace(user) != "" {
 		if c, ok := s.LoadUser(user, name); ok {
 			return c, true
@@ -793,7 +815,7 @@ func (s *SecureAPI) Resolve(name, user string) (SecureCredential, bool) {
 		// Then one somebody lent them. After their own, because a name they
 		// chose should mean their own key; before the global, because a
 		// colleague handing you a credential is the more specific answer.
-		if c, owners := s.resolveShared(name, user); len(owners) == 1 {
+		if c, owners := s.resolveShared(name, user, agentID); len(owners) == 1 {
 			return c, true
 		} else if len(owners) > 1 {
 			// Two people lent this user a credential of the same name. Picking
@@ -1452,7 +1474,7 @@ func (s *SecureAPI) BuildTools(sess *ToolSession) []AgentToolDef {
 		// Then the ones lent to them. Without this a share is decorative: the
 		// owner picks recipients, the ACL admits them, and no tool the
 		// recipient can call ever dispatches through it.
-		emit(s.SharedWithUser(u))
+		emit(s.SharedWithUserIn(u, sessAgentID(sess)))
 	}
 	emit(creds)
 	// Decode-mismatch diagnostic: only fires on the genuine failure
@@ -1679,7 +1701,7 @@ func (s *SecureAPI) dispatchToolCallFull(sess *ToolSession, credName, urlStr, me
 		}
 		return s.dispatch(synth, args, sess)
 	}
-	c, ok := s.Resolve(credName, sessUsername(sess))
+	c, ok := s.ResolveIn(credName, sessUsername(sess), sessAgentID(sess))
 	if !ok {
 		return "", fmt.Errorf("credential %q not registered", credName)
 	}
@@ -2395,6 +2417,15 @@ func (s *SecureAPI) DispatchToolCallArgs(sess *ToolSession, credName string, arg
 }
 
 // sessUsername returns the session's user, or "" for a nil session.
+// sessAgentID is the agent this session is running, or "" when the caller has
+// none. Empty is outside every lend scope, deliberately: see credShareGrantIn.
+func sessAgentID(sess *ToolSession) string {
+	if sess == nil {
+		return ""
+	}
+	return sess.AgentID
+}
+
 func sessUsername(sess *ToolSession) string {
 	if sess == nil {
 		return ""
@@ -2641,7 +2672,20 @@ const (
 // otherwise here would make an owner who never shared anything look like one
 // who did.
 func credShareGrant(c SecureCredential, user string) int {
+	return credShareGrantIn(c, user, "")
+}
+
+// credShareGrantIn is credShareGrant with the agent the caller is running, so
+// a lend narrowed to one agent answers for that agent and nothing else.
+//
+// An empty agent means the caller could not say. That is treated as outside
+// every scope rather than inside all of them: a lend exists to work in one
+// place, and a caller with no place is not it.
+func credShareGrantIn(c SecureCredential, user, agentID string) int {
 	if user = strings.TrimSpace(user); user == "" || c.Owner == "" || user == c.Owner {
+		return credShareNone
+	}
+	if !credLendCoversAgent(c, user, agentID) {
 		return credShareNone
 	}
 	if credSliceHas(c.SharedReadWrite, user) {
@@ -2651,6 +2695,17 @@ func credShareGrant(c SecureCredential, user string) int {
 		return credShareRead
 	}
 	return credShareNone
+}
+
+// credLendCoversAgent reports whether this recipient's lend reaches the agent
+// in hand. An unscoped lend reaches everything, which is what every lend made
+// before the field existed does.
+func credLendCoversAgent(c SecureCredential, user, agentID string) bool {
+	scope := c.SharedForAgents[user]
+	if len(scope) == 0 {
+		return true
+	}
+	return credSliceHas(scope, strings.TrimSpace(agentID))
 }
 
 // readOnlyForUser reports whether this dispatch is a lent-for-reads one, and so
@@ -2690,6 +2745,17 @@ func (s *SecureAPI) SetCredentialShares(owner, name string, readOnly, readWrite 
 		}
 	}
 	c.SharedReadWrite, c.SharedReadOnly = write, read
+	// The scope follows the lend. An entry for somebody who no longer holds it
+	// would outlive the grant it narrowed, and be waiting to narrow the next
+	// one made for another reason entirely.
+	for u := range c.SharedForAgents {
+		if !credSliceHas(read, u) && !credSliceHas(write, u) {
+			delete(c.SharedForAgents, u)
+		}
+	}
+	if len(c.SharedForAgents) == 0 {
+		c.SharedForAgents = nil
+	}
 	s.db.Set(secureAPITable, key, c)
 	s.mu.Unlock()
 	peershare.SetRecipients(s.db, sharedCredentialsTable, owner, name, append(append([]string{}, read...), write...))
@@ -2722,13 +2788,24 @@ func cleanShareList(users []string, owner string, stronger []string) []string {
 // that can outvote its source is how a revoked share keeps working. A disabled
 // credential is nobody's to use, the owner's included.
 func (s *SecureAPI) SharedWithUser(user string) []SecureCredential {
+	return s.SharedWithUserIn(user, "")
+}
+
+// SharedWithUserIn is SharedWithUser for a caller that knows which agent it is
+// running, so a lend narrowed to one agent appears only there.
+//
+// The catalog path matters as much as dispatch: a scoped lend that still
+// produced a fetch_url_<name> tool in somebody's general catalog would be
+// offering a capability that refuses when called, which is worse than not
+// offering it.
+func (s *SecureAPI) SharedWithUserIn(user, agentID string) []SecureCredential {
 	if !s.ready() || strings.TrimSpace(user) == "" {
 		return nil
 	}
 	var out []SecureCredential
 	for _, ref := range peershare.List(s.db, sharedCredentialsTable, user) {
 		c, ok := s.LoadUser(ref.Owner, ref.ID)
-		if !ok || c.Disabled || credShareGrant(c, user) == credShareNone {
+		if !ok || c.Disabled || credShareGrantIn(c, user, agentID) == credShareNone {
 			continue
 		}
 		out = append(out, c)
@@ -2739,10 +2816,10 @@ func (s *SecureAPI) SharedWithUser(user string) []SecureCredential {
 // resolveShared finds the credential of this name lent to this user, and every
 // owner who lent them one of that name. More than one owner is not a tie to
 // break: see Resolve.
-func (s *SecureAPI) resolveShared(name, user string) (SecureCredential, []string) {
+func (s *SecureAPI) resolveShared(name, user, agentID string) (SecureCredential, []string) {
 	var found SecureCredential
 	var owners []string
-	for _, c := range s.SharedWithUser(user) {
+	for _, c := range s.SharedWithUserIn(user, agentID) {
 		if c.Name != name {
 			continue
 		}
@@ -3159,4 +3236,87 @@ func lendingRefusal(c SecureCredential, wantWrite bool) string {
 			"Change that on the credential itself if you mean to let somebody write as you."
 	}
 	return ""
+}
+
+// LendForAgent lends this key to these people FOR ONE AGENT.
+//
+// The narrow form of SetCredentialShares, and the one a share flow should
+// reach for: somebody needing to run an agent needs the key inside that agent,
+// not a key they can spend from anywhere. Additive, like every other share
+// door — it adds the people and the scope, and leaves alone anybody already
+// holding it for other reasons.
+//
+// An existing UNSCOPED lend stays unscoped. Narrowing a grant somebody already
+// holds is a different act from making one, and doing it as a side effect of
+// sharing an agent would quietly take away access that was granted on purpose.
+func (s *SecureAPI) LendForAgent(owner, name, agentID string, users []string, write bool) error {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return errString("an agent is required: use SetCredentialShares for a lend that is not about one")
+	}
+	c, ok := s.LoadUser(owner, name)
+	if !ok {
+		return errString("no credential " + name + " owned by " + owner)
+	}
+	scope := map[string][]string{}
+	for u, ids := range c.SharedForAgents {
+		scope[u] = append([]string{}, ids...)
+	}
+	read, wr := c.SharedReadOnly, c.SharedReadWrite
+	for _, u := range users {
+		if u = strings.TrimSpace(u); u == "" || u == owner {
+			continue
+		}
+		held := credSliceHas(read, u) || credSliceHas(wr, u)
+		if held && len(scope[u]) == 0 {
+			// Already holds it unscoped. Leave it.
+			continue
+		}
+		if !credSliceHas(scope[u], agentID) {
+			scope[u] = append(scope[u], agentID)
+		}
+		if write {
+			wr = append(wr, u)
+		} else {
+			read = append(read, u)
+		}
+	}
+	if err := s.SetCredentialShares(owner, name, read, wr); err != nil {
+		return err
+	}
+	return s.setLendScope(owner, name, scope)
+}
+
+// setLendScope writes the scope map beside the lists SetCredentialShares just
+// wrote. Separate because that setter owns the lists and this owns the scope;
+// one function writing both would be the door that decides two things.
+func (s *SecureAPI) setLendScope(owner, name string, scope map[string][]string) error {
+	if !s.ready() {
+		return errString("secure-api store not initialized")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	key := credStoreKey(owner, name)
+	var c SecureCredential
+	if !s.db.Get(secureAPITable, key, &c) {
+		return errString("no credential " + name + " owned by " + owner)
+	}
+	// Only for people who still hold it: a scope naming somebody with no lend
+	// is a row that decides nothing and outlives the grant it described.
+	clean := map[string][]string{}
+	for u, ids := range scope {
+		if len(ids) == 0 {
+			continue
+		}
+		if credSliceHas(c.SharedReadOnly, u) || credSliceHas(c.SharedReadWrite, u) {
+			clean[u] = ids
+		}
+	}
+	if len(clean) == 0 {
+		c.SharedForAgents = nil
+	} else {
+		c.SharedForAgents = clean
+	}
+	s.db.Set(secureAPITable, key, c)
+	return nil
 }

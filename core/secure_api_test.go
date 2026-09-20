@@ -1519,3 +1519,108 @@ func TestTighteningThePolicyTakesBackWhatItForbids(t *testing.T) {
 		t.Errorf("the recipient still resolves it: %+v", got)
 	}
 }
+
+// ----------------------------------------------------------------------
+// Agent-scoped lends
+// ----------------------------------------------------------------------
+
+// The point: a key lent so somebody could run one agent works inside that
+// agent and nowhere else. Without this, lending for one agent handed them a
+// key they could spend from any agent of their own, or from a tool they wrote
+// that afternoon — a grant far wider than the reason for it.
+func TestALendForOneAgentWorksOnlyThere(t *testing.T) {
+	secureAPITestStore(t)
+	shareTestCred(t, "alice", "wiki", "https://wiki.example/**")
+	if err := Secure().LendForAgent("alice", "wiki", "agent-1", []string{"bob"}, false); err != nil {
+		t.Fatalf("lend: %v", err)
+	}
+
+	if _, ok := Secure().ResolveIn("wiki", "bob", "agent-1"); !ok {
+		t.Error("the lend does not work in the agent it was made for")
+	}
+	if _, ok := Secure().ResolveIn("wiki", "bob", "agent-2"); ok {
+		t.Error("the lend works from another of their agents")
+	}
+	// Fails closed: a caller that cannot say which agent it is running is
+	// outside the scope, not inside all of them.
+	if _, ok := Secure().ResolveIn("wiki", "bob", ""); ok {
+		t.Error("the lend resolved with no agent in context")
+	}
+	// And it does not appear in their general catalog, which would offer a
+	// capability that refuses when called.
+	if got := Secure().SharedWithUserIn("bob", "agent-2"); len(got) != 0 {
+		t.Errorf("a scoped lend is listed outside its agent: %+v", got)
+	}
+	if got := Secure().SharedWithUserIn("bob", "agent-1"); len(got) != 1 {
+		t.Errorf("a scoped lend is missing inside its agent: %+v", got)
+	}
+}
+
+// Lends made before the field existed, and lends made from the credential card
+// on purpose, stay unscoped. A scope that defaulted to "one agent" would have
+// broken every existing lend on the first read.
+func TestAnUnscopedLendStillWorksEverywhere(t *testing.T) {
+	secureAPITestStore(t)
+	shareTestCred(t, "alice", "wiki", "https://wiki.example/**")
+	Secure().SetCredentialShares("alice", "wiki", []string{"bob"}, nil)
+
+	for _, agent := range []string{"agent-1", "agent-2", ""} {
+		if _, ok := Secure().ResolveIn("wiki", "bob", agent); !ok {
+			t.Errorf("an unscoped lend failed for agent %q", agent)
+		}
+	}
+}
+
+// Narrowing a grant somebody already holds is a different act from making one.
+// Doing it as a side effect of sharing an agent would quietly take away access
+// that was granted on purpose.
+func TestLendingForAnAgentDoesNotNarrowAnExistingGrant(t *testing.T) {
+	secureAPITestStore(t)
+	shareTestCred(t, "alice", "wiki", "https://wiki.example/**")
+	Secure().SetCredentialShares("alice", "wiki", []string{"bob"}, nil)
+	if err := Secure().LendForAgent("alice", "wiki", "agent-1", []string{"bob"}, false); err != nil {
+		t.Fatalf("lend: %v", err)
+	}
+	if _, ok := Secure().ResolveIn("wiki", "bob", "agent-2"); !ok {
+		t.Error("an existing unscoped lend was narrowed by an agent share")
+	}
+}
+
+// The scope follows the lend. An entry for somebody who no longer holds the
+// key would outlive the grant it narrowed, and be waiting to narrow the next
+// one made for another reason entirely.
+func TestRevokingALendDropsItsScope(t *testing.T) {
+	secureAPITestStore(t)
+	shareTestCred(t, "alice", "wiki", "https://wiki.example/**")
+	Secure().LendForAgent("alice", "wiki", "agent-1", []string{"bob"}, false)
+	Secure().SetCredentialShares("alice", "wiki", nil, nil)
+
+	c, _ := Secure().LoadUser("alice", "wiki")
+	if len(c.SharedForAgents) != 0 {
+		t.Errorf("the scope outlived the lend: %+v", c.SharedForAgents)
+	}
+	// Re-lending unscoped is now genuinely unscoped rather than inheriting a
+	// narrowing nobody asked for.
+	Secure().SetCredentialShares("alice", "wiki", []string{"bob"}, nil)
+	if _, ok := Secure().ResolveIn("wiki", "bob", "agent-9"); !ok {
+		t.Error("a fresh unscoped lend inherited a stale scope")
+	}
+}
+
+// A write lend scopes the same way, and stays a write lend.
+func TestAScopedWriteLendIsStillAWriteLend(t *testing.T) {
+	secureAPITestStore(t)
+	shareTestCred(t, "alice", "wiki", "https://wiki.example/**")
+	Secure().LendForAgent("alice", "wiki", "agent-1", []string{"bob"}, true)
+
+	c, _ := Secure().LoadUser("alice", "wiki")
+	if !credSliceHas(c.SharedReadWrite, "bob") {
+		t.Errorf("the write lend did not land: %+v", c.SharedReadWrite)
+	}
+	if credShareGrantIn(c, "bob", "agent-1") != credShareWrite {
+		t.Error("it is not a write grant inside its agent")
+	}
+	if credShareGrantIn(c, "bob", "agent-2") != credShareNone {
+		t.Error("it is a grant outside its agent")
+	}
+}

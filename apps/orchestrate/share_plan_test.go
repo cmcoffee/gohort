@@ -310,3 +310,38 @@ func TestARecipientCanSeeWhatTheAgentCarries(t *testing.T) {
 		t.Errorf("a credential is listed as something that arrived: %v", carries)
 	}
 }
+
+// A lend made because somebody needed to run one agent is scoped to it. The
+// grant is as narrow as the reason for it.
+func TestAShareLendsTheKeyForThatAgentOnly(t *testing.T) {
+	guidedFixture(t)
+	// The credential store is a process singleton these fixtures do not swap,
+	// so a lend or a lending policy another test left on "wiki" decides this
+	// one's answer. Both are reset here rather than assumed: an UNSCOPED lend
+	// in particular would be left alone by LendForAgent, on purpose, and the
+	// test would be measuring that instead of what it means to.
+	if err := Secure().Save(SecureCredential{Name: "wiki", Type: SecureCredNone, Owner: "alice",
+		AllowedURLPattern: "https://wiki.example/**", Lending: LendAny}, ""); err != nil {
+		t.Skipf("no secure store here: %v", err)
+	}
+	if err := Secure().SetCredentialShares("alice", "wiki", nil, nil); err != nil {
+		t.Fatalf("clearing: %v", err)
+	}
+	lines := shareAgentGuided("alice", "a1", []string{"bob"}, map[string]string{"cred:wiki": credRead})
+
+	// Asked of the LEND rather than of resolution, because resolution answers
+	// a wider question: bob may own a key called "wiki" himself, and it is
+	// right that his own resolves everywhere. What this test is about is where
+	// alice's lend reaches.
+	if got := Secure().SharedWithUserIn("bob", "a1"); len(got) != 1 {
+		t.Errorf("the lend does not reach inside the agent it was made for: %+v", got)
+	}
+	if got := Secure().SharedWithUserIn("bob", "some-other-agent"); len(got) != 0 {
+		t.Errorf("the lend reaches an agent of their own: %+v", got)
+	}
+	// And the report says so, because a lend somebody believes is general is
+	// one they will be surprised by.
+	if !strings.Contains(strings.Join(lines, " | "), "inside this agent only") {
+		t.Errorf("the report does not say the lend is scoped: %v", lines)
+	}
+}
