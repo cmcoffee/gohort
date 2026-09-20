@@ -39,7 +39,7 @@ func TestAgentShareHelpers(t *testing.T) {
 // there if it's published (Exposed) OR peer-shared (AllowedUsers), but never a
 // clone-only seed, and not a plain private agent.
 func TestReachableAgent(t *testing.T) {
-	if !reachableAgent(AgentRecord{ID: "custom-x", Exposed: true}) {
+	if !reachableAgent(AgentRecord{ID: "custom-x", ShowOnDashboard: true}) {
 		t.Fatal("a published agent must be reachable")
 	}
 	if !reachableAgent(AgentRecord{ID: "custom-x", AllowedUsers: []string{"bob"}}) {
@@ -49,10 +49,10 @@ func TestReachableAgent(t *testing.T) {
 		t.Fatal("a private, unshared agent must NOT be reachable")
 	}
 	// A clone-only template seed is never surfaced, even flagged Exposed.
-	if reachableAgent(AgentRecord{ID: "seed-research", Exposed: true}) {
+	if reachableAgent(AgentRecord{ID: "seed-research", ShowOnDashboard: true}) {
 		t.Error("no framework seed may surface on /agents/, even with a stale Exposed flag")
 	}
-	if reachableAgent(AgentRecord{ID: "seed-kb", Exposed: true}) {
+	if reachableAgent(AgentRecord{ID: "seed-kb", ShowOnDashboard: true}) {
 		t.Fatal("a clone-only seed must never be reachable on /agents/")
 	}
 	if reachableAgent(AgentRecord{ID: "seed-kb", AllowedUsers: []string{"bob"}}) {
@@ -139,7 +139,7 @@ func TestPublishAgentForAdmin(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, _ := loadAgent(udb, "a1")
-	if !a.Exposed {
+	if !a.Everyone {
 		t.Fatal("publish must set Exposed=true")
 	}
 	if len(a.AllowedUsers) != 1 || a.AllowedUsers[0] != "bob" {

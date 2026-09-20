@@ -326,7 +326,29 @@ type AgentRecord struct {
 	// Conflicts between same-name agents owned by different users
 	// are handled by suffixing the owner-hash; that bit lives in
 	// the agents package.
+	// Exposed is now READ ONLY, kept so a record written before the split
+	// still decodes and migrates. It used to mean two things at once —
+	// everybody may use this, AND put a card on the dashboard — because the
+	// public surface needed an access gate and the app grant happened to be
+	// one. They are different questions, and welding them meant an owner could
+	// not give somebody a shortcut without widening who could use it, or widen
+	// it without putting a card in front of people who did not want one.
+	//
+	// migrateExposedFlag splits it into Everyone + ShowOnDashboard on load and
+	// clears it; nothing should read it otherwise.
 	Exposed bool `json:"exposed,omitempty"`
+
+	// Everyone is the REACH: every signed-in user of this deployment may use
+	// this agent. The third rung, and an administrator's to grant — an owner
+	// asks, through the same promotion queue a skill or a collection goes
+	// through. AllowedUsers is the rung below it and needs nobody's approval.
+	Everyone bool `json:"everyone,omitempty"`
+
+	// ShowOnDashboard is PRESENTATION: a card on the dashboard and a page at
+	// /agents/<slug> for the people who can already use it. It grants nothing,
+	// so it needs no approval — a shortcut to something you already have is
+	// not a decision anybody else has a stake in.
+	ShowOnDashboard bool `json:"show_on_dashboard,omitempty"`
 
 	// MCPExposed makes this agent reachable through gohort's INBOUND MCP server
 	// (apps/mcpserver, /mcp/) — an external MCP client (e.g. Claude Desktop) can

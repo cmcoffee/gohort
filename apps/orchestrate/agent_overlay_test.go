@@ -233,7 +233,7 @@ func TestSeedShadowRoundTrips(t *testing.T) {
 	shadow.MaxPlanSteps = 2
 	shadow.AllowedTools = []string{"web_search"}
 	shadow.LeadModel = true
-	shadow.Exposed = false
+	shadow.Everyone = false
 	shadow.Hidden = true
 
 	saved, err := saveAgent(db, shadow)
@@ -503,8 +503,8 @@ func TestTheWizardsAssistantFollowsTheConversationalShape(t *testing.T) {
 	if got.ID != "" {
 		t.Errorf("it starts as the framework's own record: id=%q", got.ID)
 	}
-	if got.Hidden || got.Exposed {
-		t.Errorf("it inherited a seed's visibility: hidden=%v exposed=%v", got.Hidden, got.Exposed)
+	if got.Hidden || got.Everyone {
+		t.Errorf("it inherited a seed's visibility: hidden=%v exposed=%v", got.Hidden, got.Everyone)
 	}
 	// The settings nobody would think to ask a new user about.
 	if got.MaxWorkerRounds != shape.MaxWorkerRounds || got.MaxPlanSteps != shape.MaxPlanSteps {

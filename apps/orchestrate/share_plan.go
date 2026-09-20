@@ -45,7 +45,7 @@ func planAgentShare(owner, id string, recipients []string) []shareledger.Decisio
 	// Planned against the recipients being proposed, not against whoever the
 	// agent already lists: the question is what THESE people would be missing.
 	a.AllowedUsers = recipients
-	a.Exposed, a.MCPExposed = false, false
+	a.Everyone = false
 
 	// Credentials, and only credentials. Everything else an agent uses travels
 	// with it and is scoped to it, so there is no question to ask: asking
@@ -198,7 +198,7 @@ func manifestForAgent(owner, id, recipient string) []string {
 		return nil
 	}
 	a.AllowedUsers = []string{recipient}
-	a.Exposed, a.MCPExposed = false, false
+	a.Everyone = false
 
 	var out []string
 	for _, it := range agentReachOf(udb, owner, a).Items {

@@ -50,7 +50,7 @@ func TestPublishingAnAgentIsRequestedNotApplied(t *testing.T) {
 	}
 	// Not live. A capability shown as on while an administrator has not looked
 	// at it is worse than one that plainly says it is waiting.
-	if got, _ := loadAgent(udb, rec.ID); got.Exposed {
+	if got, _ := loadAgent(udb, rec.ID); got.Everyone {
 		t.Error("the agent was published without an administrator")
 	}
 	if len(promotion.ListPromotionRequests(auth, true)) != 1 {
@@ -64,7 +64,7 @@ func TestPublishingAnAgentIsRequestedNotApplied(t *testing.T) {
 			t.Fatalf("approve: %v", err)
 		}
 	}
-	if got, _ := loadAgent(udb, rec.ID); !got.Exposed {
+	if got, _ := loadAgent(udb, rec.ID); !got.Everyone {
 		t.Error("approval did not publish the agent")
 	}
 }
@@ -84,7 +84,7 @@ func TestUnpublishingNeedsNobody(t *testing.T) {
 	if w := publishFlags(t, T, user, rec.ID, map[string]bool{"exposed": false}); w.Code != http.StatusNoContent {
 		t.Fatalf("unpublish was not applied directly: %d %s", w.Code, w.Body.String())
 	}
-	if got, _ := loadAgent(udb, rec.ID); got.Exposed {
+	if got, _ := loadAgent(udb, rec.ID); got.Everyone {
 		t.Error("the agent is still published")
 	}
 	if len(promotion.ListPromotionRequests(auth, true)) != 0 {
@@ -106,7 +106,7 @@ func TestAnAdminPublishesDirectly(t *testing.T) {
 	if w := publishFlags(t, T, user, rec.ID, map[string]bool{"exposed": true}); w.Code != http.StatusNoContent {
 		t.Fatalf("an admin was made to ask: %d %s", w.Code, w.Body.String())
 	}
-	if got, _ := loadAgent(udb, rec.ID); !got.Exposed {
+	if got, _ := loadAgent(udb, rec.ID); !got.Everyone {
 		t.Error("the admin's own toggle did not take")
 	}
 }
@@ -139,7 +139,7 @@ func TestMCPExposureGoesThroughTheSameGate(t *testing.T) {
 	if !got.MCPExposed {
 		t.Error("approving the MCP request did not open that door")
 	}
-	if got.Exposed {
+	if got.Everyone {
 		t.Error("approving MCP also published to the dashboard; they are separate doors")
 	}
 }

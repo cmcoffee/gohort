@@ -32,28 +32,28 @@ func TestCloneOnlySeedHidden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !normal.Exposed {
+	if !normal.ShowOnDashboard {
 		t.Error("a normal Hidden agent should be auto-exposed for reachability")
 	}
 
 	// seed-kb, even saved Hidden AND Exposed=true, must come back NOT exposed.
 	kb, err := saveAgent(db, AgentRecord{
 		ID: "seed-kb", Owner: seedOwner, Name: "Knowledge Base",
-		OrchestratorPrompt: "x", Hidden: true, Exposed: true,
+		OrchestratorPrompt: "x", Hidden: true, ShowOnDashboard: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if kb.Exposed {
+	if kb.ShowOnDashboard {
 		t.Error("seed-kb must never be Exposed (template seed)")
 	}
 
 	// The read-side guard hides it even if a stale record still carries
 	// Exposed=true (e.g. a shadow saved before this fix).
-	if publiclyExposable(AgentRecord{ID: "seed-kb", Exposed: true}) {
+	if publiclyExposable(AgentRecord{ID: "seed-kb", ShowOnDashboard: true}) {
 		t.Error("publiclyExposable must exclude seed-kb regardless of the Exposed flag")
 	}
-	if !publiclyExposable(AgentRecord{ID: "custom-x", Exposed: true}) {
+	if !publiclyExposable(AgentRecord{ID: "custom-x", ShowOnDashboard: true}) {
 		t.Error("a normal Exposed agent should still be publicly exposable")
 	}
 }

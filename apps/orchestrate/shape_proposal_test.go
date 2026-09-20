@@ -28,9 +28,9 @@ func TestProposalOpensWithTheAgentItWouldBuild(t *testing.T) {
 	if p.Draft.ID != "" || p.Draft.Owner != "" {
 		t.Errorf("the draft is already somebody's record: id=%q owner=%q", p.Draft.ID, p.Draft.Owner)
 	}
-	if p.Draft.Hidden || p.Draft.Exposed || p.Draft.Fleet {
+	if p.Draft.Hidden || p.Draft.Everyone || p.Draft.Fleet {
 		t.Errorf("the draft inherited a seed's posture: hidden=%v exposed=%v fleet=%v",
-			p.Draft.Hidden, p.Draft.Exposed, p.Draft.Fleet)
+			p.Draft.Hidden, p.Draft.Everyone, p.Draft.Fleet)
 	}
 
 	// The points are what a person checks before agreeing: what it refuses,

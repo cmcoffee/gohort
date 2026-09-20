@@ -174,7 +174,11 @@ func privilegeFlagRows(rec AgentRecord) []privilegeFlag {
 	flags := []privilegeFlag{
 		{Field: "fleet", Label: "Conductor tools (schedule, monitors, delegate)", On: rec.Fleet, Locked: sub},
 		{Field: "author", Label: "Authoring tools (build agents, tools, apps)", On: rec.Author, Locked: sub},
-		{Field: "exposed", Label: "Published to dashboard", On: rec.Exposed, Locked: sub},
+		{Field: "exposed", Label: "Everyone can use it", On: rec.Everyone, Locked: sub},
+		// Listed beside the reach, never folded into it. One says who may use
+		// the agent and takes an administrator; the other says where it
+		// appears for the people who already can, and takes nobody.
+		{Field: "show_on_dashboard", Label: "Shortcut on the dashboard", On: rec.ShowOnDashboard, Locked: sub},
 	}
 	if rec.MCPExposed {
 		flags = append(flags, privilegeFlag{Field: "mcp_exposed", Label: "Reachable over MCP", On: true, Locked: sub})

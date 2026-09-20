@@ -116,7 +116,7 @@ func (T *AgentsApp) dispatch(w http.ResponseWriter, r *http.Request) {
 	// unpublished one is reachable by its AllowedUsers recipients and the owner,
 	// with no admin involved. Without this, anyone who guessed the slug could
 	// chat with every reachable agent regardless of visibility.
-	if !orch.AgentReachableBy(r, slug, owner, agent.AllowedUsers, agent.Exposed || agent.MCPExposed) {
+	if !orch.AgentReachableBy(r, slug, owner, agent.AllowedUsers, agent.Everyone) {
 		http.NotFound(w, r) // 404 not 403 — don't leak slug existence
 		return
 	}

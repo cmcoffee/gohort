@@ -46,7 +46,7 @@ func (T *OrchestrateApp) ListGrantableApps() []GrantableApp {
 		// Only PUBLISHED agents are app-grantable. A peer-shared-only agent (in the
 		// pool via AllowedUsers, not Exposed) is reached through its recipient list,
 		// not an admin app grant — don't offer it in the grantable-apps picker.
-		if !e.Exposed {
+		if !e.ShowOnDashboard {
 			continue
 		}
 		out = append(out, GrantableApp{
@@ -89,7 +89,7 @@ func (T *OrchestrateApp) DashboardCards(r *http.Request) []DashboardCard {
 		// (or its owner). AgentReachableBy composes both, so a published agent nobody
 		// was granted shows only for admins, and a peer-shared agent shows only for
 		// its recipients.
-		if !T.AgentReachableBy(r, e.Slug, e.Owner, e.AllowedUsers, e.Exposed) {
+		if !T.AgentReachableBy(r, e.Slug, e.Owner, e.AllowedUsers, e.Everyone) {
 			continue
 		}
 		desc := strings.TrimSpace(e.Description)
@@ -166,13 +166,14 @@ func ExposedDisplayName(a AgentRecord) string {
 // metadata the directory page needs, plus enough hooks to route
 // the user to the right chat surface.
 type ExposedAgentEntry struct {
-	Slug         string
-	Name         string
-	Description  string
-	Owner        string
-	AgentID      string
-	Exposed      bool     // published to app-access users (vs. peer-shared only)
-	AllowedUsers []string // peer-share recipients (empty when published-only)
+	Slug            string
+	Name            string
+	Description     string
+	Owner           string
+	AgentID         string
+	Everyone        bool     // the REACH: every signed-in user may use it
+	ShowOnDashboard bool     // PRESENTATION: a card, for whoever can already use it
+	AllowedUsers    []string // peer-share recipients (empty when published-only)
 }
 
 // ListExposedAgents walks every authenticated user's orchestrate
@@ -198,7 +199,7 @@ type ExposedAgentEntry struct {
 // the publish. Cortex agents publish too (each visitor gets their own
 // per-(user, agent) home thread).
 func publiclyExposable(a AgentRecord) bool {
-	return agentSurfaceEligible(a) && a.Exposed
+	return agentSurfaceEligible(a) && a.ShowOnDashboard
 }
 
 // agentSurfaceEligible is the read-side guard shared by the "published"
@@ -228,7 +229,7 @@ func agentSurfaceEligible(a AgentRecord) bool {
 // to specific users (AllowedUsers). It's the directory/lookup pool; WHO may
 // actually see or run it is the separate per-user gate AgentReachableBy.
 func reachableAgent(a AgentRecord) bool {
-	return agentSurfaceEligible(a) && (a.Exposed || len(a.AllowedUsers) > 0)
+	return agentSurfaceEligible(a) && (a.Everyone || a.ShowOnDashboard || len(a.AllowedUsers) > 0)
 }
 
 // AgentReachableBy reports whether the request's user may see + run the agent at
@@ -323,13 +324,14 @@ func (T *OrchestrateApp) ListExposedAgents() []ExposedAgentEntry {
 				// Replace seed default with this user's shadow.
 			}
 			byID[a.ID] = ExposedAgentEntry{
-				Slug:         slug,
-				Name:         ExposedDisplayName(a),
-				Description:  a.Description,
-				Owner:        u.Username,
-				AgentID:      a.ID,
-				Exposed:      a.Exposed,
-				AllowedUsers: a.AllowedUsers,
+				Slug:            slug,
+				Name:            ExposedDisplayName(a),
+				Description:     a.Description,
+				Owner:           u.Username,
+				AgentID:         a.ID,
+				Everyone:        a.Everyone,
+				ShowOnDashboard: a.ShowOnDashboard,
+				AllowedUsers:    a.AllowedUsers,
 			}
 			idIsShadow[a.ID] = isShadow
 		}
@@ -522,7 +524,7 @@ func (T *OrchestrateApp) memoryAgent(r *http.Request, udb Database, user, agentI
 		return AgentRecord{}, false
 	}
 	a, owner, ok := T.lookupReachableAgentByID(agentID)
-	if !ok || !T.AgentReachableBy(r, ExposedSlug(a), owner, a.AllowedUsers, a.Exposed || a.MCPExposed) {
+	if !ok || !T.AgentReachableBy(r, ExposedSlug(a), owner, a.AllowedUsers, a.Everyone) {
 		return AgentRecord{}, false
 	}
 	return a, true

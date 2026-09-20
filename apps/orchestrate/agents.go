@@ -75,20 +75,37 @@ func loadAgent(db Database, id string) (AgentRecord, bool) {
 			// including which fields the framework keeps for itself.
 			merged := resolveSeedShadow(seed, shadow)
 			merged = selfHealAllowedTools(db, merged)
-			return enforceSubAgentPosture(applyLegacyMode(merged)), true
+			return enforceSubAgentPosture(applyLegacyMode(migrateExposedFlag(merged))), true
 		}
 		// No shadow exists: return the framework default.
-		return enforceSubAgentPosture(applyLegacyMode(seed)), true
+		return enforceSubAgentPosture(applyLegacyMode(migrateExposedFlag(seed))), true
 	}
 	// Non-seed (user-created / cloned) agent: the DB record is authoritative,
 	// except for the fields a tracking instance has left to its shape.
 	if db.Get(agentsTable, id, &a) {
 		a = resolveShapeInstance(a)
 		a = selfHealAllowedTools(db, a)
-		a = enforceSubAgentPosture(applyLegacyMode(a))
+		a = enforceSubAgentPosture(applyLegacyMode(migrateExposedFlag(a)))
 		return a, true
 	}
 	return a, false
+}
+
+// migrateExposedFlag splits the retired Exposed flag into the two decisions it
+// used to make at once: Everyone (who may use this) and ShowOnDashboard (where
+// it appears).
+//
+// On READ, like applyLegacyMode beside it, so a deployment that never saves an
+// agent again still behaves. Published agents keep behaving exactly as they
+// did — everybody could use them and they had a card — which is both halves
+// set. Idempotent: an already-split record has Exposed clear and is untouched.
+func migrateExposedFlag(a AgentRecord) AgentRecord {
+	if !a.Exposed {
+		return a
+	}
+	a.Everyone, a.ShowOnDashboard = true, true
+	a.Exposed = false
+	return a
 }
 
 // applyLegacyMode maps the retired Mode == "orchestrator" agent type onto
@@ -150,7 +167,7 @@ func enforceSubAgentPosture(a AgentRecord) AgentRecord {
 		return a
 	}
 	a.Hidden = true
-	a.Exposed = false
+	a.Everyone, a.ShowOnDashboard = false, false
 	a.PublicName = ""
 	a.AllowExplorer = false
 	a.IntakeForm = nil
@@ -283,8 +300,8 @@ func writeAgent(db Database, a AgentRecord, maySetLocked bool, reason string) (A
 	// auto-expose rule below wrongly flipped true in the past — checked first so
 	// that rule can't re-expose it.
 	if isCloneOnlySeed(a.ID) {
-		a.Exposed = false
-	} else if a.Hidden && !a.Exposed && newlyHidden(db, a) {
+		a.Everyone, a.ShowOnDashboard = false, false
+	} else if a.Hidden && !a.ShowOnDashboard && newlyHidden(db, a) {
 		// Reachability DEFAULT (not an invariant): a Hidden agent is
 		// orphaned if it's also unexposed — hidden from the fleet AND
 		// absent from the dashboard leaves the owner no surface to reach
@@ -299,7 +316,11 @@ func writeAgent(db Database, a AgentRecord, maySetLocked bool, reason string) (A
 		//
 		// Now it fires only on the transition into Hidden (or on create), so
 		// the default still lands once and the user's later choice sticks.
-		a.Exposed = true
+		// A CARD, not reach. Hiding an agent from the fleet list leaves its
+		// owner no way to open it, and a shortcut fixes that; widening who
+		// may use it never did, and doing so here was the old flag meaning
+		// two things at once.
+		a.ShowOnDashboard = true
 	}
 	// Drop the retired "orchestrator" mode marker on save. The record now
 	// carries the split Cortex + Fleet flags explicitly (the form's toggles),

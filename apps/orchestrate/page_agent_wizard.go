@@ -515,7 +515,7 @@ func (T *OrchestrateApp) hasSharedReachableAgents(r *http.Request, user string) 
 			continue
 		}
 		if containsString(e.AllowedUsers, user) ||
-			(e.Exposed && UserHasAppAccess(r, "/agents/"+e.Slug)) {
+			e.Everyone {
 			return true
 		}
 	}
@@ -628,9 +628,9 @@ func wizardBaseRecord(kind string) AgentRecord {
 	if !ok {
 		return AgentRecord{}
 	}
-	base.ID = ""         // a new agent, not the framework's
-	base.Hidden = false  // the user's own front door, not a seed
-	base.Exposed = false // reachable from their own agent list
+	base.ID = ""                                       // a new agent, not the framework's
+	base.Hidden = false                                // the user's own front door, not a seed
+	base.Everyone, base.ShowOnDashboard = false, false // reachable from their own agent list
 	// Fleet stays OFF here even though the shape carries it, because the
 	// caller turns it on for the FIRST-RUN assistant only. Conductor tools are
 	// a real block of prompt on every turn, which is the "forty tools instead

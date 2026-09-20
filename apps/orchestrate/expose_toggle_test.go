@@ -26,17 +26,17 @@ func TestUnexposingAHiddenAgentSticks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if !saved.Exposed {
+	if !saved.ShowOnDashboard {
 		t.Fatal("hiding a NEW agent should still default it to exposed (it needs a surface)")
 	}
 
 	// The user now turns the dashboard card off. This must stick.
-	saved.Exposed = false
+	saved.ShowOnDashboard = false
 	again, err := saveAgent(db, saved)
 	if err != nil {
 		t.Fatalf("update: %v", err)
 	}
-	if again.Exposed {
+	if again.ShowOnDashboard {
 		t.Fatal("Exposed was forced back on — the toggle is inoperable for Hidden agents")
 	}
 
@@ -46,7 +46,7 @@ func TestUnexposingAHiddenAgentSticks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("third save: %v", err)
 	}
-	if third.Exposed {
+	if third.ShowOnDashboard {
 		t.Error("a later unrelated save re-exposed the agent")
 	}
 }
@@ -61,7 +61,7 @@ func TestHidingAVisibleAgentDefaultsToExposed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if visible.Exposed {
+	if visible.ShowOnDashboard {
 		t.Fatal("a non-hidden agent should not be auto-exposed")
 	}
 	visible.Hidden = true
@@ -69,7 +69,7 @@ func TestHidingAVisibleAgentDefaultsToExposed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("hide: %v", err)
 	}
-	if !hidden.Exposed {
+	if !hidden.ShowOnDashboard {
 		t.Error("hiding a visible agent should default Exposed on, or it has no surface at all")
 	}
 }
@@ -86,7 +86,7 @@ func TestVisibleAgentIsNeverAutoExposed(t *testing.T) {
 		if err != nil {
 			t.Fatalf("save %d: %v", i, err)
 		}
-		if rec.Exposed {
+		if rec.ShowOnDashboard {
 			t.Fatalf("save %d auto-exposed a visible agent", i)
 		}
 	}

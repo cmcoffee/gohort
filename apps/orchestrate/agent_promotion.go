@@ -74,7 +74,10 @@ func (T *OrchestrateApp) approveAgentPublish(owner, name string) error {
 	case "mcp_exposed":
 		rec.MCPExposed = true
 	default:
-		rec.Exposed = true
+		// The REACH. A card is presentation and needs nobody's approval, so
+		// approving a request must not quietly add one: an owner who asked
+		// "may everybody use this" did not ask for it on the dashboard.
+		rec.Everyone = true
 	}
 	_, err := saveAgent(udb, rec)
 	return err

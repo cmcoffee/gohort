@@ -379,24 +379,32 @@ func (T *OrchestrateApp) handleConsolePrivileges(w http.ResponseWriter, r *http.
 			rec.Fleet = on
 		case "author":
 			rec.Author = on
-		// The two publishing flags. Turning either ON reaches every signed-in
-		// user of the deployment, which is the same reach a shared app has and
-		// has needed an administrator since v0.6.710; an agent is the larger
-		// grant, since it carries its owner's tools, credentials and memory.
-		// Turning OFF stays direct: nobody needs permission to stop publishing.
+		// REACH. Turning this on lets every signed-in user of the deployment
+		// use the agent, which is the same reach a shared app has and has
+		// needed an administrator since v0.6.710; an agent is the larger
+		// grant, since it carries its owner's tools, documents and skills.
+		// Turning OFF stays direct: nobody needs permission to stop sharing.
 		// See agent_promotion.go.
 		case "exposed":
-			if T.agentPublishNeedsApproval(r, user, rec.ID, "exposed", on, rec.Exposed) {
+			if T.agentPublishNeedsApproval(r, user, rec.ID, "exposed", on, rec.Everyone) {
 				requested = append(requested, "exposed")
 				continue
 			}
-			rec.Exposed = on
+			rec.Everyone = on
 		case "mcp_exposed":
 			if T.agentPublishNeedsApproval(r, user, rec.ID, "mcp_exposed", on, rec.MCPExposed) {
 				requested = append(requested, "mcp_exposed")
 				continue
 			}
 			rec.MCPExposed = on
+		// PRESENTATION. A card on the dashboard and a page at /agents/<slug>,
+		// for the people who can already use the agent. It grants nothing, so
+		// it asks nobody: a shortcut to something you already have is not a
+		// decision anybody else has a stake in. This used to be the same flag
+		// as the reach above, which meant an owner could not add a shortcut
+		// without widening who could use it.
+		case "show_on_dashboard":
+			rec.ShowOnDashboard = on
 		case "allow_builder_dispatch":
 			rec.AllowBuilderDispatch = on
 		default:

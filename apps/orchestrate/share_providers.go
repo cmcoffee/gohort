@@ -31,7 +31,7 @@ func registerShareProviders() {
 			var out []shareledger.Grant
 			udb := UserDB(orchestrateBaseDB, owner)
 			for _, a := range listAgents(udb, owner) {
-				if isShareableAgent(a, owner) && !a.Exposed && !a.MCPExposed {
+				if isShareableAgent(a, owner) && !a.Everyone {
 					out = append(out, shareledger.Grant{ID: a.ID, Name: a.Name})
 				}
 			}
@@ -49,7 +49,7 @@ func registerShareProviders() {
 					continue
 				}
 				switch {
-				case a.Exposed || a.MCPExposed:
+				case a.Everyone:
 					out = append(out, shareledger.Grant{
 						ID: a.ID, Name: a.Name, Reach: "Published to everybody", Wide: true,
 						Detail: agentShareDetail(udb, owner, a),

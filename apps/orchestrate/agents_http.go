@@ -266,7 +266,7 @@ var patchAgentFields = map[string]bool{
 	"capture_prompt": true,
 	"allow_explorer": true, "explorer_hard_cap": true,
 	"channel": true, "fleet": true, "author": true, "tag_name": true,
-	"exposed": true, "mcp_exposed": true, "public_name": true,
+	"exposed": true, "mcp_exposed": true, "show_on_dashboard": true, "public_name": true,
 	"allow_private_mode": true, "force_private": true, "hidden": true,
 	"allow_builder_dispatch": true, "dispatch_mode": true,
 	"evals": true, "intake_form": true, "owned_by": true,
@@ -334,7 +334,7 @@ func (T *OrchestrateApp) patchAgent(w http.ResponseWriter, r *http.Request, udb 
 		return
 	}
 	applied := make([]string, 0, len(patch))
-	var refused []string
+	var refused, requested []string
 	for k, v := range patch {
 		if k == "id" {
 			continue
@@ -342,6 +342,25 @@ func (T *OrchestrateApp) patchAgent(w http.ResponseWriter, r *http.Request, udb 
 		if !patchAgentFields[k] {
 			refused = append(refused, k)
 			continue
+		}
+		// The two REACH flags are an administrator's to grant, wherever they
+		// are written. This door applied them directly, so an owner who could
+		// not flip the toggle on the privileges card could publish to the
+		// whole deployment by PATCHing the same field — one rule with one
+		// enforcement point and one way round it.
+		//
+		// Turning either OFF stays direct here as it does there: nobody needs
+		// permission to stop sharing.
+		if k == "exposed" || k == "mcp_exposed" {
+			on := v == true
+			already := existing.Everyone
+			if k == "mcp_exposed" {
+				already = existing.MCPExposed
+			}
+			if T.agentPublishNeedsApproval(r, user, existing.ID, k, on, already) {
+				requested = append(requested, k)
+				continue
+			}
 		}
 		merged[k] = v
 		applied = append(applied, k)
@@ -372,6 +391,10 @@ func (T *OrchestrateApp) patchAgent(w http.ResponseWriter, r *http.Request, udb 
 		return
 	}
 	sort.Strings(applied)
+	if len(requested) > 0 {
+		sort.Strings(requested)
+		Log("[orchestrate.agents] PATCH agent=%s filed a publish request for %v", id, requested)
+	}
 	Log("[orchestrate.agents] PATCH agent=%s fields=%v", id, applied)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(saved)

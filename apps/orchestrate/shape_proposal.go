@@ -74,7 +74,7 @@ func proposeAgent(request string) (shapeProposal, bool) {
 	draft.ID = ""
 	draft.Owner = ""
 	draft.Hidden = false
-	draft.Exposed = false
+	draft.Everyone, draft.ShowOnDashboard = false, false
 	draft.Fleet = false // the conductor toolset is a deliberate choice, not a default
 	draft.ShapeID = m.Shape.Slug
 

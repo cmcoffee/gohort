@@ -74,7 +74,7 @@ func listUserOwnedAgentsForAdmin(db Database) []UserOwnedAgentRow {
 				Name:       a.Name,
 				SharedWith: strings.Join(a.AllowedUsers, ", "),
 				Shared:     len(a.AllowedUsers) > 0,
-				Exposed:    a.Exposed,
+				Exposed:    a.Everyone,
 			})
 		}
 	}
@@ -118,7 +118,7 @@ func publishAgentForAdmin(db Database, owner, id string) error {
 		return fmt.Errorf("only a top-level user agent can be published")
 	}
 	a.Owner = owner
-	a.Exposed = true
+	a.Everyone = true
 	_, err := saveAgent(udb, a)
 	return err
 }

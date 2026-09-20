@@ -92,7 +92,7 @@ type agentReachMap struct {
 func agentReachOf(udb Database, owner string, a AgentRecord) agentReachMap {
 	out := agentReachMap{audience: reachPrivate, recipients: a.AllowedUsers}
 	switch {
-	case a.Exposed || a.MCPExposed:
+	case a.Everyone:
 		out.audience, out.Audience = reachDeployment, "Published to everybody"
 	case len(a.AllowedUsers) > 0:
 		out.audience = reachNamed

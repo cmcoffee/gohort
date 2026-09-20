@@ -184,7 +184,7 @@ func TestSeedSettingsUnchanged(t *testing.T) {
 	// No seed publishes itself, and none of them answer another agent's
 	// dispatch by default.
 	for _, rec := range builtinAgents() {
-		if rec.Exposed {
+		if rec.ShowOnDashboard {
 			t.Errorf("%s is exposed", rec.ID)
 		}
 		if !rec.Hidden {
