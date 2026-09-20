@@ -76,6 +76,12 @@ func (T *Extensions) Routes() {
 	T.HandleFunc("/api/tool-access", T.handleUserToolAccess)
 	T.HandleFunc("/api/tool-categories", T.handleUserToolCategories)
 	T.HandleFunc("/api/promotions", T.handlePromotions)
+	// The ACL picker's candidate list, served HERE rather than borrowed from
+	// another app. It is two lines over a core helper, and pointing the picker
+	// at a sibling app's URL would make sharing a skill depend on that app
+	// being installed and enabled — and on a relative path resolving against
+	// whatever page happened to be open, which is how a picker 404s.
+	T.HandleFunc("/api/user-candidates", T.handleUserCandidates)
 	T.HandleFunc("/api/global-tools", T.handleGlobalTools)
 	T.HandleFunc("/api/skills", T.handleUserSkills)
 	T.HandleFunc("/api/skills/", T.handleUserSkillOne)
@@ -1617,7 +1623,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 							// is yours.
 							ui.Card{HTML: `<div style="font-size:0.78rem;color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Shared with</div><div style="font-size:0.75rem;color:var(--text-mute)">Other users who may use this skill. Empty means private to you. They get the behaviour, not the authorship: it activates on their turns and they cannot edit or delete it. Attached collections are NOT shared with it, because those are your documents.</div>`},
 							ui.ACLPicker(ui.ACLPickerConfig{
-								OptionsSource: "../agents/api/user-candidates",
+								OptionsSource: "api/user-candidates",
 								RecordSource:  "api/skills?id={id}",
 								Field:         "allowed_users",
 								PostTo:        "api/skills?id={id}",
@@ -2407,4 +2413,16 @@ func (T *Extensions) handleSkillCollectionOptions(w http.ResponseWriter, r *http
 		out = append(out, entry{ID: c.ID, Name: c.Name, Description: c.Description})
 	}
 	writeJSON(w, out)
+}
+
+// handleUserCandidates serves the ACL-picker candidate list ([{value,label}])
+// for the "Shared with" picker on a skill. Any authenticated user may share
+// what they own, so every approved user is a candidate; this is the fleet-wide
+// list, not the admin-only one.
+func (T *Extensions) handleUserCandidates(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(UserCandidatesJSON(AuthDB()))
 }
