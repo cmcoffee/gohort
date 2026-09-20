@@ -32,12 +32,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/atotto/clipboard"
 	"image"
 	_ "image/gif"
 	_ "image/jpeg"
 	"image/png"
 	"io"
-	"github.com/atotto/clipboard"
 	"net/http"
 	"net/url"
 	"os"
@@ -206,7 +206,9 @@ func (a *App) ListTools() []tool_descriptor {
 // The Phase-2 WebSocket dispatcher uses the same core.InvokeTool
 // path, so JS-direct calls and server-driven calls share execution.
 func (a *App) InvokeTool(name string, args map[string]any) (string, error) {
-	return core.InvokeTool(name, args)
+	// Wails hands JS calls no context of their own, and the app's is the one
+	// that ends when the app does.
+	return core.InvokeTool(a.ctx, name, args)
 }
 
 // IsConfigured tells the configure page whether the desktop already

@@ -19,6 +19,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"sync"
@@ -163,12 +164,16 @@ func FindTool(name string) (Tool, bool) {
 // Returns the handler's result + error directly; wraps the not-found case with
 // a clear message so callers (Wails bridge, WebSocket dispatch) don't have to
 // format it themselves.
-func InvokeTool(name string, args map[string]any) (string, error) {
+// The context is the caller's, and it is a parameter rather than a
+// Background() conjured here: a local tool runs on the far side of a bridge,
+// the caller is the only one who knows when whoever asked has gone away, and a
+// handler that cannot be cancelled is one that keeps working for nobody.
+func InvokeTool(ctx context.Context, name string, args map[string]any) (string, error) {
 	t, ok := FindTool(name)
 	if !ok {
 		return "", fmt.Errorf("tool %q not registered (or disabled). Registered: %v", name, registered_names())
 	}
-	return t.Handler()(args)
+	return t.Handler()(ctx, args)
 }
 
 // registered_names returns just the names of currently-enabled tools — used in

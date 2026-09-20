@@ -490,7 +490,19 @@ func (c *wsClient) handleInvoke(conn *websocket.Conn, id, name string, args map[
 			return
 		}
 	}
-	result, err := core.InvokeTool(name, args)
+	// Tied to the bridge's own teardown. A local tool invoked from the far
+	// side of a websocket has no other end-of-life: the connection can drop
+	// and the handler would carry on doing work for a caller that is gone.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		select {
+		case <-c.stop:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	result, err := core.InvokeTool(ctx, name, args)
 	if err != nil {
 		c.sendResult(conn, id, "", err.Error())
 		return
