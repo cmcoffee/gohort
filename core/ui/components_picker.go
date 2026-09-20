@@ -42,6 +42,14 @@ type ChipPicker struct {
 	//       endpoint. No separate record fetch happens.
 	AttachedField string `json:"attached_field,omitempty"`
 
+	// FlagField and its labels give each selected member an optional extra
+	// permission, toggled on their own pill and saved as its own array. See
+	// ACLPickerConfig.FlagField for why one list beats two pickers.
+	FlagField    string `json:"flag_field,omitempty"`
+	FlagLabel    string `json:"flag_label,omitempty"`
+	FlagOffLabel string `json:"flag_off_label,omitempty"`
+	FlagHelp     string `json:"flag_help,omitempty"`
+
 	PostTo string `json:"post_to"`          // save destination
 	Method string `json:"method,omitempty"` // default POST; PATCH sends only the changed Field
 	// SaveKey, when set, POSTs the selection as {SaveKey: [values]}
@@ -214,6 +222,20 @@ type ACLPickerConfig struct {
 	EmptyText string
 	// Invalidate — sources to refetch after a save (see ChipPicker.Invalidate).
 	Invalidate []string
+	// Flag gives each member an optional EXTRA permission beside membership,
+	// set on their own pill: "Contributor" over "Reader", "may write" over
+	// "may read". One list with a setting per person reads as one decision,
+	// where two parallel pickers over overlapping sets read as two and leave
+	// the reader working out which names are in both.
+	//
+	// FlagField is the record field receiving the members who hold it, as its
+	// own array — so the storage stays two plain lists and only the control is
+	// unified. Off is the default and the safe direction: an extra permission
+	// nobody asked for is not one anybody granted.
+	FlagField    string
+	FlagLabel    string // what the ON state is called, e.g. "Contributor"
+	FlagOffLabel string // what OFF is called, e.g. "Reader"
+	FlagHelp     string // hover text: what turning it on actually allows
 }
 
 // ACLPicker builds a ChipPicker preconfigured as an access-control editor: a
@@ -239,6 +261,10 @@ func ACLPicker(c ACLPickerConfig) ChipPicker {
 		Intro:         c.Intro,
 		EmptyText:     c.EmptyText,
 		Invalidate:    c.Invalidate,
+		FlagField:     c.FlagField,
+		FlagLabel:     c.FlagLabel,
+		FlagOffLabel:  c.FlagOffLabel,
+		FlagHelp:      c.FlagHelp,
 	}
 	if c.RecordSource != "" {
 		// Record mode: current selection + save both go through the owning record.

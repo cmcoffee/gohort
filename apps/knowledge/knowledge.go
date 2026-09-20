@@ -231,36 +231,28 @@ func (T *KnowledgeApp) sharingSection(user, collectionID string) (ui.Section, bo
 		Subtitle: "Other users who may attach and search this collection. Empty means private to you.",
 		Detail: "They get READ: it appears in their collections, they can attach it to their agents and search it. " +
 			"They cannot rename it, delete it or change who it reaches, and there is only ever one copy — so a document you add later is shared too, and one you remove is gone for everyone.\n\n" +
-			"Adding documents is the second list. Keep it empty unless somebody should be able to change what every agent reading this believes.\n\n" +
+			"Everybody added starts as a READER. Contributor is an extra you set on their own chip, and it is worth stopping on: a contributor may add documents, and an agent takes this corpus as fact, so they decide what every agent reading it believes.\n\n" +
 			"Sharing with the whole deployment is a separate decision and is not offered here.",
-		Body: ui.Stack{Children: []ui.Component{
-			ui.ACLPicker(ui.ACLPickerConfig{
-				OptionsSource: "/knowledge/api/user-candidates",
-				RecordSource:  base,
-				Field:         "allowed_users",
-				PostTo:        base,
-				// PATCH, because the collections endpoint treats an absent field as
-				// unchanged: a POST of the whole record from this picker would
-				// carry whatever else it happened to have read.
-				Method:     "PATCH",
-				Noun:       "user",
-				Intro:      "Users who may read and search this collection.",
-				EmptyText:  "No other users to share with yet.",
-				Invalidate: []string{base},
-			}),
-			ui.Card{HTML: `<div style="font-size:0.78rem;color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.9rem">Contributors</div>` +
-				`<div style="font-size:0.75rem;color:var(--text-mute)">Of the people above, who may ADD documents. An agent treats this corpus as fact, so a contributor decides what every agent reading it believes. They still cannot rename it, re-scope it or change who it reaches.</div>`},
-			ui.ACLPicker(ui.ACLPickerConfig{
-				OptionsSource: "/knowledge/api/user-candidates",
-				RecordSource:  base,
-				Field:         "contributors",
-				PostTo:        base,
-				Method:        "PATCH",
-				Noun:          "contributor",
-				Intro:         "Users who may add documents. Anybody not shared with above is dropped.",
-				EmptyText:     "Share it with somebody first.",
-				Invalidate:    []string{base},
-			}),
-		}},
+		Body: ui.ACLPicker(ui.ACLPickerConfig{
+			OptionsSource: "/knowledge/api/user-candidates",
+			RecordSource:  base,
+			Field:         "allowed_users",
+			PostTo:        base,
+			// PATCH, because the collections endpoint treats an absent field as
+			// unchanged: a POST of the whole record from this picker would
+			// carry whatever else it happened to have read.
+			Method:    "PATCH",
+			Noun:      "user",
+			Intro:     "Users who may use this collection. Everybody starts a reader.",
+			EmptyText: "No other users to share with yet.",
+			// One list with a setting per person. Two pickers over overlapping
+			// sets read as two decisions and leave you working out which names
+			// are in both.
+			FlagField:    "contributors",
+			FlagLabel:    "Contributor",
+			FlagOffLabel: "Reader",
+			FlagHelp:     "A contributor may add documents. An agent takes this corpus as fact, so they decide what every agent reading it believes.",
+			Invalidate:   []string{base},
+		}),
 	}, true
 }

@@ -1065,6 +1065,22 @@ select:-webkit-autofill {
   border: 1px solid var(--border); border-radius: 999px;
   font-size: 0.74rem; color: var(--text);
 }
+/* The per-member permission, on the member's own chip. It states which state
+ * it is IN, not which state it can be put into: a control reading "make
+ * contributor" tells you nothing about the person in front of it. Off is
+ * quiet — the default should look like the default. */
+.ui-cp-pill-flag {
+  border: 1px solid var(--border); border-radius: 999px;
+  background: none; color: var(--text-mute); cursor: pointer;
+  font-family: inherit; font-size: 0.64rem; line-height: 1;
+  padding: 0.12rem 0.4rem; margin-left: 0.15rem;
+  -webkit-tap-highlight-color: transparent;
+}
+.ui-cp-pill-flag:hover { color: var(--text); border-color: var(--text-mute); }
+.ui-cp-pill-flag.on {
+  background: color-mix(in srgb, var(--accent, #6366f1) 18%, transparent);
+  border-color: var(--accent, #6366f1); color: var(--text-hi);
+}
 .ui-cp-pill-x { cursor: pointer; color: var(--text-mute); font-weight: 700; }
 .ui-cp-pill-x:hover { color: var(--danger); }
 .ui-cp-add { align-self: flex-start; padding: 0.3rem 0.7rem; font-size: 0.8rem; margin-bottom: 0.5rem; }

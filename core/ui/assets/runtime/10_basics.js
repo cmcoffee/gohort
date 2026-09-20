@@ -996,6 +996,11 @@
     // mode never fetches a record (its selection seeds from cfg.value).
     var needRecord = !local && !cfg.attached_field && !!cfg.record_source;
     var record = {};
+    // Who holds the optional extra permission, keyed by member. One list with
+    // a setting per person reads as one decision; two parallel pickers over
+    // overlapping sets read as two, and leave the reader working out which
+    // names are in both.
+    var flagged = {};
     Promise.all([
       fetchJSON(cfg.options_source),
       needRecord ? fetchJSON(cfg.record_source) : Promise.resolve(null)
@@ -1007,6 +1012,11 @@
       var selected = (local ? cfg.value
                       : (cfg.attached_field ? (r[0] && r[0][cfg.attached_field]) : record[cfg.field])) || [];
       selected = selected.slice();
+      // Seed the flag from its own field on the same record, so a reload shows
+      // what is stored rather than everybody back at the default.
+      if (cfg.flag_field) {
+        ((record && record[cfg.flag_field]) || []).forEach(function(v){ flagged[v] = true; });
+      }
 
       // persist writes the current selection back. In local mode nothing is
       // POSTed — the caller is handed the selection via cfg.on_change and saves
@@ -1021,6 +1031,18 @@
         if (cfg.save_key) { body = {}; body[cfg.save_key] = selected; }
         else if (cfg.method && cfg.method.toUpperCase() === 'PATCH') { body = {}; body[cfg.field] = selected; }
         else { record[cfg.field] = selected; body = record; }
+        // The per-member flag rides along in its own field: one list on
+        // screen, two arrays on the wire. Sent on every save so removing
+        // somebody takes their flag with them rather than leaving a name in a
+        // list that outlives the membership it narrowed.
+        if (cfg.flag_field) {
+          var held = [];
+          selected.forEach(function(v){ if (flagged[v]) held.push(v); });
+          body[cfg.flag_field] = held;
+          if (!cfg.save_key && !(cfg.method && cfg.method.toUpperCase() === 'PATCH')) {
+            record[cfg.flag_field] = held;
+          }
+        }
         return fetchJSON(cfg.post_to, {
           method: cfg.method || 'POST', headers: {'Content-Type': 'application/json'},
           body: JSON.stringify(body)
@@ -1099,6 +1121,27 @@
         vals.forEach(function(v){
           var opt = byVal[v];
           var pill = el('span', {class: 'ui-cp-pill'}, [(opt && labelOf(opt)) || v]);
+          if (cfg.flag_field) {
+            // Default OFF, and it says which state it is in rather than only
+            // which state it can be put into: a control that reads "make
+            // contributor" tells you nothing about the person in front of it.
+            var on = !!flagged[v];
+            var mark = el('button', {
+              type: 'button',
+              class: 'ui-cp-pill-flag' + (on ? ' on' : ''),
+              title: cfg.flag_help || ''
+            }, [on ? (cfg.flag_label || 'Flagged') : (cfg.flag_off_label || 'Reader')]);
+            mark.addEventListener('click', function(){
+              flagged[v] = !flagged[v];
+              renderPills();
+              persist().catch(function(err){
+                showToast('Save failed: ' + err.message);
+                flagged[v] = !flagged[v];
+                renderPills();
+              });
+            });
+            pill.appendChild(mark);
+          }
           var x = el('span', {class: 'ui-cp-pill-x', title: 'Remove', text: '×'});
           x.addEventListener('click', function(){ toggle(v, false); });
           pill.appendChild(x);
