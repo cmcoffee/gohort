@@ -250,6 +250,7 @@ func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Requ
 				// has to be on the wire or it opens empty and the first save
 				// silently clears the share.
 				"allowed_users": nonNilUsers(c.AllowedUsers),
+				"contributors":  nonNilUsers(c.Contributors),
 			})
 		case http.MethodPatch:
 			var body struct {
@@ -261,6 +262,10 @@ func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Requ
 				// like every other field here, so a rename cannot clear a share
 				// it never showed.
 				AllowedUsers *[]string `json:"allowed_users"`
+				// Who may ADD to it. A subset of the above, and its own
+				// decision: reading a corpus tells you what somebody knows,
+				// writing to it decides what every agent reading it believes.
+				Contributors *[]string `json:"contributors"`
 				// "user" or "deployment". Widening is requested, narrowing is
 				// applied; both handled before the ordinary field edits below,
 				// because either one moves the record to a different pool and
@@ -334,6 +339,20 @@ func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Requ
 					return
 				}
 				c.AllowedUsers = *body.AllowedUsers
+				// Somebody taken off the share cannot stay a contributor to it.
+				// A list that outlived the access it narrowed would be waiting
+				// to hand write back the day they were re-shared.
+				c.Contributors = keepOnly(c.Contributors, c.AllowedUsers)
+			}
+			if body.Contributors != nil {
+				if c.Owner != "" && c.Owner != user {
+					http.Error(w, "only the owner decides who may add to this", http.StatusForbidden)
+					return
+				}
+				// Contributors are a subset of the people it is shared with:
+				// somebody who cannot see what is already in a corpus would be
+				// writing into it blind.
+				c.Contributors = keepOnly(*body.Contributors, c.AllowedUsers)
 			}
 			saveCollection(udb, c)
 			w.Header().Set("Content-Type", "application/json")
@@ -1887,6 +1906,18 @@ var collectionReadActions = map[string]bool{
 	"export": true,
 }
 
+// collectionCorpusActions are the ones a CONTRIBUTOR may take: they put
+// documents in. Deliberately not "steward", which reorganises what is already
+// there — rewriting somebody else's corpus is a different trust from adding to
+// it, and the curator can move or drop what its owner put in.
+var collectionCorpusActions = map[string]bool{
+	"upload":   true,
+	"paste":    true,
+	"sources":  true,
+	"autofill": true,
+	"research": true,
+}
+
 // collectionWriteRefusal says why this user may not perform this action on
 // this collection, or "" when they may.
 //
@@ -1898,12 +1929,42 @@ func collectionWriteRefusal(c Collection, user, action, method string) string {
 	if c.Owner == "" || c.Owner == user {
 		return ""
 	}
-	if collectionReadActions[action] {
+	if collectionReadActions[action] || (action == "" && method == http.MethodGet) {
 		return ""
 	}
-	if action == "" && method == http.MethodGet {
+	// A contributor may ADD to the corpus. Not rename it, not re-scope it, not
+	// change who it reaches: those are decisions about the collection, and
+	// somebody trusted to put a document in has not thereby been handed the
+	// thing itself.
+	if collectionCorpusActions[action] && CollectionContributor(c, user) {
 		return ""
+	}
+	if CollectionContributor(c, user) {
+		return "\"" + c.Name + "\" belongs to " + c.Owner +
+			". You can add to it, but renaming it, re-scoping it and changing who it reaches are theirs."
 	}
 	return "\"" + c.Name + "\" belongs to " + c.Owner +
-		" and was shared with you to read. Ask them to add what you want in it, or take a copy of your own."
+		" and was shared with you to read. Ask them to make you a contributor, or take a copy of your own."
+}
+
+// keepOnly narrows a list to the members of another. Used so a contributor
+// list can never name somebody the collection is not shared with.
+func keepOnly(list, allowed []string) []string {
+	if len(list) == 0 {
+		return nil
+	}
+	in := map[string]bool{}
+	for _, u := range allowed {
+		in[u] = true
+	}
+	out := []string{}
+	for _, u := range list {
+		if in[u] {
+			out = append(out, u)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

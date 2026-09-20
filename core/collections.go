@@ -145,7 +145,20 @@ type Collection struct {
 	// collection's chunks stay in the owner's base, where a recipient's search
 	// cannot reach them; sharedCollectionsFor says so rather than returning a
 	// collection that silently finds nothing.
-	AllowedUsers []string  `json:"allowed_users,omitempty"`
+	AllowedUsers []string `json:"allowed_users,omitempty"`
+	// Contributors may ADD to it: upload, paste, autofill, research. A subset
+	// of AllowedUsers, and a separate decision from being able to read it.
+	//
+	// Separate because the risk is not the same. Reading somebody's corpus
+	// tells you what they know. Writing to it decides what every agent reading
+	// it believes, confidently, and onward to everybody if the collection is
+	// ever published — so a contributor is trusted with the answers, not just
+	// with the documents.
+	//
+	// Empty is the default and the safe one. Nobody was ever granted this
+	// deliberately: before the write gate, every recipient had it because
+	// nothing checked, which is not the same as having been given it.
+	Contributors []string  `json:"contributors,omitempty"`
 	Created      time.Time `json:"created"`
 	Updated      time.Time `json:"updated,omitempty"`
 	// IngestedURLs tracks every URL that has been pulled into this
@@ -1051,4 +1064,27 @@ func init() {
 			return nil
 		},
 	})
+}
+
+// CollectionContributor reports whether this user may add to the collection.
+//
+// The owner always may. Everybody else has to be named, and being named as a
+// contributor without being able to read it is not a state anybody can create
+// through the pickers — but if a list ever says so, reading is implied rather
+// than refused, because a contributor who cannot see what is already there
+// would be writing blind.
+func CollectionContributor(c Collection, user string) bool {
+	user = strings.TrimSpace(user)
+	if user == "" {
+		return false
+	}
+	if c.Owner == "" || c.Owner == user {
+		return true
+	}
+	for _, u := range c.Contributors {
+		if u == user {
+			return true
+		}
+	}
+	return false
 }

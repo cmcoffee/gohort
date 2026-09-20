@@ -85,3 +85,56 @@ func TestPublishingACollectionDoesNotHandOutWrites(t *testing.T) {
 		t.Error("anybody in the deployment could write to a published collection")
 	}
 }
+
+// A contributor may ADD to the corpus, and nothing more. Somebody trusted to
+// put a document in has not thereby been handed the collection.
+func TestAContributorAddsButDoesNotOwn(t *testing.T) {
+	c := Collection{ID: "col-1", Owner: "alice", Name: "Runbooks",
+		AllowedUsers: []string{"bob", "carol"}, Contributors: []string{"bob"}}
+
+	for _, action := range []string{"upload", "paste", "sources", "autofill", "research"} {
+		if why := collectionWriteRefusal(c, "bob", action, http.MethodPost); why != "" {
+			t.Errorf("a contributor was refused %q: %s", action, why)
+		}
+	}
+	// Not the collection itself: renaming, re-scoping, re-sharing.
+	why := collectionWriteRefusal(c, "bob", "", http.MethodPost)
+	if why == "" {
+		t.Error("a contributor could rename or re-scope the collection")
+	} else if !strings.Contains(why, "add to it") {
+		t.Errorf("the refusal does not distinguish adding from owning: %s", why)
+	}
+	// Reorganising what is already there is a different trust from adding to
+	// it: the curator can move or drop what its owner put in.
+	if collectionWriteRefusal(c, "bob", "steward", http.MethodPost) == "" {
+		t.Error("a contributor could turn the curator loose on somebody else's corpus")
+	}
+	// And a reader who is not a contributor still only reads.
+	if collectionWriteRefusal(c, "carol", "upload", http.MethodPost) == "" {
+		t.Error("a plain recipient could upload")
+	}
+}
+
+// Contributors are a subset of the people it is shared with. Somebody who
+// cannot see what is already in a corpus would be writing into it blind, and a
+// list that outlived the share would be waiting to hand write back.
+func TestAContributorMustBeSomebodyItIsSharedWith(t *testing.T) {
+	if got := keepOnly([]string{"bob", "dana"}, []string{"bob"}); len(got) != 1 || got[0] != "bob" {
+		t.Errorf("the contributor list kept somebody it is not shared with: %+v", got)
+	}
+	if got := keepOnly([]string{"dana"}, []string{"bob"}); got != nil {
+		t.Errorf("an entirely stale list survived: %+v", got)
+	}
+}
+
+// Nobody holds this by default. Before the write gate every recipient could
+// write because nothing checked, which is not the same as having been given it.
+func TestContributorsAreEmptyByDefault(t *testing.T) {
+	c := Collection{ID: "col-1", Owner: "alice", AllowedUsers: []string{"bob"}}
+	if CollectionContributor(c, "bob") {
+		t.Error("a plain share made somebody a contributor")
+	}
+	if !CollectionContributor(c, "alice") {
+		t.Error("the owner is not a contributor to their own collection")
+	}
+}
