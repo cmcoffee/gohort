@@ -10,13 +10,14 @@ package orchestrate
 // what they were, and what changes is that the person states the outcome
 // instead of performing the assembly.
 //
-// WHAT IT WILL NOT DO. A tool, because a user's own tool has no rung between
-// private and the admin-published catalog; the panel says so rather than
-// offering a button that fails. A credential, because that one is not a copy
-// somebody is missing — it is whose identity the call goes out as, and the
-// ordinary answer for a team is that each person supplies their own. And
-// anything at all for a PUBLISHED agent, where closing a gap means the
-// deployment rung and that is an administrator's to grant.
+// WHAT IT WILL NOT DO. A credential, because that one is not a copy somebody
+// is missing — it is whose identity the call goes out as, and the ordinary
+// answer for a team is that each person supplies their own. A tool whose power
+// comes from a SECURED credential, because that key's access follows the tools
+// an administrator bound to it, so who may run one is the administrator's half
+// of the grant; the refusal says so and names the tool. And anything at all for
+// a PUBLISHED agent, where closing a gap means the deployment rung and that is
+// an administrator's to grant.
 //
 // TAKING IT BACK. A fan-out that could not be undone would make the first
 // convenient click a permanent tail of grants nobody remembers making. So every
@@ -67,14 +68,6 @@ func fanOutAgentShare(udb Database, owner string, a AgentRecord) []string {
 		}
 	}
 	out := done
-	// Everything the owner still has to do themselves, named. The tools are
-	// the usual answer here, and a person who is not told will believe their
-	// team has a working agent.
-	for _, it := range reach.Items {
-		if it.Gap && it.Fix != "" && it.kind == "tool" {
-			refused = append(refused, it.Kind+" "+it.Name+": "+it.Fix)
-		}
-	}
 	if len(out) == 0 && len(refused) == 0 {
 		return []string{"Nothing to do: everybody who has this agent already has everything it uses."}
 	}
@@ -171,6 +164,20 @@ func grantToRecipients(udb Database, owner string, it reachItem, users []string)
 			SaveMachineDefAs(udb, def, "shared with an agent")
 			return add, nil
 		}
+	case "tool":
+		for _, p := range LoadPersistentTempTools(AuthDB(), owner) {
+			if p.Tool.Name != it.id {
+				continue
+			}
+			add := missingFrom(p.SharedWith, users)
+			if len(add) == 0 {
+				return nil, nil
+			}
+			// Through the setter, which is where the secured-credential
+			// refusal lives: a tool whose power comes from a key an
+			// administrator bound is not its owner's to hand out.
+			return add, SetPersistentTempToolSharedWith(AuthDB(), owner, p.Tool.Name, append(p.SharedWith, add...))
+		}
 	}
 	return nil, Error("it is no longer there")
 }
@@ -212,6 +219,13 @@ func revokeFromRecipients(udb Database, owner, kind, id string, users []string) 
 			saved := SaveMachineDefAs(udb, def, "unshared with an agent")
 			breakMachineSchedulesForLostRecipients(saved, before)
 			return "Machine " + def.Name, nil
+		}
+	case "tool":
+		for _, p := range LoadPersistentTempTools(AuthDB(), owner) {
+			if p.Tool.Name != id {
+				continue
+			}
+			return "Tool " + p.Tool.Name, SetPersistentTempToolSharedWith(AuthDB(), owner, p.Tool.Name, without(p.SharedWith, users))
 		}
 	}
 	return "", Error("it is no longer there")

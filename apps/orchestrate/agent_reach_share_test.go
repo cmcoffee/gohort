@@ -102,21 +102,55 @@ func TestAHandMadeShareIsNeverClawedBack(t *testing.T) {
 	}
 }
 
-// A tool is the one gap the owner cannot close, and the report has to say so.
-// Listing only successes is how somebody concludes their team has a working
-// agent while it is still missing a tool.
-func TestTheReportNamesWhatItCouldNotDo(t *testing.T) {
+// A tool is shared like everything else now: the owner's own rung, and the
+// recipient takes it before it loads for their agents.
+func TestTheFanOutSharesATool(t *testing.T) {
 	udb := reachFixture(t)
 	if err := AdminPersistTempTool(AuthDB(), "alice", TempTool{Name: "ssh_run"}); err != nil {
 		t.Skipf("no persistent tool store in this configuration: %v", err)
 	}
-	a := AgentRecord{ID: "a1", Name: "Troubleshooter", Owner: "alice",
+	a := AgentRecord{ID: "a1", Name: "Troubleshooter", Owner: "alice", OrchestratorPrompt: "help",
 		AllowedUsers: []string{"bob"}, AllowedTools: []string{"ssh_run"}}
 
 	lines := fanOutAgentShare(udb, "alice", a)
-	joined := strings.Join(lines, " | ")
-	if !strings.Contains(joined, "ssh_run") || !strings.Contains(joined, "admin") {
-		t.Errorf("the report does not name the tool it could not share: %v", lines)
+	if !strings.Contains(strings.Join(lines, " | "), "ssh_run") {
+		t.Fatalf("the tool was not shared: %v", lines)
+	}
+	// A pointer, not a push: it is in bob's catalog, and nothing of his loads
+	// it until he takes it.
+	lent := PeerSharedToolsFor(AuthDB(), "bob")
+	if len(lent) != 1 || lent[0].Tool.Name != "ssh_run" || lent[0].Owner != "alice" {
+		t.Errorf("the tool did not reach the recipient's catalog: %+v", lent)
+	}
+	if got := agentReachOf(udb, "alice", a).Gaps; got != 0 {
+		t.Errorf("the gap survived: %+v", agentReachOf(udb, "alice", a).Items)
+	}
+}
+
+// The one tool that is NOT the owner's to hand out. A secured credential has no
+// user list: access follows the tools an administrator bound to it, so deciding
+// who may run one of those tools is the administrator's half of the grant.
+func TestAToolOnASecuredKeyIsRefusedWithTheReason(t *testing.T) {
+	udb := reachFixture(t)
+	if err := Secure().Save(SecureCredential{Name: "wiki", Type: SecureCredNone,
+		Secured: true, AllowedURLPattern: "https://wiki.example/**"}, ""); err != nil {
+		t.Skipf("no secure store in this configuration: %v", err)
+	}
+	if err := Secure().SetSecured("wiki", true); err != nil {
+		t.Skipf("cannot secure a credential here: %v", err)
+	}
+	if err := AdminPersistTempTool(AuthDB(), "alice", TempTool{Name: "wiki_read", Credential: "wiki"}); err != nil {
+		t.Skipf("no persistent tool store: %v", err)
+	}
+	a := AgentRecord{ID: "a1", Name: "Troubleshooter", Owner: "alice", OrchestratorPrompt: "help",
+		AllowedUsers: []string{"bob"}, AllowedTools: []string{"wiki_read"}}
+
+	joined := strings.Join(fanOutAgentShare(udb, "alice", a), " | ")
+	if !strings.Contains(joined, "wiki_read") || !strings.Contains(joined, "secured") {
+		t.Errorf("the refusal does not name the tool and the reason: %s", joined)
+	}
+	if got := PeerSharedToolsFor(AuthDB(), "bob"); len(got) != 0 {
+		t.Errorf("it was shared anyway: %+v", got)
 	}
 }
 

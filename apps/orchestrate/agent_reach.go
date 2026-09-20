@@ -146,10 +146,12 @@ func agentReachOf(udb Database, owner string, a AgentRecord) agentReachMap {
 		case p.Shared && len(p.AllowedUsers) == 0:
 			level, reach = reachDeployment, "In the shared catalog"
 		case p.Shared:
-			level, reach = reachNamed, "Shared with "+strings.Join(p.AllowedUsers, ", ")
+			level, reach = reachNamed, "In the catalog, for "+strings.Join(p.AllowedUsers, ", ")
+		case len(p.SharedWith) > 0:
+			level, reach = reachNamed, "Shared with "+strings.Join(p.SharedWith, ", ")
 		}
 		add(reachItem{Kind: "Tool", Name: name, Reach: reach,
-			How:   "Resolved by name from the runner's own catalog, so they need a tool called this.",
+			How:   "Resolved by name from the runner's own catalog. Sharing it offers it to them; it loads for their agents once they take it.",
 			level: level, kind: "tool", id: name})
 	}
 
@@ -327,10 +329,8 @@ func fixFor(it reachItem, audience int) string {
 		return "Ask an admin to publish it deployment-wide"
 	}
 	switch it.kind {
-	case "skill", "collection", "pipeline", "machine":
+	case "skill", "collection", "pipeline", "machine", "tool":
 		return "Share it with the same people"
-	case "tool":
-		return "Ask an admin to publish it: a tool has no in-between rung"
 	}
 	return ""
 }
@@ -343,7 +343,7 @@ func (r agentReachMap) shareableGaps() []reachItem {
 			continue
 		}
 		switch it.kind {
-		case "skill", "collection", "pipeline", "machine":
+		case "skill", "collection", "pipeline", "machine", "tool":
 			out = append(out, it)
 		}
 	}

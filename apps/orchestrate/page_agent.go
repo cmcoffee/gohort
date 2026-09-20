@@ -720,9 +720,9 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 					Fields: []ui.FormField{{Type: "header",
 						Label: "Give everything above the same people",
 						Help:  "Each thing gets the agent's own recipient list, through its own door. Nothing is copied and no new kind of grant is made.",
-						Detail: "Only what is yours to share: a skill, a collection, a pipeline or a machine you own.\n\n" +
-							"A TOOL is not, and this will say so. A tool of yours is private to you or, once an admin has published it, in the shared catalog — there is no rung in between, so one colleague cannot be handed one.\n\n" +
-							"A CREDENTIAL is not either, and that is deliberate. It is not a copy somebody is missing; it is whose identity the call goes out as, and for a team the answer is usually that each person supplies their own key of the same name.\n\n" +
+						Detail: "Only what is yours to share: a tool, skill, collection, pipeline or machine you own.\n\n" +
+							"A shared TOOL is an offer. It appears in their catalog to take, and loads for their agents once they take it — a colleague should not be able to put code in your agents' hands without you saying so, and the same holds in reverse.\n\n" +
+							"A CREDENTIAL is not shared, and that is deliberate. It is not a copy somebody is missing; it is whose identity the call goes out as, and for a team the answer is usually that each person supplies their own key of the same name. A tool that spends a SECURED key is refused for the same reason from the other side: an admin decided which tools may spend it.\n\n" +
 							"Taking somebody off this agent later takes back what this gave them, and only that — a share you made by hand, for your own reasons, is never clawed back."}},
 					Invalidate: []string{source + "/reach"},
 				},

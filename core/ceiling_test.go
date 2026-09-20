@@ -291,7 +291,20 @@ const (
 	// scoped-corpus grant beside it added NO exports at all — GroupedTool.Action
 	// and ActionNames are methods, and being in charge of a collection is a
 	// field on Collection.
-	coreExportCeiling = 2234
+	// Raised from 2234 to 2235 (2026-09-19) for the named rung on TOOLS: a
+	// user can now hand one of their own tools to a colleague without it going
+	// through the deployment catalog. It was the last kind in the user plane
+	// with no owner-controlled share, and closing that gap is three exports —
+	// SetPersistentTempToolSharedWith, PeerSharedToolsFor and the LentTool it
+	// returns, which carries the lender because every caller has to say whose
+	// code this is before anybody runs it.
+	//
+	// Two of the three were paid for rather than added: SharedToolAllowedUsers
+	// went unexported in the same change, and the three rungs before this one
+	// (skills, credentials, recipes) each paid their own way the same way. This
+	// is the first raise since the four-rung run began, and the band is exactly
+	// where it was.
+	coreExportCeiling = 2235
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

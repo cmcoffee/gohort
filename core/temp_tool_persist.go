@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/peershare"
 	"github.com/cmcoffee/gohort/core/promotion"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
@@ -362,6 +363,11 @@ type PersistentTempTool struct {
 	// this is ignored when Shared is false. Mirrors SecureCredential.AllowedUsers
 	// — one ACL concept across creds and tools. See docs/sharing-governance.md.
 	AllowedUsers []string `json:"allowed_users,omitempty"`
+	// SharedWith is the OWNER's own rung: colleagues who may adopt this tool
+	// without it ever reaching the deployment catalog. Distinct from
+	// AllowedUsers above, which narrows who may adopt an ALREADY-published
+	// one — see SetPersistentTempToolSharedWith for why the two stay apart.
+	SharedWith []string `json:"shared_with,omitempty"`
 	// ScopeAgents restricts the tool to the listed agent IDs (the FLATTENED
 	// namespace: one record per (user, name), scope as data). Empty/nil = the
 	// legacy pool semantics — visible to ALL the user's agents, subject to the
@@ -580,12 +586,12 @@ func SetPersistentTempToolAllowedUsers(db Database, username, name string, users
 	return nil
 }
 
-// SharedToolAllowedUsers returns the adopt-ACL for a Shared global tool by name:
+// sharedToolAllowedUsers returns the adopt-ACL for a Shared global tool by name:
 // the AllowedUsers list on whichever user's pool published it, plus whether a
 // Shared tool of that name exists at all. An empty list with found=true means the
 // tool is open to everyone. (First owner seen wins, matching
 // LoadSharedPersistentTempTools' dedupe.)
-func SharedToolAllowedUsers(db Database, name string) (allowed []string, found bool) {
+func sharedToolAllowedUsers(db Database, name string) (allowed []string, found bool) {
 	for _, p := range LoadSharedPersistentTempTools(db) {
 		if p.Tool.Name == name {
 			return p.AllowedUsers, true
@@ -610,7 +616,7 @@ func CanAdoptGlobalTool(db Database, user, name string) bool {
 	if user == "" {
 		return false
 	}
-	allowed, found := SharedToolAllowedUsers(db, name)
+	allowed, found := sharedToolAllowedUsers(db, name)
 	if !found || len(allowed) == 0 {
 		return true
 	}
@@ -1441,4 +1447,138 @@ func init() {
 		}
 		return SetPersistentTempToolShared(AuthDB(), owner, name, true)
 	})
+}
+
+// ----------------------------------------------------------------------
+// The named rung for a tool
+// ----------------------------------------------------------------------
+
+// sharedToolsTable indexes peer shares: recipient -> (owner, tool name).
+const sharedToolsTable = "shared_tools"
+
+// SetPersistentTempToolSharedWith is the owner's own rung: which colleagues may
+// take a copy of this tool into their catalog.
+//
+// A separate field from AllowedUsers, which reads similarly and means something
+// else. That one is the ADOPT-acl on a tool an administrator has already
+// published to the whole deployment: "of everybody, these may take it". This is
+// "nobody has it, except these". Folding them together would make the same list
+// mean two things depending on another flag, which is how one of them quietly
+// stops being enforced.
+//
+// A share is a POINTER, not a push. The tool appears in the recipient's catalog
+// to adopt, and loads for their agents only once they do — the same two steps
+// the global catalog has had since global tools were flipped from push to pull,
+// and more obviously right here: a colleague should not be able to put code in
+// your agents' hands without you saying so.
+//
+// REFUSED for a tool that dispatches through a SECURED credential. A secured
+// credential has no user list at all: access follows the tools bound to it, so
+// whoever can run a bound tool spends that key. An administrator decided which
+// tools are bound; letting the tool's owner then decide who runs it would hand
+// them the other half of a grant that was never theirs. The way to widen such a
+// tool is to ask for it to be published, which is the same administrator
+// answering the same question.
+func SetPersistentTempToolSharedWith(db Database, owner, name string, users []string) error {
+	store := tempToolStore(db)
+	if store == nil || strings.TrimSpace(owner) == "" || strings.TrimSpace(name) == "" {
+		return errString("owner and tool name are required")
+	}
+	clean := cleanRecipients(users, owner)
+	tempToolPersistMu.Lock()
+	list := LoadPersistentTempTools(store, owner)
+	var target *TempTool
+	for i := range list {
+		if list[i].Tool.Name == name {
+			target = &list[i].Tool
+			list[i].SharedWith = clean
+			break
+		}
+	}
+	if target == nil {
+		tempToolPersistMu.Unlock()
+		return errString("no persistent tool named " + name)
+	}
+	if len(clean) > 0 {
+		if why := securedCredentialBlock(*target, owner); why != "" {
+			tempToolPersistMu.Unlock()
+			return errString(why)
+		}
+	}
+	store.Set(persistentTempToolsTable, owner, list)
+	tempToolPersistMu.Unlock()
+	peershare.SetRecipients(store, sharedToolsTable, owner, name, clean)
+	return nil
+}
+
+// securedCredentialBlock says why this tool may not be handed out by its owner,
+// or "" when it may.
+func securedCredentialBlock(t TempTool, owner string) string {
+	cred := strings.TrimSpace(t.Credential)
+	if cred == "" {
+		return ""
+	}
+	c, ok := Secure().Resolve(cred, owner)
+	if !ok || !Secure().EffectiveSecured(c, owner) {
+		return ""
+	}
+	return "\"" + t.Name + "\" dispatches through the secured credential \"" + cred + "\", whose access follows the tools an administrator bound to it. " +
+		"Sharing it would decide who spends that key, which is the administrator's half of the grant. Ask for the tool to be published instead."
+}
+
+// PeerSharedToolsFor returns the tools other people have shared WITH this user.
+//
+// The record is the source and the index is derived: a revoked share is gone
+// here even if an index entry lingers, because a derived thing that can outvote
+// its source is how a revoked share keeps working. A disabled tool is nobody's
+// to run, its owner's included.
+func PeerSharedToolsFor(db Database, user string) []LentTool {
+	store := tempToolStore(db)
+	if store == nil || strings.TrimSpace(user) == "" {
+		return nil
+	}
+	var out []LentTool
+	for _, ref := range peershare.List(store, sharedToolsTable, user) {
+		for _, p := range LoadPersistentTempTools(store, ref.Owner) {
+			if p.Tool.Name != ref.ID || p.Tool.Disabled || !sliceHas(p.SharedWith, user) {
+				continue
+			}
+			out = append(out, LentTool{PersistentTempTool: p, Owner: ref.Owner})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Tool.Name < out[j].Tool.Name })
+	return out
+}
+
+// LentTool is a peer-shared tool carried with the colleague who shared it.
+//
+// The owner rides along rather than being looked up again because every caller
+// needs it: whose code you are about to run in your own session is the first
+// thing a catalog has to say about an entry, and the last thing to have to go
+// and find out separately.
+type LentTool struct {
+	PersistentTempTool
+	Owner string
+}
+
+func cleanRecipients(users []string, owner string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, u := range users {
+		if u = strings.TrimSpace(u); u != "" && u != owner && !seen[u] {
+			seen[u] = true
+			out = append(out, u)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sliceHas(list []string, want string) bool {
+	for _, s := range list {
+		if s == want {
+			return true
+		}
+	}
+	return false
 }

@@ -135,9 +135,19 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 	for _, p := range loaded {
 		own[p.Tool.Name] = true
 	}
-	adoptedGlobal := LoadAdoptedGlobalTools(poolDB, poolUser)
+	adopted := LoadAdoptedGlobalTools(poolDB, poolUser)
+	// A colleague's tool before the deployment's, for the reason every other
+	// precedence in gohort runs that way: somebody handing you a thing by name
+	// is a more specific answer than the catalog every account draws from.
+	// Both are opt-in — a share is a pointer, not a push.
+	for _, p := range PeerSharedToolsFor(poolDB, poolUser) {
+		if !own[p.Tool.Name] && adopted[p.Tool.Name] {
+			own[p.Tool.Name] = true
+			loaded = append(loaded, p.PersistentTempTool)
+		}
+	}
 	for _, p := range LoadSharedPersistentTempTools(poolDB) {
-		if !own[p.Tool.Name] && adoptedGlobal[p.Tool.Name] {
+		if !own[p.Tool.Name] && adopted[p.Tool.Name] {
 			loaded = append(loaded, p)
 		}
 	}

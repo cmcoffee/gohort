@@ -366,9 +366,16 @@ func registerOperatorWake(app *OrchestrateApp) {
 		for _, p := range LoadPersistentTempTools(AuthDB(), owner) {
 			addTool(p.Tool)
 		}
-		adoptedGlobal := LoadAdoptedGlobalTools(AuthDB(), owner)
+		adopted := LoadAdoptedGlobalTools(AuthDB(), owner)
+		// Peer-shared before global, matching the runner. Both opt-in: a share
+		// puts a tool in your catalog to take, not in your agents' hands.
+		for _, p := range PeerSharedToolsFor(AuthDB(), owner) {
+			if adopted[p.Tool.Name] {
+				addTool(p.Tool)
+			}
+		}
 		for _, p := range LoadSharedPersistentTempTools(AuthDB()) { // global pool: opt-in only
-			if adoptedGlobal[p.Tool.Name] {
+			if adopted[p.Tool.Name] {
 				addTool(p.Tool)
 			}
 		}

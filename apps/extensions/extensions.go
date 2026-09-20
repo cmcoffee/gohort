@@ -314,6 +314,27 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	// The recipient list, and ONLY the recipient list. Handing a colleague a
+	// tool is the owner's own rung: it puts the tool in their catalog to take,
+	// and loads for their agents once they take it. Refused for a tool that
+	// dispatches through a SECURED credential, because that key's access
+	// follows the tools an administrator bound to it.
+	if r.Method == http.MethodPost && strings.TrimSpace(r.URL.Query().Get("action")) == "share" {
+		var body struct {
+			SharedWith []string `json:"shared_with"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if err := SetPersistentTempToolSharedWith(AuthDB(), user, name, body.SharedWith); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		Log("[extensions] user=%q shared tool %q with %d user(s)", user, name, len(body.SharedWith))
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		// Single-record fetch (?name=) — powers the "View" RecordView and the
@@ -328,6 +349,19 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 		// (Sources can't collide — the scoped/draft listers drop anything
 		// shadowed by a committed tool of the same name — but the pool is the
 		// source of truth, so it answers first regardless.)
+		// ?share=<name> is the recipient list and nothing else. Its own door,
+		// so the picker cannot rewrite a command template and the edit form
+		// cannot rewrite who has the tool.
+		if want := strings.TrimSpace(r.URL.Query().Get("share")); want != "" {
+			for _, p := range LoadPersistentTempTools(AuthDB(), user) {
+				if p.Tool.Name == want {
+					writeJSON(w, map[string]any{"shared_with": nonNilList(p.SharedWith)})
+					return
+				}
+			}
+			writeJSON(w, map[string]any{"shared_with": []string{}})
+			return
+		}
 		if name != "" {
 			for _, p := range LoadPersistentTempTools(AuthDB(), user) {
 				if p.Tool.Name == name {
@@ -376,7 +410,11 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			Category    string `json:"category,omitempty"`
 			Missing     bool   `json:"missing"`
 			Shared      bool   `json:"shared"`
-			LastUsed    string `json:"last_used,omitempty"`
+			// Who the OWNER handed it to, as against Shared, which is the
+			// deployment catalog an admin publishes into. Two different rungs
+			// and two different columns.
+			SharedWith string `json:"shared_with,omitempty"`
+			LastUsed   string `json:"last_used,omitempty"`
 			// User-managed governance flags (Extensions › Tools toggles).
 			Locked      bool `json:"locked"`       // frozen — AI can't modify/delete
 			Disabled    bool `json:"disabled"`     // off for every agent
@@ -440,7 +478,8 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 				Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
 				Credential: p.Tool.Credential, Category: p.Tool.Category,
 				Missing: missing, Shared: p.Shared, LastUsed: last,
-				Locked: p.Tool.Locked, Disabled: p.Tool.Disabled, BuilderOnly: p.Tool.BuilderOnly, BoundOnly: p.Tool.BoundOnly,
+				SharedWith: sharedWithSummary(p.SharedWith),
+				Locked:     p.Tool.Locked, Disabled: p.Tool.Disabled, BuilderOnly: p.Tool.BuilderOnly, BoundOnly: p.Tool.BoundOnly,
 				Requested: pending, CanRequest: !p.Shared && !pending,
 				Pool: true, Deletable: true, DisableOK: true,
 				Group: "All Agents (Global tools)",
@@ -1191,8 +1230,34 @@ func (T *Extensions) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
 			Credential  string `json:"credential,omitempty"`
 			Adopted     bool   `json:"adopted"`
 			Missing     bool   `json:"missing"`
+			// From names the colleague who handed it over, empty for one the
+			// deployment publishes. Whose code you are about to run in your own
+			// session is the first thing to know about it.
+			From string `json:"from,omitempty"`
 		}
 		rows := []row{}
+		missingCred := func(t TempTool) bool {
+			cred := strings.TrimSpace(t.Credential)
+			if cred == "" || strings.EqualFold(cred, "no_auth") {
+				return false
+			}
+			_, found := Secure().Resolve(cred, user)
+			return !found
+		}
+		// A colleague's tools first: the catalog is one list of things you may
+		// take, and something handed to you personally is the more specific
+		// entry. An own tool of the same name still shadows both.
+		for _, p := range PeerSharedToolsFor(AuthDB(), user) {
+			if own[p.Tool.Name] {
+				continue
+			}
+			own[p.Tool.Name] = true
+			rows = append(rows, row{
+				Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
+				Credential: p.Tool.Credential, Adopted: adopted[p.Tool.Name],
+				Missing: missingCred(p.Tool), From: p.Owner,
+			})
+		}
 		for _, p := range LoadSharedPersistentTempTools(AuthDB()) {
 			// Own tool (or a same-named one already in the pool) — not a catalog
 			// candidate; it's shown under "Extensions › Tools" instead.
@@ -1205,15 +1270,10 @@ func (T *Extensions) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
 			if !CanAdoptGlobalTool(AuthDB(), user, p.Tool.Name) {
 				continue
 			}
-			missing := false
-			if cred := strings.TrimSpace(p.Tool.Credential); cred != "" && !strings.EqualFold(cred, "no_auth") {
-				if _, found := Secure().Resolve(cred, user); !found {
-					missing = true
-				}
-			}
 			rows = append(rows, row{
 				Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
-				Credential: p.Tool.Credential, Adopted: adopted[p.Tool.Name], Missing: missing,
+				Credential: p.Tool.Credential, Adopted: adopted[p.Tool.Name],
+				Missing: missingCred(p.Tool),
 			})
 		}
 		writeJSON(w, rows)
@@ -1550,8 +1610,9 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 					{Field: "category", Label: "Category", Mute: true},
 					{Field: "mode", Mute: true},
 					{Field: "shared", Type: "badge", Badges: []ui.BadgeMapping{
-						{Value: true, Label: "Shared", Color: "info"},
+						{Value: true, Label: "In the catalog", Color: "info"},
 					}},
+					{Field: "shared_with", Label: "", Mute: true, Flex: 1},
 					{Field: "requested", Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "Publish requested", Color: "warning"},
 					}},
@@ -1629,6 +1690,21 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 					// Request to publish — ask an admin to Share this tool to the
 					// deployment-wide catalog. Only when it isn't already shared and
 					// has no request pending (can_request).
+					// The owner's own rung, beside the request for the wider one.
+					// Handing somebody a tool is yours to do; putting it in the
+					// deployment catalog is an admin's.
+					ui.ExpandIf("Share with users", "pool", "", ui.ACLPicker(ui.ACLPickerConfig{
+						OptionsSource: "api/user-candidates",
+						RecordSource:  "api/tools?share={name}",
+						Field:         "shared_with",
+						PostTo:        "api/tools?action=share&name={name}",
+						Method:        "POST",
+						Noun:          "user",
+						Intro: "They can take this tool into their own catalog, and it runs in THEIR session against their own credentials. " +
+							"Nothing loads for their agents until they take it: a share is an offer, not a push.",
+						EmptyText:  "No other users to share with yet.",
+						Invalidate: []string{"api/tools"},
+					})),
 					ui.ModalActionIf("Request to publish", "can_request", "", ui.FormPanel{
 						SubmitLabel: "Send request",
 						PostURL:     "api/promotions?kind=tool&name={name}",
@@ -2814,4 +2890,17 @@ func handoverPending(user, name string) bool {
 func skillPublishPending(user, name string) bool {
 	req, ok := promotion.GetPromotionRequest(AuthDB(), promotion.RequestKey(SkillPromotionKind, user, name))
 	return ok && req.State == promotion.PromotionPendingState
+}
+
+// sharedWithSummary is the one line the tool list shows about who else has a
+// tool, phrased so it never reads like the deployment catalog beside it.
+func sharedWithSummary(users []string) string {
+	switch len(users) {
+	case 0:
+		return ""
+	case 1:
+		return "Shared with " + users[0]
+	default:
+		return fmt.Sprintf("Shared with %d people", len(users))
+	}
 }

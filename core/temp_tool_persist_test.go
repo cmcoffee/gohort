@@ -164,7 +164,7 @@ func TestSetPersistentTempToolAllowedUsers(t *testing.T) {
 	if err := SetPersistentTempToolAllowedUsers(db, "alice", "payroll", []string{" carol ", "bob", "bob", ""}); err != nil {
 		t.Fatal(err)
 	}
-	got, found := SharedToolAllowedUsers(db, "payroll")
+	got, found := sharedToolAllowedUsers(db, "payroll")
 	if !found || len(got) != 2 || got[0] != "bob" || got[1] != "carol" {
 		t.Fatalf("ACL must be trimmed/deduped/sorted [bob carol]; got %v", got)
 	}
@@ -437,5 +437,78 @@ func TestAdminPersistWithSessionDraftDoesNotDeadlock(t *testing.T) {
 	}
 	if !found {
 		t.Error("the updated tool never reached the persistent pool")
+	}
+}
+
+// A tool's named rung: the owner hands one to a colleague, without it ever
+// reaching the deployment catalog.
+
+func toolShareStore(t *testing.T) Database {
+	t.Helper()
+	db := &DBase{Store: kvlite.MemStore()}
+	saved := RootDB
+	RootDB = db
+	t.Cleanup(func() { RootDB = saved })
+	if err := AdminPersistTempTool(db, "alice", TempTool{Name: "ssh_run"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	return db
+}
+
+func TestALentToolReachesItsRecipient(t *testing.T) {
+	db := toolShareStore(t)
+	if err := SetPersistentTempToolSharedWith(db, "alice", "ssh_run", []string{"bob"}); err != nil {
+		t.Fatalf("share: %v", err)
+	}
+	got := PeerSharedToolsFor(db, "bob")
+	if len(got) != 1 || got[0].Tool.Name != "ssh_run" || got[0].Owner != "alice" {
+		t.Fatalf("the recipient does not have it: %+v", got)
+	}
+	// It did NOT go in the deployment catalog: that is a different rung with a
+	// different approver, and conflating them is how one stops being enforced.
+	for _, p := range LoadSharedPersistentTempTools(db) {
+		if p.Tool.Name == "ssh_run" {
+			t.Error("a peer share published the tool deployment-wide")
+		}
+	}
+	if got := PeerSharedToolsFor(db, "dana"); len(got) != 0 {
+		t.Errorf("an unnamed user has it: %+v", got)
+	}
+}
+
+// The record is the source and the index is derived.
+func TestRevokingAToolShareTakesEffect(t *testing.T) {
+	db := toolShareStore(t)
+	SetPersistentTempToolSharedWith(db, "alice", "ssh_run", []string{"bob"})
+	SetPersistentTempToolSharedWith(db, "alice", "ssh_run", nil)
+	if got := PeerSharedToolsFor(db, "bob"); len(got) != 0 {
+		t.Errorf("a revoked share survives: %+v", got)
+	}
+}
+
+// A disabled tool is nobody's to run, its owner's included.
+func TestADisabledToolIsNotLentEither(t *testing.T) {
+	db := toolShareStore(t)
+	SetPersistentTempToolSharedWith(db, "alice", "ssh_run", []string{"bob"})
+	AdminReconfigureTempTool(db, "alice", TempTool{Name: "ssh_run", Disabled: true})
+	if got := PeerSharedToolsFor(db, "bob"); len(got) != 0 {
+		t.Errorf("a disabled tool still reaches a recipient: %+v", got)
+	}
+}
+
+// Sharing with yourself is not a share, and the list stores the same way twice.
+func TestAToolShareListIsNormalized(t *testing.T) {
+	db := toolShareStore(t)
+	if err := SetPersistentTempToolSharedWith(db, "alice", "ssh_run",
+		[]string{"carol", "alice", "bob", "bob", " "}); err != nil {
+		t.Fatalf("share: %v", err)
+	}
+	for _, p := range LoadPersistentTempTools(db, "alice") {
+		if p.Tool.Name != "ssh_run" {
+			continue
+		}
+		if len(p.SharedWith) != 2 || p.SharedWith[0] != "bob" || p.SharedWith[1] != "carol" {
+			t.Errorf("the recipient list was not normalized: %+v", p.SharedWith)
+		}
 	}
 }
