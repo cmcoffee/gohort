@@ -112,10 +112,20 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 				Type     string `json:"type"`
 				Disabled bool   `json:"disabled"`
 				Secured  bool   `json:"secured"`
+				// Who else can use this key, and whether any of them can write
+				// with it. A share the admin cannot see is a share they cannot
+				// govern, and a write lend is the one that arrives at the far
+				// end wearing the owner's name.
+				LentTo      string `json:"lent_to,omitempty"`
+				Lent        bool   `json:"lent"`
+				LendsWrites bool   `json:"lends_writes"`
 			}
 			rows := []row{}
 			for _, c := range Secure().ListAllUserOwned() {
-				rows = append(rows, row{ID: c.Owner + "/" + c.Name, Owner: c.Owner, Name: c.Name, Type: c.Type, Disabled: c.Disabled, Secured: c.Secured})
+				rows = append(rows, row{ID: c.Owner + "/" + c.Name, Owner: c.Owner, Name: c.Name, Type: c.Type, Disabled: c.Disabled, Secured: c.Secured,
+					LentTo:      describeLend(c),
+					Lent:        len(c.SharedReadOnly)+len(c.SharedReadWrite) > 0,
+					LendsWrites: len(c.SharedReadWrite) > 0})
 			}
 			sort.Slice(rows, func(i, j int) bool {
 				if rows[i].Owner != rows[j].Owner {
@@ -138,8 +148,14 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 				err = Secure().SetDisabledOwned(owner, name, true)
 			case "enable":
 				err = Secure().SetDisabledOwned(owner, name, false)
+			case "revoke_share":
+				// Both lists at once. An admin either accepts a lend or stops
+				// it; narrowing somebody's grant from writes to reads on their
+				// behalf would leave the owner believing they gave one thing
+				// and the borrower holding another.
+				err = Secure().SetCredentialShares(owner, name, nil, nil)
 			default:
-				http.Error(w, "action must be enable|disable", http.StatusBadRequest)
+				http.Error(w, "action must be enable|disable|revoke_share", http.StatusBadRequest)
 				return
 			}
 			if err != nil {
@@ -826,4 +842,18 @@ func (a *AdminApp) handleUpdateUserGroups(w http.ResponseWriter, r *http.Request
 	Log("[admin] user %q set groups for %q: %v", current, username, req.Groups)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "updated"})
+}
+
+// describeLend says who a user-owned credential reaches, phrased so a read lend
+// and a write lend never read the same. Empty when it reaches nobody, which is
+// the ordinary case and needs no words.
+func describeLend(c SecureCredential) string {
+	var parts []string
+	if len(c.SharedReadOnly) > 0 {
+		parts = append(parts, strings.Join(c.SharedReadOnly, ", ")+" (reads)")
+	}
+	if len(c.SharedReadWrite) > 0 {
+		parts = append(parts, strings.Join(c.SharedReadWrite, ", ")+" (writes as owner)")
+	}
+	return strings.Join(parts, "; ")
 }

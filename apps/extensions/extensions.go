@@ -121,14 +121,40 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			HasSecret       bool   `json:"has_secret"`
 			Disabled        bool   `json:"disabled"`
 			Secured         bool   `json:"secured"`
+			// The two share lists the pickers edit, plus the one-line summary
+			// the table column reads. Who a key reaches is the fact this page
+			// exists to let someone control, so it belongs in the list and not
+			// only inside an edit form.
+			SharedReadOnly  []string `json:"shared_read_only"`
+			SharedReadWrite []string `json:"shared_read_write"`
+			SharedSummary   string   `json:"shared_summary"`
 		}
 		toRow := func(c SecureCredential) row {
 			return row{
 				Name: c.Name, Type: c.Type, BaseURL: c.BaseURL, ParamName: c.ParamName,
 				Description: c.Description, RequiresConfirm: c.RequiresConfirm,
 				HasSecret: c.Type != SecureCredNone, Disabled: c.Disabled,
-				Secured: c.Secured,
+				Secured:         c.Secured,
+				SharedReadOnly:  nonNilList(c.SharedReadOnly),
+				SharedReadWrite: nonNilList(c.SharedReadWrite),
+				SharedSummary:   shareSummary(c),
 			}
+		}
+		// ?audit=<name> is the owner's own dispatch ledger for their own key.
+		// Sharing a credential and then having no way to see what went out
+		// through it would be the worst of both: the owner carries the far
+		// end's attribution and cannot read the one record that says who
+		// actually made each call.
+		if name := strings.TrimSpace(r.URL.Query().Get("audit")); name != "" {
+			writeJSON(w, credentialLedgerRows(user, name))
+			return
+		}
+		// ?lent=1 is the other side of the share: what other people gave THIS
+		// user. A share nobody can see is one they cannot use and cannot reason
+		// about when a call goes out under somebody else's name.
+		if strings.TrimSpace(r.URL.Query().Get("lent")) != "" {
+			writeJSON(w, lentCredentialRows(user))
+			return
 		}
 		// ?name=<name> returns the SINGLE record — the edit form's Source. The
 		// secret is never included, so leaving the form's secret field blank keeps
@@ -152,6 +178,33 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 		// disabled credential drops out of the agent tool catalog until re-
 		// enabled. Owner-scoped via SetDisabledOwned, so it only ever touches
 		// the user's own credential, never a global one of the same name.
+		// The share lists, and ONLY the share lists. Each picker posts the whole
+		// record back (record mode) and this reads two fields out of it, so a
+		// picker save cannot rewrite a base URL and the ordinary edit form
+		// cannot rewrite who the key reaches. Each door opens one thing.
+		if strings.TrimSpace(r.URL.Query().Get("action")) == "share" {
+			name := strings.TrimSpace(r.URL.Query().Get("name"))
+			if name == "" {
+				http.Error(w, "missing name", http.StatusBadRequest)
+				return
+			}
+			var body struct {
+				SharedReadOnly  []string `json:"shared_read_only"`
+				SharedReadWrite []string `json:"shared_read_write"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, "bad request", http.StatusBadRequest)
+				return
+			}
+			if err := Secure().SetCredentialShares(user, name, body.SharedReadOnly, body.SharedReadWrite); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			Log("[extensions] user=%q shared credential %q with %d reader(s) and %d writer(s)",
+				user, name, len(body.SharedReadOnly), len(body.SharedReadWrite))
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		if action := strings.TrimSpace(r.URL.Query().Get("action")); action == "enable" || action == "disable" {
 			name := strings.TrimSpace(r.URL.Query().Get("name"))
 			if name == "" {
@@ -1260,6 +1313,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 							{Value: true, Label: "Tools only", Color: "success"},
 							{Value: false, Label: "All my agents", Color: "warning"},
 						}},
+						{Field: "shared_summary", Label: "Shared", Mute: true},
 						{Field: "disabled", Label: "Status", Type: "dot", Badges: []ui.BadgeMapping{
 							{Value: true, Label: "Disabled", Color: "danger"},
 							{Value: false, Label: "Active", Color: "success"},
@@ -1282,10 +1336,58 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 							PostTo:     "api/credentials?action=enable&name={name}",
 							OnlyIf:     "disabled",
 							Optimistic: true},
+						// Two grants, two pickers, because the risk is not the
+						// same on both sides. Lending a key for reads hands
+						// somebody data they could have asked you for. Lending
+						// one that writes means the page, the ticket and the
+						// comment all say YOU did it, and nothing downstream can
+						// tell otherwise — so it is a separate decision, made
+						// deliberately, and not a checkbox on the first one.
+						// The other half of lending a key: what went out through
+						// it, and who sent it. An owner answerable for calls made
+						// under their name needs the one record that tells the
+						// two apart.
+						ui.Expand("Recent calls", ui.Table{
+							Source: "api/credentials?audit={name}",
+							RowKey: "when",
+							Columns: []ui.Col{
+								{Field: "when", Label: "When", Flex: 1},
+								{Field: "who", Label: "Who", Flex: 1},
+								{Field: "method", Label: "Method", Mute: true},
+								{Field: "url", Label: "URL", Flex: 3, Mute: true},
+								{Field: "outcome", Label: "Outcome", Flex: 1},
+							},
+							EmptyText: "Nothing has been sent through this credential yet.",
+						}),
+						ui.Expand("Share for reads", ui.ACLPicker(ui.ACLPickerConfig{
+							OptionsSource: "api/user-candidates",
+							RecordSource:  "api/credentials?name={name}",
+							Field:         "shared_read_only",
+							PostTo:        "api/credentials?action=share&name={name}",
+							Method:        "POST",
+							Noun:          "user",
+							Intro: "They can read through your key: GET and HEAD, nothing else. " +
+								"Your own use of it is unchanged. Every call is logged with their name against it.",
+							EmptyText:  "No other users to share with yet.",
+							Invalidate: []string{"api/credentials"},
+						})),
+						ui.Expand("Share for writes", ui.ACLPicker(ui.ACLPickerConfig{
+							OptionsSource: "api/user-candidates",
+							RecordSource:  "api/credentials?name={name}",
+							Field:         "shared_read_write",
+							PostTo:        "api/credentials?action=share&name={name}",
+							Method:        "POST",
+							Noun:          "user",
+							Intro: "They can write through your key, and what they write arrives as YOU: " +
+								"the page says you edited it, the ticket says you commented. " +
+								"The ledger records who actually made each call, which is the only place the two can be told apart. Share this with people you would let post under your name.",
+							EmptyText:  "No other users to share with yet.",
+							Invalidate: []string{"api/credentials"},
+						})),
 						{Type: "button", Label: "Delete", Method: "DELETE",
 							PostTo:     "api/credentials?name={name}",
 							Variant:    "danger",
-							Confirm:    "Delete this credential? Agents and tools using it stop working.",
+							Confirm:    "Delete this credential? Agents and tools using it stop working, and anyone you shared it with loses it.",
 							Optimistic: true},
 					},
 					EmptyText: "No credentials yet. Add one to let your agents call an API as you.",
@@ -1303,6 +1405,26 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 					},
 				},
 			}},
+		},
+		{
+			Title:    "Shared with you",
+			Wide:     true,
+			Subtitle: "Keys other people lent you.",
+			Detail: "You never see the secret. Each one appears to your agents as a fetch_url_<name> tool, and a key of your own with the same name wins over a lent one. " +
+				"Reads-only means GET and HEAD; anything else is refused and the refusal is recorded. " +
+				"Where the grant includes writes, what you send arrives at the far end as the person who lent it, under their name.",
+			Body: ui.Table{
+				Source: "api/credentials?lent=1",
+				RowKey: "name",
+				Columns: []ui.Col{
+					{Field: "name", Flex: 1},
+					{Field: "owner", Label: "Lent by"},
+					{Field: "grant", Label: "You may", Flex: 1},
+					{Field: "tool", Label: "Tool", Mute: true, Flex: 1},
+					{Field: "base_url", Label: "Base URL", Mute: true, Flex: 2},
+				},
+				EmptyText: "Nobody has shared a credential with you.",
+			},
 		},
 		{
 			Title:    "Connected accounts",
@@ -2425,4 +2547,118 @@ func (T *Extensions) handleUserCandidates(w http.ResponseWriter, r *http.Request
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(UserCandidatesJSON(AuthDB()))
+}
+
+// nonNilList keeps an empty array an array in JSON: an ACLPicker handed null
+// where it expected a list renders as though the record had no field rather
+// than no members.
+func nonNilList(in []string) []string {
+	if in == nil {
+		return []string{}
+	}
+	return in
+}
+
+// shareSummary is the one line the credential list shows about who else can use
+// a key, phrased so that reads and writes never read the same.
+func shareSummary(c SecureCredential) string {
+	switch r, w := len(c.SharedReadOnly), len(c.SharedReadWrite); {
+	case r == 0 && w == 0:
+		return "Just you"
+	case w == 0:
+		return fmt.Sprintf("%d reading", r)
+	case r == 0:
+		return fmt.Sprintf("%d writing as you", w)
+	default:
+		return fmt.Sprintf("%d reading, %d writing as you", r, w)
+	}
+}
+
+// lentCredentialRows describes the credentials other people have lent to this
+// user, for the section that only exists once somebody has.
+type lentCredentialRow struct {
+	Name    string `json:"name"`
+	Owner   string `json:"owner"`
+	BaseURL string `json:"base_url"`
+	Grant   string `json:"grant"`
+	Tool    string `json:"tool"`
+}
+
+func lentCredentialRows(user string) []lentCredentialRow {
+	out := []lentCredentialRow{}
+	for _, c := range Secure().SharedWithUser(user) {
+		grant := "Reads only"
+		if credentialLentForWrites(c, user) {
+			grant = "Reads and writes as them"
+		}
+		out = append(out, lentCredentialRow{
+			Name: c.Name, Owner: c.Owner, BaseURL: c.BaseURL,
+			Grant: grant, Tool: "fetch_url_" + c.Name,
+		})
+	}
+	return out
+}
+
+// credentialLentForWrites reads the grant off the record rather than asking
+// core for a second opinion: the lists are the grant.
+func credentialLentForWrites(c SecureCredential, user string) bool {
+	for _, u := range c.SharedReadWrite {
+		if u == user {
+			return true
+		}
+	}
+	return false
+}
+
+// credentialLedgerRow is one line of a credential's dispatch history, as its
+// OWNER reads it.
+type credentialLedgerRow struct {
+	When    string `json:"when"`
+	Who     string `json:"who"`
+	Method  string `json:"method"`
+	URL     string `json:"url"`
+	Outcome string `json:"outcome"`
+}
+
+// credentialLedgerRows renders the owner's own ledger. Scoped to their
+// namespace by construction: LoadAudit is keyed by owner, so asking for a name
+// they do not own reads an empty ring rather than somebody else's history.
+func credentialLedgerRows(user, name string) []credentialLedgerRow {
+	out := []credentialLedgerRow{}
+	for _, e := range Secure().LoadAudit(user, name) {
+		who := e.DispatchedBy
+		switch {
+		case who == "":
+			// Blank is not the owner. A row from before the ledger recorded a
+			// caller, or a call with no session behind it, and saying "you"
+			// would be inventing the one fact this column exists to carry.
+			who = "unrecorded"
+		case who == user:
+			who = "you"
+		}
+		out = append(out, credentialLedgerRow{
+			When:    e.Timestamp.Local().Format("Jan 2 15:04"),
+			Who:     who,
+			Method:  e.Method,
+			URL:     e.URL,
+			Outcome: ledgerOutcome(e),
+		})
+	}
+	return out
+}
+
+// ledgerOutcome distinguishes the three things that can happen to a call, which
+// a status code alone does not: sent and answered, sent and rejected, and never
+// sent at all.
+func ledgerOutcome(e SecureAPIAuditEntry) string {
+	if e.Status == 0 {
+		if e.Error != "" {
+			return "Not sent: " + e.Error
+		}
+		return "Not sent"
+	}
+	if e.Status >= 200 && e.Status < 300 {
+		return fmt.Sprintf("%d", e.Status)
+	}
+	return fmt.Sprintf("%d (refused by the API)", e.Status)
 }

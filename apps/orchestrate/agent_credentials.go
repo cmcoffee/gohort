@@ -42,6 +42,13 @@ func userScopableCredentials(user string) []SecureCredential {
 		for _, c := range Secure().ListUser(user) {
 			emit(c)
 		}
+		// Then the ones somebody lent them, in the same precedence dispatch
+		// uses. Without this a borrowed credential would be reachable by every
+		// one of their agents and scopable by none of them: the per-agent
+		// opt-out only offers what this list contains.
+		for _, c := range Secure().SharedWithUser(user) {
+			emit(c)
+		}
 	}
 	for _, c := range Secure().List() {
 		if Secure().UserMayUse(c, user) {

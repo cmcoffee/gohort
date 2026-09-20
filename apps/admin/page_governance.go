@@ -10,7 +10,9 @@ func (a *AdminApp) governanceSections() []ui.Section {
 		{
 			Title:    "User-owned credentials",
 			Subtitle: "Credentials users create for themselves, on their Extensions page.",
-			Detail:   "The admin API Credentials list above shows only GLOBAL creds, so without this the admin plane is blind to these.\n\nDisable revokes a credential without deleting it: the owner keeps the record and it stops resolving. Delete removes it and its encrypted secret. User-owned agents will join this governance area once peer-sharing ships.",
+			Detail: "The admin API Credentials list above shows only GLOBAL creds, so without this the admin plane is blind to these.\n\n" +
+				"The Lent column is the one to read first. A READ lend returns data the borrower could have asked the owner for; a WRITE lend arrives at the far end as the OWNER, so the page says they edited it and only the dispatch ledger records who actually made the call.\n\n" +
+				"Revoke sharing clears both lists and the owner keeps their key. Narrowing a lend from writes to reads is the owner's to do, not the admin's: either the lend is acceptable or it stops. Disable revokes the credential itself without deleting it, for the owner and every borrower at once; Delete removes it and its encrypted secret.",
 			Body: ui.Table{
 				Source: "api/user-credentials",
 				RowKey: "id",
@@ -18,6 +20,10 @@ func (a *AdminApp) governanceSections() []ui.Section {
 					{Field: "owner", Flex: 0, Label: "Owner"},
 					{Field: "name", Flex: 1},
 					{Field: "type", Flex: 0, Mute: true},
+					{Field: "lent_to", Flex: 2, Mute: true, Label: "Lent to"},
+					{Field: "lends_writes", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "Writes as owner", Color: "warning"},
+					}},
 					{Field: "secured", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "Secured", Color: "mute"},
 					}},
@@ -33,6 +39,12 @@ func (a *AdminApp) governanceSections() []ui.Section {
 					{Type: "button", Label: "Disable",
 						PostTo: "api/user-credentials?action=disable&owner={owner}&name={name}",
 						Method: "POST", HideIf: "disabled"},
+					{Type: "button", Label: "Revoke sharing",
+						PostTo:  "api/user-credentials?action=revoke_share&owner={owner}&name={name}",
+						Method:  "POST",
+						Confirm: "Revoke every share of this credential? Everyone it was lent to loses it immediately; the owner keeps the key and can still use it.",
+						OnlyIf:  "lent",
+						Variant: "danger"},
 					{Type: "button", Label: "Delete",
 						PostTo:  "api/user-credentials?owner={owner}&name={name}",
 						Method:  "DELETE",

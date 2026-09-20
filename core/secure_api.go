@@ -38,10 +38,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/peershare"
 	"github.com/cmcoffee/snugforge/mimebody"
 )
 
@@ -180,6 +182,27 @@ type SecureCredential struct {
 	// (AgentRecord.DisabledCredentials). Secured creds ignore this (their access
 	// follows the tool-binding model). See docs/tool-credential-namespacing.md.
 	AllowedUsers []string `json:"allowed_users,omitempty"`
+	// SharedReadOnly and SharedReadWrite are the OWNER's peer share of a
+	// USER-OWNED credential: which colleagues may dispatch through their key,
+	// and what those colleagues may do with it.
+	//
+	// Two lists rather than one, because the risk is not symmetric. A read
+	// through somebody else's key returns data they could already ask them
+	// for. A WRITE lands at the far end under the owner's identity: the page
+	// says the owner edited it, the ticket says the owner commented, and
+	// nothing downstream can tell the difference. Lending a key for reads and
+	// lending one that can post as you are different decisions, so they are
+	// different grants and the owner makes each one deliberately.
+	//
+	// Read-only is enforced at dispatch (see readOnlyForUser), not by editing
+	// AllowedMethods: the owner's own use of their own credential is
+	// unchanged, and the narrowing applies to the recipient's turns alone.
+	//
+	// Ignored on a GLOBAL credential, whose reach is AllowedUsers and the
+	// admin's business. A name in both lists reads as read-write; the setter
+	// normalizes that away rather than leaving it to a lookup order.
+	SharedReadOnly  []string `json:"shared_read_only,omitempty"`
+	SharedReadWrite []string `json:"shared_read_write,omitempty"`
 	// ApprovedToolBindings is the authoritative "declaring tools" allowlist for a
 	// SECURED credential — the tools an admin has approved to bind (fetch_via /
 	// api-mode) and thereby dispatch through it. This is what makes access follow
@@ -559,6 +582,12 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 		// credential's config can't silently re-enable or unsecure it.
 		c.Disabled = existing.Disabled
 		c.Secured = existing.Secured
+		// The share lists belong to SetCredentialShares for the same reason
+		// Disabled and Secured belong to their own setters: the upsert form
+		// does not carry them, so letting the body win would silently revoke
+		// every share the moment somebody edited a base URL.
+		c.SharedReadOnly = existing.SharedReadOnly
+		c.SharedReadWrite = existing.SharedReadWrite
 	} else {
 		c.CreatedAt = time.Now()
 	}
@@ -670,6 +699,9 @@ func (s *SecureAPI) DeleteUser(owner, name string) error {
 	key := credStoreKey(owner, name)
 	s.db.Unset(secureAPITable, key)
 	s.db.Unset(secureAPITable, secureCredSecretKey(key))
+	// An index entry outliving its record points at nothing, which reads to a
+	// recipient as access they lost rather than a credential that is gone.
+	peershare.DropAll(s.db, SharedCredentialsTable, owner, name)
 	return nil
 }
 
@@ -725,6 +757,20 @@ func (s *SecureAPI) Resolve(name, user string) (SecureCredential, bool) {
 	if strings.TrimSpace(user) != "" {
 		if c, ok := s.LoadUser(user, name); ok {
 			return c, true
+		}
+		// Then one somebody lent them. After their own, because a name they
+		// chose should mean their own key; before the global, because a
+		// colleague handing you a credential is the more specific answer.
+		if c, owners := s.resolveShared(name, user); len(owners) == 1 {
+			return c, true
+		} else if len(owners) > 1 {
+			// Two people lent this user a credential of the same name. Picking
+			// one would post as the wrong person, which is the exact harm the
+			// read/write split exists to prevent, so nothing resolves and the
+			// dispatch path says whose keys collided.
+			Log("[secure_api] %q is shared with %q by %s: ambiguous, refusing to pick one",
+				name, user, strings.Join(owners, " and "))
+			return SecureCredential{}, false
 		}
 	}
 	return s.Load(name)
@@ -944,7 +990,7 @@ func (s *SecureAPI) RevokeToolBinding(cred, tool string) error {
 // later securing. An empty user passes only for an open credential.
 func (s *SecureAPI) UserMayUse(c SecureCredential, user string) bool {
 	if c.Owner != "" {
-		return c.Owner == user
+		return c.Owner == user || credShareGrant(c, user) != credShareNone
 	}
 	if len(c.AllowedUsers) == 0 {
 		return true
@@ -1371,6 +1417,10 @@ func (s *SecureAPI) BuildTools(sess *ToolSession) []AgentToolDef {
 	// on the Account page would be reachable only via a temp-tool fetch_via.
 	if u := sessUsername(sess); u != "" {
 		emit(s.ListUser(u))
+		// Then the ones lent to them. Without this a share is decorative: the
+		// owner picks recipients, the ACL admits them, and no tool the
+		// recipient can call ever dispatches through it.
+		emit(s.SharedWithUser(u))
 	}
 	emit(creds)
 	// Decode-mismatch diagnostic: only fires on the genuine failure
@@ -1397,6 +1447,17 @@ func (s *SecureAPI) agentToolFromCredential(c SecureCredential, sess *ToolSessio
 		"Fetch a URL on the %s API. Same shape as fetch_url (method / body / request_headers / save_to all supported), but the auth credential is injected server-side and the URL is bounded by an allow-list. You do not see the credential value. Allowed URLs: %s. %s",
 		c.Name, c.AllowedURLPattern, c.Description,
 	)
+	// A lent credential says so, and a read-only one says what it cannot do.
+	// A tool whose limits only appear as a refusal is the shape that produces
+	// an improvised substitute: the model tries a write, is turned away, and
+	// reaches for some other route to the same effect rather than reporting
+	// that it has no way to do it.
+	switch user := sessUsername(sess); credShareGrant(c, user) {
+	case credShareRead:
+		desc += fmt.Sprintf(" %s lent you this credential FOR READS: GET and HEAD only, and anything else is refused. If the task needs a write, say so rather than looking for another way round.", c.Owner)
+	case credShareWrite:
+		desc += fmt.Sprintf(" %s lent you this credential, reads and writes. Anything you send through it arrives as THEM and is recorded against their name, so write only what they would.", c.Owner)
+	}
 	desc = strings.TrimSpace(desc)
 	return AgentToolDef{
 		Tool: Tool{
@@ -1691,6 +1752,20 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 		savePath = resolved
 	}
 
+	// A credential lent for READS is held to reads, however wide the owner's
+	// own use of it is. Enforced here rather than by narrowing AllowedMethods
+	// on the record, so the owner's own turns are untouched and the grant
+	// stays readable as what it is.
+	//
+	// This is the point of the two lists: a write through somebody else's key
+	// arrives at the far end as THEM, and no allowlist downstream can tell the
+	// two apart afterwards.
+	if readOnlyForUser(c, sessUsername(sess)) && method != http.MethodGet && method != http.MethodHead {
+		return "", s.refuse(c, sess, method, rawURL, fmt.Sprintf(
+			"%s is not allowed: %s lent you %q for reads (GET/HEAD). Ask them for a read-write share if this genuinely has to write, and say what it would write — a write through their key is recorded as theirs",
+			method, c.Owner, c.Name))
+	}
+
 	// Method allowlist check. Empty list = all methods allowed
 	// (legacy). When set, anything outside the list is rejected
 	// before URL/auth work — a read-only credential with
@@ -1704,7 +1779,8 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 			}
 		}
 		if !ok {
-			return "", fmt.Errorf("method %s not allowed for credential %q (allowed: %v)", method, c.Name, c.AllowedMethods)
+			return "", s.refuse(c, sess, method, rawURL, fmt.Sprintf(
+				"method %s not allowed for credential %q (allowed: %v)", method, c.Name, c.AllowedMethods))
 		}
 	}
 
@@ -2511,3 +2587,152 @@ func validToolNameStr(s string) bool {
 // credential, in which case a menu should not offer it as something to
 // choose or bind.
 func (c SecureCredential) ManagedElsewhere() bool { return strings.TrimSpace(c.Managed) != "" }
+
+// ----------------------------------------------------------------------
+// Peer sharing of user-owned credentials
+// ----------------------------------------------------------------------
+
+// SharedCredentialsTable indexes peer shares: recipient -> (owner, credential
+// name). The lists on the record are what the owner edits and an admin audits;
+// this is the derived lookup that makes them findable from the other side.
+const SharedCredentialsTable = "shared_credentials"
+
+// The grant a dispatching user holds over a credential.
+const (
+	credShareNone = iota
+	credShareRead
+	credShareWrite
+)
+
+// credShareGrant reports what `user` was lent. The owner is not a recipient of
+// their own credential: their access comes from owning it, and answering
+// otherwise here would make an owner who never shared anything look like one
+// who did.
+func credShareGrant(c SecureCredential, user string) int {
+	if user = strings.TrimSpace(user); user == "" || c.Owner == "" || user == c.Owner {
+		return credShareNone
+	}
+	if credSliceHas(c.SharedReadWrite, user) {
+		return credShareWrite
+	}
+	if credSliceHas(c.SharedReadOnly, user) {
+		return credShareRead
+	}
+	return credShareNone
+}
+
+// readOnlyForUser reports whether this dispatch is a lent-for-reads one, and so
+// must be held to GET/HEAD however wide the owner's own use of the key is.
+func readOnlyForUser(c SecureCredential, user string) bool {
+	return credShareGrant(c, user) == credShareRead
+}
+
+// SetCredentialShares replaces both share lists on a user-owned credential and
+// brings the index along with them.
+//
+// The whole set each time, not a delta: the owner edits a set, and a caller
+// computing additions and removals would be a second place that knows the rule.
+// A name in both lists resolves to read-write here rather than at lookup time,
+// so what is stored is what was granted.
+func (s *SecureAPI) SetCredentialShares(owner, name string, readOnly, readWrite []string) error {
+	if !s.ready() || strings.TrimSpace(owner) == "" || name == "" {
+		return fmt.Errorf("owner and name required")
+	}
+	s.mu.Lock()
+	key := credStoreKey(owner, name)
+	var c SecureCredential
+	if !s.db.Get(secureAPITable, key, &c) {
+		s.mu.Unlock()
+		return fmt.Errorf("credential %q not found", name)
+	}
+	write := cleanShareList(readWrite, owner, nil)
+	read := cleanShareList(readOnly, owner, write)
+	c.SharedReadWrite, c.SharedReadOnly = write, read
+	s.db.Set(secureAPITable, key, c)
+	s.mu.Unlock()
+	peershare.SetRecipients(s.db, SharedCredentialsTable, owner, name, append(append([]string{}, read...), write...))
+	return nil
+}
+
+// cleanShareList trims, drops blanks, the owner (sharing with yourself is not a
+// share) and anybody already holding the stronger grant, then dedupes and sorts
+// so two equivalent lists store identically.
+func cleanShareList(users []string, owner string, stronger []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, u := range users {
+		u = strings.TrimSpace(u)
+		if u == "" || u == owner || seen[u] || credSliceHas(stronger, u) {
+			continue
+		}
+		seen[u] = true
+		out = append(out, u)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// SharedWithUser returns the user-owned credentials other people have lent to
+// this user, read from each owner's own record.
+//
+// The index is derived and the record is the source: a share revoked on the
+// record is gone here even if an index entry lingers, because a derived thing
+// that can outvote its source is how a revoked share keeps working. A disabled
+// credential is nobody's to use, the owner's included.
+func (s *SecureAPI) SharedWithUser(user string) []SecureCredential {
+	if !s.ready() || strings.TrimSpace(user) == "" {
+		return nil
+	}
+	var out []SecureCredential
+	for _, ref := range peershare.List(s.db, SharedCredentialsTable, user) {
+		c, ok := s.LoadUser(ref.Owner, ref.ID)
+		if !ok || c.Disabled || credShareGrant(c, user) == credShareNone {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// resolveShared finds the credential of this name lent to this user, and every
+// owner who lent them one of that name. More than one owner is not a tie to
+// break: see Resolve.
+func (s *SecureAPI) resolveShared(name, user string) (SecureCredential, []string) {
+	var found SecureCredential
+	var owners []string
+	for _, c := range s.SharedWithUser(user) {
+		if c.Name != name {
+			continue
+		}
+		found = c
+		owners = append(owners, c.Owner)
+	}
+	return found, owners
+}
+
+// refuse records a call that was blocked before it was sent, and returns the
+// error to report.
+//
+// Refusals used to leave no trace at all: the method and URL gates return above
+// the point where the audit entry is built, so a blocked call was reported to
+// whoever made it and to nobody else. That was survivable while a credential
+// had exactly one possible caller. It stops being survivable the moment a
+// credential is lent out, because the attempt somebody else's key turned away
+// is precisely the row its owner wants to see — a colleague repeatedly trying
+// to write through a read-only share is worth knowing about, and the refusal
+// working is not a reason to say nothing.
+//
+// Status stays 0 to mean NOT SENT. A reader who cannot tell a refusal from a
+// 403 learns the wrong thing from both.
+func (s *SecureAPI) refuse(c SecureCredential, sess *ToolSession, method, rawURL, reason string) error {
+	s.recordAudit(SecureAPIAuditEntry{
+		CredentialName: c.Name,
+		Owner:          c.Owner,
+		DispatchedBy:   sessUsername(sess),
+		Method:         method,
+		URL:            rawURL,
+		Timestamp:      time.Now(),
+		Error:          "refused before sending: " + reason,
+	})
+	return errors.New(reason)
+}

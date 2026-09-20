@@ -1054,3 +1054,228 @@ func TestLedgerRowsFromBeforeTheFieldDecode(t *testing.T) {
 		t.Errorf("a pre-field row claims a caller: %q", got[0].DispatchedBy)
 	}
 }
+
+// ----------------------------------------------------------------------
+// Peer sharing of user-owned credentials
+// ----------------------------------------------------------------------
+
+func shareTestCred(t *testing.T, owner, name, pattern string) {
+	t.Helper()
+	if err := Secure().Save(SecureCredential{Name: name, Type: SecureCredNone, Owner: owner,
+		AllowedURLPattern: pattern}, ""); err != nil {
+		t.Fatalf("save %s/%s: %v", owner, name, err)
+	}
+}
+
+// A credential a colleague lent you resolves, and appears as a tool you can
+// actually call. A share that resolves to nothing is the decorative ACL every
+// other primitive already learned not to ship.
+func TestALentCredentialResolvesForItsRecipient(t *testing.T) {
+	secureAPITestStore(t)
+	shareTestCred(t, "alice", "wiki", "https://wiki.example/**")
+	if err := Secure().SetCredentialShares("alice", "wiki", []string{"bob"}, nil); err != nil {
+		t.Fatalf("share: %v", err)
+	}
+
+	if _, ok := Secure().Resolve("wiki", "bob"); !ok {
+		t.Fatal("the recipient cannot resolve the credential lent to them")
+	}
+	// Somebody unnamed gets nothing.
+	if _, ok := Secure().Resolve("wiki", "dana"); ok {
+		t.Error("an unnamed user resolved somebody else's credential")
+	}
+	if got := Secure().SharedWithUser("bob"); len(got) != 1 || got[0].Owner != "alice" {
+		t.Errorf("the lend does not show up for the recipient: %+v", got)
+	}
+}
+
+// The record is the source and the index is derived. Revoking on the record
+// takes effect even though the setter also rewrites the index.
+func TestRevokingALentCredentialTakesEffect(t *testing.T) {
+	secureAPITestStore(t)
+	shareTestCred(t, "alice", "wiki", "https://wiki.example/**")
+	Secure().SetCredentialShares("alice", "wiki", []string{"bob"}, nil)
+	Secure().SetCredentialShares("alice", "wiki", nil, nil)
+	if _, ok := Secure().Resolve("wiki", "bob"); ok {
+		t.Error("a revoked share still resolves")
+	}
+	if got := Secure().SharedWithUser("bob"); len(got) != 0 {
+		t.Errorf("a revoked share still lists: %+v", got)
+	}
+}
+
+// Editing a credential's config must not silently revoke every share, the same
+// way it does not silently re-enable or unsecure it.
+func TestEditingACredentialKeepsItsShares(t *testing.T) {
+	secureAPITestStore(t)
+	shareTestCred(t, "alice", "wiki", "https://wiki.example/**")
+	Secure().SetCredentialShares("alice", "wiki", []string{"bob"}, []string{"carol"})
+	shareTestCred(t, "alice", "wiki", "https://wiki.example/v2/**")
+
+	c, ok := Secure().LoadUser("alice", "wiki")
+	if !ok {
+		t.Fatal("load")
+	}
+	if len(c.SharedReadOnly) != 1 || len(c.SharedReadWrite) != 1 {
+		t.Errorf("an edit dropped the shares: %+v / %+v", c.SharedReadOnly, c.SharedReadWrite)
+	}
+}
+
+// The owner's own key always shadows one lent to them: a name they chose means
+// the thing they made.
+func TestYourOwnCredentialShadowsALentOne(t *testing.T) {
+	secureAPITestStore(t)
+	shareTestCred(t, "alice", "wiki", "https://alice.example/**")
+	Secure().SetCredentialShares("alice", "wiki", []string{"bob"}, nil)
+	shareTestCred(t, "bob", "wiki", "https://bob.example/**")
+
+	c, ok := Secure().Resolve("wiki", "bob")
+	if !ok || c.Owner != "bob" {
+		t.Errorf("the recipient's own credential did not win: %+v", c)
+	}
+}
+
+// Two colleagues lending the same NAME is not a tie to break. Picking one would
+// act as the wrong person, which is the whole risk the read/write split exists
+// for, so nothing resolves.
+func TestTwoLendersOfTheSameNameRefuseToResolve(t *testing.T) {
+	secureAPITestStore(t)
+	shareTestCred(t, "alice", "wiki", "https://wiki.example/**")
+	shareTestCred(t, "carol", "wiki", "https://wiki.example/**")
+	Secure().SetCredentialShares("alice", "wiki", []string{"bob"}, nil)
+	Secure().SetCredentialShares("carol", "wiki", []string{"bob"}, nil)
+
+	if _, ok := Secure().Resolve("wiki", "bob"); ok {
+		t.Error("an ambiguous lend resolved instead of refusing")
+	}
+}
+
+// The point of two lists. A read-only lend reads and cannot write, whatever the
+// owner's own use of the key allows.
+func TestAReadOnlyLendCannotWrite(t *testing.T) {
+	secureAPITestStore(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	shareTestCred(t, "alice", "wiki", imageHostPattern(srv.URL))
+	Secure().SetCredentialShares("alice", "wiki", []string{"bob"}, nil)
+	c, _ := Secure().Resolve("wiki", "bob")
+
+	if _, err := Secure().dispatch(c, map[string]any{"url": srv.URL + "/page", "method": "GET"},
+		&ToolSession{Username: "bob"}); err != nil {
+		t.Fatalf("a read through a read-only lend was refused: %v", err)
+	}
+	_, err := Secure().dispatch(c, map[string]any{"url": srv.URL + "/page", "method": "POST", "body": "{}"},
+		&ToolSession{Username: "bob"})
+	if err == nil {
+		t.Fatal("a write through a read-only lend was allowed")
+	}
+	if !strings.Contains(err.Error(), "read") {
+		t.Errorf("the refusal does not say why: %v", err)
+	}
+	// The OWNER is not narrowed by lending it out.
+	if _, err := Secure().dispatch(c, map[string]any{"url": srv.URL + "/page", "method": "POST", "body": "{}"},
+		&ToolSession{Username: "alice"}); err != nil {
+		t.Errorf("the owner was narrowed by their own share: %v", err)
+	}
+}
+
+// A read-write lend writes. The grant is a grant.
+func TestAReadWriteLendCanWrite(t *testing.T) {
+	secureAPITestStore(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	shareTestCred(t, "alice", "wiki", imageHostPattern(srv.URL))
+	Secure().SetCredentialShares("alice", "wiki", nil, []string{"bob"})
+	c, _ := Secure().Resolve("wiki", "bob")
+
+	if _, err := Secure().dispatch(c, map[string]any{"url": srv.URL + "/page", "method": "POST", "body": "{}"},
+		&ToolSession{Username: "bob"}); err != nil {
+		t.Errorf("a read-write lend could not write: %v", err)
+	}
+}
+
+// A blocked attempt leaves a row. The refusal working is not a reason to say
+// nothing: a colleague repeatedly trying to write through a read-only lend is
+// exactly what its owner wants to see.
+func TestABlockedWriteIsRecorded(t *testing.T) {
+	secureAPITestStore(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("the request reached the server")
+	}))
+	defer srv.Close()
+	shareTestCred(t, "alice", "wiki", imageHostPattern(srv.URL))
+	Secure().SetCredentialShares("alice", "wiki", []string{"bob"}, nil)
+	c, _ := Secure().Resolve("wiki", "bob")
+	_, _ = Secure().dispatch(c, map[string]any{"url": srv.URL + "/page", "method": "DELETE"},
+		&ToolSession{Username: "bob"})
+
+	got := Secure().LoadAudit("alice", "wiki")
+	if len(got) != 1 {
+		t.Fatalf("the blocked attempt left no row: %+v", got)
+	}
+	if got[0].DispatchedBy != "bob" {
+		t.Errorf("the row does not name who tried: %+v", got[0])
+	}
+	// Status 0 means NOT SENT. A reader who cannot tell a refusal from a 403
+	// learns the wrong thing from both.
+	if got[0].Status != 0 || !strings.Contains(got[0].Error, "refused before sending") {
+		t.Errorf("a refusal is not distinguishable from a rejection: %+v", got[0])
+	}
+}
+
+// Read-write beats read-only for the same person, decided when it is stored
+// rather than by whichever lookup happens to run first.
+func TestOneNameInBothListsIsReadWrite(t *testing.T) {
+	secureAPITestStore(t)
+	shareTestCred(t, "alice", "wiki", "https://wiki.example/**")
+	Secure().SetCredentialShares("alice", "wiki", []string{"bob", "carol"}, []string{"bob"})
+
+	c, _ := Secure().LoadUser("alice", "wiki")
+	if credSliceHas(c.SharedReadOnly, "bob") {
+		t.Errorf("bob is in both lists: %+v / %+v", c.SharedReadOnly, c.SharedReadWrite)
+	}
+	if !credSliceHas(c.SharedReadWrite, "bob") || !credSliceHas(c.SharedReadOnly, "carol") {
+		t.Errorf("the grants did not survive normalization: %+v / %+v", c.SharedReadOnly, c.SharedReadWrite)
+	}
+	// Sharing with yourself is not a share.
+	Secure().SetCredentialShares("alice", "wiki", []string{"alice"}, nil)
+	c, _ = Secure().LoadUser("alice", "wiki")
+	if len(c.SharedReadOnly) != 0 {
+		t.Errorf("the owner ended up on their own share list: %+v", c.SharedReadOnly)
+	}
+}
+
+// Deleting takes the lends with it, rather than leaving rows pointing at
+// nothing.
+func TestDeletingACredentialDropsItsLends(t *testing.T) {
+	secureAPITestStore(t)
+	shareTestCred(t, "alice", "wiki", "https://wiki.example/**")
+	Secure().SetCredentialShares("alice", "wiki", []string{"bob"}, nil)
+	if err := Secure().DeleteUser("alice", "wiki"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if got := Secure().SharedWithUser("bob"); len(got) != 0 {
+		t.Errorf("the recipient still holds a deleted credential: %+v", got)
+	}
+	if _, ok := Secure().Resolve("wiki", "bob"); ok {
+		t.Error("a deleted credential still resolves for its recipient")
+	}
+}
+
+// A disabled credential is nobody's to use, the owner's included. The admin's
+// revoke lever has to reach the people it was lent to.
+func TestDisablingACredentialReachesItsRecipients(t *testing.T) {
+	secureAPITestStore(t)
+	shareTestCred(t, "alice", "wiki", "https://wiki.example/**")
+	Secure().SetCredentialShares("alice", "wiki", []string{"bob"}, nil)
+	if err := Secure().SetDisabledOwned("alice", "wiki", true); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if _, ok := Secure().Resolve("wiki", "bob"); ok {
+		t.Error("a disabled credential still resolves for its recipient")
+	}
+}
