@@ -26,6 +26,7 @@ import (
 
 	"github.com/cmcoffee/gohort/core/revisions"
 
+	"github.com/cmcoffee/gohort/core/notices"
 	"github.com/cmcoffee/gohort/core/peershare"
 	"path/filepath"
 	"sort"
@@ -88,11 +89,23 @@ type SkillRecord struct {
 	// recipient gets the skill's behaviour, not its authorship: it activates
 	// for them and they cannot edit or delete it.
 	//
-	// Sharing does NOT carry the skill's attached collections. Those are the
-	// owner's documents, and handing somebody a skill is not handing them a
-	// corpus; the skill activates for a recipient with its instructions and its
-	// tools, and its collections stay where they are. See SharedSkillsFor.
+	// A share carries BEHAVIOUR, and nothing else. Neither the skill's attached
+	// collections (the owner's documents) nor its bundled Tools (the owner's
+	// executable code) travel with it: each of those is shared on its own
+	// terms, through its own gate. A recipient gets the instructions and the
+	// tool NAMES, which resolve in their own namespace like every other
+	// dependency of a shared thing. See SharedSkillsFor.
 	AllowedUsers []string `json:"allowed_users,omitempty"`
+
+	// SharedFrom / SharedOmitted are set on the COPY a recipient sees, never
+	// stored: SharedSkillsFor fills them in as it strips what cannot travel.
+	//
+	// They exist so the absence is speakable. A skill whose instructions say
+	// "use check_inventory" on a machine with no such tool is the exact shape
+	// that produces an improvised answer instead of an error, and the model
+	// finding out is what prevents it.
+	SharedFrom    string   `json:"shared_from,omitempty"`
+	SharedOmitted []string `json:"shared_omitted,omitempty"`
 
 	// Disabled mutes the skill — classifier skips it entirely as if
 	// it didn't exist. Use to pause a skill without losing its
@@ -491,11 +504,40 @@ func SharedSkillsFor(db Database, username string) []SkillRecord {
 			if !skillSharedWith(s, username) {
 				continue
 			}
+			s.SharedFrom = ref.Owner
+			s.SharedOmitted = omittedFromShare(s)
+			noteSkillShareGaps(ref.Owner, username, s)
 			s.AttachedCollections = nil
+			// Bundled tools do not travel either, and for a stronger reason
+			// than the collections above. A skill can carry its own executable
+			// scripts so it stays portable, and attaching those for a recipient
+			// would run another person's code in their session, under their
+			// credentials, with no approval anywhere — which is precisely the
+			// gate a tool has to pass to reach even one other user. A skill
+			// share would be the way around it.
+			//
+			// So a share carries BEHAVIOUR. Tools are shared as tools, on their
+			// own terms, and collections as collections.
+			s.Tools = nil
 			out = append(out, s)
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Updated.After(out[j].Updated) })
+	return out
+}
+
+// omittedFromShare names what a share cannot carry, in the reader's terms.
+// Counts rather than names for the tools, because a recipient has no use for
+// the owner's internal tool names and every use for knowing the skill expects
+// capabilities they may not have.
+func omittedFromShare(s SkillRecord) []string {
+	var out []string
+	if n := len(s.Tools); n > 0 {
+		out = append(out, fmt.Sprintf("%d bundled tool(s)", n))
+	}
+	if n := len(s.AttachedCollections); n > 0 {
+		out = append(out, fmt.Sprintf("%d attached collection(s)", n))
+	}
 	return out
 }
 
@@ -983,7 +1025,17 @@ func skillInstructionsBlock(skill SkillRecord, delivered map[string]bool) string
 	if body == "" {
 		return ""
 	}
-	return "Apply the \"" + skill.Name + "\" approach for the REST of this turn, it governs how you read these results AND how you reply, not just this one result:\n\n" + body + "\n\n---\n"
+	out := "Apply the \"" + skill.Name + "\" approach for the REST of this turn, it governs how you read these results AND how you reply, not just this one result:\n\n" + body
+	// A shared skill arrives without whatever it could not bring. Said here,
+	// with the instructions, because this is the moment the model would
+	// otherwise go looking for a tool that is not in its catalog and invent a
+	// way around it.
+	if skill.SharedFrom != "" && len(skill.SharedOmitted) > 0 {
+		out += "\n\n(This skill was shared with you by " + skill.SharedFrom + ", and " +
+			strings.Join(skill.SharedOmitted, " and ") + " did not come with it. " +
+			"Follow the approach with the tools and documents you actually have; if it calls for something you cannot reach, say so plainly rather than working around it.)"
+	}
+	return out + "\n\n---\n"
 }
 
 // AttachDeliveredSkillTools loads the bundled Tools of every skill consulted
@@ -1194,4 +1246,28 @@ func SkillPromptSection(s SkillRecord) string {
 	b.WriteString("\n\n")
 	b.WriteString(body)
 	return b.String()
+}
+
+// noteSkillShareGaps tells a skill's OWNER that what they shared arrived
+// incomplete.
+//
+// To the owner, because they are the only one who can do anything: share the
+// tool as a tool, share the collection as a collection, or reword the skill so
+// it does not depend on either. The recipient cannot, and telling them would be
+// reporting somebody else's configuration at them.
+//
+// Folded by the notice's own fingerprint, so a skill that activates fifty times
+// a day is one row with a count rather than a stream.
+func noteSkillShareGaps(owner, recipient string, s SkillRecord) {
+	if RootDB == nil || len(s.SharedOmitted) == 0 || owner == "" || owner == recipient {
+		return
+	}
+	notices.Record(RootDB, notices.Notice{
+		Owner: owner,
+		Kind:  notices.KindStopped,
+		Title: "\"" + s.Name + "\" reaches other people without " + strings.Join(s.SharedOmitted, " or "),
+		Body: "A skill share carries the behaviour, not the owner's code or documents: bundled tools would run in somebody else's session under their credentials, " +
+			"and attached collections are your documents. Each is shared on its own terms instead. " +
+			"If this skill needs them, share the tool from Extensions and the collection from its own page; otherwise the people you shared it with are following instructions that reference things they cannot reach.",
+	})
 }

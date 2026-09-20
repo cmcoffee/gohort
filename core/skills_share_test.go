@@ -5,8 +5,10 @@ package core
 // or inherit the owner's documents with it.
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/cmcoffee/gohort/core/notices"
 	"github.com/cmcoffee/gohort/core/peershare"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
@@ -95,5 +97,91 @@ func TestYourOwnSkillComesFirst(t *testing.T) {
 	avail := AvailableSkills(db, "bob")
 	if len(avail) != 2 || avail[0].ID != "own" {
 		t.Errorf("the recipient's own skill is not first: %+v", avail)
+	}
+}
+
+// A bundled tool does not travel either. Running it would run the owner's code
+// in the recipient's session, under the recipient's credentials, with no
+// approval anywhere — which is the one thing a tool share has to pass through.
+func TestASharedSkillCarriesNoBundledTools(t *testing.T) {
+	db := skillShareStore(t)
+	SaveSkill(db, "alice", SkillRecord{ID: "s1", Name: "Triage", Instructions: "Assess.",
+		Tools:               []TempTool{{Name: "ssh_run"}, {Name: "page_oncall"}},
+		AttachedCollections: []string{"col-1"},
+		AllowedUsers:        []string{"bob"}})
+
+	got := SharedSkillsFor(db, "bob")
+	if len(got) != 1 {
+		t.Fatalf("the recipient does not have it: %+v", got)
+	}
+	if len(got[0].Tools) != 0 {
+		t.Errorf("the owner's tools travelled with the share: %+v", got[0].Tools)
+	}
+	// The owner's own copy is untouched: the strip is on the way out, not a
+	// rewrite of what they built.
+	own := LoadSkills(db, "alice")
+	if len(own) != 1 || len(own[0].Tools) != 2 || len(own[0].AttachedCollections) != 1 {
+		t.Errorf("the owner's own skill was stripped: %+v", own)
+	}
+}
+
+// The recipient's model is TOLD what did not arrive. A skill whose steps
+// reference a tool that is not there, with nothing saying so, is how a run
+// invents a substitute and reports success.
+func TestTheRecipientIsToldWhatDidNotArrive(t *testing.T) {
+	db := skillShareStore(t)
+	SaveSkill(db, "alice", SkillRecord{ID: "s1", Name: "Triage", Instructions: "Assess.",
+		Tools: []TempTool{{Name: "ssh_run"}}, AttachedCollections: []string{"col-1"},
+		AllowedUsers: []string{"bob"}})
+
+	block := skillInstructionsBlock(SharedSkillsFor(db, "bob")[0], nil)
+	for _, want := range []string{"alice", "bundled tool", "attached collection"} {
+		if !strings.Contains(block, want) {
+			t.Errorf("the recipient is not told about %q:\n%s", want, block)
+		}
+	}
+	// The owner's own turn says none of this.
+	if b := skillInstructionsBlock(LoadSkills(db, "alice")[0], nil); strings.Contains(b, "did not come with it") {
+		t.Errorf("the owner is told their own skill is incomplete:\n%s", b)
+	}
+}
+
+// And the OWNER is told, because they are the only one who can fix it: share
+// the tool as a tool, the collection as a collection, or reword the skill.
+func TestTheOwnerIsToldTheirShareIsIncomplete(t *testing.T) {
+	db := skillShareStore(t)
+	SaveSkill(db, "alice", SkillRecord{ID: "s1", Name: "Triage", Instructions: "Assess.",
+		Tools: []TempTool{{Name: "ssh_run"}}, AllowedUsers: []string{"bob"}})
+	SharedSkillsFor(db, "bob")
+
+	notes := notices.List(db, "alice")
+	if len(notes) != 1 || !strings.Contains(notes[0].Title, "Triage") {
+		t.Fatalf("the owner was not told: %+v", notes)
+	}
+	// Not the recipient's problem to read about somebody else's configuration.
+	if got := notices.List(db, "bob"); len(got) != 0 {
+		t.Errorf("the recipient was told about the owner's setup: %+v", got)
+	}
+	// Fifty activations a day is one row with a count, not a stream.
+	SharedSkillsFor(db, "bob")
+	SharedSkillsFor(db, "bob")
+	if notes := notices.List(db, "alice"); len(notes) != 1 {
+		t.Errorf("repeats did not fold: %+v", notes)
+	}
+}
+
+// A share with nothing withheld says nothing to anybody.
+func TestACompleteShareIsQuiet(t *testing.T) {
+	db := skillShareStore(t)
+	SaveSkill(db, "alice", SkillRecord{ID: "s1", Name: "Triage", Instructions: "Assess.",
+		AllowedUsers: []string{"bob"}})
+	if got := SharedSkillsFor(db, "bob"); len(got) != 1 {
+		t.Fatalf("share: %+v", got)
+	}
+	if notes := notices.List(db, "alice"); len(notes) != 0 {
+		t.Errorf("a complete share nagged its owner: %+v", notes)
+	}
+	if b := skillInstructionsBlock(SharedSkillsFor(db, "bob")[0], nil); strings.Contains(b, "did not come with it") {
+		t.Errorf("a complete share claims something is missing:\n%s", b)
 	}
 }
