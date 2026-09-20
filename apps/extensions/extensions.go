@@ -918,23 +918,69 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 			// way in, rather than a separate control on every row.
 			Playbook    string `json:"playbook"`
 			PlaybookURL string `json:"playbook_url"`
+			// Where this skill sits on the three rungs. A published skill has
+			// left the author's pool, so without listing it here they would
+			// watch it disappear and have no way back.
+			Published      bool `json:"published"`
+			PublishPending bool `json:"publish_pending"`
+			CanPublish     bool `json:"can_publish"`
 		}
-		rows := []row{}
-		for _, s := range LoadSkills(AuthDB(), user) {
+		toSkillRow := func(s SkillRecord, published bool) row {
 			updated := ""
 			if !s.Updated.IsZero() {
 				updated = s.Updated.Format("2006-01-02")
 			}
-			rows = append(rows, row{
+			pending := !published && skillPublishPending(user, s.Name)
+			return row{
 				ID: s.ID, Name: s.Name, Description: s.Description,
 				Triggers: len(s.Triggers), Disabled: s.Disabled, Updated: updated,
 				Playbook: playbookCount(s), PlaybookURL: playbookEditorURL(s.ID),
-			})
+				Published: published, PublishPending: pending,
+				CanPublish: !published && !pending,
+			}
+		}
+		// ?deployment=1 is what the deployment publishes, for everybody. These
+		// activate on your turns whether or not you went looking for them, so
+		// there is a page that says which.
+		if strings.TrimSpace(r.URL.Query().Get("deployment")) != "" {
+			rows := []row{}
+			for _, s := range DeploymentSkills(AuthDB()) {
+				rows = append(rows, toSkillRow(s, true))
+			}
+			writeJSON(w, rows)
+			return
+		}
+		rows := []row{}
+		for _, s := range LoadSkills(AuthDB(), user) {
+			rows = append(rows, toSkillRow(s, false))
+		}
+		// Plus the ones this user published, which left their pool for the
+		// deployment's. Still theirs to edit and to take back.
+		for _, s := range DeploymentSkills(AuthDB()) {
+			if s.Owner == user {
+				rows = append(rows, toSkillRow(s, true))
+			}
 		}
 		writeJSON(w, rows)
 	case http.MethodPost:
 		id := strings.TrimSpace(r.URL.Query().Get("id"))
 		action := strings.TrimSpace(r.URL.Query().Get("action"))
+		// Taking a published skill back is the author's alone: nobody needs
+		// permission to stop publishing something they wrote. It returns to
+		// their own pool, without the bundled tools, which were dropped when it
+		// went out and are not the record everybody has been using.
+		if action == "unpublish" {
+			if id == "" {
+				http.Error(w, "missing id", http.StatusBadRequest)
+				return
+			}
+			if err := NarrowSkillToOwner(AuthDB(), user, id); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		// enable/disable — mute/unmute without touching the definition.
 		if action == "enable" || action == "disable" {
 			if id == "" {
@@ -1076,9 +1122,9 @@ func (T *Extensions) handlePromotions(w http.ResponseWriter, r *http.Request) {
 	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
 	name := strings.TrimSpace(r.URL.Query().Get("name"))
 	switch kind {
-	case "tool", CredentialPromotionKind:
+	case "tool", CredentialPromotionKind, SkillPromotionKind:
 	default:
-		http.Error(w, "only tool and credential promotion are available", http.StatusBadRequest)
+		http.Error(w, "only tool, credential and skill promotion are available", http.StatusBadRequest)
 		return
 	}
 	if name == "" {
@@ -1087,9 +1133,13 @@ func (T *Extensions) handlePromotions(w http.ResponseWriter, r *http.Request) {
 	}
 	// Ownership: whatever is being handed over has to be the caller's.
 	owns := false
-	if kind == CredentialPromotionKind {
+	switch kind {
+	case CredentialPromotionKind:
 		_, owns = Secure().LoadUser(user, name)
-	} else {
+	case SkillPromotionKind:
+		// By NAME, which is what the request carries and what the admin reads.
+		_, owns = FindSkillByName(AuthDB(), user, name)
+	default:
 		for _, p := range LoadPersistentTempTools(AuthDB(), user) {
 			if p.Tool.Name == name {
 				owns = true
@@ -1715,7 +1765,9 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 		{
 			Title:    "Skills",
 			Subtitle: "Behavior packs your agents draw on.",
-			Detail:   "A skill is instructions the assistant applies when its triggers or description match the turn. Author or edit one right here (name, triggers, instructions, the tools it may call and the collections it may search), or ask Builder in Agents for skills that ship their own code.\n\nOpen a skill to give it a playbook: conditional rules (\"establish Y first; if yes do Z, if no do U\") that the framework runs and settles before the assistant answers. Disable to mute a skill without losing it; delete to retire it.",
+			Detail: "A skill is instructions the assistant applies when its triggers or description match the turn. Author or edit one right here (name, triggers, instructions, the tools it may call and the collections it may search), or ask Builder in Agents for skills that ship their own code.\n\n" +
+				"Open a skill to give it a playbook: conditional rules (\"establish Y first; if yes do Z, if no do U\") that the framework runs and settles before the assistant answers. Disable to mute a skill without losing it; delete to retire it.\n\n" +
+				"A skill reaches other people on three rungs: yours alone, shared with people you name, or published to the whole deployment. The first two are your own call; the third is an admin's, and a skill you published is listed here with a Deployment-wide badge and a Take back button.",
 			Body: ui.Stack{Children: []ui.Component{
 				ui.Table{
 					Source: "api/skills",
@@ -1727,6 +1779,12 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 						// How many conditional rules this skill carries, and the
 						// way into them: the count is the link.
 						{Field: "playbook", Label: "Playbook", Link: "playbook_url", Mute: true},
+						{Field: "published", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: true, Label: "Deployment-wide", Color: "info"},
+						}},
+						{Field: "publish_pending", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: true, Label: "Publish requested", Color: "warning"},
+						}},
 						{Field: "disabled", Label: "Status", Type: "dot", Badges: []ui.BadgeMapping{
 							{Value: true, Label: "Disabled", Color: "danger"},
 							{Value: false, Label: "Active", Color: "success"},
@@ -1780,7 +1838,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 							// anything to the whole deployment is an
 							// administrator's decision; who you hand a skill to
 							// is yours.
-							ui.Card{HTML: `<div style="font-size:0.78rem;color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Shared with</div><div style="font-size:0.75rem;color:var(--text-mute)">Other users who may use this skill. Empty means private to you. They get the behaviour, not the authorship: it activates on their turns and they cannot edit or delete it. Attached collections are NOT shared with it, because those are your documents.</div>`},
+							ui.Card{HTML: `<div style="font-size:0.78rem;color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Shared with</div><div style="font-size:0.75rem;color:var(--text-mute)">Other users who may use this skill. Empty means private to you. They get the behaviour, not the authorship: it activates on their turns and they cannot edit or delete it. Bundled tools do not travel, because that would run your code in their session. Attached collections do travel as references, and each resolves only for someone who can already read it.</div>`},
 							ui.ACLPicker(ui.ACLPickerConfig{
 								OptionsSource: "api/user-candidates",
 								RecordSource:  "api/skills?id={id}",
@@ -1800,9 +1858,32 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 							PostTo:     "api/skills?action=enable&id={id}",
 							OnlyIf:     "disabled",
 							Optimistic: true},
+						// The third rung. Sharing to named people is the author's
+						// own call; reaching every account in the deployment is
+						// an administrator's.
+						ui.ModalActionIf("Publish deployment-wide", "can_publish", "", ui.FormPanel{
+							SubmitLabel: "Ask an admin",
+							PostURL:     "api/promotions?kind=skill&name={name}",
+							Fields: []ui.FormField{
+								{Type: "header", Label: "Everybody's turns, not just yours",
+									Help: "It stays yours to edit and to take back, and an admin decides whether it goes out.",
+									Detail: "A published skill moves out of your own list into the deployment's, where the classifier can activate it on any user's turn. Your name stays on it, you keep editing it, and Take back returns it to you without asking anybody.\n\n" +
+										"Its bundled tools do not go with it. Everything true of that for one recipient is more true for every account at once: it would run your scripts in every session in the deployment, under each person's own credentials, skipping the rung a tool has to pass to reach even one other user.\n\n" +
+										"Attached collections travel as references and resolve for whoever can already read them, so promote the collection too if everybody is meant to have it. Anyone you had shared this with keeps it by having it deployment-wide instead."},
+								{Field: "note", Type: "textarea", Rows: 3, Label: "Note for the admin (optional)",
+									Placeholder: "Who is this for, and when should it fire?"},
+							},
+							Invalidate: []string{"api/skills"},
+						}),
+						{Type: "button", Label: "Take back", Method: "POST",
+							PostTo:     "api/skills?action=unpublish&id={id}",
+							OnlyIf:     "published",
+							Confirm:    "Take this skill back from the deployment? It returns to your own skills and stops activating on other people's turns.",
+							Optimistic: true},
 						{Type: "button", Label: "Delete", Method: "DELETE",
 							PostTo:     "api/skills?id={id}",
 							Variant:    "danger",
+							HideIf:     "published",
 							Confirm:    "Delete this skill? The definition is gone for good.",
 							Optimistic: true},
 					},
@@ -1822,6 +1903,24 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 					},
 				},
 			}},
+		},
+		{
+			Title:    "Skills the deployment publishes",
+			Subtitle: "Behaviour packs that apply to everybody, including you.",
+			Detail: "These activate on your turns when their triggers match, the same as your own, whether or not you went looking for them. A skill of your own with the same name is tried first.\n\n" +
+				"They carry no code: a published skill's bundled tools stay with its author. Its attached collections are references, and each one only answers for people who can already read it.\n\n" +
+				"An author publishes one by asking an admin; the ones you published are listed with your own skills above, where you can edit or take them back.",
+			Body: ui.Table{
+				Source: "api/skills?deployment=1",
+				RowKey: "id",
+				Columns: []ui.Col{
+					{Field: "name", Flex: 1},
+					{Field: "description", Mute: true, Flex: 2},
+					{Field: "triggers", Label: "Triggers", Mute: true},
+					{Field: "updated", Label: "Updated", Mute: true},
+				},
+				EmptyText: "The deployment publishes no skills.",
+			},
 		},
 		{
 			Title:    "Global tools",
@@ -2706,5 +2805,13 @@ func ledgerOutcome(e SecureAPIAuditEntry) string {
 // queueing behind it.
 func handoverPending(user, name string) bool {
 	req, ok := promotion.GetPromotionRequest(AuthDB(), promotion.RequestKey(CredentialPromotionKind, user, name))
+	return ok && req.State == promotion.PromotionPendingState
+}
+
+// skillPublishPending reports whether this skill is already waiting on an
+// admin, so the ask does not stay live and read as having done nothing. Keyed
+// on the NAME, which is what the request is filed under.
+func skillPublishPending(user, name string) bool {
+	req, ok := promotion.GetPromotionRequest(AuthDB(), promotion.RequestKey(SkillPromotionKind, user, name))
 	return ok && req.State == promotion.PromotionPendingState
 }

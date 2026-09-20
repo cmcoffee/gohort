@@ -946,25 +946,21 @@ func searchAgentKnowledgeVec(ctx context.Context, db Database, user, baseUser, a
 	// recipient gets what they were actually given, and a published agent
 	// carries a corpus only when that corpus is itself deployment-wide.
 	var withheld []string
-	for _, cid := range agentAttachedCollections {
-		cid = strings.TrimSpace(cid)
-		if cid == "" {
-			continue
+	admit := func(ids []string) {
+		for _, cid := range ids {
+			cid = strings.TrimSpace(cid)
+			if cid == "" {
+				continue
+			}
+			if _, ok := LoadCollection(UserDB(CollectionsDB(), user), user, cid); !ok {
+				withheld = append(withheld, cid)
+				continue
+			}
+			exact[collectionSource(cid)] = true
 		}
-		if _, ok := LoadCollection(UserDB(CollectionsDB(), user), user, cid); !ok {
-			withheld = append(withheld, cid)
-			continue
-		}
-		exact[collectionSource(cid)] = true
 	}
-	if len(withheld) > 0 {
-		// Never silent. A corpus that quietly stops answering is the shape that
-		// produces a confident wrong answer instead of a missing one, and the
-		// person who can fix it is the owner, who is not in this turn.
-		Log("[orchestrate.knowledge] agent=%s run by %q: %d attached collection(s) withheld, not readable by them: %v",
-			agentID, user, len(withheld), withheld)
-		noteWithheldCollections(baseUser, user, agentID, withheld)
-	}
+	admit(agentAttachedCollections)
+
 	// Active skills contribute their AttachedCollections — when the
 	// classifier picks a skill this turn, its admin-curated reference
 	// material becomes searchable alongside the agent's own corpus.
@@ -973,12 +969,22 @@ func searchAgentKnowledgeVec(ctx context.Context, db Database, user, baseUser, a
 	// is the "skills as behavior + corpus packets" path that pairs
 	// with the new pull-only retrieval model (no auto-inject =
 	// no contamination cost for ride-along docs).
+	//
+	// Through the SAME gate as the agent's own, and for the same reason. This
+	// branch used to admit a skill's collections by id with no ownership check,
+	// which was survivable only while every skill in scope was the runner's own.
+	// A skill shared with them, or one the deployment publishes, is somebody
+	// else's record naming somebody else's documents, and an id is not a grant.
 	for _, sk := range activeSkills {
-		for _, cid := range sk.AttachedCollections {
-			if cid = strings.TrimSpace(cid); cid != "" {
-				exact[collectionSource(cid)] = true
-			}
-		}
+		admit(sk.AttachedCollections)
+	}
+	if len(withheld) > 0 {
+		// Never silent. A corpus that quietly stops answering is the shape that
+		// produces a confident wrong answer instead of a missing one, and the
+		// person who can fix it is the owner, who is not in this turn.
+		Log("[orchestrate.knowledge] agent=%s run by %q: %d attached collection(s) withheld, not readable by them: %v",
+			agentID, user, len(withheld), withheld)
+		noteWithheldCollections(baseUser, user, agentID, withheld)
 	}
 	// Deployment-scoped collections auto-attach when the agent
 	// has no curated AttachedCollections (the "default = open"

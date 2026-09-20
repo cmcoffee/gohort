@@ -182,6 +182,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 				"Approve an app request to share it with every signed-in user: each gets their own copy, and its scripts run with the owner's credentials, which is why an admin sees it first.\n\n" +
 				"Approve a public-link request to mint the app's anonymous link: anyone who has the URL then runs its data sources as the owner, with no login.\n\n" +
 				"A CREDENTIAL request is the one that is not a widening. The requester is handing their key to the deployment: the secret moves into the global namespace, the credential lands secured so that it has no user list and is reachable only through the tools bound to it, and the requester becomes an ordinary user of it. They cannot take it back afterwards — read the note and be sure the deployment should own this key, because the alternative to keeping it is deleting it.\n\n" +
+				"Approve a SKILL request to move it from its author's list into the deployment's, where the classifier can activate it on any user's turn. Its bundled tools do not go with it, for the same reason a shared tool needs its own approval; its attached collections travel as references that only answer for people who can already read them. The author keeps editing it and can take it back without asking.\n\n" +
 				"Deny to dismiss.",
 			Body: ui.Table{
 				Source: "api/promotions",
@@ -205,6 +206,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 						// stops being the requester's and the move is not one
 						// they can undo.
 						{Value: "credential", Label: "Credential", Color: "danger"},
+						{Value: "skill", Label: "Skill", Color: "info"},
 					}},
 					{Field: "name", Flex: 1},
 					{Field: "note", Flex: 2, Mute: true},

@@ -28,6 +28,7 @@ import (
 
 	"github.com/cmcoffee/gohort/core/notices"
 	"github.com/cmcoffee/gohort/core/peershare"
+	"github.com/cmcoffee/gohort/core/promotion"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -94,11 +95,11 @@ type SkillRecord struct {
 	// executable code) travel with it: each of those is shared on its own
 	// terms, through its own gate. A recipient gets the instructions and the
 	// tool NAMES, which resolve in their own namespace like every other
-	// dependency of a shared thing. See SharedSkillsFor.
+	// dependency of a shared thing. See sharedSkillsFor.
 	AllowedUsers []string `json:"allowed_users,omitempty"`
 
 	// SharedFrom / SharedOmitted are set on the COPY a recipient sees, never
-	// stored: SharedSkillsFor fills them in as it strips what cannot travel.
+	// stored: sharedSkillsFor fills them in as it strips what cannot travel.
 	//
 	// They exist so the absence is speakable. A skill whose instructions say
 	// "use check_inventory" on a machine with no such tool is the exact shape
@@ -477,22 +478,27 @@ func lowerFirst(s string) string {
 // Storage shape: one row per user keyed by username, value is a
 // []SkillRecord. Same pattern as PersistentTempTools — fewer DB
 // keys, atomic per-user updates, and the row count stays small.
-// SharedSkillsTable indexes peer shares: recipient -> (owner, skill id).
-const SharedSkillsTable = "shared_skills"
-
-// SharedSkillsFor returns the skills other people have shared WITH this user.
+// sharedSkillsTable indexes peer shares: recipient -> (owner, skill id).
 //
-// Each comes back with its attached collections stripped, because those are the
-// owner's documents: handing somebody a skill is handing them a behaviour, not
-// a corpus. Disabled ones are skipped, since an owner who muted a skill has
-// muted it for everybody, not just themselves.
-func SharedSkillsFor(db Database, username string) []SkillRecord {
+// Unexported, with sharedSkillsFor below it: nothing outside core resolves a
+// skill share. Callers ask AvailableSkills what a user may use and get every
+// tier at once, which is the question they actually have.
+const sharedSkillsTable = "shared_skills"
+
+// sharedSkillsFor returns the skills other people have shared WITH this user.
+//
+// A share carries BEHAVIOUR. Bundled tools are stripped (see below), and the
+// attached collections travel as IDS that resolve — or do not — in the
+// recipient's own namespace, exactly as a shared agent's do. Disabled ones are
+// skipped, since an owner who muted a skill has muted it for everybody, not
+// just themselves.
+func sharedSkillsFor(db Database, username string) []SkillRecord {
 	store := skillStore(db)
 	if store == nil || strings.TrimSpace(username) == "" {
 		return nil
 	}
 	var out []SkillRecord
-	for _, ref := range peershare.List(store, SharedSkillsTable, username) {
+	for _, ref := range peershare.List(store, sharedSkillsTable, username) {
 		for _, s := range LoadSkills(db, ref.Owner) {
 			if s.ID != ref.ID || s.Disabled {
 				continue
@@ -507,17 +513,21 @@ func SharedSkillsFor(db Database, username string) []SkillRecord {
 			s.SharedFrom = ref.Owner
 			s.SharedOmitted = omittedFromShare(s)
 			noteSkillShareGaps(ref.Owner, username, s)
-			s.AttachedCollections = nil
-			// Bundled tools do not travel either, and for a stronger reason
-			// than the collections above. A skill can carry its own executable
+			// Bundled tools do not travel. A skill can carry its own executable
 			// scripts so it stays portable, and attaching those for a recipient
 			// would run another person's code in their session, under their
 			// credentials, with no approval anywhere — which is precisely the
 			// gate a tool has to pass to reach even one other user. A skill
-			// share would be the way around it.
+			// share would be the way around it. Tools are shared as tools.
 			//
-			// So a share carries BEHAVIOUR. Tools are shared as tools, on their
-			// own terms, and collections as collections.
+			// The attached COLLECTIONS stay, and are gated where they are read
+			// rather than here. They used to be stripped, which meant a skill
+			// and a collection deliberately shared with the same person still
+			// could not work together. The retrieval path resolves every
+			// collection id in the RUNTIME user's namespace, so a recipient
+			// gets the ones they were actually given, a deployment corpus
+			// resolves for everybody, and anything else is withheld and
+			// reported. An id is not a grant, and it is not treated as one.
 			s.Tools = nil
 			out = append(out, s)
 		}
@@ -527,18 +537,19 @@ func SharedSkillsFor(db Database, username string) []SkillRecord {
 }
 
 // omittedFromShare names what a share cannot carry, in the reader's terms.
-// Counts rather than names for the tools, because a recipient has no use for
-// the owner's internal tool names and every use for knowing the skill expects
-// capabilities they may not have.
+// Counts rather than names, because a recipient has no use for the owner's
+// internal tool names and every use for knowing the skill expects capabilities
+// they may not have.
+//
+// Only the tools. The attached collections are no longer stripped here — they
+// are resolved, or withheld, per runtime user at retrieval time, which reports
+// itself. Claiming them as missing up front would be wrong for the recipient
+// who was given them.
 func omittedFromShare(s SkillRecord) []string {
-	var out []string
 	if n := len(s.Tools); n > 0 {
-		out = append(out, fmt.Sprintf("%d bundled tool(s)", n))
+		return []string{fmt.Sprintf("%d bundled tool(s)", n)}
 	}
-	if n := len(s.AttachedCollections); n > 0 {
-		out = append(out, fmt.Sprintf("%d attached collection(s)", n))
-	}
-	return out
+	return nil
 }
 
 func skillSharedWith(s SkillRecord, user string) bool {
@@ -554,21 +565,25 @@ func skillSharedWith(s SkillRecord, user string) bool {
 // shared with them. The order puts the user's own first, because a name
 // collision should resolve to the skill they wrote.
 func AvailableSkills(db Database, username string) []SkillRecord {
-	own := LoadSkills(db, username)
-	shared := SharedSkillsFor(db, username)
-	if len(shared) == 0 {
-		return own
-	}
-	seen := make(map[string]bool, len(own))
-	for _, s := range own {
+	out := LoadSkills(db, username)
+	seen := make(map[string]bool, len(out))
+	for _, s := range out {
 		seen[s.ID] = true
 	}
-	for _, s := range shared {
-		if !seen[s.ID] {
-			own = append(own, s)
+	// Then the ones a colleague gave them, then the ones the deployment
+	// publishes. Three tiers, most specific first: a skill they wrote beats one
+	// handed to them, and a colleague handing you something is a more specific
+	// answer than a skill every account in the building has.
+	for _, tier := range [][]SkillRecord{sharedSkillsFor(db, username), DeploymentSkills(db)} {
+		for _, s := range tier {
+			if seen[s.ID] {
+				continue
+			}
+			seen[s.ID] = true
+			out = append(out, s)
 		}
 	}
-	return own
+	return out
 }
 
 func LoadSkills(db Database, username string) []SkillRecord {
@@ -665,7 +680,7 @@ func SaveSkillAs(db Database, username string, s SkillRecord, reason string) (Sk
 	// that updated one without the other would either strand a recipient or
 	// keep one who had been removed, and which of those you got would depend on
 	// which half ran.
-	peershare.SetRecipients(store, SharedSkillsTable, username, s.ID, s.AllowedUsers)
+	peershare.SetRecipients(store, sharedSkillsTable, username, s.ID, s.AllowedUsers)
 	return s, nil
 }
 
@@ -747,7 +762,7 @@ func DeleteSkill(db Database, username, id string) bool {
 	// The shares go with it. An index entry outliving its record points at
 	// nothing, which reads to a recipient as access they lost rather than a
 	// skill that is gone.
-	peershare.DropAll(store, SharedSkillsTable, username, id)
+	peershare.DropAll(store, sharedSkillsTable, username, id)
 	// The history goes with the skill, the way a deleted pipeline's does.
 	revisions.Delete(store, revisions.KindSkill, skillRingKey(username, id))
 	// Drop the skill's corpus chunks from its dedicated store.
@@ -1266,8 +1281,191 @@ func noteSkillShareGaps(owner, recipient string, s SkillRecord) {
 		Owner: owner,
 		Kind:  notices.KindStopped,
 		Title: "\"" + s.Name + "\" reaches other people without " + strings.Join(s.SharedOmitted, " or "),
-		Body: "A skill share carries the behaviour, not the owner's code or documents: bundled tools would run in somebody else's session under their credentials, " +
-			"and attached collections are your documents. Each is shared on its own terms instead. " +
-			"If this skill needs them, share the tool from Extensions and the collection from its own page; otherwise the people you shared it with are following instructions that reference things they cannot reach.",
+		Body: "A skill share carries the behaviour, not the owner's code: a bundled tool would run in somebody else's session, under their credentials, with no approval anywhere. " +
+			"Tools are shared as tools instead. If this skill needs one, share it from Extensions; otherwise the people you shared this with are following instructions that reference something they cannot reach. " +
+			"Attached collections are not stripped — each resolves for whoever was given it, and a run that cannot reach one says so on its own.",
+	})
+}
+
+// ----------------------------------------------------------------------
+// The deployment rung
+// ----------------------------------------------------------------------
+
+// deploymentSkillsTable holds the skills the deployment publishes: one slice,
+// in the same store the per-user pools live in.
+//
+// A table of its own rather than a reserved key in skillsTable, which is keyed
+// by username — a deployment skill sharing that keyspace would be one
+// unfortunate account name away from being somebody's personal pool.
+const deploymentSkillsTable = "deployment_skills"
+
+// SkillPromotionKind is the promotion kind for publishing a skill
+// deployment-wide.
+const SkillPromotionKind = "skill"
+
+func init() {
+	promotion.RegisterApprover(SkillPromotionKind, func(owner, id string) error {
+		return promoteSkillToDeployment(owner, id)
+	})
+}
+
+// DeploymentSkills returns the skills published to everybody.
+//
+// They carry no bundled tools, by construction: the promotion strips them for
+// the reason a peer share does, only more so, since this reaches every user
+// rather than one. Attached collection ids travel and resolve per runtime user
+// at retrieval time, so a skill published alongside a deployment collection
+// works for everybody and one pointing at the author's private corpus quietly
+// reaches nobody and says so.
+func DeploymentSkills(db Database) []SkillRecord {
+	store := skillStore(db)
+	if store == nil {
+		return nil
+	}
+	var out []SkillRecord
+	if !store.Get(deploymentSkillsTable, "all", &out) {
+		return nil
+	}
+	live := out[:0]
+	for _, s := range out {
+		// Disabled is the author's own mute and it still counts here: an admin
+		// approved publishing a skill, not publishing it regardless of what its
+		// author later decided about it.
+		if !s.Disabled {
+			live = append(live, s)
+		}
+	}
+	sort.SliceStable(live, func(i, j int) bool { return live[i].Updated.After(live[j].Updated) })
+	return live
+}
+
+// promoteSkillToDeployment moves a user's skill into the deployment pool, where
+// it activates on everybody's turns.
+//
+// Unexported and reached only through the registered approver: publishing to
+// the whole deployment is an administrator's decision, not a call another
+// package makes on its own.
+//
+// The record MOVES rather than being copied, as a collection's does. One copy
+// means an edit later is an edit everybody gets, and it means there is exactly
+// one answer to "whose is this" — the author's name stays on it, because a
+// published skill nobody is answerable for is worse than none.
+//
+// The bundled tools do NOT come. Everything true of that for one recipient is
+// more true for every user at once: it would run the author's scripts in every
+// session in the deployment, under each person's own credentials, with the tool
+// rung skipped entirely.
+func promoteSkillToDeployment(owner, id string) error {
+	owner, id = strings.TrimSpace(owner), strings.TrimSpace(id)
+	if owner == "" || id == "" {
+		return errString("owner and skill id are required")
+	}
+	store := skillStore(nil)
+	if store == nil {
+		return errString("no skill store")
+	}
+	// By id, then by name. The request is FILED under the skill's name, because
+	// an administrator deciding whether the deployment should publish something
+	// is reading that row and "sk-9f2a1c" tells them nothing. The id still
+	// resolves, for any caller that has one.
+	var found *SkillRecord
+	for _, s := range LoadSkills(nil, owner) {
+		if s.ID == id || strings.EqualFold(s.Name, id) {
+			c := s
+			found = &c
+			break
+		}
+	}
+	if found == nil {
+		return errString("no skill " + id + " owned by " + owner +
+			" (a skill renamed after the request was filed no longer answers to the name on it)")
+	}
+	for _, s := range DeploymentSkills(nil) {
+		if strings.EqualFold(s.Name, found.Name) {
+			return errString("the deployment already publishes a skill called " + found.Name +
+				"; rename yours before publishing it, so a turn matching that name has one answer")
+		}
+	}
+
+	published := *found
+	published.Owner = owner
+	stripped := len(published.Tools)
+	published.Tools = nil
+	// The peer shares go: everybody has it now, so a list naming three people
+	// decides nothing, and leaving it would have a later narrowing silently
+	// restore an ACL the owner had forgotten.
+	published.AllowedUsers = nil
+
+	existing := DeploymentSkills(nil)
+	store.Set(deploymentSkillsTable, "all", append(existing, published))
+	DeleteSkill(nil, owner, found.ID)
+	Log("[skills] %q published %q deployment-wide (%d bundled tool(s) not carried)", owner, published.Name, stripped)
+	noteSkillPublished(owner, published, stripped)
+	return nil
+}
+
+// NarrowSkillToOwner is the way back, and it is the OWNER's: nobody needs
+// permission to stop publishing something they wrote.
+//
+// It returns to their own pool with no recipients, because the alternative is
+// guessing which of the deployment's users they meant to keep. The bundled
+// tools do not come back — they were dropped at publication, and the record
+// that exists now is the one everybody has been using.
+func NarrowSkillToOwner(db Database, owner, id string) error {
+	owner, id = strings.TrimSpace(owner), strings.TrimSpace(id)
+	store := skillStore(db)
+	if store == nil || owner == "" || id == "" {
+		return errString("owner and skill id are required")
+	}
+	all := DeploymentSkills(db)
+	var taken *SkillRecord
+	rest := make([]SkillRecord, 0, len(all))
+	for _, s := range all {
+		if s.ID == id {
+			c := s
+			taken = &c
+			continue
+		}
+		rest = append(rest, s)
+	}
+	if taken == nil {
+		return errString("no deployment skill " + id)
+	}
+	if taken.Owner != owner {
+		return errString("skill " + id + " was published by " + taken.Owner + ", not " + owner)
+	}
+	store.Set(deploymentSkillsTable, "all", rest)
+	taken.AllowedUsers = nil
+	if _, err := SaveSkillAs(db, owner, *taken, "unpublished"); err != nil {
+		// Put it back rather than losing it between two tables.
+		store.Set(deploymentSkillsTable, "all", all)
+		return err
+	}
+	Log("[skills] %q took %q back from the deployment", owner, taken.Name)
+	return nil
+}
+
+// noteSkillPublished tells the author what reaching everybody cost them.
+//
+// They asked for one thing and two follow: the skill left their pool, and its
+// bundled tools did not come. A publication that reports success and says
+// neither leaves somebody wondering where their skill went and why the
+// deployment's copy does half of what theirs did.
+func noteSkillPublished(owner string, s SkillRecord, strippedTools int) {
+	if RootDB == nil || owner == "" {
+		return
+	}
+	body := "It has moved out of your own skills and into the deployment's, where it activates on everybody's turns. It is still yours: your name is on it, you edit it, and you can take it back at any time without asking."
+	if strippedTools > 0 {
+		body += " Its " + strconv.Itoa(strippedTools) + " bundled tool(s) did not come with it — that would run your scripts in every session in the deployment, under each person's own credentials. Share those from Extensions if the skill needs them."
+	}
+	if len(s.AttachedCollections) > 0 {
+		body += " Its attached collections travel as references and resolve for whoever can already read them, so promote the collection too if everybody is meant to have it."
+	}
+	notices.Record(RootDB, notices.Notice{
+		Owner: owner,
+		Kind:  notices.KindStopped,
+		Title: "\"" + s.Name + "\" is now a deployment skill",
+		Body:  body,
 	})
 }

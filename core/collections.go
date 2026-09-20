@@ -700,7 +700,7 @@ func LoadCollection(udb Database, user, id string) (Collection, bool) {
 	// then re-checked against the owner's record, so a stale index entry cannot
 	// grant access the owner has taken away.
 	if user != "" && RootDB != nil && VectorDB != nil {
-		for _, ref := range peershare.List(RootDB, SharedCollectionsTable, user) {
+		for _, ref := range peershare.List(RootDB, sharedCollectionsTable, user) {
 			if ref.ID != id {
 				continue
 			}
@@ -772,8 +772,8 @@ func ListCollections(udb Database, user string) []Collection {
 	return out
 }
 
-// SharedCollectionsTable indexes peer shares: recipient -> (owner, collection).
-const SharedCollectionsTable = "shared_collections"
+// sharedCollectionsTable indexes peer shares: recipient -> (owner, collection).
+const sharedCollectionsTable = "shared_collections"
 
 // SharedCollectionsFor returns the collections other people have shared WITH
 // this user, read from each owner's own store.
@@ -789,7 +789,7 @@ func SharedCollectionsFor(user string) []Collection {
 		return nil
 	}
 	var out []Collection
-	for _, ref := range peershare.List(RootDB, SharedCollectionsTable, user) {
+	for _, ref := range peershare.List(RootDB, sharedCollectionsTable, user) {
 		udb := UserDB(CollectionsDB(), ref.Owner)
 		if udb == nil {
 			continue
@@ -837,7 +837,7 @@ func SaveCollection(udb Database, c Collection) {
 	// The peer-share index follows the record in the same write, so a share and
 	// its lookup cannot disagree about who has access.
 	if RootDB != nil && c.Owner != "" {
-		peershare.SetRecipients(RootDB, SharedCollectionsTable, c.Owner, c.ID, c.AllowedUsers)
+		peershare.SetRecipients(RootDB, sharedCollectionsTable, c.Owner, c.ID, c.AllowedUsers)
 	}
 }
 
@@ -869,7 +869,7 @@ func DeleteCollection(udb, appDB Database, user, id string) (chunksRemoved int) 
 	// The shares go with it: an index entry outliving its record points at
 	// nothing, which reads to a recipient as access they lost.
 	if RootDB != nil && c.Owner != "" {
-		peershare.DropAll(RootDB, SharedCollectionsTable, c.Owner, c.ID)
+		peershare.DropAll(RootDB, sharedCollectionsTable, c.Owner, c.ID)
 	}
 	if appDB != nil {
 		chunksRemoved = WipeChunksBySourcePrefix(appDB, CollectionSource(id))
@@ -941,7 +941,7 @@ func PromoteCollectionToDeployment(owner, id string) error {
 	// The peer shares go: everybody has it now, so an entry naming three people
 	// is a row that decides nothing, and leaving it would make a later
 	// narrowing silently restore an ACL the owner had forgotten.
-	peershare.DropAll(RootDB, SharedCollectionsTable, owner, c.ID)
+	peershare.DropAll(RootDB, sharedCollectionsTable, owner, c.ID)
 	Log("[collections] %q promoted %q to deployment scope", owner, c.Name)
 	return nil
 }

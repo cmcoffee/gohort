@@ -159,7 +159,7 @@ func TestPromotingMovesTheRecordAndKeepsTheCorpus(t *testing.T) {
 	// The peer shares go, because everybody has it: an ACL naming three people
 	// decides nothing now, and leaving it would silently restore it on a later
 	// narrowing.
-	if got := peershare.List(RootDB, SharedCollectionsTable, "bob"); len(got) != 0 {
+	if got := peershare.List(RootDB, sharedCollectionsTable, "bob"); len(got) != 0 {
 		t.Errorf("peer shares survived promotion: %+v", got)
 	}
 
