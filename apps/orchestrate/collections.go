@@ -209,6 +209,22 @@ func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Requ
 		http.NotFound(w, r)
 		return
 	}
+	// ONE gate, before the switch, rather than a check inside each handler.
+	//
+	// loadCollection admits the owner, anybody it was shared with, and every
+	// user when it is deployment-wide — which is right for reading and was
+	// being used for everything. Sharing a collection handed the recipient
+	// upload, paste, sources, autofill and research on it, and renaming or
+	// re-scoping it besides: nobody granted that, it was the absence of a
+	// check. Publishing one deployment-wide handed it to everybody.
+	//
+	// It matters more than "somebody added a file". An agent takes its
+	// collections as ground truth, so whoever can write to one decides what
+	// every agent reading it believes, and they will believe it confidently.
+	if why := collectionWriteRefusal(c, user, action, r.Method); why != "" {
+		http.Error(w, why, http.StatusForbidden)
+		return
+	}
 
 	switch {
 	case action == "steward":
@@ -1860,4 +1876,34 @@ func nonNilUsers(in []string) []string {
 		return []string{}
 	}
 	return in
+}
+
+// collectionReadActions are the routes that only LOOK. Everything else is
+// treated as a write, deliberately: a new action added next year is somebody
+// else's corpus until whoever adds it says otherwise, which is the safer way
+// round for a list that will grow.
+var collectionReadActions = map[string]bool{
+	"search": true,
+	"export": true,
+}
+
+// collectionWriteRefusal says why this user may not perform this action on
+// this collection, or "" when they may.
+//
+// The owner may do anything. Everybody else may read. The one exception to the
+// exception is the empty action, which is the record itself: GET reads it, and
+// anything else is renaming, re-scoping or re-sharing somebody else's
+// collection.
+func collectionWriteRefusal(c Collection, user, action, method string) string {
+	if c.Owner == "" || c.Owner == user {
+		return ""
+	}
+	if collectionReadActions[action] {
+		return ""
+	}
+	if action == "" && method == http.MethodGet {
+		return ""
+	}
+	return "\"" + c.Name + "\" belongs to " + c.Owner +
+		" and was shared with you to read. Ask them to add what you want in it, or take a copy of your own."
 }
