@@ -57,6 +57,7 @@ func (T *ShareApp) WebDesc() string {
 func (T *ShareApp) Routes() {
 	T.HandleFunc("/api/mine", T.serveMine)
 	T.HandleFunc("/api/to-me", T.serveToMe)
+	T.HandleFunc("/api/carries", T.serveCarries)
 	T.HandleFunc("/api/revoke", T.serveRevoke)
 	T.HandleFunc("/api/plan", T.servePlan)
 	T.HandleFunc("/api/apply", T.serveApply)
@@ -85,6 +86,11 @@ type row struct {
 	// you that does not work yet, and does not say so, is worse than not
 	// having it: you find out by running it.
 	Needs bool `json:"needs,omitempty"`
+	// Carries says whether anything comes WITH this, so the expand appears
+	// only on rows that have something behind it. Record is the id the expand
+	// asks about, kept apart from ID because that one is made unique per row.
+	Carries bool   `json:"carries,omitempty"`
+	Record  string `json:"record,omitempty"`
 }
 
 func (T *ShareApp) serveMine(w http.ResponseWriter, r *http.Request) {
@@ -123,6 +129,10 @@ func (T *ShareApp) serveToMe(w http.ResponseWriter, r *http.Request) {
 			r.Detail = strings.Join(need, " ")
 			r.Needs = true
 		}
+		// Whether there is anything to open, so a row with nothing behind it
+		// offers no control rather than an expand onto an empty list.
+		r.Carries = len(shareledger.Carries(g.Kind, g.Owner, g.ID, user)) > 0
+		r.Record = g.ID
 		rows = append(rows, r)
 	}
 	writeJSON(w, rows)
@@ -246,6 +256,22 @@ func (T *ShareApp) servePage(w http.ResponseWriter, r *http.Request) {
 				Body: ui.Table{
 					Source: "api/to-me",
 					RowKey: "id",
+					RowActions: []ui.RowAction{
+						// The recipient's own version of the owner's reach
+						// panel. Somebody about to run an agent is about to run
+						// its author's code against its author's documents;
+						// that they cannot reach any of it outside the agent is
+						// what makes that safe, not a reason to leave them
+						// guessing about what happens inside it.
+						ui.ExpandIf("What it carries", "carries", "", ui.Table{
+							Source: "api/carries?kind={kind}&owner={who}&id={record}",
+							RowKey: "line",
+							Columns: []ui.Col{
+								{Field: "line", Flex: 1},
+							},
+							EmptyText: "Nothing of theirs comes with it.",
+						}),
+					},
 					Columns: append(append([]ui.Col{}, cols[:len(cols)-1]...),
 						ui.Col{Field: "needs", Label: "", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
 							{Value: true, Label: "Needs you", Color: "warning"},
@@ -257,4 +283,38 @@ func (T *ShareApp) servePage(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	page.ServeHTTP(w, r)
+}
+
+// serveCarries lists what comes with something shared with the caller.
+//
+// Gated on the caller being a RECIPIENT of that record, which the ledger
+// answers by listing it: asking what somebody else's agent carries is not a
+// question this answers for anybody who did not receive it.
+func (T *ShareApp) serveCarries(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
+	owner := strings.TrimSpace(r.URL.Query().Get("owner"))
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	held := false
+	for _, g := range shareledger.ToMe(user) {
+		if g.Kind == kind && g.Owner == owner && g.ID == id {
+			held = true
+			break
+		}
+	}
+	if !held {
+		http.NotFound(w, r)
+		return
+	}
+	type line struct {
+		Line string `json:"line"`
+	}
+	out := []line{}
+	for _, l := range shareledger.Carries(kind, owner, id, user) {
+		out = append(out, line{Line: l})
+	}
+	writeJSON(w, out)
 }

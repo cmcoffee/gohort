@@ -39,6 +39,7 @@ func registerShareProviders() {
 		},
 		Plan:     planAgentShare,
 		Share:    shareAgentGuided,
+		Carries:  carriedByAgent,
 		Manifest: manifestForAgent,
 		Mine: func(owner string) []shareledger.Grant {
 			var out []shareledger.Grant

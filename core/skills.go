@@ -1542,6 +1542,21 @@ func init() {
 			}
 			return out
 		},
+		Carries: func(owner, id, viewer string) []string {
+			for _, s := range LoadSkills(nil, owner) {
+				if s.ID != id {
+					continue
+				}
+				var out []string
+				for _, cid := range s.AttachedCollections {
+					if c, ok := LoadCollection(UserDB(CollectionsDB(), owner), owner, cid); ok {
+						out = append(out, "Reads "+owner+"'s \""+c.Name+"\" while it is active")
+					}
+				}
+				return out
+			}
+			return nil
+		},
 		Manifest: func(owner, id, recipient string) []string {
 			for _, s := range LoadSkills(nil, owner) {
 				if s.ID != id {

@@ -270,3 +270,43 @@ func hasOption(d shareledger.Decision, value string) bool {
 	}
 	return false
 }
+
+// The recipient's own view of what they are about to run.
+//
+// Somebody handed an agent is about to run its author's code against its
+// author's documents. That they cannot reach any of it outside the agent is
+// what makes that safe — it is not a reason to leave them guessing about what
+// happens inside it.
+func TestARecipientCanSeeWhatTheAgentCarries(t *testing.T) {
+	guidedFixture(t)
+	owner := UserDB(CollectionsDB(), "alice")
+	if owner == nil {
+		t.Skip("no per-user store")
+	}
+	SaveCollection(owner, Collection{ID: "runbooks", Owner: "alice", Name: "Runbooks"})
+	udb := UserDB(orchestrateBaseDB, "alice")
+	a, _ := loadAgent(udb, "a1")
+	a.AttachedCollections = []string{"runbooks"}
+	saveAgent(udb, a)
+
+	carries := carriedByAgent("alice", "a1", "bob")
+	joined := strings.Join(carries, " | ")
+	if len(carries) == 0 {
+		t.Fatal("the recipient is told nothing about what they are running")
+	}
+	// The summary comes first and says whose it is and how far it goes: the
+	// notice quotes that line alone, so it has to stand on its own.
+	if !strings.Contains(carries[0], "alice") || !strings.Contains(carries[0], "nowhere else") {
+		t.Errorf("the summary does not say whose it is and that it is scoped: %q", carries[0])
+	}
+	for _, want := range []string{"Runbooks", "Triage", "wiki_read"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("the list does not mention %q: %v", want, carries)
+		}
+	}
+	// The credential is the OTHER half — what they supply, not what arrives —
+	// and listing it here would say a key came with it when none did.
+	if strings.Contains(joined, "Credential") {
+		t.Errorf("a credential is listed as something that arrived: %v", carries)
+	}
+}

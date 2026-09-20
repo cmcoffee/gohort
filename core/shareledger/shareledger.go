@@ -86,6 +86,15 @@ type Provider struct {
 	// Share hands it over, with the answers to whatever Plan asked, and
 	// returns one line per thing it did or could not do.
 	Share func(owner, id string, recipients []string, answers map[string]string) []string
+	// Carries is what comes WITH this record for whoever holds it: the tools
+	// it runs, the documents it reads, the behaviour it applies. The other
+	// half of Manifest, and the half the recipient has no other way to see.
+	//
+	// Somebody handed an agent is about to run its author's code against its
+	// author's documents. That they cannot reach any of it OUTSIDE the agent
+	// is what makes the arrangement safe; it is not a reason to leave them
+	// guessing about what happens inside it.
+	Carries func(owner, id, viewer string) []string
 	// Manifest is what THIS recipient still has to supply for this record to
 	// do what it says — a credential of their own by the right name, a tool
 	// they have not taken yet. Empty when nothing is needed.
@@ -299,7 +308,25 @@ func tellRecipients(kind, owner, id, name string, recipients []string) {
 		return
 	}
 	for _, u := range recipients {
-		NotifyRecipient(u, owner+" shared "+name+" with you",
-			owner+" shared "+name+" with you.", Manifest(kind, owner, id, u))
+		intro := owner + " shared " + name + " with you."
+		// The first line of what it carries, which by convention is the
+		// summary sentence: whose things come with it and that they are
+		// reachable through this and nowhere else. The full list is a click
+		// away; the notice says enough to know what arrived.
+		if c := Carries(kind, owner, id, u); len(c) > 0 {
+			intro += " " + c[0]
+		}
+		NotifyRecipient(u, owner+" shared "+name+" with you", intro, Manifest(kind, owner, id, u))
 	}
+}
+
+// Carries asks one kind what comes with this record for whoever holds it.
+func Carries(kind, owner, id, viewer string) []string {
+	mu.RLock()
+	p, ok := providers[strings.TrimSpace(kind)]
+	mu.RUnlock()
+	if !ok || p.Carries == nil {
+		return nil
+	}
+	return p.Carries(owner, id, viewer)
 }

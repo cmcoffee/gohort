@@ -157,3 +157,32 @@ func TestTheGuidedFlowNamesNoKind(t *testing.T) {
 		}
 	}
 }
+
+// Asking what somebody else's agent carries is not a question this answers for
+// anybody who did not receive it. The gate is the ledger itself: if it is not
+// in your "shared with you", there is nothing here to read.
+func TestOnlyARecipientCanSeeWhatSomethingCarries(t *testing.T) {
+	src, err := os.ReadFile("share.go")
+	if err != nil {
+		t.Fatalf("reading the source: %v", err)
+	}
+	i := strings.Index(string(src), "func (T *ShareApp) serveCarries")
+	if i < 0 {
+		t.Fatal("serveCarries is gone")
+	}
+	body := string(src)[i:]
+	if end := strings.Index(body, "\nfunc "); end > 0 {
+		body = body[:end]
+	}
+	if !strings.Contains(body, "shareledger.ToMe(user)") {
+		t.Error("the carries listing does not check that the caller actually holds it")
+	}
+	if !strings.Contains(body, "http.NotFound") {
+		t.Error("a caller who does not hold it is not refused")
+	}
+	// The viewer is the session user, never a parameter — the same rule the
+	// revoke follows, and for the same reason.
+	if strings.Contains(body, `Query().Get("user")`) || strings.Contains(body, `Query().Get("viewer")`) {
+		t.Error("the carries listing takes a viewer from the request")
+	}
+}

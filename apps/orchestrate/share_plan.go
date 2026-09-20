@@ -224,3 +224,33 @@ func manifestForAgent(owner, id, recipient string) []string {
 	}
 	return out
 }
+
+// carriedByAgent is what somebody holding this agent is actually running.
+//
+// The owner has had this view since the reach panel existed. The person on the
+// other end has had nothing: they open an agent, it reads documents and calls
+// tools, and every one of those belongs to somebody else. That they cannot
+// reach any of it outside this agent is what makes it safe to hand over — it
+// is not a reason to leave them guessing about what happens inside it.
+//
+// Names rather than counts, because the agent is going to cite these documents
+// and name these tools at them anyway. Listing them up front discloses nothing
+// a turn would not, and answers "whose is this" before rather than after.
+func carriedByAgent(owner, id, viewer string) []string {
+	udb := UserDB(orchestrateBaseDB, owner)
+	a, ok := loadAgent(udb, id)
+	if !ok || a.Owner != owner {
+		return nil
+	}
+	var out []string
+	for _, it := range agentReachOf(udb, owner, a).Items {
+		if it.kind == "credential" {
+			continue // the manifest's half: what they supply, not what arrives
+		}
+		out = append(out, it.Kind+" — "+it.Name)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return append([]string{"All of this is " + owner + "'s, readable through this agent and nowhere else. You cannot attach any of it to an agent of your own."}, out...)
+}
