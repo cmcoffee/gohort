@@ -540,6 +540,17 @@ func checkCredentialToolDef(t *chatTurn) AgentToolDef {
 					cfg += fmt.Sprintf("\n%s (newest first, %d of %d recorded, every row was SENT with auth attached):", label, n, len(audit))
 					for _, e := range shown[:n] {
 						line := fmt.Sprintf("\n  %s %s %s → %d", e.Timestamp.Local().Format("Jan 2 15:04"), e.Method, e.URL, e.Status)
+						// Who made the call, when that is not already answered by
+						// whose credential it is. A user-owned credential can only
+						// be dispatched by its owner, so naming them on every row
+						// is noise; a GLOBAL credential is dispatched by anybody
+						// the grant admits, and there the name is the whole point
+						// of asking. Blank stays blank rather than guessing: a row
+						// from before the field existed is unattributed, not the
+						// owner's.
+						if e.DispatchedBy != "" && e.DispatchedBy != e.Owner {
+							line += " by " + e.DispatchedBy
+						}
 						if e.Error != "" {
 							line += " (" + e.Error + ")"
 						}

@@ -963,3 +963,94 @@ func TestUploadTimeoutIsItsOwnTunable(t *testing.T) {
 		t.Errorf("category = %q", up.Category)
 	}
 }
+
+// The dispatch ledger records WHO made the call, not only whose credential it
+// was. Owner is a namespace; the person with their hands on it is a separate
+// question, and one the ledger could not answer.
+func TestTheLedgerRecordsWhoDispatched(t *testing.T) {
+	secureAPITestStore(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	// A GLOBAL credential: anybody the grant admits dispatches through the same
+	// ring, so "who" was never answerable from the rows.
+	cred := SecureCredential{Name: "shared_api", Type: SecureCredNone,
+		AllowedURLPattern: imageHostPattern(srv.URL)}
+	if _, err := Secure().dispatch(cred, map[string]any{"url": srv.URL + "/v1/pages", "method": "GET"},
+		&ToolSession{Username: "bob"}); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+
+	got := Secure().LoadAudit("", "shared_api")
+	if len(got) != 1 {
+		t.Fatalf("expected one row, got %+v", got)
+	}
+	if got[0].DispatchedBy != "bob" {
+		t.Errorf("the ledger does not say who called: %+v", got[0])
+	}
+	if got[0].Owner != "" {
+		t.Errorf("a global credential's namespace is empty, got %q", got[0].Owner)
+	}
+}
+
+// A call with no session behind it stays blank rather than being attributed to
+// the credential's owner. Absence of a name is not evidence of one.
+func TestAnUnattributedCallIsNotAttributedToTheOwner(t *testing.T) {
+	secureAPITestStore(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	cred := SecureCredential{Name: "own_api", Type: SecureCredNone, Owner: "alice",
+		AllowedURLPattern: imageHostPattern(srv.URL)}
+	if _, err := Secure().dispatch(cred, map[string]any{"url": srv.URL + "/ping", "method": "GET"}, nil); err != nil {
+		t.Fatalf("dispatch: %v", err)
+	}
+	got := Secure().LoadAudit("alice", "own_api")
+	if len(got) != 1 {
+		t.Fatalf("expected one row, got %+v", got)
+	}
+	if got[0].DispatchedBy != "" {
+		t.Errorf("a sessionless call was attributed to %q", got[0].DispatchedBy)
+	}
+}
+
+// A failing call is recorded with its caller too: a refused write is exactly
+// the row somebody asks "who tried that" about.
+func TestAFailedCallStillNamesItsCaller(t *testing.T) {
+	secureAPITestStore(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	cred := SecureCredential{Name: "strict_api", Type: SecureCredNone,
+		AllowedURLPattern: imageHostPattern(srv.URL)}
+	_, _ = Secure().dispatch(cred, map[string]any{"url": srv.URL + "/v1/pages", "method": "POST", "body": "{}"},
+		&ToolSession{Username: "bob"})
+
+	got := Secure().LoadAudit("", "strict_api")
+	if len(got) != 1 {
+		t.Fatalf("expected one row, got %+v", got)
+	}
+	if got[0].Status != http.StatusForbidden || got[0].DispatchedBy != "bob" {
+		t.Errorf("the refused row does not name its caller: %+v", got[0])
+	}
+}
+
+// Rings written before the field existed still decode, and read as
+// unattributed rather than failing or inventing an owner.
+func TestLedgerRowsFromBeforeTheFieldDecode(t *testing.T) {
+	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
+	s.db.Set(secureAPIAuditTable, "legacy", []SecureAPIAuditEntry{{CredentialName: "legacy", URL: "https://old", Status: 200}})
+	got := s.LoadAudit("", "legacy")
+	if len(got) != 1 || got[0].URL != "https://old" {
+		t.Fatalf("pre-field ledger not readable: %+v", got)
+	}
+	if got[0].DispatchedBy != "" {
+		t.Errorf("a pre-field row claims a caller: %q", got[0].DispatchedBy)
+	}
+}

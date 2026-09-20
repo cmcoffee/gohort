@@ -312,7 +312,26 @@ type SecureAPIAuditEntry struct {
 	// the bare-name ring, so one user's dispatch ledger showed another user's
 	// calls (and the daily-cap counter counted across users). Keyed the same
 	// way credentials themselves are — credStoreKey(Owner, CredentialName).
-	Owner         string    `json:"owner,omitempty"`
+	Owner string `json:"owner,omitempty"`
+	// DispatchedBy is the session user who actually made the call, which is a
+	// different question from Owner: Owner is whose NAMESPACE the credential
+	// lives in, DispatchedBy is whose hands were on it.
+	//
+	// They are the same person for every user-owned credential today, because
+	// UserMayUse admits only the owner. The moment a credential can be lent to
+	// somebody else, that stops being true, and a ledger that records only the
+	// namespace would attribute a colleague's write to the owner with no way to
+	// tell them apart. The field exists before the sharing does, so the ledger
+	// is already answering "who" when the answer stops being obvious.
+	//
+	// For a GLOBAL credential the answer was never obvious: every user of the
+	// deployment dispatches through the same bare-name ring, and until now the
+	// rows said what was sent and not by whom.
+	//
+	// Empty means unattributed — a row written before this field existed, or a
+	// call with no tool session behind it (a render, a boot-time probe). Absence
+	// is not evidence that the owner made the call.
+	DispatchedBy  string    `json:"dispatched_by,omitempty"`
 	Method        string    `json:"method"`
 	URL           string    `json:"url"`
 	Status        int       `json:"status"`
@@ -2006,6 +2025,7 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 	auditEntry := SecureAPIAuditEntry{
 		CredentialName: c.Name,
 		Owner:          c.Owner,
+		DispatchedBy:   sessUsername(sess),
 		Method:         method,
 		URL:            rawURL,
 		Timestamp:      time.Now(),
