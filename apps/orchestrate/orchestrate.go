@@ -541,12 +541,23 @@ func (T *OrchestrateApp) Routes() {
 	// Per-session diagnostics trail (session_diag.go) — the ⚠ affordance.
 	T.HandleFunc("/api/session-diag", g(T.handleSessionDiag))
 	T.HandleFunc("/api/agents/", g(T.handleAgentOne))
-	T.HandleFunc("/api/collections", g(T.handleCollections))
+	// Collections are NOT admin-only, and were. A collection belongs to the
+	// user who made it, apps/knowledge is the surface ordinary people manage
+	// theirs from, and every one of these handlers already resolves by the
+	// session user: RequireUser for the identity, LoadCollection for what they
+	// may see, collectionWriteRefusal for what they may change. The admin gate
+	// on top of that protected nothing and broke the whole Knowledge app for
+	// anybody who is not an administrator — every call it makes comes here,
+	// so a user opening it got "Agents is admin-only" and an empty page.
+	//
+	// The gate exists for the WORKBENCH beside these: agent CRUD, prompts,
+	// tool allowlists, memory pruning. Those keep it.
+	T.HandleFunc("/api/collections", T.handleCollections)
 	// More-specific path wins over /api/collections/ in Go's ServeMux,
 	// so this route serves the pre-create draft endpoint without
 	// colliding with handleCollectionOne's per-id paths.
-	T.HandleFunc("/api/collections/draft-description", g(T.handleCollectionDraftDescription))
-	T.HandleFunc("/api/collections/", g(T.handleCollectionOne))
+	T.HandleFunc("/api/collections/draft-description", T.handleCollectionDraftDescription)
+	T.HandleFunc("/api/collections/", T.handleCollectionOne)
 	// The pipeline as a page (pipeline_page.go): what it is made of,
 	// read in the order it runs.
 	T.HandleFunc("/pipeline", g(T.handlePipelinePage))
