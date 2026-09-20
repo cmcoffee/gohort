@@ -671,7 +671,9 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		sections = append(sections, ui.Section{
 			Title:    "Share with users",
 			Subtitle: "Let specific other users run this agent. Empty means private to you.",
-			Detail:   "They run your agent, but its credentials and tools resolve in THEIR namespace: your secrets never travel with the share. An admin can audit or revoke shares.",
+			Detail: "They run your agent, but its credentials, tools and attached collections resolve in THEIR namespace: nothing of yours travels with the share. " +
+				"So a collection attached here answers for them only if you have also shared that collection with them, or an administrator has widened it to everyone. " +
+				"You are told when one is withheld. An admin can audit or revoke shares.",
 			Body: ui.ACLPicker(ui.ACLPickerConfig{
 				OptionsSource: "../api/user-candidates",
 				RecordSource:  source,

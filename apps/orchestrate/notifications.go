@@ -241,3 +241,37 @@ func noticeSourceName(udb Database, agentID string) string {
 // changes what the agent should do next rather than merely describing what
 // happened.
 const notifySent = "Sent."
+
+// noteWithheldCollections tells an agent's OWNER that a corpus their shared
+// agent carries did not reach the person running it.
+//
+// To the owner, because they are the only one who can do anything about it:
+// promote the collection, share it with that person, or detach it. The person
+// running the agent cannot, and telling them would be reporting somebody else's
+// configuration at them.
+//
+// Folded per (owner, agent) by the notice's own fingerprint, so an agent run
+// hourly by three people is one row with a count rather than a stream. The body
+// names the collections, because "a collection was withheld" is a support
+// ticket and "Runbooks was withheld" is something to act on.
+func noteWithheldCollections(owner, runBy, agentID string, ids []string) {
+	if orchRef == nil || strings.TrimSpace(owner) == "" || owner == runBy || len(ids) == 0 {
+		return
+	}
+	names := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if c, ok := LoadCollection(UserDB(CollectionsDB(), owner), owner, id); ok && strings.TrimSpace(c.Name) != "" {
+			names = append(names, c.Name)
+			continue
+		}
+		names = append(names, id)
+	}
+	orchRef.notify(owner, notices.Notice{
+		Agent: agentID,
+		Kind:  notices.KindStopped,
+		Title: "A shared agent could not use " + strings.Join(names, ", "),
+		Body: "Somebody else ran an agent you shared, and these collections are private to you, so the agent answered without them. " +
+			"Collections no longer travel with a shared agent: the person running it sees a corpus only if it is shared with them too, or with the whole deployment. " +
+			"Share the collection from its page, ask an administrator to widen it, or detach it from the agent if it was not meant to be part of what you handed over.",
+	})
+}

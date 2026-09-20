@@ -925,11 +925,45 @@ func searchAgentKnowledgeVec(ctx context.Context, db Database, user, baseUser, a
 	// longer reachable from RAG; the admin can re-ingest them as a
 	// collection if they still matter.
 	exact := make(map[string]bool, len(agentAttachedCollections)+4)
-	// Agent-attached collections are always in scope.
+	// Agent-attached collections, gated by whether the RUNTIME USER may read
+	// each one.
+	//
+	// They used to be in scope unconditionally, by id, with no ownership check
+	// at all — so attaching a private collection to an agent and then sharing
+	// or publishing that agent served the owner's corpus to everyone who could
+	// run it. The collection was never shared; the agent was, and nothing said
+	// the documents came with it.
+	//
+	// The rest of gohort already resolves a shared agent's dependencies in the
+	// RECIPIENT's namespace: AgentRecord.AllowedUsers says so in as many words,
+	// "no secret travels with the share", and credentials and tools have always
+	// worked that way. Collections were the one thing that travelled. This is
+	// that rule applied to them, not a new one.
+	//
+	// LoadCollection is the check because it already answers exactly this
+	// question: it resolves a user's own collection, one peer-shared with them,
+	// and any deployment-scoped one. So an owner's own turn is unchanged, a
+	// recipient gets what they were actually given, and a published agent
+	// carries a corpus only when that corpus is itself deployment-wide.
+	var withheld []string
 	for _, cid := range agentAttachedCollections {
-		if cid = strings.TrimSpace(cid); cid != "" {
-			exact[collectionSource(cid)] = true
+		cid = strings.TrimSpace(cid)
+		if cid == "" {
+			continue
 		}
+		if _, ok := LoadCollection(UserDB(CollectionsDB(), user), user, cid); !ok {
+			withheld = append(withheld, cid)
+			continue
+		}
+		exact[collectionSource(cid)] = true
+	}
+	if len(withheld) > 0 {
+		// Never silent. A corpus that quietly stops answering is the shape that
+		// produces a confident wrong answer instead of a missing one, and the
+		// person who can fix it is the owner, who is not in this turn.
+		Log("[orchestrate.knowledge] agent=%s run by %q: %d attached collection(s) withheld, not readable by them: %v",
+			agentID, user, len(withheld), withheld)
+		noteWithheldCollections(baseUser, user, agentID, withheld)
 	}
 	// Active skills contribute their AttachedCollections — when the
 	// classifier picks a skill this turn, its admin-curated reference
