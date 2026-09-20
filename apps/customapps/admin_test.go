@@ -146,14 +146,9 @@ func TestTheLegacyMountIsStillHonoured(t *testing.T) {
 		t.Fatalf("legacy path = %q — the redirect and the grant migration both read it", customAppsLegacyPath)
 	}
 
-	// A page written before the move still rewrites for the public surface.
-	spec := AppSpec{Slug: "weather", Page: []byte(
-		`{"sections":[{"body":{"type":"card","html":"<script>fetch('/custom/weather/data/x')</script>"}}]}`)}
-	got := string(app.publicPageBytes(spec, "TOK"))
-	if strings.Contains(got, "/custom/weather/data/x") {
-		t.Errorf("a pre-move absolute self-reference was left pointing at the gated mount:\n%s", got)
-	}
-	if !strings.Contains(got, "/apps/pub/TOK/data/x") {
-		t.Errorf("it should point at the public capability mount:\n%s", got)
-	}
+	// The page-bytes half of this test went with the anonymous surface: the
+	// /custom -> /apps rewrite lived only in publicPageBytes, so there is
+	// nothing left that rewrites a page's own absolute self-references. What
+	// still has to hold is the mount and the grant migration above, which are
+	// what a stale bookmark and a stored grant actually go through.
 }

@@ -141,27 +141,23 @@ func adminAppView(spec AppSpec, owner string) appadmin.App {
 func (T *CustomApps) registerAdminControls() {
 	base := T.WebPath() + "/_admin"
 
-	// Exposure: the anonymous capability link. The owner can revoke it from
-	// their own index; an operator needs to as well, and unlike a setting it is
-	// not an edit to what the app IS.
+	// Exposure: clearing a token left over from before anonymous links were
+	// removed. There is nothing to open, because nothing serves it any more;
+	// what remains is a field on old specs, and an operator should be able to
+	// tidy one away rather than read a state the deployment cannot honour.
 	appadmin.Register(appadmin.Control{
 		Key: "customapps.public_link", Label: "Public link", Group: "Exposure", Order: 10,
 		Render: func(spec appadmin.App) ui.Component {
 			if spec.PublicToken == "" {
-				return nil // nothing published: no control, rather than a dead button
+				return nil // the ordinary case now: no control, rather than a dead button
 			}
 			return ui.Toolbar{Actions: []ui.ToolbarAction{
 				{
-					Label:  "Open public link",
-					Method: "open",
-					Title:  "Anyone with this link loads the page and runs its data sources, in the owner's sandbox",
-					URL:    DashboardURL() + T.WebPath() + "/pub/" + spec.PublicToken + "/",
-				},
-				{
-					Label:   "Revoke link",
+					Label:   "Clear leftover link token",
 					Method:  "post",
 					Variant: "danger",
-					Confirm: "Revoke this link? Anyone holding it loses access immediately, and re-publishing mints a different one.",
+					Title:   "Anonymous links were removed; this token no longer serves anything",
+					Confirm: "Clear this leftover token? Anonymous links no longer exist, so nothing is currently served from it.",
 					URL: fmt.Sprintf("%s/revoke-link?owner=%s&slug=%s",
 						base, url.QueryEscape(spec.Owner), url.QueryEscape(spec.Slug)),
 				},
@@ -318,11 +314,12 @@ func (T *CustomApps) handleAdmin(w http.ResponseWriter, r *http.Request, user st
 	}
 	switch sub {
 	case "revoke-link":
+		// Anonymous links no longer exist; the control stays only long enough
+		// to clear a token left on a spec from before they were removed.
 		if spec.PublicToken != "" {
-			T.DB.Unset(publicAppsIndex, spec.PublicToken)
 			spec.PublicToken = ""
 			SaveAppSpec(spec)
-			Log("[customapps] admin %q revoked the public link on %q/%q", user, owner, slug)
+			Log("[customapps] admin %q cleared a leftover public token on %q/%q", user, owner, slug)
 		}
 		writeJSON(w, map[string]any{"ok": true, "message": "Link revoked."})
 	case "reach":

@@ -24,7 +24,6 @@
 package customapps
 
 import (
-	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -98,12 +97,6 @@ func (T *CustomApps) Routes() {
 	// Wire self-updating apps: register the scheduled-action trigger dispatcher and
 	// the spec-lifecycle hooks that keep each app's standing triggers in sync.
 	T.registerScheduling()
-	// The anonymous capability-URL surface (/apps/pub/<token>/…) authenticates
-	// via the unguessable token itself, so it must bypass the cookie-auth
-	// middleware. Prefix registration (trailing slash) covers every token + its
-	// sub-paths; handlePublic is then the sole access check for that subtree.
-	RegisterPublicPath(T.WebPath() + "/pub/")
-
 	// This app used to live at /custom. Bookmarks, pasted links and every
 	// published capability URL still say so, and a grant stored against the
 	// old path is rewritten once at startup (MigrateAppPathGrants) rather than
@@ -123,9 +116,10 @@ func (T *CustomApps) Routes() {
 	// Approving an "app" publish request is the same act as the owner's
 	// Share toggle would have been: share it to every signed-in user.
 	promotion.RegisterApprover("app", T.approvePublish)
-	// Approving a "public_link" request mints the anonymous capability URL —
-	// the admin's act, since the link runs the owner's scripts for anyone.
-	promotion.RegisterApprover("public_link", T.approvePublicLink)
+	// Anonymous links are gone. Stopping them being served is the code above;
+	// this withdraws the ones already minted and tells their owners which app
+	// each belonged to. See public_link_retired.go.
+	T.retirePublicLinks()
 }
 
 // route parses "/<slug>/<rest>" off the (prefix-stripped) sub-mux and
@@ -133,14 +127,6 @@ func (T *CustomApps) Routes() {
 // with a real slug.
 func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 	path := strings.Trim(r.URL.Path, "/")
-
-	// The public capability-URL surface is served BEFORE any auth check: the
-	// token in the path is its sole credential (this subtree is a registered
-	// public path, so the cookie middleware already let it through anonymously).
-	if path == "pub" || strings.HasPrefix(path, "pub/") {
-		T.handlePublic(w, r, strings.TrimPrefix(path, "pub"))
-		return
-	}
 
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
@@ -166,10 +152,6 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 	case "_app/share":
 		// POST ?slug=&on=… toggles authenticated (per-user-copy) sharing.
 		T.handleShareApp(w, r, user)
-		return
-	case "_app/public":
-		// POST ?slug=&on=… mints / revokes the anonymous capability URL.
-		T.handlePublishApp(w, r, user)
 		return
 	case "_admin/revoke-link", "_admin/reach", "_admin/tiers", "_admin/review", "_admin/scripts":
 		// Operator controls on somebody else's app. Admin-gated inside the
@@ -485,12 +467,16 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 }
 
 // shareModalScript registers the "customapps_share" client action: a modal that
-// toggles the two sharing modes (each applied immediately via _app/share and
-// _app/public) and, when a public link exists, shows it in a read-only field
-// with a Copy button. The link is the ABSOLUTE server URL the endpoints return
-// (DashboardURL-based), so copying works even from the gohort-desktop client
-// (which reaches the server over 127.0.0.1). No backticks in this string — it is
-// embedded in a Go raw literal, and a backtick would terminate it.
+// toggles sharing to signed-in users, applied immediately via _app/share.
+//
+// There is ONE sharing mode. The anonymous capability link was removed: it
+// served the app to whoever held a URL, with no account, running the owner's
+// data sources under the owner's credentials, which is the one path on which a
+// run could not be attributed to anybody. Sharing keeps its per-user copies, so
+// every opener is a person the deployment knows.
+//
+// No backticks in this string — it is embedded in a Go raw literal, and a
+// backtick would terminate it.
 //
 // Injected via Page.ExtraHeadHTML, which renders in <head> — BEFORE /_ui/ui.js
 // (loaded at body end) has defined uiRegisterClientAction. So the registration
@@ -510,9 +496,7 @@ const shareModalScript = `<script>
   var shareHelp = 'Every signed-in user gets their own copy. Your data-source and action scripts run with your credentials for them.'
     + (direct ? '' : ' An administrator approves this before it goes live.');
   var requestedHelp = 'Publish requested: an administrator reviews it before it goes live. ' + shareHelp;
-  var publicHelp = 'Anonymous, read-only. Your data sources run with your credentials for anyone who has the link. Nothing is saved. Revoke anytime by turning this off.'
     + (direct ? '' : ' An administrator approves the link before it exists.');
-  var publicRequestedHelp = 'Public link requested: an administrator reviews it before the link exists. ' + publicHelp;
   function makeToggle(label, help, checked, onChange) {
     var wrap = document.createElement('label');
     wrap.style.cssText = 'display:block;cursor:pointer';
@@ -573,56 +557,6 @@ const shareModalScript = `<script>
         }
       );
       body.appendChild(share);
-      var linkRow = document.createElement('div');
-      linkRow.style.cssText = 'margin:0.4rem 0 0 1.6rem;gap:0.4rem;align-items:center';
-      linkRow.style.display = truthy(rec.public) ? 'flex' : 'none';
-      var input = document.createElement('input');
-      input.type = 'text'; input.readOnly = true; input.value = rec.public_url || '';
-      input.style.cssText = 'flex:1 1 auto;min-width:0;padding:0.35rem 0.5rem;font-size:0.8rem;border:1px solid var(--border);border-radius:4px;background:var(--bg-2);color:var(--text)';
-      var copyBtn = document.createElement('button');
-      copyBtn.type = 'button'; copyBtn.className = 'ui-row-btn'; copyBtn.textContent = 'Copy';
-      copyBtn.addEventListener('click', function(){
-        var v = input.value; if (!v) return;
-        function done(){ copyBtn.textContent = 'Copied!'; setTimeout(function(){ copyBtn.textContent = 'Copy'; }, 1500); }
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(v).then(done, function(){ input.select(); document.execCommand('copy'); done(); });
-        } else { input.select(); document.execCommand('copy'); done(); }
-      });
-      linkRow.appendChild(input); linkRow.appendChild(copyBtn);
-      var pub = makeToggle(
-        'Public link (anyone with the URL)',
-        truthy(rec.public_requested) ? publicRequestedHelp : publicHelp,
-        truthy(rec.public),
-        function(on, cb){
-          if (!on) {
-            post('_app/public?slug=' + encodeURIComponent(slug) + '&on=false', cb, function(){ linkRow.style.display = 'none'; pub.help.textContent = publicHelp; });
-            return;
-          }
-          // Enabling public exposes the app to anyone with the URL, running the
-          // owner's credentialed data sources with no login: confirm before it
-          // goes live (or before the request is filed). uiConfirm is the
-          // runtime's cross-host dialog (native confirm is broken in the
-          // gohort-desktop WKWebView).
-          var msg = direct
-            ? 'Create a public link? Anyone who has the URL can open this app and run its data sources with YOUR credentials, with no login. Nothing is saved, and you can revoke the link anytime by turning this off.'
-            : 'Request a public link? An administrator reviews it first. Once approved, anyone who has the URL can open this app and run its data sources with YOUR credentials, with no login. Nothing is saved, and you can revoke the link anytime by turning this off.';
-          Promise.resolve(window.uiConfirm ? window.uiConfirm(msg) : window.confirm(msg)).then(function(ok){
-            if (!ok) { cb.checked = false; return; }
-            post('_app/public?slug=' + encodeURIComponent(slug) + '&on=true', cb, function(d){
-              // A non-admin's link is a REQUEST: nothing exists yet, so the
-              // box stays clear and the help says who it is waiting on.
-              if (d.requested) { cb.checked = false; pub.help.textContent = publicRequestedHelp; return; }
-              if (d.url) { input.value = d.url; linkRow.style.display = 'flex'; }
-              // Say up front which parts the link cannot carry. Found out the
-              // hard way, the answer looks like a broken app: the panel renders
-              // and then every request behind it is refused.
-              if (d.note && window.uiAlert) window.uiAlert(d.note);
-            });
-          });
-        }
-      );
-      body.appendChild(pub);
-      body.appendChild(linkRow);
     },
     actions: [{label: 'Done', primary: true, onClick: function(api){ api.close(); if (ctx.reload) ctx.reload(); }}]
   });
@@ -655,11 +589,8 @@ func (T *CustomApps) handleDeleteApp(w http.ResponseWriter, r *http.Request, use
 	spec, _ := loadSpec(user, slug)
 	appdb := T.recordBase(spec, user)
 	// Clear any sharing this app carried so a deleted app leaves no dangling
-	// index entry (a stale shared slug, or a live capability URL).
+	// index entry.
 	SetSharedOwner(T.DB, sharedAppsIndex, slug, user, false)
-	if spec.PublicToken != "" {
-		T.DB.Unset(publicAppsIndex, spec.PublicToken)
-	}
 	DeleteAppSpec(user, slug)      // shared per-owner spec store
 	appdb.Drop(recTable(slug))     // this app's records
 	appdb.Unset(activeTable, slug) // workbench open-document marker
@@ -731,9 +662,9 @@ func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owne
 	direct := requestIsAdmin(r) // shares and links directly, no request
 	for _, s := range listSpecs(owner) {
 		seen[s.Slug] = true
-		// "mine" gates the owner-only Share/Delete actions. shared/public/public_url
-		// carry the current sharing state into the Share modal (a client action)
-		// so it opens pre-filled and can show + copy the live public link.
+		// "mine" gates the owner-only Share/Delete actions, and "shared" carries
+		// the current state into the Share modal (a client action) so it opens
+		// pre-filled.
 		row := map[string]string{"slug": s.Slug, "name": s.Name, "desc": s.Desc, "mine": "1"}
 		if len(visibleSettings(s, true)) > 0 {
 			row["has_settings"] = "1"
@@ -749,14 +680,6 @@ func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owne
 		} else if publishRequested(owner, "app", s.Slug) {
 			row["requested"] = "1"
 			parts = append(parts, "publish requested")
-		}
-		if s.PublicToken != "" {
-			row["public"] = "1"
-			row["public_url"] = T.publicURL(s.PublicToken) // absolute — copyable off 127.0.0.1
-			parts = append(parts, "public link")
-		} else if publishRequested(owner, "public_link", s.Slug) {
-			row["public_requested"] = "1"
-			parts = append(parts, "public link requested")
 		}
 		status := "private"
 		if len(parts) > 0 {
@@ -1303,45 +1226,7 @@ func listSpecs(owner string) []AppSpec            { return ListAppSpecs(owner) }
 
 const (
 	sharedAppsIndex = "shared_custom_apps" // slug -> owner username
-	publicAppsIndex = "public_custom_apps" // capability token -> publicRef
 )
-
-// publicRef is what a capability token resolves to: the owner + slug whose spec
-// the token publishes.
-type publicRef struct {
-	Owner string `json:"owner"`
-	Slug  string `json:"slug"`
-}
-
-// newPublicToken mints an unguessable capability token (128 bits, hex). The
-// token IS the access control for a public app, so it must not be enumerable.
-func newPublicToken() string {
-	var b [16]byte
-	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
-}
-
-// publicURL builds the ABSOLUTE capability URL for a token, using the
-// deployment's configured public base (DashboardURL) rather than the request
-// host. This is what makes a copied link shareable: the gohort-desktop client
-// reaches the server over loopback, so a host-relative link would copy as
-// 127.0.0.1 — useless to anyone else. DashboardURL resolves to the operator's
-// configured WebBaseURL (the real server name) when set.
-func (T *CustomApps) publicURL(token string) string {
-	return DashboardURL() + T.WebPath() + "/pub/" + token + "/"
-}
-
-// lookupPublicApp resolves a capability token to its owner+slug, if published.
-func lookupPublicApp(appDB Database, token string) (publicRef, bool) {
-	var ref publicRef
-	if appDB == nil || token == "" {
-		return ref, false
-	}
-	if appDB.Get(publicAppsIndex, token, &ref) && ref.Owner != "" && ref.Slug != "" {
-		return ref, true
-	}
-	return ref, false
-}
 
 // resolveSpec finds the app a request should serve: the requester's OWN app
 // first (an owned slug shadows any shared one), else an app another user has
@@ -1450,215 +1335,11 @@ func publishRequested(owner, kind, slug string) bool {
 	return PendingPromotion(AuthDB(), owner, kind, slug)
 }
 
-// handlePublishApp mints or revokes the anonymous capability URL for an app the
-// requester owns: POST /apps/_app/public?slug=…&on=true|false. Publishing
-// mints a fresh token (if none) and registers it; unpublishing deletes the
-// token from the index — instantly revoking any shared link — and clears it
-// from the spec. Returns the public URL on publish so the UI can surface it.
-func (T *CustomApps) handlePublishApp(w http.ResponseWriter, r *http.Request, user string) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	slug := strings.TrimSpace(r.URL.Query().Get("slug"))
-	spec, ok := loadSpec(user, slug)
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	on := r.URL.Query().Get("on") != "false"
-	if on && spec.PublicToken == "" && !requestIsAdmin(r) {
-		// A public link runs the owner's scripts, with the owner's credentials,
-		// for anyone who has the URL and no login at all — so it is the
-		// administrator's decision, not the owner's: the owner asks, and the
-		// approval on the Pending promotions queue is what mints the link.
-		var body struct {
-			Note string `json:"note"`
-		}
-		_ = json.NewDecoder(r.Body).Decode(&body) // note is optional
-		if err := CreatePromotionRequest(AuthDB(), user, "public_link", slug, body.Note); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		writeJSON(w, map[string]any{"ok": true, "public": false, "requested": true})
-		return
-	}
-	spec, err := T.setPublic(user, slug, on)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
-		return
-	}
-	if !on {
-		writeJSON(w, map[string]any{"ok": true, "public": false})
-		return
-	}
-	out := map[string]any{"ok": true, "public": true, "url": T.publicURL(spec.PublicToken)}
-	if note := publishLimitationNote(spec); note != "" {
-		out["note"] = note
-	}
-	writeJSON(w, out)
-}
-
-// setPublic mints (on) or revokes (off) the anonymous capability URL for an
-// app the owner holds. Minting reuses a token that already exists; revoking
-// deletes it from the public index, which is what makes a handed-out link
-// stop resolving. Returns the saved spec so a caller can read the token.
-func (T *CustomApps) setPublic(owner, slug string, on bool) (AppSpec, error) {
-	spec, ok := loadSpec(owner, slug)
-	if !ok {
-		return spec, Error("no app " + slug + " for " + owner)
-	}
-	if on {
-		if spec.PublicToken == "" {
-			spec.PublicToken = newPublicToken()
-		}
-		SaveAppSpec(spec)
-		T.DB.Set(publicAppsIndex, spec.PublicToken, publicRef{Owner: owner, Slug: slug})
-		return spec, nil
-	}
-	if spec.PublicToken != "" {
-		T.DB.Unset(publicAppsIndex, spec.PublicToken) // revoke the link
-	}
-	spec.PublicToken = ""
-	SaveAppSpec(spec)
-	return spec, nil
-}
-
-// approvePublicLink is the "public_link" kind's promotion approver: an
-// administrator granting the request mints the app's anonymous capability
-// URL. The owner reads the link off their My Apps row once it exists.
-func (T *CustomApps) approvePublicLink(owner, slug string) error {
-	_, err := T.setPublic(owner, slug, true)
-	return err
-}
-
 // Ceilings for the anonymous capability surface. A published app is meant to
 // be read by people, so these are generous for that and bounded against a
 // script; the script ceiling is the tighter one because a data-source run is a
 // sandboxed SUBPROCESS on the owner's machine, and the query params that key
 // its cache come from whoever holds the link.
-const (
-	publicRequestsPerMinute = 120
-	publicScriptsPerMinute  = 30
-)
-
-var (
-	publicAppRequests = NewRateLimiter(publicRequestsPerMinute, time.Minute)
-	publicAppScripts  = NewRateLimiter(publicScriptsPerMinute, time.Minute)
-)
-
-// handlePublic serves the anonymous capability-URL surface:
-// /apps/pub/<token>/… . The token (validated against the public index) is the
-// sole credential — this subtree is a registered public path, so the cookie
-// middleware already passed it through unauthenticated. STATELESS and
-// read/compute-only: the page renders, data sources RUN in the owner's sandbox
-// with query-param input, "records" is always empty (no anonymous store), and
-// every write / action-fire / chat endpoint is refused.
-func (T *CustomApps) handlePublic(w http.ResponseWriter, r *http.Request, rest string) {
-	// Anonymous and unauthenticated, so the ceiling is the only thing between
-	// a copied link and as much work as requests can be issued. Applied to the
-	// whole subtree rather than just the data path: an unknown token still
-	// costs an index lookup, and the page render is not free either.
-	if !publicAppRequests.Allow(RequestSource(r)) {
-		TooManyRequests(w, time.Minute, "too many requests: slow down")
-		return
-	}
-	rest = strings.Trim(rest, "/")
-	parts := strings.SplitN(rest, "/", 2)
-	token := parts[0]
-	sub := ""
-	if len(parts) > 1 {
-		sub = parts[1]
-	}
-	ref, ok := lookupPublicApp(T.DB, token)
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	spec, ok := loadSpec(ref.Owner, ref.Slug)
-	// Defense in depth: the spec must still name THIS token and not be disabled;
-	// index/spec drift or an unpublished/disabled app reads as gone.
-	if !ok || spec.PublicToken != token || spec.Disabled {
-		http.NotFound(w, r)
-		return
-	}
-	switch {
-	case sub == "":
-		if !strings.HasSuffix(r.URL.Path, "/") {
-			http.Redirect(w, r, T.WebPath()+"/pub/"+token+"/", http.StatusFound)
-			return
-		}
-		// No record-invalidation bridge: nothing is stored on the public surface.
-		_ = ui.RenderPageJSON(w, T.publicPageBytes(spec, token), "", "", spec.Name)
-	case strings.HasPrefix(sub, "data/"):
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		T.handlePublicData(w, r, spec, strings.TrimPrefix(sub, "data/"))
-	case sub == "records":
-		// No public store: a record-backed section fetches this on load, so it
-		// must return valid (empty) JSON rather than 404 (which would error the
-		// page). Writes fall through to the refusal below.
-		if r.Method != http.MethodGet {
-			http.Error(w, "not available on a public app", http.StatusForbidden)
-			return
-		}
-		writeJSON(w, []map[string]any{})
-	case sub == "actions":
-		// A public app exposes no action buttons; return an empty list so an
-		// actions section renders (empty) instead of erroring.
-		writeJSON(w, []map[string]any{})
-	default:
-		// record write/delete, action fire, chat — none run for anonymous users.
-		http.Error(w, "not available on a public app", http.StatusForbidden)
-	}
-}
-
-// publicPageBytes adapts the owner's stored page for anonymous serving:
-//   - Rewrites the app's own AUTH-GATED mount prefix (/apps/<slug>/) to the
-//     public capability mount (/apps/pub/<token>/). The typed sections use
-//     RELATIVE sources ("data/<name>") that already resolve against the page
-//     URL, but a hand-written html section commonly fetches an ABSOLUTE path
-//     ("/apps/<slug>/data/<name>") — served verbatim that points back at the
-//     gated slug route and 302s to login (works for the owner, breaks for an
-//     anonymous visitor). The prefix rewrite makes those absolute self-refs hit
-//     the token-scoped endpoint instead.
-//   - Marks the page public so the runtime drops the live-sessions pill (which
-//     would poll the gated /api/live), and removes the Back link (it points at
-//     the owner's gated /apps/ index — meaningless to an anonymous visitor).
-func (T *CustomApps) publicPageBytes(spec AppSpec, token string) []byte {
-	// Both mounts, because a page STORED before the app moved has the old one
-	// baked into any absolute self-reference its author wrote. Rewriting only
-	// the current prefix would leave those pointing at /apps/<slug>/…, which
-	// redirects to the gated mount and sends an anonymous visitor to a login
-	// page — the exact failure this rewrite exists to prevent, reintroduced by
-	// a rename rather than by a bad link.
-	gated := [][]byte{
-		[]byte(T.WebPath() + "/" + spec.Slug + "/"),
-		[]byte(customAppsLegacyPath + "/" + spec.Slug + "/"),
-	}
-	public := []byte(T.WebPath() + "/pub/" + token + "/")
-	rewrite := func(b []byte) []byte {
-		for _, g := range gated {
-			b = bytes.ReplaceAll(b, g, public)
-		}
-		return b
-	}
-	var page map[string]any
-	if err := json.Unmarshal(spec.Page, &page); err != nil {
-		// Unparseable page: still rewrite the raw bytes so data fetches resolve.
-		return rewrite(spec.Page)
-	}
-	page["public"] = true    // runtime: suppress the live-sessions pill
-	delete(page, "back_url") // no Back link to the gated dashboard
-	publicizeSessionPanels(page)
-	out, err := json.Marshal(page)
-	if err != nil {
-		out = spec.Page
-	}
-	return rewrite(out)
-}
 
 // sessionBoundPanels are the component types whose endpoints exist only on the
 // AUTHENTICATED surface — they run a model on the owner's account and keep
@@ -1671,155 +1352,6 @@ var sessionBoundPanels = map[string]string{
 	"workbench_panel":   "document workbench",
 	"code_editor_panel": "workbench",
 	"article_editor":    "editor",
-}
-
-// publishLimitationNote warns, at the moment the link is minted, which parts of
-// the app the link cannot carry. Empty when everything in it works publicly.
-func publishLimitationNote(spec AppSpec) string {
-	var page map[string]any
-	if err := json.Unmarshal(spec.Page, &page); err != nil {
-		return ""
-	}
-	secs, _ := page["sections"].([]any)
-	seen := map[string]bool{}
-	var kinds []string
-	for _, item := range secs {
-		sec, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		body, ok := sec["body"].(map[string]any)
-		if !ok {
-			continue
-		}
-		if kind, ok := sessionBoundPanels[strings.TrimSpace(fmt.Sprint(body["type"]))]; ok && !seen[kind] {
-			seen[kind] = true
-			kinds = append(kinds, kind)
-		}
-	}
-	if len(kinds) == 0 {
-		return ""
-	}
-	sort.Strings(kinds)
-	return "Heads up: the " + strings.Join(kinds, " and the ") + " won't work on the public link. " +
-		"Those run a model on your account and keep their own history, so they need a signed-in session: " +
-		"visitors will see a short note in their place. Everything else on the page (tables, charts, data sources) works normally."
-}
-
-// publicizeSessionPanels swaps any session-bound panel for an empty state that
-// says why it isn't there.
-//
-// Published, those panels rendered in full and then 403'd on every request they
-// made: the run history sat on "Loading…", the submit button did nothing, and
-// the page gave no clue that the link — not the app — was the reason. The app
-// works perfectly for the signed-in owner, so the report is always "it's a bit
-// buggy" rather than "publishing doesn't support this", and the hunt starts in
-// the wrong place.
-//
-// A refusal the reader can see beats a control that lies. The rest of the page
-// (tables, charts, data sources) still works, so a mixed app stays publishable
-// and only loses the part that could never have worked.
-func publicizeSessionPanels(page map[string]any) {
-	secs, ok := page["sections"].([]any)
-	if !ok {
-		return
-	}
-	for _, item := range secs {
-		sec, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		body, ok := sec["body"].(map[string]any)
-		if !ok {
-			continue
-		}
-		kind, ok := sessionBoundPanels[strings.TrimSpace(fmt.Sprint(body["type"]))]
-		if !ok {
-			continue
-		}
-		sec["body"] = map[string]any{
-			"type":  "empty_state",
-			"icon":  "🔒",
-			"title": "This part needs a signed-in session",
-			"hint": "The " + kind + " runs on the owner's account and keeps its own history, so it is not part of a shared link. " +
-				"Open the app from the dashboard to use it.",
-		}
-		// The panel managed its own layout; an empty state wants the ordinary
-		// card, and the section's title is worth keeping now that something
-		// under it needs explaining.
-		delete(sec, "no_chrome")
-	}
-}
-
-// handlePublicData runs one data source for the public surface: in the OWNER's
-// sandbox, over the OWNER's stored records, with per-request input from query
-// params. A public app is the owner's app served anonymously — its data source
-// must see the config the owner set up (e.g. WHICH site to pull), so it reads
-// the owner's records exactly as it would for the owner logged in. Only anonymous
-// WRITES are withheld (records POST / actions 403 in handlePublic); the raw
-// record store is never dumped by the framework — it reaches the response only
-// if the owner's own script computes and emits it. Reuses the same cache +
-// single-flight as the authenticated path.
-func (T *CustomApps) handlePublicData(w http.ResponseWriter, r *http.Request, spec AppSpec, name string) {
-	// A second, tighter ceiling on the one action that spawns a process.
-	// Keyed on the APP, not the caller: the cost lands on the owner's machine
-	// whoever asks, and a link shared widely is exactly the case where
-	// per-source limiting does nothing. The page and the empty records/actions
-	// responses stay under the looser subtree limit above.
-	if !publicAppScripts.Allow(spec.Owner + "/" + spec.Slug) {
-		Warn("[customapps] public app %q hit its script ceiling (%d/min): refusing further runs this minute", spec.Slug, publicScriptsPerMinute)
-		TooManyRequests(w, time.Minute, "this app is being asked for data too quickly: try again shortly")
-		return
-	}
-	var ds *AppDataSource
-	for i := range spec.DataSources {
-		if spec.DataSources[i].Name == name {
-			ds = &spec.DataSources[i]
-			break
-		}
-	}
-	if ds == nil || strings.TrimSpace(ds.Script) == "" {
-		http.NotFound(w, r)
-		return
-	}
-	if spec.Owner == "" {
-		http.Error(w, "public app has no owner context", http.StatusInternalServerError)
-		return
-	}
-	ownerDB := T.recordBase(spec, spec.Owner)
-	// Feed the owner's stored records (their app config) plus each query param.
-	tbl := recTable(spec.Slug)
-	records := []map[string]any{}
-	for _, k := range ownerDB.Keys(tbl) {
-		var rec map[string]any
-		if ownerDB.Get(tbl, k, &rec) {
-			records = append(records, rec)
-		}
-	}
-	recJSON, _ := json.Marshal(records)
-	args := map[string]any{"records": string(recJSON)}
-	for k, vs := range r.URL.Query() {
-		if len(vs) > 0 {
-			args[k] = vs[0]
-		}
-	}
-	// Anonymous readers get the owner's own settings: a public app IS the
-	// owner's copy, and the params in the link must not override them.
-	T.applySettings(args, spec, spec.Owner)
-	out, err := cachedRunDataSource(spec.Owner, ownerDB, spec.Slug, *ds, args)
-	if err != nil {
-		Log("[customapps] PUBLIC data source %q/%q failed: %v", spec.Slug, name, err)
-		http.Error(w, "data source failed: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	trimmed := strings.TrimSpace(out)
-	if !json.Valid([]byte(trimmed)) {
-		Log("[customapps] PUBLIC data source %q/%q returned non-JSON (first 200B): %.200s", spec.Slug, name, trimmed)
-		http.Error(w, "the data source script must print a JSON value to stdout", http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write([]byte(trimmed))
 }
 
 // --- helpers -----------------------------------------------------------------

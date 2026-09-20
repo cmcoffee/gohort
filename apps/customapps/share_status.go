@@ -73,9 +73,12 @@ func shareStatusLines(spec AppSpec) []string {
 			lines = append(lines, "Audience: every signed-in user.")
 		}
 	}
-	state, by = promotionState(spec.Owner, "public_link", spec.Slug)
-	if l := requestLine("Public link", spec.PublicToken != "", state, by); l != "" {
-		lines = append(lines, l)
+	// Anonymous links were removed, so there is no live state to report. A
+	// leftover token still gets a line, because a spec carrying one should say
+	// so until somebody clears it rather than looking like a spec that never
+	// had one.
+	if spec.PublicToken != "" {
+		lines = append(lines, "Public link: removed from this deployment; a leftover token is still on this app and can be cleared from the operator controls.")
 	}
 	return lines
 }

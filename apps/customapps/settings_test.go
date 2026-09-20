@@ -251,10 +251,16 @@ func TestShareStatusLines(t *testing.T) {
 	}
 
 	CreatePromotionRequest(auth, "alice", "app", "tally", "")
-	CreatePromotionRequest(auth, "alice", "public_link", "tally", "")
 	l := shareStatusLines(spec)
-	if len(l) != 2 || !strings.Contains(l[0], "Share with signed-in users: requested") || !strings.Contains(l[1], "Public link: requested") {
+	if len(l) != 1 || !strings.Contains(l[0], "Share with signed-in users: requested") {
 		t.Fatalf("pending = %v", l)
+	}
+	// There is ONE sharing mode now. A request for the anonymous link cannot
+	// be filed any more, and an old one left in the store must not put a line
+	// back on a status that no surface can honour.
+	CreatePromotionRequest(auth, "alice", "public_link", "tally", "")
+	if l = shareStatusLines(spec); len(l) != 1 {
+		t.Fatalf("a stale public-link request resurfaced: %v", l)
 	}
 
 	SetPromotionRequestState(auth, PromotionRequestKey("app", "alice", "tally"), PromotionDeniedState, "root")
@@ -265,7 +271,8 @@ func TestShareStatusLines(t *testing.T) {
 	// Approved and on: the request is not news; the audience is.
 	SetPromotionRequestState(auth, PromotionRequestKey("app", "alice", "tally"), PromotionApprovedState, "root")
 	spec.Shared = true
-	if l = shareStatusLines(spec); len(l) != 2 || l[0] != "Audience: every signed-in user." {
+	// One line, not two: the second used to be the anonymous link's state.
+	if l = shareStatusLines(spec); len(l) != 1 || l[0] != "Audience: every signed-in user." {
 		t.Fatalf("shared = %v", l)
 	}
 	appadmin.Save(RootDB, "alice", "tally", appadmin.State{AllowedUsers: []string{"bob", "carol"}, UpdatedBy: "root"})
