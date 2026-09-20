@@ -428,6 +428,13 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Each forwarding option says whether it can actually deliver, and why not.
+	// An option that silently does nothing is worse than one that is not
+	// offered: you turn it on, believe you will be told, and are not. This page
+	// is built per request, so it can answer for THIS account rather than for
+	// the deployment in general.
+	forwardOptions := notifyForwardOptions(user)
+
 	sections := []ui.Section{
 		{
 			Title:    "Preferences",
@@ -444,14 +451,9 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 						Help:   "Suppress the Reference Memory layer by default.",
 						Detail: "Agents then answer fresh from your question and knowledge, without prior derived findings. Per-agent overrides still apply."},
 					{Field: "notify_forward", Label: "Forward notifications", Type: "select",
-						Options: []ui.SelectOption{
-							{Value: "off", Label: "Nowhere (keep them in the bell)"},
-							{Value: "email", Label: "Email"},
-							{Value: "phone", Label: "Phone"},
-							{Value: "both", Label: "Email and phone"},
-						},
-						Help:   "Notifications are always kept. This is whether they also reach you somewhere else.",
-						Detail: "Everything an agent tells you out of band is a notification, including anything it sends with notify_me, and this is the one setting that decides where those go. Forwarded copies are prefixed [agent@service] so a text on your phone says what it came from. Only the FIRST time something happens is forwarded; a repeat raises the count on the notice instead, because a surface that texts you twenty-four times a day is one you switch off before it is ever useful. Email needs mail configured and an account that is an email address; phone needs the messaging bridge."},
+						Options: forwardOptions,
+						Help:    "Notifications are always kept. This is whether they also reach you somewhere else.",
+						Detail:  "Everything an agent tells you out of band is a notification, including anything it sends with notify_me, and this is the one setting that decides where those go. Forwarded copies are prefixed [agent@service] so a text on your phone says what it came from. Only the FIRST time something happens is forwarded; a repeat raises the count on the notice instead, because a surface that texts you twenty-four times a day is one you switch off before it is ever useful. Email needs mail configured and an account that is an email address; phone needs the messaging bridge."},
 					{Field: "timezone", Label: "Timezone", Type: "select",
 						Options: TimezoneSelectOptions("System default"),
 						Help:    "Your personal timezone. Blank uses the system default.",
@@ -1082,3 +1084,52 @@ const userToolsHTML = `<div id="acct-tools" class="acct-tools">Loading…</div>
   load();
 })();
 </script>`
+
+// notifyForwardOptions labels each destination with whether it can reach THIS
+// account, and says what is missing when it cannot.
+//
+// Email is the one that surprises people. There is no separate address on an
+// account: NotifyUser sends only when the USERNAME is itself a valid email, so
+// somebody signed in as "craig" can never receive one however the deployment's
+// mail is configured. That is the existing contract everywhere in the app and
+// it is invisible from here, which is exactly the kind of thing a settings page
+// exists to say out loud.
+//
+// Unavailable options stay in the list rather than being dropped. A stored
+// choice must still render as itself, and a setting that silently disappears
+// when its transport goes down is one nobody can reason about; saying why is
+// more useful than pretending the option never existed.
+func notifyForwardOptions(user string) []ui.SelectOption {
+	emailWhy := ""
+	switch {
+	case !strings.Contains(user, "@"):
+		emailWhy = "unavailable: your username is not an email address"
+	case !EmailConfigured():
+		emailWhy = "unavailable: mail is not configured for this deployment"
+	}
+	phoneWhy := ""
+	if NoticePhoneReady == nil || !NoticePhoneReady(user) {
+		phoneWhy = "unavailable: no messaging bridge with your handle"
+	}
+	label := func(base, why string) string {
+		if why == "" {
+			return base
+		}
+		return base + " (" + why + ")"
+	}
+	both := ""
+	switch {
+	case emailWhy != "" && phoneWhy != "":
+		both = "unavailable: neither is set up"
+	case emailWhy != "":
+		both = "email half unavailable"
+	case phoneWhy != "":
+		both = "phone half unavailable"
+	}
+	return []ui.SelectOption{
+		{Value: "off", Label: "Nowhere (keep them in the bell)"},
+		{Value: "email", Label: label("Email", emailWhy)},
+		{Value: "phone", Label: label("Phone", phoneWhy)},
+		{Value: "both", Label: label("Email and phone", both)},
+	}
+}
