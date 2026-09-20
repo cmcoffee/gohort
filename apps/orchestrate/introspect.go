@@ -88,7 +88,7 @@ func (t *chatTurn) introspectToolDef() AgentToolDef {
 					b.WriteString("- Skills: none attached\n")
 				} else {
 					name := map[string]string{}
-					for _, sk := range LoadSkills(t.udb, t.user) {
+					for _, sk := range AvailableSkills(t.udb, t.user) {
 						name[sk.ID] = sk.Name
 					}
 					var ss []string

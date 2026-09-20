@@ -825,8 +825,12 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 						// echoing its own display back into the payload.
 						"allowed_tools":        nonNilStrings(s.AllowedTools),
 						"attached_collections": nonNilStrings(s.AttachedCollections),
-						"playbook_text":        playbookText(s),
-						"playbook_url":         playbookEditorURL(s.ID),
+						// The picker reads what it will post back, so the field
+						// has to be on the wire or it opens empty and the first
+						// save silently clears the share.
+						"allowed_users": nonNilStrings(s.AllowedUsers),
+						"playbook_text": playbookText(s),
+						"playbook_url":  playbookEditorURL(s.ID),
 					})
 					return
 				}
@@ -907,6 +911,10 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 			// pickers post the whole record; the behaviour form posts neither.
 			AllowedTools        *[]string `json:"allowed_tools"`
 			AttachedCollections *[]string `json:"attached_collections"`
+			// Who else may USE this skill. Same absent-means-unchanged rule as
+			// the two above, so the behaviour form does not wipe a share it
+			// never showed.
+			AllowedUsers *[]string `json:"allowed_users"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -959,6 +967,9 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.AttachedCollections != nil {
 			rec.AttachedCollections = *body.AttachedCollections
+		}
+		if body.AllowedUsers != nil {
+			rec.AllowedUsers = *body.AllowedUsers
 		}
 		if _, err := SaveSkill(AuthDB(), user, rec); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1600,6 +1611,21 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 								LabelField:    "name",
 								DescField:     "description",
 							},
+							// Peer sharing: named people, not everybody. Widening
+							// anything to the whole deployment is an
+							// administrator's decision; who you hand a skill to
+							// is yours.
+							ui.Card{HTML: `<div style="font-size:0.78rem;color:var(--text-mute);text-transform:uppercase;letter-spacing:0.04em;margin-top:0.8rem">Shared with</div><div style="font-size:0.75rem;color:var(--text-mute)">Other users who may use this skill. Empty means private to you. They get the behaviour, not the authorship: it activates on their turns and they cannot edit or delete it. Attached collections are NOT shared with it, because those are your documents.</div>`},
+							ui.ACLPicker(ui.ACLPickerConfig{
+								OptionsSource: "../agents/api/user-candidates",
+								RecordSource:  "api/skills?id={id}",
+								Field:         "allowed_users",
+								PostTo:        "api/skills?id={id}",
+								Method:        "POST",
+								Noun:          "user",
+								Intro:         "Users who may use this skill.",
+								EmptyText:     "No other users to share with yet.",
+							}),
 						}}),
 						{Type: "button", Label: "Disable", Method: "POST",
 							PostTo:     "api/skills?action=disable&id={id}",

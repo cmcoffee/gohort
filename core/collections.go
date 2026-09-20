@@ -119,9 +119,32 @@ type Collection struct {
 	// The data model itself does not gate writes, and that part was true:
 	// SaveCollection routes on Scope alone, so whatever sets the field decides
 	// the pool.
-	Scope   string    `json:"scope,omitempty"`
-	Created time.Time `json:"created"`
-	Updated time.Time `json:"updated,omitempty"`
+	Scope string `json:"scope,omitempty"`
+
+	// AllowedUsers is the peer-share recipient set: which other users may
+	// ATTACH and search this collection besides its Owner. Empty = private,
+	// which is the default.
+	//
+	// The middle rung of the governance model, and the same ACL field
+	// AgentRecord, SecureCredential and PersistentTempTool carry, so an owner
+	// learns one control and an admin audits one shape. Distinct from Scope,
+	// which is the top rung: these named people, not everybody.
+	//
+	// A recipient gets READ. They can attach it to their agents and search it;
+	// they cannot add documents, rename it, or delete it. The owner's copy
+	// stays the only copy, so a document added later is shared too and a
+	// document removed is gone for everyone, which is what people mean by
+	// sharing a folder.
+	//
+	// Searchable by a recipient because chunks live in the shared VectorDB
+	// keyed by collection source, not in the owner's own store. On a
+	// deployment with no VectorDB the legacy split stores apply and a shared
+	// collection's chunks stay in the owner's base, where a recipient's search
+	// cannot reach them; SharedCollectionsFor says so rather than returning a
+	// collection that silently finds nothing.
+	AllowedUsers []string  `json:"allowed_users,omitempty"`
+	Created      time.Time `json:"created"`
+	Updated      time.Time `json:"updated,omitempty"`
 	// IngestedURLs tracks every URL that has been pulled into this
 	// collection by the autofill flow. Used to dedupe across
 	// repeated "Auto-fill from web" clicks — the second run won't
@@ -671,6 +694,24 @@ func LoadCollection(udb Database, user, id string) (Collection, bool) {
 			}
 		}
 	}
+	// Shared WITH this user by somebody else. Looked up through the index and
+	// then re-checked against the owner's record, so a stale index entry cannot
+	// grant access the owner has taken away.
+	if user != "" && RootDB != nil && VectorDB != nil {
+		for _, ref := range ListPeerShares(RootDB, SharedCollectionsTable, user) {
+			if ref.ID != id {
+				continue
+			}
+			ownerDB := UserDB(CollectionsDB(), ref.Owner)
+			if ownerDB == nil {
+				continue
+			}
+			var c Collection
+			if ownerDB.Get(CollectionsTable, id, &c) && c.Owner == ref.Owner && collectionSharedWith(c, user) {
+				return c, true
+			}
+		}
+	}
 	if RootDB != nil {
 		var c Collection
 		if RootDB.Get(GlobalCollectionsTable, id, &c) {
@@ -701,6 +742,12 @@ func ListCollections(udb Database, user string) []Collection {
 			out = append(out, c)
 		}
 	}
+	// Shared WITH this user, before the deployment-wide ones: somebody chose to
+	// give them these, which is closer to their own than a corpus everybody
+	// has.
+	for _, c := range SharedCollectionsFor(user) {
+		out = append(out, c)
+	}
 	if RootDB != nil {
 		seen := make(map[string]bool, len(out))
 		for _, c := range out {
@@ -723,6 +770,54 @@ func ListCollections(udb Database, user string) []Collection {
 	return out
 }
 
+// SharedCollectionsTable indexes peer shares: recipient -> (owner, collection).
+const SharedCollectionsTable = "shared_collections"
+
+// SharedCollectionsFor returns the collections other people have shared WITH
+// this user, read from each owner's own store.
+//
+// Empty when there is no VectorDB. That is not a quiet failure: without it,
+// chunks live in the owner's per-user store and a recipient's search reaches
+// none of them, so offering the collection would be offering something that
+// attaches cleanly and then never matches anything. A deployment in that state
+// is mid-migration, and the honest answer is that peer sharing is not available
+// yet rather than available and empty.
+func SharedCollectionsFor(user string) []Collection {
+	if RootDB == nil || VectorDB == nil || strings.TrimSpace(user) == "" {
+		return nil
+	}
+	var out []Collection
+	for _, ref := range ListPeerShares(RootDB, SharedCollectionsTable, user) {
+		udb := UserDB(CollectionsDB(), ref.Owner)
+		if udb == nil {
+			continue
+		}
+		var c Collection
+		if !udb.Get(CollectionsTable, ref.ID, &c) || c.ID == "" {
+			continue
+		}
+		// Re-checked against the record rather than trusted from the index: the
+		// list on the collection is what the owner edits, the index is derived,
+		// and a derived thing that can outvote its source is how a revoked
+		// share keeps working.
+		if c.Owner != ref.Owner || !collectionSharedWith(c, user) {
+			continue
+		}
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+func collectionSharedWith(c Collection, user string) bool {
+	for _, u := range c.AllowedUsers {
+		if u == user {
+			return true
+		}
+	}
+	return false
+}
+
 // SaveCollection writes the record to the right pool based on
 // Scope. User-scoped goes to udb; deployment-scoped goes to RootDB
 // under GlobalCollectionsTable. Updated timestamp stamped on write.
@@ -736,6 +831,11 @@ func SaveCollection(udb Database, c Collection) {
 	}
 	if udb != nil {
 		udb.Set(CollectionsTable, c.ID, c)
+	}
+	// The peer-share index follows the record in the same write, so a share and
+	// its lookup cannot disagree about who has access.
+	if RootDB != nil && c.Owner != "" {
+		SetPeerShareRecipients(RootDB, SharedCollectionsTable, c.Owner, c.ID, c.AllowedUsers)
 	}
 }
 
@@ -751,12 +851,23 @@ func DeleteCollection(udb, appDB Database, user, id string) (chunksRemoved int) 
 	if !ok {
 		return 0
 	}
+	// A recipient resolves a shared collection through LoadCollection, so
+	// without this a share would carry the right to destroy somebody else's
+	// documents. Sharing gives READ: attach it, search it, nothing more.
+	if !IsDeploymentScope(c) && c.Owner != "" && c.Owner != user {
+		return 0
+	}
 	if IsDeploymentScope(c) {
 		if RootDB != nil {
 			RootDB.Unset(GlobalCollectionsTable, c.ID)
 		}
 	} else if udb != nil {
 		udb.Unset(CollectionsTable, c.ID)
+	}
+	// The shares go with it: an index entry outliving its record points at
+	// nothing, which reads to a recipient as access they lost.
+	if RootDB != nil && c.Owner != "" {
+		DropPeerShares(RootDB, SharedCollectionsTable, c.Owner, c.ID)
 	}
 	if appDB != nil {
 		chunksRemoved = WipeChunksBySourcePrefix(appDB, CollectionSource(id))

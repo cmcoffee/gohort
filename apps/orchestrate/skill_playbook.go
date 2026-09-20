@@ -79,7 +79,7 @@ func (t *chatTurn) autoDeliverPlaybooks(userMsg string) []string {
 		allowed[id] = true
 	}
 	var mine []SkillRecord
-	for _, s := range LoadSkills(t.udb, t.user) {
+	for _, s := range AvailableSkills(t.udb, t.user) {
 		if allowed[s.ID] {
 			mine = append(mine, s)
 		}

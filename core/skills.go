@@ -78,6 +78,21 @@ type SkillRecord struct {
 	// Owner is the user who authored the skill (or the seed marker
 	// for framework-provided skills, when we add those).
 	Owner string `json:"owner,omitempty"`
+	// AllowedUsers is the peer-share recipient set: which other users may USE
+	// this skill besides its Owner. Empty = private to the owner, which is the
+	// default and what almost every skill is.
+	//
+	// The same ACL concept AgentRecord, SecureCredential and PersistentTempTool
+	// carry, so an owner learns one control and an admin audits one shape. A
+	// recipient gets the skill's behaviour, not its authorship: it activates
+	// for them and they cannot edit or delete it.
+	//
+	// Sharing does NOT carry the skill's attached collections. Those are the
+	// owner's documents, and handing somebody a skill is not handing them a
+	// corpus; the skill activates for a recipient with its instructions and its
+	// tools, and its collections stay where they are. See SharedSkillsFor.
+	AllowedUsers []string `json:"allowed_users,omitempty"`
+
 	// Disabled mutes the skill — classifier skips it entirely as if
 	// it didn't exist. Use to pause a skill without losing its
 	// definition (admin can re-enable later instead of re-authoring).
@@ -448,6 +463,71 @@ func lowerFirst(s string) string {
 // Storage shape: one row per user keyed by username, value is a
 // []SkillRecord. Same pattern as PersistentTempTools — fewer DB
 // keys, atomic per-user updates, and the row count stays small.
+// SharedSkillsTable indexes peer shares: recipient -> (owner, skill id).
+const SharedSkillsTable = "shared_skills"
+
+// SharedSkillsFor returns the skills other people have shared WITH this user.
+//
+// Each comes back with its attached collections stripped, because those are the
+// owner's documents: handing somebody a skill is handing them a behaviour, not
+// a corpus. Disabled ones are skipped, since an owner who muted a skill has
+// muted it for everybody, not just themselves.
+func SharedSkillsFor(db Database, username string) []SkillRecord {
+	store := skillStore(db)
+	if store == nil || strings.TrimSpace(username) == "" {
+		return nil
+	}
+	var out []SkillRecord
+	for _, ref := range ListPeerShares(store, SharedSkillsTable, username) {
+		for _, s := range LoadSkills(db, ref.Owner) {
+			if s.ID != ref.ID || s.Disabled {
+				continue
+			}
+			// Re-checked against the record, not trusted from the index. The
+			// list on the skill is what the owner edits and an admin audits;
+			// the index is a derived lookup, and a derived thing that can
+			// outvote its source is how a revoked share keeps working.
+			if !skillSharedWith(s, username) {
+				continue
+			}
+			s.AttachedCollections = nil
+			out = append(out, s)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Updated.After(out[j].Updated) })
+	return out
+}
+
+func skillSharedWith(s SkillRecord, user string) bool {
+	for _, u := range s.AllowedUsers {
+		if u == user {
+			return true
+		}
+	}
+	return false
+}
+
+// AvailableSkills is every skill this user may use: their own, plus the ones
+// shared with them. The order puts the user's own first, because a name
+// collision should resolve to the skill they wrote.
+func AvailableSkills(db Database, username string) []SkillRecord {
+	own := LoadSkills(db, username)
+	shared := SharedSkillsFor(db, username)
+	if len(shared) == 0 {
+		return own
+	}
+	seen := make(map[string]bool, len(own))
+	for _, s := range own {
+		seen[s.ID] = true
+	}
+	for _, s := range shared {
+		if !seen[s.ID] {
+			own = append(own, s)
+		}
+	}
+	return own
+}
+
 func LoadSkills(db Database, username string) []SkillRecord {
 	store := skillStore(db)
 	if store == nil || username == "" {
@@ -538,6 +618,11 @@ func SaveSkillAs(db Database, username string, s SkillRecord, reason string) (Sk
 	}
 	rest = append(rest, s)
 	store.Set(skillsTable, username, rest)
+	// The index follows the record, always and in the same write path. A share
+	// that updated one without the other would either strand a recipient or
+	// keep one who had been removed, and which of those you got would depend on
+	// which half ran.
+	SetPeerShareRecipients(store, SharedSkillsTable, username, s.ID, s.AllowedUsers)
 	return s, nil
 }
 
@@ -616,6 +701,10 @@ func DeleteSkill(db Database, username, id string) bool {
 	} else {
 		store.Set(skillsTable, username, rest)
 	}
+	// The shares go with it. An index entry outliving its record points at
+	// nothing, which reads to a recipient as access they lost rather than a
+	// skill that is gone.
+	DropPeerShares(store, SharedSkillsTable, username, id)
 	// The history goes with the skill, the way a deleted pipeline's does.
 	revisions.Delete(store, revisions.KindSkill, skillRingKey(username, id))
 	// Drop the skill's corpus chunks from its dedicated store.

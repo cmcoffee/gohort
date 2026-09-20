@@ -30,7 +30,7 @@ func (t *chatTurn) renderTriggeredSkills() string {
 		allowed[id] = true
 	}
 	var b strings.Builder
-	for _, s := range LoadSkills(t.udb, t.user) {
+	for _, s := range AvailableSkills(t.udb, t.user) {
 		if s.Disabled || !allowed[s.ID] {
 			continue
 		}
@@ -63,7 +63,7 @@ func (t *chatTurn) renderSkillTriggerHints(userMsg string) string {
 		allowed[id] = true
 	}
 	var names []string
-	for _, s := range LoadSkills(t.udb, t.user) {
+	for _, s := range AvailableSkills(t.udb, t.user) {
 		if s.Disabled || !allowed[s.ID] || t.deliveredSkills[s.ID] {
 			continue
 		}
@@ -86,7 +86,7 @@ func availableSkillsBlock(agent AgentRecord, udb Database, user string) string {
 		allowed[id] = true
 	}
 	var avail []SkillRecord
-	for _, s := range LoadSkills(udb, user) {
+	for _, s := range AvailableSkills(udb, user) {
 		if s.Disabled || !allowed[s.ID] {
 			continue
 		}

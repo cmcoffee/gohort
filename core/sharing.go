@@ -12,7 +12,11 @@
 // app share ONE implementation instead of copy-pasting the index/permission logic.
 package core
 
-import "net/http"
+import (
+	"net/http"
+	"sort"
+	"strings"
+)
 
 // SetSharedOwner adds or removes a record from a shared index. shared && owner!=""
 // registers it (recordID -> owner); anything else unregisters it. appDB is the
@@ -155,4 +159,103 @@ func CanManageShared(reqUser, owner string, isAdmin bool) bool {
 		return true
 	}
 	return owner == reqUser
+}
+
+// --- peer shares -------------------------------------------------------------
+//
+// The primitives above cover a record published to EVERY authenticated user:
+// one index, id -> owner, presence is the flag. Peer sharing is the other shape
+// the governance model needs, and it is the middle rung: this record, these
+// named people, nobody else.
+//
+// The recipient list lives on the RECORD (AllowedUsers, the same field agents,
+// credentials and temp tools already carry) because that is what the owner
+// edits and what an admin audits. What follows is the DERIVED index that makes
+// it discoverable from the other side.
+//
+// Without it the field is decorative. That is not hypothetical: agents have
+// carried AllowedUsers for some time with recipient-side resolution noted as "a
+// separate step", so an owner can pick recipients today and nothing appears for
+// them. A picker that stores names and changes nothing is worse than no picker,
+// because the owner believes they have shared something.
+
+// PeerShareRef is one shared record, from the recipient's side.
+type PeerShareRef struct {
+	Owner string
+	ID    string
+}
+
+// peerShareKey is recipient-first so a recipient's shares are a prefix scan,
+// which is the read that happens on every list. The owner and id follow, joined
+// by a byte neither can contain.
+func peerShareKey(recipient, owner, id string) string {
+	return recipient + "\x00" + owner + "\x00" + id
+}
+
+// SetPeerShareRecipients makes the index match a record's recipient list.
+//
+// Given the WHOLE list rather than a delta, because the owner edits a set: a
+// caller that had to compute additions and removals would be a second place
+// that knows the rule, and the one that drifts is whichever runs less often.
+// Removals are found by scanning for this record's existing entries, so a
+// recipient dropped from the list loses access on the next read.
+func SetPeerShareRecipients(appDB Database, indexTable, owner, id string, recipients []string) {
+	if appDB == nil || owner == "" || id == "" {
+		return
+	}
+	want := make(map[string]bool, len(recipients))
+	for _, u := range recipients {
+		if u = strings.TrimSpace(u); u != "" && u != owner {
+			want[u] = true // sharing with yourself is not a share
+		}
+	}
+	suffix := "\x00" + owner + "\x00" + id
+	for _, k := range appDB.Keys(indexTable) {
+		if !strings.HasSuffix(k, suffix) {
+			continue
+		}
+		recipient := strings.TrimSuffix(k, suffix)
+		if want[recipient] {
+			delete(want, recipient) // already indexed
+			continue
+		}
+		appDB.Unset(indexTable, k)
+	}
+	for recipient := range want {
+		appDB.Set(indexTable, peerShareKey(recipient, owner, id), true)
+	}
+}
+
+// ListPeerShares returns every record shared WITH this recipient.
+func ListPeerShares(appDB Database, indexTable, recipient string) []PeerShareRef {
+	var out []PeerShareRef
+	if appDB == nil || strings.TrimSpace(recipient) == "" {
+		return out
+	}
+	prefix := recipient + "\x00"
+	for _, k := range appDB.Keys(indexTable) {
+		if !strings.HasPrefix(k, prefix) {
+			continue
+		}
+		owner, id, ok := strings.Cut(k[len(prefix):], "\x00")
+		if !ok || owner == "" || id == "" {
+			continue
+		}
+		out = append(out, PeerShareRef{Owner: owner, ID: id})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Owner != out[j].Owner {
+			return out[i].Owner < out[j].Owner
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}
+
+// DropPeerShares removes every entry for one record, for use when the record
+// itself is deleted. An index entry outliving its record is a row pointing at
+// nothing, which reads to the recipient as something they lost access to rather
+// than something that is gone.
+func DropPeerShares(appDB Database, indexTable, owner, id string) {
+	SetPeerShareRecipients(appDB, indexTable, owner, id, nil)
 }

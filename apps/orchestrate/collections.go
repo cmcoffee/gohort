@@ -237,6 +237,10 @@ func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Requ
 				Description        *string `json:"description"`
 				FilterRules        *string `json:"filter_rules"`
 				ClassifyOnAutofill *bool   `json:"classify_on_autofill"`
+				// Who else may attach and search this. Absent means unchanged,
+				// like every other field here, so a rename cannot clear a share
+				// it never showed.
+				AllowedUsers *[]string `json:"allowed_users"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				http.Error(w, "bad request", http.StatusBadRequest)
@@ -255,6 +259,16 @@ func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Requ
 			}
 			if body.ClassifyOnAutofill != nil {
 				c.ClassifyOnAutofill = *body.ClassifyOnAutofill
+			}
+			if body.AllowedUsers != nil {
+				// Only the OWNER shares. A recipient resolves this collection
+				// through LoadCollection, so without this check a share would
+				// carry the right to re-share somebody else's documents.
+				if c.Owner != "" && c.Owner != user {
+					http.Error(w, "only the owner can change who this is shared with", http.StatusForbidden)
+					return
+				}
+				c.AllowedUsers = *body.AllowedUsers
 			}
 			saveCollection(udb, c)
 			w.Header().Set("Content-Type", "application/json")
