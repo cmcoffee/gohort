@@ -10,6 +10,21 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
+// bellGlyphSVG is the same bell the framework header draws, inline because
+// this page is hand-rolled HTML that never loads the runtime.
+//
+// Drawn rather than typed. The emoji this replaced is not one shape: every
+// platform draws its own, at its own size, off its own baseline, so it sat
+// differently on every device — and a colour emoji cannot be muted, which is
+// the whole design here. At 0.55 opacity a colour bell goes washed out rather
+// than quiet, and washed out reads as broken.
+//
+// Kept identical to core/ui/assets/runtime/71_notice_bell.js on purpose: the
+// same control in two places that look different is worse than either.
+const bellGlyphSVG = `<svg viewBox="0 0 64 64" fill="currentColor" aria-hidden="true">` +
+	`<path d="M32 6c-9 0-16 7-16 16v8c0 7-2 11-6 15-1 1 0 3 2 3h40c2 0 3-2 2-3-4-4-6-8-6-15v-8c0-9-7-16-16-16z"/>` +
+	`<path d="M23 53h18c-1 6-4 9-9 9s-8-3-9-9z"/></svg>`
+
 // notifyPanelHTML is the bell's dropdown and the script that fills it.
 //
 // Plain markup and a fetch, not a component: the dashboard is hand-rolled HTML
@@ -150,7 +165,7 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
 		// a quiet bell is as informative as a loud one.
 		auth_html = fmt.Sprintf(
 			`<div class="auth-bar"><span class="auth-user">%s</span>`+
-				`<button type="button" class="auth-link bell" id="bell" title="Notifications" aria-label="Notifications">🔔<span class="bell-count" id="bell-count"></span></button>`+
+				`<button type="button" class="auth-link bell" id="bell" title="Notifications" aria-label="Notifications">`+bellGlyphSVG+`<span class="bell-count" id="bell-count"></span></button>`+
 				`<a class="auth-link" href="/account">Account</a><form class="auth-logout" method="POST" action="/logout"><button type="submit" class="auth-link">Logout</button></form></div>`+
 				notifyPanelHTML,
 			username)
@@ -373,6 +388,9 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
   @media (max-width: 640px) {
     body { padding: 60px 12px 20px; }
     .auth-bar { top: 8px; right: 8px; gap: 0.4rem; }
+    /* Tracks the bar above it: both move in, so the panel stays under the
+       bell rather than drifting off its corner. */
+    .notify-panel { top: 2.6rem; right: 8px; }
     .auth-user { display: none; } /* keep just the Logout button visible on narrow screens */
     .grid { grid-template-columns: 1fr; gap: 0.75rem; }
     .cluster-grid { grid-template-columns: 1fr; gap: 0.75rem; }
@@ -394,8 +412,12 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
   .ascii-logo { background: linear-gradient(180deg, var(--text-hi) 0%, var(--border) 100%); -webkit-background-clip: text; background-clip: text; }
   /* A bell that is always lit is a bell nobody reads. Muted until there is
      something unread, and then it carries the number. */
-  .bell { position: relative; background: none; border: 0; cursor: pointer; font-size: 1rem; opacity: 0.55; }
+  .bell {
+    position: relative; background: none; border: 0; cursor: pointer;
+    display: inline-flex; align-items: center; opacity: 0.55; padding: 0.2rem;
+  }
   .bell.unread { opacity: 1; }
+  .bell svg { width: 1.05rem; height: 1.05rem; display: block; }
   .bell-count {
     display: none; position: absolute; top: -0.35rem; right: -0.55rem;
     min-width: 1.05rem; padding: 0 0.25rem; border-radius: 0.6rem;
@@ -403,8 +425,14 @@ func serve_dashboard(w http.ResponseWriter, r *http.Request, apps []dashApp, not
     font-size: 0.65rem; line-height: 1.05rem; text-align: center;
   }
   .bell.unread .bell-count { display: inline-block; }
+  /* FIXED, like the bar the bell sits in. It used to be absolute, which
+     resolves against the page rather than the viewport: the bell followed you
+     down the page (the bar is fixed) while the panel it opened stayed pinned
+     2.6rem from the top of the DOCUMENT. Click it anywhere but the very top
+     and the panel opened off-screen above you. Whatever anchors the button has
+     to anchor the thing the button opens. */
   .notify-panel {
-    display: none; position: absolute; right: 1rem; top: 2.6rem; z-index: 40;
+    display: none; position: fixed; right: 12px; top: 3rem; z-index: 10000;
     width: min(26rem, calc(100vw - 2rem)); max-height: 60vh; overflow-y: auto;
     background: var(--bg-elev, #1b1b1f); border: 1px solid var(--border);
     border-radius: 0.5rem; padding: 0.4rem; text-align: left;

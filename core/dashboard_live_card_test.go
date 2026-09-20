@@ -2,6 +2,8 @@ package core
 
 import (
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -111,6 +113,91 @@ func TestLiveRibbonRowCannotCrushTheLabel(t *testing.T) {
 		badge := rule(t, css, "#webui-live-ribbon .badge")
 		if !strings.Contains(badge, "flex: 0 0 auto") || !strings.Contains(badge, "white-space: nowrap") {
 			t.Errorf("%s: a badge that shrinks clips its own word", name)
+		}
+	}
+}
+
+// The bell rides a FIXED bar, so it follows you down the dashboard. The panel
+// it opens has to follow too.
+//
+// It used to be absolutely positioned, which resolves against the page rather
+// than the viewport: the bell came with you and the panel stayed pinned near
+// the top of the document, so clicking it anywhere but the very top opened it
+// off-screen above. Whatever anchors the button has to anchor what the button
+// opens, and this pins that they agree.
+func TestTheNotificationsPanelFollowsItsBell(t *testing.T) {
+	css := dashboardPageSource(t)
+	// Two-space indent picks the top-level rule; the four-space twins inside
+	// the mobile media query only nudge the offsets.
+	bar := cssBlock(css, "\n  .auth-bar {")
+	panel := cssBlock(css, "\n  .notify-panel {")
+	if bar == "" || panel == "" {
+		t.Fatal("the auth bar or the notifications panel lost its rule")
+	}
+	if !strings.Contains(bar, "position: fixed") {
+		t.Fatal("the auth bar is no longer fixed; this test's premise needs rechecking")
+	}
+	if !strings.Contains(panel, "position: fixed") {
+		t.Error("the panel is not fixed while the bell that opens it is: " +
+			"it will open off-screen for anybody who has scrolled")
+	}
+	// Above the bar, not below it. The bar sits at a very high z-index and a
+	// panel under it would open behind the controls it belongs to.
+	if !strings.Contains(panel, "z-index: 10000") {
+		t.Error("the panel no longer sits above the fixed bar it hangs from")
+	}
+}
+
+// dashboardPageSource reads this package's dashboard template, which is a Go
+// string rather than an asset — so the source is the only place to check it.
+func dashboardPageSource(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile("dashboard_page.go")
+	if err != nil {
+		t.Fatalf("reading the dashboard page: %v", err)
+	}
+	return string(raw)
+}
+
+// cssBlock returns the declarations of the first rule opening with sel.
+func cssBlock(src, sel string) string {
+	i := strings.Index(src, sel)
+	if i < 0 {
+		return ""
+	}
+	rest := src[i+len(sel):]
+	end := strings.Index(rest, "}")
+	if end < 0 {
+		return ""
+	}
+	return rest[:end]
+}
+
+// The dashboard draws its own bell, because it is hand-rolled HTML that never
+// loads the runtime. Two copies of one control are already a liability; two
+// copies that look different are worse, so the glyph is pinned to the same
+// artwork the framework header uses.
+func TestTheDashboardBellIsTheDrawnOne(t *testing.T) {
+	src := dashboardPageSource(t)
+	if strings.Contains(src, "\U0001F514") {
+		t.Error("the dashboard bell is a platform-drawn emoji again: it renders at a " +
+			"different size on every device and cannot be muted")
+	}
+	runtime, err := os.ReadFile(filepath.Join("ui", "assets", "runtime", "71_notice_bell.js"))
+	if err != nil {
+		t.Fatalf("reading the runtime bell: %v", err)
+	}
+	// The path data is the artwork. If one copy is redrawn and the other is
+	// not, the same control looks like two controls.
+	for _, d := range []string{
+		"M32 6c-9 0-16 7-16 16v8c0 7-2 11-6 15-1 1 0 3 2 3h40c2 0 3-2 2-3-4-4-6-8-6-15v-8c0-9-7-16-16-16z",
+		"M23 53h18c-1 6-4 9-9 9s-8-3-9-9z",
+	} {
+		if !strings.Contains(src, d) {
+			t.Errorf("the dashboard bell no longer draws the shared artwork (%.20s…)", d)
+		}
+		if !strings.Contains(string(runtime), d) {
+			t.Errorf("the header bell no longer draws the shared artwork (%.20s…)", d)
 		}
 	}
 }
