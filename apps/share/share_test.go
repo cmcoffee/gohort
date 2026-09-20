@@ -90,3 +90,70 @@ func TestTheAppNamesNoKind(t *testing.T) {
 		}
 	}
 }
+
+// The guided route's own job: carry a decision key through a form field name
+// and back, and refuse to act on anything the first screen did not name.
+func TestADecisionKeySurvivesTheRoundTrip(t *testing.T) {
+	for _, k := range []string{"cred:wiki", "skill:s1", "tool:ssh_run", "collection:col-1"} {
+		if got := unsafeKey(safeKey(k)); got != k {
+			t.Errorf("%q came back as %q", k, got)
+		}
+		if strings.Contains(safeKey(k), ":") {
+			t.Errorf("%q still carries a colon as a field name: %q", k, safeKey(k))
+		}
+	}
+}
+
+// Every screen after the first says what is being shared. Quoting an id back
+// at somebody mid-flow is how they lose track of which thing they picked.
+func TestTheDecisionsScreenNamesTheThing(t *testing.T) {
+	src, err := os.ReadFile("guided.go")
+	if err != nil {
+		t.Fatalf("reading the source: %v", err)
+	}
+	if !strings.Contains(string(src), "candidateName(user, kind, id)") {
+		t.Error("the plan page no longer resolves a display name")
+	}
+}
+
+// Nothing happens until the second screen is confirmed. A first step that
+// shared anything would make "Continue" a commitment nobody agreed to.
+func TestTheFirstStepSharesNothing(t *testing.T) {
+	src, err := os.ReadFile("guided.go")
+	if err != nil {
+		t.Fatalf("reading the source: %v", err)
+	}
+	i := strings.Index(string(src), "func (T *ShareApp) servePlan(")
+	if i < 0 {
+		t.Fatal("servePlan is gone")
+	}
+	body := string(src)[i:]
+	if end := strings.Index(body, "\nfunc "); end > 0 {
+		body = body[:end]
+	}
+	if strings.Contains(body, "shareledger.Share(") {
+		t.Error("the first step shares before anybody has seen what it decides")
+	}
+}
+
+// The guided flow renders whatever the kind asked and knows none of it. The
+// moment it branches on a decision key, the kind that owns the meaning has
+// lost it.
+func TestTheGuidedFlowNamesNoKind(t *testing.T) {
+	src, err := os.ReadFile("guided.go")
+	if err != nil {
+		t.Fatalf("reading the source: %v", err)
+	}
+	for _, kind := range []string{
+		`"agent"`, `"skill"`, `"collection"`, `"pipeline"`, `"machine"`,
+		// "credential" is the one a reader would most expect to find here,
+		// since its fork is the reason the flow exists. It is not: what that
+		// decision means lives with credentials, and only what it LOOKS like
+		// lives here.
+		`"credential"`, `"cred:"`,
+	} {
+		if strings.Contains(string(src), kind) {
+			t.Errorf("the guided flow names %s; it should render only what a kind returned", kind)
+		}
+	}
+}

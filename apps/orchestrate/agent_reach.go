@@ -257,7 +257,12 @@ func agentReachOf(udb Database, owner string, a AgentRecord) agentReachMap {
 // ordinary answer for a team is that each person supplies their own key rather
 // than borrowing one.
 func credentialReach(owner, name string, disabled bool) reachItem {
-	it := reachItem{Kind: "Credential", Name: name}
+	// kind and id are stamped here like every other row's. They were not, and
+	// the omission was invisible while nothing routed on them: the fan-out
+	// skips credentials by design, so an empty kind and a kind it ignores
+	// behaved identically. The guided flow routes on it, and a credential
+	// with no kind silently became an ordinary dependency there.
+	it := reachItem{Kind: "Credential", Name: name, kind: "credential", id: name}
 	if disabled {
 		it.Reach, it.How, it.level = "Turned off for this agent", "This agent cannot dispatch through it at all.", reachDeployment
 		return it
@@ -331,6 +336,11 @@ func fixFor(it reachItem, audience int) string {
 	switch it.kind {
 	case "skill", "collection", "pipeline", "machine", "tool":
 		return "Share it with the same people"
+	case "credential":
+		// Not a copy they are missing, so "share it" is one answer of four
+		// and usually the wrong one. The guided flow is where that gets
+		// decided, because it is the only surface that asks.
+		return "Decide it when you share: their own key, or a lend of yours"
 	}
 	return ""
 }

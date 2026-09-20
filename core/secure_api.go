@@ -2954,6 +2954,30 @@ func init() {
 
 	shareledger.Register("tool", shareledger.Provider{
 		Label: "Tool",
+		Candidates: func(owner string) []shareledger.Grant {
+			var out []shareledger.Grant
+			for _, p := range LoadPersistentTempTools(nil, owner) {
+				if !p.Shared && !p.Tool.Disabled {
+					out = append(out, shareledger.Grant{ID: p.Tool.Name, Name: p.Tool.Name})
+				}
+			}
+			return out
+		},
+		Share: func(owner, id string, recipients []string, _ map[string]string) []string {
+			for _, p := range LoadPersistentTempTools(nil, owner) {
+				if p.Tool.Name != id {
+					continue
+				}
+				if err := SetPersistentTempToolSharedWith(nil, owner, id, addRecipients(p.SharedWith, recipients)); err != nil {
+					return []string{"Tool " + id + ": " + err.Error()}
+				}
+				return []string{
+					"Tool " + id + " → " + strings.Join(recipients, ", "),
+					"Tool " + id + ": it loads for their agents once they take it from their catalog.",
+				}
+			}
+			return []string{"That tool is not yours to share."}
+		},
 		Mine: func(owner string) []shareledger.Grant {
 			var out []shareledger.Grant
 			for _, p := range LoadPersistentTempTools(nil, owner) {

@@ -1474,6 +1474,30 @@ func noteSkillPublished(owner string, s SkillRecord, strippedTools int) {
 func init() {
 	shareledger.Register("skill", shareledger.Provider{
 		Label: "Skill",
+		Candidates: func(owner string) []shareledger.Grant {
+			var out []shareledger.Grant
+			for _, s := range LoadSkills(nil, owner) {
+				out = append(out, shareledger.Grant{ID: s.ID, Name: s.Name})
+			}
+			return out
+		},
+		Share: func(owner, id string, recipients []string, _ map[string]string) []string {
+			for _, s := range LoadSkills(nil, owner) {
+				if s.ID != id {
+					continue
+				}
+				s.AllowedUsers = addRecipients(s.AllowedUsers, recipients)
+				if _, err := SaveSkillAs(nil, owner, s, "shared"); err != nil {
+					return []string{"Skill " + s.Name + ": " + err.Error()}
+				}
+				out := []string{"Skill " + s.Name + " → " + strings.Join(recipients, ", ")}
+				if d := skillShareDetail(s); d != "" {
+					out = append(out, "Skill "+s.Name+": "+d)
+				}
+				return out
+			}
+			return []string{"That skill is not yours to share."}
+		},
 		Mine: func(owner string) []shareledger.Grant {
 			var out []shareledger.Grant
 			for _, s := range LoadSkills(nil, owner) {
@@ -1555,6 +1579,24 @@ func dropRecipient(list []string, drop string) []string {
 	out := []string{}
 	for _, u := range list {
 		if u != drop {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+// addRecipients appends the ones not already there, leaving the rest as they
+// were: a share is additive, and rewriting the whole list would drop anybody
+// granted for a reason this share knows nothing about.
+func addRecipients(have, add []string) []string {
+	seen := map[string]bool{}
+	out := append([]string{}, have...)
+	for _, u := range have {
+		seen[u] = true
+	}
+	for _, u := range add {
+		if u = strings.TrimSpace(u); u != "" && !seen[u] {
+			seen[u] = true
 			out = append(out, u)
 		}
 	}

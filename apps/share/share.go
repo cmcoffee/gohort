@@ -58,6 +58,9 @@ func (T *ShareApp) Routes() {
 	T.HandleFunc("/api/mine", T.serveMine)
 	T.HandleFunc("/api/to-me", T.serveToMe)
 	T.HandleFunc("/api/revoke", T.serveRevoke)
+	T.HandleFunc("/api/plan", T.servePlan)
+	T.HandleFunc("/api/apply", T.serveApply)
+	T.HandleFunc("/plan", T.servePlanPage)
 	T.HandleFunc("/", T.servePage)
 }
 
@@ -174,7 +177,8 @@ func (T *ShareApp) servePage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
 		return
 	}
 	// One column set, both directions. Who means the recipient on the left
@@ -197,6 +201,7 @@ func (T *ShareApp) servePage(w http.ResponseWriter, r *http.Request) {
 		Nav:        HubNav("/share"),
 		SectionNav: true,
 		Sections: []ui.Section{
+			shareStartSection(user),
 			{
 				Title:    "What you have shared",
 				Wide:     true,

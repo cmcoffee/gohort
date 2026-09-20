@@ -979,6 +979,26 @@ func NarrowCollectionToOwner(owner, id string) error {
 func init() {
 	shareledger.Register("collection", shareledger.Provider{
 		Label: "Knowledge",
+		Candidates: func(owner string) []shareledger.Grant {
+			var out []shareledger.Grant
+			udb := UserDB(CollectionsDB(), owner)
+			for _, c := range ListCollections(udb, owner) {
+				if c.Owner == owner && !IsDeploymentScope(c) {
+					out = append(out, shareledger.Grant{ID: c.ID, Name: c.Name})
+				}
+			}
+			return out
+		},
+		Share: func(owner, id string, recipients []string, _ map[string]string) []string {
+			udb := UserDB(CollectionsDB(), owner)
+			c, ok := LoadCollection(udb, owner, id)
+			if !ok || c.Owner != owner {
+				return []string{"That collection is not yours to share."}
+			}
+			c.AllowedUsers = addRecipients(c.AllowedUsers, recipients)
+			SaveCollection(udb, c)
+			return []string{"Knowledge " + c.Name + " → " + strings.Join(recipients, ", ")}
+		},
 		Mine: func(owner string) []shareledger.Grant {
 			var out []shareledger.Grant
 			udb := UserDB(CollectionsDB(), owner)

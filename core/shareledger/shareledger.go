@@ -73,6 +73,19 @@ type Provider struct {
 	// Revoke drops one recipient from one record. An empty recipient means
 	// every recipient. Returning an error leaves the row alone and says why.
 	Revoke func(owner, id, recipient string) error
+
+	// Candidates lists what this owner could share, for the guided flow's
+	// first step. Nil when the kind is not something somebody sets out to
+	// share — a credential is handed over as part of sharing the thing that
+	// uses it far more often than on its own.
+	Candidates func(owner string) []Grant
+	// Plan says what handing this record over would DECIDE, so the owner is
+	// asked rather than assumed at. Nil or empty means the share is one
+	// decision and the flow goes straight to confirming it.
+	Plan func(owner, id string, recipients []string) []Decision
+	// Share hands it over, with the answers to whatever Plan asked, and
+	// returns one line per thing it did or could not do.
+	Share func(owner, id string, recipients []string, answers map[string]string) []string
 }
 
 var (
@@ -164,3 +177,65 @@ func Kinds() []string {
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+// ----------------------------------------------------------------------
+// The guided route
+// ----------------------------------------------------------------------
+
+// Choice is one answer to a Decision.
+type Choice struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+	// Help is the consequence, in one line. The whole reason a guided flow
+	// exists is that these outcomes are not obvious from their names, and a
+	// list of bare options would be the same assumption in a nicer wrapper.
+	Help string `json:"help,omitempty"`
+}
+
+// Decision is something the owner has to answer before a share can go out.
+//
+// Kinds return their own, because what a share implies differs entirely
+// between them: handing over an agent raises a question per credential it
+// touches, handing over a skill raises none. A registry that tried to know
+// which was which would be back to naming kinds.
+type Decision struct {
+	// Key is the form field this answers under, stable across a rerender.
+	Key     string   `json:"key"`
+	Title   string   `json:"title"`
+	Intro   string   `json:"intro,omitempty"`
+	Options []Choice `json:"options"`
+	Default string   `json:"default,omitempty"`
+}
+
+// Options is everything this owner could share, across every kind. For the
+// first step of the guided flow, which is a list nobody can assemble from one
+// page.
+func Options(owner string) []Grant {
+	return collect(owner, func(p Provider) func(string) []Grant { return p.Candidates })
+}
+
+// Plan asks one kind what handing this record over would decide.
+func Plan(kind, owner, id string, recipients []string) []Decision {
+	mu.RLock()
+	p, ok := providers[strings.TrimSpace(kind)]
+	mu.RUnlock()
+	if !ok || p.Plan == nil {
+		return nil
+	}
+	return p.Plan(owner, id, recipients)
+}
+
+// Share hands the record over, with the answers to whatever Plan asked.
+//
+// Returns what it did AND what it could not, because a report listing only
+// successes is how somebody concludes their team has a working thing while a
+// piece of it is still missing.
+func Share(kind, owner, id string, recipients []string, answers map[string]string) ([]string, error) {
+	mu.RLock()
+	p, ok := providers[strings.TrimSpace(kind)]
+	mu.RUnlock()
+	if !ok || p.Share == nil {
+		return nil, errString("nothing here can share a " + kind)
+	}
+	return p.Share(owner, id, recipients, answers), nil
+}
