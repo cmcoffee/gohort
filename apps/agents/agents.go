@@ -111,11 +111,12 @@ func (T *AgentsApp) dispatch(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	// Per-agent access gate — a published agent is a normal app (admins + app-access
-	// grants); a peer-shared agent is reachable by its AllowedUsers recipients (or
-	// owner). Without this, anyone who guessed the slug could chat with every
-	// reachable agent regardless of visibility.
-	if !orch.AgentReachableBy(r, slug, owner, agent.AllowedUsers) {
+	// Per-agent access gate. A PUBLISHED agent takes both: the admin's grant of
+	// this app is the ceiling, and the owner's own list narrows inside it. An
+	// unpublished one is reachable by its AllowedUsers recipients and the owner,
+	// with no admin involved. Without this, anyone who guessed the slug could
+	// chat with every reachable agent regardless of visibility.
+	if !orch.AgentReachableBy(r, slug, owner, agent.AllowedUsers, agent.Exposed || agent.MCPExposed) {
 		http.NotFound(w, r) // 404 not 403 — don't leak slug existence
 		return
 	}

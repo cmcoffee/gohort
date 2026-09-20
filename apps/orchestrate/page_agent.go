@@ -139,6 +139,9 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	// effective mode first means a legacy record (no stored dispatch_mode) seeds
 	// that value on save instead of the form's first-option fallback silently
 	// converting a legacy allowlist into allow-all. Recomputed from rec below.
+	// shareRec carries the loaded record out to the sharing section, which has
+	// to say something different once the agent is published.
+	var shareRec AgentRecord
 	dispatchModeFirst := dispatchAll
 	// ForcePrivate agents can't escalate to the remote lead model (gate 2),
 	// so the "Use Lead model" toggle is hidden for them — unless the operator
@@ -155,6 +158,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		// publishing, etc. still rendering for what's actually a
 		// sub-agent).
 		if rec, ok := loadAgent(udb, id); ok {
+			shareRec = rec
 			agentLocked = rec.Locked
 			leadModelLocked = agentForcesPrivate(rec) && !AllLLMsPrivate()
 			dispatchModeFirst = effectiveDispatchMode(rec)
@@ -670,10 +674,10 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	if id != "" && !subAgent && !isSeedID(id) {
 		sections = append(sections, ui.Section{
 			Title:    "Share with users",
-			Subtitle: "Let specific other users run this agent. Empty means private to you.",
-			Detail: "They run your agent, but its credentials, tools and attached collections resolve in THEIR namespace: nothing of yours travels with the share. " +
-				"So a collection attached here answers for them only if you have also shared that collection with them, or an administrator has widened it to everyone. " +
-				"You are told when one is withheld. An admin can audit or revoke shares.",
+			Subtitle: shareSubtitleFor(shareRec),
+			Detail: "They run your agent, and what it uses travels with it: your tools, your documents, your skills, readable through this agent and nowhere else. They cannot attach any of it to an agent of their own.\n\n" +
+				"A credential is the exception, because it is whose identity a call goes out as rather than a copy anybody is missing. Decide that per key when you share, in Sharing.\n\n" +
+				"Once an admin has PUBLISHED this agent, the list below narrows inside their grant rather than adding to it: somebody has to be allowed the app AND be on your list. Leaving it empty means everybody the admin allowed. An admin can audit or revoke shares either way.",
 			Body: ui.ACLPicker(ui.ACLPickerConfig{
 				OptionsSource: "../api/user-candidates",
 				RecordSource:  source,
@@ -1334,4 +1338,21 @@ func currentAutoThinkLabel() string {
 		return "currently reasoning ON"
 	}
 	return "currently reasoning OFF"
+}
+
+// shareSubtitleFor says what the list in front of somebody actually decides,
+// which differs entirely once an agent is published.
+//
+// Before publication it is the whole grant. After, it is a narrowing inside
+// the admin's, and a line that still said "let specific users run this" would
+// be describing a control that no longer does that on its own.
+func shareSubtitleFor(a AgentRecord) string {
+	if !a.Exposed && !a.MCPExposed {
+		return "Let specific other users run this agent. Empty means private to you."
+	}
+	if len(a.AllowedUsers) == 0 {
+		return "Published: everybody the admin has granted this app can run it. Name people here to narrow it to them."
+	}
+	return "Published, and narrowed by you to " + strings.Join(a.AllowedUsers, ", ") +
+		". They also need the admin's grant of the app; this list can only narrow it, never widen it."
 }

@@ -89,7 +89,7 @@ func (T *OrchestrateApp) DashboardCards(r *http.Request) []DashboardCard {
 		// (or its owner). AgentReachableBy composes both, so a published agent nobody
 		// was granted shows only for admins, and a peer-shared agent shows only for
 		// its recipients.
-		if !T.AgentReachableBy(r, e.Slug, e.Owner, e.AllowedUsers) {
+		if !T.AgentReachableBy(r, e.Slug, e.Owner, e.AllowedUsers, e.Exposed) {
 			continue
 		}
 		desc := strings.TrimSpace(e.Description)
@@ -236,15 +236,47 @@ func reachableAgent(a AgentRecord) bool {
 // admins auto), the agent's peer-share recipient list (AllowedUsers), or its
 // owner. This composes the "published to app-access users" and "shared to specific
 // users" access models on the one public surface.
-func (T *OrchestrateApp) AgentReachableBy(r *http.Request, slug, owner string, allowedUsers []string) bool {
-	if UserHasAppAccess(r, "/agents/"+slug) {
-		return true
-	}
+func (T *OrchestrateApp) AgentReachableBy(r *http.Request, slug, owner string, allowedUsers []string, published bool) bool {
 	u := AuthCurrentUser(r)
 	if u == "" {
 		return false
 	}
-	return u == owner || containsString(allowedUsers, u)
+	if u == owner {
+		return true
+	}
+	if !published {
+		// Not published: the owner's list is the whole answer, and nobody
+		// else's opinion is involved. Handing an agent to two colleagues is
+		// the owner's business, as it is for every other kind.
+		return containsString(allowedUsers, u)
+	}
+	// Published: two gates, and it takes BOTH.
+	//
+	// The admin's grant of /agents/<slug> is the CEILING — who this deployment
+	// will let near the agent at all. The owner's list narrows inside it: they
+	// know who the agent is for, they are answerable for it (their tools,
+	// their documents, their key lent into it), and making them file a ticket
+	// to add a teammate is how admins end up granting broadly to stop being
+	// asked, which is the worse position.
+	//
+	// It used to be an OR, which meant the owner's list could reach somebody
+	// the admin had not granted — a narrowing that widened.
+	//
+	// An admin is admitted regardless of the narrowing. They can already read
+	// the record, revoke the share and un-publish it; locking them out of the
+	// thing they govern would be a gate that protects nothing and confuses
+	// whoever is debugging it.
+	if !UserHasAppAccess(r, "/agents/"+slug) {
+		return false
+	}
+	if RequestIsAdmin(r) {
+		return true
+	}
+	// Empty means the owner has not narrowed it: everybody the admin allowed.
+	// The same reading AllowedUsers has on a credential and on a shared tool,
+	// and the alternative — empty means nobody — would have made every agent
+	// published before this unreachable overnight.
+	return len(allowedUsers) == 0 || containsString(allowedUsers, u)
 }
 
 // CortexSessionID exposes a channel agent's pinned home-thread session id so
@@ -490,7 +522,7 @@ func (T *OrchestrateApp) memoryAgent(r *http.Request, udb Database, user, agentI
 		return AgentRecord{}, false
 	}
 	a, owner, ok := T.lookupReachableAgentByID(agentID)
-	if !ok || !T.AgentReachableBy(r, ExposedSlug(a), owner, a.AllowedUsers) {
+	if !ok || !T.AgentReachableBy(r, ExposedSlug(a), owner, a.AllowedUsers, a.Exposed || a.MCPExposed) {
 		return AgentRecord{}, false
 	}
 	return a, true
