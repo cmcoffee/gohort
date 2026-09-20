@@ -111,7 +111,11 @@ func (t *chatTurn) sessionMachine() (MachineDef, bool) {
 	if id == "" {
 		id = strings.TrimSpace(t.agent.Machine)
 	}
-	def, ok := LoadMachineDef(t.udb, t.user, id)
+	// The agent's OWNER, for the reason its pipelines and skills are: a
+	// machine bolted onto an agent is part of what that agent is, and a
+	// recipient has no copy of it to find.
+	ownerDB, ownerUser := t.ownerView()
+	def, ok := LoadMachineDef(ownerDB, ownerUser, id)
 	if !ok {
 		// A machine deleted out from under a live session, or an agent
 		// pointing at one that never saved. Broken-dependency posture:

@@ -53,18 +53,10 @@ func TestThePlanAsksAboutWhatTheyCannotReach(t *testing.T) {
 	for _, d := range plan {
 		keys = append(keys, d.Key)
 	}
-	// The skill, the tool and the key underneath it.
-	if len(plan) != 3 {
+	// The key, and only the key. Everything else the agent uses travels with
+	// it, so asking about it would be asking a question with one answer.
+	if len(plan) != 1 || keys[0] != "cred:wiki" {
 		t.Fatalf("decisions = %v", keys)
-	}
-	joined := strings.Join(keys, " ")
-	if !strings.Contains(joined, "skill:s1") || !strings.Contains(joined, "cred:wiki") {
-		t.Errorf("the plan does not ask about both gaps: %v", keys)
-	}
-	// The credential comes last: deciding about a key before deciding whether
-	// the tool that spends it goes at all is the wrong order to be asked in.
-	if !strings.HasPrefix(keys[len(keys)-1], "cred:") {
-		t.Errorf("the credential is not the last question: %v", keys)
 	}
 	// Four answers, defaulting to the one that keeps each person's calls
 	// going out as themselves.
@@ -91,7 +83,7 @@ func TestThePlanAsksAboutWhatTheyCannotReach(t *testing.T) {
 func TestBringingTheirOwnLendsNothing(t *testing.T) {
 	udb, _ := guidedFixture(t)
 	lines := shareAgentGuided("alice", "a1", []string{"bob"},
-		map[string]string{"skill:s1": shareSend, "cred:wiki": credOwn})
+		map[string]string{"cred:wiki": credOwn})
 
 	if got := Secure().SharedWithUser("bob"); len(got) != 0 {
 		t.Errorf("the key was lent anyway: %+v", got)
@@ -101,13 +93,13 @@ func TestBringingTheirOwnLendsNothing(t *testing.T) {
 	if !strings.Contains(strings.Join(lines, " | "), "supply their own") {
 		t.Errorf("the report does not say the recipient needs their own: %v", lines)
 	}
-	// The agent and the skill did go.
+	// The agent went; the skill was never handed over, because it travels.
 	a, _ := loadAgent(udb, "a1")
 	if !namedIn(a.AllowedUsers, "bob") {
 		t.Error("the agent was not shared")
 	}
-	if got := AvailableSkills(udb, "bob"); len(got) != 1 {
-		t.Errorf("the skill did not go: %+v", got)
+	if got := AvailableSkills(udb, "bob"); len(got) != 0 {
+		t.Errorf("sharing the agent handed its skill to the recipient: %+v", got)
 	}
 }
 
@@ -116,7 +108,7 @@ func TestBringingTheirOwnLendsNothing(t *testing.T) {
 func TestAWriteLendSaysWhoseNameTheWritesCarry(t *testing.T) {
 	guidedFixture(t)
 	lines := shareAgentGuided("alice", "a1", []string{"bob"},
-		map[string]string{"skill:s1": shareSkip, "cred:wiki": credWrite})
+		map[string]string{"cred:wiki": credWrite})
 
 	c, ok := Secure().LoadUser("alice", "wiki")
 	if !ok || !namedIn(c.SharedReadWrite, "bob") {
@@ -126,12 +118,9 @@ func TestAWriteLendSaysWhoseNameTheWritesCarry(t *testing.T) {
 	if !strings.Contains(joined, "arrive as you") {
 		t.Errorf("the report does not say whose name the writes carry: %v", lines)
 	}
-	// And the skill this run was told to skip stayed put.
+	// And no dependency was handed over, whatever the credential answer was.
 	if namedIn(skillRecipients(t, "s1"), "bob") {
-		t.Error("a dependency marked skip was shared anyway")
-	}
-	if !strings.Contains(joined, "left out") {
-		t.Errorf("the report does not say what it left out: %v", lines)
+		t.Error("a dependency was shared as a side effect of a credential answer")
 	}
 }
 
@@ -178,7 +167,7 @@ func TestTheRecipientIsToldWhatTheyMustSupply(t *testing.T) {
 	// They bring their own key, which is the default and the case where the
 	// recipient has something to do.
 	shareAgentGuided("alice", "a1", []string{"bob"},
-		map[string]string{"skill:s1": shareSend, "tool:wiki_read": shareSend, "cred:wiki": credOwn})
+		map[string]string{"cred:wiki": credOwn})
 
 	need := manifestForAgent("alice", "a1", "bob")
 	joined := strings.Join(need, " | ")
@@ -198,7 +187,7 @@ func TestACompleteShareAsksNothingOfTheRecipient(t *testing.T) {
 	udb, _ := guidedFixture(t)
 	// Lend the key and share everything else: bob is left with nothing to do.
 	shareAgentGuided("alice", "a1", []string{"bob"},
-		map[string]string{"skill:s1": shareSend, "tool:wiki_read": shareSend, "cred:wiki": credRead})
+		map[string]string{"cred:wiki": credRead})
 	// Taking the tool is the recipient's own step, so stand in for it.
 	SetGlobalToolAdopted(AuthDB(), "bob", "wiki_read", true)
 
@@ -213,15 +202,19 @@ func TestACompleteShareAsksNothingOfTheRecipient(t *testing.T) {
 // for one of them.
 func TestTheManifestIsPerRecipient(t *testing.T) {
 	guidedFixture(t)
-	shareAgentGuided("alice", "a1", []string{"bob", "carol"},
-		map[string]string{"cred:wiki": credRead, "skill:s1": shareSend, "tool:wiki_read": shareSend})
-	SetGlobalToolAdopted(AuthDB(), "bob", "wiki_read", true)
+	// Bob has a key of his own by that name; carol does not. Nobody is lent
+	// anything, so the difference is entirely about what each already holds.
+	if err := Secure().Save(SecureCredential{Name: "wiki", Type: SecureCredNone, Owner: "bob",
+		AllowedURLPattern: "https://wiki.example/**"}, ""); err != nil {
+		t.Skipf("no secure store here: %v", err)
+	}
+	shareAgentGuided("alice", "a1", []string{"bob", "carol"}, map[string]string{"cred:wiki": credOwn})
 
 	if need := manifestForAgent("alice", "a1", "bob"); len(need) != 0 {
-		t.Errorf("bob took the tool and is still being asked: %v", need)
+		t.Errorf("bob has his own key and is still being asked: %v", need)
 	}
 	if need := manifestForAgent("alice", "a1", "carol"); len(need) == 0 {
-		t.Error("carol has not taken the tool and is being told nothing")
+		t.Error("carol has no key of that name and is being told nothing")
 	}
 }
 

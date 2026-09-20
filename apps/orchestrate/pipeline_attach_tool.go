@@ -82,7 +82,12 @@ func (t *chatTurn) buildAttachedPipelineToolDefs() []AgentToolDef {
 	out := make([]AgentToolDef, 0, len(ids))
 	usedNames := make(map[string]bool, len(ids))
 	for _, pid := range ids {
-		def, ok := LoadPipelineDef(t.udb, t.user, pid)
+		// The agent's OWNER, like its tools, skills and documents. An
+		// attached pipeline is part of what the agent IS, and loading it as
+		// whoever happened to be running meant a shared agent quietly lost
+		// the pipeline tools its own prompt described.
+		ownerDB, ownerUser := t.ownerView()
+		def, ok := LoadPipelineDef(ownerDB, ownerUser, pid)
 		if !ok {
 			continue
 		}

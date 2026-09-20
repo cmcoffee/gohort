@@ -54,7 +54,7 @@ func shareStartSection(user string) ui.Section {
 	return ui.Section{
 		Title:    "Share something",
 		Subtitle: "Pick a thing and the people who should have it.",
-		Detail: "The next screen asks about anything the thing depends on that they cannot reach — its tools, its documents, and the credentials underneath them. Nothing is shared until you confirm there.\n\n" +
+		Detail: "What a thing depends on travels with it, scoped to it — their turns read your documents and run your tools THROUGH the thing you shared, and nowhere else. The next screen asks only about credentials, which do not travel, because a key is whose identity a call goes out as rather than a copy somebody is missing. Nothing is shared until you confirm there.\n\n" +
 			"You can also share from a thing's own page, which is the fast route when you know exactly what you want. Both end up in the same place.",
 		Body: ui.FormPanel{
 			PostURL:     "api/plan",
@@ -179,11 +179,11 @@ func (T *ShareApp) servePlanPage(w http.ResponseWriter, r *http.Request) {
 func planSummary(n int) string {
 	switch n {
 	case 0:
-		return "Nothing it uses is out of their reach, so there is nothing to decide. Confirm to share it."
+		return "Everything it uses travels with it, and it calls no API of yours, so there is nothing to decide. Confirm to share it."
 	case 1:
-		return "One thing it uses does not reach them yet. Your answer decides what happens to it."
+		return "Everything it uses travels with it except one credential, which is whose identity its calls go out as. Your answer decides that."
 	default:
-		return strconv.Itoa(n) + " things it uses do not reach them yet. Each answer below decides one of them."
+		return "Everything it uses travels with it except " + strconv.Itoa(n) + " credentials, which are whose identity its calls go out as. Each answer below decides one."
 	}
 }
 

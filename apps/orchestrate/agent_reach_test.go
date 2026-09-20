@@ -5,6 +5,7 @@ package orchestrate
 // the strength of it and finds out later.
 
 import (
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -47,50 +48,38 @@ func TestAPrivateAgentHasNoGaps(t *testing.T) {
 	}
 }
 
-// The case the panel exists for: shared with somebody who does not have what
-// it needs. And the answer names THEM, because "warning" is not something to
-// act on and "bob does not have this" is.
-func TestASharedAgentReportsWhatItsRecipientLacks(t *testing.T) {
+// What a shared agent's dependencies now do: travel. A skill the owner has
+// shared with nobody still reaches whoever runs their agent, because it is
+// read in the owner's namespace and scoped to that agent.
+func TestASharedAgentsDependenciesAreNotGaps(t *testing.T) {
 	udb := reachFixture(t)
 	SaveSkill(RootDB, "alice", SkillRecord{ID: "s1", Name: "Private Skill", Instructions: "."})
-	SaveSkill(RootDB, "alice", SkillRecord{ID: "s2", Name: "Given Skill", Instructions: ".",
-		AllowedUsers: []string{"bob"}})
 
 	got := agentReachOf(udb, "alice", AgentRecord{ID: "a1", Owner: "alice",
-		AllowedUsers:  []string{"bob"},
-		AllowedSkills: []string{"s1", "s2"}})
+		AllowedUsers: []string{"bob"}, AllowedSkills: []string{"s1"}})
 
-	priv, ok := itemFor(got, "Private Skill")
-	if !ok || !priv.Gap {
-		t.Fatalf("a private skill on a shared agent is not flagged: %+v", got.Items)
+	it, ok := itemFor(got, "Private Skill")
+	if !ok {
+		t.Fatalf("the skill is not listed at all: %+v", got.Items)
 	}
-	if priv.Missing != "bob does not have this" {
-		t.Errorf("the gap does not name who lacks it: %q", priv.Missing)
+	if it.Gap {
+		t.Error("a dependency that travels with the agent is reported as missing")
 	}
-	given, ok := itemFor(got, "Given Skill")
-	if !ok || given.Gap {
-		t.Errorf("a skill shared with the same person is flagged anyway: %+v", given)
-	}
-	if got.Gaps != 1 {
-		t.Errorf("gaps = %d, want 1", got.Gaps)
+	if got.Gaps != 0 {
+		t.Errorf("gaps = %d, want 0: %+v", got.Gaps, got.Items)
 	}
 }
 
-// A published agent is measured against everybody, so a skill shared with one
-// person is still short.
-func TestAPublishedAgentNeedsDeploymentWideDependencies(t *testing.T) {
+// The same holds for a published agent: everybody who runs it reads the
+// author's corpus and behaviour through it, so nothing needs widening.
+func TestAPublishedAgentsDependenciesAreNotGapsEither(t *testing.T) {
 	udb := reachFixture(t)
-	SaveSkill(RootDB, "alice", SkillRecord{ID: "s1", Name: "Given Skill", Instructions: ".",
-		AllowedUsers: []string{"bob"}})
+	SaveSkill(RootDB, "alice", SkillRecord{ID: "s1", Name: "Private Skill", Instructions: "."})
 
 	got := agentReachOf(udb, "alice", AgentRecord{ID: "a1", Owner: "alice", Exposed: true,
 		AllowedSkills: []string{"s1"}})
-	it, ok := itemFor(got, "Given Skill")
-	if !ok || !it.Gap {
-		t.Fatalf("a peer-shared skill on a published agent is not flagged: %+v", got.Items)
-	}
-	if it.Missing != "Not everybody has this" {
-		t.Errorf("missing = %q", it.Missing)
+	if got.Gaps != 0 {
+		t.Errorf("a published agent reports gaps it no longer has: %+v", got.Items)
 	}
 }
 
@@ -118,23 +107,34 @@ func TestBundledToolsTravelWithTheAgent(t *testing.T) {
 // A personal credential is NOT a gap. Everything else on this panel asks "do
 // they have a copy"; a credential asks whose identity the call goes out as, and
 // the ordinary answer for a team is that each person supplies their own.
-func TestAPersonalCredentialIsNotReportedAsMissing(t *testing.T) {
+// A credential IS a gap, and the only one: it is not a copy somebody is
+// missing but whose identity the call goes out as, which is the one thing a
+// share has to ask about.
+//
+// The name is unique to this test on purpose. The credential store is a
+// process singleton these fixtures do not swap, so a key another test saved
+// for "wiki" would decide this one's answer.
+func TestACredentialIsTheOnlyGap(t *testing.T) {
 	udb := reachFixture(t)
+	if err := Secure().Save(SecureCredential{Name: "reach_only_key", Type: SecureCredNone,
+		Owner: "alice", AllowedURLPattern: "https://x.example/**"}, ""); err != nil {
+		t.Skipf("no secure store here: %v", err)
+	}
+	Secure().SetCredentialShares("alice", "reach_only_key", nil, nil)
+
 	got := agentReachOf(udb, "alice", AgentRecord{ID: "a1", Owner: "alice",
 		AllowedUsers: []string{"bob"},
-		Tools:        []TempTool{{Name: "wiki_read", Credential: "wiki"}}})
+		Tools:        []TempTool{{Name: "wiki_read", Credential: "reach_only_key"}}})
 
-	it, ok := itemFor(got, "wiki")
+	it, ok := itemFor(got, "reach_only_key")
 	if !ok {
-		t.Fatal("the credential behind a bundled tool is not listed")
+		t.Fatalf("the credential behind a bundled tool is not listed: %+v", got.Items)
 	}
-	if it.Kind != "Credential" {
-		t.Errorf("kind = %q", it.Kind)
+	if it.Kind != "Credential" || !it.Gap {
+		t.Errorf("a personal key on a shared agent is not the gap: %+v", it)
 	}
-	// Nothing of alice's answers to "wiki" here, so the runner resolves it
-	// exactly as she does — which is not something she can fix by sharing.
-	if it.Gap {
-		t.Errorf("a credential nobody owns is reported as a gap: %+v", it)
+	if !strings.Contains(it.Fix, "their own key") {
+		t.Errorf("the fix does not describe the choice: %q", it.Fix)
 	}
 }
 

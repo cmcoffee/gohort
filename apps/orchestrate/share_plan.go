@@ -25,11 +25,10 @@ import (
 // credential has four, and a two-state control that grew a third option is how
 // the third one ends up meaning "whatever the second one meant".
 const (
-	shareSend = "send" // hand this dependency over too
-	shareSkip = "skip" // leave it out; the agent works without it, or does not
 	credOwn   = "own"  // they supply their own key of this name
 	credRead  = "read" // lend mine, reads only
 	credWrite = "write"
+	shareSkip = "skip" // turn it off for the agent entirely
 )
 
 // planAgentShare asks about everything the recipients cannot reach.
@@ -48,50 +47,18 @@ func planAgentShare(owner, id string, recipients []string) []shareledger.Decisio
 	a.AllowedUsers = recipients
 	a.Exposed, a.MCPExposed = false, false
 
+	// Credentials, and only credentials. Everything else an agent uses travels
+	// with it and is scoped to it, so there is no question to ask: asking
+	// "share this tool too?" had one possible answer, and the answer it
+	// offered was the wrong shape anyway — handing the tool over, when the
+	// agent only ever needed to run it.
 	var out []shareledger.Decision
 	for _, it := range agentReachOf(udb, owner, a).Items {
-		if !it.Gap {
-			continue
-		}
-		if it.kind == "credential" {
+		if it.Gap {
 			out = append(out, credentialDecision(it, owner))
-			continue
-		}
-		if d, ok := dependencyDecision(it); ok {
-			out = append(out, d)
 		}
 	}
-	// Credentials last: they are what the tools above rest on, and deciding
-	// about a key before deciding whether the tool that spends it goes at all
-	// is the wrong order to be asked in.
-	sort.SliceStable(out, func(i, j int) bool {
-		return credDecisionKey(out[i].Key) != credDecisionKey(out[j].Key) && !credDecisionKey(out[i].Key)
-	})
 	return out
-}
-
-func credDecisionKey(k string) bool { return strings.HasPrefix(k, "cred:") }
-
-// dependencyDecision is the ordinary case: a skill, a collection, a tool, a
-// recipe. Send it or leave it out.
-func dependencyDecision(it reachItem) (shareledger.Decision, bool) {
-	switch it.kind {
-	case "skill", "collection", "pipeline", "machine", "tool":
-	default:
-		return shareledger.Decision{}, false
-	}
-	return shareledger.Decision{
-		Key:   it.kind + ":" + it.id,
-		Title: it.Kind + " — " + it.Name,
-		Intro: it.Missing + ". " + it.How,
-		Options: []shareledger.Choice{
-			{Value: shareSend, Label: "Share it with them too",
-				Help: "They get it on the same terms, through its own door."},
-			{Value: shareSkip, Label: "Leave it out",
-				Help: "The agent still runs; anything that needed this says it could not reach it."},
-		},
-		Default: shareSend,
-	}, true
 }
 
 // credentialDecision is the fork the fan-out used to make on everybody's
@@ -156,27 +123,12 @@ func shareAgentGuided(owner, id string, recipients []string, answers map[string]
 	}
 	out := []string{"Agent " + a.Name + " → " + strings.Join(recipients, ", ")}
 
+	// Everything else the agent uses travels with it, so there is nothing to
+	// grant and nothing to report beyond saying so once.
+	out = append(out, "Its tools, skills, documents and recipes travel with it, readable through this agent and nowhere else.")
 	for _, it := range agentReachOf(udb, owner, a).Items {
-		if !it.Gap {
-			continue
-		}
-		answer := answers[it.kind+":"+it.id]
-		if it.kind == "credential" {
-			answer = answers["cred:"+it.id]
-			out = append(out, applyCredentialAnswer(owner, id, it, recipients, answer))
-			continue
-		}
-		if answer == shareSkip || answer == "" {
-			out = append(out, it.Kind+" "+it.Name+": left out, as you asked")
-			continue
-		}
-		added, err := grantToRecipients(udb, owner, it, recipients)
-		switch {
-		case err != nil:
-			out = append(out, it.Kind+" "+it.Name+": "+err.Error())
-		case len(added) > 0:
-			recordFanout(owner, id, it, added)
-			out = append(out, it.Kind+" "+it.Name+" → "+strings.Join(added, ", "))
+		if it.Gap {
+			out = append(out, applyCredentialAnswer(owner, id, it, recipients, answers["cred:"+it.id]))
 		}
 	}
 	return out
@@ -201,6 +153,9 @@ func applyCredentialAnswer(owner, agentID string, it reachItem, recipients []str
 		if err := Secure().SetCredentialShares(owner, it.id, read, write); err != nil {
 			return "Credential " + it.Name + ": " + err.Error()
 		}
+		// Recorded, so taking somebody off this agent takes the lend back
+		// with them — and takes back nothing the owner lent by hand.
+		recordShareLend(owner, agentID, it.id, recipients)
 		if answer == credWrite {
 			return "Credential " + it.Name + " → " + strings.Join(recipients, ", ") + ", reads and writes. Their writes arrive as you."
 		}
@@ -250,25 +205,22 @@ func manifestForAgent(owner, id, recipient string) []string {
 
 	var out []string
 	for _, it := range agentReachOf(udb, owner, a).Items {
+		// Credentials, and only credentials. Everything else the agent uses
+		// travels with it, so there is nothing for the recipient to fetch,
+		// adopt or ask for — and a manifest that listed those would be giving
+		// somebody homework that is already done.
 		if !it.Gap {
-			// It reaches them — which is not the same as it being ready. A
-			// shared tool sits in their catalog until they take it, and only
-			// tools know that about themselves, so ask the kind rather than
-			// growing a second opinion here.
-			out = append(out, shareledger.Manifest(it.kind, owner, it.id, recipient)...)
 			continue
 		}
-		switch it.kind {
-		case "credential":
-			// The one they can actually act on, and the one that is not a
-			// copy of anything: it needs a key of theirs by that exact name.
-			out = append(out, "It calls an API through a credential named \""+it.Name+
-				"\". Add one of your own by that name in Extensions, or its calls will fail.")
-		case "tool":
-			out = append(out, "It uses the tool \""+it.Name+"\", which has not reached you. Ask "+owner+" to share it.")
-		default:
-			out = append(out, "It uses the "+strings.ToLower(it.Kind)+" \""+it.Name+"\", which has not reached you.")
+		// Asked of THEM, not of the owner. The reach walk answers "is this key
+		// lent", which is the owner's question; the recipient's is "do I have
+		// one of this name", and somebody who already does should be told
+		// nothing rather than sent to add a second.
+		if _, ok := Secure().Resolve(it.id, recipient); ok {
+			continue
 		}
+		out = append(out, "It calls an API through a credential named \""+it.Name+
+			"\". Add one of your own by that name in Extensions, or its calls will fail.")
 	}
 	return out
 }

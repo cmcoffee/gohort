@@ -553,21 +553,16 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 			http.NotFound(w, r)
 			return
 		}
-		switch r.Method {
-		case http.MethodGet:
-			writeJSON(w, agentReachOf(udb, user, agent).Items)
-		case http.MethodPost:
-			// Close the gaps this owner can close, by giving each dependency
-			// the agent's own recipients through that kind's own door. The
-			// report names what it did AND what it could not, because one that
-			// listed only successes is how somebody concludes their team has a
-			// working agent while a tool is still missing.
-			lines := fanOutAgentShare(udb, user, agent)
-			Log("[orchestrate.share] %q shared what %q needs: %s", user, agent.Name, strings.Join(lines, "; "))
-			writeJSON(w, map[string]any{"lines": lines})
-		default:
+		// Read-only. There used to be a POST here that shared every dependency
+		// the agent's recipients could not reach; they reach all of them now,
+		// because a dependency travels with the agent. The one thing that does
+		// not travel is a credential, and that is decided when the agent is
+		// shared rather than by a button that assumes an answer.
+		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
 		}
+		writeJSON(w, agentReachOf(udb, user, agent).Items)
 		return
 	}
 	if action == "eval-suite" {

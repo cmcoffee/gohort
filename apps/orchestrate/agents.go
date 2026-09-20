@@ -340,7 +340,7 @@ func writeAgent(db Database, a AgentRecord, maySetLocked bool, reason string) (A
 	if RootDB != nil && isShareableAgent(a, a.Owner) {
 		var prior AgentRecord
 		if db.Get(agentsTable, a.ID, &prior) {
-			dropped = without(prior.AllowedUsers, a.AllowedUsers)
+			dropped = leftBehind(prior.AllowedUsers, a.AllowedUsers)
 		}
 	}
 	db.Set(agentsTable, a.ID, a)
@@ -351,11 +351,13 @@ func writeAgent(db Database, a AgentRecord, maySetLocked bool, reason string) (A
 	if RootDB != nil && isShareableAgent(a, a.Owner) {
 		peershare.SetRecipients(RootDB, SharedAgentsTable, a.Owner, a.ID, a.AllowedUsers)
 	}
-	// Only what the fan-out itself granted, which is the whole reason those
-	// grants were recorded: a collection the owner shared with somebody by hand
-	// months ago, for reasons of their own, is not this write's to claw back.
+	// Only the credential lends this agent's share made, which is the whole
+	// reason they were recorded: a key the owner lent somebody by hand months
+	// ago, for reasons of their own, is not this write's to claw back. Nothing
+	// else needs taking back — an agent's other dependencies travel with it
+	// and were never granted to anybody.
 	if len(dropped) > 0 {
-		if lines := withdrawAgentShare(db, a.Owner, a, dropped); len(lines) > 0 {
+		if lines := withdrawAgentShare(a.Owner, a.ID, dropped); len(lines) > 0 {
 			Log("[orchestrate.share] %q left %q, so what its share had granted came back: %s",
 				strings.Join(dropped, ", "), a.Name, strings.Join(lines, "; "))
 		}

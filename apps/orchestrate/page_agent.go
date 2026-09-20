@@ -694,39 +694,22 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			Title:    "What this agent reaches",
 			Wide:     true,
 			Subtitle: "Everything it depends on, and how far each of those goes today.",
-			Detail: "Sharing an agent shares the agent. Each thing it uses is a record of its own with its own reach, and a run resolves them in the namespace of whoever started it — so a person can have this agent and still be missing what it needs.\n\n" +
-				"Nothing here changes anything. It is the list to check before you share, and the answer to \"why does it work for me and not for them\" afterwards.\n\n" +
-				"How is the part worth reading: a tool is found by NAME in the runner's own catalog, while a skill, collection, pipeline or machine is found by ID and only if it reached them. A credential resolves by name as whoever is running, which is usually what you want — their calls should go out as them.",
-			Body: ui.Stack{Children: []ui.Component{
-				ui.Table{
-					Source: source + "/reach",
-					RowKey: "name",
-					Columns: []ui.Col{
-						{Field: "kind", Label: "Kind", Flex: 0},
-						{Field: "name", Flex: 1},
-						{Field: "reach", Label: "Reach", Flex: 1},
-						{Field: "missing", Label: "", Flex: 1},
-						{Field: "fix", Label: "To close it", Flex: 2},
-						{Field: "how", Label: "How a run finds it", Mute: true, Flex: 3},
-					},
-					EmptyText: "This agent depends on nothing of yours. Anybody you share it with gets all of it.",
+			Detail: "Everything here travels with the agent and is scoped to it: whoever runs it reads your documents, runs your tools and activates your skills THROUGH this agent, and nowhere else. They cannot attach any of it to an agent of their own.\n\n" +
+				"One exception, and it is the only thing a share has to ask about. A credential is not a copy somebody is missing — it is whose identity the call goes out as — so it resolves by name in the namespace of whoever is running, and you decide per key whether to lend yours or let them bring their own. That choice is made when you share, in Sharing.\n\n" +
+				"Nothing here changes anything. It is the list to check before you share, and the answer to \"why does it work for me and not for them\" afterwards.",
+			Body: ui.Table{
+				Source: source + "/reach",
+				RowKey: "name",
+				Columns: []ui.Col{
+					{Field: "kind", Label: "Kind", Flex: 0},
+					{Field: "name", Flex: 1},
+					{Field: "reach", Label: "Reach", Flex: 1},
+					{Field: "missing", Label: "", Flex: 1},
+					{Field: "fix", Label: "To decide", Flex: 2},
+					{Field: "how", Label: "How a run finds it", Mute: true, Flex: 3},
 				},
-				// One action for the one request. It only ever does what the
-				// owner could do themselves, one door at a time, to the people
-				// they already chose above.
-				ui.FormPanel{
-					PostURL:     source + "/reach",
-					SubmitLabel: "Share what this needs",
-					Fields: []ui.FormField{{Type: "header",
-						Label: "Give everything above the same people",
-						Help:  "Each thing gets the agent's own recipient list, through its own door. Nothing is copied and no new kind of grant is made.",
-						Detail: "Only what is yours to share: a tool, skill, collection, pipeline or machine you own.\n\n" +
-							"A shared TOOL is an offer. It appears in their catalog to take, and loads for their agents once they take it — a colleague should not be able to put code in your agents' hands without you saying so, and the same holds in reverse.\n\n" +
-							"A CREDENTIAL is not shared, and that is deliberate. It is not a copy somebody is missing; it is whose identity the call goes out as, and for a team the answer is usually that each person supplies their own key of the same name. A tool that spends a SECURED key is refused for the same reason from the other side: an admin decided which tools may spend it.\n\n" +
-							"Taking somebody off this agent later takes back what this gave them, and only that — a share you made by hand, for your own reasons, is never clawed back."}},
-					Invalidate: []string{source + "/reach"},
-				},
-			}},
+				EmptyText: "This agent depends on nothing of yours. Anybody you share it with gets all of it.",
+			},
 		})
 	}
 

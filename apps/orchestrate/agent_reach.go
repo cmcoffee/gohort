@@ -103,7 +103,18 @@ func agentReachOf(udb Database, owner string, a AgentRecord) agentReachMap {
 
 	creds := map[string]bool{}
 	add := func(it reachItem) {
-		it.Gap = it.level < out.audience
+		// Only a CREDENTIAL can be short. Everything else an agent depends on
+		// travels with it and is scoped to it — its tools, skills, documents,
+		// pipelines and machine all resolve in the owner's namespace for
+		// whoever runs it — so "does this reach them" has one answer and it is
+		// yes. Asking about them was asking a question with a known answer,
+		// and the answers were the wrong shape anyway: "share my collection
+		// with them" hands over a thing, where the agent only ever needed to
+		// read it.
+		//
+		// A credential is the exception because it is not a copy anybody is
+		// missing. It is whose identity the call goes out as.
+		it.Gap = it.kind == "credential" && it.level < out.audience
 		if it.Gap {
 			it.Missing = missingFor(out.audience, out.recipients)
 			it.Fix = fixFor(it, out.audience)
@@ -330,32 +341,8 @@ func namedIn(list []string, want string) bool {
 // Nothing closes a gap against EVERYBODY except the deployment rung, and that
 // is an administrator's to grant whatever the kind.
 func fixFor(it reachItem, audience int) string {
-	if audience == reachDeployment {
-		return "Ask an admin to publish it deployment-wide"
-	}
-	switch it.kind {
-	case "skill", "collection", "pipeline", "machine", "tool":
-		return "Share it with the same people"
-	case "credential":
-		// Not a copy they are missing, so "share it" is one answer of four
-		// and usually the wrong one. The guided flow is where that gets
-		// decided, because it is the only surface that asks.
-		return "Decide it when you share: their own key, or a lend of yours"
-	}
-	return ""
-}
-
-// shareableGaps are the gaps this owner can close themselves, in one action.
-func (r agentReachMap) shareableGaps() []reachItem {
-	var out []reachItem
-	for _, it := range r.Items {
-		if !it.Gap {
-			continue
-		}
-		switch it.kind {
-		case "skill", "collection", "pipeline", "machine", "tool":
-			out = append(out, it)
-		}
-	}
-	return out
+	// Only credentials reach here, since nothing else is ever a gap. Not a
+	// copy they are missing, so "share it" is one answer of four and usually
+	// the wrong one; the guided flow is the only surface that asks.
+	return "Decide it when you share: their own key, or a lend of yours"
 }
