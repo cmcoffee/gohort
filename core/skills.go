@@ -26,6 +26,7 @@ import (
 
 	"github.com/cmcoffee/gohort/core/revisions"
 
+	"github.com/cmcoffee/gohort/core/peershare"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -478,7 +479,7 @@ func SharedSkillsFor(db Database, username string) []SkillRecord {
 		return nil
 	}
 	var out []SkillRecord
-	for _, ref := range ListPeerShares(store, SharedSkillsTable, username) {
+	for _, ref := range peershare.List(store, SharedSkillsTable, username) {
 		for _, s := range LoadSkills(db, ref.Owner) {
 			if s.ID != ref.ID || s.Disabled {
 				continue
@@ -622,7 +623,7 @@ func SaveSkillAs(db Database, username string, s SkillRecord, reason string) (Sk
 	// that updated one without the other would either strand a recipient or
 	// keep one who had been removed, and which of those you got would depend on
 	// which half ran.
-	SetPeerShareRecipients(store, SharedSkillsTable, username, s.ID, s.AllowedUsers)
+	peershare.SetRecipients(store, SharedSkillsTable, username, s.ID, s.AllowedUsers)
 	return s, nil
 }
 
@@ -704,7 +705,7 @@ func DeleteSkill(db Database, username, id string) bool {
 	// The shares go with it. An index entry outliving its record points at
 	// nothing, which reads to a recipient as access they lost rather than a
 	// skill that is gone.
-	DropPeerShares(store, SharedSkillsTable, username, id)
+	peershare.DropAll(store, SharedSkillsTable, username, id)
 	// The history goes with the skill, the way a deleted pipeline's does.
 	revisions.Delete(store, revisions.KindSkill, skillRingKey(username, id))
 	// Drop the skill's corpus chunks from its dedicated store.

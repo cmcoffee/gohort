@@ -8,36 +8,49 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cmcoffee/gohort/core/peershare"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
-// The comment on Collection.Scope used to say deployment scope was
-// "admin-authored only at the HTTP layer". There was no such endpoint: it
-// described a gate that had never been built, which is worse than describing
-// none, because the next person to add a write path reads it and believes the
-// check lives somewhere else.
+// A user CAN now ask for deployment scope, and that is the point: the third
+// rung exists. What must hold is that asking is not the same as getting.
 //
-// What actually holds it shut is that nothing reads a scope off a request. This
-// pins that, so the claim and the code cannot drift apart again.
-func TestNothingLetsAUserMintADeploymentCollection(t *testing.T) {
-	for _, f := range []string{"../apps/orchestrate/collections.go"} {
-		raw, err := os.ReadFile(f)
-		if err != nil {
-			t.Fatalf("reading %s: %v", f, err)
-		}
-		src := string(raw)
-		// A create/update handler that started taking a scope from the caller
-		// is the whole risk, and it would look innocuous in a diff.
-		for _, leak := range []string{`body.Scope`, `Get("scope")`, `"scope"`} {
-			if strings.Contains(src, leak) {
-				t.Errorf("%s reads a scope from the request (%s); a user could mint a deployment-wide collection", f, leak)
-			}
-		}
+// This test replaced one that pinned the absence of any scope read at all.
+// That was the right test while nothing could widen a collection and the wrong
+// one the moment something could — a guard that forbids the mechanism rather
+// than the outcome has to be rewritten to ship the feature, and a guard
+// rewritten to ship a feature guards nothing. This one pins the outcome.
+func TestWideningACollectionGoesThroughAnAdministrator(t *testing.T) {
+	raw, err := os.ReadFile("../apps/orchestrate/collections.go")
+	if err != nil {
+		t.Fatalf("reading the handler: %v", err)
 	}
-	// And the one that does exist is the framework's own, not somebody's.
-	if DeploymentKnowledgeCollectionID == "" {
-		t.Error("the framework's own deployment collection lost its id")
+	src := string(raw)
+	// The request path exists...
+	if !strings.Contains(src, "CreatePromotionRequest(AuthDB(), user, CollectionPromotionKind") {
+		t.Error("widening no longer files a promotion request; a user could mint a deployment-wide collection")
 	}
+	// ...and the direct path is reachable only by an admin.
+	if !strings.Contains(src, "if RequestIsAdmin(r) {") {
+		t.Error("the direct promote is not gated on an admin")
+	}
+	// Only the owner decides either way.
+	if !strings.Contains(src, `http.Error(w, "only the owner can change who this is shared with"`) {
+		t.Error("a non-owner can change a collection's scope")
+	}
+	// And the approver is what actually promotes, so approving is the act.
+	if !strings.Contains(string(mustRead(t, "collections.go")), "promotion.RegisterApprover(CollectionPromotionKind") {
+		t.Error("nothing registers an approver, so an approved request would be refused as unsupported")
+	}
+}
+
+func mustRead(t *testing.T, name string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(name)
+	if err != nil {
+		t.Fatalf("reading %s: %v", name, err)
+	}
+	return b
 }
 
 // Peer sharing on collections, end to end from the recipient's side.
@@ -108,5 +121,57 @@ func TestSharingIsNotOfferedWhereItCouldNotSearch(t *testing.T) {
 	SaveCollection(owner, Collection{ID: "col-2", Owner: "alice", Name: "Runbooks", AllowedUsers: []string{"bob"}})
 	if got := SharedCollectionsFor("bob"); len(got) != 0 {
 		t.Errorf("a collection was offered that the recipient could not search: %+v", got)
+	}
+}
+
+// Promotion MOVES the record: one copy, now read from the global pool. The
+// chunks do not move at all, because they live in the shared VectorDB keyed by
+// collection source, so the corpus is reachable the moment the scope changes.
+func TestPromotingMovesTheRecordAndKeepsTheCorpus(t *testing.T) {
+	savedRoot, savedVec := RootDB, VectorDB
+	RootDB, VectorDB = &DBase{Store: kvlite.MemStore()}, &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB, VectorDB = savedRoot, savedVec })
+
+	owner := UserDB(CollectionsDB(), "alice")
+	if owner == nil {
+		t.Skip("no per-user store in this configuration")
+	}
+	SaveCollection(owner, Collection{ID: "col-1", Owner: "alice", Name: "Runbooks", AllowedUsers: []string{"bob"}})
+
+	if err := PromoteCollectionToDeployment("alice", "col-1"); err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+	// Anybody's agent can now attach it.
+	if _, ok := LoadCollection(UserDB(CollectionsDB(), "dana"), "dana", "col-1"); !ok {
+		t.Error("a deployment collection is not reachable by another user")
+	}
+	// One copy: the per-user row is gone, so an edit cannot land in a pool
+	// nobody reads.
+	var stale Collection
+	if owner.Get(CollectionsTable, "col-1", &stale) && stale.ID != "" {
+		t.Error("the per-user row survived, so there are now two copies")
+	}
+	// The owner is kept: it is who to ask about the contents.
+	c, _ := LoadCollection(nil, "", "col-1")
+	if c.Owner != "alice" {
+		t.Errorf("the deployment copy has no owner: %+v", c)
+	}
+	// The peer shares go, because everybody has it: an ACL naming three people
+	// decides nothing now, and leaving it would silently restore it on a later
+	// narrowing.
+	if got := peershare.List(RootDB, SharedCollectionsTable, "bob"); len(got) != 0 {
+		t.Errorf("peer shares survived promotion: %+v", got)
+	}
+
+	// And narrowing is the owner's, taking it back to private with no
+	// recipients rather than guessing which ones they meant.
+	if err := NarrowCollectionToOwner("bob", "col-1"); err == nil {
+		t.Error("a non-owner narrowed somebody else's collection")
+	}
+	if err := NarrowCollectionToOwner("alice", "col-1"); err != nil {
+		t.Fatalf("narrow: %v", err)
+	}
+	if _, ok := LoadCollection(UserDB(CollectionsDB(), "dana"), "dana", "col-1"); ok {
+		t.Error("it is still deployment-wide after narrowing")
 	}
 }

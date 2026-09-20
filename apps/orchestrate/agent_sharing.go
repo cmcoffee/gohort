@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/peershare"
 )
 
 func init() {
@@ -154,7 +155,7 @@ func SharedAgentsFor(db Database, user string) []AgentRecord {
 		return nil
 	}
 	var out []AgentRecord
-	for _, ref := range ListPeerShares(RootDB, SharedAgentsTable, user) {
+	for _, ref := range peershare.List(RootDB, SharedAgentsTable, user) {
 		udb := UserDB(db, ref.Owner)
 		if udb == nil {
 			continue

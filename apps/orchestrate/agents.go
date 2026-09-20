@@ -8,6 +8,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/peershare"
 	"github.com/cmcoffee/gohort/core/revisions"
 )
 
@@ -338,7 +339,7 @@ func writeAgent(db Database, a AgentRecord, maySetLocked bool, reason string) (A
 	// shareable agent: a seed or a sub-agent cannot be shared, so an entry for
 	// one would be a row nothing can act on.
 	if RootDB != nil && isShareableAgent(a, a.Owner) {
-		SetPeerShareRecipients(RootDB, SharedAgentsTable, a.Owner, a.ID, a.AllowedUsers)
+		peershare.SetRecipients(RootDB, SharedAgentsTable, a.Owner, a.ID, a.AllowedUsers)
 	}
 	// Hand back what a load would now give, not the row that went to storage.
 	// For a seed shadow those differ: the row is a full snapshot, while the

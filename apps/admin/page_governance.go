@@ -183,6 +183,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 						// surface, and "credential" never had an approver, so
 						// both were labels for a row nothing could produce.
 						{Value: "agent", Label: "Agent", Color: "warning"},
+						{Value: "collection", Label: "Collection", Color: "info"},
 					}},
 					{Field: "name", Flex: 1},
 					{Field: "note", Flex: 2, Mute: true},

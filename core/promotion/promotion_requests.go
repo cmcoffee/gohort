@@ -29,8 +29,8 @@ const (
 )
 
 // PromotionRequest is one user's ask to publish a resource they own. Kind is
-// "tool" | "app" | "agent" — whichever kinds have registered an approver. State
-// is one of the Promotion*State constants.
+// "tool" | "app" | "agent" | "collection" — whichever kinds have registered an
+// approver. State is one of the Promotion*State constants.
 type PromotionRequest struct {
 	ID        string    `json:"id"`
 	Owner     string    `json:"owner"`

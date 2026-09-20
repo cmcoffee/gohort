@@ -245,6 +245,11 @@ func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Requ
 				// like every other field here, so a rename cannot clear a share
 				// it never showed.
 				AllowedUsers *[]string `json:"allowed_users"`
+				// "user" or "deployment". Widening is requested, narrowing is
+				// applied; both handled before the ordinary field edits below,
+				// because either one moves the record to a different pool and
+				// the edits would be written to the pool it just left.
+				Scope *string `json:"scope"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				http.Error(w, "bad request", http.StatusBadRequest)
@@ -263,6 +268,46 @@ func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Requ
 			}
 			if body.ClassifyOnAutofill != nil {
 				c.ClassifyOnAutofill = *body.ClassifyOnAutofill
+			}
+			if body.Scope != nil {
+				// Widening reaches every user's agents, so it is an
+				// administrator's decision and the owner asks: the same route
+				// tools, apps and agents take. Narrowing is the owner's and
+				// applies at once, because nobody needs permission to stop
+				// sharing. See core/collection_promotion.go.
+				if c.Owner != "" && c.Owner != user {
+					http.Error(w, "only the owner can change who this is shared with", http.StatusForbidden)
+					return
+				}
+				switch strings.ToLower(strings.TrimSpace(*body.Scope)) {
+				case CollectionScopeDeployment:
+					if IsDeploymentScope(c) {
+						break // already there; nothing to ask for
+					}
+					if RequestIsAdmin(r) {
+						if err := PromoteCollectionToDeployment(user, c.ID); err != nil {
+							http.Error(w, err.Error(), http.StatusBadRequest)
+							return
+						}
+					} else if err := CreatePromotionRequest(AuthDB(), user, CollectionPromotionKind, c.ID, ""); err != nil {
+						http.Error(w, err.Error(), http.StatusBadRequest)
+						return
+					}
+					writeJSON(w, map[string]any{"ok": true, "requested": !RequestIsAdmin(r)})
+					return
+				case CollectionScopeUser, "":
+					if IsDeploymentScope(c) {
+						if err := NarrowCollectionToOwner(user, c.ID); err != nil {
+							http.Error(w, err.Error(), http.StatusBadRequest)
+							return
+						}
+						writeJSON(w, map[string]any{"ok": true})
+						return
+					}
+				default:
+					http.Error(w, "scope must be user or deployment", http.StatusBadRequest)
+					return
+				}
 			}
 			if body.AllowedUsers != nil {
 				// Only the OWNER shares. A recipient resolves this collection

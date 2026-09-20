@@ -7,6 +7,7 @@ package core
 import (
 	"testing"
 
+	"github.com/cmcoffee/gohort/core/peershare"
 	"github.com/cmcoffee/snugforge/kvlite"
 )
 
@@ -78,7 +79,7 @@ func TestDeletingASkillDropsItsShares(t *testing.T) {
 	if !DeleteSkill(db, "alice", "s1") {
 		t.Fatal("delete")
 	}
-	if got := ListPeerShares(db, SharedSkillsTable, "bob"); len(got) != 0 {
+	if got := peershare.List(db, SharedSkillsTable, "bob"); len(got) != 0 {
 		t.Errorf("the index still points at a deleted skill: %+v", got)
 	}
 	if got := AvailableSkills(db, "bob"); len(got) != 0 {

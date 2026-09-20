@@ -23,6 +23,8 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/cmcoffee/gohort/core/peershare"
+	"github.com/cmcoffee/gohort/core/promotion"
 	"sort"
 	"strconv"
 	"strings"
@@ -698,7 +700,7 @@ func LoadCollection(udb Database, user, id string) (Collection, bool) {
 	// then re-checked against the owner's record, so a stale index entry cannot
 	// grant access the owner has taken away.
 	if user != "" && RootDB != nil && VectorDB != nil {
-		for _, ref := range ListPeerShares(RootDB, SharedCollectionsTable, user) {
+		for _, ref := range peershare.List(RootDB, SharedCollectionsTable, user) {
 			if ref.ID != id {
 				continue
 			}
@@ -787,7 +789,7 @@ func SharedCollectionsFor(user string) []Collection {
 		return nil
 	}
 	var out []Collection
-	for _, ref := range ListPeerShares(RootDB, SharedCollectionsTable, user) {
+	for _, ref := range peershare.List(RootDB, SharedCollectionsTable, user) {
 		udb := UserDB(CollectionsDB(), ref.Owner)
 		if udb == nil {
 			continue
@@ -835,7 +837,7 @@ func SaveCollection(udb Database, c Collection) {
 	// The peer-share index follows the record in the same write, so a share and
 	// its lookup cannot disagree about who has access.
 	if RootDB != nil && c.Owner != "" {
-		SetPeerShareRecipients(RootDB, SharedCollectionsTable, c.Owner, c.ID, c.AllowedUsers)
+		peershare.SetRecipients(RootDB, SharedCollectionsTable, c.Owner, c.ID, c.AllowedUsers)
 	}
 }
 
@@ -867,10 +869,108 @@ func DeleteCollection(udb, appDB Database, user, id string) (chunksRemoved int) 
 	// The shares go with it: an index entry outliving its record points at
 	// nothing, which reads to a recipient as access they lost.
 	if RootDB != nil && c.Owner != "" {
-		DropPeerShares(RootDB, SharedCollectionsTable, c.Owner, c.ID)
+		peershare.DropAll(RootDB, SharedCollectionsTable, c.Owner, c.ID)
 	}
 	if appDB != nil {
 		chunksRemoved = WipeChunksBySourcePrefix(appDB, CollectionSource(id))
 	}
 	return chunksRemoved
+}
+
+// --- widening a collection to the whole deployment --------------------------
+//
+// The third rung. A collection starts private to its owner, may be shared with
+// named people (AllowedUsers), and reaches EVERY user's agents only with an
+// administrator's approval — the same route tools, apps and agents take, for
+// the same reason: peer sharing is a decision between two people, and
+// deployment-wide is a decision about the deployment.
+//
+// Until now there was no route at all. Scope could be "deployment", nothing set
+// it, and the comment on the field claimed an admin endpoint did gating that
+// did not exist. What forced the question was the attachment rule: a collection
+// attached to a PUBLISHED agent is served to everyone who runs it, so an agent
+// whose whole value is its corpus needs a legitimate way to carry one. Without
+// this rung the only options were to leak it or to break the agent.
+//
+// Here rather than in a file of its own because core is AT its file ceiling
+// (TestCoreStaysUnderItsCeiling), and this is three functions about the
+// collection type that lives in this file.
+
+// CollectionPromotionKind is the promotion kind for widening a collection.
+const CollectionPromotionKind = "collection"
+
+func init() {
+	promotion.RegisterApprover(CollectionPromotionKind, func(owner, id string) error {
+		return PromoteCollectionToDeployment(owner, id)
+	})
+}
+
+// PromoteCollectionToDeployment moves a user's collection into the
+// deployment-wide pool, where any user's agent can attach it.
+//
+// The record MOVES rather than being copied: SaveCollection routes on Scope, so
+// the same collection is now read from the global table and the per-user row is
+// dropped. One copy, as it has always been — a document added later is in the
+// deployment collection too, which is what widening means.
+//
+// The chunks do not move at all. They live in the shared VectorDB keyed by
+// collection source, so the corpus is reachable the moment the scope changes:
+// nothing is re-ingested and no embedding is recomputed.
+func PromoteCollectionToDeployment(owner, id string) error {
+	owner, id = strings.TrimSpace(owner), strings.TrimSpace(id)
+	if owner == "" || id == "" {
+		return errString("owner and collection id are required")
+	}
+	if RootDB == nil {
+		return errString("no deployment store")
+	}
+	udb := UserDB(CollectionsDB(), owner)
+	if udb == nil {
+		return errString("no store for " + owner)
+	}
+	var c Collection
+	if !udb.Get(CollectionsTable, id, &c) || c.ID == "" || c.Owner != owner {
+		return errString("no collection " + id + " owned by " + owner)
+	}
+	c.Scope = CollectionScopeDeployment
+	// Owner is KEPT. It is who to ask about the contents, and a deployment
+	// collection with no owner is one nobody is answerable for; the auto-minted
+	// framework one has none precisely because nobody authored it.
+	RootDB.Set(GlobalCollectionsTable, c.ID, c)
+	udb.Unset(CollectionsTable, c.ID)
+	// The peer shares go: everybody has it now, so an entry naming three people
+	// is a row that decides nothing, and leaving it would make a later
+	// narrowing silently restore an ACL the owner had forgotten.
+	peershare.DropAll(RootDB, SharedCollectionsTable, owner, c.ID)
+	Log("[collections] %q promoted %q to deployment scope", owner, c.Name)
+	return nil
+}
+
+// NarrowCollectionToOwner is the way back, and it is the OWNER's: nobody needs
+// permission to stop sharing something they made.
+//
+// The record moves back to their own pool with no recipients, because the
+// alternative is guessing which of the deployment's users they meant to keep.
+func NarrowCollectionToOwner(owner, id string) error {
+	owner, id = strings.TrimSpace(owner), strings.TrimSpace(id)
+	if owner == "" || id == "" || RootDB == nil {
+		return errString("owner and collection id are required")
+	}
+	var c Collection
+	if !RootDB.Get(GlobalCollectionsTable, id, &c) || c.ID == "" {
+		return errString("no deployment collection " + id)
+	}
+	if c.Owner != owner {
+		return errString("only the owner can narrow this collection")
+	}
+	udb := UserDB(CollectionsDB(), owner)
+	if udb == nil {
+		return errString("no store for " + owner)
+	}
+	c.Scope = CollectionScopeUser
+	c.AllowedUsers = nil
+	udb.Set(CollectionsTable, c.ID, c)
+	RootDB.Unset(GlobalCollectionsTable, c.ID)
+	Log("[collections] %q narrowed %q back to their own scope", owner, c.Name)
+	return nil
 }
