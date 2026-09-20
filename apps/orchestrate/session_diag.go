@@ -96,10 +96,29 @@ var diagProvisionalKinds = map[string]bool{
 	"lead-in-withheld": true,
 }
 
+// diagByDesignKinds are breadcrumbs whose verb says something was stopped when
+// nothing went wrong and the reader has nothing to do.
+//
+// A sibling of the list above, and a different reason for the same demotion.
+// That one is "it may be undone before you finish reading"; this one is "it
+// was never going to happen, and you knew". The verb rule cannot tell either
+// from a guardrail refusing a tool call, because it reads what the guard DID
+// rather than whether anybody has to act.
+//
+// authoring_withheld is the case. Running somebody else's agent means the
+// authoring tools are absent, which is the correct and expected answer — the
+// detail says "nothing is broken" in as many words — and it was showing an
+// ordinary user an amber BLOCKED card, in their chat, about a permission they
+// never asked for on an agent that is not theirs. It stays in the trail, where
+// somebody debugging an absent tool_def will find it; it comes off the pane.
+var diagByDesignKinds = map[string]bool{
+	"authoring_withheld": true,
+}
+
 // diagLevel reads a kind slug and says how loudly it should be told.
 func diagLevel(kind string) string {
 	k := strings.ToLower(strings.TrimSpace(kind))
-	if diagProvisionalKinds[k] {
+	if diagProvisionalKinds[k] || diagByDesignKinds[k] {
 		return diagLevelNote
 	}
 	for _, verb := range diagBlockingVerbs {

@@ -199,28 +199,48 @@ func TestOneStampNamesEveryCopyOfABreadcrumb(t *testing.T) {
 	}
 }
 
-// The verb rule reads what a guard DID. It cannot see whether it STUCK, and a
-// kind that names its own reversal is the case where those differ.
-func TestAReversibleDecisionIsNotABlock(t *testing.T) {
+// The verb rule reads what a guard DID. What decides whether a card belongs in
+// somebody's chat is whether they have anything to DO, and those differ twice.
+func TestABlockIsSomethingTheReaderCanActOn(t *testing.T) {
+	// Reversible: held on a bet the framework may undo before the reader has
+	// finished the sentence.
 	if diagLevel("lead-in-withheld") != diagLevelNote {
 		t.Error("held prose that the framework restores on its own is not a block")
 	}
-	// Its sibling proves the pair is provisional, and is itself just a note.
 	if diagLevel("lead-in-restored") != diagLevelNote {
 		t.Error("a restoration is not a block either")
 	}
-	// The verb still works for the withholdings that stay withheld — the
-	// exclusion is one named kind, not a hole in the rule.
-	for _, k := range []string{"guardrail-output-withheld", "authoring_withheld"} {
-		if diagLevel(k) != diagLevelBlocked {
-			t.Errorf("%q withholds something for good and must still reach the conversation", k)
-		}
+	// By design: it stays withheld, and that is the correct answer rather than
+	// a fault. Running somebody else's agent means no authoring tools; the
+	// detail says "nothing is broken" in as many words, and it was showing an
+	// ordinary user an amber BLOCKED card about a permission they never asked
+	// for on an agent that is not theirs. Still in the trail for whoever is
+	// debugging an absent tool_def; off the pane.
+	if diagLevel("authoring_withheld") != diagLevelNote {
+		t.Error("an expected absence is not a block")
+	}
+	// The verb still works for a withholding somebody SHOULD read: the warden
+	// took content out of a reply they are about to act on.
+	if diagLevel("guardrail-output-withheld") != diagLevelBlocked {
+		t.Error("content removed from a reply must still reach the conversation")
 	}
 	// Every excluded kind must be spelled exactly as its call site writes it,
 	// or the exclusion silently does nothing.
-	for k := range diagProvisionalKinds {
-		if k != strings.ToLower(strings.TrimSpace(k)) {
-			t.Errorf("%q will never match: the lookup folds case and trims first", k)
+	for _, m := range []map[string]bool{diagProvisionalKinds, diagByDesignKinds} {
+		for k := range m {
+			if k != strings.ToLower(strings.TrimSpace(k)) {
+				t.Errorf("%q will never match: the lookup folds case and trims first", k)
+			}
+		}
+	}
+	// And each one is a kind something actually writes, or the exclusion is
+	// about a breadcrumb that no longer exists.
+	src := packageSource(t)
+	for _, m := range []map[string]bool{diagProvisionalKinds, diagByDesignKinds} {
+		for k := range m {
+			if !strings.Contains(src, `"`+k+`"`) {
+				t.Errorf("no call site writes the diag kind %q", k)
+			}
 		}
 	}
 }
