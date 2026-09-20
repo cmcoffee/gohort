@@ -293,8 +293,14 @@ func TestEditorCoversEveryMachineField(t *testing.T) {
 	// the ACLPicker on the page posts to /share, and the record-saving forms
 	// deliberately cannot touch it (machines_http.go). A control for it HERE
 	// would be a second way to grant, and the two would drift.
+	//
+	// "published" is the same field by a different name: the widest grant of
+	// all, and the ONE field on a machine its owner cannot set — an
+	// administrator approves it, through /publish. A control here would be a
+	// checkbox that either lied or granted what only an admin may grant. Its
+	// surface is the publish section on the page (machinePublishSection).
 	skip := map[string]bool{"id": true, "owner": true, "created": true, "updated": true,
-		"phases": true, "previous": true, "allowed_users": true}
+		"phases": true, "previous": true, "allowed_users": true, "published": true}
 
 	check := func(what string, typ reflect.Type) {
 		for i := 0; i < typ.NumField(); i++ {

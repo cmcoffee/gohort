@@ -160,6 +160,7 @@ func (T *OrchestrateApp) handlePipelines(w http.ResponseWriter, r *http.Request)
 		// recipient list would let one POST make a pipeline and hand it out
 		// in the same breath, which is not a thing anybody asked to do.
 		def.AllowedUsers = nil
+		def.Published = false
 		if err := def.Validate(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -308,6 +309,9 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 		// your store would re-share their work under your name.
 		dup.Owner = user
 		dup.AllowedUsers = nil
+		// And not published either. An administrator agreed that THAT record
+		// should reach everybody, not every copy anyone makes of it.
+		dup.Published = false
 		dup.Name = copyName(def.Name, pipelineNames(ListPipelineDefs(udb, user)))
 		saved := SavePipelineDef(udb, dup)
 		Log("[orchestrate.pipelines] user=%q duplicated pipeline %q as %q", user, def.Name, saved.Name)
@@ -361,6 +365,49 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 		breakSchedulesForLostRecipients(saved, before)
 		Log("[orchestrate.pipelines] user=%q shared pipeline %q with %d user(s)", user, saved.Name, len(saved.AllowedUsers))
 		writeJSON(w, saved)
+	case "publish":
+		// The third rung: ask an administrator to let EVERY user of the
+		// deployment run this. The narrower grant beside it is the owner's own
+		// to make; this one is not, which is why the door only files a request.
+		//
+		// A separate door from "share" for the same reason share is separate
+		// from the editor: each one opens exactly one thing.
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !pipelineOwnerOnly(w, mine, defOwner, "publish") {
+			return
+		}
+		if def.Published {
+			http.Error(w, "this pipeline is already published", http.StatusBadRequest)
+			return
+		}
+		var body struct {
+			Note string `json:"note"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body) // the note is optional
+		if err := CreatePromotionRequest(AuthDB(), user, pipelinePromotionKind, def.Name, body.Note); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		Log("[orchestrate.pipelines] user=%q asked to publish pipeline %q", user, def.Name)
+		w.WriteHeader(http.StatusNoContent)
+	case "unpublish":
+		// Owner-direct, exactly as revoking a share is: nobody needs
+		// permission to stop publishing something they wrote.
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !pipelineOwnerOnly(w, mine, defOwner, "take back") {
+			return
+		}
+		if err := unpublishPipeline(user, def.ID); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	case "block":
 		// One derived block of the editor page, by name, as the HTML the
 		// page itself renders (pipeline_page.go). A ui.Card with a Source

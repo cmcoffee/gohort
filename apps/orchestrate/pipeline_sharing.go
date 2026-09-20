@@ -69,7 +69,10 @@ func syncPipelineShareIndex(def PipelineDef) {
 	if orchestrateBaseDB == nil || strings.TrimSpace(def.ID) == "" {
 		return
 	}
-	if len(def.AllowedUsers) > 0 && strings.TrimSpace(def.Owner) != "" {
+	// Published counts as shared for the index's purpose, which is only to
+	// bound the walk to records somebody can reach. WHO can reach it is still
+	// decided by the record, one line down in userCanRunSharedPipeline.
+	if (len(def.AllowedUsers) > 0 || def.Published) && strings.TrimSpace(def.Owner) != "" {
 		orchestrateBaseDB.Set(sharedPipelinesTable, def.ID, def.Owner)
 		return
 	}
@@ -95,6 +98,12 @@ func dropPipelineShareIndex(id string) {
 func userCanRunSharedPipeline(def PipelineDef, reqUser string) bool {
 	if strings.TrimSpace(reqUser) == "" {
 		return false
+	}
+	// Published means everybody, which is why there is no list to consult. The
+	// answer arriving here rather than at each surface is the point of the
+	// function: the third rung reaches every caller that already asked.
+	if def.Published {
+		return true
 	}
 	for _, u := range def.AllowedUsers {
 		if u == reqUser {
@@ -272,6 +281,7 @@ func listUserOwnedPipelinesForAdmin(db Database) []UserOwnedPipelineRow {
 				SharedWith: strings.Join(d.AllowedUsers, ", "),
 				Shared:     len(d.AllowedUsers) > 0,
 				Stages:     len(d.Stages),
+				Published:  d.Published,
 			})
 		}
 	}
@@ -293,6 +303,10 @@ func revokePipelineShareForAdmin(db Database, owner, id string) error {
 	before := def.AllowedUsers
 	def.Owner = owner
 	def.AllowedUsers = nil
+	// Published goes with it. An admin revoking a pipeline's sharing while it
+	// stayed deployment-wide would have revoked nothing at all — the narrower
+	// grant removed and the widest one left standing.
+	def.Published = false
 	SavePipelineDef(udb, def)
 	breakSchedulesForLostRecipients(def, before)
 	Log("[orchestrate.pipelines] admin revoked every share of pipeline %q (owner=%q)", def.Name, owner)

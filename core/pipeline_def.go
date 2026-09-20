@@ -605,6 +605,23 @@ type PipelineDef struct {
 	// fact about THIS deployment's users and means nothing in another one.
 	AllowedUsers []string `json:"allowed_users,omitempty"`
 
+	// Published is the third rung: an administrator agreed that EVERY user of
+	// this deployment may read and run this pipeline, so there is no recipient
+	// list to keep. It is set only by the promotion approver and cleared only
+	// by the owner, who needs nobody's permission to stop publishing something
+	// they wrote.
+	//
+	// The record does not move. A pipeline is already read from its owner's
+	// store by everybody who runs it, so publishing widens the grant on one
+	// copy: the owner keeps editing it, and what they edit is what everybody
+	// gets. Nothing of theirs travels either way — the recipe runs in the
+	// requester's namespace, which is what makes this a decision about a way of
+	// working rather than about access.
+	//
+	// Stripped on export, for the reason AllowedUsers is: it asserts something
+	// about THIS deployment.
+	Published bool `json:"published,omitempty"`
+
 	// Previous is the definition this one replaced, kept so a wholesale
 	// rewrite can be taken back. Exactly ONE deep, and set only by the
 	// doors that REPLACE a pipeline rather than edit part of it (today:

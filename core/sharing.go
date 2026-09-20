@@ -108,6 +108,10 @@ type UserOwnedPipelineRow struct {
 	SharedWith string `json:"shared_with,omitempty"`
 	Shared     bool   `json:"shared"`
 	Stages     int    `json:"stages"`
+	// Published is the third rung: an administrator agreed every user may run
+	// it. Listed beside Shared rather than folded into it, because "shared with
+	// two people" and "shared with everybody" are not the same row to read.
+	Published bool `json:"published"`
 }
 
 // AdminListUserOwnedPipelines / AdminRevokePipelineShare are the pipeline half of
@@ -132,6 +136,10 @@ type UserOwnedMachineRow struct {
 	Shared     bool   `json:"shared"`
 	Steps      int    `json:"steps"`
 	Unattended bool   `json:"unattended"`
+	// Published is the third rung: an administrator agreed every user may run
+	// it. Listed beside Shared rather than folded into it, because "shared with
+	// two people" and "shared with everybody" are not the same row to read.
+	Published bool `json:"published"`
 }
 
 // AdminListUserOwnedMachines / AdminRevokeMachineShare are the machine half of

@@ -201,6 +201,7 @@ func (T *OrchestrateApp) handleMachines(w http.ResponseWriter, r *http.Request) 
 		// recipient list would be a second way to grant, and the two would
 		// eventually disagree about what a grant means.
 		def.AllowedUsers = nil
+		def.Published = false
 		if err := def.Validate(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -374,6 +375,9 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		// an undo of an edit you did not make is not an undo.
 		dup.Owner = user
 		dup.AllowedUsers = nil
+		// And not published. An administrator agreed that THAT record should
+		// reach everybody, not every copy anyone makes of it.
+		dup.Published = false
 		dup.Previous = nil
 		dup.Name = copyName(def.Name, machineNames(ListMachineDefs(udb, user)))
 		saved := SaveMachineDef(udb, dup)
@@ -515,6 +519,45 @@ func (T *OrchestrateApp) handleMachineOne(w http.ResponseWriter, r *http.Request
 		breakMachineSchedulesForLostRecipients(saved, before)
 		Log("[orchestrate.machines] user=%q shared machine %q with %d user(s)", user, saved.Name, len(saved.AllowedUsers))
 		writeJSON(w, saved)
+	case "publish":
+		// The third rung: ask an administrator to let EVERY user of the
+		// deployment run this. The narrower grant beside it is the owner's own
+		// to make; this one is not, which is why the door only files a request.
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !machineOwnerOnly(w, mine, defOwner, "publish") {
+			return
+		}
+		if def.Published {
+			http.Error(w, "this machine is already published", http.StatusBadRequest)
+			return
+		}
+		var body struct {
+			Note string `json:"note"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body) // the note is optional
+		if err := CreatePromotionRequest(AuthDB(), user, machinePromotionKind, def.Name, body.Note); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		Log("[orchestrate.machines] user=%q asked to publish machine %q", user, def.Name)
+		w.WriteHeader(http.StatusNoContent)
+	case "unpublish":
+		// Owner-direct, exactly as revoking a share is.
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !machineOwnerOnly(w, mine, defOwner, "take back") {
+			return
+		}
+		if err := unpublishMachine(user, def.ID); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	case "suggest":
 		// Drafting one step's instructions, grounded in the machine
 		// around it (machine_suggest.go).

@@ -130,6 +130,9 @@ func (a *AdminApp) governanceSections() []ui.Section {
 					{Field: "shared", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "Shared", Color: "info"},
 					}},
+					{Field: "published", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "Deployment-wide", Color: "warning"},
+					}},
 				},
 				RowActions: []ui.RowAction{
 					// No Publish twin: a pipeline has no /agents/-style app
@@ -157,6 +160,9 @@ func (a *AdminApp) governanceSections() []ui.Section {
 					{Field: "name", Flex: 1},
 					{Field: "steps", Flex: 0, Label: "Steps"},
 					{Field: "shared_with", Flex: 2, Mute: true, Label: "Shared with"},
+					{Field: "published", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "Deployment-wide", Color: "warning"},
+					}},
 					{Field: "unattended", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "Runs", Color: "success"},
 					}},
@@ -183,6 +189,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 				"Approve a public-link request to mint the app's anonymous link: anyone who has the URL then runs its data sources as the owner, with no login.\n\n" +
 				"A CREDENTIAL request is the one that is not a widening. The requester is handing their key to the deployment: the secret moves into the global namespace, the credential lands secured so that it has no user list and is reachable only through the tools bound to it, and the requester becomes an ordinary user of it. They cannot take it back afterwards — read the note and be sure the deployment should own this key, because the alternative to keeping it is deleting it.\n\n" +
 				"Approve a SKILL request to move it from its author's list into the deployment's, where the classifier can activate it on any user's turn. Its bundled tools do not go with it, for the same reason a shared tool needs its own approval; its attached collections travel as references that only answer for people who can already read them. The author keeps editing it and can take it back without asking.\n\n" +
+				"A PIPELINE or MACHINE request widens a recipe. Neither record moves and nothing of the author's travels: every run happens in the namespace of whoever started it, against their agents, tools and credentials. The author keeps editing it and can take it back without asking.\n\n" +
 				"Deny to dismiss.",
 			Body: ui.Table{
 				Source: "api/promotions",
@@ -207,6 +214,8 @@ func (a *AdminApp) governanceSections() []ui.Section {
 						// they can undo.
 						{Value: "credential", Label: "Credential", Color: "danger"},
 						{Value: "skill", Label: "Skill", Color: "info"},
+						{Value: "pipeline", Label: "Pipeline", Color: "info"},
+						{Value: "machine", Label: "Machine", Color: "info"},
 					}},
 					{Field: "name", Flex: 1},
 					{Field: "note", Flex: 2, Mute: true},

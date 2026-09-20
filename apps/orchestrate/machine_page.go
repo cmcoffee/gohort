@@ -503,6 +503,7 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 			EmptyText:     "No other users to share with yet.",
 		}),
 	})
+	page.Sections = append(page.Sections, machinePublishSection(def))
 	page.Sections = withoutEmptySections(page.Sections)
 	page.ServeHTTP(w, r)
 }
@@ -1281,4 +1282,38 @@ func costText(def MachineDef) string {
 		return "Nothing beyond the reply itself: no step runs before it and no guard checks it."
 	}
 	return "Beyond the reply itself: " + strings.Join(parts, "; ") + ". The reply step is the turn you were paying for anyway."
+}
+
+// machinePublishSection is the third rung, kept apart from the picker above it
+// because the two are not the same decision. Who you hand a procedure to is
+// yours; whether every account in the deployment gets it is an administrator's.
+func machinePublishSection(def MachineDef) ui.Section {
+	if def.Published {
+		return ui.Section{
+			Title:    "Published deployment-wide",
+			Subtitle: "Every user can run this machine. It is still yours: you edit it, and what you edit is what they get.",
+			Detail: "Nothing of yours travels with it. Each run happens in the namespace of whoever started it — their agents answer its steps, their catalog resolves its tool names, their credentials back those tools.\n\n" +
+				"Take it back whenever you like, without asking anybody. It returns to being private, and anyone who had it loses it, including any schedule they armed against it.",
+			Body: ui.FormPanel{
+				PostURL:     "api/machines/" + url_(def.ID) + "/unpublish",
+				SubmitLabel: "Take back from the deployment",
+				Fields: []ui.FormField{{Type: "header", Label: "Everyone else loses it",
+					Help: "It returns to being private to you, including any schedule somebody armed against it."}},
+			},
+		}
+	}
+	return ui.Section{
+		Title:    "Publish deployment-wide",
+		Subtitle: "Ask an admin to let everybody run this machine.",
+		Detail: "The picker above is yours to use: you decide who you hand a procedure to. Reaching every account in the deployment is an administrator's decision, so this files a request and they decide.\n\n" +
+			"It stays yours either way. You keep editing it, what you edit is what everybody gets, and you can take it back without asking. Publishing replaces the named list rather than adding to it, because everybody already includes them.",
+		Body: ui.FormPanel{
+			PostURL:     "api/machines/" + url_(def.ID) + "/publish",
+			SubmitLabel: "Ask an admin",
+			Fields: []ui.FormField{
+				{Field: "note", Type: "textarea", Rows: 3, Label: "Note for the admin (optional)",
+					Placeholder: "Who is this for, and what does it do?"},
+			},
+		},
+	}
 }

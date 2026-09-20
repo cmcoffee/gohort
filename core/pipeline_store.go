@@ -196,6 +196,10 @@ func ExportPipeline(d PipelineDef) PipelineDef {
 	// somebody else or nobody, and an import that silently carried a grant to
 	// a name that got reused is the worst possible way to find that out.
 	d.AllowedUsers = nil
+	// Published is the same kind of claim: an administrator of THIS deployment
+	// agreed to it, and a recipe arriving elsewhere already published would be
+	// asserting an approval nobody there gave.
+	d.Published = false
 	// A recipe carries a pipeline, not its history — and an undo
 	// snapshot would double every bundle for something the importer can
 	// never take back.

@@ -70,7 +70,10 @@ func syncMachineShareIndex(def MachineDef) {
 	if orchestrateBaseDB == nil || strings.TrimSpace(def.ID) == "" {
 		return
 	}
-	if len(def.AllowedUsers) > 0 && strings.TrimSpace(def.Owner) != "" {
+	// Published counts as shared for the index's purpose, which is only to
+	// bound the walk to records somebody can reach. WHO can reach it is still
+	// decided by the record, in userCanRunSharedMachine.
+	if (len(def.AllowedUsers) > 0 || def.Published) && strings.TrimSpace(def.Owner) != "" {
 		orchestrateBaseDB.Set(sharedMachinesTable, def.ID, def.Owner)
 		return
 	}
@@ -95,6 +98,10 @@ func dropMachineShareIndex(id string) {
 func userCanRunSharedMachine(def MachineDef, reqUser string) bool {
 	if strings.TrimSpace(reqUser) == "" {
 		return false
+	}
+	// Published means everybody, which is why there is no list to consult.
+	if def.Published {
+		return true
 	}
 	for _, u := range def.AllowedUsers {
 		if u == reqUser {
@@ -266,6 +273,7 @@ func listUserOwnedMachinesForAdmin(db Database) []UserOwnedMachineRow {
 				Shared:     len(d.AllowedUsers) > 0,
 				Steps:      len(d.Phases),
 				Unattended: d.Unattended,
+				Published:  d.Published,
 			})
 		}
 	}
@@ -287,6 +295,10 @@ func revokeMachineShareForAdmin(db Database, owner, id string) error {
 	before := def.AllowedUsers
 	def.Owner = owner
 	def.AllowedUsers = nil
+	// Published goes with it. An admin revoking a machine's sharing while it
+	// stayed deployment-wide would have revoked nothing at all — the narrower
+	// grant removed and the widest one left standing.
+	def.Published = false
 	SaveMachineDef(udb, def)
 	breakMachineSchedulesForLostRecipients(def, before)
 	Log("[orchestrate.machines] admin revoked every share of machine %q (owner=%q)", def.Name, owner)
