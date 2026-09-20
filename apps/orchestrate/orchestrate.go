@@ -200,11 +200,28 @@ func (T *OrchestrateApp) WebOrder() int { return -1000 }
 // hub member, in which case it'd hero on its own. Kept to document intent.
 func (T *OrchestrateApp) WebFeatured() bool { return true }
 
-// WebRestricted hides Orchestrate from non-admin users on the landing
-// page. Orchestrate is the agent workbench (CRUD, prompts, allowlists,
-// memory pruning); end-users consume the agents an admin builds via
-// the per-agent exposed-app surface. Same pattern as the Admin app.
+// WebRestricted no longer hides this app, and the reasoning it used to carry
+// is worth keeping as a record of what changed.
+//
+// It hid Orchestrate from everybody but administrators, on the posture that
+// this is the agent workbench and end users consume the agents an admin
+// builds. The rest of the system stopped working that way: a user owns their
+// agents alongside their tools, skills, collections and credentials, and the
+// sharing model is written in those terms — your tools travel with your agent,
+// your key is lent for it, your list decides who holds it. Hiding the app meant
+// none of that was reachable by the people it describes.
+//
+// What was genuinely the deployment's keeps its own gate: the console routes
+// in console.go are still adminGated, one at a time, which is the granularity
+// this always wanted. A landing-page flag was never the ACL and said so itself.
 func (T *OrchestrateApp) WebRestricted(r *http.Request) bool {
+	return false
+}
+
+// webRestrictedLegacy is the old whole-app rule, kept unused rather than
+// deleted so the next person to ask "was this ever admin-only?" finds the
+// answer and the reason instead of an absence.
+func (T *OrchestrateApp) webRestrictedLegacy(r *http.Request) bool {
 	// RequestIsAdmin, not AuthIsAdmin(T.DB, …). An app's T.DB is
 	// global.db.Bucket("orchestrate") — a namespaced substore with no
 	// auth table — so the old check found nothing and AuthHasUsers(T.DB)
@@ -503,44 +520,61 @@ func (T *OrchestrateApp) Routes() {
 		}
 	}
 
-	// Wraps every handler with an admin gate. Non-admin requests get
-	// a 403 instead of being silently allowed to a hidden surface —
-	// the WebRestricted check above only hides the landing-page
-	// card; direct URLs need their own gate. WebRestricted is a
-	// LANDING-page concept; handler gating is the actual ACL.
-	g := T.adminGated
-	T.HandleFunc("/", g(T.handleRoot))
-	T.HandleFunc("/agent/", g(T.handleAgentPage))
+	// These routes are USER-scoped, not administrator-only.
+	//
+	// Every one of them used to be wrapped in an admin gate, on the posture
+	// that administrators build agents and end users consume them. The rest of
+	// the system moved past that: a user owns their agents, their tools, their
+	// skills, their collections and their credentials, and this session's
+	// sharing model is written in those terms throughout — your tools travel
+	// with your agent, your key is lent for it, your list decides who has it.
+	// The gate meant none of that was reachable by the people it describes. A
+	// user could build a tool in Extensions and a collection in Knowledge, and
+	// then not the agent that would use either.
+	//
+	// Nothing is loosened by taking it off, because the gate was never what
+	// kept people apart. Every handler behind these routes resolves the SESSION
+	// user and reads that user's own store: RequireUser for the identity,
+	// UserDB/loadAgent for what exists, and an owner check on each write path
+	// (patchAgent's "not your agent", agentEditRefusal, collectionWriteRefusal).
+	// Checked one at a time before this was removed, and pinned by
+	// TestUserScopedRoutesResolveASessionUser so a route added later cannot
+	// land here without that property.
+	//
+	// adminGated remains for anything that is genuinely the deployment's
+	// rather than one person's; nothing in this list qualified.
+	T.HandleFunc("/", T.handleRoot)
+	T.HandleFunc("/agent/", T.handleAgentPage)
 
-	T.HandleFunc("/api/agents", g(T.handleAgentList))
+	T.HandleFunc("/api/agents", T.handleAgentList)
 	// Candidate user list for the agent-page "Share with users" ACLPicker (peer
 	// sharing). Any authenticated user may share their own agent.
-	T.HandleFunc("/api/user-candidates", g(T.handleUserCandidates))
+	T.HandleFunc("/api/user-candidates", T.handleUserCandidates)
 	// Agent-centric tier-2 credential scoping — which of the user's granted
 	// credentials this agent may use (writes AgentRecord.DisabledCredentials).
-	T.HandleFunc("/api/agent-access", g(T.handleAgentAccess))
-	T.HandleFunc("/api/agent-credentials", g(T.handleAgentCredentials))
+	T.HandleFunc("/api/agent-access", T.handleAgentAccess)
+	T.HandleFunc("/api/agent-credentials", T.handleAgentCredentials)
 	// Per-tool scope pills (Tools modal): Global + per-agent toggles.
-	T.HandleFunc("/api/tool-scope", g(T.handleToolScope))
+	T.HandleFunc("/api/tool-scope", T.handleToolScope)
 	// Grouped agent-picker options (Built-in / Conversation Agents / Specialized
 	// Agents / per-app) so the client rebuilds the dropdown with the SAME
 	// separators the initial paint used — a group-less /api/agents rebuild
 	// collapsed them to Built-in/Custom after every Builder action.
-	T.HandleFunc("/api/agent-options", g(T.handleAgentPickerOptions))
-	T.HandleFunc("/api/capabilities", g(T.handleAgentCapabilities))
-	T.HandleFunc("/api/channels", g(T.handleChannels))
-	T.HandleFunc("/api/agents/import", g(T.handleAgentImport))
-	T.HandleFunc("/api/agents/suggest", g(T.handleAgentSuggest))
+	T.HandleFunc("/api/agent-options", T.handleAgentPickerOptions)
+	T.HandleFunc("/api/capabilities", T.handleAgentCapabilities)
+	T.HandleFunc("/api/channels", T.handleChannels)
+	T.HandleFunc("/api/agents/import", T.handleAgentImport)
+	T.HandleFunc("/api/agents/suggest", T.handleAgentSuggest)
 	// Guided create: drafts the prompt from the wizard brief, saves,
 	// and echoes the new record for the redirect into the editor.
-	T.HandleFunc("/api/agents/wizard", g(T.handleAgentWizard))
-	T.HandleFunc("/api/agents/propose", g(T.handleAgentPropose))
+	T.HandleFunc("/api/agents/wizard", T.handleAgentWizard)
+	T.HandleFunc("/api/agents/propose", T.handleAgentPropose)
 	// Per-user Default agent preference (surfaced on /account via the
 	// account-section registry — account_prefs.go).
-	T.HandleFunc("/api/default-agent", g(T.handleDefaultAgentPref))
+	T.HandleFunc("/api/default-agent", T.handleDefaultAgentPref)
 	// Per-session diagnostics trail (session_diag.go) — the ⚠ affordance.
-	T.HandleFunc("/api/session-diag", g(T.handleSessionDiag))
-	T.HandleFunc("/api/agents/", g(T.handleAgentOne))
+	T.HandleFunc("/api/session-diag", T.handleSessionDiag)
+	T.HandleFunc("/api/agents/", T.handleAgentOne)
 	// Collections are NOT admin-only, and were. A collection belongs to the
 	// user who made it, apps/knowledge is the surface ordinary people manage
 	// theirs from, and every one of these handlers already resolves by the
@@ -560,65 +594,65 @@ func (T *OrchestrateApp) Routes() {
 	T.HandleFunc("/api/collections/", T.handleCollectionOne)
 	// The pipeline as a page (pipeline_page.go): what it is made of,
 	// read in the order it runs.
-	T.HandleFunc("/pipeline", g(T.handlePipelinePage))
-	T.HandleFunc("/api/pipelines", g(T.handlePipelines))
+	T.HandleFunc("/pipeline", T.handlePipelinePage)
+	T.HandleFunc("/api/pipelines", T.handlePipelines)
 	// More-specific path wins over /api/pipelines/ in Go's ServeMux, so
 	// import gets its own handler without colliding with the per-id
 	// routes (get/put/delete/export/run) in handlePipelineOne.
-	T.HandleFunc("/api/pipelines/import", g(T.handlePipelineImport))
-	T.HandleFunc("/api/pipelines/draft", g(T.handlePipelineDraft))
-	T.HandleFunc("/api/pipelines/", g(T.handlePipelineOne))
+	T.HandleFunc("/api/pipelines/import", T.handlePipelineImport)
+	T.HandleFunc("/api/pipelines/draft", T.handlePipelineDraft)
+	T.HandleFunc("/api/pipelines/", T.handlePipelineOne)
 	// Eval suites on the shared run surface: stream | cancel | reconnect |
 	// sessions, the same protocol a pipeline run speaks.
-	T.HandleFunc("/api/evals/", g(T.handleEvalRuns))
-	T.HandleFunc("/api/eval-suites", g(T.handleEvalSuitesAPI))
-	T.HandleFunc("/api/eval-suites/", g(T.handleEvalSuiteOne))
-	T.HandleFunc("/evals", g(T.handleEvalsPage))
-	T.HandleFunc("/evals/", g(T.handleEvalsPage))
-	T.HandleFunc("/eval", g(T.handleEvalSuitePage))
+	T.HandleFunc("/api/evals/", T.handleEvalRuns)
+	T.HandleFunc("/api/eval-suites", T.handleEvalSuitesAPI)
+	T.HandleFunc("/api/eval-suites/", T.handleEvalSuiteOne)
+	T.HandleFunc("/evals", T.handleEvalsPage)
+	T.HandleFunc("/evals/", T.handleEvalsPage)
+	T.HandleFunc("/eval", T.handleEvalSuitePage)
 	// Phase machines (machines_http.go, docs/agent-machines.md). Same
 	// route shape as pipelines, minus /run — a machine only runs inside a
 	// session, so there is nothing to invoke from here.
 	// The machine editor as a page (machine_page.go). Registered before
 	// the /api routes for readability only — the mux matches on longest
 	// prefix, not on order.
-	T.HandleFunc("/machine", g(T.handleMachinePage))
-	T.HandleFunc("/api/machines", g(T.handleMachines))
+	T.HandleFunc("/machine", T.handleMachinePage)
+	T.HandleFunc("/api/machines", T.handleMachines)
 	// Feeds the chat toolbar's status pill with the session's current phase.
-	T.HandleFunc("/api/session-status", g(T.handleSessionStatus))
+	T.HandleFunc("/api/session-status", T.handleSessionStatus)
 	// The pill's drawer: the cursor laid out for a reader, and the two owner
 	// levers (move the phase, clear the blackboard). machine_session_state.go.
-	T.HandleFunc("/api/session-state", g(T.handleSessionState))
-	T.HandleFunc("/api/session-phases", g(T.handleSessionPhases))
-	T.HandleFunc("/api/session-phase", g(T.handleSessionPhase))
-	T.HandleFunc("/api/session-state-clear", g(T.handleSessionStateClear))
+	T.HandleFunc("/api/session-state", T.handleSessionState)
+	T.HandleFunc("/api/session-phases", T.handleSessionPhases)
+	T.HandleFunc("/api/session-phase", T.handleSessionPhase)
+	T.HandleFunc("/api/session-state-clear", T.handleSessionStateClear)
 	// The context view for a thread that has folded (session_context.go).
-	T.HandleFunc("/api/session-context", g(T.handleSessionContext))
-	T.HandleFunc("/api/machines/import", g(T.handleMachineImport))
-	T.HandleFunc("/api/machines/draft", g(T.handleMachineDraft))
-	T.HandleFunc("/api/machines/", g(T.handleMachineOne))
+	T.HandleFunc("/api/session-context", T.handleSessionContext)
+	T.HandleFunc("/api/machines/import", T.handleMachineImport)
+	T.HandleFunc("/api/machines/draft", T.handleMachineDraft)
+	T.HandleFunc("/api/machines/", T.handleMachineOne)
 	// The Sources picker (reference_picker.go) — cross-app reference
 	// sources attached to one agent. Its own endpoint rather than the
 	// agent record's field because the record stores objects and a chip
 	// picker submits scalars.
-	T.HandleFunc("/api/reference-sources", g(T.handleReferenceSources))
-	T.HandleFunc("/api/skills/list", g(T.handleSkillsList))
-	T.HandleFunc("/api/sessions", g(T.handleSessionList))
+	T.HandleFunc("/api/reference-sources", T.handleReferenceSources)
+	T.HandleFunc("/api/skills/list", T.handleSkillsList)
+	T.HandleFunc("/api/sessions", T.handleSessionList)
 	// More specific than /api/sessions/, so it wins the mux's longest-prefix
 	// match and never reaches handleSessionOne as a session id.
-	T.HandleFunc("/api/sessions/start", g(T.handleSessionStart))
-	T.HandleFunc("/api/sessions/", g(T.handleSessionOne))
+	T.HandleFunc("/api/sessions/start", T.handleSessionStart)
+	T.HandleFunc("/api/sessions/", T.handleSessionOne)
 	// Staged improvement-brief retrieval for the "Send to Builder"
 	// handoff (see send_to_builder.go). The brief is created by the
 	// /api/sessions/{sid}/send-to-builder sub-action and consumed here.
-	T.HandleFunc("/api/builder-brief/", g(T.handleBuilderBrief))
-	T.HandleFunc("/api/send", g(T.handleSendRouter))
-	T.HandleFunc("/api/cancel", g(T.handleCancelRouter))
-	T.HandleFunc("/api/confirm", g(T.handleConfirmRouter))
-	T.HandleFunc("/api/inject", g(T.handleInject))
+	T.HandleFunc("/api/builder-brief/", T.handleBuilderBrief)
+	T.HandleFunc("/api/send", T.handleSendRouter)
+	T.HandleFunc("/api/cancel", T.handleCancelRouter)
+	T.HandleFunc("/api/confirm", T.handleConfirmRouter)
+	T.HandleFunc("/api/inject", T.handleInject)
 	// Delivered attachments, so a reloaded thread still shows its pictures —
 	// and so a message posted with nobody watching can show one at all.
-	T.HandleFunc("/api/attachment", g(T.handleAttachment))
+	T.HandleFunc("/api/attachment", T.handleAttachment)
 	// A tool call the framework judges too slow to hold a turn open runs as a
 	// detached task instead. core decides; this supplies the run + delivery.
 	T.installTaskRunner()
@@ -630,12 +664,12 @@ func (T *OrchestrateApp) Routes() {
 	// Run-registry endpoints (see runs.go / runs_http.go) — let a
 	// reconnecting client discover and resume the in-flight stream
 	// for a session after disconnect.
-	T.HandleFunc("/api/runs/active", g(T.handleRunsActive))
-	T.HandleFunc("/api/runs/", g(T.handleRunsDispatch))
-	T.HandleFunc("/api/settings/private", g(T.handlePrivateModeGet))
-	T.HandleFunc("/api/settings/private/set", g(T.handlePrivateModeSet))
-	T.HandleFunc("/api/settings/memory", g(T.handleMemoryModeGet))
-	T.HandleFunc("/api/settings/memory/set", g(T.handleMemoryModeSet))
+	T.HandleFunc("/api/runs/active", T.handleRunsActive)
+	T.HandleFunc("/api/runs/", T.handleRunsDispatch)
+	T.HandleFunc("/api/settings/private", T.handlePrivateModeGet)
+	T.HandleFunc("/api/settings/private/set", T.handlePrivateModeSet)
+	T.HandleFunc("/api/settings/memory", T.handleMemoryModeGet)
+	T.HandleFunc("/api/settings/memory/set", T.handleMemoryModeSet)
 }
 
 // adminGated wraps an http.HandlerFunc so non-admin requests get a
@@ -650,7 +684,11 @@ func (T *OrchestrateApp) adminGated(h http.HandlerFunc) http.HandlerFunc {
 			// surface is apps/agents, on its own routes, and does not
 			// come through here. What this protects is the WORKBENCH —
 			// agent CRUD, prompts, tool allowlists, memory pruning.
-			http.Error(w, "Agents is admin-only. The agents themselves are at /agents/.", http.StatusForbidden)
+			// Says what this particular thing is, and where the reader's
+			// own agents are. The old wording — "Agents is admin-only" —
+			// was both wrong now and useless then: it told somebody what
+			// they were not, in an app they had just been sent to.
+			http.Error(w, "That is an administrator's view across every user's agents. Your own are on the Agents page.", http.StatusForbidden)
 			return
 		}
 		h(w, r)

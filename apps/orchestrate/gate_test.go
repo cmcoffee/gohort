@@ -1,18 +1,17 @@
 package orchestrate
 
-// The Agents workbench gate had never fired.
+// Who the admin gate is for, now that it is not for the whole app.
 //
-// It read AuthIsAdmin(T.DB, r), and an app's T.DB is
-// global.db.Bucket("orchestrate") — a namespaced substore with no auth
-// table. AuthHasUsers(T.DB) was false for the same reason, which
-// short-circuited the condition before AuthIsAdmin was consulted. So
-// agent CRUD, prompt editing, tool allowlists and memory pruning were
-// reachable by any authenticated user, on a surface documented and
-// intended as admin-only.
+// It was wrapped around all sixty routes, on the posture that administrators
+// build agents and end users consume them. A user owns their agents in the
+// same way they own their tools and their collections, so that gate kept them
+// out of their own things and this session's entire sharing model out of reach
+// of the people it is written for.
 //
-// Turning it on does not take agents away from anyone: the exposed-agent
-// surface is apps/agents, on its own routes, and never comes through
-// here.
+// What remains behind it is the CONSOLE: one administrator's view across every
+// user's agents, runs and bridges. That is genuinely the deployment's rather
+// than one person's, and it keeps the gate route by route — which is the
+// granularity this always wanted, rather than a flag over an app.
 
 import (
 	"net/http"
@@ -42,7 +41,7 @@ func sessionReq(t *testing.T, root Database, user string) *http.Request {
 	return r
 }
 
-func TestAgentsWorkbenchIsAdminOnly(t *testing.T) {
+func TestTheAdminGateGuardsTheConsoleNotTheApp(t *testing.T) {
 	app, root, done := gateFixture(t)
 	defer done()
 	root.Set(AuthTable, "user:boss", AuthUser{Username: "boss", Admin: true})
@@ -62,20 +61,23 @@ func TestAgentsWorkbenchIsAdminOnly(t *testing.T) {
 	if w := reached(sessionReq(t, root, "boss")); w.Code != http.StatusOK {
 		t.Errorf("an admin was refused: %d %s", w.Code, w.Body.String())
 	}
-	// The refusal has to point somewhere, or a user who legitimately has
-	// agents concludes they lost them.
+	// The refusal says what THIS is and where their own are. The old wording,
+	// "Agents is admin-only", told somebody what they were not — in an app
+	// they had just been sent to, about records they own.
 	w := reached(sessionReq(t, root, "temp"))
-	if body := w.Body.String(); !strings.Contains(body, "/agents/") {
-		t.Errorf("the refusal should point at the surface they DO have: %s", body)
+	body := w.Body.String()
+	if !strings.Contains(body, "administrator") || !strings.Contains(strings.ToLower(body), "your own") {
+		t.Errorf("the refusal does not say what it is or where theirs are: %s", body)
 	}
 
-	// The landing-page card follows the same policy, so the card and the
-	// URL cannot disagree.
-	if !app.WebRestricted(sessionReq(t, root, "temp")) {
-		t.Error("the dashboard card should be hidden from a non-admin")
+	// The app itself is not hidden any more. Hiding it was the same decision
+	// as the blanket gate and had the same consequence: a user with agents,
+	// tools and collections of their own could not see the place they live.
+	if app.WebRestricted(sessionReq(t, root, "temp")) {
+		t.Error("the app is hidden from a user who owns agents in it")
 	}
 	if app.WebRestricted(sessionReq(t, root, "boss")) {
-		t.Error("the dashboard card should show for an admin")
+		t.Error("the app is hidden from an admin")
 	}
 }
 

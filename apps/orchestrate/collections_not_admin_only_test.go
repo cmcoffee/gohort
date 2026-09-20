@@ -34,11 +34,15 @@ func TestTheCollectionRoutesAreNotAdminGated(t *testing.T) {
 			t.Errorf("route %s is gone", route)
 		}
 	}
-	// The workbench keeps its gate. This is the half the rule is FOR, and a
-	// blanket un-gating would take it with the other.
-	for _, route := range []string{`"/api/agents/"`, `"/api/agents/wizard"`} {
-		if !strings.Contains(src, "HandleFunc("+route+", g(") {
-			t.Errorf("the agent workbench route %s lost its admin gate", route)
-		}
+	// The agent routes came out from behind the gate too, later and for the
+	// same reason: a user owns their agents as they own their collections.
+	// What the gate is FOR now is the console — one administrator's view
+	// across every user — which keeps it route by route in console.go.
+	console, err := os.ReadFile("console.go")
+	if err != nil {
+		t.Fatalf("reading the console routes: %v", err)
+	}
+	if !strings.Contains(string(console), "g := T.adminGated") {
+		t.Error("the console gave up its admin gate; that is the half the gate is for")
 	}
 }
