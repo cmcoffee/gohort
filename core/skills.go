@@ -29,6 +29,7 @@ import (
 	"github.com/cmcoffee/gohort/core/notices"
 	"github.com/cmcoffee/gohort/core/peershare"
 	"github.com/cmcoffee/gohort/core/promotion"
+	"github.com/cmcoffee/gohort/core/shareledger"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -1468,4 +1469,94 @@ func noteSkillPublished(owner string, s SkillRecord, strippedTools int) {
 		Title: "\"" + s.Name + "\" is now a deployment skill",
 		Body:  body,
 	})
+}
+
+func init() {
+	shareledger.Register("skill", shareledger.Provider{
+		Label: "Skill",
+		Mine: func(owner string) []shareledger.Grant {
+			var out []shareledger.Grant
+			for _, s := range LoadSkills(nil, owner) {
+				if len(s.AllowedUsers) == 0 {
+					continue
+				}
+				out = append(out, shareledger.Grant{
+					ID: s.ID, Name: s.Name, Recipients: s.AllowedUsers,
+					Reach:     "Shared with " + strings.Join(s.AllowedUsers, ", "),
+					Detail:    skillShareDetail(s),
+					Revocable: true,
+				})
+			}
+			// A published one reaches everybody, and taking it back is the
+			// author's — but through the skill's own door, not this one, since
+			// un-publishing is not the same act as dropping one recipient.
+			for _, s := range DeploymentSkills(nil) {
+				if s.Owner == owner {
+					out = append(out, shareledger.Grant{
+						ID: s.ID, Name: s.Name, Reach: "Deployment-wide", Wide: true,
+						Detail: skillShareDetail(s),
+					})
+				}
+			}
+			return out
+		},
+		ToMe: func(user string) []shareledger.Grant {
+			var out []shareledger.Grant
+			for _, s := range sharedSkillsFor(nil, user) {
+				out = append(out, shareledger.Grant{
+					ID: s.ID, Name: s.Name, Owner: s.SharedFrom,
+					Reach: "Activates on your turns", Detail: skillShareDetail(s),
+				})
+			}
+			for _, s := range DeploymentSkills(nil) {
+				if s.Owner != user {
+					out = append(out, shareledger.Grant{
+						ID: s.ID, Name: s.Name, Owner: s.Owner,
+						Reach: "Published to everybody", Wide: true,
+					})
+				}
+			}
+			return out
+		},
+		Revoke: func(owner, id, recipient string) error {
+			for _, s := range LoadSkills(nil, owner) {
+				if s.ID != id {
+					continue
+				}
+				if recipient == "" {
+					s.AllowedUsers = nil
+				} else {
+					s.AllowedUsers = dropRecipient(s.AllowedUsers, recipient)
+				}
+				_, err := SaveSkillAs(nil, owner, s, "share taken back")
+				return err
+			}
+			return errString("no skill " + id + " owned by " + owner)
+		},
+	})
+}
+
+// skillShareDetail is the manifest line: what a recipient has to bring for
+// this skill to do what it says. Its bundled tools never travel, and its
+// collections travel as references that answer only for whoever can read them.
+func skillShareDetail(s SkillRecord) string {
+	var parts []string
+	if n := len(s.Tools); n > 0 {
+		parts = append(parts, strconv.Itoa(n)+" bundled tool(s) stay with the author")
+	}
+	if n := len(s.AttachedCollections); n > 0 {
+		parts = append(parts, strconv.Itoa(n)+" attached collection(s) answer only for whoever can already read them")
+	}
+	return strings.Join(parts, "; ")
+}
+
+// dropRecipient removes one name, leaving the rest as they were.
+func dropRecipient(list []string, drop string) []string {
+	out := []string{}
+	for _, u := range list {
+		if u != drop {
+			out = append(out, u)
+		}
+	}
+	return out
 }

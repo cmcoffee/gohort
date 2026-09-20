@@ -47,6 +47,7 @@ import (
 	"github.com/cmcoffee/gohort/core/notices"
 	"github.com/cmcoffee/gohort/core/peershare"
 	"github.com/cmcoffee/gohort/core/promotion"
+	"github.com/cmcoffee/gohort/core/shareledger"
 	"github.com/cmcoffee/snugforge/mimebody"
 )
 
@@ -2891,5 +2892,118 @@ func noteCredentialHandover(owner, name string, bindings []string) {
 		Kind:  notices.KindStopped,
 		Title: "\"" + name + "\" is now a deployment credential",
 		Body:  body,
+	})
+}
+
+func init() {
+	shareledger.Register("credential", shareledger.Provider{
+		Label: "Credential",
+		Mine: func(owner string) []shareledger.Grant {
+			var out []shareledger.Grant
+			for _, c := range Secure().ListUser(owner) {
+				if len(c.SharedReadOnly)+len(c.SharedReadWrite) == 0 {
+					continue
+				}
+				// Reads and writes never read the same here either: one hands
+				// over data they could have asked for, the other lets a call
+				// go out wearing the owner's name.
+				var parts []string
+				if len(c.SharedReadOnly) > 0 {
+					parts = append(parts, strings.Join(c.SharedReadOnly, ", ")+" can read")
+				}
+				if len(c.SharedReadWrite) > 0 {
+					parts = append(parts, strings.Join(c.SharedReadWrite, ", ")+" can write as you")
+				}
+				out = append(out, shareledger.Grant{
+					ID: c.Name, Name: c.Name,
+					Recipients: append(append([]string{}, c.SharedReadOnly...), c.SharedReadWrite...),
+					Reach:      strings.Join(parts, "; "),
+					Detail:     "Every call through it is recorded with the name of whoever made it.",
+					Revocable:  true,
+				})
+			}
+			return out
+		},
+		ToMe: func(user string) []shareledger.Grant {
+			var out []shareledger.Grant
+			for _, c := range Secure().SharedWithUser(user) {
+				reach := "Reads only (GET and HEAD)"
+				detail := "Anything else is refused, and the refusal is recorded."
+				if credShareGrant(c, user) == credShareWrite {
+					reach = "Reads and writes"
+					detail = "What you write arrives at the far end as " + c.Owner + ", under their name."
+				}
+				out = append(out, shareledger.Grant{
+					ID: c.Name, Name: c.Name, Owner: c.Owner, Reach: reach, Detail: detail,
+				})
+			}
+			return out
+		},
+		Revoke: func(owner, id, recipient string) error {
+			c, ok := Secure().LoadUser(owner, id)
+			if !ok {
+				return errString("no credential " + id + " owned by " + owner)
+			}
+			if recipient == "" {
+				return Secure().SetCredentialShares(owner, id, nil, nil)
+			}
+			return Secure().SetCredentialShares(owner, id,
+				dropRecipient(c.SharedReadOnly, recipient), dropRecipient(c.SharedReadWrite, recipient))
+		},
+	})
+
+	shareledger.Register("tool", shareledger.Provider{
+		Label: "Tool",
+		Mine: func(owner string) []shareledger.Grant {
+			var out []shareledger.Grant
+			for _, p := range LoadPersistentTempTools(nil, owner) {
+				switch {
+				case p.Shared:
+					reach := "In the deployment catalog"
+					if len(p.AllowedUsers) > 0 {
+						reach += ", for " + strings.Join(p.AllowedUsers, ", ")
+					}
+					out = append(out, shareledger.Grant{
+						ID: p.Tool.Name, Name: p.Tool.Name, Reach: reach, Wide: true,
+						Detail: "An administrator published it; ask them to unshare it.",
+					})
+				case len(p.SharedWith) > 0:
+					out = append(out, shareledger.Grant{
+						ID: p.Tool.Name, Name: p.Tool.Name, Recipients: p.SharedWith,
+						Reach:     "Offered to " + strings.Join(p.SharedWith, ", "),
+						Detail:    "It loads for their agents once they take it, and runs in their session against their own credentials.",
+						Revocable: true,
+					})
+				}
+			}
+			return out
+		},
+		ToMe: func(user string) []shareledger.Grant {
+			var out []shareledger.Grant
+			adopted := LoadAdoptedGlobalTools(nil, user)
+			for _, p := range PeerSharedToolsFor(nil, user) {
+				detail := "Take it from your Tools catalog to load it for your agents."
+				if adopted[p.Tool.Name] {
+					detail = "Taken: your agents load it."
+				}
+				out = append(out, shareledger.Grant{
+					ID: p.Tool.Name, Name: p.Tool.Name, Owner: p.Owner,
+					Reach: "Offered to you", Detail: detail,
+				})
+			}
+			return out
+		},
+		Revoke: func(owner, id, recipient string) error {
+			for _, p := range LoadPersistentTempTools(nil, owner) {
+				if p.Tool.Name != id {
+					continue
+				}
+				if recipient == "" {
+					return SetPersistentTempToolSharedWith(nil, owner, id, nil)
+				}
+				return SetPersistentTempToolSharedWith(nil, owner, id, dropRecipient(p.SharedWith, recipient))
+			}
+			return errString("no tool " + id + " owned by " + owner)
+		},
 	})
 }

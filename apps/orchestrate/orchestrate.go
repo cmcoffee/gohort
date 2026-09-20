@@ -269,6 +269,7 @@ func (T *OrchestrateApp) Routes() {
 	// approves. See agent_promotion.go.
 	registerAgentPromotion(T)
 	registerRecipePromotions()
+	registerShareProviders()
 
 	// Register "agent" as a portable artifact type so agents export/import via
 	// the unified bundle (Admin > /api/artifacts/*). Holds the app because

@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"github.com/cmcoffee/gohort/core/peershare"
 	"github.com/cmcoffee/gohort/core/promotion"
+	"github.com/cmcoffee/gohort/core/shareledger"
 	"sort"
 	"strconv"
 	"strings"
@@ -973,4 +974,61 @@ func NarrowCollectionToOwner(owner, id string) error {
 	RootDB.Unset(GlobalCollectionsTable, c.ID)
 	Log("[collections] %q narrowed %q back to their own scope", owner, c.Name)
 	return nil
+}
+
+func init() {
+	shareledger.Register("collection", shareledger.Provider{
+		Label: "Knowledge",
+		Mine: func(owner string) []shareledger.Grant {
+			var out []shareledger.Grant
+			udb := UserDB(CollectionsDB(), owner)
+			if udb == nil {
+				return out
+			}
+			for _, c := range ListCollections(udb, owner) {
+				switch {
+				case c.Owner != owner:
+					continue
+				case IsDeploymentScope(c):
+					out = append(out, shareledger.Grant{
+						ID: c.ID, Name: c.Name, Reach: "Deployment-wide", Wide: true,
+					})
+				case len(c.AllowedUsers) > 0:
+					out = append(out, shareledger.Grant{
+						ID: c.ID, Name: c.Name, Recipients: c.AllowedUsers,
+						Reach:     "Shared with " + strings.Join(c.AllowedUsers, ", "),
+						Revocable: true,
+					})
+				}
+			}
+			return out
+		},
+		ToMe: func(user string) []shareledger.Grant {
+			var out []shareledger.Grant
+			for _, c := range SharedCollectionsFor(user) {
+				reach, wide := "Searchable by your agents", false
+				if IsDeploymentScope(c) {
+					reach, wide = "Published to everybody", true
+				}
+				out = append(out, shareledger.Grant{
+					ID: c.ID, Name: c.Name, Owner: c.Owner, Reach: reach, Wide: wide,
+				})
+			}
+			return out
+		},
+		Revoke: func(owner, id, recipient string) error {
+			udb := UserDB(CollectionsDB(), owner)
+			c, ok := LoadCollection(udb, owner, id)
+			if !ok || c.Owner != owner {
+				return errString("no collection " + id + " owned by " + owner)
+			}
+			if recipient == "" {
+				c.AllowedUsers = nil
+			} else {
+				c.AllowedUsers = dropRecipient(c.AllowedUsers, recipient)
+			}
+			SaveCollection(udb, c)
+			return nil
+		},
+	})
 }
