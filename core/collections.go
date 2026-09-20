@@ -98,10 +98,27 @@ type Collection struct {
 	Description string `json:"description,omitempty"`
 	// Scope controls who can attach this collection. Empty or
 	// "user" = per-user (Owner has exclusive access); "deployment"
-	// = deployment-wide (any user's agent can attach). Deployment
-	// scope is admin-authored only at the HTTP layer; the data
-	// model itself doesn't gate write access — that's the
-	// admin endpoint's job.
+	// = deployment-wide (any user's agent can attach).
+	//
+	// NOTHING SETS THIS TO "deployment" EXCEPT THE FRAMEWORK. The only
+	// deployment-scoped collection that exists is the auto-created
+	// deployment-knowledge one (EnsureDeploymentKnowledgeCollection); the
+	// create handler never reads a scope off the request, so a user cannot
+	// mint one, and there is no admin endpoint that promotes an existing
+	// collection either.
+	//
+	// This comment used to say deployment scope was "admin-authored only at
+	// the HTTP layer" and that gating write access was "the admin endpoint's
+	// job". There is no such endpoint. The sentence described a gate that had
+	// never been built, which is worse than describing none: the next person to
+	// add a write path reads it and believes the check is already somewhere
+	// else. If promoting a collection is ever wanted, it goes through
+	// core/promotion like tools, apps and agents do — the owner asks, an
+	// administrator approves — and this comment says so instead.
+	//
+	// The data model itself does not gate writes, and that part was true:
+	// SaveCollection routes on Scope alone, so whatever sets the field decides
+	// the pool.
 	Scope   string    `json:"scope,omitempty"`
 	Created time.Time `json:"created"`
 	Updated time.Time `json:"updated,omitempty"`
