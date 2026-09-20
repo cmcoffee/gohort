@@ -542,6 +542,24 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		T.handleAgentKnowledgeSourceDelete(w, r, user, id, reportID)
 		return
 	}
+	if action == "reach" {
+		// What this agent depends on, and how far each of those goes. Read-only
+		// and owner-only: it reports the reach of the owner's OWN tools, keys
+		// and documents, which is their business and nobody else's — a
+		// recipient reading it would be reading somebody else's configuration.
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		udb := UserDB(T.DB, user)
+		agent, ok := loadAgent(udb, id)
+		if !ok || (agent.Owner != "" && agent.Owner != user && agent.Owner != seedOwner) {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, agentReachOf(udb, user, agent).Items)
+		return
+	}
 	if action == "eval-suite" {
 		// Lift the agent's inline cases into a standalone suite, which is
 		// where a history and a per-run fingerprint become possible. The

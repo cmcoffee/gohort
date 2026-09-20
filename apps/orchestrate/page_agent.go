@@ -685,6 +685,31 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				EmptyText:     "No other users to share with yet.",
 			}),
 		})
+		// What the agent actually reaches, right underneath the picker that
+		// decides who gets it. The two questions are asked together — "share
+		// this with my team" is one request, and the tools, documents, skills
+		// and recipes behind it are consequences of it rather than four more
+		// things to remember.
+		sections = append(sections, ui.Section{
+			Title:    "What this agent reaches",
+			Wide:     true,
+			Subtitle: "Everything it depends on, and how far each of those goes today.",
+			Detail: "Sharing an agent shares the agent. Each thing it uses is a record of its own with its own reach, and a run resolves them in the namespace of whoever started it — so a person can have this agent and still be missing what it needs.\n\n" +
+				"Nothing here changes anything. It is the list to check before you share, and the answer to \"why does it work for me and not for them\" afterwards.\n\n" +
+				"How is the part worth reading: a tool is found by NAME in the runner's own catalog, while a skill, collection, pipeline or machine is found by ID and only if it reached them. A credential resolves by name as whoever is running, which is usually what you want — their calls should go out as them.",
+			Body: ui.Table{
+				Source: source + "/reach",
+				RowKey: "name",
+				Columns: []ui.Col{
+					{Field: "kind", Label: "Kind", Flex: 0},
+					{Field: "name", Flex: 1},
+					{Field: "reach", Label: "Reach", Flex: 1},
+					{Field: "missing", Label: "", Flex: 1},
+					{Field: "how", Label: "How a run finds it", Mute: true, Flex: 3},
+				},
+				EmptyText: "This agent depends on nothing of yours. Anybody you share it with gets all of it.",
+			},
+		})
 	}
 
 	// (Phantom dispatch + wipe sections removed — phantom's per-chat dispatch
