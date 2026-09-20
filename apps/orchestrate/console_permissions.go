@@ -369,15 +369,33 @@ func (T *OrchestrateApp) handleConsolePrivileges(w http.ResponseWriter, r *http.
 		}
 		rec.AutoApproveTools = kept
 	}
+	// Flags whose ON was filed as a request rather than applied. Reported back
+	// so the UI can leave the box clear and say who it is waiting on, instead
+	// of showing a capability that is not actually live.
+	var requested []string
 	for field, on := range body.Flags {
 		switch strings.TrimSpace(field) {
 		case "fleet":
 			rec.Fleet = on
 		case "author":
 			rec.Author = on
+		// The two publishing flags. Turning either ON reaches every signed-in
+		// user of the deployment, which is the same reach a shared app has and
+		// has needed an administrator since v0.6.710; an agent is the larger
+		// grant, since it carries its owner's tools, credentials and memory.
+		// Turning OFF stays direct: nobody needs permission to stop publishing.
+		// See agent_promotion.go.
 		case "exposed":
+			if T.agentPublishNeedsApproval(r, user, rec.ID, "exposed", on, rec.Exposed) {
+				requested = append(requested, "exposed")
+				continue
+			}
 			rec.Exposed = on
 		case "mcp_exposed":
+			if T.agentPublishNeedsApproval(r, user, rec.ID, "mcp_exposed", on, rec.MCPExposed) {
+				requested = append(requested, "mcp_exposed")
+				continue
+			}
 			rec.MCPExposed = on
 		case "allow_builder_dispatch":
 			rec.AllowBuilderDispatch = on
@@ -389,6 +407,13 @@ func (T *OrchestrateApp) handleConsolePrivileges(w http.ResponseWriter, r *http.
 	if _, err := saveAgent(udb, rec); err != nil {
 		Log("[console.privileges] save %s failed: %v", rec.ID, err)
 		http.Error(w, "could not save", http.StatusInternalServerError)
+		return
+	}
+	if len(requested) > 0 {
+		// A body rather than 204, because "requested" and "done" are different
+		// outcomes and a caller that cannot tell them apart will show the
+		// capability as live when an administrator has not looked at it yet.
+		writeJSON(w, map[string]any{"ok": true, "requested": requested})
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

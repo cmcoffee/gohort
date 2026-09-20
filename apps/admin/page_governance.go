@@ -178,9 +178,11 @@ func (a *AdminApp) governanceSections() []ui.Section {
 					{Field: "kind", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: "tool", Label: "Tool", Color: "mute"},
 						{Value: "app", Label: "App", Color: "info"},
-						{Value: "public_link", Label: "Public link", Color: "warning"},
-						{Value: "credential", Label: "Credential", Color: "mute"},
-						{Value: "agent", Label: "Agent", Color: "mute"},
+						// One label per kind that can actually be FILED, per the
+						// note above. "public_link" went with the anonymous app
+						// surface, and "credential" never had an approver, so
+						// both were labels for a row nothing could produce.
+						{Value: "agent", Label: "Agent", Color: "warning"},
 					}},
 					{Field: "name", Flex: 1},
 					{Field: "note", Flex: 2, Mute: true},
