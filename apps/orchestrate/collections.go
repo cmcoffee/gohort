@@ -230,6 +230,10 @@ func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Requ
 				"chunks":               chunks,
 				"filter_rules":         c.FilterRules,
 				"classify_on_autofill": c.ClassifyOnAutofill,
+				// The share picker reads what it will patch back, so the field
+				// has to be on the wire or it opens empty and the first save
+				// silently clears the share.
+				"allowed_users": nonNilUsers(c.AllowedUsers),
 			})
 		case http.MethodPatch:
 			var body struct {
@@ -1801,4 +1805,14 @@ func fetchAndExtractForIngest(ctx context.Context, u string) (name, text string,
 		return "", "", nil, "", fmt.Errorf("fetch failed for %s: %w", u, ferr)
 	}
 	return "", "", nil, "", fmt.Errorf("extracted only %d chars from %s: JS-only or blocked even via headless browser; try a direct text/PDF URL", len(text), u)
+}
+
+// nonNilUsers keeps an empty ACL as [] rather than null, because a picker that
+// reads null renders nothing and a picker that reads [] renders "nobody yet",
+// and those look identical until somebody wonders whether it loaded.
+func nonNilUsers(in []string) []string {
+	if in == nil {
+		return []string{}
+	}
+	return in
 }

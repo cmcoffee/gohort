@@ -52,7 +52,7 @@ func (T *KnowledgeApp) WebPath() string { return "/knowledge" }
 
 // HubTab makes Knowledge a member of the shared top-nav hub.
 func (T *KnowledgeApp) HubTab() (string, int) { return "Knowledge", 30 }
-func (T *KnowledgeApp) WebName() string { return "Knowledge" }
+func (T *KnowledgeApp) WebName() string       { return "Knowledge" }
 func (T *KnowledgeApp) WebDesc() string {
 	return "Named document collections that travel with your skills."
 }
@@ -64,6 +64,20 @@ func (T *KnowledgeApp) WebOrder() int { return -800 }
 func (T *KnowledgeApp) Routes() {
 	T.HandleFunc("/", T.handleListPage)
 	T.HandleFunc("/c/", T.handleDetailPage)
+	// The share picker's candidate list. Served here rather than borrowed:
+	// "which users exist" is a question any app can answer from the auth store,
+	// so there is no reason for this page's picker to 404 when a sibling app is
+	// disabled. The collection itself still lives in orchestrate, which is why
+	// the SAVE below goes there.
+	T.HandleFunc("/api/user-candidates", T.handleUserCandidates)
+}
+
+func (T *KnowledgeApp) handleUserCandidates(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(UserCandidatesJSON(AuthDB()))
 }
 
 func (T *KnowledgeApp) handleListPage(w http.ResponseWriter, r *http.Request) {
@@ -111,6 +125,9 @@ func (T *KnowledgeApp) handleDetailPage(w http.ResponseWriter, r *http.Request) 
 		},
 	}
 	if s, ok := stewardSection(user, collectionIDFromPath(r.URL.Path)); ok {
+		sections = append(sections, s)
+	}
+	if s, ok := T.sharingSection(user, collectionIDFromPath(r.URL.Path)); ok {
 		sections = append(sections, s)
 	}
 	page := ui.Page{
@@ -163,7 +180,7 @@ func stewardSection(user, collectionID string) (ui.Section, bool) {
 	return ui.Section{
 		Title:    "In charge of this collection",
 		Subtitle: "An agent can look after this collection.",
-			Detail: "It goes and finds material, adds it, and prunes what no longer belongs. Every other agent reads the collection as usual, unchanged.",
+		Detail:   "It goes and finds material, adds it, and prunes what no longer belongs. Every other agent reads the collection as usual, unchanged.",
 		Body: ui.FormPanel{
 			Source:  base,
 			PostURL: base,
@@ -189,3 +206,43 @@ func stewardSection(user, collectionID string) (ui.Section, bool) {
 	}, true
 }
 
+// sharingSection lets the OWNER hand this collection to named people.
+//
+// Owner only, and gated by loading the record rather than by trusting the page:
+// a recipient reaches this same URL, because resolving a shared collection is
+// the point, and showing them a share editor would offer a control the endpoint
+// refuses. An absent section says "not yours" more honestly than a disabled one.
+//
+// The middle rung of the governance model. Widening a collection to the whole
+// deployment is a different decision with no path today; this is the one people
+// actually want, which is handing a corpus to a colleague.
+func (T *KnowledgeApp) sharingSection(user, collectionID string) (ui.Section, bool) {
+	if strings.TrimSpace(collectionID) == "" || strings.TrimSpace(user) == "" {
+		return ui.Section{}, false
+	}
+	c, ok := LoadCollection(UserDB(CollectionsDB(), user), user, collectionID)
+	if !ok || c.Owner != user || IsDeploymentScope(c) {
+		return ui.Section{}, false
+	}
+	base := "/orchestrate/api/collections/" + url.PathEscape(collectionID)
+	return ui.Section{
+		Title:    "Shared with",
+		Subtitle: "Other users who may attach and search this collection. Empty means private to you.",
+		Detail: "They get READ: it appears in their collections, they can attach it to their agents and search it. " +
+			"They cannot add documents, rename it or delete it, and there is only ever one copy — so a document you add later is shared too, and one you remove is gone for everyone.\n\n" +
+			"Sharing with the whole deployment is a separate decision and is not offered here.",
+		Body: ui.ACLPicker(ui.ACLPickerConfig{
+			OptionsSource: "/knowledge/api/user-candidates",
+			RecordSource:  base,
+			Field:         "allowed_users",
+			PostTo:        base,
+			// PATCH, because the collections endpoint treats an absent field as
+			// unchanged: a POST of the whole record from this picker would
+			// carry whatever else it happened to have read.
+			Method:    "PATCH",
+			Noun:      "user",
+			Intro:     "Users who may use this collection.",
+			EmptyText: "No other users to share with yet.",
+		}),
+	}, true
+}
