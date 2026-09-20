@@ -168,3 +168,58 @@ func skillRecipients(t *testing.T, id string) []string {
 	}
 	return nil
 }
+
+// The other half of a share, and the half that was missing: the person on the
+// receiving end being told what arrived and what it still needs from them.
+
+func TestTheRecipientIsToldWhatTheyMustSupply(t *testing.T) {
+	guidedFixture(t)
+	// They bring their own key, which is the default and the case where the
+	// recipient has something to do.
+	shareAgentGuided("alice", "a1", []string{"bob"},
+		map[string]string{"skill:s1": shareSend, "tool:wiki_read": shareSend, "cred:wiki": credOwn})
+
+	need := manifestForAgent("alice", "a1", "bob")
+	joined := strings.Join(need, " | ")
+	if !strings.Contains(joined, "wiki") {
+		t.Fatalf("the manifest does not name the credential they need: %v", need)
+	}
+	// By NAME and with the place to add it: "you need a credential" is a
+	// support ticket, "add one called wiki in Extensions" is something to do.
+	if !strings.Contains(joined, "Extensions") {
+		t.Errorf("the manifest does not say where to fix it: %v", need)
+	}
+}
+
+// Nothing to do means nothing said. A manifest that always found something
+// would train people to ignore it.
+func TestACompleteShareAsksNothingOfTheRecipient(t *testing.T) {
+	udb, _ := guidedFixture(t)
+	// Lend the key and share everything else: bob is left with nothing to do.
+	shareAgentGuided("alice", "a1", []string{"bob"},
+		map[string]string{"skill:s1": shareSend, "tool:wiki_read": shareSend, "cred:wiki": credRead})
+	// Taking the tool is the recipient's own step, so stand in for it.
+	SetGlobalToolAdopted(AuthDB(), "bob", "wiki_read", true)
+
+	if need := manifestForAgent("alice", "a1", "bob"); len(need) != 0 {
+		t.Errorf("a complete share still asks something of them: %v", need)
+	}
+	_ = udb
+}
+
+// The manifest is per PERSON. One colleague having a key of that name says
+// nothing about another, and a line written once at share time would be wrong
+// for one of them.
+func TestTheManifestIsPerRecipient(t *testing.T) {
+	guidedFixture(t)
+	shareAgentGuided("alice", "a1", []string{"bob", "carol"},
+		map[string]string{"cred:wiki": credRead, "skill:s1": shareSend, "tool:wiki_read": shareSend})
+	SetGlobalToolAdopted(AuthDB(), "bob", "wiki_read", true)
+
+	if need := manifestForAgent("alice", "a1", "bob"); len(need) != 0 {
+		t.Errorf("bob took the tool and is still being asked: %v", need)
+	}
+	if need := manifestForAgent("alice", "a1", "carol"); len(need) == 0 {
+		t.Error("carol has not taken the tool and is being told nothing")
+	}
+}

@@ -208,3 +208,44 @@ func mergeRecipients(have, add []string) []string {
 	sort.Strings(out)
 	return out
 }
+
+// manifestForAgent is what THIS person still has to supply before the agent
+// does what it says.
+//
+// Computed by walking the agent's reach as if they were its only recipient,
+// which is the same question the panel answers for the owner asked from the
+// other side. Per person, because the answer differs by person: one colleague
+// already has a key of that name and another does not.
+func manifestForAgent(owner, id, recipient string) []string {
+	udb := UserDB(orchestrateBaseDB, owner)
+	a, ok := loadAgent(udb, id)
+	if !ok || a.Owner != owner {
+		return nil
+	}
+	a.AllowedUsers = []string{recipient}
+	a.Exposed, a.MCPExposed = false, false
+
+	var out []string
+	for _, it := range agentReachOf(udb, owner, a).Items {
+		if !it.Gap {
+			// It reaches them — which is not the same as it being ready. A
+			// shared tool sits in their catalog until they take it, and only
+			// tools know that about themselves, so ask the kind rather than
+			// growing a second opinion here.
+			out = append(out, shareledger.Manifest(it.kind, owner, it.id, recipient)...)
+			continue
+		}
+		switch it.kind {
+		case "credential":
+			// The one they can actually act on, and the one that is not a
+			// copy of anything: it needs a key of theirs by that exact name.
+			out = append(out, "It calls an API through a credential named \""+it.Name+
+				"\". Add one of your own by that name in Extensions, or its calls will fail.")
+		case "tool":
+			out = append(out, "It uses the tool \""+it.Name+"\", which has not reached you. Ask "+owner+" to share it.")
+		default:
+			out = append(out, "It uses the "+strings.ToLower(it.Kind)+" \""+it.Name+"\", which has not reached you.")
+		}
+	}
+	return out
+}

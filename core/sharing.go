@@ -12,7 +12,13 @@
 // app share ONE implementation instead of copy-pasting the index/permission logic.
 package core
 
-import "net/http"
+import (
+	"net/http"
+	"strings"
+
+	"github.com/cmcoffee/gohort/core/notices"
+	"github.com/cmcoffee/gohort/core/shareledger"
+)
 
 // SetSharedOwner adds or removes a record from a shared index. shared && owner!=""
 // registers it (recordID -> owner); anything else unregisters it. appDB is the
@@ -163,4 +169,42 @@ func CanManageShared(reqUser, owner string, isAdmin bool) bool {
 		return true
 	}
 	return owner == reqUser
+}
+
+// ----------------------------------------------------------------------
+// Telling somebody that something has been shared with them
+// ----------------------------------------------------------------------
+
+// The owner has always had a report of what they just did. The people on the
+// other end got nothing: no word that anything arrived, and no word that the
+// thing which arrived needs something from them before it works. A share that
+// tells only the person who made it is how a colleague finds out by running
+// something and watching it fail.
+//
+// Wired here rather than inside core/shareledger so that package stays
+// storage-free — it holds the registry and knows nothing about where a
+// deployment keeps its notifications. In this file rather than one of its own
+// because core is AT its file ceiling, and this is the file about sharing
+// seams in core.
+
+func init() {
+	shareledger.NotifyRecipient = func(recipient, title, intro string, needs []string) {
+		if RootDB == nil || strings.TrimSpace(recipient) == "" {
+			return
+		}
+		// The kind turns on whether there is anything for them to do. A share
+		// that needs nothing is news; one that needs a credential of their own
+		// is waiting on them, and filing the second as news is how it gets
+		// scrolled past.
+		kind := notices.KindReport
+		if len(needs) > 0 {
+			kind = notices.KindBlocked
+		}
+		notices.Record(RootDB, notices.Notice{
+			Owner: recipient,
+			Kind:  kind,
+			Title: title,
+			Body:  strings.TrimSpace(intro + " " + strings.Join(needs, " ")),
+		})
+	}
 }

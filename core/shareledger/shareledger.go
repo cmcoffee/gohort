@@ -86,6 +86,15 @@ type Provider struct {
 	// Share hands it over, with the answers to whatever Plan asked, and
 	// returns one line per thing it did or could not do.
 	Share func(owner, id string, recipients []string, answers map[string]string) []string
+	// Manifest is what THIS recipient still has to supply for this record to
+	// do what it says — a credential of their own by the right name, a tool
+	// they have not taken yet. Empty when nothing is needed.
+	//
+	// Per recipient, not per share, because the answer differs by person:
+	// one colleague already has a key of that name and another does not, and
+	// a single line written at share time would be wrong for one of them the
+	// moment either changes.
+	Manifest func(owner, id, recipient string) []string
 }
 
 var (
@@ -237,5 +246,60 @@ func Share(kind, owner, id string, recipients []string, answers map[string]strin
 	if !ok || p.Share == nil {
 		return nil, errString("nothing here can share a " + kind)
 	}
-	return p.Share(owner, id, recipients, answers), nil
+	lines := p.Share(owner, id, recipients, answers)
+	tellRecipients(kind, owner, id, displayName(p, owner, id), recipients)
+	return lines, nil
+}
+
+// displayName finds what to call this record, so a notice says "Troubleshooter"
+// rather than quoting an id at somebody who has never seen it.
+func displayName(p Provider, owner, id string) string {
+	if p.Candidates != nil {
+		for _, g := range p.Candidates(owner) {
+			if g.ID == id {
+				return g.Name
+			}
+		}
+	}
+	return id
+}
+
+// NotifyRecipient, when wired at startup, tells somebody that something has
+// been shared with them and what they still need for it.
+//
+// A hook rather than a call into a notification store, so this package stays
+// storage-free and the deployment decides what "tell them" means. Unwired, a
+// share is silent — which is what it was before any of this.
+// Needs is kept separate from the intro rather than folded into one blob,
+// because whether there IS anything for the recipient to do decides how the
+// notice should read — and a deployment that had to infer that from the length
+// of a slice would infer it differently in two places.
+var NotifyRecipient func(recipient, title, intro string, needs []string)
+
+// Manifest asks one kind what this recipient still has to supply.
+func Manifest(kind, owner, id, recipient string) []string {
+	mu.RLock()
+	p, ok := providers[strings.TrimSpace(kind)]
+	mu.RUnlock()
+	if !ok || p.Manifest == nil {
+		return nil
+	}
+	return p.Manifest(owner, id, recipient)
+}
+
+// tellRecipients is the other half of a share, and the half that was missing.
+//
+// The owner gets a report of what they just did. The people on the other end
+// got nothing at all — no word that anything arrived, and no word that the
+// thing which arrived needs something from them before it works. A share that
+// tells only the person who made it is how a colleague finds out by running
+// something and watching it fail.
+func tellRecipients(kind, owner, id, name string, recipients []string) {
+	if NotifyRecipient == nil {
+		return
+	}
+	for _, u := range recipients {
+		NotifyRecipient(u, owner+" shared "+name+" with you",
+			owner+" shared "+name+" with you.", Manifest(kind, owner, id, u))
+	}
 }

@@ -1542,6 +1542,26 @@ func init() {
 			}
 			return out
 		},
+		Manifest: func(owner, id, recipient string) []string {
+			for _, s := range LoadSkills(nil, owner) {
+				if s.ID != id {
+					continue
+				}
+				var out []string
+				if n := len(s.Tools); n > 0 {
+					out = append(out, "It expects "+strconv.Itoa(n)+" tool(s) that stay with "+owner+
+						". If its steps call for one you do not have, say so rather than working around it.")
+				}
+				for _, cid := range s.AttachedCollections {
+					if _, ok := LoadCollection(UserDB(CollectionsDB(), recipient), recipient, cid); !ok {
+						out = append(out, "It reads a document collection you cannot reach. Ask "+owner+" to share it.")
+						break
+					}
+				}
+				return out
+			}
+			return nil
+		},
 		Revoke: func(owner, id, recipient string) error {
 			for _, s := range LoadSkills(nil, owner) {
 				if s.ID != id {

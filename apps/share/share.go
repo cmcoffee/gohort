@@ -81,6 +81,10 @@ type row struct {
 	// row covers several. A grant to three people revokes as three rows
 	// rather than one button that silently takes back more than it says.
 	Recipient string `json:"recipient,omitempty"`
+	// Needs marks a row that is waiting on the reader. Something shared with
+	// you that does not work yet, and does not say so, is worse than not
+	// having it: you find out by running it.
+	Needs bool `json:"needs,omitempty"`
 }
 
 func (T *ShareApp) serveMine(w http.ResponseWriter, r *http.Request) {
@@ -111,7 +115,15 @@ func (T *ShareApp) serveToMe(w http.ResponseWriter, r *http.Request) {
 	}
 	rows := []row{}
 	for _, g := range shareledger.ToMe(user) {
-		rows = append(rows, toRow(g, g.Reach, ""))
+		r := toRow(g, g.Reach, "")
+		// What THIS person still has to supply, asked of the kind that knows.
+		// The generic line the provider wrote is about the share; this is
+		// about them, and it is the one they can act on.
+		if need := shareledger.Manifest(g.Kind, g.Owner, g.ID, user); len(need) > 0 {
+			r.Detail = strings.Join(need, " ")
+			r.Needs = true
+		}
+		rows = append(rows, r)
 	}
 	writeJSON(w, rows)
 }
@@ -230,11 +242,15 @@ func (T *ShareApp) servePage(w http.ResponseWriter, r *http.Request) {
 				Wide:     true,
 				Subtitle: "What you have because somebody else gave it to you.",
 				Detail: "Yours to use, not to edit: the record stays with the person who made it, and what they change is what you get.\n\n" +
-					"Read the last column. Most of these run in YOUR namespace against your own tools and credentials, which is what keeps a share a way of working rather than a way into somebody's account — and it is also why something may arrive needing a credential of your own with the right name.",
+					"A row marked Needs you does not work yet. Most of these run in YOUR namespace against your own tools and credentials, which is what keeps a share a way of working rather than a way into somebody's account — and it is also why something can arrive needing a credential of your own by the right name. The last column says which.",
 				Body: ui.Table{
-					Source:    "api/to-me",
-					RowKey:    "id",
-					Columns:   cols,
+					Source: "api/to-me",
+					RowKey: "id",
+					Columns: append(append([]ui.Col{}, cols[:len(cols)-1]...),
+						ui.Col{Field: "needs", Label: "", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: true, Label: "Needs you", Color: "warning"},
+						}},
+						cols[len(cols)-1]),
 					EmptyText: "Nobody has shared anything with you.",
 				},
 			},

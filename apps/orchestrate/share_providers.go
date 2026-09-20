@@ -37,8 +37,9 @@ func registerShareProviders() {
 			}
 			return out
 		},
-		Plan:  planAgentShare,
-		Share: shareAgentGuided,
+		Plan:     planAgentShare,
+		Share:    shareAgentGuided,
+		Manifest: manifestForAgent,
 		Mine: func(owner string) []shareledger.Grant {
 			var out []shareledger.Grant
 			udb := UserDB(orchestrateBaseDB, owner)

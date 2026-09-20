@@ -130,3 +130,76 @@ func TestAnUnlabelledKindIsNotRegistered(t *testing.T) {
 		t.Errorf("kinds = %v", got)
 	}
 }
+
+// The half that was missing: telling the person on the receiving end.
+func TestASharedThingTellsItsRecipient(t *testing.T) {
+	reset(t)
+	type told struct {
+		who, title, intro string
+		needs             []string
+	}
+	var sent []told
+	saved := NotifyRecipient
+	NotifyRecipient = func(who, title, intro string, needs []string) {
+		sent = append(sent, told{who, title, intro, needs})
+	}
+	t.Cleanup(func() { NotifyRecipient = saved })
+
+	Register("agent", Provider{
+		Label:      "Agent",
+		Candidates: func(string) []Grant { return []Grant{{ID: "a1", Name: "Troubleshooter"}} },
+		Share:      func(string, string, []string, map[string]string) []string { return []string{"done"} },
+		Manifest: func(owner, id, recipient string) []string {
+			if recipient == "bob" {
+				return []string{"Add a credential named wiki."}
+			}
+			return nil
+		},
+	})
+
+	if _, err := Share("agent", "alice", "a1", []string{"bob", "carol"}, nil); err != nil {
+		t.Fatalf("share: %v", err)
+	}
+	if len(sent) != 2 {
+		t.Fatalf("told %d people", len(sent))
+	}
+	// By NAME, not by id: a notice quoting "a1" at somebody who has never
+	// seen it tells them nothing.
+	if !strings.Contains(sent[0].title, "Troubleshooter") {
+		t.Errorf("the notice does not name the thing: %q", sent[0].title)
+	}
+	// Per person. One colleague needing something says nothing about another.
+	if len(sent[0].needs) != 1 || len(sent[1].needs) != 0 {
+		t.Errorf("the manifest is not per recipient: %+v", sent)
+	}
+}
+
+// Unwired, a share is silent — which is what it was before any of this. A
+// package that assumed a notification store would make itself unusable
+// anywhere that has none.
+func TestASharedThingIsQuietWithNowhereToTell(t *testing.T) {
+	reset(t)
+	saved := NotifyRecipient
+	NotifyRecipient = nil
+	t.Cleanup(func() { NotifyRecipient = saved })
+
+	Register("agent", Provider{
+		Label: "Agent",
+		Share: func(string, string, []string, map[string]string) []string { return []string{"done"} },
+	})
+	if _, err := Share("agent", "alice", "a1", []string{"bob"}, nil); err != nil {
+		t.Errorf("share: %v", err)
+	}
+}
+
+// A kind with no manifest asks nothing, rather than asking about nothing.
+func TestAKindWithNoManifestAsksNothing(t *testing.T) {
+	reset(t)
+	Register("skill", Provider{Label: "Skill"})
+	if got := Manifest("skill", "alice", "s1", "bob"); len(got) != 0 {
+		t.Errorf("manifest = %v", got)
+	}
+	if got := Manifest("nothing", "alice", "x", "bob"); len(got) != 0 {
+		t.Errorf("an unregistered kind returned %v", got)
+	}
+}

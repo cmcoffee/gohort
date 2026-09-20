@@ -3017,6 +3017,15 @@ func init() {
 			}
 			return out
 		},
+		Manifest: func(owner, id, recipient string) []string {
+			// A shared tool is an offer: it sits in their catalog until they
+			// take it. Somebody who was never told that has a tool their
+			// agents do not load and no reason to look.
+			if LoadAdoptedGlobalTools(nil, recipient)[id] {
+				return nil
+			}
+			return []string{"Take \"" + id + "\" from your Tools catalog in Extensions; until you do, your agents do not load it."}
+		},
 		Revoke: func(owner, id, recipient string) error {
 			for _, p := range LoadPersistentTempTools(nil, owner) {
 				if p.Tool.Name != id {
