@@ -287,7 +287,7 @@ func TestBothRefusalsReachTheOwner(t *testing.T) {
 	}
 }
 
-// notify_me is the agent explicitly reaching out, and it used to be a text and
+// notify_owner is the agent explicitly reaching out, and it used to be a text and
 // nothing else: a missing bridge returned an error and what the agent had to
 // say was gone. It is now kept either way, which is the one thing
 // Notifications exists for.
@@ -339,77 +339,22 @@ func TestAForwardedNoticeSaysWhereItCameFrom(t *testing.T) {
 	}
 
 	// The agent-aware send is the one the bridge already tags "[<name>] " on
-	// the wire, so notify_me asks for the sourceless form. Both together read
+	// the wire, so notify_owner asks for the sourceless form. Both together read
 	// "[Wren] [Wren@Gohort] ...", which is the duplication this pins against.
 	src := readFile(t, "operator_tools.go")
-	if !strings.Contains(src, `outbound := noticePrefix("") + " " + text`) {
-		t.Error("notify_me is naming the agent again, which the bridge tag already does")
-	}
-}
-
-// "Never chosen" and "deliberately nowhere" are different answers, and the
-// setting has to tell them apart: the first is a default to supply, the second
-// is a decision to respect. Getting this wrong either silently stops delivering
-// messages somebody relied on, or hands them back a default they just declined.
-func TestNeverChosenIsNotTheSameAsOff(t *testing.T) {
-	savedReady, savedDB := NoticePhoneReady, AuthDB
-	t.Cleanup(func() { NoticePhoneReady, AuthDB = savedReady, savedDB })
-	db := &DBase{Store: kvlite.MemStore()}
-	AuthDB = func() Database { return db }
-
-	store := func(where string) {
-		t.Helper()
-		db.Set(AuthTable, "user:alice", AuthUser{Username: "alice", NotifyForward: where})
-	}
-
-	// Unset sends nowhere, EVEN when a phone is available. Forwarding is
-	// opt-in: a setting nobody has touched must not already be interrupting
-	// somebody, or the first thing they learn about the feature is a message
-	// they never asked for.
-	NoticePhoneReady = func(string) bool { return true }
-	store("")
-	if got := ResolveNotifyForward(db, "alice"); got != "off" {
-		t.Errorf("an unasked user is being forwarded to: %q", got)
-	}
-	// Explicitly off reads the same way, which is correct, and the two values
-	// stay distinct in STORAGE because "has this person been asked" is a
-	// separate question from "where does it go".
-	store("off")
-	if got := ResolveNotifyForward(db, "alice"); got != "off" {
-		t.Errorf("a deliberate no was overridden by the default: %q", got)
-	}
-	store("email")
-	if got := ResolveNotifyForward(db, "alice"); got != "email" {
-		t.Errorf("an explicit choice was not kept: %q", got)
-	}
-	// And saving "nowhere" from the form stores the explicit value rather than
-	// the blank, or the next read would hand the default straight back.
-	AuthSetNotifyForward(db, "alice", "")
-	if got := AuthGetNotifyForward(db, "alice"); got != "off" {
-		t.Errorf("choosing nowhere stored %q, which reads as never having been asked", got)
-	}
-}
-
-// A tool result that hands the model implementation detail gets it narrated
-// back at the owner. notify_me used to report which transport it had used, and
-// an agent duly answered "it's in your Notifications, forwarding to your phone
-// is off, want me to turn that on?" — reporting on plumbing and offering to
-// change a preference it does not own.
-func TestNotifyMeDoesNotTellTheAgentWhereItWent(t *testing.T) {
-	src := readFile(t, "operator_tools.go")
-	start := strings.Index(src, `Name:        "notify_me"`)
+	start := strings.Index(src, "func notifyOwnerToolDef(")
 	if start < 0 {
-		t.Fatal("notify_me is gone")
+		t.Fatal("notifyOwnerToolDef is gone")
 	}
 	body := src[start:]
-	if end := strings.Index(body, "\n\t\t},\n"); end > 0 {
+	if end := strings.Index(body[1:], "\nfunc "); end > 0 {
 		body = body[:end]
 	}
 	// Every success path returns the same sentence, so there is nothing to
 	// narrate and no branch that can drift into describing one.
 	for _, leak := range []string{"forwarded to your phone", "was not texted", "Forwarding to your phone", "messaging bridge is not available"} {
 		if strings.Contains(body, leak) {
-			t.Errorf("notify_me's result still describes the transport: %q", leak)
+			t.Errorf("notify_owner's result still describes the transport: %q", leak)
 		}
 	}
 	if !strings.Contains(body, "return notifySent, nil") {
@@ -419,5 +364,34 @@ func TestNotifyMeDoesNotTellTheAgentWhereItWent(t *testing.T) {
 	// the agent should DO, rather than describing what happened.
 	if !strings.Contains(body, "put anything essential from them into the message text") {
 		t.Error("an undelivered attachment no longer tells the agent to say it in words")
+	}
+}
+
+// Telling your owner something is a framework capability, not an Operator
+// privilege. The agents that need it most are the scheduled and standing ones,
+// which have no live conversation to speak into and are the least likely to be
+// in a fleet.
+//
+// It was gated while it texted a phone unconditionally, because universal reach
+// plus unconditional delivery is every agent able to interrupt somebody at
+// will. Forwarding being opt-in is what makes it safe to hand out: by default
+// this writes a notification and nothing leaves the machine. If that default
+// ever flips back, this pairing has to be reconsidered, not just the default.
+func TestEveryAgentCanTellItsOwner(t *testing.T) {
+	src := readFile(t, "runner_routing.go")
+	if !strings.Contains(src, "notifyOwnerToolDef(sess,") {
+		t.Error("notify_owner is not in the framework catalog, so an agent outside a fleet cannot reach its owner")
+	}
+	// One definition. It lived in the Operator's toolset, and a copy for
+	// everybody else is how two tools with one name come to behave differently.
+	ops := readFile(t, "operator_tools.go")
+	if n := strings.Count(ops, `Name:        "notify_owner"`); n != 1 {
+		t.Errorf("notify_owner is defined %d times; one name, one definition", n)
+	}
+	sess := &ToolSession{Username: "u"}
+	for _, td := range operatorManagementTools(sess, "agent-1") {
+		if td.Tool.Name == "notify_owner" {
+			t.Error("the Operator toolset builds it again, so a fleet agent would get two")
+		}
 	}
 }

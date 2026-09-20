@@ -39,7 +39,7 @@ type SubAgentToolException struct {
 	//
 	// A FLAG, not a tool name, and the report is incomplete without it. Fleet
 	// and Author each mint a whole catalog at dispatch time — delegate,
-	// message_contact, notify_me, standing-agent and monitor management — and
+	// message_contact, notify_owner, standing-agent and monitor management — and
 	// enforceSubAgentPosture pins Hidden, Exposed, PublicName, AllowExplorer
 	// and IntakeForm on a sub-agent while leaving both of these alone.
 	//

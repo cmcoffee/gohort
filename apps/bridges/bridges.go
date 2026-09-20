@@ -645,7 +645,7 @@ func (T *Bridges) enqueueOutbox(it OutboxItem) {
 	// Outbound name tag: prefix "[Name] " so the recipient can tell an agent's
 	// message apart from the owner's own texts in the same thread. Done here at
 	// the single outbound chokepoint so it covers channel replies, send_message,
-	// and notify_me alike. Three layers resolve here (most specific wins):
+	// and notify_owner alike. Three layers resolve here (most specific wins):
 	//   enabled  = the bound agent opted in (it.Agent set) AND the channel
 	//              didn't disable the tag.
 	//   name     = per-channel override → global override → the agent's own name.

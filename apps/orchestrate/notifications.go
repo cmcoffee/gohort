@@ -193,7 +193,7 @@ func (T *OrchestrateApp) notifyToolQueued(owner, agentID, tool string) {
 // that is four paragraphs long is one nobody scans past.
 //
 // Stored directly rather than through notify, so it does NOT forward. The
-// caller (notify_me) is already an explicit reach-out; running it through the
+// caller (notify_owner) is already an explicit reach-out; running it through the
 // forwarding preference as well would either double-send or, since that
 // preference is off by default, quietly turn a tool that always texted into
 // one that usually does not.
@@ -227,7 +227,7 @@ func noticeSourceName(udb Database, agentID string) string {
 	return agentID
 }
 
-// notifySent is what notify_me tells the agent, on every path that worked.
+// notifySent is what notify_owner tells the agent, on every path that worked.
 //
 // One sentence, and deliberately no routing. WHERE a notification went is the
 // owner's setting and none of the agent's business, and a result that hands the

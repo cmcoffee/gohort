@@ -81,7 +81,7 @@ func init() {
 		// channel-scoped messaging
 		"send_message", "list_chats", "read_chat", "list_members", "search_chat",
 		// operator / fleet
-		"message_contact", "notify_me", "await_result", "delegate",
+		"message_contact", "notify_owner", "await_result", "delegate",
 		"request_thread_binding", "release_thread_binding", "set_thread_wake",
 		"authorize_channel_sender",
 		"create_event_monitor", "delete_event_monitor", "list_event_monitors",
@@ -559,7 +559,7 @@ func channelForChat(owner, chatID, handle string) (Channel, bool) {
 	}
 	// Fall back to a whole-service ("global view") channel when no per-contact
 	// channel claims the chat — so a send to a conversation only covered by the
-	// agent's global channel still records (notify_me to the owner, the owner's
+	// agent's global channel still records (notify_owner to the owner, the owner's
 	// own 1:1 reached via a whole-service binding). Single-service deployments
 	// resolve uniquely; with multiple whole-service channels this picks the
 	// first — fine until per-service disambiguation actually matters.

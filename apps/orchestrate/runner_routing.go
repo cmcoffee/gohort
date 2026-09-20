@@ -218,6 +218,13 @@ func (t *chatTurn) frameworkConversationalTools(sess *ToolSession) []AgentToolDe
 	// shown the way to the rest of a result and finds no such tool — the exact
 	// shape that produces improvisation instead of a second call. release_output
 	// is its other half, and costs nothing to carry.
+	// Telling the owner something out of band, which every agent can do.
+	// Framework rather than Operator: anything that runs can have something
+	// worth saying, and the agents that need it most are the scheduled and
+	// standing ones, which have no live conversation to speak into. Safe to
+	// hand out because forwarding is opt-in, so by default it writes a
+	// notification and nothing leaves the machine.
+	out = append(out, notifyOwnerToolDef(sess, t.user, t.agent.ID, t.agent.ID))
 	for _, n := range []string{"find_tools", "send_status", "stay_silent", "keep_going", "read_output", "release_output"} {
 		if ct, ok := LookupChatTool(n); ok {
 			out = append(out, ChatToolToAgentToolDefWithSession(ct, sess))

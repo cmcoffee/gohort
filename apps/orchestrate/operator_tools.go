@@ -475,7 +475,7 @@ func resolveWorkspaceImages(sess *ToolSession, paths []string) []string {
 // auto-reply path (collectMessageMedia): that reply always goes back to the room
 // the media arrived on, so resolving an inbound media#N there just echoes the
 // photo straight back to the group — the "wiwee re-posts the picture" bug. The
-// explicit cross-recipient tools (message_contact / notify_me / send_message)
+// explicit cross-recipient tools (message_contact / notify_owner / send_message)
 // pass true, because forwarding "the photo Henry sent" to a DIFFERENT recipient
 // is the feature the inbound registry exists for.
 func resolveAttachmentRef(sess *ToolSession, ref string, allowInbound bool) (b64, kind string, ok bool) {
@@ -577,7 +577,7 @@ const attachmentsParamDesc = "Optional attachment reference(s) to send WITH this
 // messageImages gathers every image to ride an outbound message: the explicit
 // `attachments` workspace paths (the steered, self-contained path) PLUS the
 // implicit sess.Images / [ATTACH:] markers (collectMessageAttachments), deduped.
-// One place so send_message, message_contact and notify_me behave identically —
+// One place so send_message, message_contact and notify_owner behave identically —
 // the fragmented "did the model remember to attach first?" failure mode is why
 // images were silently dropped.
 func messageImages(sess *ToolSession, args map[string]any, text string) []string {
@@ -677,7 +677,7 @@ func operatorRecipientLabel(s MessagingChatSummary) string {
 // operatorDeliverMessage sends one message OUTBOUND via the messaging transport
 // (Bridges) — addressed by chat_id (unambiguous; the ONLY correct way to reach a
 // group) or handle. The agent composed the text, so it goes VERBATIM. This is
-// the single delivery chokepoint for notify_me, message_contact, and the
+// the single delivery chokepoint for notify_owner, message_contact, and the
 // approval-execution path; routing it through Bridges' outbox is what makes them
 // actually deliver (phantom's outbox is no longer drained — the daemon polls
 // Bridges now). Returns the text delivered.
@@ -1615,98 +1615,6 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 		// channel.
 		{
 			Tool: Tool{
-				Name:        "notify_me",
-				Description: "Tell the OWNER something out of band. Where it reaches them is their own setting and not something you decide or report on, so write a message that stands on its own and say only that you sent it. Use this ONLY when the user has explicitly asked to be notified, OR when a monitor, scheduled job, or long-running task is delivering a result they asked to be alerted about. Do NOT use it on greetings or ordinary chat, and do NOT volunteer unprompted status; for a normal reply, just reply in the conversation. No approval needed since it only reaches the owner. To include an image/file, pass its workspace path in `attachments`; if one cannot be delivered the reply says so, and then whatever mattered in it belongs in the text.",
-				Parameters: map[string]ToolParam{
-					"text":        {Type: "string", Description: "What to tell the owner. The first line becomes the notification's title, so lead with the thing itself rather than a preamble."},
-					"attachments": {Type: "array", Items: &ToolParam{Type: "string"}, Description: attachmentsParamDesc},
-				},
-				Required: []string{"text"},
-			},
-			Handler: func(ctx context.Context, args map[string]any) (string, error) {
-				text := strings.TrimSpace(oArgStr(args, "text"))
-				if text == "" {
-					return "", fmt.Errorf("text is required")
-				}
-				// This tool telling the owner something IS a notification, and
-				// there is one rule for those: they are kept, and one
-				// preference decides whether they also reach a phone or an
-				// inbox. It used to text unconditionally and leave nothing
-				// behind, which made it both a second delivery rule and a
-				// message that could be lost outright when the bridge was down.
-				//
-				// The preference RESOLVES rather than reading raw, so an owner
-				// who has never been asked keeps the texts they were already
-				// getting. See ResolveNotifyForward.
-				recordAgentNotice(owner, controllerAgentID, text)
-				wants := "off"
-				if AuthDB != nil {
-					wants = ResolveNotifyForward(AuthDB(), owner)
-				}
-				images := messageImages(sess, args, text)
-				toPhone := wants == "phone" || wants == "both"
-				if !toPhone {
-					// Images cannot live in a notice, so say so rather than
-					// dropping them quietly. The agent can then decide to put
-					// what mattered into the text.
-					if len(images) > 0 {
-						// The ONE thing the agent has to know, because it
-						// changes what it should do: the attachment did not
-						// arrive, so anything that mattered in it has to be
-						// said in words instead.
-						return "Sent. The attachments could not be delivered, so put anything essential from them into the message text.", nil
-					}
-					return notifySent, nil
-				}
-				link, ok := ActiveMessagingLink()
-				if !ok {
-					return notifySent, nil
-				}
-				self, ok := link.OwnerHandle(owner)
-				if !ok {
-					return notifySent, nil
-				}
-				// Prefixed, like any other forwarded notice: a text arriving on
-				// a phone has no other context, and this one is going out for
-				// exactly the same reason the passive ones do.
-				//
-				// WITHOUT the agent, because this path is the agent-aware send
-				// and the bridge already tags it "[<name>] " on the wire. Both
-				// produced "[Wren] [Wren@Gohort] ...". The deployment name is
-				// the part the tag does not carry, so that is the part this
-				// adds; an owner who has turned the bridge tag off gets the
-				// deployment and not the agent, which is the setting they chose.
-				outbound := noticePrefix("") + " " + text
-				// DeliverMessage (not SendToHandle) so attachments ride along;
-				// persona is inactive for the owner's own chat, so the text
-				// is sent verbatim. Empty chatID resolves the owner's thread.
-				if _, err := operatorDeliverMessage(owner, agentID, "", self, outbound, images); err != nil {
-					// The notice is already filed, so say what is actually true
-					// rather than reporting a total failure. Telling the model
-					// the send failed when the owner WILL see it is how an agent
-					// ends up saying the same thing three more ways.
-					Log("[orchestrate.notify] forwarding %s's notification failed: %v", owner, err)
-					return notifySent, nil
-				}
-				// The owner's channel (their phone) must see what was sent — record
-				// into its cortex/session so when the owner replies, the agent knows
-				// what it just told them (fixes "I sent you a joke but have no idea
-				// what it was" — the reply lands over the bridge in a different
-				// session than this notify_me). Recorded by AGENT ID, not by
-				// matching the owner's handle to a channel address (those rarely
-				// match: SelfHandle is a phone, the channel address may be an email
-				// or chat-id form, so channelForChat misses and the cortex is
-				// skipped). notify_me IS this agent notifying the owner, so it
-				// belongs in this agent's cortex. No-op if the agent has no cortex.
-				appendCortexObs(sess.DB, controllerAgentID, "Sent to you", cortexKindMessage, text)
-				if len(images) > 0 {
-					return notifySent, nil
-				}
-				return notifySent, nil
-			},
-		},
-		{
-			Tool: Tool{
 				Name:        "message_contact",
 				Description: "Send an iMessage to a CONTACT or a GROUP (anyone other than the owner). Set `to` to the recipient as shown by list_chats: a contact/group NAME (e.g. \"WiWee\"), a handle (phone/email), or a chat_id. Any of them resolve to the right conversation, group chats included; you don't need to track the opaque chat_id: the name works. To send an image/file, pass its workspace path in `attachments`. Your exact words are sent verbatim. Contacting real people is consequential, so it queues for the user's approval (unless they pre-authorized that recipient via 'Always allow', or you're replying to someone who just messaged you), then sends once approved.",
 				Parameters: map[string]ToolParam{
@@ -2246,4 +2154,111 @@ func resolveMonitorWakeAgent(sess *ToolSession, creatorAgentID, requested, notif
 	return "", fmt.Errorf("say which agent this monitor should wake: pass wake_agent with the name of the agent that owns this watch. " +
 		"Waking you would fire the alert into this build session, where nobody will see it again. " +
 		"If the alert should go straight to the user instead, set notify=\"direct\"")
+}
+
+// notifyOwnerToolDef is the tool every agent has for telling its owner
+// something out of band.
+//
+// A FRAMEWORK tool, not an Operator one. Anything that runs can have something
+// worth saying, and the agents that need it most are the scheduled and standing
+// ones, which have no live conversation to speak into and are the least likely
+// to be in a fleet. It was gated while it texted the owner's phone
+// unconditionally, because universal reach plus unconditional delivery is every
+// agent able to interrupt somebody at will; forwarding being opt-in is what
+// makes it safe to hand out, since by default this writes a notification and
+// nothing leaves the machine.
+//
+// One definition, called from the framework catalog. It lived inside the
+// Operator's toolset, and a copy for everybody else is how two tools with one
+// name come to behave differently.
+func notifyOwnerToolDef(sess *ToolSession, owner, agentID, controllerAgentID string) AgentToolDef {
+	return AgentToolDef{
+		Tool: Tool{
+			Name:        "notify_owner",
+			Description: "Tell the OWNER something out of band. Where it reaches them is their own setting and not something you decide or report on, so write a message that stands on its own and say only that you sent it. Use this ONLY when the user has explicitly asked to be notified, OR when a monitor, scheduled job, or long-running task is delivering a result they asked to be alerted about. Do NOT use it on greetings or ordinary chat, and do NOT volunteer unprompted status; for a normal reply, just reply in the conversation. No approval needed since it only reaches the owner. To include an image/file, pass its workspace path in `attachments`; if one cannot be delivered the reply says so, and then whatever mattered in it belongs in the text.",
+			Parameters: map[string]ToolParam{
+				"text":        {Type: "string", Description: "What to tell the owner. The first line becomes the notification's title, so lead with the thing itself rather than a preamble."},
+				"attachments": {Type: "array", Items: &ToolParam{Type: "string"}, Description: attachmentsParamDesc},
+			},
+			Required: []string{"text"},
+		},
+		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			text := strings.TrimSpace(oArgStr(args, "text"))
+			if text == "" {
+				return "", fmt.Errorf("text is required")
+			}
+			// This tool telling the owner something IS a notification, and
+			// there is one rule for those: they are kept, and one
+			// preference decides whether they also reach a phone or an
+			// inbox. It used to text unconditionally and leave nothing
+			// behind, which made it both a second delivery rule and a
+			// message that could be lost outright when the bridge was down.
+			//
+			// The preference RESOLVES rather than reading raw, so an owner
+			// who has never been asked keeps the texts they were already
+			// getting. See ResolveNotifyForward.
+			recordAgentNotice(owner, controllerAgentID, text)
+			wants := "off"
+			if AuthDB != nil {
+				wants = ResolveNotifyForward(AuthDB(), owner)
+			}
+			images := messageImages(sess, args, text)
+			toPhone := wants == "phone" || wants == "both"
+			if !toPhone {
+				// Images cannot live in a notice, so say so rather than
+				// dropping them quietly. The agent can then decide to put
+				// what mattered into the text.
+				if len(images) > 0 {
+					// The ONE thing the agent has to know, because it
+					// changes what it should do: the attachment did not
+					// arrive, so anything that mattered in it has to be
+					// said in words instead.
+					return "Sent. The attachments could not be delivered, so put anything essential from them into the message text.", nil
+				}
+				return notifySent, nil
+			}
+			link, ok := ActiveMessagingLink()
+			if !ok {
+				return notifySent, nil
+			}
+			self, ok := link.OwnerHandle(owner)
+			if !ok {
+				return notifySent, nil
+			}
+			// Prefixed, like any other forwarded notice: a text arriving on
+			// a phone has no other context, and this one is going out for
+			// exactly the same reason the passive ones do.
+			//
+			// WITHOUT the agent, because this path is the agent-aware send
+			// and the bridge already tags it "[<name>] " on the wire. Both
+			// produced "[Wren] [Wren@Gohort] ...". The deployment name is
+			// the part the tag does not carry, so that is the part this
+			// adds; an owner who has turned the bridge tag off gets the
+			// deployment and not the agent, which is the setting they chose.
+			outbound := noticePrefix("") + " " + text
+			// DeliverMessage (not SendToHandle) so attachments ride along;
+			// persona is inactive for the owner's own chat, so the text
+			// is sent verbatim. Empty chatID resolves the owner's thread.
+			if _, err := operatorDeliverMessage(owner, agentID, "", self, outbound, images); err != nil {
+				// The notice is already filed, so say what is actually true
+				// rather than reporting a total failure. Telling the model
+				// the send failed when the owner WILL see it is how an agent
+				// ends up saying the same thing three more ways.
+				Log("[orchestrate.notify] forwarding %s's notification failed: %v", owner, err)
+				return notifySent, nil
+			}
+			// The owner's channel (their phone) must see what was sent — record
+			// into its cortex/session so when the owner replies, the agent knows
+			// what it just told them (fixes "I sent you a joke but have no idea
+			// what it was" — the reply lands over the bridge in a different
+			// session than this notify_owner). Recorded by AGENT ID, not by
+			// matching the owner's handle to a channel address (those rarely
+			// match: SelfHandle is a phone, the channel address may be an email
+			// or chat-id form, so channelForChat misses and the cortex is
+			// skipped). notify_owner IS this agent notifying the owner, so it
+			// belongs in this agent's cortex. No-op if the agent has no cortex.
+			appendCortexObs(sess.DB, controllerAgentID, "Sent to you", cortexKindMessage, text)
+			return notifySent, nil
+		},
+	}
 }

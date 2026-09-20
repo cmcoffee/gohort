@@ -8,9 +8,10 @@ import (
 )
 
 // The inheritable set is drawn from TWO builders, and for a long time it was
-// drawn from one. The filter matched "list_chats", "read_chat" and "notify_me"
+// drawn from one. The filter matched "list_chats", "read_chat" and the notify
 // against operatorManagementTools, which builds 18 tools and neither reader is
-// among them — they live in channelChatTools. So it returned notify_me alone
+// tool against it, and neither reader is among them — they live in
+// channelChatTools. So it returned the notify tool alone
 // and this file's stated purpose, letting a Builder-authored summarizer read
 // the chat it summarizes, never worked through inheritance.
 //
@@ -26,9 +27,12 @@ func TestInheritableToolNamesExistInTheirSources(t *testing.T) {
 		built[td.Tool.Name] = true
 	}
 
-	// notify_me is the half that always worked.
-	if !built["notify_me"] {
-		t.Error("operatorManagementTools no longer builds notify_me; the inheritance filter selects it")
+	// notify_owner is NOT here any more, and must not come back: it is a
+	// framework tool every agent has without inheriting anything, so an
+	// Operator-set copy would be a second definition of one name, and a filter
+	// selecting it would hand over something already in the hand.
+	if built["notify_owner"] {
+		t.Error("notify_owner is back in the Operator toolset; it is a framework tool, and two definitions of one name is how they come to behave differently")
 	}
 	// The readers must NOT be sought there — this is the mistake, pinned so it
 	// cannot be reintroduced by someone "simplifying" back to one loop.
@@ -43,7 +47,7 @@ func TestInheritableToolNamesExistInTheirSources(t *testing.T) {
 	for _, td := range phantomInheritableToolDefs(sess, "u", "agent-1") {
 		switch td.Tool.Name {
 		case "send_message", "message_contact", "converse_with_contact":
-			t.Errorf("%s is inheritable; only the owner-safe read tools and notify_me may be", td.Tool.Name)
+			t.Errorf("%s is inheritable; only the owner-safe read tools may be", td.Tool.Name)
 		}
 	}
 }
