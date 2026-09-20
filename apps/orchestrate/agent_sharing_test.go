@@ -161,3 +161,76 @@ func TestPublishAgentForAdmin(t *testing.T) {
 		}
 	}
 }
+
+// Recipient-side resolution, which this file's header described as "a separate
+// step" for long enough that the ACL was decorative: an owner picked
+// recipients, an admin could audit and revoke them, and nothing ever appeared
+// for the person named.
+func TestASharedAgentReachesItsRecipient(t *testing.T) {
+	// newTestOrchestrate wires orchestrateBaseDB, which is what the free
+	// functions read; a test that left it nil would exercise a different store
+	// than production and skip rather than prove anything.
+	_, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	base := orchestrateBaseDB
+
+	rec := AgentRecord{ID: "a1", Owner: "alice", Name: "Researcher", OrchestratorPrompt: "research",
+		AllowedUsers: []string{"bob"}}
+	if _, err := saveAgent(udb, rec); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	got := SharedAgentsFor(base, "bob")
+	if len(got) != 1 || got[0].ID != "a1" {
+		t.Fatalf("the recipient cannot see what was shared with them: %+v", got)
+	}
+	// The OWNER travels with it. That is what lets a run resolve in the owner's
+	// context while the recipient's own credentials resolve in theirs, so no
+	// secret travels with the share.
+	if got[0].Owner != "alice" {
+		t.Errorf("the record lost its owner: %q", got[0].Owner)
+	}
+	if got := SharedAgentsFor(base, "dana"); len(got) != 0 {
+		t.Errorf("an unnamed user sees it: %+v", got)
+	}
+
+	// Dispatch resolves it, by id and by name, for the recipient.
+	bobDB := UserDB(base, "bob")
+	if a, ok := findAgentByNameOrID(bobDB, "bob", "a1"); !ok || a.Owner != "alice" {
+		t.Error("a recipient cannot dispatch to a shared agent by id")
+	}
+	if a, ok := findAgentByNameOrID(bobDB, "bob", "Researcher"); !ok || a.ID != "a1" {
+		t.Error("a recipient cannot dispatch to a shared agent by name")
+	}
+
+	// Revoking takes it back, because the index follows the record in the same
+	// write and every read re-checks the record.
+	rec.AllowedUsers = nil
+	if _, err := saveAgent(udb, rec); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if got := SharedAgentsFor(base, "bob"); len(got) != 0 {
+		t.Errorf("a revoked recipient still has it: %+v", got)
+	}
+	if _, ok := findAgentByNameOrID(bobDB, "bob", "a1"); ok {
+		t.Error("a revoked recipient can still dispatch to it")
+	}
+}
+
+// A sub-agent belongs to its parent and a seed belongs to the framework.
+// Neither is shareable, so neither should ever land in the index: an entry for
+// one would be a row nothing can act on.
+func TestOnlyAShareableAgentIsIndexed(t *testing.T) {
+	_, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	base := orchestrateBaseDB
+	if _, err := saveAgent(udb, AgentRecord{
+		ID: "sub1", Owner: "alice", Name: "Helper", OrchestratorPrompt: "help",
+		OwnedBy: "parent", AllowedUsers: []string{"bob"},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if got := SharedAgentsFor(base, "bob"); len(got) != 0 {
+		t.Errorf("a sub-agent was shared: %+v", got)
+	}
+}

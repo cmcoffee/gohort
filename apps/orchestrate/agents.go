@@ -333,6 +333,13 @@ func writeAgent(db Database, a AgentRecord, maySetLocked bool, reason string) (A
 		}
 	}
 	db.Set(agentsTable, a.ID, a)
+	// The peer-share index follows the record in the same write, so a share and
+	// the lookup that finds it cannot disagree about who has access. Only for a
+	// shareable agent: a seed or a sub-agent cannot be shared, so an entry for
+	// one would be a row nothing can act on.
+	if RootDB != nil && isShareableAgent(a, a.Owner) {
+		SetPeerShareRecipients(RootDB, SharedAgentsTable, a.Owner, a.ID, a.AllowedUsers)
+	}
 	// Hand back what a load would now give, not the row that went to storage.
 	// For a seed shadow those differ: the row is a full snapshot, while the
 	// agent is the seed wearing this record's overrides, so returning the row

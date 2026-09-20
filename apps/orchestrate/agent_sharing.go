@@ -5,15 +5,19 @@
 // non-owner surfaces: the candidate list the picker reads, and the admin
 // governance hooks (enumerate + revoke) the admin console calls.
 //
-// Recipient-side resolution (a shared agent appearing in a recipient's fleet and
-// running in the owner's context with the recipient's own credentials) is a
-// separate step — the AllowedUsers data + userCanRunSharedAgent gate below are its
-// foundation.
+// Recipient-side resolution is BUILT (see SharedAgentsFor at the bottom): a
+// shared agent appears in the recipient's fleet catalog and resolves on
+// dispatch, by id and by name, carrying its owner so the run happens in the
+// owner's context while the recipient's own credentials and tools resolve in
+// theirs. Until that existed the ACL was decorative — an owner picked
+// recipients, an admin could audit and revoke them, and nothing ever appeared
+// for the person named.
 package orchestrate
 
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -128,4 +132,49 @@ func (T *OrchestrateApp) handleUserCandidates(w http.ResponseWriter, r *http.Req
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(UserCandidatesJSON(AuthDB()))
+}
+
+// SharedAgentsTable indexes peer shares: recipient -> (owner, agent id).
+const SharedAgentsTable = "shared_agents"
+
+// SharedAgentsFor returns the agents other people have shared WITH this user,
+// read from each owner's own store.
+//
+// This is the recipient-side resolution the top of this file described as "a
+// separate step". Until it existed the ACL was decorative: an owner picked
+// recipients, an admin could audit and revoke them, and nothing ever appeared
+// for the person named. A picker that stores names and changes nothing is worse
+// than no picker, because the owner believes they shared something.
+//
+// Each record comes back with its OWNER intact, which is what makes a run
+// resolve in the owner's context while the recipient's own credentials and
+// tools resolve in theirs — no secret travels with the share.
+func SharedAgentsFor(db Database, user string) []AgentRecord {
+	if RootDB == nil || strings.TrimSpace(user) == "" {
+		return nil
+	}
+	var out []AgentRecord
+	for _, ref := range ListPeerShares(RootDB, SharedAgentsTable, user) {
+		udb := UserDB(db, ref.Owner)
+		if udb == nil {
+			continue
+		}
+		a, ok := loadAgent(udb, ref.ID)
+		if !ok {
+			continue
+		}
+		// Re-checked against the record rather than trusted from the index: the
+		// list on the agent is what the owner edits and an admin revokes, the
+		// index is derived, and a derived thing that can outvote its source is
+		// how a revoked share keeps working.
+		if !isShareableAgent(a, ref.Owner) || !userCanRunSharedAgent(a, user) {
+			continue
+		}
+		// Hidden is the owner's own fleet-visibility choice and says nothing
+		// about a share: an agent hidden from its owner's dispatch list is
+		// still the thing they handed over deliberately.
+		out = append(out, a)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }

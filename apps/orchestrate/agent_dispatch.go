@@ -2198,6 +2198,13 @@ func findAgentByNameOrID(udb Database, owner, key string) (AgentRecord, bool) {
 	if a, ok := loadAgent(udb, key); ok {
 		return a, true
 	}
+	// By id, for something shared with this user: their own store has no row
+	// for it, and an id is exact, so there is nothing to disambiguate.
+	for _, a := range SharedAgentsFor(orchestrateBaseDB, owner) {
+		if a.ID == key {
+			return a, true
+		}
+	}
 	// A name the user gave their OWN agent beats a framework seed or app agent
 	// carrying the same one, at EVERY tier below.
 	//
@@ -2215,7 +2222,12 @@ func findAgentByNameOrID(udb Database, owner, key string) (AgentRecord, bool) {
 	// user's own agents first and over the framework's only if that finds
 	// nothing.
 	own, framework := splitOwnAndFrameworkAgents(listAgents(udb, owner))
-	for _, group := range [][]AgentRecord{own, framework} {
+	// Agents somebody else shared with this user sit BETWEEN the two: after
+	// their own, because a name they chose should mean the thing they made,
+	// and before the framework's, because a colleague handing you an agent is
+	// a more specific answer than a seed that ships with every deployment.
+	shared := SharedAgentsFor(orchestrateBaseDB, owner)
+	for _, group := range [][]AgentRecord{own, shared, framework} {
 		if a, ok := matchAgentByName(group, key); ok {
 			return a, true
 		}

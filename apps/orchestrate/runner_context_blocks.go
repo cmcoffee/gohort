@@ -191,6 +191,11 @@ func (t *chatTurn) computeDispatchableFleet() []AgentRecord {
 	// restrict-mode, which would silently hide every other agent. Self-heals a
 	// legacy "only" list whose members were all deleted by falling back to all.
 	all := listAgents(fleetDB, fleetUser)
+	// Plus whatever other people have shared with this user. Advertised rather
+	// than merely dispatchable: a target the gate would accept but the catalog
+	// never mentions is one the model only reaches by guessing a name, which is
+	// the same as not having it. The dispatch resolver takes the same union.
+	all = append(all, SharedAgentsFor(orchestrateBaseDB, fleetUser)...)
 	exists := make(map[string]bool, len(all))
 	for _, a := range all {
 		exists[a.ID] = true
