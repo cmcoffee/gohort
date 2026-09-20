@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/promotion"
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
@@ -128,6 +129,11 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 			SharedReadOnly  []string `json:"shared_read_only"`
 			SharedReadWrite []string `json:"shared_read_write"`
 			SharedSummary   string   `json:"shared_summary"`
+			// Handover state. A button that stays live after the ask reads as
+			// having done nothing, and a second request would just overwrite
+			// the first — so the row says it is waiting instead.
+			HandoverPending bool `json:"handover_pending"`
+			CanHandOver     bool `json:"can_hand_over"`
 		}
 		toRow := func(c SecureCredential) row {
 			return row{
@@ -138,6 +144,8 @@ func (T *Extensions) handleCredentials(w http.ResponseWriter, r *http.Request) {
 				SharedReadOnly:  nonNilList(c.SharedReadOnly),
 				SharedReadWrite: nonNilList(c.SharedReadWrite),
 				SharedSummary:   shareSummary(c),
+				HandoverPending: handoverPending(user, c.Name),
+				CanHandOver:     !handoverPending(user, c.Name),
 			}
 		}
 		// ?audit=<name> is the owner's own dispatch ledger for their own key.
@@ -1067,20 +1075,26 @@ func (T *Extensions) handlePromotions(w http.ResponseWriter, r *http.Request) {
 	}
 	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
 	name := strings.TrimSpace(r.URL.Query().Get("name"))
-	if kind != "tool" {
-		http.Error(w, "only tool promotion is available", http.StatusBadRequest)
+	switch kind {
+	case "tool", CredentialPromotionKind:
+	default:
+		http.Error(w, "only tool and credential promotion are available", http.StatusBadRequest)
 		return
 	}
 	if name == "" {
 		http.Error(w, "missing name", http.StatusBadRequest)
 		return
 	}
-	// Ownership: the tool must be in the caller's own persistent pool.
+	// Ownership: whatever is being handed over has to be the caller's.
 	owns := false
-	for _, p := range LoadPersistentTempTools(AuthDB(), user) {
-		if p.Tool.Name == name {
-			owns = true
-			break
+	if kind == CredentialPromotionKind {
+		_, owns = Secure().LoadUser(user, name)
+	} else {
+		for _, p := range LoadPersistentTempTools(AuthDB(), user) {
+			if p.Tool.Name == name {
+				owns = true
+				break
+			}
 		}
 	}
 	if !owns {
@@ -1314,6 +1328,9 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 							{Value: false, Label: "All my agents", Color: "warning"},
 						}},
 						{Field: "shared_summary", Label: "Shared", Mute: true},
+						{Field: "handover_pending", Label: "", Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: true, Label: "Handover pending", Color: "warning"},
+						}},
 						{Field: "disabled", Label: "Status", Type: "dot", Badges: []ui.BadgeMapping{
 							{Value: true, Label: "Disabled", Color: "danger"},
 							{Value: false, Label: "Active", Color: "success"},
@@ -1384,6 +1401,26 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 							EmptyText:  "No other users to share with yet.",
 							Invalidate: []string{"api/credentials"},
 						})),
+						// Handing it over is a different ask from lending it, and
+						// the form says so before the ask rather than after. Sharing
+						// widens who may use something that stays yours; this ends
+						// the ownership, and there is no way back from it that is
+						// the former owner's to take.
+						ui.ModalActionIf("Hand to the deployment", "can_hand_over", "", ui.FormPanel{
+							SubmitLabel: "Ask an admin",
+							PostURL:     "api/promotions?kind=credential&name={name}",
+							Fields: []ui.FormField{
+								{Type: "header", Label: "This stops being your credential",
+									Help: "It becomes the deployment's, and taking it back is not yours to do.",
+									Detail: "Sharing widens who may use a key that stays yours. This ends the ownership: the secret moves into the deployment's namespace and the credential lands SECURED, which means it has no user list at all — it is reachable only through the tools bound to it, and you reach it the same way everybody else does.\n\n" +
+										"That is what lets a tuned agent be handed over as a resource rather than as a copy somebody has to reassemble: the key underneath belongs to the work instead of to a person.\n\n" +
+										"The tools that already dispatch through it become its bindings. A tool that is still yours alone stays yours alone, so share each one from Tools for your colleagues to reach the key through it. Any tool that took the raw key into a script stops working, because a secured credential never hands the secret out.\n\n" +
+										"Anyone you lent this key to loses their lend, and an admin has to agree before any of it happens."},
+								{Field: "note", Type: "textarea", Rows: 3, Label: "Note for the admin (optional)",
+									Placeholder: "What is this key for, and who needs to reach it?"},
+							},
+							Invalidate: []string{"api/credentials"},
+						}),
 						{Type: "button", Label: "Delete", Method: "DELETE",
 							PostTo:     "api/credentials?name={name}",
 							Variant:    "danger",
@@ -2661,4 +2698,13 @@ func ledgerOutcome(e SecureAPIAuditEntry) string {
 		return fmt.Sprintf("%d", e.Status)
 	}
 	return fmt.Sprintf("%d (refused by the API)", e.Status)
+}
+
+// handoverPending reports whether this credential is already waiting on an
+// admin. A button that stays live after the ask reads as having done nothing,
+// and a second request would overwrite the first with a new note rather than
+// queueing behind it.
+func handoverPending(user, name string) bool {
+	req, ok := promotion.GetPromotionRequest(AuthDB(), promotion.RequestKey(CredentialPromotionKind, user, name))
+	return ok && req.State == promotion.PromotionPendingState
 }

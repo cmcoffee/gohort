@@ -1279,3 +1279,156 @@ func TestDisablingACredentialReachesItsRecipients(t *testing.T) {
 		t.Error("a disabled credential still resolves for its recipient")
 	}
 }
+
+// ----------------------------------------------------------------------
+// Personal key -> service account
+// ----------------------------------------------------------------------
+
+// The move itself: the record and its secret leave the owner's namespace for
+// the deployment's, and land SECURED. Secured is the whole mechanism — an open
+// global credential would be usable by everybody through the auto-generated
+// fetch_url tool, which is a far wider grant than "make this the team's key".
+func TestHandingAKeyToTheDeploymentMovesItAndSecuresIt(t *testing.T) {
+	secureAPITestStore(t)
+	if err := Secure().Save(SecureCredential{Name: "wiki", Type: SecureCredBearer, Owner: "alice",
+		AllowedURLPattern: "https://wiki.example/**"}, "sk-the-key"); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if err := promoteCredentialToService("alice", "wiki"); err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+
+	if _, ok := Secure().LoadUser("alice", "wiki"); ok {
+		t.Error("the credential is still in its former owner's namespace")
+	}
+	c, ok := Secure().Load("wiki")
+	if !ok {
+		t.Fatal("the deployment does not have it")
+	}
+	if c.Owner != "" {
+		t.Errorf("it still claims an owner: %q", c.Owner)
+	}
+	if !c.Secured {
+		t.Error("it landed unsecured, which hands the whole deployment a fetch_url tool for it")
+	}
+	// The secret came with it, and came with it ONCE.
+	if got, ok := Secure().loadSecret("wiki"); !ok || got != "sk-the-key" {
+		t.Errorf("the secret did not move: %q %v", got, ok)
+	}
+	if _, ok := Secure().loadSecret(credStoreKey("alice", "wiki")); ok {
+		t.Error("a copy of the secret was left in the former owner's namespace")
+	}
+}
+
+// The former owner is exactly that. They reach it the way everybody else does,
+// which for a secured credential means through a bound tool.
+func TestTheFormerOwnerHasNoSpecialClaim(t *testing.T) {
+	secureAPITestStore(t)
+	Secure().Save(SecureCredential{Name: "wiki", Type: SecureCredBearer, Owner: "alice",
+		AllowedURLPattern: "https://wiki.example/**"}, "sk-the-key")
+	promoteCredentialToService("alice", "wiki")
+
+	c, _ := Secure().Load("wiki")
+	if !Secure().UserMayUse(c, "bob") || !Secure().UserMayUse(c, "alice") {
+		t.Error("a deployment credential should pass the WHO axis for everyone; the lock is the tool bindings")
+	}
+	// And the tool catalog offers it to nobody directly, which is what secured
+	// means: reachable through its bindings, not as fetch_url_wiki.
+	for _, tool := range Secure().BuildTools(&ToolSession{Username: "alice"}) {
+		if tool.Tool.Name == "fetch_url_wiki" {
+			t.Error("a secured deployment credential is still a directly callable tool")
+		}
+	}
+}
+
+// Lends do not survive the handover. Everybody reaches it through the bindings
+// now, so a list naming two people decides nothing, and leaving it would have a
+// later un-securing silently restore an ACL from before the key changed hands.
+func TestHandingOverClearsTheLends(t *testing.T) {
+	secureAPITestStore(t)
+	Secure().Save(SecureCredential{Name: "wiki", Type: SecureCredBearer, Owner: "alice",
+		AllowedURLPattern: "https://wiki.example/**"}, "sk-the-key")
+	Secure().SetCredentialShares("alice", "wiki", []string{"bob"}, []string{"carol"})
+	promoteCredentialToService("alice", "wiki")
+
+	c, _ := Secure().Load("wiki")
+	if len(c.SharedReadOnly) != 0 || len(c.SharedReadWrite) != 0 {
+		t.Errorf("the lend lists survived: %+v / %+v", c.SharedReadOnly, c.SharedReadWrite)
+	}
+	if got := Secure().SharedWithUser("bob"); len(got) != 0 {
+		t.Errorf("a borrower still holds it through the old index: %+v", got)
+	}
+}
+
+// A name the deployment already uses is not a conflict to resolve by preferring
+// one: every tool out there naming it would silently start dispatching through
+// a different key, to a possibly different host, as a different identity.
+func TestHandingOverRefusesToOverwriteADeploymentKey(t *testing.T) {
+	secureAPITestStore(t)
+	Secure().Save(SecureCredential{Name: "wiki", Type: SecureCredBearer,
+		AllowedURLPattern: "https://wiki.example/**"}, "the-deployments")
+	Secure().Save(SecureCredential{Name: "wiki", Type: SecureCredBearer, Owner: "alice",
+		AllowedURLPattern: "https://other.example/**"}, "alices")
+
+	err := promoteCredentialToService("alice", "wiki")
+	if err == nil {
+		t.Fatal("the handover overwrote a deployment credential")
+	}
+	if !strings.Contains(err.Error(), "rename") {
+		t.Errorf("the refusal does not say what to do about it: %v", err)
+	}
+	if got, _ := Secure().loadSecret("wiki"); got != "the-deployments" {
+		t.Errorf("the deployment's secret was replaced: %q", got)
+	}
+	if _, ok := Secure().LoadUser("alice", "wiki"); !ok {
+		t.Error("a refused handover consumed the owner's credential anyway")
+	}
+}
+
+// The tools that already dispatch through it become its bindings, because those
+// are the tools it was built for. A "secret" tool — one handed the raw key for a
+// script — is left out: securing blocks that path, so binding it would record an
+// approval for something that cannot work.
+func TestTheDeclaringToolsBecomeTheBindings(t *testing.T) {
+	secureAPITestStore(t)
+	saved := CredentialToolsResolver
+	CredentialToolsResolver = func(cred string) []CredentialToolRef {
+		return []CredentialToolRef{
+			{Tool: "wiki_search", Via: "fetch_via"},
+			{Tool: "wiki_page", Via: "api"},
+			{Tool: "wiki_search", Via: "fetch_via"}, // the same tool on a second agent
+			{Tool: "wiki_dump", Via: "secret"},
+		}
+	}
+	t.Cleanup(func() { CredentialToolsResolver = saved })
+
+	Secure().Save(SecureCredential{Name: "wiki", Type: SecureCredBearer, Owner: "alice",
+		AllowedURLPattern: "https://wiki.example/**"}, "sk-the-key")
+	if err := promoteCredentialToService("alice", "wiki"); err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+	c, _ := Secure().Load("wiki")
+	want := []string{"wiki_page", "wiki_search"}
+	if len(c.ApprovedToolBindings) != len(want) {
+		t.Fatalf("bindings = %v, want %v", c.ApprovedToolBindings, want)
+	}
+	for i, w := range want {
+		if c.ApprovedToolBindings[i] != w {
+			t.Errorf("bindings = %v, want %v", c.ApprovedToolBindings, want)
+			break
+		}
+	}
+}
+
+// Nothing to hand over is an error, not a silent no-op that reports success.
+func TestHandingOverSomethingYouDoNotOwnFails(t *testing.T) {
+	secureAPITestStore(t)
+	Secure().Save(SecureCredential{Name: "wiki", Type: SecureCredBearer, Owner: "alice",
+		AllowedURLPattern: "https://wiki.example/**"}, "sk-the-key")
+	if err := promoteCredentialToService("bob", "wiki"); err == nil {
+		t.Error("somebody handed over a credential that was not theirs")
+	}
+	if _, ok := Secure().LoadUser("alice", "wiki"); !ok {
+		t.Error("the real owner's credential was disturbed")
+	}
+}

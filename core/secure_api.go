@@ -39,11 +39,14 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/notices"
 	"github.com/cmcoffee/gohort/core/peershare"
+	"github.com/cmcoffee/gohort/core/promotion"
 	"github.com/cmcoffee/snugforge/mimebody"
 )
 
@@ -701,7 +704,7 @@ func (s *SecureAPI) DeleteUser(owner, name string) error {
 	s.db.Unset(secureAPITable, secureCredSecretKey(key))
 	// An index entry outliving its record points at nothing, which reads to a
 	// recipient as access they lost rather than a credential that is gone.
-	peershare.DropAll(s.db, SharedCredentialsTable, owner, name)
+	peershare.DropAll(s.db, sharedCredentialsTable, owner, name)
 	return nil
 }
 
@@ -2592,10 +2595,10 @@ func (c SecureCredential) ManagedElsewhere() bool { return strings.TrimSpace(c.M
 // Peer sharing of user-owned credentials
 // ----------------------------------------------------------------------
 
-// SharedCredentialsTable indexes peer shares: recipient -> (owner, credential
+// sharedCredentialsTable indexes peer shares: recipient -> (owner, credential
 // name). The lists on the record are what the owner edits and an admin audits;
 // this is the derived lookup that makes them findable from the other side.
-const SharedCredentialsTable = "shared_credentials"
+const sharedCredentialsTable = "shared_credentials"
 
 // The grant a dispatching user holds over a credential.
 const (
@@ -2650,7 +2653,7 @@ func (s *SecureAPI) SetCredentialShares(owner, name string, readOnly, readWrite 
 	c.SharedReadWrite, c.SharedReadOnly = write, read
 	s.db.Set(secureAPITable, key, c)
 	s.mu.Unlock()
-	peershare.SetRecipients(s.db, SharedCredentialsTable, owner, name, append(append([]string{}, read...), write...))
+	peershare.SetRecipients(s.db, sharedCredentialsTable, owner, name, append(append([]string{}, read...), write...))
 	return nil
 }
 
@@ -2684,7 +2687,7 @@ func (s *SecureAPI) SharedWithUser(user string) []SecureCredential {
 		return nil
 	}
 	var out []SecureCredential
-	for _, ref := range peershare.List(s.db, SharedCredentialsTable, user) {
+	for _, ref := range peershare.List(s.db, sharedCredentialsTable, user) {
 		c, ok := s.LoadUser(ref.Owner, ref.ID)
 		if !ok || c.Disabled || credShareGrant(c, user) == credShareNone {
 			continue
@@ -2735,4 +2738,158 @@ func (s *SecureAPI) refuse(c SecureCredential, sess *ToolSession, method, rawURL
 		Error:          "refused before sending: " + reason,
 	})
 	return errors.New(reason)
+}
+
+// ----------------------------------------------------------------------
+// Personal key -> service account
+// ----------------------------------------------------------------------
+
+// CredentialPromotionKind is the promotion kind for turning a user's own
+// credential into a deployment one.
+const CredentialPromotionKind = "credential"
+
+func init() {
+	promotion.RegisterApprover(CredentialPromotionKind, func(owner, name string) error {
+		return promoteCredentialToService(owner, name)
+	})
+}
+
+// promoteCredentialToService turns a personal key into the deployment's.
+//
+// Unexported, and reached only through the promotion approver registered above:
+// handing a key over is an administrator's decision, not a call another package
+// makes on its own.
+//
+// This is a different ask from the other promotions, and worth saying plainly:
+// lending a credential widens who may use something that stays YOURS, and this
+// ends the ownership. Afterwards the key belongs to the deployment, its secret
+// lives in the global namespace, and the person who built it reaches it the
+// same way everybody else does. That is what makes a tuned agent shareable as a
+// RESOURCE rather than as a copy somebody has to reassemble: the credential
+// underneath stops belonging to a person.
+//
+// It lands SECURED, which is the whole mechanism. A secured credential has no
+// user ACL at all — access follows the tools bound to it, so whoever can run a
+// bound tool dispatches through it and nobody ever holds the secret. An open
+// global credential would instead be usable by the entire deployment through
+// the auto-generated fetch_url tool, which is a far larger grant than the owner
+// asked for and not one an admin approving "make this the team's key" would
+// expect to be granting.
+//
+// The declaring tools become the initial bindings, because they are already the
+// tools this credential was built for. What they are NOT is automatically
+// reachable by anybody else: a personal tool stays personal, and sharing it is
+// its own decision on its own rung. The owner is told so rather than left to
+// discover it when a colleague reports that nothing works.
+//
+// There is no way back from here for the owner. Narrowing a deployment key to
+// one person is a grant, not a revocation, so it is not theirs to do; an admin
+// deletes it if it should not exist. The confirm copy says this before the ask.
+func promoteCredentialToService(owner, name string) error {
+	owner, name = strings.TrimSpace(owner), strings.TrimSpace(name)
+	if owner == "" || name == "" {
+		return errString("owner and credential name are required")
+	}
+	s := Secure()
+	if !s.ready() {
+		return errString("secure-api store not initialized")
+	}
+	c, ok := s.LoadUser(owner, name)
+	if !ok || c.Owner != owner {
+		return errString("no credential " + name + " owned by " + owner)
+	}
+	// A deployment credential of this name already existing is not a conflict to
+	// resolve by preferring one: the tools out there naming it would silently
+	// start dispatching through a different key, to a possibly different host,
+	// with a different identity behind it.
+	if _, taken := s.Load(name); taken {
+		return errString("the deployment already has a credential called " + name +
+			"; rename yours before promoting it, so the tools naming it keep meaning what they mean")
+	}
+	userKey := credStoreKey(owner, name)
+	secret, hasSecret := s.loadSecret(userKey)
+	if !hasSecret && c.Type != SecureCredNone {
+		return errString("credential " + name + " has no stored secret to hand over")
+	}
+
+	global := c
+	global.Owner = "" // the deployment's, not anybody's
+	global.Secured = true
+	// The lend lists go with the ownership. Everybody reaches it through the
+	// bound tools now, so a list naming two people decides nothing, and leaving
+	// it would have a later un-securing silently restore an ACL from before the
+	// key changed hands.
+	global.SharedReadOnly, global.SharedReadWrite = nil, nil
+	global.ApprovedToolBindings, global.RevokedToolBindings = credentialDeclaringTools(name), nil
+
+	s.mu.Lock()
+	s.db.Set(secureAPITable, name, global)
+	if hasSecret {
+		s.db.CryptSet(secureAPITable, secureCredSecretKey(name), secret)
+	}
+	s.db.Unset(secureAPITable, userKey)
+	s.db.Unset(secureAPITable, secureCredSecretKey(userKey))
+	s.mu.Unlock()
+	peershare.DropAll(s.db, sharedCredentialsTable, owner, name)
+
+	Log("[secure_api] %q handed credential %q to the deployment: secured, %d tool binding(s)",
+		owner, name, len(global.ApprovedToolBindings))
+	noteCredentialHandover(owner, name, global.ApprovedToolBindings)
+	return nil
+}
+
+// credentialDeclaringTools is the initial binding set: the tools that already
+// dispatch through this credential SERVER-SIDE.
+//
+// A "secret" tool — one handed the raw key to use in a script — is left out on
+// purpose. Securing a credential blocks that path, so binding such a tool would
+// record an approval for something that cannot work, and the owner is told
+// separately rather than finding out from a failing run.
+func credentialDeclaringTools(name string) []string {
+	if CredentialToolsResolver == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, ref := range CredentialToolsResolver(name) {
+		if ref.Via == "secret" || ref.Tool == "" || seen[ref.Tool] {
+			continue
+		}
+		seen[ref.Tool] = true
+		out = append(out, ref.Tool)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// noteCredentialHandover tells the former owner what changed and what is still
+// theirs to do.
+//
+// They asked for one thing and several follow. The key is no longer theirs to
+// edit, the tools bound to it are the only way anybody reaches it, and those
+// tools are still personal until each is shared on its own terms. A handover
+// that reports success and says none of this leaves somebody believing their
+// team can use a thing that only they can reach.
+func noteCredentialHandover(owner, name string, bindings []string) {
+	if RootDB == nil || owner == "" {
+		return
+	}
+	body := "It is the deployment's now, and secured: nobody holds the secret, and it is reachable only through the tools bound to it. " +
+		"You reach it the same way everybody else does."
+	switch len(bindings) {
+	case 0:
+		body += " Nothing is bound to it yet, so nothing can currently use it — an admin binds the tools in Admin > APIs."
+	case 1:
+		body += " One tool is bound to it: " + bindings[0] + "."
+	default:
+		body += " " + strconv.Itoa(len(bindings)) + " tools are bound to it: " + strings.Join(bindings, ", ") + "."
+	}
+	body += " A bound tool that is still yours alone is still yours alone — share each one from Extensions for your colleagues to reach the key through it. " +
+		"Any tool that used this credential by taking the raw key into a script stops working, because a secured credential never hands the secret out; those have to be reworked to dispatch server-side."
+	notices.Record(RootDB, notices.Notice{
+		Owner: owner,
+		Kind:  notices.KindStopped,
+		Title: "\"" + name + "\" is now a deployment credential",
+		Body:  body,
+	})
 }

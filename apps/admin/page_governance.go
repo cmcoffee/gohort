@@ -178,7 +178,11 @@ func (a *AdminApp) governanceSections() []ui.Section {
 		{
 			Title:    "Pending promotions",
 			Subtitle: "Users' bottom-up requests to publish their own resources deployment-wide.",
-			Detail:   "Approve a tool request to Share it to the global catalog, where each user then opts in from their Extensions page.\n\nApprove an app request to share it with every signed-in user: each gets their own copy, and its scripts run with the owner's credentials, which is why an admin sees it first.\n\nApprove a public-link request to mint the app's anonymous link: anyone who has the URL then runs its data sources as the owner, with no login. Deny to dismiss. Credential and agent promotion arrive with their approve paths.",
+			Detail: "Approve a tool request to Share it to the global catalog, where each user then opts in from their Extensions page.\n\n" +
+				"Approve an app request to share it with every signed-in user: each gets their own copy, and its scripts run with the owner's credentials, which is why an admin sees it first.\n\n" +
+				"Approve a public-link request to mint the app's anonymous link: anyone who has the URL then runs its data sources as the owner, with no login.\n\n" +
+				"A CREDENTIAL request is the one that is not a widening. The requester is handing their key to the deployment: the secret moves into the global namespace, the credential lands secured so that it has no user list and is reachable only through the tools bound to it, and the requester becomes an ordinary user of it. They cannot take it back afterwards — read the note and be sure the deployment should own this key, because the alternative to keeping it is deleting it.\n\n" +
+				"Deny to dismiss.",
 			Body: ui.Table{
 				Source: "api/promotions",
 				RowKey: "id",
@@ -192,10 +196,15 @@ func (a *AdminApp) governanceSections() []ui.Section {
 						{Value: "app", Label: "App", Color: "info"},
 						// One label per kind that can actually be FILED, per the
 						// note above. "public_link" went with the anonymous app
-						// surface, and "credential" never had an approver, so
-						// both were labels for a row nothing could produce.
+						// surface, so it was a label for a row nothing could
+						// produce.
 						{Value: "agent", Label: "Agent", Color: "warning"},
 						{Value: "collection", Label: "Collection", Color: "info"},
+						// Danger, alone among the kinds, because approving it
+						// transfers something rather than widening it: the key
+						// stops being the requester's and the move is not one
+						// they can undo.
+						{Value: "credential", Label: "Credential", Color: "danger"},
 					}},
 					{Field: "name", Flex: 1},
 					{Field: "note", Flex: 2, Mute: true},
@@ -205,7 +214,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 					{Type: "button", Label: "Approve",
 						PostTo:  "api/promotions?action=approve&id={id}",
 						Method:  "POST",
-						Confirm: "Approve this publish request? It goes live for its audience at once, running with its owner's credentials.",
+						Confirm: "Approve this publish request? It goes live for its audience at once, running with its owner's credentials. A CREDENTIAL request instead transfers the key to the deployment, secured, and the requester cannot take it back.",
 						// Approving a tool promotion shares it deployment-wide
 						// — which is a badge on that tool's row two sections
 						// down, in the table this queue exists to feed.
