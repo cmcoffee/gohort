@@ -36,7 +36,9 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(UserCandidatesJSON(a.db))
+		// No exclusion: an admin granting access to a deployment resource may
+		// legitimately be one of the people granted it.
+		w.Write(UserCandidatesJSON(a.db, ""))
 	})
 
 	// API: feature access — the admin gate on outward-facing surfaces a user can

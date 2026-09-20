@@ -186,3 +186,41 @@ func TestOnlyARecipientCanSeeWhatSomethingCarries(t *testing.T) {
 		t.Error("the carries listing takes a viewer from the request")
 	}
 }
+
+// A redirect URL is a TEMPLATE, never a whole URL handed over in one
+// placeholder.
+//
+// The runtime's substituter URL-encodes whatever it places, which is right —
+// an id with a slash in it would otherwise break the path. Give it a finished
+// URL and the query string is encoded along with everything else, so
+// "plan?kind=agent&id=a1" becomes one path segment and lands on a 404. That
+// shipped, and this is what it cost to find.
+func TestTheRedirectIsATemplateNotAWholeURL(t *testing.T) {
+	src, err := os.ReadFile("guided.go")
+	if err != nil {
+		t.Fatalf("reading the source: %v", err)
+	}
+	s := string(src)
+	i := strings.Index(s, "RedirectURL:")
+	if i < 0 {
+		t.Fatal("the redirect is gone")
+	}
+	line := s[i:]
+	if end := strings.Index(line, "\n"); end > 0 {
+		line = line[:end]
+	}
+	// A single placeholder for the whole value is the shape that fails.
+	if strings.Contains(line, `"{`) && strings.Count(line, "{") == 1 {
+		t.Errorf("the redirect hands the substituter a whole URL, which it will encode entire:\n  %s", strings.TrimSpace(line))
+	}
+	// The query structure has to be literal, so only the VALUES get encoded.
+	for _, want := range []string{"plan?", "kind={kind}", "id={id}", "who={who}"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the redirect template is missing %q:\n  %s", want, strings.TrimSpace(line))
+		}
+	}
+	// And the endpoint that feeds it returns the parts, not a finished URL.
+	if strings.Contains(s, `"url": "plan?`) {
+		t.Error("servePlan still builds a whole URL for the redirect to encode")
+	}
+}

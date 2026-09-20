@@ -59,9 +59,13 @@ func shareStartSection(user string) ui.Section {
 		Body: ui.FormPanel{
 			PostURL:     "api/plan",
 			SubmitLabel: "Continue",
-			// The server hands back the URL of the decisions for THIS choice,
-			// because what gets asked is not known until something is picked.
-			RedirectURL:    "{url}",
+			// A TEMPLATE, with one placeholder per value, rather than a single
+			// {url} the server fills in whole. The substituter URL-encodes
+			// whatever it puts in — which is right, since an id with a slash
+			// in it would otherwise break the path — so handing it a complete
+			// URL got the whole thing encoded into one path segment and
+			// navigated to a page that does not exist.
+			RedirectURL:    "plan?kind={kind}&id={id}&who={who}",
 			RedirectTarget: "_self",
 			Fields: []ui.FormField{
 				{Field: "what", Type: "select", Label: "What", Options: opts, Required: true},
@@ -110,8 +114,10 @@ func (T *ShareApp) servePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = user
+	// The PARTS, for the redirect template to place and encode one at a time.
+	// Returning a finished URL would mean encoding it here and again there.
 	writeJSON(w, map[string]string{
-		"url": "plan?kind=" + urlArg(kind) + "&id=" + urlArg(id) + "&who=" + urlArg(strings.Join(body.Who, ",")),
+		"kind": kind, "id": id, "who": strings.Join(body.Who, ","),
 	})
 }
 

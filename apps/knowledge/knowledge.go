@@ -73,11 +73,12 @@ func (T *KnowledgeApp) Routes() {
 }
 
 func (T *KnowledgeApp) handleUserCandidates(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(UserCandidatesJSON(AuthDB()))
+	w.Write(UserCandidatesJSON(AuthDB(), user))
 }
 
 func (T *KnowledgeApp) handleListPage(w http.ResponseWriter, r *http.Request) {

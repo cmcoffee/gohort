@@ -128,11 +128,12 @@ func publishAgentForAdmin(db Database, owner, id string) error {
 // share their own agent, so every approved user is a candidate — unlike the
 // admin-only api/user-candidates, this one is available to the whole fleet.
 func (T *OrchestrateApp) handleUserCandidates(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(UserCandidatesJSON(AuthDB()))
+	w.Write(UserCandidatesJSON(AuthDB(), user))
 }
 
 // SharedAgentsTable indexes peer shares: recipient -> (owner, agent id).

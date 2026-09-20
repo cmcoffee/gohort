@@ -2790,11 +2790,12 @@ func (T *Extensions) handleSkillCollectionOptions(w http.ResponseWriter, r *http
 // what they own, so every approved user is a candidate; this is the fleet-wide
 // list, not the admin-only one.
 func (T *Extensions) handleUserCandidates(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(UserCandidatesJSON(AuthDB()))
+	w.Write(UserCandidatesJSON(AuthDB(), user))
 }
 
 // nonNilList keeps an empty array an array in JSON: an ACLPicker handed null

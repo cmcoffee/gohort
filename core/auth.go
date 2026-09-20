@@ -2122,15 +2122,25 @@ func UserListJSON(db Database) []byte {
 // access is meaningless. This is the shared source for every ui.ACLPicker
 // (credential / tool / shared-agent access editors). Sorted by username for a
 // stable list.
-func UserCandidatesJSON(db Database) []byte {
+// except is the person doing the sharing, left out of their own picker. An
+// owner handing something to colleagues is choosing who ELSE gets it; offering
+// them their own name is offering a choice that does nothing, since every
+// setter drops the owner from a recipient list. Picking it and watching the
+// chip vanish on save is the small version of a picker that stores names and
+// changes nothing.
+//
+// A caller with nobody to exclude — an admin granting on a deployment resource,
+// where they may legitimately be one of the grantees — passes "".
+func UserCandidatesJSON(db Database, except string) []byte {
 	users := AuthListUsers(db)
 	type candidate struct {
 		Value string `json:"value"`
 		Label string `json:"label"`
 	}
+	except = strings.TrimSpace(except)
 	out := []candidate{}
 	for _, u := range users {
-		if u.Pending {
+		if u.Pending || (except != "" && u.Username == except) {
 			continue
 		}
 		out = append(out, candidate{Value: u.Username, Label: u.Username})
