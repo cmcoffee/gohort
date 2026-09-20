@@ -92,3 +92,26 @@ func TestContextMenuCapturesBeforeItDraws(t *testing.T) {
 		t.Error("the selection must be captured before the menu is opened")
 	}
 }
+
+// The floating Refresh button sits at the top-right of the webview, over the
+// page's own header. Something has to move out from under it, and WHICH thing
+// is the part that went wrong: the shim used to nudge .ui-live-pill-wrap, which
+// worked exactly as long as the live pill was the rightmost control in that
+// header. A notifications bell was later added to its right and landed
+// underneath the button, with the pill politely shifted clear of nothing.
+//
+// Padding the header clears whatever is rightmost today and whatever is added
+// tomorrow, so this pins the rule to the BAR rather than to any one control.
+func TestRefreshButtonClearsTheHeaderNotOneControl(t *testing.T) {
+	if !strings.Contains(popup_shim_js, ".ui-page-header{padding-right:") {
+		t.Error("the Refresh button no longer reserves space on the header itself; " +
+			"whatever sits rightmost will end up under it")
+	}
+	// Naming a single control again would reintroduce exactly the bug above.
+	for _, one := range []string{".ui-live-pill-wrap{margin-right", ".ui-bell-wrap{margin-right"} {
+		if strings.Contains(popup_shim_js, one) {
+			t.Errorf("the shim moves one named control (%s) out from under Refresh; "+
+				"the next control added to that header's right will be the one underneath it", one)
+		}
+	}
+}

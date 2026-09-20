@@ -13,12 +13,43 @@
   // HTML that never loads this runtime. Neither copy holds any of the rules:
   // the store, the fold-with-a-count and the read semantics are all in
   // core/notices, and both only render what /api/notifications returns.
+
+  // Drawn rather than typed. The glyph used to be the 🔔 emoji, which is not
+  // one shape: every platform draws its own, at its own size, off its own
+  // baseline, and a phone renders a large colour bitmap where a desktop
+  // renders a small one. That is why it sat wrong on mobile — and a colour
+  // emoji cannot be muted either, which is the whole design of this control:
+  // quiet until there is something unread. At 0.55 opacity a colour bell goes
+  // washed-out rather than muted, and the two read differently.
+  //
+  // Filled, no strokes, in the 64-unit viewBox the rest of the runtime's
+  // glyphs use — checked by rasterizing to 16px and looking, which is how
+  // anything this small gets judged here rather than by reasoning about it.
+  // currentColor throughout, so opacity and the unread state do the work.
+  function uiBellGlyph() {
+    var ns = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(ns, 'svg');
+    svg.setAttribute('viewBox', '0 0 64 64');
+    svg.setAttribute('class', 'ui-bell-glyph');
+    svg.setAttribute('fill', 'currentColor');
+    svg.setAttribute('aria-hidden', 'true');
+    [
+      'M32 6c-9 0-16 7-16 16v8c0 7-2 11-6 15-1 1 0 3 2 3h40c2 0 3-2 2-3-4-4-6-8-6-15v-8c0-9-7-16-16-16z',
+      'M23 53h18c-1 6-4 9-9 9s-8-3-9-9z'
+    ].forEach(function(d) {
+      var path = document.createElementNS(ns, 'path');
+      path.setAttribute('d', d);
+      svg.appendChild(path);
+    });
+    return svg;
+  }
+
   function uiNoticeBell() {
     var wrap = el('div', {class: 'ui-bell-wrap'});
     var count = el('span', {class: 'ui-bell-count'});
     var btn = el('button', {
       class: 'ui-bell', type: 'button', title: 'Notifications', 'aria-label': 'Notifications'
-    }, ['\u{1F514}', count]);
+    }, [uiBellGlyph(), count]);
     var panel = el('div', {class: 'ui-bell-panel', style: 'display:none'});
     wrap.appendChild(btn);
     wrap.appendChild(panel);

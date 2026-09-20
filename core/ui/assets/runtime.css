@@ -88,6 +88,12 @@ select:-webkit-autofill {
   display: flex; align-items: center; gap: 0.6rem;
   padding: 0.45rem 0.95rem;
   padding-top: calc(0.45rem + env(safe-area-inset-top, 0px));
+  /* The side insets matter for the same reason the top one does, and only on
+   * the bar: a phone held sideways puts a rounded corner or a camera cutout
+   * over the screen edge, and the rightmost control here is the last thing
+   * that should sit under it. Zero everywhere else. */
+  padding-right: calc(0.95rem + env(safe-area-inset-right, 0px));
+  padding-left: calc(0.95rem + env(safe-area-inset-left, 0px));
   border-bottom: 1px solid var(--border);
   background: var(--bg-1);
   position: relative; /* anchor for the fixed-offset tabs + live-pill popover */
@@ -5665,11 +5671,19 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
  * only then, so a quiet bell reads as quiet rather than as broken. */
 .ui-bell-wrap { position: relative; }
 .ui-bell {
-  display: inline-flex; align-items: center;
+  /* A fixed box rather than one the glyph sizes. The emoji this used to draw
+   * was measured by the platform's own font and pushed the header around
+   * differently on every device; a drawn glyph in a box of known height keeps
+   * the header the same everywhere and gives a phone a target worth tapping. */
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 1.75rem; box-sizing: border-box;
   background: none; border: 0; padding: 0.2rem 0.3rem;
   color: var(--text-mute); opacity: 0.55; cursor: pointer;
   font-size: 0.95rem; font-family: inherit; line-height: 1;
   -webkit-tap-highlight-color: transparent;
+}
+.ui-bell-glyph {
+  width: 1.05rem; height: 1.05rem; display: block; flex: none;
 }
 .ui-bell:hover { opacity: 0.85; }
 .ui-bell.unread { opacity: 1; }
