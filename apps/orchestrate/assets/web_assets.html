@@ -2695,6 +2695,16 @@
           // what the gate reads. This is one column instead of two lists.
           var approvable = {};
           (window.ORCH_APPROVABLE_TOOLS || []).forEach(function(n) { approvable[n] = true; });
+          // The agent's OWN tools are eligible too, and the server-supplied
+          // pool cannot name them: availableWorkerToolOptions carries shared
+          // rows only, because an agent-scoped row belongs to one agent's kit.
+          // They are also the likeliest thing to have a grant on it — a
+          // credential-backed shell or api tool somebody built for this agent
+          // — so leaving them out showed no ladder on exactly the rows that
+          // needed one, and dropped their stored grant on the next save.
+          (agent.tools || []).forEach(function(t) {
+            if (t && t.name) { approvable[t.name] = true; }
+          });
           var permState = {};
           (agent.auto_approve_tools || []).forEach(function(n) { permState[n] = 'always'; });
           (agent.no_unattended_tools || []).forEach(function(n) { permState[n] = 'attended'; });
@@ -2795,6 +2805,9 @@
           // allowed_tools option. Mixing them would leak scoped names into
           // the allowlist and break the collapse.
           var scopedCbs = [];
+          // name -> its checkbox, so the save can tell which of the agent's
+          // own tools are actually granted.
+          var scopedPermCbs = {};
           {
             var customSection = document.createElement('div');
             customSection.className = 'ui-checklist-section ui-orch-scoped-tools';
@@ -2897,6 +2910,7 @@
                 row.appendChild(cb);
                 scopedCbs.push(cb);
                 if (bucketCbs) bucketCbs.push(cb);
+                scopedPermCbs[t.name || ''] = cb;
               }
               var meta = document.createElement('label');
               meta.className = 'ui-checklist-lbl';
@@ -2914,6 +2928,9 @@
                 desc.textContent = t.description;
                 meta.appendChild(desc);
               }
+              // The permission, same control as on a pool row. Appended to
+              // the row after the label below, via the deferred call at the
+              // end of this block.
               // Mode-specific one-liner so the row can be sanity-checked at a
               // glance without expanding into the full definition.
               var summary = '';
@@ -2937,6 +2954,13 @@
                 meta.appendChild(sm);
               }
               row.appendChild(meta);
+              // The permission, the same control as on a pool row. Its
+              // checkbox is the one captured above; a Builder view has none,
+              // and a tool the agent cannot call has nothing to decide.
+              if (!isBuilder && scopedPermCbs[t.name || '']) {
+                var sPerm = toolPermControl(t.name, scopedPermCbs[t.name]);
+                if (sPerm) { row.appendChild(sPerm); }
+              }
               var rowActions = document.createElement('div');
               rowActions.style.cssText = 'display:flex;align-items:center;gap:0.4rem;margin-left:auto';
               var detailEl = buildToolDetail(t);
@@ -3285,8 +3309,13 @@
               // reads. Only for tools the agent actually has: a permission on
               // a tool it cannot call is a grant nobody made, and it would
               // come back the moment the tool was ticked again.
+              // BOTH lists: the catalog checkboxes and the agent's own tools.
+              // Only the first was consulted at first, so every grant on a
+              // tool built for this agent was dropped on the next save of this
+              // modal — silently, since nothing on screen had shown it either.
               var granted = {};
               checkboxes.forEach(function(c) { if (c.checked) granted[c.value] = true; });
+              scopedCbs.forEach(function(c) { if (c.checked) granted[c.value] = true; });
               var always = [], attended = [];
               Object.keys(permState).forEach(function(n) {
                 if (!granted[n] || !approvable[n]) { return; }
