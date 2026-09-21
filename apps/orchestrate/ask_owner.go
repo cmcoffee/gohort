@@ -234,3 +234,26 @@ func (T *OrchestrateApp) PublicHandleAskOwner(w http.ResponseWriter, r *http.Req
 	}
 	T.askOwnerRequest(w, r, user, agent)
 }
+
+// OwnerLabel is how to refer to an agent's owner in front of somebody running
+// it, which is not always by name.
+//
+// A peer share names them: they know who handed them the agent, and "ask alice"
+// is the actionable form. A PUBLISHED agent does not. It reaches every signed-in
+// user, none of whom was told whose it is, and an account here is an email
+// address — so naming the owner on that surface publishes their address to the
+// whole deployment as a side effect of a refusal.
+//
+// Empty user, or the owner themselves, gets the name: there is nobody it could
+// be disclosed to.
+func OwnerLabel(agent AgentRecord, user string) string {
+	owner := strings.TrimSpace(agent.Owner)
+	if owner == "" || owner == seedOwner {
+		return "its owner"
+	}
+	user = strings.TrimSpace(user)
+	if user == "" || user == owner || containsString(agent.AllowedUsers, user) {
+		return owner
+	}
+	return "its owner"
+}

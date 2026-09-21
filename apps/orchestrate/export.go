@@ -307,8 +307,11 @@ func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Data
 	// it for and protected nothing, since they can scroll back.
 	withholdResults := !forOwner && resolveGuardrailHooks(agent) != nil
 	if withholdResults {
-		b.WriteString("> **Tool results are withheld from this export.** This agent belongs to " +
-			chFirst(strings.TrimSpace(agent.Owner), "somebody else") + " and enforces their rules, so\n")
+		// "its owner", never the account. An export is a file: it travels
+		// further than the page it came from, and whoever it reaches was not
+		// even the person this was withheld from.
+		b.WriteString("> **Tool results are withheld from this export.** This agent belongs to somebody else\n")
+		b.WriteString("> and enforces their rules, so\n")
 		b.WriteString("> what its tools returned is not serialized here: only the calls it made. The\n")
 		b.WriteString("> results were visible in the live session.\n\n")
 	}

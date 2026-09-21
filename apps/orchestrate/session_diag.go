@@ -319,48 +319,6 @@ func (t *chatTurn) emitDiagNotice(kind, detail string, at time.Time) {
 	})
 }
 
-// redactGuardrailDetail rewrites a guardrail diagnostic when the person
-// reading the turn is not the person who wrote the rule.
-//
-// Three things have to be true at once.
-//
-// The reader must be able to FIND OUT that something was withheld: an agent
-// that fetches a joke and then declines to tell it, with nothing else anywhere,
-// reads as broken, and they re-ask in circles or stop using it.
-//
-// They must not be handed the rule itself — its text, the hook it fired at, the
-// warden's reason. That is the owner's policy, and on a shared agent it is also
-// the exact shape to phrase around.
-//
-// And it must not ANNOUNCE itself per turn. This is the one the first version
-// got wrong. guardrailSafeFallbacks varies the refusals precisely so they are
-// not a fingerprint — "someone probing learns exactly which attempts tripped
-// the guardrail and can bisect toward the rule without ever seeing it" — and a
-// live amber card on every block hands back the signal that effort removed,
-// only cleaner: varied refusals plus a deterministic card tells you which of
-// the varied refusals was a rule.
-//
-// So for somebody who is not the owner it becomes a quiet note in their own
-// trail, where a person actually confused will look, and nothing on screen. The
-// owner's copy is untouched and still says everything.
-func (t *chatTurn) redactGuardrailDetail(kind, detail string) string {
-	if t == nil || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(kind)), "guardrail") {
-		return detail
-	}
-	by := t.ranBy()
-	if by == "" {
-		return detail
-	}
-	who := strings.TrimSpace(t.ownerUser)
-	if who == "" {
-		who = "the owner of this agent"
-	}
-	// Says the omission is deliberate. "A rule stopped this" on its own invites
-	// the reader to hunt for the missing half and conclude the message is
-	// broken too.
-	return "A rule set by " + who + " stopped this. They have been told it stopped you. Which rule, and why, is theirs to see."
-}
-
 // turnDiag is appendSessionDiag bound to a chatTurn — the convenient form
 // for guards firing inside a live turn. Nil-safe on every field.
 func (t *chatTurn) turnDiag(kind, detail string) {
@@ -379,10 +337,9 @@ func (t *chatTurn) turnDiag(kind, detail string) {
 	// names the entry (diagID), and three readings would be three entries as
 	// far as the page is concerned.
 	at := time.Now()
-	// A guardrail block on somebody ELSE's run is told twice, differently:
-	// this trail is the OWNER's (see the store note below), so it keeps the
-	// rule and the reason in full, and the person who was stopped gets a
-	// separate, redacted, note-level copy in their own trail further down.
+	// A guardrail block on somebody ELSE's run leaves the owner's full
+	// breadcrumb below and tells the runner nothing about THIS turn. See
+	// quietGuardrailFor.
 	quiet := t.quietGuardrailFor(kind)
 	// The pane hears about it first. A live notice is only worth anything
 	// while the reader is still looking at the turn it belongs to, and the
@@ -423,30 +380,27 @@ func (t *chatTurn) turnDiag(kind, detail string) {
 		db = t.udb
 	}
 	appendSessionDiagAt(db, agentID, sessionID, kind, detail, at)
-	// The runner's own copy, when the trail above went somewhere they cannot
-	// read. handleSessionDiag serves a trail out of the REQUESTING user's
-	// store, so on a shared agent everything written above is invisible to the
-	// person it happened to — which would have made "quiet, but findable"
-	// simply quiet.
-	//
-	// Note level, by its kind: it names a condition rather than an action, so
-	// diagLevel leaves it in the trail instead of raising a card. That is the
-	// convention this file already runs on.
-	if quiet && t.udb != nil {
-		appendSessionDiagAt(t.udb, agentID, sessionID,
-			quietGuardrailKind, t.redactGuardrailDetail(kind, detail), at)
-	}
 }
-
-// quietGuardrailKind names the recipient's copy of a guardrail breadcrumb.
-//
-// Deliberately carries no blocking verb, which is how diagLevel decides: a kind
-// naming a CONDITION stays in the trail, a kind naming an ACTION raises a card.
-// See diagBlockingVerbs.
-const quietGuardrailKind = "guardrail-rule-applied"
 
 // quietGuardrailFor reports whether this breadcrumb is a guardrail one on a run
 // that is not the owner's, which is the only case that goes quiet.
+//
+// Quiet means NOTHING about this turn reaches the person it stopped: no card,
+// and no entry in a trail of their own. A per-turn message is an oracle
+// whatever it says and wherever it sits — its PRESENCE is the answer, and
+// blander wording or an extra click only changes the price. guardrailSafeFallbacks
+// varies the refusals for exactly this reason; a signal that fires only when a
+// rule fires undoes that however carefully it is worded.
+//
+// What the recipient gets instead is not an event at all. Any agent belonging
+// to somebody else says so, standing, before anything is refused: it runs under
+// its owner's configuration, and they are who to ask. True on every turn, so it
+// distinguishes nothing, and it arrives before the wall rather than after it,
+// which is when somebody is deciding whether the thing is broken. See
+// apps/agents (ownerConfigNote).
+//
+// The OWNER's breadcrumb is untouched and says everything: the rule, the hook,
+// the warden's reason. It is their rule.
 func (t *chatTurn) quietGuardrailFor(kind string) bool {
 	if t == nil || t.ranBy() == "" {
 		return false

@@ -387,10 +387,14 @@ func TestTheOwnerGetsTheirOwnTranscriptWhole(t *testing.T) {
 	if !strings.Contains(md, "recall") || !strings.Contains(md, "withheld") {
 		t.Errorf("a recipient must still see the call and be told why the result is absent:\n%s", md)
 	}
-	// And be told WHOSE rules did it, rather than a bare statement about
-	// "this agent" that reads as a defect in the export.
-	if !strings.Contains(md, "alice") {
-		t.Errorf("the note does not say whose agent it is:\n%s", md)
+	// And NOT be told whose: an export is a file, it travels further than the
+	// page it came from, and whoever it reaches was not even the person this
+	// was withheld from. An account here is an email address.
+	if strings.Contains(md, "alice") {
+		t.Errorf("the export names the owner in a file that can be forwarded:\n%s", md)
+	}
+	if !strings.Contains(md, "somebody else") {
+		t.Errorf("the note does not say the agent is not yours:\n%s", md)
 	}
 	// The pointer has to point somewhere. It said "see below" about a note
 	// printed above it.

@@ -326,9 +326,14 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 	// behind a door only the owner opens, and until this there was no way to
 	// knock on it from the page where they hit the wall.
 	if owner := strings.TrimSpace(agent.Owner); owner != "" && owner != user {
+		// Named on a peer share, "its owner" on a published one. An account
+		// here is an email address, and a published agent reaches every
+		// signed-in user, none of whom was told whose it is. See
+		// orchestrate.OwnerLabel.
+		who := orchestrate.OwnerLabel(agent, user)
 		dashboardActions = append(dashboardActions,
 			ui.ToolbarAction{Label: "Ask the owner", Group: "⋯", Method: "client", URL: "agents_ask_owner",
-				Title: "Need something this agent cannot reach — a document collection, a tool, a credential? Ask " + owner + ". It goes to their notifications; there is no reply here, so try again once they grant it."})
+				Title: "Need something this agent cannot reach — a document collection, a tool, a credential? Ask " + who + ". It goes to their notifications; there is no reply here, so try again once they grant it."})
 	}
 	panel := ui.AgentLoopPanel{
 		ListURL:     "api/sessions",
@@ -380,16 +385,11 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 	// New sessions still seed from the Cortex at turn time, see intakeHead above.)
 
 	page := ui.Page{
-		Title:     display,
-		ShowTitle: true,
-		BackURL:   "/",
-		MaxWidth:  "100%",
-		Sections: []ui.Section{
-			{
-				NoChrome: true,
-				Body:     panel,
-			},
-		},
+		Title:         display,
+		ShowTitle:     true,
+		BackURL:       "/",
+		MaxWidth:      "100%",
+		Sections:      chatSections(ownerConfigNote(agent, user), panel),
 		ExtraHeadHTML: intakeHead + TranscribeRuntimeFlagScript() + dashboardBarCSS + memoryModalScript + docsModalScript + askOwnerScript,
 	}
 	page.ServeHTTP(w, r)
@@ -930,6 +930,29 @@ const dashboardBarCSS = `<style>
 // the public /agents app mounts it at the relative "api/" endpoints it
 // already serves. Scoped to the end-user via /agents/<slug>/api/*; the
 // calling user only ever sees their own per-(user, agent) memory.
+// chatSections puts the standing note above the conversation, when there is
+// one. A section with only a subtitle renders as that one line (see ui.Page's
+// skip rule, which drops a section only when title, subtitle, detail AND body
+// are all empty), so the note needs no new toolkit primitive.
+func chatSections(note string, panel ui.AgentLoopPanel) []ui.Section {
+	var out []ui.Section
+	if strings.TrimSpace(note) != "" {
+		out = append(out, ui.Section{Subtitle: note})
+	}
+	return append(out, ui.Section{NoChrome: true, Body: panel})
+}
+
+// ownerConfigNote is the standing line on an agent somebody else owns. Empty
+// on your own, where there is nothing to explain and nobody to ask.
+func ownerConfigNote(agent orchestrate.AgentRecord, user string) string {
+	owner := strings.TrimSpace(agent.Owner)
+	if owner == "" || owner == user {
+		return ""
+	}
+	return "This agent is " + orchestrate.OwnerLabel(agent, user) + "'s, and runs on their configuration. " +
+		"If it declines something you need, or cannot reach a document or a tool, that is theirs to change: use Ask the owner."
+}
+
 var memoryModalScript = orchestrate.AgentMemoryModalScript("agents_memory_modal", "'api/'")
 
 // askOwnerScript powers the "Ask the owner" toolbar action, which is added only
