@@ -3745,6 +3745,15 @@
             var btn = el('button', {class: classes, title: act.title || '',
               onclick: async function() {
                 if (act.confirm && !(await window.uiConfirm(act.confirm))) return;
+                // GET NAVIGATES, matching a toolbar action. A GET that fetches
+                // and throws the response away is never what anybody meant: it
+                // fires, nothing on screen changes, and the control reads as
+                // broken. The sibling path has always navigated; this one
+                // fetched whatever method it was given.
+                if ((act.method || 'POST').toUpperCase() === 'GET') {
+                  window.location.href = act.url;
+                  return;
+                }
                 btn.disabled = true;
                 fetch(act.url, {method: act.method || 'POST'})
                   .then(function(r) {

@@ -127,6 +127,33 @@ func TestEveryRowNamesWhereItIsSet(t *testing.T) {
 	}
 }
 
+// The page renders, and the editor's link reaches it.
+//
+// The link was a DisplayPanel action with Method GET, and that path FETCHED
+// whatever method it was given: it pulled the page's HTML down, threw it away,
+// and left the screen unchanged. A control that fires and changes nothing
+// reads as broken, which is exactly how it was reported.
+func TestTheEditorLinkNavigatesToTheAccessPage(t *testing.T) {
+	app, _ := accessFixture(t, AgentRecord{ID: "a7", Name: "Linked"})
+	r := httptest.NewRequest(http.MethodGet, "/agent/a7/access", nil)
+	w := httptest.NewRecorder()
+	app.handleAgentPage(w, asUser(r, "alice"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("the access page does not render: %d %s", w.Code, w.Body.String())
+	}
+	if n := w.Body.Len(); n < 200 {
+		t.Fatalf("the page came back empty: %d bytes", n)
+	}
+	// And the sub-path is the ONLY one the agent route serves, so a typo goes
+	// to a 404 rather than silently rendering the editor for a bad id.
+	r = httptest.NewRequest(http.MethodGet, "/agent/a7/nonsense", nil)
+	w = httptest.NewRecorder()
+	app.handleAgentPage(w, asUser(r, "alice"))
+	if w.Code != http.StatusNotFound {
+		t.Errorf("an unknown sub-path rendered something: %d", w.Code)
+	}
+}
+
 // An unknown view is refused rather than silently answering with the tool
 // list, which would look like a working group that reports the wrong thing.
 func TestAnUnknownViewFallsBackToTheToolList(t *testing.T) {
