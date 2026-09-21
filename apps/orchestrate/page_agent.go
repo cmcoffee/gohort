@@ -409,6 +409,14 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				Detail: "Leave it off for Research-style agents that need network."},
 			ui.FormField{Field: "force_private", Type: "toggle", Label: "Force Private mode (network locked off)",
 				Help: "Permanently drops network + sub-agent dispatch tools. For compliance / confidential / family-facing agents."},
+			// Beside Force Private because that is what people reach for when
+			// they want this, and it is far more than they want: it takes the
+			// agent's network tools and its model with it.
+			ui.FormField{Field: "workspace_no_network", Type: "toggle", Label: "Workspace may not reach the network",
+				Help: "The agent keeps its tools and its model; only code running in its workspace is stopped from dialling out.",
+				Detail: "For an agent that should process text or files locally and never phone anywhere from in there. It can still read, write and run commands in the workspace.\n\n" +
+					"Enforced at both ways out: the sandbox gets no network namespace, and the gohort.fetch helper refuses. Closing one alone would just move a script to the other.\n\n" +
+					"It inherits downward, so a sub-agent cannot dial on this one's behalf, and it only ever narrows: Private mode still blocks a turn outright."},
 			// (Dispatch policy lives in the "Cortex & delegation" section above,
 			// next to the conductor-tools toggle — the two delegation controls
 			// were split across sections and read as one switch when they are

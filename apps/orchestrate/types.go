@@ -521,6 +521,27 @@ type AgentRecord struct {
 	// the filter regardless).
 	ForcePrivate bool `json:"force_private,omitempty"`
 
+	// WorkspaceNoNetwork stops code running in this agent's workspace from
+	// opening connections, while leaving everything else about the agent
+	// alone: it still has whatever network TOOLS it was granted, still talks
+	// to whatever model it is configured for, and still reads, writes and runs
+	// commands in the workspace.
+	//
+	// The gap it fills. ForcePrivate is the only other way to say "no
+	// network", and it takes the agent's tools and its model with it — fine
+	// for a compliance bot, useless for "process this text locally, and do not
+	// phone anywhere from in there". Those are different asks and had one
+	// answer.
+	//
+	// A CEILING, never a grant: privacy mode still blocks a turn outright, and
+	// nothing here can reopen it. Enforced at BOTH doors out of the sandbox —
+	// the network namespace (--unshare-net) and the gohort.fetch hook —
+	// because closing one alone just moves a script to the other.
+	//
+	// Negative, so the zero value is what every deployment does today. A bool
+	// cannot default to true and *bool cannot hold false through gob.
+	WorkspaceNoNetwork bool `json:"workspace_no_network,omitempty"`
+
 	// DisableSkills turns OFF the skills classifier for this agent.
 	// When set, no skill ever activates on this agent's turns: no
 	// per-skill addendums appended to the system prompt, no extra

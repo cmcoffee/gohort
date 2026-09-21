@@ -10,6 +10,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/netgate"
 )
 
 // handleSend drives one user turn against an agent:
@@ -496,6 +497,11 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 	// in-flight tool re-checking Allowed() sees the new state.
 	turnConnector := NewNetworkConnector(privateMode)
 	ctx = WithNetworkConnector(ctx, turnConnector)
+	// The agent's own ceiling on what its workspace may dial, set once here
+	// and read at both doors out of the sandbox. Independent of privacy mode,
+	// which the connector above carries: this one leaves the agent's network
+	// TOOLS alone and only says the workspace is not what reaches out.
+	ctx = netgate.WithWorkspaceNetwork(ctx, !agent.WorkspaceNoNetwork)
 	inflightConnectors.Store(sess.ID, turnConnector)
 	defer inflightConnectors.Delete(sess.ID)
 	// Also lock ForcePrivate agents so the privacy endpoint can't

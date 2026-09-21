@@ -189,3 +189,49 @@ func NetworkConnectorFromContext(ctx context.Context) *NetworkConnector {
 func NetworkAllowedFromContext(ctx context.Context) bool {
 	return NetworkConnectorFromContext(ctx).Allowed()
 }
+
+// --- the workspace's own reach -------------------------------------------
+//
+// A SECOND axis, deliberately not a field on NetworkConnector.
+//
+// The connector is the turn's privacy cutoff: mutable, flipped live, and about
+// everything the turn does. This is a standing fact about one agent — may code
+// running in its workspace open a connection at all — and it does not move for
+// the life of the turn. Folding it into the connector would have put a
+// per-agent policy behind SetAllowed, where a mid-turn flip could clear it.
+//
+// It is a CEILING, never a grant: a turn with the connector blocked stays
+// blocked whatever this says. The two are ANDed at every enforcement point.
+//
+// Absent means allowed, which is what every existing deployment does today.
+
+type workspaceNetKey struct{}
+
+// WithWorkspaceNetwork marks whether code running in the workspace may open
+// connections. Attach once, where the turn's context is assembled.
+func WithWorkspaceNetwork(ctx context.Context, allowed bool) context.Context {
+	return context.WithValue(ctx, workspaceNetKey{}, allowed)
+}
+
+// WorkspaceNetworkAllowed reports the ceiling. True when nothing set it, so a
+// caller that never learned about this behaves exactly as before.
+func WorkspaceNetworkAllowed(ctx context.Context) bool {
+	if ctx == nil {
+		return true
+	}
+	if v, ok := ctx.Value(workspaceNetKey{}).(bool); ok {
+		return v
+	}
+	return true
+}
+
+// WorkspaceNetworkFrom is the pair of questions every enforcement point has to
+// ask together: is the turn allowed out at all, and is THIS workspace allowed
+// to be the one dialling.
+//
+// One function because asking only the first is the bug this exists to close:
+// the sandbox read the connector alone, so a workspace was on the host's
+// network in every ordinary turn.
+func WorkspaceNetworkFrom(ctx context.Context) bool {
+	return NetworkAllowedFromContext(ctx) && WorkspaceNetworkAllowed(ctx)
+}

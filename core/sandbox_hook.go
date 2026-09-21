@@ -304,10 +304,26 @@ func (h *SandboxHook) handleConn(conn net.Conn) {
 	// mode, defeating the toggle. secret / log don't touch the
 	// network so they stay available (reading a stored credential is
 	// not an outbound call; it's a DB read).
-	if (req.Method == "fetch" || req.Method == "fetch_via" || req.Method == "browse_page") && h.Sess != nil && !h.Sess.NetworkAllowed() {
-		Log("[hook/%s] DENIED: session network blocked (privacy mode)", req.Method)
-		writeHookError(conn, fmt.Sprintf("hook %q refused: session network blocked (privacy mode is on)", req.Method))
-		return
+	// Two ceilings, one check. Privacy mode blocks the whole turn; the
+	// workspace's own reach blocks code running INSIDE the sandbox from being
+	// what dials, however the turn is otherwise configured.
+	//
+	// The second one has to be here as well as at --unshare-net, or the
+	// control is cosmetic: cutting the network namespace and leaving this open
+	// just moves a script from curl to gohort.fetch, which is the route the
+	// sandbox docs tell it to prefer anyway.
+	if req.Method == "fetch" || req.Method == "fetch_via" || req.Method == "browse_page" {
+		if h.Sess != nil && !h.Sess.NetworkAllowed() {
+			Log("[hook/%s] DENIED: session network blocked (privacy mode)", req.Method)
+			writeHookError(conn, fmt.Sprintf("hook %q refused: session network blocked (privacy mode is on)", req.Method))
+			return
+		}
+		if h.Sess != nil && !h.Sess.WorkspaceNetworkAllowed() {
+			Log("[hook/%s] DENIED: this agent's workspace may not open connections", req.Method)
+			writeHookError(conn, fmt.Sprintf("hook %q refused: this agent's workspace may not open connections. "+
+				"It can still read and write files and run commands; only reaching the network from in here is off.", req.Method))
+			return
+		}
 	}
 	dispatchStart := time.Now()
 	switch req.Method {

@@ -29,6 +29,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/netgate"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
@@ -354,6 +355,14 @@ func (T *OrchestrateApp) ImportAgentNotes(owner, agentID string, notes []string)
 // No-op when ForcePrivate is false. Returns ctx + the (possibly
 // filtered) tool slice so the caller can replace its local references.
 func applyForcePrivateToDispatch(ctx context.Context, subSess *ToolSession, tools []AgentToolDef, target AgentRecord) (context.Context, []AgentToolDef) {
+	// The workspace ceiling first, and outside the early return below, because
+	// it applies whether or not this dispatch is private.
+	//
+	// ANDed with what arrived, so it only ever narrows: a child of an agent
+	// whose workspace may not dial cannot dial either, which is the direction
+	// every restriction in this codebase inherits. Building a sub-agent is
+	// otherwise how you launder one.
+	ctx = netgate.WithWorkspaceNetwork(ctx, netgate.WorkspaceNetworkAllowed(ctx) && !target.WorkspaceNoNetwork)
 	// Enforce private when the TARGET is permanently private (ForcePrivate) OR
 	// the PARENT turn is already running private — the parent's connector rides
 	// on ctx, so a blocked incoming ctx means a Private parent delegated /

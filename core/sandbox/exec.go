@@ -338,7 +338,10 @@ func RunSandboxedShellIn(ctx context.Context, spec ShellRun) SandboxedShellResul
 func buildSandboxedShellCmd(ctx context.Context, spec ShellRun) (SandboxedCmd, error) {
 	command, workspaceDir, extraEnv, readOnly := spec.Command, spec.WorkspaceDir, spec.Env, spec.ReadOnly
 	sb := activeSandbox()
-	allowNetwork := netgate.NetworkAllowedFromContext(ctx)
+	// Both questions: may this turn reach the network at all, and may THIS
+	// agent's workspace be the thing dialling. Asking only the first is what
+	// left every ordinary turn's sandbox sharing the host's net namespace.
+	allowNetwork := netgate.WorkspaceNetworkFrom(ctx)
 
 	// PYTHONPATH := GohortLibMountPath so `from gohort import
 	// fetch` resolves against the bind-mounted gohort helper package

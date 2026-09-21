@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/netgate"
 )
 
 // ToolSession carries mutable per-session state shared between the caller
@@ -484,6 +486,20 @@ func (s *ToolSession) NetworkAllowed() bool {
 		return true
 	}
 	return s.Network.Allowed()
+}
+
+// WorkspaceNetworkAllowed reports whether code running in this agent's
+// workspace may open a connection AT ALL — the ceiling, ANDed with the turn's
+// own privacy state.
+//
+// Read from the turn's context rather than held here, because the ceiling is
+// set once where the turn is assembled and every consumer of it is downstream
+// of that context. See netgate.WithWorkspaceNetwork.
+func (s *ToolSession) WorkspaceNetworkAllowed() bool {
+	if s == nil {
+		return true
+	}
+	return s.NetworkAllowed() && netgate.WorkspaceNetworkAllowed(s.Ctx)
 }
 
 // SetAvailableTools records the tool names that actually resolved for this
