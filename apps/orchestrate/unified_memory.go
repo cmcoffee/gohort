@@ -392,7 +392,7 @@ func (t *chatTurn) recallSearch(query string, args map[string]any) (string, erro
 		topic := normalizeTopic(stringArg(args, "topic"))
 		ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 		defer cancel()
-		hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID, topic, query, qVec, perLayer*2, t.skillsActive, t.agent.AttachedCollections, scope)
+		hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.readsOwnerCorpus(scope), t.agent.ID, topic, query, qVec, perLayer*2, t.skillsActive, t.agent.AttachedCollections, scope)
 		var findings, knowledge []SearchHit
 		for _, h := range hits {
 			if h.Score < RelevanceFloor {

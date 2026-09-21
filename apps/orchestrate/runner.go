@@ -298,10 +298,13 @@ func (pr *planRun) assemblePrompt() {
 	//     consent to share its standing awareness. Skipped for seed agents (no
 	//     single owner namespace).
 	if !incognito && t.agent.Cortex && t.session != nil {
-		fromOwner := t.agent.Owner != "" && t.agent.Owner != seedOwner && t.user != t.agent.Owner
+		// "Granting access IS the consent" held while nobody could say
+		// otherwise. It is still the default, and now the owner can say
+		// otherwise: readsOwnerCortex is that sentence plus their switch. See
+		// memory_scope.go for why the answer differs per layer.
 		switch {
-		case fromOwner:
-			if odb := UserDB(t.app.DB, t.agent.Owner); odb != nil {
+		case t.readsOwnerCortex():
+			if odb := UserDB(t.app.DB, t.memoryUnderlay()); odb != nil {
 				pr.sys += cortexContextBlock(odb, t.agent.ID)
 			}
 		case t.session.ID != cortexSessionID(t.agent.ID):

@@ -607,38 +607,32 @@ type AgentRecord struct {
 	// docs/sharing-governance.md.
 	AllowedUsers []string `json:"allowed_users,omitempty"`
 
-	// ShareMode is how a recipient meets this agent: "" (the default) hands
-	// them its KNOWLEDGE and gives them a memory of their own, and "direct"
-	// hands them the agent as it stands, its own memory included.
+	// What of this agent's own memory a recipient's turns READ.
 	//
-	// The default is what the framework already did — every recipient of a
-	// published agent gets their own per-(user, agent) cortex thread and their
-	// own facts and notes — so an agent shared before this field existed keeps
-	// behaving exactly as it did.
+	// Three layers, three switches, and each one DEFAULTS TO WHAT THE
+	// FRAMEWORK ALREADY DID — which is not the same answer for all three, and
+	// that asymmetry is why they are named the way they are:
 	//
-	// Neither mode lets a recipient CHANGE anything. Direct is a wider read,
-	// not a wider grant: their turns see what the agent knows and accumulate
-	// their own on top, and nothing they do reaches the owner's context or any
-	// other recipient's. See the three fields below for what "its own memory"
-	// is allowed to mean, because the answer is not one thing.
-	ShareMode string `json:"share_mode,omitempty"`
-
-	// The three memory layers, each its own switch, and each off unless the
-	// owner turns it on. Meaningful only in direct mode.
+	//   - The cortex already travels. runner.go injects the OWNER's cortex feed
+	//     read-only for a non-owner, on the reasoning that granting access IS
+	//     the consent to share the agent's standing awareness.
+	//   - The owner's corpus already travels. searchAgentKnowledge passes the
+	//     owner as baseUser, so a recipient's retrieval already searches the
+	//     owner's agent corpus alongside their own.
+	//   - Saved facts have never travelled. ListMemoryFacts reads the runner's
+	//     namespace and nothing else.
 	//
-	// One switch would have been simpler and wrong. A cortex is CURATED: it is
-	// the agent's mind, something its owner shaped deliberately, and it is the
-	// layer most owners will want a recipient to have. Explicit and Reference
-	// are RESIDUE: whatever came up across the owner's conversations, including
-	// things they never decided to tell anybody. Collapsing the two into one
-	// control would make disclosing the first require disclosing the second,
-	// and the first time that surprises somebody it will be with a sentence
-	// they said months ago and have forgotten.
+	// So two are WITHHOLD switches over behaviour that exists, and one is a
+	// GRANT switch over behaviour that does not. Naming them all alike would
+	// have made the zero value silently revoke two things on every share that
+	// works today. A bool cannot default to true (gob drops a *bool that holds
+	// false), so the name carries the polarity instead.
 	//
-	// Read-only in every case. A recipient's turns never write into these.
-	ShareMemoryCortex    bool `json:"share_memory_cortex,omitempty"`
-	ShareMemoryExplicit  bool `json:"share_memory_explicit,omitempty"`
-	ShareMemoryReference bool `json:"share_memory_reference,omitempty"`
+	// Read-only in every case: a recipient's turns never write into any of
+	// them. What they learn accumulates in their own namespace, on top.
+	ShareHoldCortex     bool `json:"share_hold_cortex,omitempty"`
+	ShareHoldReference  bool `json:"share_hold_reference,omitempty"`
+	ShareMemoryExplicit bool `json:"share_memory_explicit,omitempty"`
 
 	// ShareNoUploads withholds the one thing a recipient can otherwise add:
 	// documents of their own, private to them, searched alongside the agent's

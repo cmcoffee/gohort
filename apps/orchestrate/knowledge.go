@@ -863,20 +863,20 @@ const (
 	ChunkScopeDerivedOnly
 )
 
-// baseUser, when set and different from user, adds the TEMPLATE owner's corpus as
-// a second searched layer: a scoped instance (runtimeUser != the agent's owner —
-// e.g. a per-appliance servitor agent) retrieves the template's general/base
-// knowledge ALONGSIDE what it gathered itself. Empty/equal ⇒ instance-only (the
-// normal single-scope behavior).
-func searchAgentKnowledge(ctx context.Context, db Database, user, baseUser, agentID, topic, query string, k int, activeSkills []SkillRecord, agentAttachedCollections []string, scope ChunkScope) []SearchHit {
-	return searchAgentKnowledgeVec(ctx, db, user, baseUser, agentID, topic, query, nil, k, activeSkills, agentAttachedCollections, scope)
-}
-
 // searchAgentKnowledgeVec is searchAgentKnowledge with an optional caller-
 // supplied query embedding (qVec), so a multi-layer caller (unified recall)
 // embeds the query once instead of once per layer. nil/empty qVec keeps the
 // embed-here behavior.
-func searchAgentKnowledgeVec(ctx context.Context, db Database, user, baseUser, agentID, topic, query string, qVec []float32, k int, activeSkills []SkillRecord, agentAttachedCollections []string, scope ChunkScope) []SearchHit {
+// baseUser is the agent's OWNER when somebody else is running it. It resolves
+// the agent's attached COLLECTIONS in the owner's namespace, which is what makes
+// a dependency travel with the agent, and it is not a memory decision: a
+// collection is knowledge somebody attached on purpose.
+//
+// baseCorpus is the memory decision, separated from it. It says whether this
+// run also searches the owner's own accumulated corpus for this agent — what
+// the agent worked out for itself while talking to them. The two rode one
+// argument until a switch over the second silently withheld the first.
+func searchAgentKnowledgeVec(ctx context.Context, db Database, user, baseUser string, baseCorpus bool, agentID, topic, query string, qVec []float32, k int, activeSkills []SkillRecord, agentAttachedCollections []string, scope ChunkScope) []SearchHit {
 	// db is kept in the signature for caller compatibility and acts as
 	// the system-readiness gate. The chunk search itself runs against
 	// VectorDB now (the dedicated shared store, partitioned by Source
@@ -926,7 +926,7 @@ func searchAgentKnowledgeVec(ctx context.Context, db Database, user, baseUser, a
 	// so a per-appliance instance inherits the template's base knowledge on top of
 	// its own. Empty when the run isn't scoped (baseUser unset or == user).
 	basePrefix := ""
-	if baseUser != "" && baseUser != user {
+	if baseCorpus && baseUser != "" && baseUser != user {
 		basePrefix = knowledgeSource(baseUser, agentID, "")
 	}
 	// Per-agent shared KB was deprecated in favor of attached
@@ -1268,7 +1268,7 @@ func (t *chatTurn) knowledgeToolDefScoped(scopeSkills []SkillRecord) AgentToolDe
 			topic := normalizeTopic(stringArg(args, "topic"))
 			ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 			defer cancel()
-			hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID, topic, query, t.embedQuery(ctx, query), k, scopeSkills, t.agent.AttachedCollections, ChunkScopeCuratedOnly)
+			hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.readsOwnerCorpus(ChunkScopeCuratedOnly), t.agent.ID, topic, query, t.embedQuery(ctx, query), k, scopeSkills, t.agent.AttachedCollections, ChunkScopeCuratedOnly)
 			rawHits := len(hits)
 			hits = aboveRelevanceFloor(hits)
 			dropped := rawHits - len(hits)
@@ -1393,9 +1393,13 @@ func (t *chatTurn) fetchKnowledgeDocScoped(scopeSkills []SkillRecord) AgentToolD
 			// doc_id knowledge_search returned resolves here and one it
 			// withheld does not.
 			agentPrefix := t.agentCorpusPrefix()
+			ownerPrefix := t.ownerCorpusPrefix(ChunkScopeAll)
 			exact := t.agentCorpusSources(scopeSkills)
 			allowSource := func(src string) bool {
 				if src == agentPrefix || strings.HasPrefix(src, agentPrefix+":") {
+					return true
+				}
+				if ownerPrefix != "" && (src == ownerPrefix || strings.HasPrefix(src, ownerPrefix+":")) {
 					return true
 				}
 				return exact[src]
@@ -1511,7 +1515,7 @@ func (t *chatTurn) memorySearch(args map[string]any) (string, error) {
 	topic := normalizeTopic(stringArg(args, "topic"))
 	ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 	defer cancel()
-	hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID, topic, query, t.embedQuery(ctx, query), k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
+	hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.readsOwnerCorpus(ChunkScopeDerivedOnly), t.agent.ID, topic, query, t.embedQuery(ctx, query), k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
 	rawHits := len(hits)
 	filtered := aboveRelevanceFloor(hits)
 	// THE recency pass for findings — the same one unified recall's [finding]
@@ -1587,6 +1591,13 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 		if !VectorDB.Get(EmbeddedChunks, explicitID, &c) {
 			return fmt.Sprintf("No chunk with mem_id=%q in your accessible memory: it may have already been deleted, or the id belongs to a corpus you can't access.", explicitID), nil
 		}
+		// The runner's own prefix, deliberately, with no owner layer beside
+		// it. A shared agent's memory is read underneath theirs and never
+		// written by them, and a delete is a write: admitting the owner's
+		// chunk here would let a recipient prune the agent's memory for the
+		// owner and for everybody else it is shared with. It reads as "not in
+		// your accessible memory", which is the truth about what they may
+		// change even though they can see it.
 		agentPrefix := t.agentCorpusPrefix()
 		exact := t.agentCorpusSources(t.skillsActive)
 		inScope := c.Source == agentPrefix || strings.HasPrefix(c.Source, agentPrefix+":") || exact[c.Source]
@@ -1619,7 +1630,7 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 	topic := normalizeTopic(stringArg(args, "topic"))
 	ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 	defer cancel()
-	hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID, topic, query, t.embedQuery(ctx, query), k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
+	hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.readsOwnerCorpus(ChunkScopeDerivedOnly), t.agent.ID, topic, query, t.embedQuery(ctx, query), k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
 	// Apply the same relevance floor memory_search / knowledge_search use, so a
 	// loose forget query can't delete tangentially-related chunks it wouldn't
 	// even surface. Filtering here (not just checking len==0) keeps forget's
@@ -1788,4 +1799,22 @@ func agentCorpusSourceSet(user, baseUser string, attached []string, scopeSkills 
 // RUNNER's, always: capability travels with a shared agent, history does not.
 func (t *chatTurn) agentCorpusPrefix() string {
 	return knowledgeSource(t.user, t.agent.ID, "")
+}
+
+// ownerCorpusPrefix is the OWNER's copy of this agent's corpus, when this turn
+// may read it, and empty otherwise.
+//
+// Used by the search, by fetch-by-doc_id and by delete-by-mem_id, because a
+// hit the search returns has to resolve in the tool that reads it: those two
+// built their predicate from the runner's prefix alone, so a doc surfaced out
+// of the owner's layer came back "belongs to a corpus you can't access".
+func (t *chatTurn) ownerCorpusPrefix(scope ChunkScope) string {
+	if !t.readsOwnerCorpus(scope) {
+		return ""
+	}
+	owner := t.memoryUnderlay()
+	if owner == "" {
+		return ""
+	}
+	return knowledgeSource(owner, t.agent.ID, "")
 }

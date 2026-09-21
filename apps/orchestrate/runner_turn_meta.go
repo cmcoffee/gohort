@@ -421,7 +421,26 @@ func (t *chatTurn) facts() []MemoryFact {
 	if t.incognitoSession() {
 		return nil
 	}
-	return ListMemoryFacts(t.udb, factsNamespace(t.agent.ID))
+	own := ListMemoryFacts(t.udb, factsNamespace(t.agent.ID))
+	// The owner's saved notes, underneath, when they turned that on. This is
+	// the one layer that has never travelled, so it is the one switch that
+	// grants rather than withholds: see AgentRecord.ShareMemoryExplicit.
+	//
+	// Underneath means literally that. They are appended AFTER the runner's
+	// own, so where the two disagree the last word belongs to whoever is
+	// actually in the conversation. A recipient correcting the agent has to be
+	// able to correct it.
+	//
+	// Read-only, and that costs nothing to enforce here: every write path
+	// (storeFactNote, the forget tool, the sweep) addresses t.udb by name, so
+	// no owner fact can be edited or retired through a recipient's turn. One
+	// they try to forget is simply not in their namespace.
+	if t.readsOwnerFacts() {
+		if odb := UserDB(t.app.DB, t.memoryUnderlay()); odb != nil {
+			own = append(own, ListMemoryFacts(odb, factsNamespace(t.agent.ID))...)
+		}
+	}
+	return own
 }
 
 // incognitoSession reports whether this turn runs in a clean room — the session

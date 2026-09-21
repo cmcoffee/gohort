@@ -698,7 +698,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		// it, and what it depends on.
 		sections = append(sections, ui.Section{
 			Title:    "What they get",
-			Subtitle: "Everyone you share with is a reader. This is the one thing they can add.",
+			Subtitle: "Everyone you share with is a reader. These say how much of what this agent knows they read.",
 			Detail: "Nobody you share with can change this agent: not its persona, its rules, its tools, its documents, or who else has it. That is true of both modes below and is not a setting.\n\n" +
 				"Two things are theirs and only theirs. Their conversations with it, and anything they upload to it. Neither reaches you, and neither reaches anybody else you shared with.",
 			Body: ui.FormPanel{
@@ -706,6 +706,24 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				PostURL: source,
 				Method:  "POST",
 				Fields: []ui.FormField{
+					{
+						Field: "share_hold_cortex", Type: "toggle", Label: "Keep its standing activity to yourself",
+						Help: "Off, the default, means they see it. This is what makes a shared agent feel like it knows things.",
+						Detail: "The cortex is the agent's own mind: recent events on its channels and monitors, which you shaped by pointing it at them. A recipient reads it and can never open it as a thread, and their turns never write into it.\n\n" +
+							"Turn this on when the cortex has become a record of your own week rather than the agent's job.",
+					},
+					{
+						Field: "share_hold_reference", Type: "toggle", Label: "Keep what it worked out to yourself",
+						Help: "Off, the default, means their searches also cover it.",
+						Detail: "The least deliberate thing the agent holds: what it inferred across your conversations without being asked to. Documents you uploaded are not this and travel either way, the same as the collections you attached.\n\n" +
+							"Read what is in it before deciding. This is the layer most likely to carry a sentence you have forgotten saying.",
+					},
+					{
+						Field: "share_memory_explicit", Type: "toggle", Label: "Let them see its saved notes",
+						Help: "Off, the default. This layer has never travelled.",
+						Detail: "The facts the agent kept while talking to you, in every turn's prompt. Not curated: whatever came up, including things you never decided to tell anybody. Read them before you turn this on.\n\n" +
+							"Theirs sit above yours, so where the two disagree the person in the conversation has the last word. They cannot edit or forget any of yours.",
+					},
 					{
 						Field: "share_no_uploads", Type: "toggle", Label: "They may not add documents of their own",
 						Help: "Off means they can upload; their files stay private to them.",

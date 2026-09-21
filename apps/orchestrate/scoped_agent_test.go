@@ -199,14 +199,24 @@ func TestKnowledgeBaseLayer(t *testing.T) {
 	put("base1", base, "base note: nginx config usually lives in /etc/nginx")
 	put("inst1", inst, "instance note: this appliance runs nginx on port 8443")
 
+	search := func(baseUser string, baseCorpus bool) []SearchHit {
+		return searchAgentKnowledgeVec(context.Background(), nil, inst, baseUser, baseCorpus,
+			agentID, "general", "nginx", nil, 10, nil, nil, ChunkScopeAll)
+	}
 	// Layered: base + instance both retrieved.
-	got := searchAgentKnowledge(context.Background(), nil, inst, base, agentID, "general", "nginx", 10, nil, nil, ChunkScopeAll)
-	if len(got) != 2 {
+	if got := search(base, true); len(got) != 2 {
 		t.Fatalf("with base layer: want 2 hits (base+instance), got %d", len(got))
 	}
 	// No base scope: instance only.
-	if got := searchAgentKnowledge(context.Background(), nil, inst, "", agentID, "general", "nginx", 10, nil, nil, ChunkScopeAll); len(got) != 1 {
+	if got := search("", true); len(got) != 1 {
 		t.Fatalf("without base layer: want 1 hit (instance only), got %d", len(got))
+	}
+	// A base scope whose CORPUS is withheld: instance only, and the base user
+	// still set — which is the case the two arguments were split for. baseUser
+	// resolves the agent's attached collections in the owner's namespace and
+	// must keep doing so; baseCorpus is the memory decision beside it.
+	if got := search(base, false); len(got) != 1 {
+		t.Fatalf("base corpus withheld: want 1 hit (instance only), got %d", len(got))
 	}
 }
 

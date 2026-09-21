@@ -93,11 +93,11 @@ func (t *chatTurn) renderRecallHints(userMsg string) string {
 	threshold := RecallHintThreshold()
 
 	knStart := time.Now()
-	kn := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID,
+	kn := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.readsOwnerCorpus(ChunkScopeCuratedOnly), t.agent.ID,
 		generalTopic, q, qVec, max*3, t.skillsActive, t.agent.AttachedCollections, ChunkScopeCuratedOnly)
 	knMS := time.Since(knStart)
 	memStart := time.Now()
-	mem := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.agent.ID,
+	mem := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.readsOwnerCorpus(ChunkScopeDerivedOnly), t.agent.ID,
 		generalTopic, q, qVec, max*3, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
 	memMS := time.Since(memStart)
 
