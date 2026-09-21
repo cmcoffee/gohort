@@ -2886,10 +2886,11 @@
       b.textContent = mark.glyph;
       // Styled here rather than in the sheet: it is one control, and inlining
       // keeps a panel-level primitive from needing an app to ship CSS for it.
-      b.style.cssText = 'width:17px;height:17px;padding:0;margin-right:.4rem;' +
-        'line-height:15px;border-radius:50%;border:1px solid var(--warning,#b45309);' +
-        'background:transparent;color:var(--warning,#b45309);font-size:11px;' +
-        'font-weight:700;cursor:pointer;vertical-align:middle;flex:none';
+      b.style.cssText = 'display:inline-block;width:17px;height:17px;padding:0;' +
+        'margin-right:.4rem;line-height:15px;border-radius:50%;' +
+        'border:1px solid var(--warning,#b45309);background:transparent;' +
+        'color:var(--warning,#b45309);font-size:11px;font-weight:700;' +
+        'cursor:pointer;vertical-align:baseline;flex:none';
       if (mark.title) { b.title = mark.title; b.setAttribute('aria-label', mark.title); }
       if (mark.action) {
         b.addEventListener('click', function() {
@@ -2901,7 +2902,18 @@
       } else {
         b.disabled = true;
       }
-      body.insertBefore(b, body.firstChild);
+      // INSIDE the first block, not above it. A markdown pass wraps the reply
+      // in a <p>, so inserting at the body's head puts the glyph on its own
+      // line above the text; inserting at the paragraph's head puts it where
+      // it belongs, on the first line, before the first word.
+      var host = body.firstElementChild;
+      if (host && /^(P|LI|DIV|H[1-6]|BLOCKQUOTE)$/.test(host.tagName)) {
+        host.insertBefore(b, host.firstChild);
+      } else {
+        // Streaming or non-markdown: the body holds text directly, so its own
+        // head IS the first line.
+        body.insertBefore(b, body.firstChild);
+      }
     }
 
     // markLastAssistant applies a mark to the most recent assistant bubble.
