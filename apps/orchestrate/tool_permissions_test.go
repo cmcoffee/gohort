@@ -10,6 +10,8 @@ package orchestrate
 import (
 	"strings"
 	"testing"
+
+	. "github.com/cmcoffee/gohort/core"
 )
 
 // One place asks it now. A checklist reappearing in the editor is the
@@ -77,7 +79,7 @@ func TestTheToolPolicyEndpointUsesTheGatesOwnTiering(t *testing.T) {
 	if j := strings.Index(body, `if action == "reach/credential"`); j >= 0 {
 		body = body[:j]
 	}
-	if !strings.Contains(body, "privilegeToolRows(sess, agent,") {
+	if !strings.Contains(body, "privilegeToolRows(sess, ask, scoped)") {
 		t.Error("the endpoint tiers tools itself instead of asking privilegeToolRows")
 	}
 	if !strings.Contains(body, "row.Policy") {
@@ -108,5 +110,65 @@ func TestAToolsModalSaveIsLabelledInTheHistory(t *testing.T) {
 	}
 	if !strings.Contains(body, "saveAgentAs(udb, req, reason)") {
 		t.Error("the reason is computed and then not used")
+	}
+}
+
+// An agent on the DEFAULT POOL stores an empty allowlist — empty means "every
+// catalog tool", not "no tools" — and privilegeToolRows lists from that field.
+//
+// Asking it about the agent directly therefore returned a map with nothing in
+// it, every row in the modal fell to the first state of its ladder, and the
+// whole thing read as Queues on every agent that had never curated its tools.
+// Which is most of them, and is what "all the tools on all the agents" looks
+// like from the outside.
+func TestTheToolPolicyIsAskedOverTheToolsTheModalDraws(t *testing.T) {
+	src := packageSource(t)
+	i := strings.Index(src, `if action == "tool-policy" {`)
+	if i < 0 {
+		t.Fatal("no tool-policy endpoint")
+	}
+	body := src[i:]
+	if j := strings.Index(body, `if action == "reach/credential"`); j >= 0 {
+		body = body[:j]
+	}
+	// The agent's own record must NOT be the thing asked about: its allowlist
+	// is empty on the default pool.
+	if strings.Contains(body, "privilegeToolRows(sess, agent,") {
+		t.Error("asked about the agent's allowlist, which is empty on the default pool")
+	}
+	if !strings.Contains(body, "availableWorkerToolOptions(user)") {
+		t.Error("the catalog is not part of the question, so a pool tool gets no policy")
+	}
+	if !strings.Contains(body, "AgentScopedTools(udb, user, agent.ID)") {
+		t.Error("the agent's own tools are not part of the question")
+	}
+}
+
+// The union really does produce rows for both kinds. privilegeToolRows takes
+// the allowlist AND the bundled set, and a tool in either must come back.
+func TestPrivilegeRowsCoverBothTheAllowlistAndTheBundledSet(t *testing.T) {
+	sess := &ToolSession{Username: "u"}
+	prev := ListUserAgentTools
+	ListUserAgentTools = func(Database, string) []TempTool { return nil }
+	defer func() { ListUserAgentTools = prev }()
+
+	rec := AgentRecord{ID: "tp2", AllowedTools: []string{"from_catalog"}}
+	bundled := []TempTool{{Name: "from_agent", CommandTemplate: "echo hi"}}
+	rows := privilegeToolRows(sess, rec, bundled)
+
+	seen := map[string]string{}
+	for _, r := range rows {
+		seen[r.Name] = r.Policy
+	}
+	if _, ok := seen["from_catalog"]; !ok {
+		t.Error("a tool named in the allowlist got no policy")
+	}
+	if _, ok := seen["from_agent"]; !ok {
+		t.Error("a tool bundled with the agent got no policy")
+	}
+	// A benign shell tool is not withheld, so the modal must show it Runs
+	// rather than offering an approval that grants nothing.
+	if seen["from_agent"] != "auto" {
+		t.Errorf("a tool nothing withholds tiered as %q", seen["from_agent"])
 	}
 }

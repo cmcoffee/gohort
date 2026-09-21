@@ -624,9 +624,35 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 			http.NotFound(w, r)
 			return
 		}
+		// Asked over the tools the MODAL will draw, which is not the same set
+		// as the agent's allowlist.
+		//
+		// privilegeToolRows lists from rec.AllowedTools, and an agent on the
+		// default pool stores that EMPTY — empty means "every catalog tool",
+		// not "no tools". Asking it directly returned a map with nothing in
+		// it, so every row in the modal fell to the first state of its ladder
+		// and the whole thing read as Queues, on every agent that had never
+		// curated its tool list. Which is most of them.
+		//
+		// So the question is posed over the union the modal renders: the
+		// shared catalog plus this agent's own tools. The tiering is still
+		// privilegeToolRows' — the sub-agent bypass, the pre-approved check
+		// and the credential's own toggle — because two answers to "would
+		// this stop" is how the card and the gate came apart once already.
+		scoped := toolsOfScoped(AgentScopedTools(udb, user, agent.ID))
+		ask := agent
+		ask.AllowedTools = nil
+		for _, o := range availableWorkerToolOptions(user) {
+			if o.Value != "" && o.Value != noToolsSentinel {
+				ask.AllowedTools = append(ask.AllowedTools, o.Value)
+			}
+		}
 		out := map[string]string{}
 		sess := &ToolSession{Username: user, DB: udb}
-		for _, row := range privilegeToolRows(sess, agent, toolsOfScoped(AgentScopedTools(udb, user, agent.ID))) {
+		for _, row := range privilegeToolRows(sess, ask, scoped) {
+			if row.Name == noToolsSentinel {
+				continue
+			}
 			out[row.Name] = row.Policy
 		}
 		writeJSON(w, out)
