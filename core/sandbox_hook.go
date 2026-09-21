@@ -43,6 +43,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cmcoffee/gohort/core/sandbox"
 	"github.com/cmcoffee/snugforge/iotimeout"
 )
 
@@ -1642,3 +1643,32 @@ def secret(name):
 def fetch_via(credential, url, method="GET", body=None, headers=None, request_headers=None):
     return gohort.fetch_via(credential, url, method=method, body=body, headers=headers, request_headers=request_headers)
 `
+
+// --- the shell network default -------------------------------------------
+
+// tuneShellNetworkClosed is the deployment's answer to whether a shell command
+// reaches the network only when it says it needs to.
+//
+// OFF by default, which is what this codebase has always actually done: the
+// sandbox asked the privacy connector and nothing else, so in an ordinary turn
+// every command shared the host's namespace. The field that was supposed to
+// gate it, TempTool.RawNetwork, was read by nothing.
+//
+// Switching it on is a real posture change and a breaking one for any existing
+// tool that curls without having declared raw_network, which is why it is a
+// switch an operator throws rather than a default anybody inherits. Once
+// thrown, the tool-authoring help stops being aspirational: an author who does
+// not ask for raw network genuinely does not get it, and gohort.fetch — which
+// is audited — becomes the route for ordinary HTTP, as every comment around
+// the sandbox already claims.
+const tuneShellNetworkClosed = "tune_shell_network_closed"
+
+func init() {
+	RegisterTunable(TunableSpec{
+		Key: tuneShellNetworkClosed, Category: "Security",
+		Label: "Shell tools reach the network only when they declare it",
+		Help:  "OFF (the historical behaviour): a shell command shares the host's network. ON: it gets no network namespace unless its tool record sets raw_network, and ordinary HTTP goes through the audited gohort.fetch hook instead.",
+		Kind:  KindBool, Default: 0, Min: 0, Max: 1,
+	})
+	sandbox.ShellNetworkClosedByDefault = func() bool { return TuneBool(tuneShellNetworkClosed) }
+}

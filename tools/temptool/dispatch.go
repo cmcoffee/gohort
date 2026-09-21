@@ -596,6 +596,10 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	res := sandbox.RunSandboxedShellIn(ctx, sandbox.ShellRun{
 		Command: cmd, WorkspaceDir: workspaceDir, WorkDir: workDir,
 		Env: envArgs, Reach: scopedPaths,
+		// The tool's own declaration that it needs raw TCP. Consulted only
+		// once the deployment closes the default; until then every command
+		// keeps the host's namespace, which is what has always happened.
+		RawNetwork: tt.RawNetwork,
 	})
 	Debug("[temptool] %q sandbox exit: dur=%s err=%v timedOut=%v outBytes=%d",
 		tt.Name, time.Since(tExec), res.Err, res.TimedOut, len(res.Output))

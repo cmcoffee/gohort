@@ -254,6 +254,16 @@ type ShellRun struct {
 	// keep that promise (scopedRunRefusal), so leave it empty unless the caller
 	// is a path-scoped tool. It is NOT how to make WorkDir readable.
 	ReadOnly []string
+	// RawNetwork is the command's own declaration that it needs raw TCP/UDP
+	// from inside the sandbox — a persistent REPL over a non-HTTP protocol, or
+	// a tool that cannot use the gohort.fetch hook. It only ever NARROWS
+	// against the ceilings on the context; it can never hand back a network
+	// privacy mode or a workspace setting took away.
+	//
+	// Honoured only when the deployment has closed the default (see
+	// ShellNetworkClosedByDefault). Until then every command keeps the host's
+	// namespace, which is what this codebase has always actually done.
+	RawNetwork bool
 	// Reach are host paths the command must be able to OPEN. No promise about
 	// anything else, so it is honored on every backend and refused on none.
 	// This is what a path-scoped parameter wants: the scope proves the value,
@@ -338,10 +348,25 @@ func RunSandboxedShellIn(ctx context.Context, spec ShellRun) SandboxedShellResul
 func buildSandboxedShellCmd(ctx context.Context, spec ShellRun) (SandboxedCmd, error) {
 	command, workspaceDir, extraEnv, readOnly := spec.Command, spec.WorkspaceDir, spec.Env, spec.ReadOnly
 	sb := activeSandbox()
-	// Both questions: may this turn reach the network at all, and may THIS
-	// agent's workspace be the thing dialling. Asking only the first is what
-	// left every ordinary turn's sandbox sharing the host's net namespace.
+	// Three things, ANDed, in widening order of who decides: the turn (privacy
+	// mode), the agent (its workspace ceiling), and the command itself.
+	//
+	// The third was documented for a long time and consulted by nothing.
+	// Every comment around here, the pydeps note, and the tool-authoring help
+	// all said a shell command runs with --unshare-net unless it declares
+	// raw_network=true — while the code asked only the privacy connector, so
+	// in an ordinary turn every command had the host's namespace. An author
+	// who did not set the flag believed their tool could not reach the
+	// network, and it could.
+	//
+	// Closing that by default would break every existing tool that curls
+	// without having declared it, silently and at whatever hour it next runs.
+	// So the deployment decides when to switch, and until it does the
+	// declaration is recorded and not enforced. See ShellNetworkClosedByDefault.
 	allowNetwork := netgate.WorkspaceNetworkFrom(ctx)
+	if allowNetwork && ShellNetworkClosedByDefault() && !spec.RawNetwork {
+		allowNetwork = false
+	}
 
 	// PYTHONPATH := GohortLibMountPath so `from gohort import
 	// fetch` resolves against the bind-mounted gohort helper package
@@ -1049,3 +1074,12 @@ func scopedRunRefusal(sb sandboxBackend, readOnly []string) error {
 		"Otherwise run this tool on a Linux host with bubblewrap, or drop the path_scope from the " +
 		"tool's parameter and accept that it is unconstrained.")
 }
+
+// ShellNetworkClosedByDefault reports whether this deployment has switched the
+// default to "no network unless the command declares raw_network".
+//
+// A hook rather than a tunable read, because this package cannot import core
+// (core imports it), and the tunable registry lives there. core installs the
+// real reader at start-up; the default below is what every deployment has
+// always done, so a binary that never installs it behaves as before.
+var ShellNetworkClosedByDefault = func() bool { return false }
