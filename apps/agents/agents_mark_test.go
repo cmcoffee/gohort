@@ -43,3 +43,21 @@ func TestTheMarkSaysNothingAboutTheRule(t *testing.T) {
 		t.Error("the report does not carry the session the owner needs to find the entry")
 	}
 }
+
+// The bar reads [Private] [Clean] [⋯]: the mode toggles first, the overflow of
+// per-visitor surfaces after them.
+//
+// It came out reversed because the order rule named .ui-agent-actions, which
+// is not a direct child of the topbar — it sits inside an unclassed wrapper,
+// and `order` only ranks siblings. The wrapper is what has to be ordered.
+func TestTheOverflowSitsAfterTheModeToggles(t *testing.T) {
+	if !strings.Contains(dashboardBarCSS, ".ui-agent-topbar > div:not(.ui-agent-extras-slot)") {
+		t.Error("nothing orders the wrapper that actually holds the actions row")
+	}
+	// The extras slot (which carries the mode toggles) must rank before it.
+	iExtras := strings.Index(dashboardBarCSS, ".ui-agent-extras-slot { order: 1")
+	iWrap := strings.Index(dashboardBarCSS, ".ui-agent-topbar > div:not(.ui-agent-extras-slot) { order: 2")
+	if iExtras < 0 || iWrap < 0 {
+		t.Fatal("the two order rules are not both present")
+	}
+}

@@ -370,9 +370,11 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 		//     (editable, private to them).
 		// Per-visitor surfaces — the granted user managing THEIR OWN data (notes,
 		// uploads, session export). These collapse into a single "⋯" overflow that
-		// sits AFTER the Private / Clean mode toggles (the dashboardBarCSS order
-		// rule), so the bar reads [Private] [Clean] [⋯] and the page lands you
-		// straight in the chat. What does NOT belong here is agent MANAGEMENT —
+		// sits AFTER the Private / Clean mode toggles, so the bar reads
+		// [Private] [Clean] [⋯] and the page lands you straight in the chat.
+		//
+		// The ordering is done in dashboardBarCSS, on the WRAPPER the panel puts
+		// the actions row inside rather than on the row itself; see the rule. What does NOT belong here is agent MANAGEMENT —
 		// config lives in admin-only Agency, never on the dashboard surface.
 		Actions: dashboardActions,
 		Modes:   modes,
@@ -913,9 +915,15 @@ const dashboardBarCSS = `<style>
   padding: 0.3rem 0.7rem;
 }
 .ui-agent-extras-slot { order: 1; flex: 0 1 auto; }
+/* The actions row (and the ⋯ overflow in it) is NOT a direct child of the
+   topbar: it sits inside an unclassed wrapper the panel builds for the top
+   span, and the order property only ranks siblings. So the rule below aimed at
+   .ui-agent-actions never competed with the extras slot, and the bar came out
+   [⋯] [Private] [Clean]. Ordering the wrapper is what actually moves it. */
+.ui-agent-topbar > div:not(.ui-agent-extras-slot) { order: 2; }
 .ui-agent-modes { background: transparent !important; border-top: 0 !important; padding: 0 !important; }
 .ui-agent-actions {
-  order: 2; flex: 0 1 auto;
+  flex: 0 1 auto;
   background: transparent !important; border-bottom: 0 !important; padding: 0 !important;
   gap: 0.3rem; align-items: center;
 }
