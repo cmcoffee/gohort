@@ -3,6 +3,7 @@ package orchestrate
 // The mark on a turn a rule stopped, and what saying "that was wrong" sends.
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -22,7 +23,7 @@ func TestATurnIsMarkedOnce(t *testing.T) {
 
 	turn.turnDiag("guardrail-blocked", aRuleAndItsReason)
 	turn.turnDiag("guardrail-blocked", "and again at another hook")
-	turn.deliverBlockedMark()
+	turn.markBlockedReply(turn.session)
 
 	if n := strings.Count(buf.String(), `"message_mark"`); n != 1 {
 		t.Errorf("the turn carries %d marks, want 1:\n%s", n, buf.String())
@@ -66,7 +67,7 @@ func TestTheOwnersTurnIsNotMarked(t *testing.T) {
 	turn.sse = &sseWriter{live: buf}
 	turn.turnDiag("guardrail-blocked", aRuleAndItsReason)
 
-	turn.deliverBlockedMark()
+	turn.markBlockedReply(turn.session)
 	if strings.Contains(buf.String(), `"message_mark"`) {
 		t.Error("the owner got a mark instead of their own card")
 	}
@@ -126,5 +127,52 @@ func TestAMissingEntrySaysSo(t *testing.T) {
 	}
 	if !strings.Contains(out, "block log") {
 		t.Errorf("no pointer to where the owner can look:\n%s", out)
+	}
+}
+
+// A stopped turn leaves by the DIRECT-REPLY return, not the planned path: the
+// rejection writer produces one sentence and no plan. The first version
+// stamped and delivered the mark only at the planned site, so a blocked turn
+// never got one — which is every blocked turn.
+func TestEveryTurnEndingSiteMarksTheReply(t *testing.T) {
+	src, err := os.ReadFile("runner_http.go")
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	body := string(src)
+	// titleAfterFirstTurn runs once per turn-ending site and nowhere else, so
+	// it counts them without this guard having to know their shapes.
+	ends := strings.Count(body, "titleAfterFirstTurn()")
+	marks := strings.Count(body, "markBlockedReply(&sess)")
+	if ends == 0 {
+		t.Fatal("no turn-ending sites found; this guard needs rewriting")
+	}
+	if marks < ends {
+		t.Errorf("%d of %d turn-ending sites mark the reply; a stopped turn leaves by the direct-reply return, which was the one missing it", marks, ends)
+	}
+}
+
+// The stored reply carries the mark, which is what brings it back on a reload.
+func TestTheStoredReplyCarriesTheMark(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	turn := sharedRunTurn(root, "alice", "bob", "a1")
+	sess := ChatSession{ID: "s1", Messages: []ChatMessage{
+		{Role: "user", Content: "tell me a joke"},
+		{Role: "assistant", Content: "Not getting into that."},
+	}}
+	turn.session = &sess
+	turn.turnDiag("guardrail-blocked", aRuleAndItsReason)
+	turn.markBlockedReply(&sess)
+
+	last := sess.Messages[len(sess.Messages)-1]
+	if last.Mark == nil || last.Mark.Glyph != "!" {
+		t.Fatalf("the stored reply has no mark: %+v", last.Mark)
+	}
+	if last.Mark.Action != blockedMarkAction {
+		t.Errorf("the mark names no action, so clicking it does nothing: %+v", last.Mark)
+	}
+	// The user's message is untouched: it was not the thing stopped.
+	if sess.Messages[0].Mark != nil {
+		t.Error("the user's own message was marked")
 	}
 }

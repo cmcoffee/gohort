@@ -61,18 +61,31 @@ func (t *chatTurn) blockedMark() *MessageMark {
 	}
 }
 
-// deliverBlockedMark tells the open pane about the mark on the reply this turn
-// produced. The STORED copy is set where the message is built (see
-// runner_http), so one field has one writer.
+// markBlockedReply stamps the mark onto the reply this turn produced and tells
+// the open pane about it. No-op on a turn no rule stopped.
 //
-// Sent at the END of the turn, which is why it addresses no id: the last
+// Both halves in ONE call, at every site that ends a turn, because there are
+// three of them: a direct reply, a question, and the planned path. The first
+// version delivered only at the third, which is the one a stopped turn never
+// takes — the rejection writer produces a single sentence with no plan, so it
+// leaves by the direct-reply return, and the mark was never sent or stored.
+//
+// The live event addresses no id: it is sent when the turn ends, so the last
 // assistant bubble is the one it is about. A mark emitted when the rule fired
 // would have had no bubble to attach to, since pre_output runs before the
 // reply exists.
-func (t *chatTurn) deliverBlockedMark() {
+func (t *chatTurn) markBlockedReply(sess *ChatSession) {
 	mark := t.blockedMark()
 	if mark == nil {
 		return
+	}
+	if sess != nil {
+		for i := len(sess.Messages) - 1; i >= 0; i-- {
+			if sess.Messages[i].Role == "assistant" {
+				sess.Messages[i].Mark = mark
+				break
+			}
+		}
 	}
 	if t.sse != nil {
 		t.sse.Send(map[string]any{"kind": "message_mark", "mark": mark})
