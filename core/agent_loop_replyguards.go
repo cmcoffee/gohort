@@ -521,17 +521,50 @@ func containsActionPromise(content string) bool {
 // actual user. The tag makes the origin explicit and forbids replying to it.
 const frameworkNoticeTag = "[AUTOMATED FRAMEWORK NOTICE: not written by the user, who cannot see it. Do not reply to it, apologize, or address anyone about it; silently adjust and continue.] "
 
+// guardStopPrefix is the CONTRACT between every framework guard that returns a
+// STOP verdict as a plain string and the loop that has to recognise one.
+//
+// A prose prefix carrying a contract is exactly the shape that broke the paste
+// marker: one side's wording was edited, the other side's literal was not, and
+// the mismatch was silent because a non-match is a legal outcome. There are
+// three producers of this one, in two packages, and the doc comment here
+// carried the PRE-sweep spelling ("STOP — you have already…") long after the
+// producers moved to a colon, which is the drift made visible.
+//
+// Named here so the core producers point at one spelling, and pinned across
+// the package boundary by TestEveryGuardStopUsesTheSharedPrefix, since
+// orchestrate builds one of these too and cannot see an unexported const.
+const guardStopPrefix = "STOP: "
+
+// guardStopRE recognises a framework STOP verdict at the START OF A LINE.
+//
+// Line-anchored, not Contains-anywhere, and that is the difference between
+// this and what it replaced. "STOP: you" appearing anywhere in the first 600
+// characters was narrow enough to be safe only because it was so specific —
+// and so specific that it missed THREE real verdicts. The action-quota guard
+// and the provenance guard open "STOP: '<tool>' was NOT called", and
+// orchestrate's dispatch cap opens "STOP: you've dispatched". None of the
+// three was recognised, so the loop counted a refusal as a successful tool
+// call in its progress accounting. Exactly what this function exists to
+// prevent, missed for the three cases it was not written against.
+//
+// The alternative was to widen to a bare Contains("STOP: "), which would take
+// any tool that returns a log line mentioning a stop with it. An anchored
+// match covers all four producers and still cannot be triggered mid-sentence.
+var guardStopRE = regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(guardStopPrefix) + `(you|')`)
+
 // isGuardStopResult reports whether a nominally-successful tool result is
-// actually a framework guard verdict ("STOP — you have already…") rather than
-// real output. Inner guards return STOP as a plain string; the loop's
-// progress accounting must not mistake that for a working tool call. The scan
-// tolerates the untrusted-content fence prefix on dispatch results.
+// actually a framework guard verdict rather than real output. Inner guards
+// return STOP as a plain string; the loop's progress accounting must not
+// mistake that for a working tool call. The scan tolerates the
+// untrusted-content fence prefix on dispatch results, which is why it is
+// anchored to a LINE rather than to the whole string.
 func isGuardStopResult(content string) bool {
 	head := content
 	if len(head) > 600 {
 		head = head[:600]
 	}
-	return strings.Contains(head, "STOP: you")
+	return guardStopRE.MatchString(head)
 }
 
 // endsWithCallAnnouncement detects the announce-then-stop failure: the reply's

@@ -3266,7 +3266,7 @@ func (lr *loopRun) toolRoundPlanCalls() loopAction {
 			lr.rs.guardBlockedThisRound = true
 			lr.rs.results[i] = ToolResult{
 				ID:      tc.ID,
-				Content: fmt.Sprintf("STOP: you have already called '%s' with these exact arguments %d times this turn and it failed the same way each time. Calling it again will NOT change the result. Do something different: try another approach or different arguments, or tell the user plainly that this isn't working and what you tried. Do not repeat this call.", tc.Name, lr.repeatFail[sig]),
+				Content: fmt.Sprintf(guardStopPrefix+"you have already called '%s' with these exact arguments %d times this turn and it failed the same way each time. Calling it again will NOT change the result. Do something different: try another approach or different arguments, or tell the user plainly that this isn't working and what you tried. Do not repeat this call.", tc.Name, lr.repeatFail[sig]),
 				IsError: true,
 			}
 			lr.rs.toolErrors++
@@ -3281,7 +3281,7 @@ func (lr *loopRun) toolRoundPlanCalls() loopAction {
 			lr.rs.guardBlockedThisRound = true
 			lr.rs.results[i] = ToolResult{
 				ID:      tc.ID,
-				Content: fmt.Sprintf("STOP: you have already called '%s' with these exact arguments %d times this turn and it returned the SAME result every time. It is giving you no new information and making no progress. Do NOT call it again. Answer the user with what you already have, use a DIFFERENT tool, or tell them plainly you cannot get what they asked for.", tc.Name, lr.repeatSame[sig]),
+				Content: fmt.Sprintf(guardStopPrefix+"you have already called '%s' with these exact arguments %d times this turn and it returned the SAME result every time. It is giving you no new information and making no progress. Do NOT call it again. Answer the user with what you already have, use a DIFFERENT tool, or tell them plainly you cannot get what they asked for.", tc.Name, lr.repeatSame[sig]),
 				IsError: true,
 			}
 			lr.rs.toolErrors++
