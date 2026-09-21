@@ -571,6 +571,7 @@ func (T *OrchestrateApp) Routes() {
 	T.HandleFunc("/api/agents/propose", T.handleAgentPropose)
 	// Per-user Default agent preference (surfaced on /account via the
 	// account-section registry — account_prefs.go).
+	T.HandleFunc("/api/ask-owner", T.handleAskOwner)
 	T.HandleFunc("/api/default-agent", T.handleDefaultAgentPref)
 	// Per-session diagnostics trail (session_diag.go) — the ⚠ affordance.
 	T.HandleFunc("/api/session-diag", T.handleSessionDiag)

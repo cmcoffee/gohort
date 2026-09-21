@@ -97,6 +97,52 @@ func TestTheToolIsOfferedOnlyOnSomebodyElsesAgent(t *testing.T) {
 	}
 }
 
+// The button follows the same rule as the tool, from the other side: the
+// toolbar is built once and the agent is picked afterwards, so the entry is
+// dropped for a user whose every reachable agent is their own — for whom its
+// only possible answer would be "this agent is yours".
+func TestTheButtonIsHiddenWhenEverythingIsYours(t *testing.T) {
+	mine := []AgentRecord{
+		{ID: "a1", Owner: "alice"},
+		{ID: "seed-builder", Owner: ""},
+	}
+	if hasSomeoneElsesAgent(mine, "alice") {
+		t.Error("nothing here belongs to anybody else; the entry must be dropped")
+	}
+	shared := append(append([]AgentRecord{}, mine...), AgentRecord{ID: "b1", Owner: "bob"})
+	if !hasSomeoneElsesAgent(shared, "alice") {
+		t.Error("bob's agent is reachable, so there is somebody to ask")
+	}
+	// A seed belongs to the framework. There is no person behind it, so it is
+	// not somebody else's agent however its owner field happens to be filled.
+	if hasSomeoneElsesAgent([]AgentRecord{{ID: "seed-research", Owner: "system"}}, "alice") {
+		t.Error("a framework seed must not make the entry appear")
+	}
+	if hasSomeoneElsesAgent(shared, "") {
+		t.Error("an anonymous caller has nobody to ask")
+	}
+}
+
+// Both doors go through askOwnerFor, so the cap, the wording and the fold
+// cannot come apart between the tool and the button.
+func TestTheButtonSharesTheToolsRule(t *testing.T) {
+	src := packageSource(t)
+	i := strings.Index(src, "func (T *OrchestrateApp) handleAskOwner")
+	if i < 0 {
+		t.Fatal("the button has no endpoint")
+	}
+	body := src[i:]
+	if j := strings.Index(body[10:], "\nfunc "); j >= 0 {
+		body = body[:j+10]
+	}
+	if !strings.Contains(body, "askOwnerFor(") {
+		t.Error("the endpoint records the request itself instead of going through askOwnerFor")
+	}
+	if !strings.Contains(body, "findAgentByNameOrID(") {
+		t.Error("the endpoint takes the agent on trust; it must resolve it the way a run does")
+	}
+}
+
 func max(a, b int) int {
 	if a > b {
 		return a

@@ -20,7 +20,9 @@ package orchestrate
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -137,4 +139,73 @@ func askOwnerNote(asker, owner, agentID string) {
 		}
 	}
 	orchestrateBaseDB.Set(askOwnerTable, key, append(kept, time.Now()))
+}
+
+// handleAskOwner is the button's half of the same request the tool files.
+//
+// Two doors, one function: the model reaches for the tool when it hits a wall,
+// and a user who has already decided to ask presses a button rather than
+// phrasing a sentence that makes a model choose a tool. Both land in
+// askOwnerFor, so the cap, the wording and the fold cannot come apart.
+func (T *OrchestrateApp) handleAskOwner(w http.ResponseWriter, r *http.Request) {
+	user, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("agent_id"))
+	if id == "" {
+		http.Error(w, "agent_id is required", http.StatusBadRequest)
+		return
+	}
+	// Resolved the way a run resolves it, so the button reaches exactly the
+	// agents this user may actually open — their own (where there is nobody to
+	// ask) and the ones shared with them.
+	a, found := findAgentByNameOrID(udb, user, id)
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	var body struct {
+		Request string `json:"request"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(body.Request) == "" {
+		http.Error(w, "say what you need", http.StatusBadRequest)
+		return
+	}
+	out, err := askOwnerFor(user, a.Owner, a.ID, chFirst(a.Name, a.ID), body.Request)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]string{"result": out})
+}
+
+// hasSomeoneElsesAgent reports whether this user's picker can land on an agent
+// they do not own.
+//
+// The toolbar is built once and the agent is chosen client-side, so the entry
+// cannot appear and disappear per selection. A user with nothing shared to them
+// would otherwise carry a permanent button whose only possible answer is "this
+// agent is yours" — so it is dropped for them entirely, and the endpoint still
+// refuses on its own for anybody who reaches it another way.
+func hasSomeoneElsesAgent(agents []AgentRecord, user string) bool {
+	user = strings.TrimSpace(user)
+	if user == "" {
+		return false
+	}
+	for _, a := range agents {
+		// A seed belongs to the framework: there is no person behind it.
+		if a.Owner != "" && a.Owner != user && !isSeedID(a.ID) {
+			return true
+		}
+	}
+	return false
 }

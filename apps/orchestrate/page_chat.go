@@ -180,6 +180,12 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	if !AnyReferenceSource(user) {
 		hiddenActions["orchestrate_sources_modal"] = true
 	}
+	// Nobody to ask when everything you can open is yours. See
+	// hasSomeoneElsesAgent: the toolbar is fixed at render and the agent is
+	// picked afterwards, so this is per-user rather than per-agent.
+	if !hasSomeoneElsesAgent(agents, user) {
+		hiddenActions["orchestrate_ask_owner"] = true
+	}
 
 	// The three CALLS inside the page literal, hoisted so each is timed on its
 	// own. A 340-line composite literal reads as data, and two of these reach
@@ -704,6 +710,14 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							Method: "client", URL: "orchestrate_export_session"},
 						{Group: "Session", Label: "Send to Builder", Title: "Something wrong with this agent? Say what it is, and the session goes to Builder with it so Builder fixes what you meant rather than whatever it notices first.",
 							Method: "client", URL: "orchestrate_send_to_builder"},
+						// Its sibling for an agent that is not yours to fix.
+						// Send to Builder assumes you can change the thing;
+						// this one asks the person who can. The agent offers
+						// the same by tool when it hits a wall — a button is
+						// for the user who has already decided to ask and
+						// should not have to phrase it so a model picks a tool.
+						{Group: "Session", Label: "Ask the owner", Title: "Need something this agent cannot reach — a document collection, a tool, a credential? Ask the person who owns it. It goes to their notifications; there is no reply here, so try again once they grant it.",
+							Method: "client", URL: "orchestrate_ask_owner"},
 					}),
 				},
 			},

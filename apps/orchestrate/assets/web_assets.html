@@ -2345,6 +2345,47 @@
         setTimeout(function() { a.remove(); }, 0);
       });
 
+      // Ask the owner — the same shape as Send to Builder beside it, for the
+      // agent that is not yours to fix. A tool exists for this too, and the
+      // model will offer it when it hits a wall; a button is for the user who
+      // has decided to ask and should not have to phrase a sentence that makes
+      // the model choose a tool. Both go through the same endpoint.
+      window.uiRegisterClientAction('orchestrate_ask_owner', function(ctx) {
+        var agentID = getAgentID();
+        if (!agentID) { window.uiAlert('Pick an agent first.'); return; }
+        window.uiPrompt(
+          'What do you need from the owner of this agent? Name the thing it could not reach, since they cannot see this conversation.',
+          '',
+          {multiline: true, rows: 4, ok: 'Send',
+           placeholder: 'e.g. it cannot read the Runbooks collection'}
+        ).then(function(request) {
+          if (request === null) return; // cancelled
+          if (!String(request).trim()) { window.uiAlert('Say what you need, or there is nothing to send.'); return; }
+          fetch('api/ask-owner?agent_id=' + encodeURIComponent(agentID), {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({request: request}),
+          }).then(function(r) {
+            if (!r.ok) {
+              return r.text().then(function(t) {
+                // A refusal is already a sentence to the user ("this agent is
+                // yours"), so it is shown as it stands; anything else is a
+                // failure and reads as one.
+                var msg = (t || '').trim();
+                throw new Error((r.status >= 400 && r.status < 500 && msg) ? msg : ('Could not send: ' + (msg || ('HTTP ' + r.status))));
+              });
+            }
+            return r.json();
+          }).then(function(d) {
+            // The server's own sentence, because it knows whether it sent or
+            // was capped, and a fixed "Sent" would be wrong half the time.
+            window.uiAlert((d && d.result) || 'Sent.');
+          }).catch(function(e) {
+            window.uiAlert(e.message || 'Could not send.');
+          });
+        });
+      });
+
       // Send to Builder — bundle the current session and hand it to the
       // Builder agent so it can diagnose where this agent fell short and
       // improve it. Stages the brief server-side (transcript is too big
