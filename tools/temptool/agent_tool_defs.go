@@ -352,6 +352,12 @@ func tempToolNeedsConfirm(tt *TempTool) bool {
 	if tt == nil {
 		return true
 	}
+	// The tool's own word, ahead of everything inferred below it. An owner who
+	// asked to be consulted about this tool is not overridden by the fact that
+	// its credential happens not to require it.
+	if tt.ConfirmInChat {
+		return true
+	}
 	if tt.RawNetwork {
 		return true
 	}

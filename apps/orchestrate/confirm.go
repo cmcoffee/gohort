@@ -78,6 +78,24 @@ var toolConfirms sync.Map // id -> *pendingToolConfirm
 // backed. Two shapes: api/toolbox temp tools carry the credential on
 // their record; the auto-generated per-credential tools carry it in
 // the name (call_<cred> / fetch_url_<cred>).
+// toolRecordFor finds the custom-tool record behind a call, or nil for a name
+// that is not one.
+//
+// From the SESSION's copy, which is the set that actually resolved for this
+// turn, so a name matches the definition that ran rather than a same-named
+// tool in somebody else's pool.
+func toolRecordFor(sess *ToolSession, name string) *TempTool {
+	if sess == nil {
+		return nil
+	}
+	for _, tt := range sess.CopyTempTools() {
+		if tt.Name == name {
+			return tt
+		}
+	}
+	return nil
+}
+
 func credentialForToolCall(sess *ToolSession, name string) string {
 	if sess != nil {
 		for _, tt := range sess.CopyTempTools() {
@@ -106,6 +124,20 @@ func (t *chatTurn) confirmFuncFor(sess *ToolSession) func(name, args string) boo
 		// anything the credential path would generate for the same call.
 		if spec := t.appToolConfirmation(name); spec.Asks() {
 			return t.confirmAppToolCall(name, spec, args)
+		}
+		// The TOOL's own declaration, before anything inferred from what it
+		// dispatches through. This is the path for a tool with no credential
+		// at all, which could not be confirmed by any route before: the
+		// credential toggle was the only way in, so a shell tool that deletes
+		// files had no way to ask and an api tool sharing a key with a benign
+		// one could not differ from it.
+		if tt := toolRecordFor(sess, name); tt != nil && tt.ConfirmInChat {
+			return t.escalateToolConfirm(toolConfirmRequest{
+				tool:    name,
+				prompt:  fmt.Sprintf("Allow %s?", name),
+				detail:  args,
+				because: "this tool is set to ask before every call",
+			})
 		}
 		cred := credentialForToolCall(sess, name)
 		if cred == "" {

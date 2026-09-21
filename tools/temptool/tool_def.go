@@ -88,6 +88,7 @@ func BuildToolDef() *GroupedTool {
 			"state_path":        {Type: "string", Description: "(shell, optional) Workspace subdirectory this tool may persist state in."},
 			"hook_capabilities": {Type: "array", Items: &ToolParam{Type: "string"}, Description: "(shell, optional) Extra sandbox capabilities the script needs. See action=\"help\" for the list and when each applies."},
 			"raw_network":       {Type: "boolean", Description: "(shell, advanced) Allow direct outbound network from the script instead of the gohort fetch shims. See action=\"help\" before using."},
+			"confirm_in_chat":   {Type: "boolean", Description: "Stop and ask the person watching before every call to this tool. Use for anything that changes something outside gohort and is worth a look before it happens: a post, a delete, a payment. In chat only: on a run with nobody watching the call is refused instead, since there is no one to ask."},
 			// Pipeline-mode params. Either pipeline_prompt OR pipeline_steps is required.
 			"pipeline_prompt": {Type: "string", Description: "(pipeline, ADAPTIVE) System prompt for a sub-agent that picks its own steps. Either this or pipeline_steps. See action=\"help\"."},
 			"pipeline_steps": {Type: "array", Description: "(pipeline mode, DETERMINISTIC variant) Ordered list of step objects {tool, args, name?}, executed in sequence with no inner LLM. Args undergo template substitution: {param_name} → caller arg; $N → output of step N (1-indexed); $N.field.path → JSON field path. Mutually exclusive with pipeline_prompt.",

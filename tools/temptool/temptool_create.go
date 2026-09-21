@@ -319,6 +319,12 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	if BoolArg(args, "raw_network") {
 		tool.RawNetwork = true
 	}
+	// Stop and ask the person watching before every call. Independent of the
+	// credential toggle that used to be the only route in, so a tool with no
+	// credential can ask too, and two tools sharing one key can differ.
+	if BoolArg(args, "confirm_in_chat") {
+		tool.ConfirmInChat = true
+	}
 	// Optional HookCapabilities: opens the per-dispatch UDS callback
 	// channel for the listed methods. Empty / unset = no hook, no
 	// extra env, zero surface area. Validate each entry — bare

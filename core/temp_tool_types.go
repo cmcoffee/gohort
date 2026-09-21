@@ -361,6 +361,22 @@ type TempTool struct {
 	// matters when the session would otherwise permit it.
 	RawNetwork bool `json:"raw_network,omitempty"`
 
+	// ConfirmInChat makes this tool stop and ask the person watching before
+	// every call, whatever it dispatches through.
+	//
+	// The mechanism already existed and was reachable one way only: a
+	// credential's "require confirm before each call" toggle, which is set per
+	// CREDENTIAL in the admin surface. Two tools on one key could not differ,
+	// a tool with no credential could not be confirmed at all, and the control
+	// lived nowhere near the agent whose calls it governed. This is the same
+	// escalation, declared by the tool.
+	//
+	// IN CHAT ONLY, and that is the whole of it. On a run with nobody
+	// watching there is no one to ask, so the call is refused rather than
+	// approved: an approval nobody can give is not an approval. What a tool
+	// may do unattended is a separate decision with its own controls.
+	ConfirmInChat bool `json:"confirm_in_chat,omitempty"`
+
 	// --- Pipeline-mode fields (Mode == "pipeline") ----------------------
 	// Pipeline-mode tools are mini-agents exposed as a single tool.
 	// On dispatch the framework spawns a sub-agent loop via the host

@@ -150,6 +150,9 @@ func createGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		if v, ok := args["raw_network"]; ok {
 			shellArgs["raw_network"] = v
 		}
+		if v, ok := args["confirm_in_chat"]; ok {
+			shellArgs["confirm_in_chat"] = v
+		}
 		t := &CreateTempToolTool{}
 		Debug("[tool_def] create(shell) %q: RunWithSession start", StringArg(args, "name"))
 		res, err := t.RunWithSession(shellArgs, sess)
