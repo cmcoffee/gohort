@@ -225,6 +225,12 @@ func (t *chatTurn) frameworkConversationalTools(sess *ToolSession) []AgentToolDe
 	// hand out because forwarding is opt-in, so by default it writes a
 	// notification and nothing leaves the machine.
 	out = append(out, notifyOwnerToolDef(sess, t.user, t.agent.ID, t.agent.ID))
+	// Asking the person whose agent this is for something only they can grant.
+	// Only on somebody ELSE's: on your own there is nobody to ask, and a tool
+	// offering to write to yourself is one the model will eventually use.
+	if t.ownerUser != "" && t.ownerUser != t.user {
+		out = append(out, askOwnerToolDef(sess, t.user, t.ownerUser, t.agent.ID, chFirst(t.agent.Name, t.agent.ID)))
+	}
 	for _, n := range []string{"find_tools", "send_status", "stay_silent", "keep_going", "read_output", "release_output"} {
 		if ct, ok := LookupChatTool(n); ok {
 			out = append(out, ChatToolToAgentToolDefWithSession(ct, sess))
