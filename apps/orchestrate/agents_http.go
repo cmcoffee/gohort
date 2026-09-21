@@ -593,6 +593,35 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 		writeJSON(w, agentReachOf(udb, user, agent).Items)
 		return
 	}
+	if action == "tool-policy" {
+		// What the GATE would actually do with each of this agent's tools, as
+		// opposed to what a list of names suggests. The Tools modal draws its
+		// permission ladder from this.
+		//
+		// It exists because the ladder cannot be inferred from the tool list:
+		// "could this ever stop and ask" is decided by the CREDENTIAL's own
+		// toggle, so most tools with a credential still just run. Defaulting
+		// every row to Ask told the owner their agent would stop when it would
+		// not — the same wrong answer the privilege card used to give before
+		// it moved onto this predicate.
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		udb := UserDB(T.DB, user)
+		agent, ok := loadAgent(udb, id)
+		if !ok || (agent.Owner != "" && agent.Owner != user && agent.Owner != seedOwner) {
+			http.NotFound(w, r)
+			return
+		}
+		out := map[string]string{}
+		sess := &ToolSession{Username: user, DB: udb}
+		for _, row := range privilegeToolRows(sess, agent, toolsOfScoped(AgentScopedTools(udb, user, agent.ID))) {
+			out[row.Name] = row.Policy
+		}
+		writeJSON(w, out)
+		return
+	}
 	if action == "reach/credential" {
 		// The one decision the reach report has. Everything else it lists
 		// travels with the agent, so the row states a fact; a credential is

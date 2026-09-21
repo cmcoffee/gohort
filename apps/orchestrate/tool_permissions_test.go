@@ -60,3 +60,31 @@ func TestThePageShipsTheApprovablePool(t *testing.T) {
 		t.Error("the pool is not built from the shared predicate")
 	}
 }
+
+// The endpoint answers with the GATE's own tiering, not a second opinion.
+//
+// privilegeToolRows is that answer: "consequential" there means "would stop
+// for approval on an unattended run", decided by the credential's own toggle.
+// A separate computation here would drift, and the drift shows up as a control
+// offering to grant something nothing withholds.
+func TestTheToolPolicyEndpointUsesTheGatesOwnTiering(t *testing.T) {
+	src := packageSource(t)
+	i := strings.Index(src, `if action == "tool-policy" {`)
+	if i < 0 {
+		t.Fatal("no tool-policy endpoint")
+	}
+	body := src[i:]
+	if j := strings.Index(body, `if action == "reach/credential"`); j >= 0 {
+		body = body[:j]
+	}
+	if !strings.Contains(body, "privilegeToolRows(sess, agent,") {
+		t.Error("the endpoint tiers tools itself instead of asking privilegeToolRows")
+	}
+	if !strings.Contains(body, "row.Policy") {
+		t.Error("the endpoint does not return the policy")
+	}
+	// Owner-only: it reports how the owner's own credentials are configured.
+	if !strings.Contains(body, "agent.Owner != user") {
+		t.Error("the endpoint is not owner-gated")
+	}
+}

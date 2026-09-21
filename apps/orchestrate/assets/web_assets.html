@@ -2669,7 +2669,19 @@
           });
           actionsContainer.appendChild(btn);
         }
-        fetchAgent(id).then(function(agent) {
+        Promise.all([
+          fetchAgent(id),
+          // What the gate would actually do with each tool, which cannot be
+          // inferred from the tool list: "could this ever stop and ask" is
+          // decided by the CREDENTIAL's own toggle. A failure here must not
+          // take the modal down: an empty map degrades to "we do not know",
+          // which the ladder reads as askable, and that is the cautious end.
+          fetch('api/agents/' + encodeURIComponent(id) + '/tool-policy')
+            .then(function(r) { return r.ok ? r.json() : {}; })
+            .catch(function() { return {}; })
+        ]).then(function(loaded) {
+          var agent = loaded[0];
+          var toolPolicy = loaded[1] || {};
           var catalog = window.ORCH_TOOL_CATALOG || [];
           // Builder's catalog is fixed by the framework (builderAuthoringTools
           // / builderAuthoringTools) — the allowed_tools checklist has no
@@ -2705,26 +2717,56 @@
           (agent.tools || []).forEach(function(t) {
             if (t && t.name) { approvable[t.name] = true; }
           });
-          var permState = {};
-          (agent.auto_approve_tools || []).forEach(function(n) { permState[n] = 'always'; });
-          (agent.no_unattended_tools || []).forEach(function(n) { permState[n] = 'attended'; });
-          var permOrder = ['ask', 'always', 'attended'];
-          var permLabel = {ask: 'Ask', always: 'Always', attended: 'Attended only'};
+          var preApproved = {}, heldBack = {};
+          (agent.auto_approve_tools || []).forEach(function(n) { preApproved[n] = true; });
+          (agent.no_unattended_tools || []).forEach(function(n) { heldBack[n] = true; });
+          var permLabel = {
+            runs: 'Runs', ask: 'Ask', always: 'Always', attended: 'Attended only'
+          };
           var permTitle = {
+            runs: 'Nothing withholds this one: it runs on an unattended fire as it does in chat. Its credential is not configured to ask, so there is no approval to grant.',
             ask: 'Stops on a run with nobody watching and waits in the Permissions pane for you to approve it.',
             always: 'Runs on a scheduled or standing fire without asking. Sub-agents inherit it.',
             attended: 'Refused outright on an unattended run, and NOT queued: this is your decision, not a request for one. Inherits downward, so a sub-agent cannot do what its parent was told not to.'
           };
-          // Returns the control for one row, or null where there is nothing to
-          // decide: a read-only tool never prompts, so every state means the
-          // same thing for it.
+          // Which states a row may be in, read from what the GATE would do
+          // with it rather than assumed.
+          //
+          // "auto" means nothing is holding the tool back: its credential is
+          // not configured to ask, so it runs on an unattended fire exactly as
+          // it does in chat. Ask and Always then describe the same behaviour,
+          // and offering them invites somebody to grant something the runtime
+          // never withholds — which is the wrong answer the privilege card
+          // used to give before it moved onto this predicate. Only the one
+          // direction that WOULD change it is offered beside it.
+          function permStatesFor(name) {
+            if ((toolPolicy[name] || '') === 'auto') { return ['runs', 'attended']; }
+            return ['ask', 'always', 'attended'];
+          }
+          // Where a row starts: storage first, the gate otherwise. A tool that
+          // was allowed when it was added shows what it DOES, not the default
+          // of a control that did not exist when it was set up.
+          function permStateFor(name) {
+            if (heldBack[name]) { return 'attended'; }
+            var states = permStatesFor(name);
+            if (preApproved[name] && states.indexOf('always') >= 0) { return 'always'; }
+            return states[0];
+          }
+          var permState = {};
+          // The rows that actually offered a choice. The save rewrites only
+          // these, so a stored entry this modal never asked about is left
+          // exactly as it was rather than quietly dropped.
+          var permOffered = {};
           function toolPermControl(name, cb) {
             if (!approvable[name]) { return null; }
+            permOffered[name] = true;
+            var permOrder = permStatesFor(name);
+            if (!(name in permState)) { permState[name] = permStateFor(name); }
             var wrap = document.createElement('div');
             wrap.className = 'ui-orch-tool-perm';
             var segs = {};
             function paint() {
-              var cur = permState[name] || 'ask';
+              var cur = permState[name] || permOrder[0];
               permOrder.forEach(function(k) {
                 segs[k].className = 'ui-orch-perm-seg' + (k === cur ? ' active' : '');
               });
@@ -3321,9 +3363,15 @@
               var granted = {};
               checkboxes.forEach(function(c) { if (c.checked) granted[c.value] = true; });
               scopedCbs.forEach(function(c) { if (c.checked) granted[c.value] = true; });
-              var always = [], attended = [];
-              Object.keys(permState).forEach(function(n) {
-                if (!granted[n] || !approvable[n]) { return; }
+              // Start from what is stored, minus only the rows this modal
+              // actually offered a choice on. Anything else — a tool whose
+              // ladder was not shown, an entry from a surface this modal does
+              // not cover — survives untouched instead of being cleared by a
+              // save that never asked about it.
+              var always = (agent.auto_approve_tools || []).filter(function(n) { return !permOffered[n]; });
+              var attended = (agent.no_unattended_tools || []).filter(function(n) { return !permOffered[n]; });
+              Object.keys(permOffered).forEach(function(n) {
+                if (!granted[n]) { return; }
                 if (permState[n] === 'always') { always.push(n); }
                 else if (permState[n] === 'attended') { attended.push(n); }
               });

@@ -15,7 +15,7 @@ import (
 func TestTheLadderHasThreeStatesAndSavesToBothLists(t *testing.T) {
 	src := orchestrateWebAssets
 	for _, want := range []string{
-		"var permOrder = ['ask', 'always', 'attended'];",
+		"return ['ask', 'always', 'attended'];",
 		"agent.auto_approve_tools = always;",
 		"agent.no_unattended_tools = attended;",
 	} {
@@ -38,7 +38,8 @@ func TestTheLadderHasThreeStatesAndSavesToBothLists(t *testing.T) {
 // A permission on a tool the agent cannot call is a grant nobody made, and it
 // would come back the moment the tool was ticked again.
 func TestOnlyGrantedToolsKeepAPermission(t *testing.T) {
-	if !strings.Contains(orchestrateWebAssets, "if (!granted[n] || !approvable[n]) { return; }") {
+	if !strings.Contains(orchestrateWebAssets, "Object.keys(permOffered).forEach(function(n) {") ||
+		!strings.Contains(orchestrateWebAssets, "if (!granted[n]) { return; }") {
 		t.Error("the save writes permissions for tools the agent does not have")
 	}
 }
@@ -79,15 +80,52 @@ func TestStoredGrantsSurviveTheRoundTrip(t *testing.T) {
 	src := orchestrateWebAssets
 	// Seeded from both stored lists...
 	for _, want := range []string{
-		"(agent.auto_approve_tools || []).forEach(function(n) { permState[n] = 'always'; });",
-		"(agent.no_unattended_tools || []).forEach(function(n) { permState[n] = 'attended'; });",
+		"(agent.auto_approve_tools || []).forEach(function(n) { preApproved[n] = true; });",
+		"(agent.no_unattended_tools || []).forEach(function(n) { heldBack[n] = true; });",
+		"if (heldBack[name]) { return 'attended'; }",
+		"if (preApproved[name] && states.indexOf('always') >= 0) { return 'always'; }",
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("not seeded from storage: %s", want)
 		}
 	}
-	// ...and written back from the same map.
-	if !strings.Contains(src, "Object.keys(permState).forEach(") {
+	// ...and written back from the rows that actually offered a choice.
+	if !strings.Contains(src, "Object.keys(permOffered).forEach(") {
 		t.Error("the save does not write back the state it read")
+	}
+	// A stored entry the modal never asked about survives the save. Without
+	// this, opening the modal and pressing Save revoked whatever it had not
+	// drawn a control for.
+	for _, want := range []string{
+		"(agent.auto_approve_tools || []).filter(function(n) { return !permOffered[n]; })",
+		"(agent.no_unattended_tools || []).filter(function(n) { return !permOffered[n]; })",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("the save clears what it never asked about: %s", want)
+		}
+	}
+}
+
+// A tool the gate would NOT stop shows what it does, and is not offered an
+// approval that grants nothing.
+//
+// This is the mistake the privilege card already made once and fixed: it
+// tiered on temptool.NeedsConfirm, so a tool that simply runs rendered "ask",
+// inviting the owner to grant something the runtime never withholds. The
+// ladder repeated it by defaulting every row to Ask, which is why an agent
+// whose tools were allowed when they were added read as though every one of
+// them would stop.
+func TestAToolNothingWithholdsIsNotOfferedAnApproval(t *testing.T) {
+	src := orchestrateWebAssets
+	if !strings.Contains(src, "if ((toolPolicy[name] || '') === 'auto') { return ['runs', 'attended']; }") {
+		t.Error("the ladder does not read the gate's own answer; every row defaults to Ask")
+	}
+	// It still offers the one direction that WOULD change such a tool.
+	if !strings.Contains(src, "runs: 'Runs'") {
+		t.Error("a freely-running tool has no state of its own to show")
+	}
+	// And the policy is fetched rather than guessed.
+	if !strings.Contains(src, "'/tool-policy'") {
+		t.Error("the modal never asks what the gate would do")
 	}
 }
