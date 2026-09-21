@@ -19,21 +19,26 @@ package orchestrate
 // the alert had to be redacted — this record stays on the box, so it can carry
 // the warden's reason and the hook in full.
 //
-// With one addition, for the one case the log alone cannot cover: a block on
-// SOMEBODY ELSE'S run of a shared agent. The owner is not in that conversation
-// and has no reason to open this log, and the person who was stopped cannot
-// change the rule — so the block lands where neither of them is looking and the
-// recipient quietly concludes the agent is broken. That one files a notice as
-// well, folded per (agent, runner) so a rule tripping eleven times is one row
-// with a count. Still not an interruption: it is a row on the surface the owner
-// already checks, not an alert on their phone.
+// That held for a block on somebody ELSE'S run too, after one pass in the other
+// direction. A folded notice went to the owner for those, on the argument that
+// neither party was looking at this log. Two things undid it. The fold collapses
+// the ROW but not the attention — notices.Record deliberately returns a repeat
+// unread — so a shared agent with a rule that fires routinely gave its owner a
+// bell that never stayed cleared, which is how a surface becomes one they stop
+// reading. And the recipient is no longer silent: they have a standing line
+// saying whose agent this is and a button to ask for what they need, so the
+// thing worth interrupting for is a person deciding it matters, not a rule
+// doing its job.
+//
+// A volume signal is still worth having — the same person stopped five times in
+// a day is a share that is mis-scoped rather than a rule working — but that is
+// one notice per PROBLEM, and it is not built yet. Nothing is sent today.
 
 import (
 	"strings"
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/notices"
 )
 
 // guardrailLogTable holds one capped list per agent.
@@ -101,7 +106,6 @@ func (t *chatTurn) recordGuardrailBlock(rule, hook, reason string) {
 		RanBy:   t.ranBy(),
 	}
 	appendGuardrailBlock(db, t.agent.ID, entry)
-	t.tellOwnerAboutABlock(entry)
 }
 
 // ranBy names the account driving this turn when it is not the owner's own.
@@ -123,62 +127,6 @@ func (t *chatTurn) ranBy() string {
 		return ""
 	}
 	return user
-}
-
-// tellOwnerAboutABlock files the notice described in this file's header, for a
-// block on somebody else's run and nothing else.
-//
-// The owner gets the particulars — which rule, at which hook, what the warden
-// objected to — because the rule is theirs. The person who was stopped gets
-// none of it: they are told the agent could not do the thing, which is the fact
-// they need, and not the rule that stopped them, which is the map of the fence.
-func (t *chatTurn) tellOwnerAboutABlock(b GuardrailBlock) {
-	if t == nil || b.RanBy == "" || RootDB == nil {
-		return
-	}
-	owner := strings.TrimSpace(t.ownerUser)
-	if owner == "" {
-		return
-	}
-	name := chFirst(t.agent.Name, t.agent.ID)
-	// The title is the fold key (owner, agent, kind, title), so it names the
-	// two things that make one situation and leaves the particulars to the
-	// body, which the newest occurrence overwrites.
-	// Reads right at one and at eleven, because the row carries a count beside
-	// it: "was stopped" with a 11 says what happened, where "keeps hitting"
-	// would be a sentence that is wrong the first time it appears.
-	title := b.RanBy + " was stopped by your rules on \"" + name + "\""
-	if b.Hook == GuardHookToolResult {
-		// A detection is not a rule doing its job; it is something that
-		// arrived. Different sentence, and a different fold, so the two never
-		// collapse into one row.
-		title = "Something on " + b.RanBy + "'s run of \"" + name + "\" carried hidden instructions"
-	}
-	var body strings.Builder
-	if b.Tool != "" {
-		body.WriteString("Found in what " + b.Tool + " returned.\n")
-	}
-	body.WriteString("Rule: " + chFirst(b.Rule, "(not recorded)") + "\n")
-	if b.Hook != "" {
-		body.WriteString("Stopped at: " + b.Hook + "\n")
-	}
-	if b.Reason != "" {
-		body.WriteString("Why: " + b.Reason + "\n")
-	}
-	body.WriteString("\n" + b.RanBy + " is using your agent \"" + name +
-		"\", which they cannot change. They were told it could not do the thing, " +
-		"not which rule stopped them. If this is the rule working, there is nothing to do; " +
-		"if it is catching work you meant them to be able to do, the rule is yours to narrow.")
-	notices.Record(RootDB, notices.Notice{
-		Owner: owner,
-		Agent: t.agent.ID,
-		// Stopped, not Blocked: nothing is queued waiting on the owner. The
-		// rule did what it was written to do, and the only open question is
-		// whether they still want it doing it.
-		Kind:  notices.KindStopped,
-		Title: title,
-		Body:  body.String(),
-	})
 }
 
 // appendGuardrailBlock adds one entry, trimming to the retention cap.
