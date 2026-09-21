@@ -2084,7 +2084,7 @@
 
     // Large-paste marker: when the user pastes more than ~500 chars
     // (a code block, log dump, doc excerpt), insert a compact marker
-    // like "[Pasted text #2 — 47 lines / 1834 chars]" at the cursor
+    // like "[Pasted text #2 · 47 lines / 1834 chars]" at the cursor
     // instead of jamming the textarea with the entire block. The full
     // content lives in pasteMap keyed by the marker's N; sendMessage
     // substitutes it back in just before submit, so the LLM gets the
@@ -2106,6 +2106,19 @@
       pasteMap[n] = text;
       return '[Pasted text #' + n + ' · ' + text.split('\n').length + ' lines / ' + text.length + ' chars]';
     }
+    // What sendMessage matches to expand a marker back.
+    //
+    // It depends on the STABLE parts only — the opening, the number, the
+    // closing bracket — and skips whatever the middle says. It used to spell
+    // the middle out, separator and units and all, and when the separator
+    // changed from an em dash to a middle dot the pattern stopped matching:
+    // every paste then delivered the PLACEHOLDER to the model instead of the
+    // text, silently, because a marker with no stored entry is deliberately
+    // left as literal text.
+    //
+    // The comment above makePasteMarker already said the format must live in
+    // one place. It did; the reader of it was a second copy in a regex.
+    var pasteMarkerRE = /\[Pasted text #(\d+)[^\]]*\]/g;
     inputArea.addEventListener('paste', function(ev) {
       var clip = ev.clipboardData || window.clipboardData;
       if (!clip) return;
@@ -4616,7 +4629,7 @@
     function sendMessage() {
       var text = inputArea.value.trim();
       if (!text && !pendingAttachments.length) return;
-      // Paste-marker substitution: expand any "[Pasted text #N — X
+      // Paste-marker substitution: expand any "[Pasted text #N · X
       // lines / Y chars]" markers back to their full content before
       // the send. The marker UX keeps the textarea readable while
       // composing (paste of a 200-line block doesn't fill the screen),
@@ -4627,7 +4640,7 @@
       // pasteMap) are left as literal text. After substitution we
       // clear the map so a follow-up paste starts fresh.
       if (text.indexOf('[Pasted text #') !== -1) {
-        text = text.replace(/\[Pasted text #(\d+) — \d+ lines \/ \d+ chars\]/g,
+        text = text.replace(pasteMarkerRE,
           function(match, n) {
             var content = pasteMap[parseInt(n, 10)];
             return content == null ? match : content;
