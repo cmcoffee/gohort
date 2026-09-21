@@ -120,6 +120,11 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 		Policy     string `json:"_policy,omitempty"`     // allow | ask | block (the segmented state)
 		OneShot    bool   `json:"_oneshot,omitempty"`    // one-time decision (Approve/Deny only) — no "Always" grant makes sense (e.g. activating a drafted sub-agent, which the approval consumes)
 		Suggested  bool   `json:"_suggestion,omitempty"` // an OFFER, not a request: nothing is blocked on it (see approvalIsSuggestion)
+		// NoAsk hides the "Needs approval" segment on a row that cannot hold
+		// it. A sandbox does not queue: its network namespace is cut at spawn
+		// or it is not, and a switched-off sub-action is gone from the schema
+		// rather than waiting on anybody.
+		NoAsk bool `json:"_noask,omitempty"`
 	}
 	out := []permRow{}
 	// Zone 1 — live pending requests (a decision is blocked on the user), then
@@ -257,6 +262,38 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 				Detail:  "Never unattended: " + tool,
 				ID:      "autotool:" + ag.ID + ":" + tool,
 				Managed: true, Policy: PolicyBlock,
+			})
+		}
+		// The WORKSPACE decisions, which are about the sandbox rather than a
+		// tool and so had nowhere on this page to be seen or taken back. They
+		// were set in the editor and reviewable nowhere.
+		//
+		// Listed on the same rule as the mark above: a row appears while the
+		// decision is load-bearing, and these always are. No row when nothing
+		// is narrowed, which keeps a page listing every agent from growing
+		// inert rows for the agents that narrowed nothing.
+		//
+		// NoAsk, because "Needs approval" is not a state either can hold.
+		// Nothing queues a sandbox: the namespace is cut at spawn or it is
+		// not. Offering the segment would be offering something that cannot be
+		// stored, which is what its own doc warns against.
+		if ag.WorkspaceNoNetwork {
+			out = append(out, permRow{
+				Who:     agentName[ag.ID],
+				Detail:  "Workspace may not reach the network",
+				ID:      "workspace:" + ag.ID + ":network",
+				Managed: true, Policy: PolicyBlock, NoAsk: true,
+			})
+		}
+		for _, pair := range ag.DisabledToolActions {
+			if pair = strings.TrimSpace(pair); pair == "" {
+				continue
+			}
+			out = append(out, permRow{
+				Who:     agentName[ag.ID],
+				Detail:  "Switched off: " + strings.Replace(pair, "/", " · ", 1),
+				ID:      "subaction:" + ag.ID + ":" + pair,
+				Managed: true, Policy: PolicyBlock, NoAsk: true,
 			})
 		}
 	}
@@ -468,6 +505,41 @@ func (T *OrchestrateApp) handleConsolePermissionPolicy(w http.ResponseWriter, r 
 		// leads and the subject follows, so neither has to be escaped.
 		if aid, handle, ok := strings.Cut(target, ":"); ok && handle != "" {
 			SetContactPolicy(RootDB, user, aid, handle, value)
+		}
+	case "workspace":
+		// The sandbox's own reach. Two states only, and "allow" CLEARS the
+		// mark rather than storing one: the absence is the permission.
+		if aid, what, ok := strings.Cut(target, ":"); ok && what == "network" {
+			udb := UserDB(T.DB, user)
+			if rec, found := loadAgent(udb, aid); found && rec.Owner == user {
+				rec.WorkspaceNoNetwork = value == PolicyBlock
+				if _, err := saveAgent(udb, rec); err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+			}
+		}
+	case "subaction":
+		// tool/action carries its own slash, so the agent leads and the pair
+		// follows and neither has to be escaped.
+		if aid, pair, ok := strings.Cut(target, ":"); ok && pair != "" {
+			udb := UserDB(T.DB, user)
+			if rec, found := loadAgent(udb, aid); found && rec.Owner == user {
+				kept := []string{}
+				for _, p := range rec.DisabledToolActions {
+					if strings.TrimSpace(p) != pair {
+						kept = append(kept, p)
+					}
+				}
+				if value == PolicyBlock {
+					kept = append(kept, pair)
+				}
+				rec.DisabledToolActions = kept
+				if _, err := saveAgent(udb, rec); err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+			}
 		}
 	case "autotool":
 		// Records the decision and makes the grant match it. "ask" keeps a

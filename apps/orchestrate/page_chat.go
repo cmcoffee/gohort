@@ -439,7 +439,11 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							StateField: "_policy",
 							StateOptions: []ui.OrchestratorStateOption{
 								{Label: "Always allow", Value: "allow", URL: "api/console/permissions/policy"},
-								{Label: "Needs approval", Value: "ask", URL: "api/console/permissions/policy"},
+								// Hidden on a row that cannot hold it. A sandbox does
+								// not queue: its network namespace is cut at spawn or
+								// it is not, and a switched-off sub-action is gone
+								// from the schema rather than waiting on anybody.
+								{Label: "Needs approval", Value: "ask", URL: "api/console/permissions/policy", HideIf: "_noask"},
 								// On a tool row this now means something the runtime
 								// enforces: refused on any run with nobody watching,
 								// and not queued, because the owner is not being
