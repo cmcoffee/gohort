@@ -16,6 +16,7 @@ func briefWithReason(reason string) string {
 			{Role: "user", Content: "no, you should look it up"},
 		}},
 		reason,
+		true, // the owner: Builder cannot diagnose from the calls alone
 	)
 }
 

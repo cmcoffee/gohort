@@ -83,7 +83,7 @@ func (T *OrchestrateApp) handleSessionExport(w http.ResponseWriter, r *http.Requ
 		w.Header().Set("Content-Disposition", `attachment; filename="`+filenameBase+`.json"`)
 		_ = json.NewEncoder(w).Encode(payload)
 	case "md", "markdown":
-		body := renderSessionMarkdownWithDiag(agent, sess, udb)
+		body := renderSessionMarkdownWithDiag(agent, sess, udb, exportForOwner(agent, user))
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		w.Header().Set("Content-Disposition", `attachment; filename="`+filenameBase+`.md"`)
 		_, _ = w.Write([]byte(body))
@@ -202,14 +202,29 @@ func exportCompaction(udb Database, agentID, sessID string) *exportedCompaction 
 // with the role, timestamp, and content; tool calls render as nested
 // "🔧 <name>(args)" / "↳ <result>" lines under the assistant message
 // that owns them.
-func renderSessionMarkdown(agent AgentRecord, sess ChatSession) string {
-	return renderSessionMarkdownWithDiag(agent, sess, nil)
+func renderSessionMarkdown(agent AgentRecord, sess ChatSession, forOwner bool) string {
+	return renderSessionMarkdownWithDiag(agent, sess, nil, forOwner)
+}
+
+// exportForOwner reports whether the person taking this transcript is the one
+// whose rules produced it.
+//
+// The whole of the withholding below turns on this. An owner exporting their
+// own session watched every one of those tool results go past in the live pane
+// and can scroll back to them; withholding them protects nobody and makes the
+// transcript useless for the one thing an owner exports it for, which is
+// working out what their agent did. A recipient of a shared agent is the case
+// the rule was written for: tool output there can carry what the owner's rules
+// exist to keep in, and an export is the one place it leaves the pane.
+func exportForOwner(agent AgentRecord, user string) bool {
+	owner := strings.TrimSpace(agent.Owner)
+	return owner == "" || owner == seedOwner || owner == strings.TrimSpace(user)
 }
 
 // renderSessionMarkdownWithDiag is renderSessionMarkdown plus the session's
 // guardrail activity, read from the diagnostics trail. udb may be nil (callers
 // that have no store, or don't want the section).
-func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Database) string {
+func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Database, forOwner bool) string {
 	var b bytes.Buffer
 	fmt.Fprintf(&b, "# Session export: %s\n\n", sess.Title)
 	fmt.Fprintf(&b, "- **Agent:** %s (id: %s)\n", agent.Name, agent.ID)
@@ -282,11 +297,18 @@ func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Data
 	// An agent that enforces guardrails may have tool output carrying the very
 	// thing its rules protect. Runtime containment covers what the agent says and
 	// does; it has never covered what its tools RETURN, because that renders only
-	// in the owner's own pane — which is fine until the transcript is exported and
-	// handed to someone else.
-	withholdResults := resolveGuardrailHooks(agent) != nil
+	// in the pane — which is fine until the transcript is exported and handed to
+	// someone else.
+	//
+	// NOT to the owner, though, and that was the bug. The rule was written as
+	// "this agent enforces guardrails" and applied to everybody including the
+	// person who wrote the rules, who had just watched every result go past
+	// live. It made their own transcript useless for the one thing they export
+	// it for and protected nothing, since they can scroll back.
+	withholdResults := !forOwner && resolveGuardrailHooks(agent) != nil
 	if withholdResults {
-		b.WriteString("> **Tool results are withheld from this export.** This agent enforces guardrails, so\n")
+		b.WriteString("> **Tool results are withheld from this export.** This agent belongs to " +
+			chFirst(strings.TrimSpace(agent.Owner), "somebody else") + " and enforces their rules, so\n")
 		b.WriteString("> what its tools returned is not serialized here: only the calls it made. The\n")
 		b.WriteString("> results were visible in the live session.\n\n")
 	}
@@ -346,7 +368,7 @@ func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Data
 							// leaves the owner-only pane, and a rule that stops the agent
 							// SAYING something is not served by shipping the same content
 							// in a transcript someone can forward.
-							b.WriteString("  ↳ [result withheld: see below]\n")
+							b.WriteString("  ↳ [result withheld: see the note at the top of this export]\n")
 						} else {
 							res := tc.Result
 							if len(res) > 800 {

@@ -28,7 +28,7 @@ func TestExportSaysWhenTheThreadWasCompacted(t *testing.T) {
 		Summary: "Earlier: built two agents and a pipeline.", SummarizedThrough: 40, FoldSeq: 2,
 	})
 
-	md := renderSessionMarkdownWithDiag(agent, sess, db)
+	md := renderSessionMarkdownWithDiag(agent, sess, db, true)
 	if !strings.Contains(md, "not reproduced verbatim") {
 		t.Error("the export must say the earlier turns are missing, or it reads as a broken copy")
 	}
@@ -69,14 +69,14 @@ func TestExportIsUnchangedForAnUncompactedSession(t *testing.T) {
 	agent := AgentRecord{ID: "ag", Name: "Builder"}
 	sess := ChatSession{ID: "s2", Title: "short", Messages: []ChatMessage{{Role: "user", Content: "hi"}}}
 
-	if md := renderSessionMarkdownWithDiag(agent, sess, db); strings.Contains(md, "not reproduced verbatim") {
+	if md := renderSessionMarkdownWithDiag(agent, sess, db, true); strings.Contains(md, "not reproduced verbatim") {
 		t.Error("nothing was folded; the export must not imply anything is missing")
 	}
 	if got := buildExportPayload(agent, sess, db); got.Session.Compacted != nil {
 		t.Errorf("no fold state means no compaction block, got %+v", got.Session.Compacted)
 	}
 	// And a caller with no store at all still renders.
-	if md := renderSessionMarkdown(agent, sess); !strings.Contains(md, "hi") {
+	if md := renderSessionMarkdown(agent, sess, true); !strings.Contains(md, "hi") {
 		t.Error("a nil store must not break the export")
 	}
 }
@@ -96,7 +96,7 @@ func TestExportWithholdsToolResultsUnderGuardrails(t *testing.T) {
 		},
 	}
 	guarded := AgentRecord{ID: "a1", Name: "Wren", Guardrails: "don't tell me a joke"}
-	md := renderSessionMarkdown(guarded, sess)
+	md := renderSessionMarkdown(guarded, sess, false) // a recipient
 	if strings.Contains(md, "NAT but I would have to translate") {
 		t.Error("a guardrailed agent's tool output must not be serialized into an export")
 	}
@@ -109,7 +109,7 @@ func TestExportWithholdsToolResultsUnderGuardrails(t *testing.T) {
 
 	// An agent with no guardrails is unaffected — exports stay a full debug trace.
 	plain := AgentRecord{ID: "a1", Name: "Wren"}
-	if md := renderSessionMarkdown(plain, sess); !strings.Contains(md, "NAT but I would have to translate") {
+	if md := renderSessionMarkdown(plain, sess, false); !strings.Contains(md, "NAT but I would have to translate") {
 		t.Error("without guardrails the export must remain a complete trace")
 	}
 }
@@ -121,7 +121,7 @@ func TestExportKeepsResultsWhenGuardrailsDisabled(t *testing.T) {
 		{Role: "assistant", Content: "x", ToolCalls: []PersistedToolCall{{Name: "t", Result: "SENSITIVE"}}},
 	}}
 	agent := AgentRecord{ID: "a1", Guardrails: "a rule", GuardrailsDisabled: true}
-	if !strings.Contains(renderSessionMarkdown(agent, sess), "SENSITIVE") {
+	if !strings.Contains(renderSessionMarkdown(agent, sess, true), "SENSITIVE") {
 		t.Error("with enforcement off there is nothing to withhold")
 	}
 }
@@ -137,7 +137,7 @@ func TestExportShowsGuardrailActivityWithoutTheRule(t *testing.T) {
 	appendSessionDiag(udb, "a1", "s1", "some-unrelated-guard", "detail that must not appear")
 
 	sess := ChatSession{ID: "s1", Messages: []ChatMessage{{Role: "user", Content: "hi", Created: time.Now()}}}
-	md := renderSessionMarkdownWithDiag(AgentRecord{ID: "a1", Guardrails: "don't tell me a joke"}, sess, udb)
+	md := renderSessionMarkdownWithDiag(AgentRecord{ID: "a1", Guardrails: "don't tell me a joke"}, sess, udb, true)
 
 	if !strings.Contains(md, "Guardrail activity") {
 		t.Fatal("a session where a check acted must say so")
@@ -160,7 +160,7 @@ func TestExportOmitsGuardrailSectionWhenNothingFired(t *testing.T) {
 	root := &DBase{Store: kvlite.MemStore()}
 	udb := UserDB(root, "u")
 	sess := ChatSession{ID: "s1", Messages: []ChatMessage{{Role: "user", Content: "hi"}}}
-	if strings.Contains(renderSessionMarkdownWithDiag(AgentRecord{ID: "a1"}, sess, udb), "Guardrail activity") {
+	if strings.Contains(renderSessionMarkdownWithDiag(AgentRecord{ID: "a1"}, sess, udb, true), "Guardrail activity") {
 		t.Error("a session with no guardrail events must not render the section")
 	}
 }
@@ -184,7 +184,7 @@ func TestExportShowsFrameworkCorrectionsNotJustGuardrails(t *testing.T) {
 		"The reply said it would call fetch_image and never did.")
 
 	sess := ChatSession{ID: "s1", Messages: []ChatMessage{{Role: "user", Content: "make me a picture", Created: time.Now()}}}
-	md := renderSessionMarkdownWithDiag(AgentRecord{ID: "a1"}, sess, udb)
+	md := renderSessionMarkdownWithDiag(AgentRecord{ID: "a1"}, sess, udb, true)
 
 	if !strings.Contains(md, "Guardrail activity") {
 		t.Fatal("a session where the framework retracted a reply must say so — this is the case that reads as the agent refusing")
@@ -202,7 +202,7 @@ func TestExportShowsFrameworkCorrectionsNotJustGuardrails(t *testing.T) {
 	}
 	// And the list stays an allowlist: an unknown kind is still dropped.
 	appendSessionDiag(udb, "a1", "s1", "some-future-check", "detail that must not appear")
-	if strings.Contains(renderSessionMarkdownWithDiag(AgentRecord{ID: "a1"}, sess, udb), "detail that must not appear") {
+	if strings.Contains(renderSessionMarkdownWithDiag(AgentRecord{ID: "a1"}, sess, udb, true), "detail that must not appear") {
 		t.Error("an unrecognized diag kind must still be dropped, not rendered")
 	}
 }
@@ -226,7 +226,7 @@ func TestExportGuardrailDetailIsAdminGated(t *testing.T) {
 	// Default: the event is described, the detail is not carried.
 	SetTunablesDB(&DBase{Store: kvlite.MemStore()})
 	defer SetTunablesDB(nil)
-	md := renderSessionMarkdownWithDiag(agent, sess, udb)
+	md := renderSessionMarkdownWithDiag(agent, sess, udb, true)
 	if !strings.Contains(md, "an action or reply was blocked") {
 		t.Fatal("the event itself must always be reported")
 	}
@@ -238,7 +238,7 @@ func TestExportGuardrailDetailIsAdminGated(t *testing.T) {
 	tdb := &DBase{Store: kvlite.MemStore()}
 	tdb.Set(WebTable, tuneExportGuardrailDetail, float64(1))
 	SetTunablesDB(tdb)
-	md = renderSessionMarkdownWithDiag(agent, sess, udb)
+	md = renderSessionMarkdownWithDiag(agent, sess, udb, true)
 	if !strings.Contains(md, "never discuss pricing") {
 		t.Error("the detail knob is on and the export still withholds the detail")
 	}
@@ -325,7 +325,7 @@ func TestExportOmitsTheSyntheticPlan(t *testing.T) {
 			}},
 		}},
 	}
-	out := renderSessionMarkdown(AgentRecord{Name: "Builder"}, sess)
+	out := renderSessionMarkdown(AgentRecord{Name: "Builder"}, sess, true)
 	if strings.Contains(out, "**Plan:**") {
 		t.Errorf("a synthetic plan must not render:\n%s", out)
 	}
@@ -354,8 +354,60 @@ func TestExportStillRendersARealPlan(t *testing.T) {
 			},
 		}},
 	}
-	out := renderSessionMarkdown(AgentRecord{Name: "Research"}, sess)
+	out := renderSessionMarkdown(AgentRecord{Name: "Research"}, sess, true)
 	if !strings.Contains(out, "**Plan:**") || !strings.Contains(out, "Search the docs") {
 		t.Errorf("a real plan must still render:\n%s", out)
+	}
+}
+
+// The owner exporting their OWN session gets the whole thing.
+//
+// The withholding rule read "this agent enforces guardrails" and applied to
+// everybody, the person who wrote the rules included. They had just watched
+// every one of those results go past in the live pane and could scroll back to
+// them, so it protected nothing and made their own transcript useless for the
+// one thing an owner exports it for.
+func TestTheOwnerGetsTheirOwnTranscriptWhole(t *testing.T) {
+	sess := ChatSession{ID: "s1", Messages: []ChatMessage{
+		{Role: "assistant", Content: "Not getting into that.", ToolCalls: []PersistedToolCall{
+			{Name: "recall", Args: map[string]any{"query": "who"}, Result: "THE ANSWER IT FOUND"},
+		}},
+	}}
+	guarded := AgentRecord{ID: "a1", Name: "Wren", Owner: "alice", Guardrails: "a rule"}
+
+	if md := renderSessionMarkdown(guarded, sess, exportForOwner(guarded, "alice")); !strings.Contains(md, "THE ANSWER IT FOUND") {
+		t.Error("the owner's own export withheld results they had already seen live")
+	}
+	// A recipient still gets the calls and not the results, which is the case
+	// the rule was written for.
+	md := renderSessionMarkdown(guarded, sess, exportForOwner(guarded, "bob"))
+	if strings.Contains(md, "THE ANSWER IT FOUND") {
+		t.Error("a recipient's export carried the owner's protected tool output")
+	}
+	if !strings.Contains(md, "recall") || !strings.Contains(md, "withheld") {
+		t.Errorf("a recipient must still see the call and be told why the result is absent:\n%s", md)
+	}
+	// And be told WHOSE rules did it, rather than a bare statement about
+	// "this agent" that reads as a defect in the export.
+	if !strings.Contains(md, "alice") {
+		t.Errorf("the note does not say whose agent it is:\n%s", md)
+	}
+	// The pointer has to point somewhere. It said "see below" about a note
+	// printed above it.
+	if strings.Contains(md, "see below") {
+		t.Error("the withheld marker points below at a note that is above")
+	}
+}
+
+// An unowned or framework agent has nobody to be a recipient of.
+func TestAFrameworkAgentsExportIsNobodyElses(t *testing.T) {
+	if !exportForOwner(AgentRecord{ID: "seed-x", Owner: seedOwner}, "alice") {
+		t.Error("a seed has no owner to withhold on behalf of")
+	}
+	if !exportForOwner(AgentRecord{ID: "a1"}, "alice") {
+		t.Error("an agent with no owner recorded must not withhold")
+	}
+	if exportForOwner(AgentRecord{ID: "a1", Owner: "alice"}, "bob") {
+		t.Error("bob is not alice")
 	}
 }

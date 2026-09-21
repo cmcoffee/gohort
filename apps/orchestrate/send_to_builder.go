@@ -66,7 +66,7 @@ func (T *OrchestrateApp) handleSendToBuilder(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "POST required", http.StatusMethodNotAllowed)
 		return
 	}
-	_, udb, ok := RequireUser(w, r, T.DB)
+	user, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
@@ -89,7 +89,7 @@ func (T *OrchestrateApp) handleSendToBuilder(w http.ResponseWriter, r *http.Requ
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	brief := builderBriefRecord{
 		ID:            UUIDv4(),
-		Text:          buildBuilderBrief(agent, sess, body.Reason),
+		Text:          buildBuilderBrief(agent, sess, body.Reason, exportForOwner(agent, user)),
 		SourceAgentID: agent.ID,
 		Created:       time.Now(),
 	}
@@ -140,7 +140,7 @@ const maxBriefTranscript = 60000
 // confident diagnosis of whichever problem it noticed first, and that is not
 // reliably the one the user cared about. An empty reason is stated as absent
 // rather than papered over, so Builder asks instead of guessing.
-func buildBuilderBrief(agent AgentRecord, sess ChatSession, reason string) string {
+func buildBuilderBrief(agent AgentRecord, sess ChatSession, reason string, forOwner bool) string {
 	var b strings.Builder
 	reason = strings.TrimSpace(reason)
 	if reason != "" {
@@ -174,7 +174,11 @@ func buildBuilderBrief(agent AgentRecord, sess ChatSession, reason string) strin
 	b.WriteString("6. After I accept a change, run the suite again with a note saying what you changed, and tell me BOTH scores. " +
 		"A fix that does not move the number is not a fix, and a fix that moves this case while breaking another is worth knowing about before I find out in production.\n\n")
 
-	transcript := renderSessionMarkdown(agent, sess)
+	// Builder is being asked to diagnose this agent, which it cannot do from
+	// the calls alone. Owner-only either way: handleSendToBuilder is reached
+	// from the workbench, and an agent somebody else owns is not one Builder
+	// may edit.
+	transcript := renderSessionMarkdown(agent, sess, forOwner)
 	if len(transcript) > maxBriefTranscript {
 		transcript = "_[Earlier turns omitted: showing the most recent part of the session.]_\n\n" +
 			transcript[len(transcript)-maxBriefTranscript:]
