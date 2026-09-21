@@ -154,3 +154,28 @@ func TestTheLadderSaysItIsAboutUnattendedRuns(t *testing.T) {
 		t.Error("the modal does not say the pill is silent in chat, which is where it was read as broken")
 	}
 }
+
+// Turning a tool ON means allowing it.
+//
+// An owner who ticks a tool wants the agent to use it, and "use it, except on
+// a run nobody is watching, where it stalls and waits" is not what a toggle
+// reads as. Oversight is the exception and is set deliberately, on this same
+// control, which is why the control is here at all.
+func TestTurningAToolOnAllowsIt(t *testing.T) {
+	src := orchestrateWebAssets
+	if !strings.Contains(src, "if (cb.checked && !wasOn[name] && !preApproved[name] && !heldBack[name]) {") {
+		t.Error("ticking a tool does not allow it")
+	}
+	if !strings.Contains(src, "if (permOrder.indexOf('always') >= 0) { permState[name] = 'always'; }") {
+		t.Error("the newly-allowed state is not the allowing one")
+	}
+	// A tool that was ALREADY on is not a decision being made now, and a state
+	// the owner set earlier survives an untick and re-tick.
+	if !strings.Contains(src, "wasOn[name] = !!cb.checked;") {
+		t.Error("nothing distinguishes turning a tool on from finding it on")
+	}
+	// And it is said on screen, not only in the behaviour.
+	if !strings.Contains(src, "Turning a tool on allows it outright") {
+		t.Error("the default is not stated where somebody decides")
+	}
+}
