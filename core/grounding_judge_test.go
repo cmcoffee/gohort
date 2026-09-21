@@ -235,3 +235,59 @@ func TestGroundingCorrectionSettlesTheStreamedRound(t *testing.T) {
 		t.Errorf("an unchecked claim must not be retracted like a false one; retracted=%d", retracted)
 	}
 }
+
+// Both judges used to see WHICH tools ran and never what came back, so a reply
+// quoting a tool result was indistinguishable from one inventing it. Five of
+// six convictions in one exported session were sentences lifted verbatim out of
+// framework output that the judge was not shown.
+func TestJudgesAreShownWhatTheToolsReturned(t *testing.T) {
+	const warning = "WARNING: these entries match no known tool and were dropped: recall, remember."
+	var claimOutputs, groundOutputs []string
+	app := &AppCore{LLM: &FakeLLM{Turns: []FakeTurn{
+		{ToolCalls: []ToolCall{{ID: "1", Name: "update_agent", Args: map[string]any{"action": "save"}}}},
+		{Content: "Saved. Two names were rejected: recall and remember. The cluster has three nodes.", Repeat: true},
+	}}}
+	_, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "add those tools"}}, AgentLoopConfig{
+		MaxRounds: 4,
+		RouteKey:  "test.judgeoutputs",
+		// A clean turn with a reader watching is not worth a claim-judge call;
+		// unattended widens that pre-filter without touching the verdict, which
+		// is the cheapest way to put both judges on the same turn.
+		Unattended: true,
+		Tools: []AgentToolDef{{
+			Tool: Tool{Name: "update_agent", Description: "saves an agent",
+				Parameters: map[string]ToolParam{"action": {Type: "string", Description: "what to do"}}},
+			Handler: func(ctx context.Context, args map[string]any) (string, error) {
+				return "AGENT_UPDATED ok. " + warning, nil
+			},
+		}},
+		UncheckedClaims: []string{"the cluster has three nodes"},
+		TurnClaimJudge: func(ev TurnClaimEvidence) (TurnClaimVerdict, bool) {
+			claimOutputs = ev.ToolOutputs
+			return TurnClaimVerdict{}, true
+		},
+		TurnGroundingJudge: func(ev TurnGroundingEvidence) (TurnGroundingVerdict, bool) {
+			groundOutputs = ev.ToolOutputs
+			return TurnGroundingVerdict{}, true
+		},
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	for _, c := range []struct {
+		who  string
+		outs []string
+	}{{"claim judge", claimOutputs}, {"grounding judge", groundOutputs}} {
+		if len(c.outs) == 0 {
+			t.Errorf("%s got no tool outputs; it can only tell a quoted result from an invented one if it is shown the result", c.who)
+			continue
+		}
+		joined := strings.Join(c.outs, "\n")
+		if !strings.Contains(joined, "update_agent/save") {
+			t.Errorf("%s: outputs must carry the call LABEL, got %q", c.who, joined)
+		}
+		if !strings.Contains(joined, "dropped: recall, remember") {
+			t.Errorf("%s: the result's own warning is what the reply quotes and what got convicted; it must be in the evidence, got %q", c.who, joined)
+		}
+	}
+}

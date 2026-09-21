@@ -34,6 +34,17 @@ type TurnGroundingEvidence struct {
 	// ToolCalls names what the turn ran. A turn that actually went and looked
 	// may assert what it found, so the judge has to see that it looked.
 	ToolCalls []string
+	// ToolOutputs is what those calls RETURNED, label and excerpt, in order.
+	//
+	// The line above said the judge "has to see that it looked", and that was
+	// all it could see: THAT a tool ran, never what came back. So the one
+	// thing that settles this judge's question — the reply quotes a result
+	// from this turn, therefore it is not an unchecked note being asserted —
+	// was the one thing missing from its evidence. It convicted two sentences
+	// lifted verbatim out of tool output, tracing each to an unrelated stored
+	// note that happened to share a word. See ToolOutputs on
+	// TurnClaimEvidence; same gap, same session, same fix.
+	ToolOutputs []string
 }
 
 // TurnGroundingVerdict is the judge's answer.
@@ -174,3 +185,7 @@ func judgeTurnGrounding(cfg AgentLoopConfig, ev TurnGroundingEvidence) (TurnGrou
 	}
 	return v, true
 }
+
+// ReturnsBlock renders what this turn's calls returned. Same renderer the claim
+// judge uses — see TurnClaimEvidence.ReturnsBlock.
+func (ev TurnGroundingEvidence) ReturnsBlock() string { return toolOutputEvidence(ev.ToolOutputs) }

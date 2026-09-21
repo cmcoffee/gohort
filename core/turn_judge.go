@@ -27,7 +27,11 @@
 
 package core
 
-import "strings"
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
 
 // TurnClaimEvidence is everything the judge needs to tell a reply that reports
 // what happened from one that reports what didn't.
@@ -58,6 +62,25 @@ type TurnClaimEvidence struct {
 	// the truthful reply was the one that got retracted. See the comment at
 	// the append site in agent_loop.go for the live case.
 	ToolCalls []string
+	// ToolOutputs is what those calls RETURNED: one entry per call, in the
+	// same order, each the label followed by an excerpt of the result.
+	//
+	// Without it the judge knows only that a tool ran, never what it said —
+	// and on an authoring agent almost every fact in a reply comes out of a
+	// tool result. So a reply QUOTING framework output read exactly like one
+	// inventing it, and the judge had no evidence that could ever clear it.
+	// Observed across one session: "the two rejected names were recall and
+	// remember" (verbatim in the update_agent warning), "sessions already
+	// open keep the old flow" (verbatim in the machine/update result) and
+	// "the allowlist now lists them" (the read-back the same turn ran) were
+	// all convicted as claims the turn had not supported. Six convictions,
+	// six of them wrong, five of them this.
+	//
+	// Excerpts are head AND tail, never head alone: the load-bearing part of
+	// a framework tool result is disproportionately the advisory notes it
+	// appends AFTER the outcome, which is exactly what a head-only truncation
+	// cuts. Both exculpating quotes above sat in a result's tail.
+	ToolOutputs []string
 	// PriorWork is work done FOR this turn before its loop began, which the
 	// loop therefore never sees: a machine step that searched, a delegated
 	// step, a pipeline phase. Each entry names what ran.
@@ -286,3 +309,80 @@ func judgeTurnClaim(cfg AgentLoopConfig, ev TurnClaimEvidence) (TurnClaimVerdict
 	}
 	return v, true
 }
+
+// Budgets for the tool-result excerpts both judges read. Deliberately generous
+// against the alternative: the whole evidence message is otherwise a couple of
+// KB on a worker-tier call, while ONE wrong conviction costs a retracted reply
+// plus a full extra round of the real turn — six figures of tokens in the
+// session that motivated this. Paying a few KB per judge call to stop that is
+// not a close trade.
+const (
+	// toolOutputExcerptMax is per result, split head and tail.
+	toolOutputExcerptMax = 600
+	// toolOutputEvidenceBudget caps the block across all results. When the
+	// turn ran more than fits, the OLDEST are dropped: a reply's claims rest
+	// overwhelmingly on the last things that happened, and the judge is told
+	// how many were left out so a gap never reads as "nothing ran".
+	toolOutputEvidenceBudget = 6000
+)
+
+// toolResultExcerpt renders a tool result for a judge: head AND tail, with the
+// middle elided.
+//
+// Head-only truncation is what a log wants and the wrong shape here. A
+// framework tool result leads with the outcome and then appends the advisory
+// notes that actually matter — what was dropped, what does not resolve, what
+// existing sessions will do — and those sit in the tail. Both quotes that would
+// have acquitted the replies in the motivating session were past a 300-char
+// head.
+func toolResultExcerpt(content string, max int) string {
+	s := strings.Join(strings.Fields(strings.TrimSpace(content)), " ")
+	if max < 16 {
+		max = 16
+	}
+	if len(s) <= max {
+		return s
+	}
+	// Split unevenly: the head has to establish WHICH call this was, the tail
+	// carries the notes, so the tail gets the larger share.
+	head := max / 3
+	tail := max - head
+	return s[:head] + " …[" + strconv.Itoa(len(s)-max) + " chars elided]… " + s[len(s)-tail:]
+}
+
+// toolOutputEvidence renders the per-call excerpts into the block a judge
+// reads, dropping the oldest entries when they exceed the budget. The returned
+// string is empty when there is nothing to show.
+func toolOutputEvidence(outputs []string) string {
+	if len(outputs) == 0 {
+		return ""
+	}
+	// Walk backwards so the newest entries are the ones that survive.
+	keep, used := 0, 0
+	for i := len(outputs) - 1; i >= 0; i-- {
+		used += len(outputs[i]) + 3
+		if used > toolOutputEvidenceBudget && keep > 0 {
+			break
+		}
+		keep++
+	}
+	var b strings.Builder
+	b.WriteString("WHAT THOSE CALLS RETURNED, in the same order")
+	if dropped := len(outputs) - keep; dropped > 0 {
+		fmt.Fprintf(&b, " (the %d oldest omitted for length; they ran, and this is not evidence they returned nothing)", dropped)
+	}
+	b.WriteString(":\n")
+	for _, o := range outputs[len(outputs)-keep:] {
+		fmt.Fprintf(&b, "- %s\n", o)
+	}
+	return b.String()
+}
+
+// ReturnsBlock renders what this turn's calls returned, for a judge prompt.
+//
+// A method rather than a package function on purpose: the evidence knows its
+// own outputs, and core's export ceiling charges for a top-level symbol while a
+// method on a type that is already exported costs nothing. Both judges share
+// the one renderer so the budget and the head-and-tail excerpting cannot drift
+// apart between them.
+func (ev TurnClaimEvidence) ReturnsBlock() string { return toolOutputEvidence(ev.ToolOutputs) }

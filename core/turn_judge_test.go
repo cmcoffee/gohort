@@ -292,3 +292,71 @@ func TestFailureNoteIsOneShortLine(t *testing.T) {
 		t.Errorf("note not bounded: %d chars", len([]rune(long)))
 	}
 }
+
+// The judges were shown WHICH tools ran and never what came back, so a reply
+// quoting framework output — the most reliable sentence it can write — read
+// exactly like an invention. These cover the excerpting that closes that, and
+// the one property that keeps the fix from becoming a new failure mode: the
+// excerpt is evidence FOR a reply, never against it.
+
+// A framework tool result leads with the outcome and appends the notes that
+// matter: what it dropped, what did not resolve, what already-open sessions
+// will do. Head-only truncation cuts exactly those. Both sentences that would
+// have acquitted the replies in the motivating session sat past a 300-char
+// head.
+func TestToolResultExcerptKeepsTheTail(t *testing.T) {
+	result := "AGENT_UPDATED ok. id=6d23ece1 name=\"Wren\". " +
+		strings.Repeat("NOTE: some middle detail nobody needs. ", 60) +
+		"WARNING: these allowed_tools entries match no known tool and were dropped: recall, remember."
+	ex := toolResultExcerpt(result, toolOutputExcerptMax)
+	if len(ex) > toolOutputExcerptMax+64 {
+		t.Errorf("excerpt ran past its budget: %d chars", len(ex))
+	}
+	if !strings.Contains(ex, "AGENT_UPDATED ok") {
+		t.Error("the head has to say WHICH call this was")
+	}
+	if !strings.Contains(ex, "dropped: recall, remember") {
+		t.Error("the tail is the whole point: that warning is what a reply quotes, and convicting the quote is the bug this closes")
+	}
+	if !strings.Contains(ex, "elided") {
+		t.Error("an abridged result must say it was abridged, or a judge reads a gap as an absence")
+	}
+}
+
+// A short result is passed through whole — no elision marker on something that
+// never needed cutting.
+func TestShortToolResultIsNotAbridged(t *testing.T) {
+	if got := toolResultExcerpt("Updated machine \"acme_investigation\" with 5 phases.", toolOutputExcerptMax); got != "Updated machine \"acme_investigation\" with 5 phases." {
+		t.Errorf("a short result must pass through verbatim, got %q", got)
+	}
+}
+
+// Over budget, the OLDEST go: a reply's claims rest on the last things that
+// happened. And the judge is told how many were left out, because a silent gap
+// is indistinguishable from a call that returned nothing — which is the exact
+// inference that convicts a true reply.
+func TestToolOutputEvidenceDropsOldestAndSaysSo(t *testing.T) {
+	var outs []string
+	for i := 0; i < 80; i++ {
+		outs = append(outs, "tool/act: "+strings.Repeat("x", 400))
+	}
+	outs = append(outs, "update_agent: the newest result, which the reply is about")
+	block := TurnClaimEvidence{ToolOutputs: outs}.ReturnsBlock()
+	if !strings.Contains(block, "the newest result, which the reply is about") {
+		t.Error("the newest result must survive the budget; it is what the reply reports on")
+	}
+	if !strings.Contains(block, "omitted for length") || !strings.Contains(block, "not evidence they returned nothing") {
+		t.Error("an omission must be declared AND disarmed, or the judge convicts on the gap")
+	}
+	if len(block) > toolOutputEvidenceBudget*2 {
+		t.Errorf("evidence block blew its budget: %d chars", len(block))
+	}
+}
+
+// Nothing ran, nothing rendered: an empty block rather than a heading over an
+// empty list, which reads as a positive claim that the calls returned nothing.
+func TestNoToolOutputsRendersNothing(t *testing.T) {
+	if (TurnClaimEvidence{}).ReturnsBlock() != "" {
+		t.Error("no outputs must render no block at all")
+	}
+}

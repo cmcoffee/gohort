@@ -506,6 +506,7 @@ type loopRun struct {
 	cumulativeToolErrors       int
 	lastToolError              string
 	turnToolCalls              []string
+	turnToolOutputs            []string
 	repeatFail                 map[string]int
 	sentThisTurn               map[string]bool
 	shakeoutNextRound          bool
@@ -1105,8 +1106,9 @@ func (lr *loopRun) setupState() {
 	// loop terminate — injecting a "fix the errors, don't summarize"
 	// nudge instead of letting the rescue path paper over the bailout.
 	lr.cumulativeToolErrors = 0
-	lr.lastToolError = ""         // most recent failure text, for the turn judge
-	lr.turnToolCalls = []string{} // every tool this turn ran, in order, duplicates kept
+	lr.lastToolError = ""           // most recent failure text, for the turn judge
+	lr.turnToolCalls = []string{}   // every tool this turn ran, in order, duplicates kept
+	lr.turnToolOutputs = []string{} // and what each one returned, same order
 
 	lr.repeatFail = map[string]int{}
 	// Carry in what this standing work already learned, before history is
@@ -2744,6 +2746,7 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 		Request:       LatestUserContent(lr.messages),
 		Reply:         lr.rs.resp.Content,
 		ToolCalls:     lr.turnToolCalls,
+		ToolOutputs:   lr.turnToolOutputs,
 		CatalogTools:  lr.catalogToolNames(),
 		PriorWork:     lr.cfg.priorWork(),
 		PriorReports:  lr.cfg.priorReports(),
@@ -2821,8 +2824,9 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 		// Stored notes plus, on a channel, whatever the person just
 		// said. Composed here rather than by the host so the live entry
 		// is worded the same way everywhere it is judged.
-		Unchecked: withLiveClaim(lr.cfg.UncheckedClaims, lr.cfg.LiveClaimSpeaker, LatestUserContent(lr.messages)),
-		ToolCalls: lr.turnToolCalls,
+		Unchecked:   withLiveClaim(lr.cfg.UncheckedClaims, lr.cfg.LiveClaimSpeaker, LatestUserContent(lr.messages)),
+		ToolCalls:   lr.turnToolCalls,
+		ToolOutputs: lr.turnToolOutputs,
 	}); convicted {
 		if lr.corrections.available(correctionUngrounded) && lr.round < lr.maxRounds {
 			Debug("[agent_loop] grounding judge: reply asserts an unchecked claim (%q), re-prompting: correction %d/%d",
@@ -3899,11 +3903,28 @@ func (lr *loopRun) settleToolRound() loopAction {
 		// again and returned 201, and the reply "All 3 actions returned HTTP
 		// 201" was retracted as a lie on the strength of errors=3.
 		label := toolCallLabel(w.tc)
+		var result string
+		if w.index < len(lr.rs.results) {
+			result = lr.rs.results[w.index].Content
+		}
 		if w.index < len(lr.rs.results) && lr.rs.results[w.index].IsError {
-			lr.lastToolError = lr.rs.results[w.index].Content
-			label += " [FAILED: " + toolFailureNote(lr.rs.results[w.index].Content) + "]"
+			lr.lastToolError = result
+			label += " [FAILED: " + toolFailureNote(result) + "]"
 		}
 		lr.turnToolCalls = append(lr.turnToolCalls, label)
+		// And what it RETURNED, which is the half both judges were missing.
+		// The label answers "what ran"; on an authoring turn every fact in the
+		// reply comes out of the result, and a judge shown only labels cannot
+		// tell a reply quoting framework output from one inventing it. It
+		// convicted five such sentences in a single exported session, each
+		// quoted verbatim from a result sitting right here.
+		out := label
+		if ex := toolResultExcerpt(result, toolOutputExcerptMax); ex != "" {
+			out += ": " + ex
+		} else {
+			out += ": (returned nothing)"
+		}
+		lr.turnToolOutputs = append(lr.turnToolOutputs, out)
 	}
 
 	// stay_silent closes the turn. The "do not call any more tools"

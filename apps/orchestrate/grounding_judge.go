@@ -20,11 +20,11 @@ import (
 // mistaken for. So it is asked one question about one list of sentences.
 const groundingJudgeSysPrompt = `You check whether a reply overstates what is KNOWN.
 
-You are given: the notes the assistant holds that are NOT independently verified, the tools this turn ran, and the reply about to be sent.
+You are given: the notes the assistant holds that are NOT independently verified, the tools this turn ran, what those tools RETURNED, and the reply about to be sent.
 
 Answer ASSERTED only when ALL of these hold:
 1. The reply states one of those unverified notes as established fact: flatly, as though confirmed.
-2. The turn ran nothing that would have confirmed it. If a tool call could have checked it, the reply may state what it found.
+2. The turn ran nothing that would have confirmed it. If a tool call could have checked it, the reply may state what it found. Read what the tools RETURNED before answering: if the sentence traces to a tool result from this turn, it is CHECKED and the answer is CLEAN, no matter how closely it also resembles one of the notes. A reply passing on the framework's own output is the best-grounded thing it can say.
 3. The claim matters to the answer. An aside is not worth a correction.
 
 Answer CLEAN for everything else, including:
@@ -34,6 +34,8 @@ Answer CLEAN for everything else, including:
 - The reply is about the user's own preferences, goals or identity. They are the authority on those.
 - The reply DESCRIBES material it was shown rather than endorsing it: "the picture shows X", "he posted a meme saying X". Reporting what something contains is not asserting that its contents are true.
 - The note was plainly never offered as fact (a joke, a meme, teasing, obvious exaggeration) and the reply treats it that way. Playing along with a joke is not asserting it. Only a reply that carries the joke's CONTENT forward as real is ASSERTED.
+
+What the tools returned is ABRIDGED: long results have their middle elided and the oldest may be left out. Not finding a sentence there is therefore not evidence against it. Answer ASSERTED only on a claim you can positively trace to a listed note, never on one you merely could not find in the returns.
 
 Quote the offending sentence from the REPLY verbatim as "claim", and the note it traces to verbatim as "basis".
 
@@ -54,7 +56,15 @@ func (T *OrchestrateApp) judgeTurnGrounding(ctx context.Context, ev TurnGroundin
 	for _, n := range ev.Unchecked {
 		fmt.Fprintf(&b, "- %s\n", truncateObs(strings.TrimSpace(n), 300))
 	}
-	fmt.Fprintf(&b, "\nTOOLS THE TURN RAN: %s\n\n", ran)
+	fmt.Fprintf(&b, "\nTOOLS THE TURN RAN: %s\n", ran)
+	// And what they returned. Condition 2 below turns entirely on this: a
+	// claim the turn CHECKED is not an unchecked note being asserted, and
+	// until now the judge could see that a tool ran but never what it said,
+	// so the one fact that settles its question was the one it lacked.
+	if outs := ev.ReturnsBlock(); outs != "" {
+		b.WriteString(outs)
+	}
+	b.WriteString("\n")
 	fmt.Fprintf(&b, "THE REPLY:\n%s\n", truncateObs(strings.TrimSpace(ev.Reply), 2000))
 
 	resp, err := T.LLM.Chat(ctx, []Message{{Role: "user", Content: b.String()}},

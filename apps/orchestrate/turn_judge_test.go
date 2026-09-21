@@ -485,8 +485,8 @@ func TestTheJudgeIsToldWhatIsNotAnActionClaim(t *testing.T) {
 	for _, want := range []struct{ frag, why string }{
 		{"A FINDING the assistant worked out from what its reads returned",
 			"a count derived from a read is not a claim to have written anything"},
-		{"that is not your job",
-			"the judge cannot check a number it was never shown, and must not try"},
+		{"Checking the arithmetic is not your job",
+			"the judge is shown what the reads returned now, and must still not audit a derived number"},
 		{"A reply saying it did NOT act",
 			"convicting a stated non-action demands the assistant do the thing it just explained it was right not to do"},
 		{"UNDERSTATES what happened",
