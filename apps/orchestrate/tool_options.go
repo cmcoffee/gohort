@@ -611,3 +611,19 @@ func frameworkPhaseToolOptions() []ui.SelectOption {
 	}
 	return out
 }
+
+// approvableToolNames is approvableToolOptions reduced to the names, for the
+// Tools modal's permission ladder.
+//
+// The same predicate, deliberately: the editor's lists and the modal's ladder
+// are the same question asked in one place now, and two definitions of "could
+// this ever stop and ask" would drift into a row that offers a setting the
+// gate never consults.
+func approvableToolNames(user string) []string {
+	opts := approvableToolOptions(user)
+	out := make([]string, 0, len(opts))
+	for _, o := range opts {
+		out = append(out, o.Value)
+	}
+	return out
+}

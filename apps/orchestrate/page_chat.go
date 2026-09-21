@@ -135,6 +135,10 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	// separate JS var rather than a field on SelectOption so the
 	// shared SelectOption type stays domain-agnostic.
 	internetJSON, _ := json.Marshal(internetWorkerToolNames())
+	// Which tools CAN stop and ask. The permission ladder is offered only on
+	// those: a read-only tool never prompts, so setting one is a decision with
+	// no effect, and a row that offers it reads as though it had one.
+	approvableJSON, _ := json.Marshal(approvableToolNames(user))
 	// subAgentsByParent → JS map for the secondary picker. Empty map
 	// (no sub-agents in the fleet) is fine — the JS hides the picker
 	// when the selected parent has no children.
@@ -143,6 +147,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 	phases.mark("marshal head json")
 	headHTML := "<script>window.ORCH_TOOL_CATALOG = " + string(catalogJSON) +
 		";\nwindow.ORCH_INTERNET_TOOLS = " + string(internetJSON) +
+		";\nwindow.ORCH_APPROVABLE_TOOLS = " + string(approvableJSON) +
 		";\nwindow.ORCH_SUB_AGENTS = " + string(subAgentsJSON) +
 		";\nwindow.ORCH_CHANNEL_AGENTS = " + string(cortexAgentsJSON) +
 		";</script>\n" + TranscribeRuntimeFlagScript() + "\n" + orchestrateWebAssets

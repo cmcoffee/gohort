@@ -390,6 +390,22 @@
   border-top: 1px solid var(--border);
   background: var(--bg-2);
 }
+/* The per-tool permission ladder in the Tools modal. Pushed to the right of
+   the row so the name and its help keep the left edge they share with every
+   other checklist in the app. */
+.ui-orch-tool-perm {
+  margin-left: auto; display: inline-flex; flex: none; align-self: center;
+  border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+}
+.ui-orch-perm-seg {
+  padding: 0.12rem 0.45rem; font-size: 0.7rem; line-height: 1.5;
+  background: transparent; color: var(--text-mute);
+  border: 0; border-right: 1px solid var(--border); cursor: pointer;
+  white-space: nowrap;
+}
+.ui-orch-perm-seg:last-child { border-right: 0; }
+.ui-orch-perm-seg:hover { background: var(--bg-1); color: var(--text); }
+.ui-orch-perm-seg.active { background: var(--accent, #6366f1); color: #fff; }
 .ui-orch-modal-btn {
   background: var(--bg-1); border: 1px solid var(--border);
   color: var(--text);
@@ -2672,6 +2688,59 @@
           //   some checked  → [name, ...]  (literal list)
           var allowed = {};
           var listed = agent.allowed_tools || [];
+          // --- the permission ladder -------------------------------------
+          //
+          // Three states, which is exactly what the runtime already
+          // distinguishes; the two stored lists are unchanged and are still
+          // what the gate reads. This is one column instead of two lists.
+          var approvable = {};
+          (window.ORCH_APPROVABLE_TOOLS || []).forEach(function(n) { approvable[n] = true; });
+          var permState = {};
+          (agent.auto_approve_tools || []).forEach(function(n) { permState[n] = 'always'; });
+          (agent.no_unattended_tools || []).forEach(function(n) { permState[n] = 'attended'; });
+          var permOrder = ['ask', 'always', 'attended'];
+          var permLabel = {ask: 'Ask', always: 'Always', attended: 'Attended only'};
+          var permTitle = {
+            ask: 'Stops on a run with nobody watching and waits in the Permissions pane for you to approve it.',
+            always: 'Runs on a scheduled or standing fire without asking. Sub-agents inherit it.',
+            attended: 'Refused outright on an unattended run, and NOT queued: this is your decision, not a request for one. Inherits downward, so a sub-agent cannot do what its parent was told not to.'
+          };
+          // Returns the control for one row, or null where there is nothing to
+          // decide: a read-only tool never prompts, so every state means the
+          // same thing for it.
+          function toolPermControl(name, cb) {
+            if (!approvable[name]) { return null; }
+            var wrap = document.createElement('div');
+            wrap.className = 'ui-orch-tool-perm';
+            var segs = {};
+            function paint() {
+              var cur = permState[name] || 'ask';
+              permOrder.forEach(function(k) {
+                segs[k].className = 'ui-orch-perm-seg' + (k === cur ? ' active' : '');
+              });
+              // A tool the agent cannot call has no permission to set. Shown
+              // rather than removed, so ticking the box does not make a
+              // control appear out of nowhere.
+              wrap.style.opacity = cb.checked ? '' : '0.4';
+              wrap.style.pointerEvents = cb.checked ? '' : 'none';
+            }
+            permOrder.forEach(function(k) {
+              var b = document.createElement('button');
+              b.type = 'button';
+              b.className = 'ui-orch-perm-seg';
+              b.textContent = permLabel[k];
+              b.title = permTitle[k];
+              b.addEventListener('click', function() {
+                permState[name] = k;
+                paint();
+              });
+              segs[k] = b;
+              wrap.appendChild(b);
+            });
+            cb.addEventListener('change', paint);
+            paint();
+            return wrap;
+          }
           // Tools the user has explicitly opted out of (seed agents only).
           // These stay unchecked even in the all-checked / default-pool state.
           var userDisabled = {};
@@ -3139,6 +3208,12 @@
                 lbl.appendChild(hp);
               }
               row.appendChild(lbl);
+              // The permission, on the row that grants the tool. Two
+              // checklists used to ask this, in the editor, over the same
+              // option set and nowhere near the list that says which tools
+              // the agent has at all.
+              var perm = toolPermControl(o.value, cb);
+              if (perm) { row.appendChild(perm); }
               body.appendChild(row);
               checkboxes.push(cb);
               g._cbs.push(cb);
@@ -3206,6 +3281,20 @@
               });
               scopedCbs.forEach(function(cb) { if (!cb.checked) denied.push(cb.value); });
               agent.disabled_persistent_tools = denied;
+              // The ladder decomposes back into the two lists the runtime
+              // reads. Only for tools the agent actually has: a permission on
+              // a tool it cannot call is a grant nobody made, and it would
+              // come back the moment the tool was ticked again.
+              var granted = {};
+              checkboxes.forEach(function(c) { if (c.checked) granted[c.value] = true; });
+              var always = [], attended = [];
+              Object.keys(permState).forEach(function(n) {
+                if (!granted[n] || !approvable[n]) { return; }
+                if (permState[n] === 'always') { always.push(n); }
+                else if (permState[n] === 'attended') { attended.push(n); }
+              });
+              agent.auto_approve_tools = always;
+              agent.no_unattended_tools = attended;
               saveBtn.disabled = true;
               fetch('api/agents?tools_modal=1', {
                 method: 'POST',
