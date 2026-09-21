@@ -80,7 +80,17 @@ func (T *OrchestrateApp) handleAgentPage(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	rest := strings.TrimPrefix(r.URL.Path, "/agent/")
-	if rest == "" || strings.Contains(rest, "/") {
+	if rest == "" {
+		http.NotFound(w, r)
+		return
+	}
+	// One sub-path, for the surfaces that are ABOUT an agent rather than part
+	// of editing it.
+	if id, action, found := strings.Cut(rest, "/"); found {
+		if action == "access" && id != "" {
+			T.renderAgentAccess(w, r, user, udb, id)
+			return
+		}
 		http.NotFound(w, r)
 		return
 	}
@@ -134,7 +144,7 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	// Rendered as a section below rather than as another field: the owner grants
 	// these things one editor control at a time and has never been shown what
 	// they add up to.
-	accessSummary, accessEmpty := "", ""
+	accessSummary := ""
 	// Dispatch policy to surface first in the editor's select. Ordering the
 	// effective mode first means a legacy record (no stored dispatch_mode) seeds
 	// that value on save instead of the form's first-option fallback silently
@@ -163,7 +173,6 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			leadModelLocked = agentForcesPrivate(rec) && !AllLLMsPrivate()
 			dispatchModeFirst = effectiveDispatchMode(rec)
 			accessSummary = agentAccessSummary(rec, agentReach(udb, user, rec))
-			accessEmpty = agentToolsEmptyText(rec)
 			if rec.OwnedBy != "" {
 				subAgent = true
 				if parent, pok := loadAgent(udb, rec.OwnedBy); pok {
@@ -577,41 +586,28 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// What this agent can do, and what it can reach — the two halves of the
-	// question an owner asks after granting things one control at a time. Read
-	// from the record, so an agent that has never run still answers.
+	// What this agent can do, and what it can reach, are on their own page.
+	//
+	// They used to be two sections HERE, near the bottom, behind everything
+	// you scroll past to reach them. Reviewing what you granted is its own
+	// errand and you are usually not editing when you do it; the editor is a
+	// form. One link, so there is one home for the question rather than two
+	// that drift.
 	if id != "" {
-		sections = append(sections,
-			ui.Section{
-				Title:    "What this agent can do",
-				Subtitle: accessSummary + " " + accessCaveat,
-				Body: ui.Table{
-					Source:    "../api/agent-access?id=" + id,
-					RowKey:    "name",
-					EmptyText: accessEmpty,
-					Columns: []ui.Col{
-						{Field: "name", Label: "Tool"},
-						{Field: "detail", Label: "What it does", Mute: true},
-						{Field: "policy", Label: "Unattended", Type: "badge"},
-					},
-				},
+		sections = append(sections, ui.Section{
+			Title:    "What this agent can reach",
+			Subtitle: accessSummary + " " + accessCaveat,
+			Body: ui.DisplayPanel{
+				Source: source,
+				Pairs:  []ui.DisplayPair{},
+				Actions: []ui.ToolbarAction{{
+					Label:  "Open the access page",
+					Title:  "Every tool it can call and what happens to each on an unattended run, what it can hand work to, its workspace, and what it reads.",
+					Method: "GET",
+					URL:    T.WebPrefix() + "/agent/" + url.PathEscape(id) + "/access",
+				}},
 			},
-			ui.Section{
-				Title: "What it can hand work to",
-				Subtitle: "Delegation reaches past this agent's own tools: whatever it hands work to runs with ITS catalog. " +
-					"Only targets that add something are listed; a recipe appears when one of its steps runs an agent.",
-				Body: ui.Table{
-					Source:    "../api/agent-access?id=" + id + "&view=reach",
-					RowKey:    "name",
-					EmptyText: "Nothing. This agent cannot hand work to anything that would widen it.",
-					Columns: []ui.Col{
-						{Field: "name", Label: "Target"},
-						{Field: "kind", Label: "Kind", Mute: true},
-						{Field: "adds", Label: "What it adds", Mute: true},
-					},
-				},
-			},
-		)
+		})
 	}
 
 	// External credentials — tier-2 per-agent scoping, relocated here

@@ -34,6 +34,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/sandbox"
 )
 
 // agentReachRow is one thing this agent can hand work to.
@@ -164,12 +165,19 @@ func (T *OrchestrateApp) handleAgentAccess(w http.ResponseWriter, r *http.Reques
 		http.NotFound(w, r)
 		return
 	}
-	if strings.TrimSpace(r.URL.Query().Get("view")) == "reach" {
+	switch strings.TrimSpace(r.URL.Query().Get("view")) {
+	case "reach":
 		rows := agentReach(udb, user, rec)
 		if rows == nil {
 			rows = []agentReachRow{}
 		}
 		writeJSON(w, rows)
+		return
+	case "workspace":
+		writeJSON(w, T.accessWorkspaceRows(rec))
+		return
+	case "knowledge":
+		writeJSON(w, accessKnowledgeRows(rec))
 		return
 	}
 	sess := &ToolSession{Username: user, DB: udb}
@@ -180,6 +188,84 @@ func (T *OrchestrateApp) handleAgentAccess(w http.ResponseWriter, r *http.Reques
 		})
 	}
 	writeJSON(w, rows)
+}
+
+// accessSideRow is a row in the two groups that are not a tool list: a fact,
+// a short verdict, and where the verdict is set.
+type accessSideRow struct {
+	Name   string `json:"name"`
+	Policy string `json:"policy"`
+	Detail string `json:"detail,omitempty"`
+	Where  string `json:"where,omitempty"`
+}
+
+// accessWorkspaceRows answers for the SANDBOX, which is not a tool and is
+// shared by every tool that runs a command.
+//
+// Three questions an owner actually has, in the order they think of them: can
+// it run things, can it change files, can it reach out. Each row says where
+// the answer is set, because a reader who disagrees with one wants to go and
+// change it rather than hunt for which of six surfaces owns it.
+func (T *OrchestrateApp) accessWorkspaceRows(rec AgentRecord) []accessSideRow {
+	off := map[string]bool{}
+	for _, pair := range rec.DisabledToolActions {
+		off[strings.TrimSpace(pair)] = true
+	}
+	shell := accessSideRow{Name: "Runs commands", Policy: "yes", Where: "Agent → Switched-off sub-actions"}
+	if off["workspace/run"] {
+		shell.Policy, shell.Detail = "no", "its file actions still work"
+	}
+	files := accessSideRow{Name: "Writes files", Policy: "yes", Where: "Agent → Switched-off sub-actions"}
+	if off["workspace/write"] {
+		files.Policy, files.Detail = "no", "it can still read what is there"
+	}
+	net := accessSideRow{Name: "Opens network connections", Where: "Agent → Workspace may not reach the network"}
+	switch {
+	case rec.ForcePrivate:
+		net.Policy, net.Detail = "no", "forced private, which cuts all network, not only the workspace's"
+		net.Where = "Agent → Force Private mode"
+	case rec.WorkspaceNoNetwork:
+		net.Policy, net.Detail = "no", "its tools and its model are unaffected"
+	case sandbox.ShellNetworkClosedByDefault():
+		net.Policy, net.Detail = "when declared", "this deployment requires raw_network on the tool record"
+		net.Where = "Admin → Tunables → Security"
+	default:
+		net.Policy, net.Detail = "yes", "code in the workspace shares the host's network"
+	}
+	return []accessSideRow{shell, files, net}
+}
+
+// accessKnowledgeRows answers what it reads before it answers.
+func accessKnowledgeRows(rec AgentRecord) []accessSideRow {
+	rows := []accessSideRow{}
+	if n := len(rec.AttachedCollections); n > 0 {
+		rows = append(rows, accessSideRow{
+			Name:   fmt.Sprintf("%d collection%s", n, plural(n)),
+			Policy: "attached", Detail: strings.Join(rec.AttachedCollections, ", ") +
+				" · searched every turn, and carried to anybody it is shared with",
+			Where: "Agent → Knowledge",
+		})
+	}
+	if n := len(rec.AllowedSkills); n > 0 {
+		rows = append(rows, accessSideRow{
+			Name: fmt.Sprintf("%d skill%s", n, plural(n)), Policy: "attached",
+			Detail: strings.Join(rec.AllowedSkills, ", "), Where: "Agent → Skills",
+		})
+	}
+	rows = append(rows,
+		accessSideRow{Name: "Saved notes", Policy: accessOnOff(!rec.DisableExplicit),
+			Detail: "facts it keeps in every prompt", Where: "Agent → Memory"},
+		accessSideRow{Name: "Inferred memory", Policy: accessOnOff(!rec.DisableInferred),
+			Detail: "what it works out for itself and searches later", Where: "Agent → Memory"},
+	)
+	return rows
+}
+
+func accessOnOff(v bool) string {
+	if v {
+		return "on"
+	}
+	return "off"
 }
 
 // privilegePolicyLabel says what happens on an UNATTENDED run in words, because
