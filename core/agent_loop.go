@@ -2834,6 +2834,15 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 			// checked, which is a different and lesser thing. Settling the
 			// round and asking for a rewrite keeps a correct answer from
 			// being yanked off the screen over its phrasing.
+			//
+			// And SETTLE it, which this path described and did not do. The
+			// reply has already streamed, so a retry that starts in the same
+			// bubble concatenates into it: the user gets the pre-correction
+			// text welded to the post-correction text, no separator, both
+			// paragraphs ending differently. Two corrections produced three
+			// renderings of one reply in an exported session. Every sibling
+			// guard in this file settles or retracts first, for this reason.
+			lr.settleRound()
 			lr.history[len(lr.history)-1] = Message{Role: "assistant", Content: lr.rs.resp.Content, Reasoning: lr.rs.resp.Reasoning}
 			// Two shapes of basis, and they call for different rewrites.
 			// A stored note is something the agent holds; a live claim is

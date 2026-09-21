@@ -5,6 +5,7 @@
 package core
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -183,5 +184,54 @@ func TestLiveClaimMakesAReplyWorthJudging(t *testing.T) {
 	}
 	if turnGroundingWorthJudging(TurnGroundingEvidence{Reply: ev.Reply}) {
 		t.Error("with nothing in scope the same reply must not be judged")
+	}
+}
+
+// --- what the judges are shown, and what the correction leaves on screen ----
+
+// The grounding correction described settling the round and did not do it. The
+// reply has already streamed by then, so the retry lands in the SAME bubble and
+// the user gets the pre-correction text welded to the post-correction text, no
+// separator. Two corrections in one exported session produced three renderings
+// of a single reply. Every sibling guard in agent_loop.go settles or retracts
+// first; this one now does too.
+func TestGroundingCorrectionSettlesTheStreamedRound(t *testing.T) {
+	settled, retracted, judged := 0, 0, 0
+	app := &AppCore{LLM: &FakeLLM{Turns: []FakeTurn{
+		{Content: "The staging server runs Ubuntu 22.04, so that package will work."},
+		{Content: "You mentioned the staging server runs Ubuntu 22.04, so that package should work.", Repeat: true},
+	}}}
+	_, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "will that package work?"}}, AgentLoopConfig{
+		MaxRounds:       4,
+		RouteKey:        "test.groundsettle",
+		SettleRound:     func() { settled++ },
+		RetractRound:    func() { retracted++ },
+		UncheckedClaims: []string{"the staging server runs Ubuntu 22.04"},
+		TurnGroundingJudge: func(ev TurnGroundingEvidence) (TurnGroundingVerdict, bool) {
+			judged++
+			if judged > 1 {
+				return TurnGroundingVerdict{}, true
+			}
+			return TurnGroundingVerdict{
+				Asserted: true,
+				Claim:    "The staging server runs Ubuntu 22.04, so that package will work.",
+				Basis:    "the staging server runs Ubuntu 22.04",
+			}, true
+		},
+	})
+	if err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if judged == 0 {
+		t.Fatal("the judge never ran, so this proves nothing about the correction")
+	}
+	if settled == 0 {
+		t.Error("a grounding correction must SETTLE the streamed round; without it the retry concatenates into the bubble the user is already reading")
+	}
+	// Settle, not retract: an ungrounded claim may well be true — nobody
+	// checked, which is a lesser thing than a false one — so the answer is
+	// rewritten rather than yanked off the screen.
+	if retracted != 0 {
+		t.Errorf("an unchecked claim must not be retracted like a false one; retracted=%d", retracted)
 	}
 }
