@@ -331,7 +331,7 @@ func (t *chatTurn) recordScanDetection(agentID, tool string, v ToolScanVerdict) 
 			reason = r
 		}
 	}
-	appendGuardrailBlock(db, agentID, GuardrailBlock{
+	entry := GuardrailBlock{
 		At:      time.Now(),
 		Rule:    scanDetectorRule,
 		Hook:    GuardHookToolResult,
@@ -340,7 +340,14 @@ func (t *chatTurn) recordScanDetection(agentID, tool string, v ToolScanVerdict) 
 		Channel: strings.TrimSpace(t.requesterChannel),
 		Sender:  strings.TrimSpace(t.requesterName),
 		Session: session,
-	})
+		RanBy:   t.ranBy(),
+	}
+	appendGuardrailBlock(db, agentID, entry)
+	// On somebody else's run of a shared agent this also reaches the owner's
+	// notifications. It is the same argument as a rule block, only stronger:
+	// the recipient cannot act on a detection at all, and the owner is the one
+	// who decides whether the agent should still be fetching from there.
+	t.tellOwnerAboutABlock(entry)
 	// Log level, not Debug. An agent that fetched a page carrying instructions
 	// aimed at it is a fact about the deployment, not a detail about one turn —
 	// and for a scheduled agent the server log is the surface an owner is

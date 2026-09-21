@@ -135,5 +135,12 @@ func guardrailRowWhere(b GuardrailBlock) string {
 	if s := strings.TrimSpace(b.Sender); s != "" {
 		parts = append(parts, "from "+s)
 	}
+	// Last, and phrased as an account rather than a name: on a shared agent
+	// the difference between "one of my rules fired" and "the person I shared
+	// this with cannot get past it" is the whole of what the row is telling
+	// you, and it is the part that decides whether to narrow the rule.
+	if by := strings.TrimSpace(b.RanBy); by != "" {
+		parts = append(parts, "run by "+by)
+	}
 	return strings.Join(parts, " · ")
 }

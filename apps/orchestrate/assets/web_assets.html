@@ -5853,6 +5853,8 @@
                 var where = [];
                 if (b.channel) { where.push(b.channel); }
                 if (b.sender) { where.push(b.sender); }
+                // An account the server authenticated, unlike sender above.
+                if (b.ran_by) { where.push('run by ' + b.ran_by); }
                 if (b.reason || where.length) {
                   var sub = document.createElement('div');
                   sub.style.cssText = 'color:var(--text-mute);margin-top:0.1rem';
