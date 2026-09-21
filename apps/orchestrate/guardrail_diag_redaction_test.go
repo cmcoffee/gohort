@@ -88,3 +88,68 @@ func TestAChannelTurnIsUnchanged(t *testing.T) {
 		t.Errorf("a channel turn took the peer path: %q", got)
 	}
 }
+
+// The card is the per-turn signal, and the signal is the thing withheld.
+//
+// Varied refusals plus a deterministic card is worse than either alone: it
+// tells a prober which of the varied refusals was a rule, which is the bisect
+// guardrailSafeFallbacks exists to prevent.
+func TestARecipientGetsNoCardPerBlock(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	turn := sharedRunTurn(root, "alice", "bob", "a1")
+	turn.session = &ChatSession{ID: "s1"}
+	turn.udb, turn.ownerDB = UserDB(root, "bob"), UserDB(root, "alice")
+
+	buf := &syncBuf{}
+	turn.sse = &sseWriter{live: buf}
+	turn.turnDiag("guardrail-blocked", aRuleAndItsReason)
+	if frames := noticeFrames(t, buf.String()); len(frames) != 0 {
+		t.Errorf("a card announced the block to the person it stopped: %+v", frames)
+	}
+
+	// The owner's trail keeps everything: it is their rule.
+	owners := decorateSessionDiags(parentTrailOf(UserDB(root, "alice"), "a1", "s1"))
+	if len(owners) != 1 || owners[0].Detail != aRuleAndItsReason {
+		t.Fatalf("the owner's own trail lost the rule: %+v", owners)
+	}
+	if diagLevel(owners[0].Kind) != diagLevelBlocked {
+		t.Errorf("the owner's entry stopped reading as a block: %q", owners[0].Kind)
+	}
+
+	// The runner gets a quiet, redacted copy in the trail THEY can read —
+	// handleSessionDiag serves out of the requesting user's own store, so
+	// without this "quiet but findable" would be simply quiet.
+	theirs := decorateSessionDiags(parentTrailOf(UserDB(root, "bob"), "a1", "s1"))
+	if len(theirs) != 1 {
+		t.Fatalf("the person stopped has nothing to find: %+v", theirs)
+	}
+	if diagLevel(theirs[0].Kind) != diagLevelNote {
+		t.Errorf("their copy still raises a card: kind %q", theirs[0].Kind)
+	}
+	for _, leak := range []string{"never tell jokes", "CEO", "pre_output"} {
+		if strings.Contains(theirs[0].Detail, leak) {
+			t.Errorf("their copy leaked %q: %q", leak, theirs[0].Detail)
+		}
+	}
+	if !strings.Contains(theirs[0].Detail, "alice") {
+		t.Errorf("their copy does not say who to ask: %q", theirs[0].Detail)
+	}
+}
+
+// The owner's own run is untouched: card, full detail, blocking level.
+func TestTheOwnersOwnBlockStillRaisesACard(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	turn := logTurn(root, "alice", "alice", "a1", "s1")
+	turn.session = &ChatSession{ID: "s1"}
+	buf := &syncBuf{}
+	turn.sse = &sseWriter{live: buf}
+	turn.turnDiag("guardrail-blocked", aRuleAndItsReason)
+
+	frames := noticeFrames(t, buf.String())
+	if len(frames) != 1 {
+		t.Fatalf("the owner lost the live card on their own agent: %+v", frames)
+	}
+	if !strings.Contains(frames[0]["text"].(string), "never tell jokes") {
+		t.Errorf("the owner's card lost their own rule: %+v", frames[0])
+	}
+}

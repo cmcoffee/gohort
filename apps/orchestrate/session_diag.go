@@ -322,19 +322,27 @@ func (t *chatTurn) emitDiagNotice(kind, detail string, at time.Time) {
 // redactGuardrailDetail rewrites a guardrail diagnostic when the person
 // reading the turn is not the person who wrote the rule.
 //
-// Two things have to be true at once and the unredacted text only manages one.
-// The reader must know something was WITHHELD: an agent that fetches a joke and
-// then declines to tell it, with nothing else on screen, reads as broken, and
-// they re-ask in circles or stop using it. And they must not be handed the rule
-// itself — its text, the hook it fired at, the warden's reason. That is the
-// owner's policy, and on a shared agent it is also the exact shape to phrase
-// around.
+// Three things have to be true at once.
 //
-// So the card stays and its contents go. The owner is told in full through the
-// block log and a notice (see guardrail_log.go); this is the other half of that
-// split, and it is HERE rather than at the ~15 call sites because the trail is
-// persisted in the reader's own store and a call site added later would
-// otherwise write the rule into it.
+// The reader must be able to FIND OUT that something was withheld: an agent
+// that fetches a joke and then declines to tell it, with nothing else anywhere,
+// reads as broken, and they re-ask in circles or stop using it.
+//
+// They must not be handed the rule itself — its text, the hook it fired at, the
+// warden's reason. That is the owner's policy, and on a shared agent it is also
+// the exact shape to phrase around.
+//
+// And it must not ANNOUNCE itself per turn. This is the one the first version
+// got wrong. guardrailSafeFallbacks varies the refusals precisely so they are
+// not a fingerprint — "someone probing learns exactly which attempts tripped
+// the guardrail and can bisect toward the rule without ever seeing it" — and a
+// live amber card on every block hands back the signal that effort removed,
+// only cleaner: varied refusals plus a deterministic card tells you which of
+// the varied refusals was a rule.
+//
+// So for somebody who is not the owner it becomes a quiet note in their own
+// trail, where a person actually confused will look, and nothing on screen. The
+// owner's copy is untouched and still says everything.
 func (t *chatTurn) redactGuardrailDetail(kind, detail string) string {
 	if t == nil || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(kind)), "guardrail") {
 		return detail
@@ -359,7 +367,6 @@ func (t *chatTurn) turnDiag(kind, detail string) {
 	if t == nil {
 		return
 	}
-	detail = t.redactGuardrailDetail(kind, detail)
 	// A diagnostic is text a PERSON reads, so it goes out through the same
 	// delivery scrub as a reply. Two reasons it belongs here rather than in
 	// each of the ~60 call sites: the framework writes these strings itself and
@@ -372,10 +379,20 @@ func (t *chatTurn) turnDiag(kind, detail string) {
 	// names the entry (diagID), and three readings would be three entries as
 	// far as the page is concerned.
 	at := time.Now()
+	// A guardrail block on somebody ELSE's run is told twice, differently:
+	// this trail is the OWNER's (see the store note below), so it keeps the
+	// rule and the reason in full, and the person who was stopped gets a
+	// separate, redacted, note-level copy in their own trail further down.
+	quiet := t.quietGuardrailFor(kind)
 	// The pane hears about it first. A live notice is only worth anything
 	// while the reader is still looking at the turn it belongs to, and the
 	// store write is the one part of this that can be slow.
-	t.emitDiagNotice(kind, detail, at)
+	//
+	// Not for the quiet case: the card is the per-turn signal, and the signal
+	// is the thing being withheld.
+	if !quiet {
+		t.emitDiagNotice(kind, detail, at)
+	}
 	defer t.mirrorDiagToParent(kind, detail, at)
 	// A live turn writes to its own session. A BACKGROUND turn (scheduled fire,
 	// monitor wake, dispatched sub-agent) has no *session at all — it was built
@@ -406,6 +423,35 @@ func (t *chatTurn) turnDiag(kind, detail string) {
 		db = t.udb
 	}
 	appendSessionDiagAt(db, agentID, sessionID, kind, detail, at)
+	// The runner's own copy, when the trail above went somewhere they cannot
+	// read. handleSessionDiag serves a trail out of the REQUESTING user's
+	// store, so on a shared agent everything written above is invisible to the
+	// person it happened to — which would have made "quiet, but findable"
+	// simply quiet.
+	//
+	// Note level, by its kind: it names a condition rather than an action, so
+	// diagLevel leaves it in the trail instead of raising a card. That is the
+	// convention this file already runs on.
+	if quiet && t.udb != nil {
+		appendSessionDiagAt(t.udb, agentID, sessionID,
+			quietGuardrailKind, t.redactGuardrailDetail(kind, detail), at)
+	}
+}
+
+// quietGuardrailKind names the recipient's copy of a guardrail breadcrumb.
+//
+// Deliberately carries no blocking verb, which is how diagLevel decides: a kind
+// naming a CONDITION stays in the trail, a kind naming an ACTION raises a card.
+// See diagBlockingVerbs.
+const quietGuardrailKind = "guardrail-rule-applied"
+
+// quietGuardrailFor reports whether this breadcrumb is a guardrail one on a run
+// that is not the owner's, which is the only case that goes quiet.
+func (t *chatTurn) quietGuardrailFor(kind string) bool {
+	if t == nil || t.ranBy() == "" {
+		return false
+	}
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(kind)), "guardrail")
 }
 
 // mirrorDiagToParent copies a dispatched turn's breadcrumb into the
