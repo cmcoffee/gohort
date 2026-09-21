@@ -9,6 +9,8 @@ package orchestrate
 // whose calls it governed.
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -95,5 +97,100 @@ func TestUnattendedItIsRefusedAndSaysSo(t *testing.T) {
 	}
 	if !strings.Contains(trail[0].Detail, "no interactive viewer") {
 		t.Errorf("the breadcrumb does not say why it was refused: %q", trail[0].Detail)
+	}
+}
+
+// The decision is reviewable and revocable on the Permissions page, which is
+// where every other standing decision lives.
+func TestAnAskingToolShowsOnThePermissionsPage(t *testing.T) {
+	app, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	for _, tt := range []TempTool{
+		{Name: "confirm_row_loud", CommandTemplate: "curl x", ConfirmInChat: true},
+		{Name: "confirm_row_quiet", CommandTemplate: "echo hi"},
+	} {
+		if err := AdminPersistTempTool(udb, "alice", tt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows := permRowsFor(t, app, "alice")
+	row := rowByDetail(rows, "Asks before every call")
+	if row == nil {
+		t.Fatal("a tool set to ask is reviewable nowhere")
+	}
+	if row["Who"] != "confirm_row_loud" {
+		t.Errorf("the row names the wrong subject: %+v", row)
+	}
+	if row["_policy"] != PolicyAsk {
+		t.Errorf("the row does not read as asking: %+v", row)
+	}
+	// Blocked is the unattended mark and answers a different question, so it
+	// is hidden rather than offered to mean something it does not.
+	if row["_noblock"] != true {
+		t.Errorf("the row offers a state that is not its question: %+v", row)
+	}
+	// The quiet tool grows no row: a row appears while the decision is
+	// load-bearing, which is the rule the rest of the page follows.
+	for _, r := range rows {
+		if r["Who"] == "confirm_row_quiet" {
+			t.Errorf("a tool that asks nothing grew a row: %+v", r)
+		}
+	}
+}
+
+// And it can be cleared from the same control that shows it.
+func TestAnAskingToolCanBeQuietedFromThePage(t *testing.T) {
+	app, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	if err := AdminPersistTempTool(udb, "alice", TempTool{
+		Name: "confirm_quiet_me", CommandTemplate: "curl x", ConfirmInChat: true}); err != nil {
+		t.Fatal(err)
+	}
+	set := func(value string) {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodPost, "/api/console/permissions/policy?id=confirmtool:confirm_quiet_me&value="+value, nil)
+		w := httptest.NewRecorder()
+		app.handleConsolePermissionPolicy(w, asUser(r, "alice"))
+		if w.Code != http.StatusOK && w.Code != http.StatusNoContent {
+			t.Fatalf("policy %s: %d %s", value, w.Code, w.Body.String())
+		}
+	}
+	set(PolicyAllow)
+	if toolAsks(t, udb, "confirm_quiet_me") {
+		t.Error("allowing the tool left it asking")
+	}
+	set(PolicyAsk)
+	if !toolAsks(t, udb, "confirm_quiet_me") {
+		t.Error("setting it back to ask did not take")
+	}
+}
+
+func toolAsks(t *testing.T, udb Database, name string) bool {
+	t.Helper()
+	for _, pt := range LoadPersistentTempTools(udb, "alice") {
+		if pt.Tool.Name == name {
+			return pt.Tool.ConfirmInChat
+		}
+	}
+	t.Fatalf("no tool %q", name)
+	return false
+}
+
+// A Builder edit must not silently clear it. The owner's decision about risk
+// is not something a rewrite of the tool's body gets to undo.
+func TestARewriteDoesNotQuietATool(t *testing.T) {
+	_, udb, _ := newTestOrchestrate(t)
+	if err := AdminPersistTempTool(udb, "alice", TempTool{
+		Name: "confirm_survives", CommandTemplate: "curl x", ConfirmInChat: true}); err != nil {
+		t.Fatal(err)
+	}
+	// The same tool re-persisted WITHOUT the flag, which is what an edit that
+	// reconstructs the record looks like.
+	if err := AdminPersistTempTool(udb, "alice", TempTool{
+		Name: "confirm_survives", CommandTemplate: "curl y"}); err != nil {
+		t.Fatal(err)
+	}
+	if !toolAsks(t, udb, "confirm_survives") {
+		t.Error("a rewrite cleared the owner's decision")
 	}
 }

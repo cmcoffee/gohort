@@ -846,6 +846,17 @@ func AdminPersistTempTool(db Database, username string, t TempTool) error {
 		// stays Trial, because an edit is not a vouching either.
 		next.Tool.Trial = approved[i].Tool.Trial
 		next.Tool.TrialSince = approved[i].Tool.TrialSince
+		// ConfirmInChat is governance of the same kind, and the same trap. A
+		// tool set to ask before every call, then edited by Builder, would
+		// have come back silent: the owner's decision about risk cleared by a
+		// rewrite of the tool's body, with nothing saying so and the next call
+		// going through unasked.
+		//
+		// Preserved only on UPDATE, which is the whole of this loop: a tool
+		// being created has no prior value, so an author declaring
+		// confirm_in_chat on a genuinely dangerous new tool still lands. After
+		// that it is the owner's, changed from a governance surface.
+		next.Tool.ConfirmInChat = approved[i].Tool.ConfirmInChat
 		// Wrapper-level state survives a re-persist too. ScopeAgents is the
 		// flattened namespace's scope — dropping it would silently promote an
 		// agent-scoped tool to shared on every Builder edit. Shared /
@@ -1577,6 +1588,33 @@ func cleanRecipients(users []string, owner string) []string {
 func sliceHas(list []string, want string) bool {
 	for _, s := range list {
 		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+// SetUserToolConfirmInChat turns a tool's ask-before-every-call flag on or off.
+//
+// The same shape as SetUserToolScopeAgents beside it, and for the same reason:
+// the flag lives on the tool RECORD, so it is one write to the pool rather
+// than something an agent carries. A tool's riskiness is a property of the
+// tool, and two agents holding it should not disagree about whether it asks.
+//
+// Reports whether a tool of that name was found, so a caller can tell "set" from
+// "there is no such tool" instead of both looking like success.
+func SetUserToolConfirmInChat(db Database, username, name string, confirm bool) bool {
+	db = tempToolStore(db)
+	if db == nil || username == "" {
+		return false
+	}
+	tempToolPersistMu.Lock()
+	defer tempToolPersistMu.Unlock()
+	list := LoadPersistentTempTools(db, username)
+	for i := range list {
+		if list[i].Tool.Name == name {
+			list[i].Tool.ConfirmInChat = confirm
+			db.Set(persistentTempToolsTable, username, list)
 			return true
 		}
 	}

@@ -444,6 +444,11 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 								// it is not, and a switched-off sub-action is gone
 								// from the schema rather than waiting on anybody.
 								{Label: "Needs approval", Value: "ask", URL: "api/console/permissions/policy", HideIf: "_noask"},
+								// Hidden on a row whose only two states are ask and
+								// allow: Blocked is the never-unattended mark, and on
+								// an in-chat prompt row it would read as switching the
+								// tool off.
+								//
 								// On a tool row this now means something the runtime
 								// enforces: refused on any run with nobody watching,
 								// and not queued, because the owner is not being
@@ -451,7 +456,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 								// since a segment reading "never" over a tool that
 								// went on queueing for approval is a control lying
 								// about the state it sets.
-								{Label: "Blocked", Value: "block", URL: "api/console/permissions/policy"},
+								{Label: "Blocked", Value: "block", URL: "api/console/permissions/policy", HideIf: "_noblock"},
 							},
 							RowActions: []ui.OrchestratorRowAction{
 								// Widen a grant that belongs to one agent. Only on

@@ -304,7 +304,12 @@ const (
 	// (skills, credentials, recipes) each paid their own way the same way. This
 	// is the first raise since the four-rung run began, and the band is exactly
 	// where it was.
-	coreExportCeiling = 2235
+	// 2236: SetUserToolConfirmInChat, the peer of SetUserToolScopeAgents
+	// beside it. The flag it writes is preserved across a re-persist, which
+	// is what makes a dedicated setter necessary rather than a load-edit-save
+	// through AdminPersistTempTool: that path deliberately keeps the old
+	// value, so it cannot be the route by which the value changes.
+	coreExportCeiling = 2236
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

@@ -125,6 +125,11 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 		// or it is not, and a switched-off sub-action is gone from the schema
 		// rather than waiting on anybody.
 		NoAsk bool `json:"_noask,omitempty"`
+		// NoBlock is its mirror, for a row whose only two states are ask and
+		// allow. "Blocked" is the never-unattended mark and answers a
+		// different question; offered here it would read as switching the tool
+		// off, which is not what clearing an in-chat prompt does.
+		NoBlock bool `json:"_noblock,omitempty"`
 	}
 	out := []permRow{}
 	// Zone 1 — live pending requests (a decision is blocked on the user), then
@@ -296,6 +301,25 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 				Managed: true, Policy: PolicyBlock, NoAsk: true,
 			})
 		}
+	}
+	// Tools set to ask before every call, in CHAT. One row per tool and not
+	// per agent, because the flag lives on the tool record: a tool's riskiness
+	// is a property of the tool, and two agents holding it must not disagree
+	// about whether it asks.
+	//
+	// Its state is "ask" and its only other state is "allow". Blocked is the
+	// unattended mark and belongs to a different question, so the segment is
+	// hidden rather than offered to mean something it does not.
+	for _, pt := range LoadPersistentTempTools(AuthDB(), user) {
+		if !pt.Tool.ConfirmInChat {
+			continue
+		}
+		out = append(out, permRow{
+			Who:     pt.Tool.Name,
+			Detail:  "Asks before every call, in chat, on every agent",
+			ID:      "confirmtool:" + pt.Tool.Name,
+			Managed: true, Policy: PolicyAsk, NoBlock: true,
+		})
 	}
 	for _, p := range listAutoToolPolicies(RootDB, user) {
 		if seenTool[p.AgentID+"\x00"+p.Tool] {
@@ -505,6 +529,14 @@ func (T *OrchestrateApp) handleConsolePermissionPolicy(w http.ResponseWriter, r 
 		// leads and the subject follows, so neither has to be escaped.
 		if aid, handle, ok := strings.Cut(target, ":"); ok && handle != "" {
 			SetContactPolicy(RootDB, user, aid, handle, value)
+		}
+	case "confirmtool":
+		// Keyed by TOOL, not agent: the flag is on the tool record. "ask" sets
+		// it, anything else clears it, and there is no third state because
+		// Blocked is the unattended mark and is not this control's question.
+		if !SetUserToolConfirmInChat(AuthDB(), user, target, value == PolicyAsk) {
+			http.Error(w, "no such tool", http.StatusNotFound)
+			return
 		}
 	case "workspace":
 		// The sandbox's own reach. Two states only, and "allow" CLEARS the
