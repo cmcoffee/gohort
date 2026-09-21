@@ -478,12 +478,47 @@ func unresolvedToolsWarning(sess *ToolSession, rec *AgentRecord) string {
 			" NOTE: %s %s provided by the framework, not by this list, the agent gets them when the condition behind them holds (a corpus attached, for knowledge_search / fetch_knowledge_doc), and listing them here neither grants nor removes them. Harmless to leave; if the agent CANNOT reach one, the cause is elsewhere: most often a machine phase or pipeline stage whose own tool list narrows the catalog, which drops framework tools it does not name.",
 			strings.Join(framework, ", "), isAre(len(framework)))
 	}
-	if len(missing) == 0 {
-		return out
+	if len(missing) > 0 {
+		out += fmt.Sprintf(
+			" ⚠ WARNING: these allowed_tools entries match no known tool and were dropped (typo, or a tool you haven't actually created yet): %s. The agent will NOT have them. Create the tool first (tool_def), then update_agent to add it.",
+			strings.Join(missing, ", "),
+		)
 	}
-	return out + fmt.Sprintf(
-		" ⚠ WARNING: these allowed_tools entries match no known tool and were dropped (typo, or a tool you haven't actually created yet): %s. The agent will NOT have them. Create the tool first (tool_def), then update_agent to add it.",
-		strings.Join(missing, ", "),
+	return out + attachedMachineGapsWarning(sess, rec)
+}
+
+// attachedMachineGapsWarning reports the steps of this agent's machine that
+// name tools the agent, as just saved, cannot reach.
+//
+// The cross-check ran in one direction only. Saving a MACHINE warns about phase
+// tools the agents running it do not carry (machineAttachGapsForAll), and that
+// is the direction somebody is already looking. Saving an AGENT said nothing:
+// rewriting an allowlist is exactly how a step loses the tool it names, because
+// the allowlist and the phases are separate records authored at different
+// times, and the only hint was a line of prose in this same message advising
+// that the cause of an unreachable tool is "most often a machine phase". The
+// run-time symptom is a step that quietly runs without the tools it lists — or,
+// when it loses ALL of them, one that runs with the full catalog instead, which
+// is the opposite of what the list was written for.
+//
+// Reports rather than refuses, on the same grounds as the save-time typo check:
+// the catalog is genuinely dynamic, and a name that misses today can be minted
+// tomorrow by a credential or an MCP server that has not connected yet.
+func attachedMachineGapsWarning(sess *ToolSession, rec *AgentRecord) string {
+	if sess == nil || sess.DB == nil || rec == nil || strings.TrimSpace(rec.Machine) == "" {
+		return ""
+	}
+	def, ok := LoadMachineDef(sess.DB, sess.Username, rec.Machine)
+	if !ok {
+		return ""
+	}
+	gaps := machineAttachGaps(sess.DB, sess.Username, def, *rec)
+	if len(gaps) == 0 {
+		return "" // a warning that shows up on healthy configurations gets scrolled past
+	}
+	return fmt.Sprintf(
+		" ⚠ WARNING: this agent runs the machine %q, and after this save its steps name tools the agent cannot reach: %s. Those steps will run WITHOUT the tools they name (a step that loses every name it lists runs with the FULL catalog instead). Add the names back to allowed_tools, or edit the steps with machine(action=\"update_phase\").",
+		def.Name, strings.Join(gaps, "; "),
 	)
 }
 
