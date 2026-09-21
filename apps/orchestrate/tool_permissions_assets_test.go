@@ -129,3 +129,20 @@ func TestAToolNothingWithholdsIsNotOfferedAnApproval(t *testing.T) {
 		t.Error("the modal never asks what the gate would do")
 	}
 }
+
+// The ladder is about UNATTENDED runs, and that has to be on screen rather
+// than in hover text.
+//
+// "Ask" read as "ask me every time": an owner set it, used the agent in chat,
+// was never prompted, and reasonably concluded the control did nothing. The
+// gate only exists on the two unattended surfaces (autonomousGate); in chat an
+// agent uses its tools freely and always has.
+func TestTheLadderSaysItIsAboutUnattendedRuns(t *testing.T) {
+	src := orchestrateWebAssets
+	if !strings.Contains(src, "SCHEDULED or STANDING run") {
+		t.Error("nothing on screen says which runs the pill governs")
+	}
+	if !strings.Contains(src, "None of it applies in chat") {
+		t.Error("the modal does not say the pill is silent in chat, which is where it was read as broken")
+	}
+}

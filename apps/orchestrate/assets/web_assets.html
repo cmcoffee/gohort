@@ -2815,6 +2815,17 @@
             help.textContent = "Pick which tools this agent's worker may call. Open a category to see its tools: the first one is what is scoped to this agent, the rest is your shared catalog. Uncheck everything in the catalog categories to disable ALL optional tools (the agent will be left with only framework-blessed tools like plan_set / respond_directly).";
           }
           m.body.appendChild(help);
+          if (!isBuilder) {
+            // The pill needs a frame, and hover text is not one. "Ask" read as
+            // "ask me every time", so an owner set it, used the agent in chat,
+            // was never prompted, and reasonably concluded it was broken.
+            // Every state on that control is about a run with NOBODY WATCHING;
+            // in chat an agent uses its tools freely and always has.
+            var permHelp = document.createElement('div');
+            permHelp.className = 'ui-orch-modal-help';
+            permHelp.textContent = "The pill on each tool says what happens on a SCHEDULED or STANDING run: Runs (nothing holds it back), Ask (stops and waits for you in the Permissions pane), Always (runs without asking), or Attended only (refused outright, and not queued). None of it applies in chat, where the agent uses its tools freely.";
+            m.body.appendChild(permHelp);
+          }
 
           // ONE tree for every tool this agent could load. The scoped group is
           // the first category in it, and the catalog's categories follow —
