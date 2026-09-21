@@ -935,80 +935,54 @@ const dashboardBarCSS = `<style>
 // the public /agents app mounts it at the relative "api/" endpoints it
 // already serves. Scoped to the end-user via /agents/<slug>/api/*; the
 // calling user only ever sees their own per-(user, agent) memory.
-// blockedMarkScript renders the mark on a turn one of the owner's rules
-// stopped: one glyph, the sentence on hover, and a click that tells the owner
-// you think it was wrong.
+// blockedMarkScript is the click behaviour behind the mark on a stopped turn.
 //
-// A block renderer rather than anything in core/ui, which is the toolkit's
-// route for an app-specific thing on screen: the server emits a generic
-// {kind:"block", type:"turn_blocked"} and core/ui never learns what a guardrail
-// is. The report carries the session id and nothing else; every word about the
-// rule is read from the owner's own log server-side, so this cannot assert
-// anything about why it fired.
+// The mark itself is drawn by the panel: the server sets ChatMessage.Mark, so
+// it renders inline before the reply and comes back on a reload without this
+// script running at all. What belongs to the app is what CLICKING it does, and
+// it arrives through the client-action registry like every other app behaviour.
+//
+// It sends the session id and whatever the person types. It asserts nothing
+// about the rule: every word the owner reads about that is added server-side
+// from their own block log.
 const blockedMarkScript = `<script>
 (function(){
   function register() {
-    if (!window.uiRegisterBlockRenderer) { setTimeout(register, 50); return; }
-    window.uiRegisterBlockRenderer('turn_blocked', function(d) {
-      var wrap = document.createElement('span');
-      wrap.className = 'ui-turn-blocked';
-      var mark = document.createElement('button');
-      mark.type = 'button';
-      mark.className = 'ui-turn-blocked-mark';
-      mark.textContent = '!';
-      // The whole message, on hover. Nothing about which rule or why: that is
-      // the owner's, and the turn is already in front of the reader.
-      mark.title = ((d && d.title) || 'This action was blocked.') + ' Click if you think that is wrong.';
-      mark.setAttribute('aria-label', mark.title);
-      mark.addEventListener('click', function() {
-        var session = (d && d.data && d.data.session) || '';
-        window.uiPrompt(
-          'Tell the owner why this should not have been stopped. They will see which of their rules fired; they cannot see this conversation.',
-          '',
-          {multiline: true, rows: 3, ok: 'Send'}
-        ).then(function(said) {
-          if (said === null) return;
-          mark.disabled = true;
-          fetch('api/ask-owner', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({request: said, session: session})
-          }).then(function(r) {
-            if (!r.ok) {
-              return r.text().then(function(t) {
-                var msg = (t || '').trim();
-                throw new Error((r.status >= 400 && r.status < 500 && msg) ? msg : ('Could not send: ' + (msg || ('HTTP ' + r.status))));
-              });
-            }
-            return r.json();
-          }).then(function(res) {
-            window.uiAlert((res && res.result) || 'Sent.');
-          }).catch(function(e) {
-            mark.disabled = false;
-            window.uiAlert(e.message || 'Could not send.');
-          });
+    if (!window.uiRegisterClientAction) { setTimeout(register, 50); return; }
+    window.uiRegisterClientAction('turn_blocked_report', function(ctx) {
+      var session = (ctx && ctx.data && ctx.data.session) || (ctx && ctx.sessionId) || '';
+      var btn = ctx && ctx.button;
+      window.uiPrompt(
+        'Tell the owner why this should not have been stopped. They will see which of their rules fired; they cannot see this conversation.',
+        '',
+        {multiline: true, rows: 3, ok: 'Send'}
+      ).then(function(said) {
+        if (said === null) return;
+        if (btn) btn.disabled = true;
+        fetch('api/ask-owner', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({request: said, session: session})
+        }).then(function(r) {
+          if (!r.ok) {
+            return r.text().then(function(t) {
+              var msg = (t || '').trim();
+              throw new Error((r.status >= 400 && r.status < 500 && msg) ? msg : ('Could not send: ' + (msg || ('HTTP ' + r.status))));
+            });
+          }
+          return r.json();
+        }).then(function(res) {
+          window.uiAlert((res && res.result) || 'Sent.');
+        }).catch(function(e) {
+          if (btn) btn.disabled = false;
+          window.uiAlert(e.message || 'Could not send.');
         });
       });
-      wrap.appendChild(mark);
-      // {wrap: ...}, not the node itself. addBlock drops anything without a
-      // .wrap, silently, which is why the first cut rendered nothing at all.
-      return {wrap: wrap};
     });
   }
   register();
 })();
-</script>
-<style>
-.ui-turn-blocked { display: inline-flex; vertical-align: middle; }
-.ui-turn-blocked-mark {
-  width: 18px; height: 18px; padding: 0; line-height: 16px;
-  border-radius: 50%; border: 1px solid var(--warning, #b45309);
-  background: transparent; color: var(--warning, #b45309);
-  font-size: 12px; font-weight: 700; cursor: pointer;
-}
-.ui-turn-blocked-mark:hover { background: var(--warning, #b45309); color: #fff; }
-.ui-turn-blocked-mark:disabled { opacity: 0.5; cursor: default; }
-</style>`
+</script>`
 
 var memoryModalScript = orchestrate.AgentMemoryModalScript("agents_memory_modal", "'api/'")
 

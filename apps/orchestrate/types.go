@@ -1268,6 +1268,14 @@ type ChatSession struct {
 // (e.g. "html_artifact"); ID is the block identity used for upserts;
 // Title plus ONE of HTML (authored document, sandboxed render) or URL
 // (same-origin page preview) are that renderer's payload.
+// MessageMark is the badge described on ChatMessage.Mark.
+type MessageMark struct {
+	Glyph  string            `json:"glyph"`
+	Title  string            `json:"title,omitempty"`
+	Action string            `json:"action,omitempty"`
+	Data   map[string]string `json:"data,omitempty"`
+}
+
 type UIBlock struct {
 	Type  string `json:"type"`
 	ID    string `json:"id"`
@@ -1418,6 +1426,15 @@ type ChatMessage struct {
 	// title alone can't, since many contacts share one room). Empty on plain
 	// web sessions, where the anonymous you/assistant bubbles are correct.
 	Sender string `json:"sender,omitempty"`
+
+	// Mark is a per-message badge the PANEL renders and the APP defines: a
+	// glyph at the head of the message, a tooltip, and a client action on
+	// click. Persisted, so a mark applied live is still there when the thread
+	// is reopened.
+	//
+	// Generic by design. core/ui knows a message can carry one; what any
+	// particular mark means stays in the app that set it.
+	Mark *MessageMark `json:"mark,omitempty"`
 }
 
 // PersistedToolCall is one tool invocation persisted alongside the

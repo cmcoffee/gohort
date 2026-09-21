@@ -885,6 +885,11 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 		// existed only as an SSE event, so reopening the thread showed the text
 		// that described a picture and no picture.
 		Attachments: turn.takeDeliveredAttachments(),
+		// One of the owner's rules stopped this turn, and the person it
+		// stopped is not its owner. Set HERE rather than when the rule fired,
+		// because pre_output runs before this message exists. See
+		// guardrail_mark.go.
+		Mark: turn.blockedMark(),
 	})
 	sess.Plans = append(sess.Plans, PlanSnapshot{
 		RoundIndex: len(sess.Plans),
@@ -892,6 +897,9 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 		Synthetic:  syntheticPlan,
 	})
 	_, _ = saveChatSession(udb, sess)
+	// And live, to the open pane. Addresses no id: it is sent at the end of
+	// the turn, so the last assistant bubble is the one it is about.
+	turn.deliverBlockedMark()
 
 	// Hallucinated-authoring detection. The pattern we keep seeing
 	// on smaller models: the assistant replies "I've created the

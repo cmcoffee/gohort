@@ -2869,6 +2869,50 @@
     // by openSession to pass through server-saved created (timestamp)
     // and usage (per-message stats) so replayed bubbles surface the
     // same hover-only timestamp + stats footer the live flow does.
+    // renderMessageMark draws a per-message MARK: one glyph at the head of the
+    // message, a tooltip, and an optional client action on click.
+    //
+    // Generic on purpose. The panel knows a message can carry a mark; what a
+    // mark MEANS is the app's, supplied as {glyph, title, action} and wired to
+    // the client-action registry. Idempotent, because a message can be marked
+    // by replay and again by a live event.
+    function renderMessageMark(bubble, mark) {
+      if (!bubble || !mark || !mark.glyph) return;
+      var body = bubble.querySelector('.ui-agent-msg-body') || bubble;
+      if (body.querySelector('.ui-msg-mark')) return;
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'ui-msg-mark';
+      b.textContent = mark.glyph;
+      // Styled here rather than in the sheet: it is one control, and inlining
+      // keeps a panel-level primitive from needing an app to ship CSS for it.
+      b.style.cssText = 'width:17px;height:17px;padding:0;margin-right:.4rem;' +
+        'line-height:15px;border-radius:50%;border:1px solid var(--warning,#b45309);' +
+        'background:transparent;color:var(--warning,#b45309);font-size:11px;' +
+        'font-weight:700;cursor:pointer;vertical-align:middle;flex:none';
+      if (mark.title) { b.title = mark.title; b.setAttribute('aria-label', mark.title); }
+      if (mark.action) {
+        b.addEventListener('click', function() {
+          var fn = window.UIClientActions && window.UIClientActions[mark.action];
+          if (typeof fn === 'function') {
+            fn({button: b, sessionId: activeSessionId, data: mark.data || {}});
+          }
+        });
+      } else {
+        b.disabled = true;
+      }
+      body.insertBefore(b, body.firstChild);
+    }
+
+    // markLastAssistant applies a mark to the most recent assistant bubble.
+    // The live route: a turn is marked when it ENDS, so there is no id to
+    // address and the last reply is the one it is about.
+    function markLastAssistant(mark) {
+      var all = convoLog.querySelectorAll('.ui-agent-msg-assistant');
+      if (!all.length) return;
+      renderMessageMark(all[all.length - 1], mark);
+    }
+
     function setMessageMeta(id, meta) {
       var m = msgEls[id];
       if (!m || !meta) return;
@@ -2904,6 +2948,9 @@
         m.report_kind = meta.report_kind || '';
         m.report_detail = meta.report_detail || '';
       }
+      // The replay route for a mark, so one that was applied live is still
+      // there when the thread is reopened.
+      if (meta.mark) renderMessageMark(m.bubble, meta.mark);
     }
 
     // formatTimestamp renders a Date.now()-shaped value as a short
@@ -4368,6 +4415,12 @@
         case 'block':
           addBlock(ev);
           break;
+        // A mark on the reply this turn just produced. Sent at the END of a
+        // turn, so it addresses no id: the last assistant bubble is the one
+        // it is about. What it means belongs to the app that sent it.
+        case 'message_mark':
+          markLastAssistant(ev.mark);
+          break;
         case 'block_done': {
           var be = blockEls[ev.id];
           if (be && be.onDone) be.onDone();
@@ -5127,7 +5180,7 @@
       var mid = m.id || ('m-' + Math.random().toString(36).slice(2));
       addMessage(m.role || 'assistant', mid, m.content || m.text || '', m.sender);
       if (cfg.markdown && m.role === 'assistant') finalizeMessage(mid);
-      if (m.created || m.usage || m.report_from) setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail});
+      if (m.created || m.usage || m.report_from || m.mark) setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail, mark: m.mark});
     }
 
     function stopChannelPolling() {
@@ -5219,7 +5272,7 @@
       var mid = (m && m.id) || ('obs-' + Math.random().toString(36).slice(2));
       addMessage(m.role || 'assistant', mid, m.content || m.text || '', m.sender);
       if (cfg.markdown && (m.role === 'assistant')) finalizeMessage(mid);
-      if (m.created || m.usage || m.report_from) setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail});
+      if (m.created || m.usage || m.report_from || m.mark) setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail, mark: m.mark});
       applyPersistedToolCalls(mid, m);
       if (messageReplayHooks.length) {
         var entry = msgEls[mid], bubble = entry && entry.bubble;
@@ -5850,7 +5903,7 @@
                 addMessage(m.role || 'assistant', mid, m.content || m.text || '');
                 if (cfg.markdown && (m.role === 'assistant')) finalizeMessage(mid);
                 if (m.created || m.usage) {
-                  setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail});
+                  setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail, mark: m.mark});
                 }
                 // Replay persisted tool calls (same shape as the
                 // SESSION-mode branch below — see that comment for
@@ -6047,7 +6100,7 @@
             }
             if (cfg.markdown && (m.role === 'assistant')) finalizeMessage(mid);
             if (m.created || m.usage) {
-              setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail});
+              setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail, mark: m.mark});
             }
             if (msgEls[mid] && msgEls[mid].bubble) {
               noticeAnchors.push({at: Date.parse(m.created || ''), node: msgEls[mid].bubble});

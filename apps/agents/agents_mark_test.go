@@ -13,12 +13,15 @@ import (
 	"testing"
 )
 
-func TestTheMarkRendererReturnsWhatAddBlockExpects(t *testing.T) {
-	if !strings.Contains(blockedMarkScript, "return {wrap:") {
-		t.Error("the renderer returns a bare node; addBlock drops anything without .wrap, silently")
+func TestTheMarkActionIsRegistered(t *testing.T) {
+	if !strings.Contains(blockedMarkScript, "uiRegisterClientAction('turn_blocked_report'") {
+		t.Error("the mark's click is not wired to the action the server names")
 	}
-	if !strings.Contains(blockedMarkScript, "uiRegisterBlockRenderer('turn_blocked'") {
-		t.Error("the renderer is not registered for the type the server emits")
+	// The GLYPH is the panel's now, not this script's: the server sets
+	// ChatMessage.Mark, so it renders inline before the reply and survives a
+	// reload with no app code involved.
+	if strings.Contains(blockedMarkScript, "uiRegisterBlockRenderer") {
+		t.Error("the mark is still drawn as a session-level block, which replay collapses")
 	}
 }
 

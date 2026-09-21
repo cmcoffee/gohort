@@ -22,16 +22,10 @@ func TestATurnIsMarkedOnce(t *testing.T) {
 
 	turn.turnDiag("guardrail-blocked", aRuleAndItsReason)
 	turn.turnDiag("guardrail-blocked", "and again at another hook")
+	turn.deliverBlockedMark()
 
-	if n := strings.Count(buf.String(), `"turn_blocked"`); n != 1 {
+	if n := strings.Count(buf.String(), `"message_mark"`); n != 1 {
 		t.Errorf("the turn carries %d marks, want 1:\n%s", n, buf.String())
-	}
-	// Live only. The replay path collapses persisted blocks by title within a
-	// type, and every mark shares one title — so persisting would bring three
-	// stopped turns back as a single mark at the wrong place. See the note in
-	// markTurnBlocked.
-	if len(turn.session.UIBlocks) != 0 {
-		t.Errorf("the mark was persisted, where replay would collapse it: %+v", turn.session.UIBlocks)
 	}
 	// It says what happened and nothing about which rule.
 	if !strings.Contains(buf.String(), "This action was blocked") {
@@ -41,6 +35,25 @@ func TestATurnIsMarkedOnce(t *testing.T) {
 		if strings.Contains(buf.String(), leak) {
 			t.Errorf("the mark leaked %q", leak)
 		}
+	}
+	// It rides the reply as a stored field, which is what brings it back on a
+	// reload, and it names the action the app registers.
+	mark := turn.blockedMark()
+	if mark == nil || mark.Glyph != "!" || mark.Action != blockedMarkAction {
+		t.Fatalf("the stored mark is not the one the panel draws: %+v", mark)
+	}
+	if mark.Data["session"] != "s1" {
+		t.Errorf("the mark lost the session the report needs: %+v", mark.Data)
+	}
+}
+
+// Nothing to mark on a turn no rule stopped.
+func TestAnUnstoppedTurnCarriesNoMark(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	turn := sharedRunTurn(root, "alice", "bob", "a1")
+	turn.session = &ChatSession{ID: "s1"}
+	if m := turn.blockedMark(); m != nil {
+		t.Errorf("an unstopped turn was marked: %+v", m)
 	}
 }
 
@@ -53,7 +66,8 @@ func TestTheOwnersTurnIsNotMarked(t *testing.T) {
 	turn.sse = &sseWriter{live: buf}
 	turn.turnDiag("guardrail-blocked", aRuleAndItsReason)
 
-	if strings.Contains(buf.String(), `"turn_blocked"`) {
+	turn.deliverBlockedMark()
+	if strings.Contains(buf.String(), `"message_mark"`) {
 		t.Error("the owner got a mark instead of their own card")
 	}
 	if len(noticeFrames(t, buf.String())) != 1 {
