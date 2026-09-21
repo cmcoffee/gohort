@@ -169,6 +169,15 @@ func (T *OrchestrateApp) handleAskOwner(w http.ResponseWriter, r *http.Request) 
 		http.NotFound(w, r)
 		return
 	}
+	T.askOwnerRequest(w, r, user, a)
+}
+
+// askOwnerRequest is the body both doors share, once the agent is resolved.
+func (T *OrchestrateApp) askOwnerRequest(w http.ResponseWriter, r *http.Request, user string, a AgentRecord) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	var body struct {
 		Request string `json:"request"`
 	}
@@ -208,4 +217,20 @@ func hasSomeoneElsesAgent(agents []AgentRecord, user string) bool {
 		}
 	}
 	return false
+}
+
+// PublicHandleAskOwner is the restricted /agents/<slug> surface's door onto the
+// same request.
+//
+// It takes the resolved record rather than an id because the caller has already
+// done the reaching: apps/agents matched the slug and ran the access gate, and
+// re-deriving any of that here would be a second, differently-worded answer to
+// a question already settled. This is also the surface where the ask MATTERS —
+// a recipient of a shared agent lives here, not in the workbench.
+func (T *OrchestrateApp) PublicHandleAskOwner(w http.ResponseWriter, r *http.Request, agent AgentRecord) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	T.askOwnerRequest(w, r, user, agent)
 }

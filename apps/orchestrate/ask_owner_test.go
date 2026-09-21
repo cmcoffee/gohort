@@ -123,23 +123,42 @@ func TestTheButtonIsHiddenWhenEverythingIsYours(t *testing.T) {
 	}
 }
 
-// Both doors go through askOwnerFor, so the cap, the wording and the fold
-// cannot come apart between the tool and the button.
-func TestTheButtonSharesTheToolsRule(t *testing.T) {
-	src := packageSource(t)
-	i := strings.Index(src, "func (T *OrchestrateApp) handleAskOwner")
+// fnBody returns one function's source, for the structural checks below.
+func fnBody(t *testing.T, src, decl string) string {
+	t.Helper()
+	i := strings.Index(src, decl)
 	if i < 0 {
-		t.Fatal("the button has no endpoint")
+		t.Fatalf("no such function: %s", decl)
 	}
 	body := src[i:]
 	if j := strings.Index(body[10:], "\nfunc "); j >= 0 {
 		body = body[:j+10]
 	}
-	if !strings.Contains(body, "askOwnerFor(") {
-		t.Error("the endpoint records the request itself instead of going through askOwnerFor")
+	return body
+}
+
+// Every door goes through askOwnerFor, so the cap, the wording and the fold
+// cannot come apart between the tool, the workbench button and the restricted
+// surface's button — which is the one a recipient actually reaches.
+func TestEveryDoorSharesTheToolsRule(t *testing.T) {
+	src := packageSource(t)
+	if b := fnBody(t, src, "func (T *OrchestrateApp) askOwnerRequest"); !strings.Contains(b, "askOwnerFor(") {
+		t.Error("the shared endpoint body records the request itself instead of going through askOwnerFor")
 	}
-	if !strings.Contains(body, "findAgentByNameOrID(") {
-		t.Error("the endpoint takes the agent on trust; it must resolve it the way a run does")
+	// The workbench door resolves the agent the way a run does rather than
+	// taking the posted id on trust.
+	wb := fnBody(t, src, "func (T *OrchestrateApp) handleAskOwner")
+	if !strings.Contains(wb, "findAgentByNameOrID(") {
+		t.Error("the workbench endpoint takes the agent on trust")
+	}
+	if !strings.Contains(wb, "askOwnerRequest(") {
+		t.Error("the workbench endpoint does not reach the shared body")
+	}
+	// The restricted surface's door takes the record its caller already
+	// resolved and gated, and must not re-derive that differently.
+	pb := fnBody(t, src, "func (T *OrchestrateApp) PublicHandleAskOwner")
+	if !strings.Contains(pb, "askOwnerRequest(") {
+		t.Error("the restricted surface's endpoint does not reach the shared body")
 	}
 }
 

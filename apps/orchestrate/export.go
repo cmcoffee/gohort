@@ -50,8 +50,19 @@ func (T *OrchestrateApp) handleSessionExport(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "agent_id and session id are required", http.StatusBadRequest)
 		return
 	}
-	agent, ok := loadAgent(udb, agentID)
-	if !ok || (agent.Owner != user && agent.Owner != seedOwner) {
+	// Resolved the way a RUN resolves it, not by "is this record in your own
+	// store". A recipient running a shared agent, or anybody on a published
+	// one, has no row for it — so this returned 404 for exactly the people the
+	// restricted /agents/ surface exists for, and its Copy session button was
+	// dead for every one of them.
+	//
+	// The session below is the real authorization and always was: it is loaded
+	// out of the CALLER's store, keyed by this agent, so a session you can
+	// export is one you ran. The record is wanted for the name and the tool
+	// list the export prints, which is why nothing here reads the owner's
+	// prompts or rules.
+	agent, ok := T.agentForSessionExport(udb, user, agentID)
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}
@@ -79,6 +90,35 @@ func (T *OrchestrateApp) handleSessionExport(w http.ResponseWriter, r *http.Requ
 	default:
 		http.Error(w, "unknown format: try md or json", http.StatusBadRequest)
 	}
+}
+
+// agentForSessionExport finds the record behind a session the caller holds.
+//
+// Three tiers, widening: their own agents and the ones shared with them (which
+// is what findAgentByNameOrID already answers, seeds included), then the
+// published pool, whose records live in the owner's store and appear in nobody
+// else's listing.
+func (T *OrchestrateApp) agentForSessionExport(udb Database, user, agentID string) (AgentRecord, bool) {
+	if a, ok := findAgentByNameOrID(udb, user, agentID); ok {
+		return a, true
+	}
+	// The published pool is indexed by slug, and its entries are a summary
+	// rather than the record, so the id match is followed by one load out of
+	// the owner's store.
+	//
+	// Narrowed to what actually REACHES this caller. The pool holds every agent
+	// the /agents/ surface can serve, peer-shared ones included, and a bare id
+	// match over it would hand any signed-in user the record behind an agent
+	// shared with two named colleagues.
+	for _, e := range T.ListExposedAgents() {
+		if e.AgentID != agentID || !(e.Everyone || containsString(e.AllowedUsers, user)) {
+			continue
+		}
+		if a, ok := loadAgent(UserDB(T.DB, e.Owner), agentID); ok {
+			return a, true
+		}
+	}
+	return AgentRecord{}, false
 }
 
 // sessionExportPayload is the JSON shape returned by the export

@@ -143,6 +143,11 @@ func (T *AgentsApp) dispatch(w http.ResponseWriter, r *http.Request) {
 		orch.PublicHandleSessionList(w, r, agent.ID)
 	case strings.HasPrefix(rest, "api/sessions/"):
 		orch.PublicHandleSessionOne(w, r, agent.ID, strings.TrimPrefix(rest, "api/sessions/"))
+	case rest == "api/ask-owner":
+		// The recipient's route back. This surface is where somebody running an
+		// agent they do not own actually lives, so the ask belongs here at
+		// least as much as in the workbench.
+		orch.PublicHandleAskOwner(w, r, agent)
 	case rest == "api/facts":
 		orch.PublicHandleAgentFacts(w, r, agent.ID)
 	case rest == "api/notes":
@@ -234,7 +239,6 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 		return
 	}
 	_ = udb
-	_ = user
 	display := orchestrate.ExposedDisplayName(agent)
 	desc := strings.TrimSpace(agent.Description)
 	if desc == "" {
@@ -314,6 +318,18 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 		ui.ToolbarAction{Label: "Copy session", Group: "⋯", Method: "client", URL: "copy_session",
 			Title: "Copy the full session as markdown (every user message, every assistant round, every tool call/result) for pasting into a prompt-tuning chat."},
 	)
+	// The route back to whoever owns this. Offered only on an agent that is not
+	// yours, because on your own there is nobody to ask — you are the person
+	// who would grant it. This surface is where a recipient of a shared agent
+	// actually works, so it matters more here than in the workbench: everything
+	// they might need (a collection it cannot read, a tool, a credential) is
+	// behind a door only the owner opens, and until this there was no way to
+	// knock on it from the page where they hit the wall.
+	if owner := strings.TrimSpace(agent.Owner); owner != "" && owner != user {
+		dashboardActions = append(dashboardActions,
+			ui.ToolbarAction{Label: "Ask the owner", Group: "⋯", Method: "client", URL: "agents_ask_owner",
+				Title: "Need something this agent cannot reach — a document collection, a tool, a credential? Ask " + owner + ". It goes to their notifications; there is no reply here, so try again once they grant it."})
+	}
 	panel := ui.AgentLoopPanel{
 		ListURL:     "api/sessions",
 		LoadURL:     "api/sessions/{id}",
@@ -374,7 +390,7 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 				Body:     panel,
 			},
 		},
-		ExtraHeadHTML: intakeHead + TranscribeRuntimeFlagScript() + dashboardBarCSS + memoryModalScript + docsModalScript,
+		ExtraHeadHTML: intakeHead + TranscribeRuntimeFlagScript() + dashboardBarCSS + memoryModalScript + docsModalScript + askOwnerScript,
 	}
 	page.ServeHTTP(w, r)
 }
@@ -915,6 +931,53 @@ const dashboardBarCSS = `<style>
 // already serves. Scoped to the end-user via /agents/<slug>/api/*; the
 // calling user only ever sees their own per-(user, agent) memory.
 var memoryModalScript = orchestrate.AgentMemoryModalScript("agents_memory_modal", "'api/'")
+
+// askOwnerScript powers the "Ask the owner" toolbar action, which is added only
+// on an agent somebody else owns.
+//
+// The agent offers the same thing by tool when a turn hits a wall, and the
+// model will reach for it; a button is for the person who has already decided
+// to ask and should not have to phrase a sentence that makes a model choose a
+// tool. Both go through api/ask-owner, so the daily cap and the wording cannot
+// come apart between them.
+const askOwnerScript = `<script>
+(function(){
+  function register() {
+    if (!window.uiRegisterClientAction) { setTimeout(register, 50); return; }
+    window.uiRegisterClientAction('agents_ask_owner', function(ctx) {
+      window.uiPrompt(
+        'What do you need from the owner of this agent? Name the thing it could not reach, since they cannot see this conversation.',
+        '',
+        {multiline: true, rows: 4, ok: 'Send',
+         placeholder: 'e.g. it cannot read the Runbooks collection'}
+      ).then(function(request) {
+        if (request === null) return; // cancelled
+        if (!String(request).trim()) { window.uiAlert('Say what you need, or there is nothing to send.'); return; }
+        fetch('api/ask-owner', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({request: request})
+        }).then(function(r) {
+          if (!r.ok) {
+            return r.text().then(function(t) {
+              var msg = (t || '').trim();
+              throw new Error((r.status >= 400 && r.status < 500 && msg) ? msg : ('Could not send: ' + (msg || ('HTTP ' + r.status))));
+            });
+          }
+          return r.json();
+        }).then(function(d) {
+          // The server's own sentence: it knows whether it sent or was capped,
+          // and a fixed "Sent" would be wrong half the time.
+          window.uiAlert((d && d.result) || 'Sent.');
+        }).catch(function(e) {
+          window.uiAlert(e.message || 'Could not send.');
+        });
+      });
+    });
+  }
+  register();
+})();
+</script>`
 
 // docsModalScript powers the public agent app's "Knowledge" toolbar
 // action. After the Memory→Knowledge migration this surface owns the

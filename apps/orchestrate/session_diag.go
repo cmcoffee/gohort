@@ -319,12 +319,47 @@ func (t *chatTurn) emitDiagNotice(kind, detail string, at time.Time) {
 	})
 }
 
+// redactGuardrailDetail rewrites a guardrail diagnostic when the person
+// reading the turn is not the person who wrote the rule.
+//
+// Two things have to be true at once and the unredacted text only manages one.
+// The reader must know something was WITHHELD: an agent that fetches a joke and
+// then declines to tell it, with nothing else on screen, reads as broken, and
+// they re-ask in circles or stop using it. And they must not be handed the rule
+// itself — its text, the hook it fired at, the warden's reason. That is the
+// owner's policy, and on a shared agent it is also the exact shape to phrase
+// around.
+//
+// So the card stays and its contents go. The owner is told in full through the
+// block log and a notice (see guardrail_log.go); this is the other half of that
+// split, and it is HERE rather than at the ~15 call sites because the trail is
+// persisted in the reader's own store and a call site added later would
+// otherwise write the rule into it.
+func (t *chatTurn) redactGuardrailDetail(kind, detail string) string {
+	if t == nil || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(kind)), "guardrail") {
+		return detail
+	}
+	by := t.ranBy()
+	if by == "" {
+		return detail
+	}
+	who := strings.TrimSpace(t.ownerUser)
+	if who == "" {
+		who = "the owner of this agent"
+	}
+	// Says the omission is deliberate. "A rule stopped this" on its own invites
+	// the reader to hunt for the missing half and conclude the message is
+	// broken too.
+	return "A rule set by " + who + " stopped this. They have been told it stopped you. Which rule, and why, is theirs to see."
+}
+
 // turnDiag is appendSessionDiag bound to a chatTurn — the convenient form
 // for guards firing inside a live turn. Nil-safe on every field.
 func (t *chatTurn) turnDiag(kind, detail string) {
 	if t == nil {
 		return
 	}
+	detail = t.redactGuardrailDetail(kind, detail)
 	// A diagnostic is text a PERSON reads, so it goes out through the same
 	// delivery scrub as a reply. Two reasons it belongs here rather than in
 	// each of the ~60 call sites: the framework writes these strings itself and
