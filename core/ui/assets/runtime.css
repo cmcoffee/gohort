@@ -404,14 +404,29 @@ select:-webkit-autofill {
   .ui-secnav { flex-direction: column; gap: 0.6rem; }
   .ui-secnav-rail { flex-basis: auto; flex-direction: row; flex-wrap: wrap; position: static; }
 }
+/* The title, then its ⓘ, then whatever the right slot holds.
+ *
+ * This was space-between, which distributes the free space BETWEEN the
+ * children — so the icon drifted to the middle of the row, and on a header
+ * with no right slot it went to the far edge with the whole width between it
+ * and the word it belongs to. It reads as an unrelated control rather than as
+ * part of the title.
+ *
+ * flex-start keeps them adjacent; the right slot pushes itself over with an
+ * auto margin, which is what wanted the space-between in the first place. The
+ * gap is 0 because the icon carries its own margin and a gap on top of it
+ * loosens the one pair that must stay tight. */
 .ui-section-h {
   font-size: 0.85rem; margin: 0 0 0.7rem 0;
   color: var(--text-mute); text-transform: uppercase; letter-spacing: 0.04em;
-  display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;
+  display: flex; align-items: center; justify-content: flex-start; gap: 0;
   flex-wrap: wrap;
   word-break: break-word;
 }
-.ui-section-h-r { font-size: 0.7rem; text-transform: none; letter-spacing: 0; font-weight: normal; }
+.ui-section-h-r {
+  margin-left: auto; padding-left: 0.5rem;
+  font-size: 0.7rem; text-transform: none; letter-spacing: 0; font-weight: normal;
+}
 .ui-section-sub {
   font-size: 0.8rem; color: var(--text-mute);
   margin: -0.3rem 0 0.6rem 0;
