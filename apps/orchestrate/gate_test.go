@@ -16,6 +16,8 @@ package orchestrate
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -97,5 +99,40 @@ func TestAgentsWorkbenchOpenWithoutAuth(t *testing.T) {
 	}
 	if app.WebRestricted(httptest.NewRequest(http.MethodGet, "/", nil)) {
 		t.Error("the card should show on a no-auth deployment")
+	}
+}
+
+// What the console gate is left guarding, and what it must not creep back onto.
+//
+// "Console" names two different things that were behind one gate: somebody's
+// own operator view — their agents, runs, monitors, approvals, goals, broken
+// tools — and one view ACROSS owners. The first is theirs and the landing page
+// is built from it, which is why sixty-one calls on that page 403'd for every
+// non-admin. The second is the administrator's and keeps the gate.
+func TestTheConsoleGateIsOnlyOnTheCrossOwnerViews(t *testing.T) {
+	src, err := os.ReadFile("console.go")
+	if err != nil {
+		t.Fatalf("reading the console routes: %v", err)
+	}
+	gated := regexp.MustCompile(`T\.HandleFunc\("([^"]+)",\s*gw?\(`)
+	for _, m := range gated.FindAllStringSubmatch(string(src), -1) {
+		if !strings.Contains(m[1], "/bridge") {
+			t.Errorf("%s is admin-gated but is not a cross-owner view; a user's own operator "+
+				"surface is built from these and 403s without them", m[1])
+		}
+	}
+	// And the cross-owner one keeps it: it lists every owner's bridges on
+	// purpose, which is the one thing here that is the deployment's.
+	if !strings.Contains(string(src), `T.HandleFunc("/api/console/bridges", g(`) {
+		t.Error("the cross-owner bridges listing lost its admin gate")
+	}
+	// A mutating action that lost the gate must keep the METHOD guard. The two
+	// travelled together and only one of them was an ACL: dropping both would
+	// take a CSRF protection with it, since these endpoints are query-param
+	// driven and SameSite=Lax still sends the cookie on a top-level GET.
+	for _, action := range []string{"/api/console/agents/delete", "/api/console/monitors/pause"} {
+		if !strings.Contains(string(src), `T.HandleFunc("`+action+`", w(`) {
+			t.Errorf("%s no longer rejects safe methods", action)
+		}
 	}
 }

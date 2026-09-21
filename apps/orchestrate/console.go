@@ -52,8 +52,20 @@ func consoleAgentID(r *http.Request) string {
 }
 
 func (T *OrchestrateApp) registerConsoleRoutes() {
+	// The console is mostly somebody's OWN operator view: their agents, runs,
+	// monitors, approvals, goals, broken tools. Those routes carry no admin
+	// gate, for the reason the agent routes lost theirs — each handler
+	// resolves the session user and reads that user's own store, and the gate
+	// meant the landing page 403'd in sixty-one places for anybody who is not
+	// an administrator.
+	//
+	// What keeps the gate is the view ACROSS owners: the bridges table lists
+	// every user's, deliberately, for an administrator to govern.
 	g := T.adminGated
 	gw := T.adminGatedWrite // admin + rejects safe methods (mutating actions)
+	// The method guard on its own, for a user-scoped action. Dropping the gate
+	// must not drop the CSRF protection that happened to travel with it.
+	w := T.stateChangingOnly
 
 	// Feed live AGENT activity into the global live ribbon — the same pill that
 	// shows running apps. Agents were invisible there because they run through
@@ -125,68 +137,68 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 			return out
 		})
 	})
-	T.HandleFunc("/api/console/agents", g(T.handleConsoleAgents))
-	T.HandleFunc("/api/console/agents/delete", gw(T.handleConsoleAgentDelete))
-	T.HandleFunc("/api/console/agents/pause", gw(T.handleConsoleAgentPause))
-	T.HandleFunc("/api/console/agents/resume", gw(T.handleConsoleAgentResume))
-	T.HandleFunc("/api/console/agents/run", gw(T.handleConsoleAgentRun))
-	T.HandleFunc("/api/console/agents/relink", gw(T.handleConsoleAgentRelink))
+	T.HandleFunc("/api/console/agents", T.handleConsoleAgents)
+	T.HandleFunc("/api/console/agents/delete", w(T.handleConsoleAgentDelete))
+	T.HandleFunc("/api/console/agents/pause", w(T.handleConsoleAgentPause))
+	T.HandleFunc("/api/console/agents/resume", w(T.handleConsoleAgentResume))
+	T.HandleFunc("/api/console/agents/run", w(T.handleConsoleAgentRun))
+	T.HandleFunc("/api/console/agents/relink", w(T.handleConsoleAgentRelink))
 	// Shared relink picker source: the owner's agents as {value:id,label:name}.
-	T.HandleFunc("/api/console/agent-options", g(T.handleConsoleAgentOptions))
+	T.HandleFunc("/api/console/agent-options", T.handleConsoleAgentOptions)
 	// The owner's view of an agent's picture library — the first surface that
 	// shows what is in it rather than describing it in the agent's own words.
-	T.HandleFunc("/api/agent-images", g(T.handleAgentImages))
-	T.HandleFunc("/api/agent-images/raw", g(T.handleAgentImageRaw))
-	T.HandleFunc("/api/agent-images/action", gw(T.handleAgentImageAction))
+	T.HandleFunc("/api/agent-images", T.handleAgentImages)
+	T.HandleFunc("/api/agent-images/raw", T.handleAgentImageRaw)
+	T.HandleFunc("/api/agent-images/action", w(T.handleAgentImageAction))
 	// Fleet-wide guardrail review — read-only, so no gw() write wrapper.
-	T.HandleFunc("/api/console/guardrail-blocks", g(T.handleConsoleGuardrails))
+	T.HandleFunc("/api/console/guardrail-blocks", T.handleConsoleGuardrails)
 	// Tool health: actions that have failed repeatedly and never once worked.
-	T.HandleFunc("/api/console/broken-tools", g(T.handleConsoleBrokenTools))
-	T.HandleFunc("/api/console/broken-tools/forget", gw(T.handleConsoleBrokenToolForget))
+	T.HandleFunc("/api/console/broken-tools", T.handleConsoleBrokenTools)
+	T.HandleFunc("/api/console/broken-tools/forget", w(T.handleConsoleBrokenToolForget))
 	// Per-agent spend: each agent's LLM usage, banked per run (agent_spend.go).
-	T.HandleFunc("/api/console/spend", g(T.handleConsoleSpend))
-	T.HandleFunc("/api/console/monitors", g(T.handleConsoleMonitors))
-	T.HandleFunc("/api/console/monitors/delete", gw(T.handleConsoleMonitorDelete))
-	T.HandleFunc("/api/console/monitors/pause", gw(T.handleConsoleMonitorPause))
-	T.HandleFunc("/api/console/monitors/resume", gw(T.handleConsoleMonitorResume))
-	T.HandleFunc("/api/console/monitors/relink", gw(T.handleConsoleMonitorRelink))
+	T.HandleFunc("/api/console/spend", T.handleConsoleSpend)
+	T.HandleFunc("/api/console/monitors", T.handleConsoleMonitors)
+	T.HandleFunc("/api/console/monitors/delete", w(T.handleConsoleMonitorDelete))
+	T.HandleFunc("/api/console/monitors/pause", w(T.handleConsoleMonitorPause))
+	T.HandleFunc("/api/console/monitors/resume", w(T.handleConsoleMonitorResume))
+	T.HandleFunc("/api/console/monitors/relink", w(T.handleConsoleMonitorRelink))
 	// "Move to…" (Surface: Cortex / Session / Background) — shared dynamic picker
 	// source (cortex gated on the agent) + per-type in-place setters, no
 	// delete+recreate.
-	T.HandleFunc("/api/console/surface-options", g(T.handleConsoleSurfaceOptions))
-	T.HandleFunc("/api/console/monitors/move", gw(T.handleConsoleMonitorMove))
-	T.HandleFunc("/api/console/agents/move", gw(T.handleConsoleStandingMove))
-	T.HandleFunc("/api/console/recurring/move", gw(T.handleConsoleRecurringMove))
-	T.HandleFunc("/api/console/monitors/run", gw(T.handleConsoleMonitorRun))
-	T.HandleFunc("/api/console/monitors/get", g(T.handleConsoleMonitorGet))
-	T.HandleFunc("/api/console/monitors/update", gw(T.handleConsoleMonitorUpdate))
-	T.HandleFunc("/api/console/agents/get", g(T.handleConsoleAgentGet))
-	T.HandleFunc("/api/console/agents/update", gw(T.handleConsoleAgentUpdate))
-	T.HandleFunc("/api/console/activity", g(T.handleConsoleActivity))
-	T.HandleFunc("/api/console/activity/cancel", gw(T.handleConsoleActivityCancel))
+	T.HandleFunc("/api/console/surface-options", T.handleConsoleSurfaceOptions)
+	T.HandleFunc("/api/console/monitors/move", w(T.handleConsoleMonitorMove))
+	T.HandleFunc("/api/console/agents/move", w(T.handleConsoleStandingMove))
+	T.HandleFunc("/api/console/recurring/move", w(T.handleConsoleRecurringMove))
+	T.HandleFunc("/api/console/monitors/run", w(T.handleConsoleMonitorRun))
+	T.HandleFunc("/api/console/monitors/get", T.handleConsoleMonitorGet)
+	T.HandleFunc("/api/console/monitors/update", w(T.handleConsoleMonitorUpdate))
+	T.HandleFunc("/api/console/agents/get", T.handleConsoleAgentGet)
+	T.HandleFunc("/api/console/agents/update", w(T.handleConsoleAgentUpdate))
+	T.HandleFunc("/api/console/activity", T.handleConsoleActivity)
+	T.HandleFunc("/api/console/activity/cancel", w(T.handleConsoleActivityCancel))
 	// The two summaries. Overview answers for the agent in view; fleet answers
 	// for everything the user owns and is marked fleet-scoped in the menu so no
 	// agent is appended to its request.
-	T.HandleFunc("/api/console/overview", g(T.handleConsoleOverview))
-	T.HandleFunc("/api/console/fleet", g(T.handleConsoleFleet))
-	T.HandleFunc("/api/console/runs", g(T.handleConsoleRuns))
-	T.HandleFunc("/api/console/run-detail", g(T.handleConsoleRunDetail))
-	T.HandleFunc("/api/console/approvals", g(T.handleConsoleApprovals))
-	T.HandleFunc("/api/console/permissions", g(T.handleConsolePermissions))
+	T.HandleFunc("/api/console/overview", T.handleConsoleOverview)
+	T.HandleFunc("/api/console/fleet", T.handleConsoleFleet)
+	T.HandleFunc("/api/console/runs", T.handleConsoleRuns)
+	T.HandleFunc("/api/console/run-detail", T.handleConsoleRunDetail)
+	T.HandleFunc("/api/console/approvals", T.handleConsoleApprovals)
+	T.HandleFunc("/api/console/permissions", T.handleConsolePermissions)
 	// Widen one agent's contact grant to every agent. See
 	// handleConsolePermissionPromote for why the scoped row is the default.
-	T.HandleFunc("/api/console/permissions/promote", gw(T.handleConsolePermissionPromote))
-	T.HandleFunc("/api/console/permissions/policy", g(T.handleConsolePermissionPolicy))
-	T.HandleFunc("/api/console/permissions/remove", g(T.handleConsolePermissionRemove))
-	T.HandleFunc("/api/console/privileges", g(T.handleConsolePrivileges))
-	T.HandleFunc("/api/console/approvals/approve", gw(T.handleApprovalApprove))
-	T.HandleFunc("/api/console/approvals/always", gw(T.handleApprovalAlways))
-	T.HandleFunc("/api/console/approvals/deny", gw(T.handleApprovalDeny))
-	T.HandleFunc("/api/console/credential-update/apply", gw(T.handleCredentialUpdateApply))
-	T.HandleFunc("/api/console/channel/clear", g(T.handleChannelClear))
-	T.HandleFunc("/api/console/channel/compact", g(T.handleChannelCompact))
-	T.HandleFunc("/api/console/grants", g(T.handleConsoleGrants))
-	T.HandleFunc("/api/console/grants/revoke", g(T.handleGrantRevoke))
+	T.HandleFunc("/api/console/permissions/promote", w(T.handleConsolePermissionPromote))
+	T.HandleFunc("/api/console/permissions/policy", T.handleConsolePermissionPolicy)
+	T.HandleFunc("/api/console/permissions/remove", T.handleConsolePermissionRemove)
+	T.HandleFunc("/api/console/privileges", T.handleConsolePrivileges)
+	T.HandleFunc("/api/console/approvals/approve", w(T.handleApprovalApprove))
+	T.HandleFunc("/api/console/approvals/always", w(T.handleApprovalAlways))
+	T.HandleFunc("/api/console/approvals/deny", w(T.handleApprovalDeny))
+	T.HandleFunc("/api/console/credential-update/apply", w(T.handleCredentialUpdateApply))
+	T.HandleFunc("/api/console/channel/clear", T.handleChannelClear)
+	T.HandleFunc("/api/console/channel/compact", T.handleChannelCompact)
+	T.HandleFunc("/api/console/grants", T.handleConsoleGrants)
+	T.HandleFunc("/api/console/grants/revoke", T.handleGrantRevoke)
 	// Bridges — deployment-wide admin management of the credential-
 	// polling bridges agents have created, regardless of owner. This
 	// is the admin's enable/disable switch for a bridge: a paused
@@ -211,42 +223,42 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// (any agent, not just controllers).
 	// Making one, rather than only managing what an agent made
 	// (console_machine_schedule.go).
-	T.HandleFunc("/api/console/machine-options", g(T.handleConsoleMachineOptions))
-	T.HandleFunc("/api/console/machine-schedule/create", g(T.handleConsoleMachineScheduleCreate))
+	T.HandleFunc("/api/console/machine-options", T.handleConsoleMachineOptions)
+	T.HandleFunc("/api/console/machine-schedule/create", T.handleConsoleMachineScheduleCreate)
 	// Delete a recurring task (the `recurring` tool's session updates) from the
 	// schedules rail. Owner-checked against the task payload before unscheduling.
-	T.HandleFunc("/api/console/recurring", g(T.handleConsoleRecurring))
+	T.HandleFunc("/api/console/recurring", T.handleConsoleRecurring)
 	// The merged view the Scheduler nav entry reads — the three lists above in
 	// one page, grouped. See console_scheduler.go.
-	T.HandleFunc("/api/console/scheduler", g(T.handleConsoleScheduler))
+	T.HandleFunc("/api/console/scheduler", T.handleConsoleScheduler)
 	// One task's working notes: what its fires have left for each other. GET
 	// reads, POST replaces (the same write path update_notes uses). Scoped by
 	// (kind, id) from the row, and only for tasks this user owns. See
 	// task_notes.go and docs/task-notes.md.
-	T.HandleFunc("/api/console/scheduler/notes", g(T.handleTaskNotes))
+	T.HandleFunc("/api/console/scheduler/notes", T.handleTaskNotes)
 	// Containment: one schedule saying it exists to serve another. A link and
 	// nothing more; see task_parent.go for why it carries no authority.
-	T.HandleFunc("/api/console/scheduler/parent", gw(T.handleConsoleSchedulerParent))
-	T.HandleFunc("/api/console/scheduler/parent-options", g(T.handleConsoleSchedulerParentOptions))
+	T.HandleFunc("/api/console/scheduler/parent", w(T.handleConsoleSchedulerParent))
+	T.HandleFunc("/api/console/scheduler/parent-options", T.handleConsoleSchedulerParentOptions)
 	// Whether a parent finishes when everything under it has. Opt-in: see
 	// task_rollup.go for why it cannot be inferred from the link alone.
-	T.HandleFunc("/api/console/scheduler/rollup", gw(T.handleConsoleSchedulerRollup))
-	T.HandleFunc("/api/console/goals", g(T.handleConsoleGoals))
+	T.HandleFunc("/api/console/scheduler/rollup", w(T.handleConsoleSchedulerRollup))
+	T.HandleFunc("/api/console/goals", T.handleConsoleGoals)
 	// The shape of the work: what is part of what, drawn as a tree. A third
 	// question that neither of the other two pages can answer without giving up
 	// its own ordering. See console_breakdown.go.
-	T.HandleFunc("/api/console/breakdown", g(T.handleConsoleBreakdown))
-	T.HandleFunc("/api/console/recurring/run", gw(T.handleConsoleRecurringRun))
-	T.HandleFunc("/api/console/recurring/delete", gw(T.handleConsoleRecurringDelete))
-	T.HandleFunc("/api/console/recurring/relink", gw(T.handleConsoleRecurringRelink))
-	T.HandleFunc("/api/console/recurring/resume", gw(T.handleConsoleRecurringResume))
+	T.HandleFunc("/api/console/breakdown", T.handleConsoleBreakdown)
+	T.HandleFunc("/api/console/recurring/run", w(T.handleConsoleRecurringRun))
+	T.HandleFunc("/api/console/recurring/delete", w(T.handleConsoleRecurringDelete))
+	T.HandleFunc("/api/console/recurring/relink", w(T.handleConsoleRecurringRelink))
+	T.HandleFunc("/api/console/recurring/resume", w(T.handleConsoleRecurringResume))
 	// Get one recurring task's editable fields (for the rail's edit modal) and
 	// update its schedule in place (re-validate + reschedule, prompt preserved).
-	T.HandleFunc("/api/console/recurring/get", g(T.handleConsoleRecurringGet))
-	T.HandleFunc("/api/console/recurring/update", gw(T.handleConsoleRecurringUpdate))
+	T.HandleFunc("/api/console/recurring/get", T.handleConsoleRecurringGet)
+	T.HandleFunc("/api/console/recurring/update", w(T.handleConsoleRecurringUpdate))
 	// Create a NEW recurring task from the Scheduler modal's "New recurring task"
 	// button (agent + session supplied in the body; timing same shape as update).
-	T.HandleFunc("/api/console/recurring/create", gw(T.handleConsoleRecurringCreate))
+	T.HandleFunc("/api/console/recurring/create", w(T.handleConsoleRecurringCreate))
 }
 
 // standingAgentOnRailOf reports whether a standing agent belongs on agentID's

@@ -29,17 +29,23 @@ var sessionlessByDesign = map[string]bool{
 }
 
 func TestUserScopedRoutesResolveASessionUser(t *testing.T) {
-	routes, err := os.ReadFile("orchestrate.go")
-	if err != nil {
-		t.Fatalf("reading the routes: %v", err)
+	var routes strings.Builder
+	for _, f := range []string{"orchestrate.go", "console.go"} {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("reading %s: %v", f, err)
+		}
+		routes.Write(raw)
 	}
-	// Every handler named in an UNGATED HandleFunc on this app.
-	ungated := regexp.MustCompile(`T\.HandleFunc\("[^"]*",\s*(T\.[A-Za-z]+)\)`)
+	// Every handler named in an UNGATED HandleFunc on this app, including the
+	// ones wrapped in the method-only guard: that one is a CSRF protection,
+	// not an ACL, so a route wearing it still has to say who is calling.
+	ungated := regexp.MustCompile(`T\.HandleFunc\("[^"]*",\s*w?\(?(T\.[A-Za-z]+)\)?\)`)
 	var names []string
-	for _, m := range ungated.FindAllStringSubmatch(string(routes), -1) {
+	for _, m := range ungated.FindAllStringSubmatch(routes.String(), -1) {
 		names = append(names, strings.TrimPrefix(m[1], "T."))
 	}
-	if len(names) < 40 {
+	if len(names) < 90 {
 		t.Fatalf("only found %d ungated routes; the pattern has stopped matching", len(names))
 	}
 

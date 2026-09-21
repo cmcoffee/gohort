@@ -680,10 +680,12 @@ func (T *OrchestrateApp) Routes() {
 func (T *OrchestrateApp) adminGated(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !RequestIsAdmin(r) {
-			// End users are not losing their agents: the exposed-agent
-			// surface is apps/agents, on its own routes, and does not
-			// come through here. What this protects is the WORKBENCH —
-			// agent CRUD, prompts, tool allowlists, memory pruning.
+			// What is left behind this gate is a view ACROSS owners — the
+			// bridges table lists every user's. A user's own agents, runs,
+			// monitors and approvals are not here any more; each of those
+			// handlers resolves the session user and reads that user's own
+			// store, which is what decides who sees what.
+			//
 			// Says what this particular thing is, and where the reader's
 			// own agents are. The old wording — "Agents is admin-only" —
 			// was both wrong now and useless then: it told somebody what
@@ -755,5 +757,23 @@ func (T *OrchestrateApp) registerExternalAgentHooks() {
 		ListExternalTargetsFn = func(_ Database, user string) []ExternalTarget {
 			return prevTargets(T.DB, user)
 		}
+	}
+}
+
+// stateChangingOnly is adminGatedWrite's method guard WITHOUT the admin check.
+//
+// Console action endpoints are query-param driven, so a cross-site top-level
+// GET could otherwise trigger one: SameSite=Lax still sends the session cookie
+// on such a GET, and core's Origin check only covers non-safe methods. That
+// reasoning has nothing to do with being an administrator, and it survived the
+// gate coming off the user-scoped actions — taking both away together would
+// have dropped a CSRF guard while meaning to drop an ACL.
+func (T *OrchestrateApp) stateChangingOnly(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !IsStateChangingMethod(r.Method) {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		h(w, r)
 	}
 }
