@@ -63,7 +63,7 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 				"guard_to": {Type: "string", Description: "(update_phase) Where the guard sends it."},
 				"phases": {
 					Type:        "array",
-					Description: "(create/update) Ordered phases, each an object: {\"name\": unique label, \"desc\": one line, \"prompt\": the directive}. The KEY field is \"resident\": true marks a phase user turns come back to (a turn ENDS there); false/omitted marks a transient phase that runs, produces a result, and hands straight off inside the same turn. Every machine needs at least one resident phase. Transient phases declare \"output\": [{name,type,desc,required}] and hand off with \"next\", or, to decide at run time, list the phases they may hand to in \"choices\" (the framework declares the routing field itself, do not declare one, and do not list the options in a prompt). Resident phases may NOT declare output: their reply goes to the user. A resident phase with \"next\" gets ONE turn then hands off (an intake beat); without one it stays. Add \"guard\": a plain-language condition that, checked each turn, moves the conversation out (\"the user has moved on to a different subject\"), with \"guard_to\" naming where it goes. Per-phase \"reach\" (\"\"|\"read\"|\"none\", prefer this to naming tools; it survives being run by a different agent), \"tools\" (exact names on top of reach; empty inherits), \"deny\" (names this phase may NOT reach, subtracted last, the list for \"everything it had except this one\"), \"model\" (\"worker\"|\"lead\"), \"think\" (\"on\"|\"off\", OFF by default on a transient phase; turn it ON for one that genuinely judges, such as decomposing an ambiguous request or routing between close options). Prompts template a fixed set of built-ins, {input}/{original_input}/{established}/{prev}/{now}/{user}/{agent}/{step}/{machine} (transient only; the message AND the earlier findings are supplied anyway if you never place them) and {state:PHASE} / {state:PHASE.field} (anywhere). **Call action=\"help\" for the full spec.**",
+					Description: "(create/update) Ordered phases, each an object: {\"name\": unique label, \"desc\": one line, \"prompt\": the directive}. The KEY field is \"resident\": true marks a phase user turns come back to (a turn ENDS there); false/omitted marks a transient phase that runs, produces a result, and hands straight off inside the same turn. Every machine needs at least one resident phase. Transient phases declare \"output\": [{name,type,desc,required}] and hand off with \"next\", or, to decide at run time, list the phases they may hand to in \"choices\" (the framework declares the routing field itself, do not declare one, and do not list the options in a prompt). Resident phases may NOT declare output: their reply goes to the user. A resident phase with \"next\" gets ONE turn then hands off (an intake beat); without one it stays. Add \"guard\": a plain-language condition that, checked each turn, moves the conversation out (\"the user has moved on to a different subject\"), with \"guard_to\" naming where it goes. Per-phase \"reach\" (\"all\" or \"\" for everything the agent has, \"read\", \"none\" — prefer this to naming tools; it survives being run by a different agent), \"tools\" (exact names on top of reach; empty inherits), \"deny\" (names this phase may NOT reach, subtracted last, the list for \"everything it had except this one\"), \"model\" (\"worker\"|\"lead\"), \"think\" (\"on\"|\"off\", OFF by default on a transient phase; turn it ON for one that genuinely judges, such as decomposing an ambiguous request or routing between close options). Prompts template a fixed set of built-ins, {input}/{original_input}/{established}/{prev}/{now}/{user}/{agent}/{step}/{machine} (transient only; the message AND the earlier findings are supplied anyway if you never place them) and {state:PHASE} / {state:PHASE.field} (anywhere). **Call action=\"help\" for the full spec.**",
 					Items:       &ToolParam{Type: "object"},
 				},
 				"attach_to_agents": {
@@ -180,7 +180,8 @@ tool       a tool this step CALLS DIRECTLY, with "args", and no model runs at al
            call to decide to do the only thing it could do. Args are templated ({input}, {prev},
            {state:PHASE.field}), a placeholder fills a VALUE and can never become a key. A runner
            like agent/pipeline/machine, so it excludes them, and it cannot be resident.
-reach      how much of the agent's catalog this phase may touch: empty = all of it, "read" = only
+reach      how much of the agent's catalog this phase may touch: "all" or empty = all of it (the
+           two are the same value; "all" is what update_phase prints back), "read" = only
            tools that read (nothing that writes, runs a command, or reaches the network), "none" =
            nothing, which is right for a phase that only decides or reshapes what it was given.
            PREFER THIS over naming tools. A catalog is assembled per turn out of things that move
@@ -335,7 +336,6 @@ func (t *chatTurn) machineCreateOrUpdate(args map[string]any, isUpdate bool) (st
 	}
 	def.Owner = t.user
 	saved := SaveMachineDef(t.udb, def)
-
 	verb := "Created"
 	if isUpdate {
 		verb = "Updated"
@@ -434,6 +434,37 @@ func machineFindingsText(catalog, advice []string) string {
 // the asymmetry with attached_pipelines is real and the tool description
 // says so, because "attach" reading as "add to a list" is how someone
 // ends up expecting two machines to run at once.
+
+// normalizeReach maps the sayable spelling of a reach onto the stored one.
+//
+// "all" is what the schema enum offers and what every success message prints
+// back, because the enum cannot offer "" — an empty enum value makes Gemini
+// reject the whole request, disabling every tool for that turn (see
+// TestNoEmptyEnumValuesInSource) — and "omit the param for the default" does
+// not work where an omitted field means "leave it alone" and widening a
+// narrowed step back to everything has to be sayable.
+//
+// The STORED value for "inherit everything" is the empty string, so the two
+// spellings have to be translated somewhere. update_phase did it and the
+// whole-machine create/update path did not, which made "all" a word the
+// framework teaches and then refuses: the author reads `reach = all (inherits
+// everything the agent has)` out of one call, passes it to the next, and core
+// answers `reach must be "read", "none", or empty to inherit everything, got
+// "all"`. Observed on a 3-phase-to-5 restructure, twice in one session, where
+// the rejected field belonged to a step the author had copied forward verbatim
+// and never meant to touch — and a whole-machine update is all-or-nothing, so
+// one unmeant field cost the entire save.
+//
+// Lives here, at the parse boundary, because every write path goes through one
+// of these two parsers and a normalizer further in would have to be found by
+// whoever adds the third.
+func normalizeReach(v string) string {
+	if r := strings.ToLower(strings.TrimSpace(v)); r != "all" {
+		return r
+	}
+	return ReachAll
+}
+
 func (t *chatTurn) attachMachineToAgents(raw any, machineID string) (attached, unknown []string) {
 	names, _ := raw.([]any)
 	for _, n := range names {
@@ -634,16 +665,7 @@ func (t *chatTurn) machineUpdatePhase(args map[string]any) (string, error) {
 	}
 
 	if v, present := args["reach"]; present {
-		r := strings.ToLower(strings.TrimSpace(fmt.Sprint(v)))
-		// "all" is the sayable spelling of the stored empty string. The enum
-		// cannot offer "" — an empty enum value makes Gemini reject the whole
-		// request, disabling every tool for that turn (see
-		// TestNoEmptyEnumValuesInSource) — and "omit the param for the default"
-		// does not work here, where an omitted field means "leave it alone" and
-		// widening a narrowed step back to everything has to be sayable.
-		if r == "all" {
-			r = ReachAll
-		}
+		r := normalizeReach(fmt.Sprint(v))
 		switch r {
 		case ReachAll, ReachRead, ReachNone:
 		default:
@@ -843,7 +865,7 @@ func parseMachinePhases(raw any) ([]MachinePhase, error) {
 			Name:     strings.TrimSpace(mapStr(m, "name")),
 			Desc:     strings.TrimSpace(mapStr(m, "desc")),
 			Prompt:   mapStr(m, "prompt"),
-			Reach:    strings.ToLower(strings.TrimSpace(mapStr(m, "reach"))),
+			Reach:    normalizeReach(mapStr(m, "reach")),
 			Tools:    mapStrList(m, "tools"),
 			Deny:     mapStrList(m, "deny"),
 			Model:    strings.ToLower(strings.TrimSpace(mapStr(m, "model"))),
