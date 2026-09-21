@@ -627,3 +627,72 @@ func approvableToolNames(user string) []string {
 	}
 	return out
 }
+
+// toolPolicyState is one tool's answer for the Tools modal's permission
+// control: where it sits now, and which states are worth offering for it.
+//
+// Both come from the gate rather than from the shape of the tool, because
+// "would this stop on an unattended run" is the gate's question and every
+// surface that answered it separately has drifted from it at least once.
+type toolPolicyState struct {
+	State   string   `json:"state"`
+	Options []string `json:"options"`
+}
+
+// The four states, named for what happens rather than for how it is stored.
+const (
+	toolPermRuns     = "runs"     // nothing withholds it
+	toolPermQueues   = "ask"      // stops the run, waits in the Permissions pane
+	toolPermAlways   = "always"   // the owner pre-approved it
+	toolPermAttended = "attended" // refused outright on a fire, never queued
+)
+
+// toolPolicyFor answers for every tool the Tools modal draws: the shared
+// catalog plus this agent's own tools.
+//
+// NOT the agent's allowlist. An agent on the default pool stores that empty —
+// empty means "every catalog tool" — so asking about it returned nothing and
+// every row fell to the first state of its ladder.
+func (T *OrchestrateApp) toolPolicyFor(udb Database, user string, agent AgentRecord) map[string]toolPolicyState {
+	gate := T.newAutonomousGate(user, agent.ID, nil)
+	preApproved := map[string]bool{}
+	for _, n := range agent.AutoApproveTools {
+		preApproved[strings.TrimSpace(n)] = true
+	}
+
+	names := map[string]bool{}
+	for _, o := range availableWorkerToolOptions(user) {
+		if o.Value != "" && o.Value != noToolsSentinel {
+			names[o.Value] = true
+		}
+	}
+	for _, t := range toolsOfScoped(AgentScopedTools(udb, user, agent.ID)) {
+		if n := strings.TrimSpace(t.Name); n != "" {
+			names[n] = true
+		}
+	}
+
+	out := make(map[string]toolPolicyState, len(names))
+	for name := range names {
+		switch {
+		case gate.neverUnattended(name):
+			out[name] = toolPolicyState{State: toolPermAttended,
+				Options: []string{toolPermRuns, toolPermQueues, toolPermAlways, toolPermAttended}}
+		case preApproved[name]:
+			// The owner said so. Offered alongside Queues, because taking the
+			// grant back has to be possible from the same control that shows it.
+			out[name] = toolPolicyState{State: toolPermAlways,
+				Options: []string{toolPermQueues, toolPermAlways, toolPermAttended}}
+		case gate.allows(name):
+			// Nothing is holding it back, so Queues and Always would both
+			// describe what it already does. Only the one direction that WOULD
+			// change it is offered beside it.
+			out[name] = toolPolicyState{State: toolPermRuns,
+				Options: []string{toolPermRuns, toolPermAttended}}
+		default:
+			out[name] = toolPolicyState{State: toolPermQueues,
+				Options: []string{toolPermQueues, toolPermAlways, toolPermAttended}}
+		}
+	}
+	return out
+}

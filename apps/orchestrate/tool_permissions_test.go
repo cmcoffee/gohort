@@ -63,34 +63,6 @@ func TestThePageShipsTheApprovablePool(t *testing.T) {
 	}
 }
 
-// The endpoint answers with the GATE's own tiering, not a second opinion.
-//
-// privilegeToolRows is that answer: "consequential" there means "would stop
-// for approval on an unattended run", decided by the credential's own toggle.
-// A separate computation here would drift, and the drift shows up as a control
-// offering to grant something nothing withholds.
-func TestTheToolPolicyEndpointUsesTheGatesOwnTiering(t *testing.T) {
-	src := packageSource(t)
-	i := strings.Index(src, `if action == "tool-policy" {`)
-	if i < 0 {
-		t.Fatal("no tool-policy endpoint")
-	}
-	body := src[i:]
-	if j := strings.Index(body, `if action == "reach/credential"`); j >= 0 {
-		body = body[:j]
-	}
-	if !strings.Contains(body, "privilegeToolRows(sess, ask, scoped)") {
-		t.Error("the endpoint tiers tools itself instead of asking privilegeToolRows")
-	}
-	if !strings.Contains(body, "row.Policy") {
-		t.Error("the endpoint does not return the policy")
-	}
-	// Owner-only: it reports how the owner's own credentials are configured.
-	if !strings.Contains(body, "agent.Owner != user") {
-		t.Error("the endpoint is not owner-gated")
-	}
-}
-
 // A tool change is a real change to what the agent may do, so it belongs in
 // the version history like any other edit. What it must not be is unlabelled:
 // a history of identical "update" rows is one nobody can scan for the version
@@ -110,37 +82,6 @@ func TestAToolsModalSaveIsLabelledInTheHistory(t *testing.T) {
 	}
 	if !strings.Contains(body, "saveAgentAs(udb, req, reason)") {
 		t.Error("the reason is computed and then not used")
-	}
-}
-
-// An agent on the DEFAULT POOL stores an empty allowlist — empty means "every
-// catalog tool", not "no tools" — and privilegeToolRows lists from that field.
-//
-// Asking it about the agent directly therefore returned a map with nothing in
-// it, every row in the modal fell to the first state of its ladder, and the
-// whole thing read as Queues on every agent that had never curated its tools.
-// Which is most of them, and is what "all the tools on all the agents" looks
-// like from the outside.
-func TestTheToolPolicyIsAskedOverTheToolsTheModalDraws(t *testing.T) {
-	src := packageSource(t)
-	i := strings.Index(src, `if action == "tool-policy" {`)
-	if i < 0 {
-		t.Fatal("no tool-policy endpoint")
-	}
-	body := src[i:]
-	if j := strings.Index(body, `if action == "reach/credential"`); j >= 0 {
-		body = body[:j]
-	}
-	// The agent's own record must NOT be the thing asked about: its allowlist
-	// is empty on the default pool.
-	if strings.Contains(body, "privilegeToolRows(sess, agent,") {
-		t.Error("asked about the agent's allowlist, which is empty on the default pool")
-	}
-	if !strings.Contains(body, "availableWorkerToolOptions(user)") {
-		t.Error("the catalog is not part of the question, so a pool tool gets no policy")
-	}
-	if !strings.Contains(body, "AgentScopedTools(udb, user, agent.ID)") {
-		t.Error("the agent's own tools are not part of the question")
 	}
 }
 
@@ -170,5 +111,58 @@ func TestPrivilegeRowsCoverBothTheAllowlistAndTheBundledSet(t *testing.T) {
 	// rather than offering an approval that grants nothing.
 	if seen["from_agent"] != "auto" {
 		t.Errorf("a tool nothing withholds tiered as %q", seen["from_agent"])
+	}
+}
+
+// The policy comes from the GATE, with a nil session, exactly as the schedule
+// pre-flight reads it.
+//
+// The first cut went through privilegeToolRows with a ToolSession built out of
+// nothing here. classifyPrivilegeTool answers "unresolved, therefore
+// consequential" for anything it cannot resolve, and a bare session resolves
+// very little — so every catalog tool came back consequential and the whole
+// modal read as Queues while the tools ran perfectly well.
+func TestTheToolPolicyComesFromTheGate(t *testing.T) {
+	src := packageSource(t)
+	i := strings.Index(src, "func (T *OrchestrateApp) toolPolicyFor")
+	if i < 0 {
+		t.Fatal("no toolPolicyFor")
+	}
+	body := src[i:]
+	if j := strings.Index(body[10:], "\nfunc "); j >= 0 {
+		body = body[:j+10]
+	}
+	if !strings.Contains(body, "T.newAutonomousGate(user, agent.ID, nil)") {
+		t.Error("the policy is not read from the gate")
+	}
+	for _, want := range []string{"gate.neverUnattended(name)", "gate.allows(name)"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the gate is not asked: %s", want)
+		}
+	}
+	if strings.Contains(body, "privilegeToolRows") {
+		t.Error("back on the classifier, which reports unresolvable as consequential")
+	}
+	// Over the tools the modal draws, not the agent's allowlist.
+	if !strings.Contains(body, "availableWorkerToolOptions(user)") ||
+		!strings.Contains(body, "AgentScopedTools(udb, user, agent.ID)") {
+		t.Error("the question is not posed over the set the modal renders")
+	}
+}
+
+// A tool nothing withholds is not offered an approval that grants nothing, and
+// a pre-approved one can still be taken back from the same control.
+func TestTheOfferedStatesMatchWhatWouldChangeTheTool(t *testing.T) {
+	src := packageSource(t)
+	i := strings.Index(src, "func (T *OrchestrateApp) toolPolicyFor")
+	body := src[i:]
+	if j := strings.Index(body[10:], "\nfunc "); j >= 0 {
+		body = body[:j+10]
+	}
+	if !strings.Contains(body, "Options: []string{toolPermRuns, toolPermAttended}") {
+		t.Error("a freely-running tool is offered approvals that grant nothing")
+	}
+	if !strings.Contains(body, "Options: []string{toolPermQueues, toolPermAlways, toolPermAttended}") {
+		t.Error("a pre-approved tool cannot be taken back from the control that shows it")
 	}
 }

@@ -2734,28 +2734,22 @@
             always: 'Runs on a scheduled or standing fire without asking. Sub-agents inherit it.',
             attended: 'Refused outright on an unattended run, and NOT queued: this is your decision, not a request for one. Inherits downward, so a sub-agent cannot do what its parent was told not to.'
           };
-          // Which states a row may be in, read from what the GATE would do
-          // with it rather than assumed.
-          //
-          // "auto" means nothing is holding the tool back: its credential is
-          // not configured to ask, so it runs on an unattended fire exactly as
-          // it does in chat. Ask and Always then describe the same behaviour,
-          // and offering them invites somebody to grant something the runtime
-          // never withholds — which is the wrong answer the privilege card
-          // used to give before it moved onto this predicate. Only the one
-          // direction that WOULD change it is offered beside it.
+          // The server answers both halves — where a row sits and which states
+          // are worth offering — from the gate itself. Deriving either here
+          // meant a second opinion about "would this stop", and the two came
+          // apart twice: once reading a tool list that could not name the
+          // agent's own tools, and once reading an allowlist that is EMPTY on
+          // the default pool, which made every row in the modal read the same.
           function permStatesFor(name) {
-            if ((toolPolicy[name] || '') === 'auto') { return ['runs', 'attended']; }
+            var p = toolPolicy[name];
+            if (p && p.options && p.options.length) { return p.options; }
+            // No answer for this name: offer the cautious ladder rather than
+            // asserting the tool runs freely.
             return ['ask', 'always', 'attended'];
           }
-          // Where a row starts: storage first, the gate otherwise. A tool that
-          // was allowed when it was added shows what it DOES, not the default
-          // of a control that did not exist when it was set up.
           function permStateFor(name) {
-            if (heldBack[name]) { return 'attended'; }
-            var states = permStatesFor(name);
-            if (preApproved[name] && states.indexOf('always') >= 0) { return 'always'; }
-            return states[0];
+            var p = toolPolicy[name];
+            return (p && p.state) || 'ask';
           }
           var permState = {};
           // What was already on when this modal opened. Turning a tool ON is a

@@ -78,15 +78,15 @@ func TestTheAgentsOwnToolsAreEligibleAndCounted(t *testing.T) {
 // the modal quietly revokes it.
 func TestStoredGrantsSurviveTheRoundTrip(t *testing.T) {
 	src := orchestrateWebAssets
-	// Seeded from both stored lists...
+	// Seeded from the SERVER's answer, which already folded in both stored
+	// lists and the gate. Deriving it here was a second opinion about "would
+	// this stop", and it came apart twice.
 	for _, want := range []string{
-		"(agent.auto_approve_tools || []).forEach(function(n) { preApproved[n] = true; });",
-		"(agent.no_unattended_tools || []).forEach(function(n) { heldBack[n] = true; });",
-		"if (heldBack[name]) { return 'attended'; }",
-		"if (preApproved[name] && states.indexOf('always') >= 0) { return 'always'; }",
+		"return (p && p.state) || 'ask';",
+		"if (p && p.options && p.options.length) { return p.options; }",
 	} {
 		if !strings.Contains(src, want) {
-			t.Errorf("not seeded from storage: %s", want)
+			t.Errorf("the row derives its own state instead of rendering the server's: %s", want)
 		}
 	}
 	// ...and written back from the rows that actually offered a choice.
@@ -117,7 +117,7 @@ func TestStoredGrantsSurviveTheRoundTrip(t *testing.T) {
 // them would stop.
 func TestAToolNothingWithholdsIsNotOfferedAnApproval(t *testing.T) {
 	src := orchestrateWebAssets
-	if !strings.Contains(src, "if ((toolPolicy[name] || '') === 'auto') { return ['runs', 'attended']; }") {
+	if !strings.Contains(src, "var p = toolPolicy[name];") {
 		t.Error("the ladder does not read the gate's own answer; every row defaults to Ask")
 	}
 	// It still offers the one direction that WOULD change such a tool.
