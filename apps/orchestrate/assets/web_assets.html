@@ -2954,15 +2954,20 @@
                 meta.appendChild(sm);
               }
               row.appendChild(meta);
-              // The permission, the same control as on a pool row. Its
-              // checkbox is the one captured above; a Builder view has none,
-              // and a tool the agent cannot call has nothing to decide.
-              if (!isBuilder && scopedPermCbs[t.name || '']) {
-                var sPerm = toolPermControl(t.name, scopedPermCbs[t.name]);
-                if (sPerm) { row.appendChild(sPerm); }
-              }
               var rowActions = document.createElement('div');
               rowActions.style.cssText = 'display:flex;align-items:center;gap:0.4rem;margin-left:auto';
+              // The permission, the same control as on a pool row, INSIDE the
+              // row's action group rather than beside it. Both it and the
+              // group push right with margin-left:auto, and two elements
+              // claiming the free space split it, which left the ladder
+              // stranded mid-row. One claimant, one right edge.
+              //
+              // Its checkbox is the one captured above; a Builder view has
+              // none, and a tool the agent cannot call has nothing to decide.
+              if (!isBuilder && scopedPermCbs[t.name || '']) {
+                var sPerm = toolPermControl(t.name, scopedPermCbs[t.name]);
+                if (sPerm) { sPerm.style.marginLeft = '0'; rowActions.appendChild(sPerm); }
+              }
               var detailEl = buildToolDetail(t);
               attachExpandToggle(rowActions, detailEl);
               // Scope — the shared pill editor (Global + one pill per agent)
