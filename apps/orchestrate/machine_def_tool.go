@@ -34,7 +34,7 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "machine",
-			Description: "Author phase machines: workflows an agent LIVES IN across a conversation, rather than running once and returning. A machine is a set of phases; the session remembers which phase it is in between turns, and what earlier phases decided. Actions: create, update, update_phase, list, get, delete.\n\n`update` REPLACES the whole phase list, which is right while authoring and wrong for every small edit after: use `update_phase` to change one field of one step (clear a tool list, reword a prompt, widen a reach) and leave the rest of the machine alone.\n\nUse a machine when a conversation should do something ONCE and then settle: work out what is being asked, pick an approach, then answer in that frame for the rest of the thread. Use a PIPELINE instead when the work runs start-to-finish and hands back a result. Use neither for a one-off question.\n\n**Pass `attach_to_agents` in the same call**: an unattached machine does nothing at all, because a machine only runs inside a session on an agent that points at it. Call action=\"help\" for the full spec.",
+			Description: "Author phase machines: workflows an agent LIVES IN across a conversation, rather than running once and returning. A machine is a set of phases; the session remembers which phase it is in between turns, and what earlier phases decided. Actions: create, update, update_phase, validate, list, get, delete.\n\n`update` REPLACES the whole phase list, which is right while authoring and wrong for every small edit after: use `update_phase` to change one field of one step (clear a tool list, reword a prompt, widen a reach) and leave the rest of the machine alone.\n\nCheck with `validate` before you write: a refused `update` stores NOTHING.\n\nUse a machine when a conversation should do something ONCE and then settle: work out what is being asked, pick an approach, then answer in that frame for the rest of the thread. Use a PIPELINE instead when the work runs start-to-finish and hands back a result. Use neither for a one-off question.\n\n**Pass `attach_to_agents` in the same call**: an unattached machine does nothing at all, because a machine only runs inside a session on an agent that points at it. Call action=\"help\" for the full spec.",
 			Parameters: map[string]ToolParam{
 				"action":      {Type: "string", Description: "One of: create | update | update_phase | list | get | repair | delete | help."},
 				"name":        {Type: "string", Description: "Machine name. Required for create; get/update/repair/delete also accept the id."},
@@ -63,7 +63,7 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 				"guard_to": {Type: "string", Description: "(update_phase) Where the guard sends it."},
 				"phases": {
 					Type:        "array",
-					Description: "(create/update) Ordered phases, each an object: {\"name\": unique label, \"desc\": one line, \"prompt\": the directive}. The KEY field is \"resident\": true marks a phase user turns come back to (a turn ENDS there); false/omitted marks a transient phase that runs, produces a result, and hands straight off inside the same turn. Every machine needs at least one resident phase. Transient phases declare \"output\": [{name,type,desc,required}] and hand off with \"next\", or, to decide at run time, list the phases they may hand to in \"choices\" (the framework declares the routing field itself, do not declare one, and do not list the options in a prompt). Resident phases may NOT declare output: their reply goes to the user. A resident phase with \"next\" gets ONE turn then hands off (an intake beat); without one it stays. Add \"guard\": a plain-language condition that, checked each turn, moves the conversation out (\"the user has moved on to a different subject\"), with \"guard_to\" naming where it goes. Per-phase \"reach\" (\"all\" or \"\" for everything the agent has, \"read\", \"none\" — prefer this to naming tools; it survives being run by a different agent), \"tools\" (exact names on top of reach; empty inherits), \"deny\" (names this phase may NOT reach, subtracted last, the list for \"everything it had except this one\"), \"model\" (\"worker\"|\"lead\"), \"think\" (\"on\"|\"off\", OFF by default on a transient phase; turn it ON for one that genuinely judges, such as decomposing an ambiguous request or routing between close options). Prompts template a fixed set of built-ins, {input}/{original_input}/{established}/{prev}/{now}/{user}/{agent}/{step}/{machine} (transient only; the message AND the earlier findings are supplied anyway if you never place them) and {state:PHASE} / {state:PHASE.field} (anywhere). **Call action=\"help\" for the full spec.**",
+					Description: "(create/update/validate) Ordered phases, each an object: {\"name\": unique label, \"desc\": one line, \"prompt\": the directive}. The KEY field is \"resident\": true marks a phase user turns come back to (a turn ENDS there); false/omitted marks a transient phase that runs, produces a result, and hands straight off inside the same turn. Every machine needs at least one resident phase. Transient phases declare \"output\": [{name,type,desc,required}] and hand off with \"next\", or, to decide at run time, list the phases they may hand to in \"choices\" (the framework declares the routing field itself, do not declare one, and do not list the options in a prompt). Resident phases may NOT declare output: their reply goes to the user. A resident phase with \"next\" gets ONE turn then hands off (an intake beat); without one it stays. Add \"guard\": a plain-language condition that, checked each turn, moves the conversation out (\"the user has moved on to a different subject\"), with \"guard_to\" naming where it goes. Per-phase \"reach\" (\"all\" or \"\" for everything the agent has, \"read\", \"none\" — prefer this to naming tools; it survives being run by a different agent), \"tools\" (exact names on top of reach; empty inherits), \"deny\" (names this phase may NOT reach, subtracted last, the list for \"everything it had except this one\"), \"model\" (\"worker\"|\"lead\"), \"think\" (\"on\"|\"off\", OFF by default on a transient phase; turn it ON for one that genuinely judges, such as decomposing an ambiguous request or routing between close options). Prompts template a fixed set of built-ins, {input}/{original_input}/{established}/{prev}/{now}/{user}/{agent}/{step}/{machine} (transient only; the message AND the earlier findings are supplied anyway if you never place them) and {state:PHASE} / {state:PHASE.field} (anywhere). **Call action=\"help\" for the full spec.**",
 					Items:       &ToolParam{Type: "object"},
 				},
 				"attach_to_agents": {
@@ -88,12 +88,14 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 				return t.machineDelete(args)
 			case "update_phase":
 				return t.machineUpdatePhase(args)
+			case "validate", "check":
+				return t.machineValidate(args)
 			case "repair":
 				return t.machineRepair(args)
 			case "help", "":
 				return machineHelpText, nil
 			default:
-				return "", fmt.Errorf("unknown action %q: use create | update | list | get | repair | delete | help", action)
+				return "", fmt.Errorf("unknown action %q: use create | update | update_phase | validate | list | get | repair | delete | help", action)
 			}
 		},
 	}
@@ -101,7 +103,11 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 
 const machineHelpText = `machine actions:
 - create  {name, description?, start?, phases:[...], attach_to_agents?:[names]}, author a machine.
-- update  {name|id, ...}: revise in place (same id, attachments stay).
+- update  {name|id, ...}: revise in place (same id, attachments stay). REPLACES the phase list.
+- validate {phases:[...]} or {name|id}: check WITHOUT writing. Reports what would refuse the save,
+           tool names that resolve to nothing, and steps whose agent cannot reach what they name.
+           Pass attach_to_agents to ask "would this work on that agent" before attaching it.
+           Worth doing before any update, because a refused update stores nothing at all.
 - list, your machines: [{id, name, description, phases, start}].
 - get     {name|id, full?:true}, one machine's definition.
 - repair  {name|id}: settle the findings with exactly one right answer (references to steps that
@@ -292,14 +298,31 @@ adds nothing to the turns it is not doing work on.`
 // after a REFUSED create nothing was stored, and the reflex is to "fix
 // it" with update, which would otherwise spend a round discovering there
 // is nothing to fix.
-func (t *chatTurn) machineCreateOrUpdate(args map[string]any, isUpdate bool) (string, error) {
+// machineDraft is the definition a call DESCRIBES, before anything is written.
+//
+// Split out of machineCreateOrUpdate so validate builds its candidate through
+// the same code the save does. A validate that assembled the definition even
+// slightly differently would be worse than none: its whole promise is "this is
+// what a save would say", and the first time it was wrong about that nobody
+// would trust it again.
+type machineDraft struct {
+	def MachineDef
+	// isUpdate is what actually happened after the lookup, not what was asked:
+	// an update naming nothing stored becomes a create.
+	isUpdate         bool
+	createdViaUpdate bool
+}
+
+// machineDraftFromArgs assembles the draft, resolving an update against what is
+// stored. It writes nothing.
+func (t *chatTurn) machineDraftFromArgs(args map[string]any, isUpdate bool) (machineDraft, error) {
 	name := strings.TrimSpace(stringArg(args, "name"))
 	if name == "" && !isUpdate {
-		return "", errors.New("name is required to create a machine")
+		return machineDraft{}, errors.New("name is required to create a machine")
 	}
 	phases, err := parseMachinePhases(args["phases"])
 	if err != nil {
-		return "", err
+		return machineDraft{}, err
 	}
 
 	var def MachineDef
@@ -317,7 +340,7 @@ func (t *chatTurn) machineCreateOrUpdate(args map[string]any, isUpdate bool) (st
 			isUpdate = false
 			def = MachineDef{Name: name, Owner: t.user}
 		default:
-			return "", errors.New("no matching machine to update: nothing is stored under that name/id, and this call carries no phases to store as a new one. machine(action=\"list\") shows what you actually have")
+			return machineDraft{}, errors.New("no matching machine to update: nothing is stored under that name/id, and this call carries no phases to store as a new one. machine(action=\"list\") shows what you actually have")
 		}
 	} else {
 		def = MachineDef{Name: name, Owner: t.user}
@@ -331,11 +354,134 @@ func (t *chatTurn) machineCreateOrUpdate(args map[string]any, isUpdate bool) (st
 	if len(phases) > 0 {
 		def.Phases = phases
 	}
-	if err := def.Validate(); err != nil {
-		return "", fmt.Errorf("machine is not runnable: %w", err)
-	}
 	def.Owner = t.user
+	return machineDraft{def: def, isUpdate: isUpdate, createdViaUpdate: createdViaUpdate}, nil
+}
+
+// machineValidate answers every question a save answers, and writes nothing.
+//
+// Until this existed there was no way to CHECK a machine: the actions were
+// create, update, update_phase, list, get, repair, delete, and the only route
+// to the findings was to save and read what came back. Authoring was therefore
+// write-blind by construction, and three separate costs followed from that one
+// gap:
+//
+//   - `update` REPLACES the whole phase list, so a restructure re-sends every
+//     phase, and a single unmeant field refuses the entire save. Observed twice
+//     in one session on a step the author had copied forward verbatim.
+//   - `get` omits defaults (reach is `json:",omitempty"`), so a read-modify-
+//     write round trip needs the author to know which absences were defaults.
+//   - the findings that do NOT refuse a save — a tool name nothing resolves,
+//     a step whose reach removes what it names — arrive as prose attached to a
+//     success, which is the worst place to put something that has a run-time
+//     consequence.
+//
+// It never returns an error. An action whose entire job is to say what is wrong
+// must not fail instead of saying it, so even an unparseable phase list comes
+// back as a verdict.
+func (t *chatTurn) machineValidate(args map[string]any) (string, error) {
+	// isUpdate=true so a bare {name} checks what is STORED. That is the form
+	// worth having after something ELSE changed: an agent's allowlist is
+	// rewritten somewhere far from here, and the phases that named those tools
+	// are only wrong afterwards.
+	draft, err := t.machineDraftFromArgs(args, true)
+	if err != nil {
+		return "NOT VALID, and NOTHING WAS WRITTEN: " + err.Error(), nil
+	}
+	def := draft.def
+	var b strings.Builder
+	// phases is a list of OBJECTS, so presence is the test, not length: a
+	// bare {name} is "check what is stored", which is a different question
+	// from "check this candidate against what is stored".
+	_, sent := args["phases"]
+	what := "Checked " + strconv.Quote(def.Name)
+	if def.ID != "" && !sent {
+		what = "Checked the stored " + strconv.Quote(def.Name)
+	} else if def.ID != "" {
+		what = "Checked " + strconv.Quote(def.Name) + " with the phases in this call"
+	}
+	fmt.Fprintf(&b, "%s: %d phase%s (%s). NOTHING WAS WRITTEN.",
+		what, len(def.Phases), plural(len(def.Phases)), strings.Join(def.PhaseNames(), ", "))
+	runnable := def.Validate()
+	if runnable != nil {
+		fmt.Fprintf(&b, "\n\n⚠ A save WOULD BE REFUSED: %v\nFix that first; a refused update stores nothing at all, not even the phases that were fine.", runnable)
+	} else {
+		fmt.Fprintf(&b, " A create/update with these phases WOULD SAVE, and a session would start in %s.", def.StartPhase())
+	}
+	// The per-agent preflight, which the create/update path never ran: its
+	// findings come from the generous "does anybody hold this name" catalog,
+	// and the question that decides whether a step works is what ONE agent
+	// carries. Agents named in this call are checked without being touched.
+	gaps := t.machineAttachGapsForNamed(args, def)
+	if def.ID != "" {
+		gaps = append(gaps, machineAttachGapsForAll(t.udb, t.user, def)...)
+	}
+	if len(gaps) > 0 {
+		b.WriteString("\n\nSteps that name tools the agent running them cannot reach (the step runs WITHOUT them, or with the FULL catalog when it loses every name it lists):\n- " +
+			strings.Join(dedupeStrings(gaps), "\n- "))
+	}
+	findings := t.machineFindingsNote(def)
+	b.WriteString(findings)
+	// Said out loud, because otherwise "checked and clean" and "the check did
+	// not run" are the same output, and the whole point of the action is to be
+	// able to trust a quiet answer.
+	if len(gaps) == 0 && findings == "" && runnable == nil {
+		b.WriteString("\n\nNothing else to report.")
+	}
+	return b.String(), nil
+}
+
+// machineAttachGapsForNamed runs the attach preflight against the agents an
+// attach_to_agents argument names, WITHOUT attaching them.
+//
+// attachMachineToAgents saves, which a validate must never do. Same preflight,
+// same wording, no write — so "will this machine work on that agent" can be
+// asked before the answer costs anything.
+func (t *chatTurn) machineAttachGapsForNamed(args map[string]any, def MachineDef) []string {
+	names, _ := args["attach_to_agents"].([]any)
+	var out []string
+	for _, n := range names {
+		key := strings.TrimSpace(fmt.Sprint(n))
+		if key == "" {
+			continue
+		}
+		ag, ok := t.findAgentByNameOrID(key)
+		if !ok {
+			out = append(out, "no agent found named "+strconv.Quote(key))
+			continue
+		}
+		out = append(out, machineAttachGaps(t.udb, t.user, def, ag)...)
+	}
+	return out
+}
+
+// dedupeStrings keeps first-seen order. A machine validated against an agent
+// named in the call AND already attached to it would otherwise report the same
+// gap twice, which reads as two problems.
+func dedupeStrings(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
+}
+
+func (t *chatTurn) machineCreateOrUpdate(args map[string]any, isUpdate bool) (string, error) {
+	draft, err := t.machineDraftFromArgs(args, isUpdate)
+	if err != nil {
+		return "", err
+	}
+	def, isUpdate, createdViaUpdate := draft.def, draft.isUpdate, draft.createdViaUpdate
+	if err := def.Validate(); err != nil {
+		return "", fmt.Errorf("machine is not runnable: %w. machine(action=\"validate\") checks a phase list without writing it, which is the cheaper way to find this: an update REPLACES the whole list, so one bad field costs the entire save", err)
+	}
 	saved := SaveMachineDef(t.udb, def)
+
 	verb := "Created"
 	if isUpdate {
 		verb = "Updated"
