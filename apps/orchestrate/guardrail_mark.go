@@ -66,17 +66,19 @@ func (t *chatTurn) markTurnBlocked() {
 	} else if sink := diagNoticeSinkFrom(t.ctx); sink != nil {
 		sink.Send(payload)
 	}
-	// Persisted, so the mark survives a reload. A turn that was stopped is
-	// still a turn that was stopped when you come back to the thread, and a
-	// mark that vanishes reads as having imagined it.
-	if t.session != nil {
-		t.toolMu.Lock()
-		t.session.upsert_ui_block(UIBlock{
-			Type: guardrailMarkBlock, ID: id, Title: title,
-			Data: map[string]string{"session": sessionID, "agent": t.agent.ID},
-		}, nil)
-		t.toolMu.Unlock()
-	}
+	// NOT persisted, and that is a limitation rather than a decision I like.
+	//
+	// The replay path collapses persisted blocks "one card per surface", keyed
+	// by url-or-title within a type. Every mark carries the same title and no
+	// url, so three stopped turns would come back as ONE mark, placed at the
+	// first of them. Blocks also replay as a group into the conversation log
+	// rather than beside the turn they belong to.
+	//
+	// So a live mark that lands next to its own turn beats a persisted one
+	// that lies about how many there were and where. Making it durable means
+	// carrying the mark on the MESSAGE (a field on ChatMessage, onto the
+	// bubble's dataset, drawn by a UIMessageDecorators entry) rather than as a
+	// session-level block, which is the right shape and a bigger change.
 }
 
 // blockedTurnReport is what the owner receives when somebody says a mark was

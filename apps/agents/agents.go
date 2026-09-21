@@ -990,7 +990,9 @@ const blockedMarkScript = `<script>
         });
       });
       wrap.appendChild(mark);
-      return wrap;
+      // {wrap: ...}, not the node itself. addBlock drops anything without a
+      // .wrap, silently, which is why the first cut rendered nothing at all.
+      return {wrap: wrap};
     });
   }
   register();

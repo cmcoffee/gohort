@@ -26,18 +26,19 @@ func TestATurnIsMarkedOnce(t *testing.T) {
 	if n := strings.Count(buf.String(), `"turn_blocked"`); n != 1 {
 		t.Errorf("the turn carries %d marks, want 1:\n%s", n, buf.String())
 	}
-	// Persisted, so it is still there after a reload: a turn that was stopped
-	// is still a turn that was stopped when you come back to the thread.
-	if len(turn.session.UIBlocks) != 1 || turn.session.UIBlocks[0].Type != guardrailMarkBlock {
-		t.Errorf("the mark was not persisted: %+v", turn.session.UIBlocks)
+	// Live only. The replay path collapses persisted blocks by title within a
+	// type, and every mark shares one title — so persisting would bring three
+	// stopped turns back as a single mark at the wrong place. See the note in
+	// markTurnBlocked.
+	if len(turn.session.UIBlocks) != 0 {
+		t.Errorf("the mark was persisted, where replay would collapse it: %+v", turn.session.UIBlocks)
 	}
-	// The hover text says what happened and nothing about which rule.
-	blk := turn.session.UIBlocks[0]
-	if !strings.Contains(blk.Title, "blocked") {
-		t.Errorf("the mark says nothing: %q", blk.Title)
+	// It says what happened and nothing about which rule.
+	if !strings.Contains(buf.String(), "This action was blocked") {
+		t.Errorf("the mark says nothing:\n%s", buf.String())
 	}
 	for _, leak := range []string{"never tell jokes", "CEO", "pre_output"} {
-		if strings.Contains(blk.Title, leak) || strings.Contains(buf.String(), leak) {
+		if strings.Contains(buf.String(), leak) {
 			t.Errorf("the mark leaked %q", leak)
 		}
 	}
