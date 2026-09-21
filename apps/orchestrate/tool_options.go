@@ -611,3 +611,52 @@ func frameworkPhaseToolOptions() []ui.SelectOption {
 	}
 	return out
 }
+
+// narrowableActionOptions lists the grouped-tool sub-actions worth switching
+// off one at a time, as "tool/action".
+//
+// Only the ones that DO something. A grouped tool's read actions are the
+// reason it was granted, and a list that offers to withhold workspace/ls
+// alongside workspace/run is a longer list answering the same question worse.
+// The predicate is the action's own capabilities, so a tool added later is
+// covered without touching this.
+func narrowableActionOptions(user string) []ui.SelectOption {
+	var out []ui.SelectOption
+	for _, ct := range FilterChatTools(BlockedTools) {
+		g, ok := ct.(*GroupedTool)
+		if !ok || IsFrameworkTool(ct) && g.Name() != "workspace" {
+			// Framework tools are hidden from every picker EXCEPT workspace,
+			// which is the one an owner most wants to narrow: it is always on,
+			// it is never in the allowlist, and its run action is the only
+			// shell some agents have.
+			continue
+		}
+		caps := g.ActionCaps()
+		for _, action := range g.ActionNames() {
+			if capsAreReadOnly(caps[action]) {
+				continue
+			}
+			out = append(out, ui.SelectOption{
+				Value: g.Name() + "/" + action,
+				Label: g.Name() + " · " + action,
+				Group: "Sub-actions",
+				Help:  actionHelpFor(g, action),
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Value < out[j].Value })
+	return out
+}
+
+// actionHelpFor is the action's own first sentence, trimmed to a row.
+func actionHelpFor(g *GroupedTool, action string) string {
+	a, ok := g.Action(action)
+	if !ok {
+		return ""
+	}
+	d := strings.TrimSpace(a.Description)
+	if i := strings.IndexByte(d, '.'); i > 0 {
+		d = d[:i+1]
+	}
+	return truncateObs(d, 140)
+}

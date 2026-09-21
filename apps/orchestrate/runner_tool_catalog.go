@@ -470,6 +470,10 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// path that did not exist for it, and re-fetched the same 4MB file
 	// instead. Single exit, so every caller gets this.
 	sess.SetAvailableTools(toolNames)
+	// Sub-actions this agent may not call. Set beside the tool names because
+	// both answer "what can this caller actually do", and a caller that has
+	// the tool but not one of its actions is the case a name list cannot say.
+	sess.SetWithheldActions(t.withheldToolActions())
 	return tools, toolNames, nil
 }
 
@@ -993,4 +997,37 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 		}
 	}
 	return tools
+}
+
+// withheldToolActions is the sub-actions this turn may not call: the agent's
+// own, plus everything inherited from the chain that owns it.
+//
+// Inherited by UNION and never narrowed: a restriction on a parent reaches its
+// children, which is the direction guardrails and the never-unattended mark
+// already travel. Building a sub-agent is otherwise how you launder one.
+func (t *chatTurn) withheldToolActions() []string {
+	if t == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(list []string) {
+		for _, p := range list {
+			if p = strings.TrimSpace(p); p != "" && !seen[p] {
+				seen[p] = true
+				out = append(out, p)
+			}
+		}
+	}
+	add(t.agent.DisabledToolActions)
+	db, _ := t.ownerView()
+	for id, guard := t.agent.OwnedBy, 0; id != "" && guard < maxDispatchDepth; guard++ {
+		parent, ok := loadAgent(db, id)
+		if !ok {
+			break
+		}
+		add(parent.DisabledToolActions)
+		id = parent.OwnedBy
+	}
+	return out
 }

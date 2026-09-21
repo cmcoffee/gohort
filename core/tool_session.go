@@ -361,6 +361,10 @@ type ToolSession struct {
 	// ClaimDetachSlot.
 	Detach *DetachLedger
 
+	// withheldActions is tool -> action -> true for the pairs this caller may
+	// not call. nil when nothing is narrowed, which is the common case.
+	withheldActions map[string]map[string]bool
+
 	mu sync.Mutex
 }
 
@@ -686,4 +690,64 @@ func (s *ToolSession) AppendFile(f FileAttachment) {
 	}
 	s.Files = append(s.Files, f)
 	s.mu.Unlock()
+}
+
+// --- withheld sub-actions -------------------------------------------------
+//
+// A grouped tool is one grant with several jobs inside it. workspace reads
+// files, writes them and RUNS COMMANDS, and until now an owner could only take
+// all of that or none: Caps() is the union, so one action needing CapExecute
+// hides the whole tool.
+//
+// These are the (tool, action) pairs this caller may not use. Named
+// "tool/action", the syntax the action-quota field already uses, so an owner
+// meets one spelling for a sub-action across the product.
+
+// SetWithheldActions records the pairs this session may not call. Replaces
+// whatever was there; empty clears.
+func (s *ToolSession) SetWithheldActions(pairs []string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.withheldActions = nil
+	for _, p := range pairs {
+		tool, action, ok := strings.Cut(strings.TrimSpace(p), "/")
+		tool, action = strings.TrimSpace(tool), strings.TrimSpace(action)
+		if !ok || tool == "" || action == "" {
+			continue
+		}
+		if s.withheldActions == nil {
+			s.withheldActions = map[string]map[string]bool{}
+		}
+		if s.withheldActions[tool] == nil {
+			s.withheldActions[tool] = map[string]bool{}
+		}
+		s.withheldActions[tool][action] = true
+	}
+}
+
+// ActionWithheld reports whether this caller may call tool/action.
+//
+// Nil-safe and false by default: a session that never learned about this, or a
+// tool nobody has narrowed, behaves exactly as it did.
+func (s *ToolSession) ActionWithheld(tool, action string) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.withheldActions[strings.TrimSpace(tool)][strings.TrimSpace(action)]
+}
+
+// WithheldActionsFor lists what is withheld on one tool, for the schema
+// builder. Empty when nothing is.
+func (s *ToolSession) WithheldActionsFor(tool string) map[string]bool {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.withheldActions[strings.TrimSpace(tool)]
 }

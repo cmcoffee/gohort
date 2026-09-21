@@ -412,6 +412,16 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			// Beside Force Private because that is what people reach for when
 			// they want this, and it is far more than they want: it takes the
 			// agent's network tools and its model with it.
+			// The other half of the same question. Reach says whether the
+			// workspace may dial; this says which of its jobs the agent may
+			// do at all.
+			ui.FormField{Field: "disabled_tool_actions", Type: "checklist", Label: "Switched-off sub-actions",
+				Options:     narrowableActionOptions(user),
+				Placeholder: "(nothing here can be narrowed on its own)",
+				Help:        "Parts of a grouped tool this agent may not use, while it keeps the rest.",
+				Detail: "A grouped tool is one grant with several jobs inside it: workspace reads files, writes them, and runs commands. Without this the choice is all of it or none, because a tool is offered on the union of what its actions need.\n\n" +
+					"Ticked here, the action is dropped from the schema the model sees, so it never plans around one it cannot have, and refused at the call as well for a name it guessed or carried over.\n\n" +
+					"Only the actions that DO something are listed: withholding a read is the reason the tool was granted. It inherits downward, so a sub-agent cannot run what its parent was denied."},
 			ui.FormField{Field: "workspace_no_network", Type: "toggle", Label: "Workspace may not reach the network",
 				Help: "The agent keeps its tools and its model; only code running in its workspace is stopped from dialling out.",
 				Detail: "For an agent that should process text or files locally and never phone anywhere from in there. It can still read, write and run commands in the workspace.\n\n" +

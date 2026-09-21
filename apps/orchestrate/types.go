@@ -542,6 +542,24 @@ type AgentRecord struct {
 	// cannot default to true and *bool cannot hold false through gob.
 	WorkspaceNoNetwork bool `json:"workspace_no_network,omitempty"`
 
+	// DisabledToolActions switches off individual SUB-ACTIONS of a grouped
+	// tool for this agent, as "tool/action" — the spelling the action-quota
+	// field already uses, so a sub-action is named one way across the product.
+	//
+	// A grouped tool is one grant with several jobs inside it: workspace reads
+	// files, writes them and RUNS COMMANDS. Caps() is the union, so an owner
+	// who did not want the shell could only take the whole tool, losing the
+	// file access they did want. This is the knob for "files yes, shell no".
+	//
+	// Enforced twice, and both matter. The schema the MODEL sees drops the
+	// action, so it never plans around one it cannot have and never spends a
+	// turn writing a script it will be refused. The dispatcher refuses it too,
+	// for a name guessed or carried over from earlier in the conversation.
+	//
+	// Inherits DOWNWARD through a dispatch, like every other restriction here:
+	// a sub-agent cannot run what the agent that built it was denied.
+	DisabledToolActions []string `json:"disabled_tool_actions,omitempty"`
+
 	// DisableSkills turns OFF the skills classifier for this agent.
 	// When set, no skill ever activates on this agent's turns: no
 	// per-skill addendums appended to the system prompt, no extra

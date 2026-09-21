@@ -378,9 +378,9 @@ func (g *GroupedTool) RunWithSession(args map[string]any, sess *ToolSession) (ou
 		// spec (it was asked for) behind a banner naming the ignored params
 		// and the actions that DO take them.
 		if extras := nonActionArgKeys(args); len(extras) > 0 {
-			return g.helpIgnoredParamsBanner(extras) + g.formatHelp(), nil
+			return g.helpIgnoredParamsBanner(extras) + g.formatHelpFor(sess), nil
 		}
-		return g.formatHelp(), nil
+		return g.formatHelpFor(sess), nil
 	}
 	if action == "" {
 		// No action given. A bare call (no other args) is a probe — return
@@ -411,7 +411,16 @@ func (g *GroupedTool) RunWithSession(args map[string]any, sess *ToolSession) (ou
 		// unmistakable that nothing ran.
 		return "", fmt.Errorf(
 			"%s was called with no arguments: nothing was done, and this is NOT a result. Pick an action: %s. Re-call with action=\"<one>\" plus its params, or action=\"help\" for the full spec. If you meant to pass arguments, they did not arrive: send them again with the action",
-			g.name, strings.Join(g.sortedActionNames(), ", "))
+			g.name, strings.Join(g.offeredActionNames(sess), ", "))
+	}
+	// Withheld for this caller: refused here as well as hidden from the
+	// schema. The schema narrowing is what stops a model PLANNING around an
+	// action it cannot have; this is what stops one it named anyway — guessed,
+	// carried over from an earlier turn, or read out of its own history.
+	if sess.ActionWithheld(g.name, action) {
+		return "", fmt.Errorf(
+			"%s: action %q is switched off for this agent. It is not a failure and retrying will not change it. Available actions: %s",
+			g.name, action, strings.Join(g.offeredActionNames(sess), ", "))
 	}
 	def, ok := g.actions[action]
 	if !ok {
@@ -514,14 +523,19 @@ func (g *GroupedTool) sortedActionNames() []string {
 
 // formatHelp renders the per-action documentation as a single
 // readable block. Returned by action="help" or when no action given.
-func (g *GroupedTool) formatHelp() string {
+func (g *GroupedTool) formatHelp() string { return g.formatHelpFor(nil) }
+
+// formatHelpFor is formatHelp narrowed to what this caller may call. help is
+// how a model finds out what it HAS, so listing an action it would be refused
+// makes the tool's own documentation the source of a dead end.
+func (g *GroupedTool) formatHelpFor(sess *ToolSession) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s, usage:\n\n", g.name)
 	if g.preamble != "" {
 		b.WriteString(strings.TrimSpace(g.preamble))
 		b.WriteString("\n\n")
 	}
-	for _, name := range g.sortedActionNames() {
+	for _, name := range g.offeredActionNames(sess) {
 		def := g.actions[name]
 		fmt.Fprintf(&b, "  action=%q: %s\n", name, def.Description)
 		if len(def.Params) > 0 {
@@ -582,4 +596,62 @@ func (g *GroupedTool) actionsWithParam(param string) []string {
 		}
 	}
 	return out
+}
+
+// --- per-caller sub-action narrowing --------------------------------------
+
+// offeredActionNames is sortedActionNames minus whatever this caller may not
+// call. The whole set when nothing is withheld.
+func (g *GroupedTool) offeredActionNames(sess *ToolSession) []string {
+	withheld := sess.WithheldActionsFor(g.name)
+	if len(withheld) == 0 {
+		return g.sortedActionNames()
+	}
+	var out []string
+	for _, n := range g.sortedActionNames() {
+		if !withheld[n] {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// SchemaWithSession narrows what the MODEL is offered to the actions this
+// caller may actually call.
+//
+// This is the half that matters for behaviour: an action the model cannot see
+// is one it does not plan around, so an agent with no workspace shell does not
+// spend a turn writing a script it will then be refused. RunWithSession
+// refuses as well, because a name can still be guessed or carried over from
+// an earlier turn's context.
+//
+// help is left in place: it is how a model finds out what it HAS, and it
+// renders from the same narrowed list.
+func (g *GroupedTool) SchemaWithSession(sess *ToolSession) (string, map[string]ToolParam) {
+	offered := g.offeredActionNames(sess)
+	if len(offered) == len(g.actions) {
+		return g.Desc(), g.Params()
+	}
+	desc := g.brief + ` Call with action="help" to see the full usage spec for each sub-action. Available actions: ` +
+		strings.Join(offered, ", ") + ", help."
+	// The params union is rebuilt from the offered actions only, so a param
+	// that exists solely to serve a withheld action stops being advertised.
+	params := map[string]ToolParam{
+		"action": {
+			Type:        "string",
+			Description: `Which sub-action to invoke. Call with "help" first if you don't know which action you need or what its params look like.`,
+		},
+	}
+	for _, name := range offered {
+		a := g.actions[name]
+		if a == nil {
+			continue
+		}
+		for k, v := range a.Params {
+			if _, exists := params[k]; !exists {
+				params[k] = v
+			}
+		}
+	}
+	return desc, params
 }

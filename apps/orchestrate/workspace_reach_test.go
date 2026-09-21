@@ -86,3 +86,65 @@ func TestTheCeilingIsOfferedAndSaveable(t *testing.T) {
 		t.Error("the live turn never attaches the ceiling")
 	}
 }
+
+// A restriction on a parent reaches its children. Building a sub-agent is
+// otherwise how you launder one — the same direction guardrails and the
+// never-unattended mark already travel.
+func TestWithheldActionsInheritDownTheOwnerChain(t *testing.T) {
+	_, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+
+	if _, err := saveAgent(udb, AgentRecord{
+		ID: "parent", Owner: "alice", Name: "Parent", OrchestratorPrompt: "p",
+		DisabledToolActions: []string{"workspace/run"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	child := AgentRecord{
+		ID: "child", Owner: "alice", Name: "Child", OrchestratorPrompt: "p",
+		OwnedBy:             "parent",
+		DisabledToolActions: []string{"workspace/write"},
+	}
+	if _, err := saveAgent(udb, child); err != nil {
+		t.Fatal(err)
+	}
+
+	turn := &chatTurn{agent: child, user: "alice", udb: udb}
+	got := map[string]bool{}
+	for _, p := range turn.withheldToolActions() {
+		got[p] = true
+	}
+	if !got["workspace/write"] {
+		t.Error("the child lost its own restriction")
+	}
+	if !got["workspace/run"] {
+		t.Error("a sub-agent laundered its parent's restriction")
+	}
+
+	// A top-level agent carries only its own.
+	top := &chatTurn{agent: AgentRecord{ID: "solo", Owner: "alice",
+		DisabledToolActions: []string{"workspace/run"}}, user: "alice", udb: udb}
+	if list := top.withheldToolActions(); len(list) != 1 || list[0] != "workspace/run" {
+		t.Errorf("a top-level agent picked up something: %v", list)
+	}
+}
+
+// The setting is offered over the actions that DO something, and saveable.
+func TestTheNarrowingIsOfferedAndSaveable(t *testing.T) {
+	src := packageSource(t)
+	if !strings.Contains(src, `Field: "disabled_tool_actions", Type: "checklist"`) {
+		t.Error("the narrowing is not offered in the editor")
+	}
+	if !patchAgentFields["disabled_tool_actions"] {
+		t.Error("it is offered but the PATCH allowlist drops it")
+	}
+	// Read actions are the reason a tool was granted; offering to withhold one
+	// is a decision with no upside and a longer list.
+	if !strings.Contains(src, "if capsAreReadOnly(caps[action]) {") {
+		t.Error("the option list offers read-only actions")
+	}
+	// Handed to the session beside the tool names, or nothing downstream sees it.
+	if !strings.Contains(src, "sess.SetWithheldActions(t.withheldToolActions())") {
+		t.Error("the turn never tells the session what is withheld")
+	}
+}
