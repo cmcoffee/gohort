@@ -218,12 +218,10 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 			// endpoint, which this branch never runs for.
 			req.GuardrailFailClosed = defaultNewAgentFailClosed
 		}
-		// Named for what did the writing. Every version in the history is a
-		// full snapshot of the agent, so a tool permission change lands there
-		// like any other edit — correctly, since it changes what the agent may
-		// do unattended. What it must not do is land there UNLABELLED, beside
-		// a persona rewrite, with nothing to tell the two apart when somebody
-		// is scanning for the version to roll back to.
+		// Kept from tonight, and not part of the permission control that was
+		// reverted with it: a Tools-modal save filed as a bare "update" beside
+		// a persona rewrite, so a working session left a column of identical
+		// rows with nothing to scan for.
 		reason := "update"
 		if fromToolsModal {
 			reason = "changed tools"
@@ -601,31 +599,6 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		writeJSON(w, agentReachOf(udb, user, agent).Items)
-		return
-	}
-	if action == "tool-policy" {
-		// What the GATE would do with each of this agent's tools, and which
-		// states are worth offering for it. The Tools modal renders this and
-		// derives nothing.
-		//
-		// Through autonomousGate, which is THE rule — the same object the
-		// schedule pre-flight reads, and it takes a nil session on purpose.
-		// The first cut went through privilegeToolRows with a session built
-		// here out of nothing, and classifyPrivilegeTool answers "unresolved,
-		// therefore consequential" for anything it cannot resolve. A bare
-		// session resolves very little, so every catalog tool came back
-		// "ask" and the whole modal read as Queues.
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		udb := UserDB(T.DB, user)
-		agent, ok := loadAgent(udb, id)
-		if !ok || (agent.Owner != "" && agent.Owner != user && agent.Owner != seedOwner) {
-			http.NotFound(w, r)
-			return
-		}
-		writeJSON(w, T.toolPolicyFor(udb, user, agent))
 		return
 	}
 	if action == "reach/credential" {

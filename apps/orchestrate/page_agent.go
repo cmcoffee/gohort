@@ -278,16 +278,32 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			Help:        "What this agent may cost in a rolling 24 hours. 0 = no limit.",
 			Detail: "A turn already running is never cut off. Crossing the line drops the rest of it to the local worker model, and the NEXT turn is declined until the window frees up." +
 				"\n\nPriced from what the provider reports, so it does nothing on a deployment with no cost rates configured. Worth setting on anything scheduled against a paid model: one unattended turn can cost more than a day of chat."},
-		// The two checklists that used to live here — "Pre-approved tools" and
-		// "Never unattended" — are gone, and nothing replaces them in this
-		// form. They asked the same question twice, over the same option set,
-		// on a page that never let you pick a tool in the first place: you
-		// ticked a name here and went to the Tools list to find out whether
-		// the agent could even call it.
+		// Ticked, not typed. A misspelling here grants nothing and looks
+		// exactly like a grant: the tool is refused on the first unattended
+		// fire, at whatever hour that run is scheduled for, and the list in
+		// front of the person still reads as though they had allowed it.
 		//
-		// The permission is one column on that list now, beside the tick that
-		// grants the tool. The two stored fields are unchanged and are still
-		// what the gate reads; only the asking moved.
+		// Only the tools that WOULD stop and ask are offered. Read-only ones
+		// never prompt, so listing one is a decision with no effect, and a
+		// list of those is harder to read than a short one.
+		{Field: "auto_approve_tools", Type: "checklist", Label: "Pre-approved tools",
+			Options:     approvableToolOptions(user),
+			Placeholder: "(nothing here prompts for approval)",
+			Help:        "What this agent may call on a scheduled or standing run without asking first.",
+			Detail:      "Sub-agents inherit it. Tick the consequential tools you trust it to run unattended: a credential-backed tool, a channel send. Anything unticked is refused on the first unattended fire and queued in the Permissions pane, and approving it there ticks it here. Read-only tools never prompt and are not listed."},
+		// The other direction, and the one the default makes necessary. A tool
+		// attached to an agent is a tool it may use, on a timer as in chat, so
+		// what is worth writing down is the exception: the thing you want done
+		// only while somebody is there to stop it.
+		//
+		// Same option set as above deliberately: both questions are about tools
+		// that DO something, and a list offering to restrict web_search is a
+		// longer list answering nothing.
+		{Field: "no_unattended_tools", Type: "checklist", Label: "Never unattended",
+			Options:     approvableToolOptions(user),
+			Placeholder: "(nothing here has effects worth withholding)",
+			Help:        "What this agent may use in chat but never on a run with nobody watching.",
+			Detail:      "Refused outright on a scheduled or standing fire, and NOT queued: this is your decision, not a request for one, so nothing lands in the Permissions pane waiting on you. The run says it stopped and why. Unlike pre-approval, this inherits DOWNWARD: a sub-agent cannot do what the agent that built it was told not to."},
 	}
 	// Sub-agent create flow (chat-toolbar Create → "sub-agent of X")
 	// bakes the parent ID into the form via a hidden field so the POST

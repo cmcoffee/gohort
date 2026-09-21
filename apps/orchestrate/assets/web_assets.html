@@ -390,22 +390,6 @@
   border-top: 1px solid var(--border);
   background: var(--bg-2);
 }
-/* The per-tool permission ladder in the Tools modal. Pushed to the right of
-   the row so the name and its help keep the left edge they share with every
-   other checklist in the app. */
-.ui-orch-tool-perm {
-  margin-left: auto; display: inline-flex; flex: none; align-self: center;
-  border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
-}
-.ui-orch-perm-seg {
-  padding: 0.12rem 0.45rem; font-size: 0.7rem; line-height: 1.5;
-  background: transparent; color: var(--text-mute);
-  border: 0; border-right: 1px solid var(--border); cursor: pointer;
-  white-space: nowrap;
-}
-.ui-orch-perm-seg:last-child { border-right: 0; }
-.ui-orch-perm-seg:hover { background: var(--bg-1); color: var(--text); }
-.ui-orch-perm-seg.active { background: var(--accent, #6366f1); color: #fff; }
 .ui-orch-modal-btn {
   background: var(--bg-1); border: 1px solid var(--border);
   color: var(--text);
@@ -2669,19 +2653,7 @@
           });
           actionsContainer.appendChild(btn);
         }
-        Promise.all([
-          fetchAgent(id),
-          // What the gate would actually do with each tool, which cannot be
-          // inferred from the tool list: "could this ever stop and ask" is
-          // decided by the CREDENTIAL's own toggle. A failure here must not
-          // take the modal down: an empty map degrades to "we do not know",
-          // which the ladder reads as askable, and that is the cautious end.
-          fetch('api/agents/' + encodeURIComponent(id) + '/tool-policy')
-            .then(function(r) { return r.ok ? r.json() : {}; })
-            .catch(function() { return {}; })
-        ]).then(function(loaded) {
-          var agent = loaded[0];
-          var toolPolicy = loaded[1] || {};
+        fetchAgent(id).then(function(agent) {
           var catalog = window.ORCH_TOOL_CATALOG || [];
           // Builder's catalog is fixed by the framework (builderAuthoringTools
           // / builderAuthoringTools) — the allowed_tools checklist has no
@@ -2700,120 +2672,6 @@
           //   some checked  → [name, ...]  (literal list)
           var allowed = {};
           var listed = agent.allowed_tools || [];
-          // --- the permission ladder -------------------------------------
-          //
-          // Three states, which is exactly what the runtime already
-          // distinguishes; the two stored lists are unchanged and are still
-          // what the gate reads. This is one column instead of two lists.
-          var approvable = {};
-          (window.ORCH_APPROVABLE_TOOLS || []).forEach(function(n) { approvable[n] = true; });
-          // The agent's OWN tools are eligible too, and the server-supplied
-          // pool cannot name them: availableWorkerToolOptions carries shared
-          // rows only, because an agent-scoped row belongs to one agent's kit.
-          // They are also the likeliest thing to have a grant on it — a
-          // credential-backed shell or api tool somebody built for this agent
-          // — so leaving them out showed no ladder on exactly the rows that
-          // needed one, and dropped their stored grant on the next save.
-          (agent.tools || []).forEach(function(t) {
-            if (t && t.name) { approvable[t.name] = true; }
-          });
-          var preApproved = {}, heldBack = {};
-          (agent.auto_approve_tools || []).forEach(function(n) { preApproved[n] = true; });
-          (agent.no_unattended_tools || []).forEach(function(n) { heldBack[n] = true; });
-          // "Ask" promised a conversation and delivered a queue entry. Nothing
-          // can prompt on a 3am fire, so what the state actually does is stop
-          // the run and leave the call in the Permissions pane for later. The
-          // label says that now; it is the one word somebody reads before they
-          // set it and go looking for a prompt that was never coming.
-          var permLabel = {
-            runs: 'Runs', ask: 'Queues', always: 'Always', attended: 'Attended only'
-          };
-          var permTitle = {
-            runs: 'Nothing withholds this one: it runs on an unattended fire as it does in chat. Its credential is not configured to ask, so there is no approval to grant.',
-            ask: 'Stops the run and leaves the call in the Permissions pane for you to approve. Nothing prompts: there is nobody there at the time, so approving it is what lets the NEXT run use it.',
-            always: 'Runs on a scheduled or standing fire without asking. Sub-agents inherit it.',
-            attended: 'Refused outright on an unattended run, and NOT queued: this is your decision, not a request for one. Inherits downward, so a sub-agent cannot do what its parent was told not to.'
-          };
-          // The server answers both halves — where a row sits and which states
-          // are worth offering — from the gate itself. Deriving either here
-          // meant a second opinion about "would this stop", and the two came
-          // apart twice: once reading a tool list that could not name the
-          // agent's own tools, and once reading an allowlist that is EMPTY on
-          // the default pool, which made every row in the modal read the same.
-          function permStatesFor(name) {
-            var p = toolPolicy[name];
-            if (p && p.options && p.options.length) { return p.options; }
-            // No answer for this name: offer the cautious ladder rather than
-            // asserting the tool runs freely.
-            return ['ask', 'always', 'attended'];
-          }
-          function permStateFor(name) {
-            var p = toolPolicy[name];
-            return (p && p.state) || 'ask';
-          }
-          var permState = {};
-          // What was already on when this modal opened. Turning a tool ON is a
-          // decision; finding it already on is not, and the two must not be
-          // read as the same thing.
-          var wasOn = {};
-          // The rows that actually offered a choice. The save rewrites only
-          // these, so a stored entry this modal never asked about is left
-          // exactly as it was rather than quietly dropped.
-          var permOffered = {};
-          function toolPermControl(name, cb) {
-            if (!approvable[name]) { return null; }
-            permOffered[name] = true;
-            var permOrder = permStatesFor(name);
-            if (!(name in permState)) { permState[name] = permStateFor(name); }
-            wasOn[name] = !!cb.checked;
-            var wrap = document.createElement('div');
-            wrap.className = 'ui-orch-tool-perm';
-            var segs = {};
-            function paint() {
-              var cur = permState[name] || permOrder[0];
-              permOrder.forEach(function(k) {
-                segs[k].className = 'ui-orch-perm-seg' + (k === cur ? ' active' : '');
-              });
-              // A tool the agent cannot call has no permission to set. Shown
-              // rather than removed, so ticking the box does not make a
-              // control appear out of nowhere.
-              wrap.style.opacity = cb.checked ? '' : '0.4';
-              wrap.style.pointerEvents = cb.checked ? '' : 'none';
-            }
-            permOrder.forEach(function(k) {
-              var b = document.createElement('button');
-              b.type = 'button';
-              b.className = 'ui-orch-perm-seg';
-              b.textContent = permLabel[k];
-              b.title = permTitle[k];
-              b.addEventListener('click', function() {
-                permState[name] = k;
-                paint();
-              });
-              segs[k] = b;
-              wrap.appendChild(b);
-            });
-            cb.addEventListener('change', function() {
-              // Turning a tool on means allowing it. An owner who ticks a tool
-              // wants the agent to use it, and "use it, except at 3am, where
-              // it will stop and wait for you" is not what that reads as — it
-              // is an agent that works when you watch it and stalls when you
-              // do not, for a reason nothing announced.
-              //
-              // Oversight is the exception and is set deliberately, on this
-              // same control, which is the whole point of it being here.
-              //
-              // Only for a tool being turned on NOW, and only when nothing is
-              // already stored for it: a state the owner set earlier is their
-              // decision and survives being unticked and re-ticked.
-              if (cb.checked && !wasOn[name] && !preApproved[name] && !heldBack[name]) {
-                if (permOrder.indexOf('always') >= 0) { permState[name] = 'always'; }
-              }
-              paint();
-            });
-            paint();
-            return wrap;
-          }
           // Tools the user has explicitly opted out of (seed agents only).
           // These stay unchecked even in the all-checked / default-pool state.
           var userDisabled = {};
@@ -2836,17 +2694,6 @@
             help.textContent = "Pick which tools this agent's worker may call. Open a category to see its tools: the first one is what is scoped to this agent, the rest is your shared catalog. Uncheck everything in the catalog categories to disable ALL optional tools (the agent will be left with only framework-blessed tools like plan_set / respond_directly).";
           }
           m.body.appendChild(help);
-          if (!isBuilder) {
-            // The pill needs a frame, and hover text is not one. "Ask" read as
-            // "ask me every time", so an owner set it, used the agent in chat,
-            // was never prompted, and reasonably concluded it was broken.
-            // Every state on that control is about a run with NOBODY WATCHING;
-            // in chat an agent uses its tools freely and always has.
-            var permHelp = document.createElement('div');
-            permHelp.className = 'ui-orch-modal-help';
-            permHelp.textContent = "The pill on each tool says what happens on a SCHEDULED or STANDING run: Runs (nothing holds it back), Queues (stops the run and leaves the call in the Permissions pane for you to approve, so the NEXT run has it), Always (runs without asking), or Attended only (refused outright, and never queued). None of it applies in chat, where the agent uses its tools freely. Turning a tool on allows it outright; set oversight here if it needs some.";
-            m.body.appendChild(permHelp);
-          }
 
           // ONE tree for every tool this agent could load. The scoped group is
           // the first category in it, and the catalog's categories follow —
@@ -2879,9 +2726,6 @@
           // allowed_tools option. Mixing them would leak scoped names into
           // the allowlist and break the collapse.
           var scopedCbs = [];
-          // name -> its checkbox, so the save can tell which of the agent's
-          // own tools are actually granted.
-          var scopedPermCbs = {};
           {
             var customSection = document.createElement('div');
             customSection.className = 'ui-checklist-section ui-orch-scoped-tools';
@@ -2984,7 +2828,6 @@
                 row.appendChild(cb);
                 scopedCbs.push(cb);
                 if (bucketCbs) bucketCbs.push(cb);
-                scopedPermCbs[t.name || ''] = cb;
               }
               var meta = document.createElement('label');
               meta.className = 'ui-checklist-lbl';
@@ -3002,9 +2845,6 @@
                 desc.textContent = t.description;
                 meta.appendChild(desc);
               }
-              // The permission, same control as on a pool row. Appended to
-              // the row after the label below, via the deferred call at the
-              // end of this block.
               // Mode-specific one-liner so the row can be sanity-checked at a
               // glance without expanding into the full definition.
               var summary = '';
@@ -3030,18 +2870,6 @@
               row.appendChild(meta);
               var rowActions = document.createElement('div');
               rowActions.style.cssText = 'display:flex;align-items:center;gap:0.4rem;margin-left:auto';
-              // The permission, the same control as on a pool row, INSIDE the
-              // row's action group rather than beside it. Both it and the
-              // group push right with margin-left:auto, and two elements
-              // claiming the free space split it, which left the ladder
-              // stranded mid-row. One claimant, one right edge.
-              //
-              // Its checkbox is the one captured above; a Builder view has
-              // none, and a tool the agent cannot call has nothing to decide.
-              if (!isBuilder && scopedPermCbs[t.name || '']) {
-                var sPerm = toolPermControl(t.name, scopedPermCbs[t.name]);
-                if (sPerm) { sPerm.style.marginLeft = '0'; rowActions.appendChild(sPerm); }
-              }
               var detailEl = buildToolDetail(t);
               attachExpandToggle(rowActions, detailEl);
               // Scope — the shared pill editor (Global + one pill per agent)
@@ -3311,12 +3139,6 @@
                 lbl.appendChild(hp);
               }
               row.appendChild(lbl);
-              // The permission, on the row that grants the tool. Two
-              // checklists used to ask this, in the editor, over the same
-              // option set and nowhere near the list that says which tools
-              // the agent has at all.
-              var perm = toolPermControl(o.value, cb);
-              if (perm) { row.appendChild(perm); }
               body.appendChild(row);
               checkboxes.push(cb);
               g._cbs.push(cb);
@@ -3384,31 +3206,6 @@
               });
               scopedCbs.forEach(function(cb) { if (!cb.checked) denied.push(cb.value); });
               agent.disabled_persistent_tools = denied;
-              // The ladder decomposes back into the two lists the runtime
-              // reads. Only for tools the agent actually has: a permission on
-              // a tool it cannot call is a grant nobody made, and it would
-              // come back the moment the tool was ticked again.
-              // BOTH lists: the catalog checkboxes and the agent's own tools.
-              // Only the first was consulted at first, so every grant on a
-              // tool built for this agent was dropped on the next save of this
-              // modal — silently, since nothing on screen had shown it either.
-              var granted = {};
-              checkboxes.forEach(function(c) { if (c.checked) granted[c.value] = true; });
-              scopedCbs.forEach(function(c) { if (c.checked) granted[c.value] = true; });
-              // Start from what is stored, minus only the rows this modal
-              // actually offered a choice on. Anything else — a tool whose
-              // ladder was not shown, an entry from a surface this modal does
-              // not cover — survives untouched instead of being cleared by a
-              // save that never asked about it.
-              var always = (agent.auto_approve_tools || []).filter(function(n) { return !permOffered[n]; });
-              var attended = (agent.no_unattended_tools || []).filter(function(n) { return !permOffered[n]; });
-              Object.keys(permOffered).forEach(function(n) {
-                if (!granted[n]) { return; }
-                if (permState[n] === 'always') { always.push(n); }
-                else if (permState[n] === 'attended') { attended.push(n); }
-              });
-              agent.auto_approve_tools = always;
-              agent.no_unattended_tools = attended;
               saveBtn.disabled = true;
               fetch('api/agents?tools_modal=1', {
                 method: 'POST',
