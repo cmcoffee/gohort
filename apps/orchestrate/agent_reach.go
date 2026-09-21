@@ -72,6 +72,14 @@ type reachItem struct {
 	// rather than offering a button that fails.
 	Fix string `json:"fix,omitempty"`
 
+	// Lend is the owner's standing answer for a CREDENTIAL row — own / read /
+	// write / skip — and Decide marks the rows that have one to give. Every
+	// other kind travels with the agent, so its row states a fact and offers
+	// no control; a segmented pill on those would be four ways to say the
+	// same thing.
+	Lend   string `json:"lend,omitempty"`
+	Decide bool   `json:"decide,omitempty"`
+
 	level int    // reach, for comparison; not serialized
 	kind  string // which store the fan-out would write to
 	id    string // the record's own id in that store
@@ -114,6 +122,15 @@ func agentReachOf(udb Database, owner string, a AgentRecord) agentReachMap {
 		//
 		// A credential is the exception because it is not a copy anybody is
 		// missing. It is whose identity the call goes out as.
+		if it.kind == "credential" {
+			// Stamped for every credential row, not only the ones that come up
+			// short. An owner who lent a key and then narrowed the agent has a
+			// row with no gap and a decision still standing on it, and a
+			// control that vanished when the warning did would leave them no
+			// way to take it back.
+			it.Decide = true
+			it.Lend = lendModeFor(owner, a.ID, it.id, namedIn(a.DisabledCredentials, it.id))
+		}
 		it.Gap = it.kind == "credential" && it.level < out.audience
 		if it.Gap {
 			it.Missing = missingFor(out.audience, out.recipients)

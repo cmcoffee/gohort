@@ -119,3 +119,73 @@ func leftBehind(before, after []string) []string {
 	}
 	return out
 }
+
+// withdrawOneCredentialLend takes back everything this agent's share lent of
+// ONE key, to everybody it lent it to.
+//
+// The sibling of withdrawAgentShare, which drops people; this drops a key. Same
+// discipline and the same reason for it: only what the ledger says this share
+// granted, so a lend the owner made by hand for something else survives being
+// changed here.
+func withdrawOneCredentialLend(owner, agentID, cred string) string {
+	if orchestrateBaseDB == nil {
+		return ""
+	}
+	key := shareLendKey(owner, agentID, cred)
+	var lent []string
+	if !orchestrateBaseDB.Get(shareLendTable, key, &lent) || len(lent) == 0 {
+		return ""
+	}
+	c, ok := Secure().LoadUser(owner, cred)
+	if !ok {
+		orchestrateBaseDB.Unset(shareLendTable, key)
+		return ""
+	}
+	read, write := c.SharedReadOnly, c.SharedReadWrite
+	for _, u := range lent {
+		read, write = withoutOne(read, u), withoutOne(write, u)
+	}
+	if err := Secure().SetCredentialShares(owner, cred, read, write); err != nil {
+		return ""
+	}
+	orchestrateBaseDB.Unset(shareLendTable, key)
+	return "credential " + cred + " → no longer " + strings.Join(lent, ", ")
+}
+
+// lendModeFor reads back what this agent's share currently does with one key,
+// in the vocabulary the control offers.
+//
+// Read from the ledger rather than from the credential's own lists, for the
+// same reason the ledger exists: a key the owner lent by hand is not this
+// agent's doing, and showing its pill as "lend mine" would invite somebody to
+// move it and quietly revoke a grant made for another reason entirely.
+func lendModeFor(owner, agentID, cred string, disabled bool) string {
+	if disabled {
+		return shareSkip
+	}
+	if orchestrateBaseDB == nil {
+		return credOwn
+	}
+	var lent []string
+	if !orchestrateBaseDB.Get(shareLendTable, shareLendKey(owner, agentID, cred), &lent) || len(lent) == 0 {
+		return credOwn
+	}
+	c, ok := Secure().LoadUser(owner, cred)
+	if !ok {
+		return credOwn
+	}
+	// Writes if anybody this share lent to holds the stronger grant: the
+	// control sets one answer for the whole recipient list, so the stronger
+	// one is what it last set.
+	for _, u := range lent {
+		if namedIn(c.SharedReadWrite, u) {
+			return credWrite
+		}
+	}
+	for _, u := range lent {
+		if namedIn(c.SharedReadOnly, u) {
+			return credRead
+		}
+	}
+	return credOwn
+}

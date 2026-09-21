@@ -692,6 +692,30 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				EmptyText:     "No other users to share with yet.",
 			}),
 		})
+		// How it reaches them, between the list of WHO and the inventory of
+		// WHAT. The three questions are one decision and they are asked in the
+		// order they are answered: who gets it, what they meet when they open
+		// it, and what it depends on.
+		sections = append(sections, ui.Section{
+			Title:    "What they get",
+			Subtitle: "Everyone you share with is a reader. This is the one thing they can add.",
+			Detail: "Nobody you share with can change this agent: not its persona, its rules, its tools, its documents, or who else has it. That is true of both modes below and is not a setting.\n\n" +
+				"Two things are theirs and only theirs. Their conversations with it, and anything they upload to it. Neither reaches you, and neither reaches anybody else you shared with.",
+			Body: ui.FormPanel{
+				Source:  source,
+				PostURL: source,
+				Method:  "POST",
+				Fields: []ui.FormField{
+					{
+						Field: "share_no_uploads", Type: "toggle", Label: "They may not add documents of their own",
+						Help: "Off means they can upload; their files stay private to them.",
+						Detail: "Anything they upload is searched for their turns alongside this agent's collections, and is not visible to you or to anybody else you shared with.\n\n" +
+							"Turn this on where the agent must answer from an approved corpus and nothing else.",
+					},
+				},
+			},
+		})
+
 		// What the agent actually reaches, right underneath the picker that
 		// decides who gets it. The two questions are asked together — "share
 		// this with my team" is one request, and the tools, documents, skills
@@ -716,6 +740,23 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 					{Field: "how", Label: "How a run finds it", Mute: true, Flex: 3},
 				},
 				EmptyText: "This agent depends on nothing of yours. Anybody you share it with gets all of it.",
+				// The one row kind with a decision on it. Everything else here
+				// states a fact, so it gets no control; a credential is whose
+				// identity the call goes out as, and that is set per key, on
+				// the row that raised it, rather than only inside a share flow
+				// that ran once and cannot be revisited.
+				RowActions: []ui.RowAction{
+					{
+						Type: "segmented", Field: "lend", OnlyIf: "decide",
+						PostTo: source + "/reach/credential",
+						Options: []ui.SelectOption{
+							{Value: credOwn, Label: "Theirs"},
+							{Value: credRead, Label: "Mine, reads"},
+							{Value: credWrite, Label: "Mine, writes"},
+							{Value: shareSkip, Label: "Off"},
+						},
+					},
+				},
 			},
 		})
 	}

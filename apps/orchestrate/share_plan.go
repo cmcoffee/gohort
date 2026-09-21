@@ -14,6 +14,8 @@ package orchestrate
 // in a document somebody reads afterwards.
 
 import (
+	"encoding/json"
+	"net/http"
 	"sort"
 	"strings"
 
@@ -250,4 +252,58 @@ func carriedByAgent(owner, id, viewer string) []string {
 		return nil
 	}
 	return append([]string{"All of this is " + owner + "'s, readable through this agent and nowhere else. You cannot attach any of it to an agent of your own."}, out...)
+}
+
+// handleAgentCredentialDecision sets one credential's mode for one agent, from
+// the row in the reach table that raised it.
+//
+// The guided flow asks the same four questions once, at the moment of sharing.
+// This is the same answer changed later, which is when it is actually needed:
+// a key gets rotated, somebody joins, or the first answer was the cautious one
+// and the agent has been failing for a week because of it.
+func (T *OrchestrateApp) handleAgentCredentialDecision(w http.ResponseWriter, r *http.Request, user, agentID string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	udb := UserDB(T.DB, user)
+	a, ok := loadAgent(udb, agentID)
+	if !ok || a.Owner != user {
+		http.NotFound(w, r)
+		return
+	}
+	var body struct {
+		Name string `json:"name"`
+		Lend string `json:"lend"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	name := strings.TrimSpace(body.Name)
+	if name == "" {
+		http.Error(w, "which credential?", http.StatusBadRequest)
+		return
+	}
+	// Leaving skip re-enables the key for the agent before anything else, so
+	// "they bring their own" after "leave it out" does what it says rather than
+	// setting a lend on a credential the agent still cannot dispatch through.
+	if body.Lend != shareSkip && namedIn(a.DisabledCredentials, name) {
+		a.DisabledCredentials = withoutOne(a.DisabledCredentials, name)
+		if _, err := saveAgent(udb, a); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	// Moving off a lend takes the lend back. The guided flow never had to do
+	// this because it only ever ran forward, from no decision to one; a control
+	// that can be moved back implies the move undoes something, and a pill that
+	// reads "they bring their own" over a key still lent would be a lie told by
+	// the UI.
+	if body.Lend == credOwn || body.Lend == shareSkip {
+		withdrawOneCredentialLend(user, agentID, name)
+	}
+	it := credentialReach(user, name, namedIn(a.DisabledCredentials, name))
+	msg := applyCredentialAnswer(user, agentID, it, a.AllowedUsers, body.Lend)
+	writeJSON(w, map[string]string{"result": msg})
 }

@@ -257,7 +257,13 @@ var patchAgentFields = map[string]bool{
 	"allowed_tools": true, "auto_approve_tools": true, "allowed_skills": true,
 	"attached_collections": true, "attached_pipelines": true,
 	"allowed_dispatch_targets": true, "allowed_users": true,
-	"max_plan_steps": true, "max_worker_rounds": true, "think": true,
+	// How a share reaches its recipients, beside the list of who they are.
+	// These widen what a recipient can READ and never what they can change,
+	// which is why they sit here and not with the owner-only names above.
+	"share_mode": true, "share_memory_cortex": true,
+	"share_memory_explicit": true, "share_memory_reference": true,
+	"share_no_uploads": true,
+	"max_plan_steps":   true, "max_worker_rounds": true, "think": true,
 	"think_budget": true, "context_depth": true, "gap_check": true,
 	"action_quotas": true, "daily_spend_usd": true,
 	"lead_model": true, "memory_mode": true, "disable_explicit": true,
@@ -586,6 +592,19 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		writeJSON(w, agentReachOf(udb, user, agent).Items)
+		return
+	}
+	if action == "reach/credential" {
+		// The one decision the reach report has. Everything else it lists
+		// travels with the agent, so the row states a fact; a credential is
+		// whose identity the call goes out as, and that is the owner's to set
+		// per key, here, on the row that raised it.
+		//
+		// Through applyCredentialAnswer, which is the guided flow's applier
+		// too: two surfaces asking the same question must not answer it two
+		// ways, and the scoping (this agent only) and the ledger entry that
+		// makes the lend revocable both live in there.
+		T.handleAgentCredentialDecision(w, r, user, id)
 		return
 	}
 	if action == "eval-suite" {

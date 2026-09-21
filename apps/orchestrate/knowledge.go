@@ -531,9 +531,21 @@ func (T *OrchestrateApp) handleAgentKnowledgeUpload(w http.ResponseWriter, r *ht
 	if !ok {
 		return
 	}
-	_, found := T.memoryAgent(r, udb, user, agentID)
+	agent, found := T.memoryAgent(r, udb, user, agentID)
 	if !found {
 		http.NotFound(w, r)
+		return
+	}
+	// The owner's one switch over what a recipient may ADD. Their uploads are
+	// private to them and searched only for their turns, which is why this is
+	// off by default; an owner turns it on where the agent has to answer from
+	// an approved corpus and nothing beside it.
+	//
+	// Checked on the OWNER's flag and skipped for the owner themselves, who is
+	// not a recipient of their own agent and never needed permission for their
+	// own documents.
+	if agent.ShareNoUploads && agent.Owner != "" && agent.Owner != user {
+		http.Error(w, "The owner of this agent has not allowed documents of your own here.", http.StatusForbidden)
 		return
 	}
 	var body struct {
