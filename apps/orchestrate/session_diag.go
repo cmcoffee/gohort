@@ -347,7 +347,11 @@ func (t *chatTurn) turnDiag(kind, detail string) {
 	//
 	// Not for the quiet case: the card is the per-turn signal, and the signal
 	// is the thing being withheld.
-	if !quiet {
+	if quiet {
+		// One glyph on the turn instead: that something was stopped, and a way
+		// to say they think it was wrong. No rule, no reason, no count.
+		t.markTurnBlocked()
+	} else {
 		t.emitDiagNotice(kind, detail, at)
 	}
 	defer t.mirrorDiagToParent(kind, detail, at)
@@ -385,22 +389,20 @@ func (t *chatTurn) turnDiag(kind, detail string) {
 // quietGuardrailFor reports whether this breadcrumb is a guardrail one on a run
 // that is not the owner's, which is the only case that goes quiet.
 //
-// Quiet means NOTHING about this turn reaches the person it stopped: no card,
-// and no entry in a trail of their own. A per-turn message is an oracle
-// whatever it says and wherever it sits — its PRESENCE is the answer, and
-// blander wording or an extra click only changes the price. guardrailSafeFallbacks
-// varies the refusals for exactly this reason; a signal that fires only when a
-// rule fires undoes that however carefully it is worded.
+// Quiet means no card and no trail entry of their own — a breadcrumb naming the
+// rule, the hook and the warden's reason is the OWNER's, and on a shared agent
+// it is also the shape to phrase around.
 //
-// What the recipient gets instead is not an event at all. Any agent belonging
-// to somebody else says so, standing, before anything is refused: it runs under
-// its owner's configuration, and they are who to ask. True on every turn, so it
-// distinguishes nothing, and it arrives before the wall rather than after it,
-// which is when somebody is deciding whether the thing is broken. See
-// apps/agents (ownerConfigNote).
+// It does not mean silence. The turn carries a mark (markTurnBlocked): one
+// glyph, "This action was blocked." on hover, and a way to tell the owner they
+// think it was wrong. That is a per-turn signal and so, strictly, an oracle —
+// somebody counting marks learns which asks trip a rule. It is the trade this
+// deployment wants: a recipient is somebody the owner chose, the alternative
+// costs them any way of telling a rule from a fault, and the thing they most
+// need to do about it — say so, with the turn attached — has to hang off the
+// turn to be worth anything.
 //
-// The OWNER's breadcrumb is untouched and says everything: the rule, the hook,
-// the warden's reason. It is their rule.
+// The OWNER's breadcrumb is untouched and says everything.
 func (t *chatTurn) quietGuardrailFor(kind string) bool {
 	if t == nil || t.ranBy() == "" {
 		return false

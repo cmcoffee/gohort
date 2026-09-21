@@ -180,16 +180,29 @@ func (T *OrchestrateApp) askOwnerRequest(w http.ResponseWriter, r *http.Request,
 	}
 	var body struct {
 		Request string `json:"request"`
+		// Session, when the ask is about a particular turn: the mark on a
+		// stopped turn sends it, so the owner reads what was actually asked
+		// and what came back instead of a description of it. Optional, and
+		// the plain ask carries none.
+		Session string `json:"session"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	if strings.TrimSpace(body.Request) == "" {
+	if strings.TrimSpace(body.Request) == "" && strings.TrimSpace(body.Session) == "" {
 		http.Error(w, "say what you need", http.StatusBadRequest)
 		return
 	}
-	out, err := askOwnerFor(user, a.Owner, a.ID, chFirst(a.Name, a.ID), body.Request)
+	request := body.Request
+	if sid := strings.TrimSpace(body.Session); sid != "" {
+		// Everything about the rule comes from the OWNER's block log, so the
+		// report cannot be forged by whoever sends it, and the recipient's own
+		// conversation is not shipped anywhere. See blockedTurnReport.
+		blocks := blocksForTurn(UserDB(T.DB, a.Owner), a.ID, sid, 3)
+		request = blockedTurnReport(body.Request, chFirst(a.Name, a.ID), blocks)
+	}
+	out, err := askOwnerFor(user, a.Owner, a.ID, chFirst(a.Name, a.ID), request)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

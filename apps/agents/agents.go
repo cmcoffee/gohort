@@ -385,12 +385,17 @@ func (T *AgentsApp) handleChatPage(w http.ResponseWriter, r *http.Request, agent
 	// New sessions still seed from the Cortex at turn time, see intakeHead above.)
 
 	page := ui.Page{
-		Title:         display,
-		ShowTitle:     true,
-		BackURL:       "/",
-		MaxWidth:      "100%",
-		Sections:      chatSections(ownerConfigNote(agent, user), panel),
-		ExtraHeadHTML: intakeHead + TranscribeRuntimeFlagScript() + dashboardBarCSS + memoryModalScript + docsModalScript + askOwnerScript,
+		Title:     display,
+		ShowTitle: true,
+		BackURL:   "/",
+		MaxWidth:  "100%",
+		Sections: []ui.Section{
+			{
+				NoChrome: true,
+				Body:     panel,
+			},
+		},
+		ExtraHeadHTML: intakeHead + TranscribeRuntimeFlagScript() + dashboardBarCSS + memoryModalScript + docsModalScript + askOwnerScript + blockedMarkScript,
 	}
 	page.ServeHTTP(w, r)
 }
@@ -930,28 +935,78 @@ const dashboardBarCSS = `<style>
 // the public /agents app mounts it at the relative "api/" endpoints it
 // already serves. Scoped to the end-user via /agents/<slug>/api/*; the
 // calling user only ever sees their own per-(user, agent) memory.
-// chatSections puts the standing note above the conversation, when there is
-// one. A section with only a subtitle renders as that one line (see ui.Page's
-// skip rule, which drops a section only when title, subtitle, detail AND body
-// are all empty), so the note needs no new toolkit primitive.
-func chatSections(note string, panel ui.AgentLoopPanel) []ui.Section {
-	var out []ui.Section
-	if strings.TrimSpace(note) != "" {
-		out = append(out, ui.Section{Subtitle: note})
-	}
-	return append(out, ui.Section{NoChrome: true, Body: panel})
+// blockedMarkScript renders the mark on a turn one of the owner's rules
+// stopped: one glyph, the sentence on hover, and a click that tells the owner
+// you think it was wrong.
+//
+// A block renderer rather than anything in core/ui, which is the toolkit's
+// route for an app-specific thing on screen: the server emits a generic
+// {kind:"block", type:"turn_blocked"} and core/ui never learns what a guardrail
+// is. The report carries the session id and nothing else; every word about the
+// rule is read from the owner's own log server-side, so this cannot assert
+// anything about why it fired.
+const blockedMarkScript = `<script>
+(function(){
+  function register() {
+    if (!window.uiRegisterBlockRenderer) { setTimeout(register, 50); return; }
+    window.uiRegisterBlockRenderer('turn_blocked', function(d) {
+      var wrap = document.createElement('span');
+      wrap.className = 'ui-turn-blocked';
+      var mark = document.createElement('button');
+      mark.type = 'button';
+      mark.className = 'ui-turn-blocked-mark';
+      mark.textContent = '!';
+      // The whole message, on hover. Nothing about which rule or why: that is
+      // the owner's, and the turn is already in front of the reader.
+      mark.title = ((d && d.title) || 'This action was blocked.') + ' Click if you think that is wrong.';
+      mark.setAttribute('aria-label', mark.title);
+      mark.addEventListener('click', function() {
+        var session = (d && d.data && d.data.session) || '';
+        window.uiPrompt(
+          'Tell the owner why this should not have been stopped. They will see which of their rules fired; they cannot see this conversation.',
+          '',
+          {multiline: true, rows: 3, ok: 'Send'}
+        ).then(function(said) {
+          if (said === null) return;
+          mark.disabled = true;
+          fetch('api/ask-owner', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({request: said, session: session})
+          }).then(function(r) {
+            if (!r.ok) {
+              return r.text().then(function(t) {
+                var msg = (t || '').trim();
+                throw new Error((r.status >= 400 && r.status < 500 && msg) ? msg : ('Could not send: ' + (msg || ('HTTP ' + r.status))));
+              });
+            }
+            return r.json();
+          }).then(function(res) {
+            window.uiAlert((res && res.result) || 'Sent.');
+          }).catch(function(e) {
+            mark.disabled = false;
+            window.uiAlert(e.message || 'Could not send.');
+          });
+        });
+      });
+      wrap.appendChild(mark);
+      return wrap;
+    });
+  }
+  register();
+})();
+</script>
+<style>
+.ui-turn-blocked { display: inline-flex; vertical-align: middle; }
+.ui-turn-blocked-mark {
+  width: 18px; height: 18px; padding: 0; line-height: 16px;
+  border-radius: 50%; border: 1px solid var(--warning, #b45309);
+  background: transparent; color: var(--warning, #b45309);
+  font-size: 12px; font-weight: 700; cursor: pointer;
 }
-
-// ownerConfigNote is the standing line on an agent somebody else owns. Empty
-// on your own, where there is nothing to explain and nobody to ask.
-func ownerConfigNote(agent orchestrate.AgentRecord, user string) string {
-	owner := strings.TrimSpace(agent.Owner)
-	if owner == "" || owner == user {
-		return ""
-	}
-	return "This agent is " + orchestrate.OwnerLabel(agent, user) + "'s, and runs on their configuration. " +
-		"If it declines something you need, or cannot reach a document or a tool, that is theirs to change: use Ask the owner."
-}
+.ui-turn-blocked-mark:hover { background: var(--warning, #b45309); color: #fff; }
+.ui-turn-blocked-mark:disabled { opacity: 0.5; cursor: default; }
+</style>`
 
 var memoryModalScript = orchestrate.AgentMemoryModalScript("agents_memory_modal", "'api/'")
 

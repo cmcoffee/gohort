@@ -160,6 +160,11 @@ type chatTurn struct {
 	// written by the tool and read by nobody.
 	turnClosed bool
 
+	// blockMarked records that this turn already carries the stopped mark, so
+	// a rule caught at two hooks leaves one glyph rather than two. Guarded by
+	// toolMu. See markTurnBlocked.
+	blockMarked bool
+
 	// guardrailBlocks counts DISTINCT enforced-guardrail blocks across THIS
 	// turn, at any hook — one per (rule, attempt), however many times the agent
 	// repeats that attempt. Lives on the turn because the check hook and the
