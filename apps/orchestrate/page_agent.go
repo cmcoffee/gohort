@@ -675,11 +675,16 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	// runs the OWNER's agent, but its credentials + tools resolve in the
 	// RECIPIENT's namespace, so no secret travels with the share.
 	if id != "" && !subAgent && !isSeedID(id) {
+		// ONE rail entry with its parts nested under it, not three siblings.
+		// Sharing is one operation asked in three steps — who gets it, what
+		// they get, what it depends on — and a flat rail drew them as three
+		// unrelated settings, so somebody who went to Share found the
+		// recipient picker and no reason to believe the rest existed.
 		sections = append(sections, ui.Section{
-			Title:    "Share with users",
+			Title:    "Share",
 			Subtitle: shareSubtitleFor(shareRec),
 			Detail: "They run your agent, and what it uses travels with it: your tools, your documents, your skills, readable through this agent and nowhere else. They cannot attach any of it to an agent of their own.\n\n" +
-				"A credential is the exception, because it is whose identity a call goes out as rather than a copy anybody is missing. Decide that per key when you share, in Sharing.\n\n" +
+				"A credential is the exception, because it is whose identity a call goes out as rather than a copy anybody is missing. Decide that per key on its row under What it reaches.\n\n" +
 				"Once an admin has PUBLISHED this agent, the list below narrows inside their grant rather than adding to it: somebody has to be allowed the app AND be on your list. Leaving it empty means everybody the admin allowed. An admin can audit or revoke shares either way.",
 			Body: ui.ACLPicker(ui.ACLPickerConfig{
 				OptionsSource: "../api/user-candidates",
@@ -698,13 +703,18 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		// it, and what it depends on.
 		sections = append(sections, ui.Section{
 			Title:    "What they get",
+			Indent:   1,
 			Subtitle: "Everyone you share with is a reader. These say how much of what this agent knows they read.",
-			Detail: "Nobody you share with can change this agent: not its persona, its rules, its tools, its documents, or who else has it. That is true of both modes below and is not a setting.\n\n" +
+			Detail: "Nobody you share with can change this agent: not its persona, its rules, its tools, its documents, or who else has it. None of that is a setting.\n\n" +
 				"Two things are theirs and only theirs. Their conversations with it, and anything they upload to it. Neither reaches you, and neither reaches anybody else you shared with.",
 			Body: ui.FormPanel{
-				Source:  source,
-				PostURL: source,
-				Method:  "POST",
+				Source: source,
+				// PATCH, and the id in the QUERY, exactly as splitAgentFormSections
+				// builds every other section on this page. A POST here sends this
+				// panel's four fields AS THE WHOLE RECORD and wipes the rest of the
+				// agent, which is the reason that function exists at all.
+				PostURL: "../api/agents?id=" + url.QueryEscape(id),
+				Method:  "PATCH",
 				Fields: []ui.FormField{
 					{
 						Field: "share_hold_cortex", Type: "toggle", Label: "Keep its standing activity to yourself",
@@ -740,7 +750,8 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		// and recipes behind it are consequences of it rather than four more
 		// things to remember.
 		sections = append(sections, ui.Section{
-			Title:    "What this agent reaches",
+			Title:    "What it reaches",
+			Indent:   1,
 			Wide:     true,
 			Subtitle: "Everything it depends on, and how far each of those goes today.",
 			Detail: "Everything here travels with the agent and is scoped to it: whoever runs it reads your documents, runs your tools and activates your skills THROUGH this agent, and nowhere else. They cannot attach any of it to an agent of their own.\n\n" +
