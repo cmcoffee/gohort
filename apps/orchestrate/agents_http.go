@@ -218,7 +218,17 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 			// endpoint, which this branch never runs for.
 			req.GuardrailFailClosed = defaultNewAgentFailClosed
 		}
-		saved, err := saveAgent(udb, req)
+		// Named for what did the writing. Every version in the history is a
+		// full snapshot of the agent, so a tool permission change lands there
+		// like any other edit — correctly, since it changes what the agent may
+		// do unattended. What it must not do is land there UNLABELLED, beside
+		// a persona rewrite, with nothing to tell the two apart when somebody
+		// is scanning for the version to roll back to.
+		reason := "update"
+		if fromToolsModal {
+			reason = "changed tools"
+		}
+		saved, err := saveAgentAs(udb, req, reason)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return

@@ -88,3 +88,25 @@ func TestTheToolPolicyEndpointUsesTheGatesOwnTiering(t *testing.T) {
 		t.Error("the endpoint is not owner-gated")
 	}
 }
+
+// A tool change is a real change to what the agent may do, so it belongs in
+// the version history like any other edit. What it must not be is unlabelled:
+// a history of identical "update" rows is one nobody can scan for the version
+// worth rolling back to.
+func TestAToolsModalSaveIsLabelledInTheHistory(t *testing.T) {
+	src := packageSource(t)
+	i := strings.Index(src, "fromToolsModal := r.URL.Query()")
+	if i < 0 {
+		t.Fatal("cannot find the tools-modal save path")
+	}
+	body := src[i:]
+	if j := strings.Index(body, "\nfunc "); j >= 0 {
+		body = body[:j]
+	}
+	if !strings.Contains(body, `reason = "changed tools"`) {
+		t.Error("a tools-modal save records an unlabelled revision")
+	}
+	if !strings.Contains(body, "saveAgentAs(udb, req, reason)") {
+		t.Error("the reason is computed and then not used")
+	}
+}
