@@ -139,6 +139,14 @@ func TestAToolNothingWithholdsIsNotOfferedAnApproval(t *testing.T) {
 // agent uses its tools freely and always has.
 func TestTheLadderSaysItIsAboutUnattendedRuns(t *testing.T) {
 	src := orchestrateWebAssets
+	// Named for what it DOES. "Ask" promised a conversation and delivered a
+	// queue entry, so it was set, waited for, and read as broken.
+	if strings.Contains(src, "ask: 'Ask'") {
+		t.Error("the state is still labelled as though something prompts")
+	}
+	if !strings.Contains(src, "ask: 'Queues'") {
+		t.Error("the state does not say what it does")
+	}
 	if !strings.Contains(src, "SCHEDULED or STANDING run") {
 		t.Error("nothing on screen says which runs the pill governs")
 	}

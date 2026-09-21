@@ -2720,12 +2720,17 @@
           var preApproved = {}, heldBack = {};
           (agent.auto_approve_tools || []).forEach(function(n) { preApproved[n] = true; });
           (agent.no_unattended_tools || []).forEach(function(n) { heldBack[n] = true; });
+          // "Ask" promised a conversation and delivered a queue entry. Nothing
+          // can prompt on a 3am fire, so what the state actually does is stop
+          // the run and leave the call in the Permissions pane for later. The
+          // label says that now; it is the one word somebody reads before they
+          // set it and go looking for a prompt that was never coming.
           var permLabel = {
-            runs: 'Runs', ask: 'Ask', always: 'Always', attended: 'Attended only'
+            runs: 'Runs', ask: 'Queues', always: 'Always', attended: 'Attended only'
           };
           var permTitle = {
             runs: 'Nothing withholds this one: it runs on an unattended fire as it does in chat. Its credential is not configured to ask, so there is no approval to grant.',
-            ask: 'Stops on a run with nobody watching and waits in the Permissions pane for you to approve it.',
+            ask: 'Stops the run and leaves the call in the Permissions pane for you to approve. Nothing prompts: there is nobody there at the time, so approving it is what lets the NEXT run use it.',
             always: 'Runs on a scheduled or standing fire without asking. Sub-agents inherit it.',
             attended: 'Refused outright on an unattended run, and NOT queued: this is your decision, not a request for one. Inherits downward, so a sub-agent cannot do what its parent was told not to.'
           };
@@ -2823,7 +2828,7 @@
             // in chat an agent uses its tools freely and always has.
             var permHelp = document.createElement('div');
             permHelp.className = 'ui-orch-modal-help';
-            permHelp.textContent = "The pill on each tool says what happens on a SCHEDULED or STANDING run: Runs (nothing holds it back), Ask (stops and waits for you in the Permissions pane), Always (runs without asking), or Attended only (refused outright, and not queued). None of it applies in chat, where the agent uses its tools freely.";
+            permHelp.textContent = "The pill on each tool says what happens on a SCHEDULED or STANDING run: Runs (nothing holds it back), Queues (stops the run and leaves the call in the Permissions pane for you to approve, so the NEXT run has it), Always (runs without asking), or Attended only (refused outright, and never queued). None of it applies in chat, where the agent uses its tools freely.";
             m.body.appendChild(permHelp);
           }
 
