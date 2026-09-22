@@ -38,10 +38,10 @@ type accessToolRow struct {
 	// Asks is the ask-before-every-call flag (in chat). Only a tool with a
 	// record behind it can hold one.
 	Asks bool `json:"asks"`
-	// Governable says whether the controls apply at all, so the UI renders a
-	// row it cannot act on differently from one set to "no". A framework tool
-	// has no record to carry a flag; offering it a switch would be offering
-	// one wired to nothing.
+	// Governable says whether the controls apply at all. Every tool the agent
+	// can actually CALL is: both marks are keyed by name, so neither needs the
+	// tool to have a record behind it. A tool listed here but not loaded is
+	// not, since there is nothing to govern until the agent has it.
 	Governable bool `json:"governable"`
 	// Unattended is the standing decision for scheduled and standing runs:
 	// allow, ask, or block. The GATE's answer where one is recorded, and
@@ -107,6 +107,15 @@ func (T *OrchestrateApp) resolvedAgentTools(ctx context.Context, udb Database, u
 			unattended[p.Tool] = p.Policy
 		}
 	}
+	// The owner's ask marks, read once by name.
+	asks := map[string]bool{}
+	var markDB Database
+	if AuthDB != nil {
+		markDB = AuthDB()
+	}
+	for _, n := range AskInChatTools(markDB, user) {
+		asks[n] = true
+	}
 	withheld := map[string][]string{}
 	for _, pair := range rec.DisabledToolActions {
 		if tool, action, ok := strings.Cut(strings.TrimSpace(pair), "/"); ok {
@@ -145,10 +154,14 @@ func (T *OrchestrateApp) resolvedAgentTools(ctx context.Context, udb Database, u
 			row.Unattended = PolicyAllow
 		}
 		row.Enabled = true
+		// Every loaded tool. The ask mark is keyed by NAME and the unattended
+		// policy by (agent, name), so neither wants a record: web_search and
+		// browse_page are the consequential ones and used to be the only tools
+		// that could not be stopped on, which was exactly backwards.
+		row.Governable = true
+		row.Asks = asks[name]
 		if tt, ok := pool[name]; ok {
 			row.Origin = "your tools"
-			row.Asks = tt.ConfirmInChat
-			row.Governable = true
 			if c := strings.TrimSpace(tt.Credential); c != "" && !strings.EqualFold(c, "no_auth") {
 				row.Origin = "credential: " + c
 			}
@@ -170,7 +183,7 @@ func (T *OrchestrateApp) resolvedAgentTools(ctx context.Context, udb Database, u
 		}
 		out = append(out, accessToolRow{
 			Name: name, Origin: "your tools", Detail: firstLine(tt.Description),
-			Enabled: false, Governable: true, Asks: tt.ConfirmInChat,
+			Enabled: false, Governable: false, Asks: asks[name],
 			Chat: "off", Unattended: PolicyAllow,
 		})
 	}
@@ -237,8 +250,11 @@ func (T *OrchestrateApp) handleAgentAccessTool(w http.ResponseWriter, r *http.Re
 		// hold the flag. A control that accepts a click and stores nothing is
 		// worse than one that is not offered: the row would show the new state
 		// until the next reload and then quietly revert.
-		if !SetUserToolConfirmInChat(AuthDB(), user, name, *body.Asks) {
-			http.Error(w, "that tool has no record of its own to carry the flag", http.StatusNotFound)
+		// By name, so this works for a framework tool as well as an authored
+		// one. There is no "no such tool" to report: the mark is about a NAME,
+		// and the tools most worth stopping on have no record to look up.
+		if !SetUserToolAsksInChat(AuthDB(), user, name, *body.Asks) {
+			http.Error(w, "could not record that", http.StatusInternalServerError)
 			return
 		}
 	case body.Unattended != nil:

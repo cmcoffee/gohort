@@ -309,7 +309,14 @@ const (
 	// is what makes a dedicated setter necessary rather than a load-edit-save
 	// through AdminPersistTempTool: that path deliberately keeps the old
 	// value, so it cannot be the route by which the value changes.
-	coreExportCeiling = 2236
+	// Re-baselined to 2264 for the ask-before-every-call marks:
+	// UserToolAsksInChat, AskInChatTools and SetUserToolAsksInChat. Three
+	// exports, and they replace a flag that could only ever be set on a tool
+	// somebody had authored - so the framework's own tools, the searches and
+	// the browsing and the fetches, were the only ones that could not be
+	// stopped on. The mark is keyed by NAME now, which is what lets any tool
+	// carry it, and reading it needs a function rather than a struct field.
+	coreExportCeiling = 2264
 
 	// coreExportSlack is a small band on the export count only. A file here
 	// legitimately grows an exported helper or two during ordinary work, and a

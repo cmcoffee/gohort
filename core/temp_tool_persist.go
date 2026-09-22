@@ -15,6 +15,7 @@
 package core
 
 import (
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -28,7 +29,20 @@ import (
 const (
 	pendingTempToolsTable    = "pending_temp_tools"
 	persistentTempToolsTable = "persistent_temp_tools"
-	sessionTempToolsTable    = "session_temp_tools"
+	// askInChatToolsTable holds the ask-before-every-call marks, keyed by
+	// USER, as a set of tool names.
+	//
+	// Separate from the tool record because the flag used to live ON one, and
+	// so could only be set for a tool somebody had authored. That is backwards:
+	// the framework's own tools are the consequential ones - the searches, the
+	// browsing, the fetches - and they carry no record, so the tools most worth
+	// stopping on were the only ones that could not be.
+	//
+	// By NAME, and per user rather than per agent, because a tool's riskiness
+	// is a property of the tool: two agents holding the same one should not
+	// disagree about whether it stops to ask.
+	askInChatToolsTable   = "ask_in_chat_tools"
+	sessionTempToolsTable = "session_temp_tools"
 )
 
 var tempToolPersistMu sync.Mutex
@@ -1603,6 +1617,90 @@ func sliceHas(list []string, want string) bool {
 //
 // Reports whether a tool of that name was found, so a caller can tell "set" from
 // "there is no such tool" instead of both looking like success.
+// UserToolAsksInChat reports whether this tool stops and asks before every
+// call, for this user.
+//
+// Reads BOTH stores. The name set is where the mark lives now; the flag on a
+// tool record is where it used to, and a tool marked before this existed must
+// not quietly stop asking because the storage moved underneath it.
+func UserToolAsksInChat(db Database, username, name string) bool {
+	db = tempToolStore(db)
+	if db == nil || username == "" || strings.TrimSpace(name) == "" {
+		return false
+	}
+	var names []string
+	if db.Get(askInChatToolsTable, username, &names) {
+		for _, n := range names {
+			if n == name {
+				return true
+			}
+		}
+	}
+	for _, p := range LoadPersistentTempTools(db, username) {
+		if p.Tool.Name == name {
+			return p.Tool.ConfirmInChat
+		}
+	}
+	return false
+}
+
+// AskInChatTools lists every tool this user has marked, so a surface can show
+// the marks it holds without asking about each name it happens to know.
+func AskInChatTools(db Database, username string) []string {
+	db = tempToolStore(db)
+	if db == nil || username == "" {
+		return nil
+	}
+	var names []string
+	db.Get(askInChatToolsTable, username, &names)
+	for _, p := range LoadPersistentTempTools(db, username) {
+		if !p.Tool.ConfirmInChat {
+			continue
+		}
+		if !slices.Contains(names, p.Tool.Name) {
+			names = append(names, p.Tool.Name)
+		}
+	}
+	return names
+}
+
+// SetUserToolAsksInChat marks or unmarks ANY tool, whether or not the user
+// authored it. Always reports true: there is no "no such tool" here, because
+// the mark is about a NAME and the framework's tools have no record to look up.
+func SetUserToolAsksInChat(db Database, username, name string, ask bool) bool {
+	db = tempToolStore(db)
+	name = strings.TrimSpace(name)
+	if db == nil || username == "" || name == "" {
+		return false
+	}
+	tempToolPersistMu.Lock()
+	defer tempToolPersistMu.Unlock()
+	var names []string
+	db.Get(askInChatToolsTable, username, &names)
+	kept := names[:0:0]
+	for _, n := range names {
+		if n != name {
+			kept = append(kept, n)
+		}
+	}
+	if ask {
+		kept = append(kept, name)
+	}
+	db.Set(askInChatToolsTable, username, kept)
+	// The legacy flag is cleared in step when a record exists, so the two
+	// stores cannot disagree and the reader above cannot resurrect a mark the
+	// owner just removed.
+	list := LoadPersistentTempTools(db, username)
+	for i := range list {
+		if list[i].Tool.Name == name && list[i].Tool.ConfirmInChat != ask {
+			list[i].Tool.ConfirmInChat = ask
+			db.Set(persistentTempToolsTable, username, list)
+			break
+		}
+	}
+	return true
+}
+
 func SetUserToolConfirmInChat(db Database, username, name string, confirm bool) bool {
 	db = tempToolStore(db)
 	if db == nil || username == "" {

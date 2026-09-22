@@ -131,7 +131,30 @@ func (t *chatTurn) confirmFuncFor(sess *ToolSession) func(name, args string) boo
 		// credential toggle was the only way in, so a shell tool that deletes
 		// files had no way to ask and an api tool sharing a key with a benign
 		// one could not differ from it.
-		if tt := toolRecordFor(sess, name); tt != nil && tt.ConfirmInChat {
+		// By NAME, so this reaches the framework's own tools too. It used to
+		// read a flag on the tool RECORD, which meant only a tool somebody had
+		// authored could be marked - and the consequential ones, the searches
+		// and the browsing and the fetches, carry no record. The tools most
+		// worth stopping on were the only ones that could not be.
+		// The OWNER's marks, not the runtime user's. A shared agent runs for
+		// somebody else, and whether a tool stops to ask is the owner's
+		// decision about their own tool, not a setting the visitor holds.
+		_, markOwner := t.ownerView()
+		// AuthDB is a hook the binary installs at start-up, so it is nil
+		// wherever this app runs without one - every test that builds a turn
+		// by hand, for a start. Calling it unguarded panics, and a confirm
+		// gate that panics denies nothing and stops everything.
+		var markDB Database
+		if AuthDB != nil {
+			markDB = AuthDB()
+		}
+		// Two sources, either of which stops the call. The owner's mark is
+		// keyed by NAME and reaches any tool, the framework's included. The
+		// record's own flag is a tool DECLARING that it asks, which tool_def
+		// can set on a draft that lives only in this session and so never
+		// reaches the owner's store at all.
+		tt := toolRecordFor(sess, name)
+		if (tt != nil && tt.ConfirmInChat) || UserToolAsksInChat(markDB, markOwner, name) {
 			return t.escalateToolConfirm(toolConfirmRequest{
 				tool:    name,
 				prompt:  fmt.Sprintf("Allow %s?", name),

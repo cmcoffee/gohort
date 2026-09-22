@@ -334,3 +334,56 @@ func rowByWho(rows []map[string]any, who string) map[string]any {
 	}
 	return nil
 }
+
+// The framework's own tools can be marked. They carry no record, and the mark
+// does not want one: it is keyed by NAME.
+//
+// This is the case that matters most and was impossible before. The flag lived
+// on the tool record, so only a tool somebody had authored could hold it,
+// which made web_search and browse_page - the searches, the browsing, the
+// fetches - the only tools that could not be stopped on.
+func TestAFrameworkToolCanBeMarkedToAsk(t *testing.T) {
+	_, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	if !SetUserToolAsksInChat(udb, "alice", "web_search", true) {
+		t.Fatal("marking a tool with no record was refused")
+	}
+	if !UserToolAsksInChat(udb, "alice", "web_search") {
+		t.Error("the mark did not stick")
+	}
+	// And it comes back off.
+	SetUserToolAsksInChat(udb, "alice", "web_search", false)
+	if UserToolAsksInChat(udb, "alice", "web_search") {
+		t.Error("clearing the mark left it asking")
+	}
+}
+
+// A mark made before the storage moved must not quietly stop working. The flag
+// used to live on the tool record, and a tool marked then still has it there.
+func TestAMarkOnAnOldToolRecordStillAsks(t *testing.T) {
+	_, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	if err := AdminPersistTempTool(udb, "alice", TempTool{
+		Name: "legacy_marked", CommandTemplate: "curl x", ConfirmInChat: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !UserToolAsksInChat(udb, "alice", "legacy_marked") {
+		t.Error("a tool marked under the old storage stopped asking when the storage moved")
+	}
+	// Listing finds it too, so a surface showing the marks shows that one.
+	var found bool
+	for _, n := range AskInChatTools(udb, "alice") {
+		if n == "legacy_marked" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the listing misses a mark held on a tool record")
+	}
+	// Clearing it clears BOTH stores, or the reader resurrects what the owner
+	// just removed.
+	SetUserToolAsksInChat(udb, "alice", "legacy_marked", false)
+	if UserToolAsksInChat(udb, "alice", "legacy_marked") {
+		t.Error("clearing left the old flag set, so the tool goes on asking")
+	}
+}

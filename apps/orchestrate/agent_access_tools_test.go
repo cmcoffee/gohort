@@ -40,10 +40,15 @@ func TestADefaultPoolAgentResolvesItsWholeCatalog(t *testing.T) {
 	}
 }
 
-// A tool in the owner's pool can carry a flag; a framework tool has no record
-// to hold one. The page has to say which, or it offers controls that do
-// nothing and hides ones that would work.
-func TestOnlyToolsWithARecordReadAsGovernable(t *testing.T) {
+// EVERY loaded tool can be governed, framework ones included. The ask mark is
+// keyed by name and the unattended policy by (agent, name), so neither wants a
+// record behind it.
+//
+// This asserted the opposite until the marks moved off the tool record. That
+// arrangement made web_search and browse_page - the searches, the browsing,
+// the fetches - the only tools that could NOT be stopped on, which is exactly
+// backwards from what somebody securing an agent wants.
+func TestEveryLoadedToolCanBeGoverned(t *testing.T) {
 	app, udb, _ := newTestOrchestrate(t)
 	pinRootDB(t)
 	if err := AdminPersistTempTool(udb, "alice", TempTool{
@@ -74,8 +79,8 @@ func TestOnlyToolsWithARecordReadAsGovernable(t *testing.T) {
 		}
 		if r.Origin == "framework" {
 			framework++
-			if r.Governable {
-				t.Errorf("%q reads as governable but has no record to carry a flag", r.Name)
+			if !r.Governable {
+				t.Errorf("%q cannot be governed, so the tools most worth stopping on are the ones you cannot stop on", r.Name)
 			}
 		}
 	}
@@ -155,10 +160,9 @@ func TestTheAccessPageWritesThroughTheSameSetters(t *testing.T) {
 	}
 }
 
-// A control that takes a click and stores nothing is worse than one that is
-// not offered: the row shows the new state until the next reload, then
-// quietly reverts.
-func TestSettingAskOnAToolWithNoRecordIsRefused(t *testing.T) {
+// A framework tool can be marked. It has no record, and it does not need one:
+// the mark is about a NAME.
+func TestAFrameworkToolCanBeSetToAsk(t *testing.T) {
 	app, udb, _ := newTestOrchestrate(t)
 	pinRootDB(t)
 	rec := AgentRecord{ID: "a10", Name: "Wren", Owner: "alice", OrchestratorPrompt: "p"}
@@ -169,8 +173,11 @@ func TestSettingAskOnAToolWithNoRecordIsRefused(t *testing.T) {
 		"/api/agent-access/tool?agent=a10&name=web_search", strings.NewReader(`{"asks":true}`))
 	w := httptest.NewRecorder()
 	app.handleAgentAccessTool(w, asUser(r, "alice"))
-	if w.Code != http.StatusNotFound {
-		t.Errorf("want 404 for a framework tool with no record, got %d %s", w.Code, w.Body.String())
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("marking a framework tool: %d %s", w.Code, w.Body.String())
+	}
+	if !UserToolAsksInChat(AuthDB(), "alice", "web_search") {
+		t.Error("the mark did not stick, so the tool goes on running unprompted")
 	}
 }
 
