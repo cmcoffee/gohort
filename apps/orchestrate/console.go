@@ -190,6 +190,9 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/console/permissions/promote", w(T.handleConsolePermissionPromote))
 	T.HandleFunc("/api/console/permissions/policy", T.handleConsolePermissionPolicy)
 	T.HandleFunc("/api/console/permissions/remove", T.handleConsolePermissionRemove)
+	// promote widens a decision to every agent; narrow is its opposite. The
+	// pair is what makes the two scopes usable in both directions.
+	T.HandleFunc("/api/console/permissions/narrow", T.handleConsolePermissionNarrow)
 	T.HandleFunc("/api/console/privileges", T.handleConsolePrivileges)
 	T.HandleFunc("/api/console/approvals/approve", w(T.handleApprovalApprove))
 	T.HandleFunc("/api/console/approvals/always", w(T.handleApprovalAlways))

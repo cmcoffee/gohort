@@ -56,13 +56,36 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 	// Standing decisions, one tab's worth at a time. Narrowed on the SERVER:
 	// a browser-side filter would have every tab fetch every row and hide
 	// most, and a count in a heading would then be counting what is not shown.
-	decisions := func(kind string) string {
-		return T.WebPrefix() + "/api/console/permissions?agent=" + url.QueryEscape(agent.ID) + "&kind=" + kind
+	decisions := func(kind, scope string) string {
+		u := T.WebPrefix() + "/api/console/permissions?agent=" + url.QueryEscape(agent.ID) + "&kind=" + kind
+		if scope != "" {
+			u += "&scope=" + scope
+		}
+		return u
 	}
 	// The segmented control every decision row carries. Its value arrives in
 	// the POST body keyed by the field, which the policy handler now reads as
 	// well as ?value=, so this writes through the same setter the card list
 	// always did rather than a second endpoint kept in step by hand.
+	promoteURL := T.WebPrefix() + "/api/console/permissions/promote?id={_id}"
+	narrowURL := T.WebPrefix() + "/api/console/permissions/narrow?id={_id}&agent=" + url.QueryEscape(agent.ID)
+	// scope names which way a decision can move. A decision made for THIS
+	// agent can be widened to every agent; one that binds every agent can be
+	// brought back to this one. Both MOVE it rather than copying, because two
+	// records for one decision means the wider one goes on binding everything
+	// while the page shows the narrow one as the answer.
+	scopeMove := func(wide bool) ui.RowAction {
+		if wide {
+			return ui.RowAction{
+				Type: "button", Label: "Just this agent", PostTo: narrowURL,
+				Confirm: "Narrow this to " + name + " alone? Every other agent loses it.",
+			}
+		}
+		return ui.RowAction{
+			Type: "button", Label: "All agents", PostTo: promoteURL,
+			Confirm: "Widen this to every agent you have? Each of them carries its own persona and its own rules about what it may say.",
+		}
+	}
 	policyLadder := func() []ui.RowAction {
 		return []ui.RowAction{{
 			Type: "segmented", Field: "_policy", PostTo: policyURL,
@@ -96,7 +119,7 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				Detail: "Allow once runs this call and asks again next time. Always allow runs it and records the grant, which then appears under the tab it belongs to. " +
 					"Offers are different: nothing is blocked on them and the tool already works, so they read Scope it and Dismiss rather than borrowing approval words for a refusal that is not happening.",
 				Body: ui.Table{
-					Source:    decisions("requests"),
+					Source:    decisions("requests", ""),
 					RowKey:    "_id",
 					EmptyText: "Nothing is waiting. A run that stops for an answer appears here.",
 					Columns: []ui.Col{
@@ -198,18 +221,34 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 			},
 			{
 				Group: "Delegation",
-				Title: "Standing decisions",
-				Subtitle: "Decisions recorded separately from the controls above, and what each is set to now. " +
-					"Where a control on this tab already carries its own state, it is not repeated here: the control IS the decision.",
+				Title: "This agent's own",
+				Subtitle: "Decisions that apply to this agent and nothing else. " +
+					"Where a control on this tab already carries its own state it is not repeated here, because the control IS the decision.",
 				Body: ui.Table{
-					Source:    decisions("delegation"),
+					Source:    decisions("delegation", "agent"),
 					RowKey:    "_id",
 					EmptyText: "No standing decisions about what it may call.",
 					Columns: []ui.Col{
 						{Field: "Who", Label: ""},
 						{Field: "Detail", Label: "", Mute: true},
 					},
-					RowActions: policyLadder(),
+					RowActions: append(policyLadder(), scopeMove(false)),
+				},
+			},
+			{
+				Group: "Delegation",
+				Title: "Applies to every agent",
+				Subtitle: "Decisions you made once for the whole fleet, which bind this agent too. " +
+					"Shown apart from its own because they are set elsewhere and reach further: changing one here changes it for every agent you have.",
+				Body: ui.Table{
+					Source:    decisions("delegation", "fleet"),
+					RowKey:    "_id",
+					EmptyText: "None. Everything here is this agent's own.",
+					Columns: []ui.Col{
+						{Field: "Who", Label: ""},
+						{Field: "Detail", Label: "", Mute: true},
+					},
+					RowActions: append(policyLadder(), scopeMove(true)),
 				},
 			},
 			{
@@ -340,18 +379,34 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 			},
 			{
 				Group: "Access",
-				Title: "Standing decisions",
-				Subtitle: "Decisions recorded separately from the controls above, and what each is set to now. " +
-					"Where a control on this tab already carries its own state, it is not repeated here: the control IS the decision.",
+				Title: "This agent's own",
+				Subtitle: "Decisions that apply to this agent and nothing else. " +
+					"Where a control on this tab already carries its own state it is not repeated here, because the control IS the decision.",
 				Body: ui.Table{
-					Source:    decisions("access"),
+					Source:    decisions("access", "agent"),
 					RowKey:    "_id",
 					EmptyText: "No standing decisions about who it may reach.",
 					Columns: []ui.Col{
 						{Field: "Who", Label: ""},
 						{Field: "Detail", Label: "", Mute: true},
 					},
-					RowActions: policyLadder(),
+					RowActions: append(policyLadder(), scopeMove(false)),
+				},
+			},
+			{
+				Group: "Access",
+				Title: "Applies to every agent",
+				Subtitle: "Decisions you made once for the whole fleet, which bind this agent too. " +
+					"Shown apart from its own because they are set elsewhere and reach further: changing one here changes it for every agent you have.",
+				Body: ui.Table{
+					Source:    decisions("access", "fleet"),
+					RowKey:    "_id",
+					EmptyText: "None. Everything here is this agent's own.",
+					Columns: []ui.Col{
+						{Field: "Who", Label: ""},
+						{Field: "Detail", Label: "", Mute: true},
+					},
+					RowActions: append(policyLadder(), scopeMove(true)),
 				},
 			},
 			{

@@ -309,3 +309,134 @@ func TestTheServedRowsCarryTheirTab(t *testing.T) {
 		}
 	}
 }
+
+// A decision made for THIS agent and one that binds every agent are different
+// facts, set in different places, reaching different distances. Listed
+// together the reader cannot tell which is which without decoding a row id,
+// which is what made the surface hard to read.
+func TestAgentScopedAndFleetWideDecisionsCanBeAskedForSeparately(t *testing.T) {
+	app, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	if _, err := saveAgent(udb, AgentRecord{
+		ID: "mine", Name: "Wren", Owner: "alice", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	// One of each: a contact this agent may message, and one every agent may.
+	SetContactPolicy(RootDB, "alice", "mine", "+15550109999", PolicyAllow)
+	SetContactPolicy(RootDB, "alice", "", "+15550100001", PolicyAllow)
+
+	ask := func(scope string) []map[string]any {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodGet,
+			"/api/console/permissions?agent=mine&kind=access&scope="+scope, nil)
+		w := httptest.NewRecorder()
+		app.handleConsolePermissions(w, asUser(r, "alice"))
+		var rows []map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil {
+			t.Fatal(err)
+		}
+		return rows
+	}
+	for _, r := range ask("agent") {
+		if permRowAgent(r["_id"].(string)) == "" {
+			t.Errorf("a fleet-wide decision appeared under this agent's own: %+v", r)
+		}
+	}
+	fleet := ask("fleet")
+	if len(fleet) == 0 {
+		t.Error("the fleet-wide band is empty, so a decision binding this agent is shown nowhere")
+	}
+	for _, r := range fleet {
+		if permRowAgent(r["_id"].(string)) != "" {
+			t.Errorf("an agent-scoped decision appeared under every-agent: %+v", r)
+		}
+	}
+	// Unscoped still returns both, which is what a cross-agent ledger wants.
+	if len(ask("")) <= len(fleet) {
+		t.Error("asking without a scope dropped rows instead of returning both bands")
+	}
+}
+
+// A decision must be able to move BOTH ways, or the two scopes are not usable.
+// Promote existed; without its opposite a decision can only ever widen, and an
+// owner who granted something fleet-wide once has no way back except to remove
+// it and remember to set it again on the one agent that needed it.
+func TestADecisionCanBeWidenedAndBroughtBack(t *testing.T) {
+	app, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	if _, err := saveAgent(udb, AgentRecord{
+		ID: "mine", Name: "Wren", Owner: "alice", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	SetContactPolicy(RootDB, "alice", "mine", "+15550109999", PolicyAllow)
+
+	post := func(path string) {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodPost, path, nil)
+		w := httptest.NewRecorder()
+		switch {
+		case strings.Contains(path, "/promote"):
+			app.handleConsolePermissionPromote(w, asUser(r, "alice"))
+		default:
+			app.handleConsolePermissionNarrow(w, asUser(r, "alice"))
+		}
+		if w.Code != http.StatusNoContent && w.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", path, w.Code, w.Body.String())
+		}
+	}
+	// %2B, not a bare +: in a query string a plus decodes as a SPACE, so an
+	// unencoded handle arrives as a different subject. The page substitutes
+	// through encodeURIComponent, so this mirrors what it actually sends.
+	post("/api/console/permissions/promote?id=contactfor:mine:%2B15550109999")
+	if ContactPolicy(RootDB, "alice", "", "+15550109999") != PolicyAllow {
+		t.Error("widening did not reach every agent")
+	}
+	// It MOVES. Two records for one decision would leave the wider one binding
+	// everything while the page showed the narrow one as the answer.
+	//
+	// Asked of the SCOPED listing, not ContactPolicy: that falls back to the
+	// fleet value when an agent has none of its own, so it cannot tell "has
+	// its own" from "inherits", which is exactly the distinction under test.
+	scoped := func(scope string) int {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodGet,
+			"/api/console/permissions?agent=mine&kind=access&scope="+scope, nil)
+		w := httptest.NewRecorder()
+		app.handleConsolePermissions(w, asUser(r, "alice"))
+		var rows []map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil {
+			t.Fatal(err)
+		}
+		return len(rows)
+	}
+	if scoped("agent") != 0 {
+		t.Error("the agent-scoped record survived the widening, so one decision is stored twice")
+	}
+	if scoped("fleet") == 0 {
+		t.Error("the widened decision is listed nowhere")
+	}
+	post("/api/console/permissions/narrow?id=contact:%2B15550109999&agent=mine")
+	if ContactPolicy(RootDB, "alice", "mine", "+15550109999") != PolicyAllow {
+		t.Error("narrowing did not land on the agent")
+	}
+	if scoped("fleet") != 0 {
+		t.Error("the fleet-wide record survived the narrowing, so other agents still hold it")
+	}
+	if scoped("agent") == 0 {
+		t.Error("the narrowed decision is not listed as this agent's own")
+	}
+}
+
+// Narrowing something that is already one agent's would be a no-op that reads
+// as a move, so it is refused rather than accepted quietly.
+func TestNarrowingRefusesWhatIsNotFleetWide(t *testing.T) {
+	app, _, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	r := httptest.NewRequest(http.MethodPost,
+		"/api/console/permissions/narrow?id=contactfor:mine:+15550109999&agent=mine", nil)
+	w := httptest.NewRecorder()
+	app.handleConsolePermissionNarrow(w, asUser(r, "alice"))
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("want 400, got %d %s", w.Code, w.Body.String())
+	}
+}

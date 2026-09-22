@@ -394,10 +394,29 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 	// every tab fetch every row and hide most of them, and a count in a tab
 	// heading would then be counting things the tab is not showing.
 	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
+	// scope separates a decision made for THIS agent from one that binds every
+	// agent. They were listed together, which is the thing that makes a
+	// permission surface hard to read: the reader cannot tell what they are
+	// looking at without decoding a row id, and the two are set in different
+	// places and mean different things.
+	//
+	// "agent" keeps only this agent's own; "fleet" keeps only the ones that
+	// bind everything. Empty keeps both, which is what the cross-agent ledger
+	// still wants.
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
 	kept := make([]permRow, 0, len(out))
 	for _, row := range out {
-		if want != "" {
-			if a := permRowAgent(row.ID); a != "" && a != want {
+		rowAgent := permRowAgent(row.ID)
+		if want != "" && rowAgent != "" && rowAgent != want {
+			continue
+		}
+		switch scope {
+		case "agent":
+			if rowAgent == "" {
+				continue
+			}
+		case "fleet":
+			if rowAgent != "" {
 				continue
 			}
 		}
@@ -801,6 +820,51 @@ func (T *OrchestrateApp) handleConsolePermissionPromote(w http.ResponseWriter, r
 	policy := ContactPolicy(RootDB, user, aid, subject)
 	SetContactPolicy(RootDB, user, "", subject, policy)
 	RemoveContactPolicy(RootDB, user, aid, subject)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleConsolePermissionNarrow is promote's opposite: it takes a decision
+// that binds every agent and makes it this agent's alone.
+//
+// The pair is what makes the two scopes usable. Without it a decision can only
+// ever widen, so an owner who granted something fleet-wide once has no way
+// back except to remove it and remember to set it again on the one agent that
+// needed it - and in between, nothing has it.
+//
+// It MOVES, like promote does. Leaving both would be two records for one
+// decision, and the fleet one would go on binding every other agent while the
+// page showed the narrow one as the answer.
+//
+// This takes reach AWAY from every other agent, which is the direction that
+// needs saying out loud rather than the one that grants.
+func (T *OrchestrateApp) handleConsolePermissionNarrow(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
+	kind, subject, found := strings.Cut(strings.TrimSpace(r.URL.Query().Get("id")), ":")
+	if !found || subject == "" || agentID == "" {
+		http.Error(w, "bad id", http.StatusBadRequest)
+		return
+	}
+	switch kind {
+	case "agent":
+		policy := DelegationPolicy(RootDB, user, "", subject)
+		SetDelegationPolicy(RootDB, user, agentID, subject, policy)
+		RemoveDelegationPolicy(RootDB, user, "", subject)
+	case "contact":
+		policy := ContactPolicy(RootDB, user, "", subject)
+		SetContactPolicy(RootDB, user, agentID, subject, policy)
+		RemoveContactPolicy(RootDB, user, "", subject)
+	default:
+		http.Error(w, "only a decision that binds every agent can be narrowed", http.StatusBadRequest)
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
