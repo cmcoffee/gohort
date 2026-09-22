@@ -135,6 +135,11 @@ func start_lead_llm_retry() {
 			if LeadInitError() == "" {
 				continue // healthy, or none configured — nothing to retry
 			}
+			// Deliberately the INIT error and not the runtime one. A lead that
+			// built and later stopped answering is recorded separately in core
+			// and has a live client that re-resolves on its next call, so the
+			// evidence it has recovered is a call that WORKS. Rebuilding would
+			// clear that record having proved only that a constructor runs.
 			cfg := dbcfg.leadLLM()
 			if cfg.Provider == "" {
 				SetLeadInitError("", "", nil) // it was removed; stop complaining

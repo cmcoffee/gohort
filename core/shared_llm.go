@@ -63,9 +63,25 @@ func LeadIsDistinct() bool { return SharedLeadLLM() != nil }
 // the second is true sends somebody to re-enter settings that were already
 // right, which is exactly what happened with a Bedrock lead whose AWS
 // credentials no longer resolved at boot.
+//
+// leadRuntimeErr is the OTHER way a lead goes away: it built fine and later
+// stopped answering. An SSO session reaching the end of its life is the one
+// that cost eleven hours: every lead call fell back to the worker, nothing
+// recorded it, so the background retry never ran and no surface said a word.
+// The only symptom was answers being worse than they should be, which is the
+// same symptom as no lead being configured at all.
+//
+// Kept SEPARATE from leadInitErr rather than folded into it, because the two
+// want opposite remedies. An init failure is fixed by REBUILDING, which is
+// what the background loop does every two minutes. A runtime failure already
+// has a live client that re-resolves its own credentials on the next call, so
+// the thing that proves it is over is a call that WORKS. Folded together, the
+// loop's rebuild would clear a runtime failure with no successful call behind
+// it, which is how a diagnosis starts lying.
 var (
-	leadInitMu  sync.RWMutex
-	leadInitErr string
+	leadInitMu     sync.RWMutex
+	leadInitErr    string
+	leadRuntimeErr string
 )
 
 // SetLeadInitError records (or with a nil err, clears) the reason a configured
@@ -74,6 +90,10 @@ var (
 func SetLeadInitError(provider, model string, err error) {
 	leadInitMu.Lock()
 	defer leadInitMu.Unlock()
+	// Either way this is a NEW client, so the old one's call history no longer
+	// describes anything. A runtime complaint that outlives the client it was
+	// about is the same stale-diagnosis problem leadInitErr was added to fix.
+	leadRuntimeErr = ""
 	if err == nil {
 		leadInitErr = ""
 		return
@@ -86,6 +106,57 @@ func LeadInitError() string {
 	leadInitMu.RLock()
 	defer leadInitMu.RUnlock()
 	return leadInitErr
+}
+
+// leadRuntimeError returns why the lead's last call failed, or "" when it
+// worked or none has been made.
+//
+// Unexported, with its two recorders: every producer and every reader is in
+// this package, and the retry loop in the main package must keep reading
+// LeadInitError alone, because a rebuild is not evidence about this one.
+func leadRuntimeError() string {
+	leadInitMu.RLock()
+	defer leadInitMu.RUnlock()
+	return leadRuntimeErr
+}
+
+// noteLeadCallFailed records a lead call that failed, and says so ONCE.
+//
+// Once, because the failure repeats on every call and the fact worth having
+// is the moment escalation stopped working. Repeating it per call would bury
+// that moment in its own echo, and teach somebody to filter the line.
+func noteLeadCallFailed(err error) {
+	if err == nil {
+		return
+	}
+	leadInitMu.Lock()
+	first := leadRuntimeErr == ""
+	leadRuntimeErr = "the lead model stopped answering: " + err.Error()
+	leadInitMu.Unlock()
+	if first {
+		Warn("[llm] the lead model stopped answering: %s. Every escalation runs on the WORKER until a lead call succeeds again.", err)
+	}
+}
+
+// noteLeadCallSucceeded clears it. A call that worked is the only honest
+// evidence a runtime failure is over: rebuilding the client proves the
+// constructor runs, which for several providers does no work at all.
+func noteLeadCallSucceeded() {
+	// The overwhelmingly common path is "nothing was wrong", so it takes the
+	// read lock and stops. The write lock is only for the transition.
+	leadInitMu.RLock()
+	set := leadRuntimeErr != ""
+	leadInitMu.RUnlock()
+	if !set {
+		return
+	}
+	leadInitMu.Lock()
+	cleared := leadRuntimeErr != ""
+	leadRuntimeErr = ""
+	leadInitMu.Unlock()
+	if cleared {
+		Log("[llm] the lead model is answering again, escalations have resumed.")
+	}
 }
 
 // RegisterLLMReloader installs the function that rebuilds the shared worker +
@@ -134,6 +205,7 @@ func (r reloadableLLM) Chat(ctx context.Context, messages []Message, opts ...Cha
 	}
 	resp, err := llm.Chat(ctx, messages, opts...)
 	r.record(ctx, resp)
+	r.noteLeadHealth(ctx, err)
 	return resp, err
 }
 
@@ -144,6 +216,7 @@ func (r reloadableLLM) ChatStream(ctx context.Context, messages []Message, handl
 	}
 	resp, err := llm.ChatStream(ctx, messages, handler, opts...)
 	r.record(ctx, resp)
+	r.noteLeadHealth(ctx, err)
 	return resp, err
 }
 
@@ -162,6 +235,38 @@ func (r reloadableLLM) record(ctx context.Context, resp *Response) {
 		tier = LEAD
 	}
 	RecordUsage(ctx, tier, resp)
+}
+
+// noteLeadHealth records whether the LEAD tier is answering, from the calls
+// themselves. This handle is the one place every lead call passes through,
+// which is the same reason usage recording lives here rather than at twenty
+// call sites that would each have to remember.
+//
+// Same guard as record, for the same reason: this handle serves the WORKER
+// when no distinct lead is configured, and a worker outage is not a lead
+// outage.
+//
+// Two failures are deliberately not counted. A cancelled context is the
+// caller leaving, not the model refusing. A context-exceeded error is a
+// prompt too big for the window, which says nothing about availability and
+// would mark the lead down over the single turn that overflowed.
+//
+// A provider REFUSING on content policy is not counted either, because it
+// never reaches here as an error: it comes back as a successful response the
+// agent loop inspects separately. That is the right split. A refusal is the
+// lead working.
+func (r reloadableLLM) noteLeadHealth(ctx context.Context, err error) {
+	if !r.lead || SharedLeadLLM() == nil {
+		return
+	}
+	if err == nil {
+		noteLeadCallSucceeded()
+		return
+	}
+	if ctx.Err() != nil || IsContextExceededError(err) {
+		return
+	}
+	noteLeadCallFailed(err)
 }
 
 // ContextSize forwards the underlying LLM's ContextSizer, mirroring retryLLM.

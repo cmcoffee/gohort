@@ -262,6 +262,12 @@ func leadUnavailableReason(T *AppCore) string {
 		return "no lead model is configured for this app"
 	case !LeadIsDistinct():
 		return "no separate lead model is configured: the lead and the worker would be the same model, so there is nothing to escalate to (set one in the LLM settings)"
+	// Last, because reaching it means everything structural is fine: a lead is
+	// configured, it built, and it is distinct. That is exactly when "its last
+	// call failed" is the whole explanation, and it is the case this function
+	// used to answer with the bare line below.
+	case leadRuntimeError() != "":
+		return leadRuntimeError()
 	}
 	return "the lead was unavailable"
 }
