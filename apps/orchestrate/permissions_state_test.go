@@ -59,9 +59,9 @@ func TestNeedsApprovalIsAStateAToolRowCanHold(t *testing.T) {
 // that was missing when the segment was first hidden.
 func TestBlockingAToolReachesTheRunner(t *testing.T) {
 	page := readFile(t, "page_chat.go")
-	i := strings.Index(page, `{Label: "Blocked", Value: "block"`)
+	i := strings.Index(page, `{Label: "Never", Value: "block"`)
 	if i < 0 {
-		t.Fatal("the Blocked segment is gone entirely")
+		t.Fatal("the Never segment is gone entirely")
 	}
 	line := page[i:]
 	if j := strings.Index(line, "\n"); j > 0 {

@@ -87,11 +87,7 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 			callable = append(callable, ui.SelectOption{Value: a.ID, Label: a.Name})
 		}
 	}
-	policyChoice := []ui.SelectOption{
-		{Value: "allow", Label: "Always allow"},
-		{Value: "ask", Label: "Needs approval"},
-		{Value: "block", Label: "Blocked"},
-	}
+	policyChoice := permissionLadder()
 	promoteURL := T.WebPrefix() + "/api/console/permissions/promote?id={_id}"
 	narrowURL := T.WebPrefix() + "/api/console/permissions/narrow?id={_id}&agent=" + url.QueryEscape(agent.ID)
 	// scope names which way a decision can move. A decision made for THIS
@@ -114,11 +110,7 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 	policyLadder := func() []ui.RowAction {
 		return []ui.RowAction{{
 			Type: "segmented", Field: "_policy", PostTo: policyURL,
-			Options: []ui.SelectOption{
-				{Value: "allow", Label: "Always allow"},
-				{Value: "ask", Label: "Needs approval"},
-				{Value: "block", Label: "Blocked"},
-			},
+			Options: permissionLadder(),
 		}, {
 			Type: "button", Label: "Remove", Variant: "danger", OnlyIf: "_managed",
 			PostTo:  removeURL,
@@ -202,10 +194,9 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 						// not whether it is there to call. The supervision
 						// state moved onto the toggle beside it, where it was
 						// being shown twice.
-						{Field: "chat", Label: "Loaded", Type: "badge", Badges: []ui.BadgeMapping{
-							{Value: "Asks", Label: "On", Color: "success"},
-							{Value: "Runs", Label: "On", Color: "success"},
-							{Value: "off", Label: "Off", Color: "mute"},
+						{Field: "loaded", Label: "Loaded", Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: "On", Label: "On", Color: "success"},
+							{Value: "Off", Label: "Off", Color: "mute"},
 						}},
 						{Field: "origin", Label: "From", Mute: true},
 						{Field: "detail", Label: "What it does", Mute: true},
@@ -221,25 +212,27 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 						// what its options are but never what question it
 						// answers: an unlabelled switch beside an unlabelled
 						// track is a guess either way.
+						// The same ladder, one segment short, rather than a
+						// switch. A switch asked the reader to recognise this
+						// decision in a second shape, and gave it no words.
 						{
-							Type: "toggle", Field: "asks", OnlyIf: "governable",
-							Label:  "Ask me first",
-							PostTo: toolWrite, Method: "PATCH",
+							Type: "segmented", Field: "chat", OnlyIf: "governable",
+							Label:   "In chat",
+							Options: permissionLadderNoNever(),
+							PostTo:  toolWrite, Method: "PATCH",
 						},
 						{
 							Type: "segmented", Field: "unattended", OnlyIf: "governable",
 							Label:  "Unattended",
 							PostTo: toolWrite, Method: "PATCH",
-							Options: []ui.SelectOption{
-								{Value: "allow", Label: "Runs"},
-								{Value: "ask", Label: "Queues"},
-								// "Never" rather than "Blocked": this ladder is
-								// about unattended runs only, and a segment
-								// reading Blocked on a page listing the agent's
-								// tools would read as switching the tool off
-								// everywhere, which is not what it does.
-								{Value: "block", Label: "Never"},
-							},
+							// The same three words as every other ladder
+							// here. It used to say Runs / Queues / Never, which
+							// was accurate - nobody is watching an unattended
+							// run, so asking means filing a request rather than
+							// waiting - but being right one row at a time is
+							// what produced three vocabularies for one idea.
+							// That difference is in the Detail above.
+							Options: permissionLadder(),
 						},
 					},
 				},

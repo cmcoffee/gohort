@@ -487,7 +487,11 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 								// not queue: its network namespace is cut at spawn or
 								// it is not, and a switched-off sub-action is gone
 								// from the schema rather than waiting on anybody.
-								{Label: "Needs approval", Value: "ask", URL: "api/console/permissions/policy", HideIf: "_noask"},
+								// "Ask first", the same word every ladder uses. It
+								// says who does what, and it stays true in both
+								// situations: in chat the turn stops and waits;
+								// unattended it files a request answered later.
+								{Label: "Ask first", Value: "ask", URL: "api/console/permissions/policy", HideIf: "_noask"},
 								// Hidden on a row whose only two states are ask and
 								// allow: Blocked is the never-unattended mark, and on
 								// an in-chat prompt row it would read as switching the
@@ -500,7 +504,10 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 								// since a segment reading "never" over a tool that
 								// went on queueing for approval is a control lying
 								// about the state it sets.
-								{Label: "Blocked", Value: "block", URL: "api/console/permissions/policy", HideIf: "_noblock"},
+								// "Never", not "Blocked": a ladder reads as a rule
+								// about future calls, and Blocked reads as a state
+								// the subject is already in.
+								{Label: "Never", Value: "block", URL: "api/console/permissions/policy", HideIf: "_noblock"},
 							},
 							// The console for this agent, reached from here and
 							// nowhere else. It used to live behind a button at the

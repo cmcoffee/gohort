@@ -145,7 +145,7 @@ func TestTheAccessPageWritesThroughTheSameSetters(t *testing.T) {
 		app.handleAgentAccessTool(w, asUser(r, "alice"))
 		return w.Code
 	}
-	if code := post(`{"asks":true}`); code != http.StatusNoContent {
+	if code := post(`{"chat":"ask"}`); code != http.StatusNoContent {
 		t.Fatalf("setting ask: %d", code)
 	}
 	// Scoped to THIS agent, so it holds here and does NOT become a fleet-wide
@@ -176,7 +176,7 @@ func TestAFrameworkToolCanBeSetToAsk(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := httptest.NewRequest(http.MethodPatch,
-		"/api/agent-access/tool?agent=a10&name=web_search", strings.NewReader(`{"asks":true}`))
+		"/api/agent-access/tool?agent=a10&name=web_search", strings.NewReader(`{"chat":"ask"}`))
 	w := httptest.NewRecorder()
 	app.handleAgentAccessTool(w, asUser(r, "alice"))
 	if w.Code != http.StatusNoContent {
@@ -419,5 +419,56 @@ func TestElevatingARuleSaysWhereItWent(t *testing.T) {
 	}
 	if !strings.Contains(body, "Security") {
 		t.Error("the message does not name where the rule landed")
+	}
+}
+
+// One vocabulary. There were three sets of words for one decision, and a
+// reader had to learn it three times and work out they were the same question
+// about different things.
+func TestEveryLadderSpeaksTheSameThreeWords(t *testing.T) {
+	want := []string{"Always allow", "Ask first", "Never"}
+	got := permissionLadder()
+	if len(got) != 3 {
+		t.Fatalf("the ladder is %d long", len(got))
+	}
+	for i, o := range got {
+		if o.Label != want[i] {
+			t.Errorf("segment %d is %q, want %q", i, o.Label, want[i])
+		}
+	}
+	// The short form is the SAME words, one segment short - not a different
+	// control. A row that cannot hold "Never" used to get a bare switch, which
+	// asked the reader to recognise the decision in a second shape.
+	short := permissionLadderNoNever()
+	if len(short) != 2 || short[0].Label != want[0] || short[1].Label != want[1] {
+		t.Errorf("the short ladder is not the same words: %+v", short)
+	}
+	// And the old vocabularies are gone from the surfaces that used them.
+	for _, f := range []string{"page_agent_access.go", "page_chat.go"} {
+		src := mustRead(t, f)
+		for _, dead := range []string{`Label: "Needs approval"`, `Label: "Queues"`, `Label: "Runs"}`, `"Blocked", Value:`} {
+			if strings.Contains(src, dead) {
+				t.Errorf("%s still offers %s", f, dead)
+			}
+		}
+	}
+}
+
+// In chat a tool either asks first or always runs. "Never" is not one of its
+// states: a tool the agent must never call is not loaded at all, which is a
+// different question and a different surface.
+func TestTheInChatLadderRefusesNever(t *testing.T) {
+	app, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	if _, err := saveAgent(udb, AgentRecord{
+		ID: "a30", Name: "Wren", Owner: "alice", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodPatch,
+		"/api/agent-access/tool?agent=a30&name=web_search", strings.NewReader(`{"chat":"block"}`))
+	w := httptest.NewRecorder()
+	app.handleAgentAccessTool(w, asUser(r, "alice"))
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("want 400 for a state this ladder cannot hold, got %d %s", w.Code, w.Body.String())
 	}
 }

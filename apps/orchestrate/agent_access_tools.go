@@ -52,9 +52,15 @@ type accessToolRow struct {
 	// that shows only what is on cannot answer what is off, and "off" is half
 	// of what somebody securing an agent came to check.
 	Enabled bool `json:"enabled"`
-	// Chat is the one-word answer to "does this need supervision", which is
-	// the question actually being asked. Asks / Runs.
+	// Chat is the in-chat decision, in the same three-value vocabulary every
+	// other ladder here uses: allow or ask. There is no "block" for it - a
+	// tool the agent must never call is not loaded at all, which is the Tools
+	// modal's question, not this one's.
 	Chat string `json:"chat"`
+	// Loaded is whether the agent HAS the tool, which the controls cannot say:
+	// they set what happens when it is called, not whether it is there to
+	// call.
+	Loaded string `json:"loaded"`
 	// Actions are a grouped tool's sub-actions, and Withheld the ones switched
 	// off for this agent.
 	Actions  []string `json:"actions,omitempty"`
@@ -167,10 +173,11 @@ func (T *OrchestrateApp) resolvedAgentTools(ctx context.Context, udb Database, u
 			}
 		}
 		row.Actions = grouped[name]
-		row.Chat = "Runs"
+		row.Chat = "allow"
 		if row.Asks {
-			row.Chat = "Asks"
+			row.Chat = "ask"
 		}
+		row.Loaded = "On"
 		out = append(out, row)
 	}
 	// The owner's tools this agent does NOT load. Off is a state, not an
@@ -184,7 +191,7 @@ func (T *OrchestrateApp) resolvedAgentTools(ctx context.Context, udb Database, u
 		out = append(out, accessToolRow{
 			Name: name, Origin: "your tools", Detail: firstLine(tt.Description),
 			Enabled: false, Governable: false, Asks: asks[name],
-			Chat: "off", Unattended: PolicyAllow,
+			Loaded: "Off", Unattended: PolicyAllow,
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
@@ -237,7 +244,7 @@ func (T *OrchestrateApp) handleAgentAccessTool(w http.ResponseWriter, r *http.Re
 		return
 	}
 	var body struct {
-		Asks       *bool   `json:"asks"`
+		Chat       *string `json:"chat"`
 		Unattended *string `json:"unattended"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -245,7 +252,14 @@ func (T *OrchestrateApp) handleAgentAccessTool(w http.ResponseWriter, r *http.Re
 		return
 	}
 	switch {
-	case body.Asks != nil:
+	case body.Chat != nil:
+		v := strings.TrimSpace(*body.Chat)
+		// Two values here, not three. A tool the agent must never call is not
+		// loaded at all, which the Tools modal decides.
+		if v != PolicyAllow && v != PolicyAsk {
+			http.Error(w, "in chat a tool either asks first or always runs", http.StatusBadRequest)
+			return
+		}
 		// Refused rather than silently ignored when the tool has no record to
 		// hold the flag. A control that accepts a click and stores nothing is
 		// worse than one that is not offered: the row would show the new state
@@ -253,7 +267,7 @@ func (T *OrchestrateApp) handleAgentAccessTool(w http.ResponseWriter, r *http.Re
 		// By name, so this works for a framework tool as well as an authored
 		// one. There is no "no such tool" to report: the mark is about a NAME,
 		// and the tools most worth stopping on have no record to look up.
-		if !SetUserToolAsksInChat(AuthDB(), user, rec.ID, name, *body.Asks) {
+		if !SetUserToolAsksInChat(AuthDB(), user, rec.ID, name, v == PolicyAsk) {
 			http.Error(w, "could not record that", http.StatusInternalServerError)
 			return
 		}
