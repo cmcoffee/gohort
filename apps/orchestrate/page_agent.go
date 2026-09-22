@@ -140,20 +140,15 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	agentLocked := false
-	// Dispatch policy to surface first in the editor's select. Ordering the
-	// effective mode first means a legacy record (no stored dispatch_mode) seeds
-	// that value on save instead of the form's first-option fallback silently
-	// converting a legacy allowlist into allow-all. Recomputed from rec below.
-	// shareRec carries the loaded record out to the sharing section, which has
-	// to say something different once the agent is published.
-	var shareRec AgentRecord
-	dispatchModeFirst := dispatchAll
 	// ForcePrivate agents can't escalate to the remote lead model (gate 2),
 	// so the "Use Lead model" toggle is hidden for them — unless the operator
 	// has declared every model private, in which case the lead is not remote
 	// and there is nothing for gate 2 to protect. Hiding a toggle the runtime
 	// would honor is a control that reads as broken.
 	leadModelLocked := false
+	// shareRec carries the loaded record out to the sharing section, which has
+	// to say something different once the agent is published.
+	var shareRec AgentRecord
 	if id != "" {
 		source = "../api/agents/" + id
 		title = "Edit agent"
@@ -166,7 +161,6 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			shareRec = rec
 			agentLocked = rec.Locked
 			leadModelLocked = agentForcesPrivate(rec) && !AllLLMsPrivate()
-			dispatchModeFirst = effectiveDispatchMode(rec)
 			if rec.OwnedBy != "" {
 				subAgent = true
 				if parent, pok := loadAgent(udb, rec.OwnedBy); pok {
@@ -462,17 +456,10 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			ui.FormField{Type: "header", Label: "Delegation",
 				Help:   "Both directions of agent-to-agent calling.",
 				Detail: "Who may call THIS agent (fleet visibility), and who this agent may call (dispatch policy plus the target list below, which is only consulted in the two \"selected\" modes)."},
-			ui.FormField{Field: "hidden", Type: "toggle", Label: "Hide from agent fleet",
-				Help:   "Off (default) = globally callable. On drops the agent from the fleet and refuses dispatch.",
-				Detail: "Globally callable means it appears in every other agent's Available Agents block and is dispatchable via agents(action=\"run\"). Hidden, it is dropped from that block and dispatch is refused, UNLESS a specific caller has this agent's ID on its Allowed Dispatch Targets list.\n\nThis affects FLEET visibility only. The agent still appears in your own Agents picker and stays reachable at its dashboard URL when published. Use it for personal agents, or Builder-authored sub-agents you do not want the fleet routing to."},
-
-			ui.FormField{Field: "dispatch_mode", Type: "select", Label: "Dispatch policy",
-				Options: dispatchModeOptions(dispatchModeFirst),
-				Help:    "Which other agents this one may call via agents(action=\"run\").",
-				Detail:  "This governs ordinary agent-to-agent calls whether or not the conductor tools above are on. Allow all means any non-hidden agent, and is the default. Only allow, and Allow all except, draw from the target list directly below. Allow none blocks all dispatch and is the actual delegation kill switch. Same control as the in-chat Configure, then Security & Access modal."},
-			ui.FormField{Field: "allow_builder_dispatch", Type: "toggle", Label: "Can dispatch Builder",
-				Help:   "Lets this agent hand work to Builder, to author an agent, tool or app on its behalf.",
-				Detail: "The call is agents(action=\"run\", agent=\"builder\"). Off by default and normally reserved to conductor agents (Chat), because authoring expects a human in the loop: the intake conversation, its clarifying pauses, and your review of the draft. Turning it on trades that for reach; whatever Builder creates on a dispatch still lands held for your approval rather than going live.\n\nThis is a separate grant from \"Authoring tools\" above. That one has the agent build things ITSELF, this one has it ask Builder to. Builder appears in this agent's Available Agents block only while it is on, and it is overridden by Dispatch policy = Allow none."},
+			// Delegation is NOT here. Who may call this agent and who it may
+			// call are the blast radius, which is a security question asked
+			// when you are not editing, and they live on the agent's Security
+			// page under Delegation with the target list beside them.
 			ui.FormField{Type: "header", Label: "Intake & evals", Collapsed: true,
 				Help: "Optional structured input form + saved test cases."},
 			ui.FormField{Field: "evals", Type: "textarea", Label: "Eval cases (JSON)", Rows: 6,
@@ -543,45 +530,9 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	// the chat rail's Channels area and in the Bridges app, scoped to the agent
 	// you're viewing, so the editor no longer carries a duplicate attach form.)
 
-	// Sub-agent dispatch allowlist. Only renders for existing agents
-	// (need a known ID to wire the picker's record/post URLs). The
-	// picker shows every agent the user owns; toggle a row to add /
-	// remove it from this agent's allowlist. Empty list = "any non-
-	// hidden agent" (default fleet routing); any picks = "ONLY these"
-	// (allowlist mode — overrides the default + reaches hidden agents).
-	//
-	// Hidden for sub-agents: a focused capability called by its parent
-	// rarely needs its own fleet-dispatch surface, and the allowlist
-	// adds clutter without a real use case. The parent already owns
-	// the routing decisions.
-	if id != "" && !subAgent {
-		// The subtitle names WHERE the policy lives and what it is set to
-		// right now. It used to say "the Dispatch policy above", which
-		// pointed at a select inside the collapsed "Cortex & delegation"
-		// accordion — a different widget, folded shut by default — so the
-		// card referenced a control the reader could not see.
-		// The picker is FOLDED INTO the Delegation section when the form was
-		// split, so the policy select and the list it chooses from sit
-		// together. Only when there is no Delegation section (create mode,
-		// which doesn't split) does it stand alone.
-		targetPicker := ui.ChipPicker{
-			OptionsSource: "../api/agents?role=dispatch-target&self=" + id,
-			RecordSource:  source,
-			Field:         "allowed_dispatch_targets",
-			PostTo:        source,
-			Method:        "POST",
-			NameField:     "id",
-			LabelField:    "name",
-			DescField:     "description",
-		}
-		if !foldIntoDelegation(sections, targetPicker) {
-			sections = append(sections, ui.Section{
-				Title:    "Dispatch target list",
-				Subtitle: dispatchTargetSubtitle(dispatchModeFirst),
-				Body:     targetPicker,
-			})
-		}
-	}
+	// The dispatch TARGET LIST is not here either. It is only read by the
+	// two "selected" dispatch modes, so it belongs beside the policy that
+	// reads it, which is now on the Security page.
 
 	// The security console is NOT linked from here.
 	//
