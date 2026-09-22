@@ -43,8 +43,10 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -154,7 +156,11 @@ func profileFlag(profile string) string {
 func awsCredsFromCLI(profile string) (awsCreds, time.Time, error) {
 	bin, err := exec.LookPath("aws")
 	if err != nil {
-		return awsCreds{}, time.Time{}, Error("aws CLI not found in PATH")
+		// Name the PATH that was searched. It is the SERVICE's, not the
+		// operator's, and an aws that a human finds in their login shell is
+		// routinely invisible here. "Not found" on its own sends somebody to
+		// check an installation that is perfectly fine.
+		return awsCreds{}, time.Time{}, Error("aws CLI not found in PATH (searched " + os.Getenv("PATH") + ")")
 	}
 	args := []string{"configure", "export-credentials", "--format", "process"}
 	if profile != "" {
@@ -173,7 +179,7 @@ func awsCredsFromCLI(profile string) (awsCreds, time.Time, error) {
 		if msg == "" {
 			msg = err.Error()
 		}
-		return awsCreds{}, time.Time{}, Error("aws configure export-credentials failed: " + msg)
+		return awsCreds{}, time.Time{}, Error("aws configure export-credentials failed: " + msg + awsCLIDiagnosis(bin))
 	}
 
 	var out struct {
@@ -209,6 +215,88 @@ func awsCredsFromCLI(profile string) (awsCreds, time.Time, error) {
 		Session:   out.SessionToken,
 		Source:    src,
 	}, expires, nil
+}
+
+// exportCredsMinCLI is the aws-cli version that added
+// `aws configure export-credentials`. Below it the subcommand does not exist
+// and the CLI answers with its usage banner, which reaches the operator as a
+// wall of subcommand names saying nothing about versions.
+var exportCredsMinCLI = [2]int{2, 13}
+
+// awsCLIDiagnosis returns the facts that separate "AWS refused" from "this
+// process is not looking where you logged in", for appending to a failure.
+//
+// Built ONLY on the failure path. It costs an extra exec, and none of it is
+// interesting while the thing works.
+//
+// Three facts, in the order they mislead:
+//
+//   - the BINARY, because LookPath searched the service's PATH, and the aws a
+//     human finds in their own shell is often a different one or none at all;
+//   - the VERSION, because export-credentials arrived in 2.13 and an older CLI
+//     fails in a way that never mentions its age;
+//   - the IDENTITY, because the SSO token cache is per-user under $HOME, so
+//     `aws sso login` in one account's shell does not reach a service running
+//     as another. This is the single most common cause and the hardest to see:
+//     the operator's own login is genuinely fine.
+func awsCLIDiagnosis(bin string) string {
+	who := "?"
+	if u, err := user.Current(); err == nil {
+		who = u.Username
+	}
+	ver, haveVer := awsCLIVersion(bin)
+	shown := ver
+	if !haveVer {
+		shown = "version unknown"
+	}
+	out := " [aws=" + bin + " " + shown + ", running as " + who + ", HOME=" + os.Getenv("HOME") + "]"
+	if haveVer && awsCLITooOld(ver) {
+		return out + ". That CLI predates " +
+			strconv.Itoa(exportCredsMinCLI[0]) + "." + strconv.Itoa(exportCredsMinCLI[1]) +
+			", which is where `aws configure export-credentials` was added: upgrade the CLI, the credentials are not the problem."
+	}
+	return out + ". SSO tokens are cached per-user under $HOME/.aws/sso/cache, so `aws sso login` in another account's shell never reaches this process."
+}
+
+// awsCLIVersion runs `aws --version` and returns the reported version, e.g.
+// "aws-cli/2.4.18". Reports false when the probe fails or the output does not
+// carry one, so a caller says "version unknown" rather than inventing one.
+//
+// The banner goes to stdout on v2 and stderr on some v1 builds, so both are
+// read: a diagnosis that misses the version on the exact CLI whose age is the
+// problem would be worse than useless.
+func awsCLIVersion(bin string) (string, bool) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var buf bytes.Buffer
+	cmd := exec.CommandContext(ctx, bin, "--version")
+	cmd.Stdout, cmd.Stderr = &buf, &buf
+	_ = cmd.Run() // a non-zero exit that still printed the banner is usable
+	for _, f := range strings.Fields(buf.String()) {
+		if strings.HasPrefix(f, "aws-cli/") {
+			return f, true
+		}
+	}
+	return "", false
+}
+
+// awsCLITooOld reports whether a version string from awsCLIVersion is below
+// exportCredsMinCLI. An unparseable version is NOT called too old: guessing
+// wrong here sends somebody to upgrade a CLI that was never the problem.
+func awsCLITooOld(ver string) bool {
+	parts := strings.SplitN(strings.TrimPrefix(ver, "aws-cli/"), ".", 3)
+	if len(parts) < 2 {
+		return false
+	}
+	major, err1 := strconv.Atoi(parts[0])
+	minor, err2 := strconv.Atoi(parts[1])
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	if major != exportCredsMinCLI[0] {
+		return major < exportCredsMinCLI[0]
+	}
+	return minor < exportCredsMinCLI[1]
 }
 
 // bedrockCreds caches resolved credentials and re-resolves them when they are
