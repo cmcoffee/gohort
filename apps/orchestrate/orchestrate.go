@@ -556,6 +556,9 @@ func (T *OrchestrateApp) Routes() {
 	T.HandleFunc("/api/agent-credentials", T.handleAgentCredentials)
 	// Per-tool scope pills (Tools modal): Global + per-agent toggles.
 	T.HandleFunc("/api/tool-scope", T.handleToolScope)
+	// Per-tool ask-before-every-call flag, the other property of the tool
+	// record the Tools modal edits. See tool_confirm_http.go.
+	T.HandleFunc("/api/tool-confirm", T.handleToolConfirm)
 	// Grouped agent-picker options (Built-in / Conversation Agents / Specialized
 	// Agents / per-app) so the client rebuilds the dropdown with the SAME
 	// separators the initial paint used — a group-less /api/agents rebuild

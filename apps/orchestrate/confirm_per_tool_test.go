@@ -9,8 +9,11 @@ package orchestrate
 // whose calls it governed.
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -192,5 +195,123 @@ func TestARewriteDoesNotQuietATool(t *testing.T) {
 	}
 	if !toolAsks(t, udb, "confirm_survives") {
 		t.Error("a rewrite cleared the owner's decision")
+	}
+}
+
+// --- The Tools modal's Ask control (api/tool-confirm) ---------------------
+
+// The modal needs every tool the user owns a record for, not just the ones
+// that ask: a name's ABSENCE is how a catalog row learns it is a framework
+// tool with nothing to carry the flag.
+func TestTheToolsModalCanSeeWhichToolsAsk(t *testing.T) {
+	app, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	for _, tt := range []TempTool{
+		{Name: "modal_loud", CommandTemplate: "curl x", ConfirmInChat: true},
+		{Name: "modal_quiet", CommandTemplate: "echo hi"},
+	} {
+		if err := AdminPersistTempTool(udb, "alice", tt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := httptest.NewRequest(http.MethodGet, "/api/tool-confirm", nil)
+	w := httptest.NewRecorder()
+	app.handleToolConfirm(w, asUser(r, "alice"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET: %d %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		Tools map[string]bool `json:"tools"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !got.Tools["modal_loud"] {
+		t.Error("a tool that asks does not read as asking")
+	}
+	asks, listed := got.Tools["modal_quiet"]
+	if !listed {
+		t.Error("a quiet tool of the user's is missing, so its row gets no control at all")
+	}
+	if asks {
+		t.Error("a quiet tool reads as asking")
+	}
+	// Only the user's own records. A framework tool listed here would put a
+	// switch on a row with nothing behind it to hold the setting.
+	if len(got.Tools) != 2 {
+		t.Errorf("the map carries more than the user's own tools: %v", got.Tools)
+	}
+}
+
+// The control writes through the same setter the Permissions page uses, and
+// both directions take.
+func TestTheToolsModalCanSetAndClearAsk(t *testing.T) {
+	app, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	if err := AdminPersistTempTool(udb, "alice", TempTool{
+		Name: "modal_toggle", CommandTemplate: "curl x"}); err != nil {
+		t.Fatal(err)
+	}
+	set := func(on bool) {
+		t.Helper()
+		body := strings.NewReader(fmt.Sprintf(`{"name":"modal_toggle","on":%t}`, on))
+		r := httptest.NewRequest(http.MethodPost, "/api/tool-confirm", body)
+		w := httptest.NewRecorder()
+		app.handleToolConfirm(w, asUser(r, "alice"))
+		if w.Code != http.StatusNoContent {
+			t.Fatalf("POST on=%t: %d %s", on, w.Code, w.Body.String())
+		}
+	}
+	set(true)
+	if !toolAsks(t, udb, "modal_toggle") {
+		t.Error("turning the control on did not take")
+	}
+	set(false)
+	if toolAsks(t, udb, "modal_toggle") {
+		t.Error("turning the control off did not take")
+	}
+}
+
+// A name with no record behind it is a miss, not a silent success: the modal
+// repaints the button from the answer, so "no such tool" answered as 204 would
+// paint a guard that is not there.
+func TestAskingForAToolWithNoRecordIsAMiss(t *testing.T) {
+	app, _, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	r := httptest.NewRequest(http.MethodPost, "/api/tool-confirm",
+		strings.NewReader(`{"name":"no_such_tool_here","on":true}`))
+	w := httptest.NewRecorder()
+	app.handleToolConfirm(w, asUser(r, "alice"))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("want 404 for a tool that does not exist, got %d %s", w.Code, w.Body.String())
+	}
+}
+
+// Registered is not reachable. The handler is worth nothing if the modal never
+// calls it, and the control is worth nothing on only one of the two lists a
+// tool can appear in: the same tool must not answer "does this ask first"
+// differently depending on where you found it.
+func TestTheToolsModalReachesTheAskEndpointFromBothLists(t *testing.T) {
+	routes, err := os.ReadFile("orchestrate.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(routes), `"/api/tool-confirm"`) {
+		t.Error("the Ask endpoint is not registered, so nothing can reach it")
+	}
+	assets, err := os.ReadFile("assets/web_assets.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(assets)
+	for _, want := range []string{
+		"api/tool-confirm",          // the fetch exists at all
+		"addAskControl(rowActions",  // scoped rows, beside Scope
+		"addAskControl(poolActions", // the shared catalog rows
+		"fetchToolConfirmMap()",     // state read once, with the agent
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("the Tools modal is missing %q, so the control is dead on that path", want)
+		}
 	}
 }

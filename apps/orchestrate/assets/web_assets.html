@@ -2653,7 +2653,78 @@
           });
           actionsContainer.appendChild(btn);
         }
-        fetchAgent(id).then(function(agent) {
+        // The ask-before-every-call flag (api/tool-confirm). A map of every
+        // tool the user owns a RECORD for, name to flag, so a row can tell
+        // whether it has anything to carry the flag at all.
+        //
+        // A failed read degrades to an empty map, which renders no control
+        // anywhere: better to offer nothing than a switch whose position was
+        // guessed and whose write would look like a change of mind.
+        function fetchToolConfirmMap() {
+          return fetch('api/tool-confirm', {cache: 'no-store'}).then(function(r) {
+            return r.ok ? r.json() : {tools: {}};
+          }).then(function(d) {
+            return (d && d.tools) || {};
+          }).catch(function() { return {}; });
+        }
+        // One Ask control for a tool row, in the Tools modal's row-actions
+        // strip beside Scope.
+        //
+        // Rendered only for tools the user owns a record for. A framework tool
+        // has no record to carry the flag, so a control on its row would be a
+        // switch wired to nothing.
+        //
+        // The flag lives on the TOOL, so it reaches every agent holding it.
+        // The button says that out loud rather than letting a per-agent modal
+        // imply a per-agent scope, which is the same thing Scope has to do.
+        function addAskControl(actions, toolName, confirmMap) {
+          if (!toolName || !(toolName in confirmMap)) return;
+          var on = !!confirmMap[toolName];
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          function paint() {
+            btn.textContent = on ? '\u270B Asks first' : 'Ask first';
+            btn.className = 'ui-row-btn' + (on ? ' warning' : '');
+            btn.style.cssText = 'font-size:0.78rem;padding:0.25rem 0.55rem';
+            btn.title = on
+              ? 'Stops and asks you before every call, in chat, on every agent that holds this tool. Click to stop asking.'
+              : 'Stop and ask before every call, in chat. The flag is on the tool, so it applies on every agent that holds it.';
+          }
+          paint();
+          btn.addEventListener('click', function(ev) {
+            // Catalog rows are <label>s wrapping their checkbox, so without
+            // this a click here would also uncheck the tool.
+            ev.preventDefault();
+            ev.stopPropagation();
+            var want = !on;
+            // Turning it OFF removes a stop, so only that direction confirms:
+            // a guard should be cheap to add and deliberate to remove.
+            var ask = want ? Promise.resolve(true) : window.uiConfirm(
+              'Stop asking before ' + toolName + ' runs? It will run unprompted from then on, on every agent that holds it.');
+            Promise.resolve(ask).then(function(go) {
+              if (!go) return;
+              btn.disabled = true;
+              fetch('api/tool-confirm', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name: toolName, on: want})
+              }).then(function(res) {
+                if (!res.ok) return res.text().then(function(x) { throw new Error(x || ('HTTP ' + res.status)); });
+                on = want;
+                confirmMap[toolName] = want;
+                paint();
+              }).catch(function(err) {
+                window.uiAlert('Could not change it: ' + (err && err.message || err));
+              }).then(function() { btn.disabled = false; });
+            });
+          });
+          actions.appendChild(btn);
+        }
+        // The confirm map rides alongside the agent so every row can be
+        // painted in one pass; a per-row fetch would repaint the modal as
+        // answers straggled in.
+        Promise.all([fetchAgent(id), fetchToolConfirmMap()]).then(function(loaded) {
+          var agent = loaded[0], confirmMap = loaded[1];
           var catalog = window.ORCH_TOOL_CATALOG || [];
           // Builder's catalog is fixed by the framework (builderAuthoringTools
           // / builderAuthoringTools) — the allowed_tools checklist has no
@@ -2872,6 +2943,7 @@
               rowActions.style.cssText = 'display:flex;align-items:center;gap:0.4rem;margin-left:auto';
               var detailEl = buildToolDetail(t);
               attachExpandToggle(rowActions, detailEl);
+              addAskControl(rowActions, t.name, confirmMap);
               // Scope — the shared pill editor (Global + one pill per agent)
               // against api/tool-scope. This is where a tool is detached from
               // this agent or shared with others; the checkbox above is the
@@ -3139,6 +3211,14 @@
                 lbl.appendChild(hp);
               }
               row.appendChild(lbl);
+              // Same control the scoped rows carry: a pooled tool of the
+              // user's is the same kind of record, and the answer to "does
+              // this one ask first" must not depend on which list you found
+              // it in.
+              var poolActions = document.createElement('div');
+              poolActions.style.cssText = 'display:flex;align-items:center;gap:0.4rem;margin-left:auto';
+              addAskControl(poolActions, o.value, confirmMap);
+              if (poolActions.childNodes.length) row.appendChild(poolActions);
               body.appendChild(row);
               checkboxes.push(cb);
               g._cbs.push(cb);
