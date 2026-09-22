@@ -67,6 +67,31 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 	// the POST body keyed by the field, which the policy handler now reads as
 	// well as ?value=, so this writes through the same setter the card list
 	// always did rather than a second endpoint kept in step by hand.
+	grantURL := func(kind string) string {
+		return T.WebPrefix() + "/api/console/permissions/grant?kind=" + kind + "&agent=" + url.QueryEscape(agent.ID)
+	}
+	// The handles this owner already has a decision about, as one-click fills.
+	// Presets rather than a closed list: a contact nobody has decided about
+	// yet is exactly the one somebody is here to grant, and a picker offering
+	// only what already exists could never originate anything.
+	contactPresets := []ui.FieldPreset{}
+	for _, e := range ListContactPolicies(RootDB, user) {
+		if e.Target != "" && e.Scope == "" {
+			contactPresets = append(contactPresets, ui.FieldPreset{Label: e.Target, Value: e.Target})
+		}
+	}
+	// Everything this agent could be allowed to call, by name.
+	callable := []ui.SelectOption{}
+	for _, a := range listAgents(udb, user) {
+		if a.ID != agent.ID {
+			callable = append(callable, ui.SelectOption{Value: a.ID, Label: a.Name})
+		}
+	}
+	policyChoice := []ui.SelectOption{
+		{Value: "allow", Label: "Always allow"},
+		{Value: "ask", Label: "Needs approval"},
+		{Value: "block", Label: "Blocked"},
+	}
 	promoteURL := T.WebPrefix() + "/api/console/permissions/promote?id={_id}"
 	narrowURL := T.WebPrefix() + "/api/console/permissions/narrow?id={_id}&agent=" + url.QueryEscape(agent.ID)
 	// scope names which way a decision can move. A decision made for THIS
@@ -236,6 +261,23 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				},
 			},
 			{
+				Group:    "Delegation",
+				Title:    "Let this agent call another",
+				Subtitle: "Grants a decision that does not exist yet. Everything else on this tab changes one that does.",
+				Body: ui.FormPanel{
+					PostURL:     grantURL("agent"),
+					Method:      "POST",
+					SubmitLabel: "Grant",
+					Fields: []ui.FormField{
+						{Field: "subject", Type: "select", Label: "Which agent", Options: callable,
+							Help:   "What this one may hand work to.",
+							Detail: "Whatever it calls runs with ITS catalog, not this agent's, so this is the blast radius rather than the tool list. Granted for THIS agent only."},
+						{Field: "value", Type: "select", Label: "And then", Options: policyChoice,
+							Help: "Always allow runs it without asking. Needs approval stops and waits for you. Blocked refuses it outright."},
+					},
+				},
+			},
+			{
 				Group: "Delegation",
 				Title: "Applies to every agent",
 				Subtitle: "Decisions you made once for the whole fleet, which bind this agent too. " +
@@ -391,6 +433,23 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 						{Field: "Detail", Label: "", Mute: true},
 					},
 					RowActions: append(policyLadder(), scopeMove(false)),
+				},
+			},
+			{
+				Group:    "Access",
+				Title:    "Let this agent message somebody",
+				Subtitle: "Grants a decision that does not exist yet. Everything else on this tab changes one that does.",
+				Body: ui.FormPanel{
+					PostURL:     grantURL("contact"),
+					Method:      "POST",
+					SubmitLabel: "Grant",
+					Fields: []ui.FormField{
+						{Field: "subject", Type: "text", Label: "Who", Presets: contactPresets,
+							Help:   "The handle this agent may message. The chips are people you have already decided about elsewhere.",
+							Detail: "Granted for THIS agent only. An agent carries its own persona and its own rules about what it may say to somebody, so a permission the whole fleet shares is one any other agent can spend. Widen it afterwards if you mean every agent to have it."},
+						{Field: "value", Type: "select", Label: "And then", Options: policyChoice,
+							Help: "Always allow runs it without asking. Needs approval stops and waits for you. Blocked refuses it outright."},
+					},
 				},
 			},
 			{

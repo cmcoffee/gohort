@@ -440,3 +440,75 @@ func TestNarrowingRefusesWhatIsNotFleetWide(t *testing.T) {
 		t.Errorf("want 400, got %d %s", w.Code, w.Body.String())
 	}
 }
+
+// Granting CREATES a decision. Every other control acts on one that already
+// exists, so a decision could only be born from something requesting it, and
+// two agents could not each be given their own from this page.
+func TestGrantingCreatesADecisionForOneAgent(t *testing.T) {
+	app, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	for _, id := range []string{"agent_a", "agent_b"} {
+		if _, err := saveAgent(udb, AgentRecord{
+			ID: id, Name: id, Owner: "alice", OrchestratorPrompt: "p"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	grant := func(agentID, kind, body string, want int) {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodPost,
+			"/api/console/permissions/grant?kind="+kind+"&agent="+agentID, strings.NewReader(body))
+		w := httptest.NewRecorder()
+		app.handleConsolePermissionGrant(w, asUser(r, "alice"))
+		if w.Code != want {
+			t.Fatalf("grant %s %s: %d %s", agentID, kind, w.Code, w.Body.String())
+		}
+	}
+	// The thing the question was about: two agents, each with their own, and
+	// they do not have to agree.
+	grant("agent_a", "contact", `{"subject":"ops@example.test","value":"allow"}`, http.StatusNoContent)
+	grant("agent_b", "contact", `{"subject":"ops@example.test","value":"block"}`, http.StatusNoContent)
+	if got := ContactPolicy(RootDB, "alice", "agent_a", "ops@example.test"); got != PolicyAllow {
+		t.Errorf("agent_a = %q, want allow", got)
+	}
+	if got := ContactPolicy(RootDB, "alice", "agent_b", "ops@example.test"); got != PolicyBlock {
+		t.Errorf("agent_b = %q, want block", got)
+	}
+	// Per agent, never fleet-wide: binding everything is a deliberate second
+	// step, not something granting does on the way in.
+	if ContactPolicy(RootDB, "alice", "", "never_granted@example.test") == PolicyAllow {
+		t.Error("granting reached every agent")
+	}
+	// Delegation, the same shape.
+	grant("agent_a", "agent", `{"subject":"agent_b","value":"allow"}`, http.StatusNoContent)
+	if got := DelegationPolicy(RootDB, "alice", "agent_a", "agent_b"); got != PolicyAllow {
+		t.Errorf("delegation = %q, want allow", got)
+	}
+}
+
+// What a grant refuses. A policy the gate does not know reads as SOME state on
+// the page and behaves as none; an agent dispatching to itself is not a
+// decision anybody wants stored.
+func TestGrantingRefusesWhatItCannotStore(t *testing.T) {
+	app, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	if _, err := saveAgent(udb, AgentRecord{
+		ID: "agent_a", Name: "A", Owner: "alice", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		kind, body, why string
+	}{
+		{"contact", `{"subject":"ops@example.test","value":"sometimes"}`, "an unknown policy"},
+		{"contact", `{"subject":"","value":"allow"}`, "nothing named"},
+		{"agent", `{"subject":"agent_a","value":"allow"}`, "dispatching to itself"},
+		{"nonsense", `{"subject":"x","value":"allow"}`, "an unknown kind"},
+	} {
+		r := httptest.NewRequest(http.MethodPost,
+			"/api/console/permissions/grant?kind="+c.kind+"&agent=agent_a", strings.NewReader(c.body))
+		w := httptest.NewRecorder()
+		app.handleConsolePermissionGrant(w, asUser(r, "alice"))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: want 400, got %d %s", c.why, w.Code, w.Body.String())
+		}
+	}
+}

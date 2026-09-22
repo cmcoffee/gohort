@@ -894,3 +894,71 @@ func operatorApprovalRecipient(owner string, a Authorization) string {
 	}
 	return "(unknown recipient)"
 }
+
+// handleConsolePermissionGrant CREATES a decision for one agent, rather than
+// reshaping one that already exists.
+//
+// Every other control on this page acts on a decision that is already there:
+// change its policy, widen it to every agent, narrow it back, forget it. None
+// of them can originate one, so a decision could only be born from something
+// REQUESTING it - an agent tried, you approved, a record appeared.
+//
+// That left a gap with no way across. Narrowing a fleet-wide decision gives it
+// to one agent and removes the fleet record, so the second agent that wanted
+// it had lost it and its own page offered nothing: both bands list what
+// exists, and nothing existed for it any more.
+//
+// Per agent, always. The fleet-wide form is reached by granting here and then
+// widening, which keeps "this binds everything" a deliberate second step
+// rather than something you can do by accident on the way in.
+func (T *OrchestrateApp) handleConsolePermissionGrant(w http.ResponseWriter, r *http.Request) {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
+	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
+	if agentID == "" {
+		http.Error(w, "agent required", http.StatusBadRequest)
+		return
+	}
+	var body struct {
+		Subject string `json:"subject"`
+		Value   string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	subject := strings.TrimSpace(body.Subject)
+	value := strings.TrimSpace(body.Value)
+	if subject == "" {
+		http.Error(w, "nothing named to grant", http.StatusBadRequest)
+		return
+	}
+	// A policy the gate does not know reads as SOME state on the page and
+	// behaves as none, so it is refused rather than stored.
+	if value != PolicyAllow && value != PolicyAsk && value != PolicyBlock {
+		http.Error(w, "policy must be allow, ask or block", http.StatusBadRequest)
+		return
+	}
+	switch kind {
+	case "contact":
+		SetContactPolicy(RootDB, user, agentID, subject, value)
+	case "agent":
+		// Its own id, which would be a decision about talking to itself.
+		if subject == agentID {
+			http.Error(w, "an agent does not dispatch to itself", http.StatusBadRequest)
+			return
+		}
+		SetDelegationPolicy(RootDB, user, agentID, subject, value)
+	default:
+		http.Error(w, "unknown kind "+kind, http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
