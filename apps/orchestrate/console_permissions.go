@@ -92,7 +92,7 @@ func approvalDisplay(udb Database, user string, a Authorization) (who, detail st
 	return who, detail
 }
 
-// handleConsolePermissions is the combined "Permissions" page: pending approval
+// handleConsolePermissions is the combined Security page: pending approval
 // requests AND the standing grants you've already given, on one page. Pending
 // rows come first (they need action) and carry _pending; granted rows carry
 // _granted, so the table's conditional row actions show Approve/Always/Deny on
@@ -130,6 +130,11 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 		// different question; offered here it would read as switching the tool
 		// off, which is not what clearing an in-chat prompt does.
 		NoBlock bool `json:"_noblock,omitempty"`
+		// Kind sorts the row under one of the tabs along the top of the
+		// window. Derived from the row ID rather than set at each construction
+		// site, for the same reason the agent is: that grammar already exists
+		// and two encodings of one fact drift.
+		Kind string `json:"_kind,omitempty"`
 	}
 	out := []permRow{}
 	// Zone 1 — live pending requests (a decision is blocked on the user), then
@@ -379,16 +384,46 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 	// a tool set to ask wherever it appears, governs this agent too, and
 	// dropping it would let the page lie by omission, which is the dangerous
 	// direction here.
-	if want := strings.TrimSpace(r.URL.Query().Get("agent")); want != "" {
-		kept := make([]permRow, 0, len(out))
-		for _, row := range out {
-			if a := permRowAgent(row.ID); a == "" || a == want {
-				kept = append(kept, row)
+	want := strings.TrimSpace(r.URL.Query().Get("agent"))
+	kept := make([]permRow, 0, len(out))
+	for _, row := range out {
+		if want != "" {
+			if a := permRowAgent(row.ID); a != "" && a != want {
+				continue
 			}
 		}
-		out = kept
+		row.Kind = permRowKind(row.ID)
+		kept = append(kept, row)
 	}
-	writeJSON(w, out)
+	writeJSON(w, kept)
+}
+
+// permRowKind sorts a row under one of the tabs along the top of the window.
+//
+// Four subjects, because they are four different questions somebody arrives
+// with: which tools does it have and do they need watching, what may its
+// sandbox reach, who may it talk to, and what may it hand work to. A single
+// undifferentiated list made the reader do that sorting in their head.
+//
+// A pending request carries no prefix, so it lands under "requests" and shows
+// on the All tab, which is the one the window opens on. That is deliberate:
+// something blocking a run must not be filed behind a tab nobody clicked.
+func permRowKind(id string) string {
+	kind, _, found := strings.Cut(id, ":")
+	if !found {
+		return "requests"
+	}
+	switch kind {
+	case "confirmtool", "autotool", "subaction":
+		return "tools"
+	case "workspace":
+		return "workspace"
+	case "contact", "contactfor":
+		return "access"
+	case "agent", "agentfor":
+		return "delegation"
+	}
+	return "requests"
 }
 
 // permRowAgent returns the agent a permissions row is about, or "" when it

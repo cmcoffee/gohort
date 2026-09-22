@@ -447,7 +447,29 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// no scope, a tool set to ask wherever it appears) are
 						// still listed, because they govern this agent too and
 						// hiding them would let the page lie by omission.
-						{Label: "Permissions", Icon: "🔑", Source: "api/console/permissions", Topbar: true, AllAgents: true, BadgeField: "_pending", Layout: "cards",
+						{Label: "Security", Icon: "🔑", Source: "api/console/permissions", Topbar: true, AllAgents: true, BadgeField: "_pending", Layout: "cards",
+							// Tabs along the top, because four different
+							// questions arrive here and an undifferentiated
+							// list made the reader sort them in their head:
+							// which tools it has and do they need watching,
+							// what its sandbox may reach, who it may talk to,
+							// what it may hand work to.
+							//
+							// All is first and so is the default, which is
+							// what keeps a pending request in view: those
+							// block a run and must not sit behind a tab
+							// nobody clicked. Each chip carries its count, so
+							// an empty tab says so before it is opened.
+							Filters: []ui.OrchestratorViewFilter{{
+								Options: []ui.OrchestratorFilterOption{
+									{Label: "All"},
+									{Label: "Tools", Field: "_kind", Equals: "tools"},
+									{Label: "Workspace", Field: "_kind", Equals: "workspace"},
+									{Label: "Access", Field: "_kind", Equals: "access"},
+									{Label: "Delegation", Field: "_kind", Equals: "delegation"},
+									{Label: "Requests", Field: "_kind", Equals: "requests"},
+								},
+							}},
 							StateField: "_policy",
 							StateOptions: []ui.OrchestratorStateOption{
 								{Label: "Always allow", Value: "allow", URL: "api/console/permissions/policy"},

@@ -253,3 +253,59 @@ func TestAllowingTheWorkspaceKeepsTheRow(t *testing.T) {
 		t.Errorf("blocking it again did not take: %+v", row)
 	}
 }
+
+// Every row lands under exactly one tab, and the tabs are the four questions
+// somebody actually arrives with. A row with no kind would vanish from every
+// tab except All, which is how a decision goes unreviewed.
+func TestEveryRowIsFiledUnderATab(t *testing.T) {
+	for id, want := range map[string]string{
+		"confirmtool:post":           "tools",
+		"autotool:a1:web_search":     "tools",
+		"subaction:a1:workspace/run": "tools",
+		"workspace:a1:network":       "workspace",
+		"contact:+15550109999":       "access",
+		"contactfor:a1:handle":       "access",
+		"agent:target":               "delegation",
+		"agentfor:a1:target":         "delegation",
+		// A pending request carries no prefix. It files under requests and so
+		// still shows on All, which is the tab the window opens on: something
+		// blocking a run must not sit behind a tab nobody clicked.
+		"7f3c9a2e-0000-0000-0000-000000000000": "requests",
+	} {
+		if got := permRowKind(id); got != want {
+			t.Errorf("permRowKind(%q) = %q, want %q", id, got, want)
+		}
+	}
+}
+
+// The rows the handler serves actually carry it. A kind derived correctly and
+// never attached is the same as no tabs at all.
+func TestTheServedRowsCarryTheirTab(t *testing.T) {
+	app, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	if _, err := saveAgent(udb, AgentRecord{
+		ID: "mine", Name: "Wren", Owner: "alice", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := AdminPersistTempTool(udb, "alice", TempTool{
+		Name: "tabbed_tool", CommandTemplate: "curl x"}); err != nil {
+		t.Fatal(err)
+	}
+	rows := permRowsForAgentIn(t, app, "alice", "mine")
+	if len(rows) == 0 {
+		t.Fatal("no rows to file")
+	}
+	seen := map[string]bool{}
+	for _, r := range rows {
+		k, _ := r["_kind"].(string)
+		if k == "" {
+			t.Errorf("a row carries no tab, so it shows only under All: %+v", r)
+		}
+		seen[k] = true
+	}
+	for _, want := range []string{"tools", "workspace"} {
+		if !seen[want] {
+			t.Errorf("no row filed under %q, so that tab opens empty", want)
+		}
+	}
+}
