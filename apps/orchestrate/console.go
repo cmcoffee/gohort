@@ -196,6 +196,9 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// grant CREATES one, which every other control here cannot: they all act
 	// on a decision that already exists.
 	T.HandleFunc("/api/console/permissions/grant", T.handleConsolePermissionGrant)
+	// Who may RUN the agent. Its own door because publishing is requested,
+	// not applied: see handleConsolePermissionAudience.
+	T.HandleFunc("/api/console/permissions/audience", T.handleConsolePermissionAudience)
 	T.HandleFunc("/api/console/privileges", T.handleConsolePrivileges)
 	T.HandleFunc("/api/console/approvals/approve", w(T.handleApprovalApprove))
 	T.HandleFunc("/api/console/approvals/always", w(T.handleApprovalAlways))

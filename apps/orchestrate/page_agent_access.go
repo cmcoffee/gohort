@@ -441,12 +441,20 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 					"What the agent uses travels with it either way: your tools, your documents, your skills, readable through this agent and nowhere else. Each person gets their own sessions and memory under it. A credential is the exception, because it is whose identity a call goes out as rather than a copy anybody is missing: decide that per key.\n\n" +
 					"Where an administrator has published the agent, the named list narrows INSIDE that grant rather than adding to it: somebody has to be allowed the app and be on your list.",
 				Body: ui.FormPanel{
-					Source:      patchURL,
-					PostURL:     patchURL,
-					Method:      "PATCH",
+					Source: patchURL,
+					// Its own door, not the record PATCH: publishing reaches
+					// every signed-in user, so it is requested rather than
+					// applied and has to go through the one place that rule
+					// is enforced.
+					PostURL:     T.WebPrefix() + "/api/console/permissions/audience?agent=" + url.QueryEscape(agent.ID),
+					Method:      "POST",
 					SubmitLabel: "Save",
 					Fields: []ui.FormField{
-						{Field: "exposed", Type: "select", Label: "Audience",
+						// "everyone", not the legacy "exposed": that one is
+						// read-only and migrates to TWO decisions at once,
+						// everyone may use it and put a card on the dashboard,
+						// which were deliberately split apart.
+						{Field: "everyone", Type: "select", Label: "Audience",
 							Options: []ui.SelectOption{
 								{Value: "false", Label: "Only the people I name"},
 								{Value: "true", Label: "Everyone (publish globally)"},

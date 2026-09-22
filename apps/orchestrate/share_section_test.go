@@ -11,8 +11,12 @@ package orchestrate
 // is what keeps them together.
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	. "github.com/cmcoffee/gohort/core"
 )
 
 // shareSectionSource is the run of page_agent_access.go that builds the Share
@@ -55,8 +59,18 @@ func TestSharingArrivesInOnePlace(t *testing.T) {
 // narrowing rather than an addition.
 func TestTheAudienceIsASingleChoice(t *testing.T) {
 	block := shareSectionSource(t)
-	if !strings.Contains(block, `Field: "exposed", Type: "select"`) {
+	if !strings.Contains(block, `Field: "everyone", Type: "select"`) {
 		t.Error("the audience is not one choice")
+	}
+	// NOT the legacy exposed flag: it is read-only and migrates to two
+	// decisions at once, everyone may use it AND a card on the dashboard,
+	// which were deliberately split apart.
+	if strings.Contains(block, `Field: "exposed"`) {
+		t.Error("the audience writes the retired flag, which welds the dashboard shortcut back onto publishing")
+	}
+	// Through its own door, because publishing is REQUESTED and not applied.
+	if !strings.Contains(block, "permissions/audience") {
+		t.Error("the audience PATCHes the record, bypassing the approval gate")
 	}
 	for _, label := range []string{"Everyone (publish globally)", "Only the people I name"} {
 		if !strings.Contains(block, label) {
@@ -114,5 +128,72 @@ func TestAReachFlagIsReadTolerantlyAndFailsClosed(t *testing.T) {
 		if truthyPatchValue(v) {
 			t.Errorf("%#v read as on; an unparseable value must not grant reach", v)
 		}
+	}
+}
+
+// A FormPanel loads the record and sends back everything it loaded, not only
+// the fields it draws. So a panel owning four toggles PATCHes the whole agent,
+// protected keys included, at their current values - and refusing those made
+// every panel on the Security page fail with a list of fields nobody touched.
+func TestAnEchoedProtectedFieldIsNotRefused(t *testing.T) {
+	app, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	rec := AgentRecord{ID: "a40", Name: "Wren", Owner: "alice", OrchestratorPrompt: "p",
+		Everyone: true, Tools: []TempTool{{Name: "kept", CommandTemplate: "echo hi"}}}
+	if _, err := saveAgent(udb, rec); err != nil {
+		t.Fatal(err)
+	}
+	// A panel echoing protected keys back UNCHANGED, alongside one it owns.
+	body := `{"everyone":true,"owner":"alice","share_no_uploads":true}`
+	r := httptest.NewRequest(http.MethodPatch, "/api/agents/a40", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	app.handleAgentOne(w, asUser(r, "alice"))
+	if w.Code != http.StatusOK && w.Code != http.StatusNoContent {
+		t.Fatalf("an echoed protected field was refused: %d %s", w.Code, w.Body.String())
+	}
+	got, ok := loadAgent(udb, "a40")
+	if !ok {
+		t.Fatal("the agent is gone")
+	}
+	if !got.ShareNoUploads {
+		t.Error("the field the panel owned did not save")
+	}
+	// An actual CHANGE to a protected field is still refused, which is the
+	// case the guard was written for.
+	r2 := httptest.NewRequest(http.MethodPatch, "/api/agents/a40",
+		strings.NewReader(`{"everyone":false}`))
+	w2 := httptest.NewRecorder()
+	app.handleAgentOne(w2, asUser(r2, "alice"))
+	if w2.Code != http.StatusBadRequest {
+		t.Errorf("changing a protected field through PATCH was allowed: %d %s", w2.Code, w2.Body.String())
+	}
+}
+
+// Publishing is requested, not applied. An owner who could not flip the toggle
+// on the privileges card must not be able to publish by posting the audience.
+func TestTheAudienceGoesThroughTheApprovalGate(t *testing.T) {
+	src := mustRead(t, "console_permissions.go")
+	i := strings.Index(src, "func (T *OrchestrateApp) handleConsolePermissionAudience")
+	if i < 0 {
+		t.Fatal("the audience door is gone")
+	}
+	// Bounded: this function is the last thing in the file, so a fixed window
+	// runs off the end.
+	end := i + 2400
+	if end > len(src) {
+		end = len(src)
+	}
+	body := src[i:end]
+	if !strings.Contains(body, "agentPublishNeedsApproval") {
+		t.Error("the audience sets publication without asking anybody")
+	}
+	// Turning it OFF stays direct: nobody needs permission to stop sharing.
+	if !strings.Contains(body, "rec.Everyone = on") {
+		t.Error("the audience never writes the live flag")
+	}
+	// Says REQUESTED rather than answering 204, or the page shows an agent as
+	// published while an administrator has not looked at it yet.
+	if !strings.Contains(body, `"requested"`) {
+		t.Error("a request is reported as done")
 	}
 }

@@ -354,6 +354,22 @@ func (T *OrchestrateApp) patchAgent(w http.ResponseWriter, r *http.Request, udb 
 			continue
 		}
 		if !patchAgentFields[k] {
+			// Refuse an attempt to CHANGE a protected field, not an echo of
+			// what it already holds.
+			//
+			// A FormPanel loads the record and sends back everything it
+			// loaded, not only the fields it draws, so a panel owning four
+			// toggles PATCHes the whole agent - protected keys included, at
+			// their current values. Refusing those made every panel on the
+			// Security page fail with a list of fields nobody had touched.
+			//
+			// Unchanged is a no-op, and a door that exists to stop a field
+			// being set through the wrong route has nothing to stop when
+			// nothing is being set. An actual change is still refused, which
+			// is the case the guard was written for.
+			if sameJSONValue(merged[k], v) {
+				continue
+			}
 			refused = append(refused, k)
 			continue
 		}
@@ -846,4 +862,17 @@ func truthyPatchValue(v any) bool {
 		return t != 0
 	}
 	return false
+}
+
+// sameJSONValue reports whether a patch value is what the record already
+// holds. Compared as JSON because both sides came through it: a number is a
+// float64 on one side and may be an int on the other, and a nil and a missing
+// key mean the same thing here.
+func sameJSONValue(a, b any) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	ab, err1 := json.Marshal(a)
+	bb, err2 := json.Marshal(b)
+	return err1 == nil && err2 == nil && string(ab) == string(bb)
 }

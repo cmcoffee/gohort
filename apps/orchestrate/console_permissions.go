@@ -962,3 +962,65 @@ func (T *OrchestrateApp) handleConsolePermissionGrant(w http.ResponseWriter, r *
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// handleConsolePermissionAudience sets who may RUN an agent: everyone signed
+// in, or only the people its owner names.
+//
+// Its own door rather than the record PATCH, because publishing is not the
+// owner's to apply. It reaches every signed-in user, so it is REQUESTED and
+// takes effect once an administrator approves; turning it back is direct,
+// since nobody needs permission to stop sharing. That rule has one enforcement
+// point, agentPublishNeedsApproval, and this goes through it like the
+// privileges card does.
+//
+// It reads the "everyone" key and ignores the rest of the body. A FormPanel
+// sends back the whole record it loaded, and the alternative - a panel with no
+// Source - could not show which audience is currently set.
+//
+// NOT the legacy "exposed" flag, which is read-only and migrates to two
+// decisions at once: everyone may use it, AND put a card on the dashboard.
+// Those were deliberately split, and writing the old flag would weld them
+// back together.
+func (T *OrchestrateApp) handleConsolePermissionAudience(w http.ResponseWriter, r *http.Request) {
+	user, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	rec, found := findAgentByNameOrID(udb, user, strings.TrimSpace(r.URL.Query().Get("agent")))
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	var body map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	raw, present := body["everyone"]
+	if !present {
+		http.Error(w, "no audience given", http.StatusBadRequest)
+		return
+	}
+	on := truthyPatchValue(raw)
+	if on == rec.Everyone {
+		w.WriteHeader(http.StatusNoContent) // already what was asked for
+		return
+	}
+	if T.agentPublishNeedsApproval(r, user, rec.ID, "exposed", on, rec.Everyone) {
+		// A body rather than 204: "requested" and "done" are different
+		// outcomes, and a caller that cannot tell them apart shows the agent
+		// as published while an administrator has not looked at it yet.
+		writeJSON(w, map[string]any{"ok": true, "requested": []string{"exposed"}})
+		return
+	}
+	rec.Everyone = on
+	if _, err := saveAgent(udb, rec); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
