@@ -34,6 +34,11 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 	}
 	name := chFirst(agent.Name, agent.ID)
 	src := T.WebPrefix() + "/api/agent-access?id=" + url.QueryEscape(agent.ID)
+	// {name} is the row's own name FIELD, substituted per row. Not {row_key}:
+	// the substituter resolves a placeholder by looking that key up ON THE
+	// RECORD, so {row_key} finds no such field, resolves to empty, and leaves
+	// a control that posts to a URL with no tool in it.
+	toolWrite := T.WebPrefix() + "/api/agent-access/tool?agent=" + url.QueryEscape(agent.ID) + "&name={name}"
 	reach := agentReach(udb, user, agent)
 
 	page := ui.Page{
@@ -47,16 +52,41 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 			{
 				Title:    "What this agent can do",
 				Subtitle: agentAccessSummary(agent, reach) + " " + accessCaveat,
-				Detail: "The Unattended column is the GATE's own answer, not a reading of the tool: it is what would happen on a scheduled or standing run. " +
-					"None of it applies in chat, where an agent uses its tools freely and always has.",
+				Detail: "Two different questions, and they are set per row. The switch is ask-before-every-call IN CHAT: the turn stops and waits for you. " +
+					"Runs / Queues / Never is the GATE's answer for a scheduled or standing run, where nobody is watching, and none of it applies in chat. " +
+					"Both are offered only on tools that carry a record of their own: a framework tool has nothing to hold the setting, so it shows neither.",
 				Body: ui.Table{
 					Source:    src,
 					RowKey:    "name",
 					EmptyText: agentToolsEmptyText(agent),
 					Columns: []ui.Col{
 						{Field: "name", Label: "Tool"},
+						{Field: "origin", Label: "From", Mute: true},
 						{Field: "detail", Label: "What it does", Mute: true},
-						{Field: "policy", Label: "Unattended", Type: "badge"},
+					},
+					RowActions: []ui.RowAction{
+						// Both are offered ONLY on a row that can hold the
+						// setting. A framework tool has no record of its own,
+						// so a switch on its row would take the click, show
+						// the new state, and revert on the next reload.
+						{
+							Type: "toggle", Field: "asks", OnlyIf: "governable",
+							PostTo: toolWrite, Method: "PATCH",
+						},
+						{
+							Type: "segmented", Field: "unattended", OnlyIf: "governable",
+							PostTo: toolWrite, Method: "PATCH",
+							Options: []ui.SelectOption{
+								{Value: "allow", Label: "Runs"},
+								{Value: "ask", Label: "Queues"},
+								// "Never" rather than "Blocked": this ladder is
+								// about unattended runs only, and a segment
+								// reading Blocked on a page listing the agent's
+								// tools would read as switching the tool off
+								// everywhere, which is not what it does.
+								{Value: "block", Label: "Never"},
+							},
+						},
 					},
 				},
 			},

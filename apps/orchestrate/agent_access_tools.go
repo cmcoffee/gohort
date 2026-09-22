@@ -16,6 +16,8 @@ package orchestrate
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
 	"sort"
 	"strings"
 
@@ -37,8 +39,14 @@ type accessToolRow struct {
 	// record behind it can hold one.
 	Asks bool `json:"asks"`
 	// Governable says whether the controls apply at all, so the UI renders a
-	// row it cannot act on differently from one set to "no".
+	// row it cannot act on differently from one set to "no". A framework tool
+	// has no record to carry a flag; offering it a switch would be offering
+	// one wired to nothing.
 	Governable bool `json:"governable"`
+	// Unattended is the standing decision for scheduled and standing runs:
+	// allow, ask, or block. The GATE's answer where one is recorded, and
+	// "allow" where none is, which is what the gate does with no record.
+	Unattended string `json:"unattended,omitempty"`
 	// Actions are a grouped tool's sub-actions, and Withheld the ones switched
 	// off for this agent.
 	Actions  []string `json:"actions,omitempty"`
@@ -83,6 +91,14 @@ func (T *OrchestrateApp) resolvedAgentTools(ctx context.Context, udb Database, u
 		t := p.Tool
 		pool[t.Name] = &t
 	}
+	// The standing unattended decisions for THIS agent, read once. A per-row
+	// lookup would walk the whole list again for every tool in the catalog.
+	unattended := map[string]string{}
+	for _, p := range listAutoToolPolicies(RootDB, user) {
+		if p.AgentID == rec.ID {
+			unattended[p.Tool] = p.Policy
+		}
+	}
 	withheld := map[string][]string{}
 	for _, pair := range rec.DisabledToolActions {
 		if tool, action, ok := strings.Cut(strings.TrimSpace(pair), "/"); ok {
@@ -112,6 +128,14 @@ func (T *OrchestrateApp) resolvedAgentTools(ctx context.Context, udb Database, u
 			Detail:   firstLine(d.Tool.Description),
 			Withheld: withheld[name],
 		}
+		if p, ok := unattended[name]; ok {
+			row.Unattended = p
+		} else {
+			// No record means the gate allows it, so say allow rather than
+			// leaving the control blank. A segmented control with nothing
+			// selected reads as "unset", and there is no such state.
+			row.Unattended = PolicyAllow
+		}
 		if tt, ok := pool[name]; ok {
 			row.Origin = "your tools"
 			row.Asks = tt.ConfirmInChat
@@ -133,4 +157,68 @@ func (T *OrchestrateApp) resolvedAgentTools(ctx context.Context, udb Database, u
 		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
 	})
 	return out, nil
+}
+
+// handleAgentAccessTool writes one tool's standing decisions from the access
+// page. POST ?agent=<id>&name=<tool>, body {"asks":bool} or
+// {"unattended":"allow|ask|block"}.
+//
+// A thin handler over the SAME setters the Permissions page calls, not a
+// second way to store the decision. Two surfaces that write the same fact
+// through different code is how they start disagreeing, and this pair already
+// has to agree: a tool set to ask here must read as asking there.
+//
+// The ask flag is keyed by TOOL and the unattended policy by (agent, tool),
+// which is not an inconsistency: a tool's riskiness in chat is a property of
+// the tool, while whether it may run with nobody watching is a property of the
+// agent doing the running.
+func (T *OrchestrateApp) handleAgentAccessTool(w http.ResponseWriter, r *http.Request) {
+	user, udb, ok := RequireUser(w, r, T.DB)
+	if !ok {
+		return
+	}
+	if r.Method != http.MethodPost && r.Method != http.MethodPatch {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	rec, found := findAgentByNameOrID(udb, user, strings.TrimSpace(r.URL.Query().Get("agent")))
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	if name == "" {
+		http.Error(w, "name required", http.StatusBadRequest)
+		return
+	}
+	var body struct {
+		Asks       *bool   `json:"asks"`
+		Unattended *string `json:"unattended"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+	switch {
+	case body.Asks != nil:
+		// Refused rather than silently ignored when the tool has no record to
+		// hold the flag. A control that accepts a click and stores nothing is
+		// worse than one that is not offered: the row would show the new state
+		// until the next reload and then quietly revert.
+		if !SetUserToolConfirmInChat(AuthDB(), user, name, *body.Asks) {
+			http.Error(w, "that tool has no record of its own to carry the flag", http.StatusNotFound)
+			return
+		}
+	case body.Unattended != nil:
+		v := strings.TrimSpace(*body.Unattended)
+		if v != PolicyAllow && v != PolicyAsk && v != PolicyBlock {
+			http.Error(w, "unattended must be allow, ask or block", http.StatusBadRequest)
+			return
+		}
+		setAutoToolPolicy(RootDB, udb, user, rec.ID, name, v)
+	default:
+		http.Error(w, "nothing to set", http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

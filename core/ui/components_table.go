@@ -118,7 +118,13 @@ type Col struct {
 //
 // Type values:
 //   - "toggle" — iOS switch. Field is the boolean field on the record;
-//     change POSTs {Field: newValue} to PostTo (with {row_key} substituted).
+//     change POSTs {Field: newValue} to PostTo.
+//
+// PostTo placeholders are FIELD NAMES on the record: "?name={name}&owner=
+// {owner}". They are resolved by looking the key up on the row, so a
+// placeholder naming no field resolves to EMPTY rather than erroring, and the
+// control posts to a URL missing the thing it meant to identify. In
+// particular {row_key} is not a placeholder: name the field the row key holds.
 //   - "select" — inline dropdown. Options must be set; on change POSTs
 //     {Field: newValue} (or full record if not PATCH). Use for tables
 //     where each row picks from a small enum (e.g. routing tier).
