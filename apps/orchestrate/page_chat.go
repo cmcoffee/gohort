@@ -753,8 +753,12 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							Method: "client", URL: "orchestrate_pipelines_modal"},
 						{Group: "Configure", Label: "Machines", Title: "Phase machines: give this agent a workflow it moves through and stays in, instead of re-deciding its approach every turn.",
 							Method: "client", URL: "orchestrate_machines_modal"},
-						{Group: "Configure", Label: "Security & Access", Title: "Blast-radius controls: Force Private (network off), hide from the fleet, and set the dispatch policy (allow all / only / all-except / none).",
-							Method: "client", URL: "orchestrate_security_modal"},
+						// Opens the agent's Security page rather than a modal of
+						// its own. It used to carry force_private, hidden and the
+						// dispatch targets directly, which made three surfaces
+						// holding one fact.
+						{Group: "Configure", Label: "Security", Title: "Everything that bounds this agent: its tools and whether they need watching, what its sandbox may reach, who it may talk to, and what it may hand work to.",
+							Method: "client", URL: "orchestrate_secure_agent"},
 						{Group: "Session", Label: "Copy session", Title: "Copy the full session as markdown (every user message, every assistant round, every tool call/result) for pasting into a prompt-tuning chat.",
 							Method: "client", URL: "copy_session"},
 						{Group: "Session", Label: "Save log", Title: "Download the current session as a Markdown transcript (full trace with tool calls). Useful for sharing or debugging.",
