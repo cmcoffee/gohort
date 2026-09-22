@@ -186,6 +186,19 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				},
 			},
 			{
+				Group: "Guardrails",
+				Title: "Checks that hold whether or not it agrees",
+				Subtitle: "A guardrail is enforcement, not guidance. An independent check reads the turn and stops it, " +
+					"so it holds even when the agent decided otherwise, and the agent cannot edit it away.",
+				Detail: "Its counterpart is Rules, under Configure: guidance prepended to the prompt that the agent follows, " +
+					"and that the agent and Builder can both rewrite. Rules shape behaviour; these enforce it.\n\n" +
+					"They inherit downward, so whatever this agent hands work to carries them too. A deployment's own rules sit beneath these as a floor you cannot lift here.",
+				Body: ui.ClientRegion{
+					Action: "orchestrate_rules_modal",
+					Args:   map[string]any{"only": "guardrails", "agent": agent.ID},
+				},
+			},
+			{
 				Group:    "Workspace",
 				Title:    "What its sandbox may reach",
 				Subtitle: "Shell and file work happen in one sandbox, and these govern all of it.",

@@ -2497,6 +2497,28 @@
       // --- Modal infrastructure (Tools / Memory / Rules) ----------
       // Generic modal helper. Returns {overlay, body, footer, close};
       // caller fills body + footer. Esc closes; backdrop click too.
+      // orchHostShell makes a plain element answer like an openOrchModal
+      // handle: {body, footer, close}. That is the whole coupling a modal
+      // builder has to its dialog, so one that takes a handle can be rendered
+      // into a PAGE without touching what it builds.
+      //
+      // close() is a no-op rather than removing the host. A page section is
+      // not dismissible: the reader navigates away from it, and a Cancel that
+      // deleted the section would leave a hole where the surface was.
+      //
+      // The footer keeps its own class so the buttons look like the ones in
+      // the dialog, but sits inline rather than pinned: a page has no bottom
+      // edge to pin to, and a save bar floating over a long section covers the
+      // rows it saves.
+      function orchHostShell(hostEl) {
+        var body = document.createElement('div');
+        body.className = 'ui-orch-modal-body ui-orch-hosted-body';
+        hostEl.appendChild(body);
+        var footer = document.createElement('div');
+        footer.className = 'ui-orch-modal-ftr ui-orch-hosted-ftr';
+        hostEl.appendChild(footer);
+        return {body: body, footer: footer, close: function() {}, hosted: true};
+      }
       function openOrchModal(title) {
         var overlay = document.createElement('div');
         overlay.className = 'ui-orch-modal-overlay';
@@ -4785,22 +4807,45 @@
         }, skillsList);
       });
 
-      window.uiRegisterClientAction('orchestrate_rules_modal', function() {
-        var id = getAgentID();
+      // ctx.host renders this into a page section instead of a dialog, and
+      // ctx.args.only picks which band: 'guardrails' for the Security page's
+      // Guardrails tab, 'rules' for Configure, neither for both.
+      //
+      // The split is behaviour vs enforcement. A rule is guidance the agent
+      // follows and can edit; a guardrail is a check that holds whether or not
+      // the model agrees. One Save over both made installing a check look like
+      // editing a preference, and they already write to different endpoints.
+      window.uiRegisterClientAction('orchestrate_rules_modal', function(ctx) {
+        ctx = ctx || {};
+        var only = (ctx.args && ctx.args.only) || '';
+        var id = (ctx.args && ctx.args.agent) || getAgentID();
         if (!id) { window.uiAlert('Pick an agent first.'); return; }
         fetchAgent(id).then(function(agent) {
-          var m = openOrchModal('Rules: ' + (agent.name || id));
+          var m = ctx.host ? orchHostShell(ctx.host)
+                           : openOrchModal('Rules: ' + (agent.name || id));
           var help = document.createElement('div');
           help.className = 'ui-orch-modal-help';
           help.textContent = 'Guidance the agent follows: prepended to BOTH the orchestrator and worker every turn. Use for soft constraints like "always cite a URL" or "prefer concise replies". The agent (and Builder) can edit these; for hard limits an independent check enforces, use Enforced guardrails below.';
-          m.body.appendChild(help);
+          // The two bands are gated at their ATTACHMENT, not their
+          // construction. Everything is still built either way, so the
+          // elevate arrow, grules and gBody keep working and no reference
+          // has to be untangled; a band that is not shown simply never
+          // reaches the DOM, and its state stays exactly as loaded. That
+          // also makes the shared save correct in both modes: the band you
+          // cannot see cannot be edited, so writing it back writes what was
+          // already there.
+          var showRules = only !== 'guardrails';
+          var showGuards = only !== 'rules';
           var rulesTitle = document.createElement('div');
           rulesTitle.style.cssText = 'font-weight:600;color:var(--text);margin-bottom:0.3rem';
           rulesTitle.textContent = 'Rules';
-          m.body.appendChild(rulesTitle);
           var list = document.createElement('div');
           list.className = 'ui-orch-list';
-          m.body.appendChild(list);
+          if (showRules) {
+            m.body.appendChild(help);
+            m.body.appendChild(rulesTitle);
+            m.body.appendChild(list);
+          }
 
           var rules = (agent.rules || '').split('\n')
             .map(function(s) { return s.replace(/^\s*([-*]|\d+\.)\s*/, '').trim(); })
@@ -4846,7 +4891,21 @@
                 if (!rules.length) rules.push('');
                 render();
                 renderG();
-                gWrap.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+                // Where it WENT. Elevating is the moment somebody stops
+                // trusting the agent to comply and installs a check that does
+                // not care, so it is worth saying out loud either way.
+                //
+                // With the enforced band on screen, scrolling to it shows the
+                // row landing. Without it - this view is rules only - the rule
+                // would simply vanish, which reads as a delete. It has to name
+                // where it is now and that saving is what commits the move.
+                if (showGuards) {
+                  gWrap.scrollIntoView({behavior: 'smooth', block: 'nearest'});
+                } else if (window.uiToast) {
+                  window.uiToast('Moved to enforced guardrails. Save to commit it, then find it under Security \u2192 Guardrails.');
+                } else {
+                  window.uiAlert('Moved to enforced guardrails. Save to commit it, then find it under Security \u2192 Guardrails.');
+                }
               };
               var del = document.createElement('button');
               del.className = 'ui-orch-list-del';
@@ -6275,7 +6334,7 @@
           testWrap.appendChild(testBtn);
           testWrap.appendChild(testOut);
           gWrap.appendChild(testWrap);
-          m.body.appendChild(gWrap);
+          if (showGuards) m.body.appendChild(gWrap);
 
           var cancelBtn = document.createElement('button');
           cancelBtn.className = 'ui-orch-modal-btn';

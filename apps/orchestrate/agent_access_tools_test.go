@@ -351,3 +351,60 @@ func TestTheConsoleIsReachedFromThePermissionsControl(t *testing.T) {
 		t.Error("the editor still links to the console, so there are two doors that will drift")
 	}
 }
+
+// Behaviour and enforcement are two different acts and no longer share a
+// screen. Rules are guidance the agent follows and can edit; a guardrail is a
+// check that holds whether or not the model agrees. One Save over both made
+// installing a check look like editing a preference.
+func TestGuardrailsAreOnSecurityAndRulesStayInConfigure(t *testing.T) {
+	page := mustRead(t, "page_agent_access.go")
+	if !strings.Contains(page, `"only": "guardrails"`) {
+		t.Error("the Guardrails tab does not ask for the enforced band, so it would render rules too")
+	}
+	if !strings.Contains(page, `Group: "Guardrails"`) {
+		t.Error("guardrails have no tab of their own")
+	}
+	assets := mustRead(t, "assets/web_assets.html")
+	// Configure -> Rules keeps the soft rules, which is the whole point of the
+	// split: the agent's own guidance stays where the agent's behaviour is set.
+	if !strings.Contains(assets, `uiRegisterClientAction('orchestrate_rules_modal'`) {
+		t.Error("the Rules surface is gone, not split")
+	}
+	// The bands are gated at their ATTACHMENT, so every reference across them
+	// keeps working and the band you cannot see keeps the state it loaded.
+	for _, want := range []string{
+		"var showRules = only !== 'guardrails';",
+		"var showGuards = only !== 'rules';",
+		"if (showGuards) m.body.appendChild(gWrap);",
+	} {
+		if !strings.Contains(assets, want) {
+			t.Errorf("the band gating is missing %q", want)
+		}
+	}
+	// A page section is not a dialog: close() must not delete the host.
+	if !strings.Contains(assets, "close: function() {}") {
+		t.Error("the hosted shell's close removes the section, leaving a hole where the surface was")
+	}
+}
+
+// Elevating a rule is the moment somebody stops trusting the agent to comply
+// and installs a check that does not care. In the rules-only view the enforced
+// band is not on screen, so without a word the rule just vanishes, which reads
+// as a delete.
+func TestElevatingARuleSaysWhereItWent(t *testing.T) {
+	assets := mustRead(t, "assets/web_assets.html")
+	i := strings.Index(assets, "up.title = 'Elevate to an enforced guardrail';")
+	if i < 0 {
+		t.Fatal("the elevate control is gone")
+	}
+	body := assets[i : i+2600]
+	if !strings.Contains(body, "if (showGuards) {") {
+		t.Error("elevate behaves the same whether or not the band is visible")
+	}
+	if !strings.Contains(body, "Moved to enforced guardrails") {
+		t.Error("elevating from the rules-only view says nothing, so the rule appears to be deleted")
+	}
+	if !strings.Contains(body, "Security") {
+		t.Error("the message does not name where the rule landed")
+	}
+}

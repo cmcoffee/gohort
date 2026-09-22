@@ -625,6 +625,7 @@
       else { var bs = actions.querySelectorAll('button'); if (bs.length) bs[bs.length - 1].focus(); }
     });
   }
+  window.uiToast = function(msg) { showToast(msg); };
   window.uiConfirm = function(msg) {
     if (typeof window.__uiConfirmImpl === 'function') return Promise.resolve(window.__uiConfirmImpl(msg));
     return uiDefaultModal({kind: 'confirm', msg: msg});
@@ -1382,6 +1383,10 @@
     ]));
   }
 
+  // Exported as window.uiToast so an APP can raise one. It was a prelude
+  // local, so every app that wanted to say "that worked" had either to use
+  // uiAlert, which takes a click to dismiss and reads as a problem, or to
+  // hand-roll a floating div and get the z-index wrong over a dialog.
   function showToast(msg) {
     var t = el('div', {class: 'ui-toast'}, [msg]);
     // ABOVE every modal layer. Dialogs start at 1000 and climb by 10 as

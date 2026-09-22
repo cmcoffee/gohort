@@ -980,6 +980,40 @@
     return root;
   };
 
+  // client_region — a region of the page the APP fills itself.
+  //
+  // The framework owns the chrome (a section in a tab, its title, its place in
+  // the page) and hands the app an element. Everything inside it is the app's,
+  // which is what lets a surface the app already has live inside a page rather
+  // than only inside a modal of its own.
+  //
+  // Named, not embedded: cfg.action is a handler registered through
+  // window.uiRegisterClientAction, the same seam row and view actions use. This
+  // component knows nothing about what gets drawn, which is the point - core/ui
+  // stays domain-agnostic and the app keeps its own code.
+  //
+  // The handler is called AFTER the element is in the document, because the
+  // thing it mounts routinely measures or focuses, and neither works on an
+  // element with no layout. mountComponent appends what this returns, so the
+  // call has to wait a tick rather than run inline.
+  components.client_region = function(cfg, ctx) {
+    var host = el('div', {class: 'ui-client-region'});
+    setTimeout(function() {
+      var fn = (window.UIClientActions || {})[cfg.action];
+      if (typeof fn !== 'function') {
+        host.appendChild(el('div', {class: 'ui-card', text: 'This area is not available: no handler named ' + (cfg.action || '(none)') + ' is registered.'}));
+        return;
+      }
+      try {
+        fn({host: host, args: cfg.args || {}, ctx: ctx});
+      } catch (e) {
+        console.error('client_region ' + cfg.action + ' failed:', e);
+        host.appendChild(el('div', {class: 'ui-card', text: 'This area could not be drawn: ' + (e && e.message || e)}));
+      }
+    }, 0);
+    return host;
+  };
+
   components.card = function(cfg) {
     var wrap = el('div', {class: 'ui-card'});
     // Re-execute any inline <script> tags. innerHTML doesn't run them
