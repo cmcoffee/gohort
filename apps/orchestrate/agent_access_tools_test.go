@@ -320,3 +320,34 @@ func TestSubAgentsReportHowRestrictionsReachThem(t *testing.T) {
 		t.Error("an agent this one does not own was listed as its sub-agent")
 	}
 }
+
+// The console is reached from the Permissions control and nowhere else. It
+// used to hang off a button at the bottom of the EDITOR, which is the wrong
+// place for a question you ask when you are not editing, and is what the
+// console's own header complains about. Moving the page and leaving its
+// entrance behind is how a surface ends up unfindable.
+func TestTheConsoleIsReachedFromThePermissionsControl(t *testing.T) {
+	chat, err := os.ReadFile("page_chat.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(chat), `URL: "orchestrate_secure_agent"`) {
+		t.Error("the Permissions control has no way into the console")
+	}
+	// And the handler it names is actually registered, or the button logs to
+	// the console and does nothing.
+	assets, err := os.ReadFile("assets/web_assets.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(assets), "uiRegisterClientAction('orchestrate_secure_agent'") {
+		t.Error("the client action the button names is not registered")
+	}
+	editor, err := os.ReadFile("page_agent.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(editor), "/access\"") {
+		t.Error("the editor still links to the console, so there are two doors that will drift")
+	}
+}

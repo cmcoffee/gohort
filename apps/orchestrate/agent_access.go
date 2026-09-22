@@ -152,7 +152,7 @@ func agentAccessSummary(rec AgentRecord, reach []agentReachRow) string {
 }
 
 // accessCaveat is the second register, said once rather than implied by a gap.
-const accessCaveat = "Credential-backed, custom, app-provided and MCP tools are assembled per run and are not listed here: this is what the record determines, not a transcript of one turn."
+const accessCaveat = "The list is resolved through the same call a real turn makes, so your own tools and credential-backed ones are in it. A run can still add app-provided and MCP tools that only exist once a session is open."
 
 // handleAgentAccess serves the two lists the access sections read.
 func (T *OrchestrateApp) handleAgentAccess(w http.ResponseWriter, r *http.Request) {

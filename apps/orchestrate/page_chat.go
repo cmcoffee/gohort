@@ -470,6 +470,14 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 								// about the state it sets.
 								{Label: "Blocked", Value: "block", URL: "api/console/permissions/policy", HideIf: "_noblock"},
 							},
+							// The console for this agent, reached from here and
+							// nowhere else. It used to live behind a button at the
+							// bottom of the EDITOR, which is the wrong place for a
+							// question you ask when you are not editing, and is
+							// exactly what that page's own header complains about.
+							ViewActions: []ui.OrchestratorRowAction{
+								{Label: "Open the full console", Method: "client", URL: "orchestrate_secure_agent"},
+							},
 							RowActions: []ui.OrchestratorRowAction{
 								// Widen a grant that belongs to one agent. Only on
 								// the scoped rows: the all-agents row has nowhere

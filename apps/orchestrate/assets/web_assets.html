@@ -2169,6 +2169,16 @@
     }
 
     if (window.uiRegisterClientAction) {
+      // The security console for the agent whose Permissions panel this is.
+      // A list-level button rather than a second menu entry: the decisions and
+      // the console are the same subject, so the one is where you go from the
+      // other, and this agent's id comes from the view action rather than the
+      // page, which is what makes it right on a panel opened from the topbar.
+      window.uiRegisterClientAction('orchestrate_secure_agent', function(ctx) {
+        var id = (ctx && ctx.agent) || window.GOHORT_AGENT_ID || '';
+        if (!id) { window.uiAlert('No agent is selected.'); return; }
+        window.location.href = 'agent/' + encodeURIComponent(id) + '/access';
+      });
       window.uiRegisterClientAction('orchestrate_edit_agent', function() {
         var id = getAgentID();
         if (!id) { window.uiAlert('Pick an agent first.'); return; }

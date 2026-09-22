@@ -140,11 +140,6 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		}
 	}
 	agentLocked := false
-	// The access picture, composed while the record is in hand (agent_access.go).
-	// Rendered as a section below rather than as another field: the owner grants
-	// these things one editor control at a time and has never been shown what
-	// they add up to.
-	accessSummary := ""
 	// Dispatch policy to surface first in the editor's select. Ordering the
 	// effective mode first means a legacy record (no stored dispatch_mode) seeds
 	// that value on save instead of the form's first-option fallback silently
@@ -172,7 +167,6 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			agentLocked = rec.Locked
 			leadModelLocked = agentForcesPrivate(rec) && !AllLLMsPrivate()
 			dispatchModeFirst = effectiveDispatchMode(rec)
-			accessSummary = agentAccessSummary(rec, agentReach(udb, user, rec))
 			if rec.OwnedBy != "" {
 				subAgent = true
 				if parent, pok := loadAgent(udb, rec.OwnedBy); pok {
@@ -586,29 +580,17 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
-	// What this agent can do, and what it can reach, are on their own page.
+	// The security console is NOT linked from here.
 	//
-	// They used to be two sections HERE, near the bottom, behind everything
-	// you scroll past to reach them. Reviewing what you granted is its own
-	// errand and you are usually not editing when you do it; the editor is a
-	// form. One link, so there is one home for the question rather than two
-	// that drift.
-	if id != "" {
-		sections = append(sections, ui.Section{
-			Title:    "What this agent can reach",
-			Subtitle: accessSummary + " " + accessCaveat,
-			Body: ui.DisplayPanel{
-				Source: source,
-				Pairs:  []ui.DisplayPair{},
-				Actions: []ui.ToolbarAction{{
-					Label:  "Open the access page",
-					Title:  "Every tool it can call and what happens to each on an unattended run, what it can hand work to, its workspace, and what it reads.",
-					Method: "GET",
-					URL:    T.WebPrefix() + "/agent/" + url.PathEscape(id) + "/access",
-				}},
-			},
-		})
-	}
+	// It used to be two sections at the bottom of this form, then one button
+	// at the bottom of this form, which is the same mistake with fewer rows:
+	// reviewing what you granted is its own errand and you are usually not
+	// editing when you do it. Leaving the door inside the editor meant the
+	// page had moved out and its entrance had not.
+	//
+	// It is reached from the Permissions control in the agent's own topbar,
+	// where the standing decisions already are, and from nowhere else. One
+	// home for the question rather than two that drift.
 
 	// External credentials — tier-2 per-agent scoping, relocated here
 	// from the admin credential page (which now only governs tier-1: which USERS
