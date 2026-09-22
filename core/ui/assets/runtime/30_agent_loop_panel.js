@@ -725,7 +725,7 @@
             (rows || []).forEach(function(row) {
               if (passesOthers(row, ref.fi, q) && optionMatches(ref.opt, row)) n++;
             });
-            ref.btn.className = 'ui-chip' + (chosen[ref.fi] === ref.oi ? ' on' : '');
+            ref.btn.className = 'ui-tab' + (chosen[ref.fi] === ref.oi ? ' active' : '');
             ref.count.textContent = ' ' + n;
             // A choice that would empty the page says so before it is made.
             ref.btn.style.opacity = n ? '' : '0.55';
@@ -757,7 +757,8 @@
 
         var searchBox = null;
         if (filters.length || searchHint) {
-          var bar = el('div', {style: 'display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;margin:0 0 0.7rem'});
+          var bar = el('div', {style: 'display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap;' +
+            'margin:0 0 0.8rem;padding-bottom:0.6rem;border-bottom:1px solid var(--border)'});
           if (searchHint) {
             searchBox = el('input', {type: 'search', class: 'ui-filter-search', placeholder: searchHint,
               value: query, style: 'flex:0 1 15rem;min-width:9rem'});
@@ -770,10 +771,18 @@
             if (f.label) {
               bar.appendChild(el('span', {style: 'font-size:0.72rem;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-mute, #999)'}, [f.label]));
             }
-            var group = el('div', {class: 'ui-chips'});
+            // TABS, not chips. A filter group is mutually exclusive with its
+            // first option as the default, which is what a tab bar is, and the
+            // house already draws one: .ui-tabbar / .ui-tab, the same control
+            // along the top of every admin page. Rendering the same idea two
+            // ways teaches the reader that they are two ideas.
+            //
+            // The chip styling stays where chips are genuinely chips: the
+            // multi-select picker, where several can be on at once.
+            var group = el('div', {class: 'ui-tabbar', style: 'margin:0;padding:0;border:0'});
             (f.options || []).forEach(function(opt, oi) {
-              var count = el('span', {style: 'opacity:0.7'}, ['']);
-              var btn = el('button', {type: 'button', class: 'ui-chip',
+              var count = el('span', {style: 'opacity:0.7;margin-left:0.35rem'}, ['']);
+              var btn = el('button', {type: 'button', class: 'ui-tab',
                 onclick: function() { chosen[fi] = oi; repaint(); }}, [opt.label || '?', count]);
               chipRefs.push({fi: fi, oi: oi, opt: opt, btn: btn, count: count});
               group.appendChild(btn);
@@ -860,7 +869,12 @@
         if (orchView.firstChild) orchView.insertBefore(bar, orchView.firstChild);
         else orchView.appendChild(bar);
       }
-      function selectOrchNav(idx, extraQuery, note) {
+      // keepFilters distinguishes a view being OPENED from one redrawing after
+      // a change made inside it. Opening asks for the view whole; a redraw
+      // after you set a policy is the same view you were already looking at,
+      // and throwing your tab away there is what made every click bounce back
+      // to All.
+      function selectOrchNav(idx, extraQuery, note, keepFilters) {
         var item = (cfg.orchestrator_nav || [])[idx] || {};
         clearOrchViewTimer();
         // A nav item that opens an app's own FORM rather than listing or
@@ -872,7 +886,7 @@
             var cfn = window.UIClientActions && window.UIClientActions[item.action_url];
             if (!cfn) { console.error('client nav action not registered: ' + item.action_url); return; }
             closeNavMenus();
-            cfn({reload: function() { selectOrchNav(idx, extraQuery, note); }});
+            cfn({reload: function() { selectOrchNav(idx, extraQuery, note, true); }});
             return;
         }
         // Action items are buttons (clear / decommission): POST to the URL
@@ -932,10 +946,11 @@
           // instead of leaving the stale session title.
           if (drawer && drawer.mobileTitle) drawer.mobileTitle.textContent = item.label || '';
           orchView.textContent = 'Loading…';
-          // A view the user asked for opens whole. Only the auto-refresh
-          // redraw inherits the chips, and it does not come through here.
-          clearOrchFilterState();
-          var reload = function() { selectOrchNav(idx, extraQuery, note); };
+          // A view the user ASKED for opens whole. A redraw after a change
+          // does not: it is the same view, still on screen, and the tab and
+          // the search text are where the reader left them.
+          if (!keepFilters) clearOrchFilterState();
+          var reload = function() { selectOrchNav(idx, extraQuery, note, true); };
           fetch(orchSourceURL(item.source, item, extraQuery)).then(function(r) { return r.ok ? r.json() : []; })
             .then(function(rows) { renderOrchTable(rows, item, reload); paintNarrowNote(idx, item, extraQuery, note); })
             .catch(function(err) { orchView.textContent = 'Failed to load: ' + err.message; });

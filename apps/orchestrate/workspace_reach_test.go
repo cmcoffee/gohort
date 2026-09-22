@@ -75,11 +75,30 @@ func TestBothWaysOutAreClosed(t *testing.T) {
 // than no toggle.
 func TestTheCeilingIsOfferedAndSaveable(t *testing.T) {
 	src := packageSource(t)
-	if !strings.Contains(src, `Field: "workspace_no_network", Type: "toggle"`) {
-		t.Error("the setting is not offered in the editor")
+	// Offered in SECURITY, not the editor. It was in both, which is worse than
+	// being in the wrong one: two controls over one fact drift, and the one
+	// you did not use is the one you go on believing.
+	//
+	// Named per FILE rather than over the package, because both files are in
+	// it: asking the package whether the toggle exists cannot tell which page
+	// is offering it, which is the entire question.
+	editor := mustReadFile(t, "page_agent.go")
+	security := mustReadFile(t, "page_agent_access.go")
+	if strings.Contains(editor, `Field: "workspace_no_network", Type: "toggle"`) {
+		t.Error("the editor offers it again, so there are two controls over one fact")
+	}
+	if !strings.Contains(security, `Field: "workspace_no_network", Type: "toggle"`) {
+		t.Error("the Security page does not offer the setting, so it is offered nowhere")
+	}
+	if !strings.Contains(src, `"workspace:" + ag.ID + ":network"`) {
+		t.Error("the Security window's own row is gone, so its state is not reviewable")
+	}
+	// Writable from there, whichever way it is currently set.
+	if !strings.Contains(src, `case "workspace":`) {
+		t.Error("the setting is shown but nothing writes it back")
 	}
 	if !patchAgentFields["workspace_no_network"] {
-		t.Error("the setting is offered but the PATCH allowlist drops it")
+		t.Error("the PATCH allowlist drops it, so an import or a form update cannot carry it")
 	}
 	// Set where the turn's context is assembled, or nothing downstream sees it.
 	if !strings.Contains(src, "netgate.WithWorkspaceNetwork(ctx, !agent.WorkspaceNoNetwork)") {
@@ -147,4 +166,15 @@ func TestTheNarrowingIsOfferedAndSaveable(t *testing.T) {
 	if !strings.Contains(src, "sess.SetWithheldActions(t.withheldToolActions())") {
 		t.Error("the turn never tells the session what is withheld")
 	}
+}
+
+// mustReadFile reads one source file of this package, for an assertion that is
+// about WHICH file something lives in.
+func mustReadFile(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

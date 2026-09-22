@@ -264,3 +264,44 @@ func TestAnEmptySectionIsNotRendered(t *testing.T) {
 		t.Error("a subtitle-only section was dropped")
 	}
 }
+
+// Opening a view resets its tabs; a redraw AFTER A CHANGE made inside it does
+// not. Without the distinction every click bounced the reader back to the
+// first tab: you set a policy on the Tools tab and landed on All, with the row
+// you had just touched somewhere off screen.
+func TestAChangeRedrawKeepsTheTabYouAreOn(t *testing.T) {
+	src := readRuntimeFile(t, "30_agent_loop_panel.js")
+	// The clear is GUARDED, not removed: a deliberate open still opens whole.
+	if !strings.Contains(src, "if (!keepFilters) clearOrchFilterState();") {
+		t.Error("the filter reset is unguarded, so any redraw throws the tab away")
+	}
+	// And the reload handed to row actions asks to keep them.
+	if !strings.Contains(src, "selectOrchNav(idx, extraQuery, note, true)") {
+		t.Error("a post-change reload does not ask to keep the tab, so it resets")
+	}
+	// A plain open must NOT pass it, or a view never opens whole again.
+	for _, open := range []string{"selectOrchNav(idx);", "selectOrchNav(i);"} {
+		if !strings.Contains(src, open) {
+			t.Errorf("the deliberate-open call %q has moved; this test reads the wrong place", open)
+		}
+	}
+}
+
+// The tab is a TAB, drawn the way the house draws tabs. A filter group is
+// mutually exclusive with its first option as the default, which is what a tab
+// bar is, and rendering the same idea two ways teaches the reader they are two
+// ideas.
+func TestFilterOptionsRenderAsHouseTabs(t *testing.T) {
+	src := readRuntimeFile(t, "30_agent_loop_panel.js")
+	if !strings.Contains(src, "class: 'ui-tab'") {
+		t.Error("filter options do not use the house tab class")
+	}
+	if !strings.Contains(src, "'ui-tab' + (chosen[ref.fi] === ref.oi ? ' active' : '')") {
+		t.Error("the selected tab is not marked with the house active class")
+	}
+	// The multi-select picker keeps the chip styling: several can be on at
+	// once there, which is what a chip is and a tab is not.
+	if !strings.Contains(readRuntimeFile(t, "10_basics.js"), "'ui-chip'") {
+		t.Error("the chip styling is gone from the picker, where chips are genuinely chips")
+	}
+}

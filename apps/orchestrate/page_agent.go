@@ -425,11 +425,14 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				Detail: "A grouped tool is one grant with several jobs inside it: workspace reads files, writes them, and runs commands. Without this the choice is all of it or none, because a tool is offered on the union of what its actions need.\n\n" +
 					"Ticked here, the action is dropped from the schema the model sees, so it never plans around one it cannot have, and refused at the call as well for a name it guessed or carried over.\n\n" +
 					"Only the actions that DO something are listed: withholding a read is the reason the tool was granted. It inherits downward, so a sub-agent cannot run what its parent was denied."},
-			ui.FormField{Field: "workspace_no_network", Type: "toggle", Label: "Workspace may not reach the network",
-				Help: "The agent keeps its tools and its model; only code running in its workspace is stopped from dialling out.",
-				Detail: "For an agent that should process text or files locally and never phone anywhere from in there. It can still read, write and run commands in the workspace.\n\n" +
-					"Enforced at both ways out: the sandbox gets no network namespace, and the gohort.fetch helper refuses. Closing one alone would just move a script to the other.\n\n" +
-					"It inherits downward, so a sub-agent cannot dial on this one's behalf, and it only ever narrows: Private mode still blocks a turn outright."},
+			// Workspace reach is NOT here. It is the Workspace tab of the
+			// agent's Security window, which already shows its state whichever
+			// way it is set and writes through the same field.
+			//
+			// It was in both places, which is worse than being in the wrong
+			// one: two controls over one fact drift, and the one you did not
+			// use is the one you go on believing. The editor is for what the
+			// agent IS; what it may reach is a different errand.
 			// (Dispatch policy lives in the "Cortex & delegation" section above,
 			// next to the conductor-tools toggle — the two delegation controls
 			// were split across sections and read as one switch when they are
