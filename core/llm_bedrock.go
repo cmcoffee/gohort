@@ -124,9 +124,12 @@ func resolveAWSCreds(profile string, explicit bool) (awsCreds, time.Time, error)
 		// Do NOT fall back. The operator named a profile; signing as somebody
 		// else because that profile could not be resolved is how you get a
 		// denial that makes no sense against the configuration in front of you.
+		// No trailing sentence about the token cache: awsCLIDiagnosis already
+		// says that, with the user and HOME filled in, and said twice it reads
+		// as two different remarks. Its own text ends in a period, so this one
+		// does not add another.
 		return awsCreds{}, time.Time{}, Error("bedrock: could not resolve AWS profile " + profile +
-			" - " + err.Error() + ". For SSO, run `aws sso login" + profileFlag(profile) +
-			"` as the user gohort runs as (the token cache is per-user).")
+			" - " + err.Error() + " For SSO, run `aws sso login" + profileFlag(profile) + "`.")
 	}
 	Debug("[bedrock]: aws CLI credential export unavailable (%v), trying the static credentials file", err)
 	if c, err := awsCredsFromFile(profile); err == nil {
