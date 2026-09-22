@@ -180,12 +180,23 @@ func (T *OrchestrateApp) handleAgentAccess(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, accessKnowledgeRows(rec))
 		return
 	}
-	sess := &ToolSession{Username: user, DB: udb}
-	rows := []map[string]any{}
-	for _, g := range privilegeToolRows(sess, rec, nil) {
-		rows = append(rows, map[string]any{
-			"name": g.Name, "detail": g.Detail, "policy": privilegePolicyLabel(g.Policy),
+	// The tools this agent's worker would actually be handed, resolved through
+	// the same call the runner makes.
+	//
+	// This used to list from privilegeToolRows, which reads rec.AllowedTools.
+	// That field is EMPTY on a default-pool agent, where empty means "every
+	// catalog tool", so the one page built to answer "what can this thing do"
+	// showed nothing at all for the commonest kind of agent.
+	//
+	// A resolution failure says so instead of rendering an empty list. "No
+	// tools" and "could not work out the tools" are opposite facts and this
+	// page is only worth having if it never confuses them.
+	rows, err := T.resolvedAgentTools(r.Context(), udb, user, rec)
+	if err != nil {
+		writeJSON(w, map[string]any{
+			"error": "This agent's toolset could not be resolved, so nothing below is the full picture: " + err.Error(),
 		})
+		return
 	}
 	writeJSON(w, rows)
 }
