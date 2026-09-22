@@ -48,6 +48,35 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 	// owns a few fields and must not carry the whole record: a FormPanel posts
 	// everything it holds, and everything it does not hold would be blanked.
 	patchURL := T.WebPrefix() + "/api/agents/" + url.PathEscape(agent.ID)
+	policyURL := T.WebPrefix() + "/api/console/permissions/policy?id={_id}"
+	approveURL := T.WebPrefix() + "/api/console/approvals/approve?id={_id}"
+	alwaysURL := T.WebPrefix() + "/api/console/approvals/always?id={_id}"
+	denyURL := T.WebPrefix() + "/api/console/approvals/deny?id={_id}"
+	removeURL := T.WebPrefix() + "/api/console/permissions/remove?id={_id}"
+	// Standing decisions, one tab's worth at a time. Narrowed on the SERVER:
+	// a browser-side filter would have every tab fetch every row and hide
+	// most, and a count in a heading would then be counting what is not shown.
+	decisions := func(kind string) string {
+		return T.WebPrefix() + "/api/console/permissions?agent=" + url.QueryEscape(agent.ID) + "&kind=" + kind
+	}
+	// The segmented control every decision row carries. Its value arrives in
+	// the POST body keyed by the field, which the policy handler now reads as
+	// well as ?value=, so this writes through the same setter the card list
+	// always did rather than a second endpoint kept in step by hand.
+	policyLadder := func() []ui.RowAction {
+		return []ui.RowAction{{
+			Type: "segmented", Field: "_policy", PostTo: policyURL,
+			Options: []ui.SelectOption{
+				{Value: "allow", Label: "Always allow"},
+				{Value: "ask", Label: "Needs approval"},
+				{Value: "block", Label: "Blocked"},
+			},
+		}, {
+			Type: "button", Label: "Remove", Variant: "danger", OnlyIf: "_managed",
+			PostTo:  removeURL,
+			Confirm: "Forget this decision entirely? It returns to the default and leaves this page.",
+		}}
+	}
 
 	page := ui.Page{
 		Title:     "Security: " + name,
@@ -60,6 +89,66 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 		Tabbed: true,
 		Nav:    HubNav("/orchestrate"),
 		Sections: []ui.Section{
+			{
+				Group:    "Requests",
+				Title:    "Waiting on you",
+				Subtitle: "A run has stopped and is holding for an answer. Nothing here is a setting: each row is one decision, once.",
+				Detail: "Allow once runs this call and asks again next time. Always allow runs it and records the grant, which then appears under the tab it belongs to. " +
+					"Offers are different: nothing is blocked on them and the tool already works, so they read Scope it and Dismiss rather than borrowing approval words for a refusal that is not happening.",
+				Body: ui.Table{
+					Source:    decisions("requests"),
+					RowKey:    "_id",
+					EmptyText: "Nothing is waiting. A run that stops for an answer appears here.",
+					Columns: []ui.Col{
+						{Field: "Who", Label: ""},
+						{Field: "Detail", Label: "", Mute: true},
+						{Field: "Requested", Label: "Asked", Mute: true},
+					},
+					// Ported from the card list one for one, conditions
+					// included. These unblock a stopped run, so a control that
+					// silently stopped appearing would leave a turn waiting
+					// with no way to answer it.
+					RowActions: []ui.RowAction{
+						// Activating a drafted sub-agent is a ONE-TIME decision:
+						// approving it consumes the authorization, so "once" and
+						// "always" have nothing to mean.
+						{Type: "button", Label: "Approve", Variant: "success", OnlyIf: "_oneshot",
+							PostTo:  approveURL,
+							Confirm: "Approve this sub-agent? It goes live and becomes dispatchable."},
+						{Type: "button", Label: "Allow once", OnlyIf: "_pending", HideIf: "_oneshot",
+							PostTo:  approveURL,
+							Confirm: "Approve and run this once?"},
+						{Type: "button", Label: "Always allow", Variant: "success", OnlyIf: "_pending", HideIf: "_oneshot",
+							PostTo:  alwaysURL,
+							Confirm: "Approve, run, and always allow this in future?"},
+						{Type: "button", Label: "Deny", Variant: "danger", OnlyIf: "_pending",
+							PostTo: denyURL},
+						// An OFFER, not a request: nothing is blocked on it and
+						// the tool already works. It never borrows approval
+						// verbs, and neither button is destructive enough to
+						// need a confirm.
+						{Type: "button", Label: "Scope it", Variant: "success", OnlyIf: "_suggestion",
+							PostTo: approveURL},
+						{Type: "button", Label: "Dismiss", OnlyIf: "_suggestion",
+							PostTo: denyURL},
+					},
+				},
+			},
+			{
+				Group:    "Tools",
+				Title:    "Standing decisions",
+				Subtitle: "What you have already settled here, and what it is set to now.",
+				Body: ui.Table{
+					Source:    decisions("tools"),
+					RowKey:    "_id",
+					EmptyText: "No standing decisions about its tools. They run as the gate allows.",
+					Columns: []ui.Col{
+						{Field: "Who", Label: ""},
+						{Field: "Detail", Label: "", Mute: true},
+					},
+					RowActions: policyLadder(),
+				},
+			},
 			{
 				Title:    "What this agent can do",
 				Group:    "Tools",
@@ -75,10 +164,15 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 					SearchPlaceholder: "Find a tool",
 					Columns: []ui.Col{
 						{Field: "name", Label: "Tool"},
-						{Field: "chat", Label: "In chat", Type: "badge", Badges: []ui.BadgeMapping{
-							{Value: "Asks", Label: "Asks first", Color: "warning"},
-							{Value: "Runs", Label: "Runs free", Color: "mute"},
-							{Value: "off", Label: "Not loaded", Color: "mute"},
+						// Whether the agent LOADS it, which the controls
+						// cannot say: they set what happens when it is called,
+						// not whether it is there to call. The supervision
+						// state moved onto the toggle beside it, where it was
+						// being shown twice.
+						{Field: "chat", Label: "Loaded", Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: "Asks", Label: "On", Color: "success"},
+							{Value: "Runs", Label: "On", Color: "success"},
+							{Value: "off", Label: "Off", Color: "mute"},
 						}},
 						{Field: "origin", Label: "From", Mute: true},
 						{Field: "detail", Label: "What it does", Mute: true},
@@ -88,12 +182,20 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 						// setting. A framework tool has no record of its own,
 						// so a switch on its row would take the click, show
 						// the new state, and revert on the next reload.
+						//
+						// Both are LABELLED. A row carries two ladders about
+						// two different situations, and a bare control says
+						// what its options are but never what question it
+						// answers: an unlabelled switch beside an unlabelled
+						// track is a guess either way.
 						{
 							Type: "toggle", Field: "asks", OnlyIf: "governable",
+							Label:  "Ask me first",
 							PostTo: toolWrite, Method: "PATCH",
 						},
 						{
 							Type: "segmented", Field: "unattended", OnlyIf: "governable",
+							Label:  "Unattended",
 							PostTo: toolWrite, Method: "PATCH",
 							Options: []ui.SelectOption{
 								{Value: "allow", Label: "Runs"},
@@ -107,6 +209,21 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 							},
 						},
 					},
+				},
+			},
+			{
+				Group:    "Delegation",
+				Title:    "Standing decisions",
+				Subtitle: "What you have already settled here, and what it is set to now.",
+				Body: ui.Table{
+					Source:    decisions("delegation"),
+					RowKey:    "_id",
+					EmptyText: "No standing decisions about what it may call.",
+					Columns: []ui.Col{
+						{Field: "Who", Label: ""},
+						{Field: "Detail", Label: "", Mute: true},
+					},
+					RowActions: policyLadder(),
 				},
 			},
 			{
@@ -201,6 +318,21 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 			},
 			{
 				Group:    "Workspace",
+				Title:    "Standing decisions",
+				Subtitle: "What you have already settled here, and what it is set to now.",
+				Body: ui.Table{
+					Source:    decisions("workspace"),
+					RowKey:    "_id",
+					EmptyText: "Nothing recorded about its sandbox.",
+					Columns: []ui.Col{
+						{Field: "Who", Label: ""},
+						{Field: "Detail", Label: "", Mute: true},
+					},
+					RowActions: policyLadder(),
+				},
+			},
+			{
+				Group:    "Workspace",
 				Title:    "What its sandbox may reach",
 				Subtitle: "Shell and file work happen in one sandbox, and these govern all of it.",
 				Body: ui.FormPanel{
@@ -233,6 +365,21 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 						{Field: "detail", Label: "", Mute: true},
 						{Field: "where", Label: "Set in", Mute: true},
 					},
+				},
+			},
+			{
+				Group:    "Access",
+				Title:    "Standing decisions",
+				Subtitle: "What you have already settled here, and what it is set to now.",
+				Body: ui.Table{
+					Source:    decisions("access"),
+					RowKey:    "_id",
+					EmptyText: "No standing decisions about who it may reach.",
+					Columns: []ui.Col{
+						{Field: "Who", Label: ""},
+						{Field: "Detail", Label: "", Mute: true},
+					},
+					RowActions: policyLadder(),
 				},
 			},
 			{

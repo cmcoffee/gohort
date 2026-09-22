@@ -400,6 +400,17 @@
         // {field: value} to post_to — same contract as 'select', just a
         // more visible control for a short mutually-exclusive ladder.
         var track = el('div', {class: 'ui-row-segmented'});
+        // Optional caption to the LEFT, the same pairing a toggle gets and
+        // for the same reason: in a table without a column header for it, a
+        // bare control says what its options are but never what QUESTION it
+        // answers. Two ladders on one row are indistinguishable without it.
+        var segHost = track;
+        if (act.label) {
+          segHost = el('span', {class: 'ui-row-toggle-pair'}, [
+            el('span', {class: 'ui-row-toggle-label'}, [act.label]),
+            track,
+          ]);
+        }
         var segDisabled = act.disable_if && rec[act.disable_if];
         (act.options || []).forEach(function(o) {
           var active = String(rec[act.field]) === String(o.value);
@@ -420,7 +431,7 @@
           });
           track.appendChild(seg);
         });
-        parent.appendChild(track);
+        parent.appendChild(segHost);
       } else if (act.type === 'number') {
         var ninput = el('input', {type: 'number', class: 'ui-row-number'});
         if (act.width) ninput.style.width = act.width;

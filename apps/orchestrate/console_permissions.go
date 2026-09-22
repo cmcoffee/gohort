@@ -625,6 +625,16 @@ func (T *OrchestrateApp) handleConsolePermissionPolicy(w http.ResponseWriter, r 
 	}
 	kind, target, found := strings.Cut(strings.TrimSpace(r.URL.Query().Get("id")), ":")
 	value := strings.TrimSpace(r.URL.Query().Get("value"))
+	// A segmented control on a TABLE row sends the new value as a JSON body
+	// keyed by its field; the card list sends it as ?value=. Same decision and
+	// the same setter below, so this reads whichever arrived rather than
+	// growing a second endpoint that would have to be kept in step.
+	if value == "" {
+		var body map[string]string
+		if json.NewDecoder(r.Body).Decode(&body) == nil {
+			value = strings.TrimSpace(body["_policy"])
+		}
+	}
 	if !found || target == "" {
 		http.Error(w, "bad id", http.StatusBadRequest)
 		return

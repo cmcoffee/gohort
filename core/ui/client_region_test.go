@@ -107,3 +107,27 @@ func TestAnAgentCanBeSubstitutedIntoASourcePath(t *testing.T) {
 		t.Error("the path substitution runs after the query stamp")
 	}
 }
+
+// A control in a table without a column header for it says what its options
+// are but never what QUESTION it answers. A row carrying two ladders about two
+// different situations is a guess either way without captions.
+func TestASegmentedRowActionCanCarryACaption(t *testing.T) {
+	src := readRuntimeFile(t, "10_basics.js")
+	i := strings.Index(src, "act.type === 'segmented'")
+	if i < 0 {
+		t.Fatal("the segmented renderer has moved")
+	}
+	body := src[i : i+1400]
+	if !strings.Contains(body, "ui-row-toggle-label") {
+		t.Error("a segmented action cannot carry a caption, so two ladders on one row are indistinguishable")
+	}
+	// The same pairing a toggle already had, not a second style for the same
+	// idea.
+	if !strings.Contains(body, "ui-row-toggle-pair") {
+		t.Error("the caption uses its own markup instead of the pairing toggles use")
+	}
+	// Still renders bare when unlabelled: most tables have a header for it.
+	if !strings.Contains(body, "if (act.label)") {
+		t.Error("the caption is unconditional, so every existing segmented control grows one")
+	}
+}
