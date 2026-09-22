@@ -62,3 +62,48 @@ func TestAppsCanRaiseAToast(t *testing.T) {
 		t.Error("showToast is a prelude local again, so an app has no way to raise one")
 	}
 }
+
+// A nav item can name a PAGE, not only a table source. The app declares the
+// page once and serves it both ways, so a panel and the standalone page
+// cannot drift into two surfaces that merely resemble each other.
+func TestANavItemCanRenderADeclaredPage(t *testing.T) {
+	src := readRuntimeFile(t, "30_agent_loop_panel.js")
+	if !strings.Contains(src, "if (item.page_source) {") {
+		t.Fatal("a nav item naming a page is ignored")
+	}
+	i := strings.Index(src, "if (item.page_source) {")
+	body := src[i : i+1200]
+	// Drawn with the SAME renderer a document uses, not a second one.
+	if !strings.Contains(body, "window.uiRenderPageBody(pcfg, orchView)") {
+		t.Error("the page is not drawn with the shared page renderer")
+	}
+	// The panel already sits inside a document: a page header, back arrow and
+	// footer here would be two of everything.
+	if strings.Contains(body, "uiRenderPage(") {
+		t.Error("the panel renders a whole document, chrome included")
+	}
+	// It must return, or the table path runs too and overwrites it.
+	if !strings.Contains(body, "return;") {
+		t.Error("the table path still runs after the page is drawn")
+	}
+}
+
+// A source whose id belongs in the PATH says so with {agent}; one keyed by
+// query still gets the ?agent= stamp. A source can need either.
+func TestAnAgentCanBeSubstitutedIntoASourcePath(t *testing.T) {
+	src := readRuntimeFile(t, "30_agent_loop_panel.js")
+	i := strings.Index(src, "function orchSourceURL(")
+	if i < 0 {
+		t.Fatal("orchSourceURL has moved")
+	}
+	body := src[i : i+900]
+	if !strings.Contains(body, "{agent}") {
+		t.Error("a path-keyed source cannot name the agent, so it fetches the route literally")
+	}
+	// Before the query stamp: a path-keyed source that also received ?agent=
+	// is harmless, but substituting after would leave the placeholder in the
+	// path it was meant to fill.
+	if strings.Index(body, "{agent}") > strings.Index(body, "'agent=' +") {
+		t.Error("the path substitution runs after the query stamp")
+	}
+}

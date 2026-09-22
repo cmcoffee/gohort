@@ -21,6 +21,7 @@ package orchestrate
 import (
 	"net/http"
 	"net/url"
+	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/gohort/core/ui"
@@ -252,6 +253,22 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				},
 			},
 		},
+	}
+	// ?format=json hands back the DECLARATION rather than a document, so the
+	// chat overlay can draw this page where the conversation normally sits.
+	// Same page either way: one call builds it and the two callers differ only
+	// in what they do with it, which is what stops the panel and the page
+	// drifting into two surfaces that merely resemble each other.
+	if strings.TrimSpace(r.URL.Query().Get("format")) == "json" {
+		blob, err := page.ConfigJSON()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(blob)
+		return
 	}
 	page.ServeHTTP(w, r)
 }

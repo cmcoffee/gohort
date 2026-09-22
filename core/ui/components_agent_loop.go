@@ -401,6 +401,19 @@ type NewSessionVariant struct {
 type OrchestratorNavItem struct {
 	Label  string `json:"label"`
 	Source string `json:"source,omitempty"` // GET → table rows; empty = the chat view
+	// PageSource names a URL returning a declared PAGE (Page.ConfigJSON), drawn
+	// where the conversation normally sits. Source says "rows to tabulate";
+	// this says "a page to render", and the framework draws it with the same
+	// renderer a document uses: the same tabs, sections and components.
+	//
+	// For a surface too large or too structured to be a table - a settings
+	// console with tabs, forms and its own sub-navigation. The app declares
+	// that page ONCE and serves it both ways, so the panel and the standalone
+	// page cannot drift into two surfaces that merely resemble each other.
+	//
+	// Wins over Source when both are set, and carries ?agent=<id> like Source
+	// does, so the page can be about the agent in view.
+	PageSource string `json:"page_source,omitempty"`
 	// RowActions render as per-row buttons in the table. Each fires
 	// "<Method> <URL>?id=<row._id>" then reloads the view. Rows carry their
 	// target in a hidden "_id" field (e.g. a Delete button, or an

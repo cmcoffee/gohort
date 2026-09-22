@@ -447,7 +447,17 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// no scope, a tool set to ask wherever it appears) are
 						// still listed, because they govern this agent too and
 						// hiding them would let the page lie by omission.
-						{Label: "Security", Icon: "🔑", Source: "api/console/permissions", Topbar: true, AllAgents: true, BadgeField: "_pending", Layout: "cards",
+						// PageSource, not Source: Security is the agent's whole
+						// console - tabs, forms, its own sections - and it is the
+						// SAME page served at /agent/<id>/access. Declared once,
+						// rendered here and there, so the panel and the page
+						// cannot become two surfaces that resemble each other.
+						//
+						// Source stays alongside it for the badge, which counts
+						// pending requests and has to be a number this menu can
+						// read without rendering the page.
+						{Label: "Security", Icon: "🔑", PageSource: "agent/{agent}/access?format=json",
+							Source: "api/console/permissions", Topbar: true, AllAgents: true, BadgeField: "_pending", Layout: "cards",
 							// Tabs along the top, because four different
 							// questions arrive here and an undifferentiated
 							// list made the reader sort them in their head:

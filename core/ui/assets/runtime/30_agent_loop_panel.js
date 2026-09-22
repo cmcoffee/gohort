@@ -810,6 +810,13 @@
       function orchSourceURL(src, item, extra) {
         if (!src) return src;
         var url = src;
+        // {agent} in the PATH, for a source whose id is part of the route
+        // rather than a query (/agent/<id>/access). Substituted before the
+        // ?agent= stamp below, which a query-keyed handler still wants: a
+        // source can need either, and one that names {agent} has said which.
+        if (url.indexOf('{agent}') >= 0) {
+          url = url.replace(/\{agent\}/g, encodeURIComponent(window.GOHORT_AGENT_ID || ''));
+        }
         if (extra) url += (url.indexOf('?') >= 0 ? '&' : '?') + extra;
         if (item && item.scope === 'fleet') return url;
         return url + (url.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '');
@@ -946,6 +953,23 @@
           // instead of leaving the stale session title.
           if (drawer && drawer.mobileTitle) drawer.mobileTitle.textContent = item.label || '';
           orchView.textContent = 'Loading…';
+          // A nav item naming a PAGE renders that page here, with the same
+          // renderer a document uses. The app declares the page once and
+          // serves it both ways, so this panel and the standalone page cannot
+          // drift into two surfaces that merely resemble each other.
+          if (item.page_source) {
+            fetch(orchSourceURL(item.page_source, item, extraQuery))
+              .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+              .then(function(pcfg) {
+                orchView.textContent = '';
+                // The document's own chrome is already around this: the page
+                // header, its back arrow and its footer belong to a document,
+                // and a second set inside a panel is two of everything.
+                window.uiRenderPageBody(pcfg, orchView);
+              })
+              .catch(function(err) { orchView.textContent = 'Failed to load: ' + err.message; });
+            return;
+          }
           // A view the user ASKED for opens whole. A redraw after a change
           // does not: it is the same view, still on screen, and the tab and
           // the search text are where the reader left them.

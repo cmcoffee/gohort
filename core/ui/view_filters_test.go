@@ -205,7 +205,11 @@ func TestAnAutoRefreshDoesNotUndoTheFilter(t *testing.T) {
 	if k < 0 {
 		t.Fatal("the deliberate-open path has moved")
 	}
-	if !strings.Contains(src[k:k+600], "clearOrchFilterState()") {
+	// A window rather than the whole file, so this cannot be satisfied by a
+	// clear somewhere unrelated. Widened from 600 when the page_source branch
+	// landed between the two: the reset is still on the deliberate-open path,
+	// just further down it.
+	if !strings.Contains(src[k:k+2400], "clearOrchFilterState()") {
 		t.Error("opening a view does not reset its filters")
 	}
 }
