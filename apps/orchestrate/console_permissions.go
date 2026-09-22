@@ -385,6 +385,11 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 	// dropping it would let the page lie by omission, which is the dangerous
 	// direction here.
 	want := strings.TrimSpace(r.URL.Query().Get("agent"))
+	// kind narrows to one tab's worth. Server-side, because each tab on the
+	// Security page asks for its own rows: a client-side filter would have
+	// every tab fetch every row and hide most of them, and a count in a tab
+	// heading would then be counting things the tab is not showing.
+	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
 	kept := make([]permRow, 0, len(out))
 	for _, row := range out {
 		if want != "" {
@@ -393,6 +398,9 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 			}
 		}
 		row.Kind = permRowKind(row.ID)
+		if kind != "" && row.Kind != kind {
+			continue
+		}
 		kept = append(kept, row)
 	}
 	writeJSON(w, kept)

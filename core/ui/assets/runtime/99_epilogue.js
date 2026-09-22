@@ -222,6 +222,320 @@
     }
   }
 
+  // renderPageBody draws a declared page's TABS and SECTIONS into any host.
+  //
+  // Extracted from mount(), which could only ever draw into #ui-root. A page
+  // is a declaration, and there is no reason the only place it can appear is
+  // a document of its own: an app wanting one of its pages inside a panel had
+  // to either rebuild the surface by hand or embed a frame and inherit a
+  // second document's worth of problems.
+  //
+  // Takes the host so the caller decides where. mount() passes #ui-root and
+  // the page renders exactly as before; an overlay passes its own element and
+  // gets the same tabs, the same sections, the same components.
+  //
+  // What stays in mount() is what belongs to a DOCUMENT rather than a page:
+  // the header, the live menu, the footer. A host that already has those does
+  // not want a second set.
+  function renderPageBody(cfg, root) {
+    var inGrid = !!cfg.grid;
+    var tabbed = !!cfg.tabbed;
+    var sectionsHost = root;        // non-tabbed host
+    var groupHosts = {};            // group name -> mount host (tabbed)
+    var secNav = !!cfg.section_nav; // left-rail sub-nav of a group's sections
+    // buildSecNav renders a left rail of section titles into mountEl; one
+    // section is shown at a time. Each section stashes its own mount host
+    // (s.__host) so hostForSection routes to the right sub-panel. Used both
+    // inside a tab (a group's sections) and at page level on a non-tabbed page
+    // (all sections form a single rail).
+    // secnavSlug names a section for the URL: "Try it" → "try-it". The
+    // same transform any server code linking INTO a page must apply
+    // (see Go's ui.SectionSlug), which is what makes a graph node or a
+    // shared link able to say "#verify" and land on the verify section.
+    function secnavSlug(title) {
+      return String(title || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  }
+  function buildSecNav(mountEl, secs) {
+    var rail = el('div', {class: 'ui-secnav-rail'});
+    var content = el('div', {class: 'ui-secnav-content'});
+    mountEl.appendChild(el('div', {class: 'ui-secnav'}, [rail, content]));
+    var subPanels = [], items = [], slugs = [];
+    function activate(si) {
+      for (var k = 0; k < subPanels.length; k++) subPanels[k].classList.toggle('ui-tab-hidden', k !== si);
+      for (var m = 0; m < items.length; m++) items[m].classList.toggle('active', m === si);
+    }
+    secs.forEach(function(s, si) {
+      var sp = el('div', {class: 'ui-secnav-panel' + (si === 0 ? '' : ' ui-tab-hidden')});
+      if (inGrid) { var sg = el('div', {class: 'ui-section-grid'}); sp.appendChild(sg); s.__host = sg; }
+      else { s.__host = sp; }
+      content.appendChild(sp);
+      subPanels.push(sp);
+      slugs.push(secnavSlug(s.title));
+      var ib = el('button', {type: 'button', class: 'ui-secnav-item' + (si === 0 ? ' active' : '')}, [s.title || ('Section ' + (si + 1))]);
+      // Nesting: a rail whose sections are not a flat list says so.
+      // Two entries that are ALTERNATIVES read exactly like two in
+      // sequence otherwise, which is the distinction such a list most
+      // needs to make.
+      if (s.indent > 0) {
+        ib.classList.add('nested');
+        ib.style.paddingLeft = (0.75 + s.indent * 0.85) + 'rem';
+      }
+      ib.addEventListener('click', function() {
+        activate(si);
+        // The hash is the address of the open section, so a link can carry
+        // someone to it and the browser's Back walks the trail. Pushed with
+        // a depth on it so the header arrow can step over the whole trail at
+        // once — see uiPushPageStep.
+        if (slugs[si]) uiPushPageStep(slugs[si]);
+      });
+      items.push(ib);
+      rail.appendChild(ib);
+    });
+    // Deep-linking: land on (or be sent to) #<slug>. hashchange covers
+    // both a link clicked INSIDE the page (a graph node) and the back
+    // button walking earlier sections.
+    function activateHash() {
+      var want = window.location.hash.replace(/^#/, '');
+      if (!want) { activate(0); return; }
+      var si = slugs.indexOf(secnavSlug(want));
+      if (si >= 0) activate(si);
+    }
+    window.addEventListener('hashchange', function() {
+      activateHash();
+      uiStampPageStep();
+    });
+    activateHash();
+    // Landing on #<slug> directly is depth zero: it is where this reader
+    // started, so the header arrow leaves the page rather than clearing the
+    // hash first.
+    uiPageDepth();
+  }
+  if (tabbed) {
+    var order = [], seenG = {}, secByGroup = {};
+    (cfg.sections || []).forEach(function(s) {
+      var g = s.group || 'General';
+      if (!seenG[g]) { seenG[g] = true; order.push(g); secByGroup[g] = []; }
+      secByGroup[g].push(s);
+    });
+    var tabbar = el('div', {class: 'ui-tabbar'});
+    root.appendChild(tabbar);
+    var panels = [];
+    order.forEach(function(g, idx) {
+      var panel = el('div', {class: 'ui-tabpanel' + (idx === 0 ? '' : ' ui-tab-hidden')});
+      if (secNav && secByGroup[g].length > 1) {
+        buildSecNav(panel, secByGroup[g]);
+      } else {
+        var host = panel;
+        if (inGrid) { host = el('div', {class: 'ui-section-grid'}); panel.appendChild(host); }
+        groupHosts[g] = host;
+      }
+      panels.push(panel);
+      var btn = el('button', {type: 'button', class: 'ui-tab' + (idx === 0 ? ' active' : '')}, [g]);
+      btn.addEventListener('click', function() {
+        for (var i = 0; i < panels.length; i++) panels[i].classList.toggle('ui-tab-hidden', i !== idx);
+        var tabs = tabbar.querySelectorAll('.ui-tab');
+        for (var j = 0; j < tabs.length; j++) tabs[j].classList.remove('active');
+        btn.classList.add('active');
+      });
+      tabbar.appendChild(btn);
+      root.appendChild(panel);
+    });
+  } else if (secNav && (cfg.sections || []).length > 1) {
+    // Page-level side-nav: no top tabs (a single conceptual area), just one
+    // rail of all sections. Fits a flat management surface better than a long
+    // scroll of stacked panels.
+    buildSecNav(root, cfg.sections || []);
+  } else if (inGrid) {
+    sectionsHost = el('div', {class: 'ui-section-grid'});
+    root.appendChild(sectionsHost);
+  }
+  // bareSectionHead writes a no-chrome section's title/subtitle above its
+  // body. No card, no padding, no wrapper around the body — the panel keeps
+  // managing its own layout, which is the whole reason it asked for
+  // no_chrome; it just stops being the one section kind whose heading is
+  // silently discarded.
+  //
+  // Nothing renders when there is no title and no subtitle, so every existing
+  // no-chrome section (which sets neither) is untouched.
+  function bareSectionHead(s, into) {
+    if (!s.title && !s.subtitle) return;
+    var head = el('div', {class: 'ui-section-bare-head'});
+    if (s.title) {
+      head.appendChild(window.uiAttachInfo(
+        el('div', {class: 'ui-section-h'}, [el('span', {text: s.title})]),
+        s.title ? s.detail : ''));
+    }
+    if (s.subtitle) {
+      // The icon goes on the TITLE when there is one. A section with only a
+      // subtitle has nowhere else to put it.
+      head.appendChild(window.uiAttachInfo(
+        el('div', {class: 'ui-section-sub'}, [s.subtitle]), s.title ? '' : s.detail));
+    }
+    into.appendChild(head);
+  }
+  // markMounted stamps every element a section mounted with data-ui-section,
+  // so "how many sections actually rendered?" has ONE answer for chromed and
+  // no-chrome sections alike. Anything reading the page from outside — a
+  // headless render check, a screenshot tool — can count
+  // '.ui-section,[data-ui-section]' instead of guessing at each panel's own
+  // root class and reporting a working page as blank.
+  function markMounted(nodes) {
+    (nodes || []).forEach(function(n) {
+      if (n && n.nodeType === 1 && !n.hasAttribute('data-ui-section')) {
+        n.setAttribute('data-ui-section', '');
+      }
+    });
+  }
+  function hostForSection(s) {
+    if (s.__host) return s.__host;
+    if (tabbed) return groupHosts[s.group || 'General'] || sectionsHost;
+    return sectionsHost;
+  }
+  (cfg.sections || []).forEach(function(s) {
+    var host = hostForSection(s);
+    // NoChrome sections skip the card wrapper — body mounts directly
+    // with no padding/bg/border. Used when the contained component
+    // (e.g. ChatPanel) manages its own layout and a card would just
+    // create double-nested boxes. In grid mode they ride a full-width
+    // slot so page order is preserved.
+    if (s.no_chrome) {
+      if (inGrid) {
+        var ncWrap = el('div', {class: 'ui-section-wide'});
+        bareSectionHead(s, ncWrap);
+        if (s.body) mountComponent(s.body, ncWrap);
+        markMounted([ncWrap]);
+        host.appendChild(ncWrap);
+      } else if (s.body) {
+        bareSectionHead(s, host);
+        // Mount directly, then MARK what landed. A no-chrome section has no
+        // .ui-section card by design, so from outside the page it used to be
+        // invisible — and a page built only of them (chat, workbench,
+        // pipeline) counted zero sections and read as blank to anything
+        // inspecting the DOM. The marker is inert: no class, no style, no
+        // wrapper element that could break a panel's 100%-height layout.
+        var before = host.childNodes.length;
+        mountComponent(s.body, host);
+        markMounted(Array.prototype.slice.call(host.childNodes, before));
+      }
+      return;
+    }
+    var section = el('div', {class: 'ui-section'});
+    markMounted([section]);
+    // Collapsible — when the section is declared with Collapsed:true
+    // and HAS a title, render the title bar clickable with a caret
+    // that hides/shows the subtitle + body. Without a title there's
+    // nothing to click, so the flag is silently ignored.
+    var collapsed = !!s.collapsed && !!s.title;
+    var caret = null;
+    var inner = el('div', {class: 'ui-section-inner'});
+    if (s.title) {
+      var headerWrap = el('div', {class: 'ui-section-h'}, [
+        el('span', {text: s.title}),
+        window.uiInfoIcon(s.detail),
+        el('span', {class: 'ui-section-h-r'}),
+      ]);
+      if (collapsed) {
+        headerWrap.style.cursor = 'pointer';
+        headerWrap.style.userSelect = 'none';
+        caret = document.createElement('span');
+        caret.style.cssText = 'margin-right:0.4rem;display:inline-block;color:var(--text-mute);transition:transform 0.15s';
+        caret.textContent = String.fromCharCode(9656); // ▸
+        headerWrap.insertBefore(caret, headerWrap.firstChild);
+      }
+      section.appendChild(headerWrap);
+      if (collapsed) {
+        headerWrap.addEventListener('click', function(ev) {
+          // Ignore clicks on the saving-indicator slot (.ui-section-h-r)
+          // and any interactive controls a future caller might land there.
+          if (ev.target && ev.target.closest && ev.target.closest('.ui-section-h-r')) return;
+          var open = inner.style.display === 'none';
+          inner.style.display = open ? '' : 'none';
+          caret.style.transform = open ? 'rotate(90deg)' : '';
+        });
+      }
+    }
+    if (s.subtitle || (s.detail && !s.title)) {
+      inner.appendChild(window.uiAttachInfo(
+        el('div', {class: 'ui-section-sub'}, [s.subtitle || '']),
+        s.title ? '' : s.detail));
+    }
+    if (s.body) mountComponent(s.body, inner);
+    if (collapsed) inner.style.display = 'none';
+    section.appendChild(inner);
+    if (inGrid && s.wide) section.classList.add('ui-section-wide');
+    // Cap the CARD, not just its contents. A wide section spans every
+    // grid column; on a large display that can be more width than the
+    // body has anything to say. Capped, the card keeps its own edge and
+    // stays left-aligned in the slot.
+    if (s.max_width) section.style.maxWidth = s.max_width;
+    host.appendChild(section);
+  });
+
+  // A full-height panel is a two-column layout that owns the viewport: a
+  // rail beside a working column. Every hand-written page that hosts one sets
+  // max_width 100%, arrived at independently each time — which is the tell
+  // that the requirement belongs to the PANEL rather than to each page.
+  //
+  // A STORED page cannot make that call reliably. Its width was decided when
+  // it was authored, so a page whose panel arrived later opens in a narrow
+  // column with a sidebar eating a quarter of it, and the only repair is to
+  // re-author it. Deciding it here, from what actually mounted, fixes the
+  // pages already written and means an author cannot get it wrong.
+  //
+  // Keyed on the panel roots, deliberately not on "has any section": a
+  // no-chrome section holding ordinary content keeps the column it asked for.
+  if (root.querySelector('.ui-chat, .ui-agent, .ui-pl, .ui-wb, .ui-cw, .ui-tw')) {
+    root.style.maxWidth = '100%';
+  }
+
+  // Masonry packing for grid sections. Plain CSS grid aligns every row to its
+  // tallest card, leaving holes under shorter cards (the "missing puzzle pieces"
+  // look). We give the grid a fine row track (the .ui-masonry CSS above) and set
+  // each card's row span to ceil(height / track), so cards pack directly under
+  // the one above. Only at >=2 columns; single-column (mobile) clears the spans.
+  if (inGrid) {
+    var masonryGrids = Array.prototype.slice.call(root.querySelectorAll('.ui-section-grid'));
+    masonryGrids.forEach(function(g) { g.classList.add('ui-masonry'); });
+    var layoutMasonry = function(grid) {
+      if (grid.offsetParent === null) return; // hidden (inactive tab) — reruns when shown
+      var cs = getComputedStyle(grid);
+      var cols = cs.gridTemplateColumns.split(' ').filter(Boolean).length;
+      var kids = Array.prototype.slice.call(grid.children);
+      if (cols < 2) { kids.forEach(function(c) { c.style.gridRowEnd = ''; }); return; }
+      var rowH = parseFloat(cs.gridAutoRows) || 1;
+      var gap = parseFloat(cs.rowGap) || 0;
+      // Reset, measure all, then assign — avoids interleaved read/write thrash
+      // and the cards never paint mid-pass (one synchronous JS task).
+      kids.forEach(function(c) { c.style.gridRowEnd = ''; });
+      var spans = kids.map(function(c) {
+        return Math.max(1, Math.ceil((c.getBoundingClientRect().height + gap) / (rowH + gap)));
+      });
+      kids.forEach(function(c, i) { c.style.gridRowEnd = 'span ' + spans[i]; });
+    };
+    var relayoutMasonry = function() { masonryGrids.forEach(layoutMasonry); };
+    requestAnimationFrame(relayoutMasonry); // initial pass once layout settles
+    var mrT = null;
+    window.addEventListener('resize', function() {
+      if (mrT) clearTimeout(mrT);
+      mrT = setTimeout(relayoutMasonry, 120); // column count flips at the breakpoint
+    });
+    // Recompute when a card's own height changes — async Table loads, ShowWhen
+    // toggles, collapsibles, and tab show/hide (display:none -> shown fires it).
+    if (window.ResizeObserver) {
+      var moT = null;
+      var mo = new ResizeObserver(function() {
+        if (moT) clearTimeout(moT);
+        moT = setTimeout(relayoutMasonry, 60);
+      });
+      masonryGrids.forEach(function(grid) {
+        Array.prototype.forEach.call(grid.children, function(c) { mo.observe(c); });
+      });
+    }
+  }
+  }
+  // Public, so an app can render a declared page wherever it needs one.
+  window.uiRenderPageBody = renderPageBody;
+
   function mount() {
     var configEl = document.getElementById('ui-config');
     if (!configEl) return;
@@ -508,300 +822,7 @@
     //  - grid (cfg.grid): one responsive 2-col grid (1 col on mobile);
     //    Wide sections span full width.
     //  - plain: stacked directly on root.
-    var inGrid = !!cfg.grid;
-    var tabbed = !!cfg.tabbed;
-    var sectionsHost = root;        // non-tabbed host
-    var groupHosts = {};            // group name -> mount host (tabbed)
-    var secNav = !!cfg.section_nav; // left-rail sub-nav of a group's sections
-    // buildSecNav renders a left rail of section titles into mountEl; one
-    // section is shown at a time. Each section stashes its own mount host
-    // (s.__host) so hostForSection routes to the right sub-panel. Used both
-    // inside a tab (a group's sections) and at page level on a non-tabbed page
-    // (all sections form a single rail).
-    // secnavSlug names a section for the URL: "Try it" → "try-it". The
-    // same transform any server code linking INTO a page must apply
-    // (see Go's ui.SectionSlug), which is what makes a graph node or a
-    // shared link able to say "#verify" and land on the verify section.
-    function secnavSlug(title) {
-      return String(title || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-    }
-    function buildSecNav(mountEl, secs) {
-      var rail = el('div', {class: 'ui-secnav-rail'});
-      var content = el('div', {class: 'ui-secnav-content'});
-      mountEl.appendChild(el('div', {class: 'ui-secnav'}, [rail, content]));
-      var subPanels = [], items = [], slugs = [];
-      function activate(si) {
-        for (var k = 0; k < subPanels.length; k++) subPanels[k].classList.toggle('ui-tab-hidden', k !== si);
-        for (var m = 0; m < items.length; m++) items[m].classList.toggle('active', m === si);
-      }
-      secs.forEach(function(s, si) {
-        var sp = el('div', {class: 'ui-secnav-panel' + (si === 0 ? '' : ' ui-tab-hidden')});
-        if (inGrid) { var sg = el('div', {class: 'ui-section-grid'}); sp.appendChild(sg); s.__host = sg; }
-        else { s.__host = sp; }
-        content.appendChild(sp);
-        subPanels.push(sp);
-        slugs.push(secnavSlug(s.title));
-        var ib = el('button', {type: 'button', class: 'ui-secnav-item' + (si === 0 ? ' active' : '')}, [s.title || ('Section ' + (si + 1))]);
-        // Nesting: a rail whose sections are not a flat list says so.
-        // Two entries that are ALTERNATIVES read exactly like two in
-        // sequence otherwise, which is the distinction such a list most
-        // needs to make.
-        if (s.indent > 0) {
-          ib.classList.add('nested');
-          ib.style.paddingLeft = (0.75 + s.indent * 0.85) + 'rem';
-        }
-        ib.addEventListener('click', function() {
-          activate(si);
-          // The hash is the address of the open section, so a link can carry
-          // someone to it and the browser's Back walks the trail. Pushed with
-          // a depth on it so the header arrow can step over the whole trail at
-          // once — see uiPushPageStep.
-          if (slugs[si]) uiPushPageStep(slugs[si]);
-        });
-        items.push(ib);
-        rail.appendChild(ib);
-      });
-      // Deep-linking: land on (or be sent to) #<slug>. hashchange covers
-      // both a link clicked INSIDE the page (a graph node) and the back
-      // button walking earlier sections.
-      function activateHash() {
-        var want = window.location.hash.replace(/^#/, '');
-        if (!want) { activate(0); return; }
-        var si = slugs.indexOf(secnavSlug(want));
-        if (si >= 0) activate(si);
-      }
-      window.addEventListener('hashchange', function() {
-        activateHash();
-        uiStampPageStep();
-      });
-      activateHash();
-      // Landing on #<slug> directly is depth zero: it is where this reader
-      // started, so the header arrow leaves the page rather than clearing the
-      // hash first.
-      uiPageDepth();
-    }
-    if (tabbed) {
-      var order = [], seenG = {}, secByGroup = {};
-      (cfg.sections || []).forEach(function(s) {
-        var g = s.group || 'General';
-        if (!seenG[g]) { seenG[g] = true; order.push(g); secByGroup[g] = []; }
-        secByGroup[g].push(s);
-      });
-      var tabbar = el('div', {class: 'ui-tabbar'});
-      root.appendChild(tabbar);
-      var panels = [];
-      order.forEach(function(g, idx) {
-        var panel = el('div', {class: 'ui-tabpanel' + (idx === 0 ? '' : ' ui-tab-hidden')});
-        if (secNav && secByGroup[g].length > 1) {
-          buildSecNav(panel, secByGroup[g]);
-        } else {
-          var host = panel;
-          if (inGrid) { host = el('div', {class: 'ui-section-grid'}); panel.appendChild(host); }
-          groupHosts[g] = host;
-        }
-        panels.push(panel);
-        var btn = el('button', {type: 'button', class: 'ui-tab' + (idx === 0 ? ' active' : '')}, [g]);
-        btn.addEventListener('click', function() {
-          for (var i = 0; i < panels.length; i++) panels[i].classList.toggle('ui-tab-hidden', i !== idx);
-          var tabs = tabbar.querySelectorAll('.ui-tab');
-          for (var j = 0; j < tabs.length; j++) tabs[j].classList.remove('active');
-          btn.classList.add('active');
-        });
-        tabbar.appendChild(btn);
-        root.appendChild(panel);
-      });
-    } else if (secNav && (cfg.sections || []).length > 1) {
-      // Page-level side-nav: no top tabs (a single conceptual area), just one
-      // rail of all sections. Fits a flat management surface better than a long
-      // scroll of stacked panels.
-      buildSecNav(root, cfg.sections || []);
-    } else if (inGrid) {
-      sectionsHost = el('div', {class: 'ui-section-grid'});
-      root.appendChild(sectionsHost);
-    }
-    // bareSectionHead writes a no-chrome section's title/subtitle above its
-    // body. No card, no padding, no wrapper around the body — the panel keeps
-    // managing its own layout, which is the whole reason it asked for
-    // no_chrome; it just stops being the one section kind whose heading is
-    // silently discarded.
-    //
-    // Nothing renders when there is no title and no subtitle, so every existing
-    // no-chrome section (which sets neither) is untouched.
-    function bareSectionHead(s, into) {
-      if (!s.title && !s.subtitle) return;
-      var head = el('div', {class: 'ui-section-bare-head'});
-      if (s.title) {
-        head.appendChild(window.uiAttachInfo(
-          el('div', {class: 'ui-section-h'}, [el('span', {text: s.title})]),
-          s.title ? s.detail : ''));
-      }
-      if (s.subtitle) {
-        // The icon goes on the TITLE when there is one. A section with only a
-        // subtitle has nowhere else to put it.
-        head.appendChild(window.uiAttachInfo(
-          el('div', {class: 'ui-section-sub'}, [s.subtitle]), s.title ? '' : s.detail));
-      }
-      into.appendChild(head);
-    }
-    // markMounted stamps every element a section mounted with data-ui-section,
-    // so "how many sections actually rendered?" has ONE answer for chromed and
-    // no-chrome sections alike. Anything reading the page from outside — a
-    // headless render check, a screenshot tool — can count
-    // '.ui-section,[data-ui-section]' instead of guessing at each panel's own
-    // root class and reporting a working page as blank.
-    function markMounted(nodes) {
-      (nodes || []).forEach(function(n) {
-        if (n && n.nodeType === 1 && !n.hasAttribute('data-ui-section')) {
-          n.setAttribute('data-ui-section', '');
-        }
-      });
-    }
-    function hostForSection(s) {
-      if (s.__host) return s.__host;
-      if (tabbed) return groupHosts[s.group || 'General'] || sectionsHost;
-      return sectionsHost;
-    }
-    (cfg.sections || []).forEach(function(s) {
-      var host = hostForSection(s);
-      // NoChrome sections skip the card wrapper — body mounts directly
-      // with no padding/bg/border. Used when the contained component
-      // (e.g. ChatPanel) manages its own layout and a card would just
-      // create double-nested boxes. In grid mode they ride a full-width
-      // slot so page order is preserved.
-      if (s.no_chrome) {
-        if (inGrid) {
-          var ncWrap = el('div', {class: 'ui-section-wide'});
-          bareSectionHead(s, ncWrap);
-          if (s.body) mountComponent(s.body, ncWrap);
-          markMounted([ncWrap]);
-          host.appendChild(ncWrap);
-        } else if (s.body) {
-          bareSectionHead(s, host);
-          // Mount directly, then MARK what landed. A no-chrome section has no
-          // .ui-section card by design, so from outside the page it used to be
-          // invisible — and a page built only of them (chat, workbench,
-          // pipeline) counted zero sections and read as blank to anything
-          // inspecting the DOM. The marker is inert: no class, no style, no
-          // wrapper element that could break a panel's 100%-height layout.
-          var before = host.childNodes.length;
-          mountComponent(s.body, host);
-          markMounted(Array.prototype.slice.call(host.childNodes, before));
-        }
-        return;
-      }
-      var section = el('div', {class: 'ui-section'});
-      markMounted([section]);
-      // Collapsible — when the section is declared with Collapsed:true
-      // and HAS a title, render the title bar clickable with a caret
-      // that hides/shows the subtitle + body. Without a title there's
-      // nothing to click, so the flag is silently ignored.
-      var collapsed = !!s.collapsed && !!s.title;
-      var caret = null;
-      var inner = el('div', {class: 'ui-section-inner'});
-      if (s.title) {
-        var headerWrap = el('div', {class: 'ui-section-h'}, [
-          el('span', {text: s.title}),
-          window.uiInfoIcon(s.detail),
-          el('span', {class: 'ui-section-h-r'}),
-        ]);
-        if (collapsed) {
-          headerWrap.style.cursor = 'pointer';
-          headerWrap.style.userSelect = 'none';
-          caret = document.createElement('span');
-          caret.style.cssText = 'margin-right:0.4rem;display:inline-block;color:var(--text-mute);transition:transform 0.15s';
-          caret.textContent = String.fromCharCode(9656); // ▸
-          headerWrap.insertBefore(caret, headerWrap.firstChild);
-        }
-        section.appendChild(headerWrap);
-        if (collapsed) {
-          headerWrap.addEventListener('click', function(ev) {
-            // Ignore clicks on the saving-indicator slot (.ui-section-h-r)
-            // and any interactive controls a future caller might land there.
-            if (ev.target && ev.target.closest && ev.target.closest('.ui-section-h-r')) return;
-            var open = inner.style.display === 'none';
-            inner.style.display = open ? '' : 'none';
-            caret.style.transform = open ? 'rotate(90deg)' : '';
-          });
-        }
-      }
-      if (s.subtitle || (s.detail && !s.title)) {
-        inner.appendChild(window.uiAttachInfo(
-          el('div', {class: 'ui-section-sub'}, [s.subtitle || '']),
-          s.title ? '' : s.detail));
-      }
-      if (s.body) mountComponent(s.body, inner);
-      if (collapsed) inner.style.display = 'none';
-      section.appendChild(inner);
-      if (inGrid && s.wide) section.classList.add('ui-section-wide');
-      // Cap the CARD, not just its contents. A wide section spans every
-      // grid column; on a large display that can be more width than the
-      // body has anything to say. Capped, the card keeps its own edge and
-      // stays left-aligned in the slot.
-      if (s.max_width) section.style.maxWidth = s.max_width;
-      host.appendChild(section);
-    });
-
-    // A full-height panel is a two-column layout that owns the viewport: a
-    // rail beside a working column. Every hand-written page that hosts one sets
-    // max_width 100%, arrived at independently each time — which is the tell
-    // that the requirement belongs to the PANEL rather than to each page.
-    //
-    // A STORED page cannot make that call reliably. Its width was decided when
-    // it was authored, so a page whose panel arrived later opens in a narrow
-    // column with a sidebar eating a quarter of it, and the only repair is to
-    // re-author it. Deciding it here, from what actually mounted, fixes the
-    // pages already written and means an author cannot get it wrong.
-    //
-    // Keyed on the panel roots, deliberately not on "has any section": a
-    // no-chrome section holding ordinary content keeps the column it asked for.
-    if (root.querySelector('.ui-chat, .ui-agent, .ui-pl, .ui-wb, .ui-cw, .ui-tw')) {
-      root.style.maxWidth = '100%';
-    }
-
-    // Masonry packing for grid sections. Plain CSS grid aligns every row to its
-    // tallest card, leaving holes under shorter cards (the "missing puzzle pieces"
-    // look). We give the grid a fine row track (the .ui-masonry CSS above) and set
-    // each card's row span to ceil(height / track), so cards pack directly under
-    // the one above. Only at >=2 columns; single-column (mobile) clears the spans.
-    if (inGrid) {
-      var masonryGrids = Array.prototype.slice.call(root.querySelectorAll('.ui-section-grid'));
-      masonryGrids.forEach(function(g) { g.classList.add('ui-masonry'); });
-      var layoutMasonry = function(grid) {
-        if (grid.offsetParent === null) return; // hidden (inactive tab) — reruns when shown
-        var cs = getComputedStyle(grid);
-        var cols = cs.gridTemplateColumns.split(' ').filter(Boolean).length;
-        var kids = Array.prototype.slice.call(grid.children);
-        if (cols < 2) { kids.forEach(function(c) { c.style.gridRowEnd = ''; }); return; }
-        var rowH = parseFloat(cs.gridAutoRows) || 1;
-        var gap = parseFloat(cs.rowGap) || 0;
-        // Reset, measure all, then assign — avoids interleaved read/write thrash
-        // and the cards never paint mid-pass (one synchronous JS task).
-        kids.forEach(function(c) { c.style.gridRowEnd = ''; });
-        var spans = kids.map(function(c) {
-          return Math.max(1, Math.ceil((c.getBoundingClientRect().height + gap) / (rowH + gap)));
-        });
-        kids.forEach(function(c, i) { c.style.gridRowEnd = 'span ' + spans[i]; });
-      };
-      var relayoutMasonry = function() { masonryGrids.forEach(layoutMasonry); };
-      requestAnimationFrame(relayoutMasonry); // initial pass once layout settles
-      var mrT = null;
-      window.addEventListener('resize', function() {
-        if (mrT) clearTimeout(mrT);
-        mrT = setTimeout(relayoutMasonry, 120); // column count flips at the breakpoint
-      });
-      // Recompute when a card's own height changes — async Table loads, ShowWhen
-      // toggles, collapsibles, and tab show/hide (display:none -> shown fires it).
-      if (window.ResizeObserver) {
-        var moT = null;
-        var mo = new ResizeObserver(function() {
-          if (moT) clearTimeout(moT);
-          moT = setTimeout(relayoutMasonry, 60);
-        });
-        masonryGrids.forEach(function(grid) {
-          Array.prototype.forEach.call(grid.children, function(c) { mo.observe(c); });
-        });
-      }
-    }
+    renderPageBody(cfg, root);
 
     if (cfg.footer) {
       var footer = el('div', {class: 'ui-footer'});
