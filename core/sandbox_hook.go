@@ -76,6 +76,25 @@ type SandboxHook struct {
 	// unnamed callers (run_local / persistent shell), which aren't binding-gated.
 	// Set by the dispatcher right after NewSandboxHook, before the sandbox runs.
 	ToolName string
+	// WorkspaceNetExempt lifts the workspace's REACH ceiling for this run, and
+	// only this run. It is set for a tool already in the owner's pool: a
+	// granted tool reaching out through this broker is a path somebody
+	// approved, and gohort does the dialling, so it is not the thing the
+	// ceiling exists to stop.
+	//
+	// It is NOT set for a session draft the agent authored this turn.
+	// Otherwise an agent holding tool_def could mint a tool, call it, and be
+	// out - and the ceiling would be advisory against exactly the agent
+	// capable enough to need it.
+	//
+	// A property of the RUN, not of the session: one turn dispatches a granted
+	// tool and an ad-hoc workspace command through the same ToolSession, so
+	// anything read off the session cannot tell them apart. That is the bug
+	// this field closes.
+	//
+	// It lifts ONE ceiling. Privacy mode is checked separately and first, and
+	// nothing here can hand back a network that it took away.
+	WorkspaceNetExempt bool
 
 	listener net.Listener
 	wg       sync.WaitGroup
@@ -319,7 +338,7 @@ func (h *SandboxHook) handleConn(conn net.Conn) {
 			writeHookError(conn, fmt.Sprintf("hook %q refused: session network blocked (privacy mode is on)", req.Method))
 			return
 		}
-		if h.Sess != nil && !h.Sess.WorkspaceNetworkAllowed() {
+		if h.Sess != nil && !h.WorkspaceNetExempt && !h.Sess.WorkspaceNetworkAllowed() {
 			Log("[hook/%s] DENIED: this agent's workspace may not open connections", req.Method)
 			writeHookError(conn, fmt.Sprintf("hook %q refused: this agent's workspace may not open connections. "+
 				"It can still read and write files and run commands; only reaching the network from in here is off.", req.Method))

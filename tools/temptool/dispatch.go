@@ -555,6 +555,13 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 		// Identify the tool to the hook for secured-credential binding
 		// enforcement on fetch_via. Set before the sandbox runs (below).
 		hook.ToolName = tt.Name
+		// A tool already in the owner's pool may reach the network through
+		// this broker even when the agent's workspace may not dial out on its
+		// own. The grant is the point: somebody approved this tool, and gohort
+		// does the dialling rather than the sandbox. A draft the agent wrote
+		// this turn gets no such lift, or tool_def would be the way around the
+		// ceiling. See SandboxHook.WorkspaceNetExempt.
+		hook.WorkspaceNetExempt = toolIsGranted(sess, tt)
 		envArgs["GOHORT_HOOK_PATH"] = hook.SocketPath
 		// The gohort helper package is bind-mounted RO into the
 		// sandbox from a host-side library dir (see
@@ -736,4 +743,28 @@ func extractAttachmentMarkers(output string, sess *ToolSession) string {
 		remaining = afterOpen[closeIdx+len(closeMarker):]
 	}
 	return strings.TrimSpace(result.String())
+}
+
+// toolIsGranted reports whether this tool is in the owner's persisted pool, as
+// opposed to a draft authored during this chat session.
+//
+// Asked of the store rather than inferred from the record, because a TempTool
+// carries no marker for where it came from and anything derived from its
+// fields would be a guess. The namespace is flat - one row per (user, name) -
+// so a single pass answers it for shared and agent-scoped rows alike.
+//
+// Unresolvable means NOT granted: no session, no store, or a name that is not
+// there all read as a draft. The lift is a privilege, and a privilege handed
+// out when the answer could not be determined is not a privilege, it is a
+// hole.
+func toolIsGranted(sess *ToolSession, tt *TempTool) bool {
+	if sess == nil || tt == nil || strings.TrimSpace(tt.Name) == "" {
+		return false
+	}
+	for _, p := range LoadPersistentTempTools(sess.DB, sess.Username) {
+		if p.Tool.Name == tt.Name {
+			return true
+		}
+	}
+	return false
 }
