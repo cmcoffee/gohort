@@ -233,3 +233,90 @@ func mustRead(t *testing.T, path string) string {
 	}
 	return string(b)
 }
+
+// A tool the owner has and this agent does NOT is listed, reading off. Without
+// it the page answers "what is on" and silently refuses "what is off", which
+// is the half somebody tightening an agent is usually looking for.
+func TestAToolThisAgentDoesNotLoadIsStillListedAsOff(t *testing.T) {
+	app, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	for _, n := range []string{"loaded_tool", "not_loaded_tool"} {
+		if err := AdminPersistTempTool(udb, "alice", TempTool{
+			Name: n, CommandTemplate: "echo hi"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// An allowlist naming one of them: the other exists but this agent has no
+	// access to it.
+	rec := AgentRecord{ID: "a20", Name: "Wren", Owner: "alice", OrchestratorPrompt: "p",
+		DisabledPersistentTools: []string{"not_loaded_tool"}}
+	if _, err := saveAgent(udb, rec); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := app.resolvedAgentTools(context.Background(), udb, "alice", rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var off *accessToolRow
+	for i := range rows {
+		if rows[i].Name == "not_loaded_tool" {
+			off = &rows[i]
+		}
+	}
+	if off == nil {
+		t.Fatal("a tool this agent does not load is missing, so the page cannot say what is off")
+	}
+	if off.Enabled {
+		t.Error("a tool this agent does not load reads as enabled")
+	}
+	// On rows sort before off ones: what the agent HAS is the subject.
+	seenOff := false
+	for _, r := range rows {
+		if !r.Enabled {
+			seenOff = true
+		} else if seenOff {
+			t.Errorf("%q is loaded but sorts after one that is not", r.Name)
+		}
+	}
+}
+
+// A sub-agent runs with its parent's authority, so tightening the parent is
+// worth nothing if something it owns is looser. The band says which.
+func TestSubAgentsReportHowRestrictionsReachThem(t *testing.T) {
+	_, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	parent := AgentRecord{ID: "p1", Name: "Wren", Owner: "alice", OrchestratorPrompt: "p"}
+	if _, err := saveAgent(udb, parent); err != nil {
+		t.Fatal(err)
+	}
+	for _, sub := range []AgentRecord{
+		{ID: "s1", Name: "triage", Owner: "alice", OwnedBy: "p1", OrchestratorPrompt: "p"},
+		{ID: "s2", Name: "digest", Owner: "alice", OwnedBy: "p1", OrchestratorPrompt: "p",
+			WorkspaceNoNetwork: true},
+		{ID: "x1", Name: "unrelated", Owner: "alice", OrchestratorPrompt: "p"},
+	} {
+		if _, err := saveAgent(udb, sub); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows := agentSubAgents(udb, "alice", parent)
+	if len(rows) != 2 {
+		t.Fatalf("want this agent's 2 sub-agents and nothing else, got %d: %+v", len(rows), rows)
+	}
+	byName := map[string]accessSubAgentRow{}
+	for _, r := range rows {
+		byName[r.Name] = r
+	}
+	if byName["triage"].Inherits != "lockstep" {
+		t.Errorf("a plain sub-agent should read lockstep: %+v", byName["triage"])
+	}
+	// Tighter, not looser: lockstep means the parent's limits REACH it, not
+	// that the two are identical. A child carrying its own cut is allowed and
+	// is worth saying out loud.
+	if byName["digest"].Inherits != "tighter" {
+		t.Errorf("a sub-agent with a limit of its own should read tighter: %+v", byName["digest"])
+	}
+	if _, ok := byName["unrelated"]; ok {
+		t.Error("an agent this one does not own was listed as its sub-agent")
+	}
+}

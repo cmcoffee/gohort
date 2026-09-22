@@ -179,6 +179,9 @@ func (T *OrchestrateApp) handleAgentAccess(w http.ResponseWriter, r *http.Reques
 	case "knowledge":
 		writeJSON(w, accessKnowledgeRows(rec))
 		return
+	case "subagents":
+		writeJSON(w, agentSubAgents(udb, user, rec))
+		return
 	}
 	// The tools this agent's worker would actually be handed, resolved through
 	// the same call the runner makes.

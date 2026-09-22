@@ -47,6 +47,14 @@ type accessToolRow struct {
 	// allow, ask, or block. The GATE's answer where one is recorded, and
 	// "allow" where none is, which is what the gate does with no record.
 	Unattended string `json:"unattended,omitempty"`
+	// Enabled says whether this agent actually loads the tool. A tool the
+	// owner has that this agent does NOT is listed too, reading off: a page
+	// that shows only what is on cannot answer what is off, and "off" is half
+	// of what somebody securing an agent came to check.
+	Enabled bool `json:"enabled"`
+	// Chat is the one-word answer to "does this need supervision", which is
+	// the question actually being asked. Asks / Runs.
+	Chat string `json:"chat"`
 	// Actions are a grouped tool's sub-actions, and Withheld the ones switched
 	// off for this agent.
 	Actions  []string `json:"actions,omitempty"`
@@ -136,6 +144,7 @@ func (T *OrchestrateApp) resolvedAgentTools(ctx context.Context, udb Database, u
 			// selected reads as "unset", and there is no such state.
 			row.Unattended = PolicyAllow
 		}
+		row.Enabled = true
 		if tt, ok := pool[name]; ok {
 			row.Origin = "your tools"
 			row.Asks = tt.ConfirmInChat
@@ -145,9 +154,32 @@ func (T *OrchestrateApp) resolvedAgentTools(ctx context.Context, udb Database, u
 			}
 		}
 		row.Actions = grouped[name]
+		row.Chat = "Runs"
+		if row.Asks {
+			row.Chat = "Asks"
+		}
 		out = append(out, row)
 	}
+	// The owner's tools this agent does NOT load. Off is a state, not an
+	// absence: without these rows the page answers "what is on" and silently
+	// refuses "what is off", which is the half somebody tightening an agent
+	// is usually looking for.
+	for name, tt := range pool {
+		if seen[name] {
+			continue
+		}
+		out = append(out, accessToolRow{
+			Name: name, Origin: "your tools", Detail: firstLine(tt.Description),
+			Enabled: false, Governable: true, Asks: tt.ConfirmInChat,
+			Chat: "off", Unattended: PolicyAllow,
+		})
+	}
 	sort.SliceStable(out, func(i, j int) bool {
+		// On before off: what the agent HAS is the subject, and what it merely
+		// could have is context.
+		if out[i].Enabled != out[j].Enabled {
+			return out[i].Enabled
+		}
 		// Governable rows first: they are the ones somebody came here to act
 		// on, and burying them under the framework catalog is how a control
 		// surface becomes a list nobody scrolls.
@@ -221,4 +253,48 @@ func (T *OrchestrateApp) handleAgentAccessTool(w http.ResponseWriter, r *http.Re
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// accessSubAgentRow is one sub-agent and how its parent's restrictions reach it.
+type accessSubAgentRow struct {
+	Name string `json:"name"`
+	// Inherits is the one-word mode, and the thing this band exists to make
+	// visible: a restriction set on the parent either binds the child or it
+	// does not, and until now that was true silently and stated nowhere.
+	Inherits string `json:"inherits"`
+	Detail   string `json:"detail,omitempty"`
+	Tools    int    `json:"tools,omitempty"`
+}
+
+// agentSubAgents lists the sub-agents this agent owns.
+//
+// A sub-agent runs with its parent's authority, which is exactly why this
+// belongs on a page about blast radius: tightening the parent is worth
+// nothing if a child it owns is looser, and the page that says "these are
+// the tools" has to say who else is holding them.
+func agentSubAgents(udb Database, user string, parent AgentRecord) []accessSubAgentRow {
+	out := []accessSubAgentRow{}
+	for _, a := range listAgents(udb, user) {
+		if strings.TrimSpace(a.OwnedBy) != parent.ID {
+			continue
+		}
+		row := accessSubAgentRow{
+			Name:     a.Name,
+			Inherits: "lockstep",
+			Detail:   "Every restriction on " + chFirst(parent.Name, parent.ID) + " binds it too.",
+			Tools:    len(a.AllowedTools),
+		}
+		// A sub-agent carrying its own workspace cut is TIGHTER than its
+		// parent, which is allowed and worth saying: lockstep means the
+		// parent's limits reach it, not that the two are identical.
+		if a.WorkspaceNoNetwork && !parent.WorkspaceNoNetwork {
+			row.Inherits = "tighter"
+			row.Detail = "Inherits everything above, and additionally may not reach the network from its workspace."
+		}
+		out = append(out, row)
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
+	})
+	return out
 }

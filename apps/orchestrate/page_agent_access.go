@@ -42,7 +42,7 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 	reach := agentReach(udb, user, agent)
 
 	page := ui.Page{
-		Title:      "What " + name + " can reach",
+		Title:      "Secure " + name,
 		ShowTitle:  true,
 		BackURL:    T.WebPrefix() + "/agent/" + url.PathEscape(agent.ID),
 		MaxWidth:   "980px",
@@ -56,11 +56,18 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 					"Runs / Queues / Never is the GATE's answer for a scheduled or standing run, where nobody is watching, and none of it applies in chat. " +
 					"Both are offered only on tools that carry a record of their own: a framework tool has nothing to hold the setting, so it shows neither.",
 				Body: ui.Table{
-					Source:    src,
-					RowKey:    "name",
-					EmptyText: agentToolsEmptyText(agent),
+					Source:            src,
+					RowKey:            "name",
+					EmptyText:         agentToolsEmptyText(agent),
+					Search:            true,
+					SearchPlaceholder: "Find a tool",
 					Columns: []ui.Col{
 						{Field: "name", Label: "Tool"},
+						{Field: "chat", Label: "In chat", Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: "Asks", Label: "Asks first", Color: "warning"},
+							{Value: "Runs", Label: "Runs free", Color: "mute"},
+							{Value: "off", Label: "Not loaded", Color: "mute"},
+						}},
 						{Field: "origin", Label: "From", Mute: true},
 						{Field: "detail", Label: "What it does", Mute: true},
 					},
@@ -91,9 +98,11 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				},
 			},
 			{
-				Title: "What it can hand work to",
-				Subtitle: "Delegation reaches past this agent's own tools: whatever it hands work to runs with ITS catalog. " +
-					"Only targets that add something are listed; a recipe appears when one of its steps runs an agent.",
+				Title: "What it can call",
+				Subtitle: "The blast radius. Whatever this agent hands work to runs with ITS catalog, not this one's, " +
+					"so the tools above are the floor and this list is how far past them the agent reaches.",
+				Detail: "Only targets that WIDEN it are listed: something that adds nothing it already has cannot extend the damage. " +
+					"A recipe appears when one of its steps runs an agent. Narrow this on the agent's own editor, under delegation.",
 				Body: ui.Table{
 					Source:    src + "&view=reach",
 					RowKey:    "name",
@@ -102,6 +111,26 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 						{Field: "name", Label: "Target"},
 						{Field: "kind", Label: "Kind", Mute: true},
 						{Field: "adds", Label: "What it adds", Mute: true},
+					},
+				},
+			},
+			{
+				Title: "Sub-agents",
+				Subtitle: "Who else holds what this agent holds. A sub-agent runs with its parent's authority, " +
+					"so tightening this agent is worth nothing if something it owns is looser.",
+				Detail: "Lockstep means every restriction above binds the sub-agent too. Tighter means it also carries limits of its own. " +
+					"A sub-agent is private to its parent: nothing else can reach it, which is why it does not appear in the list above.",
+				Body: ui.Table{
+					Source:    src + "&view=subagents",
+					RowKey:    "name",
+					EmptyText: "None. Nothing else runs with this agent's authority.",
+					Columns: []ui.Col{
+						{Field: "name", Label: "Sub-agent"},
+						{Field: "inherits", Label: "Restrictions", Type: "badge", Badges: []ui.BadgeMapping{
+							{Value: "lockstep", Label: "Lockstep", Color: "success"},
+							{Value: "tighter", Label: "Tighter", Color: "success"},
+						}},
+						{Field: "detail", Label: "", Mute: true},
 					},
 				},
 			},
