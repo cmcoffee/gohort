@@ -631,8 +631,18 @@ func handleRun(args map[string]any, sess *ToolSession) (string, error) {
 		return "", err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
+	// The TURN's context, not Background, for the reason temptool dispatch
+	// gives and one more. Background drops every value on the way to the
+	// sandbox: the privacy connector AND the workspace's own reach ceiling.
+	// Both default to "allowed" when absent, so losing them does not fail
+	// safe, it fails OPEN. That is how an agent told "your workspace may not
+	// open connections" by the fetch hook got out anyway on the next call by
+	// running python urllib: the hook read the ceiling off the session and
+	// refused, the namespace never saw it and stayed on the host's network.
+	ctx, cancel := context.WithTimeout(sess.Context(), runTimeout)
 	defer cancel()
+	ctx = sess.ContextWithNetworkConnector(ctx)
+	ctx = sess.ContextWithSandboxCaller(ctx)
 	// Run with the iterate-and-test hook attached so `from gohort
 	// import fetch` works exactly as it does when this same script
 	// gets dispatched later as a registered shell-mode tool. Without
@@ -756,9 +766,12 @@ func handleProbe(args map[string]any, sess *ToolSession) (string, error) {
 	if !validProbeName.MatchString(name) {
 		return "", fmt.Errorf("invalid binary name %q: must be identifier characters only (letters, digits, _, -, +, .)", name)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// Same reason as handleRun: Background would hand a probe the host's
+	// network because the ceilings ride the context and both default open.
+	ctx, cancel := context.WithTimeout(sess.Context(), 5*time.Second)
 	defer cancel()
 	cmd := "command -v " + name + " 2>/dev/null || true"
+	ctx = sess.ContextWithNetworkConnector(ctx)
 	ctx = sess.ContextWithSandboxCaller(ctx)
 	res := RunSandboxedShellPipe(ctx, cmd, "")
 	// A probe that could not RUN has learned nothing about the binary. Reading

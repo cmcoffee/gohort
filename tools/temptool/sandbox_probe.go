@@ -89,9 +89,14 @@ func (t *SandboxProbeTool) RunWithSession(args map[string]any, sess *ToolSession
 	// Use RunSandboxedShellPipe — it gives us the same /usr bind as
 	// the temp-tool dispatch but with no writable mount + no network
 	// (we don't need either for `command -v`).
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// The turn's context, not Background: the ceilings ride the context and
+	// both default to allowed when absent, so a Background root quietly hands
+	// this the host's network. A probe needs none, and a path that is on the
+	// network only because it forgot to ask is the shape of the whole bug.
+	ctx, cancel := context.WithTimeout(sess.Context(), 5*time.Second)
 	defer cancel()
 	cmd := "command -v " + name + " 2>/dev/null || true"
+	ctx = sess.ContextWithNetworkConnector(ctx)
 	ctx = sess.ContextWithSandboxCaller(ctx)
 	res := RunSandboxedShellPipe(ctx, cmd, "")
 	// A probe that could not RUN has learned nothing about the binary. Reading
