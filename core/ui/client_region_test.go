@@ -131,3 +131,36 @@ func TestASegmentedRowActionCanCarryACaption(t *testing.T) {
 		t.Error("the caption is unconditional, so every existing segmented control grows one")
 	}
 }
+
+// A row carrying a name, a state, an origin, a description and two controls
+// does not fit one line, and ellipsizing the description to make it fit cuts
+// the part that says what the thing IS.
+func TestAColumnCanRenderOnASecondLine(t *testing.T) {
+	src := readRuntimeFile(t, "10_basics.js")
+	if !strings.Contains(src, "function cellHost(col)") {
+		t.Fatal("cells all go to one host, so no column can take a second line")
+	}
+	if !strings.Contains(src, "Number(col.line) !== 2") {
+		t.Error("the second line is not opt-in per column")
+	}
+	// Built only when something asks, so every existing table keeps the
+	// single-line layout it was written for.
+	i := strings.Index(src, "function cellHost(col)")
+	if !strings.Contains(src[i:i+400], "if (!secondLine)") {
+		t.Error("the second line is built unconditionally")
+	}
+	// The two lines STACK, and the row's own flex then lays the stack out
+	// beside any actions exactly as it did with one line.
+	if !strings.Contains(src, "ui-row-lines") {
+		t.Error("the lines are not stacked, so they would sit side by side")
+	}
+	css := readRuntimeFile(t, "../runtime.css")
+	if !strings.Contains(css, ".ui-row-lines") {
+		t.Error("the stack has no styling")
+	}
+	// Top-aligned: a two-line block centred against a single button leaves the
+	// name floating off the control it belongs to.
+	if !strings.Contains(css, "align-items: flex-start") {
+		t.Error("a two-line row is not top-aligned against its actions")
+	}
+}

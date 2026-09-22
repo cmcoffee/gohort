@@ -112,6 +112,15 @@ type Col struct {
 	// because this is a real anchor and the browser handles that better than
 	// the framework can.
 	Link string `json:"link,omitempty"`
+	// Line puts this column on a SECOND line beneath the first, for a row
+	// carrying more than fits across: a name, a state, an origin, a
+	// description and two controls do not fit across one line, and ellipsizing the
+	// description to make them is cutting the part that says what the thing
+	// is.
+	//
+	// 0 or 1 is the first line, 2 the second. A table where nothing asks for
+	// it keeps the single-line layout it was written for.
+	Line int `json:"line,omitempty"`
 }
 
 // RowAction adds an interactive control to each table row.

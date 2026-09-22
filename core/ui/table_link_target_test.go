@@ -27,7 +27,9 @@ func TestAnInAppCellLinkDoesNotOpenATab(t *testing.T) {
 	if i < 0 {
 		t.Fatal("the cell-link branch is gone")
 	}
-	end := strings.Index(src[i:], "cellsWrap.appendChild(cell);")
+	// cellHost, not cellsWrap: a column can render on a second line now, so
+	// each cell is appended to the host its own column names.
+	end := strings.Index(src[i:], "cellHost(col).appendChild(cell);")
 	if end < 0 {
 		t.Fatal("could not bound the cell-link branch")
 	}

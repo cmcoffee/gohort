@@ -198,8 +198,13 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 							{Value: "On", Label: "On", Color: "success"},
 							{Value: "Off", Label: "Off", Color: "mute"},
 						}},
-						{Field: "origin", Label: "From", Mute: true},
-						{Field: "detail", Label: "What it does", Mute: true},
+						// Second line: what the tool IS. The first line is the
+						// name, whether it is loaded, and the two controls,
+						// which is already as much as fits across. Ellipsizing
+						// the description to make room cuts the part that
+						// answers what you are deciding about.
+						{Field: "origin", Label: "From", Mute: true, Line: 2},
+						{Field: "detail", Label: "", Mute: true, Line: 2},
 					},
 					RowActions: []ui.RowAction{
 						// Both are offered ONLY on a row that can hold the
@@ -426,6 +431,65 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 						{Field: "Detail", Label: "", Mute: true},
 					},
 					RowActions: append(policyLadder(), scopeMove(false)),
+				},
+			},
+			{
+				Group:    "Share",
+				Title:    "Who may run this agent",
+				Subtitle: "One choice, not two switches. Published means every signed-in person; otherwise it is the people you name and nobody else.",
+				Detail: "Publishing reaches every signed-in user, so it is REQUESTED rather than applied: it goes to the administrator's pending queue and takes effect once approved. Turning it back is yours and takes effect at once.\n\n" +
+					"What the agent uses travels with it either way: your tools, your documents, your skills, readable through this agent and nowhere else. Each person gets their own sessions and memory under it. A credential is the exception, because it is whose identity a call goes out as rather than a copy anybody is missing: decide that per key.\n\n" +
+					"Where an administrator has published the agent, the named list narrows INSIDE that grant rather than adding to it: somebody has to be allowed the app and be on your list.",
+				Body: ui.FormPanel{
+					Source:      patchURL,
+					PostURL:     patchURL,
+					Method:      "PATCH",
+					SubmitLabel: "Save",
+					Fields: []ui.FormField{
+						{Field: "exposed", Type: "select", Label: "Audience",
+							Options: []ui.SelectOption{
+								{Value: "false", Label: "Only the people I name"},
+								{Value: "true", Label: "Everyone (publish globally)"},
+							},
+							Help: "Naming people is yours alone. Publishing to everyone needs an administrator.",
+						},
+					},
+				},
+			},
+			{
+				Group: "Share",
+				Title: "The people you name",
+				// Says what this list actually decides, which differs entirely
+				// once an agent is published: before, it is the whole grant;
+				// after, it is a narrowing inside the administrator's.
+				Subtitle: shareSubtitleFor(agent),
+				Body: ui.ACLPicker(ui.ACLPickerConfig{
+					OptionsSource: T.WebPrefix() + "/api/user-candidates",
+					RecordSource:  patchURL,
+					Field:         "allowed_users",
+					PostTo:        patchURL,
+					Method:        "PATCH",
+					Noun:          "user",
+					Intro:         "Users who may run this agent.",
+					EmptyText:     "No other users to share with yet.",
+				}),
+			},
+			{
+				Group:    "Share",
+				Title:    "What a recipient sees",
+				Subtitle: "Which of its memory layers travel with the agent when somebody else runs it.",
+				Detail:   "Each is enforcement, not guidance: a recipient either reads the layer or does not, whatever the agent would say. Their own sessions and memory under it stay theirs.",
+				Body: ui.FormPanel{
+					Source:      patchURL,
+					PostURL:     patchURL,
+					Method:      "PATCH",
+					SubmitLabel: "Save",
+					Fields: []ui.FormField{
+						{Field: "share_hold_cortex", Type: "toggle", Label: "Keep its standing activity to yourself"},
+						{Field: "share_hold_reference", Type: "toggle", Label: "Keep what it worked out to yourself"},
+						{Field: "share_memory_explicit", Type: "toggle", Label: "Let them see its saved notes"},
+						{Field: "share_no_uploads", Type: "toggle", Label: "They may not add documents of their own"},
+					},
 				},
 			},
 			{

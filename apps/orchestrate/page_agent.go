@@ -146,9 +146,6 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	// and there is nothing for gate 2 to protect. Hiding a toggle the runtime
 	// would honor is a control that reads as broken.
 	leadModelLocked := false
-	// shareRec carries the loaded record out to the sharing section, which has
-	// to say something different once the agent is published.
-	var shareRec AgentRecord
 	if id != "" {
 		source = "../api/agents/" + id
 		title = "Edit agent"
@@ -158,7 +155,6 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		// publishing, etc. still rendering for what's actually a
 		// sub-agent).
 		if rec, ok := loadAgent(udb, id); ok {
-			shareRec = rec
 			agentLocked = rec.Locked
 			leadModelLocked = agentForcesPrivate(rec) && !AllLLMsPrivate()
 			if rec.OwnedBy != "" {
@@ -625,80 +621,12 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	// runs the OWNER's agent, but its credentials + tools resolve in the
 	// RECIPIENT's namespace, so no secret travels with the share.
 	if id != "" && !subAgent && !isSeedID(id) {
-		// ONE rail entry with its parts nested under it, not three siblings.
-		// Sharing is one operation asked in three steps — who gets it, what
-		// they get, what it depends on — and a flat rail drew them as three
-		// unrelated settings, so somebody who went to Share found the
-		// recipient picker and no reason to believe the rest existed.
-		sections = append(sections, ui.Section{
-			Title:    "Share",
-			Subtitle: shareSubtitleFor(shareRec),
-			Detail: "They run your agent, and what it uses travels with it: your tools, your documents, your skills, readable through this agent and nowhere else. They cannot attach any of it to an agent of their own.\n\n" +
-				"A credential is the exception, because it is whose identity a call goes out as rather than a copy anybody is missing. Decide that per key on its row under What it reaches.\n\n" +
-				"Once an admin has PUBLISHED this agent, the list below narrows inside their grant rather than adding to it: somebody has to be allowed the app AND be on your list. Leaving it empty means everybody the admin allowed. An admin can audit or revoke shares either way.",
-			Body: ui.ACLPicker(ui.ACLPickerConfig{
-				OptionsSource: "../api/user-candidates",
-				RecordSource:  source,
-				Field:         "allowed_users",
-				PostTo:        source,
-				Method:        "POST",
-				Noun:          "user",
-				Intro:         "Users who may run this agent.",
-				EmptyText:     "No other users to share with yet.",
-			}),
-		})
-		// How it reaches them, between the list of WHO and the inventory of
-		// WHAT. The three questions are one decision and they are asked in the
-		// order they are answered: who gets it, what they meet when they open
-		// it, and what it depends on.
-		sections = append(sections, ui.Section{
-			Title:    "What they get",
-			Indent:   1,
-			Subtitle: "Everyone you share with is a reader. These say how much of what this agent knows they read.",
-			Detail: "Nobody you share with can change this agent: not its persona, its rules, its tools, its documents, or who else has it. None of that is a setting.\n\n" +
-				"Two things are theirs and only theirs. Their conversations with it, and anything they upload to it. Neither reaches you, and neither reaches anybody else you shared with.",
-			Body: ui.FormPanel{
-				Source: source,
-				// PATCH, and the id in the QUERY, exactly as splitAgentFormSections
-				// builds every other section on this page. A POST here sends this
-				// panel's four fields AS THE WHOLE RECORD and wipes the rest of the
-				// agent, which is the reason that function exists at all.
-				PostURL: "../api/agents?id=" + url.QueryEscape(id),
-				Method:  "PATCH",
-				Fields: []ui.FormField{
-					{
-						Field: "share_hold_cortex", Type: "toggle", Label: "Keep its standing activity to yourself",
-						Help: "Off, the default, means they see it. This is what makes a shared agent feel like it knows things.",
-						Detail: "The cortex is the agent's own mind: recent events on its channels and monitors, which you shaped by pointing it at them. A recipient reads it and can never open it as a thread, and their turns never write into it.\n\n" +
-							"Turn this on when the cortex has become a record of your own week rather than the agent's job.",
-					},
-					{
-						Field: "share_hold_reference", Type: "toggle", Label: "Keep what it worked out to yourself",
-						Help: "Off, the default, means their searches also cover it.",
-						Detail: "The least deliberate thing the agent holds: what it inferred across your conversations without being asked to. Documents you uploaded are not this and travel either way, the same as the collections you attached.\n\n" +
-							"Read what is in it before deciding. This is the layer most likely to carry a sentence you have forgotten saying.",
-					},
-					{
-						Field: "share_memory_explicit", Type: "toggle", Label: "Let them see its saved notes",
-						Help: "Off, the default. This layer has never travelled.",
-						Detail: "The facts the agent kept while talking to you, in every turn's prompt. Not curated: whatever came up, including things you never decided to tell anybody. Read them before you turn this on.\n\n" +
-							"Theirs sit above yours, so where the two disagree the person in the conversation has the last word. They cannot edit or forget any of yours.",
-					},
-					{
-						Field: "share_no_uploads", Type: "toggle", Label: "They may not add documents of their own",
-						Help: "Off means they can upload; their files stay private to them.",
-						Detail: "Anything they upload is searched for their turns alongside this agent's collections, and is not visible to you or to anybody else you shared with.\n\n" +
-							"Turn this on where the agent must answer from an approved corpus and nothing else.",
-					},
-				},
-			},
-		})
-
-		// What the agent actually reaches, right underneath the picker that
-		// decides who gets it. The two questions are asked together — "share
-		// this with my team" is one request, and the tools, documents, skills
-		// and recipes behind it are consequences of it rather than four more
-		// things to remember.
+		// Who may RUN this agent, and what travels with it, are not here.
+		// They are the Share tab of its Security page.
+		//
+		// Both are enforcement: a person either reaches the agent or does
+		// not, and a recipient either reads a memory layer or does not,
+		// whatever the agent would say. This form is for what the agent IS.
 		sections = append(sections, ui.Section{
 			Title:    "What it reaches",
 			Indent:   1,

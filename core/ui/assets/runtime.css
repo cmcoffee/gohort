@@ -760,6 +760,14 @@ select:-webkit-autofill {
 /* Table.RowLink — the row navigates on click, so it needs to read as a
  * target. Only rows the endpoint actually gave a destination get this
  * class, which keeps a mixed table honest: inert rows look inert. */
+/* Two-line rows (Col.Line = 2). The lines stack; the row's own flex then lays
+ * the stack out beside any actions exactly as it did with one line. Aligned to
+ * the top there, because a two-line block centred against a single button
+ * leaves the name floating off the control it belongs to. */
+.ui-row-lines { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; flex: 1 1 auto; }
+.ui-row-lines .ui-row-cells { min-width: 0; }
+.ui-row-cells-2 { opacity: 0.85; }
+.ui-table-row:has(.ui-row-lines) { align-items: flex-start; }
 .ui-table-row-link { cursor: pointer; }
 /* Accent the border on hover, matching the other bordered hover targets.
  * The row's own background is already --bg-2, so tinting it isn't an

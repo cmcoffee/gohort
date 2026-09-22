@@ -171,14 +171,29 @@
         });
 
         var cellsWrap = el('div', {class: 'ui-row-cells'});
+        // A column marked line:2 renders on a SECOND line beneath the first.
+        // A row that carries a name, a state, an origin, a description and two
+        // controls does not fit one line, and ellipsizing the description to
+        // fit is cutting the part that says what the thing IS.
+        //
+        // Only built when something asks for it, so every existing table keeps
+        // the single-line layout it was written for.
+        var secondLine = null;
+        function cellHost(col) {
+          if (Number(col.line) !== 2) return cellsWrap;
+          if (!secondLine) {
+            secondLine = el('div', {class: 'ui-row-cells ui-row-cells-2'});
+          }
+          return secondLine;
+        }
         cfg.columns.forEach(function(col) {
           var v = lookup(rec, col.field);
           if (col.type === 'badge') {
-            cellsWrap.appendChild(renderBadgeCell(col, v));
+            cellHost(col).appendChild(renderBadgeCell(col, v));
             return;
           }
           if (col.type === 'dot') {
-            cellsWrap.appendChild(renderDotCell(col, v));
+            cellHost(col).appendChild(renderDotCell(col, v));
             return;
           }
           if (col.type === 'image') {
@@ -195,7 +210,7 @@
             if (v && /^(\/|https?:\/\/)/.test(String(v))) {
               ic.appendChild(el('img', {src: String(v), alt: col.label || 'image', loading: 'lazy'}));
             }
-            cellsWrap.appendChild(ic);
+            cellHost(col).appendChild(ic);
             return;
           }
           if (col.type === 'pills') {
@@ -212,7 +227,7 @@
                 'border:1px solid var(--border,#3a3a4a);border-radius:999px;font-size:0.74rem;color:var(--text-mute,#999);white-space:nowrap';
               pc.appendChild(chip);
             });
-            cellsWrap.appendChild(pc);
+            cellHost(col).appendChild(pc);
             return;
           }
           var cell = el('div', {class: 'ui-table-cell' + (col.mute ? ' mute' : '')});
@@ -254,9 +269,16 @@
           } else {
             cell.textContent = fmt(v, col.format);
           }
-          cellsWrap.appendChild(cell);
+          cellHost(col).appendChild(cell);
         });
-        row.appendChild(cellsWrap);
+        if (secondLine) {
+          // The two lines stack; the row's own flex then lays them out
+          // beside any actions exactly as it did with one.
+          var stacked = el('div', {class: 'ui-row-lines'});
+          stacked.appendChild(cellsWrap);
+          stacked.appendChild(secondLine);
+          row.appendChild(stacked);
+        } else row.appendChild(cellsWrap);
 
         var actionsWrap = el('div', {class: 'ui-row-actions'});
         (cfg.row_actions || []).forEach(function(act, ai) {

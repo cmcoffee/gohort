@@ -366,7 +366,17 @@ func (T *OrchestrateApp) patchAgent(w http.ResponseWriter, r *http.Request, udb 
 		// Turning either OFF stays direct here as it does there: nobody needs
 		// permission to stop sharing.
 		if k == "exposed" || k == "mcp_exposed" {
-			on := v == true
+			// Read tolerantly and then STORE what was read. A select sends
+			// "true" where a toggle sends true, and a strict v == true made
+			// that string read as OFF - so a control meaning "publish this"
+			// would have quietly unpublished instead, and the merged map
+			// would then have carried a string into a bool field and failed
+			// the whole patch on re-decode.
+			//
+			// Anything unrecognised reads as OFF, which is the narrowing
+			// direction: a value nobody can parse must not grant reach.
+			on := truthyPatchValue(v)
+			v = on
 			already := existing.Everyone
 			if k == "mcp_exposed" {
 				already = existing.MCPExposed
@@ -816,4 +826,24 @@ func newlyHidden(db Database, a AgentRecord) bool {
 		return true // no stored copy yet
 	}
 	return !prior.Hidden
+}
+
+// truthyPatchValue reads a reach flag from whatever a client sent it.
+//
+// The two reach flags are an administrator's to grant, so this errs one way:
+// only the values that plainly mean yes are yes, and everything else is no.
+// Reading an unknown value as ON would hand out reach on a typo.
+func truthyPatchValue(v any) bool {
+	switch t := v.(type) {
+	case bool:
+		return t
+	case string:
+		switch strings.ToLower(strings.TrimSpace(t)) {
+		case "true", "on", "yes", "1":
+			return true
+		}
+	case float64:
+		return t != 0
+	}
+	return false
 }

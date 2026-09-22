@@ -1,62 +1,79 @@
 package orchestrate
 
-// The share controls, as the editor's rail draws them.
+// The share controls, now that they are the Share tab of an agent's Security
+// page rather than a rail entry in its editor.
 //
-// Reported live as "I'm not seeing the control I asked for in Agent -> Edit ->
-// Share". They were rendering, as three sibling entries: the recipient picker
-// under "Share with users", and the rest under two titles that read like
-// unrelated settings. Sharing is ONE operation asked in three steps, and a flat
-// rail gave somebody who went looking under Share no reason to believe the
-// other two belonged to it.
+// They were three sibling rail entries once, and somebody who went looking
+// under Share found the recipient picker and no reason to believe the rest
+// existed. Sharing is ONE operation asked in three steps: who may run it, who
+// exactly, and what travels with it. The steps still have to arrive together,
+// which is what these assertions are about; they are just a tab now, and a tab
+// is what keeps them together.
 
 import (
 	"strings"
 	"testing"
 )
 
-// shareSectionSource is the block of page_agent.go that builds the three
-// sections, which is the unit these assertions are about.
+// shareSectionSource is the run of page_agent_access.go that builds the Share
+// tab, which is the unit these assertions are about.
 func shareSectionSource(t *testing.T) string {
 	t.Helper()
-	src := packageSource(t)
-	i := strings.Index(src, `Title:    "Share",`)
+	src := mustRead(t, "page_agent_access.go")
+	i := strings.Index(src, `Title:    "Who may run this agent"`)
 	if i < 0 {
-		t.Fatal("no section titled Share on the agent editor")
+		t.Fatal("no audience control on the Security page")
 	}
-	j := strings.Index(src[i:], `Title:    "What it reaches"`)
+	j := strings.Index(src[i:], `Group:    "Access"`)
 	if j < 0 {
-		t.Fatal("the reach inventory is not built beside the share picker")
+		t.Fatal("the Share group does not end; the tabs have moved")
 	}
-	k := strings.Index(src[i+j:], "})")
-	return src[i : i+j+k]
+	return src[i : i+j]
 }
 
-// One rail entry, with its parts nested under it.
-func TestSharingIsOneRailEntryWithItsPartsUnderIt(t *testing.T) {
+// All three steps under one tab. Split across tabs they would be three
+// unrelated settings again, which is the failure this arrangement replaced.
+func TestSharingArrivesInOnePlace(t *testing.T) {
 	block := shareSectionSource(t)
-	for _, part := range []string{`Title:    "What they get"`, `Title:    "What it reaches"`} {
-		i := strings.Index(block, part)
-		if i < 0 {
-			t.Fatalf("missing %s", part)
+	for _, part := range []string{
+		`Title:    "Who may run this agent"`, // the audience
+		`Title: "The people you name"`,       // exactly who
+		`Title:    "What a recipient sees"`,  // what travels
+	} {
+		if !strings.Contains(block, part) {
+			t.Errorf("missing %s from the Share tab", part)
 		}
-		// Indent is the rail's own primitive for "sub-part of the thing above".
-		if !strings.Contains(block[i:i+200], "Indent:   1,") {
-			t.Errorf("%s is drawn as a sibling of Share, not a part of it", part)
+	}
+	// And it is GONE from the editor, not duplicated there.
+	if strings.Contains(mustRead(t, "page_agent.go"), `Title:    "What they get"`) {
+		t.Error("the editor still carries the share controls, so there are two places to set one thing")
+	}
+}
+
+// One choice, not two switches. "Everyone" and "these people" read as
+// independent grants that could both be on, when publishing makes the list a
+// narrowing rather than an addition.
+func TestTheAudienceIsASingleChoice(t *testing.T) {
+	block := shareSectionSource(t)
+	if !strings.Contains(block, `Field: "exposed", Type: "select"`) {
+		t.Error("the audience is not one choice")
+	}
+	for _, label := range []string{"Everyone (publish globally)", "Only the people I name"} {
+		if !strings.Contains(block, label) {
+			t.Errorf("the audience choice does not offer %q", label)
 		}
 	}
 }
 
 // A section FormPanel on this page PATCHes. A POST sends that panel's fields as
-// the WHOLE record and wipes everything else on the agent, which is the entire
-// reason splitAgentFormSections exists; a new section added later must not
-// quietly reintroduce it.
-func TestEverySectionPanelOnTheAgentEditorPatches(t *testing.T) {
+// the whole record, so everything it does not show is blanked.
+func TestEverySharePanelPatches(t *testing.T) {
 	block := shareSectionSource(t)
-	if !strings.Contains(block, `Method:  "PATCH"`) {
-		t.Error("the share settings panel does not PATCH, so saving it would wipe the rest of the agent")
+	if !strings.Contains(block, `Method:      "PATCH"`) {
+		t.Error("a share panel does not PATCH, so saving it would wipe the rest of the agent")
 	}
-	if strings.Contains(block, `PostURL: source,`) {
-		t.Error("a section panel posts the whole record back; PATCH with the id in the query instead")
+	if strings.Contains(block, "PostURL:     source,") {
+		t.Error("a section panel posts the whole record back; PATCH with the id in the path instead")
 	}
 }
 
@@ -79,6 +96,23 @@ func TestTheSwitchesOnScreenAreTheOnesTheRuntimeReads(t *testing.T) {
 		}
 		if !patchAgentFields[field] {
 			t.Errorf("%s is on the panel but not saveable: the PATCH allowlist drops it", field)
+		}
+	}
+}
+
+// A reach flag is an administrator's to grant, so the patch door reads it
+// tolerantly and fails CLOSED. A select sends "true" where a toggle sends
+// true, and a strict comparison read that as off: a control meaning "publish
+// this" would have quietly unpublished instead.
+func TestAReachFlagIsReadTolerantlyAndFailsClosed(t *testing.T) {
+	for _, v := range []any{true, "true", "on", "YES", "1", float64(1)} {
+		if !truthyPatchValue(v) {
+			t.Errorf("%#v did not read as on", v)
+		}
+	}
+	for _, v := range []any{false, "false", "off", "", "perhaps", float64(0), nil, []string{"true"}} {
+		if truthyPatchValue(v) {
+			t.Errorf("%#v read as on; an unparseable value must not grant reach", v)
 		}
 	}
 }
