@@ -35,8 +35,13 @@ func (T *OrchestrateApp) handleToolConfirm(w http.ResponseWriter, r *http.Reques
 	switch r.Method {
 	case http.MethodGet:
 		tools := map[string]bool{}
+		agentID := strings.TrimSpace(r.URL.Query().Get("agent"))
+		asks := map[string]bool{}
+		for _, n := range AskInChatTools(AuthDB(), user, agentID) {
+			asks[n] = true
+		}
 		for _, p := range LoadPersistentTempTools(AuthDB(), user) {
-			tools[p.Tool.Name] = p.Tool.ConfirmInChat
+			tools[p.Tool.Name] = asks[p.Tool.Name]
 		}
 		w.Header().Set("Content-Type", "application/json")
 		// No caching, for the reason /api/tool-scope gives: the modal re-reads
@@ -60,8 +65,11 @@ func (T *OrchestrateApp) handleToolConfirm(w http.ResponseWriter, r *http.Reques
 		// Scoped to this user's own pool by construction: the setter is handed
 		// the requesting account, so a name belonging to somebody else simply
 		// is not found rather than being edited.
-		if !SetUserToolConfirmInChat(AuthDB(), user, body.Name, body.On) {
-			http.Error(w, "no such tool", http.StatusNotFound)
+		// Agent-scoped, like every other permission. The mark is keyed by
+		// name so it needs no record, which is what lets a framework tool
+		// carry one too.
+		if !SetUserToolAsksInChat(AuthDB(), user, strings.TrimSpace(r.URL.Query().Get("agent")), body.Name, body.On) {
+			http.Error(w, "could not record that", http.StatusInternalServerError)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

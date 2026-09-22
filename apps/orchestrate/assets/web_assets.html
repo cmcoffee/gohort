@@ -2696,7 +2696,9 @@
         // anywhere: better to offer nothing than a switch whose position was
         // guessed and whose write would look like a change of mind.
         function fetchToolConfirmMap() {
-          return fetch('api/tool-confirm', {cache: 'no-store'}).then(function(r) {
+          // Scoped to THIS agent, like every other permission: the same tool
+          // can want supervision on one agent and not on another.
+          return fetch('api/tool-confirm?agent=' + encodeURIComponent(id), {cache: 'no-store'}).then(function(r) {
             return r.ok ? r.json() : {tools: {}};
           }).then(function(d) {
             return (d && d.tools) || {};
@@ -2712,7 +2714,7 @@
         // The flag lives on the TOOL, so it reaches every agent holding it.
         // The button says that out loud rather than letting a per-agent modal
         // imply a per-agent scope, which is the same thing Scope has to do.
-        function addAskControl(actions, toolName, confirmMap) {
+        function addAskControl(actions, toolName, confirmMap, agentIDForAsk) {
           if (!toolName || !(toolName in confirmMap)) return;
           var on = !!confirmMap[toolName];
           var btn = document.createElement('button');
@@ -2742,7 +2744,7 @@
             Promise.resolve(ask).then(function(go) {
               if (!go) return;
               btn.disabled = true;
-              fetch('api/tool-confirm', {
+              fetch('api/tool-confirm?agent=' + encodeURIComponent(agentIDForAsk), {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({name: toolName, on: want})
@@ -2981,7 +2983,7 @@
               rowActions.className = 'ui-checklist-actions';
               var detailEl = buildToolDetail(t);
               attachExpandToggle(rowActions, detailEl);
-              addAskControl(rowActions, t.name, confirmMap);
+              addAskControl(rowActions, t.name, confirmMap, id);
               // Scope — the shared pill editor (Global + one pill per agent)
               // against api/tool-scope. This is where a tool is detached from
               // this agent or shared with others; the checkbox above is the
@@ -3255,7 +3257,7 @@
               // it in.
               var poolActions = document.createElement('div');
               poolActions.className = 'ui-checklist-actions';
-              addAskControl(poolActions, o.value, confirmMap);
+              addAskControl(poolActions, o.value, confirmMap, id);
               if (poolActions.childNodes.length) row.appendChild(poolActions);
               body.appendChild(row);
               checkboxes.push(cb);

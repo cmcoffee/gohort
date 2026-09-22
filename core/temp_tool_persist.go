@@ -38,9 +38,15 @@ const (
 	// browsing, the fetches - and they carry no record, so the tools most worth
 	// stopping on were the only ones that could not be.
 	//
-	// By NAME, and per user rather than per agent, because a tool's riskiness
-	// is a property of the tool: two agents holding the same one should not
-	// disagree about whether it stops to ask.
+	// Keyed by (owner, AGENT) so the marks belong to an agent, like every
+	// other permission in this codebase: the unattended policy, the workspace
+	// reach, the dispatch policy. An empty agent is the fleet-wide form, the
+	// same widening contacts and delegation already use.
+	//
+	// It was per user alone, on the reasoning that a tool's riskiness belongs
+	// to the tool. That is wrong here. web_search wanting supervision on an
+	// agent somebody else runs, and not on your own, is an ordinary thing to
+	// want, and a permission belongs to the principal holding it.
 	askInChatToolsTable   = "ask_in_chat_tools"
 	sessionTempToolsTable = "session_temp_tools"
 )
@@ -1623,18 +1629,32 @@ func sliceHas(list []string, want string) bool {
 // Reads BOTH stores. The name set is where the mark lives now; the flag on a
 // tool record is where it used to, and a tool marked before this existed must
 // not quietly stop asking because the storage moved underneath it.
-func UserToolAsksInChat(db Database, username, name string) bool {
+// askKey names one mark set. An empty agent is the fleet-wide set, which binds
+// every agent; the legacy key is the bare username, which is what the marks
+// were stored under before they were scoped and means the same thing.
+func askKey(owner, agentID string) string { return owner + ":" + agentID }
+
+func askSetHas(db Database, key, name string) bool {
+	var names []string
+	if !db.Get(askInChatToolsTable, key, &names) {
+		return false
+	}
+	return slices.Contains(names, name)
+}
+
+func UserToolAsksInChat(db Database, username, agentID, name string) bool {
 	db = tempToolStore(db)
 	if db == nil || username == "" || strings.TrimSpace(name) == "" {
 		return false
 	}
-	var names []string
-	if db.Get(askInChatToolsTable, username, &names) {
-		for _, n := range names {
-			if n == name {
-				return true
-			}
-		}
+	// This agent's own mark, then the fleet-wide one that binds every agent,
+	// then the key the marks lived under before they were scoped. A mark made
+	// before this must not quietly stop working because the key moved.
+	if agentID != "" && askSetHas(db, askKey(username, agentID), name) {
+		return true
+	}
+	if askSetHas(db, askKey(username, ""), name) || askSetHas(db, username, name) {
+		return true
 	}
 	for _, p := range LoadPersistentTempTools(db, username) {
 		if p.Tool.Name == name {
@@ -1646,13 +1666,25 @@ func UserToolAsksInChat(db Database, username, name string) bool {
 
 // AskInChatTools lists every tool this user has marked, so a surface can show
 // the marks it holds without asking about each name it happens to know.
-func AskInChatTools(db Database, username string) []string {
+func AskInChatTools(db Database, username, agentID string) []string {
 	db = tempToolStore(db)
 	if db == nil || username == "" {
 		return nil
 	}
 	var names []string
-	db.Get(askInChatToolsTable, username, &names)
+	for _, key := range []string{askKey(username, agentID), askKey(username, ""), username} {
+		if agentID == "" && key == askKey(username, "") {
+			continue // already asked for, as the first key
+		}
+		var got []string
+		if db.Get(askInChatToolsTable, key, &got) {
+			for _, n := range got {
+				if !slices.Contains(names, n) {
+					names = append(names, n)
+				}
+			}
+		}
+	}
 	for _, p := range LoadPersistentTempTools(db, username) {
 		if !p.Tool.ConfirmInChat {
 			continue
@@ -1667,7 +1699,7 @@ func AskInChatTools(db Database, username string) []string {
 // SetUserToolAsksInChat marks or unmarks ANY tool, whether or not the user
 // authored it. Always reports true: there is no "no such tool" here, because
 // the mark is about a NAME and the framework's tools have no record to look up.
-func SetUserToolAsksInChat(db Database, username, name string, ask bool) bool {
+func SetUserToolAsksInChat(db Database, username, agentID, name string, ask bool) bool {
 	db = tempToolStore(db)
 	name = strings.TrimSpace(name)
 	if db == nil || username == "" || name == "" {
@@ -1675,8 +1707,9 @@ func SetUserToolAsksInChat(db Database, username, name string, ask bool) bool {
 	}
 	tempToolPersistMu.Lock()
 	defer tempToolPersistMu.Unlock()
+	key := askKey(username, agentID)
 	var names []string
-	db.Get(askInChatToolsTable, username, &names)
+	db.Get(askInChatToolsTable, key, &names)
 	kept := names[:0:0]
 	for _, n := range names {
 		if n != name {
@@ -1686,10 +1719,14 @@ func SetUserToolAsksInChat(db Database, username, name string, ask bool) bool {
 	if ask {
 		kept = append(kept, name)
 	}
-	db.Set(askInChatToolsTable, username, kept)
-	// The legacy flag is cleared in step when a record exists, so the two
-	// stores cannot disagree and the reader above cannot resurrect a mark the
-	// owner just removed.
+	db.Set(askInChatToolsTable, key, kept)
+	// The legacy flag is fleet-wide in meaning, so only a change to the
+	// FLEET-wide mark touches it. Clearing one agent's mark must not silently
+	// clear a mark that binds every agent - that is a narrowing nobody asked
+	// for, on agents the owner was not looking at.
+	if agentID != "" {
+		return true
+	}
 	list := LoadPersistentTempTools(db, username)
 	for i := range list {
 		if list[i].Tool.Name == name && list[i].Tool.ConfirmInChat != ask {

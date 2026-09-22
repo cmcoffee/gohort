@@ -148,9 +148,15 @@ func TestTheAccessPageWritesThroughTheSameSetters(t *testing.T) {
 	if code := post(`{"asks":true}`); code != http.StatusNoContent {
 		t.Fatalf("setting ask: %d", code)
 	}
-	// The Permissions page is the other reader of that same fact.
-	if row := rowByDetail(permRowsFor(t, app, "alice"), "Asks before every call"); row == nil {
-		t.Error("a tool set to ask from the access page does not appear on the Permissions page")
+	// Scoped to THIS agent, so it holds here and does NOT become a fleet-wide
+	// mark. A permission belongs to the principal: the same tool can want
+	// supervision on one agent and not on another, and a per-agent decision
+	// silently binding every agent is the narrowing nobody asked for.
+	if !UserToolAsksInChat(AuthDB(), "alice", "a9", "shared_row_tool") {
+		t.Error("the mark did not take on the agent it was set for")
+	}
+	if UserToolAsksInChat(AuthDB(), "alice", "some_other_agent", "shared_row_tool") {
+		t.Error("a mark set on one agent bound another one too")
 	}
 	if code := post(`{"unattended":"block"}`); code != http.StatusNoContent {
 		t.Fatalf("setting unattended: %d", code)
@@ -176,7 +182,7 @@ func TestAFrameworkToolCanBeSetToAsk(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("marking a framework tool: %d %s", w.Code, w.Body.String())
 	}
-	if !UserToolAsksInChat(AuthDB(), "alice", "web_search") {
+	if !UserToolAsksInChat(AuthDB(), "alice", "a10", "web_search") {
 		t.Error("the mark did not stick, so the tool goes on running unprompted")
 	}
 }

@@ -135,21 +135,6 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				},
 			},
 			{
-				Group:    "Tools",
-				Title:    "Standing decisions",
-				Subtitle: "What you have already settled here, and what it is set to now.",
-				Body: ui.Table{
-					Source:    decisions("tools"),
-					RowKey:    "_id",
-					EmptyText: "No standing decisions about its tools. They run as the gate allows.",
-					Columns: []ui.Col{
-						{Field: "Who", Label: ""},
-						{Field: "Detail", Label: "", Mute: true},
-					},
-					RowActions: policyLadder(),
-				},
-			},
-			{
 				Title:    "What this agent can do",
 				Group:    "Tools",
 				Subtitle: agentAccessSummary(agent, reach) + " " + accessCaveat,
@@ -212,9 +197,10 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				},
 			},
 			{
-				Group:    "Delegation",
-				Title:    "Standing decisions",
-				Subtitle: "What you have already settled here, and what it is set to now.",
+				Group: "Delegation",
+				Title: "Standing decisions",
+				Subtitle: "Decisions recorded separately from the controls above, and what each is set to now. " +
+					"Where a control on this tab already carries its own state, it is not repeated here: the control IS the decision.",
 				Body: ui.Table{
 					Source:    decisions("delegation"),
 					RowKey:    "_id",
@@ -318,21 +304,6 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 			},
 			{
 				Group:    "Workspace",
-				Title:    "Standing decisions",
-				Subtitle: "What you have already settled here, and what it is set to now.",
-				Body: ui.Table{
-					Source:    decisions("workspace"),
-					RowKey:    "_id",
-					EmptyText: "Nothing recorded about its sandbox.",
-					Columns: []ui.Col{
-						{Field: "Who", Label: ""},
-						{Field: "Detail", Label: "", Mute: true},
-					},
-					RowActions: policyLadder(),
-				},
-			},
-			{
-				Group:    "Workspace",
 				Title:    "What its sandbox may reach",
 				Subtitle: "Shell and file work happen in one sandbox, and these govern all of it.",
 				Body: ui.FormPanel{
@@ -368,9 +339,10 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				},
 			},
 			{
-				Group:    "Access",
-				Title:    "Standing decisions",
-				Subtitle: "What you have already settled here, and what it is set to now.",
+				Group: "Access",
+				Title: "Standing decisions",
+				Subtitle: "Decisions recorded separately from the controls above, and what each is set to now. " +
+					"Where a control on this tab already carries its own state, it is not repeated here: the control IS the decision.",
 				Body: ui.Table{
 					Source:    decisions("access"),
 					RowKey:    "_id",

@@ -343,9 +343,13 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 	// show the whole set and let each row carry its state. It is also the
 	// honest shape for a security page - "supervised" is only meaningful next
 	// to the things that are not.
+	fleetAsks := map[string]bool{}
+	for _, n := range AskInChatTools(AuthDB(), user, "") {
+		fleetAsks[n] = true
+	}
 	for _, pt := range LoadPersistentTempTools(AuthDB(), user) {
 		policy, detail := PolicyAllow, "Runs without asking, in chat"
-		if pt.Tool.ConfirmInChat {
+		if fleetAsks[pt.Tool.Name] {
 			policy, detail = PolicyAsk, "Asks before every call, in chat, on every agent"
 		}
 		out = append(out, permRow{
@@ -658,8 +662,12 @@ func (T *OrchestrateApp) handleConsolePermissionPolicy(w http.ResponseWriter, r 
 		// Keyed by TOOL, not agent: the flag is on the tool record. "ask" sets
 		// it, anything else clears it, and there is no third state because
 		// Blocked is the unattended mark and is not this control's question.
-		if !SetUserToolConfirmInChat(AuthDB(), user, target, value == PolicyAsk) {
-			http.Error(w, "no such tool", http.StatusNotFound)
+		// Fleet-wide here, deliberately: this row is the one that binds EVERY
+		// agent, which is what permRowAgent reports it as. A mark for one
+		// agent is set on that agent's Security page, where the tool row
+		// carries it.
+		if !SetUserToolAsksInChat(AuthDB(), user, "", target, value == PolicyAsk) {
+			http.Error(w, "could not record that", http.StatusInternalServerError)
 			return
 		}
 	case "workspace":

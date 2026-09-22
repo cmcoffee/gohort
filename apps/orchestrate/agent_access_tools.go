@@ -113,7 +113,7 @@ func (T *OrchestrateApp) resolvedAgentTools(ctx context.Context, udb Database, u
 	if AuthDB != nil {
 		markDB = AuthDB()
 	}
-	for _, n := range AskInChatTools(markDB, user) {
+	for _, n := range AskInChatTools(markDB, user, rec.ID) {
 		asks[n] = true
 	}
 	withheld := map[string][]string{}
@@ -253,7 +253,7 @@ func (T *OrchestrateApp) handleAgentAccessTool(w http.ResponseWriter, r *http.Re
 		// By name, so this works for a framework tool as well as an authored
 		// one. There is no "no such tool" to report: the mark is about a NAME,
 		// and the tools most worth stopping on have no record to look up.
-		if !SetUserToolAsksInChat(AuthDB(), user, name, *body.Asks) {
+		if !SetUserToolAsksInChat(AuthDB(), user, rec.ID, name, *body.Asks) {
 			http.Error(w, "could not record that", http.StatusInternalServerError)
 			return
 		}

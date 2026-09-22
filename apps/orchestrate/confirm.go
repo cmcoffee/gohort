@@ -154,7 +154,11 @@ func (t *chatTurn) confirmFuncFor(sess *ToolSession) func(name, args string) boo
 		// can set on a draft that lives only in this session and so never
 		// reaches the owner's store at all.
 		tt := toolRecordFor(sess, name)
-		if (tt != nil && tt.ConfirmInChat) || UserToolAsksInChat(markDB, markOwner, name) {
+		agentID := ""
+		if t != nil {
+			agentID = t.agent.ID
+		}
+		if (tt != nil && tt.ConfirmInChat) || UserToolAsksInChat(markDB, markOwner, agentID, name) {
 			return t.escalateToolConfirm(toolConfirmRequest{
 				tool:    name,
 				prompt:  fmt.Sprintf("Allow %s?", name),

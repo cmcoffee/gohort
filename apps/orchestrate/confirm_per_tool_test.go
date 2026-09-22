@@ -281,18 +281,19 @@ func TestTheToolsModalCanSetAndClearAsk(t *testing.T) {
 	}
 }
 
-// A name with no record behind it is a miss, not a silent success: the modal
-// repaints the button from the answer, so "no such tool" answered as 204 would
-// paint a guard that is not there.
-func TestAskingForAToolWithNoRecordIsAMiss(t *testing.T) {
+// A name with no record behind it is MARKABLE, which is the point: the mark is
+// about a name, and the framework's own tools have no record to look up. This
+// asserted a 404 while the flag lived on the tool record, which is what made
+// the consequential tools the only ones that could not be stopped on.
+func TestAToolWithNoRecordCanStillBeMarked(t *testing.T) {
 	app, _, _ := newTestOrchestrate(t)
 	pinRootDB(t)
 	r := httptest.NewRequest(http.MethodPost, "/api/tool-confirm",
 		strings.NewReader(`{"name":"no_such_tool_here","on":true}`))
 	w := httptest.NewRecorder()
 	app.handleToolConfirm(w, asUser(r, "alice"))
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("want 404 for a tool that does not exist, got %d %s", w.Code, w.Body.String())
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("marking a tool with no record: %d %s", w.Code, w.Body.String())
 	}
 }
 
@@ -345,15 +346,15 @@ func rowByWho(rows []map[string]any, who string) map[string]any {
 func TestAFrameworkToolCanBeMarkedToAsk(t *testing.T) {
 	_, udb, _ := newTestOrchestrate(t)
 	pinRootDB(t)
-	if !SetUserToolAsksInChat(udb, "alice", "web_search", true) {
+	if !SetUserToolAsksInChat(udb, "alice", "a1", "web_search", true) {
 		t.Fatal("marking a tool with no record was refused")
 	}
-	if !UserToolAsksInChat(udb, "alice", "web_search") {
+	if !UserToolAsksInChat(udb, "alice", "a1", "web_search") {
 		t.Error("the mark did not stick")
 	}
 	// And it comes back off.
-	SetUserToolAsksInChat(udb, "alice", "web_search", false)
-	if UserToolAsksInChat(udb, "alice", "web_search") {
+	SetUserToolAsksInChat(udb, "alice", "a1", "web_search", false)
+	if UserToolAsksInChat(udb, "alice", "a1", "web_search") {
 		t.Error("clearing the mark left it asking")
 	}
 }
@@ -367,12 +368,12 @@ func TestAMarkOnAnOldToolRecordStillAsks(t *testing.T) {
 		Name: "legacy_marked", CommandTemplate: "curl x", ConfirmInChat: true}); err != nil {
 		t.Fatal(err)
 	}
-	if !UserToolAsksInChat(udb, "alice", "legacy_marked") {
+	if !UserToolAsksInChat(udb, "alice", "a1", "legacy_marked") {
 		t.Error("a tool marked under the old storage stopped asking when the storage moved")
 	}
 	// Listing finds it too, so a surface showing the marks shows that one.
 	var found bool
-	for _, n := range AskInChatTools(udb, "alice") {
+	for _, n := range AskInChatTools(udb, "alice", "a1") {
 		if n == "legacy_marked" {
 			found = true
 		}
@@ -382,8 +383,53 @@ func TestAMarkOnAnOldToolRecordStillAsks(t *testing.T) {
 	}
 	// Clearing it clears BOTH stores, or the reader resurrects what the owner
 	// just removed.
-	SetUserToolAsksInChat(udb, "alice", "legacy_marked", false)
-	if UserToolAsksInChat(udb, "alice", "legacy_marked") {
+	SetUserToolAsksInChat(udb, "alice", "", "legacy_marked", false)
+	if UserToolAsksInChat(udb, "alice", "a1", "legacy_marked") {
 		t.Error("clearing left the old flag set, so the tool goes on asking")
+	}
+}
+
+// The mark belongs to an AGENT, like every other permission here: the
+// unattended policy, the workspace reach, the dispatch policy. An empty agent
+// is the fleet-wide form, the same widening contacts and delegation use.
+func TestAMarkIsScopedToItsAgentUnlessItIsTheFleetOne(t *testing.T) {
+	_, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	SetUserToolAsksInChat(udb, "alice", "agent_one", "web_search", true)
+	if !UserToolAsksInChat(udb, "alice", "agent_one", "web_search") {
+		t.Error("the agent's own mark did not take")
+	}
+	if UserToolAsksInChat(udb, "alice", "agent_two", "web_search") {
+		t.Error("a mark for one agent bound another")
+	}
+	// The fleet-wide form binds every agent, including ones with no mark.
+	SetUserToolAsksInChat(udb, "alice", "", "browse_page", true)
+	for _, a := range []string{"agent_one", "agent_two", "never_seen"} {
+		if !UserToolAsksInChat(udb, "alice", a, "browse_page") {
+			t.Errorf("the fleet-wide mark does not reach %s", a)
+		}
+	}
+}
+
+// Clearing ONE agent's mark must not clear a mark that binds every agent. That
+// is a narrowing nobody asked for, on agents the owner was not looking at.
+func TestClearingOneAgentLeavesTheFleetMarkAlone(t *testing.T) {
+	_, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	if err := AdminPersistTempTool(udb, "alice", TempTool{
+		Name: "wide", CommandTemplate: "curl x", ConfirmInChat: true}); err != nil {
+		t.Fatal(err)
+	}
+	// The legacy record flag is fleet-wide in meaning, so an agent-scoped
+	// clear leaves it be.
+	SetUserToolAsksInChat(udb, "alice", "agent_one", "wide", false)
+	if !UserToolAsksInChat(udb, "alice", "agent_two", "wide") {
+		t.Error("clearing one agent's mark cleared a fleet-wide one")
+	}
+	// Clearing the FLEET mark does reach it, or the reader resurrects what the
+	// owner just removed.
+	SetUserToolAsksInChat(udb, "alice", "", "wide", false)
+	if UserToolAsksInChat(udb, "alice", "agent_two", "wide") {
+		t.Error("clearing the fleet-wide mark left the old flag set")
 	}
 }
