@@ -82,7 +82,18 @@ func (t *RunLocalTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		return "", fmt.Errorf("command is required")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	// The TURN's context, not Background. Two things ride it that a fresh
+	// root drops: cancellation, so a Stop reaches a command already running,
+	// and the workspace's REACH ceiling, which this tool is squarely subject
+	// to - run_local runs in sess.WorkspaceDir, so it IS the workspace.
+	//
+	// Nothing reachable leaks today: there is no hook here, so gohort.fetch
+	// raises HookError, and the hardcoded blocked connector below already
+	// cuts the namespace. The root still matters, because that makes the
+	// confinement depend on one hardcoded line rather than on the agent's
+	// setting, and the next person to relax that line would silently take the
+	// ceiling with it.
+	ctx, cancel := context.WithTimeout(sess.Context(), commandTimeout)
 	defer cancel()
 	// Wrap with the session's network connector first so Private
 	// mode (allowed=false) is still honored if it's already on.

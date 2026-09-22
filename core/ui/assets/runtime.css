@@ -1787,7 +1787,18 @@ select:-webkit-autofill {
 }
 .ui-checklist-row:hover { background: var(--bg-1); }
 .ui-checklist-cb { margin-top: 0.25rem; flex-shrink: 0; }
-.ui-checklist-lbl { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+/* Takes the leftover width and is the thing that GIVES it back. Without the
+ * flex, the label sizes to its content and a row carrying actions pushes them
+ * past the edge instead of wrapping its own help text. */
+.ui-checklist-lbl { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; flex: 1 1 auto; }
+/* Row actions on a checklist row. flex-shrink:0 on the STRIP, not just on the
+ * buttons inside it: a shrinkable container clips children that refuse to
+ * shrink, which reads as a button cut in half rather than as a layout that ran
+ * out of room. */
+.ui-checklist-actions {
+  display: flex; align-items: center; gap: 0.4rem;
+  margin-left: auto; flex-shrink: 0;
+}
 .ui-checklist-name { color: var(--text-hi); font-size: 0.85rem; }
 .ui-checklist-help {
   color: var(--text-mute); font-size: 0.76rem;

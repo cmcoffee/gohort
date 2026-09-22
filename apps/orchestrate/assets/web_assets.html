@@ -2642,7 +2642,10 @@
         function attachExpandToggle(actionsContainer, detailEl) {
           var btn = document.createElement('button');
           btn.type = 'button';
-          btn.className = 'ui-row-btn';
+          // compact, like the other two on this strip: .ui-row-btn carries a
+          // 44px minimum in BOTH axes, so a row mixing compact and full
+          // buttons comes out ragged even when nothing is clipped.
+          btn.className = 'ui-row-btn compact';
           btn.style.cssText = 'min-width:2rem;padding:0.15rem 0.4rem';
           btn.textContent = '▸';
           btn.title = 'Show full definition';
@@ -2683,9 +2686,12 @@
           var btn = document.createElement('button');
           btn.type = 'button';
           function paint() {
-            btn.textContent = on ? '\u270B Asks first' : 'Ask first';
-            btn.className = 'ui-row-btn' + (on ? ' warning' : '');
-            btn.style.cssText = 'font-size:0.78rem;padding:0.25rem 0.55rem';
+            // One word. This is the THIRD control on a row that also carries a
+            // name, a description and a command summary, and the 44px minimum
+            // tap target each button claims is what pushed the last one off.
+            btn.textContent = on ? '\u270B Asks' : 'Ask';
+            btn.className = 'ui-row-btn compact' + (on ? ' warning' : '');
+            btn.style.cssText = 'font-size:0.78rem;padding:0.25rem 0.5rem;min-width:0';
             btn.title = on
               ? 'Stops and asks you before every call, in chat, on every agent that holds this tool. Click to stop asking.'
               : 'Stop and ask before every call, in chat. The flag is on the tool, so it applies on every agent that holds it.';
@@ -2940,7 +2946,7 @@
               }
               row.appendChild(meta);
               var rowActions = document.createElement('div');
-              rowActions.style.cssText = 'display:flex;align-items:center;gap:0.4rem;margin-left:auto';
+              rowActions.className = 'ui-checklist-actions';
               var detailEl = buildToolDetail(t);
               attachExpandToggle(rowActions, detailEl);
               addAskControl(rowActions, t.name, confirmMap);
@@ -2956,8 +2962,8 @@
               // that actually writes beats two where one lies.)
               (function(tool){
                 var scopeBtn = document.createElement('button');
-                scopeBtn.className = 'ui-row-btn';
-                scopeBtn.style.cssText = 'font-size:0.78rem;padding:0.25rem 0.55rem';
+                scopeBtn.className = 'ui-row-btn compact';
+                scopeBtn.style.cssText = 'font-size:0.78rem;padding:0.25rem 0.5rem;min-width:0';
                 scopeBtn.textContent = 'Scope';
                 scopeBtn.title = 'Manage where this tool is available (global / per-agent)';
                 scopeBtn.addEventListener('click', function(){
@@ -3216,7 +3222,7 @@
               // this one ask first" must not depend on which list you found
               // it in.
               var poolActions = document.createElement('div');
-              poolActions.style.cssText = 'display:flex;align-items:center;gap:0.4rem;margin-left:auto';
+              poolActions.className = 'ui-checklist-actions';
               addAskControl(poolActions, o.value, confirmMap);
               if (poolActions.childNodes.length) row.appendChild(poolActions);
               body.appendChild(row);

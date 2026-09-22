@@ -39,6 +39,7 @@ func TestNoSandboxedExecRootsItsContextAtBackground(t *testing.T) {
 		"../tools/workspace/workspace.go",
 		"../tools/temptool/dispatch.go",
 		"../tools/temptool/sandbox_probe.go",
+		"../tools/localexec/localexec.go",
 	} {
 		src, err := os.ReadFile(f)
 		if err != nil {
