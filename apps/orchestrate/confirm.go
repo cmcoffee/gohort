@@ -160,10 +160,14 @@ func (t *chatTurn) confirmFuncFor(sess *ToolSession) func(name, args string) boo
 		}
 		if (tt != nil && tt.ConfirmInChat) || UserToolAsksInChat(markDB, markOwner, agentID, name) {
 			return t.escalateToolConfirm(toolConfirmRequest{
-				tool:    name,
-				prompt:  fmt.Sprintf("Allow %s?", name),
-				detail:  args,
-				because: "this tool is set to ask before every call",
+				tool: name,
+				// What it would DO, not just its name. The card is asking
+				// somebody to judge one call, and a name does not say whether
+				// the tool reaches outside the deployment while a raw JSON
+				// blob buries the one argument that decides it.
+				prompt:  fmt.Sprintf("Allow %s to run?", name),
+				detail:  confirmCallSummary(sess, name, args),
+				because: "you set this tool to ask before every call",
 			})
 		}
 		cred := credentialForToolCall(sess, name)
