@@ -310,15 +310,28 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 	// Its state is "ask" and its only other state is "allow". Blocked is the
 	// unattended mark and belongs to a different question, so the segment is
 	// hidden rather than offered to mean something it does not.
+	//
+	// EVERY tool of the user's, not only the ones currently asking. The flag
+	// is a plain bool on the tool record, so "allow" and "never decided" are
+	// the same value, and listing only the true ones made the control delete
+	// itself: you clicked Always allow and the row vanished, which reads as
+	// the click having failed rather than having worked.
+	//
+	// The autotool rows beside these never had the problem because they keep
+	// their own decision record. This is the same fix without a second store:
+	// show the whole set and let each row carry its state. It is also the
+	// honest shape for a security page - "supervised" is only meaningful next
+	// to the things that are not.
 	for _, pt := range LoadPersistentTempTools(AuthDB(), user) {
-		if !pt.Tool.ConfirmInChat {
-			continue
+		policy, detail := PolicyAllow, "Runs without asking, in chat"
+		if pt.Tool.ConfirmInChat {
+			policy, detail = PolicyAsk, "Asks before every call, in chat, on every agent"
 		}
 		out = append(out, permRow{
 			Who:     pt.Tool.Name,
-			Detail:  "Asks before every call, in chat, on every agent",
+			Detail:  detail,
 			ID:      "confirmtool:" + pt.Tool.Name,
-			Managed: true, Policy: PolicyAsk, NoBlock: true,
+			Managed: true, Policy: policy, NoBlock: true,
 		})
 	}
 	for _, p := range listAutoToolPolicies(RootDB, user) {

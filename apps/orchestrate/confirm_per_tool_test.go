@@ -132,12 +132,21 @@ func TestAnAskingToolShowsOnThePermissionsPage(t *testing.T) {
 	if row["_noblock"] != true {
 		t.Errorf("the row offers a state that is not its question: %+v", row)
 	}
-	// The quiet tool grows no row: a row appears while the decision is
-	// load-bearing, which is the rule the rest of the page follows.
-	for _, r := range rows {
-		if r["Who"] == "confirm_row_quiet" {
-			t.Errorf("a tool that asks nothing grew a row: %+v", r)
-		}
+	// The quiet tool DOES grow a row, reading "allow". It used to be hidden,
+	// on the rule that a row appears only while its decision is load-bearing.
+	// That rule made this control delete itself: the flag is a plain bool, so
+	// "allow" and "never decided" are the same value, and clicking Always
+	// allow removed the row you had just used. It reads as the click failing.
+	//
+	// It is also the wrong shape for a security page. "Supervised" means
+	// nothing except next to the things that are not, and a page that lists
+	// only the exceptions cannot answer what the exceptions are exceptions TO.
+	quiet := rowByWho(rows, "confirm_row_quiet")
+	if quiet == nil {
+		t.Fatal("a tool with no supervision is missing, so the page cannot say what is unsupervised")
+	}
+	if quiet["_policy"] != PolicyAllow {
+		t.Errorf("a tool that asks nothing should read as allow: %+v", quiet)
 	}
 }
 
@@ -314,4 +323,14 @@ func TestTheToolsModalReachesTheAskEndpointFromBothLists(t *testing.T) {
 			t.Errorf("the Tools modal is missing %q, so the control is dead on that path", want)
 		}
 	}
+}
+
+// rowByWho finds a row by its subject.
+func rowByWho(rows []map[string]any, who string) map[string]any {
+	for _, r := range rows {
+		if r["Who"] == who {
+			return r
+		}
+	}
+	return nil
 }
