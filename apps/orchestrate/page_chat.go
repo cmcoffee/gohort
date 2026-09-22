@@ -435,6 +435,18 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// (Deny / Allow once / Always allow); standing-policy rows
 						// render with a segmented Always allow - Needs approval -
 						// Blocked control + Remove. _pending vs _managed picks which.
+						//
+						// Scoped to the agent it is opened from. It carries no
+						// Scope:"fleet", so the client stamps ?agent=<id> on the
+						// source and the handler narrows to it: these are the
+						// permissions of AN AGENT. AllAgents stays, and is a
+						// different question - it decides which agents show the
+						// button, and every agent should.
+						//
+						// Decisions that bind every agent (a contact policy with
+						// no scope, a tool set to ask wherever it appears) are
+						// still listed, because they govern this agent too and
+						// hiding them would let the page lie by omission.
 						{Label: "Permissions", Icon: "🔑", Source: "api/console/permissions", Topbar: true, AllAgents: true, BadgeField: "_pending", Layout: "cards",
 							StateField: "_policy",
 							StateOptions: []ui.OrchestratorStateOption{

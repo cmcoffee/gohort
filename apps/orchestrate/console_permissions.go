@@ -273,23 +273,39 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 		// tool and so had nowhere on this page to be seen or taken back. They
 		// were set in the editor and reviewable nowhere.
 		//
-		// Listed on the same rule as the mark above: a row appears while the
-		// decision is load-bearing, and these always are. No row when nothing
-		// is narrowed, which keeps a page listing every agent from growing
-		// inert rows for the agents that narrowed nothing.
+		// EVERY agent, not only the narrowed ones. This used to appear only
+		// while the restriction was set, on the rule that a row shows up while
+		// its decision is load-bearing, and the reasoning was that a page
+		// listing every agent should not grow inert rows for the agents that
+		// narrowed nothing.
+		//
+		// That was wrong twice. The state is a plain bool, so "allowed" and
+		// "never decided" are the same value: setting an agent back to allowed
+		// DELETED the row you had just used, which reads as the click having
+		// failed. And an agent whose workspace can reach the network is not an
+		// inert row, it is the answer to the question somebody opens this page
+		// to ask. Who can reach the network is only legible next to who
+		// cannot.
+		//
+		// The page is scoped to ONE agent, so this is a single row rather
+		// than one per agent. The sub-action rows below deliberately do NOT
+		// list exhaustively: those are (grouped tool x action) and listing
+		// every action of thirteen grouped tools would bury the page.
 		//
 		// NoAsk, because "Needs approval" is not a state either can hold.
 		// Nothing queues a sandbox: the namespace is cut at spawn or it is
 		// not. Offering the segment would be offering something that cannot be
 		// stored, which is what its own doc warns against.
+		wsPolicy, wsDetail := PolicyAllow, "Workspace may reach the network"
 		if ag.WorkspaceNoNetwork {
-			out = append(out, permRow{
-				Who:     agentName[ag.ID],
-				Detail:  "Workspace may not reach the network",
-				ID:      "workspace:" + ag.ID + ":network",
-				Managed: true, Policy: PolicyBlock, NoAsk: true,
-			})
+			wsPolicy, wsDetail = PolicyBlock, "Workspace may not reach the network"
 		}
+		out = append(out, permRow{
+			Who:     agentName[ag.ID],
+			Detail:  wsDetail,
+			ID:      "workspace:" + ag.ID + ":network",
+			Managed: true, Policy: wsPolicy, NoAsk: true,
+		})
 		for _, pair := range ag.DisabledToolActions {
 			if pair = strings.TrimSpace(pair); pair == "" {
 				continue
@@ -353,7 +369,49 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 			Managed: true, Policy: p.Policy,
 		})
 	}
+	// Narrow to the agent this page was opened from. These are the permissions
+	// OF AN AGENT, not of the fleet: a page mixing every agent's decisions
+	// answers "what have I decided somewhere" when the question is "what can
+	// THIS one do", and leaves the reader filtering in their head on a security
+	// surface, which is where that goes wrong most expensively.
+	//
+	// A row that binds EVERY agent is kept. A contact policy with no scope, or
+	// a tool set to ask wherever it appears, governs this agent too, and
+	// dropping it would let the page lie by omission, which is the dangerous
+	// direction here.
+	if want := strings.TrimSpace(r.URL.Query().Get("agent")); want != "" {
+		kept := make([]permRow, 0, len(out))
+		for _, row := range out {
+			if a := permRowAgent(row.ID); a == "" || a == want {
+				kept = append(kept, row)
+			}
+		}
+		out = kept
+	}
 	writeJSON(w, out)
+}
+
+// permRowAgent returns the agent a permissions row is about, or "" when it
+// binds every agent.
+//
+// Read back out of the row ID rather than carried as a second field, because
+// that grammar already exists and is already what handleConsolePermissionPolicy
+// parses from the other end. Two encodings of one fact drift; one does not.
+func permRowAgent(id string) string {
+	kind, rest, found := strings.Cut(id, ":")
+	if !found {
+		return "" // a pending request, which is always the user's to see
+	}
+	switch kind {
+	case "agentfor", "contactfor", "autotool", "workspace", "subaction":
+		// The agent leads and its subject follows, which is why it leads: the
+		// subject carries its own colon or slash and neither has to be escaped.
+		if a, _, ok := strings.Cut(rest, ":"); ok {
+			return a
+		}
+	}
+	// agent: / contact: / confirmtool: bind every agent by construction.
+	return ""
 }
 
 // removeAutoApproveTool revokes a standing autonomous-tool grant from an agent.

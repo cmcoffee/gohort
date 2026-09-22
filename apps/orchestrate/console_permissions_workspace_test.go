@@ -156,3 +156,100 @@ func TestOnlyTheOwnerMovesAWorkspaceRow(t *testing.T) {
 		}
 	}
 }
+
+// permRowsForAgentIn asks the page as it is asked from an agent's chat, which
+// always carries the agent the menu was opened from.
+func permRowsForAgentIn(t *testing.T, app *OrchestrateApp, user, agentID string) []map[string]any {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodGet, "/api/console/permissions?agent="+agentID, nil)
+	w := httptest.NewRecorder()
+	app.handleConsolePermissions(w, asUser(r, user))
+	if w.Code != http.StatusOK {
+		t.Fatalf("permissions: %d %s", w.Code, w.Body.String())
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil {
+		t.Fatalf("not rows: %v", err)
+	}
+	return rows
+}
+
+// The permissions of AN AGENT, not of the fleet. A page mixing every agent's
+// decisions answers "what have I decided somewhere" when the question is
+// "what can THIS one do".
+func TestThePermissionsPageIsAboutOneAgent(t *testing.T) {
+	app, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	for _, a := range []AgentRecord{
+		{ID: "mine", Name: "Wren", Owner: "alice", OrchestratorPrompt: "p", WorkspaceNoNetwork: true},
+		{ID: "other", Name: "Scribe", Owner: "alice", OrchestratorPrompt: "p", WorkspaceNoNetwork: true},
+	} {
+		if _, err := saveAgent(udb, a); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rows := permRowsForAgentIn(t, app, "alice", "mine")
+	for _, r := range rows {
+		if r["Who"] == "Scribe" {
+			t.Errorf("another agent's decision is on this agent's page: %+v", r)
+		}
+	}
+	if rowByWho(rows, "Wren") == nil {
+		t.Error("this agent's own workspace decision is missing")
+	}
+}
+
+// A decision that binds EVERY agent governs this one too. Dropping it would
+// let the page lie by omission, which is the dangerous direction here.
+func TestAFleetWideDecisionStillShowsOnAnAgentsPage(t *testing.T) {
+	app, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	if _, err := saveAgent(udb, AgentRecord{
+		ID: "mine", Name: "Wren", Owner: "alice", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	// confirmtool binds every agent by construction: the flag is on the tool.
+	if err := AdminPersistTempTool(udb, "alice", TempTool{
+		Name: "fleet_wide_tool", CommandTemplate: "curl x", ConfirmInChat: true}); err != nil {
+		t.Fatal(err)
+	}
+	if rowByWho(permRowsForAgentIn(t, app, "alice", "mine"), "fleet_wide_tool") == nil {
+		t.Error("a tool that asks on every agent is hidden from this agent's page, which governs it")
+	}
+}
+
+// Setting the workspace back to allowed must not delete the row. The state is
+// a plain bool, so "allowed" and "never decided" are the same value, and the
+// page used to list only the restricted ones: using the control removed it.
+func TestAllowingTheWorkspaceKeepsTheRow(t *testing.T) {
+	app, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	if _, err := saveAgent(udb, AgentRecord{
+		ID: "mine", Name: "Wren", Owner: "alice", OrchestratorPrompt: "p",
+		WorkspaceNoNetwork: true}); err != nil {
+		t.Fatal(err)
+	}
+	set := func(value string) {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodPost,
+			"/api/console/permissions/policy?id=workspace:mine:network&value="+value, nil)
+		w := httptest.NewRecorder()
+		app.handleConsolePermissionPolicy(w, asUser(r, "alice"))
+		if w.Code != http.StatusOK && w.Code != http.StatusNoContent {
+			t.Fatalf("policy %s: %d %s", value, w.Code, w.Body.String())
+		}
+	}
+	set(PolicyAllow)
+	row := rowByWho(permRowsForAgentIn(t, app, "alice", "mine"), "Wren")
+	if row == nil {
+		t.Fatal("allowing the workspace deleted the row, so the control removed itself")
+	}
+	if row["_policy"] != PolicyAllow {
+		t.Errorf("the row does not read as allowed: %+v", row)
+	}
+	set(PolicyBlock)
+	row = rowByWho(permRowsForAgentIn(t, app, "alice", "mine"), "Wren")
+	if row == nil || row["_policy"] != PolicyBlock {
+		t.Errorf("blocking it again did not take: %+v", row)
+	}
+}
