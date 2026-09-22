@@ -88,7 +88,7 @@ func requestedSuffix() string {
 	if pick == activeSandbox().name() {
 		return " (requested)"
 	}
-	return " · " + pick + " was requested and is NOT what is running; see the log for why"
+	return " - " + pick + " was requested and is NOT what is running; see the log for why"
 }
 
 func located(bin string) string {

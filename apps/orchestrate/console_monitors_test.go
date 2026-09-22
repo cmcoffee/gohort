@@ -172,7 +172,7 @@ func TestOnlyTheStopsThatNeedAPersonAreAmber(t *testing.T) {
 			t.Errorf("%s → %v/%v, want %s/%s", c.cause, st["icon"], st["tone"], c.wantIcon, c.wantTone)
 		}
 		title, _ := st["title"].(string)
-		if !strings.HasPrefix(title, "nightly \u00b7 ") {
+		if !strings.HasPrefix(title, "nightly - ") {
 			t.Errorf("%s: the tooltip does not name the schedule: %q", c.cause, title)
 		}
 		// The glyph symbols belong in the glyph, not in the hover text.

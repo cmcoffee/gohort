@@ -74,7 +74,7 @@ type ChipPicker struct {
 	// this option key (e.g. reference sources grouped by kind). Blank =
 	// no grouping. Ignored in chips mode.
 	GroupByField string `json:"group_by_field,omitempty"`
-	// MetaFields render a compact "12 documents · 44 chunks" line beneath
+	// MetaFields render a compact "12 documents - 44 chunks" line beneath
 	// each attach-row: for each listed key present on the option, the
 	// value is shown followed by the key name. Ignored in chips mode.
 	MetaFields []string `json:"meta_fields,omitempty"`

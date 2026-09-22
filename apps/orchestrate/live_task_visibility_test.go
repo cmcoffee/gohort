@@ -16,19 +16,19 @@ func TestAProgresslessRunStillShowsItIsMoving(t *testing.T) {
 	render := func(kind string, round int, lastTool string, started time.Time) string {
 		status := kind
 		if round > 0 {
-			status += " · round " + shortElapsed(0)
+			status += " - round " + shortElapsed(0)
 		}
 		if lastTool != "" {
-			status += " · " + lastTool
+			status += " - " + lastTool
 		}
 		if round == 0 && lastTool == "" {
-			status += " · " + shortElapsed(time.Since(started))
+			status += " - " + shortElapsed(time.Since(started))
 		}
 		return status
 	}
 
 	task := render("task", 0, "", time.Now().Add(-3*time.Minute))
-	if !strings.HasPrefix(task, "task · ") {
+	if !strings.HasPrefix(task, "task - ") {
 		t.Fatalf("a task should carry elapsed: %q", task)
 	}
 	if task == "task" {
@@ -37,7 +37,11 @@ func TestAProgresslessRunStillShowsItIsMoving(t *testing.T) {
 	// A chat turn already has motion — rounds and tool names — so elapsed would
 	// just be noise on top of it.
 	chat := render("chat", 2, "web_search", time.Now().Add(-time.Minute))
-	if strings.Count(chat, "·") != 2 {
+	// Counts the SEPARATOR, not the character. The separator used to be a
+	// middle dot, which nothing else could produce; a bare "-" is ordinary in
+	// a tool name (fetch-url, an MCP name) and would make this assertion pass
+	// or fail for a reason it is not testing.
+	if strings.Count(chat, " - ") != 2 {
 		t.Errorf("a run with real progress detail should not also get elapsed: %q", chat)
 	}
 }

@@ -196,7 +196,7 @@ func channelObsFrom(in ChannelInbound) string {
 	if where == "" || strings.EqualFold(strings.TrimSpace(where), strings.TrimSpace(who)) {
 		return who
 	}
-	return who + " · " + where
+	return who + " - " + where
 }
 
 // observeChannelInbound feeds one handled channel inbound to the agent's cortex

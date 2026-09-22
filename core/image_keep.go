@@ -578,7 +578,7 @@ func personLine(k KeptImage) string {
 	if d := describeKept(k); d != "" {
 		parts = append(parts, d)
 	}
-	return strings.Join(parts, " · ")
+	return strings.Join(parts, " - ")
 }
 
 // keptLine renders a non-person entry the way it always read.
@@ -600,7 +600,7 @@ func describeKept(k KeptImage) string {
 	desc := k.Note
 	switch {
 	case desc != "" && k.Caption != "":
-		desc += " · " + k.Caption
+		desc += " - " + k.Caption
 	case desc == "":
 		desc = k.Caption
 	}

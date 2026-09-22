@@ -105,7 +105,7 @@ func (T *OrchestrateApp) handleAgentImages(w http.ResponseWriter, r *http.Reques
 func librarySubject(k KeptImage) string {
 	label := SubjectLabel(k.Subject)
 	if label == "" {
-		return "· not labelled"
+		return "- not labelled"
 	}
 	if k.Subject.Person && strings.TrimSpace(k.Subject.Handle) == "" {
 		// A name with no handle is a label somebody typed, not an
@@ -137,7 +137,7 @@ func libraryShows(k KeptImage) string {
 	out := strings.TrimSpace(k.Note)
 	if c := strings.TrimSpace(k.Caption); c != "" {
 		if out != "" {
-			out += " · "
+			out += " - "
 		}
 		out += c
 	}

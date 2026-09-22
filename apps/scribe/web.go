@@ -157,9 +157,9 @@ func (T *Scribe) handleList(w http.ResponseWriter, r *http.Request, udb Database
 		}
 		if oudb := UserDB(T.DB, owner); oudb != nil {
 			if g, ok := loadGuide(oudb, id); ok {
-				suffix := " · shared"
+				suffix := " - shared"
 				if g.sharedForEdit() {
-					suffix = " · shared (editable)"
+					suffix = " - shared (editable)"
 				}
 				out = append(out, row{ID: g.ID, Title: listLabel(g, suffix), Kind: g.Kind, Shared: true})
 			}
@@ -256,7 +256,7 @@ func templateBody(name string) string {
 func listLabel(g Guide, suffix string) string {
 	label := firstNonEmpty(g.Title, "Untitled "+g.kindNoun())
 	if g.isArticle() {
-		label += " · article"
+		label += " - article"
 	}
 	return label + suffix
 }
@@ -500,7 +500,7 @@ func (T *Scribe) handleRevisionPreview(w http.ResponseWriter, r *http.Request, u
 	}
 	title := rev.At
 	if note := strings.TrimSpace(rev.Note); note != "" {
-		title = note + " · " + rev.At
+		title = note + " - " + rev.At
 	}
 	writeJSON(w, map[string]string{
 		"title": title,

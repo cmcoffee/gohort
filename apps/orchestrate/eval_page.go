@@ -115,7 +115,7 @@ func (T *OrchestrateApp) handleEvalSuitePage(w http.ResponseWriter, r *http.Requ
 		Sections: []ui.Section{
 			{
 				Title:    "What it grades",
-				Subtitle: fmt.Sprintf("%s · %s", suite.TargetKind, suite.TargetID),
+				Subtitle: fmt.Sprintf("%s - %s", suite.TargetKind, suite.TargetID),
 				Body: ui.FormPanel{
 					Source:      "api/eval-suites/" + url_(suite.ID),
 					PostURL:     "api/eval-suites/" + url_(suite.ID),

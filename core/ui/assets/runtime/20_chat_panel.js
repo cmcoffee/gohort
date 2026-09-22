@@ -492,7 +492,7 @@
                 // user can tell externally-sourced sessions apart
                 // from their own.
                 (s.source ? el('span', {class: 'ui-chat-side-source ui-chat-side-source-' + s.source},
-                  [s.source + (s.chat_id ? ' · ' + s.chat_id : '')]) : null),
+                  [s.source + (s.chat_id ? ' - ' + s.chat_id : '')]) : null),
               ]),
             ]),
             inMode ? null : el('button', {
@@ -845,7 +845,7 @@
       if (stats.reasoning_tokens) parts.push(stats.reasoning_tokens.toLocaleString() + ' think');
       if (stats.est_cost && stats.est_cost > 0) parts.push('$' + Number(stats.est_cost).toFixed(4));
       if (!parts.length) return;
-      var bar = el('div', {class: 'ui-chat-round-stats'}, [parts.join(' · ')]);
+      var bar = el('div', {class: 'ui-chat-round-stats'}, [parts.join(' - ')]);
       msgEl.appendChild(bar);
     }
 
@@ -873,7 +873,7 @@
       if (sessionStats.think) parts.push(sessionStats.think.toLocaleString() + ' think');
       if (sessionStats.ms)    parts.push((sessionStats.ms / 1000).toFixed(1) + 's');
       if (sessionStats.cost > 0) parts.push('$' + sessionStats.cost.toFixed(4));
-      statsBar.textContent = 'session: ' + parts.join(' · ');
+      statsBar.textContent = 'session: ' + parts.join(' - ');
       statsBar.style.display = '';
     }
 

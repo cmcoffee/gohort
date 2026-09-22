@@ -292,7 +292,7 @@ func (T *OpenAIAPI) handleModels(w http.ResponseWriter, r *http.Request) {
 			if allow("channel:" + c.ChatID) {
 				data = append(data, map[string]any{
 					"id": "channel:" + c.ChatID, "object": "model", "owned_by": "gohort",
-					"description": c.Name + " · " + c.AgentName,
+					"description": c.Name + " - " + c.AgentName,
 				})
 			}
 		}

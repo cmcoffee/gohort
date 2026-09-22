@@ -97,7 +97,7 @@ func (t *chatTurn) buildAttachedPipelineToolDefs() []AgentToolDef {
 		d := def // capture per-iteration for the closure
 		desc := "Run the " + d.Name + " pipeline"
 		if s := strings.TrimSpace(d.Description); s != "" {
-			desc += " · " + s
+			desc += " - " + s
 		}
 		desc += ". A saved multi-stage workflow; pass the starting input and it returns the final synthesized output."
 

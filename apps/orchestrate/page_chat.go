@@ -433,7 +433,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 						// rail badge counts just the pending ones.
 						// Permissions: pending requests render as approval cards
 						// (Deny / Allow once / Always allow); standing-policy rows
-						// render with a segmented Always allow · Needs approval ·
+						// render with a segmented Always allow - Needs approval -
 						// Blocked control + Remove. _pending vs _managed picks which.
 						{Label: "Permissions", Icon: "🔑", Source: "api/console/permissions", Topbar: true, AllAgents: true, BadgeField: "_pending", Layout: "cards",
 							StateField: "_policy",

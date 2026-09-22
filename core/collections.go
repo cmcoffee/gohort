@@ -606,7 +606,7 @@ func (f HitFormat) Render(hits []SearchHit) string {
 		}
 		fmt.Fprintf(&b, "%d. %s", i+1, docName)
 		if section != "" && section != docName {
-			fmt.Fprintf(&b, " \u00b7 %s", section)
+			fmt.Fprintf(&b, " - %s", section)
 		}
 		if h.Locator != "" {
 			fmt.Fprintf(&b, " (%s)", h.Locator)

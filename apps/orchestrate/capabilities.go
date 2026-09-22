@@ -137,9 +137,9 @@ func outwardCapabilities(owner string, a AgentRecord) OutwardCapability {
 		msg = append(msg, ch.Service+": "+ch.Name+" ("+ch.Scope+")")
 	}
 	msg = append(msg, cap.MsgTools...)
-	cap.MessageSummary = strings.Join(msg, " · ")
+	cap.MessageSummary = strings.Join(msg, " - ")
 	if cap.MessageSummary == "" {
-		cap.MessageSummary = "·"
+		cap.MessageSummary = "-"
 	}
 	var spend []string
 	for _, p := range cap.PaidAPIs {
@@ -149,9 +149,9 @@ func outwardCapabilities(owner string, a AgentRecord) OutwardCapability {
 		}
 		spend = append(spend, s)
 	}
-	cap.SpendSummary = strings.Join(spend, " · ")
+	cap.SpendSummary = strings.Join(spend, " - ")
 	if cap.SpendSummary == "" {
-		cap.SpendSummary = "·"
+		cap.SpendSummary = "-"
 	}
 	return cap
 }

@@ -138,8 +138,8 @@ tool       (tool) the tool to call
 args       (tool) {param: template}
 
 === TEMPLATING ===
-{input} pipeline input · {prev} previous stage's output · {stage:NAME} a named stage's output
-{stage:NAME.field} one declared field · {item} current element (fanout) · {iteration}/{iterations} (loop body)
+{input} pipeline input - {prev} previous stage's output - {stage:NAME} a named stage's output
+{stage:NAME.field} one declared field - {item} current element (fanout) - {iteration}/{iterations} (loop body)
 Every reference is checked when the pipeline is SAVED, so a typo is an authoring error, not a mid-run surprise.
 
 === STRUCTURED OUTPUT ===

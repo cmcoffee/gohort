@@ -141,7 +141,7 @@ func (a *AdminApp) registerLLMRoutes(sub *http.ServeMux) {
 			if v.Endpoint != "" {
 				where += " at " + v.Endpoint
 			}
-			lines = append(lines, v.Tier+": "+where+" · "+p+" ("+v.Reason+")")
+			lines = append(lines, v.Tier+": "+where+" - "+p+" ("+v.Reason+")")
 		}
 		advice := strings.Join(lines, "\n")
 		if recommended {

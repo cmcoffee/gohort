@@ -128,7 +128,7 @@ func (t *chatTurn) titleAfterFirstTurn() {
 // emitStats pushes a per-message stats payload (tk/s, input/output/
 // thinking tokens, elapsed) into the conversation pane so the user can
 // see throughput per assistant turn. Mirrors the chat app's
-// "12.3 tk/s · 1450 in · 230 out · 187 think · 18.7s" footer.
+// "12.3 tk/s - 1450 in - 230 out - 187 think - 18.7s" footer.
 //
 // Nil-safe: tool-only LLM rounds (no content output) get an empty
 // payload and the framework skips rendering.

@@ -60,5 +60,5 @@ func RecordExternalCostFor(ctx context.Context, sourceID, label string, costPerC
 		RecordExternalCost(sourceID, label, costPerCall)
 		return
 	}
-	RecordExternalCost(sourceID+" · "+who, label+" (via "+who+")", costPerCall)
+	RecordExternalCost(sourceID+" - "+who, label+" (via "+who+")", costPerCall)
 }

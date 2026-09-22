@@ -160,7 +160,7 @@ no `skip_to` ENDS the pipeline, which is not an arrow, so it is a legend line na
 pass"), the body runs in order, the last body stage returns to the loop node (dotted, "again"), and
 the loop leaves once ("when it stops"). Summarising the body as "3 stages inside" would be a picture
 of a box. Body node IDs are prefixed with the loop's name because body names are scoped to the loop
-· two loops may each hold a `critique`, and they are not the same node.
+- two loops may each hold a `critique`, and they are not the same node.
 
 ## Open
 

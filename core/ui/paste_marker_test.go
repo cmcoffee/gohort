@@ -1,6 +1,6 @@
 package ui
 
-// A pasted block is stood in for by "[Pasted text #N · X lines / Y chars]" in
+// A pasted block is stood in for by "[Pasted text #N - X lines / Y chars]" in
 // the composer, and expanded back before the send.
 //
 // The two halves drifted: the marker was WRITTEN with a middle dot and MATCHED
@@ -54,7 +54,7 @@ func TestTheSendUsesTheSharedMatcher(t *testing.T) {
 func TestAProducedMarkerMatchesTheShippedPattern(t *testing.T) {
 	re := regexp.MustCompile(`\[Pasted text #(\d+)[^\]]*\]`)
 	for _, marker := range []string{
-		"[Pasted text #1 · 47 lines / 1834 chars]", // what it writes today
+		"[Pasted text #1 - 47 lines / 1834 chars]", // what it writes today
 		"[Pasted text #1 — 47 lines / 1834 chars]", // and what a saved draft may still hold
 	} {
 		m := re.FindStringSubmatch("before " + marker + " after")

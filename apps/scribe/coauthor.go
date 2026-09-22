@@ -166,7 +166,7 @@ func (T *Scribe) coauthorTools(sc coauthorScope) []AgentToolDef {
 			}
 			query := title
 			if instr != "" {
-				query = title + " · " + instr
+				query = title + " - " + instr
 			}
 			grounding, found := gatherGroundingFor(context.Background(), ownerUser, g, query)
 			if !found {

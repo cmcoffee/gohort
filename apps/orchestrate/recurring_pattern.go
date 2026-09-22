@@ -361,19 +361,19 @@ func nextRandomFire(p *orchUpdatePayload, now time.Time, randFloat func() float6
 func recurringDetail(p orchUpdatePayload) string {
 	win := ""
 	if p.HasWindow {
-		win = fmt.Sprintf(" · %s–%s", fmtHHMM(p.WindowFromMin), fmtHHMM(p.WindowToMin))
+		win = fmt.Sprintf(" - %s–%s", fmtHHMM(p.WindowFromMin), fmtHHMM(p.WindowToMin))
 	}
 	if p.Pattern == RecurringRandom {
 		if p.isContinuousRandom() {
-			return fmt.Sprintf("random · every %d–%dm%s", p.MinGapSeconds/60, effectiveMaxGapMin(p.MinGapSeconds, p.MaxGapSeconds), win)
+			return fmt.Sprintf("random - every %d–%dm%s", p.MinGapSeconds/60, effectiveMaxGapMin(p.MinGapSeconds, p.MaxGapSeconds), win)
 		}
 		gap := ""
 		if p.MinGapSeconds > 0 {
 			gap = fmt.Sprintf(" (≥%dm apart)", p.MinGapSeconds/60)
 		}
-		return fmt.Sprintf("random · %d×/day%s%s", p.TimesPerDay, win, gap)
+		return fmt.Sprintf("random - %d×/day%s%s", p.TimesPerDay, win, gap)
 	}
-	return fmt.Sprintf("recurring · every %dm%s", p.IntervalSeconds/60, win)
+	return fmt.Sprintf("recurring - every %dm%s", p.IntervalSeconds/60, win)
 }
 
 // effectiveMaxGapMin returns the continuous-mode max gap in minutes, applying

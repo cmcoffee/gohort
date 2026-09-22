@@ -204,7 +204,7 @@ Support bundles   /var/log/bundles   4 subfolders   3 users
 
   Commands
     Decrypt bundle   /opt/bin/diag_decrypt   asks for input: Response key
-                     decrypt_bundles · 4 actions          [Agents ●] [Map] [Delete]
+                     decrypt_bundles - 4 actions          [Agents ●] [Map] [Delete]
     Unseal archive   /opt/bin/unseal
                      Not mapped                                      [Map] [Delete]
                                                             [ + Add a command ]

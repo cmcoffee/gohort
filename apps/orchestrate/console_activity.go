@@ -282,7 +282,7 @@ func (T *OrchestrateApp) handleConsoleActivity(w http.ResponseWriter, r *http.Re
 		if background[s.ID] && s.Status == RunStatusRunning {
 			// Said on the row, not just in a color: this table is also read by
 			// people who arrived from a link rather than from the pill.
-			surface += " · background"
+			surface += " - background"
 		}
 		rows = append(rows, consoleActivityRow{
 			Agent:       runIndentPrefix(s.Depth) + name,

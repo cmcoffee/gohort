@@ -152,7 +152,7 @@ func (d *agentDest) Publish(ctx context.Context, user string, req docs.PublishRe
 	label := a.Label
 	if note := clipToLabel(said); note != "" {
 		if label != "" {
-			label += " · " + note
+			label += " - " + note
 		} else {
 			label = note
 		}

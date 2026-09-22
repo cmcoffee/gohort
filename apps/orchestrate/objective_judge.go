@@ -314,7 +314,7 @@ func objectiveStateLabel(o objectiveRun) string {
 	// The Next run cell already shows WHEN. This is the half it cannot carry:
 	// that the time was chosen by the last attempt, and what it is waiting for.
 	if w := strings.TrimSpace(o.PacedWhy); w != "" {
-		label += " · waiting: " + truncateObs(w, 120)
+		label += " - waiting: " + truncateObs(w, 120)
 	}
 	return label
 }

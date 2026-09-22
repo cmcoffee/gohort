@@ -598,7 +598,7 @@ func attachPipelineAgentOptions(udb Database, user string) []ui.SelectOption {
 		}
 		label := chFirst(ag.Name, ag.ID)
 		if d := strings.TrimSpace(ag.Description); d != "" {
-			label += " · " + d
+			label += " - " + d
 		}
 		out = append(out, ui.SelectOption{Value: ag.ID, Label: label})
 	}

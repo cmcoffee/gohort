@@ -247,14 +247,14 @@ earlier breakdown does not cover".
 
 === TEMPLATING ===
 A fixed vocabulary of primitives, no declaring, no naming, same meaning in every machine:
-{input} the person's message this turn · {original_input} the message that opened the conversation ·
-{established} everything earlier phases worked out · {prev} the phase run just before, this turn ·
-{now} the date and time where the person is · {user} · {agent} · {step} · {machine}.
+{input} the person's message this turn - {original_input} the message that opened the conversation -
+{established} everything earlier phases worked out - {prev} the phase run just before, this turn -
+{now} the date and time where the person is - {user} - {agent} - {step} - {machine}.
 Transient phases only (a resident phase's prompt is pinned across turns).
 You do not have to place {input} or {established}: a transient phase is handed the message when its
 prompt mentions none, and the blackboard when it places no {state:…} reference of its own. Reach for
 {state:PHASE.field} only when you need ONE value inside a sentence.
-{state:NAME} a phase's reply · {state:NAME.field} one declared field, anywhere, any turn.
+{state:NAME} a phase's reply - {state:NAME.field} one declared field, anywhere, any turn.
 Every reference is checked when the machine is saved.
 
 === A WORKED EXAMPLE ===

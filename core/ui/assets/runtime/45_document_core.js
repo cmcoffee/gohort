@@ -121,7 +121,7 @@
           var id = it[idF];
           var label = it[labelF] || '(untitled)';
           var extra = opts.metaOf ? opts.metaOf(it) : '';
-          var meta = (extra ? extra + ' · ' : '') + relTime(it[dateF]);
+          var meta = (extra ? extra + ' - ' : '') + relTime(it[dateF]);
           var selected = !!(opts.bulk && opts.bulk.selected[id]);
           var row = el('div', {
             class: 'ui-chat-side-item' +
@@ -136,7 +136,7 @@
             // Native tooltip carries the full label + metadata, so the
             // row can ellipsize at a narrow sidebar width without
             // hiding information.
-            title: label + ' · ' + meta,
+            title: label + ' - ' + meta,
           }, [
             el('div', {class: 'ui-chat-side-text'}, [
               el('div', {class: 'ui-chat-side-title'}, [label]),
@@ -528,7 +528,7 @@
       fwdBtn.disabled = index >= n - 1;
       var cur = (index >= 0) ? revisions[index] : null;
       indicator.textContent = n > 0
-        ? 'rev ' + (index + 1) + '/' + n + (cur && cur.label ? ' · ' + cur.label : '')
+        ? 'rev ' + (index + 1) + '/' + n + (cur && cur.label ? ' - ' + cur.label : '')
         : '';
       // "Make current" only means something while looking at an older
       // revision; on the newest it would be a no-op save.

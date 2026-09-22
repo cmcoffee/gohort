@@ -92,7 +92,7 @@
         // row is noise, and the repeating ones are what a reader is scanning
         // for.
         var when = it.when || '';
-        if (it.count > 1) { when += ' · ' + it.count + ' times'; }
+        if (it.count > 1) { when += ' - ' + it.count + ' times'; }
         var meta = el('div', {class: 'ui-bell-meta'}, [el('span', {}, [when])]);
         if (!it.read) {
           meta.appendChild(el('button', {class: 'ui-bell-act', type: 'button',

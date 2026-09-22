@@ -24,12 +24,12 @@ func turnAt(sec int) ChatMessage {
 // serving them here is pure transfer the client throws away.
 func TestObservationCardsSkipsChatTurns(t *testing.T) {
 	got := observationCardsSince([]ChatMessage{
-		turnAt(1), cardAt("Dana · iPhone", 2), turnAt(3), cardAt("Monitor", 4),
+		turnAt(1), cardAt("Dana - iPhone", 2), turnAt(3), cardAt("Monitor", 4),
 	}, "")
 	if len(got) != 2 {
 		t.Fatalf("want 2 cards, got %d", len(got))
 	}
-	if got[0].ReportFrom != "Dana · iPhone" || got[1].ReportFrom != "Monitor" {
+	if got[0].ReportFrom != "Dana - iPhone" || got[1].ReportFrom != "Monitor" {
 		t.Errorf("wrong cards or order: %+v", got)
 	}
 }

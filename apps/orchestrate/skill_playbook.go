@@ -185,7 +185,7 @@ func (pr playbookRunner) run(ctx context.Context, skill SkillRecord, rule Playbo
 		}
 	}
 	if ev != "" {
-		fmt.Fprintf(&b, " \u00b7 %s", excerptLine(ev, 240))
+		fmt.Fprintf(&b, " - %s", excerptLine(ev, 240))
 	}
 	b.WriteString("\n")
 	switch {

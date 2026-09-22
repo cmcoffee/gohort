@@ -704,13 +704,13 @@ func (T *CustomApps) handleAppsList(w http.ResponseWriter, r *http.Request, owne
 			} else {
 				row["auto_running"] = "1"
 				if !next.IsZero() {
-					seg = "auto-updating · next " + humanizeNext(next)
+					seg = "auto-updating - next " + humanizeNext(next)
 				}
 			}
 			if status == "private" {
 				status = seg
 			} else {
-				status += " · " + seg
+				status += " - " + seg
 			}
 		}
 		row["status"] = status

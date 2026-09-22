@@ -14,7 +14,7 @@ purpose, and they differ in four places on purpose.
 
 Under Machines, because they are the same kind of thing to somebody looking for one.
 
-Each row says what the pipeline is MADE of (`2 worker, 1 fanout · 1 worth a look`), and **who can
+Each row says what the pipeline is MADE of (`2 worker, 1 fanout - 1 worth a look`), and **who can
 call it**. That second column is the point: a pipeline reaches an agent as a tool named
 `run_<name>`, so one attached to nothing is inert, exactly as an unattached machine is. Both facts
 are computed server-side (`pipelineRow`) rather than in the page, so a row says the same thing

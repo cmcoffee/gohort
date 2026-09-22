@@ -66,7 +66,7 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 			for _, d := range ListPipelineDefs(udb, user) {
 				desc := "Pipeline"
 				if s := strings.TrimSpace(d.Description); s != "" {
-					desc += " · " + s
+					desc += " - " + s
 				}
 				out = append(out, map[string]any{"id": d.ID, "name": d.Name, "description": desc})
 			}
@@ -81,7 +81,7 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				}
 				desc := "Machine"
 				if s := strings.TrimSpace(d.Description); s != "" {
-					desc += " · " + s
+					desc += " - " + s
 				}
 				out = append(out, map[string]any{"id": d.ID, "name": d.Name, "description": desc})
 			}

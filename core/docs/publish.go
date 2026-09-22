@@ -68,7 +68,7 @@ type PublishResult struct {
 	ExternalID string `json:"external_id,omitempty"`
 	URL        string `json:"url,omitempty"`
 	Version    int    `json:"version,omitempty"`
-	// Label is a human "where it went" line for the UI ("ENG · Getting Started").
+	// Label is a human "where it went" line for the UI ("ENG - Getting Started").
 	Label string `json:"label,omitempty"`
 	// Updated reports whether this replaced an existing remote document.
 	Updated bool `json:"updated,omitempty"`

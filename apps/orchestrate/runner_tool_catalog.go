@@ -925,7 +925,7 @@ func (t *chatTurn) wrapToolsForActivity(sess *ToolSession, tools []AgentToolDef,
 								"kind": "activity",
 								"type": "cmd",
 								"id":   activityCheapID(),
-								"text": fmt.Sprintf("%s · still running (%s)", label, time.Since(began).Round(time.Second)),
+								"text": fmt.Sprintf("%s - still running (%s)", label, time.Since(began).Round(time.Second)),
 							})
 						}
 					}

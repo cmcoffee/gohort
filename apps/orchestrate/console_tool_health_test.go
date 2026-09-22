@@ -35,7 +35,7 @@ func TestBrokenToolsPaneListsAndForgets(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &rows); err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 1 || rows[0].Action != "jira · create_issue" || rows[0].ID != "jira.create_issue" {
+	if len(rows) != 1 || rows[0].Action != "jira - create_issue" || rows[0].ID != "jira.create_issue" {
 		t.Fatalf("rows = %+v", rows)
 	}
 	if !strings.HasPrefix(rows[0].Failures, "5 failure(s)") || !strings.Contains(rows[0].Error, "bad token") || rows[0].Since == "" {

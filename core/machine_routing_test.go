@@ -184,7 +184,7 @@ func TestTheDiagramDrawsASplit(t *testing.T) {
 	if !strings.Contains(joined, "dig/dashed/?") {
 		t.Errorf("the chosen-at-run-time arrow is missing: %v", out)
 	}
-	if !strings.Contains(joined, "answer/dashed/? · fallback") {
+	if !strings.Contains(joined, "answer/dashed/? - fallback") {
 		t.Errorf("the fallback should be one arrow stating both facts: %v", out)
 	}
 	// And the note names the field the decision actually lands in, which

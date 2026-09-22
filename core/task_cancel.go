@@ -189,7 +189,7 @@ func (t *backgroundWorkTool) RunWithSession(args map[string]any, sess *ToolSessi
 		for _, j := range jobs {
 			b.WriteString("  " + j.ID)
 			if l := strings.TrimSpace(j.Label); l != "" {
-				b.WriteString(" · " + l)
+				b.WriteString(" - " + l)
 			}
 			b.WriteString("\n")
 		}
@@ -205,7 +205,7 @@ func (t *backgroundWorkTool) RunWithSession(args map[string]any, sess *ToolSessi
 		for _, j := range stopped {
 			b.WriteString("  " + j.ID)
 			if l := strings.TrimSpace(j.Label); l != "" {
-				b.WriteString(" · " + l)
+				b.WriteString(" - " + l)
 			}
 			b.WriteString("\n")
 		}

@@ -218,7 +218,7 @@ func TestTheGoalsViewOwnsNoVerbs(t *testing.T) {
 // used to overwrite.
 func TestAGoalRowCarriesNoSchedulerFlags(t *testing.T) {
 	m := goalRow(consoleGoalRow{
-		Goal: "the backlog is empty", Where: "Scheduled agent · nightly",
+		Goal: "the backlog is empty", Where: "Scheduled agent - nightly",
 		ID: "nightly", Kind: schedKindStanding, Notes: true,
 	}, false, false)
 	if m == nil {

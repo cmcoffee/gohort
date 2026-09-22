@@ -290,7 +290,7 @@ func init() {
 				label = id
 			}
 			if note != "" {
-				label += " · " + note
+				label += " - " + note
 			}
 			out = append(out, ExternalTarget{Value: "agent:" + id, Label: label, Group: "Agents"})
 		}
@@ -341,7 +341,7 @@ func init() {
 					label = c.ChatID
 				}
 				if c.AgentName != "" {
-					label += " · " + c.AgentName
+					label += " - " + c.AgentName
 				}
 				out = append(out, ExternalTarget{Value: "channel:" + c.ChatID, Label: label, Group: "Channels"})
 			}

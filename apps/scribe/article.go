@@ -120,7 +120,7 @@ func (T *Scribe) articleTools(udb Database, user, pinned string, guideKit []Agen
 			if !ok {
 				return "", fmt.Errorf("no article is open: ask the user to select or create one first")
 			}
-			grounding, found := gatherGroundingFor(context.Background(), ownerUser, g, g.Title+" · "+instr)
+			grounding, found := gatherGroundingFor(context.Background(), ownerUser, g, g.Title+" - "+instr)
 			if !found {
 				return "", fmt.Errorf("no grounding found in this article's knowledge collections or attached Sources: attach a Source/collection with anything on this topic, use the `research` tool for a public/web topic, or write it yourself with write_article")
 			}

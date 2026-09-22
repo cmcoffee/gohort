@@ -111,7 +111,7 @@ type FormPanel struct {
 	//
 	//	{"title": "Kept versions",
 	//	 "empty": "Nothing kept yet.",
-	//	 "entries": [{"title": "#3 · 2 hours ago",
+	//	 "entries": [{"title": "#3 - 2 hours ago",
 	//	              "detail": "edited instructions",
 	//	              "actions": [{"label": "Restore", "url": "...", "method": "post",
 	//	                           "confirm": "...", "variant": "danger"},

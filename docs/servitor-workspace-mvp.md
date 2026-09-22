@@ -74,7 +74,7 @@ stitches the answers together.
    repo: logging-lib  repo: service-B  ssh: lab-box   repo: orchestrator
    (search code)      (search code)    (run commands) (search code)
         └───────────────┴─────── each member keeps its OWN ───────────┘
-                    store · docs · scoped graph · creds · refresh lifecycle
+                    store - docs - scoped graph - creds - refresh lifecycle
 ```
 
 ## Why this fits servitor's grain

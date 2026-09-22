@@ -229,5 +229,5 @@ func toolChecksText(t ApplianceTool) string {
 	if len(scoped) > 0 {
 		parts = append(parts, "checked: "+strings.Join(scoped, ", "))
 	}
-	return strings.Join(parts, " · ")
+	return strings.Join(parts, " - ")
 }

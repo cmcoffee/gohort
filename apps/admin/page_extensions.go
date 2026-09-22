@@ -45,7 +45,7 @@ func (a *AdminApp) extensionsSections() []ui.Section {
 								Field: "connected", Type: "badge", Label: "Conn",
 								Badges: []ui.BadgeMapping{
 									{Value: true, Label: "Connected", Color: "success"},
-									{Value: false, Label: "·", Color: "mute"},
+									{Value: false, Label: "-", Color: "mute"},
 								},
 							},
 						},

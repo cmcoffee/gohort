@@ -71,7 +71,7 @@ func (d MachineDef) Graph() WorkflowGraph {
 				// curves with their labels stacked on top of each other,
 				// so the two facts merge into one arrow that states both.
 				if t.Name == p.Next {
-					e.Label = "? · fallback"
+					e.Label = "? - fallback"
 					e.Note += "; also where it goes when " + p.RoutesBy() + " names no phase that exists"
 				}
 				g.Edges = append(g.Edges, e)

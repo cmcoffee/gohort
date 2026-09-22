@@ -507,7 +507,7 @@ func attachedSourceToolOptions(user string) []ui.SelectOption {
 				// is the only thing the author is actually choosing by.
 				out = append(out, ui.SelectOption{
 					Value: name, Label: name,
-					Group: g.Label + " · " + chFirst(it.Name, it.ID),
+					Group: g.Label + " - " + chFirst(it.Name, it.ID),
 					Help:  firstLine(td.Tool.Description),
 				})
 			}
@@ -638,7 +638,7 @@ func narrowableActionOptions(user string) []ui.SelectOption {
 			}
 			out = append(out, ui.SelectOption{
 				Value: g.Name() + "/" + action,
-				Label: g.Name() + " · " + action,
+				Label: g.Name() + " - " + action,
 				Group: "Sub-actions",
 				Help:  actionHelpFor(g, action),
 			})

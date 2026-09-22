@@ -16,7 +16,7 @@ type consoleRecurringRow struct {
 	// Recurring tasks carry no user-set name — the label is the prompt's first
 	// line (matching the Schedules rail). It renders as the card title.
 	Name    string `json:"name"`
-	Cadence string `json:"cadence"`            // human cadence ("recurring · every 30m")
+	Cadence string `json:"cadence"`            // human cadence ("recurring - every 30m")
 	Fires   string `json:"fires,omitempty"`    // "<fired> / <cap>" so far
 	NextRun string `json:"next_run,omitempty"` // RFC3339 next fire (matches consoleAgentRow)
 	State   string `json:"state,omitempty"`    // visible only when broken ("⚠ needs relink — …")

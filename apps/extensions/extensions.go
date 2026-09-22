@@ -562,7 +562,7 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			agent := agentLabel(st)
 			group := "Session drafts (legacy): " + agent
 			if t := strings.TrimSpace(st.SessionTitle); t != "" {
-				group += " · " + t
+				group += " - " + t
 			}
 			rows = append(rows, row{
 				Key:  "session:" + st.SessionID + ":" + st.Tool.Name,
@@ -2466,7 +2466,7 @@ func userPickableTools(user, exceptCategory string) []toolPick {
 		}
 		seen[n] = true
 		if c := strings.TrimSpace(cat); c != "" && !strings.EqualFold(c, exceptCategory) {
-			desc = strings.TrimSpace("currently in " + c + " · " + desc)
+			desc = strings.TrimSpace("currently in " + c + " - " + desc)
 		}
 		out = append(out, toolPick{Name: n, Desc: desc})
 	}

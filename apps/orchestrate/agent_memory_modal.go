@@ -143,7 +143,7 @@ const agentMemoryModalTemplate = `<script>
           if (item.date || item.note) {
             var meta = document.createElement('div');
             meta.style.cssText = 'color:var(--text-mute);font-size:0.7rem;margin-top:0.1rem';
-            meta.textContent = [item.date, item.note].filter(Boolean).join(' · ');
+            meta.textContent = [item.date, item.note].filter(Boolean).join(' - ');
             col.appendChild(meta);
           }
           row.appendChild(col);
@@ -574,7 +574,7 @@ const agentMemoryModalTemplate = `<script>
           topicCaret.style.cssText = 'display:inline-block;margin-right:0.4rem;transition:transform 0.15s';
           topicCaret.textContent = String.fromCharCode(9656); // ▸
           topic.appendChild(topicCaret);
-          topic.appendChild(document.createTextNode((item.topic || 'general') + (item.source_doc ? ' · ' + item.source_doc : '')));
+          topic.appendChild(document.createTextNode((item.topic || 'general') + (item.source_doc ? ' - ' + item.source_doc : '')));
           col.appendChild(topic);
           var content = document.createElement('div');
           content.style.cssText = 'white-space:pre-wrap;margin-top:0.15rem;display:none';

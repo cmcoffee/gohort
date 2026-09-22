@@ -70,9 +70,9 @@ func (s storeSource) List(user string) []ReferenceItem {
 		// agent editor, so that walk was in front of somebody every time they
 		// opened one.
 		if n, err := CountFolders(st.Path); err == nil {
-			desc += " · " + strconv.Itoa(n) + " folder" + plural(n)
+			desc += " - " + strconv.Itoa(n) + " folder" + plural(n)
 		} else {
-			desc += " · unreadable"
+			desc += " - unreadable"
 		}
 		out = append(out, ReferenceItem{ID: st.Slug, Name: st.Name, Desc: desc})
 	}

@@ -827,7 +827,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
     if(!t.scope){ return null; } // legacy: rendered as a badge instead
     var f=(t.scope.features||[]).length, tg=(t.scope.targets||[]).length;
     if(!f && !tg) return 'Reaches nothing yet: set a scope';
-    return (f?f+' feature'+(f>1?'s':''):'no features')+' · '+(tg?tg+' target'+(tg>1?'s':''):'no targets');
+    return (f?f+' feature'+(f>1?'s':''):'no features')+' - '+(tg?tg+' target'+(tg>1?'s':''):'no targets');
   }
 
   function render(list){
@@ -837,16 +837,16 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
     list.forEach(function(t){
       var nameRow = el('div',{class:'acct-tok-name'},[ document.createTextNode(t.name || '(unnamed)') ]);
       if(!t.scope){ nameRow.appendChild(el('span',{class:'acct-tok-badge warn',text:'Unrestricted'})); }
-      var subKids = [ el('span',{class:'acct-tok-code',text: t.token || ''}), document.createTextNode('  ·  created '+String(t.created||'').slice(0,10)) ];
-      subKids.push(document.createTextNode('  ·  '+lastUsed(t)));
+      var subKids = [ el('span',{class:'acct-tok-code',text: t.token || ''}), document.createTextNode('  -  created '+String(t.created||'').slice(0,10)) ];
+      subKids.push(document.createTextNode('  -  '+lastUsed(t)));
       var exp = expiryText(t);
       if(t.expires){
         var expDays = Math.ceil((Date.parse(t.expires) - Date.now()) / 86400000);
         subKids.push(el('span',{class:'acct-tok-badge'+(expDays<=7?' warn':''),text:exp}));
       }
       var sum = scopeSummary(t);
-      if(sum){ subKids.push(document.createTextNode('  ·  '+sum)); }
-      else if(!t.scope){ subKids.push(document.createTextNode('  ·  reaches everything (set a scope to restrict)')); }
+      if(sum){ subKids.push(document.createTextNode('  -  '+sum)); }
+      else if(!t.scope){ subKids.push(document.createTextNode('  -  reaches everything (set a scope to restrict)')); }
       var meta = el('div',{class:'acct-tok-meta'},[ nameRow, el('div',{class:'acct-tok-sub'}, subKids) ]);
 
       var scopeBtn = el('button',{class:'acct-tok-btn',style:'color:var(--text-mute)',text:'Scope'});
@@ -970,7 +970,7 @@ const credentialsHTML = `<div id="acct-creds" class="acct-creds">Loading…</div
     list = list || [];
     if(!list.length){ root.appendChild(el('div',{class:'acct-cred-empty',text:'No credentials yet. Add one to let your agents call an API as you.'})); }
     list.forEach(function(c){
-      var sub = (c.base_url||'') + (c.description ? '  ·  '+c.description : '');
+      var sub = (c.base_url||'') + (c.description ? '  -  '+c.description : '');
       var meta = el('div',{class:'acct-cred-meta'},[
         el('div',{class:'acct-cred-name'},[ document.createTextNode(c.name), el('span',{class:'acct-cred-badge',text:c.type}) ]),
         el('div',{class:'acct-cred-sub',text: sub})
@@ -1071,7 +1071,7 @@ const userToolsHTML = `<div id="acct-tools" class="acct-tools">Loading…</div>
       if(t.shared) name.appendChild(el('span',{class:'acct-tool-badge shared',text:'shared'}));
       if(t.missing) name.appendChild(el('span',{class:'acct-tool-badge missing',text:'missing '+(t.credential||'credential')}));
       var subText = t.description || '';
-      if(t.last_used) subText = subText ? (subText+'  ·  last used '+t.last_used) : ('last used '+t.last_used);
+      if(t.last_used) subText = subText ? (subText+'  -  last used '+t.last_used) : ('last used '+t.last_used);
       var meta = el('div',{class:'acct-tool-meta'},[ name, el('div',{class:'acct-tool-sub',text: subText}) ]);
       var del = el('button',{class:'acct-tool-btn',text:'Delete'});
       del.addEventListener('click',function(){

@@ -101,7 +101,7 @@ func (T *OrchestrateApp) handleConsoleOverview(w http.ResponseWriter, r *http.Re
 	if spend := agentSpendFor(user, agentID, now, loc); spend != nil {
 		cards = append(cards, overviewCard{
 			Title:   spend.Month,
-			Detail:  "over 30 days · " + spend.Week + " this week",
+			Detail:  "over 30 days - " + spend.Week + " this week",
 			Extra:   spend.Runs,
 			Section: secGlance,
 		})
@@ -237,7 +237,7 @@ func (T *OrchestrateApp) handleConsoleFleet(w http.ResponseWriter, r *http.Reque
 		}
 		cards = append(cards, overviewCard{
 			Title: row.Agent, Detail: row.Month + " over 30 days",
-			Extra: row.Runs + " · last " + chFirst(row.Last, "never"), Section: secSpend,
+			Extra: row.Runs + " - last " + chFirst(row.Last, "never"), Section: secSpend,
 		})
 	}
 
@@ -257,7 +257,7 @@ func (T *OrchestrateApp) handleConsoleFleet(w http.ResponseWriter, r *http.Reque
 			break
 		}
 		cards = append(cards, overviewCard{
-			Title: rec.Tool + " · " + rec.Action, Status: "broken",
+			Title: rec.Tool + " - " + rec.Action, Status: "broken",
 			Detail:  fmt.Sprintf("%d failure(s), never succeeded", rec.Fail),
 			Extra:   truncateObs(rec.LastError, 140),
 			Section: secAttention,
@@ -426,7 +426,7 @@ func joinDetail(parts ...string) string {
 			kept = append(kept, p)
 		}
 	}
-	return strings.Join(kept, " · ")
+	return strings.Join(kept, " - ")
 }
 
 // --- labels ------------------------------------------------------------------
@@ -472,7 +472,7 @@ func runCountLabel(runs []RunRecord, now time.Time) string {
 	if seven == 0 {
 		return "No runs this week"
 	}
-	return fmt.Sprintf("%d run(s) in 24h · %d in 7 days", today, seven)
+	return fmt.Sprintf("%d run(s) in 24h - %d in 7 days", today, seven)
 }
 
 // hasRecentFailure reports whether the pill above is counting anything, which
@@ -536,7 +536,7 @@ func standingWorkLabel(standing, monitors, recurring int) string {
 	if len(parts) == 0 {
 		return "No standing work"
 	}
-	return strings.Join(parts, " · ")
+	return strings.Join(parts, " - ")
 }
 
 // parkedCount counts the standing work that has stopped and is waiting on the
@@ -574,7 +574,7 @@ func fleetSpendLabel(rows []agentSpendRow) string {
 	}
 	s := HumanCount(int(tokens)) + " tokens"
 	if RatesConfigured() {
-		s = "$" + trimMoney(cost) + " · " + s
+		s = "$" + trimMoney(cost) + " - " + s
 	}
 	return s
 }

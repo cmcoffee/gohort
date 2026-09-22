@@ -185,7 +185,7 @@ func parkedStateLabel(cause, reason string) string {
 	if strings.TrimSpace(reason) == "" {
 		return head
 	}
-	return head + " · " + reason
+	return head + " - " + reason
 }
 
 // wireDependencyGuards installs the fire-path resolvers + the credential-delete

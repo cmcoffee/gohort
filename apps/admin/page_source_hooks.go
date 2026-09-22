@@ -143,7 +143,7 @@ func sourceHookFormTemplates() []ui.FormTemplate {
 		h := t.Hook
 		label := h.Name
 		if t.Description != "" {
-			label += " · " + t.Description
+			label += " - " + t.Description
 		}
 		vals := map[string]any{
 			"name":          h.Name,

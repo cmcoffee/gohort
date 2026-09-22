@@ -70,7 +70,7 @@ func BuildToolDef() *GroupedTool {
 		Params: map[string]ToolParam{
 			"name":              {Type: "string", Description: "Tool name (snake_case, must not match an existing tool)."},
 			"description":       {Type: "string", Description: "What the tool does and when to reach for it, in ONE or TWO sentences. This line is re-sent on every turn for the life of the tool: no worked examples, no restating the params, no failure modes. Hard cap 500 characters."},
-			"mode":              {Type: "string", Description: "\"api\" (one HTTPS endpoint) · \"toolbox\" (several endpoints under one name, action=\"<sub>\" dispatch) · \"shell\" (local script) · \"pipeline\" (chain existing tools). See action=\"help\"."},
+			"mode":              {Type: "string", Description: "\"api\" (one HTTPS endpoint) - \"toolbox\" (several endpoints under one name, action=\"<sub>\" dispatch) - \"shell\" (local script) - \"pipeline\" (chain existing tools). See action=\"help\"."},
 			"params":            {Type: "object", Description: "Object of {param: {type, description}}. Types: string|integer|number|boolean|array|object. Keep each description to one line: what the value is, plus the format only if it isn't obvious (cap 250 chars). Full rules + coercion in action=\"help\"."},
 			"command_template":  {Type: "string", Description: "(shell) Shell command with {param} placeholders. Use script_body for anything non-trivial. See action=\"help\" for the sandbox fact sheet."},
 			"script_body":       {Type: "string", Description: "(shell, optional) Full script source, written to the workspace and run. Python3 stdlib only: no pip. See action=\"help\"."},

@@ -166,7 +166,7 @@ func TestRelinkOffersAndAcceptsTheRightTargetKind(t *testing.T) {
 	r = httptest.NewRequest("GET", "/api/console/scheduler", nil)
 	w = httptest.NewRecorder()
 	app.handleConsoleScheduler(w, asUser(r, user))
-	if !strings.Contains(w.Body.String(), "pipeline · Nightly") {
+	if !strings.Contains(w.Body.String(), "pipeline - Nightly") {
 		t.Errorf("the row should name the pipeline it fires:\n%s", w.Body.String())
 	}
 }

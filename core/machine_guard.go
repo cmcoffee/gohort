@@ -198,7 +198,7 @@ func (d MachineDef) establishedBlock(ph MachinePhase, st MachineState) string {
 		b.WriteString("\n### ")
 		b.WriteString(p.Name)
 		if desc := strings.TrimSpace(p.Desc); desc != "" {
-			b.WriteString(" · ")
+			b.WriteString(" - ")
 			b.WriteString(desc)
 		}
 		b.WriteString("\n")

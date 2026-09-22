@@ -142,5 +142,5 @@ func guardrailRowWhere(b GuardrailBlock) string {
 	if by := strings.TrimSpace(b.RanBy); by != "" {
 		parts = append(parts, "run by "+by)
 	}
-	return strings.Join(parts, " · ")
+	return strings.Join(parts, " - ")
 }

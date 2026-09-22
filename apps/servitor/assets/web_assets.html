@@ -274,7 +274,7 @@
         stepsBox.innerHTML = '';
         (plan || []).forEach(function(step) {
           var status = (step.status || 'pending').toLowerCase();
-          var mark = '·';
+          var mark = '-';
           if (status === 'pending')     mark = '○';
           if (status === 'in_progress') mark = '●';
           if (status === 'done')        mark = '✓';
@@ -681,7 +681,7 @@
             return;
           }
           var hdr = el('div', {class: 'ui-servitor-profile-h'},
-            [d.name || '', d.scanned ? ' · scanned ' + d.scanned : '']);
+            [d.name || '', d.scanned ? ' - scanned ' + d.scanned : '']);
           body.appendChild(hdr);
           body.appendChild(el('div', {class: 'ui-servitor-profile-body'},
             [d.profile]));
@@ -1148,7 +1148,7 @@
             sel.appendChild(el('option', {value: ''}, ['(pick a system)']));
             list.forEach(function(it) {
               var v = it.peer + '\u0000' + it.id + '\u0000' + (it.kind || 'ssh');
-              var label = it.peer + ' \u00b7 ' + it.name;
+              var label = it.peer + ' - ' + it.name;
               if (it.kind) label += ' (' + it.kind + ')';
               if (it.desc) label += ' \u2014 ' + it.desc;
               var o = el('option', {value: v}, [label]);
@@ -1579,7 +1579,7 @@
           }
           mine.forEach(function(t) {
             var head = el('div', {}, [el('strong', {}, [t.name]),
-              el('span', {class: 'ui-form-help'}, [' · ' + (t.approved ? 'approved' : 'pending') + (t.risk ? ' · ' + t.risk : '')])]);
+              el('span', {class: 'ui-form-help'}, [' - ' + (t.approved ? 'approved' : 'pending') + (t.risk ? ' - ' + t.risk : '')])]);
             // The command itself, never behind a disclosure: approving without
             // reading it is the failure this whole surface exists to prevent.
             var cmd = el('code', {class: 'ui-servitor-access-cmd'}, [t.command]);

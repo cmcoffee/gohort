@@ -737,7 +737,7 @@
         stepsBox.innerHTML = '';
         (plan || []).forEach(function(step) {
           var status = (step.status || 'pending').toLowerCase();
-          var mark = '·';
+          var mark = '-';
           if (status === 'pending')     mark = '○';
           if (status === 'in_progress') mark = '●';
           if (status === 'done')        mark = '✓';
@@ -1599,7 +1599,7 @@
           var parts = [];
           if (ans.picked.length) parts.push(ans.picked.join(', '));
           if ((ans.note || '').trim()) parts.push(ans.note.trim());
-          var answer = parts.join(' · ');
+          var answer = parts.join(' - ');
           return (i + 1) + '. ' + step.question + ' → ' + (answer || '(no answer)');
         });
         var compiled = lines.join('\n');
@@ -3513,7 +3513,7 @@
             if (item.date || item.note) {
               var meta = document.createElement('div');
               meta.style.cssText = 'color:var(--text-mute);font-size:0.7rem;margin-top:0.1rem';
-              meta.textContent = [item.date, item.note].filter(Boolean).join(' · ');
+              meta.textContent = [item.date, item.note].filter(Boolean).join(' - ');
               col.appendChild(meta);
             }
             row.appendChild(col);
@@ -3824,7 +3824,7 @@
             topicCaret.style.cssText = 'display:inline-block;margin-right:0.4rem;transition:transform 0.15s';
             topicCaret.textContent = String.fromCharCode(9656); // ▸
             topic.appendChild(topicCaret);
-            topic.appendChild(document.createTextNode((item.topic || 'general') + (item.source_doc ? ' · ' + item.source_doc : '')));
+            topic.appendChild(document.createTextNode((item.topic || 'general') + (item.source_doc ? ' - ' + item.source_doc : '')));
             body.appendChild(topic);
             var content = document.createElement('div');
             content.style.cssText = 'white-space:pre-wrap;margin-top:0.15rem;display:none';
@@ -4350,7 +4350,7 @@
                 items.forEach(function(it){
                   var o = document.createElement('option');
                   o.value = it.id;
-                  o.textContent = (it.group ? it.group + ' · ' : '') + (it.name || it.id);
+                  o.textContent = (it.group ? it.group + ' - ' : '') + (it.name || it.id);
                   pick.appendChild(o);
                 });
                 mbody.appendChild(pick);
@@ -5117,7 +5117,7 @@
               for (var i = 0; i < gexceptions.length; i++) {
                 if (gExcSlug(gexceptions[i]) === l.name) { label = gexceptions[i].name || l.name; break; }
               }
-              return label + (l.off ? ' · off here' : '');
+              return label + (l.off ? ' - off here' : '');
             });
             if (gExempt(text)) { names.unshift('authorized people'); }
             return names.join(', ');
@@ -5645,7 +5645,7 @@
             coversLine.appendChild(lead);
             if (scanCovers.length) {
               var eg = document.createElement('span');
-              eg.textContent = ' · e.g. ' + scanCovers.slice(0, 6).join(', ') +
+              eg.textContent = ' - e.g. ' + scanCovers.slice(0, 6).join(', ') +
                 (scanCovers.length > 6 ? ', +' + (scanCovers.length - 6) + ' more' : '');
               coversLine.appendChild(eg);
             }
@@ -5845,7 +5845,7 @@
               row.appendChild(name);
               var sub = document.createElement('div');
               sub.style.cssText = 'color:var(--text-mute);margin-top:0.1rem';
-              sub.textContent = 'removed by: ' + (s.rule || '(rule)') + (s.why ? ' · ' + s.why : '');
+              sub.textContent = 'removed by: ' + (s.rule || '(rule)') + (s.why ? ' - ' + s.why : '');
               row.appendChild(sub);
               list.appendChild(row);
             });
@@ -5921,7 +5921,7 @@
                 // near-identical rows.
                 var isScan = (b.hook === 'tool_result');
                 if (isScan) { row.style.borderColor = 'var(--warning)'; }
-                head.textContent = when + (b.hook ? '  ·  ' + b.hook : '') + (b.tool ? '  ·  ' + b.tool : '');
+                head.textContent = when + (b.hook ? '  -  ' + b.hook : '') + (b.tool ? '  -  ' + b.tool : '');
                 head.style.cssText = 'color:var(--text-mute);font-size:0.72rem';
                 row.appendChild(head);
                 var rule = document.createElement('div');
@@ -5938,7 +5938,7 @@
                 if (b.reason || where.length) {
                   var sub = document.createElement('div');
                   sub.style.cssText = 'color:var(--text-mute);margin-top:0.1rem';
-                  sub.textContent = (where.length ? where.join(' · ') + ': ' : '') + (b.reason || '');
+                  sub.textContent = (where.length ? where.join(' - ') + ': ' : '') + (b.reason || '');
                   row.appendChild(sub);
                 }
                 list.appendChild(row);
@@ -6244,7 +6244,7 @@
                 if (skipped.length) {
                   lines.push('');
                   lines.push('Not checked, excepted for this person (' + skipped.length + '):');
-                  skipped.forEach(function(rule) { lines.push('· ' + rule); });
+                  skipped.forEach(function(rule) { lines.push('- ' + rule); });
                 }
                 if (!skipped.length && !(d.verdicts || []).length && d.checked === 0) {
                   lines.push('');
@@ -6816,7 +6816,7 @@
           getUrl: function(id) { return 'api/console/recurring/get?id=' + encodeURIComponent(id); },
           saveUrl: function(id) { return 'api/console/recurring/update?id=' + encodeURIComponent(id); },
           help: function(task) {
-            return 'Runs ' + (task.cadence || 'on a schedule') + ' · fired ' + (task.fire_count || 0) + ' time(s).';
+            return 'Runs ' + (task.cadence || 'on a schedule') + ' - fired ' + (task.fire_count || 0) + ' time(s).';
           },
           what: function(host, task) {
             var collect = recurringWhatFields(host, task);
@@ -6872,7 +6872,7 @@
           var n = area.value.length;
           var line = n.toLocaleString() + ' of ' + cap.toLocaleString() + ' characters';
           if (sections && sections.length > 1) {
-            line += ' \u00b7 ' + sections.map(function(s) { return s.name + ' (' + s.size + ')'; }).join(', ');
+            line += ' - ' + sections.map(function(s) { return s.name + ' (' + s.size + ')'; }).join(', ');
           }
           count.textContent = line;
           count.style.color = n > cap ? 'var(--danger, #c0392b)' : '';
@@ -7294,7 +7294,7 @@
           saveUrl: function(id) { return 'api/console/agents/update?id=' + encodeURIComponent(id); },
           help: function(sa) {
             return '“' + (sa.name || '') + '” runs ' + (sa.schedule_label || 'on a schedule') +
-              (sa.runs ? ' · ' + sa.runs : '') + '.';
+              (sa.runs ? ' - ' + sa.runs : '') + '.';
           },
           what: standingWhatFields,
           when: standingWhenFields
@@ -8208,7 +8208,7 @@
           hdr.appendChild(icon); hdr.appendChild(name);
           if (when) { var ts = document.createElement('span'); ts.className = 'orch-report-card-time'; ts.textContent = when; hdr.appendChild(ts); }
           // Optional subtitle: secondary context a name can't carry (for a
-          // recurring fire: owning agent · cadence · fire N). Sits under the
+          // recurring fire: owning agent - cadence - fire N). Sits under the
           // name/time header so the card says WHICH schedule fired and where it
           // is in its run, not just that something reported.
           if (msg.report_detail) {

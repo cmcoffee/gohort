@@ -648,7 +648,7 @@ func priorReportsFrom(msgs []ChatMessage) []string {
 			continue
 		}
 		if line := judgeFirstLine(m.Content, 160); line != "" {
-			out = append(out, from+" · "+line)
+			out = append(out, from+" - "+line)
 		} else {
 			out = append(out, from)
 		}

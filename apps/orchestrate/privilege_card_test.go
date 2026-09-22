@@ -84,7 +84,7 @@ func TestPrivilegeToolRowsSubAgent(t *testing.T) {
 	// The annotation is the REASON it doesn't stop, so it belongs only where the
 	// parent's authority is what's carrying it — a tool nothing was withholding
 	// isn't running "via parent", it's just running.
-	if want := "credential: loud_api · via parent"; rows[0].Detail != want {
+	if want := "credential: loud_api - via parent"; rows[0].Detail != want {
 		t.Errorf("detail = %q, want %q", rows[0].Detail, want)
 	}
 }

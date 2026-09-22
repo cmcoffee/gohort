@@ -167,7 +167,7 @@ func TestHitFormatCarriesEverythingTheStoreStamps(t *testing.T) {
 	}
 	full := HitFormat{}.Render(hits)
 	for _, want := range []string{
-		"1. OPNsense guide · Rules (page 12) [user_comment]\n   first para\n   second para",
+		"1. OPNsense guide - Rules (page 12) [user_comment]\n   first para\n   second para",
 		"\n\n2. Bread\n   word word",
 	} {
 		if !strings.Contains(full, want) {
@@ -185,7 +185,7 @@ func TestHitFormatCarriesEverythingTheStoreStamps(t *testing.T) {
 		return ""
 	}}.Render(hits)
 	for _, want := range []string{
-		"1. OPNsense guide · Rules (page 12) [user_comment]\n   doc_id: r1\n   section: Rules\n   first para",
+		"1. OPNsense guide - Rules (page 12) [user_comment]\n   doc_id: r1\n   section: Rules\n   first para",
 		"2. Bread [derived]\n   doc_id: r2\n   word word",
 	} {
 		if !strings.Contains(pane, want) {

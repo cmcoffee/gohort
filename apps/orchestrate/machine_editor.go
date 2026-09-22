@@ -349,7 +349,7 @@ func fieldKindOptions() []ui.SelectOption {
 			continue // a whole block is not one field's value
 		}
 		name := BuiltinFieldName(v.Ref)
-		out = append(out, ui.SelectOption{Value: name, Label: name + " · " + v.Means})
+		out = append(out, ui.SelectOption{Value: name, Label: name + " - " + v.Means})
 	}
 	// Last, and named plainly: this is the ordinary case, and the word
 	// for it should be the one an author would use to a colleague. The
@@ -521,7 +521,7 @@ func builtinFieldNames() []string {
 func builtinVarHelp() string {
 	var parts []string
 	for _, v := range MachineVars() {
-		part := v.Ref + " · " + v.Means
+		part := v.Ref + " - " + v.Means
 		if v.Auto != "" {
 			part += " (" + v.Auto + ")"
 		}
@@ -976,7 +976,7 @@ func phaseToolFields(p MachinePhase, cat editorCatalog) []ui.FormField {
 	case PhaseReach(p) == ReachRead:
 		label += ", read-only"
 	case len(p.Tools) > 0:
-		label += " · " + strconv.Itoa(len(p.Tools)) + " named"
+		label += " - " + strconv.Itoa(len(p.Tools)) + " named"
 	}
 	// Reached only with something stored (see phaseShowsTools), so this says
 	// what is kept and that it is doing nothing, rather than hiding it.
@@ -1590,7 +1590,7 @@ func phaseRow(p MachinePhase) map[string]any {
 	case p.NextFrom != "":
 		goes = "decided by " + p.NextFrom
 	case p.Resident && p.Next == "":
-		goes = "·"
+		goes = "-"
 	case goes == "":
 		goes = "nowhere yet"
 	}
@@ -1600,7 +1600,7 @@ func phaseRow(p MachinePhase) map[string]any {
 	}
 	establishes := strings.Join(names, ", ")
 	if establishes == "" {
-		establishes = "·"
+		establishes = "-"
 	}
 	return map[string]any{
 		"name": p.Name, "kind": kind, "goes": goes, "establishes": establishes,

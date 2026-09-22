@@ -1,5 +1,5 @@
-// Package prompts is the Prompts hub surface: a document-workbench (list ·
-// editor · chat, via core/ui's ArticleEditor) over the framework prompt blocks
+// Package prompts is the Prompts hub surface: a document-workbench (list -
+// editor - chat, via core/ui's ArticleEditor) over the framework prompt blocks
 // that shape agent behavior — the "hidden prompts" made visible AND editable.
 // The left list is the registered blocks; the centre editor holds a block's
 // effective text; the right chat refines it with the worker LLM. Saving stores
@@ -195,7 +195,7 @@ func (T *PromptsApp) handlePage(w http.ResponseWriter, r *http.Request) {
 	page.ServeHTTP(w, r)
 }
 
-// promptsEditor is the workbench (list · editor · chat) over the prompt blocks.
+// promptsEditor is the workbench (list - editor - chat) over the prompt blocks.
 // URLs are ABSOLUTE (/prompts/...) so it renders identically on the standalone
 // /prompts page AND embedded in the admin page, which serves from a different
 // path (relative "api/..." would resolve against /admin there).
@@ -298,7 +298,7 @@ func (T *PromptsApp) handleLoad(w http.ResponseWriter, r *http.Request) {
 		"ID":      b.Key,
 		"Subject": b.Title,
 		"Body":    EffectivePromptText(key, b.Text),
-		"Date":    b.Category + " · Gate: " + b.Gate,
+		"Date":    b.Category + " - Gate: " + b.Gate,
 	})
 }
 

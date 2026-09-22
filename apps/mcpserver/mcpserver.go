@@ -647,7 +647,7 @@ func (T *MCPServer) recentResults(owner string, args map[string]any) (string, er
 		// say which task ran.
 		label := rr.Agent
 		if rr.Task != "" && rr.Task != rr.Agent {
-			label = rr.Agent + " · " + rr.Task
+			label = rr.Agent + " - " + rr.Task
 		}
 		fmt.Fprintf(&b, "[%s] %s (%s): %s\n",
 			rr.Started.Local().Format("Jan 2 15:04"), label, rr.Status, rr.Summary)

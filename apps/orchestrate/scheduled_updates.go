@@ -1075,12 +1075,12 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// and mark the card — instead of letting a truncated cycle read as a clean one.
 	// Raising the agent's max_worker_rounds is the fix when this recurs.
 	hitCap := lastRound >= softCap
-	detail := fmt.Sprintf("%s · %s · fire %d", agentLabel, recurringDetail(p), p.FireCount+1)
+	detail := fmt.Sprintf("%s - %s - fire %d", agentLabel, recurringDetail(p), p.FireCount+1)
 	// A background task shares this path but has no cadence and no fire count.
-	// The recurring subtitle read "recurring · every 0m · fire 1" on it, which
+	// The recurring subtitle read "recurring - every 0m - fire 1" on it, which
 	// announces a schedule that does not exist.
 	if isTaskWake(p.Prompt) {
-		detail = agentLabel + " · finished in the background"
+		detail = agentLabel + " - finished in the background"
 	}
 	// A wake that was told to start the next piece, and started nothing.
 	//
@@ -1100,20 +1100,20 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		Log("[orchestrate/task] agent=%s session=%s delivered a piece but called no tool: the set stops here", agentLabel, p.SessionID)
 		appendSessionDiag(udb, p.AgentID, p.SessionID, "series-abandoned",
 			"A background set was told to start its next piece and the turn made no tool call: it answered in prose only. The finished piece was delivered; the rest of the set was NOT started, and the set has been closed rather than left open. If this recurs, the continuation instruction is not reaching the model, or the model is answering before acting.")
-		detail += " · set not continued"
+		detail += " - set not continued"
 	}
 	if hitCap {
-		detail += fmt.Sprintf(" · hit round cap (%d): may be incomplete", softCap)
+		detail += fmt.Sprintf(" - hit round cap (%d): may be incomplete", softCap)
 	}
 	// The verdict rides the card this fire posts, so the person reading the
 	// thread sees where the goal stands without opening Activity.
 	if objLine != "" {
-		detail += " · " + objLine
+		detail += " - " + objLine
 	}
 	// A fire that moved its own successor accounts for it where the owner is
 	// already reading, rather than leaving a next-run time nobody chose.
 	if pacedLine != "" {
-		detail += " · " + pacedLine
+		detail += " - " + pacedLine
 	}
 	// FINAL fire: the pre-arm declined to schedule a successor, so this task
 	// stops here. Say so on the card. Retirement used to be a single log line
@@ -1122,7 +1122,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 	// it got read. The last thing a task posts should be the fact that it is
 	// the last thing it will post.
 	if retireReason != "" {
-		detail += " · FINAL FIRE: " + retireReason + "; this task will not run again"
+		detail += " - FINAL FIRE: " + retireReason + "; this task will not run again"
 	}
 
 	// Render the fire as a scheduled-report card (ReportFrom/ReportKind), the

@@ -683,7 +683,7 @@
       slice.forEach(function(m) {
         var isAI = m[roleField] === aiTag;
         var label = isAI ? 'AI' : (m[whoField] || m.handle || 'them');
-        var ts = m[timeField] ? ' · ' + relTime(m[timeField]) : '';
+        var ts = m[timeField] ? ' - ' + relTime(m[timeField]) : '';
         panel.appendChild(el('div', {class: 'ui-history-msg' + (isAI ? ' ai' : '')}, [
           el('div', {class: 'ui-history-who'}, [label + ts]),
           el('div', {class: 'ui-history-body'}, [m[textField] || '(no text)']),
@@ -893,7 +893,7 @@
           var metaBits = [];
           if (rec[createdF])  metaBits.push('created ' + relTime(rec[createdF]));
           if (rec[lastSeenF]) metaBits.push('last seen ' + relTime(rec[lastSeenF]));
-          var meta    = el('div', {class: 'ui-keys-row-meta'}, [metaBits.join(' · ') || '·']);
+          var meta    = el('div', {class: 'ui-keys-row-meta'}, [metaBits.join(' - ') || '-']);
           var del     = el('button', {class: 'ui-keys-row-del', title: 'Delete this key'}, ['×']);
           del.addEventListener('click', async function() {
             if (!(await window.uiConfirm('Delete this API key? Any client using it will stop working.'))) return;
@@ -1157,7 +1157,7 @@
         if (desc) { if (desc.length > 200) desc = desc.slice(0, 200) + '…'; meta.appendChild(el('div', {class: 'ui-cp-desc', text: desc})); }
         var bits = [];
         (cfg.meta_fields || []).forEach(function(k){ if (opt[k] != null) bits.push(opt[k] + ' ' + k); });
-        if (bits.length) meta.appendChild(el('div', {class: 'ui-cp-metaline', text: bits.join(' · ')}));
+        if (bits.length) meta.appendChild(el('div', {class: 'ui-cp-metaline', text: bits.join(' - ')}));
         var add = el('button', {type: 'button', class: 'ui-cp-add-btn', title: 'Add', text: '+'});
         add.addEventListener('click', function(){ toggle(valueOf(opt), true); });
         row.appendChild(meta); row.appendChild(add);
@@ -1772,7 +1772,7 @@
                 var shown = String(row[c.field] === undefined || row[c.field] === null ? '' : row[c.field]);
                 (c.options || []).forEach(function(o) {
                   if (o && typeof o === 'object' && String(o.value) === shown && o.label) {
-                    shown += ' · ' + o.label;
+                    shown += ' - ' + o.label;
                   }
                 });
                 ctl = el('div', {
@@ -2836,7 +2836,7 @@
       var assistPrompt = (spec && spec.assist_prompt) || f.assist_prompt || '';
       var help = (spec && spec.help) || f.help || '';
       window.uiOpenAssist({
-        title: (f.label || 'Draft') + (section ? ' · ' + section : ''),
+        title: (f.label || 'Draft') + (section ? ' - ' + section : ''),
         subtitle: help || undefined,
         initial: initial,
         send: function(req, done) {
@@ -4725,7 +4725,7 @@
                 showToast(r.message);
               } else if (r && typeof r === 'object') {
                 var n = r.fixed != null ? r.fixed : (r.removed != null ? r.removed : null);
-                status.textContent = n != null ? ('done \u00b7 ' + n) : 'done';
+                status.textContent = n != null ? ('done - ' + n) : 'done';
               } else {
                 status.textContent = 'done';
               }

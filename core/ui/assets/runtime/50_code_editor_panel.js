@@ -547,7 +547,7 @@
     // exactly the background the document is being written against.
     function openDocAssist(section, initial, apply) {
       window.uiOpenAssist({
-        title: (nameInput.value || 'Document') + (section ? ' · ' + section : ''),
+        title: (nameInput.value || 'Document') + (section ? ' - ' + section : ''),
         subtitle: section
           ? 'Drafting one section. The rest of the document is untouched.'
           : 'Drafting the whole document.',
@@ -1262,7 +1262,7 @@
           var bits = [];
           if (c.documents != null) bits.push(c.documents + (c.documents === 1 ? ' doc' : ' docs'));
           if (c.chunks != null)    bits.push(c.chunks + ' chunks');
-          if (bits.length) info.appendChild(el('div', {class: 'ui-cw-list-meta mono'}, [bits.join(' · ')]));
+          if (bits.length) info.appendChild(el('div', {class: 'ui-cw-list-meta mono'}, [bits.join(' - ')]));
           var addBtn = el('button', {class: 'ui-cw-list-btn add', type: 'button', title: 'Add'}, ['+']);
           addBtn.addEventListener('click', function(){ collSelected[c.id] = true; renderCollBar(); paint(); rememberSettings(); });
           availEl.appendChild(el('div', {class: 'ui-cw-list-row'}, [info, addBtn]));

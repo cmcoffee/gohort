@@ -326,7 +326,7 @@ func (t *chatTurn) recordScanDetection(agentID, tool string, v ToolScanVerdict) 
 	reason := strings.TrimSpace(v.Span)
 	if r := strings.TrimSpace(v.Reason); r != "" {
 		if reason != "" {
-			reason += " · " + r
+			reason += " - " + r
 		} else {
 			reason = r
 		}

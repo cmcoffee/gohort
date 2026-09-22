@@ -132,5 +132,5 @@ func refPickerDesc(user, kind string, it ReferenceItem) string {
 	if desc == "" {
 		return line
 	}
-	return desc + " · " + line
+	return desc + " - " + line
 }

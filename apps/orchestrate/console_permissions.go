@@ -296,7 +296,7 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 			}
 			out = append(out, permRow{
 				Who:     agentName[ag.ID],
-				Detail:  "Switched off: " + strings.Replace(pair, "/", " · ", 1),
+				Detail:  "Switched off: " + strings.Replace(pair, "/", " - ", 1),
 				ID:      "subaction:" + ag.ID + ":" + pair,
 				Managed: true, Policy: PolicyBlock, NoAsk: true,
 			})

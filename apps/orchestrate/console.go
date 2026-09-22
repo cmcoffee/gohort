@@ -89,10 +89,10 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 				}
 				status := s.Kind
 				if s.Round > 0 {
-					status += fmt.Sprintf(" · round %d", s.Round)
+					status += fmt.Sprintf(" - round %d", s.Round)
 				}
 				if s.LastTool != "" {
-					status += " · " + s.LastTool
+					status += " - " + s.LastTool
 				}
 				// A run with no rounds and no tools has nothing that changes —
 				// a detached task is one call waiting on a backend, so it never
@@ -101,7 +101,7 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 				// honest motion it has, and without it the surface meant to say
 				// "this is still going" said nothing of the kind.
 				if s.Round == 0 && s.LastTool == "" {
-					status += " · " + shortElapsed(time.Since(s.StartedAt))
+					status += " - " + shortElapsed(time.Since(s.StartedAt))
 				}
 				label := s.Label
 				if label == "" {
@@ -311,9 +311,9 @@ func standingRoleSuffix(udb Database, sa StandingAgent, agentID string) string {
 	}
 	switch agentID {
 	case runner:
-		return " · set up from " + name(manager)
+		return " - set up from " + name(manager)
 	case manager:
-		return " · runs as " + name(runner)
+		return " - runs as " + name(runner)
 	}
 	return ""
 }

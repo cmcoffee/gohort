@@ -202,7 +202,7 @@
       }, ['☰']);
       // Secondary sidebar actions (Mark all read, Select) live behind ONE "⋯"
       // overflow so they don't crowd (and overlap) the "Sessions" title — the
-      // header reads just "⋯ · + New". The menu is built whenever at least one
+      // header reads just "⋯ - + New". The menu is built whenever at least one
       // secondary action exists; each app opts into its members (mark_all_read_url
       // / bulk_select).
       var leftExtras = collapseBtn ? [collapseBtn] : [];
@@ -1598,7 +1598,7 @@
             list.forEach(function(e) {
               var when = '';
               try { when = e.at ? new Date(e.at).toISOString() : ''; } catch (_) {}
-              lines.push('', when + (e.kind ? ' · ' + e.kind : ''), e.detail || '');
+              lines.push('', when + (e.kind ? ' - ' + e.kind : ''), e.detail || '');
             });
             return lines.join('\n');
           }
@@ -1653,7 +1653,7 @@
                 var when = '';
                 try { when = e.at ? new Date(e.at).toLocaleString() : ''; } catch (_) {}
                 row.appendChild(el('div', {style: 'color:var(--text-mute);font-size:0.72rem;margin-bottom:0.15rem'},
-                  [when + (e.kind ? ' · ' + e.kind : '')]));
+                  [when + (e.kind ? ' - ' + e.kind : '')]));
                 row.appendChild(el('div', {style: 'white-space:pre-wrap;word-break:break-word'}, [e.detail || '']));
                 body.appendChild(row);
               });
@@ -2084,7 +2084,7 @@
 
     // Large-paste marker: when the user pastes more than ~500 chars
     // (a code block, log dump, doc excerpt), insert a compact marker
-    // like "[Pasted text #2 · 47 lines / 1834 chars]" at the cursor
+    // like "[Pasted text #2 - 47 lines / 1834 chars]" at the cursor
     // instead of jamming the textarea with the entire block. The full
     // content lives in pasteMap keyed by the marker's N; sendMessage
     // substitutes it back in just before submit, so the LLM gets the
@@ -2104,7 +2104,7 @@
     function makePasteMarker(text) {
       var n = ++pasteCounter;
       pasteMap[n] = text;
-      return '[Pasted text #' + n + ' · ' + text.split('\n').length + ' lines / ' + text.length + ' chars]';
+      return '[Pasted text #' + n + ' - ' + text.split('\n').length + ' lines / ' + text.length + ' chars]';
     }
     // What sendMessage matches to expand a marker back.
     //
@@ -3231,7 +3231,7 @@
           var said = cardText.slice(0, cut).trim();
           if (said) head += ':\n\n' + said;
         } else if (detail) {
-          head += ' · ' + detail;
+          head += ' - ' + detail;
         }
         lines.push('## Request', '', head.trim(), '');
         startBubble = bubble.previousElementSibling || bubble; // include from just before this card
@@ -3869,8 +3869,8 @@
       box.appendChild(link);
     }
 
-    // renderMessageStats appends a small footer ("12.3 tk/s · 230 out
-    // · 1450 in · 187 think · 18.7s") to an assistant bubble when the
+    // renderMessageStats appends a small footer ("12.3 tk/s - 230 out
+    // - 1450 in - 187 think - 18.7s") to an assistant bubble when the
     // server emits a {kind:"stats", id, ...} payload. Same shape the
     // chat app uses; nil-safe when fields are missing. Replaces an
     // existing footer if the same bubble gets multiple stats events
@@ -3893,7 +3893,7 @@
       if (!parts.length) return;
       var existing = m.bubble.querySelector(':scope > .ui-agent-stats');
       if (existing) existing.remove();
-      var footer = el('div', {class: 'ui-agent-stats'}, [parts.join(' · ')]);
+      var footer = el('div', {class: 'ui-agent-stats'}, [parts.join(' - ')]);
       // Place stats ABOVE the action bar (Retry/Copy/timestamp).
       // The bar lives at the bottom of the bubble container, so we
       // insert stats before it when present.
@@ -4158,7 +4158,7 @@
         // lost. App can register a proper renderer later.
         if (window.console && console.warn) {
           console.warn('[ui] no block renderer for type:', d.type,
-            '· registered:', Object.keys(window.UIBlockRenderers || {}));
+            '- registered:', Object.keys(window.UIBlockRenderers || {}));
         }
         addActivity('status', id, '[' + d.type + '] ' + (d.text || d.title || ''));
         return;
@@ -4629,7 +4629,7 @@
     function sendMessage() {
       var text = inputArea.value.trim();
       if (!text && !pendingAttachments.length) return;
-      // Paste-marker substitution: expand any "[Pasted text #N · X
+      // Paste-marker substitution: expand any "[Pasted text #N - X
       // lines / Y chars]" markers back to their full content before
       // the send. The marker UX keeps the textarea readable while
       // composing (paste of a 200-line block doesn't fill the screen),

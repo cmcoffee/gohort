@@ -1111,7 +1111,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					if sa.Paused {
 						state = "paused"
 					}
-					next := "·"
+					next := "-"
 					if !sa.NextRun.IsZero() {
 						next = sa.NextRun.Local().Format("Mon Jan 2 3:04 PM")
 					}
@@ -1279,7 +1279,7 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					// label and nothing on the line says which task ran.
 					label := rr.Agent
 					if rr.Task != "" && rr.Task != rr.Agent {
-						label = rr.Agent + " · " + rr.Task
+						label = rr.Agent + " - " + rr.Task
 					}
 					fmt.Fprintf(&b, "- [%s] %s %s (%s): %s\n",
 						rr.ID, rr.Started.Local().Format("Jan 2 3:04 PM"), label, rr.Status, sum)

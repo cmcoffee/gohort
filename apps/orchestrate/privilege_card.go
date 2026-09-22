@@ -107,7 +107,7 @@ func privilegeToolRows(sess *ToolSession, rec AgentRecord, bundled []TempTool) [
 			row.Policy = "auto"
 		case subAgent:
 			row.Policy = "auto"
-			row.Detail = detail + " · via parent"
+			row.Detail = detail + " - via parent"
 		case approved[name]:
 			row.Policy = "allow"
 		default:

@@ -152,7 +152,7 @@ second field, a second endpoint and a second UI.
 
 ```
 POST /filestore/api/action?slug=<store>&within=<folder>&action=<name>
-     {}              → one phase: {"output": …} · two phases: {"challenge": …, "input_label": …}
+     {}              → one phase: {"output": …} - two phases: {"challenge": …, "input_label": …}
      {"input":"…"}   → two phases, second call: {"output": …}
 ```
 

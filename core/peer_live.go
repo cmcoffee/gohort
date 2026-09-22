@@ -68,7 +68,7 @@ func peerRowsFrom(st OllamaSchedStats, doing string) []LiveEntry {
 			Background: true, // it started without the viewer, by definition
 			// Nothing here was typed by anybody: the peer's own key label and a
 			// fixed description of what it is doing. Masked, this row says
-			// "Peers · another user", which withholds the only thing it is for.
+			// "Peers - another user", which withholds the only thing it is for.
 			PublicLabel: true,
 			App:         "Peers",
 			Status:      "on this machine's hardware",

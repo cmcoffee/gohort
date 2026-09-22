@@ -201,7 +201,7 @@ func (T *OrchestrateApp) handleSessionPhases(w http.ResponseWriter, r *http.Requ
 	for _, ph := range def.Phases {
 		label := ph.Name
 		if d := strings.TrimSpace(ph.Desc); d != "" {
-			label += " · " + truncateObs(d, 60)
+			label += " - " + truncateObs(d, 60)
 		}
 		if ph.Name == sess.Phase {
 			label += " (current)"

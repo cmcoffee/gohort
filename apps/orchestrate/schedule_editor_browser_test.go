@@ -140,7 +140,7 @@ func TestTheScheduleEditorSendsWhatWasTypedInBothHalves(t *testing.T) {
 			// machine may carry no mission at all, and it must stay editable.
 			name:   "a schedule that never had a mission still saves its timing",
 			action: "orchestrate_edit_standing",
-			record: `{name: 'nightly', mission: '', targets_run: true, runs: 'pipeline · nightly', cron: 'daily 09:00'}`,
+			record: `{name: 'nightly', mission: '', targets_run: true, runs: 'pipeline - nightly', cron: 'daily 09:00'}`,
 			checks: `
         if (!posted) fail('a missionless pipeline schedule could not be retimed: ' + alerted);
         if (posted.cron !== 'daily 09:00') fail('timing: ' + JSON.stringify(posted));`,

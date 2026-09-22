@@ -904,7 +904,7 @@ func peerApplianceScopeOptions() []ui.SelectOption {
 				continue
 			}
 			for _, it := range g.Items {
-				label := user + " · " + it.Name
+				label := user + " - " + it.Name
 				if strings.TrimSpace(it.Desc) != "" {
 					label += " (" + it.Desc + ")"
 				}

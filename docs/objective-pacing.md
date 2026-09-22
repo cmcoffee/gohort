@@ -157,7 +157,7 @@ doing its job unchanged; pacing adds one call beside it.
 
 No new page, no new rail, following the loop-objectives precedent exactly.
 
-- **The report card** detail line, beside the cadence and fire number: `· next attempt 14:00, waiting
+- **The report card** detail line, beside the cadence and fire number: `- next attempt 14:00, waiting
   on the build`.
 - **The console row** (`console_recurring.go`): the State cell gains the reason, so an objective that
   has moved itself twice says so. The Next run cell already renders the armed time, so it reports the
@@ -204,7 +204,7 @@ Three things the build settled:
 No window and no reap ceiling here: a standing agent has neither. The floor is the same deployment
 minimum, because it answers the same question and is the only floor there is.
 
-Where it shows: the standing row's detail strip (`console_recurring.go`) gains `· waiting: <why>`
+Where it shows: the standing row's detail strip (`console_recurring.go`) gains `- waiting: <why>`
 beside the cadence, and the run's summary carries the pacing line after the verdict. Tests:
 `TestScheduleStandingAgentHonoursAPacedAttempt` / `TestAPacedTimeInThePastIsIgnored` in
 `core/standing_rearm_test.go`, and the standing cases in `apps/orchestrate/objective_pacing_test.go`.

@@ -63,7 +63,7 @@ const guideCuratorAction = `function(ctx){
           var meta = [];
           if (e.guide_name) meta.push(e.guide_name + (e.section ? ' → ' + e.section : ''));
           if (e.origin) meta.push('from ' + e.origin);
-          if (meta.length) b.appendChild(el('div', {class:'gc-meta'}, [meta.join('  ·  ')]));
+          if (meta.length) b.appendChild(el('div', {class:'gc-meta'}, [meta.join('  -  ')]));
           if (e.note) b.appendChild(el('div', {class:'gc-note'}, [e.note]));
           if (e.replaced) {
             var d = el('details', {class:'gc-replaced'});
@@ -102,7 +102,7 @@ const guideCuratorAction = `function(ctx){
             if (run.counts && run.counts[k]) parts.push(run.counts[k] + ' ' + (k === 'contradiction' ? 'flagged' : k));
           });
           top.appendChild(el('strong', {}, [run.findings + ' findings']));
-          if (parts.length) top.appendChild(el('span', {class:'gc-age'}, ['\u00b7 ' + parts.join(', ')]));
+          if (parts.length) top.appendChild(el('span', {class:'gc-age'}, ['- ' + parts.join(', ')]));
           if (run.age) top.appendChild(el('span', {class:'gc-age'}, [run.age]));
           card.appendChild(top);
           if (run.error) card.appendChild(el('div', {class:'gc-err'},

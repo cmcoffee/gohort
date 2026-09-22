@@ -283,17 +283,17 @@ func (T *OrchestrateApp) handleConsoleSchedulerParentOptions(w http.ResponseWrit
 	// one that makes a mistake permanent.
 	out := []opt{{Value: "", Label: "Not part of anything"}}
 	for _, sa := range ListStandingAgents(RootDB, user) {
-		out = append(out, opt{Value: taskParentRef(schedKindStanding, sa.Name), Label: "Scheduled agent · " + sa.Name})
+		out = append(out, opt{Value: taskParentRef(schedKindStanding, sa.Name), Label: "Scheduled agent - " + sa.Name})
 	}
 	for _, rt := range listAgentRecurringTasks(user, "") {
 		uid := recurringTaskUID(rt.Payload)
 		if uid == "" {
 			continue // nothing stable to point at; see recurringTaskUID
 		}
-		out = append(out, opt{Value: taskParentRef(schedKindRecurring, uid), Label: "Recurring task · " + recurringName(rt.Payload)})
+		out = append(out, opt{Value: taskParentRef(schedKindRecurring, uid), Label: "Recurring task - " + recurringName(rt.Payload)})
 	}
 	for _, m := range ListEventMonitors(RootDB, user) {
-		out = append(out, opt{Value: taskParentRef(schedKindMonitor, m.Name), Label: "Event monitor · " + m.Name})
+		out = append(out, opt{Value: taskParentRef(schedKindMonitor, m.Name), Label: "Event monitor - " + m.Name})
 	}
 	writeJSON(w, out)
 }

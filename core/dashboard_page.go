@@ -59,7 +59,7 @@ const notifyPanelHTML = `<div class="notify-panel" id="notify-panel">
       list.innerHTML = items.map(function(it) {
         // The count is stated only when it is more than one: "1 time" on every
         // row is noise, and the chronic ones are what a reader is scanning for.
-        var times = it.count > 1 ? ' &middot; ' + it.count + ' times' : '';
+        var times = it.count > 1 ? ' - ' + it.count + ' times' : '';
         return '<div class="notify-item' + (it.read ? '' : ' unread') + '">' +
           '<div class="notify-title">' + esc(it.title) + '</div>' +
           (it.body ? '<div class="notify-body">' + esc(it.body) + '</div>' : '') +

@@ -123,7 +123,7 @@ func machineAssistSystem(def MachineDef, ph MachinePhase, framing string) string
 	b.WriteString("You are helping someone write ONE step of a workflow an AI agent moves through.\n\n")
 	b.WriteString("THE WORKFLOW: " + def.Name)
 	if d := strings.TrimSpace(def.Description); d != "" {
-		b.WriteString(" · " + d)
+		b.WriteString(" - " + d)
 	}
 	b.WriteString("\nIts steps, in order:\n")
 	for _, p := range def.Phases {

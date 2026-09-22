@@ -332,7 +332,7 @@ func MintApplianceTool(ctx context.Context, chat FactChatFunc, appliance Applian
 	if roots := PathScopeRoots(owner); len(roots) > 0 {
 		b.WriteString("\nFILE STORES ON THIS SERVER (use path_scope for a folder parameter):\n")
 		for _, rt := range roots {
-			line := "- " + rt.Ref + " · " + rt.Label
+			line := "- " + rt.Ref + " - " + rt.Label
 			if rt.Detail != "" {
 				line += ": " + rt.Detail
 			}

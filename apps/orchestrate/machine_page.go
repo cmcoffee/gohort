@@ -870,7 +870,7 @@ func forkNote(deciders []string) string {
 	if len(deciders) == 0 {
 		return ""
 	}
-	return " · one of the ways " + strings.Join(deciders, " and ") + " can go"
+	return " - one of the ways " + strings.Join(deciders, " and ") + " can go"
 }
 
 // phaseSubtitle says what a step is and where it goes, in the rail and
@@ -879,7 +879,7 @@ func forkNote(deciders []string) string {
 func phaseSubtitle(p MachinePhase) string {
 	var b strings.Builder
 	if d := strings.TrimSpace(p.Desc); d != "" {
-		b.WriteString(d + " · ")
+		b.WriteString(d + " - ")
 	}
 	if p.Resident {
 		b.WriteString("the conversation waits here")
@@ -899,7 +899,7 @@ func phaseSubtitle(p MachinePhase) string {
 		}
 	}
 	if p.Agent != "" {
-		b.WriteString(" · run by another agent")
+		b.WriteString(" - run by another agent")
 	}
 	return b.String()
 }

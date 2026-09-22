@@ -235,7 +235,7 @@ func (T *OrchestrateApp) handleConsoleAgentGet(w http.ResponseWriter, r *http.Re
 		"schedule_label":   StandingScheduleLabel(sa),
 		"paused":           sa.Paused,
 		// What this schedule actually runs. Empty for the ordinary case (the
-		// agent's own mission); "pipeline · <name>" or "machine · <name>" when
+		// agent's own mission); "pipeline - <name>" or "machine - <name>" when
 		// it drives one of those, where the mission is the run's INPUT rather
 		// than a brief — the editor labels the field differently for each, so
 		// it has to know which it is looking at.
@@ -611,12 +611,12 @@ func standingRunsLabel(user string, sa StandingAgent) string {
 	switch {
 	case sa.TargetsPipeline():
 		if def, ok := pipelineForUser(user, sa.PipelineID); ok {
-			return "pipeline · " + def.Name + sharedBySuffix(user, def.Owner)
+			return "pipeline - " + def.Name + sharedBySuffix(user, def.Owner)
 		}
 		return "pipeline run"
 	case sa.TargetsMachine():
 		if def, ok := machineForUser(user, sa.MachineID); ok {
-			return "machine · " + def.Name + sharedBySuffix(user, def.Owner)
+			return "machine - " + def.Name + sharedBySuffix(user, def.Owner)
 		}
 		return "machine run"
 	}

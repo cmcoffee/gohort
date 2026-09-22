@@ -105,9 +105,9 @@ func surfaceDestLabel(surface string) string {
 func surfaceSuffix(surface string) string {
 	switch strings.TrimSpace(surface) {
 	case "cortex":
-		return " · reports to cortex"
+		return " - reports to cortex"
 	case "background":
-		return " · background (no agent visibility)"
+		return " - background (no agent visibility)"
 	}
 	return ""
 }

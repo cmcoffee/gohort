@@ -93,7 +93,7 @@ func (T *OrchestrateApp) handleConsoleGoals(w http.ResponseWriter, r *http.Reque
 		}
 		row := consoleGoalRow{
 			Goal:     sa.Until,
-			Where:    "Scheduled agent · " + sa.Name,
+			Where:    "Scheduled agent - " + sa.Name,
 			Stands:   objectiveStateLabel(standingObjective(sa)),
 			Attempts: goalAttemptLabel(sa.UnmetCount, sa.MaxAttempts),
 			ID:       sa.Name,
@@ -119,7 +119,7 @@ func (T *OrchestrateApp) handleConsoleGoals(w http.ResponseWriter, r *http.Reque
 		}
 		row := consoleGoalRow{
 			Goal:  p.Until,
-			Where: "Recurring task · " + recurringName(p),
+			Where: "Recurring task - " + recurringName(p),
 			// objectiveAttemptNumber is which attempt the NEXT fire would be,
 			// so the number already spent is one less.
 			Stands:   objectiveStateLabel(p.objective()),
@@ -150,7 +150,7 @@ func (T *OrchestrateApp) handleConsoleGoals(w http.ResponseWriter, r *http.Reque
 		}
 		row := consoleGoalRow{
 			Goal:  m.Until,
-			Where: "Event monitor · " + m.Name,
+			Where: "Event monitor - " + m.Name,
 			// A monitor's objective is bounded by FIRES, not by attempts: it is
 			// woken by a condition rather than by a clock, so "how many tries
 			// are left" is how many times it may still fire. FireLabel is what

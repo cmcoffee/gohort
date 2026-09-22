@@ -484,9 +484,9 @@ func (T *FileStoreApp) handleCommands(w http.ResponseWriter, r *http.Request) {
 			// to unmapped from any distance.
 			mapped := "Not mapped"
 			if a.Mapped() {
-				mapped = fmt.Sprintf("%s · %s", a.ToolName(), countOf(len(a.Tools), "action", "actions"))
+				mapped = fmt.Sprintf("%s - %s", a.ToolName(), countOf(len(a.Tools), "action", "actions"))
 				if !a.Approved {
-					mapped += " · off"
+					mapped += " - off"
 				}
 			}
 			rows = append(rows, map[string]any{

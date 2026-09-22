@@ -376,8 +376,8 @@
           var state = it.queued ? 'Queued' : (it.background ? 'Background' : 'Running');
           row.appendChild(el('span', {class: 'ui-live-state' + (it.background && !it.queued ? ' background' : '')}, [state]));
           row.appendChild(el('span', {class: 'ui-live-label'}, [it.topic || it.label || 'Untitled']));
-          // The provider has been sending a status all along ("scheduled ·
-          // round 2 · web_search") and this menu never rendered it, so the one
+          // The provider has been sending a status all along ("scheduled -
+          // round 2 - web_search") and this menu never rendered it, so the one
           // field that said what the work was DOING was fetched every ten
           // seconds and dropped. Optional: not every provider sets one.
           if (it.status) {

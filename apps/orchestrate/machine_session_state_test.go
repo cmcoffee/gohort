@@ -64,7 +64,7 @@ func TestMachineStateDrawerAndOwnerMove(t *testing.T) {
 	w = call(http.MethodGet, "/api/session-phases"+q, T.handleSessionPhases)
 	var opts []map[string]any
 	json.Unmarshal(w.Body.Bytes(), &opts)
-	if len(opts) != 3 || opts[0]["label"] != "gather \u00b7 Collect the facts" || !strings.HasSuffix(opts[1]["label"].(string), "(current)") {
+	if len(opts) != 3 || opts[0]["label"] != "gather - Collect the facts" || !strings.HasSuffix(opts[1]["label"].(string), "(current)") {
 		t.Fatalf("phases = %v", opts)
 	}
 

@@ -64,16 +64,16 @@ func TestFormatRecallHints(t *testing.T) {
 	}
 	block := formatRecallHints(nil, scored, graph)
 	for _, want := range []string{
-		"knowledge · \"Q3 pricing policy\" (0.88) → fetch_knowledge_doc(doc_id=\"doc-q3\")",
-		"memory · \"Acme API pagination\" (0.79) → memory(action=\"search\")",
-		`graph · "Acme" links to "Project Zeus" (sponsors), 3 total → recall_about("Acme")`,
+		"knowledge - \"Q3 pricing policy\" (0.88) → fetch_knowledge_doc(doc_id=\"doc-q3\")",
+		"memory - \"Acme API pagination\" (0.79) → memory(action=\"search\")",
+		`graph - "Acme" links to "Project Zeus" (sponsors), 3 total → recall_about("Acme")`,
 	} {
 		if !strings.Contains(block, want) {
 			t.Fatalf("block missing line %q:\n%s", want, block)
 		}
 	}
 	// The graph line is structural — no "(0.xx)" score attached to it.
-	graphLine := block[strings.Index(block, "graph · "):]
+	graphLine := block[strings.Index(block, "graph - "):]
 	graphLine = graphLine[:strings.IndexByte(graphLine, '\n')]
 	if strings.Contains(graphLine, ") (0.") {
 		t.Fatalf("graph line should carry no score: %q", graphLine)

@@ -105,9 +105,9 @@ func (e LiveEntry) MaskedLabel(viewer string) string {
 		who = "another user"
 	}
 	if e.App != "" {
-		return indent + e.App + " · " + who
+		return indent + e.App + " - " + who
 	}
-	return indent + "Active session · " + who
+	return indent + "Active session - " + who
 }
 
 // splitLiveIndent peels a live label's leading tree indent (spaces, and the

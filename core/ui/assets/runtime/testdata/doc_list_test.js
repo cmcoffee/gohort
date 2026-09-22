@@ -79,8 +79,8 @@ function tick(){ return new Promise(function(r){ setImmediate(r); }); }
   check('sorted newest-first', rows[0].dataset.id==='c' && rows[2].dataset.id==='a',
     rows.map(function(r){return r.dataset.id;}).join(','));
   check('active row is the open record', rows[1].classList.contains('active'));
-  check('tooltip carries label + meta', rows[2]._attrs.title==='Alpha · sql · ago', rows[2]._attrs.title);
-  check('empty meta omits the separator', rows[0]._attrs.title==='Gamma · ago', rows[0]._attrs.title);
+  check('tooltip carries label + meta', rows[2]._attrs.title==='Alpha - sql - ago', rows[2]._attrs.title);
+  check('empty meta omits the separator', rows[0]._attrs.title==='Gamma - ago', rows[0]._attrs.title);
 
   rows[0]._on.click({target:{classList:{contains:function(){return false;}}}});
   check('click opens the record', opened.length===1 && opened[0]==='c');

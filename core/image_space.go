@@ -815,7 +815,7 @@ func RecentImageManifest(sess *ToolSession) string {
 		desc := r.Note
 		switch {
 		case desc != "" && r.Caption != "":
-			desc += " · " + r.Caption
+			desc += " - " + r.Caption
 		case desc == "":
 			desc = r.Caption
 		}

@@ -1115,7 +1115,7 @@ func wizardDescribeHTML() string {
 
           if(d.needs_composing){
             out.appendChild(el('p',{class:'wd-hint',text:'This kind of agent has to be pointed at something before it can run, so Builder composes it. Answer these and use the guided setup, or ask Builder directly.'}));
-            (d.asks||[]).forEach(function(q){ out.appendChild(el('p',{class:'wd-hint',text:'· '+q})); });
+            (d.asks||[]).forEach(function(q){ out.appendChild(el('p',{class:'wd-hint',text:'- '+q})); });
             return;
           }
 

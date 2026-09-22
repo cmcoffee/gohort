@@ -39,10 +39,10 @@ func TestToLLMMessagesKeepsGroupSpeakers(t *testing.T) {
 func TestLLMHistoryContentMarksReportCards(t *testing.T) {
 	got := llmHistoryContent(ChatMessage{
 		Role:       "assistant",
-		ReportFrom: "Dana · iPhone (iMessage)",
+		ReportFrom: "Dana - iPhone (iMessage)",
 		Content:    "I'm making pasta",
 	})
-	if !strings.Contains(got, "Dana · iPhone (iMessage)") {
+	if !strings.Contains(got, "Dana - iPhone (iMessage)") {
 		t.Errorf("report card lost its origin: %q", got)
 	}
 	if !strings.HasPrefix(got, "<gohort-meta>") {
@@ -68,7 +68,7 @@ func TestLLMHistoryContentLeavesPlainSessionsAlone(t *testing.T) {
 func TestBothHistoryBuildersRenderIdentically(t *testing.T) {
 	stored := []ChatMessage{
 		{Role: "user", Content: "I'm making pasta", Sender: "Dana"},
-		{Role: "assistant", ReportFrom: "Dana · iPhone (iMessage)", Content: "I'm making pasta"},
+		{Role: "assistant", ReportFrom: "Dana - iPhone (iMessage)", Content: "I'm making pasta"},
 	}
 	web := toLLMMessages(stored)
 	for i, m := range stored {

@@ -85,7 +85,7 @@ func (T *CustomApps) adminSections(r *http.Request) []AdminSectionEntry {
 		body := appadmin.For(adminAppView(spec, rw.owner))
 		if len(body) == 0 {
 			body = []ui.Component{ui.EmptyState{
-				Icon: "·", Title: "Nothing to set", Hint: "This app has no operator controls that apply to it.",
+				Icon: "-", Title: "Nothing to set", Hint: "This app has no operator controls that apply to it.",
 			}}
 		}
 		out = append(out, AdminSectionEntry{Section: ui.Section{
@@ -119,7 +119,7 @@ func adminRowSubtitle(spec AppSpec, owner string) string {
 	if len(state) == 0 {
 		return owner
 	}
-	return owner + " · " + strings.Join(state, " · ")
+	return owner + " - " + strings.Join(state, " - ")
 }
 
 // adminAppView narrows a stored spec to what a control needs. ListAppSpecs

@@ -104,7 +104,7 @@ func renderGuideStandaloneHTML(g Guide, brand, siteName string) string {
 	}
 	foot := ""
 	if len(footParts) > 0 {
-		foot = `<footer class="guide-foot">` + strings.Join(footParts, " &middot; ") + `</footer>`
+		foot = `<footer class="guide-foot">` + strings.Join(footParts, " - ") + `</footer>`
 	}
 	return `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
 		`<meta name="viewport" content="width=device-width, initial-scale=1">` +

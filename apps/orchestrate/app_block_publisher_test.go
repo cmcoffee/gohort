@@ -48,7 +48,7 @@ func TestPublishEmitsABlockFrame(t *testing.T) {
 		Type:  "anvil_edit",
 		ID:    "edit-1",
 		Title: "main.go",
-		Text:  "Edited · +3 −1",
+		Text:  "Edited - +3 −1",
 		Data:  map[string]string{"diff": "@@ -1 +1 @@"},
 	})
 

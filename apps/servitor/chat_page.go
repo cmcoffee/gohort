@@ -64,7 +64,7 @@ func (T *Servitor) handleChatPage(w http.ResponseWriter, r *http.Request) {
 		// from a local one everywhere else.
 		if strings.TrimSpace(a.PeerName) != "" {
 			remoteOpts = append(remoteOpts, ui.SelectOption{
-				Value: a.ID, Label: name + " · via " + a.PeerName, Group: "Remote (on a peer)"})
+				Value: a.ID, Label: name + " - via " + a.PeerName, Group: "Remote (on a peer)"})
 			return
 		}
 		switch t {

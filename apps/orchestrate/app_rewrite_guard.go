@@ -73,8 +73,8 @@ func appRewriteRisk(prior, next string) string {
 	}
 	b.WriteString("\nThis is the failure that looks like a success: the page still PARSES and still LOADS clean, so nothing downstream would have caught it, a canvas app runs no code until the user interacts, and by then the tool has already told you it worked.\n\n")
 	b.WriteString("If you are changing PART of the app, don't send the document at all:\n")
-	b.WriteString("  · replace_function {id, function:\"<name>\", replace:\"<whole new function>\"}, rewrites one function; you never reproduce the old text.\n")
-	b.WriteString("  · patch_html {id, find, replace}, for a constant or a one-line fix.\n")
+	b.WriteString("  - replace_function {id, function:\"<name>\", replace:\"<whole new function>\"}, rewrites one function; you never reproduce the old text.\n")
+	b.WriteString("  - patch_html {id, find, replace}, for a constant or a one-line fix.\n")
 	b.WriteString("If you really are re-authoring this app from scratch and the document you sent is COMPLETE, send it again with confirm_rewrite:true, the version it replaces is kept either way, so app_def(action=\"revert\") can put it back.")
 	return b.String()
 }

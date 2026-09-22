@@ -29,7 +29,7 @@ func TestMaskedLabel_EveryoneElseGetsGeneric(t *testing.T) {
 		if got == e.Label {
 			t.Errorf("viewer %q must not see the label", viewer)
 		}
-		if got != "Gohort · craig" {
+		if got != "Gohort - craig" {
 			t.Errorf("viewer %q: got %q", viewer, got)
 		}
 	}
@@ -41,7 +41,7 @@ func TestMaskedLabel_UnknownOwnerFailsClosed(t *testing.T) {
 	// since nothing here can tell.
 	e := LiveEntry{Label: "quarterly layoff modeling", App: "Deep Research"}
 	for _, viewer := range []string{"craig", ""} {
-		if got := e.MaskedLabel(viewer); got != "Deep Research · another user" {
+		if got := e.MaskedLabel(viewer); got != "Deep Research - another user" {
 			t.Errorf("viewer %q: got %q", viewer, got)
 		}
 	}
@@ -60,10 +60,10 @@ func TestMaskedLabel_PreservesTreeIndent(t *testing.T) {
 	// The nested run view renders depth from the label's own prefix; masking
 	// that away would flatten the tree.
 	cases := []struct{ label, want string }{
-		{"↳ sub-question about severance", "↳ Gohort · craig"},
-		{"  ↳ deeper", "  ↳ Gohort · craig"},
-		{"    ↳ deeper still", "    ↳ Gohort · craig"},
-		{"top level", "Gohort · craig"},
+		{"↳ sub-question about severance", "↳ Gohort - craig"},
+		{"  ↳ deeper", "  ↳ Gohort - craig"},
+		{"    ↳ deeper still", "    ↳ Gohort - craig"},
+		{"top level", "Gohort - craig"},
 	}
 	for _, c := range cases {
 		e := LiveEntry{Label: c.label, App: "Gohort", Owner: "craig"}
@@ -75,7 +75,7 @@ func TestMaskedLabel_PreservesTreeIndent(t *testing.T) {
 
 func TestMaskedLabel_NoAppStillMasks(t *testing.T) {
 	e := LiveEntry{Label: "sensitive", Owner: "craig"}
-	if got := e.MaskedLabel("dana"); got != "Active session · craig" {
+	if got := e.MaskedLabel("dana"); got != "Active session - craig" {
 		t.Errorf("got %q", got)
 	}
 }

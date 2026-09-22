@@ -689,7 +689,7 @@ func stageDerivedHTML(s PipelineStage) string {
 	if len(facts) == 0 {
 		return ""
 	}
-	return `<div class="pipeline-stage-facts">` + HTMLEscape(strings.Join(facts, " · ")) +
+	return `<div class="pipeline-stage-facts">` + HTMLEscape(strings.Join(facts, " - ")) +
 		`, written with the pipeline tool, which owns the shapes that nest. Editing them here would half-edit a structure.</div>`
 }
 
@@ -754,7 +754,7 @@ func stageDetailHTML(s PipelineStage) string {
 		facts = append(facts, "body: "+strings.Join(inner, " → "))
 	}
 	if len(facts) > 0 {
-		b.WriteString(`<div class="pipeline-stage-facts">` + HTMLEscape(strings.Join(facts, " · ")) + `</div>`)
+		b.WriteString(`<div class="pipeline-stage-facts">` + HTMLEscape(strings.Join(facts, " - ")) + `</div>`)
 	}
 	if b.Len() == 0 {
 		return `<div class="pipeline-stage-facts">Nothing declared beyond its name.</div>`
@@ -949,7 +949,7 @@ func planHTML(def PipelineDef) string {
 			if s.Max != s.Min {
 				calls = strconv.Itoa(s.Min) + "–" + strconv.Itoa(s.Max)
 			}
-			b.WriteString(`<span class="ui-mute"> · ` + calls + ` call` + HTMLEscape(pluralOf(s.Max)) + `</span>`)
+			b.WriteString(`<span class="ui-mute"> - ` + calls + ` call` + HTMLEscape(pluralOf(s.Max)) + `</span>`)
 		}
 		b.WriteString(`<div class="ui-mute" style="font-size:0.82rem">`)
 		if len(s.Reads) == 0 && s.Kind != StageTool && s.Kind != StageBranch {
@@ -961,7 +961,7 @@ func planHTML(def PipelineDef) string {
 		}
 		if s.Note != "" {
 			if len(s.Reads) > 0 || s.Kind == StageTool || s.Kind == StageBranch {
-				b.WriteString(` · `)
+				b.WriteString(` - `)
 			}
 			b.WriteString(HTMLEscape(s.Note))
 		}

@@ -174,7 +174,7 @@ func TestRecordCarriesTopicAndOrigin(t *testing.T) {
 	if e.Topic != "nginx tls renewal" {
 		t.Errorf("entry topic = %q", e.Topic)
 	}
-	if e.Origin != "system · web-prod-01" {
+	if e.Origin != "system - web-prod-01" {
 		t.Errorf("entry origin = %q", e.Origin)
 	}
 }
@@ -251,8 +251,8 @@ func TestFindingOriginLabel(t *testing.T) {
 		in   DocFindingOrigin
 		want string
 	}{
-		{DocFindingOrigin{SourceKind: "system", ItemLabel: "web-prod-01"}, "system · web-prod-01"},
-		{DocFindingOrigin{SourceKind: "system", ItemID: "abc"}, "system · abc"},
+		{DocFindingOrigin{SourceKind: "system", ItemLabel: "web-prod-01"}, "system - web-prod-01"},
+		{DocFindingOrigin{SourceKind: "system", ItemID: "abc"}, "system - abc"},
 		{DocFindingOrigin{ItemLabel: "somewhere"}, "somewhere"},
 		{DocFindingOrigin{SourceKind: "system"}, "system"},
 		{DocFindingOrigin{}, "unattributed"},

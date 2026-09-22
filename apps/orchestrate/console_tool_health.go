@@ -52,7 +52,7 @@ func (T *OrchestrateApp) handleConsoleBrokenTools(w http.ResponseWriter, r *http
 	rows := []consoleBrokenToolRow{}
 	for _, rec := range brokenToolActions(toolOutcomeStore(), user) {
 		rows = append(rows, consoleBrokenToolRow{
-			Action:   rec.Tool + " · " + rec.Action,
+			Action:   rec.Tool + " - " + rec.Action,
 			Status:   "broken",
 			Failures: fmt.Sprintf("%d failure(s), never succeeded", rec.Fail),
 			Since:    brokenToolSince(rec, loc),

@@ -324,7 +324,7 @@ func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Data
 	for _, m := range sess.Messages {
 		ts := ""
 		if !m.Created.IsZero() {
-			ts = " · " + m.Created.Format(time.RFC3339)
+			ts = " - " + m.Created.Format(time.RFC3339)
 		}
 		header := strings.ToUpper(m.Role[:1]) + m.Role[1:]
 		fmt.Fprintf(&b, "## %s%s\n\n", header, ts)

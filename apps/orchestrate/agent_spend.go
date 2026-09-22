@@ -192,11 +192,11 @@ func agentSpendRows(owner string, now time.Time, loc *time.Location) []agentSpen
 	render := func(d UsageDiff) string {
 		tokens := d.WorkerInput + d.WorkerOutput + d.LeadInput + d.LeadOutput + d.WorkerCacheRead + d.WorkerCacheWrite + d.LeadCacheRead + d.LeadCacheWrite
 		if tokens == 0 && d.SearchCalls == 0 && d.ImageCalls == 0 {
-			return "·"
+			return "-"
 		}
 		s := HumanCount(int(tokens)) + " tokens"
 		if priced {
-			s = "$" + trimMoney(rates.Estimate(d)) + " · " + s
+			s = "$" + trimMoney(rates.Estimate(d)) + " - " + s
 		}
 		return s
 	}

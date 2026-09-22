@@ -97,9 +97,9 @@ func TestTheMergedRowKeepsTheSingleViewsFields(t *testing.T) {
 		t.Errorf("section = %v", m["_section"])
 	}
 	// A monitor's own shape, in the same list.
-	mon := flagsOf(consoleMonitorRow{Name: "price watch", Kind: "watch", Detail: "watch · every 300s"},
+	mon := flagsOf(consoleMonitorRow{Name: "price watch", Kind: "watch", Detail: "watch - every 300s"},
 		schedSectionMonitors, schedKindMonitor)
-	if mon["kind"] != "watch" || mon["detail"] != "watch · every 300s" {
+	if mon["kind"] != "watch" || mon["detail"] != "watch - every 300s" {
 		t.Errorf("monitor fields lost in the merge: %v", mon)
 	}
 	if _, leaked := mon["mission"]; leaked {

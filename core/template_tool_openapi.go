@@ -277,7 +277,7 @@ func openapiDetect(_ Template, vals map[string]any) (map[string]any, []string, e
 	for _, o := range ops {
 		s := o.Method + " " + o.Path
 		if o.Summary != "" {
-			s += " · " + o.Summary
+			s += " - " + o.Summary
 		}
 		lines = append(lines, s)
 	}

@@ -146,7 +146,7 @@ func agentAccessSummary(rec AgentRecord, reach []agentReachRow) string {
 		parts = append(parts, fmt.Sprintf("and can hand work to %d other target(s)", n))
 	}
 	if agentForcesPrivate(rec) {
-		parts = append(parts, "· network OFF (Private)")
+		parts = append(parts, "- network OFF (Private)")
 	}
 	return strings.Join(parts, " ")
 }
@@ -242,7 +242,7 @@ func accessKnowledgeRows(rec AgentRecord) []accessSideRow {
 		rows = append(rows, accessSideRow{
 			Name:   fmt.Sprintf("%d collection%s", n, plural(n)),
 			Policy: "attached", Detail: strings.Join(rec.AttachedCollections, ", ") +
-				" · searched every turn, and carried to anybody it is shared with",
+				" - searched every turn, and carried to anybody it is shared with",
 			Where: "Agent → Knowledge",
 		})
 	}

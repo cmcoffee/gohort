@@ -187,7 +187,7 @@ func ReferenceGroups(user string) []ReferenceGroup {
 // It exists because the two questions have wildly different costs and the
 // interface only offered the expensive one. The filestore source builds each
 // item's description by WALKING THE FILESYSTEM — stat every file under every
-// folder of every store, to render "· 12 folders" in a picker. Asking it
+// folder of every store, to render "- 12 folders" in a picker. Asking it
 // merely whether it has any stores therefore cost a full tree walk, measured
 // live at 2.3 and then 5.1 seconds on a page render that displayed none of it.
 //

@@ -7,7 +7,7 @@ surfaces into orchestrate Agents, so the decisions are settled before code.
 
 Today phantom runs a second agent engine. `processMessage` does its own
 persona, memory, knowledge, skills, dispatch, scheduling, and gatekeeping
-· all of which an orchestrate Agent already does, in one place. We
+- all of which an orchestrate Agent already does, in one place. We
 maintain two brains.
 
 The direction: a **Channel** is an inbound/outbound messaging surface
@@ -23,7 +23,7 @@ stops being an engine and becomes the channel transport layer.
   Channel layer (transport: dedup, alias, gatekeep, coalesce, format)
         │  inbound message            ▲ reply
         ▼                             │
-  Orchestrate Agent loop  (persona · tools · memory · knowledge · skills · fleet)
+  Orchestrate Agent loop  (persona - tools - memory - knowledge - skills - fleet)
 ```
 
 The Slice 1 multi-service work (the `Service` dimension, the key-scoped
@@ -66,7 +66,7 @@ sessions.
 So the full vocabulary: **Service** is the wire, a **Channel** is a room on
 it, the **Cortex** is the mind across the rooms, and **Sessions** are the
 front door. Context/compaction controls are not specific to any one surface
-· they bound any persistent thread the agent runs (Cortex threads and
+- they bound any persistent thread the agent runs (Cortex threads and
 Channel threads alike), driven by per-agent settings.
 
 ## The attach model

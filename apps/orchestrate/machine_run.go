@@ -117,7 +117,7 @@ func (T *OrchestrateApp) runMachineStreaming(ctx context.Context, def MachineDef
 		id := "phase-" + strconv.Itoa(seq)
 		title := ph.Name
 		if d := strings.TrimSpace(ph.Desc); d != "" {
-			title += " · " + d
+			title += " - " + d
 		}
 		sink(PipelineEvent{Kind: "block", ID: id, Type: "phase", Title: title})
 		out, err := base(ctx, ph, prompt)

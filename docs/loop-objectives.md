@@ -92,8 +92,8 @@ card is appended:
    feed shows it without a schema change and the history is queryable by task name. A stalled
    objective also flips that row to `RunAttention`.
 3. **Card.** *(built)* The report card (`ReportFrom`/`ReportKind: cortexKindScheduled`) carries the
-   verdict in its detail line, beside the cadence and fire number: `· objective met — <reason>`,
-   `· objective not yet — <reason>`, or `· objective STALLED after N attempt(s) — <reason>`. That
+   verdict in its detail line, beside the cadence and fire number: `- objective met — <reason>`,
+   `- objective not yet — <reason>`, or `- objective STALLED after N attempt(s) — <reason>`. That
    is the one visible change per fire.
 4. **Stop or continue.** *(built)* On a manual Run now the verdict is judged and shown, but the
 schedule is deliberately untouched (that path's contract), so an owner can retry a stalled
@@ -155,7 +155,7 @@ recurring view (`console_recurring.go`). An objective is a recurring row with tw
 | cell | today | objective |
 |---|---|---|
 | Name | prompt's first line | same |
-| Cadence | `recurring · every 1440m · 09:00–09:30` | same |
+| Cadence | `recurring - every 1440m - 09:00–09:30` | same |
 | Fires | `3 / 10 fired` | same: the fire count is not the attempt count once a Resume has moved the allowance |
 | State | blank, or the broken label | `objective — no attempts yet`, or `objective — not yet (3 attempt(s)): <last reason>`; a stalled one shows the broken label, which already carries the stall reason |
 | Next run | RFC3339 | same; blank once parked |
@@ -170,7 +170,7 @@ top of the fire, so the button would do nothing.
 
 **Resume** is the answer to "I fixed what the stall named". It clears the park, puts the task back
 on its real cadence, and moves `AttemptsBase` to the current fire count so the allowance restarts
-· without that the resumed task stalls again on its first fire, which is the whole reason the
+- without that the resumed task stalls again on its first fire, which is the whole reason the
 attempt number is measured against the allowance rather than the lifetime fire count. History is
 kept: `Attempts`, `FireCount` and the ledger are untouched. Offered on any parked row, since "the
 cause is fixed" is the same request whatever parked it; a task parked for a deleted agent simply

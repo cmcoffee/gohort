@@ -137,7 +137,7 @@ action="help"
 What skills do: every allowed skill's name + description is listed in
 the host agent's prompt. The LLM reads that list and, when a skill's
 domain fits the task, consults it (read_skill / skill_knowledge_search)
-· activation is the model's call, and the description is what it judges
+- activation is the model's call, and the description is what it judges
 against. If a skill has triggers, a substring/glob match on the message
 or an attachment filename surfaces a "likely relevant this turn" hint to
 the host LLM: a nudge toward consulting, not a forced injection.

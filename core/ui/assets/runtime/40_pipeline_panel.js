@@ -594,7 +594,7 @@
             }
             if (data.Summary || data.Body) {
               body.appendChild(el('div', {class: 'ui-pl-modal-sub'},
-                ['Generated: ' + (data.Summary || '') + (data.Body ? ' · From source: ' + data.Body : '')]));
+                ['Generated: ' + (data.Summary || '') + (data.Body ? ' - From source: ' + data.Body : '')]));
             }
             if (data.ForPosition) {
               body.appendChild(el('div', {class: 'ui-pl-modal-sub'}, ['Confidence: ' + data.ForPosition]));

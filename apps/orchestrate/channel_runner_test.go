@@ -125,7 +125,7 @@ func TestTheCortexCopyOfATraceIsBounded(t *testing.T) {
 
 // Observed live on a group chat: an agent answered an inbound with
 //
-//	↳ replied: Craig Coffee · Group Chat (iMessage): lol
+//	↳ replied: Craig Coffee - Group Chat (iMessage): lol
 //	Wiwee, if you win the lottery I get the money right ?
 //
 // — the framework's own marker, and the inbound echoed back, delivered to the
@@ -139,7 +139,7 @@ func TestTheCortexCopyOfATraceIsBounded(t *testing.T) {
 func TestObservationMarkersAreFencedForTheModel(t *testing.T) {
 	card := ChatMessage{
 		Role:       "assistant",
-		ReportFrom: "Craig · Group Chat (iMessage)",
+		ReportFrom: "Craig - Group Chat (iMessage)",
 		Content:    "if you win the lottery I get the money right ?\n↳ replied: not a chance",
 	}
 	got := llmHistoryContent(card)

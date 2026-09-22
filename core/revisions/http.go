@@ -109,7 +109,7 @@ func (s Surface) serveList(w http.ResponseWriter) {
 	for _, rev := range List(s.Store, s.Kind, s.Key) {
 		title := fmt.Sprintf("#%d", rev.Seq)
 		if age := Age(rev.Stamp); age != "" {
-			title += " · " + age
+			title += " - " + age
 		}
 		// Urls are RELATIVE to the history url, which the panel resolves them
 		// against. The page rendering this decides its own depth and reaches
@@ -145,7 +145,7 @@ func (s Surface) servePreview(w http.ResponseWriter, r *http.Request) {
 	}
 	title := fmt.Sprintf("Version #%d", rev.Seq)
 	if age := Age(rev.Stamp); age != "" {
-		title += " · kept " + age
+		title += " - kept " + age
 	}
 	writeJSON(w, map[string]string{
 		"title": title,

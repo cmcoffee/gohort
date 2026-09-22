@@ -129,10 +129,10 @@ func TestListLabel(t *testing.T) {
 	if got := listLabel(Guide{Title: "G"}, ""); got != "G" {
 		t.Errorf("guide label = %q", got)
 	}
-	if got := listLabel(Guide{Kind: KindArticle, Title: "A"}, " · shared"); got != "A · article · shared" {
+	if got := listLabel(Guide{Kind: KindArticle, Title: "A"}, " - shared"); got != "A - article - shared" {
 		t.Errorf("article label = %q", got)
 	}
-	if got := listLabel(Guide{Kind: KindArticle}, ""); got != "Untitled article · article" {
+	if got := listLabel(Guide{Kind: KindArticle}, ""); got != "Untitled article - article" {
 		t.Errorf("untitled article label = %q", got)
 	}
 }

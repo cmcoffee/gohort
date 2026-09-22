@@ -537,7 +537,7 @@ func evalToolShortHash(h string) string {
 
 func evalToolNote(note string) string {
 	if note = strings.TrimSpace(note); note != "" {
-		return " · " + note
+		return " - " + note
 	}
 	return ""
 }

@@ -1658,7 +1658,7 @@ func describeWatchObject(obj map[string]any) string {
 			return "a record with no readable fields"
 		}
 	}
-	out := strings.Join(parts, " · ")
+	out := strings.Join(parts, " - ")
 	var tail []string
 	if id != "" {
 		tail = append(tail, id)

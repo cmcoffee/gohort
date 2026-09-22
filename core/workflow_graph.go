@@ -368,7 +368,7 @@ func nodeSVG(n WorkflowNode, p point, overlay *WorkflowOverlay) string {
 	if len(n.Tags) > 0 {
 		b.WriteString(`<text x="` + strconv.Itoa(tx) + `" y="` + strconv.Itoa(p.Y+51) +
 			`" font-size="9.5" fill="var(--text-mute,#71717a)">` +
-			xmlEscape(gTrunc(strings.Join(n.Tags, " · "), gNoteC)) + `</text>`)
+			xmlEscape(gTrunc(strings.Join(n.Tags, " - "), gNoteC)) + `</text>`)
 	}
 	b.WriteString(`</g>`)
 	if n.Href != "" {
@@ -487,7 +487,7 @@ func edgeTitle(e WorkflowEdge, fired int) string {
 	case fired > 1:
 		parts = append(parts, "taken "+strconv.Itoa(fired)+" times in this conversation")
 	}
-	return strings.Join(parts, " · ")
+	return strings.Join(parts, " - ")
 }
 
 func svgDefs() string {
@@ -519,7 +519,7 @@ func noteSuffix(note string) string {
 	if note == "" {
 		return ""
 	}
-	return " · " + note
+	return " - " + note
 }
 
 // gTrunc caps a label by RUNE count, so a multi-byte name is cut where it

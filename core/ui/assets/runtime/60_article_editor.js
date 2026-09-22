@@ -407,7 +407,7 @@
     // whole body or one section of it.
     function openDocAssist(section, initial, apply) {
       window.uiOpenAssist({
-        title: (titleInput.value || 'Document') + (section ? ' · ' + section : ''),
+        title: (titleInput.value || 'Document') + (section ? ' - ' + section : ''),
         subtitle: section
           ? 'Drafting one section. The rest of the document is untouched.'
           : 'Drafting the whole document.',
@@ -860,7 +860,7 @@
         fetchJSON(cfg.merge_sources_url).then(function(items) {
           (items || []).forEach(function(s) {
             var opt = el('option', {value: s.id || s.ID, title: relTime(s.date || s.Date)},
-              [(s.name || s.Name) + ' · ' + relTime(s.date || s.Date)]);
+              [(s.name || s.Name) + ' - ' + relTime(s.date || s.Date)]);
             sourceSelect.appendChild(opt);
           });
         }).catch(function(){});
@@ -895,7 +895,7 @@
               fetchJSON(cfg.merge_sources_url).then(function(items) {
                 (items || []).forEach(function(s) {
                   var opt = el('option', {value: s.id || s.ID},
-                    [(s.name || s.Name) + ' · ' + relTime(s.date || s.Date)]);
+                    [(s.name || s.Name) + ' - ' + relTime(s.date || s.Date)]);
                   sourceSelect.appendChild(opt);
                 });
               });

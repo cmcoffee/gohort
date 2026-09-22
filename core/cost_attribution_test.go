@@ -51,7 +51,7 @@ func TestAttributedCostGetsItsOwnRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(src)
-	if !strings.Contains(body, `RecordExternalCost(sourceID+" · "+who,`) {
+	if !strings.Contains(body, `RecordExternalCost(sourceID+" - "+who,`) {
 		t.Error("attributed cost no longer gets a distinct source id — a peer's spend would be " +
 			"folded into the operator's own and could not be separated again")
 	}

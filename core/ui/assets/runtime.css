@@ -277,7 +277,7 @@ select:-webkit-autofill {
 .ui-live-item .ui-live-state.background {
   background: rgba(99, 102, 241, 0.18); color: var(--ui-live-background, #6366f1);
 }
-/* What the work is DOING — "scheduled · round 2 · web_search". Right-aligned
+/* What the work is DOING — "scheduled - round 2 - web_search". Right-aligned
    and muted: it is the detail you read after deciding the row is the one you
    care about, so it must not compete with the label for the first glance. */
 .ui-live-status {
@@ -5621,7 +5621,7 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
  * as sent-but-waiting rather than answered. */
 .ui-chat-msg-pending { opacity: 0.55; }
 .ui-chat-msg-pending .ui-chat-msg-body::after {
-  content: " · queued for the running turn";
+  content: " - queued for the running turn";
   font-size: 0.75rem; color: var(--text-mute); font-style: italic;
 }
 

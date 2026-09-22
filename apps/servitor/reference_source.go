@@ -40,13 +40,13 @@ func (s servitorSource) List(user string) []ReferenceItem {
 		seen[a.ID] = true
 		desc := a.Type
 		if a.Host != "" {
-			desc = strings.TrimSpace(a.Type + " · " + a.Host)
+			desc = strings.TrimSpace(a.Type + " - " + a.Host)
 		}
 		if shared {
 			if desc == "" {
 				desc = "shared"
 			} else {
-				desc += " · shared"
+				desc += " - shared"
 			}
 		}
 		name := a.Name

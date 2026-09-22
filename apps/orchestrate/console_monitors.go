@@ -502,13 +502,13 @@ func consoleMonitorRows(user, agentID string) []consoleMonitorRow {
 			// run forever, which is the whole reason a missing bound went
 			// unnoticed until the alerts kept arriving.
 			if lbl := m.FireLabel(); lbl != "" {
-				detail += " · " + lbl
+				detail += " - " + lbl
 			}
 			// A monitor that has fired and whose condition never went false
 			// again is running without being able to do anything. It is not
 			// stopped, so it gets no stop mark — it gets told.
 			if lbl := m.StuckLabel(); lbl != "" {
-				detail += " · " + lbl
+				detail += " - " + lbl
 			}
 		}
 		last := ""
@@ -680,7 +680,7 @@ func monitorRowState(m EventMonitor) map[string]any {
 	case MonitorStopIdle:
 		icon = "off"
 	}
-	return map[string]any{"icon": icon, "tone": tone, "title": m.Name + " · " + m.StopLabel()}
+	return map[string]any{"icon": icon, "tone": tone, "title": m.Name + " - " + m.StopLabel()}
 }
 
 // monitorStopUrgency ranks the causes so a row fed by several monitors shows
@@ -774,7 +774,7 @@ func scheduleRowState(name, cause, note string) map[string]any {
 	}
 	title := name
 	if lbl := scheduleStopLabel(cause, note); lbl != "" {
-		title += " · " + strings.TrimPrefix(strings.TrimPrefix(lbl, "✓ "), "⚠ ")
+		title += " - " + strings.TrimPrefix(strings.TrimPrefix(lbl, "✓ "), "⚠ ")
 	}
 	return map[string]any{"icon": icon, "tone": tone, "title": title}
 }

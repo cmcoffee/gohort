@@ -82,7 +82,7 @@ func pipelineStatusText(d PipelineDef) string {
 	// much the pipeline says about itself; opening it runs the full check.
 	if n := len(d.Advice()); n > 0 {
 		if out != "" {
-			out += " · "
+			out += " - "
 		}
 		out += strconv.Itoa(n) + " worth a look"
 	}

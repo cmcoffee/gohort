@@ -387,7 +387,7 @@ func ComfyGraphNodes(apiJSON string) ([]ComfyNodeChoice, error) {
 		class := comfyClass(graph, id)
 		label := id
 		if title := comfyNodeTitle(graph, id); title != "" && title != class {
-			label += " · " + title
+			label += " - " + title
 		}
 		if class != "" {
 			label += " [" + class + "]"

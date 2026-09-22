@@ -51,7 +51,7 @@ type CuratorEntry struct {
 	Kind      string `json:"kind"` // one of the Outcome* constants
 	FindingID string `json:"finding_id"`
 	Topic     string `json:"topic"`  // the finding's own framing, for reading the digest
-	Origin    string `json:"origin"` // rendered "system · web-prod-01"
+	Origin    string `json:"origin"` // rendered "system - web-prod-01"
 	GuideID   string `json:"guide_id,omitempty"`
 	GuideName string `json:"guide_name,omitempty"`
 	Section   string `json:"section,omitempty"`
@@ -203,7 +203,7 @@ func findingOriginLabel(o DocFindingOrigin) string {
 	case kind == "":
 		return label
 	}
-	return kind + " · " + label
+	return kind + " - " + label
 }
 
 // --- digest ---

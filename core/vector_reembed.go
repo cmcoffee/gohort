@@ -110,7 +110,7 @@ func reembedChunks(ctx context.Context, db Database, what string, want func(c Em
 			break
 		}
 		if time.Since(lastReport) >= reembedReportEvery {
-			ReportMaintenanceProgress(ctx, fmt.Sprintf("%d of %d chunk(s) checked · %d re-embedded · %s elapsed",
+			ReportMaintenanceProgress(ctx, fmt.Sprintf("%d of %d chunk(s) checked - %d re-embedded - %s elapsed",
 				scanned, len(keys), fixed, time.Since(started).Round(time.Second)))
 			lastReport = time.Now()
 		}
@@ -175,7 +175,7 @@ func reembedChunks(ctx context.Context, db Database, what string, want func(c Em
 		invalidateChunkCacheFor(db)
 	}
 	if candidates == 0 {
-		ReportMaintenanceOutcome(ctx, fmt.Sprintf("%d chunk(s) checked · none %s", scanned, what))
+		ReportMaintenanceOutcome(ctx, fmt.Sprintf("%d chunk(s) checked - none %s", scanned, what))
 		Log("[vector-reembed] scanned %d chunk(s); none %s", scanned, what)
 		return 0
 	}
@@ -183,14 +183,14 @@ func reembedChunks(ctx context.Context, db Database, what string, want func(c Em
 	// two-second tick landed last, which can sit a few chunks short of the end
 	// and read as though the pass stopped early — it does not: the loop is
 	// sequential, each embed completes and its row is written before the next.
-	outcome := fmt.Sprintf("%d chunk(s) checked · %d re-embedded", scanned, fixed)
+	outcome := fmt.Sprintf("%d chunk(s) checked - %d re-embedded", scanned, fixed)
 	if split > 0 {
-		outcome += fmt.Sprintf(" · %d oversized split into parts", split)
+		outcome += fmt.Sprintf(" - %d oversized split into parts", split)
 	}
 	if failed > 0 {
-		outcome += fmt.Sprintf(" · %d still failing", failed)
+		outcome += fmt.Sprintf(" - %d still failing", failed)
 	}
-	ReportMaintenanceOutcome(ctx, outcome+" · "+time.Since(started).Round(time.Second).String())
+	ReportMaintenanceOutcome(ctx, outcome+" - "+time.Since(started).Round(time.Second).String())
 	Log("[vector-reembed] scanned %d chunk(s), %d %s: %d repaired, %d split, %d still failing, %.1fs",
 		scanned, candidates, what, fixed, split, failed, time.Since(started).Seconds())
 	return fixed

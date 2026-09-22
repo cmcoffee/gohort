@@ -145,7 +145,7 @@ func (t *chatTurn) introspectToolDef() AgentToolDef {
 						if strings.TrimSpace(ch.Gatekeeper) != "" {
 							parts = append(parts, "gatekeeper set")
 						}
-						b.WriteString("- " + strings.Join(parts, " · ") + "\n")
+						b.WriteString("- " + strings.Join(parts, " - ") + "\n")
 					}
 					// Reply-routing grounding — matches the per-turn [CHANNEL CONTEXT]
 					// note on each inbound: a reply goes BACK to the conversation it

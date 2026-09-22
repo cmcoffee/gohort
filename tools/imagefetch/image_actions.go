@@ -234,7 +234,7 @@ func (a imageActions) backendParamDesc() string {
 			note += "generates from text (use with action=generate)"
 		}
 		if c.Guidance != "" {
-			note += " · " + c.Guidance
+			note += " - " + c.Guidance
 		}
 		notes = append(notes, note)
 	}

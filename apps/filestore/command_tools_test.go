@@ -198,7 +198,7 @@ func TestAMappedCommandIsNotADeploymentTool(t *testing.T) {
 // never mapped, which is the state an admin most needs to spot.
 func TestStoresListSaysWhatAFolderCarries(t *testing.T) {
 	app, st, cmd := commandFixture(t)
-	if got := storeCarriesLabel(app.DB, st.Slug); got != "\u00b7" {
+	if got := storeCarriesLabel(app.DB, st.Slug); got != "-" {
 		t.Errorf("a folder carrying nothing reads as nothing, got %q", got)
 	}
 	mapIt(t, app, st, cmd)

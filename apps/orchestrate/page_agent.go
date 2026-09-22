@@ -1207,14 +1207,14 @@ func appGrantHelp(user, agentID string) string {
 		var detail []string
 		for _, g := range s.Grants {
 			if g.Detail != "" {
-				detail = append(detail, g.Label+" · "+g.Detail)
+				detail = append(detail, g.Label+" - "+g.Detail)
 			}
 		}
 		if len(detail) > 0 {
 			fmt.Fprintf(&b, " (%s)", strings.Join(detail, "; "))
 		}
 		if s.ManageURL != "" {
-			fmt.Fprintf(&b, " · manage at %s", s.ManageURL)
+			fmt.Fprintf(&b, " - manage at %s", s.ManageURL)
 		}
 		b.WriteString("\n")
 	}
@@ -1348,7 +1348,7 @@ func machineSelectField(udb Database, user string) ui.FormField {
 	for _, d := range defs {
 		label := d.Name + " (" + strconv.Itoa(len(d.Phases)) + " phases)"
 		if desc := strings.TrimSpace(d.Description); desc != "" {
-			label += " · " + desc
+			label += " - " + desc
 		}
 		opts = append(opts, ui.SelectOption{Value: d.ID, Label: label})
 	}

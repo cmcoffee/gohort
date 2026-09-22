@@ -490,7 +490,7 @@ func (g *GroupedTool) RunWithSession(args map[string]any, sess *ToolSession) (ou
 		if hint := def.typoHint(args); hint != "" {
 			parts = append(parts, hint)
 		}
-		return "", fmt.Errorf("action %q %s (call %q with action=\"help\" for the full param list; re-send the COMPLETE call: every required param in one go)", action, strings.Join(parts, " · "), g.name)
+		return "", fmt.Errorf("action %q %s (call %q with action=\"help\" for the full param list; re-send the COMPLETE call: every required param in one go)", action, strings.Join(parts, " - "), g.name)
 	}
 	return def.Handler(args, sess)
 }

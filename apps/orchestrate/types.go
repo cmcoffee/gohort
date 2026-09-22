@@ -1443,7 +1443,7 @@ type ChatMessage struct {
 	// ReportDetail is an optional one-line subtitle for a ReportFrom card,
 	// rendered under the name + time header. Carries the secondary context a
 	// name alone can't — for a recurring fire, the owning agent + cadence + fire
-	// number ("Molt Poster · every 30m · fire 5") so the card says WHICH schedule
+	// number ("Molt Poster - every 30m - fire 5") so the card says WHICH schedule
 	// fired and where it is in its run, not just that something did. Generic:
 	// standing agents / monitors may populate it too. Display-only, like
 	// ReportFrom/ReportKind — the LLM context marker ignores it.

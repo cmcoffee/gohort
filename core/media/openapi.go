@@ -186,7 +186,7 @@ func paramList(v any) []string {
 			line += " " + t
 		}
 		if d := str(p, "description"); d != "" {
-			line += " · " + oneLine(d)
+			line += " - " + oneLine(d)
 		}
 		out = append(out, line)
 	}
@@ -238,7 +238,7 @@ func responseList(v any) []string {
 		line := "`" + c + "`"
 		if r, ok := m[c].(map[string]any); ok {
 			if d := str(r, "description"); d != "" {
-				line += " · " + oneLine(d)
+				line += " - " + oneLine(d)
 			}
 			if content, ok := r["content"].(map[string]any); ok {
 				for ct, entry := range content {

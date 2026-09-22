@@ -602,8 +602,8 @@ place and implemented in another is how one of them silently stops being true.
 | `{established}` | everything earlier steps worked out, with their names | supplied when the prompt places no `{state:…}` |
 | `{prev}` | what the step before produced, this turn | |
 | `{now}` | the date and time where the PERSON is | |
-| `{user}` · `{agent}` | who is talking, and which agent they opened | |
-| `{step}` · `{machine}` | where the prompt is, by name | |
+| `{user}` - `{agent}` | who is talking, and which agent they opened | |
+| `{step}` - `{machine}` | where the prompt is, by name | |
 | `{state:NAME.field}` | one field another step established | not a built-in: it names a step |
 
 **A field can take its value from one of these instead of being asked for it.** Name it after a

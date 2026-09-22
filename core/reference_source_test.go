@@ -38,7 +38,7 @@ func (h hasItemsSource) HasItems(user string) bool {
 // Asking whether a source has anything must not build what it has.
 //
 // The filestore source describes each store by WALKING ITS TREE — stat every
-// file under every folder — to render "· 12 folders" in a picker. Asking it
+// file under every folder — to render "- 12 folders" in a picker. Asking it
 // merely whether any store exists therefore cost a full filesystem walk,
 // measured live at 2.3 then 5.1 seconds on a page render that displayed none
 // of it.

@@ -11,7 +11,7 @@ Two images, referenced from the top-level `README.md`:
 
 Not from a live instance. A running dashboard carries private app names, real
 contacts and real conversation content, and a README image lives in git history
-· removing one later means rewriting history, not deleting a file.
+- removing one later means rewriting history, not deleting a file.
 
 A fresh `--setup` with a little demo data is the right source, and has a useful
 side effect: it exercises the first-run experience a release actually ships.
