@@ -492,8 +492,13 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 					PostURL: patchURL,
 					Method:  "PATCH",
 					Fields: []ui.FormField{
-						{Field: "workspace_no_network", Type: "toggle", Invert: true, Label: "Allow network access from the workspace",
-							Help: "Off stops code running in the workspace from dialling out. The agent keeps its tools and its model either way.",
+						{Field: "workspace_network", Type: "select", Label: "Network access from the workspace",
+							Options: []ui.SelectOption{
+								{Value: "", Label: "Use the default for all agents"},
+								{Value: "on", Label: "Allowed"},
+								{Value: "off", Label: "Blocked"},
+							},
+							Help: "Currently " + workspaceNetworkSource(RootDB, user, agent) + ". Blocked stops code running in the workspace from dialling out; the agent keeps its tools and its model either way.",
 							Detail: "For an agent that should process text or files locally and never phone anywhere from in there. It can still read, write and run commands in the workspace.\n\n" +
 								"Enforced at both ways out: the sandbox gets no network namespace, and the gohort.fetch helper refuses. Closing one alone would just move a script from one to the other.\n\n" +
 								"It inherits downward, so a sub-agent cannot dial on this one's behalf, and it only ever narrows: Private mode still blocks a turn outright.\n\n" +

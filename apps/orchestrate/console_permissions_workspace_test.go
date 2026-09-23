@@ -102,8 +102,15 @@ func TestAWorkspaceDecisionCanBeRevokedFromThePage(t *testing.T) {
 	set("subaction:w3:workspace/run", PolicyAllow)
 
 	rec, _ := loadAgent(udb, "w3")
+	// Asked of the RESOLVER, not one field. The decision is a tri-state now
+	// and the legacy bool is only read for a record written before it existed,
+	// so a test reading that field alone would pass while the agent behaved
+	// the other way.
+	if !agentWorkspaceNetwork(RootDB, "alice", rec) {
+		t.Error("allowing the workspace did not take")
+	}
 	if rec.WorkspaceNoNetwork {
-		t.Error("allowing the workspace left the mark on the record")
+		t.Error("the legacy mark survived, so the resolver reads a stale block under a fresh allow")
 	}
 	if len(rec.DisabledToolActions) != 0 {
 		t.Errorf("allowing the sub-action left it switched off: %v", rec.DisabledToolActions)
@@ -113,7 +120,7 @@ func TestAWorkspaceDecisionCanBeRevokedFromThePage(t *testing.T) {
 	set("workspace:w3:network", PolicyBlock)
 	set("subaction:w3:workspace/run", PolicyBlock)
 	rec, _ = loadAgent(udb, "w3")
-	if !rec.WorkspaceNoNetwork {
+	if agentWorkspaceNetwork(RootDB, "alice", rec) {
 		t.Error("blocking the workspace did not take")
 	}
 	if len(rec.DisabledToolActions) != 1 || rec.DisabledToolActions[0] != "workspace/run" {

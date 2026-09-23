@@ -480,7 +480,9 @@ func TestTheInChatLadderRefusesNever(t *testing.T) {
 func TestEveryToggleOnSecurityMeansAllowed(t *testing.T) {
 	src := mustRead(t, "page_agent_access.go")
 	// Each negative field is inverted where it is offered.
-	for _, f := range []string{"workspace_no_network", "share_hold_cortex", "share_hold_reference", "share_no_uploads", "hidden"} {
+	// workspace_no_network is no longer a toggle at all: it became a
+	// tri-state select, because a bool cannot hold "not decided here".
+	for _, f := range []string{"share_hold_cortex", "share_hold_reference", "share_no_uploads", "hidden"} {
 		i := strings.Index(src, `Field: "`+f+`", Type: "toggle"`)
 		if i < 0 {
 			t.Errorf("%s is not offered as a toggle", f)
@@ -492,7 +494,7 @@ func TestEveryToggleOnSecurityMeansAllowed(t *testing.T) {
 	}
 	// And the labels say the positive thing, or the inversion just moves the
 	// confusion from the switch to the words beside it.
-	for _, dead := range []string{"may not reach the network", "Keep its standing activity to yourself", "Hide from agent fleet"} {
+	for _, dead := range []string{"Keep its standing activity to yourself", "Hide from agent fleet"} {
 		if strings.Contains(src, dead) {
 			t.Errorf("a label still states the restriction: %q", dead)
 		}

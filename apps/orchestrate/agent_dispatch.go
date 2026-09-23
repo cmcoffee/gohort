@@ -362,7 +362,11 @@ func applyForcePrivateToDispatch(ctx context.Context, subSess *ToolSession, tool
 	// whose workspace may not dial cannot dial either, which is the direction
 	// every restriction in this codebase inherits. Building a sub-agent is
 	// otherwise how you launder one.
-	ctx = netgate.WithWorkspaceNetwork(ctx, netgate.WorkspaceNetworkAllowed(ctx) && !target.WorkspaceNoNetwork)
+	// ANDed with what the caller's turn already carries: a dispatch narrows,
+	// never widens, so a target allowed its own workspace network still gets
+	// none inside a turn that had none.
+	ctx = netgate.WithWorkspaceNetwork(ctx, netgate.WorkspaceNetworkAllowed(ctx) &&
+		agentWorkspaceNetwork(RootDB, agentDefaultsOwner(target, ""), target))
 	// Enforce private when the TARGET is permanently private (ForcePrivate) OR
 	// the PARENT turn is already running private — the parent's connector rides
 	// on ctx, so a blocked incoming ctx means a Private parent delegated /

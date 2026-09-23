@@ -729,6 +729,19 @@ type AgentRecord struct {
 	// Distinct from Hidden, which is VISIBILITY: a hidden agent is dropped
 	// from the fleet listing but is still reachable by a caller that names it.
 	// "none" is permission, and nothing on the caller's side overrides it.
+	// WorkspaceNetwork is the tri-state successor to WorkspaceNoNetwork:
+	// "on", "off", or empty for "not decided here, use the default for all
+	// agents".
+	//
+	// A bool could not hold that third state, and the difference only shows up
+	// later: when the owner changes the fleet default, an agent that never
+	// decided should follow and one that chose the same value should not.
+	//
+	// WorkspaceNoNetwork stays readable so a record written before this still
+	// means what it meant. It could only ever record a BLOCK, so it is read as
+	// one and nothing writes it any more.
+	WorkspaceNetwork string `json:"workspace_network,omitempty"`
+
 	InboundMode string `json:"inbound_mode,omitempty"`
 	// AllowedCallers are the agent IDs that may dispatch to this one, read
 	// only when InboundMode is "only". Empty in that mode means nothing

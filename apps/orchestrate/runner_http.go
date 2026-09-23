@@ -501,7 +501,14 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 	// and read at both doors out of the sandbox. Independent of privacy mode,
 	// which the connector above carries: this one leaves the agent's network
 	// TOOLS alone and only says the workspace is not what reaches out.
-	ctx = netgate.WithWorkspaceNetwork(ctx, !agent.WorkspaceNoNetwork)
+	// Resolved, not read off one field: the agent's own answer, then a record
+	// written before the tri-state existed, then the owner's default for all
+	// agents, then the framework's, which is open.
+	//
+	// The OWNER's default, not the runtime user's. A shared agent runs for
+	// somebody else, and what its workspace may reach is its owner's decision
+	// about their own agent.
+	ctx = netgate.WithWorkspaceNetwork(ctx, agentWorkspaceNetwork(RootDB, agentDefaultsOwner(agent, user), agent))
 	inflightConnectors.Store(sess.ID, turnConnector)
 	defer inflightConnectors.Delete(sess.ID)
 	// Also lock ForcePrivate agents so the privacy endpoint can't

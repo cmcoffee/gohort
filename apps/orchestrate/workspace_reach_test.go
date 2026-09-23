@@ -84,11 +84,17 @@ func TestTheCeilingIsOfferedAndSaveable(t *testing.T) {
 	// is offering it, which is the entire question.
 	editor := mustReadFile(t, "page_agent.go")
 	security := mustReadFile(t, "page_agent_access.go")
-	if strings.Contains(editor, `Field: "workspace_no_network", Type: "toggle"`) {
+	if strings.Contains(editor, `Field: "workspace_n`) {
 		t.Error("the editor offers it again, so there are two controls over one fact")
 	}
-	if !strings.Contains(security, `Field: "workspace_no_network", Type: "toggle"`) {
+	// A tri-state SELECT, not a toggle: a bool cannot hold "not decided here,
+	// use the default for all agents", and that third state is the whole
+	// point of a default.
+	if !strings.Contains(security, `Field: "workspace_network", Type: "select"`) {
 		t.Error("the Security page does not offer the setting, so it is offered nowhere")
+	}
+	if !strings.Contains(security, "Use the default for all agents") {
+		t.Error("the agent cannot be returned to the default once it has answered")
 	}
 	if !strings.Contains(src, `"workspace:" + ag.ID + ":network"`) {
 		t.Error("the Security window's own row is gone, so its state is not reviewable")
@@ -101,8 +107,13 @@ func TestTheCeilingIsOfferedAndSaveable(t *testing.T) {
 		t.Error("the PATCH allowlist drops it, so an import or a form update cannot carry it")
 	}
 	// Set where the turn's context is assembled, or nothing downstream sees it.
-	if !strings.Contains(src, "netgate.WithWorkspaceNetwork(ctx, !agent.WorkspaceNoNetwork)") {
+	// Resolved, not read off one field: the agent's own answer, then a record
+	// written before the tri-state, then the owner's default for all agents.
+	if !strings.Contains(src, "netgate.WithWorkspaceNetwork(ctx, agentWorkspaceNetwork(") {
 		t.Error("the live turn never attaches the ceiling")
+	}
+	if strings.Contains(src, "WithWorkspaceNetwork(ctx, !agent.WorkspaceNoNetwork)") {
+		t.Error("the live turn reads the legacy bool alone, so a fleet default reaches nothing")
 	}
 }
 

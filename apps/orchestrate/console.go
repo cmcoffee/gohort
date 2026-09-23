@@ -199,6 +199,8 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// Who may RUN the agent. Its own door because publishing is requested,
 	// not applied: see handleConsolePermissionAudience.
 	T.HandleFunc("/api/console/permissions/audience", T.handleConsolePermissionAudience)
+	// What holds for every agent until one says otherwise.
+	T.HandleFunc("/api/console/fleet-defaults", T.handleFleetDefaults)
 	T.HandleFunc("/api/console/privileges", T.handleConsolePrivileges)
 	T.HandleFunc("/api/console/approvals/approve", w(T.handleApprovalApprove))
 	T.HandleFunc("/api/console/approvals/always", w(T.handleApprovalAlways))

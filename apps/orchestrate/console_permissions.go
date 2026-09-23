@@ -302,7 +302,7 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 		// not. Offering the segment would be offering something that cannot be
 		// stored, which is what its own doc warns against.
 		wsPolicy, wsDetail := PolicyAllow, "Workspace may reach the network"
-		if ag.WorkspaceNoNetwork {
+		if !agentWorkspaceNetwork(RootDB, user, ag) {
 			wsPolicy, wsDetail = PolicyBlock, "Workspace may not reach the network"
 		}
 		out = append(out, permRow{
@@ -695,7 +695,14 @@ func (T *OrchestrateApp) handleConsolePermissionPolicy(w http.ResponseWriter, r 
 		if aid, what, ok := strings.Cut(target, ":"); ok && what == "network" {
 			udb := UserDB(T.DB, user)
 			if rec, found := loadAgent(udb, aid); found && rec.Owner == user {
-				rec.WorkspaceNoNetwork = value == PolicyBlock
+				// Writes the tri-state and clears the legacy bool, so the two
+				// cannot disagree and the resolver is not reading a stale
+				// block underneath a fresh allow.
+				rec.WorkspaceNetwork = settingOn
+				if value == PolicyBlock {
+					rec.WorkspaceNetwork = settingOff
+				}
+				rec.WorkspaceNoNetwork = false
 				if _, err := saveAgent(udb, rec); err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 					return

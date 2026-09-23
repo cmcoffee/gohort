@@ -281,7 +281,7 @@ var patchAgentFields = map[string]bool{
 	"channel": true, "fleet": true, "author": true, "tag_name": true,
 	"exposed": true, "mcp_exposed": true, "show_on_dashboard": true, "public_name": true,
 	"allow_private_mode": true, "force_private": true, "hidden": true,
-	"workspace_no_network": true, "disabled_tool_actions": true,
+	"workspace_no_network": true, "workspace_network": true, "disabled_tool_actions": true,
 	"allow_builder_dispatch": true, "dispatch_mode": true,
 	"inbound_mode": true, "allowed_callers": true,
 	"evals": true, "intake_form": true, "owned_by": true,
