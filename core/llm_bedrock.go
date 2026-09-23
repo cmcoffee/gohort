@@ -639,10 +639,7 @@ func signAWSV4(req *http.Request, payload []byte, creds awsCreds, region, servic
 	}
 	signedHeaders := strings.Join(signed, ";")
 
-	path := req.URL.EscapedPath()
-	if path == "" {
-		path = "/"
-	}
+	path := sigv4CanonicalPath(req.URL.EscapedPath())
 	canonicalRequest := strings.Join([]string{
 		req.Method,
 		path,
@@ -749,6 +746,53 @@ func bedrockHint(model, msg string) string {
 		return "That is the Messages-API permission. If your role grants bedrock:InvokeModel instead, set Bedrock API to \"InvokeModel\" under Admin -> LLMs."
 	}
 	return ""
+}
+
+// sigv4CanonicalPath is the path as SigV4 wants it in the canonical request:
+// each segment URI-encoded ONE MORE TIME than it appears on the wire.
+//
+// AWS documents this as "each path segment must be URI-encoded twice" (S3
+// excepted). The path we send is already encoded once, so the canonical form
+// encodes it again: a "%3A" on the wire is "%253A" in the string AWS signs.
+//
+// This was invisible for as long as no model id contained a character that
+// needed escaping. "us.anthropic.claude-opus-5" escapes to itself, so encoding
+// it once and twice gave byte-identical results and signing EscapedPath was
+// indistinguishable from doing this properly. An inference-profile ARN is the
+// first id with a colon and a slash in it, and AWS answered with a signature
+// mismatch and the canonical string it expected - which is what this is built
+// from.
+//
+// Separators stay separators: the segments are encoded, the slashes between
+// them are not.
+func sigv4CanonicalPath(escaped string) string {
+	if escaped == "" {
+		return "/"
+	}
+	parts := strings.Split(escaped, "/")
+	for i, p := range parts {
+		parts[i] = sigv4EncodeSegment(p)
+	}
+	return strings.Join(parts, "/")
+}
+
+// sigv4EncodeSegment percent-encodes everything RFC 3986 does not call
+// unreserved, which is a stricter set than url.PathEscape uses: PathEscape
+// leaves ":" and "@" and "&" alone because a path segment may legally hold
+// them, and AWS's canonicalization encodes them anyway. A "%" already in the
+// string becomes "%25", which is what makes this the SECOND encoding.
+func sigv4EncodeSegment(seg string) string {
+	var b strings.Builder
+	for i := 0; i < len(seg); i++ {
+		c := seg[i]
+		if c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' ||
+			c == '-' || c == '.' || c == '_' || c == '~' {
+			b.WriteByte(c)
+			continue
+		}
+		fmt.Fprintf(&b, "%%%02X", c)
+	}
+	return b.String()
 }
 
 // bedrockIsProfile reports whether the configured model names an inference

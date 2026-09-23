@@ -160,16 +160,35 @@ func newBedrockRuntimeLLM(bearer, model, region, profile, endpoint string, api *
 }
 
 // invokePath builds /model/{id}/invoke.
+func (c *bedrockRuntimeClient) invokePath() string {
+	return "/model/" + bedrockPathModel(c.model) + "/invoke"
+}
+
+// bedrockPathModel escapes a model id for the URL path, which is NOT the same
+// rule for every kind of id.
 //
-// The colon in versioned model ids ("...-v1:0") has to be percent-encoded, and
-// url.PathEscape will not do it: RFC 3986 permits a literal colon inside a
-// path segment, so PathEscape leaves it. SigV4 canonicalization does not agree
+// The colon in a VERSIONED model id ("...-v1:0") has to be percent-encoded,
+// and url.PathEscape will not do it: RFC 3986 permits a literal colon inside a
+// path segment, so PathEscape leaves it. AWS's canonicalization does not agree
 // — it encodes reserved characters — so AWS would sign %3A while we sent ":"
 // and reject the request with a signature mismatch that says nothing about
-// paths. Encoding it here makes the sent path and the signed path (both read
-// from URL.EscapedPath) identical AND matches AWS's normalization.
-func (c *bedrockRuntimeClient) invokePath() string {
-	return "/model/" + strings.ReplaceAll(url.PathEscape(c.model), ":", "%3A") + "/invoke"
+// paths. Encoding it makes the sent path and the signed path (both read from
+// URL.EscapedPath) identical AND matches AWS's normalization.
+//
+// AN ARN IS THE OPPOSITE. Its colons are structure, not data, and AWS's own
+// SDK leaves them raw while percent-encoding only the slash inside the
+// resource id. Encoding them too produces a path AWS normalizes back to
+// something else, and the request is refused with exactly that signature
+// mismatch — from the other direction.
+//
+// This stayed invisible until an ARN turned up because no model id before one
+// contained a character that needed escaping at all: "us.anthropic.claude-
+// opus-5" escapes to itself, so the two rules could not be told apart.
+func bedrockPathModel(model string) string {
+	if strings.HasPrefix(model, "arn:") {
+		return url.PathEscape(model)
+	}
+	return strings.ReplaceAll(url.PathEscape(model), ":", "%3A")
 }
 
 // hoistSystemMessages moves system-role turns out of the message list, which
@@ -326,7 +345,7 @@ func (c *bedrockRuntimeClient) Chat(ctx context.Context, messages []Message, opt
 // streamPath builds /model/{id}/invoke-with-response-stream, escaped the same
 // way invokePath is.
 func (c *bedrockRuntimeClient) streamPath() string {
-	return "/model/" + strings.ReplaceAll(url.PathEscape(c.model), ":", "%3A") + "/invoke-with-response-stream"
+	return "/model/" + bedrockPathModel(c.model) + "/invoke-with-response-stream"
 }
 
 // ChatStream streams a response token by token.
