@@ -715,7 +715,7 @@ func bedrockHint(model, msg string) string {
 		if r := bedrockARNRegion(msg); r != "" {
 			hint += ", and check the AWS region on that same tier - the call went to " + r + ", which each tier sets for itself"
 		}
-		return hint + "."
+		return endSentence(hint)
 	case strings.Contains(low, "createinference") && strings.Contains(low, "not authorized"):
 		// The other half of the same confusion: the account grants one Bedrock
 		// API and not the other, and the refusal names an IAM action rather
@@ -753,10 +753,28 @@ func bedrockARNRegion(msg string) string {
 	return region
 }
 
+// endSentence closes a sentence that does not close itself, so a caller can
+// append to it without guessing.
+//
+// A provider message may or may not end in punctuation - AWS's IAM refusals do
+// not, its validation errors do - and a caller that hardcoded "." produced
+// "us-east-1.." on every Bedrock refusal carrying a hint.
+func endSentence(s string) string {
+	s = strings.TrimRight(s, " ")
+	if s == "" {
+		return s
+	}
+	switch s[len(s)-1] {
+	case '.', '!', '?', ':', ';':
+		return s
+	}
+	return s + "."
+}
+
 // withBedrockHint appends the hint for this message, if there is one.
 func withBedrockHint(model, msg string) string {
 	if h := bedrockHint(model, msg); h != "" {
-		return msg + " " + h
+		return endSentence(msg) + " " + h
 	}
 	return msg
 }

@@ -134,7 +134,10 @@ func noteLeadCallFailed(err error) {
 	leadRuntimeErr = "the lead model stopped answering: " + err.Error()
 	leadInitMu.Unlock()
 	if first {
-		Warn("[llm] the lead model stopped answering: %s. Every escalation runs on the WORKER until a lead call succeeds again.", err)
+		// No period of its own: a provider message may or may not end in one,
+		// and a hardcoded "." produced "us-east-1.." on every Bedrock refusal
+		// that carries a hint. endSentence adds one only where one is missing.
+		Warn("[llm] the lead model stopped answering: %s Every escalation runs on the WORKER until a lead call succeeds again.", endSentence(err.Error()))
 	}
 }
 

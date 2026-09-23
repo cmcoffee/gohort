@@ -110,3 +110,37 @@ func TestAnEndpointSilentlyOverridesTheRegion(t *testing.T) {
 		t.Errorf("the note still credits the region setting: %s", got)
 	}
 }
+
+// A message and a hint join without doubling the punctuation between them.
+// The first version hardcoded a period at both ends and shipped "us-east-1.."
+// into a warning an operator was meant to read carefully.
+func TestTheHintJoinsWithoutDoublingPunctuation(t *testing.T) {
+	// AWS's IAM refusals end with no punctuation; its validation errors end
+	// with a period. Both have to read correctly.
+	noStop := "User is not authorized to perform: bedrock:InvokeModelWithResponseStream on resource: " +
+		"arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-opus-5 because no identity-based policy allows the action"
+	got := withBedrockHint("anthropic.claude-opus-5", noStop)
+	if strings.Contains(got, "..") {
+		t.Errorf("doubled punctuation: %s", got)
+	}
+	if !strings.Contains(got, "action. The resource") {
+		t.Errorf("the two sentences did not join: %s", got)
+	}
+
+	withStop := "Invocation of model ID anthropic.claude-opus-5 with on-demand throughput isn’t supported."
+	if got = withBedrockHint("anthropic.claude-opus-5", withStop); strings.Contains(got, "..") {
+		t.Errorf("doubled punctuation on a message that punctuated itself: %s", got)
+	}
+
+	for _, c := range []struct{ in, want string }{
+		{"no stop", "no stop."},
+		{"has one.", "has one."},
+		{"a question?", "a question?"},
+		{"trailing space ", "trailing space."},
+		{"", ""},
+	} {
+		if got := endSentence(c.in); got != c.want {
+			t.Errorf("endSentence(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
