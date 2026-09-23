@@ -506,3 +506,31 @@ func TestEveryToggleOnSecurityMeansAllowed(t *testing.T) {
 		t.Error("a positively-stored field was inverted, which flips it for every existing agent")
 	}
 }
+
+// Which tools may run unwatched is the Unattended ladder, and nowhere else.
+//
+// The editor carried two checklists over exactly the fields that ladder
+// writes. Two controls over one fact drift, and these could disagree in a way
+// neither showed: a tool could sit on BOTH lists from the editor, which the
+// ladder cannot produce because setting one policy clears the other.
+func TestUnattendedPolicyHasOneControl(t *testing.T) {
+	editor := mustRead(t, "page_agent.go")
+	for _, f := range []string{"auto_approve_tools", "no_unattended_tools"} {
+		if strings.Contains(editor, `Field: "`+f+`"`) {
+			t.Errorf("the editor still offers %s beside the ladder that writes it", f)
+		}
+	}
+	// And the ladder still writes both lists, or removing them lost the
+	// setting rather than moving it.
+	// Across the package: removeAutoApproveTool lives beside the permissions
+	// handler rather than in tool_policy.go.
+	pol := packageSource(t)
+	for _, fn := range []string{"addAutoApproveTool", "addNoUnattendedTool", "removeAutoApproveTool", "removeNoUnattendedTool"} {
+		if !strings.Contains(pol, "func "+fn) {
+			t.Errorf("%s is gone, so the ladder cannot write what the checklists used to", fn)
+		}
+	}
+	if !strings.Contains(mustRead(t, "tool_policy.go"), "case PolicyAllow:") {
+		t.Error("the ladder no longer maps its three answers onto the two lists")
+	}
+}
