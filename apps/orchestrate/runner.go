@@ -933,6 +933,7 @@ func (pr *planRun) catalogKnowTools() error {
 	// After wrapping, so a deferred tool keeps its activity wrapper when
 	// load_tool brings it back.
 	pr.cat.knowTools = t.deferKnownAuthoringTools(pr.cat.knowTools)
+	pr.cat.knowTools = t.deferOnDemandTools(pr.cat.knowTools)
 	return nil
 }
 

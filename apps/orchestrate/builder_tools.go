@@ -1164,6 +1164,47 @@ func (t *chatTurn) deferKnownAuthoringTools(tools []AgentToolDef) []AgentToolDef
 	return kept
 }
 
+// onDemandTools are framework tools that are not authoring but are reached for
+// rarely enough to sit behind load_tool rather than in every turn's catalog.
+// They share the deferred-authoring maps (that is what load_tool and the direct-
+// call fallback consult) but get their own index section, so an agent is never
+// told a scheduler is an authoring tool.
+var onDemandTools = map[string]bool{
+	// ~2.1k tokens, the largest schema on a non-Fleet agent once tool_def was
+	// deferred, and used only on the turn that sets up or manages a schedule.
+	"recurring": true,
+}
+
+const onDemandToolIndexHeader = "\n\n## More tools (load before use)\n" +
+	"These tools exist but their parameters aren't loaded yet. When a request calls for one, first call `load_tool(names=[\"<name>\"])`, then use it normally.\n\n"
+
+// deferOnDemandTools moves the onDemandTools out of the direct catalog and into
+// the deferred index, on every agent including Builder: unlike authoring, none
+// of them is anyone's core rhythm.
+func (t *chatTurn) deferOnDemandTools(tools []AgentToolDef) []AgentToolDef {
+	kept := tools[:0:0]
+	var moved []string
+	var index strings.Builder
+	for _, td := range tools {
+		if !onDemandTools[td.Tool.Name] {
+			kept = append(kept, td)
+			continue
+		}
+		if t.deferredAuthoringDefs == nil {
+			t.deferredAuthoringDefs = map[string]AgentToolDef{}
+			t.deferredAuthoringLoaded = map[string]bool{}
+		}
+		t.deferredAuthoringDefs[td.Tool.Name] = td
+		index.WriteString(authoringIndexLine(td))
+		moved = append(moved, td.Tool.Name)
+	}
+	if len(moved) > 0 {
+		t.authoringLazyPrompt += onDemandToolIndexHeader + index.String()
+		Log("[orchestrate.tools] agent=%s: %v deferred behind load_tool", t.agent.ID, moved)
+	}
+	return kept
+}
+
 // selfServeToolIndexHeader introduces tool_def on an agent that does not author
 // anything else: tools are self-serve, but agents, apps and pipelines are not,
 // so the full authoring header ("You can build things: agents, ...") would

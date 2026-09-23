@@ -324,3 +324,36 @@ func TestBuilderKeepsToolsDirect(t *testing.T) {
 		t.Fatalf("Builder's tools must pass through untouched, got %v", namesOf(got))
 	}
 }
+
+// recurring is not authoring, so it must land under its own index section on
+// any agent, Builder included, and stay reachable. When authoring was deferred
+// too, both sections coexist and neither loses its tools.
+func TestRecurringDeferredUnderItsOwnSection(t *testing.T) {
+	for _, id := range []string{"a1", "seed-builder"} {
+		turn, _ := newAuthoringTestTurn(t)
+		turn.agent.ID = id
+		kept := turn.deferOnDemandTools([]AgentToolDef{turn.showLinkToolDef(), turn.recurringToolDef()})
+		if got := namesOf(kept); len(got) != 1 || got[0] != "show_link" {
+			t.Fatalf("%s: only show_link should stay direct, got %v", id, got)
+		}
+		if !strings.Contains(turn.authoringLazyPrompt, onDemandToolIndexHeader) || !strings.Contains(turn.authoringLazyPrompt, "- `recurring`") {
+			t.Fatalf("%s: recurring must be indexed under its own section, got %q", id, turn.authoringLazyPrompt)
+		}
+		if strings.Contains(turn.authoringLazyPrompt, "Authoring tools") {
+			t.Fatalf("%s: a scheduler must not be presented as an authoring tool", id)
+		}
+		if h, ok := turn.lazyToolFallback("recurring"); !ok || h == nil {
+			t.Fatalf("%s: recurring must still resolve when called directly", id)
+		}
+	}
+
+	turn, sess := newAuthoringTestTurn(t)
+	turn.authoringLazyPrompt = registerLazyAuthoringTools(turn, builderAuthoringTools(sess, turn))
+	turn.deferOnDemandTools([]AgentToolDef{turn.recurringToolDef()})
+	if _, ok := turn.deferredAuthoringDefs["tool_def"]; !ok {
+		t.Fatal("deferring recurring must not wipe the authoring catalog")
+	}
+	if _, ok := turn.deferredAuthoringDefs["recurring"]; !ok {
+		t.Fatal("recurring must join the existing deferred set")
+	}
+}
