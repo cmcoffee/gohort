@@ -51,6 +51,65 @@ func TestReachablePredicateMatchesTheGatesRules(t *testing.T) {
 	if !dispatchReachable(AgentRecord{ID: "parent", Name: "Parent"}, sub) {
 		t.Error("a parent must reach its own sub-agent")
 	}
+	// Allow-none is ABSOLUTE, own sub-agents included. The gate has always
+	// refused this - the observed failure was a dispatch-disabled agent
+	// dispatching its own sub-agent a hundred times in one autonomous turn -
+	// and the predicate had the ownership bypass without the guard in front of
+	// it, so the listing said reachable about a call that never happens.
+	shutParent := AgentRecord{ID: "parent", Name: "Parent", DispatchMode: dispatchNone}
+	if dispatchReachable(shutParent, sub) {
+		t.Error("an agent with Allow none reached its own sub-agent, which the gate refuses")
+	}
+}
+
+// The reach list answers what an agent can ACTUALLY hand work to, so a target
+// the user has Blocked is not in it. Policy reach alone overstates, and on the
+// page built to answer that question overstating is the direction that matters.
+func TestTheReachListDropsABlockedTarget(t *testing.T) {
+	_, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	caller := AgentRecord{ID: "caller", Name: "Caller", Owner: "alice", OrchestratorPrompt: "p"}
+	for _, rec := range []AgentRecord{
+		caller,
+		{ID: "reachable", Name: "Reachable", Owner: "alice", OrchestratorPrompt: "p"},
+		{ID: "blocked", Name: "Blocked One", Owner: "alice", OrchestratorPrompt: "p"},
+	} {
+		if _, err := saveAgent(udb, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	named := func() map[string]bool {
+		got := map[string]bool{}
+		for _, r := range agentReach(udb, "alice", caller) {
+			got[r.Name] = true
+		}
+		return got
+	}
+	if got := named(); !got["Reachable"] || !got["Blocked One"] {
+		t.Fatalf("both agents should start reachable: %v", got)
+	}
+	SetDelegationPolicy(RootDB, "alice", caller.ID, "Blocked One", PolicyBlock)
+	got := named()
+	if got["Blocked One"] {
+		t.Error("a BLOCKED target is still listed as something this agent can reach")
+	}
+	if !got["Reachable"] {
+		t.Error("blocking one target took the others with it")
+	}
+}
+
+// ...but the predicate itself must NOT read the Block, because the permissions
+// page asks it before recording a decision and a Block is a decision recorded
+// there. A control that refuses to undo what it just did is the trap this
+// codebase has walked into three times.
+func TestTheBlockCanStillBeUndone(t *testing.T) {
+	pinRootDB(t)
+	caller := AgentRecord{ID: "caller", Name: "Caller", Owner: "alice"}
+	target := AgentRecord{ID: "target", Name: "Target", Owner: "alice"}
+	SetDelegationPolicy(RootDB, "alice", caller.ID, target.Name, PolicyBlock)
+	if !dispatchReachable(caller, target) {
+		t.Error("the predicate reads the Block, so the control that set it cannot clear it")
+	}
 }
 
 func accessDB(t *testing.T) Database {

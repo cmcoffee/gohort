@@ -44,28 +44,45 @@ type agentReachRow struct {
 	Adds string `json:"adds"`
 }
 
-// dispatchReachable answers whether caller may dispatch to target, by the same
-// rules agentsRunGate enforces one refusal at a time.
+// dispatchReachable answers whether the caller's POLICY reaches target, by the
+// same rules agentsRunGate enforces one refusal at a time.
 //
-// A MIRROR, and the drift that implies is real: the gate must keep its own
-// branches because each one writes a different refusal for the model to act on,
-// while a listing needs one predicate. The matrix test beside this is what
-// holds them together — if the gate grows a rule, that test is where the
+// Policy, not "may this call happen right now". The difference is the user's
+// per-target Block, which this deliberately does NOT read: the permissions page
+// asks this before recording a decision about a target, and a Block is a
+// decision recorded there. Folding it in would mean the control that sets a
+// Block refuses to unset it - the control that deletes itself, for the fourth
+// time in this codebase. A caller that wants ACTUAL reach asks this and then
+// asks targetAcceptsDispatch; see agentReach.
+//
+// A MIRROR otherwise, and the drift that implies is real: the gate must keep
+// its own branches because each one writes a different refusal for the model to
+// act on, while a listing needs one predicate. The matrix test beside this is
+// what holds them together — if the gate grows a rule, that test is where the
 // disagreement shows up.
 func dispatchReachable(caller, target AgentRecord) bool {
 	if target.ID == caller.ID {
+		return false
+	}
+	// Allow-none is ABSOLUTE, own sub-agents included, and it is checked before
+	// the ownership branch below for exactly the reason the gate checks it
+	// first: the observed failure was a dispatch-disabled agent dispatching its
+	// own sub-agent through the ownership bypass. This predicate had the bypass
+	// and not the guard, so the listing said reachable about a call the gate
+	// refuses.
+	if effectiveDispatchMode(caller) == dispatchNone {
+		return false
+	}
+	// The agent being CALLED gets a say. Asked before the caller's remaining
+	// policy because it cannot be widened by it: an agent that accepts nothing
+	// is unreachable however open the caller is.
+	if !inboundAllows(target, caller) {
 		return false
 	}
 	if sub := strings.TrimSpace(target.OwnedBy); sub != "" {
 		// A sub-agent is private to its owner: it runs with that parent's
 		// authority, so reaching it from elsewhere would hand over the parent's.
 		return sub == caller.ID
-	}
-	// The agent being CALLED gets a say. Asked before the caller's policy
-	// because it cannot be widened by it: an agent that accepts nothing is
-	// unreachable however open the caller is.
-	if !inboundAllows(target, caller) {
-		return false
 	}
 	switch effectiveDispatchMode(caller) {
 	case dispatchNone:
@@ -96,7 +113,13 @@ func agentReach(udb Database, user string, caller AgentRecord) []agentReachRow {
 		Targets: caller.AllowedDispatchTargets,
 	}
 	for _, target := range listAgents(udb, user) {
-		if !dispatchReachable(caller, target) {
+		// Both halves, because this list answers what the agent can ACTUALLY
+		// hand work to. The policy reaches it, AND no standing decision stops
+		// the call: a target the user has Blocked is not reach, and on the page
+		// built to answer "what can this thing get to" an overstatement is the
+		// direction that matters.
+		if !dispatchReachable(caller, target) ||
+			targetAcceptsDispatch(user, caller, target) != "" {
 			continue
 		}
 		adds := dispatchEscalationNote(caller, target)
