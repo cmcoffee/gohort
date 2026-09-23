@@ -241,11 +241,9 @@
   // active page highlighted — or null when a page declares none. Scrolls
   // horizontally on narrow screens rather than wrapping.
   //
-  // Its own function because BOTH renderings need it. The full page hangs it on
-  // the header row beside the back link; a page drawn as a panel inside another
-  // surface has no header row and was therefore losing its nav entirely, which
-  // meant a link that is the only route to a related page did not exist in the
-  // place people actually read the page from.
+  // Belongs to the page HEADER and is laid out as a column of its grid, so it
+  // has one caller. See renderPageBody for why a body rendering does not get
+  // to borrow it.
   function navStrip(cfg) {
     if (!cfg.nav || !cfg.nav.length) return null;
     var tabs = el('nav', {class: 'ui-page-tabs'});
@@ -259,15 +257,18 @@
   }
 
   function renderPageBody(cfg, root) {
-    // The page's own nav first. Not the back link or the title: the surface
-    // hosting this body draws its own chrome, and a second title inside it
-    // would be the same page announcing itself twice. The nav is different -
-    // it points OUT of this page, and nothing else on the host offers it.
-    var bodyNav = navStrip(cfg);
-    if (bodyNav) {
-      bodyNav.classList.add('ui-page-tabs-inline');
-      root.appendChild(bodyNav);
-    }
+    // Page.Nav is deliberately NOT drawn here.
+    //
+    // It was, briefly, so that a link only the nav carried would exist on a
+    // page read as a panel. That was wrong twice over: Nav is usually the
+    // whole HUB menu, which the host surface is already showing, so it arrived
+    // as a second copy of navigation the reader had; and .ui-page-tabs is laid
+    // out for a column of the header GRID, so in ordinary body flow it drew on
+    // top of whatever was beneath it.
+    //
+    // A page that needs a route out of itself from inside a panel puts it in a
+    // SECTION, where both renderings draw it and it sits in the layout instead
+    // of over it. See FormField Type "link".
     var inGrid = !!cfg.grid;
     var tabbed = !!cfg.tabbed;
     var sectionsHost = root;        // non-tabbed host

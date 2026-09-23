@@ -79,9 +79,6 @@ func TestThePerAgentControlSaysWhereTheDefaultLives(t *testing.T) {
 	if !strings.Contains(security, "The default for all agents is set on the All agents page") {
 		t.Error("the control offers a default without saying where to change it")
 	}
-	if !strings.Contains(security, `Label: "All agents"`) {
-		t.Error("the link to the all-agents page is gone, so the pointer points at nothing")
-	}
 }
 
 // Nothing on these pages starts folded: the heading already says what it is.
@@ -92,24 +89,30 @@ func TestTheEditorsRemainingHeaderIsNotCollapsed(t *testing.T) {
 	}
 }
 
-// A page's nav travels with its BODY, not only with its header row.
+// A route out of a page belongs in a SECTION, not in the page nav.
 //
-// Security is read from inside the chat overlay as often as from its own URL,
-// and the overlay draws the body alone - so the "All agents" link, which is the
-// only route to the fleet-wide defaults the per-agent controls point at, did
-// not exist in the place people actually read the page from.
-func TestThePagesNavSurvivesBeingDrawnAsAPanel(t *testing.T) {
+// Security is read as a panel inside chat as often as at its own URL, and a
+// panel draws the body alone - so a link carried only by the header does not
+// exist on the surface most people read it from. Drawing Page.Nav into the body
+// was the wrong answer twice: Nav is usually the whole HUB menu, which the host
+// is already showing, and .ui-page-tabs is laid out as a column of the header
+// GRID, so in ordinary body flow it drew on top of what was beneath it.
+func TestTheRouteToTheFleetDefaultIsInTheSection(t *testing.T) {
+	security := mustReadFile(t, "page_agent_access.go")
+	if !strings.Contains(security, `{Type: "link", Label: "Where that default is set"`) {
+		t.Error("the control offers a default with no way to reach where it is set")
+	}
+	if !strings.Contains(security, `Default:     T.WebPrefix() + "/agent/" + fleetSecurityID + "/access"`) {
+		t.Error("the link does not point at the all-agents page")
+	}
+
+	// And the body rendering does NOT draw the page nav.
 	src := mustReadRuntime(t, "99_epilogue.js")
-	if strings.Count(src, "navStrip(cfg)") < 2 {
-		t.Error("the nav is built in one rendering only, so a page drawn as a panel loses it")
+	if strings.Contains(src, "bodyNav") {
+		t.Error("renderPageBody draws Page.Nav again, which lands the hub menu on top of the page")
 	}
-	if !strings.Contains(src, "bodyNav = navStrip(cfg)") {
-		t.Error("renderPageBody does not draw the page's nav")
-	}
-	// The nav only. The host surface draws its own chrome, and a second title
-	// inside it would be the same page announcing itself twice.
-	if strings.Contains(src, "bodyNav.appendChild(el('h1'") {
-		t.Error("the body rendering grew a page title, which the host already shows")
+	if strings.Count(src, "= navStrip(cfg)") != 1 {
+		t.Error("the header nav grew a second caller")
 	}
 }
 

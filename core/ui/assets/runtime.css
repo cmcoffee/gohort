@@ -821,10 +821,6 @@ select:-webkit-autofill {
   padding: 0 0.7rem 0.4rem; margin: 0.9rem 0 0;
 }
 .ui-table-band:first-child { margin-top: 0.2rem; }
-/* Page.Nav drawn inside a page BODY rather than on a header row — a page
- * rendered as a panel inside another surface. Same tabs, given the margin the
- * header row would otherwise have supplied. */
-.ui-page-tabs-inline { margin: 0 0 0.9rem; }
 .ui-table-band .ui-table-group { padding-top: 0.6rem; }
 .ui-table-band-body > .ui-table-row:last-child { border-bottom: none; }
 .ui-table-cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.95rem; }

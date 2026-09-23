@@ -573,11 +573,22 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 								{Value: "on", Label: "Allowed"},
 								{Value: "off", Label: "Blocked"},
 							},
-							Help: "Currently " + workspaceNetworkSource(RootDB, user, agent) + ". Blocked stops code running in the workspace from dialling out; the agent keeps its tools and its model either way. The default for all agents is set on the All agents page, linked at the top of this one.",
+							Help: "Currently " + workspaceNetworkSource(RootDB, user, agent) + ". Blocked stops code running in the workspace from dialling out; the agent keeps its tools and its model either way. The default for all agents is set on the All agents page, linked just below.",
 							Detail: "For an agent that should process text or files locally and never phone anywhere from in there. It can still read, write and run commands in the workspace.\n\n" +
+								"The default itself is set on the All agents page, one link below this.\n\n" +
 								"Enforced at both ways out: the sandbox gets no network namespace, and the gohort.fetch helper refuses. Closing one alone would just move a script from one to the other.\n\n" +
 								"It inherits downward, so a sub-agent cannot dial on this one's behalf, and it only ever narrows: Private mode still blocks a turn outright.\n\n" +
 								"A tool already in your pool is not stopped by this: it reaches out through the brokered fetch helper, which is a path you approved and which gohort dials on its behalf. What this stops is code the agent writes and runs on the spot."},
+						// The route to the default this control offers to use.
+						// In the SECTION rather than relying on the page nav:
+						// this page is read as a panel inside chat as often as
+						// at its own URL, and a panel draws the body alone, so
+						// a link that lives only in the header does not exist
+						// on the surface most people read it from.
+						{Type: "link", Label: "Where that default is set",
+							Default:     T.WebPrefix() + "/agent/" + fleetSecurityID + "/access",
+							Placeholder: "Security for all agents",
+							Help:        "Sets what every agent uses when it has not answered this itself."},
 					},
 				},
 			},
