@@ -286,6 +286,63 @@ func logPromptFloor(cfg AgentLoopConfig, systemPrompt string, history []Message)
 	if r := toolSchemaRanking(cfg.Tools); r != "" {
 		Debug("[agent_loop] tool schema sizes: %s", r)
 	}
+	if r := systemSectionRanking(systemPrompt); r != "" {
+		Debug("[agent_loop] system prompt sections: %s", r)
+	}
+}
+
+// systemSectionRanking splits the system prompt on its markdown headings and
+// lists each section with its size, largest first.
+//
+// The counterpart to toolSchemaRanking. The floor line gives the system prompt
+// as one number, and a ~40k-byte prompt assembled from a persona, an agent
+// roster, skills, saved notes, tool indexes and framework blocks cannot be
+// trimmed from one number any better than a catalog could. Every section
+// starts at a "#"-headed line; text before the first heading is the preamble
+// (the persona, usually). Headings repeat across blocks, so each row keeps its
+// own heading rather than being merged — two "## Notes" sections of different
+// origin are two things to look at.
+func systemSectionRanking(systemPrompt string) string {
+	if strings.TrimSpace(systemPrompt) == "" {
+		return ""
+	}
+	type section struct {
+		head string
+		n    int
+	}
+	var rows []section
+	cur := section{head: "(preamble)"}
+	for _, line := range strings.SplitAfter(systemPrompt, "\n") {
+		if t := strings.TrimSpace(line); isMarkdownHeading(t) {
+			if cur.n > 0 {
+				rows = append(rows, cur)
+			}
+			head := strings.TrimSpace(strings.TrimLeft(t, "#"))
+			if r := []rune(head); len(r) > 48 {
+				head = string(r[:48]) + "…"
+			}
+			cur = section{head: head}
+		}
+		cur.n += len(line)
+	}
+	if cur.n > 0 {
+		rows = append(rows, cur)
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].n > rows[j].n })
+	parts := make([]string, len(rows))
+	for i, r := range rows {
+		parts[i] = fmt.Sprintf("%q=%d", r.head, r.n)
+	}
+	return fmt.Sprintf("%d sections, %d bytes (~%dk tokens), largest first: %s",
+		len(rows), len(systemPrompt), len(systemPrompt)/4000, strings.Join(parts, " "))
+}
+
+// isMarkdownHeading reports whether a trimmed line is a markdown heading: one to
+// six '#' and then a space. The space is what keeps a "#include" or "#!/bin/sh"
+// inside a code example in the prompt from splitting it into a false section.
+func isMarkdownHeading(t string) bool {
+	n := len(t) - len(strings.TrimLeft(t, "#"))
+	return n >= 1 && n <= 6 && len(t) > n && t[n] == ' '
 }
 
 // toolSchemaRanking lists every tool in the catalog with its serialized size,

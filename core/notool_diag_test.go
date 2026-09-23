@@ -8,6 +8,7 @@
 package core
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -87,5 +88,32 @@ func TestToolSchemaRankingOrdersLargestFirst(t *testing.T) {
 	}
 	if toolSchemaRanking(nil) != "" {
 		t.Fatalf("empty catalog should report nothing")
+	}
+}
+
+// Every byte of the system prompt lands in exactly one section, so the rows
+// sum to the prompt's size; text before the first heading is the preamble; and
+// the largest section is listed first.
+func TestSystemSectionRankingCoversEveryByte(t *testing.T) {
+	sys := "You are helpful.\n\n## Small\nx\n## Big\n" + strings.Repeat("y", 200) + "\n#!/bin/sh\n#include <x>\n"
+	got := systemSectionRanking(sys)
+	if !strings.Contains(got, "3 sections,") || !strings.Contains(got, fmt.Sprintf("%d bytes", len(sys))) {
+		t.Fatalf("count or total wrong: %s", got)
+	}
+	bi, si, pi := strings.Index(got, `"Big"=`), strings.Index(got, `"Small"=`), strings.Index(got, `"(preamble)"=`)
+	if bi < 0 || si < 0 || pi < 0 || bi > pi || bi > si {
+		t.Fatalf("want Big first and all three present: %s", got)
+	}
+	sum := 0
+	for _, f := range strings.Fields(got[strings.Index(got, "first: ")+7:]) {
+		var n int
+		fmt.Sscanf(f[strings.LastIndex(f, "=")+1:], "%d", &n)
+		sum += n
+	}
+	if sum != len(sys) {
+		t.Fatalf("sections sum to %d, prompt is %d", sum, len(sys))
+	}
+	if systemSectionRanking("  ") != "" {
+		t.Fatal("an empty prompt should report nothing")
 	}
 }
