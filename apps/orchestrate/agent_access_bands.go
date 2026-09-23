@@ -16,7 +16,7 @@
 //     ABOVE the internet band because running code is the larger reach of the
 //     two: a search sends a query out, execution can read the workspace, write
 //     to it, and dial out itself wherever the workspace ceiling allows. The
-//     sandbox and that ceiling are real gates and the Workspace tab is where
+//     sandbox and that ceiling are real gates and the Network tab is where
 //     they are set, but they bound WHERE the code runs, not WHETHER it runs,
 //     and that second question is this page's.
 //   - THE OPEN INTERNET. A framework tool declaring CapNetwork with no named

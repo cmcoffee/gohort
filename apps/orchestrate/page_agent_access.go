@@ -297,6 +297,25 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				},
 			},
 			{
+				Group:    "Tools",
+				Title:    "Parts of a tool it may not use",
+				Subtitle: "A grouped tool is one grant with several jobs inside it: workspace reads files, writes them, and runs commands.",
+				Detail: "Without this the choice is all of it or none, because a tool is offered on the union of what its actions need.\n\n" +
+					"Ticked here, the action is dropped from the schema the model sees, so it never plans around one it cannot have, and refused at the call as well for a name it guessed or carried over.\n\n" +
+					"Only the actions that DO something are listed: withholding a read is the reason the tool was granted. It inherits downward, so a sub-agent cannot run what its parent was denied.",
+				Body: ui.FormPanel{
+					Source:  patchURL,
+					PostURL: patchURL,
+					Method:  "PATCH",
+					Fields: []ui.FormField{
+						{Field: "disabled_tool_actions", Type: "checklist", Label: "Switched-off sub-actions",
+							Options:     narrowableActionOptions(user),
+							Placeholder: "(nothing here can be narrowed on its own)",
+							Help:        "Parts of a grouped tool this agent may not use, while it keeps the rest."},
+					},
+				},
+			},
+			{
 				Group: "Delegation",
 				Title: "This agent's own",
 				Subtitle: "Decisions that apply to this agent and nothing else. " +
@@ -540,7 +559,7 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				},
 			},
 			{
-				Group:    "Workspace",
+				Group:    "Network",
 				Title:    "What its sandbox may reach",
 				Subtitle: "Shell and file work happen in one sandbox, and these govern all of it.",
 				Body: ui.FormPanel{
@@ -554,7 +573,7 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 								{Value: "on", Label: "Allowed"},
 								{Value: "off", Label: "Blocked"},
 							},
-							Help: "Currently " + workspaceNetworkSource(RootDB, user, agent) + ". Blocked stops code running in the workspace from dialling out; the agent keeps its tools and its model either way.",
+							Help: "Currently " + workspaceNetworkSource(RootDB, user, agent) + ". Blocked stops code running in the workspace from dialling out; the agent keeps its tools and its model either way. The default for all agents is set on the All agents page, linked at the top of this one.",
 							Detail: "For an agent that should process text or files locally and never phone anywhere from in there. It can still read, write and run commands in the workspace.\n\n" +
 								"Enforced at both ways out: the sandbox gets no network namespace, and the gohort.fetch helper refuses. Closing one alone would just move a script from one to the other.\n\n" +
 								"It inherits downward, so a sub-agent cannot dial on this one's behalf, and it only ever narrows: Private mode still blocks a turn outright.\n\n" +
@@ -563,8 +582,28 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				},
 			},
 			{
+				Group:    "Network",
+				Title:    "What may leave this deployment at all",
+				Subtitle: "The ceiling above is about the sandbox. This one is about the turn, and it takes the agent's model with it.",
+				Detail: "Private mode drops every network tool for the turn and holds the run on the local worker, so nothing reaches a hosted model or an outside service. The workspace ceiling above is narrower on purpose: it stops code in the sandbox dialling out while the agent keeps its tools and its model.\n\n" +
+					"FORCED is the one that does not move. The per-turn toggle cannot clear it, a dispatch to this agent inherits it, and an agent with authoring tools cannot turn it off on itself - an update that tries is reverted.\n\n" +
+					"Allowing the toggle is a weaker thing: it puts a Private switch on the agent's chat for whoever is using it, per turn. Leave it off for an agent whose job needs the network every time.\n\n" +
+					"Both are per agent and have no fleet-wide default: turning privacy on for every agent at once would silently ground a fleet, so it is a decision made one agent at a time.",
+				Body: ui.FormPanel{
+					Source:  patchURL,
+					PostURL: patchURL,
+					Method:  "PATCH",
+					Fields: []ui.FormField{
+						{Field: "force_private", Type: "toggle", Label: "Force Private mode: never reaches out",
+							Help: "Permanently drops network and sub-agent dispatch tools, and holds the agent on the local model."},
+						{Field: "allow_private_mode", Type: "toggle", Label: "Offer a Private toggle on its chat",
+							Help: "Lets whoever is using the agent drop network tools for one turn."},
+					},
+				},
+			},
+			{
 				Title:    "How it stands now",
-				Group:    "Workspace",
+				Group:    "Network",
 				Subtitle: "The sandbox its shell and file work happen in.",
 				Detail:   "Separate from its tools, and answering for all of them: a custom shell tool and the workspace tool run in the same sandbox, so these rows govern both.",
 				Body: ui.Table{
@@ -752,6 +791,37 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				},
 			},
 		},
+	}
+	// Per-agent credential scoping, on the tab about what the agent may call.
+	// Appended rather than declared inline because it is conditional: a
+	// sub-agent runs on its parent's credentials, so scoping it separately
+	// would offer a decision that never takes effect.
+	//
+	// ABSOLUTE urls. This page sits one level deeper than the editor it came
+	// from (/agent/<id>/access), so the relative paths it used there resolve
+	// against THIS page and land somewhere else entirely.
+	if strings.TrimSpace(agent.OwnedBy) == "" {
+		credAPI := T.WebPrefix() + "/api/agent-credentials?id=" + url.QueryEscape(agent.ID)
+		page.Sections = append(page.Sections, ui.Section{
+			Group:    "Tools",
+			Title:    "External credentials",
+			Subtitle: "The APIs you have been granted. All are on by default.",
+			Detail:   "Uncheck any this agent should not reach; that drops the tools which dispatch through them from its kit.\n\nSecured credentials are not listed. Their access follows their tool bindings, not per-agent scope.",
+			Body: ui.ChipPicker{
+				Mode:          "attach",
+				OptionsSource: credAPI,
+				RecordsField:  "credentials",
+				AttachedField: "enabled_credentials",
+				PostTo:        credAPI,
+				SaveKey:       "enabled_credentials",
+				NameField:     "value",
+				LabelField:    "label",
+				DescField:     "desc",
+				Noun:          "credential",
+				Intro:         "Checked = this agent may use it.",
+				EmptyText:     "No credentials have been granted to you yet.",
+			},
+		})
 	}
 	// ?format=json hands back the DECLARATION rather than a document, so the
 	// chat overlay can draw this page where the conversation normally sits.

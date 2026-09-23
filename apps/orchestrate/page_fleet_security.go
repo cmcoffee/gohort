@@ -102,7 +102,7 @@ func (T *OrchestrateApp) renderFleetSecurity(w http.ResponseWriter, r *http.Requ
 				},
 			},
 			{
-				Group:    "Workspace",
+				Group:    "Network",
 				Title:    "Network access from the workspace",
 				Subtitle: "What an agent uses when it has not decided for itself.",
 				Detail: "An agent may override this either way, including looser. A default that could only tighten would forbid \"no agent reaches the network except this one\", which is an ordinary thing to want; what makes it safe is that an override shows AS an override on the agent carrying it.\n\n" +

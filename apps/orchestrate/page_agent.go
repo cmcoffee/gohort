@@ -364,9 +364,9 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 				Help:   "Prefixes every message this agent sends over a channel with its name.",
 				Detail: "For example, \"[Assistant] on my way\". Lets the recipient tell the agent's texts apart from your own messages in the same thread. Off by default; turn it on for agents that reply in conversations you also text in."},
 
-			ui.FormField{Type: "header", Label: "Access & visibility", Collapsed: true,
-				Help:   "Who can use this agent, fleet visibility, and Private-mode policy.",
-				Detail: "The edit and delete lock is the 🔒 icon at the top-right."},
+			ui.FormField{Type: "header", Label: "Where it shows up",
+				Help:   "Whether this agent has a card on the dashboard.",
+				Detail: "Everything else that was under this heading is enforcement and moved to the agent's Security window: who may use it and whether it answers over MCP are the Share tab, Private mode is the Network tab, and the edit lock is under Limits (also still the 🔒 icon at the top-right of this page)."},
 			// Who may USE this agent, and whether it is reachable over MCP, are
 			// not here. They are the Share tab of its Security page.
 			//
@@ -378,32 +378,16 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			ui.FormField{Field: "show_on_dashboard", Type: "toggle", Label: "Shortcut on the dashboard",
 				Help:   "A card on the dashboard and a page of its own, for the people who can already use it.",
 				Detail: "Presentation, not access: it grants nothing, so nobody has to approve it. Somebody who cannot use the agent does not see the card.\n\nUseful for an agent you reach often, and for one you have hidden from the fleet list, which otherwise leaves you no way to open it."},
-			ui.FormField{Field: "allow_private_mode", Type: "toggle", Label: "Allow Private mode",
-				Help:   "Shows a Private toggle on the public chat, which drops network tools per turn.",
-				Detail: "Leave it off for Research-style agents that need network."},
-			ui.FormField{Field: "force_private", Type: "toggle", Label: "Force Private mode (network locked off)",
-				Help: "Permanently drops network + sub-agent dispatch tools. For compliance / confidential / family-facing agents."},
-			// Beside Force Private because that is what people reach for when
-			// they want this, and it is far more than they want: it takes the
-			// agent's network tools and its model with it.
-			// The other half of the same question. Reach says whether the
-			// workspace may dial; this says which of its jobs the agent may
-			// do at all.
-			ui.FormField{Field: "disabled_tool_actions", Type: "checklist", Label: "Switched-off sub-actions",
-				Options:     narrowableActionOptions(user),
-				Placeholder: "(nothing here can be narrowed on its own)",
-				Help:        "Parts of a grouped tool this agent may not use, while it keeps the rest.",
-				Detail: "A grouped tool is one grant with several jobs inside it: workspace reads files, writes them, and runs commands. Without this the choice is all of it or none, because a tool is offered on the union of what its actions need.\n\n" +
-					"Ticked here, the action is dropped from the schema the model sees, so it never plans around one it cannot have, and refused at the call as well for a name it guessed or carried over.\n\n" +
-					"Only the actions that DO something are listed: withholding a read is the reason the tool was granted. It inherits downward, so a sub-agent cannot run what its parent was denied."},
-			// Workspace reach is NOT here. It is the Workspace tab of the
-			// agent's Security window, which already shows its state whichever
-			// way it is set and writes through the same field.
+			// None of the ENFORCEMENT is here any more. Private mode and the
+			// workspace ceiling are the Network tab of the agent's Security
+			// window; the switched-off sub-actions and the credential scoping
+			// are its Tools tab. This form is for what the agent IS, and what
+			// it may reach is a different errand.
 			//
-			// It was in both places, which is worse than being in the wrong
-			// one: two controls over one fact drift, and the one you did not
-			// use is the one you go on believing. The editor is for what the
-			// agent IS; what it may reach is a different errand.
+			// Workspace reach went first and taught the rule: it was in BOTH
+			// places for a while, which is worse than being in the wrong one,
+			// because two controls over one fact drift and the one you did not
+			// use is the one you go on believing.
 			// (Dispatch policy lives in the "Cortex & delegation" section above,
 			// next to the conductor-tools toggle — the two delegation controls
 			// were split across sections and read as one switch when they are
@@ -523,32 +507,10 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 	// where the standing decisions already are, and from nowhere else. One
 	// home for the question rather than two that drift.
 
-	// External credentials — tier-2 per-agent scoping, relocated here
-	// from the admin credential page (which now only governs tier-1: which USERS
-	// may use a credential). Agent-centric so each user sees only their own fleet.
-	// The picker is an allowlist (checked = may use); the endpoint inverts it onto
-	// the AgentRecord.DisabledCredentials opt-out. Existing, non-sub agents only.
-	if id != "" && !subAgent {
-		sections = append(sections, ui.Section{
-			Title:    "External credentials",
-			Subtitle: "The APIs you've been granted. All are on by default.",
-			Detail:   "Uncheck any this agent should not reach; that drops the tools which dispatch through them from its kit.\n\nSecured credentials are not listed. Their access follows their tool bindings, not per-agent scope.",
-			Body: ui.ChipPicker{
-				Mode:          "attach",
-				OptionsSource: "../api/agent-credentials?id=" + id,
-				RecordsField:  "credentials",
-				AttachedField: "enabled_credentials",
-				PostTo:        "../api/agent-credentials?id=" + id,
-				SaveKey:       "enabled_credentials",
-				NameField:     "value",
-				LabelField:    "label",
-				DescField:     "desc",
-				Noun:          "credential",
-				Intro:         "Checked = this agent may use it.",
-				EmptyText:     "No credentials have been granted to you yet.",
-			},
-		})
-	}
+	// External credentials moved on again, to the Tools tab of the agent's
+	// Security window. Which APIs an agent may reach is what it can DO, not
+	// what it is - the same errand as the sub-actions and the tool bands, and
+	// they are now read in one place instead of three.
 
 	// The picture library — the FIRST surface that shows the owner what is in it
 	// rather than describing it in the agent's own words. That gap is not
