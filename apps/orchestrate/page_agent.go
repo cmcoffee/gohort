@@ -87,6 +87,13 @@ func (T *OrchestrateApp) handleAgentPage(w http.ResponseWriter, r *http.Request)
 	// One sub-path, for the surfaces that are ABOUT an agent rather than part
 	// of editing it.
 	if id, action, found := strings.Cut(rest, "/"); found {
+		// The fleet page under the same path, because it answers the same
+		// question one level up: "all" is not an agent id, and an agent cannot
+		// be called that (findAgentByNameOrID would have to match it first).
+		if action == "access" && id == fleetSecurityID {
+			T.renderFleetSecurity(w, r, user, udb)
+			return
+		}
 		if action == "access" && id != "" {
 			T.renderAgentAccess(w, r, user, udb, id)
 			return

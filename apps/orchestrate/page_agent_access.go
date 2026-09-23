@@ -135,7 +135,13 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 	}
 
 	page := ui.Page{
-		Title:     "Security: " + name,
+		Title: "Security: " + name,
+		// A default nobody can reach is not a default. The fleet page is one
+		// arrow away from every agent that reads it.
+		Nav: append(HubNav("/orchestrate"), ui.NavLink{
+			Label: "All agents",
+			URL:   T.WebPrefix() + "/agent/" + fleetSecurityID + "/access",
+		}),
 		ShowTitle: true,
 		BackURL:   T.WebPrefix() + "/agent/" + url.PathEscape(agent.ID),
 		MaxWidth:  "980px",
@@ -143,7 +149,6 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 		// sharing a Group land under one tab. Four, because four different
 		// questions arrive here and one long scroll made the reader sort them.
 		Tabbed: true,
-		Nav:    HubNav("/orchestrate"),
 		Sections: []ui.Section{
 			{
 				Group:    "Requests",
@@ -298,8 +303,8 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 			{
 				Group: "Delegation",
 				Title: "Applies to every agent",
-				Subtitle: "Decisions you made once for the whole fleet, which bind this agent too. " +
-					"Shown apart from its own because they are set elsewhere and reach further: changing one here changes it for every agent you have.",
+				Subtitle: "Decisions you made once for the whole fleet, which this agent reads because it has decided nothing of its own. " +
+					"Shown apart because they reach further: changing one here changes it for every agent that has not overridden it. Set them together under Security for all agents.",
 				Body: ui.Table{
 					Source:    decisions("delegation", "fleet"),
 					RowKey:    "_id",
@@ -651,8 +656,8 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 			{
 				Group: "Access",
 				Title: "Applies to every agent",
-				Subtitle: "Decisions you made once for the whole fleet, which bind this agent too. " +
-					"Shown apart from its own because they are set elsewhere and reach further: changing one here changes it for every agent you have.",
+				Subtitle: "Decisions you made once for the whole fleet, which this agent reads because it has decided nothing of its own. " +
+					"Shown apart because they reach further: changing one here changes it for every agent that has not overridden it. Set them together under Security for all agents.",
 				Body: ui.Table{
 					Source:    decisions("access", "fleet"),
 					RowKey:    "_id",
