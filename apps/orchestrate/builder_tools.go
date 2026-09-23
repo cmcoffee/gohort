@@ -1096,15 +1096,16 @@ func registerLazyAuthoringTools(t *chatTurn, tools []AgentToolDef) string {
 	b.WriteString("You can build things: agents, tools, skills, credentials, bridges, connectors. These tools exist but their parameters aren't loaded yet. When a request calls for one, first call `load_tool(names=[\"<name>\", ...])` with EVERY tool you expect to need in that one call; it returns their parameters and makes them callable. Then use them normally.\n\n")
 	for _, td := range tools {
 		t.deferredAuthoringDefs[td.Tool.Name] = td
-		b.WriteString(authoringIndexLine(td))
+		b.WriteString(deferredIndexLine(td))
 	}
 	return b.String()
 }
 
-// authoringIndexLine is one tool's entry in the deferred-authoring index: its
-// name and a short lead from its description, enough to know WHEN to load it.
-// The full description comes back with the schema on load.
-func authoringIndexLine(td AgentToolDef) string {
+// deferredIndexLine is one tool's entry in a load-before-use index (authoring,
+// More tools, and the agent's own custom tools): its name and a short lead from
+// its description, enough to know WHEN to load it. The full description comes
+// back with the schema on load.
+func deferredIndexLine(td AgentToolDef) string {
 	return "- `" + td.Tool.Name + "` " + indexLead(td.Tool.Description, indexLeadMax) + "\n"
 }
 
@@ -1194,7 +1195,7 @@ func (t *chatTurn) deferKnownAuthoringTools(tools []AgentToolDef) []AgentToolDef
 			continue
 		}
 		t.deferredAuthoringDefs[name] = td
-		t.authoringLazyPrompt += authoringIndexLine(td)
+		t.authoringLazyPrompt += deferredIndexLine(td)
 		moved = append(moved, name)
 	}
 	if len(moved) > 0 {
@@ -1240,7 +1241,7 @@ func (t *chatTurn) deferOnDemandTools(tools []AgentToolDef) []AgentToolDef {
 			t.deferredAuthoringLoaded = map[string]bool{}
 		}
 		t.deferredAuthoringDefs[td.Tool.Name] = td
-		index.WriteString(authoringIndexLine(td))
+		index.WriteString(deferredIndexLine(td))
 		moved = append(moved, td.Tool.Name)
 	}
 	if len(moved) > 0 {
@@ -1275,7 +1276,7 @@ func (t *chatTurn) deferSelfServeToolDef(tools []AgentToolDef) []AgentToolDef {
 		}
 		t.deferredAuthoringDefs = map[string]AgentToolDef{td.Tool.Name: td}
 		t.deferredAuthoringLoaded = map[string]bool{}
-		t.authoringLazyPrompt = selfServeToolIndexHeader + authoringIndexLine(td)
+		t.authoringLazyPrompt = selfServeToolIndexHeader + deferredIndexLine(td)
 		Log("[orchestrate.tools] agent=%s: tool_def deferred behind load_tool", t.agent.ID)
 	}
 	return kept

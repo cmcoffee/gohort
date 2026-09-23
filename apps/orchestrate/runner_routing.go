@@ -425,12 +425,11 @@ func lazyToolSectionFor(lazyCustomTools []AgentToolDef) string {
 	// right tools, only that they existed.
 	b.WriteString("These are tools built for THIS agent's job. Their full definitions aren't loaded yet, so call `load_tool(names=[\"<name>\", ...])` first: pass ALL the ones you'll need in that one call; it returns their parameters and makes them callable. Then call them normally.\n\n")
 	b.WriteString("**Prefer these over a generic tool.** If one of them covers what the user asked for, load it and use it: do NOT reach for `fetch_url`, `browse_page`, `web_search` or your own knowledge to do the same job by hand. A purpose-built tool here knows the service's endpoints, auth and shapes; doing it generically re-derives all of that and usually gets it wrong. The extra `load_tool` call is cheap and expected.\n\n")
+	// Same short lead as the deferred-authoring index (deferredIndexLine): the
+	// line only has to say what the tool is FOR, which is what wins it the
+	// comparison above; its full description comes back with the schema.
 	for _, td := range lazyCustomTools {
-		desc := strings.TrimSpace(td.Tool.Description)
-		if len(desc) > 200 {
-			desc = desc[:200] + "…"
-		}
-		b.WriteString("- `" + td.Tool.Name + "` " + desc + "\n")
+		b.WriteString(deferredIndexLine(td))
 	}
 	return b.String()
 }
