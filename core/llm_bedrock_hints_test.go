@@ -299,3 +299,70 @@ func readRepoSource(t *testing.T, name string) string {
 	}
 	return string(b)
 }
+
+// The field refuses what AWS would only complain about later, and in terms of
+// the field rather than the policy.
+func TestAModelIDWithInvisibleRubbishIsRefused(t *testing.T) {
+	const arn = "arn:aws:bedrock:us-west-2:123456789012:application-inference-profile/a1b2c3d4e5f6"
+
+	// The real case: an ARN copied out of coloured terminal output, with the
+	// ESC stripped somewhere and a bare "[1m" left behind. AWS answered this
+	// with "Your account is not authorized to invoke this API operation",
+	// which is about as misleading as an error gets - the account was fine.
+	err := ValidateModelID("bedrock", arn+"[1m]")
+	if err == nil {
+		t.Fatal("terminal formatting was accepted")
+	}
+	if !strings.Contains(err.Error(), "terminal formatting") {
+		t.Errorf("the refusal does not name the cause: %s", err)
+	}
+	// With the ESC still attached, and in the middle rather than the end.
+	if ValidateModelID("bedrock", "\x1b[0;32m"+arn) == nil {
+		t.Error("an ESC sequence was accepted")
+	}
+	if ValidateModelID("bedrock", arn+"\x1b[0m") == nil {
+		t.Error("a trailing reset was accepted")
+	}
+
+	// Anything else outside the legal set is named with the character and
+	// where it is, so a long ARN does not have to be eyeballed.
+	err = ValidateModelID("bedrock", arn+"<")
+	if err == nil {
+		t.Fatal("an illegal character was accepted")
+	}
+	for _, want := range []string{"letters, digits", "'<'"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal is missing %q: %s", want, err)
+		}
+	}
+
+	// Every shape that IS legal passes, or the guard is worse than the bug.
+	for _, ok := range []string{
+		arn,
+		"anthropic.claude-sonnet-5",
+		"us.anthropic.claude-opus-5",
+		"anthropic.claude-v2:1",
+		"arn:aws:bedrock:us-west-2:123456789012:inference-profile/us.anthropic.claude-opus-5",
+		"  " + arn + "  ", // trimmed first, so padding is not an error
+		"",                // "not set" is a valid state and not this function's business
+	} {
+		if err := ValidateModelID("bedrock", ok); err != nil {
+			t.Errorf("ValidateModelID(%q) = %v", ok, err)
+		}
+	}
+
+	// A bracket that is NOT an escape sequence is left alone: the test is for
+	// "[digits m", not for the character.
+	if err := ValidateModelID("ollama", "qwen3:8b[instruct]"); err != nil {
+		t.Errorf("a plain bracket was read as an escape: %v", err)
+	}
+
+	// Other providers keep their own vocabularies - the charset rule is
+	// Bedrock's - but no provider accepts a control character.
+	if err := ValidateModelID("openai", "gpt-4o"); err != nil {
+		t.Errorf("an OpenAI model was judged by Bedrock's rules: %v", err)
+	}
+	if ValidateModelID("ollama", "qwen3\t8b") == nil {
+		t.Error("a control character was accepted for a non-Bedrock provider")
+	}
+}

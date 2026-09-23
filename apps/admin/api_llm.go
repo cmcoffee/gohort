@@ -307,6 +307,15 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
+		// Refused at the moment of typing, rather than on the next escalation.
+		// A model id with invisible rubbish in it reaches AWS and comes back as
+		// "the provided model identifier is invalid" or "your account is not
+		// authorized", neither of which is about the field it came from - so
+		// the person goes and reads their IAM policy.
+		if err := ValidateModelID(strings.TrimSpace(req.Provider), req.Model); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		// Trimmed on the way in, so the STORED value is clean and the form
 		// stops displaying a leading space nobody can see. The providers trim
 		// defensively too; this is what keeps the two from disagreeing about

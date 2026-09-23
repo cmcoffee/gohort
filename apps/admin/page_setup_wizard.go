@@ -234,6 +234,15 @@ func (a *AdminApp) handleWorkerLLMTest(w http.ResponseWriter, r *http.Request) {
 	if req.APIKey == "" && a.db != nil {
 		a.db.Get(LLMTable, "api_key", &req.APIKey)
 	}
+	// The model id, before anything tries to use it. A value carrying
+	// invisible rubbish comes back from AWS as "the provided model identifier
+	// is invalid" or "your account is not authorized", neither of which is
+	// about the box it was typed into. Same guard the settings page applies;
+	// this is the other door to the same field.
+	if err := ValidateModelID(req.Provider, req.Model); err != nil {
+		writeTestResult(w, false, "", err.Error())
+		return
+	}
 	// Bedrock: check the endpoint exists before trying to talk to it. Several
 	// regions AWS documents for Bedrock have no Messages-API host, and without
 	// this the operator gets a bare DNS error that reads like a network fault.

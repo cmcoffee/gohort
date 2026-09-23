@@ -519,6 +519,83 @@ func bedrockModelID(model string) string {
 	return bedrockModelPrefix + model
 }
 
+// ValidateModelID reports what is wrong with a model id somebody typed, or nil.
+//
+// It exists because AWS answers this badly. A model id carrying invisible
+// rubbish comes back as "The provided model identifier is invalid" or, worse,
+// "Your account is not authorized to invoke this API operation" - which sends
+// the reader to their IAM policy when the actual fault is three characters on
+// the end of a text field. One evening was spent on exactly that.
+//
+// The specific case worth catching by name is ANSI residue. An ARN is long
+// enough to be copied rather than typed, and copying it out of coloured
+// terminal output brings the escape codes along: the ESC byte is usually
+// stripped somewhere on the way, leaving a bare "[1m" that looks like nothing
+// and reads as part of the id.
+//
+// Lives beside bedrockModelID because the charset rule below is Bedrock's, and
+// that is the function that already knows what a model id may look like. The
+// control-character half applies to any provider, since none of them accept
+// one.
+func ValidateModelID(provider, model string) error {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return nil // "not set" is a valid state everywhere; it is not this function's business
+	}
+	// ANSI residue first, because it has a cause worth naming. Checked before
+	// the charset rule so the reader is told what it IS rather than which
+	// bracket offended.
+	if i := ansiResidueAt(model); i >= 0 {
+		return Error("that value has terminal formatting in it (\"" + model[i:min(i+4, len(model))] +
+			"...\"), which happens when text is copied out of coloured terminal output. " +
+			"Copy it from a plain-text source - a config file, or the output of a command piped to a file - or retype it.")
+	}
+	for _, r := range model {
+		if r < 0x20 || r == 0x7f {
+			return Error("that value contains a control character, which no model id has. Retype it rather than pasting.")
+		}
+	}
+	if provider != "bedrock" {
+		return nil // other providers have their own vocabularies; this one is Bedrock's
+	}
+	for i, r := range model {
+		if r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' ||
+			r == '.' || r == '-' || r == '_' || r == ':' || r == '/' {
+			continue
+		}
+		return Error("a Bedrock model id or ARN is made of letters, digits and . - _ : / only, and this one has " +
+			strconv.QuoteRune(r) + " at position " + strconv.Itoa(i) + ".")
+	}
+	return nil
+}
+
+// ansiResidueAt finds a "[<digits>m" sequence, with or without the ESC that
+// should precede it, and returns where it starts.
+//
+// Without the ESC because that is the shape this actually arrives in: the
+// escape byte is stripped by a clipboard, a form field or a JSON round-trip,
+// and what survives is the part that looks like text.
+func ansiResidueAt(s string) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == 0x1b {
+			return i
+		}
+		if s[i] != '[' {
+			continue
+		}
+		j := i + 1
+		for j < len(s) && (s[j] >= '0' && s[j] <= '9' || s[j] == ';') {
+			j++
+		}
+		// At least one digit, closed by a CSI final byte. "[1m" and "[0;32m"
+		// qualify; "[foo]" does not, and neither does a lone bracket.
+		if j > i+1 && j < len(s) && (s[j] == 'm' || s[j] == 'K' || s[j] == 'J') {
+			return i
+		}
+	}
+	return -1
+}
+
 // newBedrockLLM builds an LLM speaking the Messages API to Bedrock. bearer is
 // a Bedrock bearer token and may be empty, in which case AWS credentials are
 // resolved and requests are SigV4-signed. endpoint overrides the derived host
