@@ -99,13 +99,18 @@ func (c *bedrockRuntimeClient) ContextSize() int {
 func newBedrockRuntimeLLM(bearer, model, region, profile, endpoint string, api *apiclient.APIClient) (LLM, error) {
 	configured := region
 	region = bedrockRegion(region)
-	Debug("[bedrock-runtime] model=%s %s", bedrockModelID(model), bedrockRegionNote(configured, region))
 
 	host := endpoint
 	if host == "" {
 		host = fmt.Sprintf("bedrock-runtime.%s.amazonaws.com", region)
 	}
 	host = strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(host, "https://"), "http://"), "/")
+	// The HOST is where the call actually goes, and it is not always what the
+	// region setting says - an Endpoint value wins over it outright. That is
+	// the one case nothing on screen can show, because the region box goes on
+	// reading what it was set to.
+	Debug("[bedrock-runtime] model=%s host=%s %s", bedrockModelID(model), host,
+		bedrockRegionNote(configured, region, endpoint))
 
 	if api == nil {
 		api = &apiclient.APIClient{

@@ -74,7 +74,8 @@ func (a *AdminApp) llmSections() []ui.Section {
 					{Field: "api_key", Label: "API key", Type: "password", Placeholder: "(leave blank to keep current)",
 						Help: "Stored encrypted. Blank reuses the primary provider's key where applicable."},
 					{Field: "endpoint", Label: "Endpoint", Type: "text", Placeholder: "(provider default)",
-						Help: "For local / self-hosted lead providers."},
+						Help:   "For local / self-hosted lead providers. On Bedrock this OVERRIDES the AWS region below.",
+						Detail: "Anything here is used as the host verbatim, so on Bedrock the region box stops deciding where calls go while going on displaying whatever it was set to. Leave it blank unless you are pointing at a private link or a VPC endpoint."},
 					{Field: "aws_region", Label: "AWS region", Type: "text", Placeholder: "us-east-1",
 						Help:   "AWS Bedrock only. Blank uses $AWS_REGION, then us-east-1.",
 						Detail: "This tier has its OWN region. Setting it on the Worker does not set it on the Lead, and a blank one here falls through to $AWS_REGION on the gohort host and then to us-east-1 - which is why a tier can keep using us-east-1 while another tier's box reads us-west-2. The debug log names the region and where it came from as each client is built.\n\n" +

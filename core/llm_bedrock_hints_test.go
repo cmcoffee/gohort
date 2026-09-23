@@ -72,12 +72,12 @@ func TestTheWrongBedrockAPINamesTheSwitch(t *testing.T) {
 // "It keeps using us-east-1 even though I set us-west-2" has two causes that
 // look identical from outside, and both end at the same default.
 func TestTheRegionSaysWhereItCameFrom(t *testing.T) {
-	if got := bedrockRegionNote("us-west-2", "us-west-2"); !strings.Contains(got, "this tier's AWS region setting") {
+	if got := bedrockRegionNote("us-west-2", "us-west-2", ""); !strings.Contains(got, "this tier's AWS region setting") {
 		t.Errorf("a configured region does not say so: %s", got)
 	}
 	// Nothing configured, nothing in the environment: the default, said as
 	// one. This is the case where the region was set on the OTHER tier.
-	got := bedrockRegionNote("", bedrockDefaultRegion)
+	got := bedrockRegionNote("", bedrockDefaultRegion, "")
 	for _, want := range []string{"the default", "nor $AWS_REGION"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the default region note is missing %q: %s", want, got)
@@ -85,7 +85,28 @@ func TestTheRegionSaysWhereItCameFrom(t *testing.T) {
 	}
 	// Nothing configured but the environment answered: the case where a
 	// correct-looking setting on screen is not what the process is using.
-	if got = bedrockRegionNote("", "eu-west-1"); !strings.Contains(got, "$AWS_REGION in the service environment") {
+	if got = bedrockRegionNote("", "eu-west-1", ""); !strings.Contains(got, "$AWS_REGION in the service environment") {
 		t.Errorf("an environment region does not say so: %s", got)
+	}
+}
+
+// An Endpoint wins over the region-derived host outright, and nothing on
+// screen shows it: the AWS region box goes on displaying what it was set to
+// while every call goes somewhere else. It is the one cause of "I set
+// us-west-2 and it still goes to us-east-1" that cannot be found by looking at
+// the region setting.
+func TestAnEndpointSilentlyOverridesTheRegion(t *testing.T) {
+	got := bedrockRegionNote("us-west-2", "us-west-2", "bedrock-runtime.us-east-1.amazonaws.com")
+	if !strings.Contains(got, "an Endpoint is set") {
+		t.Errorf("the note does not say what is really deciding the host: %s", got)
+	}
+	// It names the region the reader set, because that is the value they are
+	// looking at and disbelieving.
+	if !strings.Contains(got, "us-west-2") {
+		t.Errorf("the note does not name the setting being overridden: %s", got)
+	}
+	// And it does not claim the region setting is in force.
+	if strings.Contains(got, "from this tier's AWS region setting") {
+		t.Errorf("the note still credits the region setting: %s", got)
 	}
 }

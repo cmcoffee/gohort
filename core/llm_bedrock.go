@@ -508,7 +508,6 @@ func bedrockModelID(model string) string {
 func newBedrockLLM(bearer, model, region, profile, endpoint string, api *apiclient.APIClient) (LLM, error) {
 	configured := region
 	region = bedrockRegion(region)
-	Debug("[bedrock] model=%s %s", bedrockModelID(model), bedrockRegionNote(configured, region))
 
 	host := endpoint
 	if host == "" {
@@ -516,6 +515,10 @@ func newBedrockLLM(bearer, model, region, profile, endpoint string, api *apiclie
 	}
 	// Tolerate an operator pasting a full URL into a host field.
 	host = strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(host, "https://"), "http://"), "/")
+	// The HOST is where the call actually goes; see the note in the runtime
+	// client for why the region setting is not always what decides it.
+	Debug("[bedrock] model=%s host=%s %s", bedrockModelID(model), host,
+		bedrockRegionNote(configured, region, endpoint))
 
 	if api == nil {
 		api = &apiclient.APIClient{
@@ -698,6 +701,21 @@ func bedrockHint(model, msg string) string {
 		// depends on the account, and guessing wrong fails identically.
 		return "This model is only served through a cross-region inference profile, so the Model setting needs the region-group prefix: try \"us." +
 			strings.TrimPrefix(model, "us.") + "\" (or eu./apac./global., whichever your account is enabled for) under Admin -> LLMs."
+	case strings.Contains(low, "not authorized") && strings.Contains(low, "foundation-model/"):
+		// The most informative of these and the one that carried no hint: the
+		// resource ARN in the refusal contains BOTH settings, so a reader who
+		// knows to look already has the answer. Most do not, and the sentence
+		// around it is about IAM.
+		hint := "The resource in that ARN is a bare foundation-model id"
+		if r := bedrockARNRegion(msg); r != "" {
+			hint += " in " + r
+		}
+		hint += ". An account that routes Claude through an inference profile grants the profile, not the model, so the call is refused before the policy is even the question:" +
+			" set Model to \"us." + strings.TrimPrefix(model, "us.") + "\" under Admin -> LLMs"
+		if r := bedrockARNRegion(msg); r != "" {
+			hint += ", and check the AWS region on that same tier - the call went to " + r + ", which each tier sets for itself"
+		}
+		return hint + "."
 	case strings.Contains(low, "createinference") && strings.Contains(low, "not authorized"):
 		// The other half of the same confusion: the account grants one Bedrock
 		// API and not the other, and the refusal names an IAM action rather
@@ -705,6 +723,34 @@ func bedrockHint(model, msg string) string {
 		return "That is the Messages-API permission. If your role grants bedrock:InvokeModel instead, set Bedrock API to \"InvokeModel\" under Admin -> LLMs."
 	}
 	return ""
+}
+
+// bedrockARNRegion pulls the region out of an AWS resource ARN in an error
+// message, or "" when there is none to find.
+//
+// Worth reading rather than reporting the configured value beside it: the ARN
+// is what the call ACTUALLY used, and the whole class of confusion here is a
+// configured region that never reached the process.
+func bedrockARNRegion(msg string) string {
+	i := strings.Index(msg, "arn:aws:bedrock:")
+	if i < 0 {
+		return ""
+	}
+	rest := msg[i+len("arn:aws:bedrock:"):]
+	j := strings.IndexByte(rest, ':')
+	if j <= 0 {
+		return ""
+	}
+	region := rest[:j]
+	// A region is letters, digits and hyphens. Anything else means the ARN was
+	// not shaped the way this assumes, and a wrong guess printed as fact is
+	// worse than leaving it out.
+	for _, c := range region {
+		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
+			return ""
+		}
+	}
+	return region
 }
 
 // withBedrockHint appends the hint for this message, if there is one.
@@ -722,8 +768,15 @@ func withBedrockHint(model, msg string) string {
 // region is set on the Worker LLM and not the Lead one (separate settings,
 // separate stores), or $AWS_REGION on the service is answering instead. Both
 // end at the same default, and nothing said so.
-func bedrockRegionNote(configured, resolved string) string {
+func bedrockRegionNote(configured, resolved, endpoint string) string {
 	switch {
+	case strings.TrimSpace(endpoint) != "":
+		// An Endpoint wins over the region-derived host outright, and nothing
+		// on screen shows it: the AWS region box goes on displaying whatever
+		// it was set to while every call goes somewhere else. It is the one
+		// cause of "I set us-west-2 and it still goes to us-east-1" that
+		// cannot be found by looking at the region setting.
+		return fmt.Sprintf("the AWS region setting (%s) is NOT deciding this - an Endpoint is set, and it wins over the region", chFirstRegion(configured, resolved))
 	case configured != "":
 		return fmt.Sprintf("region=%s (from this tier's AWS region setting)", resolved)
 	case resolved == bedrockDefaultRegion:
@@ -731,4 +784,13 @@ func bedrockRegionNote(configured, resolved string) string {
 	default:
 		return fmt.Sprintf("region=%s (from $AWS_REGION in the service environment, not the AWS region setting)", resolved)
 	}
+}
+
+// chFirstRegion names the region setting in the words the reader set it in,
+// falling back to what it resolved to.
+func chFirstRegion(configured, resolved string) string {
+	if configured != "" {
+		return configured
+	}
+	return resolved
 }
