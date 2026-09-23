@@ -835,6 +835,7 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	// black box from the parent's perspective.
 	telem := newTurnTelemetry()
 	dispatchMsgs, gDecline := subTurn.applyInputGuardrail([]Message{{Role: "user", Content: deliveredMessage}})
+	subTurn.noteMountedTools(tools)
 	resp, syncTranscript, runErr := T.RunAgentLoop(ctx, dispatchMsgs, AgentLoopConfig{
 		// A terminal-rule pre_input block refused this request outright: the loop
 		// delivers this text and never calls a model. Empty on every other turn.
@@ -1816,6 +1817,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	if run.Think != nil {
 		think = *run.Think
 	}
+	subTurn.noteMountedTools(tools)
 	loopCfg := AgentLoopConfig{
 		SendGuardKey:  sendGuardKey,
 		SystemPrompt:  sysPrompt,

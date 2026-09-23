@@ -305,6 +305,13 @@ type chatTurn struct {
 	// set AND surfaced freshly on every round.
 	staticTempToolNames map[string]bool
 
+	// mountedToolNames is every tool the model was handed directly this turn,
+	// recorded where the catalog becomes final (noteMountedTools). load_tool
+	// reads it so asking to load a tool that is already callable answers
+	// "already loaded" instead of pulling a same-named pool entry in as a
+	// second definition.
+	mountedToolNames map[string]bool
+
 	// lazyCustomToolNames is the set of custom (temp) tools that take
 	// arguments and are therefore presented to the LLM by name +
 	// description only (in a prompt section), NOT as full tool defs.

@@ -379,3 +379,32 @@ func TestGraphToolsDeferredOnDemand(t *testing.T) {
 		t.Error("the on-demand section header must appear exactly once")
 	}
 }
+
+// load_tool on a tool that is already in the catalog must say so and stop. It
+// used to fall through to the persistent pool and, when an entry shared the
+// name, append it as a second definition (a live fetch_url_ts3_api collision).
+// A deferred tool is not mounted and must still load.
+func TestLoadToolOnMountedToolSaysAlreadyLoaded(t *testing.T) {
+	turn, sess := newAuthoringTestTurn(t)
+	turn.authoringLazyPrompt = registerLazyAuthoringTools(turn, builderAuthoringTools(sess, turn))
+	turn.noteMountedTools([]AgentToolDef{{Tool: Tool{Name: "fetch_url_ts3_api"}}, turn.showLinkToolDef()})
+
+	out, err := turn.loadToolToolDef(sess).Handler(context.Background(), map[string]any{
+		"names": []any{"fetch_url_ts3_api", "tool_def", "no_such_tool"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Already loaded (call directly): fetch_url_ts3_api") {
+		t.Errorf("a mounted tool must be reported as already loaded, got %q", out)
+	}
+	if turn.loadedCustomTools["fetch_url_ts3_api"] {
+		t.Error("a mounted tool must not be re-loaded as a custom tool")
+	}
+	if !strings.Contains(out, "Loaded tool_def") {
+		t.Errorf("a deferred tool is not mounted and must still load, got %q", out)
+	}
+	if !strings.Contains(out, "Unknown") || !strings.Contains(out, "no_such_tool") {
+		t.Errorf("an unknown name must still be reported, got %q", out)
+	}
+}

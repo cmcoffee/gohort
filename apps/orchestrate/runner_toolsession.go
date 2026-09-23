@@ -698,7 +698,7 @@ func (t *chatTurn) loadToolToolDef(sess *ToolSession) AgentToolDef {
 			for _, n := range want {
 				td, ok := t.lazyCustomToolDefs[n]
 				if !ok {
-					if t.staticTempToolNames[n] {
+					if t.staticTempToolNames[n] || t.mountedToolNames[n] {
 						already = append(already, n)
 						continue
 					}
@@ -761,6 +761,25 @@ func (t *chatTurn) loadToolToolDef(sess *ToolSession) AgentToolDef {
 			}
 			return strings.TrimSpace(b.String()), nil
 		},
+	}
+}
+
+// noteMountedTools records the final catalog handed to the model, for
+// load_tool's "already loaded" answer. Called where the web turn and both
+// dispatch paths build their AgentLoopConfig, AFTER any narrowing, so a tool a
+// machine phase removed is not reported as callable. NOT on a worker step: it
+// runs on the orchestrator's own chatTurn, possibly beside sibling steps, so
+// recording its catalog would overwrite the orchestrator's (and race); a step
+// keeps the old behavior.
+//
+// Without it, load_tool on a mounted tool fell through to the persistent pool
+// and, when a pool entry shared the name (seen with fetch_url_ts3_api), appended
+// it as a second definition: the loop logged a name collision every round and
+// the load counted toward promoting a built-in into the agent's kit.
+func (t *chatTurn) noteMountedTools(tools []AgentToolDef) {
+	t.mountedToolNames = make(map[string]bool, len(tools))
+	for _, td := range tools {
+		t.mountedToolNames[td.Tool.Name] = true
 	}
 }
 

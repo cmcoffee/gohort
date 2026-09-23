@@ -1767,6 +1767,7 @@ func (pr *planRun) prepareMessages() {
 			pr.mach.Name(), pr.mach.phase.Tools, phaseUnmatched))
 	}
 	pr.allTools = narrowed
+	t.noteMountedTools(pr.allTools)
 	// The catalog the model ACTUALLY receives. The full-surface line above
 	// runs before this narrowing, so on a machine turn it reports the wider
 	// pre-phase set — which is what sent a reader chasing catalog size when
