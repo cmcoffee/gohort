@@ -216,17 +216,28 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				Title:    "What this agent can do",
 				Group:    "Tools",
 				Subtitle: agentAccessSummary(agent, reach) + " " + accessCaveat,
-				Detail: "Two different questions, and they are set per row. The switch is ask-before-every-call IN CHAT: the turn stops and waits for you. " +
-					"Runs / Queues / Never is the GATE's answer for a scheduled or standing run, where nobody is watching, and none of it applies in chat. " +
-					"Both are offered only on tools that carry a record of their own: a framework tool has nothing to hold the setting, so it shows neither.",
+				Detail: "Grouped by what a call can touch, because that is what a decision here is about. A tool that reaches a system you connected or the open internet " +
+					"is worth a per-call answer; one that reads this deployment's own state is not, so it always runs and shows no controls. " +
+					"What those always-on tools may do is set elsewhere: whether the agent loads the tool at all is the Tools modal, the sandbox is the Workspace tab, and Guardrails read the turn itself.\n\n" +
+					"Where the controls do appear there are two, about two different situations. IN CHAT is ask-before-every-call: the turn stops and waits for you. " +
+					"UNATTENDED is the gate's answer for a scheduled or standing run, where nobody is watching, and none of it applies in chat.\n\n" +
+					"The band a tool lands in is decided by where it came from and what it declares it reaches, never by the name or category it claims - a tool can edit those, and a band it could relabel itself out of would not be a boundary.",
 				Body: ui.Table{
 					Source:            src,
 					RowKey:            "name",
 					EmptyText:         agentToolsEmptyText(agent),
 					Search:            true,
 					SearchPlaceholder: "Find a tool",
+					// One band per heading, drawn as its own bordered block.
+					// Rows arrive in band order, which is what decides the
+					// order the headings appear in.
+					GroupBy: "band",
 					Columns: []ui.Col{
 						{Field: "name", Label: "Tool"},
+						// WHICH system, where there is one to name. The band
+						// says a tool reaches something you connected; most of
+						// the decision is knowing what.
+						{Field: "reaches", Label: "", Type: "badge", Badges: []ui.BadgeMapping{}},
 						// Whether the agent LOADS it, which the controls
 						// cannot say: they set what happens when it is called,
 						// not whether it is there to call. The supervision
@@ -242,6 +253,7 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 						// the description to make room cuts the part that
 						// answers what you are deciding about.
 						{Field: "origin", Label: "From", Mute: true, Line: 2},
+						{Field: "category", Label: "", Mute: true, Line: 2},
 						{Field: "detail", Label: "", Mute: true, Line: 2},
 					},
 					RowActions: []ui.RowAction{

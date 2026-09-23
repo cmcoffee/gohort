@@ -40,17 +40,26 @@ func TestADefaultPoolAgentResolvesItsWholeCatalog(t *testing.T) {
 	}
 }
 
-// EVERY loaded tool can be governed, framework ones included. The ask mark is
-// keyed by name and the unattended policy by (agent, name), so neither wants a
-// record behind it.
+// Everything that reaches OUTSIDE can be governed, framework tools included,
+// and nothing that stays inside is. The ask mark is keyed by name and the
+// unattended policy by (agent, name), so neither wants a record behind it -
+// what decides is what a call can touch.
 //
-// This asserted the opposite until the marks moved off the tool record. That
-// arrangement made web_search and browse_page - the searches, the browsing,
-// the fetches - the only tools that could NOT be stopped on, which is exactly
-// backwards from what somebody securing an agent wants.
+// This has now been wrong in both directions. It asserted no framework tool
+// could be governed until the marks moved off the tool record, which made
+// web_search and browse_page - the searches, the browsing, the fetches - the
+// only tools that could NOT be stopped on. Then it asserted every one could,
+// which put a per-call decision on read_file and buried the handful worth
+// deciding under sixty that are not. The rule is the band. See
+// agent_access_bands.go.
 func TestEveryLoadedToolCanBeGoverned(t *testing.T) {
 	app, udb, _ := newTestOrchestrate(t)
 	pinRootDB(t)
+	// A framework tool that dials out. The test registry has none of the real
+	// ones (web_search and friends resolve out of the chat app), and the half
+	// of this rule worth proving end to end is that declaring CapNetwork is
+	// what keeps a framework tool governable.
+	RegisterChatTool(&fakeNetTool{})
 	if err := AdminPersistTempTool(udb, "alice", TempTool{
 		Name: "access_row_tool", CommandTemplate: "echo hi", ConfirmInChat: true}); err != nil {
 		t.Fatal(err)
@@ -63,7 +72,7 @@ func TestEveryLoadedToolCanBeGoverned(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var mine, framework int
+	var mine, framework, reachesOut, internal int
 	for _, r := range rows {
 		if r.Name == "access_row_tool" {
 			mine++
@@ -77,12 +86,33 @@ func TestEveryLoadedToolCanBeGoverned(t *testing.T) {
 				t.Errorf("origin should say where it came from, got %q", r.Origin)
 			}
 		}
-		if r.Origin == "framework" {
-			framework++
-			if !r.Governable {
-				t.Errorf("%q cannot be governed, so the tools most worth stopping on are the ones you cannot stop on", r.Name)
-			}
+		if r.Origin != "framework" {
+			continue
 		}
+		framework++
+		switch r.Band {
+		case bandInternet:
+			reachesOut++
+			if r.Name != "band_net_probe" {
+				t.Errorf("%q landed in the internet band without declaring CapNetwork", r.Name)
+			}
+			if !r.Governable {
+				t.Errorf("%q dials out and cannot be governed, so the tools most worth stopping on are the ones you cannot stop on", r.Name)
+			}
+		case bandInternal:
+			internal++
+			if r.Governable {
+				t.Errorf("%q touches nothing outside this deployment and still asks for a per-call decision", r.Name)
+			}
+		default:
+			t.Errorf("%q is a framework tool in the %q band", r.Name, r.Band)
+		}
+	}
+	if reachesOut == 0 {
+		t.Error("no framework tool resolved into the internet band, so the governable half proved nothing")
+	}
+	if internal == 0 {
+		t.Error("no framework tool resolved as internal, so the always-allowed half proved nothing")
 	}
 	if mine == 0 {
 		t.Error("the owner's own tool is missing from the agent's resolved catalog")
@@ -560,4 +590,16 @@ func TestLimitsAreOnSecurityAndNotTheEditor(t *testing.T) {
 			t.Errorf("%s is on a panel but the PATCH allowlist drops it", f)
 		}
 	}
+}
+
+// fakeNetTool is a framework tool that declares it reaches the network, which
+// is the whole of what keeps it governable.
+type fakeNetTool struct{}
+
+func (fakeNetTool) Name() string                 { return "band_net_probe" }
+func (fakeNetTool) Desc() string                 { return "dials out" }
+func (fakeNetTool) Params() map[string]ToolParam { return map[string]ToolParam{} }
+func (fakeNetTool) Caps() []Capability           { return []Capability{CapNetwork, CapRead} }
+func (fakeNetTool) Run(map[string]any) (string, error) {
+	return "", nil
 }

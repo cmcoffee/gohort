@@ -19,11 +19,17 @@ type Table struct {
 	PullToRefresh bool        `json:"pull_to_refresh,omitempty"`
 	SortBy        string      `json:"sort_by,omitempty"` // field to sort by (descending if SortDesc)
 	SortDesc      bool        `json:"sort_desc,omitempty"`
-	// GroupBy renders rows under headings, one per distinct value of this
-	// field, in the order the records arrive (so the server controls grouping
-	// order by ordering its rows — no client-side sort to keep in sync). Rows
-	// with an empty value render ungrouped, above the first heading. Empty
-	// GroupBy = a flat table, the default.
+	// GroupBy renders each distinct value of this field as its own BORDERED
+	// BAND — a heading with that group's rows enclosed under it — in the order
+	// the records arrive (so the server controls grouping order by ordering its
+	// rows — no client-side sort to keep in sync). Rows with an empty value
+	// render ungrouped and unenclosed, above the first band. Empty GroupBy = a
+	// flat table, the default.
+	//
+	// Enclosed rather than just headed, because a heading says where a group
+	// begins and nothing says where it ends: past two groups the reader is
+	// carrying the last heading they scrolled by, and where the groups mean
+	// materially different things that is the one thing they must not guess.
 	//
 	// Use when one list legitimately holds rows of different KINDS and the kind
 	// is what the reader navigates by — e.g. tools split across a user's pool,

@@ -813,6 +813,16 @@ select:-webkit-autofill {
   margin-bottom: 0.2rem;
 }
 .ui-table-group:first-child { padding-top: 0.2rem; }
+/* A grouped table draws each group as an enclosed band. The heading alone
+ * says where a group starts and nothing says where it ends, which is fine for
+ * two groups and useless for six. */
+.ui-table-band {
+  border: 1px solid var(--border); border-radius: 10px;
+  padding: 0 0.7rem 0.4rem; margin: 0.9rem 0 0;
+}
+.ui-table-band:first-child { margin-top: 0.2rem; }
+.ui-table-band .ui-table-group { padding-top: 0.6rem; }
+.ui-table-band-body > .ui-table-row:last-child { border-bottom: none; }
 .ui-table-cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.95rem; }
 .ui-table-cell.mute { color: var(--text-mute); font-size: 0.78rem; }
 .ui-table-cell a.ui-table-link { color: var(--accent); text-decoration: none; }

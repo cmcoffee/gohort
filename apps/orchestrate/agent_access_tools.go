@@ -65,6 +65,18 @@ type accessToolRow struct {
 	// off for this agent.
 	Actions  []string `json:"actions,omitempty"`
 	Withheld []string `json:"withheld,omitempty"`
+	// Band is what this tool REACHES, and the table groups on it. See
+	// agent_access_bands.go for why the reader navigates by that rather than
+	// by where the tool came from.
+	Band string `json:"band"`
+	// Reaches names the system, for a band where there is one to name. The
+	// difference between "reaches a system you connected" and knowing WHICH is
+	// most of the decision.
+	Reaches string `json:"reaches,omitempty"`
+	// Category is the owner's own label for the tool, shown but never acted
+	// on: it is editable by whoever wrote the tool, so it organises a list and
+	// does not decide a band.
+	Category string `json:"category,omitempty"`
 }
 
 // resolvedAgentTools returns what this agent's worker would actually be handed.
@@ -97,6 +109,11 @@ func (T *OrchestrateApp) resolvedAgentTools(ctx context.Context, udb Database, u
 	// wrote rather than the ones that shipped.
 	turn.loadAgentTempTools(sess, user, udb)
 	defs = append(defs, temptool.BuildAgentToolDefs(sess)...)
+	// Which app contributed which tool. resolveWorkerTools already folded the
+	// app-provided ones into the catalog above, where they are indistinguishable
+	// from framework tools - that is exactly the thing this page got wrong, so
+	// ask the registry that knows.
+	providers := AgentProvidedToolOrigins(sess, user, rec.ID)
 	// The owner's pool, read once: it answers both "can this tool carry a
 	// flag" and "is the flag set", and a lookup per row would re-read it for
 	// every tool in the catalog.
@@ -166,12 +183,30 @@ func (T *OrchestrateApp) resolvedAgentTools(ctx context.Context, udb Database, u
 		// that could not be stopped on, which was exactly backwards.
 		row.Governable = true
 		row.Asks = asks[name]
+		cred, own := "", false
 		if tt, ok := pool[name]; ok {
+			own = true
+			cred = strings.TrimSpace(tt.Credential)
+			row.Category = strings.TrimSpace(tt.Category)
 			row.Origin = "your tools"
-			if c := strings.TrimSpace(tt.Credential); c != "" && !strings.EqualFold(c, "no_auth") {
-				row.Origin = "credential: " + c
+			if cred != "" && !strings.EqualFold(cred, "no_auth") {
+				row.Origin = "credential: " + cred
 			}
+		} else if p := providers[name]; p != "" {
+			row.Origin = "provided by " + p
 		}
+		row.Band, row.Reaches = classifyTool(providers[name], cred, own, d.Tool.Caps)
+		// The controls are offered per BAND. A tool that reaches nothing
+		// outside this deployment always runs: the decision worth making about
+		// it is whether the agent has it at all, which the Tools modal asks.
+		//
+		// UNLESS a decision was already made about it - by an owner who set
+		// one before this page had bands, or through the Tools modal, which
+		// marks by name and does not ask what a tool reaches. The gate still
+		// honours that mark, so hiding the control would leave a setting that
+		// fires and cannot be seen or undone. No NEW decisions are offered in
+		// this band; existing ones stay visible and reversible.
+		row.Governable = bandGoverns(row.Band) || row.Asks || row.Unattended != PolicyAllow
 		row.Actions = grouped[name]
 		row.Chat = "allow"
 		if row.Asks {
@@ -192,19 +227,17 @@ func (T *OrchestrateApp) resolvedAgentTools(ctx context.Context, udb Database, u
 			Name: name, Origin: "your tools", Detail: firstLine(tt.Description),
 			Enabled: false, Governable: false, Asks: asks[name],
 			Loaded: "Off", Unattended: PolicyAllow,
+			Band: bandOff, Category: strings.TrimSpace(tt.Category),
 		})
 	}
+	// By BAND, because the table groups in record order and this is therefore
+	// the order the headings appear in. Descending by what a call can touch, so
+	// the tools worth a decision are the first thing on screen rather than the
+	// last - the flat alphabetical list buried them under the framework
+	// catalog, which is how a control surface becomes a list nobody scrolls.
 	sort.SliceStable(out, func(i, j int) bool {
-		// On before off: what the agent HAS is the subject, and what it merely
-		// could have is context.
-		if out[i].Enabled != out[j].Enabled {
-			return out[i].Enabled
-		}
-		// Governable rows first: they are the ones somebody came here to act
-		// on, and burying them under the framework catalog is how a control
-		// surface becomes a list nobody scrolls.
-		if out[i].Governable != out[j].Governable {
-			return out[i].Governable
+		if a, b := bandOrder(out[i].Band), bandOrder(out[j].Band); a != b {
+			return a < b
 		}
 		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
 	})

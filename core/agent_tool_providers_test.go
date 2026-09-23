@@ -107,3 +107,42 @@ func TestNilAndUnnamedRegistrationsAreIgnored(t *testing.T) {
 		t.Errorf("neither should register, got %v", toolNames(got))
 	}
 }
+
+// Which app contributed a tool, for a surface that has to say what a call
+// reaches. An app-provided tool arrives in the same catalog looking exactly
+// like a framework one, and the app is there because the capability belongs to
+// a system somebody connected.
+func TestEachToolIsAttributedToTheAppThatContributedIt(t *testing.T) {
+	resetProviders(t)
+	RegisterAgentToolProvider("zulu", providerReturning("z1", "z2"))
+	RegisterAgentToolProvider("alpha", providerReturning("a1"))
+
+	got := AgentProvidedToolOrigins(nil, "alice", "agent-1")
+	for name, want := range map[string]string{"z1": "zulu", "z2": "zulu", "a1": "alpha"} {
+		if got[name] != want {
+			t.Errorf("%s attributed to %q, want %q", name, got[name], want)
+		}
+	}
+	if len(got) != 3 {
+		t.Errorf("attributed %d tools, want 3: %v", len(got), got)
+	}
+	// A tool nobody contributed has no entry, so a caller reading the map gets
+	// "" and classifies it as framework rather than as somebody's system.
+	if p, ok := got["read_file"]; ok {
+		t.Errorf("a framework tool was attributed to %q", p)
+	}
+
+	// Same containment as the flat call: a provider that panics costs its own
+	// attribution and nothing else.
+	RegisterAgentToolProvider("bad", func(_ *ToolSession, _, _ string) []AgentToolDef {
+		panic("provider blew up")
+	})
+	if got = AgentProvidedToolOrigins(nil, "alice", "agent-1"); got["a1"] != "alpha" {
+		t.Error("one broken provider took the other attributions with it")
+	}
+
+	// No agent, nothing to attribute.
+	if got = AgentProvidedToolOrigins(nil, "alice", ""); len(got) != 0 {
+		t.Errorf("attributed tools with no agent: %v", got)
+	}
+}

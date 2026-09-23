@@ -68,26 +68,60 @@ func RegisterAgentToolProvider(name string, fn AgentToolProvider) {
 // Returns nil when nothing is contributed, so callers can append
 // unconditionally without a length check changing the catalog.
 func AgentProvidedTools(sess *ToolSession, owner, agentID string) []AgentToolDef {
+	var out []AgentToolDef
+	walkAgentToolProviders(sess, owner, agentID, func(_ string, defs []AgentToolDef) {
+		out = append(out, defs...)
+	})
+	return out
+}
+
+// AgentProvidedToolOrigins maps each contributed tool NAME to the app that
+// contributed it.
+//
+// For a surface that has to say what a tool REACHES. An app-provided tool
+// arrives looking exactly like a framework one - it is in the same catalog,
+// built the same way - but the app is there because the capability belongs to
+// a system the owner connected, so "read_file" and "a shell on an appliance"
+// were presented identically on the page built for deciding which to allow.
+//
+// Attribution by PROVENANCE, not by anything the tool says about itself. The
+// name a tool claims and the category it claims are both editable by whoever
+// wrote it; which registry handed it over is not, and on a security surface
+// that is the difference between a fact and a suggestion.
+func AgentProvidedToolOrigins(sess *ToolSession, owner, agentID string) map[string]string {
+	out := map[string]string{}
+	walkAgentToolProviders(sess, owner, agentID, func(provider string, defs []AgentToolDef) {
+		for _, d := range defs {
+			if n := d.Tool.Name; n != "" {
+				out[n] = provider
+			}
+		}
+	})
+	return out
+}
+
+// walkAgentToolProviders asks every provider in name order and hands each
+// one's tools to visit. The order guarantee in this file's header lives here,
+// so the two callers above cannot drift on it.
+func walkAgentToolProviders(sess *ToolSession, owner, agentID string, visit func(provider string, defs []AgentToolDef)) {
 	if agentID == "" {
-		return nil
+		return
 	}
 	agentToolProviderMu.RLock()
 	names := make([]string, 0, len(agentToolProviders))
-	for name := range agentToolProviders {
-		names = append(names, name)
-	}
 	snapshot := make(map[string]AgentToolProvider, len(agentToolProviders))
 	for name, fn := range agentToolProviders {
+		names = append(names, name)
 		snapshot[name] = fn
 	}
 	agentToolProviderMu.RUnlock()
 
 	sort.Strings(names)
-	var out []AgentToolDef
 	for _, name := range names {
-		out = append(out, safeProviderTools(name, snapshot[name], sess, owner, agentID)...)
+		if defs := safeProviderTools(name, snapshot[name], sess, owner, agentID); len(defs) > 0 {
+			visit(name, defs)
+		}
 	}
-	return out
 }
 
 // safeProviderTools runs one provider behind a recover. A provider that panics

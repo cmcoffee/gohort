@@ -146,17 +146,30 @@
       // Group headings, when the table declares group_by. Order follows the
       // RECORDS, not a client-side sort — the server already ordered them, and
       // re-sorting here would fight it and reshuffle headings between refreshes.
+      // Each group is a BORDERED BAND, not just a heading followed by rows. A
+      // heading says where a group starts and nothing says where it ends, so a
+      // reader scanning a long list has to carry the last heading they passed
+      // in their head — and on a list whose groups mean different things (what
+      // a tool reaches, say) that is the one thing they must not have to guess.
+      // Rows go into the band's body; ungrouped rows go straight on the list.
       var lastGroup = null;
+      var host = listEl;
       visible.forEach(function(rec) {
         if (cfg.group_by) {
           var g = lookup(rec, cfg.group_by);
           g = (g === undefined || g === null) ? '' : String(g);
           if (g !== lastGroup) {
             lastGroup = g;
-            // An empty group value renders ungrouped — no heading — so a table
+            // An empty group value renders ungrouped — no band — so a table
             // can carry a few "loose" rows above its first section.
-            if (g !== '') {
-              listEl.appendChild(el('div', {class: 'ui-table-group'}, [g]));
+            if (g === '') {
+              host = listEl;
+            } else {
+              var band = el('div', {class: 'ui-table-band'});
+              band.appendChild(el('div', {class: 'ui-table-group'}, [g]));
+              host = el('div', {class: 'ui-table-band-body'});
+              band.appendChild(host);
+              listEl.appendChild(band);
             }
           }
         }
@@ -333,7 +346,7 @@
           })(String(rowHref));
         }
 
-        listEl.appendChild(row);
+        host.appendChild(row);
       });
     }
 
