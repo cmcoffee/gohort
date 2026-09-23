@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -282,6 +283,44 @@ func logPromptFloor(cfg AgentLoopConfig, systemPrompt string, history []Message)
 	if r := promptSizeReport(cfg, systemPrompt, history); r != "" {
 		Debug("[agent_loop] prompt floor: %s", r)
 	}
+	if r := toolSchemaRanking(cfg.Tools); r != "" {
+		Debug("[agent_loop] tool schema sizes: %s", r)
+	}
+}
+
+// toolSchemaRanking lists every tool in the catalog with its serialized size,
+// largest first.
+//
+// The floor line names only the single largest schema, which answers "is it the
+// tools?" but not "which tools?" — and trimming a catalog of a hundred means
+// knowing where the weight is, not just that it is there. Sized from the
+// marshalled Tool, the form the provider is sent, so the rows sum to the tools
+// figure on the [orchestrate.orch] prompt~ line rather than to a third number.
+func toolSchemaRanking(tools []AgentToolDef) string {
+	type sized struct {
+		name string
+		n    int
+	}
+	rows := make([]sized, 0, len(tools))
+	total := 0
+	for _, t := range tools {
+		b, err := json.Marshal(t.Tool)
+		if err != nil {
+			continue
+		}
+		rows = append(rows, sized{t.Tool.Name, len(b)})
+		total += len(b)
+	}
+	if len(rows) == 0 {
+		return ""
+	}
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].n > rows[j].n })
+	parts := make([]string, len(rows))
+	for i, r := range rows {
+		parts[i] = fmt.Sprintf("%s=%d", r.name, r.n)
+	}
+	return fmt.Sprintf("%d tools, %d bytes (~%dk tokens), largest first: %s",
+		len(rows), total, total/4000, strings.Join(parts, " "))
 }
 
 // promptSizeReport says where a round's bytes actually are.

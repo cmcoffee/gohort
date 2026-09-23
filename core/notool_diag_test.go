@@ -70,3 +70,22 @@ func TestTruncationNeverSplitsACharacter(t *testing.T) {
 		t.Errorf("newlines must flatten to keep the line greppable, got %q", got)
 	}
 }
+
+// The ranking must order by serialized size, largest first, and its total must
+// be the sum of what it lists — otherwise it is a third tools figure that
+// agrees with neither the floor line nor the prompt~ line.
+func TestToolSchemaRankingOrdersLargestFirst(t *testing.T) {
+	small := AgentToolDef{Tool: Tool{Name: "small", Description: "x"}}
+	big := AgentToolDef{Tool: Tool{Name: "big", Description: strings.Repeat("y", 500)}}
+	got := toolSchemaRanking([]AgentToolDef{small, big})
+	if !strings.Contains(got, "2 tools,") {
+		t.Fatalf("count missing: %s", got)
+	}
+	bi, si := strings.Index(got, " big="), strings.Index(got, " small=")
+	if bi < 0 || si < 0 || bi > si {
+		t.Fatalf("want big before small: %s", got)
+	}
+	if toolSchemaRanking(nil) != "" {
+		t.Fatalf("empty catalog should report nothing")
+	}
+}
