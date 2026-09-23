@@ -534,3 +534,31 @@ func TestUnattendedPolicyHasOneControl(t *testing.T) {
 		t.Error("the ladder no longer maps its three answers onto the two lists")
 	}
 }
+
+// Limits are ceilings the FRAMEWORK keeps, which is the whole reason they are
+// settings rather than prompt text: written into a prompt they become rules
+// the model has to count for itself, and it miscounts.
+func TestLimitsAreOnSecurityAndNotTheEditor(t *testing.T) {
+	sec := mustRead(t, "page_agent_access.go")
+	editor := mustRead(t, "page_agent.go")
+	for _, f := range []string{"action_quotas", "daily_spend_usd", "allow_explorer", "explorer_hard_cap"} {
+		if !strings.Contains(sec, `Field: "`+f+`"`) {
+			t.Errorf("%s is offered nowhere", f)
+		}
+		if strings.Contains(editor, `Field: "`+f+`"`) {
+			t.Errorf("the editor still offers %s, so there are two controls over one limit", f)
+		}
+	}
+	// Their own tab: they are ceilings on HOW MUCH, where the ladders answer
+	// WHETHER, so putting them on Tools would mean one tab asking two
+	// questions of every row.
+	if !strings.Contains(sec, `Group:    "Limits"`) {
+		t.Error("the limits have no tab of their own")
+	}
+	// And they must survive a PATCH, or the panel saves nothing.
+	for _, f := range []string{"action_quotas", "daily_spend_usd", "allow_explorer", "explorer_hard_cap"} {
+		if !patchAgentFields[f] {
+			t.Errorf("%s is on a panel but the PATCH allowlist drops it", f)
+		}
+	}
+}

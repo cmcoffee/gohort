@@ -388,6 +388,46 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				},
 			},
 			{
+				Group:    "Limits",
+				Title:    "How much it may spend and how often",
+				Subtitle: "Ceilings the framework keeps, not rules the agent is asked to follow.",
+				Detail: "Written into a prompt instead - \"post at most six times a day\" - these are rules the model has to count for itself, and one did: it counted its own posts out of a listing, read UTC timestamps as local, and posted anyway.\n\n" +
+					"Counted here, a call is refused when the allowance is spent and the agent is told when it frees up. Only SUCCESSFUL calls count, so an outage never spends the day.",
+				Body: ui.FormPanel{
+					Source:  patchURL,
+					PostURL: patchURL,
+					Method:  "PATCH",
+					Fields: []ui.FormField{
+						{Field: "action_quotas", Type: "tags", Label: "Action limits (per 24 hours)",
+							Placeholder: "moltbook/create_post = 6",
+							Help:        "How often one action may run in a rolling 24 hours, one per line as `action = number`.",
+							Detail:      "Name a grouped tool's action (moltbook/create_post) or a whole tool (send_email). The action wins where both are set. Empty = no limit."},
+						{Field: "daily_spend_usd", Type: "number", Label: "Spend limit (US$ per 24 hours)", Min: 0, Max: 1000,
+							Placeholder: "0",
+							Help:        "What this agent may cost in a rolling 24 hours. 0 = no limit.",
+							Detail: "A turn already running is never cut off. Crossing the line drops the rest of it to the local worker model, and the NEXT turn is declined until the window frees up.\n\n" +
+								"Priced from what the provider reports, so it does nothing on a deployment with no cost rates configured. Worth setting on anything scheduled against a paid model: one unattended turn can cost more than a day of chat."},
+					},
+				},
+			},
+			{
+				Group:    "Limits",
+				Title:    "How long a turn may run",
+				Subtitle: "Explorer mode lets the worker lift its own round budget mid-turn, for an agent mapping something unfamiliar.",
+				Detail:   "Off, the budget is the budget. On, the agent may raise it and the ceiling below is where it stops regardless. The ceiling is what makes this a limit rather than a blank cheque.",
+				Body: ui.FormPanel{
+					Source:  patchURL,
+					PostURL: patchURL,
+					Method:  "PATCH",
+					Fields: []ui.FormField{
+						{Field: "allow_explorer", Type: "toggle", Label: "Let it lift its own round budget",
+							Help: "For agents mapping unfamiliar APIs, where the work is not knowable in advance."},
+						{Field: "explorer_hard_cap", Type: "number", Label: "Explorer ceiling",
+							Help: "Max rounds once it has lifted the budget. Blank or 0 = the default of 50. Only applies while the switch above is on."},
+					},
+				},
+			},
+			{
 				Group: "Guardrails",
 				Title: "Checks that hold whether or not it agrees",
 				Subtitle: "A guardrail is enforcement, not guidance. An independent check reads the turn and stops it, " +

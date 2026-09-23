@@ -254,23 +254,16 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 		// would be a no-op. Hidden for ForcePrivate agents — their
 		// conversation must never leave for the remote lead model (gate 2).
 		leadModelField(T.HasDistinctLead() && !leadModelLocked),
-		{Type: "header", Label: "Autonomous runs", Collapsed: true,
-			Help: "What this agent may do on a scheduled/standing fire, when no one is present to click Approve."},
-		// Both of these are limits the FRAMEWORK keeps. Written into the
-		// prompt instead — "post at most six times a day" — they are rules
-		// the model has to count for itself, and one did: it counted its own
-		// posts out of a listing, read UTC timestamps as local, and posted
-		// nine before reporting the cap as reached.
-		{Field: "action_quotas", Type: "tags", Label: "Action limits (per 24 hours)",
-			Placeholder: "moltbook/create_post = 6",
-			Help:        "How often one action may run in a rolling 24 hours, one per line as `action = number`.",
-			Detail: "Name a grouped tool's action (moltbook/create_post) or a whole tool (send_email). The action wins where both are set." +
-				"\n\nCounted here, not by the agent: it is refused when the allowance is spent, and told when it frees up. Only SUCCESSFUL calls count, so an outage never spends the day. Empty = no limit."},
-		{Field: "daily_spend_usd", Type: "number", Label: "Spend limit (US$ per 24 hours)", Min: 0, Max: 1000,
-			Placeholder: "0",
-			Help:        "What this agent may cost in a rolling 24 hours. 0 = no limit.",
-			Detail: "A turn already running is never cut off. Crossing the line drops the rest of it to the local worker model, and the NEXT turn is declined until the window frees up." +
-				"\n\nPriced from what the provider reports, so it does nothing on a deployment with no cost rates configured. Worth setting on anything scheduled against a paid model: one unattended turn can cost more than a day of chat."},
+		// Autonomous runs are NOT here. What this agent may do when nobody is
+		// present to click Approve is the Security page: the Unattended ladder
+		// on each tool, and the Limits tab for how much and how often.
+		//
+		// They are limits the FRAMEWORK keeps, which is the whole reason they
+		// are settings rather than prompt text. Written into a prompt - "post
+		// at most six times a day" - they are rules the model has to count for
+		// itself, and one did: it counted its own posts out of a listing, read
+		// UTC timestamps as local, and posted nine before reporting the cap as
+		// reached.
 		// Which tools may run unwatched is NOT here. It is the Unattended
 		// ladder on each tool's row, under Security -> Tools.
 		//
@@ -302,10 +295,9 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			ui.FormField{Field: "capture_prompt", Type: "toggle", Label: "Capture prompt text",
 				Help:   "Keeps each run's round-1 prompt as text, readable with inspect_run.",
 				Detail: "For answering \"what was actually in the prompt\". Switch it off again afterwards: it stores the whole conversation, once per turn."},
-			ui.FormField{Field: "allow_explorer", Type: "toggle", Label: "Allow explorer mode",
-				Help: "Lets the worker lift its round budget mid-turn. For agents mapping unfamiliar APIs."},
-			ui.FormField{Field: "explorer_hard_cap", Type: "number", Label: "Explorer ceiling",
-				Help: "Max rounds once explorer mode is active. Blank/0 = default 50. Only applies when explorer mode is allowed."},
+			// Explorer mode and its ceiling moved with the other limits, to
+			// Security -> Limits. A budget the agent may lift is a ceiling
+			// somebody sets on it, not a description of what it is.
 			ui.FormField{Type: "header", Label: "Memory", Collapsed: true,
 				Help: "What the agent remembers across turns. Knowledge (uploaded files) is always available."},
 			ui.FormField{Field: "memory_mode", Type: "select", Label: "Memory mode",
