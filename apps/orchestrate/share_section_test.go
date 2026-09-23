@@ -79,15 +79,33 @@ func TestTheAudienceIsASingleChoice(t *testing.T) {
 	}
 }
 
-// A section FormPanel on this page PATCHes. A POST sends that panel's fields as
-// the whole record, so everything it does not show is blanked.
-func TestEverySharePanelPatches(t *testing.T) {
+// A panel here saves per FIELD, with no submit button.
+//
+// SubmitLabel switches a FormPanel into submit-button mode, where the POST
+// carries the whole form state. With PATCH, per-field auto-save sends only the
+// field that changed; submit mode sends everything the panel loaded, protected
+// keys included, which is what made every save here fail with a list of fields
+// nobody had touched.
+func TestASharePanelSavesPerFieldWithNoButton(t *testing.T) {
 	block := shareSectionSource(t)
-	if !strings.Contains(block, `Method:      "PATCH"`) {
+	if strings.Contains(block, `SubmitLabel: "Save"`) {
+		t.Error("a share panel has a submit button, so it posts the whole record instead of the changed field")
+	}
+	if !strings.Contains(block, `Method:  "PATCH"`) && !strings.Contains(block, `Method:      "PATCH"`) {
 		t.Error("a share panel does not PATCH, so saving it would wipe the rest of the agent")
 	}
 	if strings.Contains(block, "PostURL:     source,") {
 		t.Error("a section panel posts the whole record back; PATCH with the id in the path instead")
+	}
+}
+
+// The GRANT forms keep theirs. They create something that does not exist yet
+// and need every field before it means anything: a subject with no policy, or
+// a policy with no subject, is not a decision.
+func TestAGrantFormKeepsItsButton(t *testing.T) {
+	src := mustRead(t, "page_agent_access.go")
+	if strings.Count(src, `SubmitLabel: "Grant"`) != 2 {
+		t.Error("a grant form lost its button, so it would write a half-filled decision on every keystroke")
 	}
 }
 

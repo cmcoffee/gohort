@@ -107,6 +107,22 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 			Confirm: "Widen this to every agent you have? Each of them carries its own persona and its own rules about what it may say.",
 		}
 	}
+	// No panel here carries a submit button, and that is the whole difference
+	// between saving and not.
+	//
+	// SubmitLabel switches a FormPanel from per-field auto-save into
+	// submit-button mode, where the POST carries the WHOLE form state. With
+	// PATCH, auto-save sends only the field that changed; submit mode sends
+	// everything the panel loaded, protected keys included, which is what made
+	// every save here fail with a list of fields nobody had touched.
+	//
+	// It is also the right model for this page on its own terms. Each control
+	// is one decision, and a button that batches several is how "install an
+	// enforced check" ended up sharing a Save with "edit a preference". The
+	// segmented controls beside these have always written immediately.
+	//
+	// The two GRANT forms keep their button: they create something that does
+	// not exist yet and need every field before it means anything.
 	policyLadder := func() []ui.RowAction {
 		return []ui.RowAction{{
 			Type: "segmented", Field: "_policy", PostTo: policyURL,
@@ -271,7 +287,7 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 							Help:   "What this one may hand work to.",
 							Detail: "Whatever it calls runs with ITS catalog, not this agent's, so this is the blast radius rather than the tool list. Granted for THIS agent only."},
 						{Field: "value", Type: "select", Label: "And then", Options: policyChoice,
-							Help: "Always allow runs it without asking. Needs approval stops and waits for you. Blocked refuses it outright."},
+							Help: "Always allow runs it without asking. Ask first stops and waits for you. Never refuses it outright."},
 					},
 				},
 			},
@@ -296,10 +312,9 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				Title:    "Who may call it, and who it may call",
 				Subtitle: "Both directions of agent-to-agent calling. The policy is the kill switch; the target list below is read only by the two \"selected\" modes.",
 				Body: ui.FormPanel{
-					Source:      patchURL,
-					PostURL:     patchURL,
-					Method:      "PATCH",
-					SubmitLabel: "Save",
+					Source:  patchURL,
+					PostURL: patchURL,
+					Method:  "PATCH",
 					Fields: []ui.FormField{
 						{Field: "hidden", Type: "toggle", Label: "Hide from agent fleet",
 							Help:   "Off (default) = globally callable. On drops the agent from the fleet and refuses dispatch.",
@@ -386,10 +401,9 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				Title:    "What its sandbox may reach",
 				Subtitle: "Shell and file work happen in one sandbox, and these govern all of it.",
 				Body: ui.FormPanel{
-					Source:      patchURL,
-					PostURL:     patchURL,
-					Method:      "PATCH",
-					SubmitLabel: "Save",
+					Source:  patchURL,
+					PostURL: patchURL,
+					Method:  "PATCH",
 					Fields: []ui.FormField{
 						{Field: "workspace_no_network", Type: "toggle", Label: "Workspace may not reach the network",
 							Help: "The agent keeps its tools and its model; only code running in its workspace is stopped from dialling out.",
@@ -446,9 +460,8 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 					// every signed-in user, so it is requested rather than
 					// applied and has to go through the one place that rule
 					// is enforced.
-					PostURL:     T.WebPrefix() + "/api/console/permissions/audience?agent=" + url.QueryEscape(agent.ID),
-					Method:      "POST",
-					SubmitLabel: "Save",
+					PostURL: T.WebPrefix() + "/api/console/permissions/audience?agent=" + url.QueryEscape(agent.ID),
+					Method:  "POST",
 					Fields: []ui.FormField{
 						// "everyone", not the legacy "exposed": that one is
 						// read-only and migrates to TWO decisions at once,
@@ -488,10 +501,9 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				Subtitle: "Which of its memory layers travel with the agent when somebody else runs it.",
 				Detail:   "Each is enforcement, not guidance: a recipient either reads the layer or does not, whatever the agent would say. Their own sessions and memory under it stay theirs.",
 				Body: ui.FormPanel{
-					Source:      patchURL,
-					PostURL:     patchURL,
-					Method:      "PATCH",
-					SubmitLabel: "Save",
+					Source:  patchURL,
+					PostURL: patchURL,
+					Method:  "PATCH",
 					Fields: []ui.FormField{
 						{Field: "share_hold_cortex", Type: "toggle", Label: "Keep its standing activity to yourself"},
 						{Field: "share_hold_reference", Type: "toggle", Label: "Keep what it worked out to yourself"},
@@ -513,7 +525,7 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 							Help:   "The handle this agent may message. The chips are people you have already decided about elsewhere.",
 							Detail: "Granted for THIS agent only. An agent carries its own persona and its own rules about what it may say to somebody, so a permission the whole fleet shares is one any other agent can spend. Widen it afterwards if you mean every agent to have it."},
 						{Field: "value", Type: "select", Label: "And then", Options: policyChoice,
-							Help: "Always allow runs it without asking. Needs approval stops and waits for you. Blocked refuses it outright."},
+							Help: "Always allow runs it without asking. Ask first stops and waits for you. Never refuses it outright."},
 					},
 				},
 			},
