@@ -106,7 +106,8 @@ func (T *OrchestrateApp) renderFleetSecurity(w http.ResponseWriter, r *http.Requ
 				Title:    "Network access from the workspace",
 				Subtitle: "What an agent uses when it has not decided for itself.",
 				Detail: "An agent may override this either way, including looser. A default that could only tighten would forbid \"no agent reaches the network except this one\", which is an ordinary thing to want; what makes it safe is that an override shows AS an override on the agent carrying it.\n\n" +
-					"Leaving this unset is not the same as blocking: unset, an agent that has decided nothing gets the framework's own answer, which is allowed.",
+					"Leaving this unset is not the same as blocking: unset, an agent that has decided nothing gets the deployment's default, and failing that the framework's own answer, which is allowed.\n\n" +
+					"An administrator can also set a MAXIMUM for the whole deployment, which nothing here can widen past. Where one is holding an agent, that agent's own page says so rather than showing you a value it is not running under.",
 				Body: ui.FormPanel{
 					Source:  T.WebPrefix() + "/api/console/fleet-defaults",
 					PostURL: T.WebPrefix() + "/api/console/fleet-defaults",

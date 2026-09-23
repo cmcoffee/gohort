@@ -178,11 +178,28 @@ type triSetting struct {
 	// because they are not all on and off: inbound reach takes its own modes,
 	// and a shared on/off check would refuse them while looking correct.
 	values []string
+	// strictness orders every value this setting takes from LOOSEST to
+	// STRICTEST, which is what lets the deployment ceiling clamp generically.
+	//
+	// Declared rather than derived, because "stricter" does not run the same
+	// way for all of them: for workspace reach off is stricter, for the share
+	// layers off is stricter, and for inbound the order runs any, only, none.
+	// A ceiling that guessed would clamp half of these the wrong way, and
+	// clamping the wrong way is the one failure a ceiling must not have.
+	//
+	// Includes the empty string where empty is a real value (inbound's "any"),
+	// and omits it where empty only means "nobody decided".
+	strictness []string
 }
 
 // onOff is the common case, named once so a setting that takes it says so
 // rather than repeating a literal that could drift.
 func onOff() []string { return []string{settingOn, settingOff} }
+
+// looseToStrict is the strictness order for an on/off setting. On is the loose
+// side of every one of them: the workspace may dial, the person it is shared
+// with sees the layer.
+func looseToStrict() []string { return []string{settingOn, settingOff} }
 
 var triSettings = map[string]triSetting{
 	defaultWorkspaceNetwork: {
@@ -190,22 +207,25 @@ var triSettings = map[string]triSetting{
 		own: func(a AgentRecord) string { return a.WorkspaceNetwork },
 		// The old field could only ever record a BLOCK.
 		legacy:    func(a AgentRecord) (string, bool) { return settingOff, a.WorkspaceNoNetwork },
-		framework: settingOn,
-		values:    onOff(),
+		framework:  settingOn,
+		values:     onOff(),
+		strictness: looseToStrict(),
 	},
 	defaultShareCortex: {
 		key:       defaultShareCortex,
 		own:       func(a AgentRecord) string { return a.ShareCortex },
 		legacy:    func(a AgentRecord) (string, bool) { return settingOff, a.ShareHoldCortex },
-		framework: settingOn,
-		values:    onOff(),
+		framework:  settingOn,
+		values:     onOff(),
+		strictness: looseToStrict(),
 	},
 	defaultShareReference: {
 		key:       defaultShareReference,
 		own:       func(a AgentRecord) string { return a.ShareReference },
 		legacy:    func(a AgentRecord) (string, bool) { return settingOff, a.ShareHoldReference },
-		framework: settingOn,
-		values:    onOff(),
+		framework:  settingOn,
+		values:     onOff(),
+		strictness: looseToStrict(),
 	},
 	defaultShareNotes: {
 		key: defaultShareNotes,
@@ -213,15 +233,17 @@ var triSettings = map[string]triSetting{
 		// The one legacy flag stored POSITIVELY: it granted rather than
 		// withheld, so a true means on and its framework answer is off.
 		legacy:    func(a AgentRecord) (string, bool) { return settingOn, a.ShareMemoryExplicit },
-		framework: settingOff,
-		values:    onOff(),
+		framework:  settingOff,
+		values:     onOff(),
+		strictness: looseToStrict(),
 	},
 	defaultShareUploads: {
 		key:       defaultShareUploads,
 		own:       func(a AgentRecord) string { return a.ShareUploads },
 		legacy:    func(a AgentRecord) (string, bool) { return settingOff, a.ShareNoUploads },
-		framework: settingOn,
-		values:    onOff(),
+		framework:  settingOn,
+		values:     onOff(),
+		strictness: looseToStrict(),
 	},
 	defaultInboundMode: {
 		key: defaultInboundMode,
@@ -231,12 +253,16 @@ var triSettings = map[string]triSetting{
 		legacy:    func(AgentRecord) (string, bool) { return "", false },
 		framework: inboundAny,
 		values:    []string{inboundOnly, inboundNone},
+		// inboundAny is the loosest and is spelled "", which here is a VALUE
+		// and not an absence: an agent that has answered nothing accepts
+		// anyone, so a ceiling has something to clamp.
+		strictness: []string{inboundAny, inboundOnly, inboundNone},
 	},
 }
 
 // resolveSetting answers one setting for one agent, in the order the answers
 // override each other.
-func resolveSetting(db Database, owner string, rec AgentRecord, key string) string {
+func resolveSettingRaw(db Database, owner string, rec AgentRecord, key string) string {
 	s, ok := triSettings[key]
 	if !ok {
 		return ""
@@ -250,7 +276,20 @@ func resolveSetting(db Database, owner string, rec AgentRecord, key string) stri
 	if v := fleetDefault(db, owner, s.key); v != "" {
 		return v
 	}
+	if v := deploymentSetting(db, deploymentDefault, s.key); v != "" {
+		return v
+	}
 	return s.framework
+}
+
+// resolveSetting answers one setting and applies the deployment's ceiling.
+//
+// Every reader goes through here. resolveSettingRaw is what the chain alone
+// says, kept separate so a page can show an owner what they set beside what
+// the deployment allows - a ceiling that silently rewrote the answer would
+// leave somebody reading their own control and not believing it.
+func resolveSetting(db Database, owner string, rec AgentRecord, key string) string {
+	return clampToDeploymentMaximum(db, key, resolveSettingRaw(db, owner, rec, key))
 }
 
 // settingIsOn is the bool form, for a setting whose values are on and off.
@@ -265,6 +304,16 @@ func settingSource(db Database, owner string, rec AgentRecord, key string) strin
 	if !ok {
 		return ""
 	}
+	// The ceiling FIRST, whatever rung the answer came from. A page that
+	// reported "set on this agent: on" while a deployment maximum was holding
+	// it off would be describing a value nobody is running under - and it is
+	// the agent's OWN setting that this most often overrides, so checking it
+	// after the own-answer branch is checking it in the one case it does not
+	// get reached.
+	raw := resolveSettingRaw(db, owner, rec, key)
+	if held := clampToDeploymentMaximum(db, key, raw); held != raw {
+		return "held at " + held + " by the deployment maximum (this agent asks for " + raw + ")"
+	}
 	if v := strings.TrimSpace(s.own(rec)); v != "" {
 		return "set on this agent: " + v
 	}
@@ -273,6 +322,9 @@ func settingSource(db Database, owner string, rec AgentRecord, key string) strin
 	}
 	if v := fleetDefault(db, owner, s.key); v != "" {
 		return "from the default for all agents: " + v
+	}
+	if v := deploymentSetting(db, deploymentDefault, s.key); v != "" {
+		return "from the deployment default: " + v
 	}
 	return "not set anywhere, so: " + s.framework
 }
