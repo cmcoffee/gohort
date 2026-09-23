@@ -340,7 +340,23 @@ func (t *chatTurn) pipelineStageDispatch() func(context.Context, string, string)
 	via := append(append([]string(nil), t.dispatchChain...), t.agent.ID)
 	user := t.user
 	app := t.app
+	caller := t.agent
 	return func(c context.Context, agentID, stageInput string) (string, error) {
+		// What the TARGET accepts, the same question agents(run) asks of a
+		// direct dispatch. A pipeline is a second route to an agent, and a
+		// restriction that held only on the first one was a way around it:
+		// author a stage that names the agent and the door is open again.
+		// Builder can author pipelines, so this is not a hypothetical route.
+		//
+		// An ERROR, not a quiet skip: a stage names a specific agent because
+		// the pipeline's author wanted that agent, and there is no inline
+		// fallback here that would be doing the same work. The refusal says
+		// who can change it.
+		if target, ok := findAgentByNameOrID(UserDB(app.DB, user), user, agentID); ok {
+			if refusal := targetAcceptsDispatch(user, caller, target); refusal != "" {
+				return "", fmt.Errorf("pipeline stage: %s", refusal)
+			}
+		}
 		return app.RunAgentSync(c, user, user, agentID, stageInput, via...)
 	}
 }

@@ -243,6 +243,26 @@ func (h *machineHost) runDelegatedPhase(ctx context.Context, ph MachinePhase, re
 		h.diag("phase_delegate_self", "phase "+ph.Name+" delegates to the agent already running it; ran inline")
 		return base(ctx, ph, prompt)
 	}
+	// What the TARGET accepts, the same question agents(run) asks. A machine
+	// is a second route to an agent, and a restriction that only held on the
+	// first one was a way around it: author a step that names the agent and
+	// the door is open again.
+	//
+	// Runs INLINE rather than failing, and says so. Inline is the safe
+	// direction - the calling agent does the work with its own reach, which is
+	// strictly less than handing it to somebody else - and it matches what
+	// this step already does for an agent that does not exist here. Silence
+	// would not: a restriction that fires and leaves no trace is one nobody
+	// can tell from a machine that was never built to delegate.
+	//
+	// A machine with NO agent behind it (run from its own page, or a schedule
+	// naming none) is not gated: caller.ID is empty, and inbound mode is about
+	// which AGENTS may call, not about the owner reaching their own fleet.
+	if refusal := targetAcceptsDispatch(h.user, AgentRecord{ID: h.agentID, Name: h.agentName}, target); refusal != "" {
+		h.diag("phase_delegate_refused", "phase "+ph.Name+" delegates to "+chFirst(target.Name, target.ID)+
+			", which this agent may not reach ("+refusal+"); this run did the phase inline instead")
+		return base(ctx, ph, prompt)
+	}
 
 	// One continuing thread per (run, step). Continuing, so a re-entered step
 	// builds on what the delegate already established in THIS run;

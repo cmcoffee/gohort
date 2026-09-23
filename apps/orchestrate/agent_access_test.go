@@ -231,9 +231,20 @@ func TestTheInboundRefusalTellsTheModelToStop(t *testing.T) {
 	if !strings.Contains(msg2, "caller list") || !strings.Contains(msg2, "Do not retry") {
 		t.Errorf("the only-mode refusal does not tell it to stop: %s", msg2)
 	}
-	// The gate consults it, or the predicate is a listing that lies.
-	if !strings.Contains(mustReadOrch(t, "agents_grouped_tool.go"), "inboundAllows(target, t.agent)") {
-		t.Error("the gate does not enforce inbound, so the listing shows a refusal that never happens")
+	// EVERY route that resolves an agent and dispatches to it consults the
+	// target's answer, or the restriction governs whichever surface thought to
+	// ask. agents(run) did; a machine's delegating step and a pipeline's agent
+	// stage resolved a target by name and went straight to it, so authoring
+	// either was a way around an agent that accepts no inbound dispatch - and
+	// Builder can author both.
+	for _, file := range []string{
+		"agents_grouped_tool.go", // agents(run)
+		"machine_host.go",        // a machine's delegating step
+		"agent_dispatch_pipeline.go", // a pipeline's agent stage
+	} {
+		if !strings.Contains(mustReadOrch(t, file), "targetAcceptsDispatch(") {
+			t.Errorf("%s dispatches without asking what the target accepts, so the restriction is only enforced where somebody remembered", file)
+		}
 	}
 }
 

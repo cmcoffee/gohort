@@ -891,16 +891,17 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 	if effectiveDispatchMode(t.agent) == dispatchNone {
 		return AgentRecord{}, "", fmt.Errorf("agents(run): this agent's dispatch policy is Allow NONE (Security & Access), it may not dispatch to ANY agent, including its own sub-agents. Do the work directly with your own tools; do not retry this call. If delegation is genuinely needed, the user must change the dispatch policy first")
 	}
-	// The Permissions pane records a per-TARGET delegation policy in the root
-	// store. The Operator's delegate tool has always honored a Block there,
-	// but agents(run) — the other dispatch surface — never consulted it, so
-	// "blocked" silently governed only half the system: a standing cycle
-	// kept dispatching a blocked target every fire (the Comedian storms).
-	// One user intent, enforced at every dispatch surface; checked before
-	// the ownership carve-outs because a Block is about the TARGET, not the
-	// route taken to reach it.
-	if IsDelegationBlocked(RootDB, fleetUser, t.agent.ID, target.Name) || IsDelegationBlocked(RootDB, fleetUser, t.agent.ID, target.ID) {
-		return AgentRecord{}, "", fmt.Errorf("agents(run): delegation to %q is BLOCKED in the user's permission settings, the call was refused. Do NOT retry and do NOT route around it; only the user can change this in the Permissions pane", target.Name)
+	// What the agent being CALLED will accept: the user's Block on this target
+	// and the target's own inbound policy. Before the caller's own rules,
+	// because neither can be widened by them, and before the ownership
+	// carve-outs, because both are about the TARGET rather than the route
+	// taken to reach it. See targetAcceptsDispatch, which is also what the
+	// machine and pipeline routes ask — they used to ask nothing.
+	//
+	// Separate from Hidden below, which is visibility: a caller that names a
+	// hidden agent still reaches it. This is permission.
+	if refusal := targetAcceptsDispatch(fleetUser, t.agent, target); refusal != "" {
+		return AgentRecord{}, "", fmt.Errorf("agents(run): %s", refusal)
 	}
 	// A hidden app agent is refused OUTRIGHT, before any carve-out — including
 	// the allowlist mode, which deliberately ignores Hidden for user agents. An
@@ -908,17 +909,6 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 	// fleet reaches the APP (its tools, its label externally), never the
 	// implementing agent. Keyed on the registry so a stale shadow or a stray
 	// allowlist entry from the era these leaked into pickers cannot reopen it.
-	// What the agent being CALLED will accept. Before the caller's own rules,
-	// and separately from Hidden: Hidden is visibility, and a caller that
-	// names a hidden agent still reaches it. This is permission, and nothing
-	// on the caller's side overrides it.
-	//
-	// A sub-agent's parent is exempt inside inboundAllows: ownership IS the
-	// link, and a rule that locked a parent out of its own child would strand
-	// the child with no way to be reached.
-	if !inboundAllows(target, t.agent) {
-		return AgentRecord{}, "", fmt.Errorf("%s", inboundRefusal(target))
-	}
 	if hiddenAppAgent(target.ID) {
 		return AgentRecord{}, "", fmt.Errorf("agents(run): %q is an app-internal agent and cannot be dispatched directly, use the app's own tools instead", target.Name)
 	}
