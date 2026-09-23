@@ -215,3 +215,63 @@ func TestTheAudienceGoesThroughTheApprovalGate(t *testing.T) {
 		t.Error("a request is reported as done")
 	}
 }
+
+// Reach an administrator grants does not live in the editor. The form for what
+// an agent IS must not be able to set who may run it or whether it is
+// reachable from outside the deployment.
+func TestReachGrantsAreNotInTheEditor(t *testing.T) {
+	editor := mustRead(t, "page_agent.go")
+	for _, f := range []string{"exposed", "mcp_exposed", "public_name"} {
+		if strings.Contains(editor, `Field: "`+f+`"`) {
+			t.Errorf("the editor still offers %s", f)
+		}
+	}
+	sec := mustRead(t, "page_agent_access.go")
+	for _, f := range []string{"everyone", "mcp_exposed", "public_name"} {
+		if !strings.Contains(sec, `Field: "`+f+`"`) {
+			t.Errorf("%s is offered nowhere", f)
+		}
+	}
+	// The editor's "everyone" toggle wrote the RETIRED exposed flag, which
+	// migrates to two decisions at once and welded the dashboard shortcut back
+	// onto publishing every time it was used.
+	if strings.Contains(sec, `Field: "exposed"`) {
+		t.Error("the Security page writes the retired flag")
+	}
+}
+
+// Both reach flags go through the one gate. An owner who cannot flip the
+// toggle on the privileges card must not reach either by another door.
+func TestBothReachFlagsAreRequestedNotApplied(t *testing.T) {
+	app, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	if _, err := saveAgent(udb, AgentRecord{
+		ID: "a50", Name: "Wren", Owner: "alice", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range []string{`{"everyone":true}`, `{"mcp_exposed":true}`} {
+		r := httptest.NewRequest(http.MethodPost,
+			"/api/console/permissions/audience?agent=a50", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		app.handleConsolePermissionAudience(w, asUser(r, "alice"))
+		if w.Code != http.StatusOK && w.Code != http.StatusNoContent {
+			t.Fatalf("%s: %d %s", body, w.Code, w.Body.String())
+		}
+	}
+	// Turning one back OFF is direct: nobody needs permission to stop sharing.
+	rec, _ := loadAgent(udb, "a50")
+	rec.MCPExposed = true
+	if _, err := saveAgent(udb, rec); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodPost,
+		"/api/console/permissions/audience?agent=a50", strings.NewReader(`{"mcp_exposed":false}`))
+	w := httptest.NewRecorder()
+	app.handleConsolePermissionAudience(w, asUser(r, "alice"))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("turning MCP reach off: %d %s", w.Code, w.Body.String())
+	}
+	if got, _ := loadAgent(udb, "a50"); got.MCPExposed {
+		t.Error("turning it off did not take")
+	}
+}

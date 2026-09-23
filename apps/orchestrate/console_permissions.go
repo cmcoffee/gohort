@@ -1013,24 +1013,34 @@ func (T *OrchestrateApp) handleConsolePermissionAudience(w http.ResponseWriter, 
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
+	// Two reach flags, one door. Both are an administrator's to grant and both
+	// go through the same gate; which one arrived decides nothing else.
+	field, current := "exposed", rec.Everyone
 	raw, present := body["everyone"]
+	if v, ok := body["mcp_exposed"]; ok && !present {
+		field, current, raw, present = "mcp_exposed", rec.MCPExposed, v, true
+	}
 	if !present {
-		http.Error(w, "no audience given", http.StatusBadRequest)
+		http.Error(w, "no reach flag given", http.StatusBadRequest)
 		return
 	}
 	on := truthyPatchValue(raw)
-	if on == rec.Everyone {
+	if on == current {
 		w.WriteHeader(http.StatusNoContent) // already what was asked for
 		return
 	}
-	if T.agentPublishNeedsApproval(r, user, rec.ID, "exposed", on, rec.Everyone) {
+	if T.agentPublishNeedsApproval(r, user, rec.ID, field, on, current) {
 		// A body rather than 204: "requested" and "done" are different
 		// outcomes, and a caller that cannot tell them apart shows the agent
 		// as published while an administrator has not looked at it yet.
-		writeJSON(w, map[string]any{"ok": true, "requested": []string{"exposed"}})
+		writeJSON(w, map[string]any{"ok": true, "requested": []string{field}})
 		return
 	}
-	rec.Everyone = on
+	if field == "mcp_exposed" {
+		rec.MCPExposed = on
+	} else {
+		rec.Everyone = on
+	}
 	if _, err := saveAgent(udb, rec); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

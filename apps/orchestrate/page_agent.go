@@ -383,20 +383,17 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			ui.FormField{Type: "header", Label: "Access & visibility", Collapsed: true,
 				Help:   "Who can use this agent, fleet visibility, and Private-mode policy.",
 				Detail: "The edit and delete lock is the 🔒 icon at the top-right."},
-			ui.FormField{Field: "exposed", Type: "toggle", Label: "Everyone in the deployment can use it",
-				Help:   "The widest rung. An administrator approves it; naming specific people below is yours alone.",
-				Detail: "This reaches every signed-in user, so it is requested rather than applied: your request appears on the administrator's Pending promotions queue and takes effect once approved. Turning it off is yours and takes effect at once.\n\nWhat the agent uses goes with it either way — your tools, documents and skills, readable through this agent and nowhere else. Each person gets their own sessions and memory under it.\n\nThis used to be the same switch as the dashboard shortcut below, which meant you could not give somebody a shortcut without widening who could use the agent."},
+			// Who may USE this agent, and whether it is reachable over MCP, are
+			// not here. They are the Share tab of its Security page.
+			//
+			// Both are reach that an administrator grants, not something the
+			// form for what the agent IS should be able to set: the "everyone"
+			// toggle here wrote the RETIRED exposed flag, which migrates to two
+			// decisions at once and welded the dashboard shortcut back onto
+			// publishing every time it was used.
 			ui.FormField{Field: "show_on_dashboard", Type: "toggle", Label: "Shortcut on the dashboard",
 				Help:   "A card on the dashboard and a page of its own, for the people who can already use it.",
 				Detail: "Presentation, not access: it grants nothing, so nobody has to approve it. Somebody who cannot use the agent does not see the card.\n\nUseful for an agent you reach often, and for one you have hidden from the fleet list, which otherwise leaves you no way to open it."},
-			ui.FormField{Field: "mcp_exposed", Type: "toggle", Label: "Reachable over MCP",
-				Help:   "Lets an external MCP client dispatch to this agent over gohort's /mcp/ endpoint. An administrator approves it.",
-				Detail: "For example Claude Desktop, with a bridge key, calling the ask_agent tool. Off by default, and requested rather than applied for the same reason the rung above is: it takes this agent, with your tools and your documents, outside the deployment. Turning it off is yours. Independent of both switches above it."},
-			ui.FormField{Field: "public_name", Type: "text", Label: "Published app name",
-				Placeholder: "(uses the agent name above when blank)",
-				Help:        "Optional. Name shown on the dashboard card and URL slug.",
-				Detail:      "Set it when the internal name reads awkwardly as an app title.",
-				SuggestURL:  "../api/agents/suggest"},
 			ui.FormField{Field: "allow_private_mode", Type: "toggle", Label: "Allow Private mode",
 				Help:   "Shows a Private toggle on the public chat, which drops network tools per turn.",
 				Detail: "Leave it off for Research-style agents that need network."},

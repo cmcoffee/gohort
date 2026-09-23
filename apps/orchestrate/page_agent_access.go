@@ -482,6 +482,39 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				},
 			},
 			{
+				Group:    "Share",
+				Title:    "Reachable from outside",
+				Subtitle: "Whether an external MCP client can dispatch to this agent over gohort's /mcp/ endpoint.",
+				Detail: "For example a desktop client with a bridge key calling ask_agent. Off by default, and REQUESTED rather than applied for the same reason publishing is: it takes this agent, with your tools and your documents, outside the deployment. Turning it back off is yours.\n\n" +
+					"Independent of the audience above. An agent nobody else may run can still be reachable this way, and one published to everyone need not be.",
+				Body: ui.FormPanel{
+					Source: patchURL,
+					// The same door as the audience, and for the same reason:
+					// this is reach an administrator grants, so it cannot be
+					// applied by writing the record.
+					PostURL: T.WebPrefix() + "/api/console/permissions/audience?agent=" + url.QueryEscape(agent.ID),
+					Method:  "POST",
+					Fields: []ui.FormField{
+						{Field: "mcp_exposed", Type: "toggle", Label: "Reachable over MCP",
+							Help: "An administrator approves this. Turning it off is yours and takes effect at once."},
+					},
+				},
+			},
+			{
+				Group:    "Share",
+				Title:    "Published app name",
+				Subtitle: "What this agent is called to the people it is published to. Blank uses its own name.",
+				Body: ui.FormPanel{
+					Source:  patchURL,
+					PostURL: patchURL,
+					Method:  "PATCH",
+					Fields: []ui.FormField{
+						{Field: "public_name", Type: "text", Label: "Published app name",
+							Placeholder: "(uses the agent name when blank)"},
+					},
+				},
+			},
+			{
 				Group: "Share",
 				Title: "The people you name",
 				// Says what this list actually decides, which differs entirely
