@@ -164,3 +164,27 @@ func TestAColumnCanRenderOnASecondLine(t *testing.T) {
 		t.Error("a two-line row is not top-aligned against its actions")
 	}
 }
+
+// A form where some switches mean "on = allowed" and others mean "on =
+// forbidden" is where somebody flips the wrong one. The storage is not free to
+// rename - inverting a stored bool inverts every record already written - so
+// the toggle turns round what the reader sees and sets, and nothing else.
+func TestAToggleCanShowTheOppositeOfANegativeField(t *testing.T) {
+	src := readRuntimeFile(t, "10_basics.js")
+	i := strings.Index(src, "} else if (t === 'toggle') {")
+	if i < 0 {
+		t.Fatal("the form toggle branch has moved")
+	}
+	body := src[i : i+1400]
+	if !strings.Contains(body, "var inv = !!f.invert;") {
+		t.Fatal("a toggle cannot be inverted, so a negative field must be labelled negatively")
+	}
+	// BOTH directions. Showing the opposite while writing the stored sense
+	// would make every click set the value it already had.
+	if !strings.Contains(body, "inv ? !initial : !!initial") {
+		t.Error("the displayed state is not inverted")
+	}
+	if !strings.Contains(body, "inv ? !input.checked : input.checked") {
+		t.Error("the saved value is not inverted, so the switch writes the opposite of what it shows")
+	}
+}

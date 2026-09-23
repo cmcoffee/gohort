@@ -1661,8 +1661,18 @@
         // iOS-style switch as a form field. Saves immediately on
         // change (no debounce) since toggles are discrete decisions.
         input = el('input', {type: 'checkbox', class: 'ui-switch'});
-        input.checked = !!initial;
-        input.addEventListener('change', function(){ save(f.field, input.checked); });
+        // invert shows and writes the OPPOSITE of the stored value, for a
+        // field whose storage is negative (no_network, hold_x, disabled).
+        //
+        // A page where some switches mean "on = allowed" and others mean "on =
+        // forbidden" is where somebody flips the wrong one. The record keeps
+        // the name it has, since renaming a stored bool inverts every existing
+        // record; only what the reader sees and sets is turned round.
+        var inv = !!f.invert;
+        input.checked = inv ? !initial : !!initial;
+        input.addEventListener('change', function(){
+          save(f.field, inv ? !input.checked : input.checked);
+        });
         // Layout: switch on the FAR LEFT (fixed), label flows to the
         // right of it (flex-grow), help (if any) on its own line
         // BELOW. Reads naturally as [decision-control] [what it

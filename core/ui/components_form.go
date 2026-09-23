@@ -558,6 +558,17 @@ type FormField struct {
 	// timeout values. Static-only; for dynamic lists (model browser,
 	// user-curated presets) use ChipsSource instead.
 	Presets []FieldPreset `json:"presets,omitempty"`
+	// Invert shows and writes the OPPOSITE of the stored value, for a toggle
+	// whose field is negative: no_network, hold_this, disabled_that.
+	//
+	// A form where some switches mean "on = allowed" and others mean "on =
+	// forbidden" is a recipe for flipping the wrong one, and the storage is
+	// not always free to rename: inverting a stored bool inverts every record
+	// already written. This turns round only what the reader sees and sets.
+	//
+	// Label it positively when you set it, or the inversion just moves the
+	// confusion: "Allow network access" and not "Workspace may not reach it".
+	Invert bool `json:"invert,omitempty"`
 
 	// Default seeds the form's local state for this field at render
 	// time. Used by Type="hidden" to bake a context-derived value into

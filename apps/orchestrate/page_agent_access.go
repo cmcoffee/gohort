@@ -320,8 +320,8 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 					PostURL: patchURL,
 					Method:  "PATCH",
 					Fields: []ui.FormField{
-						{Field: "hidden", Type: "toggle", Label: "Hide from agent fleet",
-							Help:   "Off (default) = globally callable. On drops the agent from the fleet and refuses dispatch.",
+						{Field: "hidden", Type: "toggle", Invert: true, Label: "Listed in the agent fleet",
+							Help:   "On (default) = other agents can see and call it. Off drops it from the fleet and refuses dispatch.",
 							Detail: "Globally callable means it appears in every other agent's Available Agents block and is dispatchable via agents(action=\"run\"). Hidden, it is dropped from that block and dispatch is refused, UNLESS a specific caller has this agent's ID on its Allowed Dispatch Targets list.\n\nThis affects FLEET visibility only. The agent still appears in your own Agents picker and stays reachable at its dashboard URL when published."},
 						{Field: "dispatch_mode", Type: "select", Label: "Dispatch policy",
 							Options: dispatchModeOptions(effectiveDispatchMode(agent)),
@@ -409,8 +409,8 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 					PostURL: patchURL,
 					Method:  "PATCH",
 					Fields: []ui.FormField{
-						{Field: "workspace_no_network", Type: "toggle", Label: "Workspace may not reach the network",
-							Help: "The agent keeps its tools and its model; only code running in its workspace is stopped from dialling out.",
+						{Field: "workspace_no_network", Type: "toggle", Invert: true, Label: "Allow network access from the workspace",
+							Help: "Off stops code running in the workspace from dialling out. The agent keeps its tools and its model either way.",
 							Detail: "For an agent that should process text or files locally and never phone anywhere from in there. It can still read, write and run commands in the workspace.\n\n" +
 								"Enforced at both ways out: the sandbox gets no network namespace, and the gohort.fetch helper refuses. Closing one alone would just move a script from one to the other.\n\n" +
 								"It inherits downward, so a sub-agent cannot dial on this one's behalf, and it only ever narrows: Private mode still blocks a turn outright.\n\n" +
@@ -509,10 +509,14 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 					PostURL: patchURL,
 					Method:  "PATCH",
 					Fields: []ui.FormField{
-						{Field: "share_hold_cortex", Type: "toggle", Label: "Keep its standing activity to yourself"},
-						{Field: "share_hold_reference", Type: "toggle", Label: "Keep what it worked out to yourself"},
+						// Every switch here reads "on = they get it", including
+						// the three whose stored field is negative. A column
+						// where some mean allowed and others mean withheld is
+						// where somebody flips the wrong one.
+						{Field: "share_hold_cortex", Type: "toggle", Invert: true, Label: "Let them see its standing activity"},
+						{Field: "share_hold_reference", Type: "toggle", Invert: true, Label: "Let them see what it worked out"},
 						{Field: "share_memory_explicit", Type: "toggle", Label: "Let them see its saved notes"},
-						{Field: "share_no_uploads", Type: "toggle", Label: "They may not add documents of their own"},
+						{Field: "share_no_uploads", Type: "toggle", Invert: true, Label: "Let them add documents of their own"},
 					},
 				},
 			},
