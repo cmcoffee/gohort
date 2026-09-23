@@ -2,6 +2,7 @@ package core
 
 import (
 	"bytes"
+	"encoding/json"
 	"github.com/cmcoffee/snugforge/kvlite"
 	"io"
 	"mime"
@@ -1688,5 +1689,43 @@ func TestAnEditDoesNotZeroWhatTheFormDoesNotCarry(t *testing.T) {
 	// The secret is untouched by any of it.
 	if v, _, found := s.readSecretAt(credStoreKey("alice", "gitlab")); !found || v != "glpat-original" {
 		t.Errorf("the stored secret changed on an edit: found=%v", found)
+	}
+}
+
+// Every credential ships its fetch_url_<name> schema on every turn, so the
+// generic part of it — everything that is NOT this credential's name, allowed
+// URLs or description — is paid once per credential. It was ~1,100 bytes of
+// identical prose five times over on a five-credential deployment. Guard the
+// slim version, and that each parameter still explains itself: an allowlist can
+// grant fetch_url_<name> without fetch_url, so none may defer to it.
+func TestCredentialToolSchemaStaysSlim(t *testing.T) {
+	s := &SecureAPI{}
+	c := SecureCredential{Name: "x", AllowedURLPattern: "", Description: ""}
+	td := s.agentToolFromCredential(c, nil)
+	b, err := json.Marshal(td.Tool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b) > 800 {
+		t.Errorf("generic credential-tool schema is %d bytes; keep the shared prose under 800 (it is paid once per credential)", len(b))
+	}
+	for _, p := range []string{"url", "method", "body", "request_headers", "save_to"} {
+		d := td.Tool.Parameters[p].Description
+		if strings.TrimSpace(d) == "" {
+			t.Errorf("%s lost its description", p)
+		}
+		if strings.Contains(d, "fetch_url") {
+			t.Errorf("%s defers to fetch_url, which the agent may not have: %q", p, d)
+		}
+	}
+}
+
+// An empty allow-list means every path under the base URL, and must say so
+// rather than rendering as "Allowed URLs: ." (seen live on a credential with no
+// pattern, where it read as a one-character allow-list).
+func TestCredentialToolEmptyPatternReadsAsOpen(t *testing.T) {
+	d := (&SecureAPI{}).agentToolFromCredential(SecureCredential{Name: "x"}, nil).Tool.Description
+	if strings.Contains(d, "Allowed URLs: .") || !strings.Contains(d, "any path under the API's base URL") {
+		t.Fatalf("empty pattern must read as open, got %q", d)
 	}
 }

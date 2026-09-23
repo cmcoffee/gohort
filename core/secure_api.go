@@ -1546,9 +1546,24 @@ func (s *SecureAPI) agentToolFromCredential(c SecureCredential, sess *ToolSessio
 	// (see normalizeLegacyCallToolName) so existing AllowedTools
 	// lists and authored temp tools don't break.
 	toolName := "fetch_url_" + c.Name
+	//
+	// Kept terse on purpose: every credential ships this whole schema on every
+	// turn, so the generic parameter prose was paid once per credential (five
+	// credentials, five copies of the same save_to paragraph). Only what differs
+	// per credential — its name, allowed URLs, description, lend terms — is
+	// spelled out. Each parameter still stands on its own, because an allowlist
+	// can grant fetch_url_<name> without fetch_url, so "see fetch_url" would
+	// point at a tool the agent may not have.
+	//
+	// An empty pattern means every path under the base URL is allowed. It used to
+	// render as "Allowed URLs: .", which reads as a one-character allow-list.
+	allowed := strings.TrimSpace(c.AllowedURLPattern)
+	if allowed == "" {
+		allowed = "any path under the API's base URL"
+	}
 	desc := fmt.Sprintf(
-		"Fetch a URL on the %s API. Same shape as fetch_url (method / body / request_headers / save_to all supported), but the auth credential is injected server-side and the URL is bounded by an allow-list. You do not see the credential value. Allowed URLs: %s. %s",
-		c.Name, c.AllowedURLPattern, c.Description,
+		"Call the %s API: auth is injected server-side (you never see it). Allowed URLs: %s. %s",
+		c.Name, allowed, c.Description,
 	)
 	// A lent credential says so, and a read-only one says what it cannot do.
 	// A tool whose limits only appear as a refusal is the shape that produces
@@ -1569,23 +1584,23 @@ func (s *SecureAPI) agentToolFromCredential(c SecureCredential, sess *ToolSessio
 			Parameters: map[string]ToolParam{
 				"url": {
 					Type:        "string",
-					Description: "Full URL to call. Must match the credential's allowed URL pattern: " + c.AllowedURLPattern,
+					Description: "Full URL, or a path like \"/v1/items\" when the API has a base URL.",
 				},
 				"method": {
 					Type:        "string",
-					Description: "HTTP method. Defaults to GET. Use POST/PUT/PATCH/DELETE for write operations.",
+					Description: "GET (default), POST, PUT, PATCH or DELETE.",
 				},
 				"body": {
 					Type:        "string",
-					Description: "Optional request body (typically JSON-encoded). Sent as-is with Content-Type: application/json unless overridden by request_headers.",
+					Description: "Request body, sent as JSON unless request_headers sets Content-Type.",
 				},
 				"request_headers": {
 					Type:        "object",
-					Description: "Optional extra headers as a {name: value} object. Cannot override the auth header: that's set by the credential.",
+					Description: "Extra {name: value} headers. Auth cannot be overridden.",
 				},
 				"save_to": {
 					Type:        "string",
-					Description: "Optional. Workspace-relative path to write the response body to as raw bytes (e.g. \"voice.mp3\", \"report.pdf\"). Use for binary responses (audio, image, PDF, archive), without this, binary content returns as garbled text in the tool result. When set, the tool result is a short metadata line (status, size, content-type, path) instead of the body. Pair with attach_file to deliver the saved file to the user.",
+					Description: "Workspace path to write the raw response to. Required for binary (audio, image, PDF); returns a metadata line instead of the body.",
 				},
 			},
 			Required: []string{"url"},
