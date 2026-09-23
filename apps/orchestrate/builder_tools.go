@@ -1173,6 +1173,12 @@ var onDemandTools = map[string]bool{
 	// ~2.1k tokens, the largest schema on a non-Fleet agent once tool_def was
 	// deferred, and used only on the turn that sets up or manages a schedule.
 	"recurring": true,
+	// The entity-graph trio, ~1.1k tokens together on every agent with explicit
+	// memory. The graph fills itself from conversation (graph_extract.go), so
+	// hand-linking is the supplement, not the source; the recall_about hints
+	// recall_hints.go emits name the tool, and a direct call resolves through
+	// lazyToolFallback without a load.
+	"link_entities": true, "recall_about": true, "forget_graph": true,
 }
 
 const onDemandToolIndexHeader = "\n\n## More tools (load before use)\n" +

@@ -357,3 +357,25 @@ func TestRecurringDeferredUnderItsOwnSection(t *testing.T) {
 		t.Fatal("recurring must join the existing deferred set")
 	}
 }
+
+// The entity-graph trio rides the same on-demand section as recurring: off the
+// direct catalog, listed in the index, and still callable without a load.
+func TestGraphToolsDeferredOnDemand(t *testing.T) {
+	turn, _ := newAuthoringTestTurn(t)
+	direct := []AgentToolDef{turn.showLinkToolDef(), turn.linkEntitiesToolDef(), turn.recallAboutToolDef(), turn.forgetGraphToolDef()}
+	kept := turn.deferOnDemandTools(direct)
+	if got := namesOf(kept); len(got) != 1 || got[0] != "show_link" {
+		t.Fatalf("only show_link should stay direct, got %v", got)
+	}
+	for _, n := range []string{"link_entities", "recall_about", "forget_graph"} {
+		if !strings.Contains(turn.authoringLazyPrompt, "- `"+n+"`") {
+			t.Errorf("%s missing from the on-demand index", n)
+		}
+		if h, ok := turn.lazyToolFallback(n); !ok || h == nil {
+			t.Errorf("%s must still resolve when called directly", n)
+		}
+	}
+	if strings.Count(turn.authoringLazyPrompt, onDemandToolIndexHeader) != 1 {
+		t.Error("the on-demand section header must appear exactly once")
+	}
+}
