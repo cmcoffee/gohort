@@ -81,7 +81,7 @@ func TestThePerAgentControlSaysWhereTheDefaultLives(t *testing.T) {
 	// The option itself names the value it resolves to, which is what the
 	// reader actually needs: "Default (Allowed)" says both what happens and
 	// that this agent is following rather than deciding.
-	if !strings.Contains(security, `return "Default (" + word + ")"`) {
+	if !strings.Contains(security, `Label: "Default (" + settingWord(key, effectiveDeploymentDefault(db, key)) + ")",`) {
 		t.Error("the inherited option does not say what it resolves to")
 	}
 	if !strings.Contains(security, "set once for the whole deployment, by an administrator") {

@@ -97,7 +97,7 @@ func TestTheCeilingIsOfferedAndSaveable(t *testing.T) {
 	// resolves to: "Default (Allowed)" says both what happens and that this
 	// agent is following rather than deciding, which "Use the default" did
 	// not.
-	if !strings.Contains(security, `{Value: "", Label: inheritedLabel(RootDB, defaultWorkspaceNetwork,`) {
+	if !strings.Contains(security, "Options: settingOptions(RootDB, defaultWorkspaceNetwork),") {
 		t.Error("the agent cannot be returned to the default once it has answered")
 	}
 	if !strings.Contains(src, `"workspace:" + ag.ID + ":network"`) {

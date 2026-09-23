@@ -27,45 +27,41 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
-// inheritedLabel names the "leave it alone" option on a per-agent tri-state,
-// with the value it currently resolves to.
+// settingOptions is the option list for one per-agent tri-state: the inherited
+// choice, then the setting's own values, all in the setting's own WORDS.
 //
-// "Use the default" does not tell the reader what would happen, and what would
-// happen is the entire question. The difference between leaving a setting
-// alone and setting it to the same value is whether it FOLLOWS the deployment
-// when that changes - not what it does today - and "Default (Allowed)" answers
-// both at once.
+// The inherited option names the value it resolves to. "Use the default" does
+// not tell the reader what would happen, and what would happen is the entire
+// question: the difference between leaving a setting alone and setting it to
+// the same value is whether it FOLLOWS the deployment when that changes.
+// "Default (Allowed)" answers both at once.
 //
-// The word, not the stored value: "on" means allowed here and "they see it"
-// two fields down, and a label reading "Default (on)" six times is a label
-// nobody can act on.
-func inheritedLabel(db Database, key string, words map[string]string) string {
-	v := effectiveDeploymentDefault(db, key)
-	word := words[v]
-	if word == "" {
-		word = v
+// Words from the setting, never the stored value - "on" means allowed for the
+// workspace ceiling and shared for a memory layer, so a list reading "on" six
+// times is a list nobody can act on. Ordered loosest first, the same order the
+// admin page and the ceiling use.
+func settingOptions(db Database, key string) []ui.SelectOption {
+	out := []ui.SelectOption{{
+		Value: "",
+		Label: "Default (" + settingWord(key, effectiveDeploymentDefault(db, key)) + ")",
+	}}
+	for _, v := range triSettings[key].strictness {
+		out = append(out, ui.SelectOption{Value: v, Label: settingWord(key, v)})
 	}
-	if word == "" {
-		return "Default"
-	}
-	return "Default (" + word + ")"
+	return out
 }
 
-// shareChoice is one memory layer as a tri-state, with its current answer and
-// where that answer came from stated in the help line.
+// shareChoice is one memory layer on a shared agent: the three options and the
+// line saying whether this agent decided or is following.
 //
 // A shared helper because four of them differ only in the field and the noun,
-// and four copies of a select is where one quietly keeps the wrong default.
+// and four copies of a select is where one quietly keeps the wrong option
+// list, or where the words drift apart from the line underneath.
 func shareChoice(field, noun, key string, db Database, owner string, agent AgentRecord) ui.FormField {
-	words := map[string]string{settingOn: "They see it", settingOff: "Kept to yourself"}
 	return ui.FormField{
 		Field: field, Type: "select", Label: noun,
-		Options: []ui.SelectOption{
-			{Value: "", Label: inheritedLabel(db, key, words)},
-			{Value: "on", Label: "They see it"},
-			{Value: "off", Label: "Kept to yourself"},
-		},
-		Help: "Currently " + settingSource(db, agent, key) + ".",
+		Options: settingOptions(db, key),
+		Help:    settingSource(db, agent, key),
 	}
 }
 
@@ -602,13 +598,10 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 					Method:  "PATCH",
 					Fields: []ui.FormField{
 						{Field: "workspace_network", Type: "select", Label: "Network access from the workspace",
-							Options: []ui.SelectOption{
-								{Value: "", Label: inheritedLabel(RootDB, defaultWorkspaceNetwork,
-									map[string]string{settingOn: "Allowed", settingOff: "Blocked"})},
-								{Value: "on", Label: "Allowed"},
-								{Value: "off", Label: "Blocked"},
-							},
-							Help: "Currently " + workspaceNetworkSource(RootDB, agent) + ". Blocked stops code running in the workspace from dialling out; the agent keeps its tools and its model either way. The default itself is set once for the whole deployment, by an administrator.",
+							Options: settingOptions(RootDB, defaultWorkspaceNetwork),
+							Help: workspaceNetworkSource(RootDB, agent) +
+								" Blocked stops code running in the workspace from dialling out; the agent keeps its tools and its model either way." +
+								" The default is set once for the whole deployment, by an administrator.",
 							Detail: "For an agent that should process text or files locally and never phone anywhere from in there. It can still read, write and run commands in the workspace.\n\n" +
 								"Enforced at both ways out: the sandbox gets no network namespace, and the gohort.fetch helper refuses. Closing one alone would just move a script from one to the other.\n\n" +
 								"It inherits downward, so a sub-agent cannot dial on this one's behalf, and it only ever narrows: Private mode still blocks a turn outright.\n\n" +

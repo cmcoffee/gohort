@@ -36,8 +36,8 @@ func TestADeploymentDefaultSitsUnderTheOwnersOwn(t *testing.T) {
 	if got := resolveSetting(db, blank, defaultWorkspaceNetwork); got != settingOff {
 		t.Errorf("the deployment default was ignored: %q", got)
 	}
-	if src := settingSource(db, blank, defaultWorkspaceNetwork); !strings.Contains(src, "default for all agents") {
-		t.Errorf("the page does not say where the answer came from: %q", src)
+	if src := settingSource(db, blank, defaultWorkspaceNetwork); !strings.Contains(src, "Default Setting: Blocked") {
+		t.Errorf("the page does not say what the agent is following: %q", src)
 	}
 
 	// The AGENT outranks it, in either direction - a default is a starting
@@ -66,7 +66,7 @@ func TestTheDeploymentMaximumCannotBeWidenedAway(t *testing.T) {
 		t.Errorf("an agent resolved looser than the deployment maximum: %q", got)
 	}
 	src := settingSource(db, open, defaultWorkspaceNetwork)
-	if !strings.Contains(src, "maximum") {
+	if !strings.Contains(src, "Held at Blocked by the deployment maximum") {
 		t.Errorf("the page shows a value without saying the ceiling is holding it: %q", src)
 	}
 
@@ -192,5 +192,47 @@ func TestTheDeploymentLayerIsAdminOnly(t *testing.T) {
 	// answering one question is what this replaced.
 	if strings.Contains(mustReadFile(t, "agent_settings.go"), "fleetDefault") {
 		t.Error("the per-owner defaults rung is back, so two surfaces answer one question again")
+	}
+}
+
+// One vocabulary. The admin selects, the per-agent selects and the line under
+// them all read the same words, because they all read the SETTING's words -
+// they built three of their own before, and "on" was the answer to six
+// different questions.
+func TestEverySettingSaysWhatItsValuesMean(t *testing.T) {
+	for key, spec := range triSettings {
+		if len(spec.words) == 0 {
+			t.Errorf("%s has no words, so its controls print the stored value", key)
+			continue
+		}
+		for _, v := range spec.strictness {
+			w := spec.words[v]
+			if w == "" {
+				t.Errorf("%s takes %q and has no word for it", key, v)
+				continue
+			}
+			if w == settingOn || w == settingOff {
+				t.Errorf("%s calls %q %q, which is the stored value, not a word", key, v, w)
+			}
+		}
+	}
+	// A memory layer on a shared agent is Shared or Private. It used to read
+	// "They see it" / "Kept to yourself", which overstates both sides: a
+	// recipient's view of a shared agent is already narrow, and the off side
+	// is not withholding - it is the recipient building a layer of their own
+	// that the owner never reads either.
+	for _, key := range []string{defaultShareCortex, defaultShareReference, defaultShareNotes} {
+		if got := settingWord(key, settingOn); got != "Shared" {
+			t.Errorf("%s calls its on side %q", key, got)
+		}
+		if got := settingWord(key, settingOff); got != "Private" {
+			t.Errorf("%s calls its off side %q", key, got)
+		}
+	}
+	// Uploads is a different question wearing the same on/off, so it gets its
+	// own words rather than the layer pair: it is about whether a recipient
+	// may ADD documents, not about whose layer is read.
+	if got := settingWord(defaultShareUploads, settingOn); got != "Allowed" {
+		t.Errorf("uploads borrowed the memory-layer words: %q", got)
 	}
 }

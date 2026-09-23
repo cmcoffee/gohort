@@ -84,6 +84,16 @@ type triSetting struct {
 	// because they are not all on and off: inbound reach takes its own modes,
 	// and a shared on/off check would refuse them while looking correct.
 	values []string
+	// words is what each value is CALLED, per setting, because the stored
+	// value is not a word anybody can act on: "on" means allowed for the
+	// workspace ceiling, shared for a memory layer and permitted for uploads.
+	// A page that printed the stored value six times would be six rows of
+	// "on" and nothing to choose between them.
+	//
+	// Declared here so the admin selects, the per-agent selects and the line
+	// that says where an answer came from all say the same thing. They said
+	// three different things when each built its own.
+	words map[string]string
 	// strictness orders every value this setting takes from LOOSEST to
 	// STRICTEST, which is what lets the deployment ceiling clamp generically.
 	//
@@ -102,6 +112,38 @@ type triSetting struct {
 // rather than repeating a literal that could drift.
 func onOff() []string { return []string{settingOn, settingOff} }
 
+// sharedOrPrivate names the two sides of a memory layer on a SHARED agent.
+//
+// Not "they see it" and "kept to yourself", which is what these said and which
+// overstates both sides. A recipient's view of a shared agent is already
+// narrow, so "they see it" reads as a disclosure it is not; and the off side
+// is not withholding, it is the recipient building a layer of their own that
+// the owner never reads either. Shared or private is what actually differs.
+//
+// "Private" here is about this LAYER, not about Private mode on the Network
+// tab, which is the turn's network cutoff. They share a word and nothing else.
+// In context the word is the plain one - the owner's cortex stays private -
+// and inventing a second vocabulary to keep them apart would cost more than
+// the collision does.
+func sharedOrPrivate() map[string]string {
+	return map[string]string{settingOn: "Shared", settingOff: "Private"}
+}
+
+// settingWord is what one value of one setting is CALLED. Falls back to the
+// stored value, so a value added without a word still renders as something
+// rather than as an empty option.
+func settingWord(key, value string) string {
+	if s, ok := triSettings[key]; ok {
+		if w := s.words[value]; w != "" {
+			return w
+		}
+	}
+	if value == "" {
+		return "not set"
+	}
+	return value
+}
+
 // looseToStrict is the strictness order for an on/off setting. On is the loose
 // side of every one of them: the workspace may dial, the person it is shared
 // with sees the layer.
@@ -109,7 +151,8 @@ func looseToStrict() []string { return []string{settingOn, settingOff} }
 
 var triSettings = map[string]triSetting{
 	defaultWorkspaceNetwork: {
-		key: defaultWorkspaceNetwork,
+		key:   defaultWorkspaceNetwork,
+		words: map[string]string{settingOn: "Allowed", settingOff: "Blocked"},
 		own: func(a AgentRecord) string { return a.WorkspaceNetwork },
 		// The old field could only ever record a BLOCK.
 		legacy:    func(a AgentRecord) (string, bool) { return settingOff, a.WorkspaceNoNetwork },
@@ -119,6 +162,7 @@ var triSettings = map[string]triSetting{
 	},
 	defaultShareCortex: {
 		key:       defaultShareCortex,
+		words:     sharedOrPrivate(),
 		own:       func(a AgentRecord) string { return a.ShareCortex },
 		legacy:    func(a AgentRecord) (string, bool) { return settingOff, a.ShareHoldCortex },
 		framework:  settingOn,
@@ -127,6 +171,7 @@ var triSettings = map[string]triSetting{
 	},
 	defaultShareReference: {
 		key:       defaultShareReference,
+		words:     sharedOrPrivate(),
 		own:       func(a AgentRecord) string { return a.ShareReference },
 		legacy:    func(a AgentRecord) (string, bool) { return settingOff, a.ShareHoldReference },
 		framework:  settingOn,
@@ -134,7 +179,8 @@ var triSettings = map[string]triSetting{
 		strictness: looseToStrict(),
 	},
 	defaultShareNotes: {
-		key: defaultShareNotes,
+		key:   defaultShareNotes,
+		words: sharedOrPrivate(),
 		own: func(a AgentRecord) string { return a.ShareNotes },
 		// The one legacy flag stored POSITIVELY: it granted rather than
 		// withheld, so a true means on and its framework answer is off.
@@ -145,6 +191,7 @@ var triSettings = map[string]triSetting{
 	},
 	defaultShareUploads: {
 		key:       defaultShareUploads,
+		words:     map[string]string{settingOn: "Allowed", settingOff: "Not allowed"},
 		own:       func(a AgentRecord) string { return a.ShareUploads },
 		legacy:    func(a AgentRecord) (string, bool) { return settingOff, a.ShareNoUploads },
 		framework:  settingOn,
@@ -153,6 +200,8 @@ var triSettings = map[string]triSetting{
 	},
 	defaultInboundMode: {
 		key: defaultInboundMode,
+		words: map[string]string{
+			inboundAny: "Anyone", inboundOnly: "Only its named callers", inboundNone: "Nobody"},
 		// Not on/off: its values are the inbound modes, and "" already meant
 		// "any agent". It carries a default the same way regardless.
 		own:       func(a AgentRecord) string { return a.InboundMode },
@@ -200,31 +249,42 @@ func settingIsOn(db Database, rec AgentRecord, key string) bool {
 	return resolveSetting(db, rec, key) == settingOn
 }
 
-// settingSource says WHERE an answer came from, for a page that has to show an
-// override as an override rather than as a value.
+// settingSource is the whole line that goes under a per-agent control: what
+// the setting is, and whether this agent decided it or is following.
+//
+// It LEADS with which of those it is, because that is what the reader is
+// deciding about. The line used to open "Currently " and then name a rung
+// ("from the default for all agents: off"), which buried both halves: the
+// value arrived last and in its stored spelling, and "currently" is true of
+// every value a control has ever shown.
+//
+// In the setting's own WORDS. "on" means allowed for the workspace ceiling and
+// shared for a memory layer, and a line reading "on" tells a reader nothing
+// they can act on.
 func settingSource(db Database, rec AgentRecord, key string) string {
 	s, ok := triSettings[key]
 	if !ok {
 		return ""
 	}
+	word := func(v string) string { return settingWord(key, v) }
 	// The ceiling FIRST, whatever rung the answer came from. A page that
-	// reported "set on this agent: on" while a deployment maximum was holding
-	// it off would be describing a value nobody is running under - and it is
-	// the agent's OWN setting that this most often overrides, so checking it
-	// after the own-answer branch is checking it in the one case it does not
-	// get reached.
+	// reported "set on this agent" while a deployment maximum was holding it
+	// elsewhere would be describing a value nobody is running under - and it
+	// is the agent's OWN setting that this most often overrides, so checking
+	// it after the own-answer branch is checking it in the one case it does
+	// not get reached.
 	raw := resolveSettingRaw(db, rec, key)
 	if held := clampToDeploymentMaximum(db, key, raw); held != raw {
-		return "held at " + held + " by the deployment maximum (this agent asks for " + raw + ")"
+		return "Held at " + word(held) + " by the deployment maximum - this agent asks for " + word(raw) + "."
 	}
 	if v := strings.TrimSpace(s.own(rec)); v != "" {
-		return "set on this agent: " + v
+		return "Set on this agent: " + word(v) + ". The default is " + word(effectiveDeploymentDefault(db, key)) + "."
 	}
 	if v, said := s.legacy(rec); said {
-		return "set on this agent: " + v
+		return "Set on this agent: " + word(v) + ". The default is " + word(effectiveDeploymentDefault(db, key)) + "."
 	}
-	if v := deploymentSetting(db, deploymentDefault, s.key); v != "" {
-		return "from the default for all agents: " + v
-	}
-	return "not set anywhere, so: " + s.framework
+	// Following. Named as the DEFAULT rather than as a rung it came from: an
+	// owner does not care which store answered, they care that this agent has
+	// not decided and will move if the default does.
+	return "Default Setting: " + word(effectiveDeploymentDefault(db, key)) + ". This agent has not decided, so it follows."
 }

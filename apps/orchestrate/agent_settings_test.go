@@ -71,19 +71,33 @@ func TestThePageSaysWhereTheAnswerCameFrom(t *testing.T) {
 	_, _, _ = newTestOrchestrate(t)
 	pinRootDB(t)
 	rec := AgentRecord{ID: "a", Owner: "alice"}
-	// Nothing set anywhere says exactly that, rather than claiming a default
-	// that does not exist: "from the default" when there is none would send
-	// somebody to a page to change something that is not there.
-	if got := workspaceNetworkSource(RootDB, rec); !strings.Contains(got, "not set anywhere") {
-		t.Errorf("an agent with nothing set anywhere does not say so: %q", got)
+	// An agent that has decided nothing leads with the DEFAULT and the value
+	// it resolves to, in the setting's own words. It used to open "Currently"
+	// and then name the rung the answer came from, which buried both halves:
+	// "currently" is true of every value a control ever shows, and the value
+	// arrived last in its stored spelling.
+	got := workspaceNetworkSource(RootDB, rec)
+	for _, want := range []string{"Default Setting:", "Allowed", "has not decided"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("an inheriting agent's line is missing %q: %q", want, got)
+		}
+	}
+	if strings.Contains(got, settingOn) {
+		t.Errorf("the line prints the stored value instead of the word: %q", got)
 	}
 	setDeploymentSetting(RootDB, deploymentDefault, defaultWorkspaceNetwork, settingOff)
-	if got := workspaceNetworkSource(RootDB, rec); !strings.Contains(got, "default for all agents") {
-		t.Errorf("an undecided agent does not say it is inheriting: %q", got)
+	if got = workspaceNetworkSource(RootDB, rec); !strings.Contains(got, "Default Setting: Blocked") {
+		t.Errorf("an undecided agent does not say what it is following: %q", got)
 	}
-	rec.WorkspaceNetwork = settingOff
-	if got := workspaceNetworkSource(RootDB, rec); !strings.Contains(got, "set on this agent") {
+	// An override reads as one, and still names the default it is departing
+	// from - which is the fact that decides whether to keep the override.
+	rec.WorkspaceNetwork = settingOn
+	got = workspaceNetworkSource(RootDB, rec)
+	if !strings.Contains(got, "Set on this agent: Allowed") {
 		t.Errorf("an override does not read as one: %q", got)
+	}
+	if !strings.Contains(got, "The default is Blocked") {
+		t.Errorf("an override does not say what it departs from: %q", got)
 	}
 }
 

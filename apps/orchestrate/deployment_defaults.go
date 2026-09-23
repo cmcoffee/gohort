@@ -217,11 +217,11 @@ func deploymentSettingsSection() ui.Section {
 		spec := triSettings[s.key]
 		fields = append(fields,
 			ui.FormField{Type: "header", Label: s.label, Help: s.help},
-			ui.FormField{Field: s.key, Type: "select", Label: "Default, for an agent that has not answered",
-				Options: deploymentOptions(spec, s.words),
+			ui.FormField{Field: s.key, Type: "select", Label: "Default Setting",
+				Options: deploymentOptions(spec),
 				Help:    "What every agent reads until it says otherwise. An agent can be given its own answer, in either direction, and that wins."},
 			ui.FormField{Field: s.key + "_max", Type: "select", Label: "Maximum any agent may hold",
-				Options: deploymentOptions(spec, s.words),
+				Options: deploymentOptions(spec),
 				Help:    "A ceiling, not a default: no agent resolves looser than this, whatever its owner set. Leave it at the loosest value to impose nothing.",
 				Detail: "This is the only control here that an owner cannot override. Leave it unset unless the deployment genuinely has to hold the line - a maximum that duplicates the default just removes a choice people are allowed to make.\\n\\n" +
 					"Set it and the agents already looser than it are clamped on their next turn. Their own setting is not rewritten, so lifting the ceiling gives them back what they had rather than leaving them reset."},
@@ -247,46 +247,35 @@ func deploymentSettingsSection() ui.Section {
 //
 // Ordered LOOSEST FIRST, which is also the order the ceiling ranks them in, so
 // the two selects on a row read the same way down.
-func deploymentOptions(spec triSetting, words map[string]string) []ui.SelectOption {
+func deploymentOptions(spec triSetting) []ui.SelectOption {
 	order := spec.strictness
 	if len(order) == 0 {
 		order = spec.values
 	}
 	out := []ui.SelectOption{}
 	for _, v := range order {
-		label := words[v]
-		if label == "" {
-			label = v
-		}
-		out = append(out, ui.SelectOption{Value: v, Label: label})
+		out = append(out, ui.SelectOption{Value: v, Label: settingWord(spec.key, v)})
 	}
 	return out
 }
 
-// deploymentSettingOrder is how the admin section reads, and the words each
-// setting uses for its values. Declared rather than derived: "on" means
-// "allowed" for one of these and "they see it" for another, and a page that
-// said "on" six times would be a page nobody could act on.
+// deploymentSettingOrder is how the admin section reads. The words each value
+// goes by are NOT here: they live on the setting itself, so the admin page,
+// the per-agent selects and the line under them all say the same thing. They
+// said three different things when each built its own.
 var deploymentSettingOrder = []struct {
 	key, label, help string
-	words            map[string]string
 }{
 	{defaultWorkspaceNetwork, "Network from an agent's workspace",
-		"Whether code running in an agent's sandbox may open connections.",
-		map[string]string{settingOn: "Allowed", settingOff: "Blocked"}},
+		"Whether code running in an agent's sandbox may open connections."},
 	{defaultInboundMode, "Which agents may dispatch to an agent",
-		"Who an agent accepts work from. Anyone, only its named callers, or nobody.",
-		map[string]string{inboundAny: "Anyone", inboundOnly: "Only its named callers", inboundNone: "Nobody"}},
+		"Who an agent accepts work from. Anyone, only its named callers, or nobody."},
 	{defaultShareCortex, "A shared agent's standing thread",
-		"Whether somebody the agent is shared with sees what it has been doing.",
-		map[string]string{settingOn: "They see it", settingOff: "Kept to the owner"}},
+		"Whether somebody the agent is shared with sees what it has been doing."},
 	{defaultShareReference, "A shared agent's attached knowledge",
-		"Whether somebody the agent is shared with reaches the collections attached to it.",
-		map[string]string{settingOn: "They see it", settingOff: "Kept to the owner"}},
+		"Whether somebody the agent is shared with reaches the collections attached to it."},
 	{defaultShareNotes, "A shared agent's working notes",
-		"Whether somebody the agent is shared with reads its notes.",
-		map[string]string{settingOn: "They see it", settingOff: "Kept to the owner"}},
+		"Whether somebody the agent is shared with reads its notes."},
 	{defaultShareUploads, "A shared agent's uploads",
-		"Whether somebody the agent is shared with reaches files uploaded to it.",
-		map[string]string{settingOn: "They see it", settingOff: "Kept to the owner"}},
+		"Whether somebody the agent is shared with reaches files uploaded to it."},
 }
