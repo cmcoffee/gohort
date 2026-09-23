@@ -11,7 +11,11 @@
 //
 //   - A SYSTEM THE OWNER CONNECTED. App-provided tools (an app registers a
 //     provider because the capability belongs to a machine, not to the
-//     framework) and credential-backed ones. The row names the system.
+//     framework) and credential-backed ones. ONE BAND PER SYSTEM: an app
+//     contributes a dozen tools at once, and sorting the whole band by name
+//     interleaved them with every other system's, so the thing the reader came
+//     to decide about - may this agent reach servitor - was spread down the
+//     page instead of being one box.
 //   - CODE IN THE SANDBOX. A framework tool declaring CapExecute. It sits
 //     ABOVE the internet band because running code is the larger reach of the
 //     two: a search sends a query out, execution can read the workspace, write
@@ -46,7 +50,10 @@ import (
 // is grouped on directly, so the words the reader sees are the words the
 // server sorts by and there is no second mapping to drift.
 const (
-	bandConnected = "Reaches a system you connected"
+	// bandConnected is a PREFIX: the system's name completes it, so each one
+	// gets its own heading and its own border. Everything that reads a band
+	// back sorts and governs off the prefix, never off the whole string.
+	bandConnected = "Connected system: "
 	bandSandbox   = "Runs code in the sandbox"
 	bandInternet  = "Reaches the open internet"
 	bandOwn       = "Your own tools"
@@ -60,9 +67,10 @@ const (
 // bandOrder ranks a band for sorting. The table groups in record order, so
 // this IS the order the headings appear in.
 func bandOrder(band string) int {
-	switch band {
-	case bandConnected:
+	if strings.HasPrefix(band, bandConnected) {
 		return 0
+	}
+	switch band {
 	case bandSandbox:
 		return 1
 	case bandInternet:
@@ -89,9 +97,10 @@ func classifyTool(provider, cred string, own bool, caps []Capability) (band, rea
 	cred = strings.TrimSpace(cred)
 	switch {
 	case provider != "":
-		return bandConnected, provider
+		return bandConnected + provider, provider
 	case cred != "" && !strings.EqualFold(cred, "no_auth"):
-		return bandConnected, credentialSystemName(cred)
+		sys := credentialSystemName(cred)
+		return bandConnected + sys, sys
 	case own:
 		return bandOwn, ""
 	// Before the network check, because a tool that does both is the more
@@ -133,3 +142,32 @@ func credentialSystemName(cred string) string {
 // something outside gohort, which is the whole of what makes a per-call
 // decision worth making.
 func bandGoverns(band string) bool { return band != bandInternal && band != bandOff }
+
+// bandRank orders two rows on the page. The table groups in RECORD order, so
+// this is what decides both which heading comes first and what sits under it.
+//
+// Band, then the band's own name so systems sort alphabetically among
+// themselves, then the owner's CATEGORY, then the tool.
+//
+// The category orders rows and never decides a band. It is editable by whoever
+// wrote the tool, so letting it move a tool between bands would make it a
+// boundary a tool can talk its way across; letting it cluster tools inside one
+// is just the owner's own filing.
+func bandRank(a, b accessToolRow) bool {
+	if x, y := bandOrder(a.Band), bandOrder(b.Band); x != y {
+		return x < y
+	}
+	if a.Band != b.Band {
+		return a.Band < b.Band
+	}
+	if !strings.EqualFold(a.Category, b.Category) {
+		// A tool with no category sorts after the filed ones rather than
+		// splitting them: an unfiled row between two of a category reads as
+		// belonging to it.
+		if a.Category == "" || b.Category == "" {
+			return b.Category == ""
+		}
+		return strings.ToLower(a.Category) < strings.ToLower(b.Category)
+	}
+	return strings.ToLower(a.Name) < strings.ToLower(b.Name)
+}

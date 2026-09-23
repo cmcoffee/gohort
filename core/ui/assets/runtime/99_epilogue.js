@@ -237,7 +237,37 @@
   // What stays in mount() is what belongs to a DOCUMENT rather than a page:
   // the header, the live menu, the footer. A host that already has those does
   // not want a second set.
+  // navStrip renders Page.Nav — the shared page menu for a multi-page app,
+  // active page highlighted — or null when a page declares none. Scrolls
+  // horizontally on narrow screens rather than wrapping.
+  //
+  // Its own function because BOTH renderings need it. The full page hangs it on
+  // the header row beside the back link; a page drawn as a panel inside another
+  // surface has no header row and was therefore losing its nav entirely, which
+  // meant a link that is the only route to a related page did not exist in the
+  // place people actually read the page from.
+  function navStrip(cfg) {
+    if (!cfg.nav || !cfg.nav.length) return null;
+    var tabs = el('nav', {class: 'ui-page-tabs'});
+    cfg.nav.forEach(function(it) {
+      tabs.appendChild(el('a', {
+        class: 'ui-page-tab' + (it.active ? ' active' : ''),
+        href: it.url || '#',
+      }, [it.label || '']));
+    });
+    return tabs;
+  }
+
   function renderPageBody(cfg, root) {
+    // The page's own nav first. Not the back link or the title: the surface
+    // hosting this body draws its own chrome, and a second title inside it
+    // would be the same page announcing itself twice. The nav is different -
+    // it points OUT of this page, and nothing else on the host offers it.
+    var bodyNav = navStrip(cfg);
+    if (bodyNav) {
+      bodyNav.classList.add('ui-page-tabs-inline');
+      root.appendChild(bodyNav);
+    }
     var inGrid = !!cfg.grid;
     var tabbed = !!cfg.tabbed;
     var sectionsHost = root;        // non-tabbed host
@@ -618,16 +648,8 @@
       // Top tabs — Page.Nav rendered inline on the header row (same line as the
       // back link): a shared page menu for a multi-page app, active page
       // highlighted. Scrolls horizontally on narrow screens rather than wrapping.
-      if (cfg.nav && cfg.nav.length) {
-        var tabs = el('nav', {class: 'ui-page-tabs'});
-        cfg.nav.forEach(function(it) {
-          tabs.appendChild(el('a', {
-            class: 'ui-page-tab' + (it.active ? ' active' : ''),
-            href: it.url || '#',
-          }, [it.label || '']));
-        });
-        header.appendChild(tabs);
-      }
+      var tabs = navStrip(cfg);
+      if (tabs) header.appendChild(tabs);
       // Live-sessions pill — polls /api/live every 10s and shows a
       // running/queued count badge with a click-through popover. Lets
       // operators see at a glance from any framework page that

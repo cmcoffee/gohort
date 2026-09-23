@@ -235,12 +235,7 @@ func (T *OrchestrateApp) resolvedAgentTools(ctx context.Context, udb Database, u
 	// the tools worth a decision are the first thing on screen rather than the
 	// last - the flat alphabetical list buried them under the framework
 	// catalog, which is how a control surface becomes a list nobody scrolls.
-	sort.SliceStable(out, func(i, j int) bool {
-		if a, b := bandOrder(out[i].Band), bandOrder(out[j].Band); a != b {
-			return a < b
-		}
-		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
-	})
+	sort.SliceStable(out, func(i, j int) bool { return bandRank(out[i], out[j]) })
 	return out, nil
 }
 

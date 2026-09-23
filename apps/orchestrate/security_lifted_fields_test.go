@@ -10,6 +10,7 @@ package orchestrate
 // fact drift, and the one you did not use is the one you go on believing.
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -89,4 +90,34 @@ func TestTheEditorsRemainingHeaderIsNotCollapsed(t *testing.T) {
 	if strings.Contains(editor, `Label: "Access & visibility", Collapsed: true`) {
 		t.Error("the heading is stale and folded: its contents moved to Security")
 	}
+}
+
+// A page's nav travels with its BODY, not only with its header row.
+//
+// Security is read from inside the chat overlay as often as from its own URL,
+// and the overlay draws the body alone - so the "All agents" link, which is the
+// only route to the fleet-wide defaults the per-agent controls point at, did
+// not exist in the place people actually read the page from.
+func TestThePagesNavSurvivesBeingDrawnAsAPanel(t *testing.T) {
+	src := mustReadRuntime(t, "99_epilogue.js")
+	if strings.Count(src, "navStrip(cfg)") < 2 {
+		t.Error("the nav is built in one rendering only, so a page drawn as a panel loses it")
+	}
+	if !strings.Contains(src, "bodyNav = navStrip(cfg)") {
+		t.Error("renderPageBody does not draw the page's nav")
+	}
+	// The nav only. The host surface draws its own chrome, and a second title
+	// inside it would be the same page announcing itself twice.
+	if strings.Contains(src, "bodyNav.appendChild(el('h1'") {
+		t.Error("the body rendering grew a page title, which the host already shows")
+	}
+}
+
+func mustReadRuntime(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile("../../core/ui/assets/runtime/" + name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

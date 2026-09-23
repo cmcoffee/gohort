@@ -27,11 +27,11 @@ func TestAToolIsBandedByWhatItReaches(t *testing.T) {
 		reaches  string
 	}{
 		{"an app's tool names the system it belongs to",
-			"servitor", "", false, []Capability{CapExecute}, bandConnected, "servitor"},
+			"servitor", "", false, []Capability{CapExecute}, bandConnected + "servitor", "servitor"},
 		{"a credential-backed tool names the credential",
-			"", "issue_tracker", true, []Capability{CapNetwork}, bandConnected, "issue_tracker"},
+			"", "issue_tracker", true, []Capability{CapNetwork}, bandConnected + "issue_tracker", "issue_tracker"},
 		{"an owner-scoped credential drops its scoping",
-			"", "@u:alice:issue_tracker", true, nil, bandConnected, "issue_tracker"},
+			"", "@u:alice:issue_tracker", true, nil, bandConnected + "issue_tracker", "issue_tracker"},
 		{"no_auth is not a system",
 			"", "no_auth", true, nil, bandOwn, ""},
 		{"the owner's own tool, unauthenticated",
@@ -62,8 +62,56 @@ func TestAToolIsBandedByWhatItReaches(t *testing.T) {
 	// An app's tool beats the capabilities it happens to declare. A provider
 	// is registered because the capability belongs to a machine somebody
 	// connected, and that is true whether or not the tool calls it network.
-	if band, _ := classifyTool("servitor", "", false, []Capability{CapRead}); band != bandConnected {
+	if band, _ := classifyTool("servitor", "", false, []Capability{CapRead}); band != bandConnected+"servitor" {
 		t.Errorf("a read-only app tool fell out of the connected band: %q", band)
+	}
+
+	// ONE BAND PER SYSTEM, so an app's dozen tools are one box rather than a
+	// dozen rows scattered alphabetically through everything else connected.
+	servitor, _ := classifyTool("servitor", "", false, nil)
+	tracker, _ := classifyTool("", "issue_tracker", true, nil)
+	if servitor == tracker {
+		t.Error("two connected systems share a band, so their tools interleave")
+	}
+	if bandOrder(servitor) != 0 || bandOrder(tracker) != 0 {
+		t.Error("a per-system band lost its place in the order")
+	}
+	if !bandGoverns(servitor) {
+		t.Error("a per-system band lost its controls")
+	}
+}
+
+// Within a band, rows cluster by the owner's own filing and then by name.
+//
+// The CATEGORY orders rows and never decides a band: it is editable by whoever
+// wrote the tool, so letting it move a tool between bands would make it a
+// boundary a tool can talk its way across. Clustering inside one is just the
+// owner's filing.
+func TestRowsClusterByTheOwnersFilingInsideABand(t *testing.T) {
+	row := func(band, cat, name string) accessToolRow {
+		return accessToolRow{Band: band, Category: cat, Name: name}
+	}
+	// A band always beats a category: a tool filed under "admin" does not join
+	// another band's "admin" tools.
+	if !bandRank(row(bandConnected+"servitor", "zzz", "z"), row(bandInternet, "aaa", "a")) {
+		t.Error("a category pulled a row out of its band's place")
+	}
+	// Systems sort alphabetically among themselves, so the headings are stable.
+	if !bandRank(row(bandConnected+"alpha", "", "z"), row(bandConnected+"zulu", "", "a")) {
+		t.Error("connected systems do not sort by name, so the headings reshuffle")
+	}
+	// Inside one band: category, then tool.
+	if !bandRank(row(bandOwn, "admin", "zzz"), row(bandOwn, "reporting", "aaa")) {
+		t.Error("rows are not clustered by category")
+	}
+	if !bandRank(row(bandOwn, "admin", "aaa"), row(bandOwn, "admin", "bbb")) {
+		t.Error("rows within one category are not sorted by name")
+	}
+	// An unfiled tool sorts AFTER the filed ones rather than splitting them: a
+	// row with no category sitting between two of a category reads as one of
+	// them.
+	if !bandRank(row(bandOwn, "admin", "zzz"), row(bandOwn, "", "aaa")) {
+		t.Error("an unfiled tool splits a category")
 	}
 }
 
