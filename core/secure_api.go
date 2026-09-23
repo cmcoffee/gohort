@@ -1965,7 +1965,19 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 				if c.IsPerUser() {
 					return "", fmt.Errorf("you haven't connected your %q account yet: set your key on your Account page (Connected accounts)", c.Name)
 				}
-				return "", fmt.Errorf("credential %q has no stored secret (re-add it via the admin UI)", c.Name)
+				// Named for WHERE it actually is, and whose it is. "the admin
+				// UI" was wrong twice: credentials moved under Extensions, and
+				// a user-owned one is not in the admin list at all (that list
+				// is global-only), so it sent the owner to a page their
+				// credential cannot appear on.
+				//
+				// The draft case is named because it is the likeliest: a
+				// credential authored by Builder, or added and not finished,
+				// exists with everything except its key.
+				if c.Owner != "" {
+					return "", fmt.Errorf("credential %q has no stored secret. If it was drafted and never finished, open Extensions -> API credentials and set its key; the record is there, only the secret is missing", c.Name)
+				}
+				return "", fmt.Errorf("credential %q has no stored secret. An administrator sets it under Admin -> Extensions -> API Credentials; if it was drafted and never finished, the record is there and only the secret is missing", c.Name)
 			}
 		}
 	}

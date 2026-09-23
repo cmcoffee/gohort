@@ -285,7 +285,7 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 		// right shape is to OMIT the credential entirely; the runtime
 		// branches to plain HTTP in that case.
 		if credential != "" && isPlaceholderCredential(credential) {
-			return "", fmt.Errorf("credential value %q is a placeholder string, not a real credential. For PUBLIC APIs (no auth needed), OMIT the credential field entirely: the runtime will route through plain HTTP. For AUTHENTICATED APIs, pass the actual registered credential name (have the user register one via the admin UI if none exists)", credential)
+			return "", fmt.Errorf("credential value %q is a placeholder string, not a real credential. For PUBLIC APIs (no auth needed), OMIT the credential field entirely: the runtime will route through plain HTTP. For AUTHENTICATED APIs, pass the actual registered credential name (have the user register one under Extensions -> API credentials if none exists)", credential)
 		}
 		// A secured credential is locked to the tools that already use it — a
 		// new/edited api tool can't declare it (that would self-grant the
