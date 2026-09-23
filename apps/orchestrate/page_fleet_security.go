@@ -31,6 +31,20 @@ import (
 // before it looks anything up.
 const fleetSecurityID = "all"
 
+// fleetShareChoice is one layer's default. "Not set" is offered and is not the
+// same as "kept to yourself": unset, an agent that has decided nothing gets
+// the framework's own answer, which differs per layer.
+func fleetShareChoice(field, noun string) ui.FormField {
+	return ui.FormField{
+		Field: field, Type: "select", Label: noun,
+		Options: []ui.SelectOption{
+			{Value: "", Label: "Not set"},
+			{Value: "on", Label: "They see it"},
+			{Value: "off", Label: "Kept to yourself"},
+		},
+	}
+}
+
 func (T *OrchestrateApp) renderFleetSecurity(w http.ResponseWriter, r *http.Request, user string, udb Database) {
 	// scope=fleet on every source: these are the rows that bind every agent,
 	// and mixing an agent's own into a page about all of them is the confusion
@@ -105,6 +119,23 @@ func (T *OrchestrateApp) renderFleetSecurity(w http.ResponseWriter, r *http.Requ
 								{Value: "off", Label: "Blocked"},
 							},
 							Help: "Read by every agent that has not answered this itself."},
+					},
+				},
+			},
+			{
+				Group:    "Share",
+				Title:    "What a recipient sees by default",
+				Subtitle: "Which memory layers travel with an agent that has not answered for itself.",
+				Detail:   "An agent may override any of these either way. Each says on its own page which it is doing, so an override reads as an override rather than as a value.",
+				Body: ui.FormPanel{
+					Source:  T.WebPrefix() + "/api/console/fleet-defaults",
+					PostURL: T.WebPrefix() + "/api/console/fleet-defaults",
+					Method:  "PATCH",
+					Fields: []ui.FormField{
+						fleetShareChoice("share_cortex", "Its standing activity"),
+						fleetShareChoice("share_reference", "What it worked out"),
+						fleetShareChoice("share_notes", "Its saved notes"),
+						fleetShareChoice("share_uploads", "Adding documents of their own"),
 					},
 				},
 			},

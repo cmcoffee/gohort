@@ -742,6 +742,23 @@ type AgentRecord struct {
 	// one and nothing writes it any more.
 	WorkspaceNetwork string `json:"workspace_network,omitempty"`
 
+	// The share layers, as tri-states: "on", "off", or empty for "not decided
+	// here, use the default for all agents".
+	//
+	// Stated as what a recipient GETS, where three of the four fields they
+	// replace stated what was withheld. A record where some fields mean
+	// allowed and others mean forbidden is the storage-level version of a
+	// column of switches pointing opposite ways.
+	//
+	// The old fields stay readable so a record written before this still means
+	// what it meant, and nothing writes them any more. ShareMemoryExplicit is
+	// the one that was already positive: it GRANTED, so a true reads as on
+	// where the others read as off.
+	ShareCortex    string `json:"share_cortex,omitempty"`
+	ShareReference string `json:"share_reference,omitempty"`
+	ShareNotes     string `json:"share_notes,omitempty"`
+	ShareUploads   string `json:"share_uploads,omitempty"`
+
 	InboundMode string `json:"inbound_mode,omitempty"`
 	// AllowedCallers are the agent IDs that may dispatch to this one, read
 	// only when InboundMode is "only". Empty in that mode means nothing

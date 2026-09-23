@@ -348,7 +348,9 @@ func inboundAllows(target, caller AgentRecord) bool {
 	if strings.TrimSpace(target.OwnedBy) != "" && target.OwnedBy == caller.ID {
 		return true
 	}
-	switch strings.TrimSpace(target.InboundMode) {
+	// The owner's default reaches an agent that has not answered, the same way
+	// every other setting does.
+	switch resolveSetting(RootDB, agentDefaultsOwner(target, ""), target, defaultInboundMode) {
 	case inboundNone:
 		return false
 	case inboundOnly:

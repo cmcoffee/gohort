@@ -8,6 +8,7 @@ package orchestrate
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -70,6 +71,13 @@ func TestThePageSaysWhereTheAnswerCameFrom(t *testing.T) {
 	_, _, _ = newTestOrchestrate(t)
 	pinRootDB(t)
 	rec := AgentRecord{ID: "a", Owner: "alice"}
+	// Nothing set anywhere says exactly that, rather than claiming a default
+	// that does not exist: "from the default" when there is none would send
+	// somebody to a page to change something that is not there.
+	if got := workspaceNetworkSource(RootDB, "alice", rec); !strings.Contains(got, "not set anywhere") {
+		t.Errorf("an agent with nothing set anywhere does not say so: %q", got)
+	}
+	setFleetDefault(RootDB, "alice", defaultWorkspaceNetwork, settingOff)
 	if got := workspaceNetworkSource(RootDB, "alice", rec); !strings.Contains(got, "default for all agents") {
 		t.Errorf("an undecided agent does not say it is inheriting: %q", got)
 	}
@@ -108,5 +116,69 @@ func TestFleetDefaultsRefuseWhatNothingReads(t *testing.T) {
 	}
 	if fleetDefault(RootDB, "alice", "workspce_netwrk") != "" {
 		t.Error("a key nothing reads was stored, so it looks like a setting that works")
+	}
+}
+
+// Every settable default is in the table, and every entry is complete. A
+// setting missing its framework answer defaults to the empty string, which for
+// an on/off setting is neither and behaves as off - a silent tightening on a
+// deployment that set nothing.
+func TestEveryDefaultableSettingIsWiredWholly(t *testing.T) {
+	for key, s := range triSettings {
+		if s.key != key {
+			t.Errorf("%s is filed under the wrong key: %q", key, s.key)
+		}
+		if s.own == nil || s.legacy == nil {
+			t.Errorf("%s cannot be read", key)
+		}
+		if s.framework == "" && key != defaultInboundMode {
+			t.Errorf("%s has no answer for a deployment that set nothing", key)
+		}
+		if len(s.values) == 0 {
+			t.Errorf("%s accepts nothing, so its control can never be set", key)
+		}
+		// The framework answer must be one the setting accepts, or the
+		// resolver returns a value the writer would have refused.
+		if s.framework != "" && !slices.Contains(s.values, s.framework) {
+			t.Errorf("%s defaults to %q, which it does not accept", key, s.framework)
+		}
+	}
+	// The ones that exist, so adding a field without wiring it shows up here
+	// rather than as a control that saves and does nothing.
+	for _, want := range []string{
+		defaultWorkspaceNetwork, defaultShareCortex, defaultShareReference,
+		defaultShareNotes, defaultShareUploads, defaultInboundMode,
+	} {
+		if _, ok := triSettings[want]; !ok {
+			t.Errorf("%s is not in the table", want)
+		}
+	}
+}
+
+// The share layers each keep the answer they had before defaults existed. A
+// deployment that sets nothing must behave exactly as it did.
+func TestTheShareLayersKeepTheirOldDefaults(t *testing.T) {
+	_, _, _ = newTestOrchestrate(t)
+	pinRootDB(t)
+	plain := AgentRecord{ID: "a", Owner: "alice"}
+	for key, want := range map[string]bool{
+		defaultShareCortex:    true,  // travelled before
+		defaultShareReference: true,  // travelled before
+		defaultShareNotes:     false, // did NOT: it granted rather than withheld
+		defaultShareUploads:   true,  // recipients could add documents
+	} {
+		if got := settingIsOn(RootDB, "alice", plain, key); got != want {
+			t.Errorf("%s changed for an agent that set nothing: got %v want %v", key, got, want)
+		}
+	}
+	// And a legacy record still says what it said. share_memory_explicit is
+	// the one stored POSITIVELY: a true there means on, where the others mean
+	// off, and reading it the same way as its neighbours would invert it.
+	old := AgentRecord{ID: "a", Owner: "alice", ShareMemoryExplicit: true, ShareHoldCortex: true}
+	if !settingIsOn(RootDB, "alice", old, defaultShareNotes) {
+		t.Error("an agent that shared its notes stopped sharing them")
+	}
+	if settingIsOn(RootDB, "alice", old, defaultShareCortex) {
+		t.Error("an agent holding its cortex back started sharing it")
 	}
 }

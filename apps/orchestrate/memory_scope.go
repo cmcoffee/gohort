@@ -19,10 +19,18 @@ package orchestrate
 // default on.
 //
 // The defaults are what the framework already did, which is different per
-// layer. See AgentRecord.ShareHoldCortex and its neighbours.
+// layer. See AgentRecord.ShareCortex and its neighbours.
+//
+// Resolved rather than read off a field: an agent that has answered wins, then
+// a record written before these were tri-states, then the OWNER's default for
+// all agents. The owner's, not the runtime user's - a shared agent runs for
+// somebody else, and which of its layers travel is a decision its owner made
+// about their own agent.
 
 import (
 	"strings"
+
+	. "github.com/cmcoffee/gohort/core"
 )
 
 // memoryScope is the two axes, separated.
@@ -90,7 +98,8 @@ func (t *chatTurn) memoryUnderlay() string {
 // become a record of their own week can stop it, not because sharing it was
 // wrong.
 func (t *chatTurn) readsOwnerCortex() bool {
-	return t.memoryUnderlay() != "" && !t.agent.ShareHoldCortex
+	return t.memoryUnderlay() != "" &&
+		settingIsOn(RootDB, agentDefaultsOwner(t.agent, t.user), t.agent, defaultShareCortex)
 }
 
 // readsOwnerReference reports whether retrieval also searches the owner's copy
@@ -101,7 +110,8 @@ func (t *chatTurn) readsOwnerCortex() bool {
 // inferred across the owner's conversations without being asked to. An owner
 // who reads what is in it and decides it should not travel turns this on.
 func (t *chatTurn) readsOwnerReference() bool {
-	return t.memoryUnderlay() != "" && !t.agent.ShareHoldReference
+	return t.memoryUnderlay() != "" &&
+		settingIsOn(RootDB, agentDefaultsOwner(t.agent, t.user), t.agent, defaultShareReference)
 }
 
 // readsOwnerFacts reports whether the owner's saved notes join this turn's
@@ -111,7 +121,8 @@ func (t *chatTurn) readsOwnerReference() bool {
 // default would disclose, on every existing share, whatever came up while the
 // owner was talking to the agent alone.
 func (t *chatTurn) readsOwnerFacts() bool {
-	return t.memoryUnderlay() != "" && t.agent.ShareMemoryExplicit
+	return t.memoryUnderlay() != "" &&
+		settingIsOn(RootDB, agentDefaultsOwner(t.agent, t.user), t.agent, defaultShareNotes)
 }
 
 // readsOwnerCorpus reports whether a retrieval at this scope also searches the

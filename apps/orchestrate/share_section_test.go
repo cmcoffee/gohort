@@ -114,21 +114,40 @@ func TestAGrantFormKeepsItsButton(t *testing.T) {
 func TestTheSwitchesOnScreenAreTheOnesTheRuntimeReads(t *testing.T) {
 	block := shareSectionSource(t)
 	src := packageSource(t)
+	// The tri-states, not the bools they replaced: those are still READ for a
+	// record written before this, and are written by nothing.
 	for field, reader := range map[string]string{
-		"share_hold_cortex":     "ShareHoldCortex",
-		"share_hold_reference":  "ShareHoldReference",
-		"share_memory_explicit": "ShareMemoryExplicit",
-		"share_no_uploads":      "ShareNoUploads",
+		"share_cortex":    "ShareCortex",
+		"share_reference": "ShareReference",
+		"share_notes":     "ShareNotes",
+		"share_uploads":   "ShareUploads",
 	} {
-		if !strings.Contains(block, `Field: "`+field+`"`) {
+		if !strings.Contains(block, `"`+field+`"`) {
 			t.Errorf("%s is not on the panel", field)
 		}
-		if !strings.Contains(src, "t.agent."+reader) && !strings.Contains(src, "agent."+reader) {
+		// Read through the resolver now, not off the record: the agent's own
+		// answer, then a legacy record, then the owner's default. A test
+		// looking for a bare field read would fail on the thing that makes
+		// defaults work.
+		if !strings.Contains(src, "a."+reader) {
 			t.Errorf("%s is saved by the panel and read by nothing", field)
 		}
+	}
+	// Saveable, or the panel writes nothing.
+	for _, field := range []string{"share_cortex", "share_reference", "share_notes", "share_uploads"} {
 		if !patchAgentFields[field] {
 			t.Errorf("%s is on the panel but not saveable: the PATCH allowlist drops it", field)
 		}
+	}
+	// And each is RESOLVED at its read site rather than read off the record,
+	// or a fleet default reaches nothing.
+	for _, key := range []string{"defaultShareCortex", "defaultShareReference", "defaultShareNotes", "defaultShareUploads"} {
+		if !strings.Contains(src, key) {
+			t.Errorf("%s is never consulted, so its default reaches nothing", key)
+		}
+	}
+	if !strings.Contains(src, "settingIsOn(RootDB, agentDefaultsOwner") {
+		t.Error("the share layers are not resolved through the owner's defaults")
 	}
 }
 

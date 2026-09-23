@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -27,6 +28,11 @@ const fleetDefaultsTable = "fleet_defaults"
 // reads is a control that appears to work.
 const (
 	defaultWorkspaceNetwork = "workspace_network"
+	defaultShareCortex      = "share_cortex"
+	defaultShareReference   = "share_reference"
+	defaultShareNotes       = "share_notes"
+	defaultShareUploads     = "share_uploads"
+	defaultInboundMode      = "inbound_mode"
 )
 
 // Tri-state values. Empty is the third and is never written: it is what a
@@ -75,39 +81,13 @@ func setFleetDefault(db Database, owner, setting, value string) {
 // framework's answer is last and is OPEN, which is what every deployment did
 // before any of this and must stay true for one that sets nothing.
 func agentWorkspaceNetwork(db Database, owner string, rec AgentRecord) bool {
-	switch strings.TrimSpace(rec.WorkspaceNetwork) {
-	case settingOn:
-		return true
-	case settingOff:
-		return false
-	}
-	// An override made before the tri-state existed. Only ever true for a
-	// block, since the old field could not record an explicit allow.
-	if rec.WorkspaceNoNetwork {
-		return false
-	}
-	if fleetDefault(db, owner, defaultWorkspaceNetwork) == settingOff {
-		return false
-	}
-	return true
+	return settingIsOn(db, owner, rec, defaultWorkspaceNetwork)
 }
 
 // workspaceNetworkSource says WHERE that answer came from, for a page that has
 // to show an override as an override rather than as a value.
 func workspaceNetworkSource(db Database, owner string, rec AgentRecord) string {
-	switch strings.TrimSpace(rec.WorkspaceNetwork) {
-	case settingOn:
-		return "set on this agent: allowed"
-	case settingOff:
-		return "set on this agent: blocked"
-	}
-	if rec.WorkspaceNoNetwork {
-		return "set on this agent: blocked"
-	}
-	if fleetDefault(db, owner, defaultWorkspaceNetwork) == settingOff {
-		return "from the default for all agents: blocked"
-	}
-	return "from the default for all agents: allowed"
+	return settingSource(db, owner, rec, defaultWorkspaceNetwork)
 }
 
 // agentDefaultsOwner is whose defaults an agent reads: its owner, falling back
@@ -141,16 +121,18 @@ func (T *OrchestrateApp) handleFleetDefaults(w http.ResponseWriter, r *http.Requ
 	switch r.Method {
 	case http.MethodGet:
 		w.Header().Set("Cache-Control", "no-store")
-		writeJSON(w, map[string]any{
-			defaultWorkspaceNetwork: fleetDefault(RootDB, user, defaultWorkspaceNetwork),
-		})
+		out := map[string]any{}
+		for setting := range triSettings {
+			out[setting] = fleetDefault(RootDB, user, setting)
+		}
+		writeJSON(w, out)
 	case http.MethodPatch, http.MethodPost:
 		var body map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		for _, setting := range []string{defaultWorkspaceNetwork} {
+		for setting := range triSettings {
 			raw, present := body[setting]
 			if !present {
 				continue
@@ -161,8 +143,8 @@ func (T *OrchestrateApp) handleFleetDefaults(w http.ResponseWriter, r *http.Requ
 			}
 			// Empty clears, which is NOT the same as off: cleared, an agent
 			// that decided nothing goes back to the framework's answer.
-			if v != "" && v != settingOn && v != settingOff {
-				http.Error(w, setting+" must be on, off, or empty", http.StatusBadRequest)
+			if v != "" && !slices.Contains(triSettings[setting].values, v) {
+				http.Error(w, setting+" does not take "+v, http.StatusBadRequest)
 				return
 			}
 			setFleetDefault(RootDB, user, setting, v)
@@ -171,4 +153,126 @@ func (T *OrchestrateApp) handleFleetDefaults(w http.ResponseWriter, r *http.Requ
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+// triSetting describes one setting that can carry a fleet default.
+//
+// A table rather than a resolver each, because the shape is identical every
+// time: the agent's own answer, a record written before the tri-state, the
+// owner's default, the framework's. Written out four times it drifts in the
+// order or in what an empty value means, and the difference between those is
+// whether a fleet blocks something or opens it.
+type triSetting struct {
+	key string // the fleet-default key, and the record's json field
+	// own reads the agent's own tri-state answer: "on", "off" or "".
+	own func(AgentRecord) string
+	// legacy reads a record written before this setting was tri-state, and
+	// reports whether it said anything. Only a value the old field could
+	// actually record counts: most were bools that could express one side.
+	legacy func(AgentRecord) (string, bool)
+	// framework is the answer when nobody has given one. It is what the
+	// deployment did before any of this existed and must stay that way for
+	// one that sets nothing.
+	framework string
+	// values are what may be stored, empty aside. Declared per setting
+	// because they are not all on and off: inbound reach takes its own modes,
+	// and a shared on/off check would refuse them while looking correct.
+	values []string
+}
+
+// onOff is the common case, named once so a setting that takes it says so
+// rather than repeating a literal that could drift.
+func onOff() []string { return []string{settingOn, settingOff} }
+
+var triSettings = map[string]triSetting{
+	defaultWorkspaceNetwork: {
+		key: defaultWorkspaceNetwork,
+		own: func(a AgentRecord) string { return a.WorkspaceNetwork },
+		// The old field could only ever record a BLOCK.
+		legacy:    func(a AgentRecord) (string, bool) { return settingOff, a.WorkspaceNoNetwork },
+		framework: settingOn,
+		values:    onOff(),
+	},
+	defaultShareCortex: {
+		key:       defaultShareCortex,
+		own:       func(a AgentRecord) string { return a.ShareCortex },
+		legacy:    func(a AgentRecord) (string, bool) { return settingOff, a.ShareHoldCortex },
+		framework: settingOn,
+		values:    onOff(),
+	},
+	defaultShareReference: {
+		key:       defaultShareReference,
+		own:       func(a AgentRecord) string { return a.ShareReference },
+		legacy:    func(a AgentRecord) (string, bool) { return settingOff, a.ShareHoldReference },
+		framework: settingOn,
+		values:    onOff(),
+	},
+	defaultShareNotes: {
+		key: defaultShareNotes,
+		own: func(a AgentRecord) string { return a.ShareNotes },
+		// The one legacy flag stored POSITIVELY: it granted rather than
+		// withheld, so a true means on and its framework answer is off.
+		legacy:    func(a AgentRecord) (string, bool) { return settingOn, a.ShareMemoryExplicit },
+		framework: settingOff,
+		values:    onOff(),
+	},
+	defaultShareUploads: {
+		key:       defaultShareUploads,
+		own:       func(a AgentRecord) string { return a.ShareUploads },
+		legacy:    func(a AgentRecord) (string, bool) { return settingOff, a.ShareNoUploads },
+		framework: settingOn,
+		values:    onOff(),
+	},
+	defaultInboundMode: {
+		key: defaultInboundMode,
+		// Not on/off: its values are the inbound modes, and "" already meant
+		// "any agent". It carries a default the same way regardless.
+		own:       func(a AgentRecord) string { return a.InboundMode },
+		legacy:    func(AgentRecord) (string, bool) { return "", false },
+		framework: inboundAny,
+		values:    []string{inboundOnly, inboundNone},
+	},
+}
+
+// resolveSetting answers one setting for one agent, in the order the answers
+// override each other.
+func resolveSetting(db Database, owner string, rec AgentRecord, key string) string {
+	s, ok := triSettings[key]
+	if !ok {
+		return ""
+	}
+	if v := strings.TrimSpace(s.own(rec)); v != "" {
+		return v
+	}
+	if v, said := s.legacy(rec); said {
+		return v
+	}
+	if v := fleetDefault(db, owner, s.key); v != "" {
+		return v
+	}
+	return s.framework
+}
+
+// settingIsOn is the bool form, for a setting whose values are on and off.
+func settingIsOn(db Database, owner string, rec AgentRecord, key string) bool {
+	return resolveSetting(db, owner, rec, key) == settingOn
+}
+
+// settingSource says WHERE an answer came from, for a page that has to show an
+// override as an override rather than as a value.
+func settingSource(db Database, owner string, rec AgentRecord, key string) string {
+	s, ok := triSettings[key]
+	if !ok {
+		return ""
+	}
+	if v := strings.TrimSpace(s.own(rec)); v != "" {
+		return "set on this agent: " + v
+	}
+	if v, said := s.legacy(rec); said {
+		return "set on this agent: " + v
+	}
+	if v := fleetDefault(db, owner, s.key); v != "" {
+		return "from the default for all agents: " + v
+	}
+	return "not set anywhere, so: " + s.framework
 }

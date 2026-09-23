@@ -27,6 +27,23 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
+// shareChoice is one memory layer as a tri-state, with its current answer and
+// where that answer came from stated in the help line.
+//
+// A shared helper because four of them differ only in the field and the noun,
+// and four copies of a select is where one quietly keeps the wrong default.
+func shareChoice(field, noun, key string, db Database, owner string, agent AgentRecord) ui.FormField {
+	return ui.FormField{
+		Field: field, Type: "select", Label: noun,
+		Options: []ui.SelectOption{
+			{Value: "", Label: "Use the default for all agents"},
+			{Value: "on", Label: "They see it"},
+			{Value: "off", Label: "Kept to yourself"},
+		},
+		Help: "Currently " + settingSource(db, owner, agent, key) + ".",
+	}
+}
+
 func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Request, user string, udb Database, id string) {
 	agent, ok := loadAgent(udb, id)
 	if !ok || (agent.Owner != "" && agent.Owner != user && agent.Owner != seedOwner) {
@@ -630,14 +647,18 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 					PostURL: patchURL,
 					Method:  "PATCH",
 					Fields: []ui.FormField{
-						// Every switch here reads "on = they get it", including
-						// the three whose stored field is negative. A column
-						// where some mean allowed and others mean withheld is
-						// where somebody flips the wrong one.
-						{Field: "share_hold_cortex", Type: "toggle", Invert: true, Label: "Let them see its standing activity"},
-						{Field: "share_hold_reference", Type: "toggle", Invert: true, Label: "Let them see what it worked out"},
-						{Field: "share_memory_explicit", Type: "toggle", Label: "Let them see its saved notes"},
-						{Field: "share_no_uploads", Type: "toggle", Invert: true, Label: "Let them add documents of their own"},
+						// Each states what a recipient GETS, and each carries
+						// the third state: an agent that has not answered reads
+						// the default for all agents. The help line says which
+						// it is doing, so an override reads AS an override.
+						//
+						// The Invert hack these replace is gone with them: the
+						// stored values are positive now, so nothing has to be
+						// turned round on the way to the screen.
+						shareChoice("share_cortex", "Its standing activity", defaultShareCortex, RootDB, user, agent),
+						shareChoice("share_reference", "What it worked out", defaultShareReference, RootDB, user, agent),
+						shareChoice("share_notes", "Its saved notes", defaultShareNotes, RootDB, user, agent),
+						shareChoice("share_uploads", "Adding documents of their own", defaultShareUploads, RootDB, user, agent),
 					},
 				},
 			},

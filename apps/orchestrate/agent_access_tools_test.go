@@ -479,33 +479,30 @@ func TestTheInChatLadderRefusesNever(t *testing.T) {
 // the switch that looks like every other switch.
 func TestEveryToggleOnSecurityMeansAllowed(t *testing.T) {
 	src := mustRead(t, "page_agent_access.go")
-	// Each negative field is inverted where it is offered.
-	// workspace_no_network is no longer a toggle at all: it became a
-	// tri-state select, because a bool cannot hold "not decided here".
-	for _, f := range []string{"share_hold_cortex", "share_hold_reference", "share_no_uploads", "hidden"} {
-		i := strings.Index(src, `Field: "`+f+`", Type: "toggle"`)
-		if i < 0 {
-			t.Errorf("%s is not offered as a toggle", f)
-			continue
-		}
-		if !strings.Contains(src[i:i+120], "Invert: true") {
-			t.Errorf("%s is stored negatively and shown as-is, so its switch means the opposite of the ones around it", f)
-		}
+	// Only `hidden` is still a switch over a negative field. The share layers
+	// became tri-states, whose stored values are positive, so nothing has to
+	// be turned round on the way to the screen, and workspace reach became a
+	// select for the same reason.
+	i := strings.Index(src, `Field: "hidden", Type: "toggle"`)
+	if i < 0 {
+		t.Fatal("hidden is not offered as a toggle")
 	}
-	// And the labels say the positive thing, or the inversion just moves the
-	// confusion from the switch to the words beside it.
-	for _, dead := range []string{"Keep its standing activity to yourself", "Hide from agent fleet"} {
+	if !strings.Contains(src[i:i+120], "Invert: true") {
+		t.Error("hidden is stored negatively and shown as-is, so its switch means the opposite of the ones around it")
+	}
+	// A label still stating the restriction moves the confusion from the
+	// switch to the words beside it.
+	for _, dead := range []string{"Keep its standing activity to yourself", "Hide from agent fleet", "may not reach the network"} {
 		if strings.Contains(src, dead) {
 			t.Errorf("a label still states the restriction: %q", dead)
 		}
 	}
-	// share_memory_explicit is stored POSITIVELY and must not be inverted.
-	i := strings.Index(src, `Field: "share_memory_explicit", Type: "toggle"`)
-	if i < 0 {
-		t.Fatal("share_memory_explicit is not offered")
-	}
-	if strings.Contains(src[i:i+120], "Invert: true") {
-		t.Error("a positively-stored field was inverted, which flips it for every existing agent")
+	// A setting that can be defaulted is never a switch: a switch cannot hold
+	// "use the default for all agents".
+	for _, f := range []string{"share_cortex", "share_reference", "share_notes", "share_uploads", "workspace_network"} {
+		if strings.Contains(src, `Field: "`+f+`", Type: "toggle"`) {
+			t.Errorf("%s is a switch, so it cannot be returned to the default", f)
+		}
 	}
 }
 
