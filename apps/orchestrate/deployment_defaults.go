@@ -256,15 +256,18 @@ func deploymentSettingsSection() ui.Section {
 		spec := triSettings[s.key]
 		fields = append(fields,
 			ui.FormField{Type: "header", Label: s.label, Help: s.help},
+			// NO help line on either. The labels are the words, the heading
+			// above them says what the setting is, and the ⓘ has the rest. A
+			// line that repeats its own label is a line the reader learns to
+			// skip, which is how the ones that DO say something new stop being
+			// read.
 			ui.FormField{Field: s.key, Type: "select", Label: "Default",
 				Options: optionsFor(spec.key, deploymentDefaultChoices(RootDB, spec.key)),
-				Help:    "What every agent reads until it says otherwise. An agent can be given its own answer, looser or stricter, and that wins - up to the limit below.",
-				Detail: "Only values the limit allows are offered here. A default looser than the ceiling is a value nothing ever runs under: every agent following it would be clamped on the way out, so it would exist on this page and nowhere else.\n\n" +
-					"Tightening the limit therefore pulls this down with it."},
+				Detail: "What every agent reads until it answers for itself. An agent can be given its own answer, looser or stricter, and that wins - up to the limit.\n\n" +
+					"Only values the limit allows are offered here. A default looser than the limit is a value nothing ever runs under: every agent following it would be clamped on the way out, so it would exist on this page and nowhere else. Tightening the limit therefore pulls this down with it."},
 			ui.FormField{Field: s.key + "_max", Type: "select", Label: "Limit",
 				Options: optionsFor(spec.key, deploymentOrder(spec)),
-				Help:    "A ceiling, not a default: no agent resolves looser than this, whatever its owner set. Leave it at the loosest value to impose nothing.",
-				Detail: "This is the only control here that an owner cannot override. Leave it unset unless the deployment genuinely has to hold the line - a maximum that duplicates the default just removes a choice people are allowed to make.\\n\\n" +
+				Detail: "No agent may be looser than this, whatever its owner sets. The only control here an owner cannot override. Leave it at the loosest value unless the deployment genuinely has to hold the line - a limit that matches the default just removes a choice people are allowed to make.\n\n" +
 					"Set it and the agents already looser than it are clamped on their next turn. Their own setting is not rewritten, so lifting the ceiling gives them back what they had rather than leaving them reset."},
 		)
 	}
@@ -272,7 +275,7 @@ func deploymentSettingsSection() ui.Section {
 		Group:    "Agents",
 		Title:    "Agent security across the deployment",
 		Subtitle: "What every agent starts from, and what none of them may exceed.",
-		Detail: "An agent answers for itself; failing that its owner's default for all their agents; failing that these. The maximum sits over all of it.\\n\\n" +
+		Detail: "An agent answers for itself; failing that, the Default below. The Limit sits over both, including over the Default: a default looser than the limit is a value nothing ever runs under.\n\n" +
 			"An owner still decides for each of their own agents. This is what those agents start from, and how far any of them may go.",
 		Body: ui.FormPanel{Source: api, PostURL: api, Method: "PATCH", Fields: fields},
 	}

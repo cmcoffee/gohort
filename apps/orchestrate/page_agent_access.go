@@ -605,10 +605,12 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 					Fields: []ui.FormField{
 						{Field: "workspace_network", Type: "select", Label: "Network access from the workspace",
 							Options: settingOptions(RootDB, defaultWorkspaceNetwork),
-							Help: workspaceNetworkSource(RootDB, agent) +
-								" Blocked stops code running in the workspace from dialling out; the agent keeps its tools and its model either way." +
-								" The default is set once for the whole deployment, by an administrator.",
-							Detail: "For an agent that should process text or files locally and never phone anywhere from in there. It can still read, write and run commands in the workspace.\n\n" +
+							// The live state, and nothing else. What Blocked
+							// MEANS is behind the ⓘ with the rest; repeating
+							// it here is the line people learn to skip.
+							Help: workspaceNetworkSource(RootDB, agent),
+							Detail: "Blocked stops code running in the workspace from dialling out; the agent keeps its tools and its model either way. For an agent that should process text or files locally and never phone anywhere from in there - it can still read, write and run commands in there.\n\n" +
+								"The default is set once for the whole deployment, by an administrator.\n\n" +
 								"Enforced at both ways out: the sandbox gets no network namespace, and the gohort.fetch helper refuses. Closing one alone would just move a script from one to the other.\n\n" +
 								"It inherits downward, so a sub-agent cannot dial on this one's behalf, and it only ever narrows: Private mode still blocks a turn outright.\n\n" +
 								"A tool already in your pool is not stopped by this: it reaches out through the brokered fetch helper, which is a path you approved and which gohort dials on its behalf. What this stops is code the agent writes and runs on the spot."},

@@ -77,7 +77,7 @@ func (T *OrchestrateApp) renderFleetSecurity(w http.ResponseWriter, r *http.Requ
 				Group:    "Tools",
 				Title:    "Tools that ask before every call",
 				Subtitle: "Set here, a tool stops and asks on every agent that holds it.",
-				Detail: "An agent can still be given its own answer, which wins. This is the value an agent reads when it has none.\\n\\n" +
+				Detail: "An agent can still be given its own answer, which wins. This is the value an agent reads when it has none.\n\n" +
 					"A tool listed here is asking; one that is not runs without asking unless some agent says otherwise. Clear a row to stop it asking everywhere.",
 				Body: ui.Table{
 					Source:     decisions("tools"),
