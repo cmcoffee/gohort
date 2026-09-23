@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	. "github.com/cmcoffee/gohort/core"
 	"github.com/cmcoffee/snugforge/kvlite"
@@ -407,4 +408,36 @@ func TestLoadToolOnMountedToolSaysAlreadyLoaded(t *testing.T) {
 	if !strings.Contains(out, "Unknown") || !strings.Contains(out, "no_such_tool") {
 		t.Errorf("an unknown name must still be reported, got %q", out)
 	}
+}
+
+// An index line is a short lead, never a paragraph: first sentence, at most
+// indexLeadMax runes, cut on a word, never through a multi-byte character.
+func TestIndexLeadIsShortAndClean(t *testing.T) {
+	cases := map[string]string{
+		"Short one.":                            "Short one.",
+		"First sentence. Second sentence here.": "First sentence.",
+		"Spans\nlines   and  spaces.":           "Spans lines and spaces.",
+		"Use a template (e.g. github). More.":   "Use a template (e.g. github).",
+	}
+	for in, want := range cases {
+		if got := indexLead(in, indexLeadMax); got != want {
+			t.Errorf("indexLead(%q) = %q, want %q", in, got, want)
+		}
+	}
+	long := strings.Repeat("wordy ", 30) + "é"
+	got := indexLead(long, indexLeadMax)
+	if n := len([]rune(got)); n > indexLeadMax+1 || !strings.HasSuffix(got, "…") || strings.HasSuffix(got, " …") {
+		t.Errorf("long lead not cut cleanly: %q (%d runes)", got, n)
+	}
+	if !utf8.ValidString(indexLead(strings.Repeat("é", 200), indexLeadMax)) {
+		t.Error("cut split a multi-byte character")
+	}
+}
+
+// Print the real index so the leads can be read, not just counted.
+func TestAuthoringIndexReadable(t *testing.T) {
+	turn, sess := newAuthoringTestTurn(t)
+	turn.authoringLazyPrompt = registerLazyAuthoringTools(turn, builderAuthoringTools(sess, turn))
+	turn.deferKnownAuthoringTools([]AgentToolDef{turn.appDefToolDef(), turn.pipelineGroupedToolDef(), turn.machineGroupedToolDef()})
+	t.Logf("index %d bytes:\n%s", len(turn.authoringLazyPrompt), turn.authoringLazyPrompt)
 }

@@ -1102,13 +1102,52 @@ func registerLazyAuthoringTools(t *chatTurn, tools []AgentToolDef) string {
 }
 
 // authoringIndexLine is one tool's entry in the deferred-authoring index: its
-// name and a first-200-chars description, enough to know WHEN to load it.
+// name and a short lead from its description, enough to know WHEN to load it.
+// The full description comes back with the schema on load.
 func authoringIndexLine(td AgentToolDef) string {
-	desc := strings.TrimSpace(td.Tool.Description)
-	if len(desc) > 200 {
-		desc = desc[:200] + "…"
+	return "- `" + td.Tool.Name + "` " + indexLead(td.Tool.Description, indexLeadMax) + "\n"
+}
+
+// indexLeadMax caps an index line's description. At 200 the index was the
+// second-largest section of a main-agent system prompt (~2k tokens for 35
+// tools); a lead this long still says what the tool is for.
+const indexLeadMax = 80
+
+// indexLead returns the description's first sentence, cut to max runes at a
+// word boundary. Runes, not bytes: a byte cut can split a UTF-8 character.
+func indexLead(desc string, max int) string {
+	desc = strings.Join(strings.Fields(desc), " ")
+	if i := sentenceEnd(desc); i >= 0 {
+		desc = desc[:i+1]
 	}
-	return "- `" + td.Tool.Name + "` " + desc + "\n"
+	r := []rune(desc)
+	if len(r) <= max {
+		return desc
+	}
+	cut := string(r[:max])
+	if i := strings.LastIndex(cut, " "); i > max/2 {
+		cut = cut[:i]
+	}
+	// A cut that lands just after "e.g." leaves an example with no example.
+	cut = strings.TrimSuffix(strings.TrimSuffix(strings.TrimSpace(cut), "e.g."), "i.e.")
+	return strings.TrimRight(cut, " ,;:-(") + "…"
+}
+
+// sentenceEnd is the index of the period ending desc's first sentence, or -1.
+// "e.g." and "i.e." are not sentence ends: cutting there left leads reading
+// "Author a tool from a ready-made TEMPLATE (e.g." in the live index.
+func sentenceEnd(desc string) int {
+	for from := 0; ; {
+		i := strings.Index(desc[from:], ". ")
+		if i < 0 {
+			return -1
+		}
+		i += from
+		if !strings.HasSuffix(desc[:i], "e.g") && !strings.HasSuffix(desc[:i], "i.e") {
+			return i
+		}
+		from = i + 2
+	}
 }
 
 // builderRhythmTools are the authoring tools catalogKnowTools mounts for ANY
