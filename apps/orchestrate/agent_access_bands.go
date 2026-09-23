@@ -12,6 +12,13 @@
 //   - A SYSTEM THE OWNER CONNECTED. App-provided tools (an app registers a
 //     provider because the capability belongs to a machine, not to the
 //     framework) and credential-backed ones. The row names the system.
+//   - CODE IN THE SANDBOX. A framework tool declaring CapExecute. It sits
+//     ABOVE the internet band because running code is the larger reach of the
+//     two: a search sends a query out, execution can read the workspace, write
+//     to it, and dial out itself wherever the workspace ceiling allows. The
+//     sandbox and that ceiling are real gates and the Workspace tab is where
+//     they are set, but they bound WHERE the code runs, not WHETHER it runs,
+//     and that second question is this page's.
 //   - THE OPEN INTERNET. A framework tool declaring CapNetwork with no named
 //     system behind it: web_search, browse_page, fetch_url.
 //   - THE OWNER'S OWN TOOLS. Somebody wrote the code these run.
@@ -19,7 +26,7 @@
 //     ALLOWED here: a per-call decision about read_file is a question nobody
 //     can answer usefully sixty times, and the controls that matter for these
 //     are elsewhere (the Tools modal decides whether the agent has it at all,
-//     Workspace governs the sandbox, Guardrails read the turn).
+//     Guardrails read the turn).
 //
 // BY PROVENANCE, not by what the tool says about itself. A tool's name and its
 // claimed Category are both editable by whoever wrote it; which registry
@@ -40,6 +47,7 @@ import (
 // server sorts by and there is no second mapping to drift.
 const (
 	bandConnected = "Reaches a system you connected"
+	bandSandbox   = "Runs code in the sandbox"
 	bandInternet  = "Reaches the open internet"
 	bandOwn       = "Your own tools"
 	bandInternal  = "Stays inside this deployment"
@@ -55,14 +63,16 @@ func bandOrder(band string) int {
 	switch band {
 	case bandConnected:
 		return 0
-	case bandInternet:
+	case bandSandbox:
 		return 1
-	case bandOwn:
+	case bandInternet:
 		return 2
-	case bandInternal:
+	case bandOwn:
 		return 3
+	case bandInternal:
+		return 4
 	}
-	return 4
+	return 5
 }
 
 // classifyTool places one tool in a band and says what it reaches.
@@ -84,6 +94,10 @@ func classifyTool(provider, cred string, own bool, caps []Capability) (band, rea
 		return bandConnected, credentialSystemName(cred)
 	case own:
 		return bandOwn, ""
+	// Before the network check, because a tool that does both is the more
+	// consequential of the two and the band has to say the larger thing.
+	case hasCap(caps, CapExecute):
+		return bandSandbox, ""
 	case hasCap(caps, CapNetwork):
 		return bandInternet, ""
 	}

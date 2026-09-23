@@ -217,8 +217,9 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				Group:    "Tools",
 				Subtitle: agentAccessSummary(agent, reach) + " " + accessCaveat,
 				Detail: "Grouped by what a call can touch, because that is what a decision here is about. A tool that reaches a system you connected or the open internet " +
-					"is worth a per-call answer; one that reads this deployment's own state is not, so it always runs and shows no controls. " +
-					"What those always-on tools may do is set elsewhere: whether the agent loads the tool at all is the Tools modal, the sandbox is the Workspace tab, and Guardrails read the turn itself.\n\n" +
+					"is worth a per-call answer, and so is one that runs code - the sandbox bounds WHERE that code runs, not whether it runs at all. " +
+					"A tool that only reads this deployment's own state is not, so it always runs and shows no controls. " +
+					"What those always-on tools may do is set elsewhere: whether the agent loads the tool at all is the Tools modal, and Guardrails read the turn itself.\n\n" +
 					"Where the controls do appear there are two, about two different situations. IN CHAT is ask-before-every-call: the turn stops and waits for you. " +
 					"UNATTENDED is the gate's answer for a scheduled or standing run, where nobody is watching, and none of it applies in chat.\n\n" +
 					"The band a tool lands in is decided by where it came from and what it declares it reaches, never by the name or category it claims - a tool can edit those, and a band it could relabel itself out of would not be a boundary.",

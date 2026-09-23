@@ -38,7 +38,13 @@ func TestAToolIsBandedByWhatItReaches(t *testing.T) {
 			"", "", true, nil, bandOwn, ""},
 		{"a framework tool that dials out",
 			"", "", false, []Capability{CapNetwork, CapRead}, bandInternet, ""},
-		{"a framework tool that does not",
+		{"a framework tool that runs code",
+			"", "", false, []Capability{CapExecute, CapWrite}, bandSandbox, ""},
+		{"running code is the larger reach, so it wins over dialling out",
+			"", "", false, []Capability{CapNetwork, CapExecute}, bandSandbox, ""},
+		{"writing without executing is not the sandbox band",
+			"", "", false, []Capability{CapWrite, CapRead}, bandInternal, ""},
+		{"a framework tool that does neither",
 			"", "", false, []Capability{CapRead}, bandInternal, ""},
 		{"an unannotated framework tool reads as internal, and is always allowed",
 			"", "", false, nil, bandInternal, ""},
@@ -64,7 +70,7 @@ func TestAToolIsBandedByWhatItReaches(t *testing.T) {
 // The always-allowed band is the point of the exercise: a per-call decision
 // about read_file is a question nobody can answer usefully sixty times.
 func TestOnlyWhatReachesOutsideCarriesControls(t *testing.T) {
-	for _, band := range []string{bandConnected, bandInternet, bandOwn} {
+	for _, band := range []string{bandConnected, bandSandbox, bandInternet, bandOwn} {
 		if !bandGoverns(band) {
 			t.Errorf("%q lost its controls, so something reaching outside cannot be stopped", band)
 		}
@@ -81,7 +87,7 @@ func TestOnlyWhatReachesOutsideCarriesControls(t *testing.T) {
 // in RECORD order, so this ordering is what puts the consequential tools at the
 // top of the page instead of alphabetically among sixty others.
 func TestTheConsequentialBandsComeFirst(t *testing.T) {
-	want := []string{bandConnected, bandInternet, bandOwn, bandInternal, bandOff}
+	want := []string{bandConnected, bandSandbox, bandInternet, bandOwn, bandInternal, bandOff}
 	for i := 1; i < len(want); i++ {
 		if bandOrder(want[i-1]) >= bandOrder(want[i]) {
 			t.Errorf("%q does not sort before %q", want[i-1], want[i])

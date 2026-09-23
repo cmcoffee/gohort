@@ -91,13 +91,10 @@ func TestEveryLoadedToolCanBeGoverned(t *testing.T) {
 		}
 		framework++
 		switch r.Band {
-		case bandInternet:
+		case bandInternet, bandSandbox:
 			reachesOut++
-			if r.Name != "band_net_probe" {
-				t.Errorf("%q landed in the internet band without declaring CapNetwork", r.Name)
-			}
 			if !r.Governable {
-				t.Errorf("%q dials out and cannot be governed, so the tools most worth stopping on are the ones you cannot stop on", r.Name)
+				t.Errorf("%q reaches past this deployment and cannot be governed, so the tools most worth stopping on are the ones you cannot stop on", r.Name)
 			}
 		case bandInternal:
 			internal++
