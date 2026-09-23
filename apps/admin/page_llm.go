@@ -28,8 +28,9 @@ func (a *AdminApp) llmSections() []ui.Section {
 							{Label: "Ollama", Value: "http://localhost:11434"},
 							{Label: "llama.cpp", Value: "http://localhost:8080/v1"}}},
 					{Field: "aws_region", Label: "AWS region", Type: "text", Placeholder: "us-east-1",
-						Help:    "AWS Bedrock only. Blank uses $AWS_REGION, then us-east-1.",
-						Detail:  "Not every region AWS lists for Bedrock has a Messages-API endpoint. us-west-1 does not; use us-west-2.",
+						Help:   "AWS Bedrock only. Blank uses $AWS_REGION, then us-east-1.",
+						Detail: "This tier has its OWN region. Setting it on the Worker does not set it on the Lead, and a blank one here falls through to $AWS_REGION on the gohort host and then to us-east-1 - which is why a tier can keep using us-east-1 while another tier's box reads us-west-2. The debug log names the region and where it came from as each client is built.\n\n" +
+							"Not every region AWS lists for Bedrock has a Messages-API endpoint. us-west-1 does not; use us-west-2.",
 						Presets: bedrockRegionPresets()},
 					{Field: "bedrock_api", Label: "Bedrock API", Type: "select",
 						Options: []ui.SelectOption{
@@ -75,8 +76,9 @@ func (a *AdminApp) llmSections() []ui.Section {
 					{Field: "endpoint", Label: "Endpoint", Type: "text", Placeholder: "(provider default)",
 						Help: "For local / self-hosted lead providers."},
 					{Field: "aws_region", Label: "AWS region", Type: "text", Placeholder: "us-east-1",
-						Help:    "AWS Bedrock only. Blank uses $AWS_REGION, then us-east-1.",
-						Detail:  "Not every region AWS lists for Bedrock has a Messages-API endpoint. us-west-1 does not; use us-west-2.",
+						Help:   "AWS Bedrock only. Blank uses $AWS_REGION, then us-east-1.",
+						Detail: "This tier has its OWN region. Setting it on the Worker does not set it on the Lead, and a blank one here falls through to $AWS_REGION on the gohort host and then to us-east-1 - which is why a tier can keep using us-east-1 while another tier's box reads us-west-2. The debug log names the region and where it came from as each client is built.\n\n" +
+							"Not every region AWS lists for Bedrock has a Messages-API endpoint. us-west-1 does not; use us-west-2.",
 						Presets: bedrockRegionPresets()},
 					{Field: "bedrock_api", Label: "Bedrock API", Type: "select",
 						Options: []ui.SelectOption{

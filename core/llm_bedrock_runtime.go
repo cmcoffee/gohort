@@ -97,7 +97,9 @@ func (c *bedrockRuntimeClient) ContextSize() int {
 // Credentials resolve exactly as they do for the Messages-API mode, including
 // the explicit-profile rules — the difference is the endpoint, not the auth.
 func newBedrockRuntimeLLM(bearer, model, region, profile, endpoint string, api *apiclient.APIClient) (LLM, error) {
+	configured := region
 	region = bedrockRegion(region)
+	Debug("[bedrock-runtime] model=%s %s", bedrockModelID(model), bedrockRegionNote(configured, region))
 
 	host := endpoint
 	if host == "" {
@@ -299,7 +301,10 @@ func (c *bedrockRuntimeClient) Chat(ctx context.Context, messages []Message, opt
 				msg = awsErr.Message
 			}
 		}
-		return nil, noteIfAdaptiveThinking(c.model, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: "bedrock-runtime"})
+		// AWS words this for somebody holding the API reference. Where the
+		// refusal has a setting behind it, say which one - see bedrockHint.
+		return nil, noteIfAdaptiveThinking(c.model, &APIError{
+			StatusCode: resp.StatusCode, Message: withBedrockHint(c.model, msg), Provider: "bedrock-runtime"})
 	}
 
 	var result anthResponse
@@ -362,7 +367,10 @@ func (c *bedrockRuntimeClient) ChatStream(ctx context.Context, messages []Messag
 		if json.Unmarshal(respBody, &awsErr) == nil && awsErr.Message != "" {
 			msg = awsErr.Message
 		}
-		return nil, noteIfAdaptiveThinking(c.model, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: "bedrock-runtime"})
+		// AWS words this for somebody holding the API reference. Where the
+		// refusal has a setting behind it, say which one - see bedrockHint.
+		return nil, noteIfAdaptiveThinking(c.model, &APIError{
+			StatusCode: resp.StatusCode, Message: withBedrockHint(c.model, msg), Provider: "bedrock-runtime"})
 	}
 
 	st := &anthStreamState{handler: handler}

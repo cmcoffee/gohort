@@ -506,7 +506,9 @@ func bedrockModelID(model string) string {
 // resolved and requests are SigV4-signed. endpoint overrides the derived host
 // for a private link or a VPC endpoint; it is a host, not a URL.
 func newBedrockLLM(bearer, model, region, profile, endpoint string, api *apiclient.APIClient) (LLM, error) {
+	configured := region
 	region = bedrockRegion(region)
+	Debug("[bedrock] model=%s %s", bedrockModelID(model), bedrockRegionNote(configured, region))
 
 	host := endpoint
 	if host == "" {
@@ -667,4 +669,66 @@ func hmacSHA256(key []byte, data string) []byte {
 func sha256sum(b []byte) []byte {
 	sum := sha256.Sum256(b)
 	return sum[:]
+}
+
+// --- saying what AWS will not -------------------------------------------
+//
+// AWS words its errors for somebody holding the API reference, and the one
+// that costs the most time here is the inference-profile refusal: it names a
+// concept ("on-demand throughput", "an inference profile") without naming the
+// field, so the operator reads a correct sentence and still does not know that
+// the Model box needs three characters added to the front of it.
+//
+// Appended, never substituted. AWS's own wording is what a search finds and
+// what a support case quotes, so removing it would trade one kind of stuck for
+// another.
+
+// bedrockHint returns a sentence to append to an AWS message, or "" when there
+// is nothing useful to add.
+//
+// model is what was sent, so the hint can name the exact string to use rather
+// than describing the shape of one.
+func bedrockHint(model, msg string) string {
+	low := strings.ToLower(msg)
+	switch {
+	case strings.Contains(low, "on-demand throughput isn") || strings.Contains(low, "inference profile"):
+		// The model is served only through a cross-region inference profile,
+		// whose id is the model id with a region-group prefix. gohort does not
+		// add one on its own: which group is right (us, eu, apac, global)
+		// depends on the account, and guessing wrong fails identically.
+		return "This model is only served through a cross-region inference profile, so the Model setting needs the region-group prefix: try \"us." +
+			strings.TrimPrefix(model, "us.") + "\" (or eu./apac./global., whichever your account is enabled for) under Admin -> LLMs."
+	case strings.Contains(low, "createinference") && strings.Contains(low, "not authorized"):
+		// The other half of the same confusion: the account grants one Bedrock
+		// API and not the other, and the refusal names an IAM action rather
+		// than the switch that picks between them.
+		return "That is the Messages-API permission. If your role grants bedrock:InvokeModel instead, set Bedrock API to \"InvokeModel\" under Admin -> LLMs."
+	}
+	return ""
+}
+
+// withBedrockHint appends the hint for this message, if there is one.
+func withBedrockHint(model, msg string) string {
+	if h := bedrockHint(model, msg); h != "" {
+		return msg + " " + h
+	}
+	return msg
+}
+
+// bedrockRegionNote says which region is in play and WHERE it came from.
+//
+// "It keeps using us-east-1 even though I set us-west-2" is the report this
+// exists for, and it has two causes that look identical from outside: the
+// region is set on the Worker LLM and not the Lead one (separate settings,
+// separate stores), or $AWS_REGION on the service is answering instead. Both
+// end at the same default, and nothing said so.
+func bedrockRegionNote(configured, resolved string) string {
+	switch {
+	case configured != "":
+		return fmt.Sprintf("region=%s (from this tier's AWS region setting)", resolved)
+	case resolved == bedrockDefaultRegion:
+		return fmt.Sprintf("region=%s (the default: neither this tier's AWS region setting nor $AWS_REGION named one)", resolved)
+	default:
+		return fmt.Sprintf("region=%s (from $AWS_REGION in the service environment, not the AWS region setting)", resolved)
+	}
 }
