@@ -78,7 +78,7 @@ func setDeploymentSetting(db Database, kind, setting, value string) {
 }
 
 // effectiveDeploymentDefault is what the deployment default ACTUALLY is, never
-// "undecided".
+// "undecided" and never looser than the maximum.
 //
 // Undecided is a real state in a record - an agent that has answered nothing
 // must be told apart from one that answered "off" - and it is NOT a state a
@@ -90,15 +90,42 @@ func setDeploymentSetting(db Database, kind, setting, value string) {
 // for every setting that has a choice, and which is what the deployment was
 // already doing. Installing this changes nothing until an administrator
 // decides it should.
+//
+// CLAMPED BY THE MAXIMUM, because a default looser than the ceiling is a
+// number nothing ever runs under. Nothing reads it - every agent following it
+// is clamped on the way out - so a page showing "Default: Allowed" under a
+// maximum of Blocked would be reporting a value that exists only on that page.
+// The ceiling is a ceiling over the default too.
 func effectiveDeploymentDefault(db Database, setting string) string {
 	s, ok := triSettings[setting]
 	if !ok {
 		return ""
 	}
-	if v := deploymentSetting(db, deploymentDefault, setting); v != "" {
-		return v
+	v := deploymentSetting(db, deploymentDefault, setting)
+	if v == "" {
+		v = s.framework
 	}
-	return s.framework
+	return clampToDeploymentMaximum(db, setting, v)
+}
+
+// deploymentDefaultChoices are the values the default may take: the maximum
+// and everything stricter than it.
+//
+// A select that offered the looser ones would be offering a choice the system
+// cannot hold - pick it and the answer comes back clamped, which reads as the
+// control having ignored the click. Not offering it is the same rule as
+// everywhere else here: a control must not offer a state its value cannot be.
+func deploymentDefaultChoices(db Database, setting string) []string {
+	s, ok := triSettings[setting]
+	if !ok || len(s.strictness) == 0 {
+		return s.values
+	}
+	ceiling := effectiveDeploymentMaximum(db, setting)
+	at := slices.Index(s.strictness, ceiling)
+	if at < 0 {
+		at = 0
+	}
+	return s.strictness[at:]
 }
 
 // effectiveDeploymentMaximum is the ceiling, or the loosest value the setting
@@ -192,6 +219,18 @@ func (T *OrchestrateApp) handleDeploymentSettings(w http.ResponseWriter, r *http
 					return
 				}
 				setDeploymentSetting(RootDB, pair.kind, setting, v)
+				// Tightening the MAXIMUM pulls the default down with it. The
+				// alternative is refusing the write and asking the reader to
+				// go and change the other control first, which is a rule the
+				// page would have to teach; this way the ceiling simply means
+				// what it says, and the default that was too loose is one the
+				// deployment was not running under anyway.
+				if pair.kind == deploymentMaximum {
+					if held := clampToDeploymentMaximum(RootDB, setting,
+						effectiveDeploymentDefault(RootDB, setting)); held != "" {
+						setDeploymentSetting(RootDB, deploymentDefault, setting, held)
+					}
+				}
 			}
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -217,11 +256,13 @@ func deploymentSettingsSection() ui.Section {
 		spec := triSettings[s.key]
 		fields = append(fields,
 			ui.FormField{Type: "header", Label: s.label, Help: s.help},
-			ui.FormField{Field: s.key, Type: "select", Label: "Default Setting",
-				Options: deploymentOptions(spec),
-				Help:    "What every agent reads until it says otherwise. An agent can be given its own answer, in either direction, and that wins."},
-			ui.FormField{Field: s.key + "_max", Type: "select", Label: "Maximum any agent may hold",
-				Options: deploymentOptions(spec),
+			ui.FormField{Field: s.key, Type: "select", Label: "Default",
+				Options: optionsFor(spec.key, deploymentDefaultChoices(RootDB, spec.key)),
+				Help:    "What every agent reads until it says otherwise. An agent can be given its own answer, looser or stricter, and that wins - up to the limit below.",
+				Detail: "Only values the limit allows are offered here. A default looser than the ceiling is a value nothing ever runs under: every agent following it would be clamped on the way out, so it would exist on this page and nowhere else.\n\n" +
+					"Tightening the limit therefore pulls this down with it."},
+			ui.FormField{Field: s.key + "_max", Type: "select", Label: "Limit",
+				Options: optionsFor(spec.key, deploymentOrder(spec)),
 				Help:    "A ceiling, not a default: no agent resolves looser than this, whatever its owner set. Leave it at the loosest value to impose nothing.",
 				Detail: "This is the only control here that an owner cannot override. Leave it unset unless the deployment genuinely has to hold the line - a maximum that duplicates the default just removes a choice people are allowed to make.\\n\\n" +
 					"Set it and the agents already looser than it are clamped on their next turn. Their own setting is not rewritten, so lifting the ceiling gives them back what they had rather than leaving them reset."},
@@ -230,9 +271,9 @@ func deploymentSettingsSection() ui.Section {
 	return ui.Section{
 		Group:    "Agents",
 		Title:    "Agent security across the deployment",
-		Subtitle: "What every fleet starts from, and what none of them may exceed.",
+		Subtitle: "What every agent starts from, and what none of them may exceed.",
 		Detail: "An agent answers for itself; failing that its owner's default for all their agents; failing that these. The maximum sits over all of it.\\n\\n" +
-			"Owners keep their own layer on purpose. This sets a floor under it and a roof over it, not the room.",
+			"An owner still decides for each of their own agents. This is what those agents start from, and how far any of them may go.",
 		Body: ui.FormPanel{Source: api, PostURL: api, Method: "PATCH", Fields: fields},
 	}
 }
@@ -247,14 +288,18 @@ func deploymentSettingsSection() ui.Section {
 //
 // Ordered LOOSEST FIRST, which is also the order the ceiling ranks them in, so
 // the two selects on a row read the same way down.
-func deploymentOptions(spec triSetting) []ui.SelectOption {
-	order := spec.strictness
-	if len(order) == 0 {
-		order = spec.values
+func deploymentOrder(spec triSetting) []string {
+	if len(spec.strictness) > 0 {
+		return spec.strictness
 	}
+	return spec.values
+}
+
+// optionsFor turns a list of values into a select, in the setting's own words.
+func optionsFor(key string, values []string) []ui.SelectOption {
 	out := []ui.SelectOption{}
-	for _, v := range order {
-		out = append(out, ui.SelectOption{Value: v, Label: settingWord(spec.key, v)})
+	for _, v := range values {
+		out = append(out, ui.SelectOption{Value: v, Label: settingWord(key, v)})
 	}
 	return out
 }

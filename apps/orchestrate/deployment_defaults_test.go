@@ -4,6 +4,8 @@ package orchestrate
 // between them.
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"testing"
@@ -36,7 +38,7 @@ func TestADeploymentDefaultSitsUnderTheOwnersOwn(t *testing.T) {
 	if got := resolveSetting(db, blank, defaultWorkspaceNetwork); got != settingOff {
 		t.Errorf("the deployment default was ignored: %q", got)
 	}
-	if src := settingSource(db, blank, defaultWorkspaceNetwork); !strings.Contains(src, "Default Setting: Blocked") {
+	if src := settingSource(db, blank, defaultWorkspaceNetwork); !strings.Contains(src, "Default: Blocked") {
 		t.Errorf("the page does not say what the agent is following: %q", src)
 	}
 
@@ -66,7 +68,7 @@ func TestTheDeploymentMaximumCannotBeWidenedAway(t *testing.T) {
 		t.Errorf("an agent resolved looser than the deployment maximum: %q", got)
 	}
 	src := settingSource(db, open, defaultWorkspaceNetwork)
-	if !strings.Contains(src, "Held at Blocked by the deployment maximum") {
+	if !strings.Contains(src, "Held at Blocked by the deployment limit") {
 		t.Errorf("the page shows a value without saying the ceiling is holding it: %q", src)
 	}
 
@@ -234,5 +236,86 @@ func TestEverySettingSaysWhatItsValuesMean(t *testing.T) {
 	// may ADD documents, not about whose layer is read.
 	if got := settingWord(defaultShareUploads, settingOn); got != "Allowed" {
 		t.Errorf("uploads borrowed the memory-layer words: %q", got)
+	}
+}
+
+// A default looser than the ceiling is a value nothing ever runs under: every
+// agent following it is clamped on the way out, so it would exist on the admin
+// page and nowhere else.
+func TestTheDefaultCannotBeLooserThanTheMaximum(t *testing.T) {
+	db := deploymentTestDB(t)
+
+	// Set the loose default first, then tighten the ceiling under it.
+	setDeploymentSetting(db, deploymentDefault, defaultWorkspaceNetwork, settingOn)
+	setDeploymentSetting(db, deploymentMaximum, defaultWorkspaceNetwork, settingOff)
+	if got := effectiveDeploymentDefault(db, defaultWorkspaceNetwork); got != settingOff {
+		t.Errorf("the default reads looser than the maximum: %q", got)
+	}
+	// And an agent following it lands in the same place, so the page and the
+	// runtime agree.
+	blank := AgentRecord{ID: "a", Owner: "alice"}
+	if got := resolveSetting(db, blank, defaultWorkspaceNetwork); got != settingOff {
+		t.Errorf("an agent following the default resolved %q", got)
+	}
+
+	// The select offers only what the value may be. A control that takes the
+	// click, shows the new value and means the old one reads as broken.
+	for _, v := range deploymentDefaultChoices(db, defaultWorkspaceNetwork) {
+		if v == settingOn {
+			t.Error("the default select still offers a value the maximum forbids")
+		}
+	}
+	// Lifting the ceiling gives the choice back.
+	setDeploymentSetting(db, deploymentMaximum, defaultWorkspaceNetwork, "")
+	if len(deploymentDefaultChoices(db, defaultWorkspaceNetwork)) != 2 {
+		t.Error("lifting the maximum did not restore the choice")
+	}
+}
+
+// Tightening the maximum pulls the stored default down with it, rather than
+// refusing the write and asking the reader to go and change the other control
+// first - a rule the page would then have to teach.
+func TestTighteningTheMaximumMovesTheDefault(t *testing.T) {
+	app, _, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	AuthDB().Set(AuthTable, "user:alice", AuthUser{Username: "alice", Admin: true})
+	patch := func(body string) {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodPatch, "/api/console/deployment-settings", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		app.handleDeploymentSettings(w, asUser(r, "alice"))
+		if w.Code != http.StatusNoContent {
+			t.Fatalf("patch %s: %d", body, w.Code)
+		}
+	}
+	patch(`{"workspace_network":"on"}`)
+	patch(`{"workspace_network_max":"off"}`)
+	if got := deploymentSetting(RootDB, deploymentDefault, defaultWorkspaceNetwork); got != settingOff {
+		t.Errorf("the STORED default was left looser than the ceiling: %q", got)
+	}
+}
+
+// The per-agent control obeys the same rule, and says why its list is short.
+// A select missing the option somebody came to pick, with nothing explaining
+// it, reads as a broken control - and the reason is a maximum they may not be
+// able to see.
+func TestAnAgentIsNotOfferedWhatTheMaximumForbids(t *testing.T) {
+	db := deploymentTestDB(t)
+	setDeploymentSetting(db, deploymentMaximum, defaultWorkspaceNetwork, settingOff)
+
+	for _, o := range settingOptions(db, defaultWorkspaceNetwork) {
+		if o.Value == settingOn {
+			t.Error("an agent is offered a value that would be clamped the moment it was picked")
+		}
+	}
+	line := settingSource(db, AgentRecord{ID: "a", Owner: "alice"}, defaultWorkspaceNetwork)
+	if !strings.Contains(line, "Limit: Blocked") {
+		t.Errorf("the short list is unexplained: %q", line)
+	}
+	// No maximum, no sentence: a line that explains a constraint nobody set is
+	// noise on every other deployment.
+	setDeploymentSetting(db, deploymentMaximum, defaultWorkspaceNetwork, "")
+	if line = settingSource(db, AgentRecord{ID: "a", Owner: "alice"}, defaultWorkspaceNetwork); strings.Contains(line, "Limit") {
+		t.Errorf("an unconstrained setting talks about a limit: %q", line)
 	}
 }

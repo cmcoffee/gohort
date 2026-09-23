@@ -77,7 +77,7 @@ func TestThePageSaysWhereTheAnswerCameFrom(t *testing.T) {
 	// "currently" is true of every value a control ever shows, and the value
 	// arrived last in its stored spelling.
 	got := workspaceNetworkSource(RootDB, rec)
-	for _, want := range []string{"Default Setting:", "Allowed", "has not decided"} {
+	for _, want := range []string{"Default:", "Allowed", "has not decided"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("an inheriting agent's line is missing %q: %q", want, got)
 		}
@@ -86,7 +86,7 @@ func TestThePageSaysWhereTheAnswerCameFrom(t *testing.T) {
 		t.Errorf("the line prints the stored value instead of the word: %q", got)
 	}
 	setDeploymentSetting(RootDB, deploymentDefault, defaultWorkspaceNetwork, settingOff)
-	if got = workspaceNetworkSource(RootDB, rec); !strings.Contains(got, "Default Setting: Blocked") {
+	if got = workspaceNetworkSource(RootDB, rec); !strings.Contains(got, "Default: Blocked") {
 		t.Errorf("an undecided agent does not say what it is following: %q", got)
 	}
 	// An override reads as one, and still names the default it is departing
@@ -96,7 +96,7 @@ func TestThePageSaysWhereTheAnswerCameFrom(t *testing.T) {
 	if !strings.Contains(got, "Set on this agent: Allowed") {
 		t.Errorf("an override does not read as one: %q", got)
 	}
-	if !strings.Contains(got, "The default is Blocked") {
+	if !strings.Contains(got, "Default: Blocked") {
 		t.Errorf("an override does not say what it departs from: %q", got)
 	}
 }

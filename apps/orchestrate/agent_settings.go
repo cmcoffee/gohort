@@ -267,24 +267,34 @@ func settingSource(db Database, rec AgentRecord, key string) string {
 		return ""
 	}
 	word := func(v string) string { return settingWord(key, v) }
-	// The ceiling FIRST, whatever rung the answer came from. A page that
-	// reported "set on this agent" while a deployment maximum was holding it
-	// elsewhere would be describing a value nobody is running under - and it
-	// is the agent's OWN setting that this most often overrides, so checking
-	// it after the own-answer branch is checking it in the one case it does
-	// not get reached.
-	raw := resolveSettingRaw(db, rec, key)
-	if held := clampToDeploymentMaximum(db, key, raw); held != raw {
-		return "Held at " + word(held) + " by the deployment maximum - this agent asks for " + word(raw) + "."
+	// The limit, said wherever one is set. A select missing the option
+	// somebody came to pick, with nothing explaining why, reads as a broken
+	// control - and the reason is a deployment limit they may not be able to
+	// see. Absent where none is set: a line explaining a constraint nobody
+	// imposed is noise on every other deployment.
+	limit := ""
+	if v := effectiveDeploymentMaximum(db, key); v != "" && len(s.strictness) > 0 && v != s.strictness[0] {
+		limit = " Limit: " + word(v) + ", so nothing looser can be set here."
 	}
-	if v := strings.TrimSpace(s.own(rec)); v != "" {
-		return "Set on this agent: " + word(v) + ". The default is " + word(effectiveDeploymentDefault(db, key)) + "."
+	// The agent's OWN answer, which is the only one a limit can be said to
+	// override. An agent that has decided nothing is not asking for anything,
+	// so reporting it as held would tell somebody their setting was overruled
+	// when they never made one - and it would say so on every agent in a
+	// deployment that has a limit at all.
+	own := strings.TrimSpace(s.own(rec))
+	if own == "" {
+		if v, said := s.legacy(rec); said {
+			own = v
+		}
 	}
-	if v, said := s.legacy(rec); said {
-		return "Set on this agent: " + word(v) + ". The default is " + word(effectiveDeploymentDefault(db, key)) + "."
+	if own != "" {
+		if held := clampToDeploymentMaximum(db, key, own); held != own {
+			return "Held at " + word(held) + " by the deployment limit - this agent asks for " + word(own) + "."
+		}
+		return "Set on this agent: " + word(own) + ". Default: " + word(effectiveDeploymentDefault(db, key)) + "." + limit
 	}
 	// Following. Named as the DEFAULT rather than as a rung it came from: an
 	// owner does not care which store answered, they care that this agent has
 	// not decided and will move if the default does.
-	return "Default Setting: " + word(effectiveDeploymentDefault(db, key)) + ". This agent has not decided, so it follows."
+	return "Default: " + word(effectiveDeploymentDefault(db, key)) + ". This agent has not decided, so it follows." + limit
 }

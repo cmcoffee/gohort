@@ -40,12 +40,18 @@ import (
 // workspace ceiling and shared for a memory layer, so a list reading "on" six
 // times is a list nobody can act on. Ordered loosest first, the same order the
 // admin page and the ceiling use.
+//
+// Values looser than the deployment MAXIMUM are not offered. Picking one would
+// be clamped on the way out, so the control would take the click, show the new
+// value, and mean the old one - which reads as the control being broken rather
+// than as a ceiling doing its job. The same rule this page applies everywhere
+// else: never offer a state the value cannot be.
 func settingOptions(db Database, key string) []ui.SelectOption {
 	out := []ui.SelectOption{{
 		Value: "",
 		Label: "Default (" + settingWord(key, effectiveDeploymentDefault(db, key)) + ")",
 	}}
-	for _, v := range triSettings[key].strictness {
+	for _, v := range deploymentDefaultChoices(db, key) {
 		out = append(out, ui.SelectOption{Value: v, Label: settingWord(key, v)})
 	}
 	return out
@@ -620,7 +626,7 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 						// a permission they have and a page that is broken.
 						adminOnlyLink(RequestIsAdmin(r), "Where that default is set",
 							T.WebPrefix()+"/admin", "Deployment agent settings",
-							"One default for every agent, and the maximum none of them may exceed."),
+							"One default for every agent, and the limit none of them may exceed."),
 					},
 				},
 			},
