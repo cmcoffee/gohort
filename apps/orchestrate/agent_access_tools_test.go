@@ -600,3 +600,70 @@ func (fakeNetTool) Caps() []Capability           { return []Capability{CapNetwor
 func (fakeNetTool) Run(map[string]any) (string, error) {
 	return "", nil
 }
+
+// The rules editor commits as you go, like every other panel on the Security
+// page. It was the only one left with a Save button.
+//
+// Not per KEYSTROKE though: a guardrail is enforcement, and saving on input
+// would put "never send" into force for as long as it takes to finish typing
+// "never send to outside addresses". Blur, change, and the clicks that mutate
+// a list are the commit points.
+func TestTheRulesEditorCommitsAsYouGo(t *testing.T) {
+	assets := mustReadFile(t, "assets/web_assets.html")
+
+	// Scoped to THIS modal, by the tail that only it has: other modals keep
+	// their own Save buttons and an assertion over the whole file would be
+	// about all of them.
+	tail := "m.footer.appendChild(closeBtn);\n        }).catch(function(err) {\n          window.uiAlert('Failed to load agent: '"
+	if !strings.Contains(assets, tail) {
+		t.Error("the rules modal does not end with a Close button, so it still has its Save")
+	}
+	for _, want := range []string{
+		"m.body.addEventListener('change', gCommit, true)",
+		"m.body.addEventListener('blur', gCommit, true)",
+	} {
+		if !strings.Contains(assets, want) {
+			t.Errorf("the editor does not commit on %q", want)
+		}
+	}
+	// Never on input. This is the assertion that keeps a half-typed rule out
+	// of enforcement.
+	if strings.Contains(assets, "addEventListener('input', gCommit") {
+		t.Error("the editor commits per keystroke, so a half-typed rule is enforced")
+	}
+
+	// A click mutates a list and fires neither change nor blur, so each one
+	// commits for itself. Deleting a rule is the one that matters most: an
+	// uncommitted delete leaves a rule the owner believes is gone.
+	if !strings.Contains(assets, "grules.splice(idx, 1); renderG(); gCommit();") {
+		t.Error("deleting a rule does not commit")
+	}
+	if !strings.Contains(assets, "gexceptions.splice(idx, 1); renderE(); renderG(); gCommit();") {
+		t.Error("deleting an exception does not commit")
+	}
+
+	// Commits are CHAINED, never concurrent. gSave is two sequenced POSTs
+	// whose first preserves guardrails from the stored copy server-side, so
+	// two in flight together let the record write save a pre-guardrail copy
+	// over the one that just landed. That lost update already happened once
+	// with a single button; a commit per control would make it the norm.
+	if !strings.Contains(assets, "gChain = gChain.then(go, go)") {
+		t.Error("commits are not serialized, so two can race and lose an edit")
+	}
+
+	// And the editor says when it wrote. With no button, "did that take?" has
+	// nowhere else to look.
+	if !strings.Contains(assets, "gSaid('Saved ' + new Date().toLocaleTimeString())") {
+		t.Error("a commit reports nothing, so a saved edit is indistinguishable from a lost one")
+	}
+	if !strings.Contains(assets, "gSaid('NOT saved: '") {
+		t.Error("a failed commit is silent")
+	}
+
+	// No copy left telling people to press a button that is gone.
+	for _, stale := range []string{"Save to commit it", "when you Save"} {
+		if strings.Contains(assets, stale) {
+			t.Errorf("stale copy still says %q", stale)
+		}
+	}
+}

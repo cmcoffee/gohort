@@ -4890,6 +4890,7 @@
                 // there.
                 if (!already) grules.push(t);
                 rules.splice(idx, 1);
+                gCommit();
                 if (!rules.length) rules.push('');
                 render();
                 renderG();
@@ -4904,9 +4905,9 @@
                 if (showGuards) {
                   gWrap.scrollIntoView({behavior: 'smooth', block: 'nearest'});
                 } else if (window.uiToast) {
-                  window.uiToast('Moved to enforced guardrails. Save to commit it, then find it under Security \u2192 Guardrails.');
+                  window.uiToast('Moved to enforced guardrails and saved. Find it under Security \u2192 Guardrails.');
                 } else {
-                  window.uiAlert('Moved to enforced guardrails. Save to commit it, then find it under Security \u2192 Guardrails.');
+                  window.uiAlert('Moved to enforced guardrails and saved. Find it under Security \u2192 Guardrails.');
                 }
               };
               var del = document.createElement('button');
@@ -5219,6 +5220,7 @@
             // and lost your place in the list.
             function commit() {
               grules[idx] = gCompose(gBody(grules[idx]), gMode(grules[idx]), builtin, chosen, gTool(grules[idx]));
+              gCommit();
               renderG();
             }
             window.uiOpenModal({
@@ -5375,6 +5377,7 @@
               term.title = gModeTitle[gMode(text)];
               term.onclick = function() {
                 grules[idx] = gCompose(gBody(grules[idx]), gNextMode(gMode(grules[idx])), gExempt(grules[idx]), gLinks(grules[idx]), gTool(grules[idx]));
+                gCommit();
                 renderG();
               };
               // Separate control, not a fourth position in the cycle: a rule can
@@ -5453,7 +5456,7 @@
               });
               var del = document.createElement('button');
               del.className = 'ui-orch-list-del'; del.type = 'button'; del.textContent = '×';
-              del.onclick = function() { grules.splice(idx, 1); renderG(); };
+              del.onclick = function() { grules.splice(idx, 1); renderG(); gCommit(); };
               row.appendChild(input); row.appendChild(toolSel); row.appendChild(term); row.appendChild(exempt); row.appendChild(del);
               gList.appendChild(row);
             });
@@ -5466,7 +5469,7 @@
               // guardrail is guidance with an
               // expensive judge attached, and guidance belongs in the Rules band
               // above; this band is for limits that don't negotiate.
-              grules.push(''); renderG();
+              grules.push(''); renderG(); // no commit: an empty row is not a rule yet
               var inputs = gList.querySelectorAll('input');
               if (inputs.length) inputs[inputs.length - 1].focus();
             };
@@ -5940,9 +5943,10 @@
             restore.addEventListener('click', function() {
               clearToolScopes = true;
               renderToolScopes([]);
+              gCommit(); // a click, so neither change nor blur fires for it
               scopeBody.appendChild(Object.assign(document.createElement('div'), {
                 className: 'ui-orch-modal-help',
-                textContent: 'Will be restored when you Save. If a rule really does forbid every use of one, it will be removed again the next time this agent reaches for it: edit or delete the rule to change that for good.',
+                textContent: 'Restored. If a rule really does forbid every use of one, it will be removed again the next time this agent reaches for it: edit or delete the rule to change that for good.',
               }));
             });
             scopeBody.appendChild(restore);
@@ -6111,7 +6115,7 @@
               // full strength. Say so, because the opposite would be a quiet
               // hole in a rule the owner still believes is absolute.
               del.title = 'Delete. Rules linked to it go back to applying in full. To turn it off temporarily, use the on/off button instead: that keeps the wording and the links.';
-              del.onclick = function() { gexceptions.splice(idx, 1); renderE(); renderG(); };
+              del.onclick = function() { gexceptions.splice(idx, 1); renderE(); renderG(); gCommit(); };
               row.appendChild(nameIn); row.appendChild(textIn); row.appendChild(del);
               excList.appendChild(row);
               var dupNote = document.createElement('div');
@@ -6343,21 +6347,49 @@
           gWrap.appendChild(testWrap);
           if (showGuards) m.body.appendChild(gWrap);
 
-          var cancelBtn = document.createElement('button');
-          cancelBtn.className = 'ui-orch-modal-btn';
-          cancelBtn.textContent = 'Cancel';
-          cancelBtn.onclick = m.close;
-          var saveBtn = document.createElement('button');
-          saveBtn.className = 'ui-orch-modal-btn primary';
-          saveBtn.textContent = 'Save';
-          saveBtn.onclick = function() {
+          var closeBtn = document.createElement('button');
+          closeBtn.className = 'ui-orch-modal-btn';
+          closeBtn.textContent = 'Close';
+          closeBtn.onclick = m.close;
+          // Says what the last commit did. It replaces the Save button, so the
+          // thing that used to reassure by being pressable now reassures by
+          // reporting - an editor with no button has to say when it wrote, or
+          // "did that take?" is a question with nowhere to look.
+          var gStatus = document.createElement('span');
+          gStatus.className = 'ui-orch-modal-help';
+          gStatus.style.cssText = 'margin-right:auto;font-size:0.75rem;opacity:0.85';
+          function gSaid(text, bad) {
+            gStatus.textContent = text;
+            gStatus.style.color = bad ? 'var(--danger)' : 'var(--text-mute)';
+          }
+          // Commits run STRICTLY ONE AT A TIME, chained rather than fired.
+          //
+          // gSave is two sequenced POSTs, and the first preserves guardrails by
+          // copying the STORED copy server-side - so two commits in flight
+          // together let the record write read a copy from before the guardrail
+          // write landed, and save the stale value over it. That lost update
+          // already happened once with a single Save button; with a commit per
+          // control it would be the normal case rather than the race.
+          //
+          // One queued commit carries every edit made since the last one: the
+          // payload is rebuilt from current state when it runs, so coalescing
+          // cannot drop an edit, only spare a request.
+          var gChain = Promise.resolve(), gQueued = false;
+          function gCommit() {
+            if (gQueued) { return; }
+            gQueued = true;
+            var go = function() { gQueued = false; return gSave(); };
+            gChain = gChain.then(go, go);
+          }
+          function gSave() {
             var clean = rules.map(function(r) { return r.trim(); })
                              .filter(function(r) { return r.length > 0; });
             agent.rules = clean.join('\n');
             var gclean = grules.map(function(r) { return r.trim(); })
                                .filter(function(r) { return r.length > 0; });
             var hooks = hookDefs.map(function(h){ return h.v; }).filter(function(v){ return activeHooks[v]; });
-            saveBtn.disabled = true;
+            gSaid('Saving\u2026');
+            return (
             // Two saves, STRICTLY SEQUENCED — never Promise.all.
             //
             // The whole-record POST preserves guardrails by copying them from
@@ -6415,15 +6447,29 @@
                     ' could not be stored (an entry needs both a name and a value; blanks and duplicates are dropped). Reopen Rules to see what was kept.');
                 }
               }
-              m.close();
+              // NOT closed. There is no longer a moment called "saving" to
+              // close after: every edit has already landed, and closing on one
+              // of them would take the window away mid-sentence.
+              gSaid('Saved ' + new Date().toLocaleTimeString());
               refreshAgentCounts();
             }).catch(function(err) {
-              saveBtn.disabled = false;
-              window.uiAlert('Save failed: ' + (err && err.message || err));
-            });
-          };
-          m.footer.appendChild(cancelBtn);
-          m.footer.appendChild(saveBtn);
+              gSaid('NOT saved: ' + (err && err.message || err), true);
+            }));
+          }
+          // Every control commits, so nothing waits on a button.
+          //
+          // Delegated for change and blur rather than wired per control: these
+          // bands carry a dozen inputs, selects and checkboxes each, and a list
+          // that grows a control later would otherwise grow one that silently
+          // does not save. blur needs capture, since it does not bubble.
+          //
+          // On BLUR, never on input. A guardrail is enforcement, and saving per
+          // keystroke would put "never send" into force for as long as it takes
+          // to finish typing "never send to outside addresses".
+          m.body.addEventListener('change', gCommit, true);
+          m.body.addEventListener('blur', gCommit, true);
+          m.footer.appendChild(gStatus);
+          m.footer.appendChild(closeBtn);
         }).catch(function(err) {
           window.uiAlert('Failed to load agent: ' + (err && err.message || err));
         });
