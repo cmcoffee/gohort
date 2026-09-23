@@ -27,21 +27,55 @@ import (
 	"github.com/cmcoffee/gohort/core/ui"
 )
 
+// inheritedLabel names the "leave it alone" option on a per-agent tri-state,
+// with the value it currently resolves to.
+//
+// "Use the default" does not tell the reader what would happen, and what would
+// happen is the entire question. The difference between leaving a setting
+// alone and setting it to the same value is whether it FOLLOWS the deployment
+// when that changes - not what it does today - and "Default (Allowed)" answers
+// both at once.
+//
+// The word, not the stored value: "on" means allowed here and "they see it"
+// two fields down, and a label reading "Default (on)" six times is a label
+// nobody can act on.
+func inheritedLabel(db Database, key string, words map[string]string) string {
+	v := effectiveDeploymentDefault(db, key)
+	word := words[v]
+	if word == "" {
+		word = v
+	}
+	if word == "" {
+		return "Default"
+	}
+	return "Default (" + word + ")"
+}
+
 // shareChoice is one memory layer as a tri-state, with its current answer and
 // where that answer came from stated in the help line.
 //
 // A shared helper because four of them differ only in the field and the noun,
 // and four copies of a select is where one quietly keeps the wrong default.
 func shareChoice(field, noun, key string, db Database, owner string, agent AgentRecord) ui.FormField {
+	words := map[string]string{settingOn: "They see it", settingOff: "Kept to yourself"}
 	return ui.FormField{
 		Field: field, Type: "select", Label: noun,
 		Options: []ui.SelectOption{
-			{Value: "", Label: "Use the default for all agents"},
+			{Value: "", Label: inheritedLabel(db, key, words)},
 			{Value: "on", Label: "They see it"},
 			{Value: "off", Label: "Kept to yourself"},
 		},
-		Help: "Currently " + settingSource(db, owner, agent, key) + ".",
+		Help: "Currently " + settingSource(db, agent, key) + ".",
 	}
+}
+
+// adminOnlyLink is a link field that renders for an administrator and an empty
+// spacer for everybody else.
+func adminOnlyLink(isAdmin bool, label, url, text, help string) ui.FormField {
+	if !isAdmin {
+		return ui.FormField{Type: "link", Label: ""}
+	}
+	return ui.FormField{Type: "link", Label: label, Default: url, Placeholder: text, Help: help}
 }
 
 func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Request, user string, udb Database, id string) {
@@ -569,26 +603,31 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 					Fields: []ui.FormField{
 						{Field: "workspace_network", Type: "select", Label: "Network access from the workspace",
 							Options: []ui.SelectOption{
-								{Value: "", Label: "Use the default for all agents"},
+								{Value: "", Label: inheritedLabel(RootDB, defaultWorkspaceNetwork,
+									map[string]string{settingOn: "Allowed", settingOff: "Blocked"})},
 								{Value: "on", Label: "Allowed"},
 								{Value: "off", Label: "Blocked"},
 							},
-							Help: "Currently " + workspaceNetworkSource(RootDB, user, agent) + ". Blocked stops code running in the workspace from dialling out; the agent keeps its tools and its model either way. The default for all agents is set on the All agents page, linked just below.",
+							Help: "Currently " + workspaceNetworkSource(RootDB, agent) + ". Blocked stops code running in the workspace from dialling out; the agent keeps its tools and its model either way. The default itself is set once for the whole deployment, by an administrator.",
 							Detail: "For an agent that should process text or files locally and never phone anywhere from in there. It can still read, write and run commands in the workspace.\n\n" +
-								"The default itself is set on the All agents page, one link below this.\n\n" +
 								"Enforced at both ways out: the sandbox gets no network namespace, and the gohort.fetch helper refuses. Closing one alone would just move a script from one to the other.\n\n" +
 								"It inherits downward, so a sub-agent cannot dial on this one's behalf, and it only ever narrows: Private mode still blocks a turn outright.\n\n" +
 								"A tool already in your pool is not stopped by this: it reaches out through the brokered fetch helper, which is a path you approved and which gohort dials on its behalf. What this stops is code the agent writes and runs on the spot."},
-						// The route to the default this control offers to use.
-						// In the SECTION rather than relying on the page nav:
-						// this page is read as a panel inside chat as often as
-						// at its own URL, and a panel draws the body alone, so
-						// a link that lives only in the header does not exist
-						// on the surface most people read it from.
-						{Type: "link", Label: "Where that default is set",
-							Default:     T.WebPrefix() + "/agent/" + fleetSecurityID + "/access",
-							Placeholder: "Security for all agents",
-							Help:        "Sets what every agent uses when it has not answered this itself."},
+						// The route to the default this control offers to
+						// use. In the SECTION rather than relying on the page
+						// nav: this page is read as a panel inside chat as
+						// often as at its own URL, and a panel draws the body
+						// alone, so a link living only in the header does not
+						// exist on the surface most people read it from.
+						//
+						// Shown to an ADMINISTRATOR only. Everybody can see
+						// what the default is - it is in the option label and
+						// the help line - and a link to a page that would
+						// refuse the reader is worse than no link: it reads as
+						// a permission they have and a page that is broken.
+						adminOnlyLink(RequestIsAdmin(r), "Where that default is set",
+							T.WebPrefix()+"/admin", "Deployment agent settings",
+							"One default for every agent, and the maximum none of them may exceed."),
 					},
 				},
 			},

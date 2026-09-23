@@ -27,29 +27,27 @@ func TestADeploymentDefaultSitsUnderTheOwnersOwn(t *testing.T) {
 	blank := AgentRecord{ID: "a", Owner: "alice"}
 
 	// Nothing set anywhere: the framework's answer, which is open.
-	if got := resolveSetting(db, "alice", blank, defaultWorkspaceNetwork); got != settingOn {
+	if got := resolveSetting(db, blank, defaultWorkspaceNetwork); got != settingOn {
 		t.Errorf("a deployment that sets nothing changed behaviour: %q", got)
 	}
 
 	// The deployment speaks, and a fleet nobody has touched reads it.
 	setDeploymentSetting(db, deploymentDefault, defaultWorkspaceNetwork, settingOff)
-	if got := resolveSetting(db, "alice", blank, defaultWorkspaceNetwork); got != settingOff {
+	if got := resolveSetting(db, blank, defaultWorkspaceNetwork); got != settingOff {
 		t.Errorf("the deployment default was ignored: %q", got)
 	}
-	if src := settingSource(db, "alice", blank, defaultWorkspaceNetwork); !strings.Contains(src, "deployment default") {
+	if src := settingSource(db, blank, defaultWorkspaceNetwork); !strings.Contains(src, "default for all agents") {
 		t.Errorf("the page does not say where the answer came from: %q", src)
 	}
 
-	// The OWNER outranks it, in either direction - it is a starting point, and
-	// one that could not be moved would not be one.
-	setFleetDefault(db, "alice", defaultWorkspaceNetwork, settingOn)
-	if got := resolveSetting(db, "alice", blank, defaultWorkspaceNetwork); got != settingOn {
-		t.Error("an owner could not widen off a deployment DEFAULT, which makes it a ceiling by accident")
+	// The AGENT outranks it, in either direction - a default is a starting
+	// point, and one that could not be moved would not be one.
+	own := AgentRecord{ID: "a", Owner: "alice", WorkspaceNetwork: settingOn}
+	if got := resolveSetting(db, own, defaultWorkspaceNetwork); got != settingOn {
+		t.Error("an agent could not widen off a deployment DEFAULT, which makes it a ceiling by accident")
 	}
-
-	// And the agent outranks the owner, as before.
-	own := AgentRecord{ID: "a", Owner: "alice", WorkspaceNetwork: settingOff}
-	if got := resolveSetting(db, "alice", own, defaultWorkspaceNetwork); got != settingOff {
+	own.WorkspaceNetwork = settingOff
+	if got := resolveSetting(db, own, defaultWorkspaceNetwork); got != settingOff {
 		t.Error("the agent's own answer stopped winning")
 	}
 }
@@ -57,18 +55,17 @@ func TestADeploymentDefaultSitsUnderTheOwnersOwn(t *testing.T) {
 // The maximum is the one that constrains, and it constrains everybody.
 func TestTheDeploymentMaximumCannotBeWidenedAway(t *testing.T) {
 	db := deploymentTestDB(t)
-	// An owner who has opened everything, on an agent that has too.
-	setFleetDefault(db, "alice", defaultWorkspaceNetwork, settingOn)
+	// An agent whose owner has opened it.
 	open := AgentRecord{ID: "a", Owner: "alice", WorkspaceNetwork: settingOn}
-	if got := resolveSetting(db, "alice", open, defaultWorkspaceNetwork); got != settingOn {
+	if got := resolveSetting(db, open, defaultWorkspaceNetwork); got != settingOn {
 		t.Fatalf("setup: %q", got)
 	}
 
 	setDeploymentSetting(db, deploymentMaximum, defaultWorkspaceNetwork, settingOff)
-	if got := resolveSetting(db, "alice", open, defaultWorkspaceNetwork); got != settingOff {
+	if got := resolveSetting(db, open, defaultWorkspaceNetwork); got != settingOff {
 		t.Errorf("an agent resolved looser than the deployment maximum: %q", got)
 	}
-	src := settingSource(db, "alice", open, defaultWorkspaceNetwork)
+	src := settingSource(db, open, defaultWorkspaceNetwork)
 	if !strings.Contains(src, "maximum") {
 		t.Errorf("the page shows a value without saying the ceiling is holding it: %q", src)
 	}
@@ -76,7 +73,7 @@ func TestTheDeploymentMaximumCannotBeWidenedAway(t *testing.T) {
 	// Lifting the ceiling gives the agent back what it had. Its own setting
 	// was never rewritten, so nobody has to remember what it used to be.
 	setDeploymentSetting(db, deploymentMaximum, defaultWorkspaceNetwork, "")
-	if got := resolveSetting(db, "alice", open, defaultWorkspaceNetwork); got != settingOn {
+	if got := resolveSetting(db, open, defaultWorkspaceNetwork); got != settingOn {
 		t.Error("lifting the ceiling left the agent clamped, so the clamp rewrote the record")
 	}
 }
@@ -87,7 +84,7 @@ func TestTheMaximumOnlyEverTightens(t *testing.T) {
 	db := deploymentTestDB(t)
 	shut := AgentRecord{ID: "a", Owner: "alice", WorkspaceNetwork: settingOff}
 	setDeploymentSetting(db, deploymentMaximum, defaultWorkspaceNetwork, settingOn)
-	if got := resolveSetting(db, "alice", shut, defaultWorkspaceNetwork); got != settingOff {
+	if got := resolveSetting(db, shut, defaultWorkspaceNetwork); got != settingOff {
 		t.Errorf("a maximum of 'allowed' opened an agent its owner had closed: %q", got)
 	}
 }
@@ -101,12 +98,12 @@ func TestStrictnessIsDeclaredNotGuessed(t *testing.T) {
 	// "", which here is a VALUE rather than an absence.
 	open := AgentRecord{ID: "a", Owner: "alice"} // accepts anyone
 	setDeploymentSetting(db, deploymentMaximum, defaultInboundMode, inboundOnly)
-	if got := resolveSetting(db, "alice", open, defaultInboundMode); got != inboundOnly {
+	if got := resolveSetting(db, open, defaultInboundMode); got != inboundOnly {
 		t.Errorf("an agent accepting anyone was not clamped to its caller list: %q", got)
 	}
 	// Already stricter, so untouched.
 	shut := AgentRecord{ID: "a", Owner: "alice", InboundMode: inboundNone}
-	if got := resolveSetting(db, "alice", shut, defaultInboundMode); got != inboundNone {
+	if got := resolveSetting(db, shut, defaultInboundMode); got != inboundNone {
 		t.Errorf("a maximum loosened an agent that accepts nobody: %q", got)
 	}
 
@@ -131,7 +128,7 @@ func TestAnUnrecognisedCeilingDoesNothing(t *testing.T) {
 	db := deploymentTestDB(t)
 	open := AgentRecord{ID: "a", Owner: "alice", WorkspaceNetwork: settingOn}
 	setDeploymentSetting(db, deploymentMaximum, defaultWorkspaceNetwork, "blocked")
-	if got := resolveSetting(db, "alice", open, defaultWorkspaceNetwork); got != settingOn {
+	if got := resolveSetting(db, open, defaultWorkspaceNetwork); got != settingOn {
 		t.Errorf("a ceiling nobody can spell grounded the deployment: %q", got)
 	}
 }
@@ -161,14 +158,25 @@ func TestTheDeploymentLayerIsOfferedToAnAdmin(t *testing.T) {
 			t.Errorf("%s has no deployment maximum control", key)
 		}
 	}
-	// Each select offers "unset", which is not the same as any of the values:
-	// unset, the rung below answers.
+	// NO select offers "undecided". There is one default for the deployment
+	// and it always has a value; an undecided option would be a state the
+	// resolution chain has no rung for, and the reader would be choosing
+	// between a value and the same value spelled differently.
+	//
+	// Inbound is the exception that proves it: its loosest value IS the empty
+	// string (accepts anyone), so an empty option there is a named choice
+	// rather than an absence, and it carries a word.
 	for _, f := range panel.Fields {
 		if f.Type != "select" {
 			continue
 		}
-		if len(f.Options) == 0 || f.Options[0].Value != "" {
-			t.Errorf("%s cannot be cleared, so a deployment can never stop saying something", f.Field)
+		for _, o := range f.Options {
+			if o.Value == "" && !strings.HasPrefix(f.Field, defaultInboundMode) {
+				t.Errorf("%s offers an undecided option", f.Field)
+			}
+			if strings.TrimSpace(o.Label) == "" {
+				t.Errorf("%s has an option with no words on it", f.Field)
+			}
 		}
 	}
 }
@@ -180,9 +188,9 @@ func TestTheDeploymentLayerIsAdminOnly(t *testing.T) {
 	if !strings.Contains(src, "if !RequestIsAdmin(r) {") {
 		t.Error("the deployment settings endpoint is not admin-gated, so any owner can set the ceiling over every other owner")
 	}
-	// And the per-owner endpoint stays per-owner: it keys by the CALLER, so an
-	// admin gate there would be the wrong fix for the wrong problem.
-	if !strings.Contains(mustReadFile(t, "fleet_defaults.go"), "setFleetDefault(RootDB, user, setting, v)") {
-		t.Error("the fleet default stopped being keyed to the caller")
+	// And there is no second, owner-scoped copy of the same chain. Two pages
+	// answering one question is what this replaced.
+	if strings.Contains(mustReadFile(t, "agent_settings.go"), "fleetDefault") {
+		t.Error("the per-owner defaults rung is back, so two surfaces answer one question again")
 	}
 }

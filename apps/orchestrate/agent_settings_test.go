@@ -23,25 +23,25 @@ func TestWorkspaceReachResolvesInOrder(t *testing.T) {
 
 	// Nothing set anywhere: the framework's own answer, which is OPEN. Every
 	// deployment did this before any of it, and must keep doing it.
-	if !agentWorkspaceNetwork(RootDB, "alice", undecided) {
+	if !agentWorkspaceNetwork(RootDB, undecided) {
 		t.Error("an agent with nothing set anywhere was blocked")
 	}
-	// The owner's default reaches it.
-	setFleetDefault(RootDB, "alice", defaultWorkspaceNetwork, settingOff)
-	if agentWorkspaceNetwork(RootDB, "alice", undecided) {
+	// The deployment's default reaches it.
+	setDeploymentSetting(RootDB, deploymentDefault, defaultWorkspaceNetwork, settingOff)
+	if agentWorkspaceNetwork(RootDB, undecided) {
 		t.Error("the default for all agents did not reach an undecided agent")
 	}
 	// Its own answer wins, in EITHER direction. A default that could only
 	// tighten would forbid "no agent reaches the network except this one".
 	allowed := undecided
 	allowed.WorkspaceNetwork = settingOn
-	if !agentWorkspaceNetwork(RootDB, "alice", allowed) {
+	if !agentWorkspaceNetwork(RootDB, allowed) {
 		t.Error("an agent could not be looser than the default")
 	}
 	// Clearing the default is NOT setting it off: cleared, the undecided
 	// agent goes back to the framework's answer.
-	setFleetDefault(RootDB, "alice", defaultWorkspaceNetwork, "")
-	if !agentWorkspaceNetwork(RootDB, "alice", undecided) {
+	setDeploymentSetting(RootDB, deploymentDefault, defaultWorkspaceNetwork, "")
+	if !agentWorkspaceNetwork(RootDB, undecided) {
 		t.Error("clearing the default left it blocking")
 	}
 }
@@ -52,7 +52,7 @@ func TestALegacyBlockIsStillABlock(t *testing.T) {
 	_, _, _ = newTestOrchestrate(t)
 	pinRootDB(t)
 	old := AgentRecord{ID: "a", Owner: "alice", WorkspaceNoNetwork: true}
-	if agentWorkspaceNetwork(RootDB, "alice", old) {
+	if agentWorkspaceNetwork(RootDB, old) {
 		t.Error("an agent blocked before the tri-state existed started reaching the network")
 	}
 	// And a fresh answer overrides it, or the migration would be a trap: the
@@ -60,7 +60,7 @@ func TestALegacyBlockIsStillABlock(t *testing.T) {
 	// explains why.
 	fresh := old
 	fresh.WorkspaceNetwork = settingOn
-	if !agentWorkspaceNetwork(RootDB, "alice", fresh) {
+	if !agentWorkspaceNetwork(RootDB, fresh) {
 		t.Error("a stale block outranked a fresh allow")
 	}
 }
@@ -74,15 +74,15 @@ func TestThePageSaysWhereTheAnswerCameFrom(t *testing.T) {
 	// Nothing set anywhere says exactly that, rather than claiming a default
 	// that does not exist: "from the default" when there is none would send
 	// somebody to a page to change something that is not there.
-	if got := workspaceNetworkSource(RootDB, "alice", rec); !strings.Contains(got, "not set anywhere") {
+	if got := workspaceNetworkSource(RootDB, rec); !strings.Contains(got, "not set anywhere") {
 		t.Errorf("an agent with nothing set anywhere does not say so: %q", got)
 	}
-	setFleetDefault(RootDB, "alice", defaultWorkspaceNetwork, settingOff)
-	if got := workspaceNetworkSource(RootDB, "alice", rec); !strings.Contains(got, "default for all agents") {
+	setDeploymentSetting(RootDB, deploymentDefault, defaultWorkspaceNetwork, settingOff)
+	if got := workspaceNetworkSource(RootDB, rec); !strings.Contains(got, "default for all agents") {
 		t.Errorf("an undecided agent does not say it is inheriting: %q", got)
 	}
 	rec.WorkspaceNetwork = settingOff
-	if got := workspaceNetworkSource(RootDB, "alice", rec); !strings.Contains(got, "set on this agent") {
+	if got := workspaceNetworkSource(RootDB, rec); !strings.Contains(got, "set on this agent") {
 		t.Errorf("an override does not read as one: %q", got)
 	}
 }
@@ -90,19 +90,23 @@ func TestThePageSaysWhereTheAnswerCameFrom(t *testing.T) {
 // Only NAMED settings are accepted. An open key-value store would be a page
 // where a typo silently creates a default nothing reads, which looks exactly
 // like one that works.
-func TestFleetDefaultsRefuseWhatNothingReads(t *testing.T) {
+func TestDeploymentSettingsRefuseWhatNothingReads(t *testing.T) {
 	app, _, _ := newTestOrchestrate(t)
 	pinRootDB(t)
+	// These are ADMIN controls, so the harness's user has to be one. Without
+	// this every call below is a 403 and the test proves the gate rather than
+	// the validation it was written for.
+	AuthDB().Set(AuthTable, "user:alice", AuthUser{Username: "alice", Admin: true})
 	patch := func(body string) int {
-		r := httptest.NewRequest(http.MethodPatch, "/api/console/fleet-defaults", strings.NewReader(body))
+		r := httptest.NewRequest(http.MethodPatch, "/api/console/deployment-settings", strings.NewReader(body))
 		w := httptest.NewRecorder()
-		app.handleFleetDefaults(w, asUser(r, "alice"))
+		app.handleDeploymentSettings(w, asUser(r, "alice"))
 		return w.Code
 	}
 	if code := patch(`{"workspace_network":"off"}`); code != http.StatusNoContent {
 		t.Fatalf("setting a known default: %d", code)
 	}
-	if fleetDefault(RootDB, "alice", defaultWorkspaceNetwork) != settingOff {
+	if deploymentSetting(RootDB, deploymentDefault, defaultWorkspaceNetwork) != settingOff {
 		t.Error("the default did not stick")
 	}
 	// A value the resolver does not know reads as SOME state and behaves as
@@ -114,7 +118,7 @@ func TestFleetDefaultsRefuseWhatNothingReads(t *testing.T) {
 	if code := patch(`{"workspce_netwrk":"off"}`); code != http.StatusNoContent {
 		t.Errorf("a misspelled key errored instead of being ignored: %d", code)
 	}
-	if fleetDefault(RootDB, "alice", "workspce_netwrk") != "" {
+	if deploymentSetting(RootDB, deploymentDefault, "workspce_netwrk") != "" {
 		t.Error("a key nothing reads was stored, so it looks like a setting that works")
 	}
 }
@@ -167,7 +171,7 @@ func TestTheShareLayersKeepTheirOldDefaults(t *testing.T) {
 		defaultShareNotes:     false, // did NOT: it granted rather than withheld
 		defaultShareUploads:   true,  // recipients could add documents
 	} {
-		if got := settingIsOn(RootDB, "alice", plain, key); got != want {
+		if got := settingIsOn(RootDB, plain, key); got != want {
 			t.Errorf("%s changed for an agent that set nothing: got %v want %v", key, got, want)
 		}
 	}
@@ -175,10 +179,10 @@ func TestTheShareLayersKeepTheirOldDefaults(t *testing.T) {
 	// the one stored POSITIVELY: a true there means on, where the others mean
 	// off, and reading it the same way as its neighbours would invert it.
 	old := AgentRecord{ID: "a", Owner: "alice", ShareMemoryExplicit: true, ShareHoldCortex: true}
-	if !settingIsOn(RootDB, "alice", old, defaultShareNotes) {
+	if !settingIsOn(RootDB, old, defaultShareNotes) {
 		t.Error("an agent that shared its notes stopped sharing them")
 	}
-	if settingIsOn(RootDB, "alice", old, defaultShareCortex) {
+	if settingIsOn(RootDB, old, defaultShareCortex) {
 		t.Error("an agent holding its cortex back started sharing it")
 	}
 }

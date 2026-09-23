@@ -65,10 +65,12 @@ func TestTheNetworkTabHoldsBothHalves(t *testing.T) {
 	if strings.Count(security, `Group:    "Network"`) < 3 {
 		t.Error("the Network tab is missing one of its sections")
 	}
-	// The fleet page mirrors these tabs; a rename on one side alone puts the
-	// same setting under two different headings.
-	if !strings.Contains(mustReadFile(t, "page_fleet_security.go"), `Group:    "Network"`) {
-		t.Error("the all-agents page still calls it Workspace, so one setting sits under two headings")
+	// The all-agents page carries no SETTINGS at all any more - only standing
+	// decisions - so it has no Network tab to keep in step. A second copy of
+	// the defaults chain is what this replaced.
+	fleet := mustReadFile(t, "page_fleet_security.go")
+	if strings.Contains(fleet, "fleet-defaults") || strings.Contains(fleet, "workspace_network") {
+		t.Error("the owner-side page offers the settings again, so two surfaces answer one question")
 	}
 }
 
@@ -76,8 +78,14 @@ func TestTheNetworkTabHoldsBothHalves(t *testing.T) {
 // "use the default for all agents" and has to say where that is set.
 func TestThePerAgentControlSaysWhereTheDefaultLives(t *testing.T) {
 	security := mustReadFile(t, "page_agent_access.go")
-	if !strings.Contains(security, "The default for all agents is set on the All agents page") {
-		t.Error("the control offers a default without saying where to change it")
+	// The option itself names the value it resolves to, which is what the
+	// reader actually needs: "Default (Allowed)" says both what happens and
+	// that this agent is following rather than deciding.
+	if !strings.Contains(security, `return "Default (" + word + ")"`) {
+		t.Error("the inherited option does not say what it resolves to")
+	}
+	if !strings.Contains(security, "set once for the whole deployment, by an administrator") {
+		t.Error("the control offers a default without saying whose it is")
 	}
 }
 
@@ -99,11 +107,14 @@ func TestTheEditorsRemainingHeaderIsNotCollapsed(t *testing.T) {
 // GRID, so in ordinary body flow it drew on top of what was beneath it.
 func TestTheRouteToTheFleetDefaultIsInTheSection(t *testing.T) {
 	security := mustReadFile(t, "page_agent_access.go")
-	if !strings.Contains(security, `{Type: "link", Label: "Where that default is set"`) {
+	if !strings.Contains(security, `adminOnlyLink(RequestIsAdmin(r), "Where that default is set"`) {
 		t.Error("the control offers a default with no way to reach where it is set")
 	}
-	if !strings.Contains(security, `Default:     T.WebPrefix() + "/agent/" + fleetSecurityID + "/access"`) {
-		t.Error("the link does not point at the all-agents page")
+	// Only for somebody who can follow it. A link to a page that would refuse
+	// the reader is worse than no link: it reads as a permission they have and
+	// a page that is broken.
+	if !strings.Contains(security, "func adminOnlyLink(isAdmin bool") {
+		t.Error("the link is shown to everyone, including the people it would refuse")
 	}
 
 	// And the body rendering does NOT draw the page nav.

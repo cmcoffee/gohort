@@ -77,6 +77,48 @@ func setDeploymentSetting(db Database, kind, setting, value string) {
 	db.Set(deploymentSettingsTable, key, value)
 }
 
+// effectiveDeploymentDefault is what the deployment default ACTUALLY is, never
+// "undecided".
+//
+// Undecided is a real state in a record - an agent that has answered nothing
+// must be told apart from one that answered "off" - and it is NOT a state a
+// deployment-wide setting gets to be in. There is exactly one default and it
+// always has a value: a page reading "not set" leaves the reader to work out
+// what happens instead, and the answer was buried in a constant.
+//
+// Unset resolves to the FRAMEWORK's answer, which is the least restrictive one
+// for every setting that has a choice, and which is what the deployment was
+// already doing. Installing this changes nothing until an administrator
+// decides it should.
+func effectiveDeploymentDefault(db Database, setting string) string {
+	s, ok := triSettings[setting]
+	if !ok {
+		return ""
+	}
+	if v := deploymentSetting(db, deploymentDefault, setting); v != "" {
+		return v
+	}
+	return s.framework
+}
+
+// effectiveDeploymentMaximum is the ceiling, or the loosest value the setting
+// takes when no administrator has set one.
+//
+// Same reasoning: "no maximum" and "a maximum at the loosest value" are the
+// same thing to every reader of it, and naming the value is the one that says
+// what is happening. Clamping to the loosest value is a no-op, so an unset
+// ceiling constrains nothing - which is what it should do.
+func effectiveDeploymentMaximum(db Database, setting string) string {
+	s, ok := triSettings[setting]
+	if !ok || len(s.strictness) == 0 {
+		return ""
+	}
+	if v := deploymentSetting(db, deploymentMaximum, setting); v != "" {
+		return v
+	}
+	return s.strictness[0]
+}
+
 // clampToDeploymentMaximum returns the stricter of an answer and the
 // deployment's ceiling.
 //
@@ -122,8 +164,8 @@ func (T *OrchestrateApp) handleDeploymentSettings(w http.ResponseWriter, r *http
 		w.Header().Set("Cache-Control", "no-store")
 		out := map[string]any{}
 		for setting := range triSettings {
-			out[setting] = deploymentSetting(RootDB, deploymentDefault, setting)
-			out[setting+"_max"] = deploymentSetting(RootDB, deploymentMaximum, setting)
+			out[setting] = effectiveDeploymentDefault(RootDB, setting)
+			out[setting+"_max"] = effectiveDeploymentMaximum(RootDB, setting)
 		}
 		writeJSON(w, out)
 	case http.MethodPatch, http.MethodPost:
@@ -175,12 +217,12 @@ func deploymentSettingsSection() ui.Section {
 		spec := triSettings[s.key]
 		fields = append(fields,
 			ui.FormField{Type: "header", Label: s.label, Help: s.help},
-			ui.FormField{Field: s.key, Type: "select", Label: "Default for a fleet that has not decided",
-				Options: deploymentOptions(spec, s.words, "No deployment default"),
-				Help:    "What an owner's agents read before the owner sets anything. They can change it, in either direction."},
+			ui.FormField{Field: s.key, Type: "select", Label: "Default, for an agent that has not answered",
+				Options: deploymentOptions(spec, s.words),
+				Help:    "What every agent reads until it says otherwise. An agent can be given its own answer, in either direction, and that wins."},
 			ui.FormField{Field: s.key + "_max", Type: "select", Label: "Maximum any agent may hold",
-				Options: deploymentOptions(spec, s.words, "No maximum"),
-				Help:    "A ceiling, not a default: no agent resolves looser than this, whatever its owner set.",
+				Options: deploymentOptions(spec, s.words),
+				Help:    "A ceiling, not a default: no agent resolves looser than this, whatever its owner set. Leave it at the loosest value to impose nothing.",
 				Detail: "This is the only control here that an owner cannot override. Leave it unset unless the deployment genuinely has to hold the line - a maximum that duplicates the default just removes a choice people are allowed to make.\\n\\n" +
 					"Set it and the agents already looser than it are clamped on their next turn. Their own setting is not rewritten, so lifting the ceiling gives them back what they had rather than leaving them reset."},
 		)
@@ -197,9 +239,21 @@ func deploymentSettingsSection() ui.Section {
 
 // deploymentOptions builds a select from a setting's own values, so a value
 // added to triSettings appears here without this file being touched.
-func deploymentOptions(spec triSetting, words map[string]string, unset string) []ui.SelectOption {
-	out := []ui.SelectOption{{Value: "", Label: unset}}
-	for _, v := range spec.values {
+//
+// No "not set" option. A deployment-wide setting always has an answer, and
+// offering undecided would put a state on the page that the resolution chain
+// does not have a rung for - the reader would be choosing between a value and
+// a value spelled differently.
+//
+// Ordered LOOSEST FIRST, which is also the order the ceiling ranks them in, so
+// the two selects on a row read the same way down.
+func deploymentOptions(spec triSetting, words map[string]string) []ui.SelectOption {
+	order := spec.strictness
+	if len(order) == 0 {
+		order = spec.values
+	}
+	out := []ui.SelectOption{}
+	for _, v := range order {
 		label := words[v]
 		if label == "" {
 			label = v
@@ -222,7 +276,7 @@ var deploymentSettingOrder = []struct {
 		map[string]string{settingOn: "Allowed", settingOff: "Blocked"}},
 	{defaultInboundMode, "Which agents may dispatch to an agent",
 		"Who an agent accepts work from. Anyone, only its named callers, or nobody.",
-		map[string]string{inboundOnly: "Only its named callers", inboundNone: "Nobody"}},
+		map[string]string{inboundAny: "Anyone", inboundOnly: "Only its named callers", inboundNone: "Nobody"}},
 	{defaultShareCortex, "A shared agent's standing thread",
 		"Whether somebody the agent is shared with sees what it has been doing.",
 		map[string]string{settingOn: "They see it", settingOff: "Kept to the owner"}},

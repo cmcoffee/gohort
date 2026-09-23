@@ -146,8 +146,8 @@ func TestTheSwitchesOnScreenAreTheOnesTheRuntimeReads(t *testing.T) {
 			t.Errorf("%s is never consulted, so its default reaches nothing", key)
 		}
 	}
-	if !strings.Contains(src, "settingIsOn(RootDB, agentDefaultsOwner") {
-		t.Error("the share layers are not resolved through the owner's defaults")
+	if !strings.Contains(src, "settingIsOn(RootDB, t.agent, defaultShare") {
+		t.Error("the share layers are not resolved through the settings chain")
 	}
 }
 

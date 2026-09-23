@@ -302,7 +302,7 @@ func (T *OrchestrateApp) handleConsolePermissions(w http.ResponseWriter, r *http
 		// not. Offering the segment would be offering something that cannot be
 		// stored, which is what its own doc warns against.
 		wsPolicy, wsDetail := PolicyAllow, "Workspace may reach the network"
-		if !agentWorkspaceNetwork(RootDB, user, ag) {
+		if !agentWorkspaceNetwork(RootDB, ag) {
 			wsPolicy, wsDetail = PolicyBlock, "Workspace may not reach the network"
 		}
 		out = append(out, permRow{

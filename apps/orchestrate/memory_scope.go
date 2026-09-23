@@ -99,7 +99,7 @@ func (t *chatTurn) memoryUnderlay() string {
 // wrong.
 func (t *chatTurn) readsOwnerCortex() bool {
 	return t.memoryUnderlay() != "" &&
-		settingIsOn(RootDB, agentDefaultsOwner(t.agent, t.user), t.agent, defaultShareCortex)
+		settingIsOn(RootDB, t.agent, defaultShareCortex)
 }
 
 // readsOwnerReference reports whether retrieval also searches the owner's copy
@@ -111,7 +111,7 @@ func (t *chatTurn) readsOwnerCortex() bool {
 // who reads what is in it and decides it should not travel turns this on.
 func (t *chatTurn) readsOwnerReference() bool {
 	return t.memoryUnderlay() != "" &&
-		settingIsOn(RootDB, agentDefaultsOwner(t.agent, t.user), t.agent, defaultShareReference)
+		settingIsOn(RootDB, t.agent, defaultShareReference)
 }
 
 // readsOwnerFacts reports whether the owner's saved notes join this turn's
@@ -122,7 +122,7 @@ func (t *chatTurn) readsOwnerReference() bool {
 // owner was talking to the agent alone.
 func (t *chatTurn) readsOwnerFacts() bool {
 	return t.memoryUnderlay() != "" &&
-		settingIsOn(RootDB, agentDefaultsOwner(t.agent, t.user), t.agent, defaultShareNotes)
+		settingIsOn(RootDB, t.agent, defaultShareNotes)
 }
 
 // readsOwnerCorpus reports whether a retrieval at this scope also searches the

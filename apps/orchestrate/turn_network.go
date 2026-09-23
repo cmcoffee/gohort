@@ -42,6 +42,6 @@ import (
 func withAgentNetwork(ctx context.Context, user string, agent AgentRecord, private bool) (context.Context, *NetworkConnector) {
 	conn := NewNetworkConnector(private)
 	ctx = WithNetworkConnector(ctx, conn)
-	ctx = netgate.WithWorkspaceNetwork(ctx, agentWorkspaceNetwork(RootDB, agentDefaultsOwner(agent, user), agent))
+	ctx = netgate.WithWorkspaceNetwork(ctx, agentWorkspaceNetwork(RootDB, agent))
 	return ctx, conn
 }

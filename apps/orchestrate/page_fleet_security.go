@@ -1,21 +1,21 @@
-// What holds for EVERY agent, in one place.
+// The standing decisions an owner has made about every one of their agents.
 //
-// The per-agent Security page answers "what can this one do". It cannot
-// answer "what is true of all of them", and an owner with a dozen agents had
-// to visit a dozen pages to find out - or to change one thing everywhere.
+// A contact policy, a delegation policy and a tool's ask-mark are each read
+// agent-first and then fleet-wide, so a decision recorded here reaches an
+// agent that has decided nothing. Each one is a row somebody promoted from a
+// single agent to all of them, and each can be narrowed back.
 //
-// A fleet value here is a DEFAULT, not a ceiling. An agent may override it in
-// either direction, including looser: "no agent reaches the network except
-// this one" is an ordinary thing to want, and a ceiling model forbids it. What
-// makes that safe is that an override is visible AS an override on the agent
-// that carries it, never silent.
+// THE SETTINGS ARE NOT HERE ANY MORE. This page used to carry a second copy of
+// the defaults chain - the workspace ceiling and the four share layers, per
+// owner - and it was one rung too many. Two pages answered the same question,
+// an owner reading theirs could not see the deployment's, and the layer bought
+// nothing a per-agent answer did not already buy. There is one default now,
+// an administrator sets it, and the per-agent control names the value it
+// resolves to rather than pointing at another page. See
+// deployment_defaults.go.
 //
-// Only the decisions that genuinely fall back are here. A contact policy, a
-// delegation policy and a tool's ask-mark are each read agent-first and then
-// fleet-wide, so a value set here reaches an agent that has decided nothing.
-// The rest of an agent's settings are fields on its own record with no
-// fallback to fall back TO, and listing them here would be a page of controls
-// that look like defaults and are not.
+// What is left is not a settings page and does not pretend to be one: every
+// row here is a decision, with the agent it came from still recorded.
 
 package orchestrate
 
@@ -30,20 +30,6 @@ import (
 // them". Not an agent, and an agent cannot be named it: the route checks this
 // before it looks anything up.
 const fleetSecurityID = "all"
-
-// fleetShareChoice is one layer's default. "Not set" is offered and is not the
-// same as "kept to yourself": unset, an agent that has decided nothing gets
-// the framework's own answer, which differs per layer.
-func fleetShareChoice(field, noun string) ui.FormField {
-	return ui.FormField{
-		Field: field, Type: "select", Label: noun,
-		Options: []ui.SelectOption{
-			{Value: "", Label: "Not set"},
-			{Value: "on", Label: "They see it"},
-			{Value: "off", Label: "Kept to yourself"},
-		},
-	}
-}
 
 func (T *OrchestrateApp) renderFleetSecurity(w http.ResponseWriter, r *http.Request, user string, udb Database) {
 	// scope=fleet on every source: these are the rows that bind every agent,
@@ -80,7 +66,7 @@ func (T *OrchestrateApp) renderFleetSecurity(w http.ResponseWriter, r *http.Requ
 	}
 
 	page := ui.Page{
-		Title:     "Security: all agents",
+		Title:     "Standing decisions: all agents",
 		ShowTitle: true,
 		BackURL:   T.WebPrefix() + "/",
 		MaxWidth:  "980px",
@@ -99,45 +85,6 @@ func (T *OrchestrateApp) renderFleetSecurity(w http.ResponseWriter, r *http.Requ
 					EmptyText:  "No tool asks on every agent. Each is decided per agent, or not at all.",
 					Columns:    []ui.Col{{Field: "Who", Label: "Tool"}, {Field: "Detail", Label: "", Mute: true}},
 					RowActions: ladder(),
-				},
-			},
-			{
-				Group:    "Network",
-				Title:    "Network access from the workspace",
-				Subtitle: "What an agent uses when it has not decided for itself.",
-				Detail: "An agent may override this either way, including looser. A default that could only tighten would forbid \"no agent reaches the network except this one\", which is an ordinary thing to want; what makes it safe is that an override shows AS an override on the agent carrying it.\n\n" +
-					"Leaving this unset is not the same as blocking: unset, an agent that has decided nothing gets the deployment's default, and failing that the framework's own answer, which is allowed.\n\n" +
-					"An administrator can also set a MAXIMUM for the whole deployment, which nothing here can widen past. Where one is holding an agent, that agent's own page says so rather than showing you a value it is not running under.",
-				Body: ui.FormPanel{
-					Source:  T.WebPrefix() + "/api/console/fleet-defaults",
-					PostURL: T.WebPrefix() + "/api/console/fleet-defaults",
-					Method:  "PATCH",
-					Fields: []ui.FormField{
-						{Field: "workspace_network", Type: "select", Label: "By default",
-							Options: []ui.SelectOption{
-								{Value: "", Label: "Not set (allowed)"},
-								{Value: "on", Label: "Allowed"},
-								{Value: "off", Label: "Blocked"},
-							},
-							Help: "Read by every agent that has not answered this itself."},
-					},
-				},
-			},
-			{
-				Group:    "Share",
-				Title:    "What a recipient sees by default",
-				Subtitle: "Which memory layers travel with an agent that has not answered for itself.",
-				Detail:   "An agent may override any of these either way. Each says on its own page which it is doing, so an override reads as an override rather than as a value.",
-				Body: ui.FormPanel{
-					Source:  T.WebPrefix() + "/api/console/fleet-defaults",
-					PostURL: T.WebPrefix() + "/api/console/fleet-defaults",
-					Method:  "PATCH",
-					Fields: []ui.FormField{
-						fleetShareChoice("share_cortex", "Its standing activity"),
-						fleetShareChoice("share_reference", "What it worked out"),
-						fleetShareChoice("share_notes", "Its saved notes"),
-						fleetShareChoice("share_uploads", "Adding documents of their own"),
-					},
 				},
 			},
 			band("Access", "access", "No contact decision binds every agent."),

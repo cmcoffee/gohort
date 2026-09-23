@@ -200,9 +200,10 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	// not applied: see handleConsolePermissionAudience.
 	T.HandleFunc("/api/console/permissions/audience", T.handleConsolePermissionAudience)
 	// What holds for every agent until one says otherwise.
-	T.HandleFunc("/api/console/fleet-defaults", T.handleFleetDefaults)
-	// The rung beneath it, and the ceiling over all of it. Admin-gated inside
-	// the handler: an owner sets what their own fleet does, not what everybody's does.
+	// ONE default for every agent, and the ceiling over all of them. Admin-gated
+	// inside the handler. There was a per-OWNER rung here too, on its own
+	// endpoint, and it was one rung too many: two pages answered the same
+	// question and an owner reading theirs could not see the deployment's.
 	T.HandleFunc("/api/console/deployment-settings", T.handleDeploymentSettings)
 	T.HandleFunc("/api/console/privileges", T.handleConsolePrivileges)
 	T.HandleFunc("/api/console/approvals/approve", w(T.handleApprovalApprove))

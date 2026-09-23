@@ -106,7 +106,7 @@ func TestAWorkspaceDecisionCanBeRevokedFromThePage(t *testing.T) {
 	// and the legacy bool is only read for a record written before it existed,
 	// so a test reading that field alone would pass while the agent behaved
 	// the other way.
-	if !agentWorkspaceNetwork(RootDB, "alice", rec) {
+	if !agentWorkspaceNetwork(RootDB, rec) {
 		t.Error("allowing the workspace did not take")
 	}
 	if rec.WorkspaceNoNetwork {
@@ -120,7 +120,7 @@ func TestAWorkspaceDecisionCanBeRevokedFromThePage(t *testing.T) {
 	set("workspace:w3:network", PolicyBlock)
 	set("subaction:w3:workspace/run", PolicyBlock)
 	rec, _ = loadAgent(udb, "w3")
-	if agentWorkspaceNetwork(RootDB, "alice", rec) {
+	if agentWorkspaceNetwork(RootDB, rec) {
 		t.Error("blocking the workspace did not take")
 	}
 	if len(rec.DisabledToolActions) != 1 || rec.DisabledToolActions[0] != "workspace/run" {

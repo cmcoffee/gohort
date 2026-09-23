@@ -93,7 +93,11 @@ func TestTheCeilingIsOfferedAndSaveable(t *testing.T) {
 	if !strings.Contains(security, `Field: "workspace_network", Type: "select"`) {
 		t.Error("the Security page does not offer the setting, so it is offered nowhere")
 	}
-	if !strings.Contains(security, "Use the default for all agents") {
+	// The third state is still offered, and it now NAMES the value it
+	// resolves to: "Default (Allowed)" says both what happens and that this
+	// agent is following rather than deciding, which "Use the default" did
+	// not.
+	if !strings.Contains(security, `{Value: "", Label: inheritedLabel(RootDB, defaultWorkspaceNetwork,`) {
 		t.Error("the agent cannot be returned to the default once it has answered")
 	}
 	if !strings.Contains(src, `"workspace:" + ag.ID + ":network"`) {

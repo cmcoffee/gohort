@@ -366,7 +366,7 @@ func applyForcePrivateToDispatch(ctx context.Context, subSess *ToolSession, tool
 	// never widens, so a target allowed its own workspace network still gets
 	// none inside a turn that had none.
 	ctx = netgate.WithWorkspaceNetwork(ctx, netgate.WorkspaceNetworkAllowed(ctx) &&
-		agentWorkspaceNetwork(RootDB, agentDefaultsOwner(target, ""), target))
+		agentWorkspaceNetwork(RootDB, target))
 	// Enforce private when the TARGET is permanently private (ForcePrivate) OR
 	// the PARENT turn is already running private — the parent's connector rides
 	// on ctx, so a blocked incoming ctx means a Private parent delegated /

@@ -1,4 +1,4 @@
-// Values that hold for every agent until one says otherwise.
+// The settings an agent can answer for itself, and what answers when it has not.
 //
 // A setting stored as a bool on an agent cannot express this. "Off because the
 // default is off" and "off because I set it" are the same false, and the
@@ -9,20 +9,21 @@
 // decided here". The same reason gob cannot carry a *bool in this codebase: a
 // pointer that must distinguish unset from false does not survive the round
 // trip, and a string does.
+//
+// THERE IS ONE DEFAULT AND AN ADMINISTRATOR SETS IT. There used to be a
+// per-owner rung here as well - every owner carried their own default for
+// their own fleet - and it was one rung too many. Two pages could answer the
+// same question, an owner reading theirs could not see the deployment's, and
+// the layer bought nothing a per-agent answer did not already buy. See
+// deployment_defaults.go, which now holds both the default and the ceiling.
 
 package orchestrate
 
 import (
-	"encoding/json"
-	"fmt"
-	"net/http"
-	"slices"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 )
-
-const fleetDefaultsTable = "fleet_defaults"
 
 // The settings that can carry a fleet default. Named, not open: a key nobody
 // reads is a control that appears to work.
@@ -42,37 +43,6 @@ const (
 	settingOff = "off"
 )
 
-func fleetDefaultKey(owner, setting string) string { return owner + "\x00" + setting }
-
-// fleetDefault reads what holds for every agent of this owner, or "" when
-// nothing does.
-func fleetDefault(db Database, owner, setting string) string {
-	if db == nil || strings.TrimSpace(owner) == "" {
-		return ""
-	}
-	var v string
-	db.Get(fleetDefaultsTable, fleetDefaultKey(owner, setting), &v)
-	return strings.TrimSpace(v)
-}
-
-// setFleetDefault records it, or clears it when value is empty.
-//
-// Clearing is not the same as setting it off: cleared, every agent that had
-// not decided goes back to the framework's own answer, which for workspace
-// reach is allowed. That is a widening, and it is the owner's to make, but it
-// is not what "off" means and the two must not be spelled the same way.
-func setFleetDefault(db Database, owner, setting, value string) {
-	if db == nil || strings.TrimSpace(owner) == "" {
-		return
-	}
-	key := fleetDefaultKey(owner, setting)
-	if value = strings.TrimSpace(value); value == "" {
-		db.Unset(fleetDefaultsTable, key)
-		return
-	}
-	db.Set(fleetDefaultsTable, key, value)
-}
-
 // agentWorkspaceNetwork resolves whether code in this agent's workspace may
 // open a connection, in the order the answers override each other.
 //
@@ -80,80 +50,16 @@ func setFleetDefault(db Database, owner, setting, value string) {
 // this existed, then the owner's default, then the framework's: allowed. The
 // framework's answer is last and is OPEN, which is what every deployment did
 // before any of this and must stay true for one that sets nothing.
-func agentWorkspaceNetwork(db Database, owner string, rec AgentRecord) bool {
-	return settingIsOn(db, owner, rec, defaultWorkspaceNetwork)
+func agentWorkspaceNetwork(db Database, rec AgentRecord) bool {
+	return settingIsOn(db, rec, defaultWorkspaceNetwork)
 }
 
 // workspaceNetworkSource says WHERE that answer came from, for a page that has
 // to show an override as an override rather than as a value.
-func workspaceNetworkSource(db Database, owner string, rec AgentRecord) string {
-	return settingSource(db, owner, rec, defaultWorkspaceNetwork)
+func workspaceNetworkSource(db Database, rec AgentRecord) string {
+	return settingSource(db, rec, defaultWorkspaceNetwork)
 }
 
-// agentDefaultsOwner is whose defaults an agent reads: its owner, falling back
-// to the running user for a record that carries none (a seed, or one written
-// before ownership was stamped).
-//
-// Not the runtime user. A shared agent runs for somebody else, and what its
-// workspace may reach is a decision its OWNER made about their own agent, not
-// a setting the visitor brings with them.
-func agentDefaultsOwner(rec AgentRecord, fallback string) string {
-	if o := strings.TrimSpace(rec.Owner); o != "" && o != seedOwner {
-		return o
-	}
-	return strings.TrimSpace(fallback)
-}
-
-// handleFleetDefaults reads and writes the values that hold for every agent.
-//
-// GET answers with the settings as a flat object, which is what a FormPanel
-// loads. PATCH takes the fields that changed, which is what per-field
-// auto-save sends.
-//
-// Only NAMED settings are accepted. An open key-value store here would be a
-// page where a typo silently creates a default nothing reads, which looks
-// exactly like one that works.
-func (T *OrchestrateApp) handleFleetDefaults(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
-	if !ok {
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		w.Header().Set("Cache-Control", "no-store")
-		out := map[string]any{}
-		for setting := range triSettings {
-			out[setting] = fleetDefault(RootDB, user, setting)
-		}
-		writeJSON(w, out)
-	case http.MethodPatch, http.MethodPost:
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		for setting := range triSettings {
-			raw, present := body[setting]
-			if !present {
-				continue
-			}
-			v := strings.TrimSpace(fmt.Sprint(raw))
-			if raw == nil {
-				v = ""
-			}
-			// Empty clears, which is NOT the same as off: cleared, an agent
-			// that decided nothing goes back to the framework's answer.
-			if v != "" && !slices.Contains(triSettings[setting].values, v) {
-				http.Error(w, setting+" does not take "+v, http.StatusBadRequest)
-				return
-			}
-			setFleetDefault(RootDB, user, setting, v)
-		}
-		w.WriteHeader(http.StatusNoContent)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
 
 // triSetting describes one setting that can carry a fleet default.
 //
@@ -262,7 +168,7 @@ var triSettings = map[string]triSetting{
 
 // resolveSetting answers one setting for one agent, in the order the answers
 // override each other.
-func resolveSettingRaw(db Database, owner string, rec AgentRecord, key string) string {
+func resolveSettingRaw(db Database, rec AgentRecord, key string) string {
 	s, ok := triSettings[key]
 	if !ok {
 		return ""
@@ -271,9 +177,6 @@ func resolveSettingRaw(db Database, owner string, rec AgentRecord, key string) s
 		return v
 	}
 	if v, said := s.legacy(rec); said {
-		return v
-	}
-	if v := fleetDefault(db, owner, s.key); v != "" {
 		return v
 	}
 	if v := deploymentSetting(db, deploymentDefault, s.key); v != "" {
@@ -288,18 +191,18 @@ func resolveSettingRaw(db Database, owner string, rec AgentRecord, key string) s
 // says, kept separate so a page can show an owner what they set beside what
 // the deployment allows - a ceiling that silently rewrote the answer would
 // leave somebody reading their own control and not believing it.
-func resolveSetting(db Database, owner string, rec AgentRecord, key string) string {
-	return clampToDeploymentMaximum(db, key, resolveSettingRaw(db, owner, rec, key))
+func resolveSetting(db Database, rec AgentRecord, key string) string {
+	return clampToDeploymentMaximum(db, key, resolveSettingRaw(db, rec, key))
 }
 
 // settingIsOn is the bool form, for a setting whose values are on and off.
-func settingIsOn(db Database, owner string, rec AgentRecord, key string) bool {
-	return resolveSetting(db, owner, rec, key) == settingOn
+func settingIsOn(db Database, rec AgentRecord, key string) bool {
+	return resolveSetting(db, rec, key) == settingOn
 }
 
 // settingSource says WHERE an answer came from, for a page that has to show an
 // override as an override rather than as a value.
-func settingSource(db Database, owner string, rec AgentRecord, key string) string {
+func settingSource(db Database, rec AgentRecord, key string) string {
 	s, ok := triSettings[key]
 	if !ok {
 		return ""
@@ -310,7 +213,7 @@ func settingSource(db Database, owner string, rec AgentRecord, key string) strin
 	// the agent's OWN setting that this most often overrides, so checking it
 	// after the own-answer branch is checking it in the one case it does not
 	// get reached.
-	raw := resolveSettingRaw(db, owner, rec, key)
+	raw := resolveSettingRaw(db, rec, key)
 	if held := clampToDeploymentMaximum(db, key, raw); held != raw {
 		return "held at " + held + " by the deployment maximum (this agent asks for " + raw + ")"
 	}
@@ -320,11 +223,8 @@ func settingSource(db Database, owner string, rec AgentRecord, key string) strin
 	if v, said := s.legacy(rec); said {
 		return "set on this agent: " + v
 	}
-	if v := fleetDefault(db, owner, s.key); v != "" {
-		return "from the default for all agents: " + v
-	}
 	if v := deploymentSetting(db, deploymentDefault, s.key); v != "" {
-		return "from the deployment default: " + v
+		return "from the default for all agents: " + v
 	}
 	return "not set anywhere, so: " + s.framework
 }

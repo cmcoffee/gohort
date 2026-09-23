@@ -544,7 +544,7 @@ func (T *OrchestrateApp) handleAgentKnowledgeUpload(w http.ResponseWriter, r *ht
 	// Checked on the OWNER's flag and skipped for the owner themselves, who is
 	// not a recipient of their own agent and never needed permission for their
 	// own documents.
-	if !settingIsOn(RootDB, agentDefaultsOwner(agent, user), agent, defaultShareUploads) &&
+	if !settingIsOn(RootDB, agent, defaultShareUploads) &&
 		agent.Owner != "" && agent.Owner != user {
 		http.Error(w, "The owner of this agent has not allowed documents of your own here.", http.StatusForbidden)
 		return
