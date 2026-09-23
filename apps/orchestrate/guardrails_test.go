@@ -980,3 +980,78 @@ func TestSortedHookListIsStable(t *testing.T) {
 		t.Error("an inert agent reports no active hooks")
 	}
 }
+
+// A tool binding has to survive the round trip the editor actually makes:
+// offered in the picker, composed into "#name rule", parsed back, and matched
+// against the picker's list again.
+//
+// It did not. leadingToolName stopped at the first character outside
+// [a-z0-9_], so a hyphenated tool name bound to its own prefix -
+// "#ts3-client-status" became "ts3" - and since that prefix is not a name the
+// picker offers, reopening the editor could not select it and fell back to
+// "any action". The binding looked like it had not saved. It had saved, to the
+// wrong thing, and the rule text kept the remainder.
+func TestAToolBindingSurvivesTheEditorsRoundTrip(t *testing.T) {
+	for _, name := range []string{
+		"send_email",
+		"ts3-client-status",
+		"web_search",
+		"a-b-c_d",
+	} {
+		r := parseGuardrailRule("#" + name + " never do the thing")
+		if r.Tool != name {
+			t.Errorf("#%s bound to %q", name, r.Tool)
+		}
+		// And the rule text is the rule, with no fragment of the name left in
+		// it - the leak that made this visible.
+		if r.Text != "never do the thing" {
+			t.Errorf("#%s left %q in the rule text", name, r.Text)
+		}
+	}
+
+	// A SLASH is not part of a name: it is not legal in a tool name, so
+	// "#tool/action" must not bind a rule to something no agent can call - a
+	// rule enforced nowhere is the one direction this must not fail in.
+	if r := parseGuardrailRule("#moltbook/create_post never"); r.Tool != "moltbook" {
+		t.Errorf("a slash joined the name: %q", r.Tool)
+	}
+
+	// A trailing hyphen is punctuation, not part of a name.
+	if r := parseGuardrailRule("#send_email- never"); r.Tool != "send_email" {
+		t.Errorf("a trailing hyphen joined the name: %q", r.Tool)
+	}
+
+	// A bare "#" still binds nothing, which is the safe reading: a rule that
+	// applies nowhere is a rule that is not enforced.
+	if r := parseGuardrailRule("# never do the thing"); r.Tool != "" {
+		t.Errorf("a bare marker bound to %q", r.Tool)
+	}
+}
+
+// The picker never offers a name the marker cannot carry, so the round trip
+// above is guaranteed rather than hoped for.
+func TestThePickerOnlyOffersBindableNames(t *testing.T) {
+	agent := AgentRecord{ID: "a", Owner: "alice", AllowedTools: []string{
+		"send_email", "ts3-client-status",
+		"has a space", "has#hash", "has(paren)", "moltbook/create_post",
+	}}
+	offered := map[string]bool{}
+	for _, n := range guardrailToolChoices(agent) {
+		offered[n] = true
+		if leadingToolName(n) != n {
+			t.Errorf("the picker offers %q, which the marker cannot carry", n)
+		}
+	}
+	for _, want := range []string{"send_email", "ts3-client-status"} {
+		if !offered[want] {
+			t.Errorf("a bindable name was dropped from the picker: %q", want)
+		}
+	}
+	// And a name that cannot be stored is not offered, rather than offered and
+	// then silently mangled.
+	for _, unwanted := range []string{"has a space", "has#hash", "has(paren)", "moltbook/create_post"} {
+		if offered[unwanted] {
+			t.Errorf("the picker offers %q, which cannot round-trip", unwanted)
+		}
+	}
+}

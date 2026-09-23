@@ -452,6 +452,14 @@ func guardrailToolChoices(agent AgentRecord) []string {
 		if n == "" || n == "*" || n == noToolsSentinel || seen[n] {
 			return
 		}
+		// Only a name the MARKER can carry. A binding is stored as "#name" in
+		// the rule text, so a name the grammar cannot round-trip would be
+		// offered in the picker, saved as something shorter, and come back
+		// unmatched - which reads as the setting not having saved. A control
+		// must not offer a state its value cannot hold.
+		if leadingToolName(n) != n {
+			return
+		}
 		seen[n] = true
 		out = append(out, n)
 	}

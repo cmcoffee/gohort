@@ -31,11 +31,11 @@ func TestTheToolMarkerParsesAlongsideTheOthers(t *testing.T) {
 		{"@night-shift #send_email never email out of hours", "never email out of hours", "send_email"},
 		// A bare "#" names nothing, so it binds nothing. The rule stays
 		// general, which is the SAFE reading: the opposite would let a stray
-		// character scope a rule down to no tool at all.
-		{"# never do that", "never do that", ""},
-		// A hyphen cannot appear in a tool name, so the name stops there rather
-		// than storing something that matches nothing.
-		{"#send-email never email", "-email never email", "send"},
+		// A hyphen IS part of a tool name: validLLMToolName is
+		// ^[a-zA-Z0-9_-]{1,128}$, so "send-email" is an ordinary name and the
+		// picker offers it. This asserted the opposite, and the truncation it
+		// pinned is what made a hyphenated binding reopen as "any action".
+		{"#send-email never email", "never email", "send-email"},
 	}
 	for _, c := range cases {
 		r := parseGuardrailRule(c.line)

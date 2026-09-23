@@ -374,11 +374,30 @@ func leadingToolName(s string) string {
 	i := 0
 	for i < len(s) {
 		c := s[i]
-		if c == '_' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
+		// The hyphen is part of a NAME, not a boundary. validLLMToolName is
+		// ^[a-zA-Z0-9_-]{1,128}$, so a hyphenated tool is an ordinary tool and
+		// the picker offers it - but the name used to stop at the first
+		// hyphen, so "#ts3-client-status" bound to "ts3". That prefix is not a
+		// name the picker offers, so reopening the editor could not select it
+		// and fell back to "any action": the binding looked like it had not
+		// saved, when it had saved to the wrong thing and left "-client-status"
+		// in the rule text.
+		//
+		// A SLASH is not included, and deliberately: it is not legal in a tool
+		// name, so "#tool/action" would bind a rule to something no agent can
+		// call - a rule enforced nowhere, which is the one direction this must
+		// not fail in. A grouped tool is bound by its own name.
+		if c == '_' || c == '-' ||
+			(c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') {
 			i++
 			continue
 		}
 		break
+	}
+	// A trailing hyphen is punctuation, not part of a name: "#send_email-"
+	// binds to send_email.
+	for i > 0 && s[i-1] == '-' {
+		i--
 	}
 	return s[:i]
 }

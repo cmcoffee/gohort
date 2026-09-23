@@ -5004,7 +5004,7 @@
           // carve-out; "@name" links one of the owner's named exceptions, and a
           // rule may carry several.
           var G_BLOCK = 'block', G_RECOVER = 'recover', G_APPEAL = 'appeal';
-          var G_MARKER_RE = /^\s*(?:[?!~]|@[a-z0-9_-]*|#[a-z0-9_]*)\s*/i;
+          var G_MARKER_RE = /^\s*(?:[?!~]|@[a-z0-9_-]*|#[a-z0-9_-]*)\s*/i;
           // Consume the whole leading RUN of markers. Reading only the first is
           // the bug that broke "~" when it shipped, and with "@name" links a
           // rule routinely carries three or four.
@@ -5041,8 +5041,13 @@
           // generally. A bare '#' names nothing and binds nothing — the safe
           // reading, matching the server.
           function gTool(s) {
-            var m = String(gMarkers(s) || '').match(/#([a-z0-9_]+)/i);
-            return m ? m[1].toLowerCase() : '';
+            // The hyphen is part of a NAME: a tool name is
+            // ^[a-zA-Z0-9_-]+, so truncating at the first hyphen bound the
+            // rule to a prefix the picker does not offer, which reopened as
+            // "any action". Matches the server's leadingToolName, trailing
+            // hyphen and all.
+            var m = String(gMarkers(s) || '').match(/#([a-z0-9_-]+)/i);
+            return m ? m[1].toLowerCase().replace(/-+$/, '') : '';
           }
           function gCompose(body, mode, exempt, links, tool) {
             var pre = exempt ? '@' : '';
