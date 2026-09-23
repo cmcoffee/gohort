@@ -282,6 +282,19 @@ func draftAPICredentialToolDef(t *chatTurn) AgentToolDef {
 			// with a tweaked base_url. Only the user's OWN record is at risk
 			// (SaveAPIDraft keys by owner), so check that one precisely. An
 			// unfinished draft (disabled, no real secret) stays freely editable.
+			// A working GLOBAL credential of the same name is broken just as
+			// badly, without being touched at all. Resolution tries the user's
+			// OWN namespace first (SecureAPI.ResolveIn), so a personal draft
+			// SHADOWS the deployment's credential: every tool naming it starts
+			// resolving to a disabled record with no secret, and the real one
+			// sits there working and unreachable. The reasoning above - "only
+			// the user's OWN record is at risk, SaveAPIDraft keys by owner" -
+			// is true about overwriting and wrong about breaking.
+			if _, globalExists := Secure().Load(credName); globalExists {
+				if _, enabled, hasSecret := Secure().CredentialStatus(credName); enabled || hasSecret {
+					return fmt.Sprintf("The deployment already has a working credential called %q, and drafting a personal one of the same name would SHADOW it: your own namespace is resolved first, so every tool naming %q would start reaching a disabled draft with no secret while the working credential sits unreachable. NOT drafting it. To use the existing one, pass credential=%q to tool_def - you do not need to draft anything. If you genuinely need a separate credential, give it a different name.", credName, credName, credName), nil
+				}
+			}
 			if _, ownExists := Secure().LoadUser(t.user, credName); ownExists {
 				if _, enabled, hasSecret := Secure().CredentialStatusOwned(t.user, credName); enabled || hasSecret {
 					state := "already has its secret set"
