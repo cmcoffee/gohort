@@ -234,3 +234,57 @@ func TestDeferredToolCalledDirectlyStillResolves(t *testing.T) {
 		t.Fatal("the fallback must not invent tools")
 	}
 }
+
+// The Builder-rhythm tools (app_def, pipeline, machine, the build-plan card) are
+// mounted by catalogKnowTools, not builderAuthoringTools, so deferring the
+// catalog used to leave them direct on every Author agent — app_def alone was
+// the largest schema in the prompt. Once the turn has deferred, they must join
+// the index and stay reachable, and a direct tool the index already lists must
+// not be mounted twice.
+func TestBuilderRhythmToolsJoinTheDeferredIndex(t *testing.T) {
+	turn, sess := newAuthoringTestTurn(t)
+	turn.authoringLazyPrompt = registerLazyAuthoringTools(turn, builderAuthoringTools(sess, turn))
+	if _, ok := turn.deferredAuthoringDefs["tool_def"]; !ok {
+		t.Fatal("precondition: tool_def is part of the deferred authoring catalog")
+	}
+	direct := []AgentToolDef{
+		turn.appDefToolDef(),
+		turn.pipelineGroupedToolDef(),
+		turn.machineGroupedToolDef(),
+		turn.presentBuildPlanToolDef(),
+		turn.markStepDoneToolDef(),
+		turn.showLinkToolDef(),
+		{Tool: Tool{Name: "tool_def", Description: "the self-serve mount"}},
+	}
+	kept := turn.deferKnownAuthoringTools(direct)
+	if got := namesOf(kept); len(got) != 1 || got[0] != "show_link" {
+		t.Fatalf("only show_link should stay direct, got %v", got)
+	}
+	for _, n := range []string{"app_def", "pipeline", "machine", "present_build_plan", "mark_step_done"} {
+		if _, ok := turn.deferredAuthoringDefs[n]; !ok {
+			t.Errorf("%s deferred but not stored — load_tool cannot return its schema", n)
+		}
+		if !strings.Contains(turn.authoringLazyPrompt, "`"+n+"`") {
+			t.Errorf("%s missing from the index — the model cannot know it exists", n)
+		}
+		if h, ok := turn.lazyToolFallback(n); !ok || h == nil {
+			t.Errorf("%s must still resolve when called directly", n)
+		}
+	}
+	if strings.Count(turn.authoringLazyPrompt, "- `tool_def`") != 1 {
+		t.Error("tool_def must be listed in the index exactly once")
+	}
+}
+
+// A turn that did not defer its catalog — Builder, or an author running for a
+// non-owner — must get its tools back untouched.
+func TestNoDeferralLeavesDirectToolsAlone(t *testing.T) {
+	turn, _ := newAuthoringTestTurn(t)
+	direct := []AgentToolDef{turn.appDefToolDef(), turn.pipelineGroupedToolDef()}
+	if got := turn.deferKnownAuthoringTools(direct); len(got) != 2 {
+		t.Fatalf("no deferral this turn, tools must pass through, got %v", namesOf(got))
+	}
+	if turn.authoringLazyPrompt != "" {
+		t.Fatal("no index may appear when nothing was deferred")
+	}
+}

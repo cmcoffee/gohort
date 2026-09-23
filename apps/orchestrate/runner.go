@@ -930,6 +930,9 @@ func (pr *planRun) catalogKnowTools() error {
 	// via AllowedTools, but the closure-bound default registration is
 	// removed.
 	t.wrapToolsForActivity(pr.sess, pr.cat.knowTools, t.agent)
+	// After wrapping, so a deferred tool keeps its activity wrapper when
+	// load_tool brings it back.
+	pr.cat.knowTools = t.deferKnownAuthoringTools(pr.cat.knowTools)
 	return nil
 }
 

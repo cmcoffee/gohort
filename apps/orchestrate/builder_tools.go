@@ -1096,13 +1096,67 @@ func registerLazyAuthoringTools(t *chatTurn, tools []AgentToolDef) string {
 	b.WriteString("You can build things: agents, tools, skills, credentials, bridges, connectors. These tools exist but their parameters aren't loaded yet. When a request calls for one, first call `load_tool(names=[\"<name>\", ...])` with EVERY tool you expect to need in that one call; it returns their parameters and makes them callable. Then use them normally.\n\n")
 	for _, td := range tools {
 		t.deferredAuthoringDefs[td.Tool.Name] = td
-		desc := strings.TrimSpace(td.Tool.Description)
-		if len(desc) > 200 {
-			desc = desc[:200] + "…"
-		}
-		b.WriteString("- `" + td.Tool.Name + "` " + desc + "\n")
+		b.WriteString(authoringIndexLine(td))
 	}
 	return b.String()
+}
+
+// authoringIndexLine is one tool's entry in the deferred-authoring index: its
+// name and a first-200-chars description, enough to know WHEN to load it.
+func authoringIndexLine(td AgentToolDef) string {
+	desc := strings.TrimSpace(td.Tool.Description)
+	if len(desc) > 200 {
+		desc = desc[:200] + "…"
+	}
+	return "- `" + td.Tool.Name + "` " + desc + "\n"
+}
+
+// builderRhythmTools are the authoring tools catalogKnowTools mounts for ANY
+// agent that can author, outside builderAuthoringTools: the app / pipeline /
+// machine managers and the build-plan card Builder paints as it works.
+var builderRhythmTools = map[string]bool{
+	"app_def": true, "pipeline": true, "machine": true,
+	"present_build_plan": true, "revise_build_plan": true, "report_build_gaps": true,
+	"mark_step_in_progress": true, "mark_step_done": true, "mark_step_blocked": true,
+}
+
+// deferKnownAuthoringTools moves the Builder-rhythm tools out of a non-Builder
+// agent's direct catalog and into the deferred-authoring index, and drops any
+// direct tool the index already carries.
+//
+// Deferring builderAuthoringTools left these behind. They are mounted by a
+// separate block gated on agentCanAuthor, commented "Builder-only" but reached
+// by every Author agent, so an authoring Chat agent still paid ~10.8k tokens on
+// every turn for app_def, pipeline and machine alone (app_def is the single
+// largest schema in the catalog). And tool_def rode in twice: listed in the
+// index AND mounted direct by the self-serve block.
+//
+// Only acts when this turn already deferred its authoring catalog — that is the
+// signal that the agent is a non-Builder author running as its owner. Builder,
+// and any turn that did not defer, gets the tools back unchanged.
+func (t *chatTurn) deferKnownAuthoringTools(tools []AgentToolDef) []AgentToolDef {
+	if t.deferredAuthoringDefs == nil {
+		return tools
+	}
+	kept := tools[:0:0]
+	var moved []string
+	for _, td := range tools {
+		name := td.Tool.Name
+		if _, already := t.deferredAuthoringDefs[name]; already {
+			continue
+		}
+		if !builderRhythmTools[name] {
+			kept = append(kept, td)
+			continue
+		}
+		t.deferredAuthoringDefs[name] = td
+		t.authoringLazyPrompt += authoringIndexLine(td)
+		moved = append(moved, name)
+	}
+	if len(moved) > 0 {
+		Log("[orchestrate.tools] agent=%s: %d more authoring tool(s) deferred behind load_tool: %v", t.agent.ID, len(moved), moved)
+	}
+	return kept
 }
 
 // loadedDeferredAuthoringTools returns the deferred tools the model has loaded
