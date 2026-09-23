@@ -288,3 +288,39 @@ func TestNoDeferralLeavesDirectToolsAlone(t *testing.T) {
 		t.Fatal("no index may appear when nothing was deferred")
 	}
 }
+
+// A non-author agent still carries the self-serve tool_def, and it was the
+// largest schema on an agent configured with no tools at all. With no authoring
+// catalog to join, it gets an index of its own: tools-only wording (this agent
+// cannot build agents or apps), still reachable by load_tool or a direct call.
+func TestSelfServeToolDefDeferredOnNonAuthor(t *testing.T) {
+	turn, _ := newAuthoringTestTurn(t)
+	turn.agent.Author = false
+	direct := []AgentToolDef{
+		turn.showLinkToolDef(),
+		{Tool: Tool{Name: "tool_def", Description: "the self-serve mount"}, Handler: func(context.Context, map[string]any) (string, error) { return "", nil }},
+	}
+	kept := turn.deferKnownAuthoringTools(direct)
+	if got := namesOf(kept); len(got) != 1 || got[0] != "show_link" {
+		t.Fatalf("only show_link should stay direct, got %v", got)
+	}
+	if !strings.HasPrefix(turn.authoringLazyPrompt, selfServeToolIndexHeader) || !strings.Contains(turn.authoringLazyPrompt, "- `tool_def`") {
+		t.Fatalf("index must carry the tools-only header and the tool_def line, got %q", turn.authoringLazyPrompt)
+	}
+	if strings.Contains(turn.authoringLazyPrompt, "agents, tools, skills") {
+		t.Fatal("a non-author must not be told it can build agents")
+	}
+	if h, ok := turn.lazyToolFallback("tool_def"); !ok || h == nil {
+		t.Fatal("tool_def must still resolve when called directly")
+	}
+}
+
+// Builder authors constantly and keeps everything inline.
+func TestBuilderKeepsToolsDirect(t *testing.T) {
+	turn, _ := newAuthoringTestTurn(t)
+	turn.agent.ID = "seed-builder"
+	direct := []AgentToolDef{turn.appDefToolDef(), {Tool: Tool{Name: "tool_def"}}}
+	if got := turn.deferKnownAuthoringTools(direct); len(got) != 2 || turn.authoringLazyPrompt != "" {
+		t.Fatalf("Builder's tools must pass through untouched, got %v", namesOf(got))
+	}
+}

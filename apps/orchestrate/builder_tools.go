@@ -1131,12 +1131,17 @@ var builderRhythmTools = map[string]bool{
 // largest schema in the catalog). And tool_def rode in twice: listed in the
 // index AND mounted direct by the self-serve block.
 //
-// Only acts when this turn already deferred its authoring catalog — that is the
-// signal that the agent is a non-Builder author running as its owner. Builder,
-// and any turn that did not defer, gets the tools back unchanged.
+// Acts fully only when this turn already deferred its authoring catalog — that
+// is the signal that the agent is a non-Builder author running as its owner.
+// Any other non-Builder turn still has tool_def mounted by the self-serve block,
+// and that one goes behind load_tool on its own (deferSelfServeToolDef). Builder
+// gets the tools back unchanged.
 func (t *chatTurn) deferKnownAuthoringTools(tools []AgentToolDef) []AgentToolDef {
-	if t.deferredAuthoringDefs == nil {
+	if isBuilderAgent(t.agent.ID) {
 		return tools
+	}
+	if t.deferredAuthoringDefs == nil {
+		return t.deferSelfServeToolDef(tools)
 	}
 	kept := tools[:0:0]
 	var moved []string
@@ -1155,6 +1160,37 @@ func (t *chatTurn) deferKnownAuthoringTools(tools []AgentToolDef) []AgentToolDef
 	}
 	if len(moved) > 0 {
 		Log("[orchestrate.tools] agent=%s: %d more authoring tool(s) deferred behind load_tool: %v", t.agent.ID, len(moved), moved)
+	}
+	return kept
+}
+
+// selfServeToolIndexHeader introduces tool_def on an agent that does not author
+// anything else: tools are self-serve, but agents, apps and pipelines are not,
+// so the full authoring header ("You can build things: agents, ...") would
+// promise what this agent cannot do.
+const selfServeToolIndexHeader = "\n\n## Tool authoring (load before use)\n" +
+	"You can build your own tools with tool_def. Its parameters aren't loaded yet: when a request calls for it, first call `load_tool(names=[\"tool_def\"])`, then use it normally.\n\n"
+
+// deferSelfServeToolDef puts the self-serve tool_def behind load_tool on an
+// agent with no deferred authoring catalog.
+//
+// Every non-Builder agent carries tool_def so it can author its own tools, and
+// at ~2.6k tokens it was the largest schema on an agent configured with no tools
+// at all — paid on every turn, used on the rare one that builds a tool. The
+// index line plus header is a small fraction of that; the cost is one load_tool
+// round on a turn that actually authors, and a direct call without loading still
+// resolves through lazyToolFallback.
+func (t *chatTurn) deferSelfServeToolDef(tools []AgentToolDef) []AgentToolDef {
+	kept := tools[:0:0]
+	for _, td := range tools {
+		if td.Tool.Name != "tool_def" || t.deferredAuthoringDefs != nil {
+			kept = append(kept, td)
+			continue
+		}
+		t.deferredAuthoringDefs = map[string]AgentToolDef{td.Tool.Name: td}
+		t.deferredAuthoringLoaded = map[string]bool{}
+		t.authoringLazyPrompt = selfServeToolIndexHeader + authoringIndexLine(td)
+		Log("[orchestrate.tools] agent=%s: tool_def deferred behind load_tool", t.agent.ID)
 	}
 	return kept
 }
