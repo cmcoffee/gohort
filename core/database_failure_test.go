@@ -343,3 +343,47 @@ func TestAnUnreadableAskMarkReadsAsMarked(t *testing.T) {
 		t.Error("a deployment with no user store now stops on every tool call")
 	}
 }
+
+// A credential whose secret cannot be READ is not a credential missing one.
+//
+// Get reports a failed read as "not found", so an intermittent store turned a
+// present, correct key into "has no stored secret (re-add it via the admin
+// UI)" - which sends somebody to replace a credential that was never broken.
+// Observed on a deployment whose database lives on NFS: the same tool failed,
+// succeeded, then failed again within seven minutes.
+func TestAnUnreadableSecretIsNotAMissingOne(t *testing.T) {
+	resetDBHealth(t)
+
+	// A store that works and genuinely holds nothing: absent, and readable.
+	working := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
+	if _, readable, found := working.readSecretAt("gitlab"); !readable || found {
+		t.Errorf("an empty store: readable=%v found=%v, want true/false", readable, found)
+	}
+
+	// A store that holds one: present.
+	working.db.CryptSet(secureAPITable, secureCredSecretKey("gitlab"), "glpat-xxx")
+	if v, readable, found := working.readSecretAt("gitlab"); !readable || !found || v == "" {
+		t.Errorf("a stored secret: readable=%v found=%v empty=%v", readable, found, v == "")
+	}
+
+	// A store that cannot be read must report that, NOT "no secret". The
+	// failure direction is unchanged - the call is still refused - but the
+	// words decide whether somebody replaces a working key.
+	broken := &SecureAPI{db: brokenDB(errors.New("input/output error"))}
+	v, readable, found := broken.readSecretAt("gitlab")
+	if readable {
+		t.Error("a failed read reported itself as a successful one")
+	}
+	if found || v != "" {
+		t.Errorf("a failed read returned a value: found=%v", found)
+	}
+	if h := DBHealth(); h.Reads == 0 {
+		t.Error("the failed read was not recorded, so Maintenance cannot confirm it")
+	}
+
+	// And resolveSecret keeps its old shape for every caller that does not
+	// care, so the distinction costs nothing at the other call sites.
+	if _, ok := working.resolveSecret(SecureCredential{Name: "gitlab"}, ""); !ok {
+		t.Error("resolveSecret stopped finding a stored secret")
+	}
+}

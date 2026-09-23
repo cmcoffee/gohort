@@ -1235,12 +1235,33 @@ func (s *SecureAPI) touch(name string) {
 
 // loadSecret returns the decrypted SHARED secret value for a credential.
 func (s *SecureAPI) loadSecret(name string) (string, bool) {
-	if !s.ready() {
-		return "", false
-	}
-	var secret string
-	ok := s.db.Get(secureAPITable, secureCredSecretKey(name), &secret)
+	secret, _, ok := s.readSecretAt(name)
 	return secret, ok
+}
+
+// readSecretAt reads one secret and reports whether the store could ANSWER,
+// separately from whether it held anything.
+//
+// Get collapses those two, and for a credential they are opposite problems: an
+// absent secret means somebody has to paste a key, and an unreadable one means
+// the key is fine and the STORE is not. Told apart only by TryGet, they
+// produced the same "has no stored secret (re-add it)" - which sends somebody
+// to replace a working credential because a disk hiccupped. This deployment
+// keeps its database on NFS, so that is not a hypothetical.
+//
+// The failure direction is unchanged and correct either way: an unreadable
+// secret still refuses the call. Only the WORDS change, and they are the whole
+// difference between "paste your key again" and "look at the store".
+func (s *SecureAPI) readSecretAt(key string) (secret string, readable bool, found bool) {
+	if !s.ready() {
+		return "", true, false
+	}
+	found, err := s.db.TryGet(secureAPITable, secureCredSecretKey(key), &secret)
+	if err != nil {
+		Log("[secure_api] could not READ the secret for %q (%v): the credential is not necessarily missing one", key, err)
+		return "", false, false
+	}
+	return secret, true, found
 }
 
 // IsPerUser reports whether a credential is scoped so each user supplies their
@@ -1350,16 +1371,23 @@ func (s *SecureAPI) HasUserSecret(name, user string) bool {
 // resolveSecret picks the secret to dispatch with: the calling user's own for a
 // per_user credential, else the shared secret. user comes from the tool session.
 func (s *SecureAPI) resolveSecret(c SecureCredential, user string) (string, bool) {
+	secret, _, ok := s.resolveSecretRead(c, user)
+	return secret, ok
+}
+
+// resolveSecretRead is resolveSecret with the store's ANSWER reported
+// separately: readable is false when the store could not be read at all, which
+// is not the same as a credential that has no secret. See readSecretAt.
+func (s *SecureAPI) resolveSecretRead(c SecureCredential, user string) (secret string, readable bool, ok bool) {
 	if c.IsPerUser() {
-		return s.loadUserSecret(c.Name, user)
+		v, found := s.loadUserSecret(c.Name, user)
+		return v, true, found
 	}
 	if c.Owner != "" {
 		// User-owned credential: its secret lives at the owner-namespaced key.
-		var secret string
-		ok := s.db.Get(secureAPITable, secureCredSecretKey(credStoreKey(c.Owner, c.Name)), &secret)
-		return secret, ok
+		return s.readSecretAt(credStoreKey(c.Owner, c.Name))
 	}
-	return s.loadSecret(c.Name)
+	return s.readSecretAt(c.Name)
 }
 
 // CredentialStatus reports a credential's readiness as plain booleans — never
@@ -1960,7 +1988,16 @@ func (s *SecureAPI) dispatch(c SecureCredential, args map[string]any, sess *Tool
 			secret = tok
 		} else {
 			var ok bool
-			secret, ok = s.resolveSecret(c, callUser)
+			var readable bool
+			secret, readable, ok = s.resolveSecretRead(c, callUser)
+			if !readable {
+				// The store could not answer. The credential is not missing
+				// anything, and telling somebody to re-add it would have them
+				// replace a key that is present and correct - which is what
+				// the old wording did, because Get reports a failed read as
+				// "not found".
+				return "", fmt.Errorf("could not read the stored secret for %q right now: the credential is intact, the STORE did not answer. Check Maintenance in the admin console for database read failures, and retry", c.Name)
+			}
 			if !ok || secret == "" {
 				if c.IsPerUser() {
 					return "", fmt.Errorf("you haven't connected your %q account yet: set your key on your Account page (Connected accounts)", c.Name)
