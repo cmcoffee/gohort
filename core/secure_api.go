@@ -627,6 +627,27 @@ func (s *SecureAPI) Save(c SecureCredential, secret string) error {
 		// every share the moment somebody edited a base URL.
 		c.SharedReadOnly = existing.SharedReadOnly
 		c.SharedReadWrite = existing.SharedReadWrite
+		// EVERY OTHER FIELD THE UPSERT FORMS DO NOT CARRY, for that same
+		// reason. The rule was stated above and then applied to two fields;
+		// these four were left to be zeroed by any edit, and each one is
+		// load-bearing:
+		//
+		//   CredScope decides WHICH KEY the secret is read from. Clearing it
+		//   on a per_user credential moves the lookup from __usecret__<user>
+		//   to the owner-namespaced __secret, so a key that is present and
+		//   correct stops being found. It reads as "the credential has no
+		//   stored secret", and the secret is still sitting there untouched.
+		//
+		//   SharedForAgents is the per-agent lend scope. Zeroed, a lend
+		//   narrowed to one agent silently widens to every agent - a
+		//   restriction lost by editing a base URL.
+		//
+		//   The tool-binding lists are what a secured credential is locked to.
+		//   Zeroed, a secured credential is bound to nothing.
+		c.CredScope = existing.CredScope
+		c.SharedForAgents = existing.SharedForAgents
+		c.ApprovedToolBindings = existing.ApprovedToolBindings
+		c.RevokedToolBindings = existing.RevokedToolBindings
 		// Lending is NOT preserved: it is ordinary config the form carries,
 		// and it governs the two lists above rather than being one of them.
 		// Applied right here, so tightening the policy takes back the lends it

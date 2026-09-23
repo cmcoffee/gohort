@@ -1624,3 +1624,69 @@ func TestAScopedWriteLendIsStillAWriteLend(t *testing.T) {
 		t.Error("it is a grant outside its agent")
 	}
 }
+
+// An edit must not zero what the form does not carry.
+//
+// Save takes a whole SecureCredential, and the upsert forms build a PARTIAL
+// one - nine fields from Extensions, a few more from admin. Every field
+// outside that set was overwritten with its zero value by any edit, however
+// unrelated: change a base URL, lose the rest.
+//
+// The damage is invisible at the moment it happens and shows up later as
+// something else entirely. CredScope decides which key the secret is read
+// from, so clearing it on a per_user credential moves the lookup and the
+// credential reports "no stored secret" while the secret sits untouched under
+// the old key. That is a key that "just vanished".
+func TestAnEditDoesNotZeroWhatTheFormDoesNotCarry(t *testing.T) {
+	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
+
+	full := SecureCredential{
+		Name: "gitlab", Type: SecureCredBearer, BaseURL: "https://git.example",
+		Owner: "alice", CredScope: "per_user",
+		SharedReadOnly: []string{"bob"}, SharedReadWrite: []string{"carol"},
+		SharedForAgents:      map[string][]string{"bob": {"agent-1"}},
+		ApprovedToolBindings: []string{"gitlab_list_projects"},
+		RevokedToolBindings:  []string{"gitlab_delete"},
+		Secured:              true,
+	}
+	if err := s.Save(full, "glpat-original"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The shape an upsert form posts: the handful of fields it owns, and
+	// nothing else. Blank secret = keep the stored one.
+	if err := s.Save(SecureCredential{
+		Name: "gitlab", Type: SecureCredBearer, BaseURL: "https://git.example/v2",
+		Owner: "alice",
+	}, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	got, ok := s.LoadUser("alice", "gitlab")
+	if !ok {
+		t.Fatal("the credential is gone entirely")
+	}
+	// What the form DID carry changed.
+	if got.BaseURL != "https://git.example/v2" {
+		t.Errorf("the edit did not apply: %q", got.BaseURL)
+	}
+	// What it did not carry survived.
+	if got.CredScope != "per_user" {
+		t.Errorf("CredScope was zeroed: %q - the secret lookup has moved and the key reads as missing", got.CredScope)
+	}
+	if len(got.SharedForAgents["bob"]) != 1 {
+		t.Errorf("SharedForAgents was zeroed: %v - a lend scoped to one agent silently widened", got.SharedForAgents)
+	}
+	if len(got.ApprovedToolBindings) != 1 || len(got.RevokedToolBindings) != 1 {
+		t.Errorf("the tool bindings were zeroed: approved=%v revoked=%v", got.ApprovedToolBindings, got.RevokedToolBindings)
+	}
+	// And the ones that were already preserved still are.
+	if !got.Secured || len(got.SharedReadOnly) != 1 || len(got.SharedReadWrite) != 1 {
+		t.Errorf("a previously-preserved field regressed: secured=%v ro=%v rw=%v",
+			got.Secured, got.SharedReadOnly, got.SharedReadWrite)
+	}
+	// The secret is untouched by any of it.
+	if v, _, found := s.readSecretAt(credStoreKey("alice", "gitlab")); !found || v != "glpat-original" {
+		t.Errorf("the stored secret changed on an edit: found=%v", found)
+	}
+}
