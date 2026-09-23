@@ -275,9 +275,13 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				},
 			},
 			{
-				Group:    "Delegation",
-				Title:    "Let this agent call another",
-				Subtitle: "Grants a decision that does not exist yet. Everything else on this tab changes one that does.",
+				Group: "Delegation",
+				Title: "What happens when it calls one",
+				Subtitle: "The policy above decides WHICH agents it can call. This decides what happens when it calls one of them: " +
+					"runs straight away, stops and asks you first, or is refused.",
+				Detail: "Two layers, and this is the second. A decision here about an agent the dispatch policy does not reach does nothing, " +
+					"because the call never gets this far: widen the policy first, or pick a target that is already on the list.\n\n" +
+					"Ask first is the default for a target you have decided nothing about, which is why most agents do not appear here until you have.",
 				Body: ui.FormPanel{
 					PostURL:     grantURL("agent"),
 					Method:      "POST",
@@ -309,8 +313,8 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 			},
 			{
 				Group:    "Delegation",
-				Title:    "Who may call it, and who it may call",
-				Subtitle: "Both directions of agent-to-agent calling. The policy is the kill switch; the target list below is read only by the two \"selected\" modes.",
+				Title:    "Which agents it can call at all",
+				Subtitle: "The first of two layers, and the kill switch. Allow none stops every call whatever is decided further down; the target list below is read only by the two \"selected\" modes.",
 				Body: ui.FormPanel{
 					Source:  patchURL,
 					PostURL: patchURL,

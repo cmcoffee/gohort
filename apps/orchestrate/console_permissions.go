@@ -912,7 +912,7 @@ func operatorApprovalRecipient(owner string, a Authorization) string {
 // widening, which keeps "this binds everything" a deliberate second step
 // rather than something you can do by accident on the way in.
 func (T *OrchestrateApp) handleConsolePermissionGrant(w http.ResponseWriter, r *http.Request) {
-	user, _, ok := RequireUser(w, r, T.DB)
+	user, udb, ok := RequireUser(w, r, T.DB)
 	if !ok {
 		return
 	}
@@ -954,6 +954,19 @@ func (T *OrchestrateApp) handleConsolePermissionGrant(w http.ResponseWriter, r *
 		if subject == agentID {
 			http.Error(w, "an agent does not dispatch to itself", http.StatusBadRequest)
 			return
+		}
+		// A decision about an agent the dispatch policy does not reach can
+		// never fire: the call is refused a layer earlier, before anything
+		// here is consulted. Storing it would leave a row on the page saying
+		// "always allow" about a call that does not happen, which is worse
+		// than refusing to write it.
+		if caller, ok := loadAgent(udb, agentID); ok {
+			if target, ok := loadAgent(udb, subject); ok && !dispatchReachable(caller, target) {
+				http.Error(w, "this agent's dispatch policy does not reach "+agentName(target)+
+					", so a decision about it could never take effect. Widen the policy above first, or pick a target it can already call.",
+					http.StatusBadRequest)
+				return
+			}
 		}
 		SetDelegationPolicy(RootDB, user, agentID, subject, value)
 	default:

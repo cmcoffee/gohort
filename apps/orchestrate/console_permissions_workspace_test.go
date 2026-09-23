@@ -512,3 +512,50 @@ func TestGrantingRefusesWhatItCannotStore(t *testing.T) {
 		}
 	}
 }
+
+// Two layers, and the second cannot fire without the first. A decision about
+// an agent the dispatch policy does not reach would leave a row saying "always
+// allow" about a call that never happens.
+func TestADecisionAboutAnUnreachableAgentIsRefused(t *testing.T) {
+	app, udb, _ := newTestOrchestrate(t)
+	pinRootDB(t)
+	// dispatchNone is the kill switch: it reaches nothing.
+	caller := AgentRecord{ID: "caller", Name: "Caller", Owner: "alice",
+		OrchestratorPrompt: "p", DispatchMode: string(dispatchNone)}
+	if _, err := saveAgent(udb, caller); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := saveAgent(udb, AgentRecord{
+		ID: "target", Name: "Target", Owner: "alice", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodPost,
+		"/api/console/permissions/grant?kind=agent&agent=caller",
+		strings.NewReader(`{"subject":"target","value":"allow"}`))
+	w := httptest.NewRecorder()
+	app.handleConsolePermissionGrant(w, asUser(r, "alice"))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("want 400 for a decision that could never fire, got %d %s", w.Code, w.Body.String())
+	}
+	// And it says WHY, and what to do: a refusal that only says no leaves
+	// somebody clicking the same button again.
+	body := w.Body.String()
+	for _, want := range []string{"Target", "dispatch policy", "Widen"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the refusal does not mention %q: %s", want, body)
+		}
+	}
+	// Reachable, and the same grant lands.
+	caller.DispatchMode = string(dispatchAll)
+	if _, err := saveAgent(udb, caller); err != nil {
+		t.Fatal(err)
+	}
+	r2 := httptest.NewRequest(http.MethodPost,
+		"/api/console/permissions/grant?kind=agent&agent=caller",
+		strings.NewReader(`{"subject":"target","value":"allow"}`))
+	w2 := httptest.NewRecorder()
+	app.handleConsolePermissionGrant(w2, asUser(r2, "alice"))
+	if w2.Code != http.StatusNoContent {
+		t.Fatalf("a reachable target was refused: %d %s", w2.Code, w2.Body.String())
+	}
+}
