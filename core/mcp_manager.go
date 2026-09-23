@@ -863,6 +863,11 @@ func (m *MCPManager) oauthAuthorizer(user, server string) mcpclient.Authorizer {
 // validOAuthToken returns a current access token for (user, server),
 // refreshing if it is missing/near expiry. Serialized to avoid refresh
 // storms.
+// mcpReauthKey namespaces an MCP server in the reauth barrier, which is shared
+// with the SecureAPI credentials. A server and a credential could otherwise
+// answer to one name and release each other's waiters.
+func mcpReauthKey(server string) string { return "mcp:" + server }
+
 func (m *MCPManager) validOAuthToken(user, server string) (string, error) {
 	m.oauthMu.Lock()
 	defer m.oauthMu.Unlock()
@@ -896,6 +901,16 @@ func (m *MCPManager) validOAuthToken(user, server string) (string, error) {
 		if oauthGrantRejected(err) {
 			if m.ready() {
 				m.db.Unset(mcpServersTable, mcpOAuthTokKey(server, user))
+			}
+			// ONE prompt per dead connection, the same barrier the SecureAPI
+			// credentials use: an agent holding six tools from one MCP server
+			// reported this six times, once per tool that happened to be
+			// called. See oauth_reauth.go.
+			if !ReauthAnnounce(user, mcpReauthKey(server)) {
+				if ReauthWait(ctx, user, mcpReauthKey(server)) {
+					return m.validOAuthToken(user, server)
+				}
+				return "", MCPNotConnectedError{Server: server}
 			}
 			Log("[mcp] %q refused %q's refresh token (%v): cleared; reconnect required", server, user, err)
 			return "", MCPNotConnectedError{Server: server}
@@ -1025,6 +1040,8 @@ func (m *MCPManager) invalidateOAuthToken(server, user string) {
 func (m *MCPManager) saveOAuthToken(server, user string, t mcpOAuthToken) {
 	if m.ready() && user != "" {
 		m.db.CryptSet(mcpServersTable, mcpOAuthTokKey(server, user), t)
+		// Stored, so the person finished: release anything holding for it.
+		ReauthResolved(user, mcpReauthKey(server))
 	}
 }
 

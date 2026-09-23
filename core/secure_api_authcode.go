@@ -46,6 +46,10 @@ func (s *SecureAPI) SaveUserToken(name, user string, tok CredOAuthToken) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.db.CryptSet(secureAPITable, secureCredUserTokenKey(name, user), tok)
+	// A token being STORED is the only event that means the person finished -
+	// being sent to the provider means only that they were asked. Releases
+	// every tool call holding for this credential.
+	ReauthResolved(user, name)
 	return nil
 }
 
@@ -292,6 +296,19 @@ func (s *SecureAPI) userAccessToken(ctx context.Context, c SecureCredential, use
 		// cannot work and letting it fail as something else.
 		if oauthGrantRejected(err) {
 			s.ClearUserToken(c.Name, user)
+			// ONE prompt per dead credential. A turn calling six tools through
+			// this credential used to report this six times - each call
+			// resolved it independently, found the same dead token, and said
+			// so - and the model read each as a fresh failure and retried
+			// around them. See the barrier in oauth_reauth.go.
+			if !ReauthAnnounce(user, c.Name) {
+				if ReauthWait(ctx, user, c.Name) {
+					// Reconnected while we held. Resolve again and carry on:
+					// this call never failed as far as the agent is concerned.
+					return s.userAccessToken(ctx, c, user)
+				}
+				return "", fmt.Errorf("your %q connection is being reconnected: somebody has already been asked to do it on the Account page, and this call waited for it. Do NOT report this as a new problem or retry it, and do not try another tool that uses %q", c.Name, c.Name)
+			}
 			Log("[secureapi] %q refused %q's refresh token (%v): cleared; reconnect required", c.Name, user, err)
 			return "", fmt.Errorf("your %q connection has expired and can't be renewed automatically: reconnect it on your Account page (Connected accounts)", c.Name)
 		}
