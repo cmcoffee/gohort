@@ -10,7 +10,6 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
-	"github.com/cmcoffee/gohort/core/netgate"
 )
 
 // handleSend drives one user turn against an agent:
@@ -495,20 +494,11 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 	// instance is what makes the mid-turn cutoff work: when the
 	// privacy endpoint flips this connector via SetAllowed, every
 	// in-flight tool re-checking Allowed() sees the new state.
-	turnConnector := NewNetworkConnector(privateMode)
-	ctx = WithNetworkConnector(ctx, turnConnector)
-	// The agent's own ceiling on what its workspace may dial, set once here
-	// and read at both doors out of the sandbox. Independent of privacy mode,
-	// which the connector above carries: this one leaves the agent's network
-	// TOOLS alone and only says the workspace is not what reaches out.
-	// Resolved, not read off one field: the agent's own answer, then a record
-	// written before the tri-state existed, then the owner's default for all
-	// agents, then the framework's, which is open.
-	//
-	// The OWNER's default, not the runtime user's. A shared agent runs for
-	// somebody else, and what its workspace may reach is its owner's decision
-	// about their own agent.
-	ctx = netgate.WithWorkspaceNetwork(ctx, agentWorkspaceNetwork(RootDB, agentDefaultsOwner(agent, user), agent))
+	// Both network facts at once (withAgentNetwork): the connector above, and
+	// the agent's own ceiling on what its WORKSPACE may dial, which is
+	// independent of privacy mode and leaves the agent's network TOOLS alone.
+	var turnConnector *NetworkConnector
+	ctx, turnConnector = withAgentNetwork(ctx, user, agent, privateMode)
 	inflightConnectors.Store(sess.ID, turnConnector)
 	defer inflightConnectors.Delete(sess.ID)
 	// Also lock ForcePrivate agents so the privacy endpoint can't

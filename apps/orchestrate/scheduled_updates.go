@@ -472,6 +472,17 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		return nil
 	}
 
+	// The network state this fire runs under - see withAgentNetwork for why
+	// both halves are set together. There is no per-fire privacy toggle to OR
+	// in the way a live turn ORs the user's, so the agent's own ForcePrivate is
+	// the whole of it.
+	//
+	// Deliberately NOT registered in inflightConnectors: a fire is not a
+	// session anybody is toggling, and leaving it unreachable means the one
+	// thing that could loosen it mid-run cannot.
+	var fireConnector *NetworkConnector
+	ctx, fireConnector = withAgentNetwork(ctx, p.Username, agent, agentForcesPrivate(agent))
+
 	// PRE-ARM the next occurrence BEFORE running the fire. The scheduler
 	// removed this task from the persistent queue before invoking us, and the
 	// fire below runs a full agent loop — minutes on a local model. The old
@@ -619,6 +630,11 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		AgentID:           agent.ID,
 		IntentText:        p.Prompt, // Tier-1 tool elevation matches against the mission
 		DeniedCredentials: credentialDenySet(agent, p.Username),
+		// The SAME connector the context carries. Both, because the two
+		// questions are answered from different places: NetworkAllowed reads
+		// this field and the workspace ceiling reads the context, and
+		// WorkspaceNetworkAllowed ANDs them. One of the two set is half a gate.
+		Network: fireConnector,
 	}
 	// The fire runs in ITS AGENT's directory, the same place the agent's own
 	// turns run, so a wake can see what the agent just made.
