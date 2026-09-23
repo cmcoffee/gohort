@@ -307,11 +307,15 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 			http.Error(w, "bad request", http.StatusBadRequest)
 			return
 		}
-		a.db.Set(table, "provider", req.Provider)
-		a.db.Set(table, "model", req.Model)
-		a.db.Set(table, "endpoint", req.Endpoint)
-		a.db.Set(table, "aws_region", req.AWSRegion)
-		a.db.Set(table, "aws_profile", req.AWSProfile)
+		// Trimmed on the way in, so the STORED value is clean and the form
+		// stops displaying a leading space nobody can see. The providers trim
+		// defensively too; this is what keeps the two from disagreeing about
+		// what was saved.
+		a.db.Set(table, "provider", strings.TrimSpace(req.Provider))
+		a.db.Set(table, "model", strings.TrimSpace(req.Model))
+		a.db.Set(table, "endpoint", strings.TrimSpace(req.Endpoint))
+		a.db.Set(table, "aws_region", strings.TrimSpace(req.AWSRegion))
+		a.db.Set(table, "aws_profile", strings.TrimSpace(req.AWSProfile))
 		a.db.Set(table, "bedrock_api", req.BedrockAPI)
 		a.db.Set(table, "native_tools", req.NativeTools)
 		a.db.Set(table, "disable_thinking", req.DisableThinking)

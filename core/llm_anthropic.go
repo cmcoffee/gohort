@@ -89,6 +89,25 @@ const anthropicDefaultContextSize = 200_000
 // model), and with no sized worker it returned 0, which disables compaction
 // entirely and lets a runaway session grow until the API 400s — after
 // billing its way there.
+// apiError builds the failure this client reports, which is not the same for
+// both of the things this type is.
+//
+// An anthropicClient with the Bedrock path prefix IS the Messages-API Bedrock
+// mode - same wire format, different host and signing - so AWS's refusals
+// arrive here rather than through the InvokeModel client, and they arrive
+// worded for somebody holding the API reference. The hints existed and reached
+// only the other mode, which means the deployment that picked this one got the
+// raw AWS sentence and no idea which setting it was about.
+//
+// The provider name follows the same fact: reporting "anthropic" for a call
+// that went to Bedrock sends a reader to the wrong settings page.
+func (c *anthropicClient) apiError(status int, msg string) *APIError {
+	if c.pathPrefix == bedrockPathPrefix {
+		return &APIError{StatusCode: status, Message: withBedrockHint(c.model, msg), Provider: "bedrock"}
+	}
+	return &APIError{StatusCode: status, Message: msg, Provider: "anthropic"}
+}
+
 func (c *anthropicClient) ContextSize() int {
 	if c.contextSize > 0 {
 		return c.contextSize
@@ -694,7 +713,7 @@ func (c *anthropicClient) Chat(ctx context.Context, messages []Message, opts ...
 		if json.Unmarshal(respBody, &apiErr) == nil && apiErr.Error.Message != "" {
 			msg = apiErr.Error.Message
 		}
-		return nil, noteIfAdaptiveThinking(c.model, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: "anthropic"})
+		return nil, noteIfAdaptiveThinking(c.model, c.apiError(resp.StatusCode, msg))
 	}
 
 	var result anthResponse
@@ -1013,7 +1032,7 @@ func (c *anthropicClient) ChatStream(ctx context.Context, messages []Message, ha
 		if json.Unmarshal(respBody, &apiErr) == nil && apiErr.Error.Message != "" {
 			msg = apiErr.Error.Message
 		}
-		return nil, noteIfAdaptiveThinking(c.model, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: "anthropic"})
+		return nil, noteIfAdaptiveThinking(c.model, c.apiError(resp.StatusCode, msg))
 	}
 
 	st := &anthStreamState{handler: handler}

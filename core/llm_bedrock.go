@@ -492,6 +492,15 @@ func bedrockProfile(configured string) string {
 // model — so "us.anthropic.claude-opus-4-8" being passed through untouched is
 // load-bearing, not a nicety.
 func bedrockModelID(model string) string {
+	// TRIMMED FIRST. This value is pasted into a form by a human, and an ARN
+	// is long enough that it is pasted rather than typed - so it arrives with
+	// a leading space or a trailing newline often enough to matter. Untrimmed,
+	// " arn:aws:..." fails the arn: test below, fails the contains-test too
+	// (an application profile's id says nothing about anthropic), and is
+	// handed to Bedrock as "anthropic. arn:aws:..." - which comes back as "the
+	// provided model identifier is invalid" and names nothing a reader can act
+	// on, least of all a space they cannot see in the field.
+	model = strings.TrimSpace(model)
 	if model == "" {
 		return bedrockDefaultModel
 	}

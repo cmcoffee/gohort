@@ -5,6 +5,7 @@ package core
 // mentions it.
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -218,4 +219,83 @@ func TestAProfileRefusalIsNotAConfigError(t *testing.T) {
 			t.Errorf("%q read as a profile", m)
 		}
 	}
+}
+
+// A pasted model id arrives with whatever came with it. Whitespace is the
+// common case and is trimmed; anything else is left alone and reaches AWS,
+// which answers about identifiers and authorization rather than about the
+// characters in the field.
+func TestAPastedModelIsTrimmedBeforeAnythingElse(t *testing.T) {
+	const arn = "arn:aws:bedrock:us-west-2:123456789012:application-inference-profile/a1b2c3d4e5f6"
+	for _, in := range []string{" " + arn, arn + "\n", "\t" + arn + " \r\n", "  " + arn + "  "} {
+		if got := bedrockModelID(in); got != arn {
+			t.Errorf("bedrockModelID(%q)\n got: %s\nwant: %s", in, got, arn)
+		}
+	}
+	// Untrimmed, a leading space defeats BOTH tests that would recognise an
+	// ARN: it does not start with "arn:", and an application profile's id
+	// says nothing about anthropic. The result was "anthropic. arn:aws:..." on
+	// the wire, and a 400 naming nothing a reader can act on.
+	if got := bedrockModelID(" " + arn); strings.HasPrefix(got, bedrockModelPrefix) {
+		t.Errorf("a padded ARN was treated as a bare model name: %s", got)
+	}
+	// The ids that DO take a prefix must not grow "anthropic. name" either.
+	if got := bedrockModelID("  claude-sonnet-5 "); got != "anthropic.claude-sonnet-5" {
+		t.Errorf("a padded model name: %q", got)
+	}
+	// Whitespace alone is "nothing set", not a model called " ".
+	if got := bedrockModelID("   "); got != bedrockDefaultModel {
+		t.Errorf("blank-but-padded did not fall back to the default: %q", got)
+	}
+}
+
+// BOTH Bedrock modes, because they are different clients and the fixes had to
+// reach both.
+//
+// The InvokeModel mode is its own client; the Messages-API mode is an
+// anthropicClient carrying the Bedrock path prefix. They share the signer and
+// the model-id rule, and they did NOT share the hints - so a deployment on the
+// Messages API got AWS's raw sentence and no idea which setting it named.
+func TestBothBedrockModesGetTheSameTreatment(t *testing.T) {
+	const aws = "Invocation of model ID anthropic.claude-opus-5 with on-demand throughput isn’t supported."
+
+	// Messages-API mode: an anthropicClient with the Bedrock prefix.
+	bedrockish := &anthropicClient{model: "anthropic.claude-opus-5", pathPrefix: bedrockPathPrefix}
+	got := bedrockish.apiError(400, aws)
+	if !strings.Contains(got.Message, "us.anthropic.claude-opus-5") {
+		t.Errorf("the Messages-API mode gets no hint: %s", got.Message)
+	}
+	// And it reports as Bedrock: saying "anthropic" about a call that went to
+	// AWS sends the reader to the wrong settings page.
+	if got.Provider != "bedrock" {
+		t.Errorf("provider = %q, want bedrock", got.Provider)
+	}
+
+	// A REAL Anthropic client is untouched - no AWS hint on a call that never
+	// went near AWS.
+	plain := &anthropicClient{model: "claude-opus-5"}
+	got = plain.apiError(400, aws)
+	if got.Provider != "anthropic" {
+		t.Errorf("provider = %q, want anthropic", got.Provider)
+	}
+	if got.Message != aws {
+		t.Errorf("a direct Anthropic error was rewritten: %s", got.Message)
+	}
+
+	// The model-id rule is shared by construction: both constructors run the
+	// id through bedrockModelID, so the ARN passthrough and the trim reach
+	// both without either client knowing about them.
+	src := readRepoSource(t, "llm_bedrock.go")
+	if strings.Count(src, "bedrockModelID(model)") == 0 {
+		t.Error("the Messages-API constructor stopped normalizing the model id")
+	}
+}
+
+func readRepoSource(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
