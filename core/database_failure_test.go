@@ -294,3 +294,52 @@ func TestAFailedChunkReadIsNotCachedAsAnEmptyCorpus(t *testing.T) {
 		t.Fatal("the corpus is still empty after the store recovered — the failure was cached")
 	}
 }
+
+// A restriction that cannot be read is a restriction that applies.
+//
+// UserToolAsksInChat is the in-chat half of "does this tool stop and ask", and
+// its empty case GRANTS: no mark means the tool runs with no prompt. Get
+// collapses "the set is there and this name is not in it" into "I could not
+// read the set", so a degraded store quietly un-marked every tool the owner had
+// marked. The unattended half, credentialAlwaysConfirms, already returned true
+// for anything it could not resolve; these are two halves of one question and
+// they fell opposite ways.
+func TestAnUnreadableAskMarkReadsAsMarked(t *testing.T) {
+	resetDBHealth(t)
+	prior := RootDB
+	t.Cleanup(func() { RootDB = prior })
+
+	// A store that works and genuinely holds no mark: the tool just runs.
+	working := &DBase{Store: kvlite.MemStore()}
+	RootDB = working
+	if !SetUserToolAsksInChat(working, "alice", "", "marked_tool", true) {
+		t.Fatal("could not record the mark")
+	}
+	if UserToolAsksInChat(working, "alice", "", "other_tool") {
+		t.Error("an unmarked tool asks, so every call stops on a healthy store")
+	}
+	if !UserToolAsksInChat(working, "alice", "", "marked_tool") {
+		t.Error("a marked tool does not ask")
+	}
+
+	// A store that cannot be read must NOT answer the same as one holding
+	// nothing. A click is the cost of falling closed; a tool the owner marked
+	// running unprompted is the cost of falling open.
+	RootDB = brokenDB(errors.New("input/output error"))
+	if !UserToolAsksInChat(RootDB, "alice", "", "other_tool") {
+		t.Fatal("a failed read reported 'not marked' — so a degraded store un-marks every tool the owner marked")
+	}
+	if h := DBHealth(); h.Reads == 0 {
+		t.Error("the failed read was not recorded")
+	}
+
+	// No store at all is a different thing and must stay open: a nil store
+	// means the binary installed no auth layer, so there are no marks and
+	// nobody to ask. Falling closed there would stop every tool call in every
+	// turn, which is not a restriction holding, it is the framework refusing
+	// to work.
+	RootDB = nil
+	if UserToolAsksInChat(nil, "alice", "", "other_tool") {
+		t.Error("a deployment with no user store now stops on every tool call")
+	}
+}

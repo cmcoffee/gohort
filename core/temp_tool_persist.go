@@ -1634,9 +1634,30 @@ func sliceHas(list []string, want string) bool {
 // were stored under before they were scoped and means the same thing.
 func askKey(owner, agentID string) string { return owner + ":" + agentID }
 
+// askSetHas reports whether one mark set holds this name, and reads a FAILED
+// read as holding it.
+//
+// TryGet rather than Get, because the two answers Get collapses fall opposite
+// ways here. "The set is there and this name is not in it" means the tool runs
+// without asking. "I could not read the set" means nothing is known, and the
+// safe reading of an unknown RESTRICTION is that it applies: a turn that stops
+// and asks a person who is sitting there costs a click, and one that does not
+// ask runs a tool the owner marked. This is the hazard core/database.go records
+// on TryGet in the words "a caller whose empty case GRANTS something has to be
+// found and told which way to fall" - this is one of those callers, and it fell
+// the wrong way.
+//
+// Its sibling on the unattended path already does this: credentialAlwaysConfirms
+// returns true for a credential it cannot resolve. One question, two halves, and
+// they used to fail in opposite directions.
 func askSetHas(db Database, key, name string) bool {
 	var names []string
-	if !db.Get(askInChatToolsTable, key, &names) {
+	found, err := db.TryGet(askInChatToolsTable, key, &names)
+	if err != nil {
+		Log("[temptool] could not read the ask-before-every-call marks at %q (%v): treating %q as marked", key, err, name)
+		return true
+	}
+	if !found {
 		return false
 	}
 	return slices.Contains(names, name)
@@ -1644,6 +1665,15 @@ func askSetHas(db Database, key, name string) bool {
 
 func UserToolAsksInChat(db Database, username, agentID, name string) bool {
 	db = tempToolStore(db)
+	// Not a failed read - there is nothing here to read. A nil store means the
+	// binary installed no auth layer at all (a test harness, an embedded mode
+	// with no users), so there are no marks and nobody to ask; and no tool name
+	// means no question was asked. Failing CLOSED on these would stop every
+	// tool call in every turn that runs without a user store, which is not a
+	// restriction holding, it is the framework refusing to work.
+	//
+	// The direction that matters is inside askSetHas, where a store that IS
+	// there and cannot be read now reads as marked.
 	if db == nil || username == "" || strings.TrimSpace(name) == "" {
 		return false
 	}
@@ -1656,7 +1686,27 @@ func UserToolAsksInChat(db Database, username, agentID, name string) bool {
 	if askSetHas(db, askKey(username, ""), name) || askSetHas(db, username, name) {
 		return true
 	}
-	for _, p := range LoadPersistentTempTools(db, username) {
+	return askRecordFlag(db, username, name)
+}
+
+// askRecordFlag reads the mark's OLD home - the flag on the tool's own record -
+// and falls the same way askSetHas does when the read fails.
+//
+// Its own read rather than LoadPersistentTempTools, which collapses a failed
+// read into an empty pool. That loader has many callers and an empty pool is
+// the right answer for most of them; here it means "this tool does not ask",
+// which is the one reading that grants something.
+func askRecordFlag(db Database, username, name string) bool {
+	var pool []PersistentTempTool
+	found, err := db.TryGet(persistentTempToolsTable, username, &pool)
+	if err != nil {
+		Log("[temptool] could not read %s's tool pool (%v): treating %q as marked ask-before-every-call", username, err, name)
+		return true
+	}
+	if !found {
+		return false
+	}
+	for _, p := range pool {
 		if p.Tool.Name == name {
 			return p.Tool.ConfirmInChat
 		}
