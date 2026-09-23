@@ -65,6 +65,9 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 	// owns a few fields and must not carry the whole record: a FormPanel posts
 	// everything it holds, and everything it does not hold would be blanked.
 	patchURL := T.WebPrefix() + "/api/agents/" + url.PathEscape(agent.ID)
+	// The lock has its own door: Locked is not a patchable field, so that one
+	// place stays the single source of truth for it.
+	lockURL := patchURL + "/lock"
 	policyURL := T.WebPrefix() + "/api/console/permissions/policy?id={_id}"
 	approveURL := T.WebPrefix() + "/api/console/approvals/approve?id={_id}"
 	alwaysURL := T.WebPrefix() + "/api/console/approvals/always?id={_id}"
@@ -461,11 +464,34 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				},
 			},
 			{
+				Group: "Limits",
+				Title: "Who may change any of this",
+				Subtitle: "Every other control on this page is set by you and enforced by the framework. This one decides whether an AGENT can come back and edit them.",
+				Detail: "An agent holding the authoring toolset (Builder, or one you gave it to) can call update_agent on any agent you own. It cannot LOOSEN a ceiling - the spend cap, the action limits and the privacy lock only ratchet tighter, and an attempt to raise one is reverted and reported - but it can change everything else about the agent, including its prompt, its rules and its tool allowlist.\n\n" +
+					"Locked closes that door completely: no agent may edit or delete this one, and restoring an earlier revision is blocked too, since a restore is the largest edit there is. You keep editing it from here and from the editor either way.\n\n" +
+					"Worth setting on anything that runs unattended, holds a credential, or reaches a system you connected.",
+				Body: ui.FormPanel{
+					// Source is the agent record, which carries the flag;
+					// PostURL is the lock's OWN endpoint, because Locked is
+					// deliberately not patchable. setAgentLocked is the single
+					// door through it, so an ordinary form save cannot clobber
+					// a lock somebody set.
+					Source:  patchURL,
+					PostURL: lockURL,
+					Method:  "POST",
+					Fields: []ui.FormField{
+						{Field: "locked", Type: "toggle", Label: "Locked: no agent may edit this one",
+							Help: "You can still edit it. This stops agents, including the one being configured."},
+					},
+				},
+			},
+			{
 				Group:    "Limits",
 				Title:    "How much it may spend and how often",
 				Subtitle: "Ceilings the framework keeps, not rules the agent is asked to follow.",
 				Detail: "Written into a prompt instead - \"post at most six times a day\" - these are rules the model has to count for itself, and one did: it counted its own posts out of a listing, read UTC timestamps as local, and posted anyway.\n\n" +
-					"Counted here, a call is refused when the allowance is spent and the agent is told when it frees up. Only SUCCESSFUL calls count, so an outage never spends the day.",
+					"Counted here, a call is refused when the allowance is spent and the agent is told when it frees up. Only SUCCESSFUL calls count, so an outage never spends the day.\n\n" +
+					"These ratchet. An agent with authoring tools may lower its own limits and cannot raise or clear them - an update that tries is reverted and the agent is told to ask you. Lock the agent above to stop it editing anything at all.",
 				Body: ui.FormPanel{
 					Source:  patchURL,
 					PostURL: patchURL,

@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -562,7 +563,18 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	// What the agent could do before this update, so the privileges card can
 	// tell a grant from a save that merely carried existing powers along.
 	before := snapshotPrivileges(sess, existing)
+	// The record as it stood, for the ratchet below. AgentRecord is a struct
+	// and mergeAgentArgs REPLACES ActionQuotas rather than mutating it, but
+	// the map is cloned anyway: a shallow copy that is correct only because of
+	// how the far end happens to be written is one refactor from being wrong.
+	priorLimits := existing
+	priorLimits.ActionQuotas = maps.Clone(existing.ActionQuotas)
 	mergeAgentArgs(&existing, args)
+	// An agent may tighten its own ceilings and not raise them. See
+	// keepEnforcementTight: the Limits tab calls these ceilings the framework
+	// keeps, and this is what makes that true of how they are SET as well as
+	// of how they are enforced.
+	raised := keepEnforcementTight(priorLimits, &existing)
 	// LLM-supplied inline tools commit via the unified store (scoped to this
 	// agent) after the record saves — mergeAgentArgs no longer writes them
 	// onto the record.
@@ -609,6 +621,7 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 		verifyHint += fmt.Sprintf(" Auto-copied %d session tool(s) into the agent so it owns its tool dependencies.", copied)
 	}
 	verifyHint += unresolvedToolsWarning(sess, &saved)
+	verifyHint += enforcementNote(raised)
 	// An update can widen what an agent may do as easily as a create can —
 	// same card, same reason — but only when it actually did (see before).
 	emitPrivilegeCard(sess, saved, append(append([]TempTool{}, inlineTools...), copiedTools...), before)
