@@ -207,6 +207,10 @@ func main() {
 			// so an admin LLM-config change (core.ReloadLLMs) swaps the concretes
 			// live and every app's reference follows, no restart.
 			SetSharedLLMs(T.LLM, T.LeadLLM)
+			// Boot's own record of what is running, so the admin page can show
+			// it from the first request rather than only after a save. See
+			// SetLiveLLMs for why stored and running are different questions.
+			SetLiveLLMs(describeLLMConfig(dbcfg.llm()), describeLLMConfig(dbcfg.leadLLM()))
 			shared_llm = ReloadableWorkerLLM()
 			shared_lead_llm = ReloadableLeadLLM()
 			shared_prompt_tools = T.PromptTools

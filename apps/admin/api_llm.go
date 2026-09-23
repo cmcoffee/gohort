@@ -334,8 +334,22 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 		// Apply live — rebuild the shared LLMs from the new config so the change
 		// takes effect without a restart. Best-effort: on a bad config the prior
 		// LLMs stay active and we log it (the config is still saved).
+		// A rebuild that fails leaves the PREVIOUS client live (see
+		// reloadSharedLLMs, which returns before SetSharedLLMs). Saying 204
+		// here reported "saved" for a config the process is not running, and
+		// the only evidence was a log line - which is an evening of changing a
+		// setting that was already correct.
 		if err := ReloadLLMs(); err != nil {
 			Log("[admin] LLM reload after %s save failed (config saved; prior LLM still active): %v", table, err)
+			_, lead := LiveLLMs()
+			still := "the previously loaded model"
+			if table == LeadLLMTable && lead != "" {
+				still = lead
+			}
+			http.Error(w, "Saved, but NOT applied: "+err.Error()+
+				". Calls keep going to "+still+" until this is fixed and the settings are saved again.",
+				http.StatusConflict)
+			return
 		}
 		Log("[admin] user %q updated %s (provider=%q model=%q)", AuthCurrentUser(r), table, req.Provider, req.Model)
 		w.WriteHeader(http.StatusNoContent)
@@ -370,6 +384,7 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 		"model":                   model,
 		"endpoint":                endpoint,
 		"aws_region":              awsRegion,
+		"_live":                   liveTierDescription(table),
 		"aws_profile":             awsProfile,
 		"bedrock_api":             bedrockAPI,
 		"native_tools":            nativeTools,
@@ -390,4 +405,33 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(out)
+}
+
+// liveTierDescription is what this tier is ACTUALLY running, for a form that
+// otherwise only shows what is stored.
+//
+// The two differ whenever a save could not rebuild: the config is written
+// first and the rebuild is best-effort, so a failure leaves the previous
+// client serving every call while the form reads back the new values. The
+// difference is invisible without this, and it is the difference between
+// "my setting is wrong" and "my setting never took".
+func liveTierDescription(table string) string {
+	worker, lead := LiveLLMs()
+	live := worker
+	if table == LeadLLMTable {
+		live = lead
+	}
+	if live == "" {
+		if table == LeadLLMTable {
+			return "No lead model is loaded; escalations run on the worker."
+		}
+		return ""
+	}
+	out := "Running now: " + live
+	if table == LeadLLMTable {
+		if e := LeadInitError(); e != "" {
+			out += ". " + e
+		}
+	}
+	return out
 }

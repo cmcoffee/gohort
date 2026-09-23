@@ -495,6 +495,15 @@ func bedrockModelID(model string) string {
 	if model == "" {
 		return bedrockDefaultModel
 	}
+	// An ARN is already fully qualified and never takes a prefix. An
+	// APPLICATION inference profile is named by ARN and its id is opaque -
+	// nothing in it says "anthropic" - so the contains-test below would miss
+	// it and prepend, turning a valid ARN into a name Bedrock cannot resolve.
+	// That is the shape an account takes when somebody moves you off the
+	// system profiles onto one of their own.
+	if strings.HasPrefix(model, "arn:") {
+		return model
+	}
 	if strings.Contains(model, bedrockModelPrefix) {
 		return model
 	}
@@ -702,10 +711,27 @@ func bedrockHint(model, msg string) string {
 		return "This model is only served through a cross-region inference profile, so the Model setting needs the region-group prefix: try \"us." +
 			strings.TrimPrefix(model, "us.") + "\" (or eu./apac./global., whichever your account is enabled for) under Admin -> LLMs."
 	case strings.Contains(low, "not authorized") && strings.Contains(low, "foundation-model/"):
-		// The most informative of these and the one that carried no hint: the
-		// resource ARN in the refusal contains BOTH settings, so a reader who
-		// knows to look already has the answer. Most do not, and the sentence
-		// around it is about IAM.
+		// TWO different situations wear this same refusal, and telling somebody
+		// the wrong one costs more than saying nothing.
+		//
+		// If the configured model is ALREADY a profile, the foundation-model
+		// ARN in the message is not what gohort asked for: AWS expands a
+		// cross-region profile and authorizes against the underlying model in
+		// EVERY region the profile can route to, so the region in that ARN is
+		// one of the profile's members and not where the call went. The policy
+		// grants the profile and not all of its members. Nothing in gohort can
+		// fix that, and telling the reader to change a model id that is already
+		// right sends them to the one place with no answer in it.
+		if bedrockIsProfile(model) {
+			hint := "gohort asked for the inference profile \"" + model + "\", not that model id"
+			if r := bedrockARNRegion(msg); r != "" {
+				hint += ": AWS expands a cross-region profile and authorizes against the underlying model in every region it can route to, and " +
+					r + " is one of those members rather than where this call went"
+			}
+			return endSentence(hint + ". The policy grants the profile but not all of its member regions -" +
+				" the action is needed on the foundation-model ARN in each of them, which is an AWS policy change and not a gohort setting")
+		}
+		// Otherwise the model id really is bare, and that is the config error.
 		hint := "The resource in that ARN is a bare foundation-model id"
 		if r := bedrockARNRegion(msg); r != "" {
 			hint += " in " + r
@@ -723,6 +749,26 @@ func bedrockHint(model, msg string) string {
 		return "That is the Messages-API permission. If your role grants bedrock:InvokeModel instead, set Bedrock API to \"InvokeModel\" under Admin -> LLMs."
 	}
 	return ""
+}
+
+// bedrockIsProfile reports whether the configured model names an inference
+// profile rather than a foundation model.
+//
+// A system profile carries a region-group prefix ("us.", "eu.", "apac.",
+// "global."); an application profile is named by ARN. Either way the call is
+// already asking for a profile, which changes what a foundation-model refusal
+// means entirely.
+func bedrockIsProfile(model string) bool {
+	if strings.HasPrefix(model, "arn:") {
+		return strings.Contains(model, ":inference-profile/") ||
+			strings.Contains(model, ":application-inference-profile/")
+	}
+	for _, p := range []string{"us.", "eu.", "apac.", "global."} {
+		if strings.HasPrefix(model, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // bedrockARNRegion pulls the region out of an AWS resource ARN in an error

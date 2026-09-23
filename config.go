@@ -157,10 +157,43 @@ func start_lead_llm_retry() {
 			// Swap the lead ALONE. Apps hold reloadable handles, so this reaches
 			// every reference without re-threading anything.
 			SetSharedLLMs(SharedWorkerLLM(), lead)
+			liveWorker, _ := LiveLLMs()
+			SetLiveLLMs(liveWorker, describeLLMConfig(cfg))
 			SetLeadInitError("", "", nil)
 			Log("[llm] lead LLM (%s/%s) recovered and is now serving escalations.", cfg.Provider, cfg.Model)
 		}
 	}()
+}
+
+// describeLLMConfig is the one-line "what is running" for a tier: enough to
+// tell two configurations of the same provider apart, which for Bedrock means
+// the region as well as the model.
+func describeLLMConfig(c LLMProviderConfig) string {
+	if c.Provider == "" {
+		return ""
+	}
+	out := c.Provider + "/" + c.Model
+	switch c.Provider {
+	case "bedrock":
+		if c.Endpoint != "" {
+			// The endpoint wins over the region, so it is what the reader
+			// needs to see; showing the region here would repeat the lie the
+			// form is already telling.
+			return out + " via " + c.Endpoint
+		}
+		if c.Region == "" {
+			// Blank does NOT mean "no region" - it means $AWS_REGION or the
+			// framework default decided, and which one is the difference this
+			// whole line exists to show. The client logs the resolved answer;
+			// this says the setting is not the thing choosing it.
+			return out + " in whatever region $AWS_REGION or the default names (not set on this tier)"
+		}
+		return out + " in " + c.Region
+	}
+	if c.Endpoint != "" {
+		return out + " at " + c.Endpoint
+	}
+	return out
 }
 
 func reloadSharedLLMs() error {
@@ -188,6 +221,12 @@ func reloadSharedLLMs() error {
 	// cause is how somebody stops believing the diagnostics.
 	SetLeadInitError("", "", nil)
 	SetSharedLLMs(worker, lead)
+	// Record what is now RUNNING, beside the form that shows what is stored.
+	// Only here and at boot, because only an install changes the answer - a
+	// save that failed to rebuild must leave this reading the OLD client, or
+	// it becomes the second place that says what should be true rather than
+	// what is.
+	SetLiveLLMs(describeLLMConfig(cfg), describeLLMConfig(leadCfg))
 	// Recompute the tool-calling mode from the CONFIG THAT JUST LOADED. Without
 	// this the process kept whatever mode it booted with, so turning "Native
 	// tool calling" on in the admin UI rebuilt the LLM and changed nothing —

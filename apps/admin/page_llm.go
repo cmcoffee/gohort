@@ -68,6 +68,11 @@ func (a *AdminApp) llmSections() []ui.Section {
 			Body: ui.FormPanel{
 				Source: "api/lead-llm",
 				Fields: []ui.FormField{
+					// What is RUNNING, above what is stored. A save writes the
+					// config and then rebuilds, and a rebuild that fails leaves
+					// the previous client serving every call - so the fields
+					// below can read back perfectly while nothing uses them.
+					{Field: "_live", Type: "readonly", Label: "In use"},
 					{Field: "provider", Label: "Provider", Type: "select", Options: LLMProviderOptions(true),
 						Help: "(use primary) routes lead stages to the worker model. A peer offering inference appears here too."},
 					{Field: "model", Label: "Model", Type: "text", Placeholder: "e.g. claude-sonnet-5"},

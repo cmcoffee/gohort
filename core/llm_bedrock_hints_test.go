@@ -144,3 +144,78 @@ func TestTheHintJoinsWithoutDoublingPunctuation(t *testing.T) {
 		}
 	}
 }
+
+// An ARN is already fully qualified. An APPLICATION inference profile is named
+// by ARN and its id is opaque - nothing in it says "anthropic" - so the
+// contains-test would miss it and prepend, turning a valid ARN into a name
+// Bedrock cannot resolve. That is the shape an account takes when somebody
+// moves you off the system profiles onto one of their own.
+func TestAnARNIsNeverPrefixed(t *testing.T) {
+	for _, arn := range []string{
+		"arn:aws:bedrock:us-west-2:123456789012:application-inference-profile/a1b2c3d4e5f6",
+		"arn:aws:bedrock:us-west-2:123456789012:inference-profile/us.anthropic.claude-opus-5",
+		"arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-opus-5",
+	} {
+		if got := bedrockModelID(arn); got != arn {
+			t.Errorf("bedrockModelID(%q) = %q", arn, got)
+		}
+	}
+	// The ordinary cases are unchanged.
+	if got := bedrockModelID("claude-sonnet-5"); got != "anthropic.claude-sonnet-5" {
+		t.Errorf("a bare model name lost its prefix: %q", got)
+	}
+	if got := bedrockModelID("us.anthropic.claude-opus-5"); got != "us.anthropic.claude-opus-5" {
+		t.Errorf("a system profile id was rewritten: %q", got)
+	}
+}
+
+// The same refusal means two different things, and telling somebody the wrong
+// one costs more than saying nothing.
+//
+// AWS expands a cross-region profile and authorizes against the underlying
+// model in EVERY region it can route to, so a us-east-1 foundation-model ARN
+// can come back from a call that went to us-west-2 asking for a profile. The
+// first version of this hint read that as a bare model id and told the
+// operator to set a Model field that was already correct - sending them to the
+// one place with no answer in it.
+func TestAProfileRefusalIsNotAConfigError(t *testing.T) {
+	const aws = "User is not authorized to perform: bedrock:InvokeModelWithResponseStream on resource: " +
+		"arn:aws:bedrock:us-east-1::foundation-model/anthropic.claude-opus-5 because no identity-based policy allows the action"
+
+	// Configured with a profile: the ARN is a member region, not the request.
+	hint := bedrockHint("us.anthropic.claude-opus-5", aws)
+	if strings.Contains(hint, "set Model to") {
+		t.Errorf("the hint told an already-correct config to change the model: %s", hint)
+	}
+	for _, want := range []string{"inference profile", "member", "us-east-1", "AWS policy change"} {
+		if !strings.Contains(hint, want) {
+			t.Errorf("the profile hint is missing %q: %s", want, hint)
+		}
+	}
+
+	// Configured with a bare id: that IS the config error, and the old advice
+	// is right.
+	if hint = bedrockHint("anthropic.claude-opus-5", aws); !strings.Contains(hint, "set Model to") {
+		t.Errorf("a genuinely bare model id lost its fix: %s", hint)
+	}
+
+	// An application profile is an ARN and counts the same way.
+	arn := "arn:aws:bedrock:us-west-2:123456789012:application-inference-profile/a1b2c3"
+	if hint = bedrockHint(arn, aws); strings.Contains(hint, "set Model to") {
+		t.Errorf("an application profile was read as a bare model id: %s", hint)
+	}
+
+	for _, m := range []string{"us.anthropic.claude-opus-5", "eu.anthropic.claude-opus-5",
+		"global.anthropic.claude-opus-5", arn,
+		"arn:aws:bedrock:us-west-2:123456789012:inference-profile/us.anthropic.claude-opus-5"} {
+		if !bedrockIsProfile(m) {
+			t.Errorf("%q did not read as a profile", m)
+		}
+	}
+	for _, m := range []string{"anthropic.claude-opus-5", "claude-sonnet-5",
+		"arn:aws:bedrock:us-west-2::foundation-model/anthropic.claude-opus-5"} {
+		if bedrockIsProfile(m) {
+			t.Errorf("%q read as a profile", m)
+		}
+	}
+}

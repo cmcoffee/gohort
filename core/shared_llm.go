@@ -82,6 +82,11 @@ var (
 	leadInitMu     sync.RWMutex
 	leadInitErr    string
 	leadRuntimeErr string
+	// What is actually installed, per tier. Guarded by the same mutex as the
+	// lead's error state because the two are read together: "why is the lead
+	// broken" and "what is answering instead" are one question.
+	liveWorkerLLM string
+	liveLeadLLM   string
 )
 
 // SetLeadInitError records (or with a nil err, clears) the reason a configured
@@ -99,6 +104,38 @@ func SetLeadInitError(provider, model string, err error) {
 		return
 	}
 	leadInitErr = "the configured lead model (" + provider + "/" + model + ") could not be initialized: " + err.Error()
+	// The lead that IS running is whatever was installed before this attempt,
+	// and saying so is the whole point: "saved but not applied" is invisible
+	// otherwise.
+	if liveLeadLLM != "" {
+		leadInitErr += ". Until this is fixed, lead calls keep going to the previously loaded " + liveLeadLLM
+	}
+}
+
+// SetLiveLLMs records WHAT IS RUNNING, as a short description per tier, and is
+// called only where an LLM is actually installed.
+//
+// The admin form shows what is STORED. Those are not the same thing and the
+// gap has a specific cause: a save writes the config and then rebuilds, and a
+// rebuild that fails leaves the previous client live (see reloadSharedLLMs,
+// which returns before SetSharedLLMs). The form then describes a system nobody
+// is running, the only evidence is one log line, and an operator can spend an
+// evening changing a setting that is already correct.
+//
+// A description rather than the config: the thing worth showing is the model
+// and the host a call actually goes to, which for Bedrock is not derivable
+// from the model field alone.
+func SetLiveLLMs(worker, lead string) {
+	leadInitMu.Lock()
+	liveWorkerLLM, liveLeadLLM = worker, lead
+	leadInitMu.Unlock()
+}
+
+// LiveLLMs returns those descriptions, empty before anything is installed.
+func LiveLLMs() (worker, lead string) {
+	leadInitMu.RLock()
+	defer leadInitMu.RUnlock()
+	return liveWorkerLLM, liveLeadLLM
 }
 
 // LeadInitError returns that reason, or "" when the lead is fine or absent.
