@@ -335,6 +335,44 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 			},
 			{
 				Group:    "Delegation",
+				Title:    "Who may call THIS agent",
+				Subtitle: "The other direction. Everything above is what this agent may call; this is what may call it, decided here rather than on every other agent.",
+				Detail: "Without it, \"only these two may call me\" could only be arranged by visiting every other agent in the fleet and excluding this one, which nobody does and nothing checks held.\n\n" +
+					"Separate from being listed in the fleet, which is visibility: a caller that names a hidden agent still reaches it. This is permission, and nothing on the caller's side overrides it.\n\n" +
+					"A sub-agent's parent is always exempt. Ownership is the link, and a rule that locked a parent out of its own child would leave the child unreachable by anything.",
+				Body: ui.FormPanel{
+					Source:  patchURL,
+					PostURL: patchURL,
+					Method:  "PATCH",
+					Fields: []ui.FormField{
+						{Field: "inbound_mode", Type: "select", Label: "Accepts dispatches from",
+							Options: []ui.SelectOption{
+								{Value: "", Label: "Any agent"},
+								{Value: "only", Label: "Only the agents I list"},
+								{Value: "none", Label: "No agent"},
+							},
+							Help: "Any agent still means the caller's own policy applies. No agent is absolute.",
+						},
+					},
+				},
+			},
+			{
+				Group:    "Delegation",
+				Title:    "Agents that may call it",
+				Subtitle: "Read only while the setting above is \"Only the agents I list\". Empty there means nothing reaches it, which is the same as No agent.",
+				Body: ui.ChipPicker{
+					OptionsSource: T.WebPrefix() + "/api/agents?role=dispatch-target&self=" + url.QueryEscape(agent.ID),
+					RecordSource:  patchURL,
+					Field:         "allowed_callers",
+					PostTo:        patchURL,
+					Method:        "PATCH",
+					NameField:     "id",
+					LabelField:    "name",
+					DescField:     "description",
+				},
+			},
+			{
+				Group:    "Delegation",
 				Title:    "Dispatch target list",
 				Subtitle: dispatchTargetSubtitle(effectiveDispatchMode(agent)),
 				Body: ui.ChipPicker{

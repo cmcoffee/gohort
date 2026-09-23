@@ -283,6 +283,7 @@ var patchAgentFields = map[string]bool{
 	"allow_private_mode": true, "force_private": true, "hidden": true,
 	"workspace_no_network": true, "disabled_tool_actions": true,
 	"allow_builder_dispatch": true, "dispatch_mode": true,
+	"inbound_mode": true, "allowed_callers": true,
 	"evals": true, "intake_form": true, "owned_by": true,
 	"work_plan": true,
 }

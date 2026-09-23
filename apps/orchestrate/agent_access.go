@@ -61,6 +61,12 @@ func dispatchReachable(caller, target AgentRecord) bool {
 		// authority, so reaching it from elsewhere would hand over the parent's.
 		return sub == caller.ID
 	}
+	// The agent being CALLED gets a say. Asked before the caller's policy
+	// because it cannot be widened by it: an agent that accepts nothing is
+	// unreachable however open the caller is.
+	if !inboundAllows(target, caller) {
+		return false
+	}
 	switch effectiveDispatchMode(caller) {
 	case dispatchNone:
 		return false
@@ -313,4 +319,69 @@ func agentToolsEmptyText(rec AgentRecord) string {
 		return "No allowlist, which means the DEFAULT POOL: every read and network tool this deployment has. Narrow it above to change that."
 	}
 	return "No tools resolved from this agent's allowlist: every name on it matches nothing, so the agent cannot act."
+}
+
+// Inbound reach: who may dispatch TO an agent, decided by the agent being
+// called.
+//
+// Every other reachability rule is expressed from the CALLER's side, so "only
+// these two may call me" could previously only be arranged by visiting every
+// other agent in the fleet and excluding this one. Nobody does that, and
+// nothing checks it held.
+const (
+	inboundAny  = ""     // any agent, subject to Hidden and the caller's policy
+	inboundOnly = "only" // only AllowedCallers
+	inboundNone = "none" // nothing reaches it
+)
+
+// inboundAllows reports whether target accepts a dispatch from caller.
+//
+// Asked AFTER the caller's own policy, never instead of it: the two narrow
+// together and neither widens the other. A caller allowed to reach everything
+// still cannot reach an agent that accepts nothing.
+//
+// A sub-agent's parent is exempt. Ownership IS the link - a sub-agent runs
+// with its parent's authority and exists to be called by it - and an inbound
+// rule that locked a parent out of its own child would strand the child with
+// no way to be reached at all.
+func inboundAllows(target, caller AgentRecord) bool {
+	if strings.TrimSpace(target.OwnedBy) != "" && target.OwnedBy == caller.ID {
+		return true
+	}
+	switch strings.TrimSpace(target.InboundMode) {
+	case inboundNone:
+		return false
+	case inboundOnly:
+		return dispatchListContainsID(target.AllowedCallers, caller.ID)
+	}
+	return true
+}
+
+// dispatchListContainsID is the plain membership test, separate from
+// dispatchListContains because that one reads a caller's OWN list off its
+// record and this asks about a list belonging to somebody else.
+func dispatchListContainsID(list []string, id string) bool {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false
+	}
+	for _, v := range list {
+		if strings.TrimSpace(v) == id {
+			return true
+		}
+	}
+	return false
+}
+
+// inboundRefusal is what the model is told, in the words that let it stop
+// rather than retry. It names the agent that refused and who has to change it,
+// because a refusal the caller could act on is one it will try to route round.
+func inboundRefusal(target AgentRecord) string {
+	name := agentName(target)
+	if strings.TrimSpace(target.InboundMode) == inboundNone {
+		return "agents(run): " + name + " accepts no dispatches from any agent (Security -> Delegation on " + name +
+			"). This is set on the agent being called, so nothing on this side changes it: do the work yourself, or ask the user."
+	}
+	return "agents(run): " + name + " only accepts dispatches from agents on its own caller list, and this one is not on it" +
+		" (Security -> Delegation on " + name + "). Do not retry; only the user can add it."
 }

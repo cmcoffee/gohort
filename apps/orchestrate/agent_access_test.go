@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -159,4 +160,88 @@ func TestAnEmptyToolTableNeverReadsAsNoAccess(t *testing.T) {
 	if strings.EqualFold(wide, none) {
 		t.Error("the widest and the narrowest agent must not read the same")
 	}
+}
+
+// The agent being CALLED gets a say. Every other reachability rule is
+// expressed from the caller's side, so "only these two may call me" could
+// previously only be arranged by visiting every other agent in the fleet and
+// excluding this one - which nobody does, and nothing checks held.
+func TestAnAgentDecidesWhoMayCallIt(t *testing.T) {
+	open := AgentRecord{ID: "target", Name: "Target"}
+	caller := AgentRecord{ID: "caller", Name: "Caller", DispatchMode: string(dispatchAll)}
+	other := AgentRecord{ID: "other", Name: "Other", DispatchMode: string(dispatchAll)}
+
+	if !dispatchReachable(caller, open) {
+		t.Fatal("setup: an open agent should be reachable")
+	}
+	// none is absolute, and the caller being wide open does not widen it.
+	shut := open
+	shut.InboundMode = inboundNone
+	if dispatchReachable(caller, shut) {
+		t.Error("an agent accepting nothing was reachable by an allow-all caller")
+	}
+	// only, with a list.
+	picky := open
+	picky.InboundMode, picky.AllowedCallers = inboundOnly, []string{"caller"}
+	if !dispatchReachable(caller, picky) {
+		t.Error("a listed caller was refused")
+	}
+	if dispatchReachable(other, picky) {
+		t.Error("an unlisted caller got through")
+	}
+	// only with an EMPTY list means nothing reaches it, not "open by
+	// accident": a mode that silently fell back to open is the dangerous
+	// direction for a control whose whole point is narrowing.
+	empty := open
+	empty.InboundMode = inboundOnly
+	if dispatchReachable(caller, empty) {
+		t.Error("an empty caller list read as open")
+	}
+}
+
+// A sub-agent's parent is exempt. Ownership IS the link: a sub-agent runs with
+// its parent's authority and exists to be called by it, and an inbound rule
+// that locked the parent out would leave the child unreachable by anything.
+func TestAnInboundRuleDoesNotStrandASubAgent(t *testing.T) {
+	parent := AgentRecord{ID: "parent", Name: "Parent"}
+	child := AgentRecord{ID: "child", Name: "Child", OwnedBy: "parent", InboundMode: inboundNone}
+	if !dispatchReachable(parent, child) {
+		t.Error("a parent was locked out of its own sub-agent, which nothing else can reach")
+	}
+	// And it does not make the child public by the same token.
+	stranger := AgentRecord{ID: "stranger", Name: "Stranger", DispatchMode: string(dispatchAll)}
+	if dispatchReachable(stranger, child) {
+		t.Error("the parent exemption let somebody else in")
+	}
+}
+
+// The gate and the predicate are mirrors, and the gate has to refuse with
+// words the model can act on: naming the agent that refused, and who can
+// change it. A refusal the caller thinks it can fix is one it routes around.
+func TestTheInboundRefusalTellsTheModelToStop(t *testing.T) {
+	shut := AgentRecord{ID: "target", Name: "Target", InboundMode: inboundNone}
+	msg := inboundRefusal(shut)
+	for _, want := range []string{"Target", "no dispatches", "nothing on this side changes it"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal is missing %q: %s", want, msg)
+		}
+	}
+	picky := AgentRecord{ID: "target", Name: "Target", InboundMode: inboundOnly}
+	msg2 := inboundRefusal(picky)
+	if !strings.Contains(msg2, "caller list") || !strings.Contains(msg2, "Do not retry") {
+		t.Errorf("the only-mode refusal does not tell it to stop: %s", msg2)
+	}
+	// The gate consults it, or the predicate is a listing that lies.
+	if !strings.Contains(mustReadOrch(t, "agents_grouped_tool.go"), "inboundAllows(target, t.agent)") {
+		t.Error("the gate does not enforce inbound, so the listing shows a refusal that never happens")
+	}
+}
+
+func mustReadOrch(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

@@ -714,6 +714,28 @@ type AgentRecord struct {
 	// was closed and what it changes for an existing allowlist.
 	AllowedDispatchTargets []string `json:"allowed_dispatch_targets,omitempty"`
 
+	// InboundMode is who may dispatch TO this agent, decided by the agent
+	// being called rather than by each caller.
+	//
+	// Everything else about reachability is expressed from the CALLER's side:
+	// its dispatch policy, its target list. So "only these two agents may call
+	// me" could only be arranged by visiting every other agent in the fleet
+	// and excluding this one, which nobody does and nothing checks.
+	//
+	// "" (default) - any agent may call it, subject to Hidden and to the
+	// caller's own policy. "only" - only AllowedCallers. "none" - no agent may
+	// call it at all.
+	//
+	// Distinct from Hidden, which is VISIBILITY: a hidden agent is dropped
+	// from the fleet listing but is still reachable by a caller that names it.
+	// "none" is permission, and nothing on the caller's side overrides it.
+	InboundMode string `json:"inbound_mode,omitempty"`
+	// AllowedCallers are the agent IDs that may dispatch to this one, read
+	// only when InboundMode is "only". Empty in that mode means nothing
+	// reaches it, which is the same as "none" and is left to mean exactly
+	// that rather than quietly falling back to open.
+	AllowedCallers []string `json:"allowed_callers,omitempty"`
+
 	// DispatchMode selects how AllowedDispatchTargets is interpreted, so the
 	// list can express a denylist or a hard block, not just an allowlist:
 	//   "" / "all" — dispatch to any non-Hidden agent (the default). When

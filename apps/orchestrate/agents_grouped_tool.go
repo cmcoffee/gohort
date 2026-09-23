@@ -908,6 +908,17 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 	// fleet reaches the APP (its tools, its label externally), never the
 	// implementing agent. Keyed on the registry so a stale shadow or a stray
 	// allowlist entry from the era these leaked into pickers cannot reopen it.
+	// What the agent being CALLED will accept. Before the caller's own rules,
+	// and separately from Hidden: Hidden is visibility, and a caller that
+	// names a hidden agent still reaches it. This is permission, and nothing
+	// on the caller's side overrides it.
+	//
+	// A sub-agent's parent is exempt inside inboundAllows: ownership IS the
+	// link, and a rule that locked a parent out of its own child would strand
+	// the child with no way to be reached.
+	if !inboundAllows(target, t.agent) {
+		return AgentRecord{}, "", fmt.Errorf("%s", inboundRefusal(target))
+	}
 	if hiddenAppAgent(target.ID) {
 		return AgentRecord{}, "", fmt.Errorf("agents(run): %q is an app-internal agent and cannot be dispatched directly, use the app's own tools instead", target.Name)
 	}
