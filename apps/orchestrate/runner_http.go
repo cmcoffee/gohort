@@ -625,24 +625,6 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 	// turn starts unscoped; tools fall back to generalTopic when
 	// the LLM doesn't pass one.)
 
-	// Fire a fast acknowledgment concurrently so the user sees a
-	// contextual "On it…" while round-1 planning (thinking mode)
-	// produces its first real output. Skipped automatically for
-	// greetings / trivial asks (the ack call returns NONE). Promotion
-	// turns already emit their own "Routing follow-up…" status and
-	// returned above, so this only runs on main-LLM turns.
-	//
-	// DISABLED by default: the ack is a 3rd concurrent LLM call that
-	// competes with this turn's own lead + worker calls for the same
-	// backend slots. On constrained servers (llama.cpp --parallel <= 2)
-	// it never lands — it just queues, times out at ackTimeout, and adds
-	// latency + log noise — while its value is purely cosmetic and the
-	// "Thinking…" status below already fills the dead air. Flip
-	// ackEnabled to true on a server with spare slots to re-enable.
-	if ackEnabled {
-		go turn.emitAck(ctx, req.Message)
-	}
-
 	// --- Orchestrator round 1: respond directly, plan, or ask ---
 	turn.emitStatus("Thinking…")
 	steps, question, directReply, planErr := turn.runPlan(planMsgs)

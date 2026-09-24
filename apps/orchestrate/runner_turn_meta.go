@@ -222,60 +222,6 @@ func (t *chatTurn) emitStatus(text string) {
 	})
 }
 
-func init() {
-	RegisterTunable(TunableSpec{App: "/orchestrate", Key: "tune_ack_timeout", Category: "Timeouts", Label: "Acknowledgment timeout", Help: "Bounds the fast \"On it…\" acknowledgment call.", Kind: KindSeconds, Default: 8, Min: 1, Max: 60})
-}
-
-// ackTimeout bounds the fast acknowledgment call. Short — the ack
-// is only useful if it lands while the user is staring at dead air;
-// a slow ack is worse than none.
-func ackTimeout() time.Duration { return TuneDuration("tune_ack_timeout") }
-
-// ackEnabled gates the concurrent "On it…" acknowledgment (see emitAck
-// and its launch site). Off by default — on small llama.cpp slot pools
-// the ack can't get a slot and is pure overhead; the "Thinking…" status
-// already covers the dead air. Set true on a server with spare slots.
-const ackEnabled = false
-
-// emitAck fires a fast, no-think worker call that produces a short
-// natural acknowledgment ("On it — checking that now.") and streams
-// it as a status the moment it returns. Runs as a goroutine launched
-// at turn start so it overlaps round-1 planning — the orchestrator's
-// first round uses thinking mode, which delays its first visible
-// output by seconds; this fills that gap with a contextual ack
-// instead of a bare "Thinking…".
-//
-// The ack call itself decides whether an ack is warranted: greetings,
-// thanks, and instantly-answerable questions get "NONE" back and emit
-// nothing, so conversational turns don't get a needless "On it!".
-func (t *chatTurn) emitAck(ctx context.Context, userMsg string) {
-	if t == nil || t.app == nil {
-		return
-	}
-	cctx, cancel := context.WithTimeout(ctx, ackTimeout())
-	defer cancel()
-	sys := "A user just messaged an assistant that may need tools, web search, or sub-agents to answer. In ONE short, natural sentence, acknowledge you're on it (e.g. \"On it: let me look that up.\" / \"Sure, checking now.\" / \"Give me a sec to dig into that.\"). Do NOT answer the request, do NOT ask questions, do NOT name tools or agents. If the message is a greeting, a thanks, or something you'd answer instantly with no lookup, reply with exactly NONE."
-	resp, err := t.app.WorkerChat(cctx,
-		[]Message{{Role: "user", Content: userMsg}},
-		WithSystemPrompt(sys), WithMaxTokens(30), WithThink(false),
-		// Best-effort ack: never retry. The 8s ackTimeout is already
-		// blown by the time it fails, so a retry just re-pays the wait
-		// and spams "[retry] attempt failed" / "chat failed" for a call
-		// whose result is optional. A failed ack is a silent no-op.
-		WithMaxRetries(0),
-	)
-	if err != nil || resp == nil {
-		return
-	}
-	ack := strings.TrimSpace(resp.Content)
-	if ack == "" || strings.HasPrefix(strings.ToUpper(ack), "NONE") {
-		return
-	}
-	// Strip wrapping quotes the model sometimes adds.
-	ack = strings.Trim(ack, "\"'")
-	t.emitStatus(ack)
-}
-
 // resolveTopic returns the turn's knowledge topic. With the per-turn
 // classifier removed, this is just the value passed at chatTurn
 // construction (sub-agent dispatches set it from the parent) or
