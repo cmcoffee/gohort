@@ -4237,6 +4237,40 @@ textarea.ui-modal-input { resize: vertical; min-height: 5rem; line-height: 1.5; 
  * strips this class as soon as real text arrives. */
 .ui-agent-msg-empty { display: none; }
 
+/* Struck message: taken back but kept on screen. The text stays readable
+ * (muted, struck through) so what was said is still there to check, and the
+ * reason line above it says why it does not stand. */
+.ui-agent-msg-struck .ui-agent-msg-body {
+  color: var(--text-mute);
+  text-decoration: line-through;
+  text-decoration-color: var(--text-mute);
+  background: transparent;
+  border-style: dashed;
+}
+.ui-agent-msg-struck .ui-agent-msg-body * { text-decoration: inherit; color: inherit; }
+.ui-agent-msg-struck-reason {
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--text-mute);
+  margin-bottom: 0.25rem;
+  padding: 0 0.2rem;
+}
+/* Label chip at the head of a message ("Correction"). */
+.ui-agent-msg-label {
+  align-self: flex-start;
+  display: inline-block;
+  width: max-content;
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
 .ui-agent-divider {
   flex: 0 0 4px; cursor: col-resize;
   background: var(--border);

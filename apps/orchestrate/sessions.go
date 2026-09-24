@@ -335,7 +335,9 @@ func generateSessionTitle(ctx context.Context, llm LLM, s ChatSession) string {
 	for _, m := range s.Messages {
 		if userMsg == "" && m.Role == "user" {
 			userMsg = m.Content
-		} else if assistantMsg == "" && m.Role == "assistant" {
+		} else if assistantMsg == "" && m.Role == "assistant" && m.Retracted == "" {
+			// A struck reply is not what the conversation is about; the
+			// correction after it is.
 			assistantMsg = m.Content
 		}
 		if userMsg != "" && assistantMsg != "" {

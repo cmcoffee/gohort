@@ -14,29 +14,29 @@ func TestASeriesCountsAcrossCallsAndClosesItself(t *testing.T) {
 	const sess, tool = "sess-series-1", "image"
 	t.Cleanup(func() { CloseTaskSeries(sess, tool) })
 
-	piece, of := AdvanceTaskSeries(sess, tool, 3)
+	piece, of := advanceTaskSeries(sess, tool, 3)
 	if piece != 1 || of != 3 {
 		t.Fatalf("first piece of three = %d of %d, want 1 of 3", piece, of)
 	}
 	// The later calls carry no count — that is the shape the model actually
 	// produces, and re-declaring it every time is bookkeeping it gets wrong.
-	if piece, of = AdvanceTaskSeries(sess, tool, 0); piece != 2 || of != 3 {
+	if piece, of = advanceTaskSeries(sess, tool, 0); piece != 2 || of != 3 {
 		t.Fatalf("second piece = %d of %d, want 2 of 3", piece, of)
 	}
-	if piece, of = AdvanceTaskSeries(sess, tool, 0); piece != 3 || of != 3 {
+	if piece, of = advanceTaskSeries(sess, tool, 0); piece != 3 || of != 3 {
 		t.Fatalf("third piece = %d of %d, want 3 of 3", piece, of)
 	}
 	if TaskSeriesOpen(sess, tool) {
 		t.Error("the last piece must close the series — an open one renumbers whatever renders next")
 	}
 	// And a call after it is over is a lone piece of work again, not piece 4.
-	if piece, of = AdvanceTaskSeries(sess, tool, 0); piece != 0 || of != 0 {
+	if piece, of = advanceTaskSeries(sess, tool, 0); piece != 0 || of != 0 {
 		t.Errorf("a call after the series ended = %d of %d, want 0 of 0", piece, of)
 	}
 }
 
 func TestALoneCallIsNotASeries(t *testing.T) {
-	if piece, of := AdvanceTaskSeries("sess-series-2", "image", 1); piece != 0 || of != 0 {
+	if piece, of := advanceTaskSeries("sess-series-2", "image", 1); piece != 0 || of != 0 {
 		t.Errorf("one picture is not a set: got %d of %d", piece, of)
 	}
 	if TaskSeriesOpen("sess-series-2", "image") {
@@ -50,7 +50,7 @@ func TestALoneCallIsNotASeries(t *testing.T) {
 func TestAnOverlongSeriesIsClampedNotRefused(t *testing.T) {
 	const sess, tool = "sess-series-3", "image"
 	t.Cleanup(func() { CloseTaskSeries(sess, tool) })
-	piece, of := AdvanceTaskSeries(sess, tool, 99)
+	piece, of := advanceTaskSeries(sess, tool, 99)
 	if piece != 1 {
 		t.Fatalf("piece = %d, want 1", piece)
 	}
@@ -64,25 +64,25 @@ func TestAnOverlongSeriesIsClampedNotRefused(t *testing.T) {
 func TestSeriesAreKeyedByTool(t *testing.T) {
 	const sess = "sess-series-4"
 	t.Cleanup(func() { CloseTaskSeries(sess, "image"); CloseTaskSeries(sess, "other") })
-	if _, of := AdvanceTaskSeries(sess, "image", 3); of != 3 {
+	if _, of := advanceTaskSeries(sess, "image", 3); of != 3 {
 		t.Fatalf("image series total = %d, want 3", of)
 	}
-	if piece, of := AdvanceTaskSeries(sess, "other", 0); piece != 0 || of != 0 {
+	if piece, of := advanceTaskSeries(sess, "other", 0); piece != 0 || of != 0 {
 		t.Errorf("another tool must not inherit the count: got %d of %d", piece, of)
 	}
-	if piece, _ := AdvanceTaskSeries(sess, "image", 0); piece != 2 {
+	if piece, _ := advanceTaskSeries(sess, "image", 0); piece != 2 {
 		t.Errorf("the image series must be where it was left: piece %d, want 2", piece)
 	}
 }
 
 func TestAFailedPieceEndsTheSet(t *testing.T) {
 	const sess, tool = "sess-series-5", "image"
-	AdvanceTaskSeries(sess, tool, 3)
+	advanceTaskSeries(sess, tool, 3)
 	CloseTaskSeries(sess, tool)
 	if TaskSeriesOpen(sess, tool) {
 		t.Error("a closed series must not still be open")
 	}
-	if piece, _ := AdvanceTaskSeries(sess, tool, 0); piece != 0 {
+	if piece, _ := advanceTaskSeries(sess, tool, 0); piece != 0 {
 		t.Errorf("nothing should resume a closed set: got piece %d", piece)
 	}
 }
@@ -90,14 +90,14 @@ func TestAFailedPieceEndsTheSet(t *testing.T) {
 func TestAnAbandonedSeriesExpires(t *testing.T) {
 	const sess, tool = "sess-series-6", "image"
 	t.Cleanup(func() { CloseTaskSeries(sess, tool) })
-	AdvanceTaskSeries(sess, tool, 4)
+	advanceTaskSeries(sess, tool, 4)
 
 	taskSeriesMu.Lock()
 	taskSeriesLedger[taskSeriesKey(sess, tool)].at = time.Now().Add(-taskSeriesTTL - time.Minute)
 	taskSeriesMu.Unlock()
 
 	// The sweep runs on access, so an unrelated series is what triggers it.
-	AdvanceTaskSeries("sess-series-6b", tool, 2)
+	advanceTaskSeries("sess-series-6b", tool, 2)
 	t.Cleanup(func() { CloseTaskSeries("sess-series-6b", tool) })
 	if TaskSeriesOpen(sess, tool) {
 		t.Error("a set the model walked away from must not outlive its TTL")
@@ -161,7 +161,7 @@ func TestARefusedSecondCallBecomesASet(t *testing.T) {
 	}
 	// The piece already in flight then books itself as the first of them and
 	// asks for the next — with no count ever passed by the model.
-	piece, of := AdvanceTaskSeries(sess, tool, 0)
+	piece, of := advanceTaskSeries(sess, tool, 0)
 	if piece != 1 || of != 3 {
 		t.Fatalf("the running piece = %d of %d, want 1 of 3", piece, of)
 	}
@@ -175,7 +175,7 @@ func TestARefusedSecondCallBecomesASet(t *testing.T) {
 func TestALandedPieceStopsTheSetFromGrowing(t *testing.T) {
 	const sess, tool = "sess-series-8", "image"
 	t.Cleanup(func() { CloseTaskSeries(sess, tool) })
-	AdvanceTaskSeries(sess, tool, 3) // piece 1 of 3 lands
+	advanceTaskSeries(sess, tool, 3) // piece 1 of 3 lands
 	if of := ExtendTaskSeries(sess, tool); of != 3 {
 		t.Errorf("set grew to %d after a piece landed; three variations must not become nine", of)
 	}
@@ -307,7 +307,7 @@ func TestRenderToolsShareOneSlotAndOneSet(t *testing.T) {
 	if of := ExtendTaskSeries(sess.ChatSessionID, twin.key()); of != 2 {
 		t.Fatalf("set = %d, want 2", of)
 	}
-	if piece, of := AdvanceTaskSeries(sess.ChatSessionID, grouped.key(), 0); piece != 1 || of != 2 {
+	if piece, of := advanceTaskSeries(sess.ChatSessionID, grouped.key(), 0); piece != 1 || of != 2 {
 		t.Errorf("piece %d of %d — the set must not fork across names", piece, of)
 	}
 	// A tool with no declared identity is still rationed on its own name.
@@ -411,9 +411,9 @@ func TestASetSurvivesTheWakeTurnsOwnSessionID(t *testing.T) {
 // lies: kill the second of four renders and the next wake cheerfully starts
 // the third, because the ledger still says there are pieces left.
 func TestCancellingClosesEverySetInTheConversation(t *testing.T) {
-	AdvanceTaskSeries("sess-cancel", RenderDetachIdentity, 4)
-	AdvanceTaskSeries("sess-cancel", "video", 3)
-	AdvanceTaskSeries("sess-other", RenderDetachIdentity, 4)
+	advanceTaskSeries("sess-cancel", RenderDetachIdentity, 4)
+	advanceTaskSeries("sess-cancel", "video", 3)
+	advanceTaskSeries("sess-other", RenderDetachIdentity, 4)
 	t.Cleanup(func() { CloseTaskSeriesForSession("sess-other") })
 
 	if n := CloseTaskSeriesForSession("sess-cancel"); n != 2 {

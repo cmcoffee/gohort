@@ -387,6 +387,7 @@ func (T *OrchestrateApp) runOneEvalCase(ctx context.Context, agent AgentRecord, 
 		Tools:               tools,
 		MaxRounds:           resolveMaxWorkerRounds(agent),
 		ThinkBudget:         agent.ThinkBudget, // per-agent override; 0 = inherit route/global
+		Effort:              agent.Effort,      // per-agent level; a budget above wins
 		GuardrailCheck:      evalTurn.guardrailEnforcer().Check,
 		GuardrailActionGate: evalTurn.guardrailEnforcer().ActionGate,
 		GuardrailHalted:     evalTurn.guardrailEnforcer().Halted,

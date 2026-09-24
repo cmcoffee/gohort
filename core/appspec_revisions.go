@@ -30,10 +30,10 @@ import (
 // AppRevisionTable holds one revision ring per app slug.
 const AppRevisionTable = "app_spec_revisions"
 
-// AppRevisionsKept is the ring depth. Deep enough to walk back through a bad
+// appRevisionsKept is the ring depth. Deep enough to walk back through a bad
 // authoring session (the observed one burned four saves), shallow enough that
 // the stored bytes stay incidental.
-const AppRevisionsKept = 6
+const appRevisionsKept = 6
 
 // AppSaveNoHistory, passed as the reason to SaveAppSpecAs, suppresses the
 // snapshot. The rollback paths use it: restoring a known-good revision after a
@@ -97,8 +97,8 @@ func PushAppRevision(prior AppSpec, reason string) int {
 		Reason: reason,
 		Spec:   blob,
 	})
-	if n := len(ring.Entries); n > AppRevisionsKept {
-		ring.Entries = ring.Entries[n-AppRevisionsKept:]
+	if n := len(ring.Entries); n > appRevisionsKept {
+		ring.Entries = ring.Entries[n-appRevisionsKept:]
 	}
 	db.Set(AppRevisionTable, prior.Slug, ring)
 	return seq

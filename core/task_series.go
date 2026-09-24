@@ -64,7 +64,7 @@ func taskSeriesKey(sessionID, tool string) string {
 	return strings.TrimSpace(sessionID) + "\x00" + strings.TrimSpace(tool)
 }
 
-// AdvanceTaskSeries claims the next piece of a series for this conversation and
+// advanceTaskSeries claims the next piece of a series for this conversation and
 // tool, opening one when want is more than a single piece and none is open.
 //
 // Returns the 1-based piece just claimed and the total. (0, 0) means this call
@@ -74,7 +74,7 @@ func taskSeriesKey(sessionID, tool string) string {
 // its first call has said everything it needs to; re-declaring it on each later
 // call is bookkeeping it would get wrong, and omitting it must not silently end
 // the series it is halfway through.
-func AdvanceTaskSeries(sessionID, tool string, want int) (piece, of int) {
+func advanceTaskSeries(sessionID, tool string, want int) (piece, of int) {
 	if strings.TrimSpace(sessionID) == "" || strings.TrimSpace(tool) == "" {
 		return 0, 0
 	}
@@ -115,7 +115,7 @@ func AdvanceTaskSeries(sessionID, tool string, want int) (piece, of int) {
 // This is the path that actually gets used, because it is the shape the model
 // naturally produces. Told to make four variations it does not declare four —
 // it calls the tool four times, the way it would if nothing detached. The
-// declared count (see AdvanceTaskSeries) is the tidy route and the schema asks
+// declared count (see advanceTaskSeries) is the tidy route and the schema asks
 // for it; this is the one that catches the honest attempt, and it needs no
 // cooperation at all.
 //
@@ -197,7 +197,7 @@ func BookSeriesPiece(sess *ToolSession, key string, want int, what string) (piec
 	if sess == nil || !sess.Detached {
 		return 0, 0
 	}
-	piece, of = AdvanceTaskSeries(sess.DeliverySession(), key, want)
+	piece, of = advanceTaskSeries(sess.DeliverySession(), key, want)
 	if c := SeriesContinuation(piece, of, what); c != "" {
 		sess.SetTaskContinuation(c)
 	}

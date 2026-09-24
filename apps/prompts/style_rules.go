@@ -198,65 +198,6 @@ func (T *PromptsApp) handleStyleForm(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, styleRulesForm())
 }
 
-// --- global rules ------------------------------------------------------------
-//
-// Same editor, different list. Style rules are taste; these are obligations, so
-// the copy is firmer and there is nothing shipped to switch off — a deployment
-// writes its own.
-
-func (T *PromptsApp) handleGlobalRules(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
-	if r.Method == http.MethodPost {
-		var req struct {
-			Rules string `json:"rules"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		var rules []styles.StyleRule
-		for _, line := range splitRuleLines(req.Rules) {
-			rules = append(rules, styles.StyleRule{Text: line})
-		}
-		styles.SetGlobalRules(rules)
-		Log("[prompts] global rules saved: %d", len(rules))
-		writeJSON(w, map[string]any{"ok": true})
-		return
-	}
-	var lines []string
-	for _, rule := range styles.EnabledGlobalRules() {
-		lines = append(lines, rule.Text)
-	}
-	writeJSON(w, map[string]any{"rules": strings.Join(lines, "\n")})
-}
-
-// globalRulesForm is the editor spec, mounted in a modal like the style one.
-func globalRulesForm() ui.FormPanel {
-	return ui.FormPanel{
-		Source:  "/prompts/api/global",
-		PostURL: "/prompts/api/global",
-		Fields: []ui.FormField{{
-			Field:     "rules",
-			Label:     "Rules",
-			Type:      "rules",
-			RowEditor: true,
-			Help: "One rule per line. These apply to EVERY agent and come before any rules a user adds " +
-				"to their own workspace, which see them but cannot edit or remove them. Use this for the " +
-				"constraints that are not a matter of preference, e.g. \"Do not perform any action that " +
-				"may potentially be deemed illegal.\" Nothing ships here; the list is yours.",
-			SuggestURL: "/prompts/api/assist",
-			AssistPrompt: "You write operator rules that bind an AI assistant's conduct: short imperative " +
-				"lines, one obligation each. State the boundary and what to do when a request would cross " +
-				"it. Be concrete about the behaviour, not aspirational about values. Do not use em-dashes.",
-		}},
-	}
-}
-
-func (T *PromptsApp) handleGlobalForm(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
-		return
-	}
-	writeJSON(w, globalRulesForm())
-}
+// Global rules moved to Admin, Governance, Rules (apps/admin/api_rules.go):
+// they are obligations a deployment holds every agent to, and that is a
+// governance decision rather than prompt text.

@@ -2983,6 +2983,42 @@
       renderMessageMark(all[all.length - 1], mark);
     }
 
+    // strikeMessage keeps a message on screen but marks it as taken back: the
+    // text is struck through and muted, with the reason on its own line above
+    // it. Generic: the panel knows a message can be struck with a reason; the
+    // reason is the server's words. The reason sits OUTSIDE the body so the
+    // markdown pass (which rewrites the body) cannot wipe it, and so a copy of
+    // the card text is still just the text. Idempotent: live, then replay.
+    function strikeMessage(id, reason) {
+      var m = msgEls[id];
+      if (!m || !m.bubble) return;
+      m.bubble.classList.add('ui-agent-msg-struck');
+      m.struck = reason || '';
+      var line = m.bubble.querySelector(':scope > .ui-agent-msg-struck-reason');
+      if (!reason) { if (line) line.remove(); return; }
+      if (!line) {
+        line = el('div', {class: 'ui-agent-msg-struck-reason'});
+        m.bubble.insertBefore(line, m.body);
+      }
+      line.textContent = reason;
+    }
+
+    // labelMessage puts a small label chip at the head of a message (e.g. a
+    // follow-up the server wants read as a correction). What the label says
+    // is the server's; the panel only shows it. Idempotent.
+    function labelMessage(id, label) {
+      var m = msgEls[id];
+      if (!m || !m.bubble) return;
+      m.label = label || '';
+      var chip = m.bubble.querySelector(':scope > .ui-agent-msg-label');
+      if (!label) { if (chip) chip.remove(); return; }
+      if (!chip) {
+        chip = el('div', {class: 'ui-agent-msg-label'});
+        m.bubble.insertBefore(chip, m.body);
+      }
+      chip.textContent = label;
+    }
+
     function setMessageMeta(id, meta) {
       var m = msgEls[id];
       if (!m || !meta) return;
@@ -3021,6 +3057,10 @@
       // The replay route for a mark, so one that was applied live is still
       // there when the thread is reopened.
       if (meta.mark) renderMessageMark(m.bubble, meta.mark);
+      // The replay route for a struck or labelled message, so what was shown
+      // live is still shown when the thread is reopened.
+      if (meta.retracted) strikeMessage(id, meta.retracted);
+      if (meta.label) labelMessage(id, meta.label);
     }
 
     // formatTimestamp renders a Date.now()-shaped value as a short
@@ -3332,8 +3372,17 @@
             continue;
           }
           roundNum++;
-          lines.push('## Assistant (round ' + roundNum + ')');
+          // A struck or labelled bubble says so in the copy too: pasted as
+          // plain text, a struck reply reads as an answer that stood.
+          var entryFor = msgEntryForBubble(next);
+          var struck = next.classList.contains('ui-agent-msg-struck');
+          var tag = struck ? ', struck through' : ((entryFor && entryFor.label) ? ', ' + entryFor.label : '');
+          lines.push('## Assistant (round ' + roundNum + tag + ')');
           lines.push('');
+          if (struck && entryFor && entryFor.struck) {
+            lines.push('> ' + entryFor.struck);
+            lines.push('');
+          }
           if (txt) {
             lines.push(txt);
             lines.push('');
@@ -4357,6 +4406,15 @@
         case 'message_done':
           finalizeMessage(ev.id);
           break;
+        // A message taken back but kept visible, and a labelled one. Both
+        // address a bubble by id; what the reason or label says is the
+        // server's text.
+        case 'chunk_strike':
+          strikeMessage(ev.id, ev.reason || '');
+          break;
+        case 'message_label':
+          labelMessage(ev.id, ev.label || '');
+          break;
         case 'stats':
           renderMessageStats(ev);
           break;
@@ -5250,7 +5308,7 @@
       var mid = m.id || ('m-' + Math.random().toString(36).slice(2));
       addMessage(m.role || 'assistant', mid, m.content || m.text || '', m.sender);
       if (cfg.markdown && m.role === 'assistant') finalizeMessage(mid);
-      if (m.created || m.usage || m.report_from || m.mark) setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail, mark: m.mark});
+      if (m.created || m.usage || m.report_from || m.mark || m.retracted || m.label) setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail, mark: m.mark, retracted: m.retracted, label: m.label});
     }
 
     function stopChannelPolling() {
@@ -5342,7 +5400,7 @@
       var mid = (m && m.id) || ('obs-' + Math.random().toString(36).slice(2));
       addMessage(m.role || 'assistant', mid, m.content || m.text || '', m.sender);
       if (cfg.markdown && (m.role === 'assistant')) finalizeMessage(mid);
-      if (m.created || m.usage || m.report_from || m.mark) setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail, mark: m.mark});
+      if (m.created || m.usage || m.report_from || m.mark || m.retracted || m.label) setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail, mark: m.mark, retracted: m.retracted, label: m.label});
       applyPersistedToolCalls(mid, m);
       if (messageReplayHooks.length) {
         var entry = msgEls[mid], bubble = entry && entry.bubble;
@@ -5972,8 +6030,8 @@
                 var mid = m.id || ('m-' + Math.random().toString(36).slice(2));
                 addMessage(m.role || 'assistant', mid, m.content || m.text || '');
                 if (cfg.markdown && (m.role === 'assistant')) finalizeMessage(mid);
-                if (m.created || m.usage) {
-                  setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail, mark: m.mark});
+                if (m.created || m.usage || m.retracted || m.label) {
+                  setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail, mark: m.mark, retracted: m.retracted, label: m.label});
                 }
                 // Replay persisted tool calls (same shape as the
                 // SESSION-mode branch below — see that comment for
@@ -6169,8 +6227,8 @@
               else if (m.role === 'assistant') attachAssistantActions(msgEls[mid].bubble);
             }
             if (cfg.markdown && (m.role === 'assistant')) finalizeMessage(mid);
-            if (m.created || m.usage) {
-              setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail, mark: m.mark});
+            if (m.created || m.usage || m.retracted || m.label) {
+              setMessageMeta(mid, {created: m.created, usage: m.usage, report_from: m.report_from, report_kind: m.report_kind, report_detail: m.report_detail, mark: m.mark, retracted: m.retracted, label: m.label});
             }
             if (msgEls[mid] && msgEls[mid].bubble) {
               noticeAnchors.push({at: Date.parse(m.created || ''), node: msgEls[mid].bubble});

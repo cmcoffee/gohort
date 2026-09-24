@@ -7,6 +7,8 @@ import (
 // governanceSections is the governance part of the admin page: User-owned credentials, Global tools, User-owned agents, User-owned pipelines, User-owned machines, Pending promotions.
 func (a *AdminApp) governanceSections() []ui.Section {
 	return []ui.Section{
+		// First: the deployment's obligations frame everything else here.
+		rulesSection(),
 		{
 			Title:    "User-owned credentials",
 			Subtitle: "Credentials users create for themselves, on their Extensions page.",

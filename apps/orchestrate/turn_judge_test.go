@@ -564,8 +564,8 @@ func TestTheConfirmingReadingCanClearAConviction(t *testing.T) {
 	if first.Think == nil || *first.Think {
 		t.Error("the first reading should be the fast, thinking-off one")
 	}
-	if second.Think == nil || !*second.Think || second.ThinkBudget == nil {
-		t.Error("the confirming reading should think, on a small budget")
+	if second.Think == nil || !*second.Think || second.Effort != "low" || second.ThinkBudget != nil {
+		t.Error("the confirming reading should think, at low effort and with no raw budget to override it")
 	}
 }
 

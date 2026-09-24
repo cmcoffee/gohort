@@ -82,6 +82,8 @@ type bedrockRuntimeClient struct {
 	// 0 falls back to anthropicDefaultContextSize (same Claude models, same
 	// economics — see the const in llm_anthropic.go).
 	contextSize int
+	// effort is the tier's default and maximum effort; see resolveEffort.
+	effort effortTier
 }
 
 // ContextSize implements ContextSizer — see anthropicClient.ContextSize for
@@ -278,6 +280,7 @@ func (c *bedrockRuntimeClient) buildBody(messages []Message, cfg ChatConfig) ([]
 // Chat sends a non-streaming InvokeModel request.
 func (c *bedrockRuntimeClient) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
 	cfg := applyOpts(c.model, anthDefaultMaxTokens, opts)
+	c.effort.resolve(&cfg)
 	body, err := c.buildBody(messages, cfg)
 	if err != nil {
 		return nil, err
@@ -356,6 +359,7 @@ func (c *bedrockRuntimeClient) streamPath() string {
 // to the same accumulator the SSE reader uses. See llm_bedrock_eventstream.go.
 func (c *bedrockRuntimeClient) ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
 	cfg := applyOpts(c.model, anthDefaultStreamMaxTokens, opts)
+	c.effort.resolve(&cfg)
 	body, err := c.buildBody(messages, cfg)
 	if err != nil {
 		return nil, err

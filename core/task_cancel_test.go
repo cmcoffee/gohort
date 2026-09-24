@@ -16,7 +16,7 @@ func TestAnAgentCanSeeAndStopWhatItStarted(t *testing.T) {
 	RegisterBackgroundJob(sess, TaskRun{ID: "task-a", Label: "image: a red bicycle"}, func() { stoppedA = true })
 	RegisterBackgroundJob(sess, TaskRun{ID: "task-b", Label: "image: a blue one"}, func() { stoppedB = true })
 	// A set is running alongside them, and stopping the work must stop it too.
-	AdvanceTaskSeries(sess, RenderDetachIdentity, 4)
+	advanceTaskSeries(sess, RenderDetachIdentity, 4)
 
 	tool := &backgroundWorkTool{}
 	s := &ToolSession{ChatSessionID: sess}

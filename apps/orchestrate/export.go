@@ -352,8 +352,24 @@ func renderSessionMarkdownWithDiag(agent AgentRecord, sess ChatSession, udb Data
 			ts = " - " + m.Created.Format(time.RFC3339)
 		}
 		header := strings.ToUpper(m.Role[:1]) + m.Role[1:]
+		// A label and a retraction are part of what the reader saw, so the
+		// export says them too: a struck reply exported as plain text would
+		// read as an answer that stood.
+		retracted := strings.TrimSpace(m.Retracted)
+		switch {
+		case retracted != "":
+			header += " (retracted)"
+		case strings.TrimSpace(m.Label) != "":
+			header += " [" + strings.TrimSpace(m.Label) + "]"
+		}
 		fmt.Fprintf(&b, "## %s%s\n\n", header, ts)
+		if retracted != "" {
+			fmt.Fprintf(&b, "> %s\n\n", exportText(retracted))
+		}
 		if body := strings.TrimSpace(exportText(m.Content)); body != "" {
+			if retracted != "" {
+				body = strikeMarkdown(body)
+			}
 			b.WriteString(body)
 			b.WriteString("\n\n")
 		}
@@ -527,22 +543,23 @@ func guardrailExportEvents(udb Database, agentID, sessionID string) []guardrailE
 		// Safe by the same rule as the rest: kind only, no detail. These carry
 		// no user-authored rule text — they name a mechanical check — but their
 		// Detail does quote the reply, so it stays out like everything else.
-		"phantom-delivery-corrected":   "a reply claimed to hand over a file that did not exist; the claim was removed and the turn retried",
-		"phantom-delivery-uncorrected": "a reply kept claiming a file that did not exist; it was replaced with a truthful one",
-		"unkept-claim-corrected":       "a reply promised something the turn had not done; the turn was retried",
-		"unkept-claim-uncorrected":     "a reply kept promising something the turn had not done; it was replaced",
-		"ungrounded-claim-corrected":   "a reply asserted something the turn had no support for; the turn was retried",
-		"ungrounded-claim-uncorrected": "a reply kept asserting something unsupported; it was replaced",
-		"unverified-premise-held":      "a claim rested on an unverified premise and was held",
-		"machinery-corrected":          "a reply exposed internal machinery; the turn was retried",
-		"machinery-uncorrected":        "a reply kept exposing internal machinery; it was replaced",
-		"turn-judge-overturned":        "a reply was flagged, and a second reading cleared it; it went out as written",
-		"announced-call-corrected":     "a reply announced a tool call it never made; the turn was retried",
-		"tool-markup-corrected":        "a reply wrote a tool call as text instead of calling it; the turn was retried",
-		"tool-mention-corrected":       "a reply named internal tooling to the user; the turn was retried",
-		"empty-round-retried":          "a round produced nothing and was retried",
-		"giveup-retried":               "a reply gave up without trying; the turn was retried",
-		"round-batch-capped":           "the turn requested more tool calls at once than are allowed and was capped",
+		"phantom-delivery-corrected":     "a reply claimed to hand over a file that did not exist; the claim was removed and the turn retried",
+		"phantom-delivery-uncorrected":   "a reply kept claiming a file that did not exist; it was replaced with a truthful one",
+		"unkept-claim-corrected":         "a reply promised something the turn had not done; it was struck through and the turn retried",
+		"unkept-claim-uncorrected":       "a reply kept promising something the turn had not done; it was replaced",
+		"ungrounded-claim-corrected":     "a reply asserted something the turn had no support for; a correction was asked for",
+		"ungrounded-claim-retry-dropped": "the correction only repeated the unsupported claim and was dropped; the original reply stands",
+		"ungrounded-claim-uncorrected":   "a reply kept asserting something unsupported; it was replaced",
+		"unverified-premise-held":        "a claim rested on an unverified premise and was held",
+		"machinery-corrected":            "a reply exposed internal machinery; it was struck through and the turn retried",
+		"machinery-uncorrected":          "a reply kept exposing internal machinery; it was replaced",
+		"turn-judge-overturned":          "a reply was flagged, and a second reading cleared it; it went out as written",
+		"announced-call-corrected":       "a reply announced a tool call it never made; the turn was retried",
+		"tool-markup-corrected":          "a reply wrote a tool call as text instead of calling it; the turn was retried",
+		"tool-mention-corrected":         "a reply named internal tooling to the user; the turn was retried",
+		"empty-round-retried":            "a round produced nothing and was retried",
+		"giveup-retried":                 "a reply gave up without trying; the turn was retried",
+		"round-batch-capped":             "the turn requested more tool calls at once than are allowed and was capped",
 	}
 	withDetail := TuneBool(tuneExportGuardrailDetail)
 	var out []guardrailExportEvent
@@ -568,4 +585,25 @@ func guardrailExportEvents(udb Database, agentID, sessionID string) []guardrailE
 // transcript, because it gets read as evidence.
 func exportText(s string) string {
 	return prompts.ApplyRuleEnforcers(StripMetaTags(s))
+}
+
+// strikeMarkdown renders text struck through, line by line: Markdown's ~~ does
+// not span a blank line, so one pair around a multi-paragraph reply strikes
+// nothing. Fence lines are left alone, and so is everything between them,
+// since ~~ inside a code block is printed rather than applied.
+func strikeMarkdown(text string) string {
+	lines := strings.Split(text, "\n")
+	inFence := false
+	for i, ln := range lines {
+		trimmed := strings.TrimSpace(ln)
+		if strings.HasPrefix(trimmed, "```") {
+			inFence = !inFence
+			continue
+		}
+		if inFence || trimmed == "" {
+			continue
+		}
+		lines[i] = "~~" + trimmed + "~~"
+	}
+	return strings.Join(lines, "\n")
 }

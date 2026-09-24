@@ -63,6 +63,54 @@ func (t *chatTurn) recordToolCall(rec toolCallRecord) {
 // strings are dropped — the live UI doesn't materialize a bubble for
 // tool-only rounds, and we mirror that here.
 func (t *chatTurn) captureMidTurnBubble(text string) {
+	t.captureBubble(text, "", "")
+}
+
+// captureStruckBubble records a bubble the turn took back but kept on screen,
+// struck through, with the reason it was taken back. Saved like any other
+// bubble so a reload and the export show what was said and why it did not
+// stand.
+func (t *chatTurn) captureStruckBubble(text, reason string) {
+	t.captureBubble(text, reason, "")
+}
+
+// captureLabelledBubble records a bubble shown under a label. The text and
+// label are remembered too, because the bubble is usually the turn's final
+// reply and gets deduplicated against it on save; finalReplyLabel hands the
+// label on to the message that replaces it.
+func (t *chatTurn) captureLabelledBubble(text, label string) {
+	if saved := t.captureBubble(text, "", label); saved != "" {
+		t.noteLabelled(saved, label)
+	}
+}
+
+// noteLabelled remembers the last labelled reply for finalReplyLabel.
+func (t *chatTurn) noteLabelled(text, label string) {
+	if label == "" {
+		return
+	}
+	t.bubblesMu.Lock()
+	t.labelledText, t.labelledAs = text, label
+	t.bubblesMu.Unlock()
+}
+
+// finalReplyLabel is the label the turn's final persisted message carries: the
+// labelled bubble's, when that bubble is the one the final reply stands in for
+// (the same near-duplicate test appendMidTurnBubbles drops it by). A labelled
+// bubble that was kept in its own right keeps its own label and passes none on.
+func (t *chatTurn) finalReplyLabel(final string) string {
+	t.bubblesMu.Lock()
+	text, label := t.labelledText, t.labelledAs
+	t.bubblesMu.Unlock()
+	if label == "" || strings.TrimSpace(final) == "" || !repeatsWithoutAdding(text, final) {
+		return ""
+	}
+	return label
+}
+
+// captureBubble is the shared door behind the capture helpers. Returns the
+// text as saved, "" when nothing was.
+func (t *chatTurn) captureBubble(text, retracted, label string) string {
 	// The single door every narration bubble walks through on its way into the
 	// transcript, so the delivery scrub lives here rather than at each caller.
 	// Most callers already hand over cleanBubbleText output and the marker
@@ -80,7 +128,7 @@ func (t *chatTurn) captureMidTurnBubble(text string) {
 	// re-render a bubble mid-turn to no visible effect.
 	trimmed := strings.TrimSpace(prompts.ApplyRuleEnforcers(StripMetaTags(text)))
 	if trimmed == "" {
-		return
+		return ""
 	}
 	// Snapshot the tool calls that have fired SINCE the previous mid-
 	// turn bubble was captured. This attributes each tool call to the
@@ -101,8 +149,11 @@ func (t *chatTurn) captureMidTurnBubble(text string) {
 		Content:   trimmed,
 		Created:   time.Now(),
 		ToolCalls: calls,
+		Retracted: retracted,
+		Label:     label,
 	})
 	t.bubblesMu.Unlock()
+	return trimmed
 }
 
 // persistedToolCallsFromUnlocked returns the slice of tool calls from
@@ -173,7 +224,11 @@ func appendMidTurnBubbles(sess *ChatSession, bubbles []ChatMessage, finalReply s
 	if final := strings.TrimSpace(finalReply); final != "" {
 		kept := bubbles[:0]
 		for _, b := range bubbles {
-			if repeatsWithoutAdding(b.Content, final) {
+			// A struck bubble is never folded into the reply that replaced
+			// it. The corrected reply often says much the same thing, and
+			// dropping the struck one as a "duplicate" would erase exactly
+			// the record of what was taken back.
+			if b.Retracted == "" && repeatsWithoutAdding(b.Content, final) {
 				if len(b.ToolCalls) > 0 {
 					orphanedCalls = append(orphanedCalls, b.ToolCalls...)
 				}

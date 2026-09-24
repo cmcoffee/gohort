@@ -217,6 +217,11 @@ var FindDependents func(kind, owner, id string, users []string) []Dependent
 // left with only the id, and this is the last moment the name is known.
 var OnWithdrawn func(kind, owner, id, name string, dependents []Dependent)
 
+// CanKeep, when wired, says whether the person who lost a record can take the
+// version they had back as their own (a published tool its author withdrew),
+// so the notice offers that instead of only removing it.
+var CanKeep func(kind, owner, id, user string) bool
+
 // DependentsOf is who relies on this record today, among users (nil for
 // anybody), asked of the kind first when it narrows the question.
 func DependentsOf(kind, owner, id string, users []string) []Dependent {
@@ -298,6 +303,9 @@ func withdrawn(kind, owner, id, name string, lost []string, deps []Dependent) {
 		// Only a person with something relying on it has anything to do,
 		// and the notice is filed as waiting on them exactly then.
 		if names := uses[u]; len(names) > 0 {
+			if CanKeep != nil && CanKeep(kind, owner, id, u) {
+				ask = "keep the version you had (Keep it, in the agent's tools), " + ask
+			}
 			needs = append(needs, "Your "+plural(len(names), "agent", "agents")+" "+joinNames(names)+
 				" "+plural(len(names), "uses", "use")+" it and now "+plural(len(names), "runs", "run")+
 				" without it. Remove it there, "+ask)

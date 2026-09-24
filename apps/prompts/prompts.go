@@ -121,8 +121,6 @@ func (T *PromptsApp) Routes() {
 		HandleDocRules(w, r, T.DB, "prompts")
 	}))
 	T.HandleFunc("/api/style/form", T.adminGated(T.handleStyleForm))
-	T.HandleFunc("/api/global", T.adminGated(T.handleGlobalRules)) // GET/POST the operator rule list
-	T.HandleFunc("/api/global/form", T.adminGated(T.handleGlobalForm))
 	T.HandleFunc("/api/style", T.adminGated(T.handleStyleRules))                   // GET -> {builtins, custom}; POST {disabled, custom}
 	T.HandleFunc("/api/assist", T.adminGated(T.handleAssist))                      // POST {name, section, message, draft, history}
 	T.HandleFunc("/api/revisions", T.adminGated(T.handleRevList))                  // GET  ?id= -> [{id, date}]
@@ -134,8 +132,6 @@ func (T *PromptsApp) Routes() {
 // styleRulesRowID is the synthetic list row that opens the style-rule editor.
 // Not a block key: nothing loads or saves under it.
 const styleRulesRowID = "__style_rules__"
-
-const globalRulesRowID = "__global_rules__"
 
 // lookupBlock finds a registered block by key — the guard that keeps the write
 // endpoints scoped to real blocks (no arbitrary WebTable writes).
@@ -260,10 +256,10 @@ func (T *PromptsApp) handleList(w http.ResponseWriter, r *http.Request) {
 	// button: they are prompt text like everything else here, so they belong in
 	// the same list. The Action field routes the click to a list editor instead
 	// of the prose pane, because a set of one-line rules is not a document.
+	//
+	// Global rules are not here: they are a governance decision, edited under
+	// Admin, Governance, Rules.
 	out := []map[string]any{{
-		"ID": globalRulesRowID, "Subject": "Global rules", "Date": "Rules",
-		"Action": "prompts_global_rules",
-	}, {
 		"ID": styleRulesRowID, "Subject": "Style rules", "Date": "Style",
 		"Action": "prompts_style_rules",
 	}}
@@ -722,9 +718,6 @@ const promptsHead = `<script>
   }
   window.uiRegisterClientAction('prompts_style_rules', function(ctx) {
     promptsOpenRuleEditor(ctx, 'Style rules', '/prompts/api/style/form');
-  });
-  window.uiRegisterClientAction('prompts_global_rules', function(ctx) {
-    promptsOpenRuleEditor(ctx, 'Global rules', '/prompts/api/global/form');
   });
   window.uiRegisterClientAction('prompts_optimize_all', function(ctx) {
     var ed = ctx.editor;

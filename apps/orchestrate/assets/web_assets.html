@@ -2632,6 +2632,17 @@
           .then(function(d) { return {items: (d && d.items) || [], labels: (d && d.labels) || {}}; })
           .catch(function() { return {items: [], labels: {}}; });
       }
+      // Take a withdrawn tool back as the user's own copy (the version they
+      // were running). The agent keeps its name, so it simply works again.
+      function recreateAgentReference(id, ref) {
+        return fetch('api/agents/' + encodeURIComponent(id) + '/missing', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({kind: 'tool', id: ref, action: 'recreate'})
+        }).then(function(r) {
+          if (!r.ok) return r.text().then(function(t) { throw new Error(t || ('HTTP ' + r.status)); });
+        });
+      }
       function dropAgentReference(id, kind, ref) {
         return fetch('api/agents/' + encodeURIComponent(id) + '/missing', {
           method: 'POST',
@@ -2863,8 +2874,12 @@
           // server holds the same line (keepUnlistedTools).
           var catalogNames = {};
           catalog.forEach(function(o) { catalogNames[o.value] = true; });
-          var goneTools = {};
-          (missing.items || []).forEach(function(it) { if (it.kind === 'tool') goneTools[it.id] = true; });
+          var goneTools = {}, recreatable = {};
+          (missing.items || []).forEach(function(it) {
+            if (it.kind !== 'tool') return;
+            goneTools[it.id] = true;
+            if (it.recreatable) recreatable[it.id] = true;
+          });
           var extras = [];
           if (!isNoneSentinel) {
             listed.forEach(function(n) { if (!catalogNames[n] && extras.indexOf(n) < 0) extras.push(n); });
@@ -2899,6 +2914,7 @@
               var gone = !!goneTools[n];
               desc.textContent = gone
                 ? 'No longer available: whoever shared it withdrew or deleted it. The agent runs without it.'
+                  + (recreatable[n] ? ' Keep it makes the version you were running your own tool.' : '')
                 : 'Allowed for this agent, but not offered in this list.';
               if (gone) desc.style.color = 'var(--warning)';
               meta.appendChild(desc);
@@ -2917,6 +2933,30 @@
                 paintRm();
               });
               paintRm();
+              if (recreatable[n]) {
+                var keep = document.createElement('button');
+                keep.type = 'button';
+                keep.className = 'ui-row-btn compact';
+                keep.style.cssText = 'font-size:0.78rem;padding:0.25rem 0.5rem;min-width:0;margin-right:0.3rem';
+                keep.textContent = 'Keep it';
+                keep.title = 'Make the version you were running your own tool; the agent uses it again';
+                keep.addEventListener('click', function() {
+                  keep.disabled = true; rm.disabled = true;
+                  keep.textContent = 'Keeping…';
+                  recreateAgentReference(id, n).then(function() {
+                    delete goneTools[n];
+                    delete removedRefs[n];
+                    desc.textContent = 'Now your own tool. The agent uses it again.';
+                    desc.style.color = '';
+                    keep.remove(); rm.remove();
+                  }).catch(function(e) {
+                    keep.disabled = false; rm.disabled = false;
+                    keep.textContent = 'Keep it';
+                    window.uiAlert('Could not keep ' + n + ': ' + e.message);
+                  });
+                });
+                row.appendChild(keep);
+              }
               row.appendChild(rm);
               exSection.appendChild(row);
             });

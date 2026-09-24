@@ -52,6 +52,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 					{Field: "disable_thinking", Label: "Disable thinking (force think=false)", Type: "toggle"},
 					{Field: "thinking_budget", Label: "Thinking budget (tokens, 0 = unlimited)", Type: "number", Min: 0, Max: 131072,
 						Help: "Also the hard ceiling for per-agent / per-route budgets. Default 4096."},
+					effortDefaultField(), effortMaxField(),
 					{Field: "no_think_use_kwarg", Label: "No-think: send enable_thinking=false", Type: "toggle"},
 					{Field: "no_think_send_budget", Label: "No-think: send thinking_budget cap", Type: "toggle"},
 					{Field: "no_think_budget", Label: "No-think: budget value (tokens)", Type: "number", Min: 0, Max: 8192,
@@ -103,6 +104,7 @@ func (a *AdminApp) llmSections() []ui.Section {
 					{Type: "header", Label: "Thinking"},
 					{Field: "disable_thinking", Label: "Disable thinking (force think=false)", Type: "toggle"},
 					{Field: "thinking_budget", Label: "Thinking budget (tokens, 0 = unlimited)", Type: "number", Min: 0, Max: 131072},
+					effortDefaultField(), effortMaxField(),
 					{Field: "no_think_use_kwarg", Label: "No-think: send enable_thinking=false", Type: "toggle"},
 					{Field: "no_think_send_budget", Label: "No-think: send thinking_budget cap", Type: "toggle"},
 					{Field: "no_think_budget", Label: "No-think: budget value (tokens)", Type: "number", Min: 0, Max: 8192},
@@ -235,4 +237,31 @@ func (a *AdminApp) llmSections() []ui.Section {
 			},
 		},
 	}
+}
+
+// effortDefaultField and effortMaxField are the per-tier effort settings,
+// identical on the Worker and Lead forms because each tier resolves effort
+// the same way; only the stored values differ.
+func effortDefaultField() ui.FormField {
+	return ui.FormField{Field: "default_effort", Label: "Default effort", Type: "select",
+		Options: []ui.SelectOption{
+			{Value: "", Label: "Model default"},
+			{Value: "off", Label: "Off"},
+			{Value: "low", Label: "Low"},
+			{Value: "medium", Label: "Medium"},
+			{Value: "high", Label: "High"}},
+		Help: "How hard this tier reasons when a call or agent names no effort.",
+		Detail: "Each provider gets its own dial: Claude's effort setting (or a thinking budget on older Claude models), OpenAI's reasoning effort, a thinking budget for llama.cpp and Gemini, on/off for Ollama. " +
+			"A token budget set on an agent or a route overrides it, and a stage routed without thinking stays without it."}
+}
+
+func effortMaxField() ui.FormField {
+	return ui.FormField{Field: "max_effort", Label: "Maximum effort", Type: "select",
+		Options: []ui.SelectOption{
+			{Value: "", Label: "No cap"},
+			{Value: "low", Label: "Low"},
+			{Value: "medium", Label: "Medium"},
+			{Value: "high", Label: "High"}},
+		Help:   "The most effort any call on this tier may use, whatever an agent asks for.",
+		Detail: "Caps effort levels only. An explicit token budget is not an effort level; on llama.cpp the thinking budget above remains its ceiling."}
 }

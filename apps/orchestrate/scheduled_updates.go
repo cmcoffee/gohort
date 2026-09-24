@@ -806,6 +806,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		StampLocation:       UserLocation(p.Username), // stamp the turn in the owning user's zone
 		TurnNotes:           func(string) string { return dependencyTurnNote(subSess) },
 		ThinkBudget:         agent.ThinkBudget,
+		Effort:              agent.Effort,
 		ActionQuotas:        agent.ActionQuotas,
 		BudgetKey:           agent.ID,
 		DailySpendUSD:       agent.DailySpendUSD,

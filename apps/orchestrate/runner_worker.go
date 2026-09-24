@@ -358,6 +358,7 @@ func (t *chatTurn) runWorkerStep(prior []PlanStep, cur PlanStep, userMsg string,
 		ToolFallbackResolver: t.lazyToolFallback,
 		MaxRounds:            hardCap,
 		ThinkBudget:          t.agent.ThinkBudget, // per-agent override; 0 = inherit route/global
+		Effort:               t.agent.Effort,      // per-agent level; a budget above wins
 		ActionQuotas:         t.agent.ActionQuotas,
 		BudgetKey:            t.agent.ID,
 		DailySpendUSD:        t.agent.DailySpendUSD,
@@ -551,7 +552,7 @@ func (t *chatTurn) runSynthesis(userMsg string, steps []PlanStep, notes []inject
 	}
 	// Per-agent override wins over the route default (see plan round
 	// for rationale).
-	switch t.agent.Think {
+	switch t.agent.thinkMode() {
 	case "on":
 		think = true
 	case "off":

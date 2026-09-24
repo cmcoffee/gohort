@@ -117,7 +117,7 @@ type AlwaysDetachTool interface {
 }
 
 // SeriesTool is a DetachableTool that can work through a SET one piece per
-// turn: it books each finished piece against the count (AdvanceTaskSeries) and
+// turn: it books each finished piece against the count (advanceTaskSeries) and
 // leaves the instruction that starts the next (SetTaskContinuation).
 //
 // Declared rather than assumed, because the refusal a second detach gets now

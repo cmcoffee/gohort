@@ -852,6 +852,7 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 		MaxRounds:      resolveMaxWorkerRounds(target),
 		StampLocation:  UserLocation(runtimeUser), // stamp the turn in the acting user's zone
 		ThinkBudget:    target.ThinkBudget,        // per-agent override; 0 = inherit route/global
+		Effort:         target.Effort,             // per-agent level; a budget above wins
 		ActionQuotas:   target.ActionQuotas,       // per-agent 24h caps; empty = uncapped
 		BudgetKey:      target.ID,
 		DailySpendUSD:  target.DailySpendUSD,
@@ -1837,6 +1838,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 		Tools:         tools,
 		MaxRounds:     resolveMaxWorkerRounds(target),
 		ThinkBudget:   target.ThinkBudget, // per-agent override; 0 = inherit route/global
+		Effort:        target.Effort,      // per-agent level; a budget above wins
 		ActionQuotas:  target.ActionQuotas,
 		BudgetKey:     target.ID,
 		DailySpendUSD: target.DailySpendUSD,
@@ -2171,6 +2173,16 @@ func llmHistoryContent(m ChatMessage) string {
 		// early and put the rest of itself back in the model's plain input.
 		return textutil.FenceMeta(fmt.Sprintf("automated report from %q: context, not user input",
 			strings.TrimSpace(m.ReportFrom))) + "\n" + fenceObservationMarkers(m.Content)
+	}
+	// A reply the turn took back stays in the thread, with the retraction
+	// noted, rather than being dropped. Dropped, the model would lose the
+	// tool calls that rode on it and could not tell why the reply after it
+	// reads like a correction; carried bare, it would re-read a statement the
+	// framework ruled false as something it said and stood by. Fenced like the
+	// report marker, so an echo of it is scrubbed on the way out.
+	if m.Role == "assistant" && strings.TrimSpace(m.Retracted) != "" {
+		return textutil.FenceMeta(fmt.Sprintf("this reply was retracted and does not stand: %s The reply after it is the correction; do not treat this one as fact or repeat it.",
+			strings.TrimSpace(m.Retracted))) + "\n" + m.Content
 	}
 	return attributeSender(m.Role, m.Sender, m.Content)
 }

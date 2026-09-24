@@ -66,6 +66,8 @@ type anthropicClient struct {
 	// contextSize is the operator-configured working context cap (tokens);
 	// 0 falls back to anthropicDefaultContextSize. See ContextSize.
 	contextSize int
+	// effort is the tier's default and maximum effort; see resolveEffort.
+	effort effortTier
 }
 
 // anthropicDefaultContextSize is the working context cap reported when the
@@ -296,6 +298,17 @@ func budgetAsEffort(budget int) string {
 	return "medium"
 }
 
+// anthEffortBudgets is what an effort level buys on a model that takes the
+// budgeted shape. 1024 is the API's minimum budget; medium is the framework
+// default (anthDefaultThinkBudget), so "medium" and "thinking on" agree; high
+// sits at the threshold budgetAsEffort already reads as high, so the two
+// translations round-trip.
+var anthEffortBudgets = map[string]int{
+	effortLow:    1024,
+	effortMedium: anthDefaultThinkBudget,
+	effortHigh:   anthDefaultThinkBudget * 3,
+}
+
 // isUnsupportedThinkingTypeErr reports whether a provider refused the budgeted
 // shape and asked for the adaptive one.
 //
@@ -325,18 +338,26 @@ func isUnsupportedThinkingTypeErr(err error) bool {
 // call byte-identical — this changes nothing until a route or an agent asks for
 // thinking, so no bill moves by surprise.
 func anthThinkingFor(cfg ChatConfig, maxTokens int) (*anthThinking, *anthOutputConfig, int) {
-	if cfg.Think == nil || !*cfg.Think {
+	if cfg.Think == nil || !*cfg.Think || cfg.Effort == effortOff {
 		return nil, nil, maxTokens
 	}
 	budget := anthDefaultThinkBudget
+	effort := ""
 	if cfg.ThinkBudget != nil && *cfg.ThinkBudget > 0 {
 		budget = *cfg.ThinkBudget
+	} else if b, ok := anthEffortBudgets[cfg.Effort]; ok {
+		budget, effort = b, cfg.Effort
 	}
 	if thinkingStyleFor(cfg.Model) == anthThinkAdaptive {
 		// The model decides its own depth here, so max_tokens needs no headroom
 		// carved out of it — there is no budget competing for the allowance.
+		// A named effort goes across as itself; only a bare budget has to be
+		// translated, and budgetAsEffort is that translation.
+		if effort == "" {
+			effort = budgetAsEffort(budget)
+		}
 		return &anthThinking{Type: anthThinkAdaptive},
-			&anthOutputConfig{Effort: budgetAsEffort(budget)}, maxTokens
+			&anthOutputConfig{Effort: effort}, maxTokens
 	}
 	if maxTokens <= budget {
 		// Headroom for an actual answer on top of the reasoning. Without it a
@@ -655,6 +676,7 @@ func warnStopReason(stopReason string) {
 // Chat sends a non-streaming request.
 func (c *anthropicClient) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
 	cfg := applyOpts(c.model, anthDefaultMaxTokens, opts)
+	c.effort.resolve(&cfg)
 
 	systemPrompt := cfg.SystemPrompt
 	if cfg.JSONMode {
@@ -979,6 +1001,7 @@ func (a *anthStreamState) response(tag string) *Response {
 // ChatStream sends a streaming request.
 func (c *anthropicClient) ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
 	cfg := applyOpts(c.model, anthDefaultStreamMaxTokens, opts)
+	c.effort.resolve(&cfg)
 
 	systemPrompt := cfg.SystemPrompt
 	if cfg.JSONMode {

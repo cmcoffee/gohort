@@ -524,6 +524,9 @@ type loopRun struct {
 	// refused before it runs. See unkeptClaimCorrection for why a correction
 	// must never be what makes an agent act.
 	rewriteOnly bool
+	// groundingRetry is the pending grounding correction, judged against the
+	// next final reply; see dropRepeatedGroundingRetry.
+	groundingRetry *groundingRetry
 	// outputChecked marks that THIS round already judged its terminal reply, so
 	// the exit funnel does not pay a second warden call for the same draft.
 	// Reset at the top of every round: a new draft is a new question.
@@ -838,6 +841,25 @@ func (lr *loopRun) addClause(key, clause string) {
 	}
 }
 
+// addLeadClause puts a clause at the very TOP of the system prompt rather than
+// after everything else. For the deployment's global rules and style rules:
+// appended, they sat below the persona and every other section, the weakest
+// position in the prompt for rules that are meant to hold everywhere. Called in
+// reverse order of how they should read, since each goes in front.
+//
+// They change only when an operator edits them, so the prompt's cached prefix
+// stays stable turn to turn; an edit re-prefills once.
+func (lr *loopRun) addLeadClause(key, clause string) {
+	if clause != "" {
+		if lr.systemPrompt == "" {
+			lr.systemPrompt = clause
+		} else {
+			lr.systemPrompt = clause + "\n\n" + lr.systemPrompt
+		}
+		lr.clauseKeys = append(lr.clauseKeys, key)
+	}
+}
+
 func (lr *loopRun) setupPrompt() {
 	// In PromptTools mode, inject tool descriptions into the system
 	// prompt instead of using native function calling. Everything stays
@@ -930,11 +952,12 @@ func (lr *loopRun) setupPrompt() {
 		}
 		lr.addClause(prompts.VolatileFactsKey, prompts.VolatileFactsClause(hasWebTool))
 	}
-	// Global rules — the deployment's own, ahead of everything else this
-	// section adds. Injected here and ONLY here: the per-namespace rules panels
+	// Output style and global rules lead the prompt: style second, global
+	// rules first (each addLeadClause goes in front of what is there). Global
+	// rules are injected here and ONLY here: the per-namespace rules panels
 	// display them so a person can see the whole set on one screen, and a
 	// display is not a second injection.
-	lr.addClause(prompts.GlobalRulesKey, prompts.GlobalRulesClause())
+	//
 	// Output style — universal (every reply, with or without tools).
 	// Suppresses persistent LLM lexical/punctuation tics the user flagged.
 	//
@@ -944,8 +967,9 @@ func (lr *loopRun) setupPrompt() {
 	// transforms (StripFillerClassic, StripEmDashes) bound to the same keys, so
 	// turning one off on the Prompts page stops the sentence AND the transform
 	// together rather than leaving the prompt asking for something the code no
-	// longer does. Empty when every rule is off, and then nothing is appended.
-	lr.addClause(prompts.StyleKey, prompts.StyleClause())
+	// longer does. Empty when every rule is off, and then nothing is added.
+	lr.addLeadClause(prompts.StyleKey, prompts.StyleClause())
+	lr.addLeadClause(prompts.GlobalRulesKey, prompts.GlobalRulesClause())
 	// Secret handling — universal. Stops any agent from soliciting API
 	// credentials in chat (the OPNsense-controller failure mode); auth is
 	// injected server-side via Admin > APIs credentials, so the secret never
@@ -1007,6 +1031,124 @@ func (lr *loopRun) retractRound() {
 		return
 	}
 	lr.settleRound()
+}
+
+// strikeRound takes the current round's reply back while leaving it visible,
+// struck through with reason beside it (see AgentLoopConfig.StrikeRound).
+// Falls back to retractRound on hosts that did not wire it.
+func (lr *loopRun) strikeRound(reason string) {
+	if lr.cfg.StrikeRound != nil {
+		lr.cfg.StrikeRound(reason)
+		return
+	}
+	lr.retractRound()
+}
+
+// labelNextRound asks the host to label the next reply bubble it finalizes;
+// "" cancels a pending label. Nil-safe.
+func (lr *loopRun) labelNextRound(label string) {
+	if lr.cfg.LabelNextRound != nil {
+		lr.cfg.LabelNextRound(label)
+	}
+}
+
+// correctionLabel is what a follow-up asked for by the grounding correction is
+// shown under, so it reads as a correction of the reply above it rather than a
+// second answer.
+const correctionLabel = "Correction"
+
+// unkeptStrikeReason is the line shown beside a reply the turn judge took back
+// as false. Built from the verdict's own quote and finding, because the whole
+// point of leaving the reply on screen is that a reader can check the call.
+func unkeptStrikeReason(v TurnClaimVerdict) string {
+	why := strings.TrimRight(strings.TrimSpace(v.Why), ".")
+	claim := strings.TrimSpace(v.Claim)
+	switch {
+	case claim != "" && why != "":
+		return fmt.Sprintf("Retracted: said %q, but %s.", truncForLog(claim, 120), why)
+	case claim != "":
+		return fmt.Sprintf("Retracted: said %q, which did not happen.", truncForLog(claim, 120))
+	case why != "":
+		return fmt.Sprintf("Retracted: described work that did not happen (%s).", why)
+	}
+	return "Retracted: described work that did not happen."
+}
+
+// machineryStrikeReason is the line shown beside a reply taken back for
+// explaining the framework's plumbing to someone who did not ask.
+func machineryStrikeReason(leak string) string {
+	return fmt.Sprintf("Retracted: explained how the work is run (%q), which was not asked about.", truncForLog(strings.TrimSpace(leak), 120))
+}
+
+// groundingCorrection is the notice sent after a reply stated an unchecked
+// claim as fact. With the original still on screen (showsOriginal) it asks for
+// a short correction of that one claim and nothing else; without, the reply
+// that comes back is the only one anybody sees, so it asks for the same reply
+// with only that sentence fixed.
+func groundingCorrection(claim, basis string, showsOriginal bool) string {
+	head := fmt.Sprintf("Your reply states %q as established fact. That traces to %s. ", claim, basis)
+	if showsOriginal {
+		return head + "Your reply has already been sent and stays as it is; do NOT send it again, rewrite it, or restate any of the rest of it. Write only a SHORT correction of that one claim, one or two sentences, which will appear under your reply marked as a correction. Either CHECK it now with a real tool call and say what you found, or say where the claim came from and when, if you know (\"going by my note from…\", \"you mentioned…\", \"they posted…\"), or correct it if you now know it is wrong. Do not repeat the claim as it was written. If it was never offered as fact in the first place, a joke, a meme, teasing, obvious exaggeration, one light line in the register it was sent in is the whole correction; the same goes for describing what a picture you were shown visibly contains, which needs no hedge. Do not apologise, do not say you should have checked, do not mention this instruction, and do not hedge anything else."
+	}
+	return head + "Either CHECK it now with a real tool call and then say what you found, or rewrite that one sentence to say where it came from (\"you mentioned…\", \"they posted…\"). If it was never offered as fact in the first place, a joke, a meme, teasing, obvious exaggeration, do NEITHER of those: reply in the register it was sent in and just don't restate its content as true. Describing what a picture you were shown visibly contains is not a claim and needs no hedge. Send the SAME reply with only that fixed: do not apologise, do not say you should have checked, do not mention this instruction, and do not add a disclaimer or hedge anything else."
+}
+
+// groundingRetry remembers a grounding correction long enough to judge what
+// comes back. The follow-up is asked for a short correction of one claim; one
+// that simply says the claim again is not a correction, and showing it would
+// put the same unchecked sentence on screen twice under a "Correction" label.
+type groundingRetry struct {
+	claim      string
+	original   string
+	reasoning  string
+	historyLen int // history up to and including the original reply
+	toolCalls  int // turnToolCalls at the time of the correction
+}
+
+// repeatsClaim reports whether a follow-up still carries the flagged claim
+// word for word, give or take case, spacing and the sentence's closing mark.
+func (g *groundingRetry) repeatsClaim(reply string) bool {
+	norm := func(s string) string {
+		return strings.Join(strings.Fields(strings.ToLower(s)), " ")
+	}
+	claim := strings.TrimRight(norm(g.claim), ".!?")
+	return claim != "" && strings.Contains(norm(reply), claim)
+}
+
+// dropRepeatedGroundingRetry ends the turn on the ORIGINAL reply when the
+// follow-up to a grounding correction only repeats the flagged claim. The
+// original is already settled on screen and in the transcript, so the repeat
+// is erased (retract, not strike: it adds nothing to see), history is wound
+// back to the original, and the original is what the turn returns, so the
+// persisted final reply is the answer the person actually read rather than an
+// empty message or the dropped repeat.
+//
+// Only a follow-up that ran nothing is judged this way. One that CHECKED with
+// a tool and still states the claim may now be stating a fact, and the
+// grounding judge below sees the tool output and decides.
+func (lr *loopRun) dropRepeatedGroundingRetry() loopAction {
+	g := lr.groundingRetry
+	if g == nil {
+		return actNone
+	}
+	lr.groundingRetry = nil
+	if len(lr.turnToolCalls) != g.toolCalls || !g.repeatsClaim(lr.rs.resp.Content) {
+		return actNone
+	}
+	Debug("[agent_loop] grounding follow-up repeats the flagged claim (%q): dropping it, the original reply stands", truncForLog(g.claim, 80))
+	lr.emitDiag("ungrounded-claim-retry-dropped", fmt.Sprintf("The follow-up asked for a short correction of %q only said it again, so it was dropped. The original reply stands as the answer.", truncForLog(g.claim, 120)))
+	lr.retractRound()
+	lr.labelNextRound("")
+	if g.historyLen <= len(lr.history) {
+		lr.history = lr.history[:g.historyLen]
+	}
+	lr.rs.resp.Content = g.original
+	lr.rs.resp.Reasoning = g.reasoning
+	lr.rs.resp.ToolCalls = nil
+	if lr.cfg.OnStep != nil {
+		lr.cfg.OnStep(StepInfo{Round: lr.round, Content: lr.rs.resp.Content, Done: true})
+	}
+	return lr.exit(lr.rs.resp, lr.history, nil)
 }
 
 // replaceBlockedDraft overwrites the most-recent assistant turn's content
@@ -1657,6 +1799,13 @@ func (lr *loopRun) prepareCall() loopAction {
 		if rb := RouteThinkBudget(lr.cfg.RouteKey); rb != nil && *rb > 0 {
 			lr.rs.opts = append(lr.rs.opts, WithThinkBudget(*rb))
 		}
+	}
+	// Effort (e.g. a per-agent level). Only without a per-loop budget: the
+	// budget is the advanced override and wins. A route budget or a
+	// WithThink(false) outranks it too; that is settled inside the client
+	// (resolveEffort), which is the only place that sees the final options.
+	if lr.cfg.Effort != "" && lr.cfg.ThinkBudget == 0 {
+		lr.rs.opts = append(lr.rs.opts, WithEffort(lr.cfg.Effort))
 	}
 	// If the previous round produced tool calls and ToolRoundOptions are
 	// configured, use them instead of ChatOptions for this round.
@@ -2724,6 +2873,14 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 		}
 	}
 
+	// A grounding follow-up that only says the flagged claim again is not a
+	// correction; drop it before the judges spend a call on it. Ahead of the
+	// turn judge on purpose: judging a reply that will not be sent can only
+	// strike or re-prompt something nobody should see.
+	if act := lr.dropRepeatedGroundingRetry(); act != actNone {
+		return act
+	}
+
 	// A turn that called NOTHING leaves no trail but its own words, and
 	// without them a failure cannot be diagnosed at all. Observed: "Wiwee,
 	// try again" answered in 66 characters with zero tool calls — the
@@ -2786,10 +2943,18 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 			}
 			lr.emitDiag("unkept-claim-corrected", fmt.Sprintf("The reply said %q, which did not happen: %s. %s", truncForLog(verdict.Claim, 120), verdict.Why, how))
 			verdict.settle("unkept-claim-corrected")
-			// Retract rather than settle: the claim is false and, on a
-			// streaming surface, already painted. Same call as the phantom
-			// guard makes about the same class of statement.
-			lr.retractRound()
+			// Strike rather than settle: the claim is false and must not
+			// stand as the answer. Strike rather than retract: erasing it
+			// hid what the judge objected to, so a wrong conviction looked
+			// exactly like a right one, and the reader was left with a
+			// reply whose correction nobody could see. The struck reply
+			// stays on screen and in the transcript with the reason beside
+			// it. Only the judge's two corrections strike. Every other
+			// retractRound caller (guardrail blocks, withheld or leaking
+			// drafts, phantom deliveries) keeps erasing, because there the
+			// text itself is what the guard keeps in, and a struck-through
+			// copy would still publish it.
+			lr.strikeRound(unkeptStrikeReason(verdict))
 			lr.history[len(lr.history)-1] = Message{Role: "assistant", Content: lr.rs.resp.Content, Reasoning: lr.rs.resp.Reasoning}
 			lr.history = append(lr.history, Message{Role: "user", Content: frameworkNoticeTag + unkeptClaimCorrection(verdict, ev.TurnDidWork())})
 			if !ev.TurnDidWork() {
@@ -2812,7 +2977,9 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 					truncForLog(leak, 80), lr.corrections.spend(correctionMachinery), maxCorrectionsPerKind)
 				lr.emitDiag("machinery-corrected", fmt.Sprintf("The reply explained how the work is being run (%q), which nobody asked about. Re-prompted for the same message without it.", truncForLog(leak, 120)))
 				verdict.settle("machinery-corrected")
-				lr.retractRound()
+				// Struck, not erased: see the unkept-claim branch above for
+				// why these two strike and the guardrail paths erase.
+				lr.strikeRound(machineryStrikeReason(leak))
 				lr.history[len(lr.history)-1] = Message{Role: "assistant", Content: lr.rs.resp.Content, Reasoning: lr.rs.resp.Reasoning}
 				lr.history = append(lr.history, Message{
 					Role: "user",
@@ -2881,12 +3048,28 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 				}
 				basis = fmt.Sprintf("what %s just put in the conversation, which nothing has checked: %q", who, gv.Basis)
 			}
-			lr.history = append(lr.history, Message{
-				Role: "user",
-				Content: frameworkNoticeTag + fmt.Sprintf(
-					"Your reply states %q as established fact. That traces to %s. Either CHECK it now with a real tool call and then say what you found, or rewrite that one sentence to say where it came from (\"you mentioned…\", \"they posted…\"). If it was never offered as fact in the first place, a joke, a meme, teasing, obvious exaggeration, do NEITHER of those: reply in the register it was sent in and just don't restate its content as true. Describing what a picture you were shown visibly contains is not a claim and needs no hedge. Send the SAME reply with only that fixed: do not apologise, do not say you should have checked, do not mention this instruction, and do not add a disclaimer or hedge anything else.",
-					gv.Claim, basis),
-			})
+			// Where the settled original stays on screen, what comes back is a
+			// CORRECTION of one sentence under a label, not a second copy of
+			// the reply. Asked to rewrite the whole reply, models answered with
+			// a standalone hedge paragraph or the same claim again 45 seconds
+			// later, as an unlabelled second message either way. A host with
+			// no SettleRound never showed the original, so the reply it gets
+			// back is the only one there is, and it still needs the whole
+			// reply rewritten.
+			showsOriginal := lr.cfg.SettleRound != nil
+			if showsOriginal {
+				lr.labelNextRound(correctionLabel)
+			}
+			// Remembered so a follow-up that only repeats the claim is dropped
+			// rather than shown (dropRepeatedGroundingRetry).
+			lr.groundingRetry = &groundingRetry{
+				claim:      gv.Claim,
+				original:   lr.rs.resp.Content,
+				reasoning:  lr.rs.resp.Reasoning,
+				historyLen: len(lr.history),
+				toolCalls:  len(lr.turnToolCalls),
+			}
+			lr.history = append(lr.history, Message{Role: "user", Content: frameworkNoticeTag + groundingCorrection(gv.Claim, basis, showsOriginal)})
 			return actContinue
 		}
 		if lr.corrections.exhausted(correctionUngrounded) {

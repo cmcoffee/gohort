@@ -106,11 +106,26 @@ func resolveDispatchThink(target AgentRecord) bool {
 	if p := RouteThink("app.orchestrate.orchestrator"); p != nil {
 		think = *p
 	}
-	switch target.Think {
+	switch target.thinkMode() {
 	case "on":
 		think = true
 	case "off":
 		think = false
 	}
 	return think
+}
+
+// thinkMode is the agent's effective think override: "on", "off" or "" (the
+// route decides). A set Effort takes precedence over the legacy Think field,
+// because a level already says whether to reason: "off" means no, any other
+// level means yes. Without this an agent at effort "high" whose Think was left
+// "off" would never reason, since a call with thinking off ignores effort.
+func (a AgentRecord) thinkMode() string {
+	switch strings.ToLower(strings.TrimSpace(a.Effort)) {
+	case "off":
+		return "off"
+	case "low", "medium", "high":
+		return "on"
+	}
+	return a.Think
 }

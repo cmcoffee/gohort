@@ -46,6 +46,8 @@ func (d dbCFG) llm() LLMProviderConfig {
 	global.db.Get(LLMTable, "disable_thinking", &c.DisableThinking)
 	c.ThinkingBudget = DEFAULT_THINKING_BUDGET
 	global.db.Get(LLMTable, "thinking_budget", &c.ThinkingBudget)
+	global.db.Get(LLMTable, "default_effort", &c.DefaultEffort)
+	global.db.Get(LLMTable, "max_effort", &c.MaxEffort)
 	global.db.Get(LLMTable, "native_tools", &c.NativeTools)
 	global.db.Get(LLMTable, "ollama_max_parallel", &c.OllamaMaxParallel)
 	global.db.Get(LLMTable, "llamacpp_max_parallel", &c.LlamacppMaxParallel)
@@ -71,6 +73,8 @@ func (d dbCFG) leadLLM() LLMProviderConfig {
 	global.db.Get(LeadLLMTable, "disable_thinking", &c.DisableThinking)
 	c.ThinkingBudget = DEFAULT_THINKING_BUDGET
 	global.db.Get(LeadLLMTable, "thinking_budget", &c.ThinkingBudget)
+	global.db.Get(LeadLLMTable, "default_effort", &c.DefaultEffort)
+	global.db.Get(LeadLLMTable, "max_effort", &c.MaxEffort)
 	global.db.Get(LeadLLMTable, "native_tools", &c.NativeTools)
 	// Parallel limits load from LLMTable (the worker table) on purpose: they
 	// describe the local inference server's slot count (Ollama / llama.cpp

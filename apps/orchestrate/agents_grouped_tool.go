@@ -1333,6 +1333,7 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		Tools:               tools,
 		MaxRounds:           resolveMaxWorkerRounds(target),
 		ThinkBudget:         target.ThinkBudget, // per-agent override; 0 = inherit route/global
+		Effort:              target.Effort,      // per-agent level; a budget above wins
 		Confirm:             func(name, args string) bool { return true },
 		GuardrailCheck:      subTurn.guardrailEnforcer().Check,
 		GuardrailActionGate: subTurn.guardrailEnforcer().ActionGate,

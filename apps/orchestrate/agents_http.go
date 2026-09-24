@@ -288,7 +288,7 @@ var patchAgentFields = map[string]bool{
 	"share_hold_cortex": true, "share_hold_reference": true,
 	"share_memory_explicit": true, "share_no_uploads": true,
 	"max_plan_steps": true, "max_worker_rounds": true, "think": true,
-	"think_budget": true, "context_depth": true, "gap_check": true,
+	"think_budget": true, "effort": true, "context_depth": true, "gap_check": true,
 	"action_quotas": true, "daily_spend_usd": true,
 	"lead_model": true, "memory_mode": true, "disable_explicit": true,
 	"disable_inferred": true, "disable_compaction": true, "recall_hints": true,

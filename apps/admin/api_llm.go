@@ -315,6 +315,8 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 			NativeTools          bool   `json:"native_tools"`
 			DisableThinking      bool   `json:"disable_thinking"`
 			ThinkingBudget       int    `json:"thinking_budget"`
+			DefaultEffort        string `json:"default_effort"`
+			MaxEffort            string `json:"max_effort"`
 			NoThinkUseKwarg      bool   `json:"no_think_use_kwarg"`
 			NoThinkSendBudget    bool   `json:"no_think_send_budget"`
 			NoThinkBudget        int    `json:"no_think_budget"`
@@ -347,6 +349,8 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 		a.db.Set(table, "native_tools", req.NativeTools)
 		a.db.Set(table, "disable_thinking", req.DisableThinking)
 		a.db.Set(table, "thinking_budget", req.ThinkingBudget)
+		a.db.Set(table, "default_effort", effortLevel(req.DefaultEffort))
+		a.db.Set(table, "max_effort", effortLevel(req.MaxEffort))
 		a.db.Set(table, "no_think_configured", true)
 		a.db.Set(table, "no_think_use_kwarg", req.NoThinkUseKwarg)
 		a.db.Set(table, "no_think_send_budget", req.NoThinkSendBudget)
@@ -401,6 +405,9 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 	a.db.Get(table, "native_tools", &nativeTools)
 	a.db.Get(table, "disable_thinking", &disableThinking)
 	a.db.Get(table, "thinking_budget", &thinkingBudget)
+	var defaultEffort, maxEffort string
+	a.db.Get(table, "default_effort", &defaultEffort)
+	a.db.Get(table, "max_effort", &maxEffort)
 	var ntConfigured bool
 	a.db.Get(table, "no_think_configured", &ntConfigured)
 	if ntConfigured {
@@ -421,6 +428,8 @@ func (a *AdminApp) handleLLMConfig(w http.ResponseWriter, r *http.Request, table
 		"native_tools":            nativeTools,
 		"disable_thinking":        disableThinking,
 		"thinking_budget":         thinkingBudget,
+		"default_effort":          defaultEffort,
+		"max_effort":              maxEffort,
 		"no_think_use_kwarg":      ntKwarg,
 		"no_think_send_budget":    ntBudget,
 		"no_think_budget":         noThinkBudget,
@@ -465,4 +474,16 @@ func liveTierDescription(table string) string {
 		}
 	}
 	return out
+}
+
+// effortLevel keeps only a real effort level, so a hand-edited or stale form
+// value is stored as "not set" rather than reaching a provider as a parameter
+// it rejects. The client normalizes again; this keeps the form honest about
+// what is saved.
+func effortLevel(v string) string {
+	switch l := strings.ToLower(strings.TrimSpace(v)); l {
+	case "off", "low", "medium", "high":
+		return l
+	}
+	return ""
 }

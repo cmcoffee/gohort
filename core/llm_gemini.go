@@ -71,7 +71,33 @@ type geminiClient struct {
 	model           string
 	api             *apiclient.APIClient
 	disableThinking bool
-	thinkingBudget  int // 0 = default (16384); positive = cap at that many tokens
+	thinkingBudget  int        // 0 = default (16384); positive = cap at that many tokens
+	effort          effortTier // the tier's default and maximum effort; see resolveEffort.
+}
+
+// geminiEffortBudgets is what an effort level buys as a thinkingBudget. Low
+// and medium sit below the 16384 this client sends when thinking is on and
+// nothing is named, so an everyday level is cheaper than a bare "think"; high
+// is the one deliberate step above it.
+var geminiEffortBudgets = map[string]int{
+	effortLow:    1024,
+	effortMedium: 8192,
+	effortHigh:   24576,
+}
+
+// thinkBudgetFor is the thinkingBudget for a call that thinks: an explicit
+// budget, else the effort table, else the configured default, else 16384.
+func (c *geminiClient) thinkBudgetFor(cfg ChatConfig) int {
+	if cfg.ThinkBudget != nil && *cfg.ThinkBudget > 0 {
+		return *cfg.ThinkBudget
+	}
+	if b, ok := geminiEffortBudgets[cfg.Effort]; ok {
+		return b
+	}
+	if c.thinkingBudget > 0 {
+		return c.thinkingBudget
+	}
+	return 16384
 }
 
 // NewGeminiLLM creates an LLM client for Google Gemini using the default HTTP client.
@@ -365,6 +391,7 @@ func (c *geminiClient) doRequest(ctx context.Context, urlPath string, body []byt
 // Chat sends a non-streaming request to Gemini.
 func (c *geminiClient) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
 	cfg := applyOpts(c.model, 4096, opts)
+	c.effort.resolve(&cfg)
 
 	payload := gemRequest{
 		Contents: c.buildMessages(messages),
@@ -411,13 +438,7 @@ func (c *geminiClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 			// Pro: leave ThinkingConfig nil — can't disable, model uses default.
 			Debug("[gemini]: thinking disabled: model=%s", cfg.Model)
 		} else {
-			budget := c.thinkingBudget
-			if cfg.ThinkBudget != nil && *cfg.ThinkBudget > 0 {
-				budget = *cfg.ThinkBudget
-			}
-			if budget <= 0 {
-				budget = 16384
-			}
+			budget := c.thinkBudgetFor(cfg)
 			genCfg.ThinkingConfig = &gemThinkingConfig{ThinkingBudget: &budget}
 			if genCfg.MaxOutputTokens > 0 {
 				genCfg.MaxOutputTokens += budget
@@ -488,6 +509,7 @@ func (c *geminiClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 // ChatStream sends a streaming request to Gemini.
 func (c *geminiClient) ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
 	cfg := applyOpts(c.model, 4096, opts)
+	c.effort.resolve(&cfg)
 
 	payload := gemRequest{
 		Contents: c.buildMessages(messages),
@@ -522,13 +544,7 @@ func (c *geminiClient) ChatStream(ctx context.Context, messages []Message, handl
 				genCfg.ThinkingConfig = &gemThinkingConfig{ThinkingBudget: &zero}
 			}
 		} else {
-			budget := c.thinkingBudget
-			if cfg.ThinkBudget != nil && *cfg.ThinkBudget > 0 {
-				budget = *cfg.ThinkBudget
-			}
-			if budget <= 0 {
-				budget = 16384
-			}
+			budget := c.thinkBudgetFor(cfg)
 			genCfg.ThinkingConfig = &gemThinkingConfig{ThinkingBudget: &budget}
 			if genCfg.MaxOutputTokens > 0 {
 				genCfg.MaxOutputTokens += budget

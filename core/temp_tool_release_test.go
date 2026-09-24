@@ -410,3 +410,84 @@ func TestDefinitionDiffShowsChangedFieldsOnly(t *testing.T) {
 		t.Errorf("a new parameter is not shown:\n%s", d)
 	}
 }
+
+// A tool the user took and lost can be recreated as their own, from what they
+// were running, when the owner withdrew or deleted it. Not when the owner took
+// it away from this user in particular: that is a decision about them.
+func TestALostToolIsRecreatedOnlyWhenItWasWithdrawn(t *testing.T) {
+	setup := func(t *testing.T) Database {
+		db := &DBase{Store: kvlite.MemStore()}
+		saved := RootDB
+		RootDB = db
+		t.Cleanup(func() { RootDB = saved })
+		if err := AdminPersistTempTool(db, "alice", TempTool{Name: "wiki_read", Description: "d", CommandTemplate: "echo alice-v1"}); err != nil {
+			t.Fatal(err)
+		}
+		return db
+	}
+	own := func(db Database, user string) (TempTool, bool) {
+		for _, p := range LoadPersistentTempTools(db, user) {
+			if p.Tool.Name == "wiki_read" {
+				return p.Tool, true
+			}
+		}
+		return TempTool{}, false
+	}
+
+	t.Run("published then withdrawn", func(t *testing.T) {
+		db := setup(t)
+		_ = SetPersistentTempToolShared(db, "alice", "wiki_read", true)
+		if err := SetGlobalToolAdopted(db, "bob", "wiki_read", "alice", true); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := RecreateLostTool(db, "bob", "wiki_read", false); err == nil {
+			t.Fatal("a tool that still works was offered for recreation")
+		}
+		_ = SetPersistentTempToolShared(db, "alice", "wiki_read", false)
+		if _, err := RecreateLostTool(db, "bob", "wiki_read", true); err != nil {
+			t.Fatalf("a withdrawn tool could not be recreated: %v", err)
+		}
+		got, ok := own(db, "bob")
+		if !ok || got.CommandTemplate != "echo alice-v1" {
+			t.Fatalf("bob's copy is not what he was running: %+v", got)
+		}
+		if LoadAdoptedGlobalTools(db, "bob")["wiki_read"] {
+			t.Error("the adoption of the gone tool was left behind")
+		}
+	})
+	t.Run("colleague deleted it", func(t *testing.T) {
+		db := setup(t)
+		_ = SetPersistentTempToolSharedWith(db, "alice", "wiki_read", []string{"bob"})
+		_ = SetGlobalToolAdopted(db, "bob", "wiki_read", "alice", true)
+		AdoptedToolsFor(db, "bob") // takes the frozen copy
+		_ = DeletePersistentTempTool(db, "alice", "wiki_read")
+		if _, err := RecreateLostTool(db, "bob", "wiki_read", true); err != nil {
+			t.Fatalf("a deleted colleague's tool could not be recreated from the copy: %v", err)
+		}
+		if got, ok := own(db, "bob"); !ok || got.CommandTemplate != "echo alice-v1" {
+			t.Fatalf("recreated from the wrong definition: %+v", got)
+		}
+	})
+	t.Run("share revoked", func(t *testing.T) {
+		db := setup(t)
+		_ = SetPersistentTempToolSharedWith(db, "alice", "wiki_read", []string{"bob"})
+		_ = SetGlobalToolAdopted(db, "bob", "wiki_read", "alice", true)
+		AdoptedToolsFor(db, "bob")
+		_ = SetPersistentTempToolSharedWith(db, "alice", "wiki_read", nil)
+		if _, err := RecreateLostTool(db, "bob", "wiki_read", true); err == nil {
+			t.Error("recreating undid a revocation aimed at this user")
+		}
+		if _, ok := own(db, "bob"); ok {
+			t.Error("a refused recreate still landed a tool")
+		}
+	})
+	t.Run("left off the adopt list", func(t *testing.T) {
+		db := setup(t)
+		_ = SetPersistentTempToolShared(db, "alice", "wiki_read", true)
+		_ = SetGlobalToolAdopted(db, "bob", "wiki_read", "alice", true)
+		_ = SetPersistentTempToolAllowedUsers(db, "alice", "wiki_read", []string{"carol"})
+		if _, err := RecreateLostTool(db, "bob", "wiki_read", true); err == nil {
+			t.Error("recreating undid an administrator narrowing the tool")
+		}
+	})
+}

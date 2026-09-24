@@ -819,7 +819,8 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		"triggers":                 {Type: "array", Description: "Substring/glob patterns matched against each user message. On a match the host agent gets a per-turn nudge to dispatch HERE first. Author SPECIFIC patterns the domain's questions actually contain (criminal law: \"penal code\", \"felony\", \"sentencing\"), loose ones over-fire and train the host to ignore the hint. Empty = in the catalog, no nudge.", Items: &ToolParam{Type: "string"}},
 		"owned_by":                 {Type: "string", Description: "Parent agent ID, making this a sub-agent: deleting the parent cascade-deletes this agent (sessions/memory/knowledge included), and the parent may dispatch to it without an allowed_dispatch_targets entry, ownership IS the dispatch link. Pair with hidden=true to keep it out of the global fleet menu."},
 		"ingest_attachments":       {Type: "boolean", Description: "Extracted text from uploaded documents (PDF/DOCX/text) is ALSO ingested into the agent's knowledge store under topic=\"attachments\", searchable in later sessions. For document-Q&A agents whose uploads are referenced repeatedly. Default false."},
-		"think":                    {Type: "string", Description: "Reasoning override: \"on\", \"off\", or \"auto\" (the route decides). Create defaults: top-level \"on\", sub-agents (owned_by set) \"off\"; update keeps the stored value when omitted. \"on\" for planners/synthesizers, \"off\" for lookups, transformers, routers."},
+		"think":                    {Type: "string", Description: "Reasoning override: \"on\", \"off\", or \"auto\" (the route decides). Create defaults: top-level \"on\", sub-agents (owned_by set) \"off\"; update keeps the stored value when omitted. \"on\" for planners/synthesizers, \"off\" for lookups, transformers, routers. When effort is set, effort takes precedence and this is ignored."},
+		"effort":                   {Type: "string", Description: "Reasoning effort: \"off\", \"low\", \"medium\" or \"high\"; \"default\" follows the deployment's setting for the model tier. The everyday reasoning control: each model gets its own dial. Takes precedence over think (\"off\" = no reasoning, any other level = reasoning on); an explicit think_budget still wins over it. \"low\" for lookups and routers, \"high\" for hard planning or analysis. Update keeps the stored value when omitted."},
 		"intake_form": {
 			Type:        "array",
 			Description: "Intake form shown on the first turn of every new session (chat input hidden until submitted). Values pack into a markdown user message; file fields upload as attachments (PDF/DOCX text-extracted, images to vision). Each entry: {name, label, type, placeholder, help, required, options, allow_other}. type: \"text\" (default), \"textarea\", \"select\" (one), \"checklist\" (many, comma-joined), \"number\", \"file\", \"button\" (submits immediately with the label as value). options feeds select/checklist/button; allow_other (checklist only) adds an \"Other:\" free-text row. Omit for chat-first agents.",
@@ -980,7 +981,41 @@ func agentRecordFromArgs(args map[string]any) AgentRecord {
 	// reasoning adds latency without improving the answer. Author can
 	// override either default by passing think explicitly.
 	rec.Think = parseThinkArg(args, rec.OwnedBy != "")
+	if level, ok := parseEffortArg(args); ok {
+		rec.Effort = level
+		rec.Think = thinkForEffort(level, rec.Think)
+	}
 	return rec
+}
+
+// parseEffortArg reads the "effort" arg. ok is false when the arg is absent,
+// null or not a level, so a typo leaves the stored value alone rather than
+// quietly clearing it; "default" / "auto" / "" clear it on purpose.
+func parseEffortArg(args map[string]any) (level string, ok bool) {
+	v, present := args["effort"]
+	if !present || v == nil {
+		return "", false
+	}
+	switch l := strings.ToLower(strings.TrimSpace(fmt.Sprint(v))); l {
+	case "off", "low", "medium", "high":
+		return l, true
+	case "default", "auto", "":
+		return "", true
+	}
+	return "", false
+}
+
+// thinkForEffort is the Think value that agrees with an effort level, so the
+// stored record reads the same as it runs (see AgentRecord.thinkMode). No
+// level keeps whatever think was.
+func thinkForEffort(level, think string) string {
+	switch level {
+	case "off":
+		return "off"
+	case "":
+		return think
+	}
+	return "on"
 }
 
 // parseThinkArg reads the "think" arg as a tri-state ("on" / "off" /
@@ -1129,6 +1164,12 @@ func mergeAgentArgs(rec *AgentRecord, args map[string]any) {
 	// that's the explicit "go back to route default" intent.
 	if v, ok := args["think"]; ok && v != nil {
 		rec.Think = parseThinkArg(args, rec.OwnedBy != "")
+	}
+	// Effort after think, so a call passing both ends with the effort's
+	// answer: the level already says whether to reason.
+	if level, ok := parseEffortArg(args); ok {
+		rec.Effort = level
+		rec.Think = thinkForEffort(level, rec.Think)
 	}
 	if v, ok := args["intake_form"]; ok && v != nil {
 		rec.IntakeForm = intakeFormFromArgs(args)

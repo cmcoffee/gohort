@@ -2054,6 +2054,84 @@ func withdrawnToolRelease(db Database, id string) (ToolRelease, bool) {
 	return rel, db.Get(withdrawnToolReleasesTable, id, &rel)
 }
 
+// RecreateLostTool offers back, as the user's OWN tool, a tool they took that
+// is gone: the last approved release of a published tool its owner withdrew
+// or deleted, or the frozen copy of a colleague's tool its owner deleted. The
+// user's agents were running exactly that definition, so the copy is the same
+// code under their own name, and later changes to it are theirs to make.
+//
+// Not offered when the tool still exists and the owner took it away from THIS
+// user (a share revoked, or dropped from a published tool's adopt list): that
+// is a decision about them, and recreating the tool would undo it.
+//
+// With apply=false it only says whether recreating is possible and from what,
+// for the editor to decide whether to show the button.
+func RecreateLostTool(db Database, user, name string, apply bool) (TempTool, error) {
+	db = tempToolStore(db)
+	user, name = strings.TrimSpace(user), strings.TrimSpace(name)
+	if db == nil || user == "" || name == "" {
+		return TempTool{}, errString("a user and a tool name are required")
+	}
+	ad, took := loadAdoptions(db, user)[name]
+	if !took {
+		return TempTool{}, errString("you did not take a tool called " + name)
+	}
+	for _, p := range AdoptedToolsFor(db, user) {
+		if p.Tool.Name == name {
+			return TempTool{}, errString(name + " still works for your agents: there is nothing to recreate")
+		}
+	}
+	for _, p := range LoadPersistentTempTools(db, user) {
+		if p.Tool.Name == name {
+			return TempTool{}, errString("you already have a tool called " + name)
+		}
+	}
+	var def TempTool
+	found := false
+	ownerRow, ownerStill := PersistentTempTool{}, false
+	for _, p := range LoadPersistentTempTools(db, ad.Owner) {
+		if p.Tool.Name == name && (ad.ID == "" || p.ID == ad.ID) {
+			ownerRow, ownerStill = p, true
+		}
+	}
+	switch {
+	case ad.Copy != nil:
+		// A colleague's tool: offered only when they deleted it. Still there
+		// and no longer shared with this user is a revocation.
+		if ownerStill {
+			return TempTool{}, errString(ad.Owner + " stopped sharing " + name + " with you; ask them if you need it")
+		}
+		def, found = *ad.Copy, true
+	default:
+		if ownerStill && ownerRow.Shared {
+			// Still published: this user was left off its adopt list.
+			return TempTool{}, errString(name + " is still published, but not to you; ask an administrator if you need it")
+		}
+		key := ad.ID
+		if key == "" {
+			key = ad.Owner + "\x00" + name
+		}
+		if rel, ok := withdrawnToolRelease(db, key); ok && rel.Owner == ad.Owner {
+			def, found = rel.Tool, true
+		}
+	}
+	if !found {
+		return TempTool{}, errString("no copy of " + name + " was kept, so it cannot be recreated")
+	}
+	if !apply {
+		return def, nil
+	}
+	def.Locked = false
+	if err := AdminPersistTempTool(db, user, def); err != nil {
+		return TempTool{}, err
+	}
+	// Their own copy now answers to the name; the adoption would only ever
+	// point at the tool that is gone.
+	_ = SetGlobalToolAdopted(db, user, name, "", false)
+	Log("[temp_tool_persist] %s recreated %s's withdrawn tool %q as their own", user, ad.Owner, name)
+	return def, nil
+}
+
 // toolRequestSnapshot is the definition a publish or update request asked
 // for, frozen when it was asked.
 type toolRequestSnapshot struct {

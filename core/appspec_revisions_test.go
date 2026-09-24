@@ -129,13 +129,13 @@ func TestNoHistorySuppressesTheSnapshot(t *testing.T) {
 // listing reads newest first because that is the one an author wants.
 func TestRingTrimsToDepthNewestFirst(t *testing.T) {
 	revisionTestDB(t)
-	total := AppRevisionsKept + 3
+	total := appRevisionsKept + 3
 	for i := 1; i <= total; i++ {
 		savePage(t, "game", `{"v":`+itoaSmall(i)+`}`, "update")
 	}
 	revs := ListAppRevisions("alice", "game")
-	if len(revs) != AppRevisionsKept {
-		t.Fatalf("ring depth = %d, want %d", len(revs), AppRevisionsKept)
+	if len(revs) != appRevisionsKept {
+		t.Fatalf("ring depth = %d, want %d", len(revs), appRevisionsKept)
 	}
 	// Newest kept revision is the version saved immediately before the last.
 	if revs[0].Seq != total-1 {

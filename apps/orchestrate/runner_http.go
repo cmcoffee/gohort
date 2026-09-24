@@ -644,6 +644,9 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 		sess.Messages = append(sess.Messages, ChatMessage{
 			Role: "assistant", Content: directReply,
 			Created: time.Now(), Usage: turn.drainLastUsage(),
+			// A labelled reply ("Correction") keeps its label when its
+			// captured bubble was folded into this final message.
+			Label: turn.finalReplyLabel(directReply),
 			// ToolCalls: the orchestrator's tool log this turn — same
 			// data the plan_set path persists at the bottom of this
 			// function. orphanCalls picks up any tool records from
@@ -670,6 +673,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 		sess.Messages = append(sess.Messages, ChatMessage{
 			Role: "assistant", Content: question,
 			Created: time.Now(), Usage: turn.drainLastUsage(),
+			Label: turn.finalReplyLabel(question),
 			// ToolCalls: ask_user / ask_user_form are themselves tool
 			// calls; record everything that fired this turn (including
 			// the ask itself) so the export shows what led to the
@@ -874,6 +878,7 @@ func (T *OrchestrateApp) handleSendWithAppToolsPublishing(w http.ResponseWriter,
 		Role: "assistant", Content: reply,
 		Created: time.Now(), Usage: turn.drainLastUsage(),
 		ToolCalls: finalCalls,
+		Label:     turn.finalReplyLabel(reply),
 		// The live stream already painted these; carrying their ids is what
 		// makes them survive a reload. Until now an image the agent delivered
 		// existed only as an SSE event, so reopening the thread showed the text

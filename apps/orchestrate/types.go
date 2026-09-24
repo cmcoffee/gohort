@@ -275,6 +275,14 @@ type AgentRecord struct {
 	// Applied by passing it into AgentLoopConfig.ThinkBudget at each run path.
 	ThinkBudget int `json:"think_budget,omitempty"`
 
+	// Effort is the provider-neutral reasoning level for this agent's calls:
+	// "off", "low", "medium" or "high"; "" = the tier's admin default. The
+	// everyday control: each provider maps it to its own dial (Claude effort
+	// or a budget table, OpenAI reasoning_effort, a llama.cpp / Gemini budget).
+	// ThinkBudget, when set, is the advanced override and wins. Applied by
+	// passing it into AgentLoopConfig.Effort at each run path.
+	Effort string `json:"effort,omitempty"`
+
 	// ActionQuotas caps how often one action may run in a rolling 24 hours,
 	// keyed by tool ("moltbook") or by a grouped tool's action
 	// ("moltbook/create_post"), the action winning where both are set. Empty
@@ -1533,6 +1541,19 @@ type ChatMessage struct {
 	// Generic by design. core/ui knows a message can carry one; what any
 	// particular mark means stays in the app that set it.
 	Mark *MessageMark `json:"mark,omitempty"`
+
+	// Retracted, when set, marks an assistant reply the turn took back, and
+	// carries the one-line reason shown beside it. The reply is kept rather
+	// than deleted: a correction that erased what the model said made it
+	// impossible to see what the check objected to. The panel renders it
+	// struck through; the model's history carries it with the retraction
+	// noted (llmHistoryContent), so a later turn does not re-read it as fact.
+	Retracted string `json:"retracted,omitempty"`
+
+	// Label is a short tag shown on the bubble ("Correction"), so a follow-up
+	// the framework asked for reads as what it is rather than as a second
+	// unexplained answer. Display-only.
+	Label string `json:"label,omitempty"`
 }
 
 // PersistedToolCall is one tool invocation persisted alongside the

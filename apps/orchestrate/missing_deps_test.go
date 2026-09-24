@@ -6,6 +6,7 @@ package orchestrate
 // before taking it back.
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -347,5 +348,79 @@ func TestTheEditorListsWhatIsMissing(t *testing.T) {
 	}
 	if LoadAdoptedGlobalTools(app.DB, "alice")["wiki_read"] {
 		t.Error("the dangling adoption survived Remove")
+	}
+}
+
+// A published tool its author withdrew is offered back to the taker as their
+// own copy; the agent keeps the name and works again. A revoked peer share is
+// not offered: that was taken from them on purpose.
+func TestTheEditorOffersToKeepAWithdrawnTool(t *testing.T) {
+	app, req, udb := authedApp(t)
+	prevRoot, prevBase := RootDB, orchestrateBaseDB
+	RootDB, orchestrateBaseDB = app.DB, app.DB
+	t.Cleanup(func() { RootDB, orchestrateBaseDB = prevRoot, prevBase })
+	for _, name := range []string{"wiki_read", "ticket_read"} {
+		if err := AdminPersistTempTool(app.DB, "lender", TempTool{Name: name, Description: "d", CommandTemplate: "echo " + name}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = SetPersistentTempToolShared(app.DB, "lender", "wiki_read", true)
+	_ = SetPersistentTempToolSharedWith(app.DB, "lender", "ticket_read", []string{"alice"})
+	for _, name := range []string{"wiki_read", "ticket_read"} {
+		if err := SetGlobalToolAdopted(app.DB, "alice", name, "lender", true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	AdoptedToolsFor(app.DB, "alice")
+	if _, err := saveAgent(udb, AgentRecord{ID: "agent-1", Owner: "alice", Name: "Helper", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = SetPersistentTempToolShared(app.DB, "lender", "wiki_read", false)
+	_ = SetPersistentTempToolSharedWith(app.DB, "lender", "ticket_read", nil)
+	// The notice says so too, for the one that can be kept.
+	if n, ok := noticeFor(app.DB, "alice", "wiki_read"); !ok || !strings.Contains(n.Body, "Keep it") {
+		t.Errorf("the withdrawal notice should offer to keep it: %+v", n)
+	}
+	if n, ok := noticeFor(app.DB, "alice", "ticket_read"); !ok || strings.Contains(n.Body, "Keep it") {
+		t.Errorf("a revoked share must not be offered: %+v", n)
+	}
+
+	w := httptest.NewRecorder()
+	app.handleAgentOne(w, req(http.MethodGet, "/api/agents/agent-1/missing", nil))
+	var got struct {
+		Items []missingRef `json:"items"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	offered := map[string]bool{}
+	for _, it := range got.Items {
+		offered[it.ID] = it.Recreatable
+	}
+	if !offered["wiki_read"] || offered["ticket_read"] {
+		t.Fatalf("want the withdrawn published tool offered and the revoked share not, got %+v", got.Items)
+	}
+
+	w = httptest.NewRecorder()
+	app.handleAgentOne(w, req(http.MethodPost, "/api/agents/agent-1/missing", map[string]any{"kind": "tool", "id": "ticket_read", "action": "recreate"}))
+	if w.Code == http.StatusOK {
+		t.Fatal("a revoked share was recreated")
+	}
+	w = httptest.NewRecorder()
+	app.handleAgentOne(w, req(http.MethodPost, "/api/agents/agent-1/missing", map[string]any{"kind": "tool", "id": "wiki_read", "action": "recreate"}))
+	if w.Code != http.StatusOK {
+		t.Fatalf("keep: %d %s", w.Code, w.Body.String())
+	}
+	mine := false
+	for _, p := range LoadPersistentTempTools(app.DB, "alice") {
+		mine = mine || (p.Tool.Name == "wiki_read" && p.Tool.CommandTemplate == "echo wiki_read")
+	}
+	if !mine {
+		t.Fatal("alice has no copy of the tool she kept")
+	}
+	w = httptest.NewRecorder()
+	app.handleAgentOne(w, req(http.MethodGet, "/api/agents/agent-1/missing", nil))
+	if strings.Contains(w.Body.String(), `"wiki_read"`) {
+		t.Errorf("the kept tool is still listed missing: %s", w.Body.String())
 	}
 }

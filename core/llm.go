@@ -710,6 +710,7 @@ type ChatConfig struct {
 	MaxRetries   *int
 	Think        *bool  // Enable/disable thinking for thinking models (nil = model default)
 	ThinkBudget  *int   // Per-call thinking token budget; overrides global ThinkingBudget when set. 0 = ignored.
+	Effort       string // Provider-neutral reasoning level: "off" | "low" | "medium" | "high"; "" = the tier's DefaultEffort. An explicit ThinkBudget or Think=false outranks it (see resolveEffort).
 	RouteKey     string // Routing stage key; LeadChat may downgrade to worker based on config.
 	// TierOverride pins this call's tier regardless of what RouteKey's stage
 	// says — the per-call form of AgentLoopConfig.TierOverride, and the only
@@ -964,6 +965,103 @@ func WithThinkBudget(n int) ChatOption {
 	return func(c *ChatConfig) { c.ThinkBudget = &n }
 }
 
+// WithEffort sets the provider-neutral reasoning level for this call: "off",
+// "low", "medium" or "high". An explicit WithThinkBudget or WithThink(false) on
+// the same call wins over it. See resolveEffort for the whole precedence.
+func WithEffort(level string) ChatOption {
+	return func(c *ChatConfig) { c.Effort = level }
+}
+
+// Effort levels. Plain strings rather than an exported type: they cross the
+// admin form, the agent record and the tool schema as text, and every reader
+// normalizes through normEffort anyway.
+const (
+	effortOff    = "off"
+	effortLow    = "low"
+	effortMedium = "medium"
+	effortHigh   = "high"
+)
+
+// effortRank orders the levels so a tier's MaxEffort can cap them. 0 means
+// "not a level".
+func effortRank(level string) int {
+	switch level {
+	case effortOff:
+		return 1
+	case effortLow:
+		return 2
+	case effortMedium:
+		return 3
+	case effortHigh:
+		return 4
+	}
+	return 0
+}
+
+// normEffort trims and lowercases a level and returns "" for anything that is
+// not one, so a stray value in a stored record reads as "not set" rather than
+// reaching a provider as a parameter it rejects.
+func normEffort(level string) string {
+	l := strings.ToLower(strings.TrimSpace(level))
+	if effortRank(l) == 0 {
+		return ""
+	}
+	return l
+}
+
+// effortTier is one tier's admin effort settings (LLMProviderConfig
+// DefaultEffort / MaxEffort), carried by every client so each resolves a call
+// the same way.
+type effortTier struct {
+	def string
+	max string
+}
+
+func (e effortTier) resolve(cfg *ChatConfig) { resolveEffort(cfg, e.def, e.max) }
+
+// resolveEffort settles the effort for one call, in place, before a client
+// builds its request. Afterwards cfg.Effort is "" (no effort in play: the
+// client behaves exactly as it did before effort existed) or a normalized
+// level, and cfg.Think agrees with it.
+//
+// Precedence, highest first:
+//  1. an explicit ThinkBudget: the raw token budget is the advanced override,
+//     so effort steps aside entirely;
+//  2. Think=false: a caller that turned thinking off meant it;
+//  3. the per-call level (WithEffort, the agent's Effort);
+//  4. the tier default - except that a default of "off" does not veto a
+//     caller that explicitly asked for thinking (a "(thinking)" route stage);
+//
+// and whatever wins is then capped at the tier's max. Never scaled by prompt
+// size: prompt size is not task difficulty (see the think-budget model).
+func resolveEffort(cfg *ChatConfig, def, max string) {
+	level := normEffort(cfg.Effort)
+	cfg.Effort = ""
+	if cfg.ThinkBudget != nil && *cfg.ThinkBudget > 0 {
+		return
+	}
+	if cfg.Think != nil && !*cfg.Think {
+		return
+	}
+	if level == "" {
+		level = normEffort(def)
+		if level == effortOff && cfg.Think != nil && *cfg.Think {
+			level = ""
+		}
+	}
+	if level == "" {
+		return
+	}
+	if m := normEffort(max); m != "" && effortRank(level) > effortRank(m) {
+		level = m
+	}
+	cfg.Effort = level
+	on := level != effortOff
+	if !on || cfg.Think == nil {
+		cfg.Think = &on
+	}
+}
+
 // workerJudgeThinkBudget is the small thinking allowance for one-shot
 // worker-tier judge/suggest calls. Qwen3-class models degenerate in no-think
 // mode (repetition, format drift), so WithThink(false) is the wrong lever for
@@ -1133,6 +1231,12 @@ type LLMProviderConfig struct {
 	NoThinkPrependSystem bool // llama.cpp: prepend "/no_think " to system prompt. Default false (off because kwarg+budget alone works); enable as belt-and-suspenders for models where kwarg unreliable.
 	NoThinkPrependUser   bool // llama.cpp: prepend "/no_think " to last user message. Default false (same reasoning as PrependSystem).
 	NoThinkBudget        int  // llama.cpp: thinking_budget_tokens value when NoThinkSendBudget is true. 0 = llamacppNoThinkDefaultBudget (512).
+	// DefaultEffort is the effort a call on this tier gets when it names none
+	// ("" = model default, else off/low/medium/high). MaxEffort caps any level
+	// a call or agent asks for ("" = no cap). Neither touches an explicit
+	// token budget: ThinkingBudget above stays the llama.cpp ceiling.
+	DefaultEffort string
+	MaxEffort     string
 }
 
 // newLLMAPIClient builds an apiclient.APIClient configured for LLM provider
@@ -1572,7 +1676,10 @@ func doWithRetry(ctx context.Context, maxRetries int, opts []ChatOption, fn func
 		// that just failed. Retried at most once: a second identical refusal
 		// means something else is wrong and looping on it would turn one clear
 		// error into a hang.
-		if isUnsupportedThinkingTypeErr(err) && !thinkingRetried {
+		// The same holds for a reasoning_effort the model refused: the client
+		// recorded the model (noteIfReasoningEffortRefused) and the rebuilt
+		// request leaves the field out.
+		if (isUnsupportedThinkingTypeErr(err) || isUnsupportedReasoningEffortErr(err)) && !thinkingRetried {
 			thinkingRetried = true
 			continue
 		}
@@ -1764,6 +1871,21 @@ func NewLLMFromConfig(cfg LLMProviderConfig) (LLM, error) {
 		StartLlamacppScheduler(mp)
 	default:
 		return nil, Error("no LLM provider is configured: set one in the web UI under Admin → LLMs → Worker LLM")
+	}
+
+	// Handed to every client rather than applied here, because only the
+	// client knows its own dial (an effort string, a budget, a flag) and
+	// resolution has to see the call's final options.
+	tier := effortTier{def: normEffort(cfg.DefaultEffort), max: normEffort(cfg.MaxEffort)}
+	switch c := inner.(type) {
+	case *anthropicClient:
+		c.effort = tier
+	case *bedrockRuntimeClient:
+		c.effort = tier
+	case *openAIClient:
+		c.effort = tier
+	case *geminiClient:
+		c.effort = tier
 	}
 
 	return &retryLLM{inner: inner, maxRetries: 5, peer: peerName}, nil

@@ -13,6 +13,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/cmcoffee/gohort/core/prompts"
+	"github.com/cmcoffee/snugforge/kvlite"
 )
 
 func TestTheJudgeLooksWhenActionsAndWordsCouldDisagree(t *testing.T) {
@@ -604,5 +607,43 @@ func TestATurnThatChangedStateIsJudged(t *testing.T) {
 	run([]Capability{CapRead})
 	if calls != 0 {
 		t.Errorf("a clean read-only turn should not cost a judge call, got %d", calls)
+	}
+}
+
+// Global rules and style rules lead the system prompt, global first, ahead of
+// the agent's own prompt. Appended, they sat below the persona and every other
+// section: the weakest position for rules meant to hold everywhere.
+func TestGlobalAndStyleRulesLeadThePrompt(t *testing.T) {
+	store := &DBase{Store: kvlite.MemStore()}
+	SetPromptOverrideDB(store)
+	t.Cleanup(func() { SetPromptOverrideDB(nil) })
+	prompts.SetGlobalRules([]prompts.StyleRule{{Text: "Never share customer names."}})
+	prompts.SetCustomStyleRules([]prompts.StyleRule{{Text: "Keep replies short."}})
+
+	var sys string
+	app, _ := withTierStubs(t, "test.ruleslead", func(int) []ToolCall { return nil })
+	capture := func(opts []ChatOption) {
+		var c ChatConfig
+		for _, o := range opts {
+			o(&c)
+		}
+		sys = c.SystemPrompt
+	}
+	// The route's tier decides which fake answers; hook both.
+	app.LLM.(*tierStubLLM).onOpts = capture
+	app.LeadLLM.(*tierStubLLM).onOpts = capture
+	if _, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "hi"}}, AgentLoopConfig{
+		MaxRounds: 2, RouteKey: "test.ruleslead", SystemPrompt: "You are Wren, a helpful assistant.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	g := strings.Index(sys, "Never share customer names.")
+	st := strings.Index(sys, "Keep replies short.")
+	persona := strings.Index(sys, "You are Wren")
+	if g < 0 || st < 0 || persona < 0 {
+		t.Fatalf("a section is missing from the prompt:\n%s", sys)
+	}
+	if !(g < st && st < persona) {
+		t.Errorf("want global rules, then style, then the agent's prompt; got positions %d, %d, %d", g, st, persona)
 	}
 }

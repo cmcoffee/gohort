@@ -230,6 +230,28 @@ type AgentLoopConfig struct {
 	// stream buffer like SettleRound so the retry doesn't concatenate.
 	RetractRound func()
 
+	// StrikeRound takes the current round's reply BACK without hiding it: the
+	// app keeps the bubble on screen and in the saved transcript, rendered
+	// struck through with reason (one line, ready to show) beside it, then
+	// resets the stream buffer like RetractRound so the corrected reply opens
+	// a fresh bubble. Called only for a reply the turn judge found FALSE about
+	// the turn (an unkept claim) or talking plumbing: a correction that erased
+	// the original made it impossible to see what the check had objected to,
+	// and so impossible to tell a right call from a wrong one.
+	//
+	// Guardrail blocks, withheld drafts and phantom deliveries still go through
+	// RetractRound, and must: there the text IS what the rule keeps in, and
+	// showing it struck through would publish it. Nil falls back to
+	// RetractRound, so a host that wired only the retract behaves as before.
+	StrikeRound func(reason string)
+
+	// LabelNextRound asks the app to show the NEXT reply bubble it finalizes
+	// with a small label (e.g. "Correction"), live and in the saved
+	// transcript, so a follow-up the framework asked for reads as one instead
+	// of as a second unexplained answer. An empty label cancels a pending one.
+	// Nil means no labelling.
+	LabelNextRound func(label string)
+
 	// DrainViewImages, when set, is called after each tool-execution round to
 	// pull any frames a tool queued for the model to look at (e.g. view_video's
 	// sampled video frames, held on sess.PendingViewImages). Returned images are
@@ -487,6 +509,12 @@ type AgentLoopConfig struct {
 	// not an input-scaled one. Callers needing a specific size set this;
 	// the resolution order is per-call WithThinkBudget > this > global.
 	ThinkBudget int
+
+	// Effort is the provider-neutral reasoning level for every round of this
+	// loop ("off" | "low" | "medium" | "high"; "" = the tier default), e.g.
+	// a per-agent setting. Applied only when ThinkBudget is 0: a budget is
+	// the advanced override and wins.
+	Effort string
 
 	// SerialTools limits execution to one tool call per round. When the LLM
 	// returns multiple tool calls in a single response, only the first is

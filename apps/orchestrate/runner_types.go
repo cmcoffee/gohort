@@ -419,6 +419,11 @@ type chatTurn struct {
 	// reported — "anything it writes mid-turn is lost").
 	bubblesMu      sync.Mutex
 	midTurnBubbles []ChatMessage
+	// labelledText/labelledAs are the last labelled bubble's saved text and
+	// label, so the final reply that dedups it away can inherit the label
+	// (finalReplyLabel). Guarded by bubblesMu.
+	labelledText string
+	labelledAs   string
 
 	// pipelineDepth tracks recursion into pipeline-mode sub-agents.
 	// Capped at maxPipelineDepth so a pipeline tool calling another

@@ -38,6 +38,11 @@ type missingRef struct {
 	// Name is the last name it was known by, or the id when nothing
 	// remembers one. A deleted collection's UUID tells its owner nothing.
 	Name string `json:"name"`
+	// Recreatable is set, for a tool, when the user can have it back as their
+	// own copy (core.RecreateLostTool): it was withdrawn or deleted, not taken
+	// from them in particular. Filled by the editor's GET only; the per-turn
+	// check does not pay for it.
+	Recreatable bool `json:"recreatable,omitempty"`
 }
 
 // missingKindPhrase is how the model and the owner are told what kind of thing
@@ -485,6 +490,12 @@ func (T *OrchestrateApp) handleAgentMissing(w http.ResponseWriter, r *http.Reque
 		if refs == nil {
 			refs = []missingRef{}
 		}
+		for i := range refs {
+			if refs[i].Kind == "tool" {
+				_, err := RecreateLostTool(udb, user, refs[i].ID, false)
+				refs[i].Recreatable = err == nil
+			}
+		}
 		labels := map[string]string{}
 		for _, m := range refs {
 			labels[m.ID] = m.Name
@@ -497,11 +508,28 @@ func (T *OrchestrateApp) handleAgentMissing(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		var body struct {
-			Kind string `json:"kind"`
-			ID   string `json:"id"`
+			Kind   string `json:"kind"`
+			ID     string `json:"id"`
+			Action string `json:"action"` // "" = remove the reference; "recreate" = take the tool back as one's own
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.ID) == "" {
 			http.Error(w, "kind and id are required", http.StatusBadRequest)
+			return
+		}
+		if body.Action == "recreate" {
+			if strings.TrimSpace(body.Kind) != "tool" {
+				http.Error(w, "only a tool can be recreated", http.StatusBadRequest)
+				return
+			}
+			// The agent keeps naming the tool; the user's own copy now answers
+			// to that name, so nothing on the agent changes.
+			def, err := RecreateLostTool(udb, user, strings.TrimSpace(body.ID), true)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusConflict)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"recreated": def.Name})
 			return
 		}
 		saved, err := dropAgentReference(udb, user, a, strings.TrimSpace(body.Kind), strings.TrimSpace(body.ID))

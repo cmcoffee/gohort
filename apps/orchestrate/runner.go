@@ -136,6 +136,9 @@ type planRun struct {
 	lastFinalizedText string
 	holdStream        bool
 	streamFreshBubble bool
+	// nextLabel is the label the loop asked for on the next answer bubble
+	// (AgentLoopConfig.LabelNextRound), consumed by the first one finalized.
+	nextLabel string
 	// produced: what this turn has run a deliverable producer for, tracked
 	// live off the step callback. Read by the phantom-delivery guard, which
 	// has to answer "was this turn making a picture?" while the loop is still
@@ -1129,7 +1132,7 @@ func (pr *planRun) resolveRouting() {
 	// have decided this agent always reasons (planners, synthesizers)
 	// or never reasons (fast specialists). Empty Think means "auto":
 	// keep the route default we just picked up.
-	switch t.agent.Think {
+	switch t.agent.thinkMode() {
 	case "on":
 		pr.think = true
 	case "off":
@@ -1320,7 +1323,7 @@ func (pr *planRun) onStepHandler(info StepInfo) {
 	// Persist the answer so a reloaded session replays the same
 	// bubble the user saw live. handleSend drains the buffer right
 	// before appending the final assistant message.
-	t.captureMidTurnBubble(cleaned)
+	pr.captureAnswer(id, cleaned)
 	pr.streamMsgID = ""
 	pr.streamedBuf.Reset()
 	t.setCurrentMsgID("")
@@ -1362,7 +1365,7 @@ func (pr *planRun) settleRound() {
 	t.sse.Send(map[string]any{"kind": "message_done", "id": id})
 	pr.lastFinalizedID = id
 	pr.lastFinalizedText = cleaned
-	t.captureMidTurnBubble(cleaned)
+	pr.captureAnswer(id, cleaned)
 	pr.streamMsgID = ""
 	pr.streamedBuf.Reset()
 	t.setCurrentMsgID("")
@@ -1391,6 +1394,83 @@ func (pr *planRun) retractRound() {
 	pr.streamMsgID = ""
 	pr.streamedBuf.Reset()
 	t.setCurrentMsgID("")
+}
+
+// strikeRound takes the current round's reply back WITHOUT hiding it (via
+// AgentLoopConfig.StrikeRound): the bubble is finalized, the page is told to
+// strike it through with the reason beside it, and it is saved marked
+// retracted, so a reload and the export show what was said and why it did not
+// stand. The loop calls it only for the turn judge's corrections; guardrail
+// blocks still come through retractRound, because there the text is what the
+// rule keeps in.
+//
+// Falls back to retractRound when there is nothing to strike, and when the
+// agent holds its stream for an output guardrail and the warden will not pass
+// the text: a held reply has not been judged yet, and striking it through
+// would show a person exactly what the guardrail exists to keep from them.
+// The stream state is reset either way, so the retry opens a fresh bubble.
+func (pr *planRun) strikeRound(reason string) {
+	t := pr.t
+	id := pr.streamMsgID
+	if id == "" {
+		id = t.getCurrentMsgID()
+	}
+	raw := pr.streamedBuf.String()
+	cleaned := cleanBubbleText(raw)
+	if id == "" || cleaned == "" || !pr.mayShowStruck(cleaned) {
+		pr.retractRound()
+		return
+	}
+	if reason = strings.TrimSpace(reason); reason == "" {
+		reason = "Retracted."
+	}
+	if cleaned != strings.TrimSpace(raw) {
+		t.sse.Send(map[string]any{"kind": "chunk_replace", "id": id, "text": cleaned})
+	}
+	pr.paintHeldBubble(id, cleaned)
+	t.sse.Send(map[string]any{"kind": "message_done", "id": id})
+	t.sse.Send(map[string]any{"kind": "chunk_strike", "id": id, "reason": reason})
+	// lastFinalizedText is left alone on purpose: it is what a later reply is
+	// deduplicated against, and a corrected reply that resembles the struck
+	// one must still be shown.
+	t.captureStruckBubble(cleaned, reason)
+	pr.streamMsgID = ""
+	pr.streamedBuf.Reset()
+	t.setCurrentMsgID("")
+}
+
+// mayShowStruck reports whether a reply about to be struck may be shown at
+// all. Only a held stream needs asking: an agent without an output guardrail
+// already streamed the text live.
+func (pr *planRun) mayShowStruck(text string) bool {
+	if !pr.holdStream {
+		return true
+	}
+	enforce := pr.t.guardrailEnforcer()
+	if enforce.Check == nil {
+		return true
+	}
+	return !enforce.Check(GuardHookPreOutput, text).Blocked
+}
+
+// labelNextRound records the label the loop asked for on the next answer
+// bubble (AgentLoopConfig.LabelNextRound). "" cancels a pending one.
+func (pr *planRun) labelNextRound(label string) {
+	pr.nextLabel = strings.TrimSpace(label)
+}
+
+// captureAnswer saves a finalized answer bubble, carrying the pending label
+// when the loop asked for one: the page is told to show it and the saved
+// message keeps it, so a reload shows the same thing.
+func (pr *planRun) captureAnswer(id, text string) {
+	label := pr.nextLabel
+	if label == "" || strings.TrimSpace(text) == "" {
+		pr.t.captureMidTurnBubble(text)
+		return
+	}
+	pr.nextLabel = ""
+	pr.t.sse.Send(map[string]any{"kind": "message_label", "id": id, "label": label})
+	pr.t.captureLabelledBubble(text, label)
 }
 
 // presentationOnlyRound reports whether every tool this round called exists to
@@ -1527,7 +1607,7 @@ func cleanBubbleText(s string) string {
 	return strings.TrimSpace(StripMetaTags(StripToolCallMarkup(s)))
 }
 
-func (pr *planRun) emitBubble(text string) {
+func (pr *planRun) emitBubble(text string) string {
 	t := pr.t
 	// Scrubbed here rather than at each caller: a decline, a captured question
 	// and a captured reply all arrive by this door and none of them passes
@@ -1535,7 +1615,7 @@ func (pr *planRun) emitBubble(text string) {
 	text = StripMetaTags(text)
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
-		return
+		return ""
 	}
 	id := fmt.Sprintf("orch-%d", time.Now().UnixNano())
 	t.sse.Send(map[string]any{
@@ -1546,6 +1626,7 @@ func (pr *planRun) emitBubble(text string) {
 	})
 	t.sse.Send(map[string]any{"kind": "message_done", "id": id})
 	t.emitStats(id, pr.resp, pr.orchStart)
+	return id
 }
 
 func (pr *planRun) emitCapturedAsBubble(text string) {
@@ -1571,7 +1652,15 @@ func (pr *planRun) emitCapturedAsBubble(text string) {
 		return
 	}
 	Debug("[orchestrate.orch] emitting captured reply as bubble (%d ch, last bubble %d ch)", len(trimmed), len(strings.TrimSpace(pr.lastFinalizedText)))
-	pr.emitBubble(text)
+	id := pr.emitBubble(text)
+	// A reply that never streamed (respond_directly, a non-streamed rescue)
+	// is not captured as a bubble; the handler saves it as the final
+	// message, so the label is noted for that message to pick up.
+	if label := pr.nextLabel; label != "" && id != "" {
+		pr.nextLabel = ""
+		pr.t.sse.Send(map[string]any{"kind": "message_label", "id": id, "label": label})
+		pr.t.noteLabelled(trimmed, label)
+	}
 }
 
 func (pr *planRun) initRoundCaps() {
@@ -1889,14 +1978,21 @@ func (pr *planRun) finish() (steps []PlanStep, question, directReply string, err
 	}
 	if finalID != "" {
 		t.sse.Send(map[string]any{"kind": "message_done", "id": finalID})
-		if pr.streamedBuf.Len() > 0 {
+		streamed := pr.streamedBuf.Len() > 0
+		if streamed {
 			pr.lastFinalizedText = cleanBubbleText(pr.streamedBuf.String())
 		}
 		pr.lastFinalizedID = finalID
 		// Persist the final round's narration too — same gap as the
 		// per-round capture in onStepHandler, only on the rare path
 		// where the loop terminates after streaming but before OnStep.
-		t.captureMidTurnBubble(pr.lastFinalizedText)
+		// Only text streamed THIS round may take a pending label; with
+		// none, lastFinalizedText is an earlier bubble's.
+		if streamed {
+			pr.captureAnswer(finalID, pr.lastFinalizedText)
+		} else {
+			t.captureMidTurnBubble(pr.lastFinalizedText)
+		}
 		pr.streamMsgID = ""
 		t.setCurrentMsgID("")
 	}
@@ -2100,6 +2196,12 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		// concatenating into an orphaned one (the double-emit fix).
 		SettleRound:  pr.settleRound,
 		RetractRound: pr.retractRound,
+		// The turn judge's corrections keep the reply they take back on
+		// screen, struck through with the reason; a grounding correction's
+		// follow-up is shown under a "Correction" label. Both saved, so a
+		// reload shows what happened.
+		StrikeRound:    pr.strikeRound,
+		LabelNextRound: pr.labelNextRound,
 		// Feed view_video's sampled frames to the model on the next round so it
 		// actually sees the clip instead of describing it blind.
 		DrainViewImages: pr.sess.DrainViewImages,
@@ -2225,6 +2327,7 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		// agent's worker-rounds budget + enter_explorer_mode.
 		MaxRounds:     pr.absoluteCeiling,
 		ThinkBudget:   t.agent.ThinkBudget,  // per-agent override; 0 = inherit route/global
+		Effort:        t.agent.Effort,       // per-agent level; a ThinkBudget wins over it
 		ActionQuotas:  t.agent.ActionQuotas, // per-agent 24h caps; empty = uncapped
 		BudgetKey:     t.agent.ID,
 		DailySpendUSD: t.agent.DailySpendUSD,

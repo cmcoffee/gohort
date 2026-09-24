@@ -188,6 +188,13 @@ func CanManageShared(reqUser, owner string, isAdmin bool) bool {
 // seams in core.
 
 func init() {
+	shareledger.CanKeep = func(kind, owner, id, user string) bool {
+		if kind != "tool" || RootDB == nil {
+			return false
+		}
+		_, err := RecreateLostTool(RootDB, user, id, false)
+		return err == nil
+	}
 	shareledger.NotifyRecipient = func(recipient, title, intro string, needs []string) {
 		if RootDB == nil || strings.TrimSpace(recipient) == "" {
 			return

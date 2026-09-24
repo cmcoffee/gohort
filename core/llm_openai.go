@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/jpeg"
@@ -14,6 +15,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cmcoffee/gohort/core/media"
@@ -177,6 +179,7 @@ type openAIClient struct {
 	noThinkPrependSystem bool          // llama.cpp: prepend "/no_think " to system prompt on no-think calls.
 	noThinkPrependUser   bool          // llama.cpp: prepend "/no_think " to last user message on no-think calls.
 	noThinkBudget        int           // llama.cpp: budget value when noThinkSendBudget is true. 0 falls back to llamacppNoThinkDefaultBudget.
+	effort               effortTier    // the tier's default and maximum effort; see resolveEffort.
 }
 
 // llamacppNoThinkDefaultBudget is the thinking_budget_tokens cap used
@@ -264,6 +267,15 @@ func (c *openAIClient) llamacppThinkBudget(cfg ChatConfig) *int {
 		}
 		return &b
 	}
+	// An effort level, from the table below. The admin global is the same
+	// hard ceiling here as for an explicit budget: effort picks a size, the
+	// deployment still decides the most anything may spend.
+	if b, ok := llamacppEffortBudgets[cfg.Effort]; ok {
+		if c.llamacppBudget > 0 && b > c.llamacppBudget {
+			b = c.llamacppBudget
+		}
+		return &b
+	}
 	// Global configured budget.
 	if c.llamacppBudget > 0 {
 		return &c.llamacppBudget
@@ -273,6 +285,78 @@ func (c *openAIClient) llamacppThinkBudget(cfg ChatConfig) *int {
 	// pass WithThinkBudget(n) per-call, or operators can set the
 	// global llamacppBudget via config / admin UI.
 	return nil
+}
+
+// llamacppEffortBudgets is what an effort level buys on llama.cpp. Sized for
+// Qwen 3.6, which fills whatever it is given: high is the framework default
+// (4096, the model's practical sweet spot), and low is the same allowance the
+// no-think path already trusts for short classifier-style calls.
+var llamacppEffortBudgets = map[string]int{
+	effortLow:    512,
+	effortMedium: 2048,
+	effortHigh:   4096,
+}
+
+// reasoning_effort is OpenAI's own dial, and only reasoning models take it:
+// the rest answer a 400 that names the parameter. Which models those are is not
+// derivable from the id in a way that keeps working, so the field is sent and
+// the model is BELIEVED when it refuses - the same bargain the Anthropic client
+// makes over thinking shapes (noteAdaptiveThinking). One 400, once per model
+// per process.
+var (
+	noReasoningEffortMu     sync.RWMutex
+	noReasoningEffortModels = map[string]bool{}
+)
+
+// reasoningEffortRefused reports whether this model has refused the field.
+func reasoningEffortRefused(model string) bool {
+	noReasoningEffortMu.RLock()
+	defer noReasoningEffortMu.RUnlock()
+	return noReasoningEffortModels[model]
+}
+
+// isUnsupportedReasoningEffortErr reports whether a provider refused
+// reasoning_effort. Matched on a 400 that names the parameter, because a bare
+// 400 is shared with every other malformed request.
+func isUnsupportedReasoningEffortErr(err error) bool {
+	var ae *APIError
+	if !errors.As(err, &ae) || ae.StatusCode != http.StatusBadRequest {
+		return false
+	}
+	return strings.Contains(strings.ToLower(ae.Message), "reasoning_effort")
+}
+
+// noteIfReasoningEffortRefused records a refusal against the model id the
+// request actually carried, then returns the error unchanged for the retry
+// layer (doWithRetry) to rebuild the call without the field.
+func noteIfReasoningEffortRefused(payload oaiRequest, err error) error {
+	if payload.ReasoningEffort == "" || !isUnsupportedReasoningEffortErr(err) {
+		return err
+	}
+	noReasoningEffortMu.Lock()
+	already := noReasoningEffortModels[payload.Model]
+	noReasoningEffortModels[payload.Model] = true
+	noReasoningEffortMu.Unlock()
+	if !already {
+		Log("[llm] %s does not take reasoning_effort: leaving it out for this model", payload.Model)
+	}
+	return err
+}
+
+// applyThinkFields sets the thinking fields for a hosted OpenAI-compatible
+// request (not llama.cpp, not Ollama). With no effort in play it is exactly
+// the old behaviour. With one, reasoning_effort carries it and the
+// gohort-local `think` flag stays off the wire - it was never OpenAI's, and
+// effort resolution sets Think itself rather than the caller asking.
+func (c *openAIClient) applyThinkFields(payload *oaiRequest, cfg ChatConfig) {
+	if cfg.Effort == "" {
+		payload.Think = cfg.Think
+		return
+	}
+	if cfg.Effort == effortOff || (cfg.Think != nil && !*cfg.Think) || reasoningEffortRefused(cfg.Model) {
+		return
+	}
+	payload.ReasoningEffort = cfg.Effort
 }
 
 // Thinking budgets are no longer auto-injected by input-token scaling.
@@ -718,6 +802,7 @@ type oaiRequest struct {
 	Tools                []oaiTool          `json:"tools,omitempty"`
 	ResponseFormat       *oaiResponseFormat `json:"response_format,omitempty"`
 	Think                *bool              `json:"think,omitempty"`
+	ReasoningEffort      string             `json:"reasoning_effort,omitempty"`       // hosted OpenAI: "low" | "medium" | "high"; see applyThinkFields
 	ThinkingBudgetTokens *int               `json:"thinking_budget_tokens,omitempty"` // llama.cpp: budget when thinking is on; do NOT use 0 to disable (unreliable on Qwen 3.6)
 	ChatTemplateKwargs   map[string]any     `json:"chat_template_kwargs,omitempty"`   // llama.cpp: per-request {"enable_thinking": bool} — works reliably even when launch is --reasoning on
 	Options              map[string]any     `json:"options,omitempty"`                // Ollama-specific options (num_ctx, etc.)
@@ -1725,6 +1810,7 @@ func (c *openAIClient) chatStreamViaOllamaNative(ctx context.Context, cfg ChatCo
 // Chat sends a non-streaming request.
 func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...ChatOption) (*Response, error) {
 	cfg := applyOpts(c.model, 0, opts)
+	c.effort.resolve(&cfg)
 
 	// Hard total-response deadline: give up on the LLM if the whole call
 	// (queue + prefill + thinking + streaming) exceeds the budget. The
@@ -1799,7 +1885,7 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 			payload.MaxTokens += *payload.ThinkingBudgetTokens
 		}
 	} else {
-		payload.Think = cfg.Think
+		c.applyThinkFields(&payload, cfg)
 	}
 	if cfg.JSONMode {
 		payload.ResponseFormat = &oaiResponseFormat{Type: "json_object"}
@@ -1843,7 +1929,7 @@ func (c *openAIClient) Chat(ctx context.Context, messages []Message, opts ...Cha
 		if c.llamacpp {
 			ep = "llama.cpp"
 		}
-		return nil, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: ep}
+		return nil, noteIfReasoningEffortRefused(payload, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: ep})
 	}
 
 	var result oaiResponse
@@ -1967,6 +2053,7 @@ func estimateReasoningTokens(total int, reasoning, content string, toolCalls []T
 // ChatStream sends a streaming request.
 func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handler StreamHandler, opts ...ChatOption) (*Response, error) {
 	cfg := applyOpts(c.model, 0, opts)
+	c.effort.resolve(&cfg)
 
 	// Hard total-response deadline — see Chat(). A streaming generation
 	// that keeps emitting tokens within the idle window would otherwise
@@ -2022,7 +2109,7 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 			payload.MaxTokens += *payload.ThinkingBudgetTokens
 		}
 	} else {
-		payload.Think = cfg.Think
+		c.applyThinkFields(&payload, cfg)
 	}
 	if cfg.JSONMode {
 		payload.ResponseFormat = &oaiResponseFormat{Type: "json_object"}
@@ -2074,7 +2161,7 @@ func (c *openAIClient) ChatStream(ctx context.Context, messages []Message, handl
 		if c.llamacpp {
 			ep = "llama.cpp"
 		}
-		return nil, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: ep}
+		return nil, noteIfReasoningEffortRefused(payload, &APIError{StatusCode: resp.StatusCode, Message: msg, Provider: ep})
 	}
 
 	var full strings.Builder

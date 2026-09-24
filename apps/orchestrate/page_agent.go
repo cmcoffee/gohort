@@ -251,6 +251,16 @@ func (T *OrchestrateApp) renderAgentEditor(w http.ResponseWriter, r *http.Reques
 			Placeholder: "0",
 			Help:        "Max thinking tokens per LLM call. 0 inherits the deployment default (4096).",
 			Detail:      "The admin global budget is a hard ceiling, so this can only LOWER the budget, for snappier turns. A value above the ceiling is clamped. Only applies when Think is on."},
+		{Field: "effort", Type: "select", Label: "Effort",
+			Options: []ui.SelectOption{
+				{Value: "", Label: "Default: follow the model tier's setting"},
+				{Value: "off", Label: "Off: no reasoning"},
+				{Value: "low", Label: "Low"},
+				{Value: "medium", Label: "Medium"},
+				{Value: "high", Label: "High"},
+			},
+			Help:   "How hard this agent reasons. A think budget, if set, overrides it.",
+			Detail: "Each model gets its own dial: Claude's effort setting, OpenAI's reasoning effort, or a thinking budget sized for local models. When set, it also decides Think mode: Off means no reasoning, any other level means reasoning on. The admin's maximum effort for the model tier still caps it."},
 		// Which MODEL does the reasoning — a Reasoning setting, not an
 		// Autonomous-runs one. It sat under Autonomous runs purely by
 		// position (a header owns the fields until the next header), so it

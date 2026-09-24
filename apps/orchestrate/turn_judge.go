@@ -111,7 +111,7 @@ Reply with JSON only: {"verdict":"KEPT"|"UNKEPT","claim":"<the exact sentence fr
 //
 // Two readings before anything is corrected. The first is fast, thinking off,
 // and runs on every turn the pre-filter selects; most come back KEPT and that
-// is the end of it. A conviction is read again with a small thinking budget,
+// is the end of it. A conviction is read again at low reasoning effort,
 // and only a finding BOTH readings make is acted on. A correction retracts a
 // reply the person may already be reading and burns a round, so it is worth a
 // second call to be sure; and the first reading's mistakes were the kind a
@@ -125,7 +125,11 @@ func (T *OrchestrateApp) judgeTurnClaims(ctx context.Context, ev TurnClaimEviden
 	if !ok || (!first.Unkept && first.Machinery == "") {
 		return first, ok
 	}
-	second, ok := T.readTurnClaims(ctx, ev, "confirm", WithThink(true), WorkerJudgeThink())
+	// Low effort rather than a raw token count: each provider sizes "a
+	// moment's thought" for itself (a small llama.cpp budget, Claude's low
+	// effort, OpenAI's reasoning_effort), where one number fit only the
+	// local worker it was tuned on.
+	second, ok := T.readTurnClaims(ctx, ev, "confirm", WithThink(true), WithEffort("low"))
 	flagged := first.Claim
 	if !first.Unkept {
 		flagged = first.Machinery
