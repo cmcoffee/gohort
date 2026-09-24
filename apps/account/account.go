@@ -50,6 +50,9 @@ func (T *Account) Routes() {
 	T.HandleFunc("/api/connections", T.handleConnections)
 	T.HandleFunc("/api/tokens", T.handleTokens)
 	T.HandleFunc("/api/token-targets", T.handleTokenTargets)
+	T.HandleFunc("/api/artifacts/export", T.handleArtifactExport)
+	T.HandleFunc("/api/artifacts/preview", T.handleArtifactPreview)
+	T.HandleFunc("/api/artifacts/import", T.handleArtifactImport)
 	T.HandleFunc("/oauth/start", T.handleOAuthStart)
 	T.HandleFunc("/oauth/callback", T.handleOAuthCallback)
 	T.HandleFunc("/mcp/connect", T.handleMCPConnect)
@@ -496,7 +499,9 @@ func (T *Account) servePage(w http.ResponseWriter, r *http.Request) {
 			Detail:   "For example Claude Desktop over MCP, or a voice platform over the OpenAI /v1 endpoint. Send it as the client's X-API-Key header, or as \"Authorization: Bearer <token>\". It is shown once at creation and can be revoked any time.\n\nEach key is SCOPED: a new key reaches nothing until you grant it features and targets, under Configure access. Keys created before scoping existed are marked Unrestricted; set a scope to lock them down.",
 			Body:     ui.Card{HTML: tokensHTML},
 		},
+		artifactsSection(),
 	)
+	extraHead += artifactsHead()
 	ui.Page{
 		Title:         "Account",
 		ShowTitle:     true,

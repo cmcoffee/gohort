@@ -119,3 +119,61 @@ func TestAUserImportTakesOnlyUserImportableTypes(t *testing.T) {
 		t.Errorf("admin import: %+v", res)
 	}
 }
+
+// A user's export is their own artifacts and nothing deployment-wide: an admin
+// kind is refused outright, every selector resolves in the user's namespace
+// whatever owner it named, and the dependency closure leaves out
+// deployment-wide dependencies.
+func TestAUserExportStaysInsideTheUsersOwnNamespace(t *testing.T) {
+	agentLike := &ownerFake{sniffingFake: sniffingFake{fakeArtifact{typ: "pipeline"}}}
+	agentLike.byOwner = map[string]map[string]bool{"alice": {"mine": true, "helper": true}, "bob": {"theirs": true}}
+	agentLike.deps = map[string][]ArtifactSel{
+		"mine": {{Type: "credential", Name: "crm"}, {Type: "pipeline", Name: "helper", Owner: "bob"}},
+	}
+	cred := &fakeArtifact{typ: "credential", recipes: map[string]string{"crm": "crm"}}
+	withFakeTypes(t, agentLike, cred)
+
+	if _, err := ExportArtifactBundleAsUser(nil, "alice", []ArtifactSel{{Type: "credential", Name: "crm"}}, true); err == nil {
+		t.Error("a user exported an administrator's kind of artifact")
+	}
+	// Named with bob as owner: still resolves as alice's, and alice has no
+	// "theirs", so the export fails rather than reading bob's store.
+	if _, err := ExportArtifactBundleAsUser(nil, "alice", []ArtifactSel{{Type: "pipeline", Name: "theirs", Owner: "bob"}}, true); err == nil {
+		t.Error("a user exported another user's artifact by naming its owner")
+	}
+	b, err := ExportArtifactBundleAsUser(nil, "alice", []ArtifactSel{{Type: "pipeline", Name: "mine"}}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, a := range b.Artifacts {
+		got = append(got, a.Type+":"+a.Name)
+	}
+	// The pipeline dependency was addressed to bob; it resolves in ALICE'S
+	// namespace, where she has her own "helper". The credential stays out.
+	if len(got) != 2 || got[0] != "pipeline:mine" || got[1] != "pipeline:helper" {
+		t.Fatalf("got %v", got)
+	}
+	for _, o := range agentLike.resolvedFor {
+		if o != "alice" {
+			t.Fatalf("an export read %q's store", o)
+		}
+	}
+}
+
+// ownerFake resolves names per owner and records whose store each export read.
+type ownerFake struct {
+	sniffingFake
+	byOwner     map[string]map[string]bool
+	resolvedFor []string
+}
+
+func (o *ownerFake) ExportArtifact(_ Database, name, owner string) (json.RawMessage, error) {
+	o.resolvedFor = append(o.resolvedFor, owner)
+	if !o.byOwner[owner][name] {
+		return nil, Error("no such pipeline")
+	}
+	return json.Marshal(name)
+}
+
+func (o *ownerFake) Dependencies(_ Database, name, _ string) []ArtifactSel { return o.deps[name] }

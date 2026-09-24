@@ -133,6 +133,7 @@ func (a *AdminApp) serveNewAdminPage(w http.ResponseWriter, r *http.Request) {
 		Head: ui.NewHead().
 			CSS(adminUsersCSS).
 			JS(adminUsersModalJS).
+			JS(ArtifactClientJS).
 			JS(artifactDownloadHelper).
 			JS(artifactExportControls).
 			JS(artifactImportPreviewJS).

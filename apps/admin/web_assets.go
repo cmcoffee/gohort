@@ -81,14 +81,12 @@ const adminResetPasswordAction = `function(ctx){
   if(u) openModal(u, ctx);
 }`
 
-// artifactDownload is the shared client-action body: it navigates a hidden
-// anchor at the unified artifact-export endpoint so the browser downloads a
-// secret-free gohort.bundle/v1. All the export buttons below are one-liners
+// artifactDownload is the shared client-action body, over the core
+// ArtifactClientJS download: the browser downloads a secret-free
+// gohort.bundle/v1. All the export buttons below are one-liners
 // over it, differing only in the query (individual vs all-of-type vs all).
 const artifactDownloadHelper = `function __artifactDownload(href, filename){
-  var a = document.createElement('a');
-  a.href = href; a.download = filename;
-  document.body.appendChild(a); a.click(); a.remove();
+  window.gohortArtifacts.download(href, filename);
 }`
 
 // artifactExportControls layers the "Include dependencies" export preference on
@@ -513,102 +511,17 @@ const credentialsExportAllAction = `function(){
   __artifactExport('?all=credential', 'credentials.gohort.json');
 }`
 
-// artifactImportPreviewJS is the preview-then-confirm import flow:
-// __artifactImportPreview() opens a file picker, dry-runs the chosen bundle
-// against /api/artifacts/preview, and shows the result in a uiOpenModal —
-// per-artifact import/skip predictions plus unmet-reference warnings. Nothing
-// is written until the admin clicks the Import button, which posts the SAME
-// bytes to /api/artifacts/import and surfaces the real result. App-specific
-// (knows the artifact endpoints), so it lives here, not in core/ui.
+// artifactImportPreviewJS points the shared preview-then-confirm import flow
+// (core ArtifactClientJS) at the admin's deployment-wide endpoints.
 const artifactImportPreviewJS = `
 window.__artifactImportPreview = function(){
-  var input = document.createElement('input');
-  input.type = 'file'; input.accept = '.json,application/json';
-  input.style.display = 'none';
-  document.body.appendChild(input);
-  input.addEventListener('change', function(){
-    var f = input.files && input.files[0];
-    input.remove();
-    if(!f) return;
-    var reader = new FileReader();
-    reader.onload = function(){ __artifactPreviewOpen(String(reader.result || ''), f.name); };
-    reader.onerror = function(){ (window.uiAlert||window.alert)('Could not read the selected file.'); };
-    reader.readAsText(f);
+  window.gohortArtifacts.importFlow({
+    previewURL: 'api/artifacts/preview',
+    importURL: 'api/artifacts/import',
+    invalidate: ['api/connectors','api/persistent-tools','api/secure-api','api/skills'],
+    subtitle: 'Imported artifacts land as drafts for review; a name that already exists is skipped.'
   });
-  input.click();
-};
-function __artifactPreviewOpen(text, filename){
-  fetch('api/artifacts/preview', {method:'POST', credentials:'same-origin',
-      headers:{'Content-Type':'application/json'}, body: JSON.stringify({pack:text})})
-    .then(function(r){ return r.ok ? r.json() : r.text().then(function(t){ throw new Error(t || ('HTTP '+r.status)); }); })
-    .then(function(p){ __artifactPreviewModal(p, text, filename); })
-    .catch(function(e){ (window.uiAlert||window.alert)('Preview failed: ' + (e && e.message || e)); });
-}
-function __artifactPreviewModal(p, text, filename){
-  var n = p.would_import || 0, s = p.would_skip || 0;
-  window.uiOpenModal({
-    title: 'Import preview',
-    subtitle: filename + ', nothing has been imported yet. Imported artifacts land as drafts for review; a name that already exists is skipped.',
-    width: '760px',
-    actions: [
-      {label: 'Cancel'},
-      {label: 'Import ' + n + (n === 1 ? ' artifact' : ' artifacts'), primary: true, onClick: function(api, btn){
-        btn.disabled = true; btn.textContent = 'Importing…';
-        fetch('api/artifacts/import', {method:'POST', credentials:'same-origin',
-            headers:{'Content-Type':'application/json'}, body: JSON.stringify({pack:text})})
-          .then(function(r){ return r.ok ? r.json() : r.text().then(function(t){ throw new Error(t || ('HTTP '+r.status)); }); })
-          .then(function(d){
-            api.close();
-            if(window.uiInvalidate) window.uiInvalidate(['api/connectors','api/persistent-tools','api/secure-api','api/skills']);
-            (window.uiAlert||window.alert)(d.message || 'Import complete.');
-          })
-          .catch(function(e){
-            btn.disabled = false; btn.textContent = 'Import';
-            (window.uiAlert||window.alert)('Import failed: ' + (e && e.message || e));
-          });
-      }}
-    ],
-    mount: function(body, api){
-      if(!n && api.primaryButton) api.primaryButton.disabled = true;
-      var sum = document.createElement('div');
-      sum.style.cssText = 'font-size:0.85rem;color:var(--text-mute)';
-      sum.textContent = 'Would import ' + n + ', skip ' + s + '.';
-      body.appendChild(sum);
-      var list = document.createElement('div');
-      list.style.cssText = 'display:flex;flex-direction:column;gap:0.35rem';
-      (p.items || []).forEach(function(it){
-        var row = document.createElement('div');
-        row.style.cssText = 'display:flex;gap:0.6rem;align-items:baseline;font-size:0.85rem;border-bottom:1px solid var(--border);padding-bottom:0.35rem';
-        var imp = it.action === 'import';
-        var badge = document.createElement('span');
-        badge.textContent = imp ? 'import' : 'skip';
-        badge.style.cssText = 'flex:0 0 3.6rem;text-align:center;font-size:0.72rem;border-radius:4px;padding:0.1rem 0.3rem;' +
-          (imp ? 'background:rgba(99,102,241,0.15);color:var(--accent,#6366f1)' : 'background:rgba(139,148,158,0.15);color:var(--text-mute)');
-        var typ = document.createElement('span');
-        typ.style.cssText = 'flex:0 0 6.5rem;color:var(--text-mute)';
-        typ.textContent = it.type;
-        var name = document.createElement('span');
-        name.style.cssText = 'font-weight:600;overflow-wrap:anywhere';
-        name.textContent = it.name || '(unnamed)';
-        row.appendChild(badge); row.appendChild(typ); row.appendChild(name);
-        if(it.detail){
-          var det = document.createElement('span');
-          det.style.cssText = 'color:var(--text-mute);font-size:0.78rem';
-          det.textContent = it.detail;
-          row.appendChild(det);
-        }
-        list.appendChild(row);
-        (it.warnings || []).forEach(function(wtext){
-          var wrow = document.createElement('div');
-          wrow.style.cssText = 'font-size:0.78rem;color:var(--warn,#d97706);padding-left:4.2rem';
-          wrow.textContent = 'Warning: ' + wtext;
-          list.appendChild(wrow);
-        });
-      });
-      body.appendChild(list);
-    }
-  });
-}`
+};`
 
 // artifactsImportPreviewAction dispatches the "Import bundle…" toolbar button
 // into the preview flow above.

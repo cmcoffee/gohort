@@ -29,12 +29,22 @@ package core
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 )
+
+// ArtifactClientJS is the shared browser half of the bundle format
+// (assets/artifact_client.js): window.gohortArtifacts.download(href, name) and
+// window.gohortArtifacts.importFlow({previewURL, importURL, invalidate,
+// subtitle, onDone}). A page that exports or imports bundles includes it in
+// its head and points it at its own endpoints.
+//
+//go:embed assets/artifact_client.js
+var ArtifactClientJS string
 
 // ArtifactBundleFormat identifies the unified wire format. Bumped only on a
 // breaking envelope change; importers accept older minor forms (and the legacy
@@ -223,7 +233,65 @@ func lookupArtifactType(name string) (ArtifactType, bool) {
 // idempotent — "export all" already contains every dependency and the closure
 // is a no-op over it. Dependency waves are sorted for byte-stable output.
 func ExportArtifactBundle(db Database, sels []ArtifactSel) (ArtifactBundle, error) {
-	return exportArtifactBundle(db, sels, true)
+	return exportArtifactBundle(db, sels, true, nil)
+}
+
+// ExportArtifactBundleAsUser is the export an ordinary user may run: only
+// their OWN artifacts, of the kinds they may import (ArtifactUserImportable).
+// Every selector is resolved in owner's namespace whatever Owner it named, and
+// a type outside the user's kinds is an error, not a silent drop. The
+// dependency closure is held to the same line: a dependency of a user kind is
+// resolved in owner's namespace (one that belongs to somebody else, a tool
+// shared with them say, does not resolve there and is left out), and a
+// deployment-wide dependency (a credential's configuration, a connector) is
+// left out entirely. Those are an administrator's to export; the import on
+// the other side warns that the reference is missing.
+func ExportArtifactBundleAsUser(db Database, owner string, sels []ArtifactSel, includeDeps bool) (ArtifactBundle, error) {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return ArtifactBundle{}, Error("an export needs a signed-in user")
+	}
+	own := make([]ArtifactSel, 0, len(sels))
+	for _, s := range sels {
+		if !ArtifactTypeUserImportable(s.Type) {
+			return ArtifactBundle{}, fmt.Errorf("%q artifacts are exported by an administrator", strings.TrimSpace(s.Type))
+		}
+		s.Owner = owner
+		own = append(own, s)
+	}
+	return exportArtifactBundle(db, own, includeDeps, func(dep ArtifactSel) (ArtifactSel, bool) {
+		if !ArtifactTypeUserImportable(dep.Type) {
+			return dep, false
+		}
+		dep.Owner = owner
+		return dep, true
+	})
+}
+
+// ArtifactSelectionForOwner is "everything this user owns": every artifact of
+// a user kind whose Owner is owner, sorted as ArtifactSelectionForTypes sorts.
+// The account-level backup starts from it.
+func ArtifactSelectionForOwner(db Database, owner string) []ArtifactSel {
+	owner = strings.TrimSpace(owner)
+	if owner == "" {
+		return nil
+	}
+	var types []string
+	for name := range artifactTypes {
+		if ArtifactTypeUserImportable(name) {
+			types = append(types, name)
+		}
+	}
+	if len(types) == 0 {
+		return nil
+	}
+	var mine []ArtifactSel
+	for _, s := range ArtifactSelectionForTypes(db, types...) {
+		if strings.TrimSpace(s.Owner) == owner {
+			mine = append(mine, s)
+		}
+	}
+	return mine
 }
 
 // ExportArtifactBundleShallow exports EXACTLY the selection with no dependency
@@ -232,13 +300,14 @@ func ExportArtifactBundle(db Database, sels []ArtifactSel) (ArtifactBundle, erro
 // opt-out in the export UI). The explicit selection is still strict: a typo
 // errors, same as the closure path.
 func ExportArtifactBundleShallow(db Database, sels []ArtifactSel) (ArtifactBundle, error) {
-	return exportArtifactBundle(db, sels, false)
+	return exportArtifactBundle(db, sels, false, nil)
 }
 
 // exportArtifactBundle is the shared body: it always exports the explicit
 // selection strictly, and walks the transitive dependency closure only when
-// includeDeps is set.
-func exportArtifactBundle(db Database, sels []ArtifactSel, includeDeps bool) (ArtifactBundle, error) {
+// includeDeps is set. depFilter, when set, rewrites or drops each dependency
+// before it is resolved (false = leave it out).
+func exportArtifactBundle(db Database, sels []ArtifactSel, includeDeps bool, depFilter func(ArtifactSel) (ArtifactSel, bool)) (ArtifactBundle, error) {
 	bundle := ArtifactBundle{Bundle: ArtifactBundleFormat, ExportedAt: time.Now(), GohortVersion: AppVersion}
 	seen := map[string]bool{}
 	selKey := func(s ArtifactSel) string {
@@ -303,6 +372,12 @@ func exportArtifactBundle(db Database, sels []ArtifactSel, includeDeps bool) (Ar
 			return wave[i].Name < wave[j].Name
 		})
 		for _, s := range wave {
+			if depFilter != nil {
+				var keep bool
+				if s, keep = depFilter(s); !keep {
+					continue
+				}
+			}
 			added, _ := addArtifact(s, false)
 			if added {
 				pending = append(pending, artifactDeps(db, s)...)

@@ -71,6 +71,11 @@ func (a *agentArtifact) ListArtifacts(_ Database) []ArtifactSel {
 			if isAppAgent(rec.ID) {
 				continue
 			}
+			// A built-in the user never changed is the deployment's, not
+			// theirs; their customized copy is saved under their name.
+			if rec.Owner != u.Username {
+				continue
+			}
 			out = append(out, ArtifactSel{Type: "agent", Name: rec.Name, Owner: u.Username})
 		}
 	}

@@ -73,8 +73,10 @@ func TestTheActionsThatChangeAnotherSectionSaySo(t *testing.T) {
 	}
 
 	// The file import has done this since it existed; the catalog install
-	// is the same importer reached another way, so the two lists match.
-	if !strings.Contains(src, `uiInvalidate(['api/connectors','api/persistent-tools','api/secure-api','api/skills'])`) {
+	// is the same importer reached another way, so the two lists match. The
+	// flow itself is the shared core bundle client, handed the list to
+	// refresh once an import lands.
+	if !strings.Contains(src, `invalidate: ['api/connectors','api/persistent-tools','api/secure-api','api/skills']`) {
 		t.Error("the file-import path should still invalidate the same four sections")
 	}
 }
