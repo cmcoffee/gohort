@@ -47,6 +47,15 @@ type FieldPreset struct {
 	Hint  string `json:"hint,omitempty"`
 }
 
+// RowMode is one of the choices a Type=="rules" field offers per row (see
+// FormField.RowModes). Marker is what the row's line starts with when this
+// mode is chosen; the default mode has none.
+type RowMode struct {
+	Marker string `json:"marker"`
+	Label  string `json:"label"`
+	Help   string `json:"help,omitempty"`
+}
+
 // SectionSpec is one declared area of a Type=="sections" FormField.
 //
 // The value such a field saves is still a single markdown string: the

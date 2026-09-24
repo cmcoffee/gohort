@@ -1072,3 +1072,38 @@ func TestTheInputGuardrailWaitIsNamedInPrepTime(t *testing.T) {
 		t.Errorf("the guardrail wait is not named in the prep line: %s", line)
 	}
 }
+
+// Governance's Always list picks what a breach does per rule, stored as the
+// same markers an agent's own guardrails use. The check reads the mode off
+// each line; the model is told the rule, never its punctuation.
+func TestGovernanceBreachModesReachTheWardenAndNotThePrompt(t *testing.T) {
+	restore := withGlobalRules(t, "? Keep replies under 200 words.", "~ Never quote a price unless asked twice.", "Do not share customer names.")
+	defer restore()
+
+	rules := guardrailRules(AgentRecord{})
+	if len(rules) != 3 {
+		t.Fatalf("rules = %+v", rules)
+	}
+	if !rules[0].Correctable || rules[0].Contestable || rules[0].Text != "Keep replies under 200 words." {
+		t.Errorf("\"Attempt recovery\" should reach the check as correctable: %+v", rules[0])
+	}
+	if !rules[1].Contestable || rules[1].Correctable || !strings.HasPrefix(rules[1].Text, "Never quote") {
+		t.Errorf("\"Allow appeal\" should reach the check as contestable: %+v", rules[1])
+	}
+	if rules[2].Correctable || rules[2].Contestable {
+		t.Errorf("a plain line blocks: %+v", rules[2])
+	}
+
+	clause := prompts.GlobalRulesClause()
+	for _, leak := range []string{"? Keep", "~ Never"} {
+		if strings.Contains(clause, leak) {
+			t.Errorf("a marker reached the prompt (%q):\n%s", leak, clause)
+		}
+	}
+	if !strings.Contains(clause, "(1) Keep replies under 200 words.") || !strings.Contains(clause, "(2) Never quote a price") {
+		t.Errorf("the rules should read cleanly in the prompt:\n%s", clause)
+	}
+	if md := prompts.GlobalRulesMarkdown(); strings.Contains(md, "- ?") || strings.Contains(md, "- ~") {
+		t.Errorf("the inherited-rules view shows markers:\n%s", md)
+	}
+}

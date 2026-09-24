@@ -116,3 +116,19 @@ func TestGovernanceStyleRulesReplaceTheList(t *testing.T) {
 		t.Errorf("the Rules section should carry both lists: %s", spec)
 	}
 }
+
+// The Always list offers the three breach modes, with the markers the
+// guardrail check reads; the Style list offers none.
+func TestTheAlwaysListOffersBreachModes(t *testing.T) {
+	always, style := alwaysRulesForm().Fields[0], styleRulesForm().Fields[0]
+	if len(always.RowModes) != 3 || always.RowModes[0].Marker != "" || always.RowModes[1].Marker != "?" || always.RowModes[2].Marker != "~" {
+		t.Fatalf("breach modes = %+v", always.RowModes)
+	}
+	if len(style.RowModes) != 0 {
+		t.Error("style rules are not enforced by the check, so they offer no breach mode")
+	}
+	raw, _ := json.Marshal(always)
+	if !strings.Contains(string(raw), `"row_modes":[{"marker":"","label":"Block"`) {
+		t.Errorf("the field should carry its modes to the page: %s", raw)
+	}
+}

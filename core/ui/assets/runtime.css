@@ -1844,6 +1844,15 @@ select:-webkit-autofill {
   outline: none; transition: border-color 0.1s ease;
 }
 .ui-rules-input:focus { border-color: var(--accent); }
+/* Per-row mode picker (FormField.RowModes): how this one rule is treated.
+ * Compact and beside the input, so the mode reads as part of the row. */
+.ui-rules-mode {
+  flex: 0 0 auto; max-width: 11rem;
+  padding: 0.35rem 0.4rem; border-radius: 6px;
+  background: var(--bg-1); border: 1px solid var(--border);
+  color: var(--text); font-size: 0.78rem; font-family: inherit; outline: none;
+}
+.ui-rules-mode:focus { border-color: var(--accent); }
 /* Single-rule editor — swapped in place of the list by RowEditor. Sized so a
  * two-sentence rule is visible whole, which is the entire reason it exists. */
 .ui-rules-edit { display: flex; flex-direction: column; gap: 0.6rem; }

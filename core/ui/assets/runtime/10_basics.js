@@ -2101,8 +2101,15 @@
         // load so existing free-form rules don't double-prefix.
         input = el('div', {class: 'ui-rules'});
         var rules = parseRules(String(initial));
+        // Per-row modes (FormField.RowModes): each line carries its mode as a
+        // leading marker. The input shows the rule without it; the picker
+        // owns it. Without modes these are identities.
+        var rowModes = (f.row_modes && f.row_modes.length) ? f.row_modes : null;
+        function ruleBody(line) { return rowModes ? uiRuleModeOf(line, rowModes).body : line; }
+        function ruleMode(line) { return rowModes ? uiRuleModeOf(line, rowModes).mode : 0; }
+        function withBody(line, body) { return rowModes ? uiRuleModeLine(ruleMode(line), body, rowModes) : body; }
         function persist() {
-          var joined = rules.filter(function(r){ return r.trim() !== ''; }).join('\n');
+          var joined = rules.filter(function(r){ return ruleBody(r).trim() !== ''; }).join('\n');
           if (current[f.field] !== joined) save(f.field, joined);
         }
         // One rule, full size, with a composer that asks for a rewrite. Replaces
@@ -2115,7 +2122,7 @@
           box.setAttribute('data-ui-modal-back', '1');
           box.__uiModalBack = function() { renderRules(); };
           var ta = el('textarea', {class: 'ui-rules-edit-ta', placeholder: 'The rule…'});
-          ta.value = rules[idx] || '';
+          ta.value = ruleBody(rules[idx] || '');
           box.appendChild(ta);
 
           if (f.suggest_url) {
@@ -2156,7 +2163,7 @@
           var bar = el('div', {class: 'ui-rules-edit-bar'});
           var done = el('button', {class: 'ui-rules-edit-done', type: 'button'}, ['Done']);
           done.addEventListener('click', function() {
-            rules[idx] = ta.value.replace(/\s+/g, ' ').trim();
+            rules[idx] = withBody(rules[idx], ta.value.replace(/\s+/g, ' ').trim());
             persist();
             renderRules();
           });
@@ -2176,15 +2183,15 @@
           rules.forEach(function(r, idx) {
             var row = el('div', {class: 'ui-rules-row'});
             var num = el('span', {class: 'ui-rules-num'}, [String(idx + 1) + '.']);
-            var ti = el('input', {type: 'text', class: 'ui-rules-input', value: r, placeholder: 'rule…'});
+            var ti = el('input', {type: 'text', class: 'ui-rules-input', value: ruleBody(r), placeholder: 'rule…'});
             ti.addEventListener('blur', function() {
-              rules[idx] = ti.value;
+              rules[idx] = withBody(rules[idx], ti.value);
               persist();
             });
             ti.addEventListener('keydown', function(ev) {
               if (ev.key === 'Enter') {
                 ev.preventDefault();
-                rules[idx] = ti.value;
+                rules[idx] = withBody(rules[idx], ti.value);
                 rules.splice(idx + 1, 0, '');
                 renderRules();
                 persist();
@@ -2197,7 +2204,7 @@
               // ✎ is the pencil this codebase already uses for "edited" badges.
               edit = el('button', {class: 'ui-rules-edit-btn', title: 'Edit this rule', type: 'button'}, ['✎']);
               edit.addEventListener('click', function() {
-                rules[idx] = ti.value; // keep an in-progress edit
+                rules[idx] = withBody(rules[idx], ti.value); // keep an in-progress edit
                 renderRuleEditor(idx);
               });
             }
@@ -2209,6 +2216,21 @@
             });
             row.appendChild(num);
             row.appendChild(ti);
+            if (rowModes) {
+              var modeSel = el('select', {class: 'ui-rules-mode'});
+              rowModes.forEach(function(m, mi) {
+                modeSel.appendChild(el('option', {value: String(mi)}, [m.label || m.marker || 'default']));
+              });
+              modeSel.value = String(ruleMode(r));
+              modeSel.title = rowModes[ruleMode(r)].help || '';
+              modeSel.addEventListener('change', function() {
+                var mi = parseInt(modeSel.value, 10) || 0;
+                rules[idx] = uiRuleModeLine(mi, ti.value, rowModes);
+                modeSel.title = rowModes[mi].help || '';
+                persist();
+              });
+              row.appendChild(modeSel);
+            }
             // Edit immediately before remove: the destructive control stays
             // last, where a mis-aimed click is least likely to land on it.
             if (edit) { row.appendChild(edit); }

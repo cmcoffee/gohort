@@ -1418,6 +1418,34 @@
     }).filter(function(t){ return t !== ''; });
   }
 
+  // --- per-row modes on a rules field (FormField.RowModes) --------------
+  //
+  // A row's mode is the marker its line starts with; the default mode has
+  // none. ONE marker is read, never a run: a line that stacks two ("? ~ x")
+  // keeps the second in its text, visible, rather than the picker silently
+  // settling on one and rewriting the line without the other. Pure, so the
+  // harness can drive them without a DOM.
+  function uiRuleModeOf(line, modes) {
+    var s = String(line || '').replace(/^\s+/, '');
+    var hit = -1;
+    for (var i = 0; i < (modes || []).length; i++) {
+      var mk = modes[i].marker || '';
+      if (mk && s.indexOf(mk) === 0 && (hit < 0 || mk.length > modes[hit].marker.length)) { hit = i; }
+    }
+    if (hit < 0) { return {mode: 0, body: s}; }
+    return {mode: hit, body: s.slice(modes[hit].marker.length).replace(/^\s+/, '')};
+  }
+  // The line for a body in a mode. An empty body keeps its marker, so a mode
+  // picked on a row not typed into yet is not lost; the field drops rows
+  // with no body when it saves.
+  function uiRuleModeLine(mode, body, modes) {
+    body = String(body || '').trim();
+    var mk = (modes && modes[mode] && modes[mode].marker) || '';
+    if (!mk) { return body; }
+    return body ? mk + ' ' + body : mk;
+  }
+  // end rule modes
+
   // renderSideHeader builds the standard sidebar header used by chat,
   // pipeline, and article-editor panels. Layout is:
   //   [Label (flex:1), ...extras, + New, × close (mobile only)]

@@ -550,6 +550,18 @@ type FormField struct {
 	// focus and Escape handling to change one sentence.
 	RowEditor bool `json:"row_editor,omitempty"`
 
+	// RowModes gives each row of a Type=="rules" list a picker for how that
+	// row is treated. The choice is stored as a marker at the FRONT OF THE
+	// LINE rather than anywhere else, so a row and its mode cannot drift
+	// apart when rows are reordered, pasted or edited as text, and a reader of
+	// the saved string needs no second field to know what each row meant. The
+	// input shows the row without its marker; the picker owns it.
+	//
+	// The first mode is the default and should have an empty Marker, so a
+	// plain line is the default mode. What a mode MEANS belongs to whoever
+	// reads the saved lines; the field only keeps the marker on the right row.
+	RowModes []RowMode `json:"row_modes,omitempty"`
+
 	// Presets — small inline static list of one-click fills shown
 	// above the input. Click a preset to populate the field with
 	// its value (and save / mark dirty in the usual way). Use for

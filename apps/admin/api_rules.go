@@ -153,17 +153,33 @@ func alwaysRulesForm() ui.FormPanel {
 		PostURL:     "api/global-rules",
 		SubmitLabel: "Save Always rules",
 		Fields: []ui.FormField{{
-			Field:      "rules",
-			Label:      "Always",
-			Type:       "rules",
-			RowEditor:  true,
-			Help:       "Obligations, checked on every reply. One per line, e.g. \"Do not perform any action that may potentially be deemed illegal.\" Nothing ships here; the list is yours.",
+			Field:     "rules",
+			Label:     "Always",
+			Type:      "rules",
+			RowEditor: true,
+			Help:      "Obligations, checked on every reply. One per line, e.g. \"Do not perform any action that may potentially be deemed illegal.\" The picker beside each rule says what happens when a reply breaks it. Nothing ships here; the list is yours.",
+			// What a breach does, per rule: the same three modes, and the
+			// same markers, as an agent's own guardrails, because every
+			// agent's guardrail check reads these lines with that parser.
+			RowModes:   alwaysRuleModes,
 			SuggestURL: "/prompts/api/assist",
 			AssistPrompt: "You write operator rules that bind an AI assistant's conduct: short imperative " +
 				"lines, one obligation each. State the boundary and what to do when a request would cross " +
 				"it. Be concrete about the behaviour, not aspirational about values. Do not use em-dashes.",
 		}},
 	}
+}
+
+// alwaysRuleModes are what a breach of an Always rule does. The markers are the
+// guardrail grammar orchestrate's parseGuardrailRule reads ("?" correctable,
+// "~" contestable), and the labels match an agent's own guardrail editor.
+var alwaysRuleModes = []ui.RowMode{
+	{Label: "Block",
+		Help: "A breach ends the turn and a separate model writes the refusal, with no attempt at a compliant version. The default."},
+	{Marker: "?", Label: "Attempt recovery",
+		Help: "A breach sends the reply back for one rewrite, and declines if it still breaks the rule. For a rule that shapes an answer rather than forbidding it."},
+	{Marker: "~", Label: "Allow appeal",
+		Help: "The agent may dispute a block once, by quoting the user's own words; the framework looks the quote up itself and re-checks. For a rule with a condition the check cannot see."},
 }
 
 // styleRulesForm edits the Style list, shipped rules included.
