@@ -189,7 +189,7 @@ func TestACompleteShareAsksNothingOfTheRecipient(t *testing.T) {
 	shareAgentGuided("alice", "a1", []string{"bob"},
 		map[string]string{"cred:wiki": credRead})
 	// Taking the tool is the recipient's own step, so stand in for it.
-	SetGlobalToolAdopted(AuthDB(), "bob", "wiki_read", true)
+	SetGlobalToolAdopted(AuthDB(), "bob", "wiki_read", "", true)
 
 	if need := manifestForAgent("alice", "a1", "bob"); len(need) != 0 {
 		t.Errorf("a complete share still asks something of them: %v", need)

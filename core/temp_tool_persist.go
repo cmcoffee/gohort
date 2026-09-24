@@ -545,6 +545,21 @@ func SetPersistentTempToolShared(db Database, username, name string, shared bool
 	if db == nil || username == "" {
 		return errString("admin action requires authenticated user")
 	}
+	// One published tool per name, the rule skills already follow. Two would
+	// leave every lookup by name to pick one, and whichever it picked is whose
+	// code an adopter's agents run.
+	if shared {
+		for _, owner := range db.Keys(persistentTempToolsTable) {
+			if owner == username {
+				continue
+			}
+			for _, p := range LoadPersistentTempTools(db, owner) {
+				if p.Shared && p.Tool.Name == name {
+					return errString("the deployment already publishes a tool called " + name + " (" + owner + "'s); rename this one before publishing it")
+				}
+			}
+		}
+	}
 	tempToolPersistMu.Lock()
 	defer tempToolPersistMu.Unlock()
 	approved := LoadPersistentTempTools(db, username)
@@ -656,67 +671,202 @@ func CanAdoptGlobalTool(db Database, user, name string) bool {
 
 const adoptedGlobalToolsTable = "adopted_global_tools"
 
-// LoadAdoptedGlobalTools returns the set of global (Shared) tool NAMES the user
-// has adopted into their fleet. Global tools are opt-IN: a Shared tool loads for
-// a user's agents only once they've adopted it from the catalog (their Account
-// page). Empty set when the user has adopted none. See SetGlobalToolAdopted and
-// the runner's shared-pool load path.
-func LoadAdoptedGlobalTools(db Database, username string) map[string]bool {
-	db = tempToolStore(db)
-	out := map[string]bool{}
+// An adoption is stored as "name<TAB>owner": the tool the user took, and whose.
+// A bare "name" is an adoption from before the owner was recorded.
+//
+// The owner is the point. Adoption used to be a name and nothing else, and the
+// runtime loaded any peer-shared or published tool answering to it, from
+// whoever: when a second user published or shared a tool under the same name,
+// the adopters' agents started running that user's code, in their own
+// sessions, with their own credentials.
+const adoptionOwnerSep = "\t"
+
+func splitAdoption(entry string) (name, owner string) {
+	name, owner, _ = strings.Cut(entry, adoptionOwnerSep)
+	return strings.TrimSpace(name), strings.TrimSpace(owner)
+}
+
+// loadAdoptionPins reads the user's adoptions as name -> owner, "" for one
+// recorded before owners were. A pinned entry wins over a bare one.
+func loadAdoptionPins(db Database, username string) map[string]string {
+	out := map[string]string{}
 	if db == nil || username == "" {
 		return out
 	}
-	var names []string
-	if db.Get(adoptedGlobalToolsTable, username, &names) {
-		for _, n := range names {
-			out[n] = true
+	var entries []string
+	db.Get(adoptedGlobalToolsTable, username, &entries)
+	for _, e := range entries {
+		name, owner := splitAdoption(e)
+		if name == "" {
+			continue
+		}
+		if prev, seen := out[name]; !seen || prev == "" {
+			out[name] = owner
+		}
+	}
+	return out
+}
+
+// saveAdoptionPins writes the adoption list back, one entry per name. Caller
+// holds tempToolPersistMu.
+func saveAdoptionPins(db Database, username string, pins map[string]string) {
+	out := make([]string, 0, len(pins))
+	for name, owner := range pins {
+		if owner == "" {
+			out = append(out, name)
+		} else {
+			out = append(out, name+adoptionOwnerSep+owner)
+		}
+	}
+	sort.Strings(out)
+	db.Set(adoptedGlobalToolsTable, username, out)
+}
+
+// LoadAdoptedGlobalTools returns the set of global (Shared) tool NAMES the user
+// has adopted into their fleet. Global tools are opt-IN: a Shared tool loads for
+// a user's agents only once they've adopted it from the catalog (their Account
+// page). Empty set when the user has adopted none. Which owner's tool a name
+// resolves to is AdoptedToolsFor's question, not this one's.
+func LoadAdoptedGlobalTools(db Database, username string) map[string]bool {
+	db = tempToolStore(db)
+	out := map[string]bool{}
+	for name := range loadAdoptionPins(db, username) {
+		out[name] = true
+	}
+	return out
+}
+
+// adoptionCandidates are the tools answering to name that user may take: those
+// shared with them by a colleague first, then those the deployment publishes
+// whose adopt list admits them. Every owner's, not the first one found.
+func adoptionCandidates(db Database, user, name string) []LentTool {
+	var out []LentTool
+	for _, p := range PeerSharedToolsFor(db, user) {
+		if p.Tool.Name == name {
+			out = append(out, p)
+		}
+	}
+	for _, owner := range db.Keys(persistentTempToolsTable) {
+		if owner == user {
+			continue
+		}
+		for _, p := range LoadPersistentTempTools(db, owner) {
+			if p.Shared && !p.Tool.Disabled && p.Tool.Name == name &&
+				(len(p.AllowedUsers) == 0 || sliceHas(p.AllowedUsers, user)) {
+				out = append(out, LentTool{PersistentTempTool: p, Owner: owner})
+			}
+		}
+	}
+	return out
+}
+
+// distinctOwners lists the owners among candidates, in order.
+func distinctOwners(cands []LentTool) []string {
+	var out []string
+	for _, c := range cands {
+		if !sliceHas(out, c.Owner) {
+			out = append(out, c.Owner)
 		}
 	}
 	return out
 }
 
 // SetGlobalToolAdopted adds (adopted=true) or removes (adopted=false) one global
-// tool from the user's adoption list. Idempotent; the stored list is deduped and
-// sorted. Adopting a name not currently in the shared pool is harmless — it just
-// won't resolve until such a tool is published.
-func SetGlobalToolAdopted(db Database, username, name string, adopted bool) error {
+// tool from the user's adoption list, pinned to owner. An empty owner is
+// resolved when exactly one owner offers the name, and refused when more than
+// one does: whose code the user's agents will run is not a thing to guess.
+// Un-adopting is always allowed, so a tightened ACL never strands a tool.
+func SetGlobalToolAdopted(db Database, username, name, owner string, adopted bool) error {
 	db = tempToolStore(db)
 	if db == nil || username == "" {
 		return errString("adoption requires an authenticated user")
 	}
-	if strings.TrimSpace(name) == "" {
+	name, owner = strings.TrimSpace(name), strings.TrimSpace(owner)
+	if name == "" {
 		return errString("tool name required")
 	}
-	// Adopting is gated by the tool's AllowedUsers ACL — a user may only pull in a
-	// global tool they're permitted to see. Un-adopting is ALWAYS allowed: a user
-	// must be able to drop a tool even after their grant was revoked, so a
-	// tightened ACL never strands an un-removable tool in their fleet. Checked
-	// before taking the lock (CanAdoptGlobalTool reads the shared pool, and the
-	// mutex is not reentrant).
-	if adopted && !CanAdoptGlobalTool(db, username, name) {
-		return errString("not permitted to adopt tool " + name)
+	if adopted {
+		cands := adoptionCandidates(db, username, name)
+		owners := distinctOwners(cands)
+		switch {
+		case len(owners) == 0:
+			return errString("not permitted to adopt tool " + name)
+		case owner == "" && len(owners) > 1:
+			return errString("more than one person offers a tool called " + name + " (" + strings.Join(owners, ", ") + "); say whose to take")
+		case owner == "":
+			owner = owners[0]
+		case !sliceHas(owners, owner):
+			return errString("not permitted to adopt " + owner + "'s tool " + name)
+		}
 	}
 	tempToolPersistMu.Lock()
 	defer tempToolPersistMu.Unlock()
-	var names []string
-	db.Get(adoptedGlobalToolsTable, username, &names)
-	set := make(map[string]bool, len(names))
-	for _, n := range names {
-		set[n] = true
-	}
+	pins := loadAdoptionPins(db, username)
 	if adopted {
-		set[name] = true
+		pins[name] = owner
 	} else {
-		delete(set, name)
+		delete(pins, name)
 	}
-	out := make([]string, 0, len(set))
-	for n := range set {
-		out = append(out, n)
-	}
-	sort.Strings(out)
-	db.Set(adoptedGlobalToolsTable, username, out)
+	saveAdoptionPins(db, username, pins)
 	return nil
+}
+
+// AdoptedToolsFor resolves the user's adoptions to the tools their agents load:
+// each name to the tool of the owner it was adopted from, still shared with
+// them or still published and still admitting them. The one resolver the chat
+// runtime and the watch runtime both use, so they cannot disagree.
+//
+// An adoption recorded before owners were is pinned here the first time exactly
+// one owner offers the name. When several do it loads none of them and says so:
+// the old behaviour picked whichever was found first.
+func AdoptedToolsFor(db Database, user string) []LentTool {
+	db = tempToolStore(db)
+	if db == nil || strings.TrimSpace(user) == "" {
+		return nil
+	}
+	pins := loadAdoptionPins(db, user)
+	names := make([]string, 0, len(pins))
+	for name := range pins {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	var out []LentTool
+	learned := map[string]string{}
+	for _, name := range names {
+		cands := adoptionCandidates(db, user, name)
+		pin := pins[name]
+		if pin == "" {
+			owners := distinctOwners(cands)
+			if len(owners) > 1 {
+				Log("[temp_tool_persist] %s adopted %q before owners were recorded, and %s all offer one: loading none of them until it is taken again from one owner", user, name, strings.Join(owners, ", "))
+				continue
+			}
+			if len(owners) == 1 {
+				pin = owners[0]
+				learned[name] = pin
+			}
+		}
+		for _, c := range cands {
+			if c.Owner == pin {
+				out = append(out, c)
+				break
+			}
+		}
+	}
+	if len(learned) > 0 {
+		tempToolPersistMu.Lock()
+		cur := loadAdoptionPins(db, user)
+		for name, owner := range learned {
+			if cur[name] == "" {
+				if _, still := cur[name]; still {
+					cur[name] = owner
+				}
+			}
+		}
+		saveAdoptionPins(db, user, cur)
+		tempToolPersistMu.Unlock()
+	}
+	return out
 }
 
 // MergeAdoptedGlobalTools unions the given names into the user's adoption list

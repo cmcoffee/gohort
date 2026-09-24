@@ -175,3 +175,39 @@ func TestPromotingMovesTheRecordAndKeepsTheCorpus(t *testing.T) {
 		t.Error("it is still deployment-wide after narrowing")
 	}
 }
+
+// Taking somebody off a collection's share takes them off its contributors
+// too. The share ledger's revoke did not, so sharing it with them again later
+// quietly handed back write access nobody re-granted.
+func TestAContributorTakenOffTheShareIsNoLongerOne(t *testing.T) {
+	savedRoot, savedVec := RootDB, VectorDB
+	RootDB, VectorDB = &DBase{Store: kvlite.MemStore()}, &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB, VectorDB = savedRoot, savedVec })
+	aliceDB := UserDB(CollectionsDB(), "alice")
+	SaveCollection(aliceDB, Collection{ID: "runbooks", Owner: "alice", Name: "Runbooks",
+		AllowedUsers: []string{"bob"}, Contributors: []string{"bob"}})
+	c, _ := LoadCollection(aliceDB, "alice", "runbooks")
+	if !CollectionContributor(c, "bob") {
+		t.Fatal("precondition: bob contributes while it is shared with him")
+	}
+
+	// The revoke path: the share list shrinks, nothing else is touched.
+	c.AllowedUsers = nil
+	SaveCollection(aliceDB, c)
+	c, _ = LoadCollection(aliceDB, "alice", "runbooks")
+	if len(c.Contributors) != 0 {
+		t.Errorf("a revoke left bob on the contributors: %v", c.Contributors)
+	}
+	c.AllowedUsers = []string{"bob"}
+	SaveCollection(aliceDB, c)
+	c, _ = LoadCollection(aliceDB, "alice", "runbooks")
+	if CollectionContributor(c, "bob") {
+		t.Error("sharing it again brought bob's write access back")
+	}
+
+	// A record stored before the rule obeys it on read.
+	stale := Collection{ID: "x", Owner: "alice", Contributors: []string{"bob"}}
+	if CollectionContributor(stale, "bob") {
+		t.Error("a stored contributor who is not on the share still contributes")
+	}
+}

@@ -4,7 +4,8 @@ import "testing"
 
 // TestSharedPersistentTempTools covers the deployment-wide shared pool: a tool
 // is private to its owner until marked Shared, then surfaces in the shared pool
-// (deduped by name across owners), and drops back out when unshared.
+// (one per name: a second owner's same-named publish is refused), and drops back
+// out when unshared.
 func TestSharedPersistentTempTools(t *testing.T) {
 	db := OpenCache()
 
@@ -26,14 +27,18 @@ func TestSharedPersistentTempTools(t *testing.T) {
 		t.Error("sharing a missing tool should error")
 	}
 
-	// Share alice's weather + deploy, and bob's weather. The shared pool dedupes
-	// by name, so "weather" appears once even though two owners share it.
+	// Share alice's weather + deploy. Bob's weather is REFUSED: the deployment
+	// publishes one tool per name, because two would leave every lookup by name
+	// to pick one, and whichever it picked is whose code an adopter runs.
 	for _, tt := range []struct{ user, name string }{
-		{"alice", "weather"}, {"alice", "deploy"}, {"bob", "weather"},
+		{"alice", "weather"}, {"alice", "deploy"},
 	} {
 		if err := SetPersistentTempToolShared(db, tt.user, tt.name, true); err != nil {
 			t.Fatalf("share %s/%s: %v", tt.user, tt.name, err)
 		}
+	}
+	if err := SetPersistentTempToolShared(db, "bob", "weather", true); err == nil {
+		t.Fatal("a second published tool called weather was allowed")
 	}
 	got := LoadSharedPersistentTempTools(db)
 	names := map[string]int{}
@@ -47,12 +52,15 @@ func TestSharedPersistentTempTools(t *testing.T) {
 		t.Fatalf("shared pool = %v (want one weather + one deploy)", names)
 	}
 
-	// Unsharing alice's weather still leaves bob's weather shared.
+	// Once alice unpublishes weather, bob may publish his.
 	if err := SetPersistentTempToolShared(db, "alice", "weather", false); err != nil {
 		t.Fatal(err)
 	}
+	if err := SetPersistentTempToolShared(db, "bob", "weather", true); err != nil {
+		t.Fatalf("bob could not publish weather once the name was free: %v", err)
+	}
 	if got := LoadSharedPersistentTempTools(db); len(got) != 2 {
-		t.Errorf("bob still shares weather + alice shares deploy → 2, got %d", len(got))
+		t.Errorf("bob shares weather + alice shares deploy → 2, got %d", len(got))
 	}
 	// Unshare the rest → empty pool.
 	_ = SetPersistentTempToolShared(db, "bob", "weather", false)

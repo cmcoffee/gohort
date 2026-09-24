@@ -8,33 +8,41 @@ import (
 
 // TestGlobalToolAdoption covers the opt-in adoption store: adopt adds, adopt
 // again is idempotent, unadopt removes, isolation is per-user, and Merge unions
-// (the migration's grandfather path) without clobbering existing adoptions.
+// (the migration's grandfather path) without clobbering existing adoptions. An
+// adoption names a tool somebody actually offers.
 func TestGlobalToolAdoption(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
 	saved := RootDB
 	RootDB = db
 	t.Cleanup(func() { RootDB = saved })
+	db.Set(persistentTempToolsTable, "carol", []PersistentTempTool{
+		{Tool: TempTool{Name: "weather"}, Shared: true},
+		{Tool: TempTool{Name: "jira"}, Shared: true},
+	})
 
 	// Empty to start.
 	if got := LoadAdoptedGlobalTools(db, "alice"); len(got) != 0 {
 		t.Fatalf("fresh user must have no adoptions; got %v", got)
 	}
+	if err := SetGlobalToolAdopted(db, "alice", "nobody_offers_this", "", true); err == nil {
+		t.Fatal("an adoption of a tool nobody offers must be refused")
+	}
 
 	// Adopt is idempotent; unadopt removes.
-	if err := SetGlobalToolAdopted(db, "alice", "weather", true); err != nil {
+	if err := SetGlobalToolAdopted(db, "alice", "weather", "", true); err != nil {
 		t.Fatal(err)
 	}
-	if err := SetGlobalToolAdopted(db, "alice", "weather", true); err != nil {
+	if err := SetGlobalToolAdopted(db, "alice", "weather", "carol", true); err != nil {
 		t.Fatal(err)
 	}
-	if err := SetGlobalToolAdopted(db, "alice", "jira", true); err != nil {
+	if err := SetGlobalToolAdopted(db, "alice", "jira", "", true); err != nil {
 		t.Fatal(err)
 	}
 	a := LoadAdoptedGlobalTools(db, "alice")
 	if !a["weather"] || !a["jira"] || len(a) != 2 {
 		t.Fatalf("alice should have adopted weather+jira once each; got %v", a)
 	}
-	if err := SetGlobalToolAdopted(db, "alice", "weather", false); err != nil {
+	if err := SetGlobalToolAdopted(db, "alice", "weather", "", false); err != nil {
 		t.Fatal(err)
 	}
 	a = LoadAdoptedGlobalTools(db, "alice")
@@ -55,27 +63,27 @@ func TestGlobalToolAdoption(t *testing.T) {
 	}
 }
 
-// TestGlobalToolAdoptACL covers the phase-5 adopt ACL: AllowedUsers on a Shared
-// tool restricts who may see/adopt it, the field survives the kvlite/gob round
-// trip, CanAdoptGlobalTool enforces the rule (open=all, restricted=members,
-// unpublished=harmless, anon=never), and SetGlobalToolAdopted refuses an
-// ACL-denied adopt while always permitting un-adopt.
+// TestGlobalToolAdoptACL covers the adopt ACL: AllowedUsers on a Shared tool
+// restricts who may see/adopt it, the field survives the kvlite/gob round trip,
+// CanAdoptGlobalTool enforces the rule (open=all, restricted=members, anon=never),
+// and SetGlobalToolAdopted refuses an ACL-denied adopt while always permitting
+// un-adopt.
 func TestGlobalToolAdoptACL(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
 	saved := RootDB
 	RootDB = db
 	t.Cleanup(func() { RootDB = saved })
 
-	// alice publishes two shared tools: "payroll" restricted to herself, and
+	// dave publishes two shared tools: "payroll" restricted to alice, and
 	// "weather" open to everyone (empty AllowedUsers).
-	db.Set(persistentTempToolsTable, "alice", []PersistentTempTool{
+	db.Set(persistentTempToolsTable, "dave", []PersistentTempTool{
 		{Tool: TempTool{Name: "payroll"}, Shared: true, AllowedUsers: []string{"alice"}},
 		{Tool: TempTool{Name: "weather"}, Shared: true},
 	})
 
 	// AllowedUsers survives the kvlite/gob round-trip.
 	var got []string
-	for _, p := range LoadPersistentTempTools(db, "alice") {
+	for _, p := range LoadPersistentTempTools(db, "dave") {
 		if p.Tool.Name == "payroll" {
 			got = p.AllowedUsers
 		}
@@ -94,27 +102,107 @@ func TestGlobalToolAdoptACL(t *testing.T) {
 	if !CanAdoptGlobalTool(db, "bob", "weather") {
 		t.Fatal("weather is open (empty ACL); bob must be permitted")
 	}
-	if !CanAdoptGlobalTool(db, "carol", "unpublished") {
-		t.Fatal("an unpublished name is harmless; must be permitted (existence != permission)")
-	}
 	if CanAdoptGlobalTool(db, "", "weather") {
 		t.Fatal("anonymous must never be permitted")
 	}
 
 	// Adopt guard refuses an ACL-denied adopt but allows a permitted one.
-	if err := SetGlobalToolAdopted(db, "bob", "payroll", true); err == nil {
+	if err := SetGlobalToolAdopted(db, "bob", "payroll", "", true); err == nil {
 		t.Fatal("SetGlobalToolAdopted must refuse an ACL-denied adopt")
 	}
 	if LoadAdoptedGlobalTools(db, "bob")["payroll"] {
 		t.Fatal("a refused adopt must not persist")
 	}
-	if err := SetGlobalToolAdopted(db, "alice", "payroll", true); err != nil {
+	if err := SetGlobalToolAdopted(db, "alice", "payroll", "", true); err != nil {
 		t.Fatalf("alice is permitted; adopt should succeed: %v", err)
 	}
 	// Un-adopt is ALWAYS allowed, even for a user who could never adopt — a
 	// tightened ACL must never strand an un-removable tool.
-	if err := SetGlobalToolAdopted(db, "bob", "payroll", false); err != nil {
+	if err := SetGlobalToolAdopted(db, "bob", "payroll", "", false); err != nil {
 		t.Fatalf("un-adopt must always be allowed: %v", err)
+	}
+}
+
+// An adoption is of ONE owner's tool. It used to be a bare name, resolved to
+// whichever published or shared tool answered to it: a second user publishing a
+// tool of the same name put their code into every adopter's agents. And the
+// admin narrowing who may adopt a published tool was checked only at adopt
+// time, so somebody taken off the list kept running it.
+func TestAnAdoptionRunsOnlyTheToolItWasTakenFrom(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	saved := RootDB
+	RootDB = db
+	t.Cleanup(func() { RootDB = saved })
+	db.Set(persistentTempToolsTable, "carol", []PersistentTempTool{
+		{Tool: TempTool{Name: "wiki_read", CommandTemplate: "carol-version"}, Shared: true},
+	})
+	if err := SetGlobalToolAdopted(db, "bob", "wiki_read", "", true); err != nil {
+		t.Fatal(err)
+	}
+	loaded := func() []LentTool { return AdoptedToolsFor(db, "bob") }
+	if got := loaded(); len(got) != 1 || got[0].Owner != "carol" {
+		t.Fatalf("bob's adoption should load carol's tool: %+v", got)
+	}
+
+	// Carol stops publishing; mallory offers a tool of the same name.
+	db.Set(persistentTempToolsTable, "carol", []PersistentTempTool{
+		{Tool: TempTool{Name: "wiki_read", CommandTemplate: "carol-version"}},
+	})
+	db.Set(persistentTempToolsTable, "mallory", []PersistentTempTool{
+		{Tool: TempTool{Name: "wiki_read", CommandTemplate: "mallory-version"}, Shared: true},
+	})
+	for _, p := range loaded() {
+		if p.Owner == "mallory" {
+			t.Fatal("another user's same-named tool was substituted into bob's agents")
+		}
+	}
+
+	// Publishing a second tool under a name the deployment already publishes
+	// is refused, so the ambiguity cannot be created by the front door.
+	db.Set(persistentTempToolsTable, "carol", []PersistentTempTool{
+		{Tool: TempTool{Name: "wiki_read", CommandTemplate: "carol-version"}},
+	})
+	if err := SetPersistentTempToolShared(db, "carol", "wiki_read", true); err == nil {
+		t.Error("a second published tool under one name was allowed")
+	}
+
+	// The admin narrows mallory's tool to alice; bob, who took it, stops
+	// loading it without having to un-adopt.
+	if err := SetGlobalToolAdopted(db, "bob", "wiki_read", "mallory", true); err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded()) != 1 {
+		t.Fatal("precondition: bob loads mallory's tool once he takes it from her")
+	}
+	db.Set(persistentTempToolsTable, "mallory", []PersistentTempTool{
+		{Tool: TempTool{Name: "wiki_read", CommandTemplate: "mallory-version"}, Shared: true, AllowedUsers: []string{"alice"}},
+	})
+	if len(loaded()) != 0 {
+		t.Error("a user taken off a published tool's adopt list kept running it")
+	}
+}
+
+// An adoption from before owners were recorded is pinned the first time one
+// owner offers the name, and loads nothing while several do.
+func TestALegacyAdoptionIsPinnedOnlyWhenUnambiguous(t *testing.T) {
+	db := &DBase{Store: kvlite.MemStore()}
+	saved := RootDB
+	RootDB = db
+	t.Cleanup(func() { RootDB = saved })
+	MergeAdoptedGlobalTools(db, "bob", []string{"wiki_read"})
+	db.Set(persistentTempToolsTable, "carol", []PersistentTempTool{{Tool: TempTool{Name: "wiki_read"}, Shared: true}})
+	db.Set(persistentTempToolsTable, "mallory", []PersistentTempTool{{Tool: TempTool{Name: "wiki_read"}, Shared: true}})
+	if got := AdoptedToolsFor(db, "bob"); len(got) != 0 {
+		t.Fatalf("an ambiguous legacy adoption loaded %+v", got)
+	}
+	db.Set(persistentTempToolsTable, "mallory", []PersistentTempTool{{Tool: TempTool{Name: "wiki_read"}}})
+	if got := AdoptedToolsFor(db, "bob"); len(got) != 1 || got[0].Owner != "carol" {
+		t.Fatalf("an unambiguous legacy adoption should resolve: %+v", got)
+	}
+	// Now pinned: mallory publishing again does not move it.
+	db.Set(persistentTempToolsTable, "mallory", []PersistentTempTool{{Tool: TempTool{Name: "wiki_read"}, Shared: true}})
+	if got := AdoptedToolsFor(db, "bob"); len(got) != 1 || got[0].Owner != "carol" {
+		t.Fatalf("a pinned adoption moved to another owner: %+v", got)
 	}
 }
 

@@ -58,7 +58,7 @@ func adviceForStages(stages []PipelineStage, prefix string) []string {
 		// provides. ModelOutput rather than Output: a field filled from
 		// a variable is never asked of the model, so a stage whose only
 		// declarations are fills has no contract to collide with.
-		if len(s.ModelOutput()) > 0 && AsksForRawJSON(s.Prompt) {
+		if len(s.ModelOutput()) > 0 && asksForRawJSON(s.Prompt) {
 			out = append(out, DeclaredOutputPromptAdvice("stage", prefix+name))
 		}
 		// A fanout body multiplies: N branches x K stages of model calls,

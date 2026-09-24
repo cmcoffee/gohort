@@ -779,10 +779,6 @@ func DeclaredOutputPromptAdvice(kind, name string) string {
 		"formatting rules is how a model ends up returning a JSON string inside a JSON field."
 }
 
-// AsksForRawJSON reports whether a prompt hand-rolls a JSON contract.
-// Exported for the other definitions that declare output fields.
-func AsksForRawJSON(prompt string) bool { return asksForRawJSON(prompt) }
-
 // MachineRewrite is a finding a draft-and-review can settle: the step,
 // and the finding as the brief the drafter is given.
 type MachineRewrite struct {

@@ -839,6 +839,7 @@ func collectionSharedWith(c Collection, user string) bool {
 // under GlobalCollectionsTable. Updated timestamp stamped on write.
 func SaveCollection(udb Database, c Collection) {
 	c.Updated = time.Now()
+	c.Contributors = contributorsStillShared(c)
 	if IsDeploymentScope(c) {
 		if RootDB != nil {
 			RootDB.Set(GlobalCollectionsTable, c.ID, c)
@@ -1068,11 +1069,10 @@ func init() {
 
 // CollectionContributor reports whether this user may add to the collection.
 //
-// The owner always may. Everybody else has to be named, and being named as a
-// contributor without being able to read it is not a state anybody can create
-// through the pickers — but if a list ever says so, reading is implied rather
-// than refused, because a contributor who cannot see what is already there
-// would be writing blind.
+// The owner always may. Everybody else has to be named as a contributor AND
+// still be on the share: a contributor taken off the share is no longer one
+// (contributorsStillShared), so sharing it with them again does not bring the
+// write access back with it.
 func CollectionContributor(c Collection, user string) bool {
 	user = strings.TrimSpace(user)
 	if user == "" {
@@ -1081,10 +1081,35 @@ func CollectionContributor(c Collection, user string) bool {
 	if c.Owner == "" || c.Owner == user {
 		return true
 	}
-	for _, u := range c.Contributors {
+	for _, u := range contributorsStillShared(c) {
 		if u == user {
 			return true
 		}
 	}
 	return false
+}
+
+// contributorsStillShared is Contributors held to the rule its comment states:
+// a subset of the people it is shared with. Taking somebody off the share used
+// to leave them on this list on every path but the edit form (the share ledger's
+// revoke did not trim it), so sharing the collection with them again later
+// quietly handed back write access nobody re-granted. Enforced where it is saved
+// and again where it is read, so a record stored before this still obeys it.
+//
+// A deployment collection has no share list (everybody reads it), so its
+// contributors are the owner's grant alone and are left as they are.
+func contributorsStillShared(c Collection) []string {
+	if IsDeploymentScope(c) || len(c.Contributors) == 0 {
+		return c.Contributors
+	}
+	var out []string
+	for _, u := range c.Contributors {
+		for _, a := range c.AllowedUsers {
+			if u == a {
+				out = append(out, u)
+				break
+			}
+		}
+	}
+	return out
 }

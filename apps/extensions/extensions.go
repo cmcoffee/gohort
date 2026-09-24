@@ -1310,7 +1310,14 @@ func (T *Extensions) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
-		adopted := LoadAdoptedGlobalTools(AuthDB(), user)
+		// "Added" means that owner's tool is what the user's agents load, not
+		// merely that the name is on their list: an adoption is pinned to the
+		// owner it was taken from.
+		loadedFrom := map[string]string{}
+		for _, p := range AdoptedToolsFor(AuthDB(), user) {
+			loadedFrom[p.Tool.Name] = p.Owner
+		}
+		publishedBy := SharedToolOwners(AuthDB())
 		// A tool already in the user's OWN pool (they authored it, and it may be
 		// the one they shared) is always active for them — "adopting" it from the
 		// catalog is a no-op, and a same-named global tool would just collide. So
@@ -1330,6 +1337,9 @@ func (T *Extensions) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
 			// deployment publishes. Whose code you are about to run in your own
 			// session is the first thing to know about it.
 			From string `json:"from,omitempty"`
+			// Owner is whose tool this row is, either way: what Add pins the
+			// adoption to.
+			Owner string `json:"owner"`
 		}
 		rows := []row{}
 		missingCred := func(t TempTool) bool {
@@ -1350,8 +1360,8 @@ func (T *Extensions) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
 			own[p.Tool.Name] = true
 			rows = append(rows, row{
 				Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
-				Credential: p.Tool.Credential, Adopted: adopted[p.Tool.Name],
-				Missing: missingCred(p.Tool), From: p.Owner,
+				Credential: p.Tool.Credential, Adopted: loadedFrom[p.Tool.Name] == p.Owner,
+				Missing: missingCred(p.Tool), From: p.Owner, Owner: p.Owner,
 			})
 		}
 		for _, p := range LoadSharedPersistentTempTools(AuthDB()) {
@@ -1366,10 +1376,11 @@ func (T *Extensions) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
 			if !CanAdoptGlobalTool(AuthDB(), user, p.Tool.Name) {
 				continue
 			}
+			owner := publishedBy[p.Tool.Name]
 			rows = append(rows, row{
 				Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
-				Credential: p.Tool.Credential, Adopted: adopted[p.Tool.Name],
-				Missing: missingCred(p.Tool),
+				Credential: p.Tool.Credential, Adopted: owner != "" && loadedFrom[p.Tool.Name] == owner,
+				Missing: missingCred(p.Tool), Owner: owner,
 			})
 		}
 		writeJSON(w, rows)
@@ -1378,19 +1389,21 @@ func (T *Extensions) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
 		// params (?name=&adopt=true) — the latter lets a declarative table
 		// RowAction button drive it with no client script.
 		name := strings.TrimSpace(r.URL.Query().Get("name"))
+		owner := strings.TrimSpace(r.URL.Query().Get("owner"))
 		adopt := r.URL.Query().Get("adopt") == "true"
 		if name == "" {
 			var body struct {
 				Name  string `json:"name"`
+				Owner string `json:"owner"`
 				Adopt bool   `json:"adopt"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
-			name, adopt = strings.TrimSpace(body.Name), body.Adopt
+			name, owner, adopt = strings.TrimSpace(body.Name), strings.TrimSpace(body.Owner), body.Adopt
 		}
-		if err := SetGlobalToolAdopted(AuthDB(), user, name, adopt); err != nil {
+		if err := SetGlobalToolAdopted(AuthDB(), user, name, owner, adopt); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -2149,7 +2162,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 				},
 				RowActions: []ui.RowAction{
 					{Type: "button", Label: "Add", Method: "POST",
-						PostTo:     "api/global-tools?name={name}&adopt=true",
+						PostTo:     "api/global-tools?name={name}&owner={owner}&adopt=true",
 						HideIf:     "adopted",
 						Optimistic: true},
 					{Type: "button", Label: "Remove", Method: "POST",
