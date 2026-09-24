@@ -226,9 +226,13 @@ func (T *OrchestrateApp) handleMachineImport(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxImportBytes))
-	if err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
+	body, ok := readImportBody(w, r)
+	if !ok {
+		return
+	}
+	if importBundleAtDoor(w, user, body, "machine", func(name string) (any, bool) {
+		return findMachineByNameOrID(udb, user, name)
+	}) {
 		return
 	}
 	recipe, err := decodeMachineRecipe(body)
@@ -797,10 +801,6 @@ func copyName(base string, existing []string) string {
 	}
 	return name
 }
-
-// maxImportBytes bounds a pasted or uploaded recipe. A machine is
-// prompts and wiring; anything past this is not one.
-const maxImportBytes = 1 << 20
 
 // decodeMachineRecipe reads a recipe in either of the two shapes it
 // legitimately arrives in.

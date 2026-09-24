@@ -162,6 +162,9 @@ type toolArtifact struct{}
 
 func (toolArtifact) ArtifactType() string { return "tool" }
 
+// UserImportable: a tool lands in the importer's PENDING pool; an admin approves it.
+func (toolArtifact) UserImportable() bool { return true }
+
 func (toolArtifact) ListArtifacts(db Database) []ArtifactSel {
 	store := tempToolStore(db)
 	if store == nil {
@@ -324,6 +327,9 @@ func (toolArtifact) ImportArtifact(db Database, recipe json.RawMessage, owner st
 type skillArtifact struct{}
 
 func (skillArtifact) ArtifactType() string { return "skill" }
+
+// UserImportable: a skill lands disabled in the importer's own namespace.
+func (skillArtifact) UserImportable() bool { return true }
 
 func (skillArtifact) ListArtifacts(db Database) []ArtifactSel {
 	store := skillStore(db)
@@ -555,6 +561,9 @@ type PortableChunk struct {
 type collectionArtifact struct{}
 
 func (collectionArtifact) ArtifactType() string { return "collection" }
+
+// UserImportable: a collection lands user-scoped under the importer.
+func (collectionArtifact) UserImportable() bool { return true }
 
 func (collectionArtifact) ListArtifacts(_ Database) []ArtifactSel {
 	base := CollectionsDB()
@@ -949,6 +958,9 @@ type customAppArtifact struct{}
 
 func (customAppArtifact) ArtifactType() string { return "custom_app" }
 
+// UserImportable: an app lands disabled and unshared; sharing stays admin-approved.
+func (customAppArtifact) UserImportable() bool { return true }
+
 func (customAppArtifact) ListArtifacts(_ Database) []ArtifactSel {
 	authDB := AuthDB()
 	if authDB == nil {
@@ -1244,6 +1256,9 @@ func (sourceHookArtifact) ImportArtifact(db Database, recipe json.RawMessage, _ 
 type monitorArtifact struct{}
 
 func (monitorArtifact) ArtifactType() string { return "monitor" }
+
+// UserImportable: a monitor lands paused under the importer, with a fresh token.
+func (monitorArtifact) UserImportable() bool { return true }
 
 func (monitorArtifact) ListArtifacts(db Database) []ArtifactSel {
 	if db == nil {

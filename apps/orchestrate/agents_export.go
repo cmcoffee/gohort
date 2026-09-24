@@ -93,9 +93,23 @@ func (T *OrchestrateApp) handleAgentImport(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	body, ok := readImportBody(w, r)
+	if !ok {
+		return
+	}
+	if importBundleAtDoor(w, user, body, "agent", func(name string) (any, bool) {
+		for _, a := range listAgents(udb, user) {
+			if a.OwnedBy == "" && a.Owner == user && a.Name == name {
+				return a, true
+			}
+		}
+		return nil, false
+	}) {
+		return
+	}
 	var imp agentExport
-	if err := json.NewDecoder(r.Body).Decode(&imp); err != nil {
-		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+	if err := json.Unmarshal(UnwrapArtifactUpload(body), &imp); err != nil {
+		http.Error(w, "that does not read as an agent recipe ("+err.Error()+")", http.StatusBadRequest)
 		return
 	}
 	saved, subCount, err := importAgentRecipe(udb, imp, user)

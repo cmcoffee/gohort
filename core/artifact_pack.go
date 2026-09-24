@@ -149,6 +149,45 @@ func exportableCredential(name string) bool {
 	return true
 }
 
+// ArtifactRecipeSniffer is an OPTIONAL ArtifactType capability for a type whose
+// recipe also circulates as a BARE file, from before the bundle envelope
+// existed or from a per-app Export button (an agent's .agent.json, a
+// pipeline's .pipeline.json). Given the top-level keys of a JSON object that
+// is neither a bundle nor a bare {type, recipe} artifact, the type says
+// whether the object is one of its recipes, so ParseArtifactBundle can lift it
+// into a one-item bundle instead of falling through to the legacy connector
+// parser, which reads any {"name": ...} object as a connector.
+//
+// Claim only on a key no other type's recipe has.
+type ArtifactRecipeSniffer interface {
+	SniffsRecipe(fields map[string]json.RawMessage) bool
+}
+
+// ArtifactUserImportable is an OPTIONAL ArtifactType capability: a type that
+// returns true may be imported by an ordinary user into their OWN namespace.
+// Every such type's import must land inside the importer's reach and inert
+// (drafts, disabled, pending review). A type without it (connectors,
+// credentials, source hooks: deployment-wide records) is admin-only.
+type ArtifactUserImportable interface {
+	UserImportable() bool
+}
+
+// ArtifactTypeUserImportable reports whether an ordinary user may import
+// artifacts of the named type (see ArtifactUserImportable). Unknown types are
+// not importable by anyone, so they read false.
+func ArtifactTypeUserImportable(typ string) bool {
+	at, ok := lookupArtifactType(typ)
+	if !ok {
+		return false
+	}
+	ui, ok := at.(ArtifactUserImportable)
+	return ok && ui.UserImportable()
+}
+
+// adminOnlyArtifactDetail is the skip reason for a type an ordinary user's
+// import may not bring in.
+const adminOnlyArtifactDetail = "only an administrator can import this kind of artifact"
+
 var artifactTypes = map[string]ArtifactType{}
 
 // RegisterArtifactType adds a portable artifact type to the registry. Called
@@ -353,6 +392,22 @@ func ParseArtifactBundle(data []byte) (ArtifactBundle, error) {
 		}
 		return ArtifactBundle{Bundle: ArtifactBundleFormat, Artifacts: []PortableArtifact{one}}, nil
 	}
+	if trimmed[0] == '{' {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(trimmed, &fields) == nil {
+			// A form's file field posts the file's TEXT as a string under its
+			// field name: {"recipe": "<file>"} or {"pack": "<file>"}. Unwrap
+			// and parse what the file says.
+			if inner, ok := uploadWrappedText(fields); ok {
+				return ParseArtifactBundle([]byte(inner))
+			}
+			if typ, ok := sniffArtifactType(fields); ok {
+				one := PortableArtifact{Type: typ, Recipe: json.RawMessage(trimmed)}
+				one.Name = artifactRecipeName(one)
+				return ArtifactBundle{Bundle: ArtifactBundleFormat, Artifacts: []PortableArtifact{one}}, nil
+			}
+		}
+	}
 	// Legacy connector pack / bare connector(s): reuse the connector parser and
 	// lift each into a connector artifact so old files keep importing.
 	pack, err := ParseConnectorPack(trimmed)
@@ -368,6 +423,90 @@ func ParseArtifactBundle(data []byte) (ArtifactBundle, error) {
 		b.Artifacts = append(b.Artifacts, PortableArtifact{Type: "connector", Name: pc.Name, Recipe: recipe})
 	}
 	return b, nil
+}
+
+// IsArtifactEnvelope reports whether data (after any upload wrapper) is a
+// bundle envelope or a bare {type, recipe} artifact, as opposed to a bare
+// recipe of one type. A per-type import door uses it to hand envelopes to the
+// bundle importer and keep its own handling for the bare files it has always
+// taken.
+func IsArtifactEnvelope(data []byte) bool {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return false
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(trimmed, &fields) != nil {
+		return false
+	}
+	if inner, ok := uploadWrappedText(fields); ok {
+		return IsArtifactEnvelope([]byte(inner))
+	}
+	var probe struct {
+		Bundle    string          `json:"bundle"`
+		Artifacts json.RawMessage `json:"artifacts"`
+		Type      string          `json:"type"`
+		Recipe    json.RawMessage `json:"recipe"`
+	}
+	_ = json.Unmarshal(trimmed, &probe)
+	return probe.Bundle == ArtifactBundleFormat || len(probe.Artifacts) > 0 ||
+		(strings.TrimSpace(probe.Type) != "" && len(probe.Recipe) > 0)
+}
+
+// UnwrapArtifactUpload returns the file text inside a form upload wrapper
+// ({"recipe": "<text>"} or {"pack": "<text>"}), or data unchanged when it is
+// not one.
+func UnwrapArtifactUpload(data []byte) []byte {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || trimmed[0] != '{' {
+		return data
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(trimmed, &fields) != nil {
+		return data
+	}
+	if inner, ok := uploadWrappedText(fields); ok {
+		return UnwrapArtifactUpload([]byte(inner))
+	}
+	return data
+}
+
+// uploadWrappedText returns the file text when fields is exactly an upload
+// wrapper: one key, "recipe" or "pack", holding a JSON STRING. A {"recipe": {...}}
+// object is a bare artifact's recipe, not a wrapper, and is left alone.
+func uploadWrappedText(fields map[string]json.RawMessage) (string, bool) {
+	if len(fields) != 1 {
+		return "", false
+	}
+	for _, key := range []string{"recipe", "pack"} {
+		raw, ok := fields[key]
+		if !ok {
+			continue
+		}
+		var text string
+		if json.Unmarshal(raw, &text) != nil || strings.TrimSpace(text) == "" {
+			return "", false
+		}
+		return text, true
+	}
+	return "", false
+}
+
+// sniffArtifactType asks each registered ArtifactRecipeSniffer, in type-name
+// order so the answer never depends on map iteration, whether fields is one of
+// its bare recipes.
+func sniffArtifactType(fields map[string]json.RawMessage) (string, bool) {
+	names := make([]string, 0, len(artifactTypes))
+	for n := range artifactTypes {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		if sn, ok := artifactTypes[n].(ArtifactRecipeSniffer); ok && sn.SniffsRecipe(fields) {
+			return n, true
+		}
+	}
+	return "", false
 }
 
 // ArtifactImportOutcome records what happened to one artifact in an import.
@@ -443,6 +582,18 @@ func artifactExists(db Database, s ArtifactSel) bool {
 // the missing piece. The check runs AFTER all imports so a credential bundled
 // alongside the tool that needs it doesn't false-warn.
 func ImportArtifactBundle(db Database, data []byte, owner string) (ArtifactImportResult, error) {
+	return importArtifactBundle(db, data, owner, false)
+}
+
+// ImportArtifactBundleAsUser is ImportArtifactBundle for an ordinary user's
+// own namespace: only ArtifactUserImportable types import, and every other
+// artifact in the bundle is reported as skipped rather than silently dropped,
+// so the person can see what needs an administrator.
+func ImportArtifactBundleAsUser(db Database, data []byte, owner string) (ArtifactImportResult, error) {
+	return importArtifactBundle(db, data, owner, true)
+}
+
+func importArtifactBundle(db Database, data []byte, owner string, userOnly bool) (ArtifactImportResult, error) {
 	var res ArtifactImportResult
 	bundle, err := ParseArtifactBundle(data)
 	if err != nil {
@@ -462,6 +613,12 @@ func ImportArtifactBundle(db Database, data []byte, owner string) (ArtifactImpor
 		if !ok {
 			res.Outcomes = append(res.Outcomes, ArtifactImportOutcome{
 				Type: typ, Name: a.Name, Status: "skipped", Detail: "unknown artifact type"})
+			res.Skipped++
+			continue
+		}
+		if userOnly && !ArtifactTypeUserImportable(typ) {
+			res.Outcomes = append(res.Outcomes, ArtifactImportOutcome{
+				Type: typ, Name: artifactRecipeName(a), Status: "skipped", Detail: adminOnlyArtifactDetail})
 			res.Skipped++
 			continue
 		}
@@ -557,6 +714,15 @@ type ArtifactPreviewResult struct {
 // name matches only a PENDING draft previews as a skip, while import actually
 // replaces that draft in place.
 func PreviewArtifactBundle(db Database, data []byte, owner string) (ArtifactPreviewResult, error) {
+	return previewArtifactBundle(db, data, owner, false)
+}
+
+// PreviewArtifactBundleAsUser is the dry-run twin of ImportArtifactBundleAsUser.
+func PreviewArtifactBundleAsUser(db Database, data []byte, owner string) (ArtifactPreviewResult, error) {
+	return previewArtifactBundle(db, data, owner, true)
+}
+
+func previewArtifactBundle(db Database, data []byte, owner string, userOnly bool) (ArtifactPreviewResult, error) {
 	var res ArtifactPreviewResult
 	bundle, err := ParseArtifactBundle(data)
 	if err != nil {
@@ -591,6 +757,8 @@ func PreviewArtifactBundle(db Database, data []byte, owner string) (ArtifactPrev
 		switch {
 		case !known:
 			item.Action, item.Detail = "skip", "unknown artifact type"
+		case userOnly && !ArtifactTypeUserImportable(typ):
+			item.Action, item.Detail = "skip", adminOnlyArtifactDetail
 		case name == "":
 			item.Action, item.Detail = "skip", "missing artifact name"
 		case artifactExists(db, ArtifactSel{Type: typ, Name: name, Owner: owner}):

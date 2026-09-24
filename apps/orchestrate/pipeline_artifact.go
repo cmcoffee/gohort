@@ -42,6 +42,15 @@ type pipelineArtifact struct{ app *OrchestrateApp }
 
 func (*pipelineArtifact) ArtifactType() string { return "pipeline" }
 
+// UserImportable: a pipeline lands under the importer, unpublished.
+func (*pipelineArtifact) UserImportable() bool { return true }
+
+// SniffsRecipe claims a bare .pipeline.json: a pipeline is its stages.
+func (*pipelineArtifact) SniffsRecipe(fields map[string]json.RawMessage) bool {
+	_, ok := fields["stages"]
+	return ok
+}
+
 // ListArtifacts enumerates every user's pipeline defs. Owner is set so export
 // resolves the right per-user store.
 func (p *pipelineArtifact) ListArtifacts(_ Database) []ArtifactSel {

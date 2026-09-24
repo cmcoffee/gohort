@@ -186,9 +186,21 @@ func (T *OrchestrateApp) handlePipelineImport(w http.ResponseWriter, r *http.Req
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	body, ok := readImportBody(w, r)
+	if !ok {
+		return
+	}
+	if importBundleAtDoor(w, user, body, "pipeline", func(name string) (any, bool) {
+		return findPipelineByNameOrID(udb, user, name)
+	}) {
+		return
+	}
+	// The page's Import form posts the file as TEXT under its field name,
+	// {"recipe": "<file>"}; a script posts the recipe itself. Decoding the
+	// wrapper as a PipelineDef read every UI import as an empty pipeline.
 	var recipe PipelineDef
-	if err := json.NewDecoder(r.Body).Decode(&recipe); err != nil {
-		http.Error(w, "bad request", http.StatusBadRequest)
+	if err := json.Unmarshal(UnwrapArtifactUpload(body), &recipe); err != nil {
+		http.Error(w, "that does not read as a pipeline recipe ("+err.Error()+")", http.StatusBadRequest)
 		return
 	}
 	saved, err := ImportPipeline(udb, user, recipe)

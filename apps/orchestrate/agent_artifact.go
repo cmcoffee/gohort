@@ -33,6 +33,17 @@ type agentArtifact struct{ app *OrchestrateApp }
 
 func (*agentArtifact) ArtifactType() string { return "agent" }
 
+// UserImportable: an agent lands private under the importer, its tools pending
+// (see makeImportedAgentInert, queueImportedTools).
+func (*agentArtifact) UserImportable() bool { return true }
+
+// SniffsRecipe claims a bare .agent.json, the per-agent Export button's file.
+// orchestrator_prompt is required on every agent and on nothing else.
+func (*agentArtifact) SniffsRecipe(fields map[string]json.RawMessage) bool {
+	_, ok := fields["orchestrator_prompt"]
+	return ok
+}
+
 // ListArtifacts enumerates every user's TOP-LEVEL agents (sub-agents ride inside
 // their parent's recipe, so they aren't listed on their own). Owner is set so
 // export resolves the right per-user store.
@@ -245,9 +256,10 @@ func agentExportDeps(db Database, exp agentExport, owner string, inBundle func(t
 
 // ImportArtifact reconstitutes an agent recipe under owner as a NEW agent (fresh
 // id, reborn sub-agents). A same-named top-level agent is skipped, never
-// clobbered — consistent with connector/tool import. Unlike those, agents have
-// no separate approval gate: an imported agent is usable immediately, but any
-// tools its allowlist names must themselves exist/be approved to actually fire.
+// clobbered — consistent with connector/tool import. The agent itself is
+// usable by its importer at once, but lands private with no autonomy grants,
+// and the tools it carries inline wait in the pending pool for approval
+// (importAgentRecipe).
 func (a *agentArtifact) ImportArtifact(_ Database, recipe json.RawMessage, owner string) (string, string, error) {
 	owner = strings.TrimSpace(owner)
 	if owner == "" {

@@ -39,6 +39,15 @@ type machineArtifact struct{ app *OrchestrateApp }
 
 func (*machineArtifact) ArtifactType() string { return "machine" }
 
+// UserImportable: a machine lands under the importer, unpublished.
+func (*machineArtifact) UserImportable() bool { return true }
+
+// SniffsRecipe claims a bare .machine.json: a machine is its phases.
+func (*machineArtifact) SniffsRecipe(fields map[string]json.RawMessage) bool {
+	_, ok := fields["phases"]
+	return ok
+}
+
 // ListArtifacts enumerates every user's machines, Owner set so export
 // resolves the right per-user store.
 func (m *machineArtifact) ListArtifacts(_ Database) []ArtifactSel {
