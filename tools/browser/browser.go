@@ -170,7 +170,15 @@ func browsePageTotalBudget() time.Duration {
 // goroutine is allowed to leak (it'll complete eventually when rod
 // errors out or the process exits); the caller gets a clear error
 // immediately rather than waiting alongside a hung browser.
+//
+// It is also the local renderer's own guard. Chromium will render file://,
+// loopback and metadata URLs without complaint, and Fetch is exported for
+// callers that go around the routed BrowserFetchFunc seam, so the check has
+// to live at the one entry every local render passes through.
 func (t *BrowsePageTool) fetch(target string, maxChars int) (string, error) {
+	if err := RefuseNonPublicHost(target); err != nil {
+		return "", err
+	}
 	budget := browsePageTotalBudget()
 	type result struct {
 		text string

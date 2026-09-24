@@ -137,6 +137,13 @@ func (T *Servitor) cloneAndIngestRepo(ctx context.Context, user string, udb Data
 			}
 			return nil
 		}
+		// Regular files only. A repo is attacker-authored content, and a
+		// symlink in it (to /etc, the gohort data dir, a key file) would
+		// otherwise pass the Lstat-based size check and then be FOLLOWED by
+		// ReadFile, landing a host file in the store for read_file to return.
+		if !d.Type().IsRegular() {
+			return nil
+		}
 		info, err := d.Info()
 		if err != nil || info.Size() == 0 || info.Size() > maxIngestFileSize {
 			return nil

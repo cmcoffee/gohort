@@ -535,6 +535,9 @@ func (T *Servitor) registerPeerExec() {
 		// output_id this instance alone could serve.
 		ctx = withRawCapture(ctx)
 		if a.Type == "command" {
+			if err := localCommandAllowed(a); err != nil {
+				return "", err
+			}
 			return exec.exec_local_ctx(ctx, command, a.WorkDir, a.EnvVars)
 		}
 		client, err := acquireConn(user, a)

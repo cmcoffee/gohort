@@ -251,6 +251,10 @@ func (pr *probeRun) connect() probeAction {
 		emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf(
 			"Working %s through %s.", applianceLabel(pr.appliance.Name, pr.appliance.ID), pr.appliance.PeerName)})
 	} else if pr.appliance.Type == "command" {
+		if err := localCommandAllowed(pr.appliance); err != nil {
+			probeSessions.AppendEvent(pr.id, probeEvent{Kind: "error", Text: err.Error()}, true)
+			return actReturn
+		}
 		emit(pr.id, probeEvent{Kind: "status", Text: fmt.Sprintf("Running locally: %s", pr.appliance.Command)})
 	} else if pr.appliance.Type == "repo" {
 		// No connection to acquire — probes search/read the encrypted store.

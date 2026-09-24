@@ -67,7 +67,7 @@ func init() {
 	})
 
 	gt.AddAction("define", &GroupedToolAction{
-		Description: "Register a NEW reusable export format backed by a generator script. The script reads the ExportInput JSON ({title,date,data}) on stdin and writes the file's bytes base64-encoded to stdout on a line beginning with the marker \"" + ExportB64Marker + "\". Any pip packages it imports must be listed in py_requires: they're provisioned (sandboxed, host-side) at define time so create is fast. Use when a user wants a format the built-ins don't cover (CSV, an invoice .xlsx with your layout, a branded .docx, etc.).",
+		Description: "Register a NEW reusable export format backed by a generator script. The script reads the ExportInput JSON ({title,date,data}) on stdin and writes the file's bytes base64-encoded to stdout on a line beginning with the marker \"" + ExportB64Marker + "\". Any pip packages it imports must be listed in py_requires: they're provisioned host-side at define time so create is fast. Only packages the built-in formats already use (openpyxl, python-docx, python-pptx) are available unless an admin defines the format. Use when a user wants a format the built-ins don't cover (CSV, an invoice .xlsx with your layout, a branded .docx, etc.).",
 		Params: map[string]ToolParam{
 			"name":        {Type: "string", Description: "Format name (lowercase identifier: letters, digits, _, -). Cannot shadow a built-in (pdf/xlsx/docx/pptx)."},
 			"ext":         {Type: "string", Description: "File extension including the dot, e.g. \".csv\". Defaults to \".\"+name."},
@@ -137,6 +137,13 @@ func handleCreate(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	if _, ok := args["data"]; !ok {
 		return "", Error("data is required: see the expected shape via action=formats")
+	}
+	// A stored format is re-checked on every run: one saved before the
+	// package gate existed would otherwise provision whatever it named.
+	if f.UserDefined {
+		if err := checkPyRequires(sess, f.PyRequires); err != nil {
+			return "", err
+		}
 	}
 
 	in := ExportInput{
@@ -215,6 +222,9 @@ func handleDefine(args map[string]any, sess *ToolSession) (string, error) {
 		UserDefined: true,
 	}
 
+	if err := checkPyRequires(sess, f.PyRequires); err != nil {
+		return "", err
+	}
 	// Provision now so pip errors surface at define time, not on first
 	// create. Only python formats have pip deps.
 	if interp == "python3" && len(f.PyRequires) > 0 {
@@ -255,6 +265,38 @@ func handleUndefine(args map[string]any, sess *ToolSession) (string, error) {
 
 // resolveFormat looks up a built-in first, then the caller's per-user
 // defined formats.
+// checkPyRequires gates which pip packages a user-defined format may
+// provision. pip installs into ONE directory every user's sandboxed scripts
+// import from, so the package set is deployment-wide: a non-admin may use
+// only what the built-in formats already provision, and anything else needs
+// an admin to define the format. Spec syntax is enforced for everyone.
+func checkPyRequires(sess *ToolSession, specs []string) error {
+	if len(specs) == 0 {
+		return nil
+	}
+	builtin := map[string]bool{}
+	for _, f := range ListExportFormats() {
+		for _, s := range f.PyRequires {
+			builtin[PySpecName(s)] = true
+		}
+	}
+	admin := sess != nil && UserIsAdmin(sess.Username)
+	for _, s := range specs {
+		if err := ValidatePySpec(s); err != nil {
+			return err
+		}
+		if !admin && !builtin[PySpecName(s)] {
+			names := make([]string, 0, len(builtin))
+			for n := range builtin {
+				names = append(names, n)
+			}
+			sort.Strings(names)
+			return Error("py_requires " + strconvQuote(s) + " is not available: formats you define may use only the packages the built-in formats provision (" + strings.Join(names, ", ") + "). Ask an admin to define a format that needs other packages.")
+		}
+	}
+	return nil
+}
+
 func resolveFormat(sess *ToolSession, name string) (*ExportFormat, error) {
 	if f, ok := LookupExportFormat(name); ok {
 		return f, nil

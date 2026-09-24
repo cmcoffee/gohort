@@ -727,6 +727,22 @@ func AuthGetUser(db Database, username string) (AuthUser, bool) {
 	return user, ok
 }
 
+// UserIsAdmin reports whether the named account exists and is an admin, for
+// callers that know WHO is acting but hold no request (tool handlers). An
+// unknown name, an empty name, or an unreadable auth store reads as not an
+// admin.
+func UserIsAdmin(username string) bool {
+	if strings.TrimSpace(username) == "" || AuthDB == nil {
+		return false
+	}
+	db := AuthDB()
+	if db == nil {
+		return false
+	}
+	u, ok := AuthGetUser(db, username)
+	return ok && u.Admin
+}
+
 // AuthSetUser creates or updates a user. If password is non-empty it
 // is hashed and stored; otherwise the existing hash is preserved.
 func AuthSetUser(db Database, username, password string, admin bool) {

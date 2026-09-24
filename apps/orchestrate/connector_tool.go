@@ -550,6 +550,18 @@ func patchInt(cur int, args map[string]any, key string) int {
 	return cur
 }
 
+// mayManageConnector reports whether the session may change or remove c.
+// Connectors are deployment-wide — an approved one is every user's tool — so
+// only an admin or the user who drafted it may touch it. A connector with no
+// recorded drafter is admin-only.
+func mayManageConnector(sess *ToolSession, c Connector) bool {
+	user := bridgeOwner(sess)
+	if user == "" {
+		return false
+	}
+	return (c.Owner != "" && c.Owner == user) || UserIsAdmin(user)
+}
+
 // connectorUpdate patches an existing connector's fields in place. Only provided
 // fields change; the kind is fixed. SaveConnector re-validates and, if the
 // connector is approved, re-materializes so the change takes effect immediately.
@@ -561,6 +573,9 @@ func connectorUpdate(args map[string]any, sess *ToolSession) (string, error) {
 	prev, ok := GetConnector(RootDB, name)
 	if !ok {
 		return "", fmt.Errorf("no connector named %q: create it first", name)
+	}
+	if !mayManageConnector(sess, prev) {
+		return "", fmt.Errorf("connector %q belongs to another user: only its drafter or an admin can change it", name)
 	}
 	owner := bridgeOwner(sess)
 	c := prev
@@ -707,11 +722,29 @@ func connectorUpdate(args map[string]any, sess *ToolSession) (string, error) {
 		return "", fmt.Errorf("update not supported for kind %q: delete and recreate instead", prev.Kind)
 	}
 
+	// Admin approval covered the connector as it was. A non-admin edit to a
+	// live connector takes it down first so the changed version never goes
+	// live unreviewed; auto-approving kinds re-approve as they do on create.
+	if prev.Approved && !UserIsAdmin(owner) {
+		if err := UnapproveConnector(RootDB, name); err != nil {
+			return "", err
+		}
+	}
 	if err := SaveConnector(RootDB, c); err != nil {
 		return "", err
 	}
+	if h, ok := ConnectorHandlerFor(c.Kind); ok && prev.Approved && !UserIsAdmin(owner) {
+		if aa, ok := h.(ConnectorAutoApprover); ok && aa.AutoApprove() {
+			if err := ApproveConnector(RootDB, name); err != nil {
+				return "", fmt.Errorf("saved, but auto-approve failed: %w", err)
+			}
+		}
+	}
 	saved, _ := GetConnector(RootDB, name)
 	state := "draft updated (still UNAPPROVED)"
+	if prev.Approved && !saved.Approved {
+		state = "updated and taken OFFLINE until an admin re-approves it in Admin > Connectors"
+	}
 	if saved.Approved {
 		state = "updated and RE-MATERIALIZED (live now)"
 	}
@@ -824,8 +857,12 @@ func connectorTest(args map[string]any, sess *ToolSession) (string, error) {
 
 func connectorDelete(args map[string]any, sess *ToolSession) (string, error) {
 	name := strings.TrimSpace(stringArg(args, "name"))
-	if _, ok := GetConnector(RootDB, name); !ok {
+	c, ok := GetConnector(RootDB, name)
+	if !ok {
 		return "", fmt.Errorf("no connector named %q", name)
+	}
+	if !mayManageConnector(sess, c) {
+		return "", fmt.Errorf("connector %q belongs to another user: only its drafter or an admin can delete it", name)
 	}
 	if err := DeleteConnector(RootDB, name); err != nil {
 		return "", err

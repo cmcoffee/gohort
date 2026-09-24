@@ -29,6 +29,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -107,6 +109,33 @@ func ensurePyDepsDirLocked() string {
 	return dir
 }
 
+// pySpecRE is the ONLY spec shape pip ever receives: a package name, optional
+// extras, and optional version constraints. Everything else pip accepts in
+// that position is refused, because each is a way to run code or read files
+// on the host: an option (leading "-"), a URL or "name @ url" direct
+// reference, a local path, or a VCS spec.
+var pySpecRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*(\[[A-Za-z0-9._,-]+\])?((==|!=|>=|<=|~=|>|<)[A-Za-z0-9.*+!]+(,(==|!=|>=|<=|~=|>|<)[A-Za-z0-9.*+!]+)*)?$`)
+
+// ValidatePySpec reports whether spec is a plain PyPI requirement pip may be
+// handed (see pySpecRE).
+func ValidatePySpec(spec string) error {
+	if !pySpecRE.MatchString(spec) {
+		return errors.New("pydeps: refused pip spec " + strconv.Quote(spec) + ": only a package name with optional extras and version (e.g. \"openpyxl\" or \"pandas>=2.0\") is allowed")
+	}
+	return nil
+}
+
+// PySpecName returns the package-name part of a validated spec, lowercased
+// and with "_"/"." folded to "-" (PEP 503), for allowlist comparison.
+func PySpecName(spec string) string {
+	name := spec
+	if i := strings.IndexAny(name, "[=!<>~"); i >= 0 {
+		name = name[:i]
+	}
+	name = strings.ToLower(name)
+	return strings.NewReplacer("_", "-", ".", "-").Replace(name)
+}
+
 // EnsurePyDeps installs the given pip specs into the managed deps dir,
 // skipping any already recorded in the install marker. Idempotent and
 // safe to call on every use of a generator: once a spec is installed it
@@ -118,8 +147,10 @@ func ensurePyDepsDirLocked() string {
 // installed); a non-nil error carries pip's combined output so the
 // caller can surface why provisioning failed.
 //
-// Callers are responsible for governance — validate specs against an
-// allowlist before calling. This function trusts its inputs.
+// Every spec must pass ValidatePySpec, and pip installs wheels only
+// (--only-binary=:all:), so no package's build hooks ever run on the host.
+// WHICH packages may be installed is still the caller's call: gate names
+// against an allowlist before calling.
 //
 // ctx bounds the pip run: pass the request/turn context so a cancelled
 // request aborts a cold install rather than letting it run to the
@@ -131,6 +162,11 @@ func EnsurePyDeps(ctx context.Context, specs ...string) error {
 	specs = dedupeNonEmpty(specs)
 	if len(specs) == 0 {
 		return nil
+	}
+	for _, s := range specs {
+		if err := ValidatePySpec(s); err != nil {
+			return err
+		}
 	}
 
 	// Resolve the dir under its own fast lock, then serialize the install
@@ -174,6 +210,9 @@ func EnsurePyDeps(ctx context.Context, specs ...string) error {
 		"--upgrade",
 		"--no-input",
 		"--disable-pip-version-check",
+		// Wheels only: an sdist runs its build backend (setup.py) on the
+		// host at install time, outside every sandbox.
+		"--only-binary=:all:",
 	}, missing...)
 	nfo.Debug("[pydeps] installing %v into %s", missing, dir)
 	cmd := exec.CommandContext(ctx, "python3", args...)

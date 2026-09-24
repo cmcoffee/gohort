@@ -92,8 +92,17 @@ func BrowsePeer() (RemotePeer, bool) {
 
 // installBrowseRouting points BrowserFetchFunc at whichever renderer the
 // current configuration names. Idempotent; safe to call on every change.
+//
+// The non-public-host guard runs at this seam, ahead of BOTH renderers,
+// because callers reach for the browser as a FALLBACK when a guarded plain
+// fetch fails — and a guarded fetch fails precisely on the URLs the guard
+// refuses. A caller that forgot to re-check before falling back would hand
+// Chromium a file:// or metadata URL; here, no caller can.
 func installBrowseRouting() {
 	BrowserFetchFunc = func(url string, maxChars int) (string, error) {
+		if err := RefuseNonPublicHost(url); err != nil {
+			return "", err
+		}
 		if p, ok := BrowsePeer(); ok {
 			return peerBrowseFetch(p, url, maxChars)
 		}

@@ -8,7 +8,9 @@
 package servitor
 
 import (
+	"fmt"
 	"net/http"
+	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -60,6 +62,22 @@ func (T *Servitor) resolveAppliance(reqUser string, reqUDB Database, applianceID
 		}
 	}
 	return Appliance{}, "", nil, false
+}
+
+// localCommandAllowed refuses a LOCAL command-type appliance whose owner is
+// not an admin. That type runs `sh -c` on the gohort host itself, as the
+// gohort process, so owning one is owning the server and every tenant's data
+// on it. Creation is admin-only (web_appliances.go); this is the runtime half,
+// which also stops any such record saved before that gate existed. A remote
+// stub (PeerName set) executes on the peer, under the peer's own policy.
+func localCommandAllowed(a Appliance) error {
+	if a.Type != "command" || strings.TrimSpace(a.PeerName) != "" {
+		return nil
+	}
+	if UserIsAdmin(a.Owner) {
+		return nil
+	}
+	return fmt.Errorf("%s is a local command system owned by a non-admin account; it runs commands on the gohort server itself, so only an admin-owned one may run", applianceLabel(a.Name, a.ID))
 }
 
 // canManageAppliance reports whether reqUser may change sharing / edit / delete

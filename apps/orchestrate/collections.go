@@ -1862,6 +1862,11 @@ func fetchAndExtractForIngest(ctx context.Context, u string) (name, text string,
 	if len(text) >= ingestMinChars {
 		return name, text, raw, mime, nil
 	}
+	// A URL the static path refused (scheme / non-public host) is not a
+	// failed fetch to retry through the browser: it stays refused.
+	if err := RefuseNonPublicHost(u); err != nil {
+		return "", "", nil, "", err
+	}
 	// Static path got a JS-only skeleton / soft block / nothing. Retry
 	// through the headless browser; keep whichever extraction is richer.
 	if BrowserFetchFunc != nil {

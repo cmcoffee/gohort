@@ -162,3 +162,43 @@ func TestABorrowingInstanceDoesNotServeBrowse(t *testing.T) {
 		t.Errorf("the refusal should say it will not relay: %s", w.Body.String())
 	}
 }
+
+// Callers fall back to the browser when a guarded plain fetch FAILS, and a
+// guarded fetch fails exactly on the URLs its guard refuses. So the routed
+// seam refuses them itself: the renderer never sees a file:// or metadata URL
+// no matter which caller forgot to re-check.
+func TestBrowseSeamRefusesNonPublicURLsBeforeRendering(t *testing.T) {
+	prevFetch := BrowserFetchFunc
+	browseMu.RLock()
+	prevLocal := localBrowse
+	browseMu.RUnlock()
+	t.Cleanup(func() {
+		browseMu.Lock()
+		localBrowse = prevLocal
+		browseMu.Unlock()
+		BrowserFetchFunc = prevFetch
+	})
+
+	rendered := 0
+	RegisterBrowserFetch(func(url string, maxChars int) (string, error) {
+		rendered++
+		return "rendered", nil
+	})
+	for _, u := range []string{
+		"file:///etc/passwd",
+		"http://169.254.169.254/latest/meta-data/",
+		"http://127.0.0.1:8080/",
+		"http://localhost/",
+		"javascript:alert(1)",
+	} {
+		if _, err := BrowserFetchFunc(u, 100); err == nil {
+			t.Errorf("%s should be refused at the seam", u)
+		}
+	}
+	if rendered != 0 {
+		t.Fatalf("the renderer ran %d time(s) for refused URLs", rendered)
+	}
+	if _, err := BrowserFetchFunc("https://example.com/", 100); err != nil || rendered != 1 {
+		t.Fatalf("a public URL should still render: err=%v rendered=%d", err, rendered)
+	}
+}

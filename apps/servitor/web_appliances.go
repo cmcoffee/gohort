@@ -80,6 +80,12 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 		isRemote := false
 		switch req.Type {
 		case "command":
+			// Runs `sh -c` on the gohort host as the gohort process: owning
+			// one is owning the server. See localCommandAllowed.
+			if !servitorIsAdmin(r) {
+				http.Error(w, "a local command system runs commands on the gohort server itself, so only an admin can create or change one", http.StatusForbidden)
+				return
+			}
 			if req.Name == "" || req.Command == "" {
 				http.Error(w, "name and command required", http.StatusBadRequest)
 				return

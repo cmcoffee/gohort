@@ -312,7 +312,14 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 		}
 		// Restore persistent state for stateful tools.
 		if tt.StatePath != "" {
-			stateTarget := filepath.Join(tmp, tt.StatePath)
+			// The gohort process does this copy, not the sandbox, so the
+			// path must stay inside the run dir: no absolute path, no "..",
+			// no symlink along the way (a recipe or a prior run can plant
+			// one). StatePath travels in imported recipes.
+			stateTarget, err := ResolveWorkspacePath(tmp, tt.StatePath)
+			if err != nil {
+				return "", fmt.Errorf("state_path: %w", err)
+			}
 			if err := os.MkdirAll(stateTarget, 0700); err != nil {
 				return "", fmt.Errorf("mkdir state target: %w", err)
 			}
@@ -625,8 +632,11 @@ func dispatchTempToolUncached(sess *ToolSession, tt *TempTool, args map[string]a
 	// dispatch. Best-effort: state-save errors are logged but don't
 	// fail the dispatch itself.
 	if len(tt.Recipe) > 0 && tt.StatePath != "" {
-		stateTarget := filepath.Join(workspaceDir, tt.StatePath)
-		if err := CopyToolStateBack(sess.Username, tt.Name, stateTarget); err != nil {
+		// Re-resolved rather than reused: the script has just run and may
+		// have replaced a path component with a symlink out of the run dir.
+		if stateTarget, err := ResolveWorkspacePath(workspaceDir, tt.StatePath); err != nil {
+			Log("[temptool] state save refused for %s: %v", tt.Name, err)
+		} else if err := CopyToolStateBack(sess.Username, tt.Name, stateTarget); err != nil {
 			Debug("[temptool] state save failed for %s: %v", tt.Name, err)
 		}
 	}

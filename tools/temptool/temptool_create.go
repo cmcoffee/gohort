@@ -307,6 +307,11 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	// run their script and produce output, no state. Stateful tools
 	// (counters, accumulating logs, lookup DBs) opt in.
 	if sp := strings.TrimSpace(StringArg(args, "state_path")); sp != "" {
+		// Refused up front for a clear error; dispatch re-checks, since a
+		// StatePath also arrives through imported recipes.
+		if filepath.IsAbs(sp) || strings.Contains("/"+filepath.ToSlash(sp)+"/", "/../") {
+			return "", fmt.Errorf("state_path must be a relative path inside the workspace, got %q", sp)
+		}
 		tool.StatePath = sp
 	}
 	// Optional RawNetwork: opt-in escape hatch that keeps the bwrap

@@ -202,6 +202,8 @@ var (
 	EnsurePyDeps               = deps.EnsurePyDeps
 	EnsurePyDepsDir            = deps.EnsurePyDepsDir
 	PyDepsAvailable            = deps.PyDepsAvailable
+	ValidatePySpec             = deps.ValidatePySpec
+	PySpecName                 = deps.PySpecName
 	PrependPythonPath          = deps.PrependPythonPath
 	CheckDependencies          = deps.CheckDependencies
 	LogDependencyHealth        = deps.LogDependencyHealth

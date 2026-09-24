@@ -72,6 +72,10 @@ func (T *Servitor) runMapAppSession(ctx context.Context, id, userID, ownerUser s
 			"Mapping %s through %s.", appliance.Command, appliance.PeerName)})
 		execFn = peerExecFor(ctx, appliance)
 	} else if appliance.Type == "command" {
+		if err := localCommandAllowed(appliance); err != nil {
+			probeSessions.AppendEvent(id, probeEvent{Kind: "error", Text: err.Error()}, true)
+			return
+		}
 		emit(id, probeEvent{Kind: "status", Text: fmt.Sprintf("Running locally: %s", appliance.Command)})
 		execFn = func(cmd string) (string, error) {
 			return a.exec_local_ctx(ctx, cmd, appliance.WorkDir, appliance.EnvVars)
