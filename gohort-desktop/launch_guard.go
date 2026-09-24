@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/cmcoffee/gohort/gohort-desktop/core"
@@ -69,7 +70,18 @@ func guardLaunch(next http.Handler, secret string, port int) http.Handler {
 			if !strings.HasPrefix(dest, "/") || strings.HasPrefix(dest, "//") || strings.HasPrefix(dest, "/\\") {
 				dest = "/"
 			}
-			http.Redirect(w, r, dest, http.StatusFound)
+			// A page that navigates on, not a redirect. The window arrives here
+			// from the wails:// bootstrap page, a different site, and a redirect
+			// at the end of a cross-site navigation is itself cross-site: the
+			// strict cookie just set is not sent with it, so the first real
+			// page was refused with the message below. A navigation this page
+			// starts is same-site, and carries the cookie.
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-store")
+			fmt.Fprintf(w, `<!DOCTYPE html><html><head><meta charset="utf-8">`+
+				core.FirstPaintHead()+
+				`<title>Loading…</title></head><body><script>location.replace(%s);</script></body></html>`,
+				strings.ReplaceAll(strconv.Quote(dest), "<", `\u003c`))
 			return
 		}
 		c, err := r.Cookie(launchCookieName)
