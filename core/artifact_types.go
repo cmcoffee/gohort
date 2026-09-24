@@ -43,6 +43,10 @@ type connectorArtifact struct{}
 
 func (connectorArtifact) ArtifactType() string { return "connector" }
 
+func (connectorArtifact) ImportFollowUp() string {
+	return "Waiting for an administrator to approve it in Admin > Connectors."
+}
+
 func (connectorArtifact) ListArtifacts(db Database) []ArtifactSel {
 	var out []ArtifactSel
 	for _, c := range ListConnectors(db) {
@@ -165,6 +169,14 @@ func (toolArtifact) ArtifactType() string { return "tool" }
 
 // UserImportable: a tool lands in the importer's PENDING pool; an admin approves it.
 func (toolArtifact) UserImportable() bool { return true }
+
+func (toolArtifact) ImportFollowUp() string {
+	return "Waiting for an administrator to approve it (Admin > Tools, Pending). It cannot run until then."
+}
+
+func (toolArtifact) MissingFollowUp() string {
+	return "No tool by this name here. Import or build it, or anything that calls it will not have it."
+}
 
 func (toolArtifact) ListArtifacts(db Database) []ArtifactSel {
 	store := tempToolStore(db)
@@ -331,6 +343,10 @@ func (skillArtifact) ArtifactType() string { return "skill" }
 
 // UserImportable: a skill lands disabled in the importer's own namespace.
 func (skillArtifact) UserImportable() bool { return true }
+
+func (skillArtifact) ImportFollowUp() string {
+	return "Switched off. Read it, then turn it on in Extensions > Skills."
+}
 
 func (skillArtifact) ListArtifacts(db Database) []ArtifactSel {
 	store := skillStore(db)
@@ -565,6 +581,13 @@ func (collectionArtifact) ArtifactType() string { return "collection" }
 
 // UserImportable: a collection lands user-scoped under the importer.
 func (collectionArtifact) UserImportable() bool { return true }
+
+func (collectionArtifact) ImportFollowUp() string {
+	return "Its documents are being indexed in the background; search reaches them shortly."
+}
+
+// ContentKind: a corpus is documents, exempt from the export secret scan.
+func (collectionArtifact) ContentKind() bool { return true }
 
 func (collectionArtifact) ListArtifacts(_ Database) []ArtifactSel {
 	base := CollectionsDB()
@@ -843,6 +866,14 @@ type credentialArtifact struct{}
 
 func (credentialArtifact) ArtifactType() string { return "credential" }
 
+func (credentialArtifact) ImportFollowUp() string {
+	return "Has no secret yet and is switched off. Add its secret and enable it in Admin > APIs."
+}
+
+func (credentialArtifact) MissingFollowUp() string {
+	return "No credential by this name here. Add one in Extensions > Credentials (or ask an administrator), or the parts that call it will fail."
+}
+
 func (credentialArtifact) ListArtifacts(_ Database) []ArtifactSel {
 	api := Secure()
 	if api == nil {
@@ -961,6 +992,10 @@ func (customAppArtifact) ArtifactType() string { return "custom_app" }
 
 // UserImportable: an app lands disabled and unshared; sharing stays admin-approved.
 func (customAppArtifact) UserImportable() bool { return true }
+
+func (customAppArtifact) ImportFollowUp() string {
+	return "Switched off. Read its data-source and action scripts, then Enable it in My Apps."
+}
 
 func (customAppArtifact) ListArtifacts(_ Database) []ArtifactSel {
 	authDB := AuthDB()
@@ -1165,6 +1200,10 @@ type sourceHookArtifact struct{}
 
 func (sourceHookArtifact) ArtifactType() string { return "source_hook" }
 
+func (sourceHookArtifact) ImportFollowUp() string {
+	return "Switched off. Check where it points, then enable it in Admin."
+}
+
 func (sourceHookArtifact) ListArtifacts(_ Database) []ArtifactSel {
 	var out []ArtifactSel
 	for _, h := range RegisteredSourceHooks() {
@@ -1260,6 +1299,10 @@ func (monitorArtifact) ArtifactType() string { return "monitor" }
 
 // UserImportable: a monitor lands paused under the importer, with a fresh token.
 func (monitorArtifact) UserImportable() bool { return true }
+
+func (monitorArtifact) ImportFollowUp() string {
+	return "Paused. Resume it from the Scheduler when you are ready for it to run."
+}
 
 func (monitorArtifact) ListArtifacts(db Database) []ArtifactSel {
 	if db == nil {
@@ -1507,6 +1550,10 @@ func (scheduleArtifact) UserImportable() bool { return true }
 
 // ImportsLate: it runs an agent that may arrive in the same bundle.
 func (scheduleArtifact) ImportsLate() bool { return true }
+
+func (scheduleArtifact) ImportFollowUp() string {
+	return "Paused. Resume it from the Scheduler when you are ready for it to run."
+}
 
 func (scheduleArtifact) SniffsRecipe(fields map[string]json.RawMessage) bool {
 	_, ok := fields["schedule"]

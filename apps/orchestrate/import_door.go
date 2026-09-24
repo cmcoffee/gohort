@@ -97,6 +97,9 @@ func importBundleAtDoor(w http.ResponseWriter, user string, body []byte, typ str
 			out["warnings"] = res.Warnings
 		}
 		out["outcomes"] = res.Outcomes
+		if len(res.Checklist) > 0 {
+			out["checklist"] = res.Checklist
+		}
 		writeJSON(w, out)
 		return true
 	}

@@ -41,6 +41,9 @@ func (*appRecordsArtifact) UserImportable() bool  { return true }
 func (*appRecordsArtifact) OptInDependency() bool { return true }
 func (*appRecordsArtifact) ImportsLate() bool     { return true }
 
+// ContentKind: rows somebody typed, not a recipe.
+func (*appRecordsArtifact) ContentKind() bool { return true }
+
 func (*appRecordsArtifact) SniffsRecipe(fields map[string]json.RawMessage) bool {
 	_, ok := fields["app_records"]
 	return ok

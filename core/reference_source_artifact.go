@@ -35,6 +35,10 @@ type referenceSourceArtifact struct{}
 
 func (referenceSourceArtifact) ArtifactType() string { return "reference_source" }
 
+func (referenceSourceArtifact) MissingFollowUp() string {
+	return "This source (a file store, a system) cannot travel. Attach an equivalent one here, or it works without that material."
+}
+
 // RefSourceSelName is the stable identity of one attached item: the pair the
 // agent record actually stores. NOT the display label — a store can be renamed
 // (that is exactly why its handle is frozen), and an attachment that stopped

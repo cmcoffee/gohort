@@ -239,8 +239,10 @@ func TestImportWarns_MissingDependency(t *testing.T) {
 	if len(res.Outcomes) != 1 || len(res.Outcomes[0].Warnings) != 1 {
 		t.Fatalf("warning should attach to the tool's outcome, got %+v", res.Outcomes)
 	}
-	if !strings.Contains(res.Summary(), "Warning:") {
-		t.Fatalf("summary should surface the warning, got %q", res.Summary())
+	// The summary is now the "what is left to do" list: it has to name the
+	// missing credential AND what needed it.
+	if sum := res.Summary(); !strings.Contains(sum, `credential "openweather"`) || !strings.Contains(sum, `needed by tool "weather"`) {
+		t.Fatalf("summary should surface the missing reference and what needs it, got %q", sum)
 	}
 }
 

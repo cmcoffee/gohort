@@ -32,7 +32,9 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -451,6 +453,19 @@ func exportArtifactBundle(db Database, sels []ArtifactSel, includeDeps bool, dep
 			}
 			return false, nil
 		}
+		// A recipe with a key baked into it would hand that key to whoever
+		// gets the file. Refused for explicit selections and dependencies
+		// alike, naming what was found but never the value.
+		if !isContentKind(typ) {
+			if hint := recipeSecretHint(recipe); hint != "" {
+				what := "it"
+				if !strict {
+					what = "one of the things it depends on, " + typ + " " + strconv.Quote(name) + ","
+				}
+				return false, fmt.Errorf("not exported: %s looks like it has a hardcoded secret (%s). Move it into a credential and reference that by name%s",
+					what, hint, map[bool]string{true: "", false: ", or leave that kind out of the export"}[strict])
+			}
+		}
 		seen[selKey(s)] = true
 		one := PortableArtifact{Type: typ, Name: name, Recipe: recipe}
 		seenRecipe[recipeKey(typ, s.Owner, artifactRecipeName(one))] = true
@@ -500,7 +515,10 @@ func exportArtifactBundle(db Database, sels []ArtifactSel, includeDeps bool, dep
 			if seenRecipe[recipeKey(s.Type, s.Owner, s.Name)] {
 				continue
 			}
-			added, _ := addArtifact(s, false)
+			added, err := addArtifact(s, false)
+			if err != nil {
+				return ArtifactBundle{}, err
+			}
 			if added {
 				pending = append(pending, artifactDeps(db, s)...)
 			}
@@ -718,6 +736,145 @@ type ArtifactImportOutcome struct {
 	Warnings []string `json:"warnings,omitempty"`
 }
 
+// ArtifactFollowUp is one line of an import's "what is left to do": an
+// imported artifact that landed inert and what brings it to life, or a
+// reference the bundle needed that this install does not have.
+type ArtifactFollowUp struct {
+	Type    string `json:"type"`
+	Name    string `json:"name"`
+	Action  string `json:"action"`
+	Missing bool   `json:"missing,omitempty"` // a reference, not something that was imported
+	// NeededBy names what referenced a missing thing ("tool \"weather\""), so
+	// the person knows what will not work until it exists.
+	NeededBy []string `json:"needed_by,omitempty"`
+}
+
+// artifactImportFollowUp is an OPTIONAL capability: a type whose import lands
+// inert (switched off, paused, pending review) says, in one sentence, what the
+// person does next. Every import is inert by design; this is what stops that
+// from reading as "it did not work".
+type artifactImportFollowUp interface {
+	ImportFollowUp() string
+}
+
+// artifactMissingFollowUp is the OPTIONAL twin for a reference to this type
+// that an import found missing: what to do about it here.
+type artifactMissingFollowUp interface {
+	MissingFollowUp() string
+}
+
+// artifactContentKind is an OPTIONAL capability for a kind that carries
+// CONTENT rather than a recipe (documents, conversations, memory, records).
+// Content is exempt from the export secret scan: a document quoting an
+// example token is not a tool with a key baked into it, and refusing it would
+// only teach people to stop exporting. Recipe kinds are scanned by default.
+type artifactContentKind interface {
+	ContentKind() bool
+}
+
+func followUpFor(typ string) string {
+	at, ok := lookupArtifactType(typ)
+	if !ok {
+		return ""
+	}
+	if f, ok := at.(artifactImportFollowUp); ok {
+		return strings.TrimSpace(f.ImportFollowUp())
+	}
+	return ""
+}
+
+func missingFollowUpFor(typ string) string {
+	if at, ok := lookupArtifactType(typ); ok {
+		if f, ok := at.(artifactMissingFollowUp); ok {
+			if a := strings.TrimSpace(f.MissingFollowUp()); a != "" {
+				return a
+			}
+		}
+	}
+	return "Not on this install. Import or create it here, or the parts that use it will not work."
+}
+
+func isContentKind(typ string) bool {
+	return artifactTypeHas(typ, func(at ArtifactType) bool {
+		c, ok := at.(artifactContentKind)
+		return ok && c.ContentKind()
+	})
+}
+
+// secretHintRe pulls the KEY WORD out of a secret-shaped match, so a refusal
+// can say what it found without repeating the value.
+var secretHintRe = regexp.MustCompile(`(?i)(bearer|api[_-]?key|access[_-]?token|token|secret|password)`)
+
+// keyShapedMatch narrows a secret-shaped match to one whose VALUE looks like a
+// key rather than a word. Recipes are full of prose ("the token: provided by
+// the caller"), and a refusal on that would teach people to stop exporting. A
+// Bearer value always counts; a key=value needs 12+ characters with both
+// letters and digits, which real keys have and English words do not.
+func keyShapedMatch(m string) bool {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(m)), "bearer") {
+		return true
+	}
+	i := strings.IndexAny(m, "=:")
+	if i < 0 {
+		return false
+	}
+	val := strings.Trim(strings.TrimSpace(m[i+1:]), `"'`)
+	if len(val) < 12 {
+		return false
+	}
+	letters, digits := false, false
+	for _, r := range val {
+		switch {
+		case r >= '0' && r <= '9':
+			digits = true
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z':
+			letters = true
+		}
+	}
+	return letters && digits
+}
+
+// recipeSecretHint returns "" when a recipe carries nothing secret-shaped, or
+// the key word of the first thing that looks like a hardcoded secret.
+func recipeSecretHint(recipe json.RawMessage) string {
+	// Scanned as decoded text, so an escaped quote or newline in the JSON
+	// cannot hide a value from the pattern.
+	var v any
+	if json.Unmarshal(recipe, &v) != nil {
+		return ""
+	}
+	var hint string
+	var walk func(any)
+	walk = func(x any) {
+		if hint != "" {
+			return
+		}
+		switch t := x.(type) {
+		case string:
+			for _, m := range secretLikeRe.FindAllString(t, -1) {
+				if !keyShapedMatch(m) {
+					continue
+				}
+				hint = strings.ToLower(secretHintRe.FindString(m))
+				if hint == "" {
+					hint = "a credential"
+				}
+				break
+			}
+		case []any:
+			for _, e := range t {
+				walk(e)
+			}
+		case map[string]any:
+			for _, e := range t {
+				walk(e)
+			}
+		}
+	}
+	walk(v)
+	return hint
+}
+
 // ArtifactImportResult summarizes a bundle import: per-artifact outcomes plus
 // running counts, so the caller can report a partial import honestly. Warnings
 // aggregates every outcome's warnings (each already artifact-qualified) for a
@@ -731,6 +888,9 @@ type ArtifactImportResult struct {
 	Skipped       int                     `json:"skipped"`
 	Outcomes      []ArtifactImportOutcome `json:"outcomes"`
 	Warnings      []string                `json:"warnings,omitempty"`
+	// Checklist is what is left to do: everything that landed inert with its
+	// next step, then every reference this install is missing.
+	Checklist []ArtifactFollowUp `json:"checklist,omitempty"`
 }
 
 // Summary renders a one-glance human summary of an import: the counts, then any
@@ -744,6 +904,16 @@ func (r ArtifactImportResult) Summary() string {
 	fmt.Fprintf(&b, "Imported %d, skipped %d.", r.Imported, r.Skipped)
 	if v := strings.TrimSpace(r.GohortVersion); v != "" && v != AppVersion {
 		fmt.Fprintf(&b, " Bundle exported by gohort %s (this install is %s).", v, AppVersion)
+	}
+	if len(r.Checklist) > 0 {
+		b.WriteString("\nWhat is left to do:")
+		for _, c := range r.Checklist {
+			fmt.Fprintf(&b, "\n- %s %q: %s", c.Type, c.Name, c.Action)
+			if len(c.NeededBy) > 0 {
+				fmt.Fprintf(&b, " (needed by %s)", strings.Join(c.NeededBy, ", "))
+			}
+		}
+		return b.String()
 	}
 	for _, w := range r.Warnings {
 		b.WriteString("\nWarning: ")
@@ -860,10 +1030,26 @@ func warnMissingDependencies(db Database, res *ArtifactImportResult, imported []
 		}
 	}
 	for _, s := range imported {
+		if a := followUpFor(s.Type); a != "" {
+			res.Checklist = append(res.Checklist, ArtifactFollowUp{Type: s.Type, Name: s.Name, Action: a})
+		}
+	}
+	missingAt := map[string]int{}
+	for _, s := range imported {
 		for _, dep := range artifactDeps(db, s) {
 			if artifactExists(db, dep) {
 				continue
 			}
+			k := dep.Type + "\x00" + dep.Name
+			i, seen := missingAt[k]
+			if !seen {
+				i = len(res.Checklist)
+				missingAt[k] = i
+				res.Checklist = append(res.Checklist, ArtifactFollowUp{
+					Type: dep.Type, Name: dep.Name, Action: missingFollowUpFor(dep.Type), Missing: true,
+				})
+			}
+			res.Checklist[i].NeededBy = append(res.Checklist[i].NeededBy, fmt.Sprintf("%s %q", s.Type, s.Name))
 			msg := missingDepWarning(s, dep)
 			res.Warnings = append(res.Warnings, msg)
 			if i, ok := outcomeAt[s.Type+"\x00"+s.Name]; ok {

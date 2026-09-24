@@ -7,6 +7,7 @@ package core
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -279,5 +280,89 @@ func TestOptInDataLateImportAndBackReferences(t *testing.T) {
 	}
 	if len(res.Outcomes) != 2 || res.Outcomes[0].Type != "agent" || res.Outcomes[1].Type != "memory" {
 		t.Errorf("attachments should import after what they attach to: %+v", res.Outcomes)
+	}
+}
+
+// A recipe with a key baked into it is refused at export, whether it was
+// selected or pulled in as a dependency; content kinds are not scanned.
+type secretFake struct {
+	fakeArtifact
+	recipe  map[string]string
+	content bool
+}
+
+func (f *secretFake) ExportArtifact(_ Database, name, _ string) (json.RawMessage, error) {
+	r, ok := f.recipe[name]
+	if !ok {
+		return nil, Error("no such")
+	}
+	return json.Marshal(map[string]string{"name": name, "body": r})
+}
+func (f *secretFake) UserImportable() bool { return true }
+func (f *secretFake) ContentKind() bool    { return f.content }
+
+func TestExportRefusesAHardcodedSecretButNotInContent(t *testing.T) {
+	tools := &secretFake{fakeArtifact: fakeArtifact{typ: "tool"}, recipe: map[string]string{
+		"clean": "curl {url}", "leaky": "curl -H 'Authorization: Bearer sk_live_abcdefghijklmnop' {url}",
+	}}
+	tools.deps = map[string][]ArtifactSel{"clean": {{Type: "tool", Name: "leaky"}}}
+	docs := &secretFake{fakeArtifact: fakeArtifact{typ: "guide"}, content: true, recipe: map[string]string{
+		"howto": "Set api_key=abcdefghijklmnop in your shell",
+	}}
+	withFakeTypes(t, &dependingSecretFake{tools}, docs)
+
+	_, err := ExportArtifactBundleAsUser(nil, "alice", []ArtifactSel{{Type: "tool", Name: "leaky"}}, UserExportOptions{})
+	if err == nil || !strings.Contains(err.Error(), "hardcoded secret (bearer)") || strings.Contains(err.Error(), "sk_live") {
+		t.Fatalf("a baked-in key should be refused without repeating it: %v", err)
+	}
+	_, err = ExportArtifactBundleAsUser(nil, "alice", []ArtifactSel{{Type: "tool", Name: "clean"}}, UserExportOptions{IncludeDeps: true})
+	if err == nil || !strings.Contains(err.Error(), "depends on") {
+		t.Fatalf("a dependency with a baked-in key should be refused and named: %v", err)
+	}
+	// Prose that merely names a key is not one.
+	tools.recipe["prose"] = "Pass the token: provided by the caller, and the password: whatever they chose."
+	if _, err := ExportArtifactBundleAsUser(nil, "alice", []ArtifactSel{{Type: "tool", Name: "prose"}}, UserExportOptions{}); err != nil {
+		t.Fatalf("prose naming a key was refused: %v", err)
+	}
+	tools.recipe["kv"] = "X-Api-Key: api_key=a1b2c3d4e5f6g7h8"
+	if _, err := ExportArtifactBundleAsUser(nil, "alice", []ArtifactSel{{Type: "tool", Name: "kv"}}, UserExportOptions{}); err == nil {
+		t.Fatal("a key=value with a key-shaped value should be refused")
+	}
+	if _, err := ExportArtifactBundleAsUser(nil, "alice", []ArtifactSel{{Type: "guide", Name: "howto"}}, UserExportOptions{}); err != nil {
+		t.Fatalf("a document quoting an example token is content, not a leak: %v", err)
+	}
+}
+
+type dependingSecretFake struct{ *secretFake }
+
+func (d *dependingSecretFake) Dependencies(_ Database, name, _ string) []ArtifactSel {
+	return d.deps[name]
+}
+
+// An import says what is left to do: each inert thing's next step, and each
+// reference the install does not have.
+type followUpFake struct{ fakeArtifact }
+
+func (*followUpFake) ImportFollowUp() string { return "Switched off. Turn it on." }
+
+func TestAnImportReportsWhatIsLeftToDo(t *testing.T) {
+	skills := &followUpFake{fakeArtifact{typ: "skill", deps: map[string][]ArtifactSel{"triage": {{Type: "tool", Name: "absent"}}}}}
+	withFakeTypes(t, skills, &fakeArtifact{typ: "tool"})
+	bundle := []byte(`{"bundle": "` + ArtifactBundleFormat + `", "artifacts": [{"type": "skill", "name": "triage", "recipe": "triage"}]}`)
+	res, err := ImportArtifactBundle(nil, bundle, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Checklist) != 2 {
+		t.Fatalf("want the skill's next step and the missing tool: %+v", res.Checklist)
+	}
+	if res.Checklist[0].Action != "Switched off. Turn it on." || res.Checklist[0].Missing {
+		t.Errorf("follow-up: %+v", res.Checklist[0])
+	}
+	if !res.Checklist[1].Missing || res.Checklist[1].Name != "absent" {
+		t.Errorf("missing reference: %+v", res.Checklist[1])
+	}
+	if !strings.Contains(res.Summary(), "What is left to do") {
+		t.Errorf("summary: %s", res.Summary())
 	}
 }

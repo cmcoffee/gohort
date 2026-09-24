@@ -76,7 +76,8 @@
             api.close();
             if (opts.invalidate && window.uiInvalidate) window.uiInvalidate(opts.invalidate);
             if (opts.onDone) opts.onDone(d);
-            (window.uiAlert || window.alert)(d.message || 'Import complete.');
+            if (d.checklist && d.checklist.length) showChecklist(d);
+            else (window.uiAlert || window.alert)(d.message || 'Import complete.');
           }).catch(function (e) {
             btn.disabled = false;
             btn.textContent = 'Import';
@@ -102,6 +103,57 @@
           });
         });
         body.appendChild(list);
+      },
+    });
+  }
+
+  // showChecklist is what an import says when it is done: the counts, then
+  // what is left to do. Everything lands inert by design, and without the
+  // next step for each thing that reads as the import not having worked.
+  function showChecklist(d) {
+    window.uiOpenModal({
+      title: 'Imported ' + (d.imported || 0) + (d.skipped ? ', skipped ' + d.skipped : ''),
+      subtitle: 'Everything came in switched off or waiting for review. Here is what is left to do.',
+      width: '640px',
+      actions: [{label: 'Done', primary: true}],
+      mount: function (body) {
+        var groups = [
+          ['To finish setting up', d.checklist.filter(function (c) { return !c.missing; })],
+          ['Missing on this install', d.checklist.filter(function (c) { return c.missing; })],
+        ];
+        groups.forEach(function (g) {
+          if (!g[1].length) return;
+          var h = document.createElement('div');
+          h.style.cssText = 'font-weight:600;font-size:0.85rem;margin-top:0.4rem';
+          h.textContent = g[0];
+          body.appendChild(h);
+          g[1].forEach(function (c) {
+            var r = document.createElement('label');
+            r.style.cssText = 'display:flex;gap:0.6rem;align-items:flex-start;padding:0.35rem 0;border-bottom:1px solid var(--border);font-size:0.84rem;cursor:pointer';
+            var cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.style.marginTop = '0.2rem';
+            var t = document.createElement('div');
+            var name = document.createElement('div');
+            name.style.cssText = 'font-weight:600;overflow-wrap:anywhere';
+            name.textContent = c.type + ' ' + c.name;
+            var act = document.createElement('div');
+            act.style.cssText = 'color:' + (c.missing ? 'var(--warn,#d97706)' : 'var(--text-mute)');
+            act.textContent = c.action + (c.needed_by && c.needed_by.length ? ' Needed by ' + c.needed_by.join(', ') + '.' : '');
+            t.appendChild(name);
+            t.appendChild(act);
+            r.appendChild(cb);
+            r.appendChild(t);
+            body.appendChild(r);
+          });
+        });
+        (d.outcomes || []).forEach(function (o) {
+          if (o.status !== 'skipped') return;
+          var s = document.createElement('div');
+          s.style.cssText = 'font-size:0.8rem;color:var(--text-mute);padding-top:0.3rem';
+          s.textContent = 'Skipped ' + o.type + ' ' + o.name + ': ' + (o.detail || '');
+          body.appendChild(s);
+        });
       },
     });
   }

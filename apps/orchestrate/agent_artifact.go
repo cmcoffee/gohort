@@ -37,6 +37,10 @@ func (*agentArtifact) ArtifactType() string { return "agent" }
 // (see makeImportedAgentInert, queueImportedTools).
 func (*agentArtifact) UserImportable() bool { return true }
 
+func (*agentArtifact) ImportFollowUp() string {
+	return "Private to you. Any tools of its own are waiting for approval with the rest of the tools."
+}
+
 // SniffsRecipe claims a bare .agent.json, the per-agent Export button's file.
 // orchestrator_prompt is required on every agent and on nothing else.
 func (*agentArtifact) SniffsRecipe(fields map[string]json.RawMessage) bool {

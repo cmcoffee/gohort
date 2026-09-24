@@ -44,6 +44,13 @@ func (*guideArtifact) ArtifactType() string { return "guide" }
 // UserImportable: a guide lands in the importer's own library, private.
 func (*guideArtifact) UserImportable() bool { return true }
 
+func (*guideArtifact) ImportFollowUp() string {
+	return "Private to you, with web research off until you turn it on in its Settings."
+}
+
+// ContentKind: a document, exempt from the export secret scan.
+func (*guideArtifact) ContentKind() bool { return true }
+
 // SniffsRecipe claims a bare portable guide: sections plus a name, and no
 // stages or phases (which would make it a pipeline or a machine).
 func (*guideArtifact) SniffsRecipe(fields map[string]json.RawMessage) bool {

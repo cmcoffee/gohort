@@ -77,6 +77,13 @@ func (*agentMemoryArtifact) UserImportable() bool  { return true }
 func (*agentMemoryArtifact) OptInDependency() bool { return true }
 func (*agentMemoryArtifact) ImportsLate() bool     { return true }
 
+func (*agentMemoryArtifact) ImportFollowUp() string {
+	return "Its saved facts and findings are still being written in the background."
+}
+
+// ContentKind: what the agent learned, not a recipe.
+func (*agentMemoryArtifact) ContentKind() bool { return true }
+
 func (*agentMemoryArtifact) SniffsRecipe(fields map[string]json.RawMessage) bool {
 	_, ok := fields["agent_memory"]
 	return ok

@@ -78,6 +78,13 @@ func (*sessionArtifact) ArtifactType() string { return "session" }
 func (*sessionArtifact) UserImportable() bool { return true }
 func (*sessionArtifact) ImportsLate() bool    { return true }
 
+func (*sessionArtifact) ImportFollowUp() string {
+	return "Read-only. Open it and use Session > Continue to carry it on."
+}
+
+// ContentKind: a conversation; its secret-shaped lines are redacted on export.
+func (*sessionArtifact) ContentKind() bool { return true }
+
 // SniffsRecipe claims this recipe and the older Save log JSON export
 // ({exported_at, agent, session}), so a file saved before bundles imports.
 func (*sessionArtifact) SniffsRecipe(fields map[string]json.RawMessage) bool {
