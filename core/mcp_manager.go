@@ -1209,10 +1209,21 @@ func (m *MCPManager) registerTools(cfg MCPServerConfig, tools []mcpclient.ToolDe
 	if len(names) > 0 {
 		ensureMCPToolGroup(cfg)
 	}
-	taken := map[string]bool{}
+	// Names already held elsewhere count as taken, not just those assigned in
+	// this pass. Only same-server clashes used to be avoided, so server "git"
+	// with "hub_search" and server "git_hub" with "search" both came out as
+	// git_hub_search: the second reused the first's proxy, overwriting its
+	// schema while calls still went to the first server. A built-in of the
+	// same name was likewise silently unreachable. This server's own proxies
+	// are left out, so a reconnect keeps the names it had.
+	taken := m.namesHeldElsewhere(cfg.Name)
 	for _, raw := range names {
 		def := byName[raw]
 		full := mcpExposedName(cfg.Name, raw, taken)
+		for full != "" && IsReservedToolName(full) {
+			taken[full] = true
+			full = mcpExposedName(cfg.Name, raw, taken)
+		}
 		if full == "" {
 			Log("[mcp] %s: tool %q has no usable name after sanitizing; skipped", cfg.Name, raw)
 			continue
@@ -1226,6 +1237,13 @@ func (m *MCPManager) registerTools(cfg MCPServerConfig, tools []mcpclient.ToolDe
 
 		m.mu.Lock()
 		proxy, exists := m.proxies[full]
+		if exists && proxy.server != cfg.Name {
+			// namesHeldElsewhere should have made this impossible; a proxy
+			// never changes which server it calls.
+			m.mu.Unlock()
+			Log("[mcp] %s: %q is already %s's tool; skipped rather than re-pointed", cfg.Name, full, proxy.server)
+			continue
+		}
 		if !exists {
 			proxy = &mcpProxyTool{mgr: m, server: cfg.Name, rawName: raw, fullName: full}
 			m.proxies[full] = proxy
@@ -1240,6 +1258,28 @@ func (m *MCPManager) registerTools(cfg MCPServerConfig, tools []mcpclient.ToolDe
 			RegisterChatTool(proxy)
 		}
 	}
+}
+
+// namesHeldElsewhere is every tool name a server's tools must not take: other
+// servers' proxies, and registered tools that are not this server's proxies.
+// Reserved names (tools assembled per turn, which nothing can enumerate) are
+// refused name by name where the name is assigned.
+func (m *MCPManager) namesHeldElsewhere(server string) map[string]bool {
+	taken := map[string]bool{}
+	m.mu.Lock()
+	for name, p := range m.proxies {
+		if p.server != server {
+			taken[name] = true
+		}
+	}
+	m.mu.Unlock()
+	for _, t := range RegisteredChatTools() {
+		if p, ok := t.(*mcpProxyTool); ok && p.server == server {
+			continue
+		}
+		taken[t.Name()] = true
+	}
+	return taken
 }
 
 // maxLLMToolNameBytes is the longest tool name the model APIs accept. Both

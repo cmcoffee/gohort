@@ -278,6 +278,10 @@ func (T *CodeWriterAgent) handleChat(w http.ResponseWriter, r *http.Request) {
 			refs = append(append(ReferenceSelections{}, wr.Sources...), refs...)
 		}
 	}
+	// The same item picked in both places is one reference, not two: fetched
+	// once, and its tools built once. Twice put every tool name in the request
+	// twice, which some providers refuse outright.
+	refs = uniqueReferences(refs)
 	if len(refs) > 0 {
 		if uid := AuthCurrentUser(r); uid != "" {
 			// Rides the current user message, not the system prompt — the
@@ -982,4 +986,19 @@ func (T *CodeWriterAgent) handleAssist(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{"reply": reply, "value": value})
+}
+
+// uniqueReferences drops repeat selections of the same item, keeping the
+// first, so the order (writer's sources, then the turn's picks) survives.
+func uniqueReferences(refs ReferenceSelections) ReferenceSelections {
+	seen := map[ReferenceSelection]bool{}
+	out := make(ReferenceSelections, 0, len(refs))
+	for _, r := range refs {
+		if seen[r] {
+			continue
+		}
+		seen[r] = true
+		out = append(out, r)
+	}
+	return out
 }

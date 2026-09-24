@@ -511,6 +511,29 @@ func (skillArtifact) ImportArtifact(db Database, recipe json.RawMessage, owner s
 			}
 		}
 	}
+	// The importer's PUBLISHED skills too. SaveSkill sends a save for an id
+	// its author published to the deployment copy, so importing a recipe of
+	// one's own published skill wrote the import over the copy everybody
+	// uses, disabled, and it vanished for all of them while the result said
+	// "imported". Same for the name: a published skill of that name is one
+	// the importer already has.
+	for _, p := range PublishedSkillsBy(db, owner) {
+		if p.ID == strings.TrimSpace(s.ID) {
+			return name, "this skill is already published by you; take it back first to replace it", nil
+		}
+		if strings.EqualFold(strings.TrimSpace(p.Name), name) {
+			return name, "you already publish a skill with this name", nil
+		}
+	}
+	// An id somebody else's published skill holds is re-minted, so the import
+	// lands as its own record rather than addressing theirs. It costs only the
+	// in-bundle wiring to this one skill.
+	for _, p := range allDeploymentSkills(db) {
+		if p.ID == strings.TrimSpace(s.ID) {
+			s.ID = ""
+			break
+		}
+	}
 	s.Embedding = nil
 	s.Disabled = true
 	// Share state is this install's fact about a record, never part of the

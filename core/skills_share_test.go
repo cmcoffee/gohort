@@ -5,6 +5,7 @@ package core
 // or inherit the owner's documents with it.
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -453,5 +454,28 @@ func TestAPublishedSkillKeepsItsHistoryAndStaysOnTheAuthorsList(t *testing.T) {
 	}
 	if !listed {
 		t.Error("a muted published skill fell off its author's list of what they share")
+	}
+}
+
+// Importing a recipe of a skill the importer has published wrote the import
+// over the deployment copy (SaveSkill routes a published id there), disabled,
+// so it vanished for everybody while the result said "imported".
+func TestImportingYourOwnPublishedSkillLeavesItAlone(t *testing.T) {
+	db := skillShareStore(t)
+	SaveSkill(db, "alice", SkillRecord{ID: "s1", Name: "Triage", Instructions: "Assess."})
+	if err := promoteSkillToDeployment("alice", "s1"); err != nil {
+		t.Fatal(err)
+	}
+	recipe, _ := json.Marshal(SkillRecord{ID: "s1", Name: "Triage", Instructions: "Something else."})
+	_, skipped, err := (skillArtifact{}).ImportArtifact(db, recipe, "alice")
+	if err != nil || skipped == "" {
+		t.Fatalf("the import should be skipped, got skipped=%q err=%v", skipped, err)
+	}
+	pub := PublishedSkillsBy(db, "alice")
+	if len(pub) != 1 || pub[0].Instructions != "Assess." || pub[0].Disabled {
+		t.Errorf("the deployment copy was changed by the import: %+v", pub)
+	}
+	if len(DeploymentSkills(db)) != 1 {
+		t.Error("the published skill stopped activating for everybody")
 	}
 }

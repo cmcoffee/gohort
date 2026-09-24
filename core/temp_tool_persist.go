@@ -949,6 +949,12 @@ func QueuePendingTempToolScoped(db Database, username string, t TempTool, sessio
 	return nil
 }
 
+// SameDefinition reports whether t and o do the same thing: equal once the
+// governance flags an owner sets (lock, disable, builder-only, bound-only,
+// trial, confirm-in-chat) are set aside. A method so callers outside core can
+// ask it without a new top-level export.
+func (t TempTool) SameDefinition(o TempTool) bool { return !toolDefinitionChanged(t, o) }
+
 // toolDefinitionChanged reports whether what a tool DOES changed between two
 // versions, ignoring the governance flags an owner sets on it (lock, disable,
 // builder-only, bound-only, trial, confirm-in-chat).

@@ -314,3 +314,24 @@ func validateTemplate(cmd string, params map[string]ToolParam) error {
 	}
 	return nil
 }
+
+// checkNewToolName is the gate every tool_def create mode applies to a new
+// name: the form, not a static built-in, not a per-turn built-in (a temp tool
+// named send_message would shadow the real one with a stub), and not a name
+// the session catalog already answers to. It lived inline in shell mode only:
+// api and toolbox mode skipped the reserved check and pipeline mode checked
+// nothing, so a pipeline tool could quietly take any name at all.
+func checkNewToolName(sess *ToolSession, name string) error {
+	if !validToolName(name) {
+		return fmt.Errorf("name must be lowercase letters / digits / underscores only (got %q)", name)
+	}
+	for _, ct := range RegisteredChatTools() {
+		if ct.Name() == name {
+			return fmt.Errorf("name %q collides with a registered tool: pick another", name)
+		}
+	}
+	if IsReservedToolName(name) {
+		return fmt.Errorf("name %q is a built-in tool (channel/operator): pick another; don't recreate it", name)
+	}
+	return CheckCatalogNameCollision(sess, name, nil)
+}

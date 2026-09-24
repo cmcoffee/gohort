@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/cmcoffee/gohort/core/internal/mcpclient"
 )
 
 // llmToolNamePattern is the character class every provider validates a tool
@@ -313,5 +315,38 @@ func TestMCPExposedNameRespectsLengthCap(t *testing.T) {
 			t.Fatalf("truncation collapsed two names onto %q", got)
 		}
 		taken[got] = true
+	}
+}
+
+// Two servers whose names compose to the same exposed name must not share a
+// proxy. "git" with "hub_search" and "git_hub" with "search" both came out as
+// git_hub_search: the second reused the first's proxy, overwriting its schema
+// while every call still went to the first server.
+func TestTwoServersNeverShareAToolName(t *testing.T) {
+	m := &MCPManager{proxies: map[string]*mcpProxyTool{}}
+	m.registerTools(MCPServerConfig{Name: "tncol_git"}, []mcpclient.ToolDef{{Name: "hub_search", Description: "from git"}})
+	m.registerTools(MCPServerConfig{Name: "tncol_git_hub"}, []mcpclient.ToolDef{{Name: "search", Description: "from git_hub"}})
+
+	first := m.proxies["tncol_git_hub_search"]
+	if first == nil || first.server != "tncol_git" || first.desc != "from git" {
+		t.Fatalf("the first server's tool was taken over: %+v", first)
+	}
+	var second *mcpProxyTool
+	for name, p := range m.proxies {
+		if p.server == "tncol_git_hub" {
+			second = p
+			if name == "tncol_git_hub_search" {
+				t.Fatal("the second server was given the first server's name")
+			}
+		}
+	}
+	if second == nil || second.rawName != "search" || second.desc != "from git_hub" {
+		t.Fatalf("the second server's tool is missing or wrong: %+v", second)
+	}
+
+	// Reconnecting a server keeps the names it had.
+	m.registerTools(MCPServerConfig{Name: "tncol_git"}, []mcpclient.ToolDef{{Name: "hub_search", Description: "from git, again"}})
+	if p := m.proxies["tncol_git_hub_search"]; p.server != "tncol_git" || p.desc != "from git, again" {
+		t.Errorf("a reconnect moved or lost the server's own tool: %+v", p)
 	}
 }

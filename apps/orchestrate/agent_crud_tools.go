@@ -810,7 +810,7 @@ func agentMutationParams(includeID bool) map[string]ToolParam {
 		},
 		"tools": {
 			Type:        "array",
-			Description: "Agent-scoped tools that auto-load whenever this agent runs: bespoke shell/api tools for THIS agent's job, kept out of the user-wide pool (two agents can carry same-named tools with different configs). Each entry a TempTool: {name, description, params, mode (\"shell\"|\"api\"), command_template, body_template, credential, method}. Do NOT also list these in allowed_tools; they attach automatically. For a multi-stage workflow use attached_pipelines instead.",
+			Description: "Agent-scoped tools that auto-load whenever this agent runs: bespoke shell/api tools for THIS agent's job, kept out of the user-wide pool. A tool name is one tool across all your agents: reusing a name another agent's tool already has shares that tool, and a different definition under it is refused, so give a new tool a new name. Each entry a TempTool: {name, description, params, mode (\"shell\"|\"api\"), command_template, body_template, credential, method}. Do NOT also list these in allowed_tools; they attach automatically. For a multi-stage workflow use attached_pipelines instead.",
 			Items:       &ToolParam{Type: "object"},
 		},
 		"evals": {

@@ -892,11 +892,22 @@ func houseStyleTools(tools []Tool) []Tool {
 	if len(tools) == 0 {
 		return tools
 	}
-	out := make([]Tool, len(tools))
-	copy(out, tools)
-	for i := range out {
-		out[i].Description = textutil.StripEmDashes(out[i].Description)
-		out[i].Parameters = houseStyleParams(out[i].Parameters)
+	// One definition per name, the first. Some providers refuse a whole
+	// request that names a tool twice, and a caller that assembled its kit
+	// from two sources (a writer's references and the turn's) sent exactly
+	// that. First wins, which is also the agent loop's rule, so the schema
+	// sent and the handler that runs are the same tool.
+	out := make([]Tool, 0, len(tools))
+	seen := make(map[string]bool, len(tools))
+	for _, t := range tools {
+		if seen[t.Name] {
+			Debug("[llm] tool %q was offered twice in one request; the first definition was kept", t.Name)
+			continue
+		}
+		seen[t.Name] = true
+		t.Description = textutil.StripEmDashes(t.Description)
+		t.Parameters = houseStyleParams(t.Parameters)
+		out = append(out, t)
 	}
 	return out
 }

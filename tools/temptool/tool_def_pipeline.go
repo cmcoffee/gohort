@@ -21,6 +21,9 @@ func createPipelineGrouped(args map[string]any, sess *ToolSession) (string, erro
 	if name == "" {
 		return "", fmt.Errorf("name is required")
 	}
+	if err := checkNewToolName(sess, name); err != nil {
+		return "", err
+	}
 	desc := strings.TrimSpace(StringArg(args, "description"))
 	if desc == "" {
 		return "", fmt.Errorf("description is required")

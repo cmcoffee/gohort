@@ -314,6 +314,39 @@ func tempToolToCreateArgs(tt TempTool) map[string]any {
 		if tt.Expand {
 			out["expand"] = true
 		}
+	case TempToolModePipeline:
+		// Round-tripped like the other modes. Without this case an update
+		// rebuilt a pipeline tool with no prompt, steps or inner tools, and
+		// the create path refused it: no pipeline tool could be edited.
+		if len(tt.Params) > 0 {
+			out["params"] = tt.Params
+			out["required"] = append([]string{}, tt.Required...)
+		}
+		if tt.PipelinePrompt != "" {
+			out["pipeline_prompt"] = tt.PipelinePrompt
+		}
+		if len(tt.PipelineSteps) > 0 {
+			steps := make([]any, 0, len(tt.PipelineSteps))
+			for _, st := range tt.PipelineSteps {
+				m := map[string]any{"tool": st.Tool}
+				if st.Name != "" {
+					m["name"] = st.Name
+				}
+				if len(st.Args) > 0 {
+					m["args"] = st.Args
+				}
+				steps = append(steps, m)
+			}
+			out["pipeline_steps"] = steps
+		}
+		inner := make([]any, 0, len(tt.PipelineTools))
+		for _, n := range tt.PipelineTools {
+			inner = append(inner, n)
+		}
+		out["pipeline_tools"] = inner
+		if tt.PipelineMaxRounds > 0 {
+			out["pipeline_max_rounds"] = float64(tt.PipelineMaxRounds)
+		}
 	default:
 		// api / shell share the same scalar fields; empty ones are simply
 		// absent, which the create path tolerates per mode.

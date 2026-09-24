@@ -246,12 +246,22 @@ func chatToolLoop(ctx context.Context, call func(context.Context, []Message, ...
 	if len(kit) == 0 {
 		return call(ctx, messages, opts...)
 	}
+	// One entry per name, the first, for the schema and the handler alike.
+	// Without it a kit merged from two sources sent a name twice (a whole-
+	// request refusal on some providers) while the handler map kept the LAST,
+	// so the model could read one tool's schema and run another's handler.
 	tools := make([]Tool, 0, len(kit))
 	handlers := make(map[string]ToolHandlerFunc, len(kit))
+	deduped := make([]AgentToolDef, 0, len(kit))
 	for _, def := range kit {
+		if _, dup := handlers[def.Tool.Name]; dup {
+			continue
+		}
 		tools = append(tools, def.Tool)
 		handlers[def.Tool.Name] = def.Handler
+		deduped = append(deduped, def)
 	}
+	kit = deduped
 
 	// Pass native tool definitions -- the LLM layer will strip them if
 	// native tools are disabled, and the prompt-based fallback below

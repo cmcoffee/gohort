@@ -145,24 +145,7 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 	if name == "" {
 		return "", fmt.Errorf("name is required")
 	}
-	if !validToolName(name) {
-		return "", fmt.Errorf("name must be lowercase letters / digits / underscores only (got %q)", name)
-	}
-	// Reject collisions with the static catalog so the LLM can't
-	// shadow a real tool with a temp one and confuse later dispatch.
-	for _, ct := range RegisteredChatTools() {
-		if ct.Name() == name {
-			return "", fmt.Errorf("name %q collides with a registered tool: pick another", name)
-		}
-	}
-	// Also reject DYNAMIC per-agent built-ins (channel/operator tools) that aren't
-	// in the static catalog — a temp tool named e.g. send_message would otherwise
-	// shadow the real, delivering tool with a stub that fakes success.
-	if IsReservedToolName(name) {
-		return "", fmt.Errorf("name %q is a built-in tool (channel/operator): pick another; don't recreate it", name)
-	}
-	// And reject a name an existing toolbox action already publishes.
-	if err := CheckCatalogNameCollision(sess, name, nil); err != nil {
+	if err := checkNewToolName(sess, name); err != nil {
 		return "", err
 	}
 

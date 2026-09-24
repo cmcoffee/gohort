@@ -253,6 +253,9 @@ func createToolboxGrouped(args map[string]any, sess *ToolSession) (string, error
 			return "", fmt.Errorf("name %q collides with a registered tool: pick another", name)
 		}
 	}
+	if IsReservedToolName(name) {
+		return "", fmt.Errorf("name %q is a built-in tool (channel/operator): pick another; don't recreate it", name)
+	}
 	desc := strings.TrimSpace(StringArg(args, "description"))
 	if desc == "" {
 		return "", fmt.Errorf("description is required")

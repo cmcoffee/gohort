@@ -409,6 +409,9 @@ func bundleAgentToolByID(udb Database, owner, agentID string, t TempTool) error 
 	// agent; only its definition updates. AgentRecord.Tools is no longer
 	// written.
 	existing, had := UserToolByName(udb, owner, t.Name)
+	if err := bundleRefusal(udb, rec, existing, had, t); err != nil {
+		return err
+	}
 	if err := AdminPersistTempTool(udb, owner, t); err != nil {
 		return err
 	}
@@ -423,6 +426,69 @@ func bundleAgentToolByID(udb Database, owner, agentID string, t TempTool) error 
 		return fmt.Errorf("bundle %q: scope update failed", t.Name)
 	}
 	return nil
+}
+
+// bundleRefusal says why bundling t onto rec must not go ahead, or nil.
+//
+// One name is one tool (the flattened namespace), so bundling a DIFFERENT
+// definition under a name that already exists rewrites that tool for everyone
+// who has it. The authoring paths that land here (create_agent / update_agent
+// inline tools, add_tool, tool_template, a pipeline's tools) did that silently:
+// they replaced locked tools and other agents' tools, and create_agent's own
+// description promised per-agent copies. Now a changed definition goes ahead
+// only when the tool is this agent's alone and unlocked. An identical one only
+// extends the scope, as before.
+//
+// A NEW name is held to what the other creation paths already check: a
+// lower-case snake_case name, not a built-in's, not a reserved one.
+func bundleRefusal(udb Database, rec AgentRecord, existing PersistentTempTool, had bool, t TempTool) error {
+	if !had {
+		if !snakeToolName(t.Name) {
+			return fmt.Errorf("tool name %q must be lower-case letters, digits and underscores (at most 64)", t.Name)
+		}
+		if _, builtin := LookupChatTool(t.Name); builtin || IsReservedToolName(t.Name) {
+			return fmt.Errorf("%q is the name of a built-in tool; give this one a different name", t.Name)
+		}
+		return nil
+	}
+	if existing.Tool.SameDefinition(t) {
+		return nil
+	}
+	if existing.Tool.Locked {
+		return fmt.Errorf("a locked tool called %q already exists, and this is a different definition; unlock it in Extensions to change it, or give this one a different name", t.Name)
+	}
+	var others []string
+	for _, id := range existing.ScopeAgents {
+		if id == rec.ID {
+			continue
+		}
+		name := id
+		if a, ok := loadAgent(udb, id); ok && strings.TrimSpace(a.Name) != "" {
+			name = a.Name
+		}
+		others = append(others, name)
+	}
+	switch {
+	case len(existing.ScopeAgents) == 0:
+		return fmt.Errorf("a tool called %q already exists and every agent can use it; this definition differs, so saving it here would change it for all of them. Update it with tool_def if that is the intent, or give this one a different name", t.Name)
+	case len(others) > 0:
+		return fmt.Errorf("a tool called %q already exists and is used by %s; this definition differs, so saving it here would change it for them too. Update it with tool_def if that is the intent, or give this one a different name", t.Name, strings.Join(others, ", "))
+	}
+	return nil
+}
+
+// snakeToolName is the tool-name rule the creation tools enforce: lower-case
+// letters, digits and underscores, 1 to 64 long.
+func snakeToolName(s string) bool {
+	if len(s) == 0 || len(s) > 64 {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_') {
+			return false
+		}
+	}
+	return true
 }
 
 // unbundleAgentToolByID removes a tool from an agent's record — the OFF twin of

@@ -87,15 +87,7 @@ func (t *CreateAPIToolTool) RunWithSession(args map[string]any, sess *ToolSessio
 	if name == "" {
 		return "", fmt.Errorf("name is required")
 	}
-	if !validToolName(name) {
-		return "", fmt.Errorf("name must be lowercase letters / digits / underscores only (got %q)", name)
-	}
-	for _, ct := range RegisteredChatTools() {
-		if ct.Name() == name {
-			return "", fmt.Errorf("name %q collides with a registered tool", name)
-		}
-	}
-	if err := CheckCatalogNameCollision(sess, name, nil); err != nil {
+	if err := checkNewToolName(sess, name); err != nil {
 		return "", err
 	}
 	desc := strings.TrimSpace(StringArg(args, "description"))
