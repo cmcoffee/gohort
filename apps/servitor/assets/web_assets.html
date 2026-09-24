@@ -136,7 +136,7 @@
   margin-bottom: 0.5rem;
 }
 .ui-servitor-app-tabs {
-  display: flex; gap: 0.4rem; margin: 0.5rem 0;
+  display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.5rem 0;
 }
 /* Access modal. The command is the widest thing in a row and never muted:
    approving without reading it is the failure this surface exists to stop. */
@@ -194,7 +194,7 @@
 }
 
 .ui-servitor-interject-actions {
-  display: flex; gap: 0.3rem; margin-top: 0.4rem;
+  display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.4rem;
   justify-content: flex-end;
 }
 .ui-servitor-interject-btn {
@@ -232,11 +232,6 @@
   color: #3fb950; border-color: #3fb950;
 }
 
-.ui-servitor-modal-footer {
-  display: flex; gap: 0.4rem; justify-content: flex-end;
-  padding-top: 0.8rem; margin-top: 0.8rem;
-  border-top: 1px solid var(--border);
-}
 </style>
 <script>
 (function() {
@@ -530,7 +525,7 @@
         // modals where the × is enough.
         footer: function() {
           if (footer) footer.remove();
-          footer = el('div', {class: 'ui-servitor-modal-footer'});
+          footer = el('div', {class: 'ui-modal-footer'});
           for (var i = 0; i < arguments.length; i++) {
             footer.appendChild(arguments[i]);
           }

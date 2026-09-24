@@ -697,7 +697,7 @@ const agentMemoryModalTemplate = `<script>
       // --- Footer: Cancel + Save (saves facts only, Inferred is
       // per-entry delete; Notes auto-write paths are gone) ---
       var actions = document.createElement('div');
-      actions.style.cssText = 'display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.8rem;padding-top:0.6rem;border-top:1px solid var(--border)';
+      actions.className = 'ui-modal-footer';
       var cancel = document.createElement('button');
       cancel.textContent = 'Cancel';
       cancel.className = 'ui-row-btn';

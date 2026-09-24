@@ -474,7 +474,7 @@ const intakeFormAssets = `<style>
   font-size: 0.75rem; color: var(--text-mute);
 }
 .ui-orch-intake-actions {
-  display: flex; justify-content: flex-end; margin-top: 0.5rem;
+  display: flex; flex-wrap: wrap; justify-content: flex-end; margin-top: 0.5rem;
 }
 /* Button-type intake field: row of clickable buttons that each
  * submit the form immediately with their label as the value. */

@@ -1067,7 +1067,7 @@ func wizardDescribeHTML() string {
 .wd-ask input{width:100%;box-sizing:border-box}
 .wd-row{display:flex;gap:.5rem;align-items:flex-end;margin-top:.5rem}
 .wd-row textarea{flex:1;min-height:3.4rem;resize:vertical}
-.wd-foot{display:flex;gap:.5rem;justify-content:flex-end;margin-top:.9rem}
+.wd-foot{display:flex;flex-wrap:wrap;gap:.5rem;justify-content:flex-end;margin-top:.9rem}
 </style>
 <script>
 (function(){

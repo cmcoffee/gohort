@@ -126,7 +126,7 @@
 }
 .ui-orch-ask-extra:focus { border-color: var(--accent); }
 .ui-orch-ask-actions {
-  display: flex; justify-content: flex-end;
+  display: flex; flex-wrap: wrap; justify-content: flex-end;
   margin-top: 0.5rem;
 }
 .ui-orch-ask-submit {
@@ -214,7 +214,7 @@
 .ui-orch-priv-fixed { color: var(--text-mute); font-size: 0.78rem; white-space: nowrap; }
 .ui-orch-priv-sep { margin-top: 0.6rem; padding-top: 0.5rem; border-top: 1px solid var(--border); }
 .ui-orch-priv select { font-family: inherit; font-size: 0.8rem; padding: 0.1rem 0.3rem; background: var(--bg-0); color: var(--text); border: 1px solid var(--border); border-radius: 4px; }
-.ui-orch-priv-actions { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.7rem; }
+.ui-orch-priv-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.7rem; }
 .ui-orch-priv-note { font-size: 0.78rem; color: var(--text-mute); }
 /* Small "answered" footer for clarity. */
 .ui-orch-ask.submitted::after {
@@ -247,7 +247,7 @@
   border-left-color: #f85149;
 }
 .ui-orch-interject-actions {
-  display: flex; gap: 0.3rem;
+  display: flex; flex-wrap: wrap; gap: 0.3rem;
   margin-top: 0.3rem;
 }
 /* Once the agent has drained the note the framework marks it .consumed, and
@@ -567,7 +567,7 @@
   font-size: 0.75rem; color: var(--text-mute);
 }
 .ui-orch-intake-actions {
-  display: flex; justify-content: flex-end; margin-top: 0.5rem;
+  display: flex; flex-wrap: wrap; justify-content: flex-end; margin-top: 0.5rem;
 }
 .ui-orch-intake-button-row {
   display: flex; flex-wrap: wrap; gap: 0.4rem;

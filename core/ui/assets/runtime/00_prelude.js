@@ -845,7 +845,7 @@
     if (actions === undefined) actions = [{label: opts.closeLabel || 'Close', primary: true}];
     if (actions && actions.length) {
       var bar = document.createElement('div');
-      bar.style.cssText = 'display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.8rem;padding-top:0.6rem;border-top:1px solid var(--border)';
+      bar.className = 'ui-modal-footer';
       actions.forEach(function(a) {
         var btn = document.createElement('button');
         btn.type = 'button';

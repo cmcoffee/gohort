@@ -723,7 +723,7 @@ const tokensHTML = `<div id="acct-tokens" class="acct-tokens">Loading…</div>
 .acct-tok-chk { display:flex; align-items:center; gap:0.45rem; font-size:0.83rem; color:var(--text); }
 .acct-tok-chk input { margin:0; }
 .acct-tok-scope-note { font-size:0.75rem; color:var(--text-mute); font-style:italic; }
-.acct-tok-scope-actions { display:flex; gap:0.5rem; align-items:center; }
+.acct-tok-scope-actions { display:flex;flex-wrap:wrap; gap:0.5rem; align-items:center; }
 </style>
 <script>
 (function(){

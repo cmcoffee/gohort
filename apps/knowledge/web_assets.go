@@ -180,7 +180,7 @@ const documentsListAssets = `<style>
     });
 
     var actions = document.createElement('div');
-    actions.style.cssText = 'display:flex;gap:0.5rem;justify-content:flex-end;margin-top:0.8rem;padding-top:0.6rem;border-top:1px solid var(--border)';
+    actions.className = 'ui-modal-footer';
     var cancel = document.createElement('button'); cancel.className = 'ui-row-btn'; cancel.textContent = 'Cancel';
     cancel.addEventListener('click', function(){ overlay.remove(); });
     var create = document.createElement('button'); create.className = 'ui-row-btn primary'; create.textContent = 'Create';
@@ -315,7 +315,7 @@ const documentsDetailAssets = `<style>
 .docs-desc-wrap { margin-bottom: 0.5rem; }
 .docs-detail-desc-edit { width: 100%; min-height: 4.5rem; resize: vertical; background: var(--bg-0); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 0.5rem 0.6rem; font: inherit; font-size: 0.85rem; line-height: 1.45; }
 .docs-detail-desc-edit:focus { border-color: var(--accent, #56d364); outline: none; }
-.docs-desc-actions { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.4rem; }
+.docs-desc-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 0.4rem; }
 .docs-desc-actions span { font-size: 0.74rem; color: var(--text-mute); }
 .docs-detail-meta { font-size: 0.74rem; color: var(--text-mute); display: flex; gap: 1rem; }
 .docs-section { background: var(--bg-1); border: 1px solid var(--border); border-radius: 8px; padding: 0.8rem; }

@@ -380,7 +380,7 @@ const scribeArticleCSS = `.guide-doc-image { display: block; width: 100%; max-he
 .guide-article-body h3 { font-size: 1.12rem; color: var(--text-hi); margin: 1.3rem 0 0.5rem; }
 .scribe-img-preview { min-height: 4rem; display: flex; align-items: center; justify-content: center; background: var(--bg-2); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 0.8rem; overflow: hidden; }
 .scribe-img-preview img { width: 100%; max-height: 220px; object-fit: cover; display: block; }
-.scribe-img-actions { display: flex; gap: 0.5rem; margin-bottom: 0.6rem; }
+.scribe-img-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.6rem; }
 .scribe-img-url { display: flex; gap: 0.5rem; }
 .scribe-img-url input { flex: 1; padding: 0.45rem 0.6rem; background: var(--bg-0); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }`
 
@@ -484,7 +484,7 @@ const guideSectionCtrlCSS = `<style>
    kept as the floor for a short viewport, where the body scrolls instead. */
 .guide-edit-field.guide-edit-grow { flex: 1 1 auto; min-height: 0; margin-bottom: 0; }
 .guide-edit-field.guide-edit-grow textarea { flex: 1 1 auto; min-height: min(24rem, 40vh); }
-.guide-edit-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.4rem; }
+.guide-edit-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.5rem; margin-top: 0.4rem; }
 /* Touch devices have no hover, so the hover-revealed section controls would be
    unreachable: keep them visible there, and drop them out of the heading overlap
    onto their own right-aligned row on narrow screens. */

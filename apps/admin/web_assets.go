@@ -229,7 +229,7 @@ window.uiTemplateForm = function(cfg, reload){
     fillSuggestions(null);
     function collect(){ var out={}; Object.keys(inputs).forEach(function(k){ if(k==='__name'||inputs[k].type==='file')return; var it=inputs[k]; out[k]=(it.type==='bool'?it.el.checked:(it.type==='number'?(parseInt(it.el.value,10)||0):it.el.value)); }); return out; }
     var msg=document.createElement('div'); msg.style.cssText='font-size:12px;white-space:pre-wrap;min-height:16px;margin:6px 0;';
-    var actions=document.createElement('div'); actions.style.cssText='margin-top:10px;display:flex;gap:8px;justify-content:flex-end;align-items:center;';
+    var actions=document.createElement('div'); actions.className='ui-modal-footer';
     if(cfg.detect){
       var det=document.createElement('button'); det.className='ui-row-btn'; det.textContent='Detect';
       det.onclick=function(){ msg.textContent=''; det.disabled=true; det.textContent='Detecting…';
@@ -315,7 +315,7 @@ const connectorEditSpecAction = `function(ctx){
         var msg = document.createElement('div');
         msg.style.cssText = 'margin:8px 0 0;font-size:12px;color:#e5484d;white-space:pre-wrap;min-height:16px;';
         var actions = document.createElement('div');
-        actions.style.cssText = 'margin-top:10px;display:flex;gap:8px;justify-content:flex-end;';
+        actions.className = 'ui-modal-footer';
         var cancel = document.createElement('button');
         cancel.className = 'ui-row-btn'; cancel.textContent = 'Cancel';
         cancel.onclick = function(){ try{ dlg.close(); dlg.remove(); }catch(e){} };
