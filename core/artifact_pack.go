@@ -159,7 +159,7 @@ func exportableCredential(name string) bool {
 	return true
 }
 
-// ArtifactRecipeSniffer is an OPTIONAL ArtifactType capability for a type whose
+// artifactRecipeSniffer is an OPTIONAL ArtifactType capability for a type whose
 // recipe also circulates as a BARE file, from before the bundle envelope
 // existed or from a per-app Export button (an agent's .agent.json, a
 // pipeline's .pipeline.json). Given the top-level keys of a JSON object that
@@ -169,28 +169,28 @@ func exportableCredential(name string) bool {
 // parser, which reads any {"name": ...} object as a connector.
 //
 // Claim only on a key no other type's recipe has.
-type ArtifactRecipeSniffer interface {
+type artifactRecipeSniffer interface {
 	SniffsRecipe(fields map[string]json.RawMessage) bool
 }
 
-// ArtifactUserImportable is an OPTIONAL ArtifactType capability: a type that
+// artifactUserImportable is an OPTIONAL ArtifactType capability: a type that
 // returns true may be imported by an ordinary user into their OWN namespace.
 // Every such type's import must land inside the importer's reach and inert
 // (drafts, disabled, pending review). A type without it (connectors,
 // credentials, source hooks: deployment-wide records) is admin-only.
-type ArtifactUserImportable interface {
+type artifactUserImportable interface {
 	UserImportable() bool
 }
 
-// ArtifactTypeUserImportable reports whether an ordinary user may import
-// artifacts of the named type (see ArtifactUserImportable). Unknown types are
+// artifactTypeUserImportable reports whether an ordinary user may import
+// artifacts of the named type (see artifactUserImportable). Unknown types are
 // not importable by anyone, so they read false.
-func ArtifactTypeUserImportable(typ string) bool {
+func artifactTypeUserImportable(typ string) bool {
 	at, ok := lookupArtifactType(typ)
 	if !ok {
 		return false
 	}
-	ui, ok := at.(ArtifactUserImportable)
+	ui, ok := at.(artifactUserImportable)
 	return ok && ui.UserImportable()
 }
 
@@ -236,8 +236,19 @@ func ExportArtifactBundle(db Database, sels []ArtifactSel) (ArtifactBundle, erro
 	return exportArtifactBundle(db, sels, true, nil)
 }
 
+// UserExportOptions says which dependencies a user's export carries.
+// IncludeDeps false is a bare export of exactly the selection. With it set,
+// DepTypes, when non-empty, narrows the closure to those kinds: the person
+// ticked "tools and skills" but not "knowledge collections", say. A kind left
+// out is not walked through either, so a collection reached only through an
+// unticked skill stays out as well.
+type UserExportOptions struct {
+	IncludeDeps bool
+	DepTypes    []string
+}
+
 // ExportArtifactBundleAsUser is the export an ordinary user may run: only
-// their OWN artifacts, of the kinds they may import (ArtifactUserImportable).
+// their OWN artifacts, of the kinds they may import (artifactUserImportable).
 // Every selector is resolved in owner's namespace whatever Owner it named, and
 // a type outside the user's kinds is an error, not a silent drop. The
 // dependency closure is held to the same line: a dependency of a user kind is
@@ -246,26 +257,58 @@ func ExportArtifactBundle(db Database, sels []ArtifactSel) (ArtifactBundle, erro
 // deployment-wide dependency (a credential's configuration, a connector) is
 // left out entirely. Those are an administrator's to export; the import on
 // the other side warns that the reference is missing.
-func ExportArtifactBundleAsUser(db Database, owner string, sels []ArtifactSel, includeDeps bool) (ArtifactBundle, error) {
+func ExportArtifactBundleAsUser(db Database, owner string, sels []ArtifactSel, opts UserExportOptions) (ArtifactBundle, error) {
 	owner = strings.TrimSpace(owner)
 	if owner == "" {
 		return ArtifactBundle{}, Error("an export needs a signed-in user")
 	}
 	own := make([]ArtifactSel, 0, len(sels))
 	for _, s := range sels {
-		if !ArtifactTypeUserImportable(s.Type) {
+		if !artifactTypeUserImportable(s.Type) {
 			return ArtifactBundle{}, fmt.Errorf("%q artifacts are exported by an administrator", strings.TrimSpace(s.Type))
 		}
 		s.Owner = owner
 		own = append(own, s)
 	}
-	return exportArtifactBundle(db, own, includeDeps, func(dep ArtifactSel) (ArtifactSel, bool) {
-		if !ArtifactTypeUserImportable(dep.Type) {
+	only := map[string]bool{}
+	for _, t := range opts.DepTypes {
+		if t = strings.TrimSpace(t); t != "" {
+			only[t] = true
+		}
+	}
+	return exportArtifactBundle(db, own, opts.IncludeDeps, func(dep ArtifactSel) (ArtifactSel, bool) {
+		if !artifactTypeUserImportable(dep.Type) {
+			return dep, false
+		}
+		if len(only) > 0 && !only[strings.TrimSpace(dep.Type)] {
 			return dep, false
 		}
 		dep.Owner = owner
 		return dep, true
 	})
+}
+
+// ArtifactExportPlanAsUser lists what a user's export of sels would carry
+// BESIDES sels themselves, with every dependency kind included: the choices
+// an export dialog offers ("this agent uses 3 tools, 2 skills and a
+// collection"). Nothing is written; it is the same walk the export runs.
+func ArtifactExportPlanAsUser(db Database, owner string, sels []ArtifactSel) ([]ArtifactSel, error) {
+	b, err := ExportArtifactBundleAsUser(db, owner, sels, UserExportOptions{IncludeDeps: true})
+	if err != nil {
+		return nil, err
+	}
+	explicit := map[string]bool{}
+	for _, s := range sels {
+		explicit[strings.TrimSpace(s.Type)+"\x00"+strings.TrimSpace(s.Name)] = true
+	}
+	var deps []ArtifactSel
+	for _, a := range b.Artifacts {
+		if explicit[a.Type+"\x00"+a.Name] {
+			continue
+		}
+		deps = append(deps, ArtifactSel{Type: a.Type, Name: artifactRecipeName(a), Owner: owner})
+	}
+	return deps, nil
 }
 
 // ArtifactSelectionForOwner is "everything this user owns": every artifact of
@@ -278,7 +321,7 @@ func ArtifactSelectionForOwner(db Database, owner string) []ArtifactSel {
 	}
 	var types []string
 	for name := range artifactTypes {
-		if ArtifactTypeUserImportable(name) {
+		if artifactTypeUserImportable(name) {
 			types = append(types, name)
 		}
 	}
@@ -567,7 +610,7 @@ func uploadWrappedText(fields map[string]json.RawMessage) (string, bool) {
 	return "", false
 }
 
-// sniffArtifactType asks each registered ArtifactRecipeSniffer, in type-name
+// sniffArtifactType asks each registered artifactRecipeSniffer, in type-name
 // order so the answer never depends on map iteration, whether fields is one of
 // its bare recipes.
 func sniffArtifactType(fields map[string]json.RawMessage) (string, bool) {
@@ -577,7 +620,7 @@ func sniffArtifactType(fields map[string]json.RawMessage) (string, bool) {
 	}
 	sort.Strings(names)
 	for _, n := range names {
-		if sn, ok := artifactTypes[n].(ArtifactRecipeSniffer); ok && sn.SniffsRecipe(fields) {
+		if sn, ok := artifactTypes[n].(artifactRecipeSniffer); ok && sn.SniffsRecipe(fields) {
 			return n, true
 		}
 	}
@@ -661,7 +704,7 @@ func ImportArtifactBundle(db Database, data []byte, owner string) (ArtifactImpor
 }
 
 // ImportArtifactBundleAsUser is ImportArtifactBundle for an ordinary user's
-// own namespace: only ArtifactUserImportable types import, and every other
+// own namespace: only artifactUserImportable types import, and every other
 // artifact in the bundle is reported as skipped rather than silently dropped,
 // so the person can see what needs an administrator.
 func ImportArtifactBundleAsUser(db Database, data []byte, owner string) (ArtifactImportResult, error) {
@@ -691,7 +734,7 @@ func importArtifactBundle(db Database, data []byte, owner string, userOnly bool)
 			res.Skipped++
 			continue
 		}
-		if userOnly && !ArtifactTypeUserImportable(typ) {
+		if userOnly && !artifactTypeUserImportable(typ) {
 			res.Outcomes = append(res.Outcomes, ArtifactImportOutcome{
 				Type: typ, Name: artifactRecipeName(a), Status: "skipped", Detail: adminOnlyArtifactDetail})
 			res.Skipped++
@@ -832,7 +875,7 @@ func previewArtifactBundle(db Database, data []byte, owner string, userOnly bool
 		switch {
 		case !known:
 			item.Action, item.Detail = "skip", "unknown artifact type"
-		case userOnly && !ArtifactTypeUserImportable(typ):
+		case userOnly && !artifactTypeUserImportable(typ):
 			item.Action, item.Detail = "skip", adminOnlyArtifactDetail
 		case name == "":
 			item.Action, item.Detail = "skip", "missing artifact name"

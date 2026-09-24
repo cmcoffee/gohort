@@ -124,8 +124,9 @@ func TestThePipelinePageReadsInTheOrderItRuns(t *testing.T) {
 	if !strings.Contains(body, `"field":"description"`) || !strings.Contains(body, `"method":"PUT"`) {
 		t.Error("the pipeline's own fields should be editable")
 	}
-	// Export is here, next to the thing being exported.
-	if !strings.Contains(body, "/api/pipelines/"+def.ID+"/export") {
+	// Export is here, next to the thing being exported, through the shared
+	// dialog that lets the owner choose what travels with it.
+	if !strings.Contains(body, `"url":"export_pipeline"`) || !strings.Contains(body, def.ID) {
 		t.Error("no export on the page")
 	}
 	// A pipeline nobody can reach is a 404, not somebody else's.

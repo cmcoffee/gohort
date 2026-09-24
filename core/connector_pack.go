@@ -138,7 +138,7 @@ type ConnectorImportResult struct {
 
 // ImportConnectorPack reconstitutes connectors from pack bytes as new records
 // owned by owner. Every connector lands UNAPPROVED and inert until an admin
-// approves it (SaveConnectorDraft), including kinds that auto-approve on
+// approves it (saveConnectorDraft), including kinds that auto-approve on
 // create: an imported recipe's target was chosen somewhere else. A name that
 // already exists is SKIPPED, never overwritten — import can't clobber a live
 // integration. Referenced credentials must exist on this install; a validate
@@ -171,7 +171,7 @@ func ImportConnectorPack(db Database, data []byte, owner string) (ConnectorImpor
 			Spec:     pc.Spec,
 			Owner:    owner,
 		}
-		if err := SaveConnectorDraft(db, c); err != nil {
+		if err := saveConnectorDraft(db, c); err != nil {
 			res.Skipped = append(res.Skipped, ConnectorImportSkip{Name: name, Reason: err.Error()})
 			continue
 		}

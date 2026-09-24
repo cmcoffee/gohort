@@ -805,14 +805,13 @@ func TestTheMachinesListCarriesInAndOut(t *testing.T) {
 		t.Error("an import should land in the machine it made, like Draft and Duplicate do")
 	}
 
-	// Out: on the row, as a navigation — the endpoint answers with a
-	// Content-Disposition, so the browser downloads and the page stays.
-	if !strings.Contains(body, `"post_to":"/orchestrate/api/machines/{id}/export"`) {
+	// Out: on the row, through the shared export dialog, which lets the
+	// owner choose which of the machine's dependencies travel with it.
+	if !strings.Contains(body, `"post_to":"export_machine"`) {
 		t.Error("no way to take a machine out from the list")
 	}
-	if !strings.Contains(body, `"label":"Export","post_to":"/orchestrate/api/machines/{id}/export","method":"GET"`) &&
-		!strings.Contains(body, `"method":"GET"`) {
-		t.Error("export should navigate rather than fetch-and-discard")
+	if !strings.Contains(machinesHeadForTest(), `"export_machine"`) {
+		t.Error("the list's Export has no handler registered on the page")
 	}
 }
 
@@ -1082,4 +1081,15 @@ func TestNeitherDraftingDoorIsADialog(t *testing.T) {
 			t.Errorf("the page is missing %q", want)
 		}
 	}
+}
+
+// machinesHeadForTest is the head the Extensions page adds for the machines
+// section, where its row actions' client handlers are registered.
+func machinesHeadForTest() string {
+	for _, e := range ExtensionSectionEntries() {
+		if strings.Contains(e.Head, "export_machine") {
+			return e.Head
+		}
+	}
+	return ""
 }

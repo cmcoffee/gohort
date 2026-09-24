@@ -145,7 +145,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 		";\nwindow.ORCH_INTERNET_TOOLS = " + string(internetJSON) +
 		";\nwindow.ORCH_SUB_AGENTS = " + string(subAgentsJSON) +
 		";\nwindow.ORCH_CHANNEL_AGENTS = " + string(cortexAgentsJSON) +
-		";</script>\n" + TranscribeRuntimeFlagScript() + "\n" + orchestrateWebAssets
+		";</script>\n<script>" + ArtifactClientJS + "</script>\n" + TranscribeRuntimeFlagScript() + "\n" + orchestrateWebAssets
 
 	// Builder handoff: a ?builder_brief=<id> deep-link (from the send_to_builder
 	// tool or the toolbar "Send to Builder" button) carries a one-shot brief.
@@ -750,7 +750,7 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 							Method: "client", URL: "orchestrate_clone_agent"},
 						{Group: "Agent", Label: "Import", Title: "Import an agent recipe from a JSON file",
 							Method: "client", URL: "orchestrate_import_agent"},
-						{Group: "Agent", Label: "Export", Title: "Download the active agent as a portable JSON recipe",
+						{Group: "Agent", Label: "Export", Title: "Download the active agent, choosing which of its tools, skills and knowledge go with it",
 							Method: "client", URL: "orchestrate_export_agent"},
 						{Group: "Agent", Label: "Delete", Title: "Delete the active agent",
 							Method: "client", URL: "orchestrate_delete_agent", Variant: "danger"},

@@ -35,7 +35,7 @@ func init() {
 
 // connectorArtifact makes a Connector portable. Recipe is a PortableConnector
 // (already identity-free / secret-free). Import goes through
-// SaveConnectorDraft, so every kind lands UNAPPROVED, including rest_poll,
+// saveConnectorDraft, so every kind lands UNAPPROVED, including rest_poll,
 // which auto-approves only when created here. Global (admin) scope; Owner
 // records who imported it.
 type connectorArtifact struct{}
@@ -139,7 +139,7 @@ func (connectorArtifact) ImportArtifact(db Database, recipe json.RawMessage, own
 		Spec:     pc.Spec,
 		Owner:    owner,
 	}
-	if err := SaveConnectorDraft(db, c); err != nil {
+	if err := saveConnectorDraft(db, c); err != nil {
 		return name, "", err
 	}
 	return name, "", nil

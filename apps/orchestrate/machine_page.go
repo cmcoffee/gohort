@@ -31,7 +31,7 @@ import (
 func init() {
 	RegisterExtensionSection(ExtensionSectionEntry{
 		Build: machinesExtensionSection,
-		Head:  assignPillsHead,
+		Head:  assignPillsHead + artifactExportHead(),
 		// After the page's own tools and credentials, which are what
 		// somebody reaches for constantly.
 		Order: 10,
@@ -136,8 +136,8 @@ func machinesExtensionSection(r *http.Request, user string) (ui.Section, bool) {
 					// Downloading a recipe should not require opening the
 					// machine first — the reason to take a copy is usually
 					// that you are about to change it.
-					{Type: "button", Label: "Export", Method: "GET",
-						PostTo: "/orchestrate/api/machines/{id}/export"},
+					{Type: "button", Label: "Export", Method: "client",
+						PostTo: "export_machine"},
 					{Type: "button", Label: "Duplicate", Method: "POST",
 						PostTo:         "/orchestrate/api/machines/{id}/duplicate",
 						RedirectURL:    "/orchestrate/machine?id={id}",
@@ -297,6 +297,8 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 		// of that choice lives in the arrows.
 		Sticky: machineMapCard(def),
 		Head: ui.NewHead().
+			JS(ArtifactClientJS).
+			ClientAction("export_machine", `function(ctx){ window.gohortArtifacts.exportAction('machine', 'id', 'name')(ctx); }`).
 			ClientAction("machine_remove_step", machineRemoveStepJS).
 			ClientAction("machine_move_step", machineMoveStepJS).
 			ClientAction("machine_try", machineTryJS).
@@ -322,12 +324,8 @@ func (T *OrchestrateApp) handleMachinePage(w http.ResponseWriter, r *http.Reques
 					// you author. Export downloads the same JSON the
 					// bundle carries; Duplicate lands in the copy, so
 					// trying something drastic never costs the original.
-					ui.Toolbar{Actions: []ui.ToolbarAction{{
-						Label:  "Export",
-						Title:  "Download this machine's portable recipe",
-						Method: "GET",
-						URL:    "/orchestrate/api/machines/" + url_(def.ID) + "/export",
-					}, {
+					ui.Toolbar{Actions: []ui.ToolbarAction{exportToolbarAction("machine", def.ID, def.Name,
+						"/orchestrate/api/machines/"+url_(def.ID)+"/export", true), {
 						Label:  "Duplicate",
 						Title:  "Make a copy to experiment on, and open it",
 						Method: "client",

@@ -28,7 +28,7 @@ import (
 func init() {
 	RegisterExtensionSection(ExtensionSectionEntry{
 		Build: pipelinesExtensionSection,
-		Head:  assignPillsHead,
+		Head:  assignPillsHead + artifactExportHead(),
 		// Directly after Machines: they are the same kind of thing to
 		// somebody looking for one, and a workflow that runs to an end
 		// belongs next to a workflow a conversation sits in.
@@ -107,8 +107,8 @@ func pipelinesExtensionSection(r *http.Request, user string) (ui.Section, bool) 
 					// table carries and the same one Extensions › Tools uses.
 					{Type: "button", Label: "Assign", Method: "client",
 						PostTo: "orchestrate_assign"},
-					{Type: "button", Label: "Export", Method: "GET",
-						PostTo: "/orchestrate/api/pipelines/{id}/export"},
+					{Type: "button", Label: "Export", Method: "client",
+						PostTo: "export_pipeline"},
 					{Type: "button", Label: "Delete", Method: "DELETE",
 						PostTo:     "/orchestrate/api/pipelines/{id}",
 						Variant:    "danger",
@@ -177,6 +177,8 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 		// exactly what a stage's own section cannot show.
 		Sticky: pipelineMapCard(def),
 		Head: ui.NewHead().CSS(pipelineStageCSS).
+			JS(ArtifactClientJS).
+			ClientAction("export_pipeline", `function(ctx){ window.gohortArtifacts.exportAction('pipeline', 'id', 'name')(ctx); }`).
 			JS(pipelineMapHereJS).
 			ClientAction("pipeline_duplicate", pipelineDuplicateJS),
 		Sections: []ui.Section{{
@@ -201,12 +203,8 @@ func (T *OrchestrateApp) handlePipelinePage(w http.ResponseWriter, r *http.Reque
 							Detail: "It is the difference between a pipeline that gets called and one that does not."},
 					},
 				},
-				ui.Toolbar{Actions: []ui.ToolbarAction{{
-					Label:  "Export",
-					Title:  "Download this pipeline's portable recipe",
-					Method: "GET",
-					URL:    "/orchestrate/api/pipelines/" + url_(def.ID) + "/export",
-				}, {
+				ui.Toolbar{Actions: []ui.ToolbarAction{exportToolbarAction("pipeline", def.ID, def.Name,
+					"/orchestrate/api/pipelines/"+url_(def.ID)+"/export", mine), {
 					// A client action, not a POST toolbar button: the
 					// toolbar fires the request and stays put, and the
 					// point of duplicating is to work on the COPY.

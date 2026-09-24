@@ -94,7 +94,8 @@ func (a *agentArtifact) ExportArtifact(_ Database, name, owner string) (json.Raw
 		return nil, fmt.Errorf("no store for user %q", owner)
 	}
 	for _, rec := range listAgents(udb, owner) {
-		if rec.OwnedBy == "" && rec.Name == name {
+		// By name, or by id: the chat page knows the agent it has open by id.
+		if rec.OwnedBy == "" && (rec.Name == name || rec.ID == name) {
 			exp, ok := buildAgentExport(udb, rec.ID, owner)
 			if !ok {
 				return nil, fmt.Errorf("no agent named %q for user %q", name, owner)

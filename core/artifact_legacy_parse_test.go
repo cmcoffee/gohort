@@ -133,15 +133,15 @@ func TestAUserExportStaysInsideTheUsersOwnNamespace(t *testing.T) {
 	cred := &fakeArtifact{typ: "credential", recipes: map[string]string{"crm": "crm"}}
 	withFakeTypes(t, agentLike, cred)
 
-	if _, err := ExportArtifactBundleAsUser(nil, "alice", []ArtifactSel{{Type: "credential", Name: "crm"}}, true); err == nil {
+	if _, err := ExportArtifactBundleAsUser(nil, "alice", []ArtifactSel{{Type: "credential", Name: "crm"}}, UserExportOptions{IncludeDeps: true}); err == nil {
 		t.Error("a user exported an administrator's kind of artifact")
 	}
 	// Named with bob as owner: still resolves as alice's, and alice has no
 	// "theirs", so the export fails rather than reading bob's store.
-	if _, err := ExportArtifactBundleAsUser(nil, "alice", []ArtifactSel{{Type: "pipeline", Name: "theirs", Owner: "bob"}}, true); err == nil {
+	if _, err := ExportArtifactBundleAsUser(nil, "alice", []ArtifactSel{{Type: "pipeline", Name: "theirs", Owner: "bob"}}, UserExportOptions{IncludeDeps: true}); err == nil {
 		t.Error("a user exported another user's artifact by naming its owner")
 	}
-	b, err := ExportArtifactBundleAsUser(nil, "alice", []ArtifactSel{{Type: "pipeline", Name: "mine"}}, true)
+	b, err := ExportArtifactBundleAsUser(nil, "alice", []ArtifactSel{{Type: "pipeline", Name: "mine"}}, UserExportOptions{IncludeDeps: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,3 +177,37 @@ func (o *ownerFake) ExportArtifact(_ Database, name, owner string) (json.RawMess
 }
 
 func (o *ownerFake) Dependencies(_ Database, name, _ string) []ArtifactSel { return o.deps[name] }
+
+// The export dialog offers what an item depends on, by kind, and the ticks it
+// sends back narrow the closure to those kinds.
+func TestTheExportPlanAndTheKindsTheDialogTicks(t *testing.T) {
+	pipes := &ownerFake{sniffingFake: sniffingFake{fakeArtifact{typ: "pipeline"}}}
+	pipes.byOwner = map[string]map[string]bool{"alice": {"main": true}}
+	pipes.deps = map[string][]ArtifactSel{"main": {{Type: "skill", Name: "triage"}, {Type: "machine", Name: "intake"}}}
+	skills := &ownerFake{sniffingFake: sniffingFake{fakeArtifact{typ: "skill"}}}
+	skills.byOwner = map[string]map[string]bool{"alice": {"triage": true}}
+	machines := &ownerFake{sniffingFake: sniffingFake{fakeArtifact{typ: "machine"}}}
+	machines.byOwner = map[string]map[string]bool{"alice": {"intake": true}}
+	withFakeTypes(t, pipes, skills, machines)
+
+	plan, err := ArtifactExportPlanAsUser(nil, "alice", []ArtifactSel{{Type: "pipeline", Name: "main"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan) != 2 {
+		t.Fatalf("the plan should list both dependencies and not the item itself: %+v", plan)
+	}
+
+	b, err := ExportArtifactBundleAsUser(nil, "alice", []ArtifactSel{{Type: "pipeline", Name: "main"}},
+		UserExportOptions{IncludeDeps: true, DepTypes: []string{"skill"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kinds []string
+	for _, a := range b.Artifacts {
+		kinds = append(kinds, a.Type)
+	}
+	if len(kinds) != 2 || kinds[0] != "pipeline" || kinds[1] != "skill" {
+		t.Fatalf("only the ticked kind should travel: %v", kinds)
+	}
+}

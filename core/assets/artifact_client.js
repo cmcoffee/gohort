@@ -133,5 +133,127 @@
     input.click();
   }
 
-  window.gohortArtifacts = {download: download, importFlow: importFlow};
+  // What each dependency kind is called in the export dialog, in the order the
+  // dialog lists them.
+  var KINDS = [
+    ['tool', 'Tools'],
+    ['skill', 'Skills'],
+    ['collection', 'Knowledge collections'],
+    ['pipeline', 'Pipelines'],
+    ['machine', 'Machines'],
+    ['agent', 'Agents'],
+    ['custom_app', 'Custom apps'],
+    ['monitor', 'Monitors'],
+  ];
+  // A collection carries its documents' full text: it can be large and it is
+  // the owner's data, so it goes only when asked for.
+  var OFF_BY_DEFAULT = {collection: true};
+  var KIND_NOTES = {
+    collection: 'Carries the documents\' full text, and can be large.',
+  };
+
+  // exportFlow downloads one artifact, first letting the person choose which
+  // kinds of dependency travel with it. It asks the export endpoint for the
+  // plan (what the item depends on); with nothing to choose it downloads at
+  // once, otherwise it opens a dialog with one checkbox per kind.
+  //   opts: {base (export endpoint), type, name (name or id), label (filename), note}
+  function exportFlow(opts) {
+    var base = opts.base || '/account/api/artifacts/export';
+    var q = '?type=' + encodeURIComponent(opts.type) + '&name=' + encodeURIComponent(opts.name) +
+      (opts.label ? '&file=' + encodeURIComponent(opts.label) : '');
+    fetch(base + q + '&plan=1', {credentials: 'same-origin'}).then(function (r) {
+      return r.ok ? r.json() : r.text().then(function (t) { throw new Error(t || ('HTTP ' + r.status)); });
+    }).then(function (plan) {
+      var deps = plan.dependencies || [];
+      if (!deps.length) { download(base + q + '&deps=0'); return; }
+      var byKind = {};
+      deps.forEach(function (d) { (byKind[d.type] = byKind[d.type] || []).push(d.name); });
+      var boxes = {};
+      window.uiOpenModal({
+        title: 'Export ' + (opts.label || opts.name),
+        subtitle: 'Choose what travels with it. Anything left out has to exist wherever the file is imported, or that part will not work there. No secrets are ever included.',
+        width: '560px',
+        actions: [
+          {label: 'Cancel'},
+          {label: 'Export', primary: true, onClick: function (api) {
+            var chosen = [];
+            Object.keys(boxes).forEach(function (k) { if (boxes[k].checked) chosen.push(k); });
+            download(base + q + (chosen.length ? '&include=' + encodeURIComponent(chosen.join(',')) : '&deps=0'));
+            api.close();
+          }},
+        ],
+        mount: function (body) {
+          if (opts.note) {
+            var n = document.createElement('div');
+            n.style.cssText = 'font-size:0.82rem;color:var(--text-mute)';
+            n.textContent = opts.note;
+            body.appendChild(n);
+          }
+          KINDS.forEach(function (kind) {
+            var names = byKind[kind[0]];
+            if (!names) return;
+            delete byKind[kind[0]];
+            body.appendChild(kindRow(kind[0], kind[1], names, boxes));
+          });
+          // A kind this list does not name yet still gets a checkbox.
+          Object.keys(byKind).forEach(function (k) {
+            body.appendChild(kindRow(k, k, byKind[k], boxes));
+          });
+        },
+      });
+    }).catch(function (e) { fail('Export failed: ', e); });
+  }
+
+  function kindRow(kind, label, names, boxes) {
+    var wrap = document.createElement('label');
+    wrap.style.cssText = 'display:flex;gap:0.6rem;align-items:flex-start;padding:0.45rem 0;border-bottom:1px solid var(--border);cursor:pointer';
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !OFF_BY_DEFAULT[kind];
+    cb.style.marginTop = '0.2rem';
+    boxes[kind] = cb;
+    var text = document.createElement('div');
+    var head = document.createElement('div');
+    head.style.cssText = 'font-weight:600;font-size:0.88rem';
+    head.textContent = label + ' (' + names.length + ')';
+    var list = document.createElement('div');
+    list.style.cssText = 'font-size:0.8rem;color:var(--text-mute);overflow-wrap:anywhere';
+    list.textContent = names.join(', ');
+    text.appendChild(head);
+    text.appendChild(list);
+    if (KIND_NOTES[kind]) {
+      var note = document.createElement('div');
+      note.style.cssText = 'font-size:0.78rem;color:var(--warn,#d97706)';
+      note.textContent = KIND_NOTES[kind];
+      text.appendChild(note);
+    }
+    wrap.appendChild(cb);
+    wrap.appendChild(text);
+    return wrap;
+  }
+
+  // exportAction builds a client-action handler for an Export button. On a
+  // table row it reads the record (nameField: the name or id to export,
+  // labelField: the filename); on a toolbar it reads action.data, a JSON
+  // object {name, label}.
+  function exportAction(type, nameField, labelField) {
+    return function (ctx) {
+      var rec = ctx && ctx.record;
+      var name = '', label = '';
+      if (rec) {
+        name = rec[nameField || 'name'];
+        label = rec[labelField || 'name'] || name;
+      } else if (ctx && ctx.action && ctx.action.data) {
+        try {
+          var d = JSON.parse(ctx.action.data);
+          name = d.name;
+          label = d.label || d.name;
+        } catch (e) { name = ctx.action.data; }
+      }
+      if (!name) { fail('', 'Nothing to export.'); return; }
+      exportFlow({type: type, name: String(name), label: String(label || name)});
+    };
+  }
+
+  window.gohortArtifacts = {download: download, importFlow: importFlow, exportFlow: exportFlow, exportAction: exportAction};
 })();

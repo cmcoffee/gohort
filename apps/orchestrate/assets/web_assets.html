@@ -2323,16 +2323,14 @@
       window.uiRegisterClientAction('orchestrate_export_agent', function() {
         var id = getAgentID();
         if (!id) { window.uiAlert('Pick an agent first.'); return; }
-        // Trigger a download via an invisible link so the Content-
-        // Disposition header lands without leaving the page. Direct
-        // navigation works too but blanks the chat surface, which is
-        // annoying — the link path keeps the user in place.
-        var a = document.createElement('a');
-        a.href = 'api/agents/' + encodeURIComponent(id) + '/export';
-        a.style.display = 'none';
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(function() { a.remove(); }, 0);
+        // A bundle, through the shared export dialog: the person picks which
+        // of the agent's shared tools, skills, collections and pipelines go
+        // with it. Tools that belong to this agent alone are part of the
+        // agent and always travel.
+        window.gohortArtifacts.exportFlow({
+          type: 'agent', name: id, label: getAgentLabel() || id,
+          note: 'Tools that belong to this agent alone are part of it and always go with it. These are the other things it uses.'
+        });
       });
 
       // Save log → download the current session's full trace

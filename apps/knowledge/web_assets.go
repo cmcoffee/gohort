@@ -13,6 +13,7 @@ const documentsListBody = `
 <div class="docs-page">
   <div class="docs-hdr">
     <p class="docs-intro">Reusable document collections. Create a named bundle of documents, then attach it to whichever agents or experts need it via their Knowledge picker. The chunks merge into RAG at consult / recall time. Use this for domain-scoped reference material that more than one agent might want; for files private to a single agent, use that agent's own Knowledge button instead.</p>
+    <button id="docs-import" class="ui-row-btn" title="Preview a collection somebody exported, then bring it into your own knowledge">Import…</button>
     <button id="docs-new" class="ui-row-btn primary">+ New collection</button>
   </div>
   <div id="docs-status" class="docs-status"></div>
@@ -100,6 +101,19 @@ const documentsListAssets = `<style>
     s.textContent = text;
     return s;
   }
+
+  // Import goes through the shared bundle client (core ArtifactClientJS,
+  // loaded in the page head) against the person's own account endpoints.
+  var importBtn = $('#docs-import');
+  if (importBtn) importBtn.addEventListener('click', function() {
+    if (!window.gohortArtifacts) return;
+    window.gohortArtifacts.importFlow({
+      previewURL: '/account/api/artifacts/preview',
+      importURL: '/account/api/artifacts/import',
+      subtitle: 'A collection lands as your own, and its documents are indexed again in the background, so search reaches them a little after the import finishes. A name you already have is skipped.',
+      onDone: function() { load(); }
+    });
+  });
 
   newBtn.addEventListener('click', function() {
     // Div-overlay modal instead of a native <dialog>/showModal(): WKWebView

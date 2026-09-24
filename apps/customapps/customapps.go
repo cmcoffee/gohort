@@ -432,11 +432,26 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 		// sharing modes and copy the public link. App-specific behavior, so it
 		// lives here (the app's own page) via the client-action registry — never
 		// in core/ui.
-		ExtraHeadHTML: shareModalScript,
+		// Export and Import go through the shared bundle client (core
+		// ArtifactClientJS) against the person's own account endpoints.
+		ExtraHeadHTML: shareModalScript + ui.NewHead().
+			JS(ArtifactClientJS).
+			ClientAction("export_custom_app", `function(ctx){ window.gohortArtifacts.exportAction('custom_app', 'slug', 'name')(ctx); }`).
+			ClientAction("customapps_import", `function(){
+  window.gohortArtifacts.importFlow({
+    previewURL: '/account/api/artifacts/preview',
+    importURL: '/account/api/artifacts/import',
+    invalidate: ['_apps'],
+    subtitle: 'An app lands switched off and shared with nobody: read its data-source and action scripts, then Enable it. Its records never travel. A slug you already have is skipped.'
+  });
+}`).Render(),
 		Sections: []ui.Section{{
 			Title:    "My apps",
 			Subtitle: "Data-driven apps composed from ui primitives.",
-			Body: ui.Table{
+			Body: ui.Stack{Children: []ui.Component{ui.Toolbar{Actions: []ui.ToolbarAction{{
+				Label: "Import…", Title: "Preview an app somebody exported, then bring it in",
+				Method: "client", URL: "customapps_import",
+			}}}, ui.Table{
 				Source: "_apps",
 				RowKey: "slug",
 				Columns: []ui.Col{
@@ -454,6 +469,7 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 						Confirm: "Enable this imported app? Review its data-source and action scripts first: they run in your sandbox once the app is live."},
 					// One Share button opens the sharing modal (customapps_share).
 					{Type: "button", Label: "Share", Method: "client", PostTo: "customapps_share", OnlyIf: "mine"},
+					{Type: "button", Label: "Export", Method: "client", PostTo: "export_custom_app", OnlyIf: "mine"},
 					// Pause / Resume a self-updating app. Only one shows at a time,
 					// gated on the auto_running / auto_paused fields the list sets.
 					{Type: "button", Label: "Pause", Method: "POST", PostTo: "_app/schedule?slug={slug}&on=false", OnlyIf: "auto_running"},
@@ -461,7 +477,7 @@ func (T *CustomApps) handleIndex(w http.ResponseWriter, r *http.Request) {
 					{Type: "button", Label: "Delete", Method: "DELETE", PostTo: "_app?slug={slug}", OnlyIf: "mine", Variant: "danger",
 						Confirm: "Delete this app and all its data? This can't be undone."},
 				},
-			},
+			}}},
 		}},
 	}.ServeHTTP(w, r)
 }

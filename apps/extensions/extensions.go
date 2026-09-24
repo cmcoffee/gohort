@@ -456,9 +456,13 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			// Deletable = has a record of its own to delete (pool or orphan). A
 			// session draft is excluded: Discard is its verb, and DELETE would
 			// 404 on a tool that lives only in a chat session.
-			Deletable bool   `json:"deletable"`
-			SessionID string `json:"session_id,omitempty"` // for the keep/drop actions
-			AgentID   string `json:"agent_id,omitempty"`
+			Deletable bool `json:"deletable"`
+			// Exportable = kept in the user's store (pool or agent-scoped), so
+			// the per-user export can resolve it. A session draft and an orphan
+			// are records awaiting a decision, not things to hand somebody.
+			Exportable bool   `json:"exportable"`
+			SessionID  string `json:"session_id,omitempty"` // for the keep/drop actions
+			AgentID    string `json:"agent_id,omitempty"`
 			// Group is the heading this row renders under (ui.Table group_by).
 			Group string `json:"group"`
 		}
@@ -617,6 +621,7 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 				if names[rows[i].Name] > 1 {
 					rows[i].Conflict = true
 				}
+				rows[i].Exportable = (rows[i].Pool || rows[i].AgentTool) && !rows[i].Session && !rows[i].Orphan
 			}
 		}
 		// Re-heading by what a tool IS FOR rather than where its record lives,
@@ -1625,7 +1630,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 			// from the problem: you read "Uncategorized" in this table and had to
 			// leave the page to do anything about it. A category exists only to be
 			// a heading in the list above it, so it belongs under that list.
-			Body: ui.Stack{Children: []ui.Component{ui.Table{
+			Body: ui.Stack{Children: []ui.Component{importToolbar("Bring in tools or skills somebody exported"), ui.Table{
 				Source:            "api/tools",
 				RowKey:            "key",
 				Search:            true,
@@ -1690,6 +1695,8 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 					{Field: "description", Mute: true, Flex: 1},
 				},
 				RowActions: []ui.RowAction{
+					{Type: "button", Label: "Export", Method: "client",
+						PostTo: "export_tool", OnlyIf: "exportable"},
 					// View the full tool definition (read parity with the admin's
 					// tool RecordView, scoped to the user's own pool). Source fetches
 					// the single record so heavy fields (script body, command
@@ -1881,6 +1888,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 				"Open a skill to give it a playbook: conditional rules (\"establish Y first; if yes do Z, if no do U\") that the framework runs and settles before the assistant answers. Disable to mute a skill without losing it; delete to retire it.\n\n" +
 				"A skill reaches other people on three rungs: yours alone, shared with people you name, or published to the whole deployment. The first two are your own call; the third is an admin's, and a skill you published is listed here with a Deployment-wide badge and a Take back button.",
 			Body: ui.Stack{Children: []ui.Component{
+				importToolbar("Bring in skills or tools somebody exported"),
 				ui.Table{
 					Source: "api/skills",
 					RowKey: "id",
@@ -1962,6 +1970,10 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 								EmptyText:     "No other users to share with yet.",
 							}),
 						}}),
+						// A published skill lives in the deployment's list, not the
+						// user's own, so the per-user export cannot reach it.
+						{Type: "button", Label: "Export", Method: "client",
+							PostTo: "export_skill", HideIf: "published"},
 						{Type: "button", Label: "Disable", Method: "POST",
 							PostTo:     "api/skills?action=disable&id={id}",
 							HideIf:     "disabled",
@@ -2070,7 +2082,20 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 	// user's own reusable things live, and the things they build are not
 	// all this app's to know about — a machine belongs to orchestrate and
 	// renders here without this file learning what one is.
-	head := ui.NewHead().ClientAction("tool_access_pills", toolAccessPillsJS)
+	head := ui.NewHead().ClientAction("tool_access_pills", toolAccessPillsJS).
+		// Export and Import go through the shared bundle client (core
+		// ArtifactClientJS) against the person's own account endpoints.
+		JS(ArtifactClientJS).
+		ClientAction("export_tool", `function(ctx){ window.gohortArtifacts.exportAction('tool', 'name', 'name')(ctx); }`).
+		ClientAction("export_skill", `function(ctx){ window.gohortArtifacts.exportAction('skill', 'id', 'name')(ctx); }`).
+		ClientAction("extensions_import", `function(){
+  window.gohortArtifacts.importFlow({
+    previewURL: '/account/api/artifacts/preview',
+    importURL: '/account/api/artifacts/import',
+    invalidate: ['api/tools', 'api/skills'],
+    subtitle: 'Everything lands in your own account for review: tools wait for an administrator to approve them, skills arrive switched off. A name you already have is skipped.'
+  });
+}`)
 	for _, e := range ExtensionSectionEntries() {
 		if e.Build == nil {
 			continue
@@ -2940,4 +2965,12 @@ func sharedWithSummary(users []string) string {
 	default:
 		return fmt.Sprintf("Shared with %d people", len(users))
 	}
+}
+
+// importToolbar is the Import button over a list of the person's own things:
+// preview a bundle, then land it in their account (extensions_import).
+func importToolbar(title string) ui.Component {
+	return ui.Toolbar{Actions: []ui.ToolbarAction{{
+		Label: "Import…", Title: title, Method: "client", URL: "extensions_import",
+	}}}
 }

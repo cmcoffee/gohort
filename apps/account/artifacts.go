@@ -41,7 +41,11 @@ func downloadName(base string) string {
 
 // handleArtifactExport downloads the requester's own artifacts as a bundle:
 //
-//	?type=<t>&name=<n>   one artifact, with what it depends on (deps=0: bare)
+//	?type=<t>&name=<n>   one artifact, by name or id, with what it depends on
+//	    &include=<t1,t2>   only these kinds of dependency (the export dialog's ticks)
+//	    &deps=0            none at all: exactly the one artifact
+//	    &plan=1            no download: JSON list of what it depends on
+//	    &file=<label>      the download's filename, when name is an id
 //	?all=1               everything the requester owns
 func (T *Account) handleArtifactExport(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
@@ -55,10 +59,13 @@ func (T *Account) handleArtifactExport(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	typ := strings.TrimSpace(q.Get("type"))
 	name := strings.TrimSpace(q.Get("name"))
-	includeDeps := true
+	opts := UserExportOptions{IncludeDeps: true}
 	switch strings.ToLower(strings.TrimSpace(q.Get("deps"))) {
 	case "0", "false", "no", "none", "off":
-		includeDeps = false
+		opts.IncludeDeps = false
+	}
+	if inc := strings.TrimSpace(q.Get("include")); inc != "" {
+		opts.DepTypes = strings.Split(inc, ",")
 	}
 
 	var (
@@ -68,7 +75,11 @@ func (T *Account) handleArtifactExport(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case typ != "" && name != "":
 		sels = []ArtifactSel{{Type: typ, Name: name}}
-		filename = downloadName(name)
+		label := strings.TrimSpace(q.Get("file"))
+		if label == "" {
+			label = name
+		}
+		filename = downloadName(label)
 	case q.Get("all") != "":
 		sels = ArtifactSelectionForOwner(RootDB, user)
 		if len(sels) == 0 {
@@ -81,7 +92,20 @@ func (T *Account) handleArtifactExport(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name what to export (type and name), or all=1 for everything you own", http.StatusBadRequest)
 		return
 	}
-	bundle, err := ExportArtifactBundleAsUser(RootDB, user, sels, includeDeps)
+	if q.Get("plan") != "" {
+		deps, err := ArtifactExportPlanAsUser(RootDB, user, sels)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if deps == nil {
+			deps = []ArtifactSel{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"dependencies": deps})
+		return
+	}
+	bundle, err := ExportArtifactBundleAsUser(RootDB, user, sels, opts)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

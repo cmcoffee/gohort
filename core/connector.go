@@ -183,12 +183,12 @@ func SaveConnector(db Database, c Connector) error {
 	return saveConnector(db, c, true)
 }
 
-// SaveConnectorDraft is SaveConnector for a connector that did not originate
+// saveConnectorDraft is SaveConnector for a connector that did not originate
 // here: an imported recipe. It never auto-approves. An auto-approving kind
 // earns that on create because the person creating it chose its target on
 // this install; an imported one arrives with somebody else's URL and body, so
 // it waits for an admin like every other imported artifact.
-func SaveConnectorDraft(db Database, c Connector) error {
+func saveConnectorDraft(db Database, c Connector) error {
 	return saveConnector(db, c, false)
 }
 
