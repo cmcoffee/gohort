@@ -64,13 +64,14 @@ func dispatchReachable(caller, target AgentRecord) bool {
 	if target.ID == caller.ID {
 		return false
 	}
-	// Allow-none is ABSOLUTE, own sub-agents included, and it is checked before
-	// the ownership branch below for exactly the reason the gate checks it
-	// first: the observed failure was a dispatch-disabled agent dispatching its
-	// own sub-agent through the ownership bypass. This predicate had the bypass
-	// and not the guard, so the listing said reachable about a call the gate
-	// refuses.
-	if effectiveDispatchMode(caller) == dispatchNone {
+	// Allow none stops every agent in the fleet, own sub-agents included, and it
+	// is checked before the ownership branch below for exactly the reason the
+	// gate checks it first: the observed failure was a dispatch-disabled agent
+	// dispatching its own sub-agent through the ownership bypass. This predicate
+	// had the bypass and not the guard, so the listing said reachable about a
+	// call the gate refuses. Builder is the one exception, through its own
+	// grant, exactly as in the gate.
+	if effectiveDispatchMode(caller) == dispatchNone && !(isBuilderAgent(target.ID) && builderDispatchAllowed(caller)) {
 		return false
 	}
 	// The agent being CALLED gets a say. Asked before the caller's remaining
@@ -78,6 +79,12 @@ func dispatchReachable(caller, target AgentRecord) bool {
 	// is unreachable however open the caller is.
 	if !inboundAllows(target, caller) {
 		return false
+	}
+	// Builder answers to its grant, not to the policy switch below: it is
+	// Hidden by seed posture, so the switch would call it unreachable for every
+	// caller, including the ones the gate lets through.
+	if isBuilderAgent(target.ID) {
+		return builderDispatchAllowed(caller)
 	}
 	if sub := strings.TrimSpace(target.OwnedBy); sub != "" {
 		// A sub-agent is private to its owner: it runs with that parent's

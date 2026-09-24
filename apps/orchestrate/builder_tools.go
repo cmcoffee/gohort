@@ -941,23 +941,40 @@ func isBuilderAgent(agentID string) bool {
 	return agentID == "seed-builder"
 }
 
-// canDispatchBuilder reports whether THIS turn's agent may reach Builder:
-// a Fleet controller (Chat and the like, the historic rule) or an agent
-// the user has granted AgentRecord.AllowBuilderDispatch.
+// canDispatchBuilder reports whether THIS turn's agent may reach Builder. See
+// builderDispatchAllowed, which is the rule; this is its turn-shaped form.
 //
 // One predicate for permission AND visibility on purpose. Builder is
 // filtered out of the fleet catalog, agents(list), and agents(get); an
 // agent permitted to call a target it cannot see never thinks to call it,
 // so a grant that moved only the gate would read as broken. Every filter
 // asks this same question.
-//
-// Deliberately NOT consulted for dispatch policy "Allow none" — that is
-// checked earlier and stays absolute.
 func (t *chatTurn) canDispatchBuilder() bool {
 	if t == nil {
 		return false
 	}
-	return t.agent.Fleet || t.agent.AllowBuilderDispatch
+	return builderDispatchAllowed(t.agent)
+}
+
+// builderDispatchAllowed is THE rule for who may hand work to Builder, asked by
+// the dispatch gate, the fleet catalog, agents(list/get), hand_to_builder and
+// the access page's reach listing, so none of them can disagree.
+//
+// Builder is a special case of dispatch, not one of the user's agents: it is
+// kept out of the dispatch-target picker, and what it produces on a dispatch
+// lands for the user's approval. So the explicit "Can dispatch Builder" grant
+// holds under EVERY dispatch policy, Allow none included: Allow none stops
+// every agent in the fleet, and the grant beside it decides Builder. Turning
+// the grant off is how Builder is stopped.
+//
+// Only the explicit grant cuts through Allow none. A Fleet controller's
+// implicit access (the historic rule) stops there, so no agent gains a route
+// past Allow none that nobody switched on.
+func builderDispatchAllowed(a AgentRecord) bool {
+	if effectiveDispatchMode(a) == dispatchNone {
+		return a.AllowBuilderDispatch
+	}
+	return a.Fleet || a.AllowBuilderDispatch
 }
 
 // agentCanAuthor reports whether an agent should receive the authoring toolset —

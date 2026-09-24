@@ -44,12 +44,37 @@ func TestComputeDispatchableFleet_BuilderFollowsTheGrant(t *testing.T) {
 		t.Error("a granted agent must see Builder in its fleet catalog")
 	}
 	// The grant is explicit, so it shouldn't also have to be repeated in an
-	// allowlist — but Allow none stays absolute.
+	// allowlist, and it holds under Allow none: Builder answers to its own
+	// switch, not the fleet policy.
 	if !hasBuilder(AgentRecord{ID: "a1", Owner: "someuser", AllowBuilderDispatch: true,
 		DispatchMode: dispatchOnly, AllowedDispatchTargets: []string{"someone-else"}}) {
 		t.Error("the grant should hold under allowlist mode")
 	}
-	if hasBuilder(AgentRecord{ID: "a1", Owner: "someuser", AllowBuilderDispatch: true, DispatchMode: dispatchNone}) {
-		t.Error("Allow none must stay absolute, grant or not")
+	if !hasBuilder(AgentRecord{ID: "a1", Owner: "someuser", AllowBuilderDispatch: true, DispatchMode: dispatchNone}) {
+		t.Error("the explicit grant must hold under Allow none")
+	}
+	// Only the explicit grant: a Fleet controller's implicit access stops at
+	// Allow none.
+	if hasBuilder(AgentRecord{ID: "a1", Owner: "someuser", Fleet: true, DispatchMode: dispatchNone}) {
+		t.Error("Fleet alone must not reach Builder under Allow none")
+	}
+}
+
+// Under Allow none with the grant, Builder is the WHOLE catalog: nothing else
+// in the fleet may be advertised, since the gate refuses all of it.
+func TestAllowNoneWithGrantListsBuilderOnly(t *testing.T) {
+	root := &DBase{Store: kvlite.MemStore()}
+	udb := UserDB(root, "u")
+	if _, err := saveAgent(udb, AgentRecord{Name: "Other", Owner: "u", OrchestratorPrompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	turn := &chatTurn{agent: AgentRecord{ID: "a1", Owner: "u", AllowBuilderDispatch: true, DispatchMode: dispatchNone}, udb: udb, user: "u"}
+	got := turn.computeDispatchableFleet()
+	if len(got) != 1 || !isBuilderAgent(got[0].ID) {
+		names := []string{}
+		for _, a := range got {
+			names = append(names, a.Name)
+		}
+		t.Fatalf("Allow none + grant must list Builder alone, got %v", names)
 	}
 }

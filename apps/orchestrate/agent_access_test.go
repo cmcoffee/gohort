@@ -18,6 +18,17 @@ func TestReachablePredicateMatchesTheGatesRules(t *testing.T) {
 	}
 	open := AgentRecord{ID: "open", Name: "Open"}
 	hidden := AgentRecord{ID: "hidden", Name: "Hidden", Hidden: true}
+	builder := AgentRecord{ID: "seed-builder", Name: "Builder", Hidden: true}
+	granted := func(mode string) AgentRecord {
+		c := caller(mode)
+		c.AllowBuilderDispatch = true
+		return c
+	}
+	fleet := func(mode string) AgentRecord {
+		c := caller(mode)
+		c.Fleet = true
+		return c
+	}
 
 	cases := []struct {
 		name   string
@@ -36,6 +47,14 @@ func TestReachablePredicateMatchesTheGatesRules(t *testing.T) {
 		{"a blank list with no mode reads as all", caller(""), open, true},
 		{"a blank mode WITH a list reads as only", caller("", "other"), open, false},
 		{"nothing reaches itself", caller(dispatchAll), caller(dispatchAll), false},
+		// Builder answers to its grant, not the policy switch (it is Hidden by
+		// seed posture, which the switch would read as unreachable).
+		{"a granted caller reaches Builder", granted(dispatchAll), builder, true},
+		{"the grant holds under Allow none", granted(dispatchNone), builder, true},
+		{"a Fleet caller reaches Builder", fleet(dispatchAll), builder, true},
+		{"Fleet alone stops at Allow none", fleet(dispatchNone), builder, false},
+		{"a plain caller does not reach Builder", caller(dispatchAll), builder, false},
+		{"the grant reopens nothing else under Allow none", granted(dispatchNone), open, false},
 	}
 	for _, c := range cases {
 		if got := dispatchReachable(c.caller, c.target); got != c.want {

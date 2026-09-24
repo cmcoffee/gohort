@@ -18,6 +18,10 @@ func TestCanDispatchBuilder(t *testing.T) {
 		// The grant is independent of the authoring capability: Author has
 		// the agent build things itself, this has it ask Builder to.
 		{"author flag alone does not grant it", AgentRecord{Author: true}, false},
+		// Builder is not one of the user's agents: the explicit grant holds
+		// under Allow none, and only the explicit grant.
+		{"granted, Allow none", AgentRecord{AllowBuilderDispatch: true, DispatchMode: dispatchNone}, true},
+		{"fleet, Allow none", AgentRecord{Fleet: true, DispatchMode: dispatchNone}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -407,7 +407,7 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 			{
 				Group:    "Delegation",
 				Title:    "Which agents it can call at all",
-				Subtitle: "The first of two layers, and the kill switch. Allow none stops every call whatever is decided further down; the target list below is read only by the two \"selected\" modes.",
+				Subtitle: "The first of two layers, and the kill switch. Allow none stops every call to another agent whatever is decided further down; Builder answers only to its own switch below. The target list is read only by the two \"selected\" modes.",
 				Body: ui.FormPanel{
 					Source:  patchURL,
 					PostURL: patchURL,
@@ -419,10 +419,10 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 						{Field: "dispatch_mode", Type: "select", Label: "Dispatch policy",
 							Options: dispatchModeOptions(effectiveDispatchMode(agent)),
 							Help:    "Which other agents this one may call via agents(action=\"run\").",
-							Detail:  "This is the blast radius, and it bounds damage in a way the tool list cannot: whatever this agent calls runs with ITS catalog, not this one's. Allow all means any non-hidden agent, and is the default. Only allow, and Allow all except, draw from the target list below. Allow none blocks all dispatch and is the actual delegation kill switch."},
+							Detail:  "This is the blast radius, and it bounds damage in a way the tool list cannot: whatever this agent calls runs with ITS catalog, not this one's. Allow all means any non-hidden agent, and is the default. Only allow, and Allow all except, draw from the target list below. Allow none blocks all dispatch to other agents and is the actual delegation kill switch. Builder is not one of your agents and is governed by Can dispatch Builder alone."},
 						{Field: "allow_builder_dispatch", Type: "toggle", Label: "Can dispatch Builder",
-							Help:   "Lets this agent hand work to Builder, to author an agent, tool or app on its behalf.",
-							Detail: "The call is agents(action=\"run\", agent=\"builder\"). Off by default and normally reserved to conductor agents, because authoring expects a human in the loop: the intake conversation, its clarifying pauses, and your review of the draft.\n\nSeparate from the authoring tools, which have the agent build things ITSELF; this one has it ask Builder to. Overridden by Dispatch policy = Allow none."},
+							Help:   "Lets this agent hand work to Builder, to author an agent, tool or app on its behalf. Holds under every dispatch policy, Allow none included.",
+							Detail: "The call is agents(action=\"run\", agent=\"builder\"). Off by default and normally reserved to conductor agents, because authoring expects a human in the loop: the intake conversation, its clarifying pauses, and your review of the draft.\n\nSeparate from the authoring tools, which have the agent build things ITSELF; this one has it ask Builder to.\n\nThis is the only switch for Builder. Allow none stops every other agent but not Builder when this is on, so turn this off to stop Builder. Conductor agents can reach Builder without it, but only while their policy is not Allow none. Whatever Builder produces on a dispatch still waits for your approval."},
 					},
 				},
 			},

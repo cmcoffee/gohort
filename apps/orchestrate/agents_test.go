@@ -42,6 +42,28 @@ func TestDispatchNoneBlocksOwnedSubAgent(t *testing.T) {
 	}
 }
 
+// Allow none stops the fleet, own sub-agents included, but Builder answers to
+// its own grant: with "Can dispatch Builder" on, the gate lets Builder through
+// under Allow none, and without it (a Fleet controller's implicit access
+// included) Builder is refused like everything else.
+func TestDispatchNoneLetsTheBuilderGrantThrough(t *testing.T) {
+	turn, _ := newRunGateTurn(t, dispatchNone)
+	turn.agent.AllowBuilderDispatch = true
+	target, _, err := turn.agentsRunGate(map[string]any{"agent": "seed-builder", "message": "build a tool"})
+	if err != nil || !isBuilderAgent(target.ID) {
+		t.Fatalf("Allow none + grant must reach Builder; got target=%q err=%v", target.ID, err)
+	}
+	if _, _, err := turn.agentsRunGate(map[string]any{"agent": "Comedian", "message": "tell a joke"}); err == nil {
+		t.Fatal("the Builder grant must not reopen the rest of the fleet under Allow none")
+	}
+
+	fleet, _ := newRunGateTurn(t, dispatchNone)
+	fleet.agent.Fleet = true
+	if _, _, err := fleet.agentsRunGate(map[string]any{"agent": "seed-builder", "message": "build a tool"}); err == nil {
+		t.Fatal("a Fleet controller without the explicit grant must not reach Builder under Allow none")
+	}
+}
+
 // TestPermissionBlockRefusesAgentsRun pins tool/shell symmetry for the
 // Permissions-pane delegation policy: a target Blocked there must be
 // unreachable through agents(run) too, not just through the Operator's

@@ -202,6 +202,17 @@ func (t *chatTurn) computeDispatchableFleet() []AgentRecord {
 	}
 	mode := effectiveDispatchMode(t.agent)
 	if mode == dispatchNone {
+		// Allow none stops the fleet; Builder answers to its own grant
+		// (builderDispatchAllowed), and is listed alone when that grant is on,
+		// so the one target the gate accepts is one the model can see.
+		if t.canDispatchBuilder() {
+			for _, a := range all {
+				if isBuilderAgent(a.ID) {
+					Debug("[orchestrate] available-agents: agent=%q is Allow none, listing Builder only (Can dispatch Builder is on)", t.agent.ID)
+					return []AgentRecord{a}
+				}
+			}
+		}
 		Debug("[orchestrate] available-agents: suppressed for agent=%q, dispatch policy is Allow none", t.agent.ID)
 		return nil
 	}
@@ -224,8 +235,7 @@ func (t *chatTurn) computeDispatchableFleet() []AgentRecord {
 		// to everyone who can't call it, listed for everyone who can — and
 		// listed regardless of dispatch mode, since the grant is explicit
 		// and shouldn't also have to be repeated in an allowlist. (Allow
-		// none already returned above, so this can't resurrect dispatch for
-		// an agent the user switched off.)
+		// none is handled above, by the same predicate.)
 		if isBuilderAgent(a.ID) {
 			if t.canDispatchBuilder() {
 				available = append(available, a)

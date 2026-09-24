@@ -880,15 +880,17 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 	// fails on every sub-agent it just authored. Limited to sub-agents
 	// only (target.OwnedBy != "") so the override doesn't unlock
 	// arbitrary fleet access from Builder; just the specialists.
-	// "Allow none" is ABSOLUTE. The ownership and Builder carve-outs below
-	// widen WHICH targets are reachable under a permissive policy, but they
-	// must never override an explicit "this agent dispatches to nobody"
-	// setting — that's the user disabling delegation for this agent, full
-	// stop, own sub-agents included. Checked before the carve-outs because
-	// the observed failure was exactly this: a dispatch-disabled agent
-	// dispatching its own sub-agent 100+ times in one autonomous turn via
-	// the ownership bypass.
-	if effectiveDispatchMode(t.agent) == dispatchNone {
+	// "Allow none" stops every agent in the fleet, own sub-agents included.
+	// The ownership carve-out below widens WHICH targets are reachable under a
+	// permissive policy, but must never override an explicit "this agent
+	// dispatches to nobody". Checked before the carve-outs because the observed
+	// failure was exactly this: a dispatch-disabled agent dispatching its own
+	// sub-agent 100+ times in one autonomous turn via the ownership bypass.
+	//
+	// Builder is the one exception, and only through the explicit "Can
+	// dispatch Builder" grant (builderDispatchAllowed): it is not one of the
+	// user's agents, and the grant sits beside Allow none as its own switch.
+	if effectiveDispatchMode(t.agent) == dispatchNone && !(isBuilderAgent(target.ID) && t.canDispatchBuilder()) {
 		return AgentRecord{}, "", fmt.Errorf("agents(run): this agent's dispatch policy is Allow NONE (Security & Access), it may not dispatch to ANY agent, including its own sub-agents. Do the work directly with your own tools; do not retry this call. If delegation is genuinely needed, the user must change the dispatch policy first")
 	}
 	// What the agent being CALLED will accept: the user's Block on this target
@@ -914,15 +916,14 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 	}
 	if target.OwnedBy == t.agent.ID {
 		// Allowed by ownership; skip the standard checks.
-	} else if isBuilderAgent(target.ID) && (t.agent.Fleet || t.agent.AllowBuilderDispatch) {
+	} else if isBuilderAgent(target.ID) && t.canDispatchBuilder() {
 		// Builder is dispatch-callable from a Fleet controller (e.g. Chat) for
 		// in-session authoring, or from an agent the user has explicitly granted
 		// AllowBuilderDispatch, despite Builder's Hidden=true seed posture. The
 		// guard at the top of this function already refused unauthorized callers,
 		// so reaching here means the caller is authorized — let it through past
-		// the Hidden / allowlist checks below. (Allow-none was refused earlier
-		// still; this carve-out widens WHICH targets are reachable, never
-		// whether dispatch is permitted at all.)
+		// the Hidden / allowlist checks below. Under Allow none only the explicit
+		// grant gets this far (builderDispatchAllowed).
 	} else if isBuilderAgent(t.agent.ID) && target.OwnedBy != "" {
 		// Builder override — allow dispatch to any sub-agent for
 		// post-authoring verification. Logged for audit visibility.
