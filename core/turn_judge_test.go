@@ -445,3 +445,42 @@ func TestARewriteOnlyTurnRunsNoTools(t *testing.T) {
 		t.Errorf("the rewritten reply should be what goes out, got %+v", resp)
 	}
 }
+
+// A verdict the judge's own second reading overturned is not a conviction: the
+// reply goes out as written, and the trail says a correction did NOT happen, so
+// the two outcomes are told apart after the fact. The judge is also handed the
+// time the turn was stamped with.
+func TestAnOverturnedVerdictLeavesANoteNotACorrection(t *testing.T) {
+	app, log := withTierStubs(t, "test.overturned", func(int) []ToolCall { return nil })
+	var seen TurnClaimEvidence
+	var diags []string
+	_, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "what's going on?"}}, AgentLoopConfig{
+		MaxRounds: 6, RouteKey: "test.overturned",
+		TurnClaimJudge: func(ev TurnClaimEvidence) (TurnClaimVerdict, bool) {
+			seen = ev
+			return TurnClaimVerdict{Overturned: "It had flagged \"just past midnight\"."}, true
+		},
+		OnDiag: func(kind, detail string) { diags = append(diags, kind) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(seen.Now, "Current date & time") {
+		t.Errorf("the judge was not given the time the turn carried: %q", seen.Now)
+	}
+	if len(*log) != 1 {
+		t.Errorf("an overturned verdict must not re-prompt; the model was called %d time(s)", len(*log))
+	}
+	found := false
+	for _, d := range diags {
+		if d == "turn-judge-overturned" {
+			found = true
+		}
+		if d == "unkept-claim-corrected" || d == "machinery-corrected" {
+			t.Errorf("an overturned verdict was acted on: %s", d)
+		}
+	}
+	if !found {
+		t.Errorf("the trail does not say the verdict was overturned: %v", diags)
+	}
+}

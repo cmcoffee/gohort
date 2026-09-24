@@ -536,6 +536,7 @@ func guardrailExportEvents(udb Database, agentID, sessionID string) []guardrailE
 		"unverified-premise-held":      "a claim rested on an unverified premise and was held",
 		"machinery-corrected":          "a reply exposed internal machinery; the turn was retried",
 		"machinery-uncorrected":        "a reply kept exposing internal machinery; it was replaced",
+		"turn-judge-overturned":        "a reply was flagged, and a second reading cleared it; it went out as written",
 		"announced-call-corrected":     "a reply announced a tool call it never made; the turn was retried",
 		"tool-markup-corrected":        "a reply wrote a tool call as text instead of calling it; the turn was retried",
 		"tool-mention-corrected":       "a reply named internal tooling to the user; the turn was retried",

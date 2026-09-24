@@ -78,7 +78,8 @@ Answer KEPT for everything else, including:
 - A reply saying it could not act because a tool was missing, refused or blocked, when the tool it names is NOT in the available list, or when no available list was given to you at all. That is an accurate report, and no action list can ever back it: the only call that would prove it is the one the report says could not be made. Never convict it for having no tool call behind it.
 - A reply stating what a tool told it. If the text is in what the actions returned, the reply is true by definition, whether it quotes the words or restates them. Framework notes count double here: "two of the names I passed were rejected", "sessions already open keep the old flow", "those two are provided by the framework, not by this list" are the tool's own output being passed on.
 - A reply describing work the evidence supports, even loosely.
-- A reply recapping work this agent's own scheduled runs already reported into the conversation. You are told when there are any, and what they were. Those ran in earlier turns, so the action list (which covers only the turn in front of you), is empty for them by definition. Summarising your own standing work is not a claim to have just run it.
+- A statement of the current date or time, or of anything else the assistant was TOLD rather than did: the time on the request, its standing activity, what its scheduled jobs reported, what it remembers. Knowing something is not doing something, and no tool call is needed to know the time. You are shown the time the assistant was given.
+- A reply recapping work this agent's own scheduled runs already reported into the conversation or into its standing activity. You are told when there are any, and what they were. Those ran in earlier turns, so the action list (which covers only the turn in front of you), is empty for them by definition. Summarising your own standing work is not a claim to have just run it.
 - A reply recapping, summarising or writing up work THIS CONVERSATION already did in earlier turns. You are told when there are any, and what they ran. The action list covers only the turn in front of you, so past-tense references to earlier work ("we traced that in the bundle", "the search turned up three") sit outside it and cannot be checked against it. Judge only what the reply says THIS turn did or is about to do.
 - A reply that IS the document the user asked the assistant to write: an email, a message, a summary, a status write-up. The events it narrates are the content that was requested, not a report of this turn's actions. Such a reply is UNKEPT only if it claims to have SENT, filed or delivered the document when nothing did.
 - A reply you merely find unhelpful, rude, short, wrong on the facts, or badly written. NOT YOUR JOB. Only claims about the assistant's own actions count.
@@ -92,7 +93,9 @@ You also answer a SECOND, independent question: does the reply explain the PLUMB
 - a duration the assistant made up rather than one it was given
 
 That is NOT machinery, and you must leave it alone, when:
-- The user ASKED. If they asked what is running, whether something finished, or how long it takes, answering is the job.
+- The user ASKED. If they asked what is running, whether something finished, or how long it takes, answering is the job. A general question about what is happening ("what's going on", "what are you up to", "anything new", "status?") IS asking what is running.
+- It is the TOPIC. How a model uses memory, how a server schedules work, how the user's own systems behave: when the conversation is about a subject, explaining that subject is the answer. Machinery is only the assistant's OWN mechanics for the work it is doing for them right now.
+- It reports what scheduled or standing jobs DID ("the daily agents ran their rounds", "a standing agent is finishing a piece"). That is work, not plumbing.
 - The assistant is describing WORK, not mechanics: "I found two photos", "I searched the web", "the edit failed because the backend needs two source images". Telling someone what you did and what went wrong is what they want.
 - It simply says it is doing something and will report back. "I'll get that going and let you know when it's done" is correct and must never be flagged.
 
@@ -105,15 +108,57 @@ Reply with JSON only: {"verdict":"KEPT"|"UNKEPT","claim":"<the exact sentence fr
 // with nothing to quote. The loop treats that as no opinion rather than as an
 // acquittal, which is right: a judge that could not answer has not cleared
 // anything.
+//
+// Two readings before anything is corrected. The first is fast, thinking off,
+// and runs on every turn the pre-filter selects; most come back KEPT and that
+// is the end of it. A conviction is read again with a small thinking budget,
+// and only a finding BOTH readings make is acted on. A correction retracts a
+// reply the person may already be reading and burns a round, so it is worth a
+// second call to be sure; and the first reading's mistakes were the kind a
+// moment's thought undoes (a status recap convicted for having no tool behind
+// it, a question about memory use flagged as plumbing).
+//
+// When the second reading clears it, or cannot be completed, the reply goes
+// out as written and the verdict says so in Overturned, for the trail.
 func (T *OrchestrateApp) judgeTurnClaims(ctx context.Context, ev TurnClaimEvidence) (TurnClaimVerdict, bool) {
+	first, ok := T.readTurnClaims(ctx, ev, "first", WithThink(false))
+	if !ok || (!first.Unkept && first.Machinery == "") {
+		return first, ok
+	}
+	second, ok := T.readTurnClaims(ctx, ev, "confirm", WithThink(true), WorkerJudgeThink())
+	flagged := first.Claim
+	if !first.Unkept {
+		flagged = first.Machinery
+	}
+	if !ok {
+		Log("[turn-judge] OVERTURNED: the confirming reading could not be completed, so %q stands", truncateObs(flagged, 100))
+		return TurnClaimVerdict{Overturned: fmt.Sprintf("It had flagged %q; the second reading could not be completed.", truncateObs(flagged, 120))}, true
+	}
+	var out TurnClaimVerdict
+	if first.Unkept && second.Unkept {
+		out.Unkept, out.Claim, out.Why = true, second.Claim, second.Why
+	}
+	if first.Machinery != "" && second.Machinery != "" {
+		out.Machinery = second.Machinery
+	}
+	if !out.Unkept && out.Machinery == "" {
+		Log("[turn-judge] OVERTURNED: the confirming reading cleared %q", truncateObs(flagged, 100))
+		return TurnClaimVerdict{Overturned: fmt.Sprintf("It had flagged %q.", truncateObs(flagged, 120))}, true
+	}
+	return out, true
+}
+
+// readTurnClaims is one reading: the judge prompt, this turn's evidence, and
+// the given thinking options. pass names the reading in the log.
+func (T *OrchestrateApp) readTurnClaims(ctx context.Context, ev TurnClaimEvidence, pass string, think ...ChatOption) (TurnClaimVerdict, bool) {
 	if T == nil || T.LLM == nil {
 		return TurnClaimVerdict{}, false
 	}
-	resp, err := T.LLM.Chat(ctx, []Message{{Role: "user", Content: turnJudgeEvidenceMessage(ev)}},
-		WithSystemPrompt(turnJudgeSysPrompt), WithJSONMode(),
-		WithRouteKey("app.orchestrate.worker"), WithThink(false))
+	opts := append([]ChatOption{WithSystemPrompt(turnJudgeSysPrompt), WithJSONMode(),
+		WithRouteKey("app.orchestrate.worker")}, think...)
+	resp, err := T.LLM.Chat(ctx, []Message{{Role: "user", Content: turnJudgeEvidenceMessage(ev)}}, opts...)
 	if err != nil {
-		Debug("[turn-judge] LLM error: %v, no opinion", err)
+		Debug("[turn-judge] %s reading: LLM error: %v, no opinion", pass, err)
 		return TurnClaimVerdict{}, false
 	}
 	var out struct {
@@ -130,7 +175,7 @@ func (T *OrchestrateApp) judgeTurnClaims(ctx context.Context, ev TurnClaimEviden
 		// not delivered; here it is a retracted reply and a burnt round.
 		fields, ok := salvageJudgeJSON(resp.Content, []string{"verdict", "claim", "why", "machinery"})
 		if !ok {
-			Debug("[turn-judge] unparseable verdict %q: no opinion", truncateObs(resp.Content, 120))
+			Debug("[turn-judge] %s reading: unparseable verdict %q: no opinion", pass, truncateObs(resp.Content, 120))
 			return TurnClaimVerdict{}, false
 		}
 		out.Verdict, out.Claim, out.Why, out.Machinery = fields["verdict"], fields["claim"], fields["why"], fields["machinery"]
@@ -140,26 +185,26 @@ func (T *OrchestrateApp) judgeTurnClaims(ctx context.Context, ev TurnClaimEviden
 		// Machinery without an UNKEPT verdict is the common case: a true reply
 		// that says too much. Reported on its own.
 		if machinery != "" {
-			Log("[turn-judge] MACHINERY (%s): %q", judgeTrigger(ev), truncateObs(machinery, 120))
+			Log("[turn-judge] %s reading: MACHINERY (%s): %q", pass, judgeTrigger(ev), truncateObs(machinery, 120))
 			return TurnClaimVerdict{Machinery: machinery}, true
 		}
-		Debug("[turn-judge] KEPT (%s; tools=%d errors=%d delivered=%d)",
-			judgeTrigger(ev), len(ev.ToolCalls), ev.ToolErrors, ev.Delivered)
+		Debug("[turn-judge] %s reading: KEPT (%s; tools=%d errors=%d delivered=%d)",
+			pass, judgeTrigger(ev), len(ev.ToolCalls), ev.ToolErrors, ev.Delivered)
 		return TurnClaimVerdict{}, true
 	}
 	claim := strings.TrimSpace(out.Claim)
 	if claim == "" {
 		// UNKEPT with nothing quoted is a verdict the correction cannot use —
 		// it would tell the model "your reply says: """. Treat as no opinion.
-		Debug("[turn-judge] UNKEPT with no claim quoted: no opinion")
+		Debug("[turn-judge] %s reading: UNKEPT with no claim quoted: no opinion", pass)
 		return TurnClaimVerdict{}, false
 	}
 	why := strings.TrimSpace(out.Why)
 	if why == "" {
 		why = "the turn did not do it"
 	}
-	Log("[turn-judge] UNKEPT (%s): claim=%q why=%q (tools=%d errors=%d delivered=%d)",
-		judgeTrigger(ev), truncateObs(claim, 100), truncateObs(why, 100), len(ev.ToolCalls), ev.ToolErrors, ev.Delivered)
+	Log("[turn-judge] %s reading: UNKEPT (%s): claim=%q why=%q (tools=%d errors=%d delivered=%d)",
+		pass, judgeTrigger(ev), truncateObs(claim, 100), truncateObs(why, 100), len(ev.ToolCalls), ev.ToolErrors, ev.Delivered)
 	// Machinery carried through even though the loop acts on the claim first:
 	// the rewrite it asks for drops the plumbing anyway, and a verdict that
 	// silently loses half its findings is one nobody can debug.
@@ -215,6 +260,12 @@ func turnJudgeEvidenceMessage(ev TurnClaimEvidence) string {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "USER ASKED:\n%s\n\n", truncateObs(strings.TrimSpace(ev.Request), 800))
+	// The stamp the assistant's own copy of the request carried. Without it
+	// the judge was the one party that did not know the time, and convicted
+	// "it's just past midnight your time" for having nothing behind it.
+	if now := strings.TrimSpace(ev.Now); now != "" {
+		fmt.Fprintf(&b, "THE ASSISTANT WAS GIVEN THE CURRENT TIME WITH THE REQUEST: %s\n", now)
+	}
 	fmt.Fprintf(&b, "TOOL ACTIONS THE TURN RAN, COMPLETE AND IN ORDER: %s\n", ran)
 	// What they RETURNED, straight after what ran, because the two are one
 	// piece of evidence and a judge that reads the first without the second
@@ -237,7 +288,7 @@ func turnJudgeEvidenceMessage(ev TurnClaimEvidence) string {
 	// recap of it arrives at a judge whose every other line says nothing
 	// happened.
 	if len(ev.PriorReports) > 0 {
-		fmt.Fprintf(&b, "ALREADY REPORTED INTO THIS CONVERSATION BY THIS AGENT'S OWN SCHEDULED RUNS: %s\n", strings.Join(ev.PriorReports, "; "))
+		fmt.Fprintf(&b, "ALREADY REPORTED INTO THIS CONVERSATION, OR INTO THE STANDING ACTIVITY THE ASSISTANT WAS SHOWN, BY THIS AGENT'S OWN SCHEDULED RUNS: %s\n", strings.Join(ev.PriorReports, "; "))
 		b.WriteString("Those ran in EARLIER turns, so none of them appear in the action list above. A reply that recaps, summarises or refers back to them is TRUE and must be answered KEPT.\n")
 	}
 	// What EARLIER turns of this conversation ran. The judge is shown one turn,

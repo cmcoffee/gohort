@@ -623,10 +623,19 @@ const (
 // roughly what it was; the bodies are what make these threads enormous in the
 // first place.
 func (t *chatTurn) priorReportsForJudge() []string {
-	if t.session == nil {
-		return nil
+	var out []string
+	if t.session != nil {
+		out = priorReportsFrom(t.session.Messages)
 	}
-	return priorReportsFrom(t.session.Messages)
+	// Plus the standing activity the prompt carried, which a forked session
+	// knows about without any of it being in its own thread.
+	for _, l := range t.cortexReports {
+		out = append(out, strings.TrimPrefix(l, "- "))
+	}
+	if len(out) > judgeReportsShown*2 {
+		out = out[len(out)-judgeReportsShown*2:]
+	}
+	return out
 }
 
 // priorReportsFrom is the read itself, off a thread's messages rather than off

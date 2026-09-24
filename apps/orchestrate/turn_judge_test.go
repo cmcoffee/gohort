@@ -528,3 +528,113 @@ func TestTheJudgeIsToldToReadOutcomesNotTheFailureCount(t *testing.T) {
 		t.Error("an honest account of what went wrong must not be convicted for describing it")
 	}
 }
+
+// A conviction is read twice before anything is corrected: fast first, then
+// with thinking. Only a finding both readings make is acted on; one the second
+// reading clears goes out as written, and says so for the trail.
+//
+// The motivating turn: "what's going on" answered with the agent's standing
+// activity and the time, convicted for having no tool behind it, then flagged
+// as plumbing, and the second retry said "All quiet". Two corrections turned a
+// true status recap into nothing.
+
+var statusTurn = TurnClaimEvidence{
+	Request: "What's going on ?",
+	Reply:   "Not much on my end, it's just past midnight your time. The daily top stories agents ran their 9am, 12pm and 5pm rounds today.",
+	Now:     "[Current date & time: Thu, September 24, 2026 at 12:31 AM PDT]",
+}
+
+func TestTheConfirmingReadingCanClearAConviction(t *testing.T) {
+	stub := &FakeLLM{Turns: []FakeTurn{
+		{Content: `{"verdict":"UNKEPT","claim":"it's just past midnight your time","why":"no tool ran"}`},
+		{Content: `{"verdict":"KEPT"}`},
+	}}
+	app := &OrchestrateApp{AppCore: AppCore{LLM: stub}}
+	v, ok := app.judgeTurnClaims(context.Background(), statusTurn)
+	if !ok || v.Unkept || v.Machinery != "" {
+		t.Fatalf("a finding the second reading cleared must not be acted on: %+v ok=%v", v, ok)
+	}
+	if !strings.Contains(v.Overturned, "just past midnight") {
+		t.Errorf("the trail should say what was flagged and cleared: %q", v.Overturned)
+	}
+	if stub.Calls() != 2 {
+		t.Fatalf("want a fast reading and a confirming one, got %d call(s)", stub.Calls())
+	}
+	first, second := stub.Config(0), stub.Config(1)
+	if first.Think == nil || *first.Think {
+		t.Error("the first reading should be the fast, thinking-off one")
+	}
+	if second.Think == nil || !*second.Think || second.ThinkBudget == nil {
+		t.Error("the confirming reading should think, on a small budget")
+	}
+}
+
+func TestOnlyWhatBothReadingsFindIsActedOn(t *testing.T) {
+	// Both convict the claim: it stands, in the second reading's words.
+	stub := &FakeLLM{Turns: []FakeTurn{
+		{Content: `{"verdict":"UNKEPT","claim":"Here you go","why":"no file"}`},
+		{Content: `{"verdict":"UNKEPT","claim":"Here you go.","why":"0 files are being delivered"}`},
+	}}
+	app := &OrchestrateApp{AppCore: AppCore{LLM: stub}}
+	v, ok := app.judgeTurnClaims(context.Background(), garageTurn)
+	if !ok || !v.Unkept || v.Why != "0 files are being delivered" {
+		t.Fatalf("a claim both readings convict must stand: %+v", v)
+	}
+
+	// Machinery found only by the first: cleared.
+	stub = &FakeLLM{Turns: []FakeTurn{
+		{Content: `{"verdict":"KEPT","machinery":"A few things running in the background:"}`},
+		{Content: `{"verdict":"KEPT","machinery":""}`},
+	}}
+	app = &OrchestrateApp{AppCore: AppCore{LLM: stub}}
+	v, ok = app.judgeTurnClaims(context.Background(), statusTurn)
+	if !ok || v.Machinery != "" || v.Overturned == "" {
+		t.Errorf("machinery the second reading did not find must not be acted on: %+v", v)
+	}
+
+	// A clean first reading asks nothing more.
+	stub = &FakeLLM{Turns: []FakeTurn{{Content: `{"verdict":"KEPT"}`, Repeat: true}}}
+	app = &OrchestrateApp{AppCore: AppCore{LLM: stub}}
+	app.judgeTurnClaims(context.Background(), statusTurn)
+	if stub.Calls() != 1 {
+		t.Errorf("an acquittal needs no second reading, made %d call(s)", stub.Calls())
+	}
+}
+
+func TestAConfirmingReadingThatFailsLetsTheReplyStand(t *testing.T) {
+	stub := &FakeLLM{Turns: []FakeTurn{
+		{Content: `{"verdict":"UNKEPT","claim":"it's just past midnight your time","why":"no tool ran"}`},
+		{Err: context.DeadlineExceeded},
+	}}
+	app := &OrchestrateApp{AppCore: AppCore{LLM: stub}}
+	v, ok := app.judgeTurnClaims(context.Background(), statusTurn)
+	if !ok || v.Unkept || v.Overturned == "" {
+		t.Errorf("an unconfirmed conviction must not be acted on, and must say why: %+v ok=%v", v, ok)
+	}
+}
+
+func TestTheJudgeKnowsWhatTheAssistantWasTold(t *testing.T) {
+	msg := turnJudgeEvidenceMessage(statusTurn)
+	if !strings.Contains(msg, "12:31 AM") {
+		t.Error("the judge is not given the time the assistant was given")
+	}
+	for _, rule := range []string{
+		"Knowing something is not doing something",
+		`"what's going on"`,
+		"It is the TOPIC",
+	} {
+		if !strings.Contains(turnJudgeSysPrompt, rule) {
+			t.Errorf("the judge prompt lost the rule %q", rule)
+		}
+	}
+}
+
+// A forked session's agent is shown its standing activity in the prompt; the
+// judge has to be shown the same lines, or a recap of them reads as invented.
+func TestStandingActivityTheAgentWasShownReachesTheJudge(t *testing.T) {
+	turn := &chatTurn{cortexReports: []string{"- top-stories: ran the 5pm round"}}
+	got := strings.Join(turn.priorReportsForJudge(), "|")
+	if !strings.Contains(got, "top-stories: ran the 5pm round") {
+		t.Errorf("the standing activity never reaches the judge: %q", got)
+	}
+}

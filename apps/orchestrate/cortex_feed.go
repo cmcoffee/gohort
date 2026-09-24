@@ -204,16 +204,29 @@ func cortexDeliverableTools(db Database, agentID string) []AgentToolDef {
 // when the cortex is off, empty, or has no observations. Live-read (kept short);
 // cross-session continuity of FACTS rides the memory layer, not this.
 func cortexContextBlock(db Database, agentID string) string {
-	if db == nil || strings.TrimSpace(agentID) == "" {
+	lines := cortexContextLines(db, agentID)
+	if len(lines) == 0 {
 		return ""
+	}
+	return "\n\n## Recent standing activity (your cortex)\n\nBackground awareness: recent events on your channels / monitors. This is PASSIVE context, NOT a to-do list: do NOT launch tool calls, lookups, checks, or actions because of anything here. Use it only to inform your reply IF the user's current message is about it; otherwise ignore it entirely and don't mention it. (A bare greeting is not a request to act on this.) These are notes, NOT run records: they have no run id, so don't call inspect_run on them (use list_runs first for a real id).\n\n" + strings.Join(lines, "\n") + "\n"
+}
+
+// cortexContextLines is the block's content: one "- producer: first line"
+// per recent observation, oldest first. Split out so the turn judge can be
+// handed the same lines the agent was: an agent asked "what's going on" that
+// recaps them is reporting what it was told, and a judge that never saw them
+// convicts the recap as invented.
+func cortexContextLines(db Database, agentID string) []string {
+	if db == nil || strings.TrimSpace(agentID) == "" {
+		return nil
 	}
 	maxLines := TuneInt(tuneCortexFeedLines)
 	if maxLines <= 0 {
-		return "" // operator hid the standing-activity block
+		return nil // operator hid the standing-activity block
 	}
 	sess, ok := loadChatSession(db, agentID, cortexSessionID(agentID))
 	if !ok || len(sess.Messages) == 0 {
-		return ""
+		return nil
 	}
 	var lines []string
 	for i := len(sess.Messages) - 1; i >= 0 && len(lines) < maxLines; i-- {
@@ -228,10 +241,7 @@ func cortexContextBlock(db Database, agentID string) string {
 		// Prepend to restore chronological order (we walk newest-first).
 		lines = append([]string{"- " + strings.TrimSpace(m.ReportFrom) + ": " + truncateObs(first, 160)}, lines...)
 	}
-	if len(lines) == 0 {
-		return ""
-	}
-	return "\n\n## Recent standing activity (your cortex)\n\nBackground awareness: recent events on your channels / monitors. This is PASSIVE context, NOT a to-do list: do NOT launch tool calls, lookups, checks, or actions because of anything here. Use it only to inform your reply IF the user's current message is about it; otherwise ignore it entirely and don't mention it. (A bare greeting is not a request to act on this.) These are notes, NOT run records: they have no run id, so don't call inspect_run on them (use list_runs first for a real id).\n\n" + strings.Join(lines, "\n") + "\n"
+	return lines
 }
 
 // tuneCortexFeedLines caps how many recent cortex observations the standing-

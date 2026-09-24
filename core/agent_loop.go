@@ -2763,8 +2763,13 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 		Backgrounded:  lr.cfg.backgrounded(),
 		GivenEstimate: lr.cfg.backgroundEstimate(),
 		Unattended:    lr.cfg.Unattended,
+		Now:           CurrentContextStampIn(lr.cfg.StampLocation),
 	}
-	if verdict, convicted := judgeTurnClaim(lr.cfg, ev); convicted {
+	verdict, convicted := judgeTurnClaim(lr.cfg, ev)
+	if !convicted && verdict.Overturned != "" {
+		lr.emitDiag("turn-judge-overturned", "A first reading flagged the reply and a closer one cleared it, so it went out as written. "+verdict.Overturned)
+	}
+	if convicted {
 		// Two independent findings share one verdict, so each branch checks
 		// its own. A machinery-only conviction reaching the claim branch
 		// would tell the model its reply "did not happen" about a sentence

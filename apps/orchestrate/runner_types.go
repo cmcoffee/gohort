@@ -141,6 +141,11 @@ type chatTurn struct {
 	// priorWork is what ran for this turn BEFORE its loop began — machine
 	// steps, and whatever a step delegated. Guarded by toolMu.
 	priorWork []string
+	// cortexReports is the standing activity this turn's prompt was given
+	// (cortexContextLines). The judge reads it alongside the thread's own
+	// reports: a forked session carries none of those, and its agent recapping
+	// what the prompt told it was otherwise convicted as invention.
+	cortexReports []string
 	// detach is this TURN's background-job ledger, shared by every session the
 	// turn mints. It has to live here rather than on a session because a plan
 	// runs each step on its OWN session (runWorkerStep), so a per-session cap

@@ -306,9 +306,11 @@ func (pr *planRun) assemblePrompt() {
 		case t.readsOwnerCortex():
 			if odb := UserDB(t.app.DB, t.memoryUnderlay()); odb != nil {
 				pr.sys += cortexContextBlock(odb, t.agent.ID)
+				t.cortexReports = cortexContextLines(odb, t.agent.ID)
 			}
 		case t.session.ID != cortexSessionID(t.agent.ID):
 			pr.sys += cortexContextBlock(t.udb, t.agent.ID)
+			t.cortexReports = cortexContextLines(t.udb, t.agent.ID)
 		}
 	}
 	// (credentialFirstGuidance is Builder-persona territory now: the

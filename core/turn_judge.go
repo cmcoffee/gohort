@@ -163,6 +163,13 @@ type TurnClaimEvidence struct {
 	// applies the same standard, it just gets asked on turns the evidence
 	// alone would have let through. See turnClaimWorthJudging.
 	Unattended bool
+	// Now is the date-and-time stamp the assistant's own copy of the request
+	// carried. The loop stamps the newest user turn in its history, while
+	// Request is read from the unstamped messages, so without this the judge
+	// was the one party in the turn that did not know the time. It convicted
+	// "it's just past midnight your time" as a claim with no evidence behind
+	// it, and the retry lost the whole reply that sentence opened.
+	Now string
 }
 
 // TurnClaimVerdict is the judge's answer.
@@ -185,6 +192,11 @@ type TurnClaimVerdict struct {
 	// background (task a79c771f5f35a9f6ef0489d0)" was an accurate account of
 	// the situation and still nothing the person asked to hear.
 	Machinery string
+	// Overturned is set, with the verdict otherwise empty, when a first
+	// reading convicted and a closer second reading did not. The reply goes
+	// out as written; this is what the trail says about it, so a correction
+	// that did NOT happen is as visible as one that did.
+	Overturned string
 }
 
 // TurnClaimJudge reads a finished turn and reports whether its reply is true
@@ -304,6 +316,9 @@ func judgeTurnClaim(cfg AgentLoopConfig, ev TurnClaimEvidence) (TurnClaimVerdict
 		return TurnClaimVerdict{}, false
 	}
 	v, ok := cfg.TurnClaimJudge(ev)
+	if ok && strings.TrimSpace(v.Overturned) != "" {
+		return TurnClaimVerdict{Overturned: v.Overturned}, false
+	}
 	if !ok || (!v.Unkept && strings.TrimSpace(v.Machinery) == "") {
 		return TurnClaimVerdict{}, false
 	}

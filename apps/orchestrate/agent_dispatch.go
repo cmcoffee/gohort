@@ -858,6 +858,7 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 		TurnNotes:        func(user string) string { return turnNotes(subSess, runtimeDB, subSessID, user) },
 		CapturePrompt:    target.CapturePrompt,
 		TurnClaimJudge:   T.turnClaimJudge(ctx),
+		PriorReports:     func() []string { return dispatchPriorReports(target, subSessID, runtimeDB) },
 		// And whether the reply KNOWS what it asserts. This site had the claim
 		// judge and not this one — an inconsistency rather than a decision, and
 		// the kind that is invisible because the path still works: a reply here
@@ -1895,6 +1896,9 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	loopCfg.TurnNotes = func(user string) string { return turnNotes(subSess, runtimeDB, subSessionID, user) }
 	// Last look before the reply reaches the channel. See turn_judge.go.
 	loopCfg.TurnClaimJudge = T.turnClaimJudge(ctx)
+	loopCfg.PriorReports = func() []string {
+		return append(priorReportsFrom(priorSession.Messages), dispatchPriorReports(target, subSessionID, runtimeDB)...)
+	}
 	// And whether it KNOWS what it asserts. On this path the live claim matters
 	// more than the stored ones: a contact says something in a room and the
 	// agent can adopt it and repeat it to everyone inside the same turn.

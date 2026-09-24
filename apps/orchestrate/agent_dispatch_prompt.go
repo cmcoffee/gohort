@@ -7,6 +7,20 @@ import (
 	. "github.com/cmcoffee/gohort/core"
 )
 
+// dispatchPriorReports is the standing activity dispatchSystemPrompt shows the
+// agent, as the judge reads it: the same condition, the same lines. A reply
+// recapping what that block told the agent is reporting, not inventing.
+func dispatchPriorReports(target AgentRecord, sessID string, runtimeDB Database) []string {
+	if !target.Cortex || sessID == cortexSessionID(target.ID) {
+		return nil
+	}
+	var out []string
+	for _, l := range cortexContextLines(runtimeDB, target.ID) {
+		out = append(out, strings.TrimPrefix(l, "- "))
+	}
+	return out
+}
+
 // dispatchSystemPrompt assembles the system prompt for an external/channel
 // dispatch (RunAgentSync / RunAgentSyncContinuingRich): the agent's context
 // (rules + facts) over its OrchestratorPrompt, then the Available-agents/skills
