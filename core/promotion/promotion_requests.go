@@ -59,6 +59,14 @@ func CreatePromotionRequest(db Store, owner, kind, name, note string) error {
 	if owner == "" || kind == "" || name == "" {
 		return errString("owner, kind and name are required")
 	}
+	requestHooksMu.RLock()
+	hook := requestHooks[kind]
+	requestHooksMu.RUnlock()
+	if hook != nil {
+		if err := hook(owner, name); err != nil {
+			return err
+		}
+	}
 	id := RequestKey(kind, owner, name)
 	db.Set(promotionRequestsTable, id, PromotionRequest{
 		ID: id, Owner: owner, Kind: kind, Name: name, Note: strings.TrimSpace(note),
@@ -147,6 +155,30 @@ func RegisterApprover(kind string, fn Approver) {
 	approversMu.Lock()
 	defer approversMu.Unlock()
 	approvers[kind] = fn
+}
+
+// RequestHook runs when a request for one kind is filed, before it is stored.
+// It lets the package that owns the kind freeze what is being asked for (so
+// the approver publishes what the admin was shown, not what the resource has
+// become since) or refuse a request that asks for nothing. An error refuses
+// the request and is shown to the requester.
+type RequestHook func(owner, name string) error
+
+var (
+	requestHooksMu sync.RWMutex
+	requestHooks   = map[string]RequestHook{}
+)
+
+// RegisterRequestHook installs the request hook for a kind. A later
+// registration for the same kind replaces the earlier one.
+func RegisterRequestHook(kind string, fn RequestHook) {
+	kind = strings.TrimSpace(kind)
+	if kind == "" || fn == nil {
+		return
+	}
+	requestHooksMu.Lock()
+	defer requestHooksMu.Unlock()
+	requestHooks[kind] = fn
 }
 
 // Approve grants a pending request: it runs the kind's registered side effect

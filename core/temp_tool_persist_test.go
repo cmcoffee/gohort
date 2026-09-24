@@ -19,6 +19,7 @@ func TestGlobalToolAdoption(t *testing.T) {
 		{Tool: TempTool{Name: "weather"}, Shared: true},
 		{Tool: TempTool{Name: "jira"}, Shared: true},
 	})
+	migrateToolReleases(db) // published tools are their releases
 
 	// Empty to start.
 	if got := LoadAdoptedGlobalTools(db, "alice"); len(got) != 0 {
@@ -80,6 +81,7 @@ func TestGlobalToolAdoptACL(t *testing.T) {
 		{Tool: TempTool{Name: "payroll"}, Shared: true, AllowedUsers: []string{"alice"}},
 		{Tool: TempTool{Name: "weather"}, Shared: true},
 	})
+	migrateToolReleases(db)
 
 	// AllowedUsers survives the kvlite/gob round-trip.
 	var got []string
@@ -133,9 +135,16 @@ func TestAnAdoptionRunsOnlyTheToolItWasTakenFrom(t *testing.T) {
 	saved := RootDB
 	RootDB = db
 	t.Cleanup(func() { RootDB = saved })
-	db.Set(persistentTempToolsTable, "carol", []PersistentTempTool{
-		{Tool: TempTool{Name: "wiki_read", CommandTemplate: "carol-version"}, Shared: true},
-	})
+	publish := func(owner, cmd string) {
+		t.Helper()
+		if err := AdminPersistTempTool(db, owner, TempTool{Name: "wiki_read", CommandTemplate: cmd}); err != nil {
+			t.Fatal(err)
+		}
+		if err := SetPersistentTempToolShared(db, owner, "wiki_read", true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	publish("carol", "carol-version")
 	if err := SetGlobalToolAdopted(db, "bob", "wiki_read", "", true); err != nil {
 		t.Fatal(err)
 	}
@@ -144,13 +153,11 @@ func TestAnAdoptionRunsOnlyTheToolItWasTakenFrom(t *testing.T) {
 		t.Fatalf("bob's adoption should load carol's tool: %+v", got)
 	}
 
-	// Carol stops publishing; mallory offers a tool of the same name.
-	db.Set(persistentTempToolsTable, "carol", []PersistentTempTool{
-		{Tool: TempTool{Name: "wiki_read", CommandTemplate: "carol-version"}},
-	})
-	db.Set(persistentTempToolsTable, "mallory", []PersistentTempTool{
-		{Tool: TempTool{Name: "wiki_read", CommandTemplate: "mallory-version"}, Shared: true},
-	})
+	// Carol stops publishing; mallory publishes a tool of the same name.
+	if err := SetPersistentTempToolShared(db, "carol", "wiki_read", false); err != nil {
+		t.Fatal(err)
+	}
+	publish("mallory", "mallory-version")
 	for _, p := range loaded() {
 		if p.Owner == "mallory" {
 			t.Fatal("another user's same-named tool was substituted into bob's agents")
@@ -159,9 +166,6 @@ func TestAnAdoptionRunsOnlyTheToolItWasTakenFrom(t *testing.T) {
 
 	// Publishing a second tool under a name the deployment already publishes
 	// is refused, so the ambiguity cannot be created by the front door.
-	db.Set(persistentTempToolsTable, "carol", []PersistentTempTool{
-		{Tool: TempTool{Name: "wiki_read", CommandTemplate: "carol-version"}},
-	})
 	if err := SetPersistentTempToolShared(db, "carol", "wiki_read", true); err == nil {
 		t.Error("a second published tool under one name was allowed")
 	}
@@ -174,9 +178,9 @@ func TestAnAdoptionRunsOnlyTheToolItWasTakenFrom(t *testing.T) {
 	if len(loaded()) != 1 {
 		t.Fatal("precondition: bob loads mallory's tool once he takes it from her")
 	}
-	db.Set(persistentTempToolsTable, "mallory", []PersistentTempTool{
-		{Tool: TempTool{Name: "wiki_read", CommandTemplate: "mallory-version"}, Shared: true, AllowedUsers: []string{"alice"}},
-	})
+	if err := SetPersistentTempToolAllowedUsers(db, "mallory", "wiki_read", []string{"alice"}); err != nil {
+		t.Fatal(err)
+	}
 	if len(loaded()) != 0 {
 		t.Error("a user taken off a published tool's adopt list kept running it")
 	}
@@ -190,17 +194,25 @@ func TestALegacyAdoptionIsPinnedOnlyWhenUnambiguous(t *testing.T) {
 	RootDB = db
 	t.Cleanup(func() { RootDB = saved })
 	MergeAdoptedGlobalTools(db, "bob", []string{"wiki_read"})
-	db.Set(persistentTempToolsTable, "carol", []PersistentTempTool{{Tool: TempTool{Name: "wiki_read"}, Shared: true}})
-	db.Set(persistentTempToolsTable, "mallory", []PersistentTempTool{{Tool: TempTool{Name: "wiki_read"}, Shared: true}})
+	// Two owners offer the name: carol shares hers with bob, mallory
+	// publishes hers.
+	_ = AdminPersistTempTool(db, "carol", TempTool{Name: "wiki_read", CommandTemplate: "carol"})
+	_ = AdminPersistTempTool(db, "mallory", TempTool{Name: "wiki_read", CommandTemplate: "mallory"})
+	if err := SetPersistentTempToolSharedWith(db, "carol", "wiki_read", []string{"bob"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetPersistentTempToolShared(db, "mallory", "wiki_read", true); err != nil {
+		t.Fatal(err)
+	}
 	if got := AdoptedToolsFor(db, "bob"); len(got) != 0 {
 		t.Fatalf("an ambiguous legacy adoption loaded %+v", got)
 	}
-	db.Set(persistentTempToolsTable, "mallory", []PersistentTempTool{{Tool: TempTool{Name: "wiki_read"}}})
+	_ = SetPersistentTempToolShared(db, "mallory", "wiki_read", false)
 	if got := AdoptedToolsFor(db, "bob"); len(got) != 1 || got[0].Owner != "carol" {
 		t.Fatalf("an unambiguous legacy adoption should resolve: %+v", got)
 	}
 	// Now pinned: mallory publishing again does not move it.
-	db.Set(persistentTempToolsTable, "mallory", []PersistentTempTool{{Tool: TempTool{Name: "wiki_read"}, Shared: true}})
+	_ = SetPersistentTempToolShared(db, "mallory", "wiki_read", true)
 	if got := AdoptedToolsFor(db, "bob"); len(got) != 1 || got[0].Owner != "carol" {
 		t.Fatalf("a pinned adoption moved to another owner: %+v", got)
 	}
@@ -242,6 +254,7 @@ func TestSetPersistentTempToolAllowedUsers(t *testing.T) {
 	db.Set(persistentTempToolsTable, "alice", []PersistentTempTool{
 		{Tool: TempTool{Name: "payroll"}, Shared: true},
 	})
+	migrateToolReleases(db)
 
 	// Unknown tool errors.
 	if err := SetPersistentTempToolAllowedUsers(db, "alice", "nope", []string{"bob"}); err == nil {
@@ -601,24 +614,24 @@ func TestAToolShareListIsNormalized(t *testing.T) {
 	}
 }
 
-// A published tool is taken out of the catalog when its definition changes:
-// the admin approved THAT code. Flipping a governance flag is not a
-// redefinition and keeps it published.
-func TestRedefiningAPublishedToolUnpublishesIt(t *testing.T) {
+// A published tool is NOT taken out of the catalog when its owner edits it,
+// and the edit does not reach its adopters either: they run the release an
+// administrator approved. (It used to be un-published on any edit, which took
+// the tool away from everybody to keep unreviewed code from reaching them.)
+func TestRedefiningAPublishedToolReachesNoAdopter(t *testing.T) {
 	db := &DBase{Store: kvlite.MemStore()}
+	saved := RootDB
+	RootDB = db
+	t.Cleanup(func() { RootDB = saved })
 	orig := TempTool{Name: "fetch_report", Description: "d", CommandTemplate: "curl https://reports.example/{id}"}
 	if err := AdminPersistTempTool(db, "alice", orig); err != nil {
 		t.Fatal(err)
 	}
-	list := LoadPersistentTempTools(db, "alice")
-	list[0].Shared = true
-	db.Set(persistentTempToolsTable, "alice", list)
-
-	flagged := orig
-	flagged.Disabled = true
-	_ = AdminReconfigureTempTool(db, "alice", flagged)
-	if p, _ := UserToolByName(db, "alice", "fetch_report"); !p.Shared {
-		t.Fatal("a governance flag change unpublished the tool")
+	if err := SetPersistentTempToolShared(db, "alice", "fetch_report", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetGlobalToolAdopted(db, "bob", "fetch_report", "alice", true); err != nil {
+		t.Fatal(err)
 	}
 
 	changed := orig
@@ -626,7 +639,18 @@ func TestRedefiningAPublishedToolUnpublishesIt(t *testing.T) {
 	if err := AdminPersistTempTool(db, "alice", changed); err != nil {
 		t.Fatal(err)
 	}
-	if p, _ := UserToolByName(db, "alice", "fetch_report"); p.Shared {
-		t.Fatal("a redefined tool stayed in the catalog")
+	flagged := changed
+	flagged.Locked = true
+	_ = AdminReconfigureTempTool(db, "alice", flagged)
+
+	if p, _ := UserToolByName(db, "alice", "fetch_report"); !p.Shared || p.Tool.CommandTemplate != changed.CommandTemplate {
+		t.Fatalf("the owner's working copy should hold the edit and stay published: %+v", p)
+	}
+	got := AdoptedToolsFor(db, "bob")
+	if len(got) != 1 || got[0].Tool.CommandTemplate != orig.CommandTemplate || got[0].Version != 1 {
+		t.Fatalf("an owner's edit reached an adopter: %+v", got)
+	}
+	if p, _, _ := FindSharedToolWithOwner(db, "fetch_report"); p.Tool.CommandTemplate != orig.CommandTemplate {
+		t.Fatalf("the catalog serves the working copy, not the release: %q", p.Tool.CommandTemplate)
 	}
 }

@@ -429,7 +429,7 @@ func bedrockRegion(configured string) string {
 	return bedrockDefaultRegion
 }
 
-// BedrockEndpointHost returns the Messages-API Bedrock hostname for a region.
+// bedrockEndpointHost returns the Messages-API Bedrock hostname for a region.
 //
 // Not every region AWS documents for Claude on Bedrock actually has one of
 // these hosts: the published region table describes where the service is
@@ -438,7 +438,7 @@ func bedrockRegion(configured string) string {
 // rather than a configuration one — hence CheckBedrockEndpoint below, so the
 // admin connectivity test can say what is actually wrong. us-west-1 is the
 // one that catches people out: N. California has no endpoint, us-west-2 does.
-func BedrockEndpointHost(region string) string {
+func bedrockEndpointHost(region string) string {
 	return fmt.Sprintf("bedrock-mantle.%s.api.aws", bedrockRegion(region))
 }
 
@@ -447,7 +447,7 @@ func BedrockEndpointHost(region string) string {
 // where a precise message is worth a DNS lookup; the client itself does not
 // call it, so a transient resolver failure can never block startup.
 func CheckBedrockEndpoint(region string) error {
-	host := BedrockEndpointHost(region)
+	host := bedrockEndpointHost(region)
 	if _, err := net.LookupHost(host); err != nil {
 		return Error("no Bedrock endpoint in region " + bedrockRegion(region) + " (" + host +
 			" does not resolve). The Messages-API endpoint exists in a subset of the regions AWS lists for Bedrock; us-east-1, us-east-2, us-west-2, eu-west-1, eu-central-1, and ap-northeast-1 all have one.")
@@ -606,7 +606,7 @@ func newBedrockLLM(bearer, model, region, profile, endpoint string, api *apiclie
 
 	host := endpoint
 	if host == "" {
-		host = BedrockEndpointHost(region)
+		host = bedrockEndpointHost(region)
 	}
 	// Tolerate an operator pasting a full URL into a host field.
 	host = strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(host, "https://"), "http://"), "/")

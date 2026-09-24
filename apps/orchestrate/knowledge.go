@@ -964,12 +964,13 @@ func searchAgentKnowledgeVec(ctx context.Context, db Database, user, baseUser st
 	// this agent stays theirs — capability travels, history does not.
 	exact, withheld := agentCorpusSourceSet(user, baseUser, agentAttachedCollections, activeSkills)
 	if len(withheld) > 0 {
-		// Never silent. A corpus that quietly stops answering is the shape that
-		// produces a confident wrong answer instead of a missing one, and the
-		// person who can fix it is the owner, who is not in this turn.
-		Log("[orchestrate.knowledge] agent=%s run by %q: %d attached collection(s) withheld, not readable by them: %v",
+		// Logged here, and SAID once per turn where the run starts
+		// (trackMissingDependencies): the model is told the corpus is gone,
+		// the session gets its breadcrumb, and the owner is told when
+		// somebody else's run found it. Reporting from a search as well would
+		// be a second voice for the same gap, repeated per search.
+		Log("[orchestrate.knowledge] agent=%s run by %q: %d attached collection(s) withheld, not readable by the owner any more: %v",
 			agentID, user, len(withheld), withheld)
-		noteWithheldCollections(baseUser, user, agentID, withheld)
 	}
 	allow := func(c EmbeddedChunk) bool {
 		// Source allow-list (prefix for agent corpus, exact for the rest).
@@ -1571,10 +1572,10 @@ func (t *chatTurn) memorySearch(args map[string]any) (string, error) {
 	return out, nil
 }
 
-// memoryForget is the forget-action implementation. Two modes:
-// surgical (id=...) and bulk (query=...). Caps at maxForgetK so a
-// single fuzzy query can't clear the whole index — admin per-agent
-// wipe in the Memory modal is the path for bulk reset.
+// memoryForget is the forget-action implementation. Two modes: surgical
+// (id=...), which deletes, and query=..., which only lists candidates with
+// their ids so the delete that follows is by id. The admin per-agent wipe in
+// the Memory modal is the path for bulk reset.
 func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 	explicitID := strings.TrimSpace(stringArg(args, "id"))
 	query := strings.TrimSpace(stringArg(args, "query"))
@@ -1622,8 +1623,16 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 		return fmt.Sprintf("Deleted 1 memory entry: mem_id=%s, topic=%q.", explicitID, topic), nil
 	}
 
-	// Query-mode: vector-search delete.
-	k := 3
+	// Query mode LISTS; it never deletes. It used to delete every finding above
+	// the search relevance floor, and that floor is set for finding things,
+	// where a loose match is fine: asked to "clear those pending edits", it
+	// deleted a note about a GPU setup (0.45) and one about a trip (0.40),
+	// while the edits themselves sat in a pinned note it never searched. A
+	// similarity score is a guess, and a delete is not undoable.
+	//
+	// So it searches both places a memory can be, shows the candidates with
+	// their ids, and the model deletes the ones that are actually meant, by id.
+	k := 5
 	if v, ok := args["k"].(float64); ok && v > 0 {
 		k = int(v)
 		if k > maxForgetK {
@@ -1633,42 +1642,118 @@ func (t *chatTurn) memoryForget(args map[string]any) (string, error) {
 	topic := normalizeTopic(stringArg(args, "topic"))
 	ctx, cancel := context.WithTimeout(context.Background(), knowledgeIngestTimeout())
 	defer cancel()
-	hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.readsOwnerCorpus(ChunkScopeDerivedOnly), t.agent.ID, topic, query, t.embedQuery(ctx, query), k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
-	// Apply the same relevance floor memory_search / knowledge_search use, so a
-	// loose forget query can't delete tangentially-related chunks it wouldn't
-	// even surface. Filtering here (not just checking len==0) keeps forget's
-	// precision aligned with search.
-	hits = aboveRelevanceFloor(hits)
-	if len(hits) == 0 {
-		return "No matching derived chunks to forget: Reference Memory has nothing close enough to that query (above the relevance floor) under this agent.", nil
-	}
-	ids := make([]string, 0, len(hits))
+	qVec := t.embedQuery(ctx, query)
+
 	var b strings.Builder
-	noun := "entries"
-	if len(hits) == 1 {
-		noun = "entry"
+	var offered []string
+	fmt.Fprintf(&b, "Nothing has been deleted. Closest matches to %q:\n", query)
+
+	facts := SearchMemoryFactsVec(t.udb, factsNamespace(t.agent.ID), query, qVec)
+	if len(facts) == 0 {
+		// The fact search falls back to matching the whole query as one
+		// phrase, which "pending photo edits Shazz" never is. A preview deletes
+		// nothing, so a looser word match is safe here and is what finds the
+		// note a person is actually describing.
+		facts = factsSharingWords(ListMemoryFacts(t.udb, factsNamespace(t.agent.ID)), query)
 	}
-	fmt.Fprintf(&b, "Deleted %d memory %s:\n", len(hits), noun)
-	for i, h := range hits {
-		if h.ID == "" {
+	if len(facts) > k {
+		facts = facts[:k]
+	}
+	if len(facts) > 0 {
+		b.WriteString("\nPinned notes:\n")
+		for _, f := range facts {
+			id := "fact:" + f.ID
+			offered = append(offered, id)
+			fmt.Fprintf(&b, "- %s  %s\n", id, knowledgeSearchExcerpt(f.Note))
+		}
+	}
+
+	hits := searchAgentKnowledgeVec(ctx, t.app.DB, t.user, t.ownerUser, t.readsOwnerCorpus(ChunkScopeDerivedOnly), t.agent.ID, topic, query, qVec, k, t.skillsActive, t.agent.AttachedCollections, ChunkScopeDerivedOnly)
+	hits = aboveRelevanceFloor(hits)
+	seen := map[string]bool{}
+	var findings []string
+	for _, h := range hits {
+		ref := h.ReportID
+		if ref == "" {
+			ref = h.ID
+		}
+		if ref == "" || seen[ref] {
 			continue
 		}
-		ids = append(ids, h.ID)
+		seen[ref] = true
+		id := "mem:" + ref
+		offered = append(offered, id)
 		topicLabel := strings.TrimSpace(strings.TrimPrefix(h.Section, "## "))
-		fmt.Fprintf(&b, "%d. %s: mem_id=%s\n   %s\n", i+1, topicLabel, h.ID, knowledgeSearchExcerpt(h.Text))
-		Log("[orchestrate.memory.forget] user=%q agent=%q deleted chunk id=%s topic=%q score=%.3f",
-			t.user, t.agent.ID, h.ID, h.Section, h.Score)
+		findings = append(findings, fmt.Sprintf("- %s  %s (match %.2f): %s", id, topicLabel, h.Score, knowledgeSearchExcerpt(h.Text)))
 	}
-	// Chunks live in VectorDB, not t.app.DB (see id-mode note above).
-	DeleteChunksByIDs(VectorDB, ids)
-	return strings.TrimRight(b.String(), "\n"), nil
+	if len(findings) > 0 {
+		b.WriteString("\nSaved findings:\n")
+		b.WriteString(strings.Join(findings, "\n"))
+		b.WriteString("\n")
+	}
+	if len(offered) == 0 {
+		return "Nothing has been deleted, and nothing in your pinned notes or saved findings is close to that. Tell the user nothing matched rather than deleting something else.", nil
+	}
+	t.forgetOfferedMu.Lock()
+	if t.forgetOffered == nil {
+		t.forgetOffered = map[string]bool{}
+	}
+	for _, id := range offered {
+		t.forgetOffered[id] = true
+	}
+	t.forgetOfferedMu.Unlock()
+	b.WriteString("\nDelete only the ones that are exactly what the user asked to remove, one forget(id=...) call each. A match score measures how similar the wording is, not whether it is the same thing. If none of these is it, delete nothing and tell the user so.")
+	Log("[orchestrate.memory.forget] user=%q agent=%q previewed %d candidate(s) for %q, nothing deleted",
+		t.user, t.agent.ID, len(offered), truncateObs(query, 80))
+	return b.String(), nil
 }
 
-// maxForgetK caps how many chunks one knowledge_forget call can
-// delete. Tight on purpose — a loose query that returns many matches
-// shouldn't be able to wipe the agent's index in one fell swoop. If
-// the agent needs to clear everything under a topic, the admin
-// per-agent wipe button is the right path.
+// factsSharingWords ranks pinned notes by how many of the query's words (three
+// letters or more) they contain, most first, keeping those that share at least
+// two (or the only one, for a one-word query). For listing candidates only.
+func factsSharingWords(all []MemoryFact, query string) []MemoryFact {
+	var words []string
+	for _, w := range strings.Fields(strings.ToLower(query)) {
+		w = strings.Trim(w, ".,;:!?\"'()")
+		if len(w) >= 3 {
+			words = append(words, w)
+		}
+	}
+	need := 2
+	if len(words) < 2 {
+		need = len(words)
+	}
+	if need == 0 {
+		return nil
+	}
+	type scored struct {
+		f MemoryFact
+		n int
+	}
+	var ranked []scored
+	for _, f := range all {
+		note := strings.ToLower(f.Note)
+		n := 0
+		for _, w := range words {
+			if strings.Contains(note, w) {
+				n++
+			}
+		}
+		if n >= need {
+			ranked = append(ranked, scored{f, n})
+		}
+	}
+	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].n > ranked[j].n })
+	out := make([]MemoryFact, len(ranked))
+	for i, r := range ranked {
+		out[i] = r.f
+	}
+	return out
+}
+
+// maxForgetK caps how many candidates one forget preview lists per kind.
+// Deletion is by id only, so this bounds the size of the list, not the
+// damage a loose query can do.
 const maxForgetK = 10
 
 // headingListMax bounds the section index in a fetch reply. A spec with

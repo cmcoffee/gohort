@@ -224,3 +224,44 @@ func TestTheRedirectIsATemplateNotAWholeURL(t *testing.T) {
 		t.Error("servePlan still builds a whole URL for the redirect to encode")
 	}
 }
+
+// The take-back question names what it stops, per row: the recipient's own
+// agents that rely on the grant. A row nobody relies on keeps the plain one.
+func TestTheTakeBackQuestionNamesTheAgentsItStops(t *testing.T) {
+	g := shareledger.Grant{Kind: "skill", Label: "Skill", ID: "s1", Name: "Runbook",
+		Recipients: []string{"bob", "carol"}, Revocable: true,
+		Dependents: []shareledger.Dependent{{User: "bob", Uses: []string{"Triage", "Intake"}}}}
+
+	bob := withDependents(toRow(g, g.Reach, "bob"), g, "bob")
+	if bob.Uses != "Triage, Intake" {
+		t.Errorf("bob's row does not say what relies on it: %q", bob.Uses)
+	}
+	if !strings.Contains(bob.Confirm, "\"Triage\", \"Intake\" use it") {
+		t.Errorf("bob's take-back question does not name his agents: %q", bob.Confirm)
+	}
+	carol := withDependents(toRow(g, g.Reach, "carol"), g, "carol")
+	if carol.Uses != "" || carol.Confirm != takeBackPrompt {
+		t.Errorf("carol relies on nothing, so her row should ask the plain question: %+v", carol)
+	}
+	// A row for everybody names each person's.
+	wide := shareledger.Grant{Kind: "skill", ID: "s2", Name: "Tone", Wide: true,
+		Dependents: []shareledger.Dependent{{User: "bob", Uses: []string{"Triage"}}}}
+	if r := withDependents(toRow(wide, "", ""), wide, ""); r.Uses != "bob: Triage" {
+		t.Errorf("the everybody row: %q", r.Uses)
+	}
+	if strings.Contains(bob.Confirm, "—") {
+		t.Error("user-facing text carries an em-dash")
+	}
+}
+
+// The page wires the per-row question in, and the table carries who relies on
+// each grant beside it.
+func TestThePageAsksThePerRowQuestion(t *testing.T) {
+	src, err := os.ReadFile("share.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), `ConfirmField: "confirm"`) || !strings.Contains(string(src), `Field: "uses"`) {
+		t.Error("the Sharing page no longer shows dependents or asks the per-row question")
+	}
+}

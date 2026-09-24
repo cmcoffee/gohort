@@ -1114,6 +1114,10 @@ select:-webkit-autofill {
   background: color-mix(in srgb, var(--accent, #6366f1) 18%, transparent);
   border-color: var(--accent, #6366f1); color: var(--text-hi);
 }
+/* A selected value with no option behind it any more. Dashed and muted so it
+ * reads as a stale reference, not as one more live choice. */
+.ui-cp-pill-missing { border-style: dashed; color: var(--text-mute); }
+.ui-cp-pill-note { font-size: 0.64rem; color: var(--warning, var(--text-mute)); font-style: italic; }
 .ui-cp-pill-x { cursor: pointer; color: var(--text-mute); font-weight: 700; }
 .ui-cp-pill-x:hover { color: var(--danger); }
 .ui-cp-add { align-self: flex-start; padding: 0.3rem 0.7rem; font-size: 0.8rem; margin-bottom: 0.5rem; }

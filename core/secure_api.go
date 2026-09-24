@@ -3225,10 +3225,13 @@ func init() {
 	// the name was on the adoption list, which was false when the adoption was
 	// pinned to somebody else's tool of that name and false when the user's
 	// own tool held the name.
-	takenToolsView := func(user string) (loadedFrom map[string]string, ownAll, ownSome map[string]bool) {
-		loadedFrom, ownAll, ownSome = map[string]string{}, map[string]bool{}, map[string]bool{}
+	takenToolsView := func(user string) (loadedFrom map[string]string, ownAll, ownSome, changed map[string]bool) {
+		loadedFrom, ownAll, ownSome, changed = map[string]string{}, map[string]bool{}, map[string]bool{}, map[string]bool{}
 		for _, p := range AdoptedToolsFor(nil, user) {
 			loadedFrom[p.Tool.Name] = p.Owner
+			// A peer tool runs the copy the user took; the owner may have
+			// changed theirs since.
+			changed[p.Tool.Name] = p.Update != nil
 		}
 		for _, p := range LoadPersistentTempTools(nil, user) {
 			if len(p.ScopeAgents) == 0 {
@@ -3271,12 +3274,17 @@ func init() {
 				switch {
 				case p.Shared:
 					reach := "In the deployment catalog"
+					for _, r := range ToolReleases(nil) {
+						if r.Owner == owner && r.Name == p.Tool.Name && r.Version > 0 {
+							reach += fmt.Sprintf(" (v%d)", r.Version)
+						}
+					}
 					if len(p.AllowedUsers) > 0 {
 						reach += ", for " + strings.Join(p.AllowedUsers, ", ")
 					}
 					out = append(out, shareledger.Grant{
 						ID: p.Tool.Name, Name: p.Tool.Name, Reach: reach, Wide: true,
-						Detail: "An administrator published it; ask them to unshare it.",
+						Detail: "Published: others run the version an administrator approved. Your edits reach only your own agents until an update you request is approved; you can withdraw it from Extensions, Tools.",
 					})
 				case len(p.SharedWith) > 0:
 					out = append(out, shareledger.Grant{
@@ -3291,7 +3299,7 @@ func init() {
 		},
 		ToMe: func(user string) []shareledger.Grant {
 			var out []shareledger.Grant
-			loadedFrom, ownAll, ownSome := takenToolsView(user)
+			loadedFrom, ownAll, ownSome, changed := takenToolsView(user)
 			for _, p := range PeerSharedToolsFor(nil, user) {
 				name := p.Tool.Name
 				detail := "Take it from your Tools catalog to load it for your agents."
@@ -3300,6 +3308,8 @@ func init() {
 					detail = "Your own tool of this name runs instead; rename yours to use this one."
 				case other == p.Owner && ownSome[name]:
 					detail = "Taken: your agents load it, except those that carry your own tool of this name."
+				case other == p.Owner && changed[name]:
+					detail = "Taken: your agents run the copy you took; " + p.Owner + " has changed it since. Accept the update in your Tools catalog to switch."
 				case other == p.Owner:
 					detail = "Taken: your agents load it."
 				case other != "":
@@ -3318,7 +3328,7 @@ func init() {
 			// agents do not load and no reason to look. "Loads" is the
 			// resolver's answer, not a name on their list: the name may be
 			// pinned to somebody else's tool, or their own tool may hold it.
-			loadedFrom, ownAll, _ := takenToolsView(recipient)
+			loadedFrom, ownAll, _, _ := takenToolsView(recipient)
 			if loadedFrom[id] == owner && !ownAll[id] {
 				return nil
 			}
@@ -3339,7 +3349,115 @@ func init() {
 			}
 			return errString("no tool " + id + " owned by " + owner)
 		},
+		// Only the people who TOOK this owner's copy can be relying on it: a
+		// tool is referenced by name, so an offer nobody took, or a name their
+		// own tool already holds, leaves their agents untouched either way.
+		Dependents: func(owner, id string, users []string) []shareledger.Dependent {
+			takers := toolTakersOf(owner, id)
+			if users != nil {
+				var in []string
+				for _, u := range takers {
+					if sliceHas(users, u) {
+						in = append(in, u)
+					}
+				}
+				takers = in
+			}
+			if len(takers) == 0 || shareledger.FindDependents == nil {
+				return nil
+			}
+			return shareledger.FindDependents("tool", owner, id, takers)
+		},
 	})
+	// A peer share of a tool narrows through one setter, reached from the
+	// Tools page, the Sharing page and anything later; the index write under
+	// it is the one place all of them pass. See peershare.OnDropped.
+	peershare.OnDropped(sharedToolsTable, func(owner, name string, dropped []string) {
+		noteToolWithdrawn(owner, name, dropped)
+	})
+}
+
+// noteToolWithdrawn tells the people who just lost owner's tool that they
+// lost it, naming the agents of theirs that loaded it.
+//
+// THE hook for a tool leaving people: a peer share narrowed (wired through
+// the share index above), and - for the paths that live with the tool store -
+// unpublishing, narrowing a published tool's adopt list, or deleting it. Pass
+// lost as nil when the tool reached the deployment rather than named people:
+// everybody who took this owner's copy is then asked about. Either way, anybody
+// the tool still reaches by another door (published AND shared with them) is
+// left out, since nothing was taken from them.
+//
+// Call it AFTER the store write, so "still reaches them" reads the new state.
+func noteToolWithdrawn(owner, name string, lost []string) {
+	owner, name = strings.TrimSpace(owner), strings.TrimSpace(name)
+	if owner == "" || name == "" {
+		return
+	}
+	if lost == nil {
+		lost = toolTakersOf(owner, name)
+	}
+	var gone []string
+	for _, u := range lost {
+		if u != owner && !toolStillOffered(owner, name, u) {
+			gone = append(gone, u)
+		}
+	}
+	shareledger.Withdrawn("tool", owner, name, name, gone)
+}
+
+// toolTakersOf lists who took owner's tool of this name into their agents: an
+// adoption pinned to that owner, and no tool of their own holding the name for
+// every agent. The pin survives the tool going away, which is what makes this
+// answerable after a delete.
+func toolTakersOf(owner, name string) []string {
+	db := tempToolStore(nil)
+	if db == nil {
+		return nil
+	}
+	// Both tables: an adoption lives in the legacy string list until the
+	// user's list is next written. loadAdoptions reads the two as one.
+	users := map[string]bool{}
+	for _, t := range []string{adoptedGlobalToolsTable, toolAdoptionsTable} {
+		for _, u := range db.Keys(t) {
+			users[u] = true
+		}
+	}
+	var out []string
+	for u := range users {
+		if u == owner || loadAdoptions(db, u)[name].Owner != owner {
+			continue
+		}
+		shadowed := false
+		for _, p := range SharedUserTools(db, u) {
+			if p.Tool.Name == name {
+				shadowed = true
+				break
+			}
+		}
+		if !shadowed {
+			out = append(out, u)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// toolStillOffered reports whether owner's tool of this name still reaches user
+// by any door: shared with them, or published with an adopt list admitting them.
+func toolStillOffered(owner, name, user string) bool {
+	for _, p := range LoadPersistentTempTools(nil, owner) {
+		if p.Tool.Name != name || p.Tool.Disabled {
+			continue
+		}
+		if sliceHas(p.SharedWith, user) {
+			return true
+		}
+		if p.Shared && (len(p.AllowedUsers) == 0 || sliceHas(p.AllowedUsers, user)) {
+			return true
+		}
+	}
+	return false
 }
 
 // ----------------------------------------------------------------------

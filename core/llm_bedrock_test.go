@@ -236,12 +236,12 @@ aws_session_token = WORKTOKEN
 func TestBedrockEndpointHost(t *testing.T) {
 	t.Setenv("AWS_REGION", "")
 	t.Setenv("AWS_DEFAULT_REGION", "")
-	if got := BedrockEndpointHost("us-west-2"); got != "bedrock-mantle.us-west-2.api.aws" {
-		t.Errorf("BedrockEndpointHost = %q", got)
+	if got := bedrockEndpointHost("us-west-2"); got != "bedrock-mantle.us-west-2.api.aws" {
+		t.Errorf("bedrockEndpointHost = %q", got)
 	}
 	// Blank must go through the same region precedence the client uses, or the
 	// pre-flight check would validate a different host than the one dialled.
-	if got := BedrockEndpointHost(""); got != "bedrock-mantle."+bedrockDefaultRegion+".api.aws" {
+	if got := bedrockEndpointHost(""); got != "bedrock-mantle."+bedrockDefaultRegion+".api.aws" {
 		t.Errorf("blank region: %q", got)
 	}
 }

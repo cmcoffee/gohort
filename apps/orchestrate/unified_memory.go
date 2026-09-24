@@ -646,7 +646,16 @@ func recallSnippet(text string) string {
 // somewhere this does not look — so a false negative must cost a slightly wrong
 // message, never a refused lookup.
 func (t *chatTurn) recallIDWasIssued(id string) bool {
-	if t == nil || t.session == nil || strings.TrimSpace(id) == "" {
+	if t == nil || strings.TrimSpace(id) == "" {
+		return false
+	}
+	t.forgetOfferedMu.Lock()
+	offered := t.forgetOffered[strings.TrimSpace(id)]
+	t.forgetOfferedMu.Unlock()
+	if offered {
+		return true
+	}
+	if t.session == nil {
 		return false
 	}
 	// The bare reference counts: an id is issued as "doc:<ref>", and an agent
@@ -735,12 +744,12 @@ func (t *chatTurn) forgetToolDef() AgentToolDef {
 	return AgentToolDef{
 		Tool: Tool{
 			Name:        "forget",
-			Description: fmt.Sprintf("Delete something from your memory, by id or by search.\n\n  id, from a recall hit:\n    fact:<id>  a pinned note (or pass a bare number matching the index in your %q prompt block, then ALWAYS also pass quote)\n    mem:<id>   a finding you saved with remember\n  query, no id in hand: deletes the findings matching the query (tightly capped, relevance-floored, same precision as recall). Use for \"drop what I saved about X\".\n\n[knowledge] and [history] items are NOT deletable here: knowledge is admin-managed source-of-truth, and history is the immutable record of what was said. Required: `id` OR `query`.", t.factsBlockName()),
+			Description: fmt.Sprintf("Delete something from your memory. Deleting is by id only; search first if you do not have one.\n\n  id, from a recall hit:\n    fact:<id>  a pinned note (or pass a bare number matching the index in your %q prompt block, then ALWAYS also pass quote)\n    mem:<id>   a finding you saved with remember\n  query, no id in hand: DELETES NOTHING. It lists the closest pinned notes and findings with their ids; then delete the ones that are exactly what was asked for, one forget(id=...) call each. A similar-sounding match is not a match: if none is right, delete nothing and say so.\n\n[knowledge] and [history] items are NOT deletable here: knowledge is admin-managed source-of-truth, and history is the immutable record of what was said. Required: `id` OR `query`.", t.factsBlockName()),
 			Parameters: map[string]ToolParam{
 				"id":    {Type: "string", Description: fmt.Sprintf("The id from a recall hit (fact:… or mem:…), or a bare 1-based number to drop the matching pinned note in your %q block.", t.factsBlockName())},
 				"quote": {Type: "string", Description: "With a bare-number id: a distinctive phrase copied verbatim from the note you're deleting, so the right note is dropped even if the numbered list shifted since you read it. Ignored for fact:/mem: ids (those are stable)."},
-				"query": {Type: "string", Description: "Without an id: natural-language description of the FINDINGS to delete. Only close matches above the relevance floor are removed, capped per call."},
-				"k":     {Type: "number", Description: "(query mode) max findings to delete in one call (default 3, hard-capped)."},
+				"query": {Type: "string", Description: "Without an id: what you are looking to delete. Lists the closest pinned notes and findings with their ids and deletes nothing."},
+				"k":     {Type: "number", Description: "(query mode) how many candidates to list per kind (default 5, hard-capped)."},
 			},
 			Caps: []Capability{CapWrite},
 		},

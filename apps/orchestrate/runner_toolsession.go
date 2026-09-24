@@ -184,7 +184,9 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 	// the owner it was taken from (AdoptedToolsFor). Both are opt-in: a share
 	// is a pointer, not a push. An own tool of the same name still wins, for
 	// the agents that tool reaches.
+	adoptedResolved := map[string]bool{}
 	for _, p := range AdoptedToolsFor(poolDB, poolUser) {
+		adoptedResolved[p.Tool.Name] = true
 		if !own[p.Tool.Name] {
 			own[p.Tool.Name] = true
 			loaded = append(loaded, p.PersistentTempTool)
@@ -256,6 +258,11 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 	if n := len(loaded); n > 0 {
 		Log("[orchestrate.tools] loaded %d persistent temp tool(s) for %s", n, poolUser)
 	}
+	// What this agent references and could not load: a taken tool whose owner
+	// took it back, and (checked here because this is the one step every run
+	// path shares) skills and collections gone the same way. Said once per
+	// turn to the model and once per session to the trail; see missing_deps.go.
+	t.trackMissingDependencies(sess, poolUser, poolDB, own, adoptedResolved)
 	// Agent-scoped tools now ride the unified store (ScopeAgents on the
 	// record) and were folded into the pool loop above — AgentRecord.Tools is
 	// no longer a runtime source (see migrateAgentToolsToStore).

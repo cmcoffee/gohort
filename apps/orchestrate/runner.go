@@ -2114,7 +2114,7 @@ func (pr *planRun) loopConfig() AgentLoopConfig {
 		// actually did? Backstops the phrase-list guards on the shapes they don't
 		// know. See turn_judge.go.
 		CapturePrompt:  t.agent.CapturePrompt,
-		TurnClaimJudge: t.app.turnClaimJudge(t.ctx),
+		TurnClaimJudge: t.claimJudge(t.ctx),
 		// What ran for this turn BEFORE the loop did — the machine steps. The
 		// loop cannot see them (they run during system-prompt assembly, on a
 		// session of their own), so without this the judge reads a turn whose

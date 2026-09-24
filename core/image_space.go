@@ -110,7 +110,7 @@ type RecentImage struct {
 	// Unannounced is true while the model has never been shown this picture's
 	// position — a background render that landed between rounds. It holds no
 	// position in the model's view of the ring until it is listed. See
-	// SnapshotImageRefs and AnnounceRecentImages.
+	// SnapshotImageRefs and announceRecentImages.
 	Unannounced bool
 	path        string // absolute file path
 }
@@ -271,7 +271,7 @@ func TransientImageRefs(text string) []string {
 // and every position the model does hold has quietly moved down one. Skipping
 // them numbers the ring as the model believes it to be. They are not lost:
 // their result hands over the stable id, and the moment the ring is listed for
-// the model (AnnounceRecentImages, from the manifest) they take their positions
+// the model (announceRecentImages, from the manifest) they take their positions
 // like anything else.
 func SnapshotImageRefs(sess *ToolSession) {
 	if sess == nil {
@@ -289,14 +289,14 @@ func SnapshotImageRefs(sess *ToolSession) {
 	sess.mu.Unlock()
 }
 
-// AnnounceRecentImages marks every picture in the ring as one the model has now
+// announceRecentImages marks every picture in the ring as one the model has now
 // been shown, and returns how many changed.
 //
 // Called where the ring is LISTED for the model, because that listing is the
 // event: it states each picture's current position, so from then on a position
 // the model uses is one it actually read rather than one assigned to it while
 // it was not looking.
-func AnnounceRecentImages(sess *ToolSession) int {
+func announceRecentImages(sess *ToolSession) int {
 	n := 0
 	for _, r := range RecentImages(sess) {
 		if !r.Unannounced {
@@ -803,7 +803,7 @@ func RecentImageManifest(sess *ToolSession) string {
 	// the text is built so the next round's snapshot agrees with what was said
 	// here; the snapshot is only retaken between rounds, so nothing mid-round
 	// shifts underneath the call that produced this.
-	AnnounceRecentImages(sess)
+	announceRecentImages(sess)
 	// SPLIT BY PROVENANCE, not listed flat.
 	//
 	// The kept-image manifest has marked the agent's own output for a while;

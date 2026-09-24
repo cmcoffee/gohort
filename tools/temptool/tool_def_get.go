@@ -31,7 +31,7 @@ func getGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			}
 			src := "active (admin-approved)"
 			if p.Shared {
-				src = "active (admin-approved), PUBLISHED deployment-wide: you own it, so an update changes it for every user"
+				src = "active (admin-approved), PUBLISHED deployment-wide. This is your own working copy: an update changes it for you and your agents only. Everyone else runs the version an administrator approved until you ask for an update (Request update, in Extensions › Tools) and it is approved"
 			}
 			return fmt.Sprintf("source: %s\n%s", src, string(body)), nil
 		}
@@ -67,7 +67,7 @@ func getGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			return "", fmt.Errorf("marshal tool %q: %w", name, err)
 		}
 		if owner == sess.Username {
-			return fmt.Sprintf("source: active (shared deployment-wide; you own it, so update edits it in place)\n%s", string(body)), nil
+			return fmt.Sprintf("source: the published version of your tool, as other users run it (your own copy is not in your pool)\n%s", string(body)), nil
 		}
 		return fmt.Sprintf("source: shared deployment-wide, owned by %s, FULL definition below including its script; reading is always allowed, only editing is not. To change its behavior, copy it under a NEW name with action=\"create\" and edit that.\n%s", owner, string(body)), nil
 	}

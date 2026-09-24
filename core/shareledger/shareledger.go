@@ -28,6 +28,7 @@ package shareledger
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -58,6 +59,19 @@ type Grant struct {
 	// an administrator granted, or one whose kind offers no revoke. A
 	// button that cannot work is worse than an absent one.
 	Revocable bool `json:"revocable"`
+	// Dependents is who relies on this today, and through what: per person,
+	// the names of their own things that reference it. Filled on the owner's
+	// side, because the owner is the one about to take it away, and "they
+	// lose it" reads very differently from "their Triage agent stops working".
+	Dependents []Dependent `json:"dependents,omitempty"`
+}
+
+// Dependent is one person whose own things reference a shared record.
+type Dependent struct {
+	User string `json:"user"`
+	// Uses names their things that reference it, in their words (an agent's
+	// name, not its id).
+	Uses []string `json:"uses"`
 }
 
 // Provider is one kind's backend. A kind with nothing to offer on a side
@@ -104,6 +118,13 @@ type Provider struct {
 	// a single line written at share time would be wrong for one of them the
 	// moment either changes.
 	Manifest func(owner, id, recipient string) []string
+	// Dependents narrows who can depend on this record before FindDependents
+	// is asked about them. Nil for a kind where holding it is enough (a
+	// skill or collection id on an agent names exactly one record); set by a
+	// kind that is referenced some other way, where holding the grant and
+	// having taken it are different things - a tool is referenced by NAME, so
+	// only the people who took this owner's copy can be relying on it.
+	Dependents func(owner, id string, users []string) []Dependent
 }
 
 var (
@@ -125,15 +146,19 @@ func Register(kind string, p Provider) {
 
 // Mine is everything this owner has shared, across every registered kind.
 func Mine(owner string) []Grant {
-	return collect(owner, func(p Provider) func(string) []Grant { return p.Mine })
+	return collect(owner, true, func(p Provider) func(string) []Grant { return p.Mine })
 }
 
 // ToMe is everything shared WITH this user, across every registered kind.
 func ToMe(user string) []Grant {
-	return collect(user, func(p Provider) func(string) []Grant { return p.ToMe })
+	return collect(user, false, func(p Provider) func(string) []Grant { return p.ToMe })
 }
 
-func collect(who string, pick func(Provider) func(string) []Grant) []Grant {
+// collect gathers one side across every kind. withDependents asks, per grant,
+// who relies on it; only the owner's view does:
+// that is the side deciding whether to take something back, and "they lose it"
+// reads very differently from "their Triage agent stops working".
+func collect(who string, withDependents bool, pick func(Provider) func(string) []Grant) []Grant {
 	out := []Grant{}
 	if strings.TrimSpace(who) == "" {
 		return out
@@ -154,6 +179,15 @@ func collect(who string, pick func(Provider) func(string) []Grant) []Grant {
 			// provider to repeat them: a row that disagrees with the key it
 			// was registered under is a row nothing can route a revoke to.
 			g.Kind, g.Label = kind, p.Label
+			if withDependents && g.Dependents == nil && (g.Wide || len(g.Recipients) > 0) {
+				// Recipients when there are some; nobody-in-particular (nil)
+				// for a grant that reaches everybody.
+				var users []string
+				if !g.Wide {
+					users = g.Recipients
+				}
+				g.Dependents = dependentsWith(p, kind, who, g.ID, users)
+			}
 			out = append(out, g)
 		}
 	}
@@ -166,6 +200,143 @@ func collect(who string, pick func(Provider) func(string) []Grant) []Grant {
 		return out[i].Name < out[j].Name
 	})
 	return out
+}
+
+// FindDependents, when wired, answers which of these users' own things
+// reference kind/id: agents that name a skill, attach a collection, load a
+// tool. Nil users means anybody at all, for a record that reached everybody.
+//
+// A hook for the reason NotifyRecipient is one: what references a record is
+// the business of whatever app owns the referencing things, and this package
+// knows no kind on either end. Unwired, nobody depends on anything and the
+// ledger reads as it did before.
+var FindDependents func(kind, owner, id string, users []string) []Dependent
+
+// OnWithdrawn, when wired, is told each time a record stops reaching people,
+// with its last name. Whatever holds a reference to it by id is about to be
+// left with only the id, and this is the last moment the name is known.
+var OnWithdrawn func(kind, owner, id, name string, dependents []Dependent)
+
+// DependentsOf is who relies on this record today, among users (nil for
+// anybody), asked of the kind first when it narrows the question.
+func DependentsOf(kind, owner, id string, users []string) []Dependent {
+	mu.RLock()
+	p, ok := providers[strings.TrimSpace(kind)]
+	mu.RUnlock()
+	if !ok {
+		return nil
+	}
+	return dependentsWith(p, kind, owner, id, users)
+}
+
+func dependentsWith(p Provider, kind, owner, id string, users []string) []Dependent {
+	if p.Dependents != nil {
+		return p.Dependents(owner, id, users)
+	}
+	if FindDependents == nil {
+		return nil
+	}
+	return FindDependents(kind, owner, id, users)
+}
+
+// Withdrawn tells each of lost that a record they had no longer reaches them,
+// and names which of their own things relied on it.
+//
+// Called by the kind at the moment access is taken away - a share revoked, a
+// publication taken back, the record deleted - on whichever path did it. The
+// share already told them it arrived; a take-back that told them nothing is
+// how somebody finds out by watching their agent answer without it.
+func Withdrawn(kind, owner, id, name string, lost []string) {
+	if len(lost) == 0 {
+		return
+	}
+	withdrawn(kind, owner, id, name, lost, DependentsOf(kind, owner, id, lost))
+}
+
+// WithdrawnFromEverybody is Withdrawn for a record that reached everybody:
+// told to the people who were actually relying on it, since telling the whole
+// deployment that something most of them never used has gone would be noise
+// that teaches everyone to ignore the rest.
+func WithdrawnFromEverybody(kind, owner, id, name string) {
+	deps := DependentsOf(kind, owner, id, nil)
+	var lost []string
+	for _, d := range deps {
+		if len(d.Uses) > 0 {
+			lost = append(lost, d.User)
+		}
+	}
+	withdrawn(kind, owner, id, name, lost, deps)
+}
+
+func withdrawn(kind, owner, id, name string, lost []string, deps []Dependent) {
+	if strings.TrimSpace(name) == "" {
+		name = id
+	}
+	if OnWithdrawn != nil {
+		OnWithdrawn(kind, owner, id, name, deps)
+	}
+	if NotifyRecipient == nil {
+		return
+	}
+	uses := make(map[string][]string, len(deps))
+	for _, d := range deps {
+		uses[d.User] = d.Uses
+	}
+	what := "\"" + name + "\" (" + strings.ToLower(labelOf(kind)) + ")"
+	for _, u := range lost {
+		if u = strings.TrimSpace(u); u == "" || u == owner {
+			continue
+		}
+		// A deployment record can have no owner (the framework minted it),
+		// and "from " followed by nothing reads as a bug.
+		from, ask := "", "or replace it."
+		if owner != "" {
+			from, ask = " from "+owner, "or ask "+owner+" to share it again."
+		}
+		intro := what + from + " is no longer available to you: it was taken back or deleted."
+		var needs []string
+		// Only a person with something relying on it has anything to do,
+		// and the notice is filed as waiting on them exactly then.
+		if names := uses[u]; len(names) > 0 {
+			needs = append(needs, "Your "+plural(len(names), "agent", "agents")+" "+joinNames(names)+
+				" "+plural(len(names), "uses", "use")+" it and now "+plural(len(names), "runs", "run")+
+				" without it. Remove it there, "+ask)
+		}
+		NotifyRecipient(u, what+" is no longer available", intro, needs)
+	}
+}
+
+// labelOf is what to call a kind on screen, falling back to its key.
+func labelOf(kind string) string {
+	mu.RLock()
+	p, ok := providers[strings.TrimSpace(kind)]
+	mu.RUnlock()
+	if ok && p.Label != "" {
+		return p.Label
+	}
+	return kind
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+// joinNames lists names for a sentence, capped so a person with forty agents
+// on the default tool pool gets a readable line rather than all forty.
+func joinNames(names []string) string {
+	const show = 5
+	quoted := make([]string, 0, len(names))
+	for i, n := range names {
+		if i == show {
+			quoted = append(quoted, "and "+strconv.Itoa(len(names)-show)+" more")
+			break
+		}
+		quoted = append(quoted, "\""+n+"\"")
+	}
+	return strings.Join(quoted, ", ")
 }
 
 // Revoke routes a take-back to the kind that owns the record.
@@ -229,7 +400,7 @@ type Decision struct {
 // first step of the guided flow, which is a list nobody can assemble from one
 // page.
 func Options(owner string) []Grant {
-	return collect(owner, func(p Provider) func(string) []Grant { return p.Candidates })
+	return collect(owner, false, func(p Provider) func(string) []Grant { return p.Candidates })
 }
 
 // Plan asks one kind what handing this record over would decide.

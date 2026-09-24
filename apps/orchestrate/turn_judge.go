@@ -132,9 +132,13 @@ func (T *OrchestrateApp) judgeTurnClaims(ctx context.Context, ev TurnClaimEviden
 	}
 	if !ok {
 		Log("[turn-judge] OVERTURNED: the confirming reading could not be completed, so %q stands", truncateObs(flagged, 100))
-		return TurnClaimVerdict{Overturned: fmt.Sprintf("It had flagged %q; the second reading could not be completed.", truncateObs(flagged, 120))}, true
+		return TurnClaimVerdict{Overturned: fmt.Sprintf("It had flagged %q; the second reading could not be completed.", truncateObs(flagged, 120)),
+			Readings: []TurnClaimVerdict{first}}, true
 	}
-	var out TurnClaimVerdict
+	// Both readings ride along whatever the outcome. The loop acts on the
+	// combined finding; a review of the judge's false positives needs to know
+	// which reading made them, and that is gone once they are combined.
+	out := TurnClaimVerdict{Readings: []TurnClaimVerdict{first, second}}
 	if first.Unkept && second.Unkept {
 		out.Unkept, out.Claim, out.Why = true, second.Claim, second.Why
 	}
@@ -143,7 +147,7 @@ func (T *OrchestrateApp) judgeTurnClaims(ctx context.Context, ev TurnClaimEviden
 	}
 	if !out.Unkept && out.Machinery == "" {
 		Log("[turn-judge] OVERTURNED: the confirming reading cleared %q", truncateObs(flagged, 100))
-		return TurnClaimVerdict{Overturned: fmt.Sprintf("It had flagged %q.", truncateObs(flagged, 120))}, true
+		return TurnClaimVerdict{Overturned: fmt.Sprintf("It had flagged %q.", truncateObs(flagged, 120)), Readings: out.Readings}, true
 	}
 	return out, true
 }
@@ -223,17 +227,17 @@ func (T *OrchestrateApp) readTurnClaims(ctx context.Context, ev TurnClaimEvidenc
 //
 // Order matches turnClaimWorthJudging: first arm to match wins, so these read
 // as the reason it was selected rather than as a list of everything true.
+//
+// Read off core's own pre-filter (JudgeArm) rather than restating its order
+// here: this label is now also what the firing record files the conviction
+// under, and a copy of the arms that drifts from the decision would file an
+// "unattended" selection as "produced nothing" and point tuning at the wrong
+// arm.
 func judgeTrigger(ev TurnClaimEvidence) string {
-	switch {
-	case ev.Backgrounded:
-		return "background job started"
-	case !ev.TurnDidWork():
-		return "no tools ran"
-	case ev.ToolErrors > 0:
-		return "tool errors"
-	default:
-		return "produced nothing"
+	if arm := ev.JudgeArm(); arm != "" {
+		return arm
 	}
+	return "not selected"
 }
 
 // turnClaimJudge binds the judge to one turn's context, or returns nil when the

@@ -80,7 +80,7 @@ func (a *AdminApp) toolsSections() []ui.Section {
 		{
 			Title:    "Global Tools",
 			Subtitle: "User-wide tools, available to ALL of the owner's agents.",
-			Detail:   "\"Access\" opens the pill editor: descope a tool down to specific agents, or disable it per agent.\n\nShare publishes the tool to the deployment-wide catalog, where each user OPTS IN from their Extensions page; it no longer auto-loads for everyone. Unshare pulls it from the catalog, and Delete revokes immediately. Export a tool, or all of them, as a portable bundle. A ⚠ badge marks a tool whose credential dependency is missing.",
+			Detail:   "\"Access\" opens the pill editor: descope a tool down to specific agents, or disable it per agent.\n\nShare publishes the tool to the deployment-wide catalog, where each user OPTS IN from their Extensions page; it no longer auto-loads for everyone. What they run is the tool as it was when shared (its version 1): the owner's later edits reach them only through an update request you approve. Unshare pulls it from the catalog, and Delete revokes immediately. Export a tool, or all of them, as a portable bundle. A ⚠ badge marks a tool whose credential dependency is missing.",
 			Body: ui.Stack{Children: []ui.Component{
 				ui.Table{
 					Source:       "api/persistent-tools",

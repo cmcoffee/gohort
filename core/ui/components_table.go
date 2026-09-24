@@ -169,6 +169,12 @@ type RowAction struct {
 	Method  string          `json:"method,omitempty"`  // toggle: PATCH/POST (default POST). button: GET/POST/DELETE (default POST).
 	Confirm string          `json:"confirm,omitempty"` // button: confirm() prompt
 	Render  json.RawMessage `json:"render,omitempty"`  // expand: nested Component
+	// ConfirmField names a record field holding THIS row's confirm prompt,
+	// used in place of Confirm when the row carries one. For a question whose
+	// honest answer differs per row: "delete this?" is the same everywhere,
+	// "take this back?" is not when one row's recipient depends on it and
+	// the next one's does not.
+	ConfirmField string `json:"confirm_field,omitempty"`
 	// Leading places the action at the FAR LEFT of the row, before the
 	// columns. Use for the most-frequently-tapped control (typically a
 	// primary toggle) so it's always thumb-reachable on narrow phones,

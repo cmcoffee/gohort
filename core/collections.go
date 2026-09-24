@@ -878,13 +878,20 @@ func SaveCollection(udb Database, c Collection) {
 		}
 		return
 	}
+	var prior Collection
 	if udb != nil {
+		udb.Get(CollectionsTable, c.ID, &prior)
 		udb.Set(CollectionsTable, c.ID, c)
 	}
 	// The peer-share index follows the record in the same write, so a share and
 	// its lookup cannot disagree about who has access.
 	if RootDB != nil && c.Owner != "" {
 		peershare.SetRecipients(RootDB, sharedCollectionsTable, c.Owner, c.ID, c.AllowedUsers)
+	}
+	// Whoever this save took off the share is told, whichever door narrowed
+	// it: every one of them saves through here.
+	if c.Owner != "" && prior.Owner == c.Owner {
+		shareledger.Withdrawn("collection", c.Owner, c.ID, c.Name, recipientsLost(prior.AllowedUsers, c.AllowedUsers))
 	}
 }
 
@@ -920,6 +927,13 @@ func DeleteCollection(udb, appDB Database, user, id string) (chunksRemoved int) 
 	}
 	if appDB != nil {
 		chunksRemoved = WipeChunksBySourcePrefix(appDB, CollectionSource(id))
+	}
+	// The people it reached are told, and which of their agents attach it:
+	// those agents keep the id and answer without the documents from now on.
+	if IsDeploymentScope(c) {
+		shareledger.WithdrawnFromEverybody("collection", c.Owner, c.ID, c.Name)
+	} else if c.Owner != "" {
+		shareledger.Withdrawn("collection", c.Owner, c.ID, c.Name, c.AllowedUsers)
 	}
 	return chunksRemoved
 }
@@ -1019,6 +1033,7 @@ func NarrowCollectionToOwner(owner, id string) error {
 	udb.Set(CollectionsTable, c.ID, c)
 	RootDB.Unset(GlobalCollectionsTable, c.ID)
 	Log("[collections] %q narrowed %q back to their own scope", owner, c.Name)
+	shareledger.WithdrawnFromEverybody("collection", owner, c.ID, c.Name)
 	return nil
 }
 

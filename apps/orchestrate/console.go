@@ -152,6 +152,10 @@ func (T *OrchestrateApp) registerConsoleRoutes() {
 	T.HandleFunc("/api/agent-images/action", w(T.handleAgentImageAction))
 	// Fleet-wide guardrail review — read-only, so no gw() write wrapper.
 	T.HandleFunc("/api/console/guardrail-blocks", T.handleConsoleGuardrails)
+	// Deployment-wide review of every correction check and guardrail that
+	// fired, admin only (judge_records.go). Read-only, so no gw() wrapper.
+	T.HandleFunc("/api/console/judge-records", T.handleConsoleFirings)
+	T.HandleFunc("/api/console/judge-records/export", T.handleConsoleFiringExport)
 	// Tool health: actions that have failed repeatedly and never once worked.
 	T.HandleFunc("/api/console/broken-tools", T.handleConsoleBrokenTools)
 	T.HandleFunc("/api/console/broken-tools/forget", w(T.handleConsoleBrokenToolForget))

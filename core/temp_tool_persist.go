@@ -18,6 +18,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -373,11 +374,17 @@ type PendingTempTool struct {
 // PersistentTempTool is an approved tool that loads into every new
 // session for its owning user. ApprovedAt records when the human
 // admin approved it; LastUsedAt is updated on each invocation. When
-// Shared is set, the tool is published to the DEPLOYMENT-WIDE shared
-// pool: it loads for every user's turn (in addition to their own
-// pool), subject to the same per-agent gating. See
-// LoadSharedPersistentTempTools.
+// Shared is set, the tool is published to the DEPLOYMENT-WIDE catalog,
+// where other users may adopt it. What they run is its ToolRelease, the
+// version an administrator approved, not this record: this record is the
+// owner's working copy. See LoadSharedPersistentTempTools.
 type PersistentTempTool struct {
+	// ID names this tool for as long as it exists, through every edit: minted
+	// when the tool is created, never reused.
+	// A release and an adoption record it, so a tool deleted and recreated
+	// under the same name is a different tool to both, and an adopter is not
+	// quietly reattached to code they never chose.
+	ID         string    `json:"id,omitempty"`
 	Tool       TempTool  `json:"tool"`
 	ApprovedAt time.Time `json:"approved_at"`
 	LastUsedAt time.Time `json:"last_used_at,omitempty"`
@@ -513,77 +520,88 @@ func LoadPersistentTempTools(db Database, username string) []PersistentTempTool 
 	return out
 }
 
-// LoadSharedPersistentTempTools returns the deployment-wide shared pool:
-// every persistent tool any user has marked Shared, deduped by tool name
-// (first owner seen wins). These load for ALL users' turns, so an admin can
-// publish a tool once and have it available everywhere — without copying it
-// into each user's pool. Walks every user's persistent pool; cheap at the
-// scale we expect (the admin persistent-tools page already does this walk).
+// LoadSharedPersistentTempTools returns the deployment-wide catalog: one
+// entry per published tool, carrying the RELEASE an administrator approved
+// (not the owner's working copy, which may have moved on since), with the
+// owner's adopt list and disable switch. Sorted by name.
 func LoadSharedPersistentTempTools(db Database) []PersistentTempTool {
 	db = tempToolStore(db)
-	if db == nil {
-		return nil
-	}
 	var out []PersistentTempTool
-	seen := map[string]bool{}
-	for _, u := range db.Keys(persistentTempToolsTable) {
-		for _, p := range LoadPersistentTempTools(db, u) {
-			if p.Shared && !seen[p.Tool.Name] {
-				seen[p.Tool.Name] = true
-				out = append(out, p)
-			}
-		}
+	for _, p := range publishedTools(db) {
+		out = append(out, p.PersistentTempTool)
 	}
 	return out
 }
 
-// SetPersistentTempToolShared flips the deployment-wide Shared flag on a tool
-// in a user's persistent pool. Returns an error when the named tool isn't in
-// that user's pool. Admin-driven (from the persistent-tools page).
+// SetPersistentTempToolShared publishes (shared=true) or withdraws a tool in a
+// user's persistent pool. Returns an error when the named tool isn't in that
+// user's pool. Admin-driven (the persistent-tools page), and the owner's own
+// withdraw.
+//
+// Publishing freezes the tool AS IT IS NOW into its release, version 1: what
+// adopters run until an administrator approves an update. Publishing a tool
+// that is already published changes nothing, so the direct Share button can
+// never slip the owner's newer working copy past the update review.
+// Withdrawing takes the release out of the catalog and keeps it as a
+// tombstone (withdrawnToolRelease).
 func SetPersistentTempToolShared(db Database, username, name string, shared bool) error {
 	db = tempToolStore(db)
 	if db == nil || username == "" {
 		return errString("admin action requires authenticated user")
 	}
-	// One published tool per name, the rule skills already follow. Two would
-	// leave every lookup by name to pick one, and whichever it picked is whose
-	// code an adopter's agents run.
-	if shared {
-		for _, owner := range db.Keys(persistentTempToolsTable) {
-			if owner == username {
-				continue
-			}
-			for _, p := range LoadPersistentTempTools(db, owner) {
-				if p.Shared && p.Tool.Name == name {
-					return errString("the deployment already publishes a tool called " + name + " (" + owner + "'s); rename this one before publishing it")
-				}
-			}
+	// Registered before the unlock's defer so it runs AFTER it: the notice
+	// reads the store, and the store lock is not reentrant.
+	notify := false
+	defer func() {
+		if notify {
+			noteToolWithdrawn(username, name, nil)
 		}
-	}
+	}()
 	tempToolPersistMu.Lock()
 	defer tempToolPersistMu.Unlock()
 	approved := LoadPersistentTempTools(db, username)
-	found := false
+	idx := -1
 	for i := range approved {
 		if approved[i].Tool.Name == name {
-			approved[i].Shared = shared
-			found = true
+			idx = i
 			break
 		}
 	}
-	if !found {
+	if idx < 0 {
 		return errString("no persistent tool named " + name)
 	}
-	db.Set(persistentTempToolsTable, username, approved)
-	// Sharing FULFILLS any pending publish request for this tool, however it got
-	// shared (admin Approve, the direct Share button, a migration) — otherwise the
-	// request queue and the owner's "Publish requested" badge go stale on a tool
-	// that is, in fact, already shared. Un-sharing leaves the request untouched.
-	if shared {
+	if !shared {
+		withdrew := withdrawToolReleaseLocked(db, username, approved[idx])
+		approved[idx].Shared = false
+		db.Set(persistentTempToolsTable, username, approved)
+		// Everybody who took it is told, naming their agents that used it.
+		notify = withdrew
+		// An update asked for before the withdrawal is moot; left pending,
+		// approving it would put the tool straight back in the catalog.
 		reqID := PromotionRequestKey("tool", username, name)
-		if req, ok := GetPromotionRequest(db, reqID); ok && req.State == PromotionPendingState {
-			_ = SetPromotionRequestState(db, reqID, PromotionApprovedState, req.DecidedBy)
+		if req, ok := GetPromotionRequest(db, reqID); withdrew && ok && req.State == PromotionPendingState {
+			_ = SetPromotionRequestState(db, reqID, PromotionDeniedState, "")
 		}
+		return nil
+	}
+	published, err := publishToolReleaseLocked(db, username, &approved[idx], nil, "")
+	if err != nil {
+		return err
+	}
+	if !published {
+		return nil // already in the catalog; its release stands
+	}
+	db.Set(persistentTempToolsTable, username, approved)
+	db.Unset(toolUpdateRequestsTable, PromotionRequestKey("tool", username, name))
+	// Publishing FULFILLS any pending publish request for this tool, however it
+	// got published (admin Approve, the direct Share button) — otherwise the
+	// request queue and the owner's "Publish requested" badge go stale on a tool
+	// that is, in fact, already shared. Un-sharing leaves the request untouched,
+	// and so does a no-op publish: a pending request on a published tool is an
+	// UPDATE, which only its approval answers.
+	reqID := PromotionRequestKey("tool", username, name)
+	if req, ok := GetPromotionRequest(db, reqID); ok && req.State == PromotionPendingState {
+		_ = SetPromotionRequestState(db, reqID, PromotionApprovedState, req.DecidedBy)
 	}
 	return nil
 }
@@ -609,12 +627,23 @@ func SetPersistentTempToolAllowedUsers(db Database, username, name string, users
 		clean = append(clean, u)
 	}
 	sort.Strings(clean)
+	notify := false
+	defer func() {
+		if notify {
+			// nil: everybody who took it; the notice skips anyone the new
+			// list still admits.
+			noteToolWithdrawn(username, name, nil)
+		}
+	}()
 	tempToolPersistMu.Lock()
 	defer tempToolPersistMu.Unlock()
 	approved := LoadPersistentTempTools(db, username)
 	found := false
 	for i := range approved {
 		if approved[i].Tool.Name == name {
+			// Narrowing a published tool is taking it away from whoever the
+			// new list leaves out.
+			notify = approved[i].Shared && len(clean) > 0 && !sameStringSet(approved[i].AllowedUsers, clean)
 			approved[i].AllowedUsers = clean
 			found = true
 			break
@@ -628,10 +657,9 @@ func SetPersistentTempToolAllowedUsers(db Database, username, name string, users
 }
 
 // sharedToolAllowedUsers returns the adopt-ACL for a Shared global tool by name:
-// the AllowedUsers list on whichever user's pool published it, plus whether a
-// Shared tool of that name exists at all. An empty list with found=true means the
-// tool is open to everyone. (First owner seen wins, matching
-// LoadSharedPersistentTempTools' dedupe.)
+// the AllowedUsers list on the owner's record, plus whether a published tool of
+// that name exists at all. An empty list with found=true means the tool is open
+// to everyone. (The deployment publishes one tool per name.)
 func sharedToolAllowedUsers(db Database, name string) (allowed []string, found bool) {
 	for _, p := range LoadSharedPersistentTempTools(db) {
 		if p.Tool.Name == name {
@@ -671,8 +699,17 @@ func CanAdoptGlobalTool(db Database, user, name string) bool {
 
 const adoptedGlobalToolsTable = "adopted_global_tools"
 
-// An adoption is stored as "name<TAB>owner": the tool the user took, and whose.
-// A bare "name" is an adoption from before the owner was recorded.
+// toolAdoptionsTable holds what an adoption knows beyond its name and owner
+// (toolAdoption: the tool's ID, a colleague's tool's frozen copy), keyed by
+// user. adoptedGlobalToolsTable stays the list of WHAT is adopted: every write
+// keeps both, and a record whose name has left the list, or whose owner no
+// longer matches it, counts for nothing. So anything that reads or writes the
+// list alone still sees, and decides, the whole of it.
+const toolAdoptionsTable = "tool_adoptions"
+
+// An adoption on the list is stored as "name<TAB>owner": the tool the user
+// took, and whose. A bare "name" is an adoption from before the owner was
+// recorded.
 //
 // The owner is the point. Adoption used to be a name and nothing else, and the
 // runtime loaded any peer-shared or published tool answering to it, from
@@ -686,7 +723,46 @@ func splitAdoption(entry string) (name, owner string) {
 	return strings.TrimSpace(name), strings.TrimSpace(owner)
 }
 
-// loadAdoptionPins reads the user's adoptions as name -> owner, "" for one
+// toolAdoption is one tool a user took from a colleague or from the catalog.
+type toolAdoption struct {
+	Name string `json:"name"`
+	// Owner is whose tool it is; "" for an adoption recorded before owners
+	// were, pinned the first time exactly one owner offers the name.
+	Owner string `json:"owner,omitempty"`
+	// ID is the tool's ID (PersistentTempTool.ID) when it was taken, so the
+	// owner deleting it and making another under the same name does not hand
+	// the adopter the new one. "" until first resolved, for older entries.
+	ID string `json:"id,omitempty"`
+	// Copy is, for a tool a colleague shared, the definition the user took:
+	// what their agents run. The colleague's later edits reach them only when
+	// they accept them, by taking the tool again. Nil for a published tool,
+	// whose release an administrator approves for everybody at once.
+	Copy *TempTool `json:"copy,omitempty"`
+	// At is when Copy was taken.
+	At time.Time `json:"at,omitempty"`
+}
+
+// loadAdoptions reads the user's adoptions by name: the list, completed from
+// the records that still match it. A pinned list entry wins over a bare one.
+func loadAdoptions(db Database, username string) map[string]toolAdoption {
+	out := map[string]toolAdoption{}
+	if db == nil || username == "" {
+		return out
+	}
+	for name, owner := range loadAdoptionPins(db, username) {
+		out[name] = toolAdoption{Name: name, Owner: owner}
+	}
+	var recs []toolAdoption
+	db.Get(toolAdoptionsTable, username, &recs)
+	for _, r := range recs {
+		if l, listed := out[r.Name]; listed && r.Owner != "" && (l.Owner == "" || l.Owner == r.Owner) {
+			out[r.Name] = r
+		}
+	}
+	return out
+}
+
+// loadAdoptionPins reads the user's adoption list as name -> owner, "" for one
 // recorded before owners were. A pinned entry wins over a bare one.
 func loadAdoptionPins(db Database, username string) map[string]string {
 	out := map[string]string{}
@@ -707,19 +783,23 @@ func loadAdoptionPins(db Database, username string) map[string]string {
 	return out
 }
 
-// saveAdoptionPins writes the adoption list back, one entry per name. Caller
-// holds tempToolPersistMu.
-func saveAdoptionPins(db Database, username string, pins map[string]string) {
-	out := make([]string, 0, len(pins))
-	for name, owner := range pins {
-		if owner == "" {
-			out = append(out, name)
-		} else {
-			out = append(out, name+adoptionOwnerSep+owner)
+// saveAdoptionsLocked writes the user's whole adoption list, and the records
+// completing it. Caller holds tempToolPersistMu.
+func saveAdoptionsLocked(db Database, username string, recs map[string]toolAdoption) {
+	list := make([]string, 0, len(recs))
+	out := make([]toolAdoption, 0, len(recs))
+	for name, r := range recs {
+		if r.Owner == "" {
+			list = append(list, name)
+			continue
 		}
+		list = append(list, name+adoptionOwnerSep+r.Owner)
+		out = append(out, r)
 	}
-	sort.Strings(out)
-	db.Set(adoptedGlobalToolsTable, username, out)
+	sort.Strings(list)
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	db.Set(adoptedGlobalToolsTable, username, list)
+	db.Set(toolAdoptionsTable, username, out)
 }
 
 // LoadAdoptedGlobalTools returns the set of global (Shared) tool NAMES the user
@@ -730,15 +810,16 @@ func saveAdoptionPins(db Database, username string, pins map[string]string) {
 func LoadAdoptedGlobalTools(db Database, username string) map[string]bool {
 	db = tempToolStore(db)
 	out := map[string]bool{}
-	for name := range loadAdoptionPins(db, username) {
+	for name := range loadAdoptions(db, username) {
 		out[name] = true
 	}
 	return out
 }
 
 // adoptionCandidates are the tools answering to name that user may take: those
-// shared with them by a colleague first, then those the deployment publishes
-// whose adopt list admits them. Every owner's, not the first one found.
+// shared with them by a colleague first (the colleague's current definition,
+// Version 0), then the releases the deployment publishes whose adopt list
+// admits them. Every owner's, not the first one found.
 func adoptionCandidates(db Database, user, name string) []LentTool {
 	var out []LentTool
 	for _, p := range PeerSharedToolsFor(db, user) {
@@ -746,18 +827,24 @@ func adoptionCandidates(db Database, user, name string) []LentTool {
 			out = append(out, p)
 		}
 	}
-	for _, owner := range db.Keys(persistentTempToolsTable) {
-		if owner == user {
-			continue
-		}
-		for _, p := range LoadPersistentTempTools(db, owner) {
-			if p.Shared && !p.Tool.Disabled && p.Tool.Name == name &&
-				(len(p.AllowedUsers) == 0 || sliceHas(p.AllowedUsers, user)) {
-				out = append(out, LentTool{PersistentTempTool: p, Owner: owner})
-			}
+	for _, p := range publishedTools(db) {
+		if p.Owner != user && !p.Tool.Disabled && p.Tool.Name == name &&
+			(len(p.AllowedUsers) == 0 || sliceHas(p.AllowedUsers, user)) {
+			out = append(out, p)
 		}
 	}
 	return out
+}
+
+// pickAdoption is the candidate an adoption resolves to: its owner's, and the
+// very tool it was taken from once its ID is known.
+func pickAdoption(cands []LentTool, rec toolAdoption) (LentTool, bool) {
+	for _, c := range cands {
+		if c.Owner == rec.Owner && (rec.ID == "" || c.ID == rec.ID) {
+			return c, true
+		}
+	}
+	return LentTool{}, false
 }
 
 // distinctOwners lists the owners among candidates, in order.
@@ -776,6 +863,10 @@ func distinctOwners(cands []LentTool) []string {
 // resolved when exactly one owner offers the name, and refused when more than
 // one does: whose code the user's agents will run is not a thing to guess.
 // Un-adopting is always allowed, so a tightened ACL never strands a tool.
+//
+// Taking a colleague's tool freezes a copy of its definition as it is now, and
+// taking it again replaces that copy with the current one: that is how a user
+// accepts a colleague's update (LentTool.Update says there is one).
 func SetGlobalToolAdopted(db Database, username, name, owner string, adopted bool) error {
 	db = tempToolStore(db)
 	if db == nil || username == "" {
@@ -785,6 +876,7 @@ func SetGlobalToolAdopted(db Database, username, name, owner string, adopted boo
 	if name == "" {
 		return errString("tool name required")
 	}
+	var took LentTool
 	if adopted {
 		cands := adoptionCandidates(db, username, name)
 		owners := distinctOwners(cands)
@@ -798,16 +890,22 @@ func SetGlobalToolAdopted(db Database, username, name, owner string, adopted boo
 		case !sliceHas(owners, owner):
 			return errString("not permitted to adopt " + owner + "'s tool " + name)
 		}
+		took, _ = pickAdoption(cands, toolAdoption{Owner: owner})
 	}
 	tempToolPersistMu.Lock()
 	defer tempToolPersistMu.Unlock()
-	pins := loadAdoptionPins(db, username)
+	recs := loadAdoptions(db, username)
 	if adopted {
-		pins[name] = owner
+		rec := toolAdoption{Name: name, Owner: owner, ID: took.ID}
+		if took.Version == 0 {
+			frozen := took.Tool
+			rec.Copy, rec.At = &frozen, time.Now()
+		}
+		recs[name] = rec
 	} else {
-		delete(pins, name)
+		delete(recs, name)
 	}
-	saveAdoptionPins(db, username, pins)
+	saveAdoptionsLocked(db, username, recs)
 	return nil
 }
 
@@ -816,63 +914,93 @@ func SetGlobalToolAdopted(db Database, username, name, owner string, adopted boo
 // them or still published and still admitting them. The one resolver the chat
 // runtime and the watch runtime both use, so they cannot disagree.
 //
+// What loads is never the owner's working copy. A published tool loads its
+// release, the version an administrator approved. A colleague's tool loads the
+// copy the user took (LentTool.Update carries the colleague's newer definition
+// when there is one, for the user to accept or not).
+//
 // An adoption recorded before owners were is pinned here the first time exactly
 // one owner offers the name. When several do it loads none of them and says so:
-// the old behaviour picked whichever was found first.
+// the old behaviour picked whichever was found first. An adoption recorded
+// before IDs and copies were is completed the first time it resolves, with the
+// tool's ID and, for a colleague's tool, a copy of its definition then: the
+// same thing the user was running.
 func AdoptedToolsFor(db Database, user string) []LentTool {
 	db = tempToolStore(db)
 	if db == nil || strings.TrimSpace(user) == "" {
 		return nil
 	}
-	pins := loadAdoptionPins(db, user)
-	names := make([]string, 0, len(pins))
-	for name := range pins {
+	recs := loadAdoptions(db, user)
+	names := make([]string, 0, len(recs))
+	for name := range recs {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	var out []LentTool
-	learned := map[string]string{}
+	learned := map[string]toolAdoption{}
 	for _, name := range names {
+		rec := recs[name]
 		cands := adoptionCandidates(db, user, name)
-		pin := pins[name]
-		if pin == "" {
+		if rec.Owner == "" {
 			owners := distinctOwners(cands)
 			if len(owners) > 1 {
 				Log("[temp_tool_persist] %s adopted %q before owners were recorded, and %s all offer one: loading none of them until it is taken again from one owner", user, name, strings.Join(owners, ", "))
 				continue
 			}
-			if len(owners) == 1 {
-				pin = owners[0]
-				learned[name] = pin
+			if len(owners) == 0 {
+				continue
+			}
+			rec.Owner = owners[0]
+		}
+		c, ok := pickAdoption(cands, rec)
+		if !ok {
+			continue
+		}
+		if rec.ID == "" {
+			rec.ID = c.ID
+		}
+		if c.Version == 0 {
+			if rec.Copy == nil {
+				frozen := c.Tool
+				rec.Copy, rec.At = &frozen, time.Now()
+			}
+			current := c.Tool
+			c.Tool = *rec.Copy
+			if !current.SameDefinition(c.Tool) {
+				c.Update = &current
 			}
 		}
-		for _, c := range cands {
-			if c.Owner == pin {
-				out = append(out, c)
-				break
-			}
+		if rec != recs[name] {
+			learned[name] = rec
 		}
+		out = append(out, c)
 	}
 	if len(learned) > 0 {
 		tempToolPersistMu.Lock()
-		cur := loadAdoptionPins(db, user)
-		for name, owner := range learned {
-			if cur[name] == "" {
-				if _, still := cur[name]; still {
-					cur[name] = owner
-				}
+		cur := loadAdoptions(db, user)
+		for name, rec := range learned {
+			// Fill in only what is still missing. An adoption removed or taken
+			// again since the read above is the newer word.
+			was, still := cur[name]
+			if !still || (was.Owner != "" && was.Owner != rec.Owner) || (was.ID != "" && was.ID != rec.ID) {
+				continue
 			}
+			if was.Copy != nil {
+				rec.Copy, rec.At = was.Copy, was.At
+			}
+			cur[name] = rec
 		}
-		saveAdoptionPins(db, user, cur)
+		saveAdoptionsLocked(db, user, cur)
 		tempToolPersistMu.Unlock()
 	}
 	return out
 }
 
-// MergeAdoptedGlobalTools unions the given names into the user's adoption list
-// (deduped, sorted). Used by the one-time opt-in migration to grandfather every
-// existing user into the global tools they saw under the old auto-load model,
-// without clobbering anything they'd already adopted.
+// MergeAdoptedGlobalTools unions the given names into the user's adoption list.
+// Used by the one-time opt-in migration to grandfather every existing user into
+// the global tools they saw under the old auto-load model, without clobbering
+// anything they'd already adopted. A merged name has no owner yet; it is pinned
+// the first time it resolves unambiguously.
 func MergeAdoptedGlobalTools(db Database, username string, names []string) {
 	db = tempToolStore(db)
 	if db == nil || username == "" || len(names) == 0 {
@@ -880,23 +1008,15 @@ func MergeAdoptedGlobalTools(db Database, username string, names []string) {
 	}
 	tempToolPersistMu.Lock()
 	defer tempToolPersistMu.Unlock()
-	var existing []string
-	db.Get(adoptedGlobalToolsTable, username, &existing)
-	set := make(map[string]bool, len(existing)+len(names))
-	for _, n := range existing {
-		set[n] = true
-	}
+	recs := loadAdoptions(db, username)
 	for _, n := range names {
-		if strings.TrimSpace(n) != "" {
-			set[n] = true
+		if n = strings.TrimSpace(n); n != "" {
+			if _, have := recs[n]; !have {
+				recs[n] = toolAdoption{Name: n}
+			}
 		}
 	}
-	out := make([]string, 0, len(set))
-	for n := range set {
-		out = append(out, n)
-	}
-	sort.Strings(out)
-	db.Set(adoptedGlobalToolsTable, username, out)
+	saveAdoptionsLocked(db, username, recs)
 }
 
 // QueuePendingTempTool adds a tool to the approval queue. Returns an
@@ -986,26 +1106,15 @@ func (t TempTool) SameDefinition(o TempTool) bool { return !toolDefinitionChange
 // versions, ignoring the governance flags an owner sets on it (lock, disable,
 // builder-only, bound-only, trial, confirm-in-chat).
 func toolDefinitionChanged(a, b TempTool) bool {
-	neutral := func(t TempTool) TempTool {
-		t.Locked, t.Disabled, t.BuilderOnly, t.BoundOnly = false, false, false, false
-		t.Trial, t.TrialSince, t.ConfirmInChat = false, time.Time{}, false
-		return t
-	}
-	return !reflect.DeepEqual(neutral(a), neutral(b))
+	return !reflect.DeepEqual(withoutGovernance(a), withoutGovernance(b))
 }
 
-// unpublishIfRedefined takes a tool back out of the deployment catalog when
-// its definition changed. Publishing is an administrator's approval of THAT
-// command or script; keeping the flag across an owner's rewrite let every
-// adopter run new code, in their own workspace and with their own
-// credentials, that nobody had looked at. The owner asks again, and the
-// admin reviews what it is now.
-func unpublishIfRedefined(p *PersistentTempTool, prev TempTool, owner string) {
-	if !p.Shared || !toolDefinitionChanged(prev, p.Tool) {
-		return
-	}
-	p.Shared = false
-	Log("[temp_tool_persist] %s changed published tool %q: taken out of the catalog until an admin approves the new version", owner, p.Tool.Name)
+// withoutGovernance clears the flags an owner sets ON a tool rather than IN
+// it, leaving what the tool does.
+func withoutGovernance(t TempTool) TempTool {
+	t.Locked, t.Disabled, t.BuilderOnly, t.BoundOnly = false, false, false, false
+	t.Trial, t.TrialSince, t.ConfirmInChat = false, time.Time{}, false
+	return t
 }
 
 // AdminPersistTempTool writes a TempTool directly into the per-user
@@ -1031,9 +1140,10 @@ func AdminReconfigureTempTool(db Database, username string, t TempTool) error {
 	found := false
 	for i := range list {
 		if list[i].Tool.Name == t.Name {
-			prev := list[i].Tool
-			list[i].Tool = t // keep ApprovedAt/LastUsedAt/Shared/AllowedUsers
-			unpublishIfRedefined(&list[i], prev, username)
+			// Keeps ID/ApprovedAt/LastUsedAt/Shared/AllowedUsers. A published
+			// tool stays published: adopters run its release, which this
+			// does not touch.
+			list[i].Tool = t
 			found = true
 			break
 		}
@@ -1110,8 +1220,18 @@ func AdminPersistTempTool(db Database, username string, t TempTool) error {
 		next.ScopeAgents = approved[i].ScopeAgents
 		next.Shared = approved[i].Shared
 		next.AllowedUsers = approved[i].AllowedUsers
+		// And the owner's own share list, dropped here the same way: every
+		// edit silently revoked the tool from the colleagues it was shared
+		// with, while the share index still listed them.
+		next.SharedWith = approved[i].SharedWith
 		next.LastUsedAt = approved[i].LastUsedAt
-		unpublishIfRedefined(&next, approved[i].Tool, username)
+		// The same tool, edited: it keeps its ID, so its release and the
+		// adoptions of it still name it. The edit reaches only the owner's
+		// own agents; adopters run the release until an update is approved.
+		next.ID = approved[i].ID
+	}
+	if next.ID == "" {
+		next.ID = UUIDv4()
 	}
 	rest = append(rest, next)
 	db.Set(persistentTempToolsTable, username, rest)
@@ -1195,9 +1315,15 @@ func ApprovePendingTempTool(db Database, username, name string) error {
 	for i := range approved {
 		if approved[i].Tool.Name != name {
 			deduped = append(deduped, approved[i])
+			continue
 		}
+		// The record it replaces goes, and a release of it goes with it,
+		// kept as a tombstone: the new record is a new tool (a new ID) that
+		// nobody approved for the catalog.
+		withdrawToolReleaseLocked(db, username, approved[i])
 	}
 	deduped = append(deduped, PersistentTempTool{
+		ID:          UUIDv4(),
 		Tool:        moved.Tool,
 		ApprovedAt:  time.Now(),
 		ScopeAgents: moved.ScopeAgents,
@@ -1293,12 +1419,25 @@ func DeletePersistentTempTool(db Database, username, name string) error {
 	if db == nil || username == "" {
 		return errString("admin action requires authenticated user")
 	}
+	notify := false
+	defer func() {
+		if notify {
+			noteToolWithdrawn(username, name, nil)
+		}
+	}()
 	tempToolPersistMu.Lock()
 	defer tempToolPersistMu.Unlock()
 	approved := LoadPersistentTempTools(db, username)
 	rest := approved[:0]
 	for i := range approved {
 		if approved[i].Tool.Name == name {
+			// Deleting a published tool withdraws its release, and the
+			// release is kept as a tombstone: adopters lose the tool either
+			// way, and a record of what they had is what lets them be
+			// offered it back as their own copy.
+			if withdrawToolReleaseLocked(db, username, approved[i]) {
+				notify = true
+			}
 			continue
 		}
 		rest = append(rest, approved[i])
@@ -1603,16 +1742,17 @@ func DeleteSessionTempTools(db Database, chatSessionID string) {
 //
 // Returns the owner so callers can tell "this is yours, edit it" apart from
 // "this belongs to someone else", which are different answers.
+//
+// The tool returned is the RELEASE, what adopters run, not the owner's working
+// copy.
 func FindSharedToolWithOwner(db Database, name string) (tool PersistentTempTool, owner string, found bool) {
 	db = tempToolStore(db)
 	if db == nil || strings.TrimSpace(name) == "" {
 		return PersistentTempTool{}, "", false
 	}
-	for _, u := range db.Keys(persistentTempToolsTable) {
-		for _, p := range LoadPersistentTempTools(db, u) {
-			if p.Shared && p.Tool.Name == name {
-				return p, u, true
-			}
+	for _, p := range publishedTools(db) {
+		if p.Tool.Name == name {
+			return p.PersistentTempTool, p.Owner, true
 		}
 	}
 	return PersistentTempTool{}, "", false
@@ -1627,17 +1767,8 @@ func FindSharedToolWithOwner(db Database, name string) (tool PersistentTempTool,
 func SharedToolOwners(db Database) map[string]string {
 	db = tempToolStore(db)
 	out := map[string]string{}
-	if db == nil {
-		return out
-	}
-	for _, u := range db.Keys(persistentTempToolsTable) {
-		for _, p := range LoadPersistentTempTools(db, u) {
-			if p.Shared {
-				if _, seen := out[p.Tool.Name]; !seen {
-					out[p.Tool.Name] = u
-				}
-			}
-		}
+	for _, p := range publishedTools(db) {
+		out[p.Tool.Name] = p.Owner
 	}
 	return out
 }
@@ -1693,17 +1824,440 @@ func ToolClaimNote(sess *ToolSession, rawURL string) string {
 	return textutil.ClaimNote(host, claims)
 }
 
-// The tool kind's approve side effect: Share it to the deployment-wide
-// catalog. Registered here, next to the primitive it calls, so the admin
+// The tool kind's approve side effect: publish it to the deployment-wide
+// catalog, or, for a tool already there, make the requested definition its
+// next version. Registered here, next to the primitive it calls, so the admin
 // queue approves a tool the same way it approves every other kind — through
 // the registry — and needs no per-kind switch of its own.
+//
+// The request hook freezes what the owner asked for at the moment they asked,
+// so the administrator approves the definition they were shown, not whatever
+// the working copy says by the time they click.
 func init() {
 	promotion.RegisterApprover("tool", func(owner, name string) error {
 		if AuthDB == nil {
 			return errString("auth store not initialized")
 		}
-		return SetPersistentTempToolShared(AuthDB(), owner, name, true)
+		return approveToolRelease(AuthDB(), owner, name)
 	})
+	promotion.RegisterRequestHook("tool", func(owner, name string) error {
+		return snapshotToolRequest(nil, owner, name)
+	})
+}
+
+// ----------------------------------------------------------------------
+// Published releases
+// ----------------------------------------------------------------------
+
+const (
+	// toolReleasesTable is what the deployment catalog serves, keyed by tool
+	// NAME: the deployment publishes one tool per name.
+	toolReleasesTable = "tool_releases"
+	// withdrawnToolReleasesTable keeps the last release of a tool its owner
+	// withdrew or deleted, keyed by the tool's ID.
+	withdrawnToolReleasesTable = "withdrawn_tool_releases"
+	// toolUpdateRequestsTable holds the definition a publish or update request
+	// asked for, keyed by the request's id.
+	toolUpdateRequestsTable = "tool_update_requests"
+	// toolReleaseHistoryCap is how many replaced versions a release keeps to
+	// roll back to.
+	toolReleaseHistoryCap = 5
+)
+
+// ToolRelease is a published tool as its adopters run it: a frozen copy of the
+// owner's definition, taken when an administrator approved it.
+//
+// Separate from the owner's own record because an approval covers the code
+// that was reviewed. Adopters used to load the owner's live record, so every
+// edit reached them unreviewed, and the fix for that (un-publishing on any
+// edit) took the tool away from all of them instead. Now the owner's record is
+// a working copy that only their own agents run; the owner asks for it to
+// become the next version, and an administrator approves that against a diff.
+type ToolRelease struct {
+	ID         string    `json:"id"`
+	Owner      string    `json:"owner"`
+	Name       string    `json:"name"`
+	Tool       TempTool  `json:"tool"`
+	Version    int       `json:"version"`
+	ApprovedAt time.Time `json:"approved_at"`
+	ApprovedBy string    `json:"approved_by,omitempty"`
+	// History is the versions this one replaced, newest first, at most
+	// toolReleaseHistoryCap: what an administrator can roll back to. Entries
+	// carry no history of their own.
+	History []ToolRelease `json:"history,omitempty"`
+	// WithdrawnAt is set only on the tombstone kept after its owner withdrew
+	// or deleted the tool.
+	WithdrawnAt time.Time `json:"withdrawn_at,omitempty"`
+}
+
+// ToolReleases lists what the deployment catalog serves, one release per
+// published tool, sorted by name: the administrator's view of versions and
+// history. Adopters resolve through AdoptedToolsFor, never through this.
+func ToolReleases(db Database) []ToolRelease {
+	db = tempToolStore(db)
+	var out []ToolRelease
+	for _, p := range publishedTools(db) {
+		if rel, ok := loadToolRelease(db, p.Tool.Name); ok {
+			out = append(out, rel)
+		}
+	}
+	return out
+}
+
+func loadToolRelease(db Database, name string) (ToolRelease, bool) {
+	var rel ToolRelease
+	if db == nil || name == "" {
+		return rel, false
+	}
+	return rel, db.Get(toolReleasesTable, name, &rel)
+}
+
+// releaseOwnerRow finds the owner's record a release was taken from, and
+// reports whether the release is LIVE: that record still exists (same ID, so
+// not a same-named successor) and is still published.
+func releaseOwnerRow(db Database, rel ToolRelease) (PersistentTempTool, bool) {
+	for _, p := range LoadPersistentTempTools(db, rel.Owner) {
+		if p.Tool.Name == rel.Name && p.ID == rel.ID {
+			return p, p.Shared
+		}
+	}
+	return PersistentTempTool{}, false
+}
+
+// publishedTools is the deployment catalog as adopters see it: every live
+// release, with its owner and version, and the owner's governance on it (who
+// may adopt it, and the disable switch, which is a stop rather than a change
+// to what runs). Sorted by name.
+func publishedTools(db Database) []LentTool {
+	if db == nil {
+		return nil
+	}
+	var out []LentTool
+	for _, name := range db.Keys(toolReleasesTable) {
+		rel, ok := loadToolRelease(db, name)
+		if !ok || rel.Name != name {
+			continue
+		}
+		row, live := releaseOwnerRow(db, rel)
+		if !live {
+			continue
+		}
+		t := rel.Tool
+		t.Disabled = row.Tool.Disabled
+		out = append(out, LentTool{
+			PersistentTempTool: PersistentTempTool{
+				ID: rel.ID, Tool: t, ApprovedAt: rel.ApprovedAt, LastUsedAt: row.LastUsedAt,
+				Shared: true, AllowedUsers: row.AllowedUsers,
+			},
+			Owner: rel.Owner, Version: rel.Version,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Tool.Name < out[j].Tool.Name })
+	return out
+}
+
+// nextReleaseVersion is one past every version the release has held, so a
+// rollback never lets a later update reuse a number.
+func nextReleaseVersion(rel ToolRelease) int {
+	next := rel.Version
+	for _, h := range rel.History {
+		if h.Version > next {
+			next = h.Version
+		}
+	}
+	return next + 1
+}
+
+// pushReleaseHistory files prev (the version being replaced) into rel's
+// history, newest first, keeping the last toolReleaseHistoryCap.
+func pushReleaseHistory(rel *ToolRelease, prev ToolRelease) {
+	prev.History, prev.WithdrawnAt = nil, time.Time{}
+	hist := append([]ToolRelease{prev}, rel.History...)
+	sort.SliceStable(hist, func(i, j int) bool { return hist[i].Version > hist[j].Version })
+	if len(hist) > toolReleaseHistoryCap {
+		hist = hist[:toolReleaseHistoryCap]
+	}
+	rel.History = hist
+}
+
+// publishToolReleaseLocked makes p's tool (or def, the definition a request
+// froze) the catalog's release of it, and marks p published; the caller writes
+// p back. Reports false, changing nothing, when p is already published: an
+// already-published tool changes only by an approved update. Refuses a name
+// another owner's live release holds. Caller holds tempToolPersistMu.
+func publishToolReleaseLocked(db Database, owner string, p *PersistentTempTool, def *TempTool, by string) (bool, error) {
+	name := p.Tool.Name
+	if cur, ok := loadToolRelease(db, name); ok {
+		if _, live := releaseOwnerRow(db, cur); live {
+			if cur.Owner != owner {
+				// One published tool per name, the rule skills already follow.
+				// Two would leave every lookup by name to pick one, and
+				// whichever it picked is whose code an adopter's agents run.
+				return false, errString("the deployment already publishes a tool called " + name + " (" + cur.Owner + "'s); rename this one before publishing it")
+			}
+			if cur.ID == p.ID && p.Shared {
+				return false, nil
+			}
+		}
+	}
+	if p.ID == "" {
+		p.ID = UUIDv4()
+	}
+	d := p.Tool
+	if def != nil {
+		d = *def
+	}
+	// Published again after a withdrawal, the numbering carries on, so a
+	// version number never names two different definitions of one tool.
+	version := 1
+	if gone, ok := withdrawnToolRelease(db, p.ID); ok {
+		version = nextReleaseVersion(gone)
+	}
+	db.Set(toolReleasesTable, name, ToolRelease{
+		ID: p.ID, Owner: owner, Name: name, Tool: d, Version: version,
+		ApprovedAt: time.Now(), ApprovedBy: by,
+	})
+	p.Shared = true
+	Log("[temp_tool_persist] published %s's tool %q as version %d", owner, name, version)
+	return true, nil
+}
+
+// withdrawToolReleaseLocked takes p's release out of the catalog, if it has
+// one, and keeps it as a tombstone. Caller holds tempToolPersistMu.
+func withdrawToolReleaseLocked(db Database, owner string, p PersistentTempTool) bool {
+	cur, ok := loadToolRelease(db, p.Tool.Name)
+	if !ok || cur.Owner != owner || cur.ID != p.ID {
+		return false
+	}
+	cur.WithdrawnAt = time.Now()
+	db.Set(withdrawnToolReleasesTable, tombstoneKey(cur), cur)
+	db.Unset(toolReleasesTable, cur.Name)
+	Log("[temp_tool_persist] %s's tool %q (version %d) left the catalog; its release is kept as a tombstone", owner, cur.Name, cur.Version)
+	return true
+}
+
+func tombstoneKey(rel ToolRelease) string {
+	if rel.ID != "" {
+		return rel.ID
+	}
+	return rel.Owner + "\x00" + rel.Name
+}
+
+// withdrawnToolRelease returns the last release of a tool its owner withdrew or
+// deleted, by the tool's ID: the definition its adopters were running, which
+// is what they can be offered back as a copy of their own.
+func withdrawnToolRelease(db Database, id string) (ToolRelease, bool) {
+	var rel ToolRelease
+	if db == nil || id == "" {
+		return rel, false
+	}
+	return rel, db.Get(withdrawnToolReleasesTable, id, &rel)
+}
+
+// toolRequestSnapshot is the definition a publish or update request asked
+// for, frozen when it was asked.
+type toolRequestSnapshot struct {
+	ID   string    `json:"id,omitempty"`
+	Tool TempTool  `json:"tool"`
+	At   time.Time `json:"at"`
+}
+
+// snapshotToolRequest freezes the owner's working copy as what their publish
+// or update request asks for. Refuses an update request with nothing in it:
+// a working copy that is already the published version. Whether the
+// requester owns the tool is the caller's check, made before filing; with no
+// such tool there is nothing to freeze, and approving would find none.
+func snapshotToolRequest(db Database, owner, name string) error {
+	db = tempToolStore(db)
+	if db == nil {
+		return nil
+	}
+	p, ok := UserToolByName(db, owner, name)
+	if !ok {
+		return nil
+	}
+	if cur, ok := loadToolRelease(db, name); ok && p.Shared && cur.Owner == owner && cur.ID == p.ID &&
+		cur.Tool.SameDefinition(p.Tool) {
+		return errString("your copy of " + name + " is the published version " + strconv.Itoa(cur.Version) +
+			", so there is no update to ask for; change it first")
+	}
+	db.Set(toolUpdateRequestsTable, PromotionRequestKey("tool", owner, name),
+		toolRequestSnapshot{ID: p.ID, Tool: p.Tool, At: time.Now()})
+	return nil
+}
+
+// Requested returns the definition a PENDING publish or update request for
+// this tool asked for: what approving the request would publish. Keyed by the
+// release's owner and name, so it answers for a tool not yet published too.
+func (r ToolRelease) Requested(db Database) (TempTool, bool) {
+	db = tempToolStore(db)
+	if db == nil {
+		return TempTool{}, false
+	}
+	key := PromotionRequestKey("tool", r.Owner, r.Name)
+	if req, ok := GetPromotionRequest(db, key); !ok || req.State != PromotionPendingState {
+		return TempTool{}, false
+	}
+	var snap toolRequestSnapshot
+	if db.Get(toolUpdateRequestsTable, key, &snap) {
+		return snap.Tool, true
+	}
+	// A request filed before requests froze their definition asks for the
+	// working copy.
+	if p, ok := UserToolByName(db, r.Owner, r.Name); ok {
+		return p.Tool, true
+	}
+	return TempTool{}, false
+}
+
+// approveToolRelease is an administrator approving a tool request: the first
+// publish of a tool, or the next version of a published one. What it publishes
+// is the definition the request froze (the working copy, for a request from
+// before requests froze one). The version replaced goes into the history.
+func approveToolRelease(db Database, owner, name string) error {
+	db = tempToolStore(db)
+	if db == nil || owner == "" {
+		return errString("admin action requires authenticated user")
+	}
+	tempToolPersistMu.Lock()
+	defer tempToolPersistMu.Unlock()
+	list := LoadPersistentTempTools(db, owner)
+	idx := -1
+	for i := range list {
+		if list[i].Tool.Name == name {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return errString("no persistent tool named " + name)
+	}
+	p := &list[idx]
+	key := PromotionRequestKey("tool", owner, name)
+	def := p.Tool
+	var snap toolRequestSnapshot
+	if db.Get(toolUpdateRequestsTable, key, &snap) {
+		if snap.ID != "" && p.ID != "" && snap.ID != p.ID {
+			return errString(owner + " deleted " + name + " and made a new one since asking; deny this and let them ask again")
+		}
+		def = snap.Tool
+	}
+	cur, ok := loadToolRelease(db, name)
+	if row, live := releaseOwnerRow(db, cur); !ok || !live || cur.Owner != owner || row.ID != p.ID {
+		if _, err := publishToolReleaseLocked(db, owner, p, &def, ""); err != nil {
+			return err
+		}
+		db.Set(persistentTempToolsTable, owner, list)
+	} else if !cur.Tool.SameDefinition(def) {
+		prev := cur
+		pushReleaseHistory(&cur, prev)
+		cur.Tool, cur.Version = def, nextReleaseVersion(prev)
+		cur.ApprovedAt, cur.ApprovedBy = time.Now(), ""
+		db.Set(toolReleasesTable, name, cur)
+		Log("[temp_tool_persist] %s's tool %q: version %d approved, replacing version %d", owner, name, cur.Version, prev.Version)
+	}
+	db.Unset(toolUpdateRequestsTable, key)
+	return nil
+}
+
+// RollBack makes one of the release's kept versions the one adopters run. The
+// version it replaces is kept in turn, so a rollback can itself be undone.
+func (r ToolRelease) RollBack(db Database, version int, by string) error {
+	db = tempToolStore(db)
+	if db == nil {
+		return errString("tool store not initialized")
+	}
+	tempToolPersistMu.Lock()
+	defer tempToolPersistMu.Unlock()
+	cur, ok := loadToolRelease(db, r.Name)
+	if !ok || cur.Owner != r.Owner || cur.ID != r.ID {
+		return errString(r.Name + " is no longer published")
+	}
+	if version == cur.Version {
+		return errString(r.Name + " is already at version " + strconv.Itoa(version))
+	}
+	at := -1
+	for i, h := range cur.History {
+		if h.Version == version {
+			at = i
+			break
+		}
+	}
+	if at < 0 {
+		return errString("version " + strconv.Itoa(version) + " of " + r.Name + " is not kept; the last " + strconv.Itoa(toolReleaseHistoryCap) + " versions are")
+	}
+	target := cur.History[at]
+	prev := cur
+	cur.History = append(append([]ToolRelease{}, cur.History[:at]...), cur.History[at+1:]...)
+	pushReleaseHistory(&cur, prev)
+	cur.Tool, cur.Version = target.Tool, target.Version
+	cur.ApprovedAt, cur.ApprovedBy = time.Now(), by
+	db.Set(toolReleasesTable, r.Name, cur)
+	Log("[temp_tool_persist] %s rolled %s's tool %q back to version %d from %d", by, r.Owner, r.Name, version, prev.Version)
+	return nil
+}
+
+// MigrateToolReleases gives every tool an ID and every published tool the
+// release its adopters run, version 1 being its definition now, so nothing
+// anybody runs changes on upgrade. Called once at startup; marker-guarded,
+// and idempotent besides.
+func MigrateToolReleases(db Database) {
+	NewMigrationRunner("core", "").Once("tool_releases:v1", func() int { return migrateToolReleases(db) })
+}
+
+// migrateToolReleases is MigrateToolReleases' body; returns records changed.
+//
+// Two published tools of one name (the deployment allowed that before it
+// published one per name) cannot both have a release. The first owner in name
+// order keeps it, which is also whose tool the old first-found lookup served;
+// the other is un-published, and says so in the log.
+func migrateToolReleases(db Database) int {
+	db = tempToolStore(db)
+	if db == nil {
+		return 0
+	}
+	tempToolPersistMu.Lock()
+	defer tempToolPersistMu.Unlock()
+	changed := 0
+	owners := db.Keys(persistentTempToolsTable)
+	sort.Strings(owners)
+	for _, owner := range owners {
+		list := LoadPersistentTempTools(db, owner)
+		dirty := false
+		for i := range list {
+			if list[i].ID == "" {
+				list[i].ID = UUIDv4()
+				dirty = true
+				changed++
+			}
+		}
+		if dirty {
+			db.Set(persistentTempToolsTable, owner, list)
+		}
+	}
+	for _, owner := range owners {
+		list := LoadPersistentTempTools(db, owner)
+		dirty := false
+		for i := range list {
+			if !list[i].Shared {
+				continue
+			}
+			// A no-op for a tool that already has its release.
+			published, err := publishToolReleaseLocked(db, owner, &list[i], nil, "")
+			if err != nil {
+				Log("[temp_tool_persist] migration: %s's published tool %q un-published: %v", owner, list[i].Tool.Name, err)
+				list[i].Shared = false
+			}
+			if published || err != nil {
+				dirty = true
+				changed++
+			}
+		}
+		if dirty {
+			db.Set(persistentTempToolsTable, owner, list)
+		}
+	}
+	return changed
 }
 
 // ----------------------------------------------------------------------
@@ -1816,6 +2370,13 @@ func PeerSharedToolsFor(db Database, user string) []LentTool {
 type LentTool struct {
 	PersistentTempTool
 	Owner string
+	// Version is the release version of a PUBLISHED tool (1 and up); 0 for a
+	// tool a colleague shared directly, which has no releases.
+	Version int
+	// Update is, for a colleague's tool the user has taken, the colleague's
+	// current definition when it differs from the copy the user runs: an
+	// update they can accept by taking the tool again. Nil otherwise.
+	Update *TempTool
 }
 
 func cleanRecipients(users []string, owner string) []string {
@@ -2030,4 +2591,22 @@ func SetUserToolConfirmInChat(db Database, username, name string, confirm bool) 
 		}
 	}
 	return false
+}
+
+// sameStringSet reports whether a and b hold the same strings, in any order.
+func sameStringSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := make(map[string]int, len(a))
+	for _, x := range a {
+		seen[x]++
+	}
+	for _, x := range b {
+		if seen[x] == 0 {
+			return false
+		}
+		seen[x]--
+	}
+	return true
 }

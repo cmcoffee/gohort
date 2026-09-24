@@ -91,6 +91,12 @@ type row struct {
 	// asks about, kept apart from ID because that one is made unique per row.
 	Carries bool   `json:"carries,omitempty"`
 	Record  string `json:"record,omitempty"`
+	// Uses is who relies on this and through what, in their words: the
+	// recipient's own agents that reference it. Confirm is the take-back
+	// question for THIS row, naming them, since "they lose it" and "their
+	// Triage agent stops working" are different decisions.
+	Uses    string `json:"uses,omitempty"`
+	Confirm string `json:"confirm,omitempty"`
 }
 
 func (T *ShareApp) serveMine(w http.ResponseWriter, r *http.Request) {
@@ -104,11 +110,11 @@ func (T *ShareApp) serveMine(w http.ResponseWriter, r *http.Request) {
 		// decisions, and a single Revoke over all of them takes back more than
 		// the button says it does.
 		if len(g.Recipients) == 0 {
-			rows = append(rows, toRow(g, g.Reach, ""))
+			rows = append(rows, withDependents(toRow(g, g.Reach, ""), g, ""))
 			continue
 		}
 		for _, u := range g.Recipients {
-			rows = append(rows, toRow(g, g.Reach, u))
+			rows = append(rows, withDependents(toRow(g, g.Reach, u), g, u))
 		}
 	}
 	writeJSON(w, rows)
@@ -150,6 +156,56 @@ func toRow(g shareledger.Grant, reach, recipient string) row {
 		Name: g.Name, Who: who, Reach: reach, Detail: g.Detail, Wide: g.Wide,
 		Revocable: g.Revocable, Recipient: recipient,
 	}
+}
+
+// takeBackPrompt is the default take-back question, for a row nobody relies on.
+const takeBackPrompt = "Take this back? They lose it now, including anything they had scheduled against it."
+
+// withDependents fills the row's Uses and its take-back question from the
+// grant's dependents: this recipient's, or everybody's on a row that covers
+// the whole deployment.
+func withDependents(r row, g shareledger.Grant, recipient string) row {
+	r.Confirm = takeBackPrompt
+	var parts []string
+	var names []string
+	for _, d := range g.Dependents {
+		if recipient != "" && d.User != recipient {
+			continue
+		}
+		if len(d.Uses) == 0 {
+			continue
+		}
+		names = append(names, d.Uses...)
+		if recipient != "" {
+			parts = append(parts, strings.Join(d.Uses, ", "))
+		} else {
+			parts = append(parts, d.User+": "+strings.Join(d.Uses, ", "))
+		}
+	}
+	if len(parts) == 0 {
+		return r
+	}
+	r.Uses = strings.Join(parts, "; ")
+	who := "Their agents "
+	if recipient == "" {
+		who = "Agents "
+	} else if len(names) == 1 {
+		who = "Their agent "
+	}
+	verb := " use it and will run without it."
+	if len(names) == 1 {
+		verb = " uses it and will run without it."
+	}
+	r.Confirm = "Take this back? " + who + quoteList(names) + verb + " They are told, and can remove it or ask you to share it again."
+	return r
+}
+
+func quoteList(names []string) string {
+	q := make([]string, 0, len(names))
+	for _, n := range names {
+		q = append(q, "\""+n+"\"")
+	}
+	return strings.Join(q, ", ")
 }
 
 // serveRevoke takes one grant back, routed to the kind that owns the record.
@@ -216,6 +272,11 @@ func (T *ShareApp) servePage(w http.ResponseWriter, r *http.Request) {
 		{Field: "reach", Label: "What it allows", Flex: 2, Mute: true},
 		{Field: "detail", Label: "", Flex: 2, Mute: true},
 	}
+	// The owner's table adds who relies on each grant, before the question of
+	// taking it back is asked.
+	mineCols := append(append([]ui.Col{}, cols[:len(cols)-1]...),
+		ui.Col{Field: "uses", Label: "Relied on by", Flex: 2, Mute: true},
+		cols[len(cols)-1])
 	page := ui.Page{
 		Title:      "Sharing",
 		ShowTitle:  true,
@@ -230,19 +291,21 @@ func (T *ShareApp) servePage(w http.ResponseWriter, r *http.Request) {
 				Subtitle: "Everything of yours that reaches somebody else.",
 				Detail: "One row per person, not per thing: a skill you gave three colleagues is three grants, and taking one back should not quietly take back the other two.\n\n" +
 					"Sharing itself stays where the thing is — you share an agent from the agent page, a credential from its card. This is the audit, and the one place to take any of it back.\n\n" +
+					"Relied on by names their own agents that use the thing, so you can see what a take-back stops before you do it; they are told when you do.\n\n" +
 					"A row marked Everybody was widened by an administrator, or published by you from that thing's own page; it is taken back there rather than here, because un-publishing is a different act from dropping one person.",
 				Body: ui.Table{
 					Source:  "api/mine",
 					RowKey:  "id",
-					Columns: cols,
+					Columns: mineCols,
 					RowActions: []ui.RowAction{
 						{Type: "button", Label: "Take back",
-							PostTo:     "api/revoke?kind={kind}&id={id}&recipient={recipient}",
-							Method:     "POST",
-							OnlyIf:     "revocable",
-							Confirm:    "Take this back? They lose it now, including anything they had scheduled against it.",
-							Variant:    "danger",
-							Invalidate: []string{"api/mine"}},
+							PostTo:       "api/revoke?kind={kind}&id={id}&recipient={recipient}",
+							Method:       "POST",
+							OnlyIf:       "revocable",
+							Confirm:      takeBackPrompt,
+							ConfirmField: "confirm",
+							Variant:      "danger",
+							Invalidate:   []string{"api/mine"}},
 					},
 					EmptyText: "You have not shared anything. Share a thing from its own page and it appears here.",
 				},

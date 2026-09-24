@@ -1,7 +1,11 @@
 package core
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -632,4 +636,148 @@ func (s *ToolSession) CopyTempTools() []*TempTool {
 	out := make([]*TempTool, len(s.TempTools))
 	copy(out, s.TempTools)
 	return out
+}
+
+// DefinitionDiff says, field by field, how o's definition differs from t's:
+// what somebody approving o in place of t has to read. The governance flags
+// SameDefinition sets aside are set aside here too, so the two agree on
+// whether there is anything to show. A multi-line value (a script body, a
+// parameter list) gets a line diff rather than both copies whole. "" when the
+// definitions match.
+//
+// Every field is compared, not a chosen few: a reviewer shown the command and
+// the script but not, say, the credential or the response pipe would approve
+// a change nobody showed them.
+func (t TempTool) DefinitionDiff(o TempTool) string {
+	a, b := definitionFields(t), definitionFields(o)
+	keys := make([]string, 0, len(a)+len(b))
+	for k := range a {
+		keys = append(keys, k)
+	}
+	for k := range b {
+		if _, dup := a[k]; !dup {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	var sb strings.Builder
+	for _, k := range keys {
+		before, after := a[k], b[k]
+		if before == after {
+			continue
+		}
+		label := definitionFieldLabel(k)
+		if !strings.Contains(before, "\n") && !strings.Contains(after, "\n") && len(before) <= 160 && len(after) <= 160 {
+			fmt.Fprintf(&sb, "%s:\n- %s\n+ %s\n\n", label, noneIfEmpty(before), noneIfEmpty(after))
+			continue
+		}
+		fmt.Fprintf(&sb, "%s:\n%s\n\n", label, definitionLineDiff(before, after))
+	}
+	return strings.TrimSpace(sb.String())
+}
+
+// definitionFields flattens a tool's definition to field -> text, by its JSON
+// names: a string as itself, anything else (params, actions, headers) as
+// indented JSON so a line diff can say which entry changed.
+func definitionFields(t TempTool) map[string]string {
+	out := map[string]string{}
+	raw, err := json.Marshal(withoutGovernance(t))
+	if err != nil {
+		return out
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(raw, &fields) != nil {
+		return out
+	}
+	for k, v := range fields {
+		var s string
+		if json.Unmarshal(v, &s) == nil {
+			out[k] = s
+			continue
+		}
+		var pretty bytes.Buffer
+		if json.Indent(&pretty, v, "", "  ") != nil {
+			out[k] = string(v)
+			continue
+		}
+		out[k] = pretty.String()
+	}
+	return out
+}
+
+func definitionFieldLabel(k string) string {
+	switch k {
+	case "command_template":
+		// api and toolbox modes keep their URL here too.
+		return "command / URL template"
+	case "params":
+		return "parameters"
+	}
+	return strings.ReplaceAll(k, "_", " ")
+}
+
+func noneIfEmpty(s string) string {
+	if s == "" {
+		return "(none)"
+	}
+	return s
+}
+
+// definitionLineDiff is a line diff of two texts: the lines only the first has
+// ("- "), and the lines only the second has ("+ "), in order, by longest
+// common subsequence. Capped, so one rewritten script cannot bury the rest of
+// a review; past the size an LCS table is worth, it lists both sides.
+func definitionLineDiff(a, b string) string {
+	const maxOut = 120
+	al, bl := strings.Split(a, "\n"), strings.Split(b, "\n")
+	if a == "" {
+		al = nil
+	}
+	if b == "" {
+		bl = nil
+	}
+	var lines []string
+	if len(al)*len(bl) > 400000 {
+		for _, l := range al {
+			lines = append(lines, "- "+l)
+		}
+		for _, l := range bl {
+			lines = append(lines, "+ "+l)
+		}
+	} else {
+		// lcs[i][j] is the common length of al[i:] and bl[j:].
+		lcs := make([][]int, len(al)+1)
+		for i := range lcs {
+			lcs[i] = make([]int, len(bl)+1)
+		}
+		for i := len(al) - 1; i >= 0; i-- {
+			for j := len(bl) - 1; j >= 0; j-- {
+				if al[i] == bl[j] {
+					lcs[i][j] = lcs[i+1][j+1] + 1
+				} else if lcs[i+1][j] >= lcs[i][j+1] {
+					lcs[i][j] = lcs[i+1][j]
+				} else {
+					lcs[i][j] = lcs[i][j+1]
+				}
+			}
+		}
+		i, j := 0, 0
+		for i < len(al) || j < len(bl) {
+			switch {
+			case i < len(al) && j < len(bl) && al[i] == bl[j]:
+				i, j = i+1, j+1
+			case i < len(al) && (j == len(bl) || lcs[i+1][j] >= lcs[i][j+1]):
+				lines = append(lines, "- "+al[i])
+				i++
+			default:
+				lines = append(lines, "+ "+bl[j])
+				j++
+			}
+		}
+	}
+	if len(lines) > maxOut {
+		more := len(lines) - maxOut
+		lines = append(lines[:maxOut], fmt.Sprintf("... and %d more changed lines", more))
+	}
+	return strings.Join(lines, "\n")
 }

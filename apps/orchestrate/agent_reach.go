@@ -25,8 +25,9 @@ package orchestrate
 //   - SKILLS resolve BY ID against the runner's available set, which is their
 //     own plus what was shared with them plus what the deployment publishes. A
 //     same-named skill of their own is a DIFFERENT id and will not stand in.
-//   - COLLECTIONS resolve BY ID, gated per runtime user. Yours reaches them
-//     only if it is shared with them or deployment-wide.
+//   - COLLECTIONS resolve BY ID in the OWNER's namespace and travel with the
+//     agent (see agentCorpusSourceSet); a recipient reads them through this
+//     agent and nowhere else.
 //   - PIPELINES and MACHINES resolve BY ID against their own plus what is
 //     shared with them plus what is published.
 //   - CREDENTIALS resolve BY NAME in the runner's namespace: their own of that
@@ -183,27 +184,39 @@ func agentReachOf(udb Database, owner string, a AgentRecord) agentReachMap {
 			level: level, kind: "tool", id: name})
 	}
 
-	// Skills: by ID, against what the runner can actually use.
+	// Taken tools whose owner withdrew them. The adoption is still on the
+	// owner's list and this agent still loads the name, but nothing answers
+	// to it: the one tool gap that is not somebody else's to explain.
+	for _, m := range agentMissingRefs(AgentRecord{ID: a.ID, Owner: a.Owner, AllowedTools: a.AllowedTools,
+		DisabledPersistentTools: a.DisabledPersistentTools}, udb, owner, nil, nil) {
+		add(reachItem{Kind: "Tool", Name: m.Name, Reach: goneReach,
+			How: "Taken from somebody else, who has since withdrawn or deleted it. The agent runs without it; remove it in the agent's Tools.", level: reachDeployment})
+	}
+
+	// Skills: by ID, against what the owner can use - their own, what was
+	// shared with them, and what the deployment publishes. The same set the
+	// runtime resolves against (agentSkills), so "gone" here is gone there.
 	skills := map[string]SkillRecord{}
-	for _, s := range LoadSkills(udb, owner) {
+	for _, s := range AvailableSkills(udb, owner) {
 		skills[s.ID] = s
 	}
 	published := map[string]bool{}
 	for _, s := range DeploymentSkills(udb) {
 		published[s.ID] = true
-		skills[s.ID] = s
 	}
 	for _, id := range a.AllowedSkills {
 		s, ok := skills[strings.TrimSpace(id)]
 		if !ok {
-			add(reachItem{Kind: "Skill", Name: id, Reach: "Not found",
-				How: "Attached by id, and no skill of yours answers to it. It does nothing for you either.", level: reachDeployment})
+			add(reachItem{Kind: "Skill", Name: missingRefName("skill", strings.TrimSpace(id)), Reach: goneReach,
+				How: "Attached by id, and it no longer reaches you: whoever shared it took it back or deleted it. It does nothing for anybody; remove it in the agent's Skills.", level: reachDeployment})
 			continue
 		}
 		level, reach := reachPrivate, "Private to you"
 		switch {
 		case published[s.ID]:
 			level, reach = reachDeployment, "Deployment-wide"
+		case s.SharedFrom != "":
+			level, reach = reachNamed, "Shared with you by "+s.SharedFrom
 		case len(s.AllowedUsers) > 0:
 			level, reach = reachNamed, "Shared with "+strings.Join(s.AllowedUsers, ", ")
 		}
@@ -212,7 +225,7 @@ func agentReachOf(udb Database, owner string, a AgentRecord) agentReachMap {
 			level: level, kind: "skill", id: s.ID})
 	}
 
-	// Collections: by id, gated per runtime user.
+	// Collections: by id, as the owner.
 	for _, id := range a.AttachedCollections {
 		id = strings.TrimSpace(id)
 		if id == "" {
@@ -220,8 +233,8 @@ func agentReachOf(udb Database, owner string, a AgentRecord) agentReachMap {
 		}
 		c, ok := LoadCollection(UserDB(CollectionsDB(), owner), owner, id)
 		if !ok {
-			add(reachItem{Kind: "Knowledge", Name: id, Reach: "Not found",
-				How: "Attached by id, and no collection of yours answers to it.", level: reachDeployment})
+			add(reachItem{Kind: "Knowledge", Name: missingRefName("collection", id), Reach: goneReach,
+				How: "Attached by id, and it no longer reaches you: whoever shared it took it back or deleted it. The agent answers without it; remove it in the agent's Knowledge.", level: reachDeployment})
 			continue
 		}
 		level, reach := reachPrivate, "Private to you"
@@ -232,7 +245,7 @@ func agentReachOf(udb Database, owner string, a AgentRecord) agentReachMap {
 			level, reach = reachNamed, "Shared with "+strings.Join(c.AllowedUsers, ", ")
 		}
 		add(reachItem{Kind: "Knowledge", Name: c.Name, Reach: reach,
-			How:   "Resolved as whoever is running, so they see it only if it was shared with them.",
+			How:   "Travels with the agent: read as you, its owner, whoever runs it, and through this agent only.",
 			level: level, kind: "collection", id: c.ID})
 	}
 
@@ -278,6 +291,10 @@ func agentReachOf(udb Database, owner string, a AgentRecord) agentReachMap {
 	}
 	return out
 }
+
+// goneReach is what a reference that no longer resolves reads as, in every
+// kind's row: the same words the editor's modals use for it.
+const goneReach = "No longer available"
 
 // credentialReach is its own function because a credential answers the
 // question differently from everything else above it. The others are "do they

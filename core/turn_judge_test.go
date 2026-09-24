@@ -484,3 +484,125 @@ func TestAnOverturnedVerdictLeavesANoteNotACorrection(t *testing.T) {
 		t.Errorf("the trail does not say the verdict was overturned: %v", diags)
 	}
 }
+
+// The judge knows what it found and not what became of it. The loop tells it,
+// through the verdict's Acted hook, with the same kind it writes to the trail,
+// so a record of the judge's firings can tell a corrected conviction from one
+// let stand or overturned.
+func TestTheLoopTellsTheVerdictWhatItDidWithIt(t *testing.T) {
+	var acted []string
+	judged := 0
+	stub := &FakeLLM{Turns: []FakeTurn{
+		{Content: "On it, grabbing those photos now."},
+		{Content: "I have not started on the photos.", Repeat: true},
+	}}
+	app := &AppCore{LLM: stub, LeadLLM: stub}
+	_, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "find me photos"}}, AgentLoopConfig{
+		MaxRounds: 6,
+		TurnClaimJudge: func(ev TurnClaimEvidence) (TurnClaimVerdict, bool) {
+			judged++
+			if judged == 1 {
+				return TurnClaimVerdict{Unkept: true, Claim: "On it, grabbing those photos now.", Why: "no tool ran",
+					Acted: func(kind string) { acted = append(acted, kind) }}, true
+			}
+			return TurnClaimVerdict{}, true
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(acted) != 1 || acted[0] != "unkept-claim-corrected" {
+		t.Errorf("the verdict was not told it was corrected: %v", acted)
+	}
+}
+
+// An overturn keeps the readings and the hook through the pre-filter wrapper,
+// or the one outcome most worth reviewing arrives with nothing to review. And
+// a hook that panics costs the record, not the turn.
+func TestAnOverturnKeepsItsReadingsAndAPanickingHookIsHarmless(t *testing.T) {
+	readings := []TurnClaimVerdict{{Unkept: true, Claim: "x"}, {}}
+	var acted []string
+	cfg := AgentLoopConfig{TurnClaimJudge: func(TurnClaimEvidence) (TurnClaimVerdict, bool) {
+		return TurnClaimVerdict{Overturned: "It had flagged \"x\".", Readings: readings,
+			Acted: func(kind string) { acted = append(acted, kind); panic("recorder broke") }}, true
+	}}
+	v, convicted := judgeTurnClaim(cfg, TurnClaimEvidence{Reply: "x"})
+	if convicted || v.Overturned == "" {
+		t.Fatalf("precondition: overturned, got %+v", v)
+	}
+	if len(v.Readings) != 2 || v.Acted == nil {
+		t.Fatalf("the overturn dropped its readings or its hook: %+v", v)
+	}
+	v.settle("turn-judge-overturned") // must not panic
+	if len(acted) != 1 {
+		t.Errorf("the hook was not called: %v", acted)
+	}
+}
+
+// The arm label is the pre-filter's own decision, including the unattended
+// arm, which a label kept apart from the decision reported as "produced
+// nothing".
+func TestTheArmIsThePreFiltersOwnDecision(t *testing.T) {
+	for _, c := range []struct {
+		ev   TurnClaimEvidence
+		want string
+	}{
+		{TurnClaimEvidence{Backgrounded: true}, "background job started"},
+		{TurnClaimEvidence{}, "no tools ran"},
+		{TurnClaimEvidence{ToolCalls: []string{"search"}, ToolErrors: 1}, "tool errors"},
+		{TurnClaimEvidence{ToolCalls: []string{"image/generate"}}, "produced nothing"},
+		{TurnClaimEvidence{ToolCalls: []string{"search"}, Unattended: true}, "unattended"},
+		{TurnClaimEvidence{ToolCalls: []string{"search"}}, ""},
+	} {
+		if got := c.ev.JudgeArm(); got != c.want {
+			t.Errorf("JudgeArm = %q, want %q for %+v", got, c.want, c.ev)
+		}
+		c.ev.Reply = "something"
+		if turnClaimWorthJudging(c.ev) != (c.want != "") {
+			t.Errorf("the pre-filter and its label disagree for %+v", c.ev)
+		}
+	}
+}
+
+// A turn whose write succeeded is judged. Asked to clear some pending photo
+// edits, forget deleted two unrelated memories and reported success; the reply
+// "All cleared" was never looked at, because every arm looked for failure.
+func TestATurnThatChangedStateIsJudged(t *testing.T) {
+	var judged TurnClaimEvidence
+	calls := 0
+	run := func(caps []Capability) {
+		// A fresh model per run: its call counter decides which round calls
+		// the tool, and a shared one would make the second run's turn call
+		// nothing at all.
+		app, _ := withTierStubs(t, "test.changedstate", func(n int) []ToolCall {
+			if n == 1 {
+				return []ToolCall{{ID: "c1", Name: "forget_thing"}}
+			}
+			return nil
+		})
+		calls = 0
+		_, _, err := app.RunAgentLoop(context.Background(), []Message{{Role: "user", Content: "clear those pending edits"}}, AgentLoopConfig{
+			MaxRounds: 4, RouteKey: "test.changedstate",
+			Tools: []AgentToolDef{{
+				Tool:    Tool{Name: "forget_thing", Caps: caps},
+				Handler: func(context.Context, map[string]any) (string, error) { return "Deleted 2 entries", nil },
+			}},
+			TurnClaimJudge: func(ev TurnClaimEvidence) (TurnClaimVerdict, bool) {
+				calls++
+				judged = ev
+				return TurnClaimVerdict{}, true
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	run([]Capability{CapWrite})
+	if calls == 0 || !judged.ChangedState || judged.JudgeArm() != "changed state" {
+		t.Errorf("a successful write was not put before the judge: calls=%d arm=%q", calls, judged.JudgeArm())
+	}
+	run([]Capability{CapRead})
+	if calls != 0 {
+		t.Errorf("a clean read-only turn should not cost a judge call, got %d", calls)
+	}
+}

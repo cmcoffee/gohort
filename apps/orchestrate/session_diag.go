@@ -332,6 +332,10 @@ func (t *chatTurn) turnDiag(kind, detail string) {
 	// model (a refusal, a withheld output), which can carry a marker of its
 	// own. One funnel, so a diag added later cannot miss it.
 	detail = prompts.ApplyRuleEnforcers(StripMetaTags(detail))
+	// A correction check that fired is also filed for review across the
+	// deployment (judge_records.go). Queued, never waited on, and a no-op for
+	// every kind that is not a check.
+	t.recordCheckFiring(kind, detail)
 	// ONE clock reading for all three destinations — the open pane, this
 	// turn's trail, and the parent's — because the stamp is half of what
 	// names the entry (diagID), and three readings would be three entries as

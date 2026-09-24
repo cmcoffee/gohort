@@ -170,6 +170,13 @@ type TurnClaimEvidence struct {
 	// "it's just past midnight your time" as a claim with no evidence behind
 	// it, and the retry lost the whole reply that sentence opened.
 	Now string
+	// ChangedState is set when a call that declares CapWrite succeeded this
+	// turn: something stored was written or deleted. Such a turn is judged
+	// even though nothing failed, because "it succeeded" is not the question.
+	// Observed: asked to clear some pending photo edits, forget deleted two
+	// unrelated memories, reported success, and the reply "All cleared" went
+	// out unexamined because no arm looked at a clean turn.
+	ChangedState bool
 }
 
 // TurnClaimVerdict is the judge's answer.
@@ -197,6 +204,38 @@ type TurnClaimVerdict struct {
 	// out as written; this is what the trail says about it, so a correction
 	// that did NOT happen is as visible as one that did.
 	Overturned string
+	// Readings are the individual readings this verdict was reached from, in
+	// order: the fast one, then the confirming one when there was one. Each
+	// carries only its own finding (Unkept, Claim, Why, Machinery).
+	//
+	// The verdict above is what the loop ACTS on, and on its own it cannot say
+	// whether a false positive was the fast reading's or survived both. That is
+	// the question a review of the judge's convictions needs answered, so the
+	// app's judge hands both readings through rather than only the outcome.
+	// The loop never reads this.
+	Readings []TurnClaimVerdict
+	// Acted, when the judge set it, is told the diag kind the loop emitted
+	// for this verdict ("unkept-claim-corrected", "machinery-uncorrected",
+	// "turn-judge-overturned"), at the moment it emits it. Nil is fine.
+	//
+	// The judge knows what it found and not what became of it: whether a
+	// correction was spent, the budget was already gone, or the round cap left
+	// nothing to do. Only the loop knows that, and a record of the judge's
+	// firings that cannot tell "corrected" from "let stand" cannot say which
+	// convictions cost the user a retracted reply. Called synchronously on the
+	// loop's goroutine, so it must not block.
+	Acted func(kind string)
+}
+
+// settle reports the kind the loop emitted for this verdict to whoever asked
+// to be told (Acted). A panicking recorder must not take the turn with it:
+// the record is a review aid, and the reply is the product.
+func (v TurnClaimVerdict) settle(kind string) {
+	if v.Acted == nil {
+		return
+	}
+	defer func() { _ = recover() }()
+	v.Acted(kind)
 }
 
 // TurnClaimJudge reads a finished turn and reports whether its reply is true
@@ -232,6 +271,21 @@ func turnClaimWorthJudging(ev TurnClaimEvidence) bool {
 	if strings.TrimSpace(ev.Reply) == "" {
 		return false
 	}
+	return ev.JudgeArm() != ""
+}
+
+// JudgeArm names the arm of the pre-filter that selects this turn for the
+// judge, or "" when none does. First arm to match wins, so the name reads as
+// the reason it was selected rather than as a list of everything true. It does
+// not look at the reply: an empty one is never judged, whatever the arm.
+//
+// One function for the decision and its label, because they are read by
+// different people for the same purpose. The pre-filter decides; the record of
+// the judge's firings says which arm decided, and a run of overturned
+// convictions all under one arm is the signal that the arm is too broad. A
+// label kept beside the decision rather than derived from it drifts, and then
+// the tuning signal names the wrong arm.
+func (ev TurnClaimEvidence) JudgeArm() string {
 	// A started background job used to skip the judge outright, on the grounds
 	// that "I'll report back" is TRUE and convicting it would flag the exact
 	// reply detachedNotice asks for. That reasoning holds for the CLAIM, and
@@ -243,7 +297,7 @@ func turnClaimWorthJudging(ev TurnClaimEvidence) bool {
 	// the claim arm suppresses itself on that fact rather than on this branch,
 	// which leaves the machinery arm free to look.
 	if ev.Backgrounded {
-		return true
+		return "background job started"
 	}
 	// Said something, did nothing. The largest class by far, and the one the
 	// guards keep half-missing: "Wiwee, try again" answered in 66 characters
@@ -254,17 +308,22 @@ func turnClaimWorthJudging(ev TurnClaimEvidence) bool {
 	// it in front of the judge on those grounds is asking a question whose
 	// premise is already false.
 	if !ev.TurnDidWork() {
-		return true
+		return "no tools ran"
 	}
 	// Did something and it failed. A reply after a failed tool is either an
 	// honest report or a claim of a result that never arrived.
 	if ev.ToolErrors > 0 {
-		return true
+		return "tool errors"
 	}
 	// Ran something whose job is producing a file, and nothing is going out
 	// with the reply.
 	if ev.Delivered == 0 && turnRanProducer(ev.ToolCalls) {
-		return true
+		return "produced nothing"
+	}
+	// Changed something stored. A success report is exactly what needs
+	// checking here: whether what changed is what the reply says changed.
+	if ev.ChangedState {
+		return "changed state"
 	}
 	// Nobody is reading. Every arm above asks "does the framework have reason
 	// to doubt THIS turn"; a turn that ran cleanly and failed nothing has none,
@@ -278,9 +337,9 @@ func turnClaimWorthJudging(ev TurnClaimEvidence) bool {
 	// costs one small model call that comes back KEPT. Fires are a small
 	// fraction of turns, so the ceiling on that cost is low and known.
 	if ev.Unattended {
-		return true
+		return "unattended"
 	}
-	return false
+	return ""
 }
 
 // turnRanProducer reports whether any call was to a tool that exists to make
@@ -317,7 +376,10 @@ func judgeTurnClaim(cfg AgentLoopConfig, ev TurnClaimEvidence) (TurnClaimVerdict
 	}
 	v, ok := cfg.TurnClaimJudge(ev)
 	if ok && strings.TrimSpace(v.Overturned) != "" {
-		return TurnClaimVerdict{Overturned: v.Overturned}, false
+		// The findings are cleared, the account of how they were reached is
+		// not: the readings and the recorder travel with the overturn, or the
+		// one outcome most worth reviewing arrives with nothing to review.
+		return TurnClaimVerdict{Overturned: v.Overturned, Readings: v.Readings, Acted: v.Acted}, false
 	}
 	if !ok || (!v.Unkept && strings.TrimSpace(v.Machinery) == "") {
 		return TurnClaimVerdict{}, false

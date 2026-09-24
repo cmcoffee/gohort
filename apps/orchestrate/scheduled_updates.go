@@ -804,6 +804,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		// keeps failing at 09:00 is still failing at 09:00 tomorrow.
 		FailureMemoryKey:    failureMemoryKey(p.AgentID, p.SessionID),
 		StampLocation:       UserLocation(p.Username), // stamp the turn in the owning user's zone
+		TurnNotes:           func(string) string { return dependencyTurnNote(subSess) },
 		ThinkBudget:         agent.ThinkBudget,
 		ActionQuotas:        agent.ActionQuotas,
 		BudgetKey:           agent.ID,
@@ -850,7 +851,7 @@ func fireOrchestrateUpdate(ctx context.Context, p orchUpdatePayload, reArm bool)
 		// the evidence says in as many words, so the fire that reads nine times
 		// and reports three posts is caught exactly as before.
 		CapturePrompt:  agent.CapturePrompt,
-		TurnClaimJudge: app.turnClaimJudge(ctx),
+		TurnClaimJudge: subTurn.claimJudge(ctx),
 		PriorTurnWork:  func() []string { return priorTurnWorkFrom(sess.Messages) },
 		// And the reports this thread already holds, which on a recurring
 		// schedule are this fire's own earlier cycles: their replies are stored

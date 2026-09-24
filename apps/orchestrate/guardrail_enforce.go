@@ -272,6 +272,9 @@ func (t *chatTurn) guardrailCheckHookCtx(ctx context.Context) func(hookPoint, ca
 		// repeatedly is the shape most worth seeing, and the per-thread trail
 		// above can only be found by someone who already knows which thread.
 		t.recordGuardrailBlock(rule, hookPoint, reason)
+		// And filed with the deployment's other correction checks, where an
+		// appeal that later lifts it counts as the block being overturned.
+		t.recordGuardrailFiring(rule, hookPoint, reason, candidate, firingActed)
 		// And ask, once per pair, whether this rule refuses the tool outright —
 		// the answer is what keeps the catalog from offering it again next
 		// turn. Off the critical path; see guardrail_tool_scope.go.

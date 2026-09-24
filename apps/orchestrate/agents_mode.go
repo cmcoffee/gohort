@@ -323,5 +323,10 @@ func isResolvableToolName(db Database, owner, name string) bool {
 			return true
 		}
 	}
-	return false
+	// A tool the owner TOOK from somebody is theirs to name, whether or not
+	// it resolves right now. Healing it away made every load of the agent
+	// drop a working taken tool from its list, and turned a withdrawn one
+	// into a silent loss instead of a reference the editor can show as gone
+	// (see missing_deps.go). Removing it is the owner's call, through Remove.
+	return LoadAdoptedGlobalTools(db, owner)[name]
 }

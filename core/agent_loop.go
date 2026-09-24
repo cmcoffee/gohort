@@ -507,6 +507,7 @@ type loopRun struct {
 	lastToolError              string
 	turnToolCalls              []string
 	turnToolOutputs            []string
+	turnChangedState           bool
 	repeatFail                 map[string]int
 	sentThisTurn               map[string]bool
 	shakeoutNextRound          bool
@@ -2764,10 +2765,12 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 		GivenEstimate: lr.cfg.backgroundEstimate(),
 		Unattended:    lr.cfg.Unattended,
 		Now:           CurrentContextStampIn(lr.cfg.StampLocation),
+		ChangedState:  lr.turnChangedState,
 	}
 	verdict, convicted := judgeTurnClaim(lr.cfg, ev)
 	if !convicted && verdict.Overturned != "" {
 		lr.emitDiag("turn-judge-overturned", "A first reading flagged the reply and a closer one cleared it, so it went out as written. "+verdict.Overturned)
+		verdict.settle("turn-judge-overturned")
 	}
 	if convicted {
 		// Two independent findings share one verdict, so each branch checks
@@ -2782,6 +2785,7 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 				how = "Re-prompted to rewrite it; nothing ran this turn, so it was not asked to act."
 			}
 			lr.emitDiag("unkept-claim-corrected", fmt.Sprintf("The reply said %q, which did not happen: %s. %s", truncForLog(verdict.Claim, 120), verdict.Why, how))
+			verdict.settle("unkept-claim-corrected")
 			// Retract rather than settle: the claim is false and, on a
 			// streaming surface, already painted. Same call as the phantom
 			// guard makes about the same class of statement.
@@ -2795,6 +2799,7 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 		}
 		if verdict.Unkept && lr.corrections.exhausted(correctionUnkeptClaim) {
 			lr.emitDiag("unkept-claim-uncorrected", fmt.Sprintf("The reply still says %q after correction, and it did not happen: %s. Delivered as written.", truncForLog(verdict.Claim, 120), verdict.Why))
+			verdict.settle("unkept-claim-uncorrected")
 		}
 		// Machinery is a separate finding with a separate budget, because it
 		// is a separate failure: the reply is usually TRUE and merely says
@@ -2806,6 +2811,7 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 				Debug("[agent_loop] turn judge: reply explains machinery (%q); re-prompting: correction %d/%d",
 					truncForLog(leak, 80), lr.corrections.spend(correctionMachinery), maxCorrectionsPerKind)
 				lr.emitDiag("machinery-corrected", fmt.Sprintf("The reply explained how the work is being run (%q), which nobody asked about. Re-prompted for the same message without it.", truncForLog(leak, 120)))
+				verdict.settle("machinery-corrected")
 				lr.retractRound()
 				lr.history[len(lr.history)-1] = Message{Role: "assistant", Content: lr.rs.resp.Content, Reasoning: lr.rs.resp.Reasoning}
 				lr.history = append(lr.history, Message{
@@ -2818,6 +2824,7 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 			}
 			if lr.corrections.exhausted(correctionMachinery) {
 				lr.emitDiag("machinery-uncorrected", fmt.Sprintf("The reply still explains how the work is run (%q) after correction. Delivered as written.", truncForLog(leak, 120)))
+				verdict.settle("machinery-uncorrected")
 			}
 		}
 	}
@@ -3937,6 +3944,21 @@ func (lr *loopRun) settleToolRound() loopAction {
 			label += " [FAILED: " + toolFailureNote(result) + "]"
 		}
 		lr.turnToolCalls = append(lr.turnToolCalls, label)
+		// A call that SUCCEEDED at changing stored state. Declared by the tool
+		// (CapWrite), not guessed from its name, so the judge's pre-filter can
+		// look at every turn that deleted or wrote something.
+		if !(w.index < len(lr.rs.results) && lr.rs.results[w.index].IsError) {
+			for _, td := range lr.tools {
+				if td.Tool.Name == w.tc.Name {
+					for _, c := range td.Tool.Caps {
+						if c == CapWrite {
+							lr.turnChangedState = true
+						}
+					}
+					break
+				}
+			}
+		}
 		// And what it RETURNED, which is the half both judges were missing.
 		// The label answers "what ran"; on an authoring turn every fact in the
 		// reply comes out of the result, and a judge shown only labels cannot

@@ -59,6 +59,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 			Subtitle: "What this deployment publishes, and who may take it.",
 			Detail: "A tool reaches other people on three rungs: its owner's alone, shared by them with people they name, or published here to the deployment catalog. This is the third — the one an admin grants.\n\n" +
 				"Published is not loaded. Each user opts in from their own Extensions catalog and picks which of their agents load it, which is their business and not shown here: an admin who wants somebody to stop using a tool takes away the permission rather than the preference. Access does that for one person; Unshare does it for everybody.\n\n" +
+				"What users run is the VERSION you approved, not the owner's current copy. The owner's edits reach only their own agents until they request an update, which arrives in Pending promotions with the changes to review; approving makes it the next version for everyone. History keeps the last five versions, and any of them can be rolled back to.\n\n" +
 				"Publish a tool, set its access, and inspect what it actually does on the Tools page.",
 			Body: ui.Table{
 				Source: "api/global-tools",
@@ -66,12 +67,44 @@ func (a *AdminApp) governanceSections() []ui.Section {
 				Columns: []ui.Col{
 					{Field: "tool", Flex: 1},
 					{Field: "owner", Flex: 0, Label: "Published by"},
+					{Field: "version", Flex: 0, Label: "Version", Mute: true},
+					{Field: "approved_at", Format: "reltime", Flex: 0, Mute: true, Label: "Approved"},
 					{Field: "access", Flex: 2, Mute: true, Label: "May be taken by"},
 					{Field: "restricted", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "Restricted", Color: "info"},
 					}},
+					{Field: "update_requested", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "Update requested", Color: "warning"},
+					}},
 				},
 				RowActions: []ui.RowAction{
+					// The owner's requested next version, against the one users
+					// run now. Approve or Deny it in Pending promotions below.
+					ui.ExpandIf("Review update", "update_requested", "", ui.RecordView{
+						Pairs: []ui.DisplayPair{{Label: "Requested changes", Field: "review", Block: true}},
+					}),
+					// The versions this one replaced, each with what rolling
+					// back to it would change.
+					ui.ExpandIf("History", "has_history", "", ui.Table{
+						Source: "api/global-tools?history={tool}",
+						RowKey: "past_version",
+						Columns: []ui.Col{
+							{Field: "label", Flex: 0, Label: "Version"},
+							{Field: "approved_at", Format: "reltime", Flex: 0, Mute: true, Label: "Approved"},
+							{Field: "approved_by", Flex: 1, Mute: true, Label: "By"},
+						},
+						RowActions: []ui.RowAction{
+							ui.Expand("Changes", ui.RecordView{
+								Pairs: []ui.DisplayPair{{Label: "Rolling back to this version changes", Field: "changes", Block: true}},
+							}),
+							{Type: "button", Label: "Roll back",
+								PostTo:     "api/global-tools?action=rollback&tool={tool}&owner={owner}&to={past_version}",
+								Method:     "POST",
+								Confirm:    "Make this version the one every user who added the tool runs? The current version is kept in the history.",
+								Invalidate: []string{"api/global-tools"}},
+						},
+						EmptyText: "No earlier versions kept.",
+					}),
 					// The same door the Tools page opens, rendered where the
 					// question is asked. Who may take a published tool is the
 					// governance question about it, so answering it here saves
@@ -202,7 +235,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 		{
 			Title:    "Pending promotions",
 			Subtitle: "Users' bottom-up requests to publish their own resources deployment-wide.",
-			Detail: "Approve a tool request to Share it to the global catalog, where each user then opts in from their Extensions page.\n\n" +
+			Detail: "Approve a tool request to Share it to the global catalog, where each user then opts in from their Extensions page. A tool request marked Update asks for a published tool's next version: Review shows what changes, and approving it changes what every user who added the tool runs. What you approve is the definition as it was when the owner asked.\n\n" +
 				"Approve an app request to share it with every signed-in user: each gets their own copy, and its scripts run with the owner's credentials, which is why an admin sees it first.\n\n" +
 				"Approve a public-link request to mint the app's anonymous link: anyone who has the URL then runs its data sources as the owner, with no login.\n\n" +
 				"A CREDENTIAL request is the one that is not a widening. The requester is handing their key to the deployment: the secret moves into the global namespace, the credential lands secured so that it has no user list and is reachable only through the tools bound to it, and the requester becomes an ordinary user of it. They cannot take it back afterwards — read the note and be sure the deployment should own this key, because the alternative to keeping it is deleting it.\n\n" +
@@ -235,11 +268,19 @@ func (a *AdminApp) governanceSections() []ui.Section {
 						{Value: "pipeline", Label: "Pipeline", Color: "info"},
 						{Value: "machine", Label: "Machine", Color: "info"},
 					}},
+					{Field: "update", Flex: 0, Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "Update", Color: "warning"},
+					}},
 					{Field: "name", Flex: 1},
 					{Field: "note", Flex: 2, Mute: true},
 					{Field: "created", Format: "reltime", Flex: 0, Mute: true},
 				},
 				RowActions: []ui.RowAction{
+					// What approving a tool request would publish: a diff
+					// against the published version, or the whole new tool.
+					ui.ExpandIf("Review", "review", "", ui.RecordView{
+						Pairs: []ui.DisplayPair{{Label: "What approving publishes", Field: "review", Block: true}},
+					}),
 					{Type: "button", Label: "Approve",
 						PostTo:  "api/promotions?action=approve&id={id}",
 						Method:  "POST",
@@ -247,7 +288,7 @@ func (a *AdminApp) governanceSections() []ui.Section {
 						// Approving a tool promotion shares it deployment-wide
 						// — which is a badge on that tool's row two sections
 						// down, in the table this queue exists to feed.
-						Invalidate: []string{"api/persistent-tools"}},
+						Invalidate: []string{"api/persistent-tools", "api/global-tools"}},
 					{Type: "button", Label: "Deny",
 						PostTo:  "api/promotions?action=deny&id={id}",
 						Method:  "POST",

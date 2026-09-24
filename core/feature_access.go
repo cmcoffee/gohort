@@ -220,9 +220,9 @@ func ListExternalTargets(db Database, user string) []ExternalTarget {
 // surfaces. Derived lazily (sync.Once) because app agents register in each
 // app's init() and the fold must run after all of them.
 
-// AppFeatureKey maps an app-agent OwningApp label to its feature key
+// appFeatureKey maps an app-agent OwningApp label to its feature key
 // ("Servitor" → "app:servitor"). Empty label → "".
-func AppFeatureKey(owningApp string) string {
+func appFeatureKey(owningApp string) string {
 	slug := strings.ToLower(strings.TrimSpace(owningApp))
 	slug = strings.ReplaceAll(slug, " ", "-")
 	if slug == "" {
@@ -239,7 +239,7 @@ func foldAppAgentFeatures() {
 	appFeatureFoldOnce.Do(func() {
 		seen := map[string]bool{}
 		for _, s := range appagents.AppAgents() {
-			k := AppFeatureKey(s.OwningApp)
+			k := appFeatureKey(s.OwningApp)
 			if k == "" || seen[k] {
 				continue
 			}
@@ -259,7 +259,7 @@ func foldAppAgentFeatures() {
 func AppFeatureKeyForAgent(agentID string) string {
 	if s, ok := appagents.AppAgentByID(strings.TrimSpace(agentID)); ok {
 		foldAppAgentFeatures()
-		return AppFeatureKey(s.OwningApp)
+		return appFeatureKey(s.OwningApp)
 	}
 	return ""
 }

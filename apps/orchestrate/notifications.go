@@ -242,36 +242,39 @@ func noticeSourceName(udb Database, agentID string) string {
 // happened.
 const notifySent = "Sent."
 
-// noteWithheldCollections tells an agent's OWNER that a corpus their shared
-// agent carries did not reach the person running it.
+// notifyMissingDependencies tells an agent's OWNER that a run by somebody else
+// found the agent referencing things it can no longer reach.
 //
 // To the owner, because they are the only one who can do anything about it:
-// promote the collection, share it with that person, or detach it. The person
-// running the agent cannot, and telling them would be reporting somebody else's
-// configuration at them.
+// remove the reference, or ask whoever shared the thing to share it again. The
+// person running the agent cannot, and telling them would be reporting somebody
+// else's configuration at them. An owner running their own agent is not told
+// here: the session's breadcrumb is in front of them, and the take-back that
+// caused it already sent them a notice.
+//
+// This replaces a collections-only notice from the search path, written when a
+// shared agent's collections resolved as the RUNNER and were withheld for being
+// private to the owner. They resolve as the owner now, so the only way one is
+// withheld is the one every kind shares: its owner took it back or deleted it.
 //
 // Folded per (owner, agent) by the notice's own fingerprint, so an agent run
 // hourly by three people is one row with a count rather than a stream. The body
-// names the collections, because "a collection was withheld" is a support
-// ticket and "Runbooks was withheld" is something to act on.
-func noteWithheldCollections(owner, runBy, agentID string, ids []string) {
-	if orchRef == nil || strings.TrimSpace(owner) == "" || owner == runBy || len(ids) == 0 {
+// names the things, because "something was missing" is a support ticket and
+// "Runbooks was missing" is something to act on.
+func notifyMissingDependencies(owner, runBy, agentID string, refs []missingRef) {
+	if orchRef == nil || strings.TrimSpace(owner) == "" || owner == runBy || len(refs) == 0 {
 		return
 	}
-	names := make([]string, 0, len(ids))
-	for _, id := range ids {
-		if c, ok := LoadCollection(UserDB(CollectionsDB(), owner), owner, id); ok && strings.TrimSpace(c.Name) != "" {
-			names = append(names, c.Name)
-			continue
-		}
-		names = append(names, id)
+	names := make([]string, 0, len(refs))
+	for _, r := range refs {
+		names = append(names, "\""+r.Name+"\"")
 	}
 	orchRef.notify(owner, notices.Notice{
 		Agent: agentID,
 		Kind:  notices.KindStopped,
-		Title: "A shared agent could not use " + strings.Join(names, ", "),
-		Body: "Somebody else ran an agent you shared, and these collections are private to you, so the agent answered without them. " +
-			"Collections no longer travel with a shared agent: the person running it sees a corpus only if it is shared with them too, or with the whole deployment. " +
-			"Share the collection from its page, ask an administrator to widen it, or detach it from the agent if it was not meant to be part of what you handed over.",
+		Title: "An agent you shared ran without " + strings.Join(names, ", "),
+		Body: "Somebody else ran this agent, and it references " + missingRefList(refs) +
+			", which it can no longer reach: each was taken back by whoever shared it, or deleted. The agent answered without them. " +
+			"Remove them from the agent's Tools, Skills or Knowledge, or ask whoever shared them to share them again.",
 	})
 }

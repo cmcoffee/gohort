@@ -493,7 +493,10 @@
         if (act.compact) classes += ' compact';
         if (act.variant) classes += ' ' + act.variant;
         var btn = el('button', {class: classes, onclick: async function() {
-          if (act.confirm && !(await window.uiConfirm(act.confirm))) return;
+          // A row may carry its own prompt (confirm_field), for a question
+          // whose honest answer differs from row to row.
+          var ask = (act.confirm_field && rec[act.confirm_field]) || act.confirm;
+          if (ask && !(await window.uiConfirm(ask))) return;
           // Method="client" — hand off to an app-registered browser handler
           // (window.uiRegisterClientAction), passing the row record + a reload
           // callback. Lets a row button run custom UI (e.g. a modal that shows a
@@ -1128,7 +1131,10 @@
     // --- attach mode: selected-as-pills + "+ Add" reveal-list ---
     function renderAttach(options, selected, persist) {
       if (cfg.intro) wrap.appendChild(el('div', {class: 'ui-cp-intro', text: cfg.intro}));
-      if (!options.length) {
+      // Nothing to offer AND nothing selected is the only empty state. A
+      // selection whose options have all gone still has to be shown, or the
+      // record keeps values nobody can see or remove.
+      if (!options.length && !selected.length) {
         wrap.appendChild(el('div', {class: 'ui-cp-empty', text: cfg.empty_text || '(nothing to show)'}));
         return;
       }
@@ -1166,7 +1172,23 @@
         if (!vals.length) { pills.appendChild(el('span', {class: 'ui-cp-none', text: 'None selected yet.'})); return; }
         vals.forEach(function(v){
           var opt = byVal[v];
-          var pill = el('span', {class: 'ui-cp-pill'}, [(opt && labelOf(opt)) || v]);
+          if (!opt) {
+            // Selected, but no longer among the options: deleted, or no
+            // longer reachable by this viewer. Said as such, by its last known
+            // name when the caller supplied one (cfg.missing_labels), rather
+            // than as a bare stored value that reads like a glitch.
+            var gone = el('span', {
+              class: 'ui-cp-pill ui-cp-pill-missing',
+              title: cfg.missing_help || 'Still selected, but no longer available to choose. Remove it to clear it.'
+            }, [(cfg.missing_labels && cfg.missing_labels[v]) || v,
+                el('span', {class: 'ui-cp-pill-note', text: cfg.missing_text || 'no longer available'})]);
+            var gx = el('span', {class: 'ui-cp-pill-x', title: 'Remove', text: '×'});
+            gx.addEventListener('click', function(){ toggle(v, false); });
+            gone.appendChild(gx);
+            pills.appendChild(gone);
+            return;
+          }
+          var pill = el('span', {class: 'ui-cp-pill'}, [labelOf(opt)]);
           if (cfg.flag_field) {
             // Default OFF, and it says which state it is in rather than only
             // which state it can be put into: a control that reads "make
@@ -1215,7 +1237,11 @@
         if (!open) return;
         listWrap.innerHTML = '';
         var avail = pool.filter(function(o){ return !isSel[valueOf(o)]; });
-        if (!avail.length) { listWrap.appendChild(el('div', {class: 'ui-cp-empty', text: 'Everything is added.'})); return; }
+        if (!avail.length) {
+          listWrap.appendChild(el('div', {class: 'ui-cp-empty',
+            text: options.length ? 'Everything is added.' : (cfg.empty_text || '(nothing to show)')}));
+          return;
+        }
         if (cfg.group_by_field) {
           var order = [], groups = {};
           avail.forEach(function(o){ var g = o[cfg.group_by_field] || ''; if (!groups[g]) { groups[g] = []; order.push(g); } groups[g].push(o); });

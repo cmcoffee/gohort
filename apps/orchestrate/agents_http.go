@@ -199,6 +199,11 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 			}
 		}
 		if fromToolsModal {
+			// Names the modal had no checkbox for survive its save; only an
+			// explicit Remove (api/agents/<id>/missing) takes one off.
+			if existing, ok := loadAgent(udb, req.ID); ok && req.ID != "" {
+				req.AllowedTools = keepUnlistedTools(existing.AllowedTools, req.AllowedTools, workerToolCatalogNames(user))
+			}
 			curateToolsFromModal(T.DB, user, &req)
 		}
 		// Reach that needs an administrator (everyone, inbound MCP) changes
@@ -617,6 +622,10 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 	if strings.HasPrefix(action, "knowledge/sources/") {
 		reportID := strings.TrimPrefix(action, "knowledge/sources/")
 		T.handleAgentKnowledgeSourceDelete(w, r, user, id, reportID)
+		return
+	}
+	if action == "missing" {
+		T.handleAgentMissing(w, r, user, udb, id)
 		return
 	}
 	if action == "reach" {

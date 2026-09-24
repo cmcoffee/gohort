@@ -46,9 +46,13 @@ func (t *chatTurn) guardrailInputDirective(candidate string) (directive string, 
 		// A pre_input hard block is the quietest failure of all — no reply was
 		// ever generated, so there is not even a turn for the owner to read back.
 		t.recordGuardrailBlock(rule, guardHookPreInput, reason)
+		t.recordGuardrailFiring(rule, guardHookPreInput, reason, candidate, firingActed)
 		return "", true
 	}
 	t.turnDiag("guardrail-input", fmt.Sprintf("Guardrail %q flagged the incoming request; a steer-away directive was injected before round 1: %s", rule, reason))
+	// A steer is a firing too, and the one most likely to be a false positive
+	// nobody notices: the reply just comes out oddly evasive.
+	t.recordGuardrailFiring(rule, guardHookPreInput, reason, candidate, firingSteered)
 	Log("[orchestrate.guardrail] agent=%s pre_input directive injected (rule=%q)", t.agent.ID, rule)
 	return guardrailInputMessage(rule, reason), false
 }

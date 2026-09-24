@@ -11,6 +11,7 @@ package peershare
 // and nothing appears for them.
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -105,5 +106,33 @@ func TestSharingWithYourselfIsNotAShare(t *testing.T) {
 	}
 	if got := List(db, "shared_things", "bob"); len(got) != 1 {
 		t.Errorf("a real recipient was lost alongside the blanks: %+v", got)
+	}
+}
+
+// Every path that narrows a share passes through the index write, so that is
+// where the people it just stopped reaching are named, once, whoever did it.
+func TestDroppingRecipientsIsReported(t *testing.T) {
+	db := newStore()
+	var got []string
+	OnDropped("idx", func(owner, id string, dropped []string) {
+		got = append(got, owner+"/"+id+":"+strings.Join(dropped, ","))
+	})
+	t.Cleanup(func() { OnDropped("idx", nil) })
+
+	SetRecipients(db, "idx", "alice", "r1", []string{"bob", "carol", "dana"})
+	if len(got) != 0 {
+		t.Fatalf("a share that only added people reported drops: %v", got)
+	}
+	SetRecipients(db, "idx", "alice", "r1", []string{"carol"})
+	DropAll(db, "idx", "alice", "r1")
+	want := []string{"alice/r1:bob,dana", "alice/r1:carol"}
+	if strings.Join(got, ";") != strings.Join(want, ";") {
+		t.Errorf("drops = %v, want %v", got, want)
+	}
+	// Another table's writes are not this callback's business.
+	SetRecipients(db, "other", "alice", "r2", []string{"bob"})
+	DropAll(db, "other", "alice", "r2")
+	if len(got) != 2 {
+		t.Errorf("a drop on another index reached this one's callback: %v", got)
 	}
 }

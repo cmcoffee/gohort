@@ -161,6 +161,9 @@ func commitmentTurnNote(db Database, sessionID string) string {
 // the instruction sits closest to where the model starts writing.
 func turnNotes(sess *ToolSession, db Database, sessionID, userMessage string) string {
 	var parts []string
+	if n := dependencyTurnNote(sess); n != "" {
+		parts = append(parts, n)
+	}
 	if n := imageSpaceNote(sess, userMessage); n != "" {
 		parts = append(parts, n)
 	}

@@ -213,6 +213,8 @@ func (t *chatTurn) guardrailAppealToolDef() AgentToolDef {
 				_, reason := firstViolation(verdicts)
 				t.turnDiag("guardrail-appeal-failed", fmt.Sprintf(
 					"Appeal against %q was re-checked with the verified quote (%d user message(s)) and still violates: %s", offer.Rule, n, reason))
+				// The re-check is the block's confirming reading, and it agreed.
+				t.settleGuardrailFiring(offer.Rule, offer.Hook, firingReading{Verdict: "VIOLATE", Why: reason}, false, "appealed; the re-check upheld the block")
 				Log("[orchestrate.guardrail] agent=%s appeal REJECTED (rule=%q, matches=%d)", t.agent.ID, offer.Rule, n)
 				return "Re-checked with your quote, and it still breaks the rule. The block stands: comply with it.", nil
 			}
@@ -229,6 +231,10 @@ func (t *chatTurn) guardrailAppealToolDef() AgentToolDef {
 				"Guardrail %q blocked a %s check, and the agent appealed: it cited %q, which the framework found in %d user message(s). Re-checked with that finding, the rule reads as satisfied and the block was lifted for the rest of this turn.",
 				offer.Rule, offer.Hook, quote, n))
 			Log("[orchestrate.guardrail] agent=%s appeal UPHELD (rule=%q, matches=%d)", t.agent.ID, offer.Rule, n)
+			// The one outcome where the block is known to have been wrong, so the
+			// firing it disputed is marked overturned.
+			t.settleGuardrailFiring(offer.Rule, offer.Hook, firingReading{Verdict: "COMPLY",
+				Why: fmt.Sprintf("re-checked with the user's own words cited (%d message(s)), the rule reads as satisfied", n)}, true, "appealed; the block was lifted")
 			return fmt.Sprintf("Appeal upheld: %q appears in %d of the user's messages, so the rule's condition is met. Go ahead with what you were doing.", quote, n), nil
 		},
 	}

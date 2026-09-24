@@ -1160,6 +1160,10 @@ func init_database() {
 	// not an invariant.
 	RootDB = global.db
 	SetErrTable(global.db.Table("fuzz_errors"))
+	// Published tools run from approved releases; a deployment from before
+	// releases gets one per published tool (its definition now, as version 1)
+	// before anything resolves an adoption. Once, marker-guarded.
+	MigrateToolReleases(global.db)
 	global.cache = global.db.Sub("cache")
 
 	// Install the operator-configured deployment timezone as the process

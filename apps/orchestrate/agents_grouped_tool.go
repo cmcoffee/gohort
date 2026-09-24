@@ -1340,6 +1340,9 @@ func (t *chatTurn) agentsRunAction(args map[string]any) (string, error) {
 		GuardrailReject:     subTurn.guardrailEnforcer().Reject,
 		GuardrailDeclines:   subTurn.agent.GuardrailDeclines,
 		OnStep:              stepNotice,
+		// The sub-agent's own missing references, which the parent's note
+		// does not cover: see dependencyTurnNote.
+		TurnNotes: func(string) string { return dependencyTurnNote(subSess) },
 		// Custom-tool resolution, same as the channel/dispatch + web paths:
 		// lazyToolFallback resolves a direct call to a has-args custom tool;
 		// dynamicNewTempTools surfaces tools loaded via load_tool this turn.

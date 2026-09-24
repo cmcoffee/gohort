@@ -320,8 +320,28 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 		}
 		switch r.Method {
 		case http.MethodGet:
+			// A tool request carries what approving it would publish: the
+			// definition the owner's request froze, as a diff against the
+			// published version for an update, whole for a first publish.
+			type reqRow struct {
+				PromotionRequest
+				Update bool   `json:"update,omitempty"`
+				Review string `json:"review,omitempty"`
+			}
+			releases := map[string]ToolRelease{}
+			for _, rel := range ToolReleases(a.db) {
+				releases[rel.Name] = rel
+			}
+			rows := []reqRow{}
+			for _, req := range ListPromotionRequests(a.db, true) { // pending only — the actionable queue
+				row := reqRow{PromotionRequest: req}
+				if req.Kind == "tool" {
+					row.Update, row.Review = toolRequestReview(a.db, releases, req.Owner, req.Name)
+				}
+				rows = append(rows, row)
+			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(ListPromotionRequests(a.db, true)) // pending only — the actionable queue
+			json.NewEncoder(w).Encode(rows)
 		case http.MethodPost:
 			action := r.URL.Query().Get("action")
 			id := strings.TrimSpace(r.URL.Query().Get("id"))
@@ -373,8 +393,45 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 		if !a.requireAdmin(w, r) {
 			return
 		}
+		releases := map[string]ToolRelease{}
+		for _, rel := range ToolReleases(a.db) {
+			releases[rel.Name] = rel
+		}
 		switch r.Method {
 		case http.MethodGet:
+			// ?history=<tool>: the versions a release keeps to roll back to,
+			// each with what rolling back to it would change.
+			if name := strings.TrimSpace(r.URL.Query().Get("history")); name != "" {
+				type histRow struct {
+					Tool        string `json:"tool"`
+					Owner       string `json:"owner"`
+					PastVersion int    `json:"past_version"`
+					Label       string `json:"label"`
+					ApprovedAt  string `json:"approved_at,omitempty"`
+					ApprovedBy  string `json:"approved_by,omitempty"`
+					Changes     string `json:"changes"`
+				}
+				hist := []histRow{}
+				if rel, ok := releases[name]; ok {
+					for _, h := range rel.History {
+						hr := histRow{
+							Tool: rel.Name, Owner: rel.Owner, PastVersion: h.Version,
+							Label: fmt.Sprintf("v%d", h.Version), ApprovedBy: h.ApprovedBy,
+							Changes: rel.Tool.DefinitionDiff(h.Tool),
+						}
+						if !h.ApprovedAt.IsZero() {
+							hr.ApprovedAt = h.ApprovedAt.UTC().Format("2006-01-02T15:04:05Z")
+						}
+						if hr.Changes == "" {
+							hr.Changes = "The same definition as the current version."
+						}
+						hist = append(hist, hr)
+					}
+				}
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(hist)
+				return
+			}
 			type row struct {
 				ID     string `json:"id"`
 				Tool   string `json:"tool"`
@@ -383,6 +440,17 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 				// Restricted drives the badge: "every user" and "these three"
 				// are different grants and should not read the same.
 				Restricted bool `json:"restricted"`
+				// Version is the approved version adopters run; the owner's
+				// working copy may have moved on, which only an approved
+				// update carries to them.
+				Version    string `json:"version"`
+				ApprovedAt string `json:"approved_at,omitempty"`
+				HasHistory bool   `json:"has_history"`
+				// UpdateRequested: the owner asked for their current copy to
+				// become the next version; Review is the diff to approve or
+				// deny in Pending promotions.
+				UpdateRequested bool   `json:"update_requested"`
+				Review          string `json:"review,omitempty"`
 			}
 			rows := []row{}
 			// Who published each one. A catalog entry with no name behind it
@@ -393,14 +461,48 @@ func (a *AdminApp) registerUsersRoutes(sub *http.ServeMux) {
 				if len(p.AllowedUsers) > 0 {
 					access, restricted = strings.Join(p.AllowedUsers, ", "), true
 				}
-				rows = append(rows, row{
+				rw := row{
 					ID: p.Tool.Name, Tool: p.Tool.Name, Owner: owners[p.Tool.Name],
 					Access: access, Restricted: restricted,
-				})
+				}
+				if rel, ok := releases[p.Tool.Name]; ok {
+					rw.Version = fmt.Sprintf("v%d", rel.Version)
+					rw.HasHistory = len(rel.History) > 0
+					if !rel.ApprovedAt.IsZero() {
+						rw.ApprovedAt = rel.ApprovedAt.UTC().Format("2006-01-02T15:04:05Z")
+					}
+					if PendingPromotion(a.db, rel.Owner, "tool", rel.Name) {
+						rw.UpdateRequested, rw.Review = toolRequestReview(a.db, releases, rel.Owner, rel.Name)
+					}
+				}
+				rows = append(rows, rw)
 			}
 			sort.Slice(rows, func(i, j int) bool { return rows[i].Tool < rows[j].Tool })
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(rows)
+		case http.MethodPost:
+			// ?action=rollback&tool=&owner=&to=<version>: make a kept version
+			// the one adopters run. The one it replaces is kept in turn.
+			if r.URL.Query().Get("action") != "rollback" {
+				http.Error(w, "action must be rollback", http.StatusBadRequest)
+				return
+			}
+			name := strings.TrimSpace(r.URL.Query().Get("tool"))
+			rel, ok := releases[name]
+			if !ok || rel.Owner != strings.TrimSpace(r.URL.Query().Get("owner")) {
+				http.Error(w, "no published tool "+name+" of that owner's", http.StatusNotFound)
+				return
+			}
+			var to int
+			if _, err := fmt.Sscanf(r.URL.Query().Get("to"), "%d", &to); err != nil {
+				http.Error(w, "to must be a version number", http.StatusBadRequest)
+				return
+			}
+			if err := rel.RollBack(a.db, to, AuthCurrentUser(r)); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
@@ -850,4 +952,31 @@ func describeLend(c SecureCredential) string {
 		parts = append(parts, strings.Join(c.SharedReadWrite, ", ")+" (writes as owner)")
 	}
 	return strings.Join(parts, "; ")
+}
+
+// toolRequestReview is what approving owner's pending request for tool name
+// would publish, for the reviewer: whether it is an update of a published
+// tool, and the text to read (a diff against the published version, or the
+// whole definition for a first publish).
+func toolRequestReview(db Database, releases map[string]ToolRelease, owner, name string) (update bool, review string) {
+	rel, published := releases[name]
+	if published && rel.Owner != owner {
+		return false, fmt.Sprintf("The deployment already publishes a tool called %s (%s's), so approving this is refused until one of them is renamed.", name, rel.Owner)
+	}
+	probe := rel
+	if !published {
+		probe = ToolRelease{Owner: owner, Name: name}
+	}
+	want, ok := probe.Requested(db)
+	if !ok {
+		return published, ""
+	}
+	if published {
+		d := rel.Tool.DefinitionDiff(want)
+		if d == "" {
+			d = "No change from the published version."
+		}
+		return true, fmt.Sprintf("Update to %s's published tool, now at version %d. Approving makes this the next version for everyone who added it.\n\n%s", owner, rel.Version, d)
+	}
+	return false, "A new tool for the catalog. Its whole definition:\n\n" + (TempTool{}).DefinitionDiff(want)
 }

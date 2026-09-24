@@ -938,12 +938,24 @@ func (T *OrchestrateApp) handleSkillsList(w http.ResponseWriter, r *http.Request
 		Description string `json:"description,omitempty"`
 		Disabled    bool   `json:"disabled,omitempty"`
 	}
+	// Every skill the runtime would resolve for this user's agents: their own,
+	// what colleagues shared with them, what the deployment publishes. The
+	// picker used to offer their own only, so an attached shared skill had
+	// no option behind it and rendered as a bare id; now a selected skill with
+	// no option is exactly one that no longer reaches them.
 	var list []out
-	for _, sk := range LoadSkills(udb, user) {
+	for _, sk := range AvailableSkills(udb, user) {
+		desc := sk.Description
+		switch who := strings.TrimSpace(sk.SharedFrom); {
+		case who != "":
+			desc = strings.TrimSpace("Shared by " + who + " - " + desc)
+		case sk.Owner != "" && sk.Owner != user:
+			desc = strings.TrimSpace("Published by " + sk.Owner + " - " + desc)
+		}
 		list = append(list, out{
 			ID:          sk.ID,
 			Name:        sk.Name,
-			Description: sk.Description,
+			Description: strings.TrimSuffix(desc, " -"),
 			Disabled:    sk.Disabled,
 		})
 	}

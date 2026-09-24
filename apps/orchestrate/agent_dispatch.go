@@ -863,7 +863,7 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 		OnStep:           func(info StepInfo) { telem.record(info); liveRun.SetProgress(info.Round, info.ToolCalls) },
 		TurnNotes:        func(user string) string { return turnNotes(subSess, runtimeDB, subSessID, user) },
 		CapturePrompt:    target.CapturePrompt,
-		TurnClaimJudge:   T.turnClaimJudge(ctx),
+		TurnClaimJudge:   subTurn.claimJudge(ctx),
 		PriorReports:     func() []string { return dispatchPriorReports(target, subSessID, runtimeDB) },
 		// And whether the reply KNOWS what it asserts. This site had the claim
 		// judge and not this one — an inconsistency rather than a decision, and
@@ -1907,7 +1907,7 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	// with no filenames anywhere in it. See imageSpaceNote.
 	loopCfg.TurnNotes = func(user string) string { return turnNotes(subSess, runtimeDB, subSessionID, user) }
 	// Last look before the reply reaches the channel. See turn_judge.go.
-	loopCfg.TurnClaimJudge = T.turnClaimJudge(ctx)
+	loopCfg.TurnClaimJudge = subTurn.claimJudge(ctx)
 	loopCfg.PriorReports = func() []string {
 		return append(priorReportsFrom(priorSession.Messages), dispatchPriorReports(target, subSessionID, runtimeDB)...)
 	}

@@ -20,6 +20,7 @@ package peershare
 import (
 	"sort"
 	"strings"
+	"sync"
 )
 
 // Store is the slice of a key/value database this leaf uses. core's Database
@@ -61,6 +62,7 @@ func SetRecipients(db Store, indexTable, owner, id string, recipients []string) 
 		}
 	}
 	suffix := "\x00" + owner + "\x00" + id
+	var dropped []string
 	for _, k := range db.Keys(indexTable) {
 		if !strings.HasSuffix(k, suffix) {
 			continue
@@ -71,10 +73,45 @@ func SetRecipients(db Store, indexTable, owner, id string, recipients []string) 
 			continue
 		}
 		db.Unset(indexTable, k)
+		dropped = append(dropped, recipient)
 	}
 	for recipient := range want {
 		db.Set(indexTable, key(recipient, owner, id), true)
 	}
+	if len(dropped) > 0 {
+		dropMu.RLock()
+		fn := onDropped[indexTable]
+		dropMu.RUnlock()
+		if fn != nil {
+			sort.Strings(dropped)
+			fn(owner, id, dropped)
+		}
+	}
+}
+
+var (
+	dropMu    sync.RWMutex
+	onDropped = map[string]func(owner, id string, dropped []string){}
+)
+
+// OnDropped registers what to do when a record's index loses recipients: the
+// people a share just stopped reaching, by whatever path took them off.
+//
+// Here because this is the one write every path that narrows a share goes
+// through. A kind whose recipient list has several setters (a page, the share
+// ledger, a later cleanup) would otherwise need its "tell them" at each one,
+// and the setter nobody remembered is the one that takes a thing away in
+// silence. Called after the index is written, with the record already saved,
+// so the callback reads the state the owner left behind. Storage stays the only
+// thing this package knows: what the drop MEANS is the registering kind's.
+func OnDropped(indexTable string, fn func(owner, id string, dropped []string)) {
+	dropMu.Lock()
+	defer dropMu.Unlock()
+	if fn == nil {
+		delete(onDropped, indexTable)
+		return
+	}
+	onDropped[indexTable] = fn
 }
 
 // List returns every record shared WITH this recipient.

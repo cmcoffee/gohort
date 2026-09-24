@@ -203,3 +203,126 @@ func TestAKindWithNoManifestAsksNothing(t *testing.T) {
 		t.Errorf("an unregistered kind returned %v", got)
 	}
 }
+
+// hooks swaps the three wiring points for the length of a test.
+func hooks(t *testing.T, find func(kind, owner, id string, users []string) []Dependent) *[]string {
+	t.Helper()
+	savedFind, savedNotify, savedGone := FindDependents, NotifyRecipient, OnWithdrawn
+	t.Cleanup(func() { FindDependents, NotifyRecipient, OnWithdrawn = savedFind, savedNotify, savedGone })
+	FindDependents = find
+	OnWithdrawn = nil
+	var sent []string
+	NotifyRecipient = func(recipient, title, intro string, needs []string) {
+		sent = append(sent, recipient+"|"+title+"|"+intro+"|"+strings.Join(needs, " "))
+	}
+	return &sent
+}
+
+// The owner sees who relies on a grant before taking it back: filled on their
+// side, for named recipients and for everybody-at-once alike.
+func TestTheOwnersViewNamesWhoReliesOnEachGrant(t *testing.T) {
+	reset(t)
+	var asked [][]string
+	hooks(t, func(kind, owner, id string, users []string) []Dependent {
+		asked = append(asked, users)
+		if id == "s1" {
+			return []Dependent{{User: "bob", Uses: []string{"Triage"}}}
+		}
+		return nil
+	})
+	Register("skill", Provider{
+		Label: "Skill",
+		Mine: func(owner string) []Grant {
+			return []Grant{
+				{ID: "s1", Name: "Runbook", Recipients: []string{"bob", "carol"}},
+				{ID: "s2", Name: "Tone", Wide: true},
+			}
+		},
+		ToMe: func(user string) []Grant { return []Grant{{ID: "s9", Name: "Theirs", Owner: "dana"}} },
+	})
+	mine := Mine("alice")
+	if len(mine[0].Dependents) != 1 || mine[0].Dependents[0].User != "bob" {
+		t.Errorf("the grant does not say bob's Triage relies on it: %+v", mine[0].Dependents)
+	}
+	// Named recipients are asked about by name; a deployment-wide grant is
+	// asked about everybody (nil).
+	if len(asked) != 2 || strings.Join(asked[0], ",") != "bob,carol" || asked[1] != nil {
+		t.Errorf("wrong people asked about: %#v", asked)
+	}
+	// The recipient's side is not the one deciding anything.
+	if got := ToMe("bob"); got[0].Dependents != nil {
+		t.Errorf("the recipient's view should carry no dependents: %+v", got[0])
+	}
+}
+
+// A kind referenced some other way narrows the question itself.
+func TestAKindCanNarrowItsDependents(t *testing.T) {
+	reset(t)
+	hooks(t, func(kind, owner, id string, users []string) []Dependent {
+		t.Error("the generic finder was asked although the kind answers for itself")
+		return nil
+	})
+	Register("tool", Provider{
+		Label: "Tool",
+		Dependents: func(owner, id string, users []string) []Dependent {
+			return []Dependent{{User: "bob", Uses: []string{"Helper"}}}
+		},
+	})
+	if got := DependentsOf("tool", "alice", "wiki", []string{"bob"}); len(got) != 1 || got[0].Uses[0] != "Helper" {
+		t.Errorf("DependentsOf = %+v", got)
+	}
+}
+
+// Everybody who lost it is told; whoever had something relying on it is told
+// which of their things, and that is what makes the notice wait on them.
+func TestWithdrawnTellsEachPersonAndNamesTheirAgents(t *testing.T) {
+	reset(t)
+	sent := hooks(t, func(kind, owner, id string, users []string) []Dependent {
+		return []Dependent{{User: "bob", Uses: []string{"Triage", "Intake"}}}
+	})
+	var remembered string
+	OnWithdrawn = func(kind, owner, id, name string, deps []Dependent) { remembered = kind + ":" + id + "=" + name }
+	Register("collection", Provider{Label: "Knowledge"})
+
+	Withdrawn("collection", "alice", "c1", "Runbooks", []string{"bob", "carol"})
+	if len(*sent) != 2 {
+		t.Fatalf("want one notice per person who lost it, got %v", *sent)
+	}
+	bob, carol := (*sent)[0], (*sent)[1]
+	if !strings.HasPrefix(bob, "bob|\"Runbooks\" (knowledge) is no longer available|") ||
+		!strings.Contains(bob, "\"Triage\", \"Intake\" use it") || !strings.Contains(bob, "ask alice") {
+		t.Errorf("bob's notice: %s", bob)
+	}
+	if !strings.HasPrefix(carol, "carol|") || !strings.HasSuffix(carol, "|") {
+		t.Errorf("carol relied on nothing, so her notice asks nothing of her: %s", carol)
+	}
+	if remembered != "collection:c1=Runbooks" {
+		t.Errorf("the last name was not handed on: %q", remembered)
+	}
+	if strings.Contains(strings.Join(*sent, ""), "—") {
+		t.Error("user-facing text carries an em-dash")
+	}
+}
+
+// A record that reached everybody is not announced to everybody: only to the
+// people who were actually relying on it.
+func TestWithdrawnFromEverybodyTellsOnlyItsDependents(t *testing.T) {
+	reset(t)
+	sent := hooks(t, func(kind, owner, id string, users []string) []Dependent {
+		if users != nil {
+			t.Errorf("a deployment-wide record should ask about everybody, got %v", users)
+		}
+		return []Dependent{{User: "bob", Uses: []string{"Triage"}}}
+	})
+	Register("skill", Provider{Label: "Skill"})
+	WithdrawnFromEverybody("skill", "alice", "s1", "Runbook")
+	if len(*sent) != 1 || !strings.HasPrefix((*sent)[0], "bob|") {
+		t.Errorf("want bob alone told, got %v", *sent)
+	}
+	// Nobody lost it: nothing is said, and no finder is asked.
+	*sent = nil
+	Withdrawn("skill", "alice", "s1", "Runbook", nil)
+	if len(*sent) != 0 {
+		t.Errorf("an empty take-back said something: %v", *sent)
+	}
+}

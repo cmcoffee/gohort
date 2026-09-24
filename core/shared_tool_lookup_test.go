@@ -26,6 +26,7 @@ func TestFindSharedToolWithOwner(t *testing.T) {
 		Tool: TempTool{Name: "private_helper"},
 	}
 	db.Set("persistent_temp_tools", owner, []PersistentTempTool{shared, private})
+	migrateToolReleases(db) // a published tool is served from its release
 
 	got, gotOwner, ok := FindSharedToolWithOwner(db, "get_top_stories")
 	if !ok {
@@ -71,6 +72,7 @@ func TestSharedToolOwners(t *testing.T) {
 	db.Set("persistent_temp_tools", "bob@example.com", []PersistentTempTool{
 		{Tool: TempTool{Name: "bob_shared"}, Shared: true},
 	})
+	migrateToolReleases(db)
 
 	owners := SharedToolOwners(db)
 	if owners["get_top_stories"] != "alice@example.com" {

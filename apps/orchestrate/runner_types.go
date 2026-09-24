@@ -563,6 +563,12 @@ type chatTurn struct {
 	// loop that tunes the threshold. Populated by renderRecallHints; read under mu.
 	hintedDocIDs   map[string]bool
 	hintedDocIDsMu sync.Mutex
+	// forgetOffered is the set of ids a forget preview listed THIS turn. The
+	// delete that follows checks ids against the saved conversation, which a
+	// tool result from the same turn has not reached yet; without this the
+	// model would be told the id it was just shown was invented.
+	forgetOffered   map[string]bool
+	forgetOfferedMu sync.Mutex
 	// hintedKnowledge counts the curated-corpus documents that same search
 	// found this turn, pointers and auto-promoted bodies together. Read by
 	// corpusToolDefs: a search that came back with documents is direct proof

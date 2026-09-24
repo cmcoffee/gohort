@@ -95,7 +95,8 @@ func TestTheOwnerIsToldWhatWasWithheld(t *testing.T) {
 	}
 	SaveCollection(owner, Collection{ID: "private-1", Owner: "alice", Name: "Runbooks"})
 
-	noteWithheldCollections("alice", "bob", "agent-1", []string{"private-1"})
+	refs := []missingRef{{Kind: "collection", ID: "private-1", Name: "Runbooks"}}
+	notifyMissingDependencies("alice", "bob", "agent-1", refs)
 	list := notices.List(root, "alice")
 	if len(list) != 1 {
 		t.Fatalf("the owner was not told: %+v", list)
@@ -105,11 +106,15 @@ func TestTheOwnerIsToldWhatWasWithheld(t *testing.T) {
 	if !strings.Contains(list[0].Title, "Runbooks") {
 		t.Errorf("the notice does not name the collection: %q", list[0].Title)
 	}
-	if !strings.Contains(list[0].Body, "Share the collection") {
-		t.Errorf("the notice does not say what to do about it: %q", list[0].Body)
+	// What is true now: collections resolve as the OWNER, so the only way one
+	// goes missing is that whoever shared it took it back or deleted it. The
+	// old text blamed the collection being private to the owner.
+	if strings.Contains(list[0].Body, "private to you") || !strings.Contains(list[0].Body, "Remove them") {
+		t.Errorf("the notice does not say what happened and what to do about it: %q", list[0].Body)
 	}
-	// The owner's OWN runs are not an event: nothing was withheld from them.
-	noteWithheldCollections("alice", "alice", "agent-1", []string{"private-1"})
+	// The owner's OWN runs are not an event here: the session's breadcrumb is
+	// in front of them.
+	notifyMissingDependencies("alice", "alice", "agent-1", refs)
 	if got := len(notices.List(root, "alice")); got != 1 {
 		t.Errorf("the owner is being told about their own turns: %d notices", got)
 	}

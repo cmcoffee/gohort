@@ -697,6 +697,13 @@ func SaveSkillAs(db Database, username string, s SkillRecord, reason string) (Sk
 	// keep one who had been removed, and which of those you got would depend on
 	// which half ran.
 	peershare.SetRecipients(store, sharedSkillsTable, username, s.ID, s.AllowedUsers)
+	// Whoever this save took off the share is told, on every path that narrows
+	// it (the skill's own form, the Sharing page, a rollback), because they all
+	// arrive here. Their agents keep the id; without this they find out by
+	// watching one answer without the skill.
+	if hadPrior {
+		shareledger.Withdrawn("skill", username, s.ID, s.Name, recipientsLost(prior.AllowedUsers, s.AllowedUsers))
+	}
 	return s, nil
 }
 
@@ -754,9 +761,21 @@ func RollbackSkill(db Database, username, id, ref string) (SkillRecord, error) {
 // deletion and silently bloat the vector store.
 func DeleteSkill(db Database, username, id string) bool {
 	store := skillStore(db)
+	// Read before it goes: the notice below names it, and after the drop the
+	// id is all anybody has.
+	var gone SkillRecord
+	for _, s := range LoadSkills(db, username) {
+		if s.ID == id {
+			gone = s
+			break
+		}
+	}
 	if !dropSkillRecord(db, username, id) {
 		return false
 	}
+	// Here rather than in dropSkillRecord, which publishing also uses: a skill
+	// moving to the deployment still reaches everybody it reached before.
+	shareledger.Withdrawn("skill", username, id, gone.Name, gone.AllowedUsers)
 	// The history goes with the skill, the way a deleted pipeline's does.
 	revisions.Delete(store, revisions.KindSkill, skillRingKey(username, id))
 	// Drop the skill's corpus chunks from its dedicated store.
@@ -1693,6 +1712,8 @@ func NarrowSkillToOwner(db Database, owner, id string) error {
 		return err
 	}
 	Log("[skills] %q took %q back from the deployment", owner, taken.Name)
+	// Everybody had it; the people whose agents actually named it are told.
+	shareledger.WithdrawnFromEverybody("skill", owner, taken.ID, taken.Name)
 	return nil
 }
 
@@ -1865,6 +1886,18 @@ func dropRecipient(list []string, drop string) []string {
 	out := []string{}
 	for _, u := range list {
 		if u != drop {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+// recipientsLost is who a write takes off a recipient list: in before, not in
+// after.
+func recipientsLost(before, after []string) []string {
+	var out []string
+	for _, u := range before {
+		if u = strings.TrimSpace(u); u != "" && !sliceHas(after, u) {
 			out = append(out, u)
 		}
 	}

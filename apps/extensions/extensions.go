@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -435,6 +436,14 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			// Promotion (publish-to-catalog) request state for this tool.
 			Requested  bool `json:"requested"`   // a promotion request is pending admin review
 			CanRequest bool `json:"can_request"` // eligible to request: not already shared, none pending
+			// A published tool's release: what everybody else runs. The row is
+			// the owner's working copy, which they may have edited since; an
+			// edit reaches nobody until an update is approved.
+			Release         string `json:"release,omitempty"` // "Published v3", "... - your copy differs"
+			Differs         bool   `json:"differs"`           // working copy is not the published version
+			Diff            string `json:"diff,omitempty"`    // published -> working copy, field by field
+			CanUpdate       bool   `json:"can_update"`        // differs, and no update request pending
+			UpdateRequested bool   `json:"update_requested"`  // an update request is pending admin review
 			// Session drafts — tools the assistant authored mid-conversation with
 			// persist=false. They are real and callable for the life of their chat
 			// session, but they vanish when it is deleted, and they were only ever
@@ -470,6 +479,13 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			Group string `json:"group"`
 		}
 		rows := []row{}
+		// The user's own published tools, by name: their releases.
+		released := map[string]ToolRelease{}
+		for _, rel := range ToolReleases(AuthDB()) {
+			if rel.Owner == user {
+				released[rel.Name] = rel
+			}
+		}
 		// Shared rows only: agent-scoped rows live in the same store now, but
 		// they render under "Scoped Tools" (via ListScopedTools), not here.
 		for _, p := range SharedUserTools(AuthDB(), user) {
@@ -486,20 +502,31 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			if !p.LastUsedAt.IsZero() {
 				last = p.LastUsedAt.Format("2006-01-02")
 			}
-			// A shared tool is never "requested" (sharing fulfills the request), so
-			// suppress the badge even if a stale pending row survives.
-			pending := !p.Shared && PendingPromotion(AuthDB(), user, "tool", p.Tool.Name)
-			rows = append(rows, row{
+			// A pending request on an unpublished tool asks to publish it; on a
+			// published one it asks for the working copy to become the next
+			// version. Two different badges.
+			pending := PendingPromotion(AuthDB(), user, "tool", p.Tool.Name)
+			r := row{
 				Key:  "pool:" + p.Tool.Name,
 				Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
 				Credential: p.Tool.Credential, Category: p.Tool.Category,
 				Missing: missing, Shared: p.Shared, LastUsed: last,
 				SharedWith: sharedWithSummary(p.SharedWith),
 				Locked:     p.Tool.Locked, Disabled: p.Tool.Disabled, BuilderOnly: p.Tool.BuilderOnly, BoundOnly: p.Tool.BoundOnly,
-				Requested: pending, CanRequest: !p.Shared && !pending,
+				Requested: !p.Shared && pending, CanRequest: !p.Shared && !pending,
 				Pool: true, Deletable: true, DisableOK: true,
 				Group: "All Agents (Global tools)",
-			})
+			}
+			if rel, ok := released[p.Tool.Name]; ok && p.Shared && rel.ID == p.ID {
+				r.Release = "Published v" + strconv.Itoa(rel.Version)
+				if !rel.Tool.SameDefinition(p.Tool) {
+					r.Differs, r.Diff = true, rel.Tool.DefinitionDiff(p.Tool)
+					r.Release += " - your copy differs"
+				}
+				r.UpdateRequested = pending
+				r.CanUpdate = r.Differs && !pending
+			}
+			rows = append(rows, r)
 		}
 		// Agent-scoped tools after the global pool. Sections read: All Agents ->
 		// Scoped Tools -> legacy session drafts -> Orphaned.
@@ -797,6 +824,18 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			if _, err := PromoteScopedTool(user, agentID, sid, name, target); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		// withdraw — the owner taking their published tool back out of the
+		// deployment catalog. Publishing is an administrator's to grant;
+		// withdrawing is the owner's to do. Everyone who added it stops
+		// loading it, and the last approved version is kept.
+		if action == "withdraw" {
+			if err := SetPersistentTempToolShared(AuthDB(), user, name, false); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
@@ -1295,9 +1334,12 @@ func (o ownedSkill) save() (SkillRecord, error) {
 
 // handlePromotions lets a user request that one of their OWN resources be
 // published deployment-wide (bottom-up escalation — an admin approves it on the
-// Administrator page). Today only tool promotion is wired: the request asks the
-// admin to Share the tool to the global catalog. POST ?kind=tool&name=<tool>
-// with an optional JSON {note}; owner is the session user, who must own the tool.
+// Administrator page). For a tool the request asks the admin to publish it to
+// the global catalog, or, when it is published already, to make the owner's
+// current copy its next version (core freezes that copy as the request is
+// filed, and refuses a request with no change in it). POST
+// ?kind=tool&name=<tool> with an optional JSON {note}; owner is the session
+// user, who must own the tool.
 func (T *Extensions) handlePromotions(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
@@ -1356,6 +1398,9 @@ func (T *Extensions) handlePromotions(w http.ResponseWriter, r *http.Request) {
 // with an adopted flag; POST {name, adopt} adds/removes one from the user's
 // adoption list. Enforcement (which shared tools actually load) lives in the
 // runner + operator-wake tool-load paths.
+//
+// Adding a colleague's tool again when it is already added accepts their
+// update: the copy the user runs becomes the colleague's current definition.
 func (T *Extensions) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
 	if !ok {
@@ -1367,10 +1412,16 @@ func (T *Extensions) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
 		// merely that the name is on their list: an adoption is pinned to the
 		// owner it was taken from.
 		loadedFrom := map[string]string{}
+		taken := map[string]LentTool{} // what the user's agents run, by name
 		for _, p := range AdoptedToolsFor(AuthDB(), user) {
 			loadedFrom[p.Tool.Name] = p.Owner
+			taken[p.Tool.Name] = p
 		}
 		publishedBy := SharedToolOwners(AuthDB())
+		versions := map[string]int{}
+		for _, rel := range ToolReleases(AuthDB()) {
+			versions[rel.Name] = rel.Version
+		}
 		// A tool already in the user's OWN pool (they authored it, and it may be
 		// the one they published) is always active for them, and their own copy
 		// wins over anything taken under the same name. Their own published tool
@@ -1406,6 +1457,14 @@ func (T *Extensions) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
 			// Owner is whose tool this row is, either way: what Add pins the
 			// adoption to.
 			Owner string `json:"owner"`
+			// Version is a published tool's approved version ("v3"); a
+			// colleague's tool has none.
+			Version string `json:"version,omitempty"`
+			// UpdateAvailable: the user took a colleague's tool, which runs as
+			// the copy they took, and the colleague has changed it since. Diff
+			// says how; Accept takes the new definition.
+			UpdateAvailable bool   `json:"update_available"`
+			Diff            string `json:"diff,omitempty"`
 		}
 		rows := []row{}
 		missingCred := func(t TempTool) bool {
@@ -1426,13 +1485,17 @@ func (T *Extensions) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			listed[key] = true
-			rows = append(rows, row{
+			r := row{
 				Key:  key,
 				Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
 				Credential: p.Tool.Credential, Adopted: loadedFrom[p.Tool.Name] == p.Owner,
 				Missing: missingCred(p.Tool), Shadowed: own[p.Tool.Name],
 				From: p.Owner, Owner: p.Owner,
-			})
+			}
+			if t, ok := taken[p.Tool.Name]; ok && r.Adopted && t.Version == 0 && t.Update != nil {
+				r.UpdateAvailable, r.Diff = true, t.Tool.DefinitionDiff(*t.Update)
+			}
+			rows = append(rows, r)
 		}
 		for _, p := range LoadSharedPersistentTempTools(AuthDB()) {
 			owner := publishedBy[p.Tool.Name]
@@ -1457,6 +1520,7 @@ func (T *Extensions) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
 				Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
 				Credential: p.Tool.Credential, Adopted: owner != "" && loadedFrom[p.Tool.Name] == owner,
 				Missing: missingCred(p.Tool), Shadowed: own[p.Tool.Name], Owner: owner,
+				Version: "v" + strconv.Itoa(versions[p.Tool.Name]),
 			})
 		}
 		writeJSON(w, rows)
@@ -1795,7 +1859,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 		{
 			Title:    "Tools",
 			Subtitle: "Everything built for you, grouped by category.",
-			Detail:   "The category is the same heading a tool appears under in the tool picker and each app's tool list. Categories are assigned from the Categories list directly below this table: open one and tick its tools. Tools that have not claimed one sit under \"Uncategorized\".\n\nThe Agents column says who can use each tool, where blank means your global pool and every agent, and Access is where you change that.\n\nTools the assistant authored but nobody has vouched for are badged Unconfirmed, and are dropped automatically if left that way. \"Orphaned Tools\" lost their agent when it was deleted. Filter the list with the box above.",
+			Detail:   "The category is the same heading a tool appears under in the tool picker and each app's tool list. Categories are assigned from the Categories list directly below this table: open one and tick its tools. Tools that have not claimed one sit under \"Uncategorized\".\n\nThe Agents column says who can use each tool, where blank means your global pool and every agent, and Access is where you change that.\n\nA tool of yours in the deployment catalog runs for everyone else as the version an administrator approved. Your edits change your own copy; Request update asks for them to become the next version.\n\nTools the assistant authored but nobody has vouched for are badged Unconfirmed, and are dropped automatically if left that way. \"Orphaned Tools\" lost their agent when it was deleted. Filter the list with the box above.",
 			// Tools first, then the categories that head them. Categories used to
 			// be their own rail section, which put the fix one navigation away
 			// from the problem: you read "Uncategorized" in this table and had to
@@ -1824,9 +1888,15 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 					{Field: "shared", Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "In the catalog", Color: "info"},
 					}},
+					// Which version everybody else runs, and whether this copy
+					// has moved on from it.
+					{Field: "release", Label: "", Mute: true, Flex: 1},
 					{Field: "shared_with", Label: "", Mute: true, Flex: 1},
 					{Field: "requested", Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "Publish requested", Color: "warning"},
+					}},
+					{Field: "update_requested", Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "Update requested", Color: "warning"},
 					}},
 					{Field: "conflict", Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "Name conflict", Color: "danger"},
@@ -1929,6 +1999,29 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 						},
 						Invalidate: []string{"api/tools"},
 					}),
+					// A published tool's edits reach only its owner's agents;
+					// everyone else runs the approved version. These say what
+					// changed and ask for it to become the next version, which
+					// an admin reviews against the same diff.
+					ui.ExpandIf("What changed", "differs", "", ui.RecordView{
+						Pairs: []ui.DisplayPair{
+							{Label: "Published version -> your copy", Field: "diff", Block: true},
+						},
+					}),
+					ui.ModalActionIf("Request update", "can_update", "", ui.FormPanel{
+						SubmitLabel: "Send request",
+						PostURL:     "api/promotions?kind=tool&name={name}",
+						Fields: []ui.FormField{
+							{Field: "note", Type: "textarea", Rows: 3, Label: "Note for the admin (optional)",
+								Placeholder: "What changed, and why everyone should get it?"},
+						},
+						Invalidate: []string{"api/tools"},
+					}),
+					{Type: "button", Label: "Withdraw", Method: "POST",
+						PostTo:  "api/tools?action=withdraw&name={name}",
+						OnlyIf:  "shared",
+						Confirm: "Take this tool out of the deployment catalog? Everyone who added it stops loading it. You keep your own copy.",
+						Variant: "danger"},
 					// Session drafts: keep moves the tool into the pool (where every
 					// control above starts applying); discard throws it away. Both
 					// only appear on draft rows, and every pool-only action below is
@@ -2222,15 +2315,21 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 		{
 			Title:    "Global tools",
 			Subtitle: "Shared tools your deployment publishes.",
-			Detail:   "Add the ones you want and they become available to your agents; remove any you do not use.",
+			Detail: "Add the ones you want and they become available to your agents; remove any you do not use.\n\n" +
+				"A published tool runs as the version an administrator approved, and a new version reaches you when one is approved. " +
+				"A tool a colleague shared with you runs as the copy you added: when they change it, the row says an update is available, and nothing changes for you until you accept it.",
 			Body: ui.Table{
 				Source: "api/global-tools",
 				RowKey: "key",
 				Columns: []ui.Col{
 					{Field: "name", Flex: 1},
 					{Field: "mode", Mute: true},
+					{Field: "version", Label: "Version", Mute: true},
 					{Field: "adopted", Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "Added", Color: "success"},
+					}},
+					{Field: "update_available", Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "Update available", Color: "warning"},
 					}},
 					{Field: "shadowed", Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "Shadowed by your own tool", Color: "warning"},
@@ -2250,6 +2349,17 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 						PostTo:     "api/global-tools?name={name}&adopt=false",
 						OnlyIf:     "adopted",
 						Optimistic: true},
+					// A colleague's newer definition: read it, then take it or
+					// keep running the copy already added.
+					ui.ExpandIf("What changed", "update_available", "", ui.RecordView{
+						Pairs: []ui.DisplayPair{
+							{Label: "Your copy -> theirs now", Field: "diff", Block: true},
+						},
+					}),
+					{Type: "button", Label: "Accept update", Method: "POST",
+						PostTo:  "api/global-tools?name={name}&owner={owner}&adopt=true",
+						OnlyIf:  "update_available",
+						Confirm: "Switch to their current version of this tool? Your agents run it from now on."},
 				},
 				EmptyText: "No global tools published yet. When your deployment shares one, it appears here to add.",
 			},
