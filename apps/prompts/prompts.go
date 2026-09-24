@@ -120,18 +120,12 @@ func (T *PromptsApp) Routes() {
 	T.HandleFunc("/api/rules", T.adminGated(func(w http.ResponseWriter, r *http.Request) {
 		HandleDocRules(w, r, T.DB, "prompts")
 	}))
-	T.HandleFunc("/api/style/form", T.adminGated(T.handleStyleForm))
-	T.HandleFunc("/api/style", T.adminGated(T.handleStyleRules))                   // GET -> {builtins, custom}; POST {disabled, custom}
 	T.HandleFunc("/api/assist", T.adminGated(T.handleAssist))                      // POST {name, section, message, draft, history}
 	T.HandleFunc("/api/revisions", T.adminGated(T.handleRevList))                  // GET  ?id= -> [{id, date}]
 	T.HandleFunc("/api/revision", T.adminGated(T.handleRevLoad))                   // GET  ?revid= -> {body}
 	T.HandleFunc("/api/optimize-all", T.adminGated(T.handleOptimizeAll))           // POST -> starts a background pass
 	T.HandleFunc("/api/optimize-all/status", T.adminGated(T.handleOptimizeStatus)) // GET  -> {optimizing, done, total}
 }
-
-// styleRulesRowID is the synthetic list row that opens the style-rule editor.
-// Not a block key: nothing loads or saves under it.
-const styleRulesRowID = "__style_rules__"
 
 // lookupBlock finds a registered block by key — the guard that keeps the write
 // endpoints scoped to real blocks (no arbitrary WebTable writes).
@@ -252,17 +246,9 @@ func (T *PromptsApp) handleList(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := RequireUser(w, r, T.DB); !ok {
 		return
 	}
-	// Style rules ride at the TOP of the list as a selectable row rather than a
-	// button: they are prompt text like everything else here, so they belong in
-	// the same list. The Action field routes the click to a list editor instead
-	// of the prose pane, because a set of one-line rules is not a document.
-	//
-	// Global rules are not here: they are a governance decision, edited under
-	// Admin, Governance, Rules.
-	out := []map[string]any{{
-		"ID": styleRulesRowID, "Subject": "Style rules", "Date": "Style",
-		"Action": "prompts_style_rules",
-	}}
+	// Rules, both the Always and the Style list, are not here: they are the
+	// operator directing every agent, edited under Admin, Governance, Rules.
+	out := []map[string]any{}
 	for _, b := range AllPromptBlocks() {
 		subject := b.Title
 		date := b.Category
@@ -688,36 +674,6 @@ const promptsHead = `<script>
         ed.toast('No rewrite produced');
       }
     }).catch(function(err){ ed.restore(ctx.button); ed.toast('Error: ' + (err && err.message || err)); });
-  });
-  // Style rules open a LIST editor, not the workbench pane. A one-line rule is
-  // a checkbox or a line in a textarea; loading it into a full prose editor
-  // with a chat pane beside it would be the wrong instrument for six words.
-  //
-  // Shipped rules get a checkbox rather than an edit box: switching one off is
-  // reversible and leaves the text on screen to switch back on, where letting
-  // it be rewritten would quietly lose the reason it exists. Rules marked
-  // "enforced" also run as a transform on the way out, so unchecking one stops
-  // both halves at once.
-  // The Style rules row opens the rule editor page. It is a FormPanel over a
-  // "rules" field, the framework's line-separated list editor, which is the same
-  // control the persona editor uses. Building a bespoke modal here would mean a
-  // second rule editor that behaves almost, but not quite, like the real one.
-  function promptsOpenRuleEditor(ctx, title, formURL) {
-    fetch(formURL).then(function(r){ return r.json(); }).then(function(spec) {
-      var handle = window.uiOpenSimpleModal({
-        title: title, width: 'min(720px, 94vw)',
-        mount: function(body) {
-          window.uiMountComponent(spec, body, {
-            __closeModal: function(){ if (handle) handle.close(); },
-          });
-        },
-      });
-    }).catch(function(err){
-      ctx.editor.toast('Could not open ' + title + ': ' + (err && err.message || err));
-    });
-  }
-  window.uiRegisterClientAction('prompts_style_rules', function(ctx) {
-    promptsOpenRuleEditor(ctx, 'Style rules', '/prompts/api/style/form');
   });
   window.uiRegisterClientAction('prompts_optimize_all', function(ctx) {
     var ed = ctx.editor;
