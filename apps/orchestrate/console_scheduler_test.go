@@ -216,3 +216,26 @@ func TestAScheduleSaysWhatItRuns(t *testing.T) {
 		t.Errorf("an unowned target names nobody: %q", got)
 	}
 }
+
+// The parent and roll-up actions POST a kind-qualified id; the runtime sends
+// the field they name. Sending the bare _id answered "bad id" to every click.
+func TestTheParentActionsSendAKindQualifiedID(t *testing.T) {
+	row := flagsOf(consoleMonitorRow{Name: "disk-full", ID: "disk-full"}, schedSectionMonitors, schedKindMonitor)
+	if row["_ref"] != schedKindMonitor+":disk-full" {
+		t.Fatalf("the row should carry its kind-qualified id: %v", row["_ref"])
+	}
+	src, err := os.ReadFile("page_chat.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, url := range []string{`URL: "api/console/scheduler/rollup"`, `URL: "api/console/scheduler/parent"`} {
+		i := strings.Index(string(src), url)
+		if i < 0 {
+			t.Fatalf("%s is gone", url)
+		}
+		line := string(src)[i : i+strings.Index(string(src)[i:], "\n")]
+		if !strings.Contains(line, `IDField: "_ref"`) {
+			t.Errorf("%s does not send the kind-qualified id: %s", url, line)
+		}
+	}
+}

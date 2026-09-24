@@ -154,6 +154,12 @@ func schedulerRow(row any, section, kind string) map[string]any {
 	}
 	m["_kind"] = kind
 	m["_notes"] = true
+	// The kind-qualified id the parent and roll-up actions address a row by
+	// (their IDField): _id alone is a bare name, and a monitor and a standing
+	// agent can share one.
+	if id, ok := m["_id"].(string); ok && id != "" {
+		m["_ref"] = kind + ":" + id
+	}
 	addSchedulerActionFlags(m, kind)
 	addSchedulerFilterFlags(m)
 	return m

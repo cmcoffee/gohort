@@ -608,6 +608,10 @@ type OrchestratorRowAction struct {
 	// When empty the action is a plain fixed-URL button as before.
 	PickerSource string `json:"picker_source,omitempty"`
 	PickerTitle  string `json:"picker_title,omitempty"` // modal heading (default: Label)
+	// IDField names the row field sent as ?id= (default "_id"). For a view
+	// whose rows are of several kinds and whose endpoint needs to know which,
+	// the app puts a kind-qualified id in a hidden field and names it here.
+	IDField string `json:"id_field,omitempty"`
 	// ShowResult makes the action a READ: the runtime fetches URL?id=<row._id>
 	// (Method defaults to GET) and renders the JSON reply in a modal titled
 	// Label, instead of firing-and-reloading. Objects render as labelled

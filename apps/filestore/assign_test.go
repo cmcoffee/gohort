@@ -149,3 +149,42 @@ func actionsOf(app *FileStoreApp, slug string) []StoreCommand {
 	}
 	return out
 }
+
+// The page as it runs: the settings form loads a view without the list, the
+// picker PATCHes the list alone, and Save posts back everything the form
+// loaded. Neither undoes the other.
+func TestTheSettingsFormAndThePickerDoNotUndoEachOther(t *testing.T) {
+	app := assignFixture(t)
+	call := func(method, path, body string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		w := httptest.NewRecorder()
+		app.handleStores(w, asStoreAdmin(t, r))
+		return w
+	}
+	w := call("GET", "/filestore/api/stores?slug=support_bundles&view=form", "")
+	var form map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &form); err != nil {
+		t.Fatalf("form load: %d %s", w.Code, w.Body.String())
+	}
+	if _, has := form["allowed_users"]; has {
+		t.Fatal("the form's load carries allowed_users, so Save would write it back stale")
+	}
+	if w := call("PATCH", "/filestore/api/stores?slug=support_bundles", `{"allowed_users":["ana"]}`); w.Code != http.StatusOK {
+		t.Fatalf("picker: %d %s", w.Code, w.Body.String())
+	}
+	form["description"] = "edited after the chip"
+	body, _ := json.Marshal(form)
+	if w := call("POST", "/filestore/api/stores", string(body)); w.Code != http.StatusOK {
+		t.Fatalf("save: %d %s", w.Code, w.Body.String())
+	}
+	after, _ := LoadStore(app.DB, "support_bundles")
+	if strings.Join(after.AllowedUsers, ",") != "ana" {
+		t.Errorf("Save reverted the picker: %v", after.AllowedUsers)
+	}
+	if after.Description != "edited after the chip" {
+		t.Errorf("the form's edit should land: %q", after.Description)
+	}
+	if w := call("PATCH", "/filestore/api/stores?slug=nope", `{"allowed_users":["ana"]}`); w.Code != http.StatusNotFound {
+		t.Errorf("a PATCH must not create a store: %d", w.Code)
+	}
+}

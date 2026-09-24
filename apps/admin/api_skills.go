@@ -134,7 +134,7 @@ func (a *AdminApp) registerSkillsRoutes(sub *http.ServeMux) {
 				})
 			}
 			json.NewEncoder(w).Encode(out)
-		case http.MethodPost:
+		case http.MethodPost, http.MethodPatch:
 			// Partial-update mode: ?action=enable|disable just flips
 			// the Disabled flag and persists. Used by the per-row
 			// toggle button so a quick mute doesn't require a full
@@ -166,7 +166,14 @@ func (a *AdminApp) registerSkillsRoutes(sub *http.ServeMux) {
 				w.WriteHeader(http.StatusNoContent)
 				return
 			}
-			body, err := decodeSkillBody(r)
+			body, err := decodeSkillBody(r, func(id string) (SkillRecord, bool) {
+				for _, s := range LoadSkills(a.db, username) {
+					if s.ID == id {
+						return s, true
+					}
+				}
+				return SkillRecord{}, false
+			})
 			if err != nil {
 				http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
 				return
@@ -267,13 +274,27 @@ func (a *AdminApp) registerSkillsRoutes(sub *http.ServeMux) {
 						pb = string(raw)
 					}
 				}
-				_ = json.NewEncoder(w).Encode(wire{
+				rec := wire{
 					ID: s.ID, Name: s.Name, Description: s.Description,
 					Triggers: s.Triggers, AllowedTools: s.AllowedTools,
 					AttachedCollections: s.AttachedCollections,
 					Instructions:        s.Instructions, Disabled: s.Disabled,
 					PlaybookText: pb,
-				})
+				}
+				if r.URL.Query().Get("view") != "form" {
+					_ = json.NewEncoder(w).Encode(rec)
+					return
+				}
+				// The Edit form's load, without the two lists the pickers
+				// beside it own: the form saves the whole record it loaded
+				// on every change, so a list here went back as it stood
+				// when the row opened, undoing any chip flipped since.
+				var out map[string]any
+				raw, _ := json.Marshal(rec)
+				_ = json.Unmarshal(raw, &out)
+				delete(out, "allowed_tools")
+				delete(out, "attached_collections")
+				_ = json.NewEncoder(w).Encode(out)
 				return
 			}
 		}
@@ -322,9 +343,14 @@ func (a *AdminApp) registerSkillsRoutes(sub *http.ServeMux) {
 
 // decodeSkillBody reads a skill from the request. The editor sends the
 // playbook as playbook_text, a JSON array in a textarea; an empty text clears
-// it, and a body with neither key (a chip picker posting an older record)
-// leaves the field to the record's own decoding.
-func decodeSkillBody(r *http.Request) (SkillRecord, error) {
+// it.
+//
+// The body is decoded ONTO the stored record when it names one (?id= or an
+// "id" key), so a key the caller did not send keeps its stored value. The
+// editor is a form plus two pickers, each sending only what it holds, and none
+// of them holds the share list or the bundled tools; decoded into a blank
+// record, every save dropped both.
+func decodeSkillBody(r *http.Request, prior func(id string) (SkillRecord, bool)) (SkillRecord, error) {
 	var raw map[string]json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		return SkillRecord{}, err
@@ -336,7 +362,9 @@ func decodeSkillBody(r *http.Request) (SkillRecord, error) {
 		}
 		delete(raw, "playbook_text")
 		if strings.TrimSpace(text) == "" {
-			delete(raw, "playbook")
+			// null, not absent: onto a stored record, absent would keep the
+			// rules the person just emptied the box to remove.
+			raw["playbook"] = json.RawMessage("null")
 		} else {
 			var rules []PlaybookRule
 			if err := json.Unmarshal([]byte(text), &rules); err != nil {
@@ -345,11 +373,24 @@ func decodeSkillBody(r *http.Request) (SkillRecord, error) {
 			raw["playbook"] = json.RawMessage(text)
 		}
 	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" {
+		var s string
+		if v, ok := raw["id"]; ok && json.Unmarshal(v, &s) == nil {
+			id = strings.TrimSpace(s)
+		}
+	}
+	var body SkillRecord
+	if id != "" {
+		if p, ok := prior(id); ok {
+			body = p
+		}
+		raw["id"], _ = json.Marshal(id)
+	}
 	merged, err := json.Marshal(raw)
 	if err != nil {
 		return SkillRecord{}, err
 	}
-	var body SkillRecord
 	if err := json.Unmarshal(merged, &body); err != nil {
 		return SkillRecord{}, err
 	}

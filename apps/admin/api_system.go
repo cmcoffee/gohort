@@ -153,15 +153,21 @@ func (a *AdminApp) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	// A loopback-bound proxy answers on localhost and nowhere else, so showing
 	// the deployment's external hostname there would hand the operator a URL
 	// that cannot work and read as the endpoint being broken.
+	//
+	// Worked on its own copy: this used to blank external_url itself, which
+	// is also what this GET returns for the Site Settings form, so the next
+	// save of any panel wrote an empty External URL back (breaking email
+	// links and OAuth redirects).
 	var proxy_url string
 	if ollama_proxy_port > 0 {
 		host := "localhost"
+		proxy_host_src := external_url
 		if ollama_proxy_bind == "127.0.0.1" {
-			external_url = ""
+			proxy_host_src = ""
 		}
-		if external_url != "" {
+		if proxy_host_src != "" {
 			// Strip scheme and path, keep just the hostname.
-			h := strings.TrimRight(external_url, "/")
+			h := strings.TrimRight(proxy_host_src, "/")
 			h = strings.TrimPrefix(h, "https://")
 			h = strings.TrimPrefix(h, "http://")
 			if slash := strings.Index(h, "/"); slash >= 0 {

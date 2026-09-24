@@ -113,3 +113,19 @@ func TestTheAvailabilityFlagIsComputedNotStored(t *testing.T) {
 		t.Error("the save path does not clear the computed flag, so it would be persisted")
 	}
 }
+
+// A remote stub is stored under the far side's kind, so the editor has to
+// open a record with a peer_name as "remote", or saving it demands a host and
+// typing one silently turns it into a local system.
+func TestTheEditorOpensAPeerSystemAsRemote(t *testing.T) {
+	src, err := os.ReadFile("assets/web_assets.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	fix := strings.Index(body, "if (rec.peer_name) rec.type = 'remote';")
+	first := strings.Index(body, "setType(rec.type || 'ssh');")
+	if fix < 0 || first < 0 || fix > first {
+		t.Fatal("the editor must switch a peer system to remote before its first setType")
+	}
+}

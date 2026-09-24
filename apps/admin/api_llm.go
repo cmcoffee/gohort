@@ -30,36 +30,54 @@ func (a *AdminApp) registerLLMRoutes(sub *http.ServeMux) {
 			Private       bool   `json:"private"`
 		}
 		if r.Method == http.MethodPost {
+			// Each routing-table control posts only its own field: the tier
+			// select sends value, the budget box sends think_budget. Only what
+			// was sent changes. Requiring both made every budget save fail as
+			// "invalid value", and every tier change reset the budget to none.
 			var req struct {
-				Key         string `json:"key"`
-				Value       string `json:"value"`
-				ThinkBudget int    `json:"think_budget"`
+				Key         string  `json:"key"`
+				Value       *string `json:"value"`
+				ThinkBudget *int    `json:"think_budget"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				http.Error(w, "bad request", http.StatusBadRequest)
 				return
 			}
-			allowed := map[string]bool{}
-			for _, v := range RouteValues() {
-				allowed[v] = true
-			}
-			if !allowed[req.Value] {
-				http.Error(w, "invalid value", http.StatusBadRequest)
+			if strings.TrimSpace(req.Key) == "" || (req.Value == nil && req.ThinkBudget == nil) {
+				http.Error(w, "key and a value or think_budget are required", http.StatusBadRequest)
 				return
 			}
-			// Private stages can't route to lead, but allow worker ↔ worker
-			// (thinking). Tested by TIER, not by one literal, so a new lead
-			// value can't slip past this guard.
-			if PrivateStageEnforced(req.Key) && RouteValueIsLead(req.Value) {
-				http.Error(w, "private stage: cannot route to lead", http.StatusForbidden)
+			if req.Value != nil {
+				allowed := map[string]bool{}
+				for _, v := range RouteValues() {
+					allowed[v] = true
+				}
+				if !allowed[*req.Value] {
+					http.Error(w, "invalid value", http.StatusBadRequest)
+					return
+				}
+				// Private stages can't route to lead, but allow worker ↔ worker
+				// (thinking). Tested by TIER, not by one literal, so a new lead
+				// value can't slip past this guard.
+				if PrivateStageEnforced(req.Key) && RouteValueIsLead(*req.Value) {
+					http.Error(w, "private stage: cannot route to lead", http.StatusForbidden)
+					return
+				}
+			}
+			if req.ThinkBudget != nil && (*req.ThinkBudget < 0 || *req.ThinkBudget > 65536) {
+				http.Error(w, "think_budget must be between 0 and 65536", http.StatusBadRequest)
 				return
 			}
 			if a.db != nil {
-				a.db.Set(RoutingTable, req.Key, req.Value)
-				if req.ThinkBudget > 0 {
-					a.db.Set(RoutingTable, req.Key+".think_budget", req.ThinkBudget)
-				} else {
-					a.db.Unset(RoutingTable, req.Key+".think_budget")
+				if req.Value != nil {
+					a.db.Set(RoutingTable, req.Key, *req.Value)
+				}
+				if req.ThinkBudget != nil {
+					if *req.ThinkBudget > 0 {
+						a.db.Set(RoutingTable, req.Key+".think_budget", *req.ThinkBudget)
+					} else {
+						a.db.Unset(RoutingTable, req.Key+".think_budget")
+					}
 				}
 			}
 			w.WriteHeader(http.StatusNoContent)

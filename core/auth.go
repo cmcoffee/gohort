@@ -745,18 +745,17 @@ func UserIsAdmin(username string) bool {
 
 // AuthSetUser creates or updates a user. If password is non-empty it
 // is hashed and stored; otherwise the existing hash is preserved.
+//
+// Everything else on the record is kept. It used to rebuild the record from a
+// handful of fields, so an admin promoting, demoting or resetting a user wiped
+// that user's own preferences: timezone, notification forwarding, private and
+// clean modes, per-agent overrides, default agent.
 func AuthSetUser(db Database, username, password string, admin bool) {
-	var existing AuthUser
-	db.Get(AuthTable, "user:"+username, &existing)
-
-	user := AuthUser{
-		Username: username,
-		Admin:    admin,
-		Pending:  existing.Pending,
-		Apps:     existing.Apps,
-		Groups:   existing.Groups,
-	}
-	user.PassHash = existing.PassHash // default: keep existing (empty password = no change)
+	var user AuthUser
+	db.Get(AuthTable, "user:"+username, &user)
+	user.Username = username
+	user.Admin = admin
+	// PassHash is kept unless a new password is given (empty = no change).
 	if password != "" {
 		if h := hashPassword(password); h != "" {
 			user.PassHash = h

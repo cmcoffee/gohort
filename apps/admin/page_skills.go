@@ -36,7 +36,7 @@ func (a *AdminApp) skillsSections() []ui.Section {
 					ui.Expand("Edit", ui.Stack{
 						Children: []ui.Component{
 							ui.FormPanel{
-								Source:  "api/skills/{id}",
+								Source:  "api/skills/{id}?view=form",
 								PostURL: "api/skills",
 								Method:  "POST",
 								Fields: []ui.FormField{
@@ -66,11 +66,13 @@ func (a *AdminApp) skillsSections() []ui.Section {
 								OptionsSource: "api/tool-groups/registry",
 								RecordSource:  "api/skills/{id}",
 								Field:         "allowed_tools",
-								PostTo:        "api/skills",
-								Method:        "POST",
-								NameField:     "name",
-								LabelField:    "name",
-								DescField:     "description",
+								// PATCH sends this list alone; the handler
+								// decodes it onto the stored skill.
+								PostTo:     "api/skills?id={id}",
+								Method:     "PATCH",
+								NameField:  "name",
+								LabelField: "name",
+								DescField:  "description",
 							},
 							// Attached collections — picker from the
 							// current user's Document Collections. Same
@@ -85,11 +87,13 @@ func (a *AdminApp) skillsSections() []ui.Section {
 								OptionsSource: "api/collections",
 								RecordSource:  "api/skills/{id}",
 								Field:         "attached_collections",
-								PostTo:        "api/skills",
-								Method:        "POST",
-								NameField:     "id",
-								LabelField:    "name",
-								DescField:     "description",
+								// PATCH sends this list alone; the handler
+								// decodes it onto the stored skill.
+								PostTo:     "api/skills?id={id}",
+								Method:     "PATCH",
+								NameField:  "id",
+								LabelField: "name",
+								DescField:  "description",
 							},
 						},
 					}),

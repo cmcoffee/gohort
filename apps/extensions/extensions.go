@@ -63,7 +63,7 @@ func (T *Extensions) HubTab() (string, int) { return "Extensions", 40 }
 // legacyGatewaysPath is where this app lived until it was renamed. Links,
 // bookmarks and stored per-user grants still name it, so the old prefix
 // redirects here and the grants that named it move over once.
-const legacyGatewaysPath = "/extensions"
+const legacyGatewaysPath = "/gateways"
 
 func (T *Extensions) Routes() {
 	RegisterLegacyMount(legacyGatewaysPath, T.WebPath())
@@ -929,7 +929,7 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 		if id := strings.TrimSpace(r.URL.Query().Get("id")); id != "" {
 			for _, s := range LoadSkills(AuthDB(), user) {
 				if s.ID == id {
-					writeJSON(w, map[string]any{
+					out := map[string]any{
 						"id":           s.ID,
 						"name":         s.Name,
 						"description":  s.Description,
@@ -943,15 +943,23 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 						// the other is what the textarea edits once Edit JSON
 						// is on. One field cannot be both without the form
 						// echoing its own display back into the payload.
-						"allowed_tools":        nonNilStrings(s.AllowedTools),
-						"attached_collections": nonNilStrings(s.AttachedCollections),
+						"playbook_text": playbookText(s),
+						"playbook_url":  playbookEditorURL(s.ID),
+					}
+					// ?view=form is the behaviour form's own load. It leaves
+					// the grants out: a form posts back the whole record it
+					// loaded, so a grant on the wire here would be written back
+					// on Save as it stood when the row opened, undoing any chip
+					// flipped since.
+					if r.URL.Query().Get("view") != "form" {
+						out["allowed_tools"] = nonNilStrings(s.AllowedTools)
+						out["attached_collections"] = nonNilStrings(s.AttachedCollections)
 						// The picker reads what it will post back, so the field
 						// has to be on the wire or it opens empty and the first
 						// save silently clears the share.
-						"allowed_users": nonNilStrings(s.AllowedUsers),
-						"playbook_text": playbookText(s),
-						"playbook_url":  playbookEditorURL(s.ID),
-					})
+						out["allowed_users"] = nonNilStrings(s.AllowedUsers)
+					}
+					writeJSON(w, out)
 					return
 				}
 			}
@@ -1127,6 +1135,54 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 		rec.Triggers = splitSkillTriggers(body.Triggers)
 		if body.PlaybookText != nil {
 			rec.Playbook = playbook // nil when the field came through blank — clears
+		}
+		if body.AllowedTools != nil {
+			rec.AllowedTools = *body.AllowedTools
+		}
+		if body.AttachedCollections != nil {
+			rec.AttachedCollections = *body.AttachedCollections
+		}
+		if body.AllowedUsers != nil {
+			rec.AllowedUsers = *body.AllowedUsers
+		}
+		if _, err := SaveSkill(AuthDB(), user, rec); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	case http.MethodPatch:
+		// The grant pickers: each sends only its own field, so flipping one
+		// chip cannot write back another picker's list, or the behaviour
+		// form's text, as they stood when the row opened.
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		if id == "" {
+			http.Error(w, "missing id", http.StatusBadRequest)
+			return
+		}
+		var body struct {
+			AllowedTools        *[]string `json:"allowed_tools"`
+			AttachedCollections *[]string `json:"attached_collections"`
+			AllowedUsers        *[]string `json:"allowed_users"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if body.AllowedTools == nil && body.AttachedCollections == nil && body.AllowedUsers == nil {
+			http.Error(w, "nothing to change", http.StatusBadRequest)
+			return
+		}
+		var rec SkillRecord
+		found := false
+		for _, s := range LoadSkills(AuthDB(), user) {
+			if s.ID == id {
+				rec, found = s, true
+				break
+			}
+		}
+		if !found {
+			http.Error(w, "skill not found", http.StatusNotFound)
+			return
 		}
 		if body.AllowedTools != nil {
 			rec.AllowedTools = *body.AllowedTools
@@ -1857,7 +1913,8 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 					Subtitle: "Name it, then tick the tools that belong in it. A category exists because tools point at it: an empty one has nothing to show.",
 					Width:    "560px",
 					Body: ui.FormPanel{
-						PostURL:     "api/tool-categories?name={name}",
+						// The name is a field of this form, so it travels in the body.
+						PostURL:     "api/tool-categories",
 						SubmitLabel: "Create category",
 						Fields: []ui.FormField{
 							{Field: "name", Type: "text", Label: "Category name",
@@ -1916,7 +1973,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 						// (preserving any Builder-authored tools/grants).
 						ui.Expand("Edit", ui.Stack{Children: []ui.Component{
 							ui.FormPanel{
-								Source:      "api/skills?id={id}",
+								Source:      "api/skills?id={id}&view=form",
 								PostURL:     "api/skills?id={id}",
 								SubmitLabel: "Save skill",
 								Fields:      userSkillFormFields(),
@@ -1938,7 +1995,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 								RecordSource:  "api/skills?id={id}",
 								Field:         "allowed_tools",
 								PostTo:        "api/skills?id={id}",
-								Method:        "POST",
+								Method:        "PATCH",
 								NameField:     "name",
 								LabelField:    "name",
 								DescField:     "description",
@@ -1949,7 +2006,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 								RecordSource:  "api/skills?id={id}",
 								Field:         "attached_collections",
 								PostTo:        "api/skills?id={id}",
-								Method:        "POST",
+								Method:        "PATCH",
 								NameField:     "id",
 								LabelField:    "name",
 								DescField:     "description",
@@ -1964,7 +2021,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 								RecordSource:  "api/skills?id={id}",
 								Field:         "allowed_users",
 								PostTo:        "api/skills?id={id}",
-								Method:        "POST",
+								Method:        "PATCH",
 								Noun:          "user",
 								Intro:         "Users who may use this skill.",
 								EmptyText:     "No other users to share with yet.",
@@ -2702,15 +2759,23 @@ func (T *Extensions) handleUserToolCategories(w http.ResponseWriter, r *http.Req
 		})
 		writeJSON(w, rows)
 	case http.MethodPost:
-		if name == "" {
-			http.Error(w, "missing name", http.StatusBadRequest)
-			return
-		}
 		var body struct {
+			Name  string   `json:"name"`
 			Tools []string `json:"tools"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		// The per-row picker names the category in the query; the "Add
+		// category" form types it into a field, so it arrives in the body. An
+		// unsubstituted "{name}" placeholder is never a category: it filed
+		// tools under a category literally called that.
+		if name == "" || strings.HasPrefix(name, "{") {
+			name = strings.TrimSpace(body.Name)
+		}
+		if name == "" || strings.HasPrefix(name, "{") {
+			http.Error(w, "missing name", http.StatusBadRequest)
 			return
 		}
 		want := map[string]bool{}

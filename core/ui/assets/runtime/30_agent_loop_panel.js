@@ -389,6 +389,12 @@
           // {value,label} choices and show them in a modal; picking one POSTs the
           // action URL with the chosen value, then reloads. Shared by the cards +
           // table renderers below.
+          // rowActionID is the id a row action sends: the field it names in
+          // id_field, else the row's _id.
+          function rowActionID(a, row) {
+            var v = row && row[(a && a.id_field) || '_id'];
+            return v == null ? '' : String(v);
+          }
           function openRowPicker(a, row) {
             var agent = window.GOHORT_AGENT_ID || '';
             var src = a.picker_source + (a.picker_source.indexOf('?') >= 0 ? '&' : '?') + 'agent=' + encodeURIComponent(agent);
@@ -411,7 +417,7 @@
                   if (!opts || !opts.length) { list.appendChild(el('div', {style: 'color:var(--text-mute,#999)'}, ['No options available.'])); return; }
                   opts.forEach(function(opt) {
                     var b = el('button', {type: 'button', class: 'ui-row-btn', style: 'text-align:left', onclick: function() {
-                      var u = a.url + '?id=' + encodeURIComponent(row._id) + '&agent=' + encodeURIComponent(agent) + '&value=' + encodeURIComponent(opt.value);
+                      var u = a.url + '?id=' + encodeURIComponent(rowActionID(a, row)) + '&agent=' + encodeURIComponent(agent) + '&value=' + encodeURIComponent(opt.value);
                       b.disabled = true;
                       fetch(u, {method: a.method || 'POST', credentials: 'same-origin'})
                         .then(function(r) { if (!r.ok) return r.text().then(function(t){ throw new Error(t); }); })
@@ -442,7 +448,7 @@
             if (String(a.method || '').toLowerCase() === 'client') {
               var fn = window.UIClientActions && window.UIClientActions[a.url];
               if (!fn) { console.error('client row action not registered: ' + a.url); return; }
-              fn({id: row._id, row: row, reload: reload});
+              fn({id: rowActionID(a, row), row: row, reload: reload});
               return;
             }
             // A NAVIGATION rather than a call: open another nav view, optionally
@@ -467,7 +473,7 @@
               selectOrchNav(found, q, a.note);
               return;
             }
-            var rowURL = a.url + '?id=' + encodeURIComponent(row._id) + '&agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '');
+            var rowURL = a.url + '?id=' + encodeURIComponent(rowActionID(a, row)) + '&agent=' + encodeURIComponent(window.GOHORT_AGENT_ID || '');
             if (a.show_result) {
               fetch(rowURL, {method: a.method || 'GET'})
                 .then(function(r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })

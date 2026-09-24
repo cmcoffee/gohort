@@ -185,9 +185,12 @@ func (T *FileStoreApp) adminSection() ui.Section {
 							OptionsSource: "/admin/api/user-candidates",
 							RecordSource:  "/filestore/api/stores?slug={slug}",
 							Field:         "allowed_users",
-							PostTo:        "/filestore/api/stores",
-							Method:        "POST",
-							Noun:          "user",
+							// PATCH sends the list alone. A POST carries the
+							// whole record as it stood when the row opened,
+							// which put back any setting saved since.
+							PostTo: "/filestore/api/stores?slug={slug}",
+							Method: "PATCH",
+							Noun:   "user",
 							Intro: "Empty means EVERY user: a folder of customer captures is rarely something every account should hold, " +
 								"and configuring a store is already admin-only, so without this the cheap half was gated and the reading was not. " +
 								"Applies to admins too: admin manages the list, membership decides reach.",
@@ -197,7 +200,10 @@ func (T *FileStoreApp) adminSection() ui.Section {
 
 						ui.Card{HTML: folderPanelHeading("Settings", "")},
 						ui.FormPanel{
-							Source:      "/filestore/api/stores?slug={slug}",
+							// view=form leaves allowed_users out: the form posts
+							// back everything it loaded, so the list would be
+							// saved as it stood when the row opened.
+							Source:      "/filestore/api/stores?slug={slug}&view=form",
 							PostURL:     "/filestore/api/stores",
 							SubmitLabel: "Save changes",
 							Fields:      storeFormFields(),
@@ -316,11 +322,21 @@ func (T *FileStoreApp) handleStores(w http.ResponseWriter, r *http.Request) {
 				http.NotFound(w, r)
 				return
 			}
+			if r.URL.Query().Get("view") == "form" {
+				// The settings form's load, without the list the picker
+				// beside it owns (see the form's Source).
+				var out map[string]any
+				raw, _ := json.Marshal(st)
+				_ = json.Unmarshal(raw, &out)
+				delete(out, "allowed_users")
+				writeJSON(w, out)
+				return
+			}
 			writeJSON(w, st)
 			return
 		}
 		writeJSON(w, T.storeRows())
-	case http.MethodPost:
+	case http.MethodPost, http.MethodPatch:
 		// Decoded ONTO the stored record, not into a blank one. Two editors
 		// now write this record — the form (name, path, retention…) and the
 		// assignment picker (allowed_users) — and neither sends the other's
@@ -337,10 +353,14 @@ func (T *FileStoreApp) handleStores(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		st := Store{}
+		found := false
 		if s := storeSlugOf(raw, slug); s != "" {
-			if existing, found := LoadStore(T.DB, s); found {
-				st = existing
-			}
+			st, found = LoadStore(T.DB, s)
+		}
+		// A PATCH changes a store that exists; it never creates one.
+		if r.Method == http.MethodPatch && !found {
+			http.NotFound(w, r)
+			return
 		}
 		if err := json.Unmarshal(raw, &st); err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)

@@ -1279,6 +1279,11 @@
         if (t === 'workspace') loadWorkspaceMembers();
         if (t === 'ssh' || t === 'command' || t === 'bundle') loadLinkedRepos();
       }
+      // A remote stub is stored under the far side's kind (ssh, command, ...),
+      // so the editor would open it as a LOCAL system of that kind: saving then
+      // asked for a host, and typing one cleared the peer link. peer_name is
+      // what says it lives over there.
+      if (rec.peer_name) rec.type = 'remote';
       setType(rec.type || 'ssh');
 
       // Shared fields

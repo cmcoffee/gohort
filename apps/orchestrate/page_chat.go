@@ -394,9 +394,9 @@ func (T *OrchestrateApp) handleChatPage(w http.ResponseWriter, r *http.Request) 
 								// cannot tell them apart: rolling up by default
 								// would declare the first kind finished on
 								// somebody else's evidence.
-								{Label: "Finish on children", Method: "POST", URL: "api/console/scheduler/rollup", OnlyIf: "_notes",
+								{Label: "Finish on children", Method: "POST", URL: "api/console/scheduler/rollup", OnlyIf: "_notes", IDField: "_ref",
 									Confirm: "Toggle whether this finishes when everything under it has finished? With it on, it stops on its own and does not wait for its own check."},
-								{Label: "Part of…", Method: "POST", URL: "api/console/scheduler/parent",
+								{Label: "Part of…", Method: "POST", URL: "api/console/scheduler/parent", IDField: "_ref",
 									PickerSource: "api/console/scheduler/parent-options",
 									PickerTitle:  "Part of which larger piece of work?", OnlyIf: "_notes"},
 								// Scheduled agents. "Edit schedule" is a CLIENT action: the
