@@ -1701,21 +1701,19 @@ def fetch_via(credential, url, method="GET", body=None, headers=None, request_he
 // every command shared the host's namespace. The field that was supposed to
 // gate it, TempTool.RawNetwork, was read by nothing.
 //
-// Switching it on is a real posture change and a breaking one for any existing
-// tool that curls without having declared raw_network, which is why it is a
-// switch an operator throws rather than a default anybody inherits. Once
-// thrown, the tool-authoring help stops being aspirational: an author who does
-// not ask for raw network genuinely does not get it, and gohort.fetch — which
-// is audited — becomes the route for ordinary HTTP, as every comment around
-// the sandbox already claims.
+// ON by default since 2026-09 (security audit): an open shell reached loopback
+// and LAN services past every SSRF guard the fetch paths apply. A tool that
+// needs raw sockets declares raw_network (and asks before it runs); ordinary
+// HTTP goes through gohort.fetch, which is audited and public-only. A
+// deployment that relied on the old behaviour can switch it back off.
 const tuneShellNetworkClosed = "tune_shell_network_closed"
 
 func init() {
 	RegisterTunable(TunableSpec{
 		Key: tuneShellNetworkClosed, Category: "Security",
 		Label: "Shell tools reach the network only when they declare it",
-		Help:  "OFF (the historical behaviour): a shell command shares the host's network. ON: it gets no network namespace unless its tool record sets raw_network, and ordinary HTTP goes through the audited gohort.fetch hook instead.",
-		Kind:  KindBool, Default: 0, Min: 0, Max: 1,
+		Help:  "ON (the default): a shell command gets no network namespace unless its tool record sets raw_network, and ordinary HTTP goes through the audited gohort.fetch hook. OFF (the historical behaviour): every shell command shares the host's network, loopback and LAN included.",
+		Kind:  KindBool, Default: 1, Min: 0, Max: 1,
 	})
 	sandbox.ShellNetworkClosedByDefault = func() bool { return TuneBool(tuneShellNetworkClosed) }
 }

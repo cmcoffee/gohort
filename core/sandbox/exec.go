@@ -438,8 +438,14 @@ func buildSandboxedShellCmd(ctx context.Context, spec ShellRun) (SandboxedCmd, e
 // Scoped read-only binds are deliberately NOT offered here. They are a promise
 // about a path (RunSandboxedShellScoped), and a long-lived shell outlives the
 // resolution that proved it.
+//
+// The long-lived shell is a connection REPL (psql, redis-cli, ssh) and needs
+// the network by design, so it declares raw network: a deployment that closes
+// shell networking by default still gives it one (the session's Private mode
+// still takes it away). What it pays instead is confirmation: a persistent
+// tool asks before it runs (tempToolNeedsConfirm), as a raw_network tool does.
 func NewSandboxedShellCmd(ctx context.Context, command, workspaceDir string, extraEnv map[string]string) (SandboxedCmd, error) {
-	return buildSandboxedShellCmd(ctx, ShellRun{Command: command, WorkspaceDir: workspaceDir, Env: extraEnv})
+	return buildSandboxedShellCmd(ctx, ShellRun{Command: command, WorkspaceDir: workspaceDir, Env: extraEnv, RawNetwork: true})
 }
 
 // runSandboxedShellWithBinds is the body both one-shot variants share. readOnly
@@ -1082,4 +1088,4 @@ func scopedRunRefusal(sb sandboxBackend, readOnly []string) error {
 // (core imports it), and the tunable registry lives there. core installs the
 // real reader at start-up; the default below is what every deployment has
 // always done, so a binary that never installs it behaves as before.
-var ShellNetworkClosedByDefault = func() bool { return false }
+var ShellNetworkClosedByDefault = func() bool { return true }

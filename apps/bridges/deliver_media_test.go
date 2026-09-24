@@ -23,7 +23,7 @@ func TestDeliverMediaPutsVideosOnTheOutbox(t *testing.T) {
 		[]string{"img-b64"}, []string{"vid-b64"}); err != nil {
 		t.Fatalf("deliver: %v", err)
 	}
-	items := T.drainOutbox("imessage")
+	items := T.drainOutbox("imessage", "craig")
 	if len(items) != 1 {
 		t.Fatalf("expected one queued item, got %d", len(items))
 	}
@@ -44,7 +44,7 @@ func TestDeliverStillWorksWithoutVideos(t *testing.T) {
 	if err := c.Deliver("craig", "imessage", "chat1", "", "text only", "Wren", nil); err != nil {
 		t.Fatalf("deliver: %v", err)
 	}
-	items := T.drainOutbox("imessage")
+	items := T.drainOutbox("imessage", "craig")
 	// The name tag is prefixed at the outbox chokepoint, so the text is
 	// "[Wren] text only" by design; assert the payload, not the wire form.
 	if len(items) != 1 || !strings.Contains(items[0].Text, "text only") {

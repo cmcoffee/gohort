@@ -139,6 +139,9 @@ func (T *Servitor) RegisterRoutes(mux *http.ServeMux, prefix string) {
 		}
 	}
 
+	// SSH host keys are pinned on first use (ssh_pool.go).
+	hostKeyStore = T.DB
+
 	// Expose servitor's appliances as a generic reference source so writer
 	// apps can ground drafts in gathered system knowledge. T.DB is final here.
 	RegisterReferenceSource(servitorSource{app: T})

@@ -295,6 +295,11 @@ func (T *Servitor) handleAppliances(w http.ResponseWriter, r *http.Request) {
 		// Keep the global shared index in sync with the record's Shared flag.
 		T.setApplianceShared(req.ID, owner, req.Shared)
 		dropConn(owner, req.ID) // force reconnect with new credentials
+		// Saving a system is the owner saying "this is the machine": the next
+		// connection trusts whatever key it presents now (a rebuilt host).
+		if req.Type == "ssh" {
+			forgetHostKey(req.Host, req.Port)
+		}
 		// Repo appliances: clone + ingest under the OWNER (one shared clone) on
 		// create or when the store is empty.
 		if req.Type == "repo" && (isNew || req.RepoFiles == 0) {

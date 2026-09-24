@@ -108,7 +108,14 @@ func (t *ScreenshotPageTool) RunWithSession(args map[string]any, sess *ToolSessi
 		return "", fmt.Errorf("browser unavailable")
 	}
 
-	page, err := b.Page(proto.TargetCreateTarget{})
+	// A throwaway context per call, as in fetchImpl: no cookies or storage
+	// carried between users of the one shared profile.
+	inc, err := b.Incognito()
+	if err != nil {
+		return "", fmt.Errorf("creating browser context: %w", err)
+	}
+	defer inc.Close()
+	page, err := inc.Page(proto.TargetCreateTarget{})
 	if err != nil {
 		return "", fmt.Errorf("creating browser page: %w", err)
 	}

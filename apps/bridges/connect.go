@@ -32,7 +32,7 @@ func findOrchestrate() *orchestrate.OrchestrateApp {
 	return o
 }
 
-// handleConversations lists chats Bridges has seen, with which channel (if any)
+// handleConversations lists the caller's chats, with which channel (if any)
 // each is currently connected to.
 func (T *Bridges) handleConversations(w http.ResponseWriter, r *http.Request) {
 	user, _, ok := RequireUser(w, r, T.DB)
@@ -51,7 +51,7 @@ func (T *Bridges) handleConversations(w http.ResponseWriter, r *http.Request) {
 		LastAt       string `json:"last_at,omitempty"`
 	}
 	out := []row{}
-	for _, c := range T.listConvos() {
+	for _, c := range T.convosFor(user, RequestIsAdmin(r)) {
 		connected, channelID, autoReply := "", "", false
 		for _, ch := range chans {
 			if ch.Service == c.Service && ch.Address != "" && (ch.Address == c.Handle || ch.Address == c.ChatID) {
@@ -110,7 +110,7 @@ func (T *Bridges) handleIncomingConvos(w http.ResponseWriter, r *http.Request) {
 		Desc  string `json:"desc"`
 	}
 	out := []row{}
-	for _, c := range T.listConvos() {
+	for _, c := range T.convosFor(user, RequestIsAdmin(r)) {
 		// Curated or already-connected chats are in the managed list, not here.
 		if c.Added || connected(c) {
 			continue
@@ -137,9 +137,11 @@ func (T *Bridges) handleIncomingConvos(w http.ResponseWriter, r *http.Request) {
 //	POST /bridges/api/add-convo?chat_id=<id>   (pick an incoming chat)
 //	POST /bridges/api/add-convo  {handle, service}   (manual number)
 func (T *Bridges) handleAddConvo(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
 		return
 	}
+	admin := RequestIsAdmin(r)
 	// The manual-entry form GETs this for prefill — hand back a blank record.
 	if r.Method == http.MethodGet {
 		w.Header().Set("Content-Type", "application/json")
@@ -169,7 +171,16 @@ func (T *Bridges) handleAddConvo(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		svc := firstNonEmpty(strings.TrimSpace(req.Service), "imessage")
-		c, _ := T.getConvo(handle)
+		// A new entry is the caller's. One already on record must be theirs
+		// too; another user's reads as not found, same as every chat_id path.
+		c, exists := T.getConvo(handle)
+		if exists && !convoVisibleTo(c, user, admin) {
+			http.Error(w, "conversation not found", http.StatusNotFound)
+			return
+		}
+		if !exists {
+			c.Owner = user
+		}
 		c.ChatID = handle
 		c.Service = svc
 		c.Handle = handle
@@ -180,8 +191,8 @@ func (T *Bridges) handleAddConvo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c, ok := T.getConvo(req.ChatID)
-	if !ok {
+	c, found := T.convoFor(req.ChatID, user, admin)
+	if !found {
 		http.Error(w, "conversation not found", http.StatusNotFound)
 		return
 	}
@@ -283,8 +294,13 @@ func (T *Bridges) handleConnectChannel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "chat_id is required", http.StatusBadRequest)
 		return
 	}
-	var c Convo
-	T.DB.Get(convosTable, req.ChatID, &c)
+	// Only the caller's own conversation connects: binding another user's chat
+	// to your channel would route their contact's messages to your agent.
+	c, found := T.convoFor(req.ChatID, user, RequestIsAdmin(r))
+	if !found {
+		http.Error(w, "conversation not found", http.StatusNotFound)
+		return
+	}
 	svc := firstNonEmpty(c.Service, "imessage")
 	// A group binds to its stable chat id (no single member owns the room); a
 	// 1:1 binds to the contact's handle so it routes even if the chat id varies.
@@ -295,7 +311,7 @@ func (T *Bridges) handleConnectChannel(w http.ResponseWriter, r *http.Request) {
 	// Connecting curates the chat into the managed list (in case it was added
 	// straight from the incoming picker's Connect path).
 	if !c.Added {
-		c.ChatID, c.Added = req.ChatID, true
+		c.Added = true
 		T.saveConvo(c)
 	}
 

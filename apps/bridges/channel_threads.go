@@ -1,6 +1,7 @@
 package bridges
 
 import (
+	"fmt"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -9,12 +10,19 @@ import (
 // channelThreadsImpl exposes Bridges' stored conversations + outbound to
 // orchestrate's channel-scoped chat tools (list_chats / read_chat / send_message).
 // Registered at startup so orchestrate can read/send over channels without
-// importing Bridges. Single-owner deployment: the owner arg is informational.
+// importing Bridges. The owner arg scopes every call to that user's
+// conversations (plus the ownerless legacy ones, when the owner is an admin).
 type channelThreadsImpl struct{ T *Bridges }
+
+// owned reports whether chatID is a conversation owner may reach.
+func (c channelThreadsImpl) owned(owner, chatID string) bool {
+	_, ok := c.T.convoFor(chatID, owner, ownerIsAdmin(owner))
+	return ok
+}
 
 func (c channelThreadsImpl) Threads(owner string) []ChannelThreadInfo {
 	var out []ChannelThreadInfo
-	for _, cv := range c.T.listConvos() {
+	for _, cv := range c.T.convosFor(owner, ownerIsAdmin(owner)) {
 		out = append(out, ChannelThreadInfo{
 			ChatID:      cv.ChatID,
 			Service:     cv.Service,
@@ -27,6 +35,9 @@ func (c channelThreadsImpl) Threads(owner string) []ChannelThreadInfo {
 }
 
 func (c channelThreadsImpl) Members(owner, chatID string) []ChannelMember {
+	if !c.owned(owner, chatID) {
+		return nil
+	}
 	// syncMembersFromHistory derives the full roster from the stored thread
 	// (catches anyone who messaged but wasn't captured live), then returns it.
 	conv := c.T.syncMembersFromHistory(chatID)
@@ -41,6 +52,9 @@ func (c channelThreadsImpl) Members(owner, chatID string) []ChannelMember {
 }
 
 func (c channelThreadsImpl) Messages(owner, chatID string, limit int) []ChannelLine {
+	if !c.owned(owner, chatID) {
+		return nil
+	}
 	if limit <= 0 {
 		limit = 30
 	}
@@ -63,7 +77,7 @@ func (c channelThreadsImpl) Messages(owner, chatID string, limit int) []ChannelL
 // the whole feed resident in its context.
 func (c channelThreadsImpl) SearchMessages(owner, chatID, query string, limit int) []ChannelLine {
 	query = strings.ToLower(strings.TrimSpace(query))
-	if query == "" || chatID == "" {
+	if query == "" || chatID == "" || !c.owned(owner, chatID) {
 		return nil
 	}
 	if limit <= 0 {
@@ -102,12 +116,23 @@ func (c channelThreadsImpl) Deliver(owner, service, chatID, handle, text, agentN
 // DeliverMedia is the real body: the outbox has always carried videos, so this
 // only had to be reachable. See core/messaging.ChannelMediaDeliverer.
 func (c channelThreadsImpl) DeliverMedia(owner, service, chatID, handle, text, agentName string, images, videos []string) error {
+	// The outbound is stamped with this owner, so only their own connector
+	// drains it. An unnamed owner is the deployment admin's, as on inbound.
+	owner = c.T.ownerOr(strings.TrimSpace(owner))
+	admin := ownerIsAdmin(owner)
+	// A chat on record must be this owner's: sending into another user's
+	// conversation would also write into their stored thread below. A chat id
+	// with no record is a fresh chat and goes through.
+	cv, known := c.T.getConvo(chatID)
+	if known && chatID != "" && !convoVisibleTo(cv, owner, admin) {
+		return fmt.Errorf("no conversation %q for this user", chatID)
+	}
 	svc := strings.TrimSpace(service)
 	if svc == "" {
 		// Caller didn't specify a transport (proactive send) — resolve it from
 		// the conversation so a Telegram chat's message goes out Telegram, not
 		// the iMessage default. Falls back to iMessage when the chat is unknown.
-		if cv, ok := c.T.getConvo(chatID); ok && strings.TrimSpace(cv.Service) != "" {
+		if known && strings.TrimSpace(cv.Service) != "" {
 			svc = cv.Service
 		}
 	}
@@ -119,7 +144,7 @@ func (c channelThreadsImpl) DeliverMedia(owner, service, chatID, handle, text, a
 	// with chatID="" only when the handle has no thread yet; the daemon then
 	// starts a fresh chat to the bare handle.
 	if chatID == "" && strings.TrimSpace(handle) != "" {
-		for _, cv := range c.T.listConvos() {
+		for _, cv := range c.T.convosFor(owner, admin) {
 			if cv.Handle == handle || containsFold(cv.AliasHandles, handle) {
 				chatID = cv.ChatID
 				break

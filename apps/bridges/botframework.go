@@ -343,7 +343,7 @@ func (T *Bridges) botOutboundLoop(ctx context.Context, c Connector, spec BotFram
 	tick := time.NewTicker(botOutboundTick)
 	defer tick.Stop()
 	for {
-		T.deliverBotOutbound(ctx, spec)
+		T.deliverBotOutbound(ctx, spec, T.ownerOr(c.Owner))
 		select {
 		case <-ctx.Done():
 			Log("[bridges] bot %q outbound loop stopped", c.Name)
@@ -360,8 +360,8 @@ func (T *Bridges) botOutboundLoop(ctx context.Context, c Connector, spec BotFram
 // whose conversation is UNKNOWN is different: there is no address for it and no
 // tick will ever produce one, so it is dropped loudly rather than re-queued
 // forever into a warning every three seconds.
-func (T *Bridges) deliverBotOutbound(ctx context.Context, spec BotFrameworkSpec) {
-	items := T.drainOutbox(spec.Service)
+func (T *Bridges) deliverBotOutbound(ctx context.Context, spec BotFrameworkSpec, owner string) {
+	items := T.drainOutbox(spec.Service, owner)
 	for i, it := range items {
 		if ctx.Err() != nil {
 			for _, r := range items[i:] {

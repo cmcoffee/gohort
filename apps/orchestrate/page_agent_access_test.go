@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/sandbox"
 )
 
 func accessRowsFor(t *testing.T, app *OrchestrateApp, id, view string) []map[string]any {
@@ -59,11 +60,21 @@ func TestTheWorkspaceGroupAnswersForTheSandbox(t *testing.T) {
 			t.Errorf("the workspace group never mentions %q", want)
 		}
 	}
-	// Default deployment, no restrictions: it reaches out, and says why.
+	// Default deployment: shell networking is closed unless a tool declares
+	// raw_network, and the row says so and where that is set.
 	net := byName["Opens network connections"]
-	if net["policy"] != "yes" {
-		t.Errorf("an unrestricted workspace reads as %v", net["policy"])
+	if net["policy"] != "when declared" {
+		t.Errorf("a default workspace reads as %v", net["policy"])
 	}
+	// A deployment that switched it back open reads as open.
+	prevClosed := sandbox.ShellNetworkClosedByDefault
+	sandbox.ShellNetworkClosedByDefault = func() bool { return false }
+	for _, row := range accessRowsFor(t, app, "a1", "workspace") {
+		if row["name"] == "Opens network connections" && row["policy"] != "yes" {
+			t.Errorf("an open deployment reads as %v", row["policy"])
+		}
+	}
+	sandbox.ShellNetworkClosedByDefault = prevClosed
 
 	// The agent's own ceiling shows, and says what it does NOT take away.
 	app2, _ := accessFixture(t, AgentRecord{ID: "a2", Name: "Held", WorkspaceNoNetwork: true})

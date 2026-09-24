@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -118,13 +119,21 @@ func (t *commandTool) Handler() core.ToolHandler {
 	return func(ctx context.Context, args map[string]any) (string, error) {
 		cmdArgs := make([]string, 0, len(t.spec.Args))
 		for _, a := range t.spec.Args {
-			cmdArgs = append(cmdArgs, substituteArgs(a, args))
+			v := substituteArgs(a, args)
+			// A value that fills a whole argument must not become an option
+			// of the approved binary ("--output=/etc/...", "-e ...").
+			if placeholderRE.MatchString(a) && placeholderRE.FindString(a) == a && strings.HasPrefix(v, "-") {
+				return "", fmt.Errorf("the value for %s starts with '-', which %s would read as an option", a, t.spec.Command)
+			}
+			cmdArgs = append(cmdArgs, v)
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), runTimeout)
 		defer cancel()
 		c := exec.CommandContext(ctx, t.spec.Command, cmdArgs...)
-		// Params also arrive as env vars, matching gohort's own shell tools.
-		c.Env = append(os.Environ(), argsToEnv(args)...)
+		// Params also arrive as env vars, matching gohort's own shell tools:
+		// the DECLARED ones only, and never one that changes how a program
+		// loads (see argsToEnv).
+		c.Env = append(os.Environ(), argsToEnv(args, t.spec.Params)...)
 		var out bytes.Buffer
 		c.Stdout = &out
 		c.Stderr = &out
@@ -142,17 +151,54 @@ func (t *commandTool) Handler() core.ToolHandler {
 
 // substituteArgs replaces {key} tokens in a command-arg template with the
 // tool-call values. No shell is involved, so this only fills VALUES.
+//
+// One pass over the template: a value is inserted and never read again, so a
+// value containing "{other}" cannot expand another parameter (the old loop
+// re-scanned its own output in map order).
 func substituteArgs(tmpl string, args map[string]any) string {
-	out := tmpl
-	for k, v := range args {
-		out = strings.ReplaceAll(out, "{"+k+"}", toStr(v))
-	}
-	return out
+	return placeholderRE.ReplaceAllStringFunc(tmpl, func(tok string) string {
+		key := tok[1 : len(tok)-1]
+		if v, ok := args[key]; ok {
+			return toStr(v)
+		}
+		return tok
+	})
 }
 
-func argsToEnv(args map[string]any) []string {
+var (
+	placeholderRE = regexp.MustCompile(`\{[A-Za-z_][A-Za-z0-9_]*\}`)
+	envNameRE     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+)
+
+// loaderEnv reports whether an environment name changes how a program is
+// loaded or run, rather than passing it a value: setting one from a tool
+// call turns an approved fixed binary into arbitrary code on this machine.
+func loaderEnv(name string) bool {
+	u := strings.ToUpper(name)
+	switch u {
+	case "PATH", "HOME", "SHELL", "IFS", "ENV", "BASH_ENV", "NODE_OPTIONS", "NODE_PATH",
+		"PERL5OPT", "PERL5LIB", "PERLLIB", "RUBYOPT", "RUBYLIB", "GIT_SSH", "GIT_SSH_COMMAND",
+		"GIT_EXEC_PATH", "EDITOR", "VISUAL", "PAGER", "TMPDIR", "SSH_ASKPASS", "PROMPT_COMMAND":
+		return true
+	}
+	for _, p := range []string{"LD_", "DYLD_", "PYTHON", "JAVA_", "_JAVA", "GCONV", "LUA_"} {
+		if strings.HasPrefix(u, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// argsToEnv exports each DECLARED parameter as an environment variable. A key
+// the command did not declare, a malformed name, or a name that would change
+// how a program loads is left out: they used to be exported whatever they
+// were, appended after os.Environ so they won.
+func argsToEnv(args map[string]any, declared map[string]core.ToolParam) []string {
 	env := make([]string, 0, len(args))
 	for k, v := range args {
+		if _, ok := declared[k]; !ok || !envNameRE.MatchString(k) || loaderEnv(k) {
+			continue
+		}
 		env = append(env, k+"="+toStr(v))
 	}
 	return env

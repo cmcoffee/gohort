@@ -116,12 +116,83 @@ type Convo struct {
 	// list shows only these; raw inbound stays in the "Add" picker until added.
 	Added  bool   `json:"added,omitempty"`
 	LastAt string `json:"last_at,omitempty"`
+	// Owner is the gohort user this conversation belongs to: stamped from the
+	// authenticating key or connector when inbound first records it, or from
+	// the signed-in user who adds it by hand. Empty on conversations recorded
+	// before ownership existed; those belong to the deployment admin (see
+	// convoVisibleTo) and are left as they are rather than rewritten.
+	Owner string `json:"owner,omitempty"`
 }
 
 func (T *Bridges) getConvo(chatID string) (Convo, bool) {
 	var c Convo
 	ok := T.DB.Get(convosTable, chatID, &c)
 	return c, ok
+}
+
+// convoVisibleTo reports whether user may see and manage c. An owned
+// conversation is its owner's alone; an ownerless one predates ownership and
+// belongs to the deployment admin, so only an admin sees it.
+func convoVisibleTo(c Convo, user string, admin bool) bool {
+	if c.Owner == "" {
+		return admin
+	}
+	return c.Owner == user
+}
+
+// ownerIsAdmin is the admin test for callers holding a username and no
+// request (the poll, the agent-facing seams). Same posture as RequestIsAdmin:
+// a deployment with no accounts configured is single-user, so everyone is.
+func ownerIsAdmin(owner string) bool {
+	if AuthDB == nil {
+		return true
+	}
+	db := AuthDB()
+	if db == nil || !AuthHasUsers(db) {
+		return true
+	}
+	return UserIsAdmin(owner)
+}
+
+// convoFor loads a conversation for user. Missing and not-yours are the same
+// answer, so a caller probing chat ids learns nothing about other users'.
+func (T *Bridges) convoFor(chatID, user string, admin bool) (Convo, bool) {
+	c, ok := T.getConvo(chatID)
+	if !ok || !convoVisibleTo(c, user, admin) {
+		return Convo{}, false
+	}
+	return c, true
+}
+
+// convosFor is listConvos narrowed to what user may see.
+func (T *Bridges) convosFor(user string, admin bool) []Convo {
+	var out []Convo
+	for _, c := range T.listConvos() {
+		if convoVisibleTo(c, user, admin) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// inboundMayWrite reports whether an inbound authenticated as owner on svc may
+// record into the stored conversation c. Another user's conversation is never
+// writable. An ownerless (pre-ownership) one is taken by an admin, or by the
+// owner of a key or connector for the SAME service when that service is not the
+// generic "api": minting those keys and approving those connectors is an
+// administrator's call, so the traffic is genuinely theirs. A generic api key
+// any user can mint names its own chat ids, and must not be able to claim an
+// old conversation by guessing one.
+func inboundMayWrite(c Convo, owner, svc string) bool {
+	switch {
+	case c.Owner == owner:
+		return true
+	case c.Owner != "":
+		return false
+	case owner == "" || ownerIsAdmin(owner):
+		return true
+	}
+	return svc != "api" && c.Service == svc
 }
 
 func (T *Bridges) saveConvo(c Convo) {
@@ -172,7 +243,10 @@ func chatHandle(chatID string) string {
 // is also me" gesture) silently fails to route, and a raw-handle alias never
 // matches a chat-id-form channel address. Only 1:1 convos cluster — a group is
 // identified by its own chat id, never by a member, so it never joins a person.
-func (T *Bridges) inboundIdentities(svc, chatID, handle string) []string {
+//
+// Only owner's conversations take part: another user's aliases say nothing
+// about who this owner's contact is.
+func (T *Bridges) inboundIdentities(owner, svc, chatID, handle string) []string {
 	seen := map[string]bool{}
 	add := func(s string) {
 		if s = strings.TrimSpace(s); s != "" {
@@ -189,7 +263,7 @@ func (T *Bridges) inboundIdentities(svc, chatID, handle string) []string {
 		// convo count; trivial at personal-assistant scale.
 		for grew := true; grew; {
 			grew = false
-			for _, c := range T.listConvos() {
+			for _, c := range T.convosFor(owner, ownerIsAdmin(owner)) {
 				if isGroupChat(c.ChatID) {
 					continue
 				}
@@ -228,12 +302,19 @@ func (T *Bridges) inboundIdentities(svc, chatID, handle string) []string {
 // thread. They are distinct: in a named group every message shares one
 // convoName but each has its own senderName — conflating them (the old single
 // arg) stamped the group's name onto every participant.
-func (T *Bridges) upsertConvo(service, chatID, handle, senderName, convoName string) {
+//
+// owner is who the inbound authenticated as. It is stamped when the record has
+// none, which is its first save or an ownerless one inboundMayWrite let this
+// owner take; the caller has already refused a conversation owned by anyone else.
+func (T *Bridges) upsertConvo(owner, service, chatID, handle, senderName, convoName string) {
 	if strings.TrimSpace(chatID) == "" {
 		return
 	}
 	c, _ := T.getConvo(chatID)
 	c.ChatID = chatID
+	if c.Owner == "" {
+		c.Owner = owner
+	}
 	c.Service = service
 	// A group has no canonical handle — its identity is the stable chat id.
 	// Clear any handle a pre-fix inbound clobbered in, so the address derives
@@ -607,9 +688,11 @@ type OutboxItem struct {
 	// so recipients can tell an agent's message from the owner's own texts.
 	// Empty = the agent didn't opt in (or is unknown) → untagged.
 	Agent   string   `json:"agent,omitempty"`
-	// Owner is the gohort user this outbound belongs to, carried ONLY so
-	// enqueueOutbox can resolve the bound channel for per-channel tag overrides.
-	// Cleared before the item is stored/drained, so it never reaches a connector.
+	// Owner is the gohort user this outbound belongs to. enqueueOutbox resolves
+	// the bound channel's tag overrides with it, and drainOutbox hands an item
+	// only to a connector of the same owner. Stored (kvlite encodes with gob,
+	// which ignores json tags) but never serialized to a connector: the poll
+	// response is JSON, and there it is "-".
 	Owner   string   `json:"-"`
 	Created string   `json:"created"`
 	// Seq is a per-process monotonic enqueue counter used ONLY to break ties when
@@ -675,7 +758,6 @@ func (T *Bridges) enqueueOutbox(it OutboxItem) {
 			noteOutboundTag(prefix)
 		}
 	}
-	it.Owner = "" // transient — never persist/leak the owner to a connector
 	// Fingerprint what we are about to send, AFTER the tag + markdown
 	// flattening, since that is the form that comes back. In a self thread the
 	// copy that returns is is_from_me exactly like the owner's own typing, so
@@ -699,13 +781,26 @@ func (T *Bridges) enqueueOutbox(it OutboxItem) {
 		it.ID, it.ChatID, it.Service, it.Type, len(it.Text), len(it.Images), imgBytes, len(it.Videos), vidBytes)
 }
 
-// drainOutbox returns and removes every pending item for one service, oldest
-// first, so a connector only ever gets its own service's traffic.
-func (T *Bridges) drainOutbox(service string) []OutboxItem {
+// outboxFor reports whether a connector owned by owner (admin: that owner's
+// standing) may take it. An item with no owner was queued before outbound
+// carried one; it is the deployment admin's, like an ownerless conversation.
+func outboxFor(it OutboxItem, owner string, admin bool) bool {
+	if it.Owner == "" {
+		return owner == "" || admin
+	}
+	return it.Owner == owner
+}
+
+// drainOutbox returns and removes every pending item for one service AND one
+// owner, oldest first, so a connector only ever gets its own service's traffic
+// and never another user's. The service alone let any key for a service drain
+// every user's outbound on it.
+func (T *Bridges) drainOutbox(service, owner string) []OutboxItem {
 	var out []OutboxItem
+	admin := ownerIsAdmin(owner)
 	for _, id := range T.DB.Keys(outboxTable) {
 		var it OutboxItem
-		if T.DB.Get(outboxTable, id, &it) && it.Service == service {
+		if T.DB.Get(outboxTable, id, &it) && it.Service == service && outboxFor(it, owner, admin) {
 			out = append(out, it)
 			T.DB.Unset(outboxTable, id)
 		}
@@ -733,7 +828,7 @@ func (T *Bridges) drainOutbox(service string) []OutboxItem {
 				total += len(v)
 			}
 		}
-		Log("[bridges.outbox] drained %d item(s) for svc=%q (%d bytes total): handed to connector", len(out), service, total)
+		Log("[bridges.outbox] drained %d item(s) for svc=%q owner=%q (%d bytes total): handed to connector", len(out), service, owner, total)
 	}
 	return out
 }
@@ -827,6 +922,15 @@ func (T *Bridges) rosterNames(chatID string) []string {
 		names = append(names, n)
 	}
 	return names
+}
+
+// ownerOr resolves the owner a key or connector acts for: its own, else the
+// deployment admin for one recorded before keys carried an owner.
+func (T *Bridges) ownerOr(owner string) string {
+	if owner != "" {
+		return owner
+	}
+	return T.bridgeOwner()
 }
 
 // bridgeOwner returns the single owner Bridges operates for — the deployment

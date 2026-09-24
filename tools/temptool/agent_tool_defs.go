@@ -358,7 +358,9 @@ func tempToolNeedsConfirm(tt *TempTool) bool {
 	if tt.ConfirmInChat {
 		return true
 	}
-	if tt.RawNetwork {
+	// Raw network, and a persistent shell (which always has it: see
+	// NewSandboxedShellCmd): both reach past the audited fetch hook.
+	if tt.RawNetwork || tt.Mode == TempToolModePersistent {
 		return true
 	}
 	for _, c := range tt.HookCapabilities {

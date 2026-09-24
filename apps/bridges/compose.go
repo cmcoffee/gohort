@@ -11,18 +11,27 @@ import (
 // Group composition — thread view + participant naming + aliases, lifted from
 // phantom. Bridges stores identity + recent messages (transport-level), the
 // agent owns persona/behavior.
+//
+// Every handler here takes a chat_id and answers 404 unless the conversation is
+// the caller's (convoFor): missing and another user's read the same, so a chat
+// id cannot be probed.
 
 // handleConvInfo returns a conversation's identity (members + alias handles) for
 // the member editor.
 //
 //	GET /bridges/api/conv-info/{chat_id} → Convo
 func (T *Bridges) handleConvInfo(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
 		return
 	}
 	chatID := strings.TrimPrefix(r.URL.Path, "/api/conv-info/")
 	if chatID == "" {
 		http.Error(w, "chat_id required", http.StatusBadRequest)
+		return
+	}
+	if _, ok := T.convoFor(chatID, user, RequestIsAdmin(r)); !ok {
+		http.Error(w, "conversation not found", http.StatusNotFound)
 		return
 	}
 	// Harvest participants from the thread so the roster is complete even for
@@ -38,12 +47,21 @@ func (T *Bridges) handleConvInfo(w http.ResponseWriter, r *http.Request) {
 //
 //	PATCH /bridges/api/conversation/{chat_id}  {members, alias_handles, display_name}
 func (T *Bridges) handleConvUpdate(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
 		return
 	}
 	chatID := strings.TrimPrefix(r.URL.Path, "/api/conversation/")
 	if chatID == "" {
 		http.Error(w, "chat_id required", http.StatusBadRequest)
+		return
+	}
+	// Edits apply to a conversation that exists and is the caller's; this no
+	// longer creates one from a bare id, which would let a user claim a chat id
+	// before its real owner's first message arrives.
+	c, found := T.convoFor(chatID, user, RequestIsAdmin(r))
+	if !found {
+		http.Error(w, "conversation not found", http.StatusNotFound)
 		return
 	}
 	// DELETE removes the conversation (and its thread) — used when folding a
@@ -63,8 +81,6 @@ func (T *Bridges) handleConvUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request", http.StatusBadRequest)
 		return
 	}
-	c, _ := T.getConvo(chatID)
-	c.ChatID = chatID
 	if req.Members != nil {
 		c.Members = *req.Members
 	}
@@ -89,12 +105,17 @@ func (T *Bridges) handleConvUpdate(w http.ResponseWriter, r *http.Request) {
 //
 //	GET /bridges/api/messages/{chat_id} → [{role, display_name, text, timestamp}]
 func (T *Bridges) handleMessages(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+	user, _, ok := RequireUser(w, r, T.DB)
+	if !ok {
 		return
 	}
 	chatID := strings.TrimPrefix(r.URL.Path, "/api/messages/")
 	if chatID == "" {
 		http.Error(w, "chat_id required", http.StatusBadRequest)
+		return
+	}
+	if _, ok := T.convoFor(chatID, user, RequestIsAdmin(r)); !ok {
+		http.Error(w, "conversation not found", http.StatusNotFound)
 		return
 	}
 	msgs := T.recentMessages(chatID, 50)

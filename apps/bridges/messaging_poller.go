@@ -149,7 +149,7 @@ func (T *Bridges) outboundLoop(ctx context.Context, c Connector, spec RestMessag
 	tick := time.NewTicker(3 * time.Second)
 	defer tick.Stop()
 	for {
-		T.deliverOutbound(ctx, spec)
+		T.deliverOutbound(ctx, spec, T.ownerOr(c.Owner))
 		select {
 		case <-ctx.Done():
 			Log("[bridges] webhook %q outbound loop stopped", c.Name)
@@ -224,27 +224,27 @@ func (T *Bridges) pollOnce(ctx context.Context, c Connector, spec RestMessagingS
 		T.setPollCursor(c.Name, newCur)
 	}
 	if ingest {
-		T.deliverOutbound(ctx, spec)
+		T.deliverOutbound(ctx, spec, T.ownerOr(c.Owner))
 	}
 	return nil
 }
 
-// deliverOutbound drains the service's outbox and posts each reply back out. On a
-// send failure the item AND every not-yet-sent item are re-queued so nothing is
-// lost, and delivery retries next tick.
-func (T *Bridges) deliverOutbound(ctx context.Context, spec RestMessagingSpec) {
+// deliverOutbound drains the service's outbox for the connector's owner and
+// posts each reply back out. On a send failure the item AND every not-yet-sent
+// item are re-queued so nothing is lost, and delivery retries next tick.
+func (T *Bridges) deliverOutbound(ctx context.Context, spec RestMessagingSpec, owner string) {
 	if spec.SendURL == "" {
 		// Inbound-only connector (no outbound leg). If a bidirectional channel is
 		// bound to this service, its agent's replies enqueue with nothing to drain
 		// them — they'd pile up in the uncapped outbox silently. Surface it (guards
 		// leave breadcrumbs) so the misconfiguration is visible, not invisible.
-		if n := T.pendingOutboxCount(spec.Service); n > 0 {
+		if n := T.pendingOutboxCount(spec.Service, owner); n > 0 {
 			Warn("[bridges] %d queued reply(ies) for svc=%q but its rest_messaging connector has no send_url: set the bound channel to inbound-only, or add send_url to deliver them", n, spec.Service)
 		}
 		return
 	}
 	method := firstNonEmpty(spec.SendMethod, "POST")
-	items := T.drainOutbox(spec.Service)
+	items := T.drainOutbox(spec.Service, owner)
 	for i, it := range items {
 		if ctx.Err() != nil {
 			// Shutting down mid-drain: re-queue the rest so nothing is lost.
@@ -407,13 +407,14 @@ func jsonPathString(node any, path string) string {
 
 // --- helpers ------------------------------------------------------------------
 
-// pendingOutboxCount reports how many items are queued for a service (used to
-// surface replies stranded by an inbound-only connector).
-func (T *Bridges) pendingOutboxCount(service string) int {
+// pendingOutboxCount reports how many of owner's items are queued for a service
+// (used to surface replies stranded by an inbound-only connector).
+func (T *Bridges) pendingOutboxCount(service, owner string) int {
 	n := 0
+	admin := ownerIsAdmin(owner)
 	for _, id := range T.DB.Keys(outboxTable) {
 		var it OutboxItem
-		if T.DB.Get(outboxTable, id, &it) && it.Service == service {
+		if T.DB.Get(outboxTable, id, &it) && it.Service == service && outboxFor(it, owner, admin) {
 			n++
 		}
 	}

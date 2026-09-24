@@ -1014,8 +1014,91 @@
     return host;
   };
 
+  // --- isolated content ------------------------------------------------
+  //
+  // cfg.isolate renders a Card's or Frame's HTML in a SANDBOXED iframe: its
+  // scripts run, but with no origin, so they cannot read this page, its
+  // cookies or storage, or call any endpoint as the viewer. A page that hosts
+  // HTML its viewer did not write (one user's app shown to another) sets it.
+  //
+  // The one thing such content legitimately needs is its own data. A shim in
+  // the frame routes a RELATIVE fetch, and a relative <img src>, to this page
+  // by message; this page performs it with the viewer's session only when the
+  // path starts with one of cfg.isolate_fetch, and answers with the body.
+  // Anything else (another app, the admin API, an absolute URL) is refused.
+  var ISOLATE_SHIM = '<script>(function(){' +
+    'var n=0,p={};' +
+    'addEventListener("message",function(e){var d=e.data;if(!d||!d.__uiIsoReply)return;var c=p[d.id];if(!c)return;delete p[d.id];' +
+      'if(d.error){c.rej(new Error(d.error));return;}' +
+      'c.res(new Response(d.body,{status:d.status,headers:{"Content-Type":d.type||"application/octet-stream"}}));});' +
+    'function ask(u,o){o=o||{};return new Promise(function(res,rej){var id=++n;p[id]={res:res,rej:rej};' +
+      'var h=o.headers||{},ct=h["Content-Type"]||h["content-type"]||"";' +
+      'parent.postMessage({__uiIso:1,id:id,url:String(u),method:o.method||"GET",body:(o.body==null?null:String(o.body)),ctype:ct},"*");});}' +
+    'window.fetch=function(u,o){u=String(u&&u.url||u);if(/^[a-z][a-z0-9+.-]*:/i.test(u)||u.indexOf("//")===0)' +
+      'return Promise.reject(new Error("isolated content can only fetch its own data"));return ask(u,o);};' +
+    'function img(x){var s=x.getAttribute&&x.getAttribute("src");if(!s||/^(data|blob):|^[a-z][a-z0-9+.-]*:|^\\/\\//i.test(s)||x.__uiIso)return;' +
+      'x.__uiIso=1;ask(s).then(function(r){return r.blob();}).then(function(b){x.src=URL.createObjectURL(b);}).catch(function(){});}' +
+    'function scan(r){(r.querySelectorAll?r.querySelectorAll("img[src]"):[]).forEach(img);}' +
+    'function height(){parent.postMessage({__uiIsoHeight:Math.ceil(document.documentElement.scrollHeight)},"*");}' +
+    'addEventListener("DOMContentLoaded",function(){scan(document);new MutationObserver(function(m){m.forEach(function(x){x.addedNodes.forEach(function(nd){if(nd.tagName==="IMG")img(nd);else scan(nd);});});height();})' +
+      '.observe(document.documentElement,{childList:true,subtree:true});' +
+      'if(window.ResizeObserver)new ResizeObserver(height).observe(document.documentElement);height();});' +
+    '})();<\/script>';
+
+  function isolatedFrame(cfg, autoHeight) {
+    var f = document.createElement('iframe');
+    f.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-modals allow-pointer-lock');
+    var allowed = (cfg.isolate_fetch || []).map(String);
+    function permitted(u) {
+      if (/^[a-z][a-z0-9+.-]*:/i.test(u) || u.indexOf('//') === 0 || u.charAt(0) === '/') return false;
+      if (u.split(/[?#]/)[0].split('/').indexOf('..') >= 0) return false;
+      return allowed.some(function(pre) { return pre && u.indexOf(pre) === 0; });
+    }
+    window.addEventListener('message', function(e) {
+      if (e.source !== f.contentWindow || !e.data) return;
+      var d = e.data;
+      if (d.__uiIsoHeight && autoHeight) {
+        f.style.height = Math.min(Math.max(d.__uiIsoHeight, 40), 20000) + 'px';
+        return;
+      }
+      if (!d.__uiIso) return;
+      function reply(r) { r.__uiIsoReply = 1; r.id = d.id; f.contentWindow.postMessage(r, '*'); }
+      if (!permitted(String(d.url || ''))) { reply({error: 'not allowed: ' + d.url}); return; }
+      var opts = {method: d.method || 'GET', credentials: 'same-origin'};
+      if (d.body != null && opts.method !== 'GET' && opts.method !== 'HEAD') {
+        opts.body = d.body;
+        opts.headers = {'Content-Type': d.ctype || 'application/json'};
+      }
+      fetch(d.url, opts).then(function(r) {
+        var type = r.headers.get('Content-Type') || '';
+        return r.arrayBuffer().then(function(buf) { reply({status: r.status, type: type, body: buf}); });
+      }).catch(function(err) { reply({error: String(err && err.message || err)}); });
+    });
+    f.__uiSet = function(html) { f.setAttribute('srcdoc', ISOLATE_SHIM + (html || '')); };
+    return f;
+  }
+
   components.card = function(cfg) {
     var wrap = el('div', {class: 'ui-card'});
+    if (cfg.isolate) {
+      var iso = isolatedFrame(cfg, true);
+      iso.style.cssText = 'display:block;width:100%;border:0;background:transparent;height:40px';
+      iso.__uiSet(cfg.html);
+      wrap.appendChild(iso);
+      if (cfg.source) {
+        fetch(cfg.source, {credentials: 'same-origin', cache: 'no-store'})
+          .then(function(r) { return r.ok ? r.text() : null; })
+          .then(function(body) {
+            if (body === null) return;
+            var html = body;
+            if (body.charAt(0) === '{') {
+              try { var d = JSON.parse(body); if (d && typeof d.html === 'string') html = d.html; } catch (_) {}
+            }
+            iso.__uiSet(html);
+          }).catch(function() {});
+      }
+      return wrap;
+    }
     // Re-execute any inline <script> tags. innerHTML doesn't run them
     // (per HTML5), so we manually clone each script into a fresh
     // element the browser will execute. Keep this for the escape-hatch
@@ -1093,7 +1176,15 @@
     f.style.cssText = 'display:block;width:100%;border:0;background:#fff;border-radius:8px;' +
       'height:' + (cfg.height || 'min(80vh, 860px)');
     f.setAttribute('allow', 'autoplay; fullscreen');
-    f.setAttribute('srcdoc', cfg.html || '');
+    if (cfg.isolate) {
+      var iso = isolatedFrame(cfg, false);
+      iso.style.cssText = f.style.cssText;
+      iso.setAttribute('allow', 'autoplay; fullscreen');
+      iso.__uiSet(cfg.html);
+      f = iso;
+    } else {
+      f.setAttribute('srcdoc', cfg.html || '');
+    }
     // Keyboard-driven documents (games, editors) are inert until the frame
     // holds focus. Take it on load unless the user is typing somewhere.
     f.addEventListener('load', function() {

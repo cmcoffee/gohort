@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1302,6 +1304,67 @@ func (pr *probeRun) readTools() {
 	}
 }
 
+// maxWatchMinutes caps how long a watch may keep polling: a day.
+const maxWatchMinutes = 24 * 60
+
+// watchReadCommands are the commands an unattended watch may run: each only
+// reads. A tool with subcommands is listed with the ones that only read.
+var watchReadCommands = map[string][]string{
+	"cat": nil, "head": nil, "tail": nil, "grep": nil, "egrep": nil, "fgrep": nil, "ls": nil,
+	"stat": nil, "test": nil, "[": nil, "wc": nil, "ps": nil, "pgrep": nil, "df": nil, "du": nil,
+	"uptime": nil, "free": nil, "date": nil, "echo": nil, "true": nil, "id": nil, "hostname": nil,
+	"ping": nil, "ss": nil, "netstat": nil, "curl": nil, "dig": nil,
+	"host": nil, "nslookup": nil, "sort": nil, "uniq": nil, "cut": nil,
+	"tr": nil, "jq": nil, "journalctl": nil, "find": nil, "pidof": nil, "lsof": nil,
+	"systemctl": {"status", "is-active", "is-enabled", "is-failed", "show", "list-units", "list-timers"},
+	"docker":    {"ps", "inspect", "logs", "images", "stats"},
+	"kubectl":   {"get", "describe", "logs", "top"},
+	"zpool":     {"status", "list"},
+	"zfs":       {"list", "get"},
+	"git":       {"status", "log", "rev-parse", "diff", "show"},
+}
+
+// watchCommandRefusal says why cmd is not a read-only watch, or "".
+func watchCommandRefusal(cmd string) string {
+	if strings.ContainsAny(cmd, "`\n\r") || strings.Contains(cmd, "$(") || strings.Contains(cmd, ">") {
+		return "it uses substitution, a newline or a redirect"
+	}
+	if strings.Contains(strings.ReplaceAll(strings.ReplaceAll(cmd, "&&", ""), "||", ""), "&") {
+		return "it starts something in the background"
+	}
+	for _, seg := range shell_segments(cmd) {
+		f := strings.Fields(seg)
+		if len(f) == 0 {
+			continue
+		}
+		name := cmd_base(f[0])
+		subs, ok := watchReadCommands[name]
+		if !ok {
+			return strconv.Quote(name) + " is not one of the read-only commands a watch may run"
+		}
+		if subs != nil {
+			sub := ""
+			for _, a := range f[1:] {
+				if !strings.HasPrefix(a, "-") {
+					sub = a
+					break
+				}
+			}
+			if !slices.Contains(subs, sub) {
+				return strconv.Quote(name+" "+sub) + " changes something; a watch may only use " + name + " " + strings.Join(subs, "/")
+			}
+		}
+		for _, a := range f[1:] {
+			switch a {
+			case "-exec", "-execdir", "-delete", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls",
+				"-o", "-O", "--output", "-d", "--data", "--data-binary", "-F", "--form", "-X", "--request", "-T", "--upload-file":
+				return strconv.Quote(name+" "+a) + " can write or run something"
+			}
+		}
+	}
+	return ""
+}
+
 func (pr *probeRun) reportTools() {
 	// watch_condition — register a 1-minute expect-style poll until a condition is met.
 	pr.watch_condition_tool = AgentToolDef{
@@ -1327,12 +1390,31 @@ func (pr *probeRun) reportTools() {
 			if task == "" || command == "" || pattern == "" {
 				return "", fmt.Errorf("task, command, and success_pattern are required")
 			}
+			// A watch runs unattended, every minute, long after this turn:
+			// nobody is there to approve it, so it may only run a command the
+			// classifier calls read-only. Classified with no scratch exemption,
+			// since the run's scratch directory is gone by then. It used to
+			// register anything, which made it a way around every confirmation
+			// run_command asks for.
+			if cat, reason := classify_command_scoped(command, ""); cat != RiskNone {
+				return "", fmt.Errorf("a watch runs unattended every minute, so it can only run read-only commands; this one is %s (%s). Run it once with run_command instead, then watch with a read-only check", cat, reason)
+			}
+			// The classifier is a denylist and misses things (it passes
+			// "systemctl restart"), so an unattended watch also has to be
+			// built only from commands known to read and nothing else.
+			if why := watchCommandRefusal(command); why != "" {
+				return "", fmt.Errorf("a watch runs unattended every minute, so it can only run read-only commands: %s. Run the action once with run_command, then watch with a read-only check (status, cat, grep, tail, ...)", why)
+			}
 			timeoutMin := 60
 			if s, _ := args["timeout_minutes"].(string); s != "" {
 				var n int
 				if _, err := fmt.Sscanf(s, "%d", &n); err == nil && n > 0 {
 					timeoutMin = n
 				}
+			}
+			// Bounded: a watch that never matches must not run for ever.
+			if timeoutMin > maxWatchMinutes {
+				timeoutMin = maxWatchMinutes
 			}
 			now := time.Now()
 			w := ScheduledWatch{

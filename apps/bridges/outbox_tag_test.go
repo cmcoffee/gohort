@@ -1,6 +1,8 @@
 package bridges
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -79,15 +81,22 @@ func TestEnqueueOutboxAgentNameTag(t *testing.T) {
 		}
 	})
 
-	// The transient Owner is cleared before the item is stored, so it never
-	// reaches a connector draining the outbox.
-	t.Run("owner_not_persisted", func(t *testing.T) {
+	// The Owner is stored, because drainOutbox filters on it, but it never
+	// reaches a connector: the poll response is JSON and the field is "-".
+	t.Run("owner_stored_not_serialized", func(t *testing.T) {
 		T := newBridges()
 		T.enqueueOutbox(OutboxItem{ID: "a6", Service: "imessage", ChatID: "chat-x", Owner: "u9", Text: "hi", Agent: "Assistant", Type: "reply"})
 		var it OutboxItem
 		T.DB.Get(outboxTable, "a6", &it)
-		if it.Owner != "" {
-			t.Fatalf("owner leaked into stored item: %q", it.Owner)
+		if it.Owner != "u9" {
+			t.Fatalf("owner not stored: %q", it.Owner)
+		}
+		b, err := json.Marshal(it)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), "u9") {
+			t.Fatalf("owner leaked into the connector's JSON: %s", b)
 		}
 	})
 }

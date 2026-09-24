@@ -255,24 +255,29 @@ func TestEnforceSecuredBinding(t *testing.T) {
 	}
 }
 
-// TestCredentialDispatchAccessByKind pins the by-kind access gate: an OPEN cred is
-// gated by its user ACL (WHO) — enforced at dispatch so fetch_via / api-mode can't
-// reach a cred the user wasn't shared — while a SECURED cred DEFERS to its bound
-// tools (WHAT) and does NOT consult AllowedUsers (a stale/hidden list must not gate
-// it). The two models never compose.
+// TestCredentialDispatchAccessByKind pins the access gate: an OPEN cred is gated
+// by its user ACL (WHO), enforced at dispatch so fetch_via / api-mode can't reach
+// a cred the user wasn't shared; a SECURED cred is gated by the same user ACL AND
+// its bound tools (WHAT). Securing narrows how a key is used, never who may use
+// it: any user can author a tool that declares a credential, and a declaring
+// tool binds itself on first dispatch, so WHAT alone let everybody in.
 func TestCredentialDispatchAccessByKind(t *testing.T) {
 	s := &SecureAPI{db: &DBase{Store: kvlite.MemStore()}}
 
-	// SECURED cred that (still) carries a leftover AllowedUsers from before it was
-	// secured — it must be IGNORED; access follows the binding only.
 	s.db.Set(secureAPITable, "sec", SecureCredential{
 		Name: "sec", Secured: true, AllowedUsers: []string{"alice"},
 		ApprovedToolBindings: []string{"bound"},
 	})
-	// A user OUTSIDE the leftover AllowedUsers, dispatching the bound tool → PASSES:
-	// a secured cred defers to whoever has the tool, not the user list.
-	if err := s.EnforceSecuredBinding("sec", "bound", "bob"); err != nil {
-		t.Fatalf("a secured cred must defer to its binding, ignoring AllowedUsers: %v", err)
+	if err := s.EnforceSecuredBinding("sec", "bound", "alice"); err != nil {
+		t.Fatalf("a granted user through a bound tool must pass: %v", err)
+	}
+	// A user OUTSIDE AllowedUsers is refused even through a bound tool.
+	if err := s.EnforceSecuredBinding("sec", "bound", "bob"); err == nil {
+		t.Fatal("a secured cred let in a user its Access list does not name")
+	}
+	// Nor can they bind a tool of their own to it.
+	if err := s.EnforceSecuredBinding("sec", "bobs_new_tool", "bob"); err == nil {
+		t.Fatal("a non-grantee bound a new tool to a secured cred")
 	}
 	// The WHAT axis still applies: a revoked binding is refused regardless of user.
 	if err := s.RevokeToolBinding("sec", "bound"); err != nil {

@@ -1075,12 +1075,11 @@ func (s *SecureAPI) UserMayUse(c SecureCredential, user string) bool {
 
 // EnforceSecuredBinding is the dispatch-time credential-access gate: may `user`
 // dispatch `toolName` through `credName`? Returns nil (allow) or a directive error
-// (refuse). The gate is by credential kind — the two never compose:
+// (refuse):
 //   - OPEN cred → WHO axis: the user must be granted it (open / allowlist / own).
-//   - SECURED cred → WHAT axis: access is DEFERRED to the bound tools — the tool
-//     must be an approved declaring binding (a revoked/tombstoned one is refused,
-//     an un-revoked declaring tool is allowed and recorded). AllowedUsers is NOT
-//     consulted for a secured cred; the bound tools carry their own access.
+//   - SECURED cred → the WHO axis as above, AND the WHAT axis: the tool must be
+//     a declaring binding (a revoked/tombstoned one is refused, an un-revoked
+//     declaring tool is allowed and recorded).
 //
 // A tool only REACHES dispatch for a secured cred if it already DECLARES it (the
 // fetch_via hook / api-mode wiring verified that), so an un-revoked declaring tool
@@ -1106,13 +1105,17 @@ func (s *SecureAPI) EnforceSecuredBinding(credName, toolName, user string) error
 		}
 		return nil
 	}
-	// SECURED cred → access is DEFERRED to the tools bound to it: whoever can use a
-	// bound declaring tool can dispatch through the credential (secret server-side).
-	// A secured cred has NO separate user ACL — AllowedUsers is not consulted here,
-	// because the bound tools carry their own access (adopt ACL for shared tools,
-	// per-agent scope, ownership) and a second cred-level user gate would be
-	// redundant and confusing. The admin governs a secured cred's reach by governing
-	// WHICH TOOLS are bound (Bindings), not a user list.
+	// SECURED cred → WHO and WHAT both apply. It used to be WHAT alone, on the
+	// theory that the bound tools carry their own access. But a declaring tool
+	// that is not yet recorded is bound automatically on its first dispatch
+	// (below), and any user can author a tool that declares a credential, so
+	// securing a credential restricted to one person made it reachable by
+	// everybody. Securing narrows HOW the key is used (server-side only,
+	// through bound tools); it never widens WHO. The admin's Access list is
+	// shown for secured credentials again for the same reason.
+	if !s.UserMayUse(c, user) {
+		return fmt.Errorf("credential %q is not shared with you: an admin grants access via Access in Admin > APIs", credName)
+	}
 	toolName = strings.TrimSpace(toolName)
 	if toolName == "" {
 		return nil

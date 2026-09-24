@@ -123,14 +123,28 @@ func (t *BrowsePageTool) launch() {
 		// only one gohort process owns this profile.
 		clearStaleSingleton(profileDir)
 
-		u, err := launcher.New().
-			Bin(binPath).
-			Headless(true).
-			NoSandbox(true).
-			Set("disable-gpu").
-			Set("disable-dev-shm-usage").
-			UserDataDir(profileDir).
-			Launch()
+		// Chromium's own sandbox is what contains a renderer exploit from a
+		// page somebody asked the agent to read; without it that exploit runs
+		// as the gohort process. It is used whenever it can be: root cannot
+		// run it at all, and some container hosts lack the namespaces it
+		// needs, which is the one case the fallback below is for.
+		launch := func(noSandbox bool) (string, error) {
+			return launcher.New().
+				Bin(binPath).
+				Headless(true).
+				NoSandbox(noSandbox).
+				Set("disable-gpu").
+				Set("disable-dev-shm-usage").
+				UserDataDir(profileDir).
+				Launch()
+		}
+		noSandbox := os.Geteuid() == 0
+		u, err := launch(noSandbox)
+		if err != nil && !noSandbox {
+			Log("[browser] WARNING: Chromium would not start with its sandbox (%v); starting WITHOUT it. A renderer exploit from a browsed page would then run as this process: run gohort where user namespaces are available to keep it.", err)
+			clearStaleSingleton(profileDir)
+			u, err = launch(true)
+		}
 		if err != nil {
 			t.initErr = fmt.Errorf("Chromium launch failed: %w", err)
 			Log("[browser] launch error: %v", t.initErr)
@@ -217,7 +231,15 @@ func (t *BrowsePageTool) fetchImpl(target string, maxChars int) (string, error) 
 	b := t.browser
 	t.mu.Unlock()
 
-	page, err := b.Page(proto.TargetCreateTarget{})
+	// A throwaway context per call: one profile is shared by every user of
+	// this server, and a page visited for one must not see the cookies or
+	// storage another left behind.
+	inc, err := b.Incognito()
+	if err != nil {
+		return "", fmt.Errorf("creating browser context: %w", err)
+	}
+	defer inc.Close()
+	page, err := inc.Page(proto.TargetCreateTarget{})
 	if err != nil {
 		return "", fmt.Errorf("creating browser page: %w", err)
 	}

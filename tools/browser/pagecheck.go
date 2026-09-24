@@ -63,7 +63,14 @@ func (t *BrowsePageTool) checkPage(target string, cookies []PageCheckCookie, pro
 	b := t.browser
 	t.mu.Unlock()
 
-	page, err := b.Page(proto.TargetCreateTarget{})
+	// A throwaway context per call, as in fetchImpl: no cookies or storage
+	// carried between users of the one shared profile.
+	inc, err := b.Incognito()
+	if err != nil {
+		return nil, fmt.Errorf("creating browser context: %w", err)
+	}
+	defer inc.Close()
+	page, err := inc.Page(proto.TargetCreateTarget{})
 	if err != nil {
 		return nil, fmt.Errorf("creating browser page: %w", err)
 	}

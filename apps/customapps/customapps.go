@@ -220,7 +220,7 @@ func (T *CustomApps) route(w http.ResponseWriter, r *http.Request) {
 		// one). Keyed by the app's owner, so a shared app the owner still watches
 		// keeps its owner-side tracker running.
 		T.touchAppView(spec)
-		_ = ui.RenderPageJSON(w, spec.Page, "", recordsInvalidationBridge(spec), spec.Name) // "" → resolved theme (see RegisterThemeResolver)
+		_ = ui.RenderPageJSON(w, isolateAppHTML(spec.Page), "", recordsInvalidationBridge(spec), spec.Name) // "" → resolved theme (see RegisterThemeResolver)
 	case rest == "_settings":
 		// The app's Settings page — a form over the tunables it declares.
 		T.handleSettingsPage(w, r, spec, user == ownerUser)
@@ -1419,4 +1419,46 @@ func (T *CustomApps) handleAsset(w http.ResponseWriter, r *http.Request, owner, 
 	if r.Method != http.MethodHead {
 		_, _ = w.Write(data)
 	}
+}
+
+// appOwnPaths are the relative endpoints an app's own page HTML may still
+// reach from inside its sandbox: its data sources and actions, its records,
+// and its assets. Nothing else in gohort.
+var appOwnPaths = []string{"data/", "action/", "actions", "records", "record", "assets/"}
+
+// isolateAppHTML marks every Card and Frame in an app's page as isolated.
+// An app's page HTML is its author's, shown to whoever opens the app,
+// administrators included; on the gohort origin its script could act as the
+// viewer against every endpoint the viewer can reach. Isolated, it runs in a
+// sandbox with no origin and reaches only the app's own endpoints (see the
+// runtime's isolatedFrame). Rewritten at serve time, so every stored app,
+// old or new, is covered.
+func isolateAppHTML(page json.RawMessage) json.RawMessage {
+	var v any
+	if len(page) == 0 || json.Unmarshal(page, &v) != nil {
+		return page
+	}
+	var walk func(any)
+	walk = func(x any) {
+		switch t := x.(type) {
+		case map[string]any:
+			if typ, _ := t["type"].(string); typ == "card" || typ == "frame" {
+				t["isolate"] = true
+				t["isolate_fetch"] = appOwnPaths
+			}
+			for _, e := range t {
+				walk(e)
+			}
+		case []any:
+			for _, e := range t {
+				walk(e)
+			}
+		}
+	}
+	walk(v)
+	out, err := json.Marshal(v)
+	if err != nil {
+		return page
+	}
+	return out
 }

@@ -143,10 +143,11 @@ func (a *AdminApp) credentialsSections() []ui.Section {
 							// use it — is on the agent editor, "External
 							// credentials", so each user scopes their own fleet instead of
 							// the admin managing an unbounded per-agent list here.)
-							// HIDDEN when Secured: a secured cred has no user ACL — its
-							// access is deferred to the tools bound to it (see Bindings),
-							// so a user list here would be moot and misleading.
-							ui.ModalActionIf("Access", "", "secured", ui.ACLPicker(ui.ACLPickerConfig{
+							// Shown for a Secured credential too: securing narrows HOW
+							// the key is used (only through bound tools, server-side),
+							// never WHO may use it, so the user list still applies and
+							// has to be visible to be reviewed.
+							ui.ModalActionIf("Access", "", "", ui.ACLPicker(ui.ACLPickerConfig{
 								OptionsSource: "api/user-candidates",
 								RecordSource:  "api/secure-api?name={name}",
 								Field:         "allowed_users",

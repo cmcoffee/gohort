@@ -652,6 +652,10 @@ type Servitor struct {
 		allow      string
 		output     string
 		max_rounds int
+		// no_home_key: do not fall back to the service account's own
+		// ~/.ssh/id_rsa. Set for any appliance whose owner is not an admin
+		// (see acquireConn).
+		no_home_key bool
 	}
 	// allowSet holds the risk categories the operator has chosen to run WITHOUT
 	// confirmation (parsed from --allow in Init). A category not in the set
@@ -1133,7 +1137,7 @@ func (T *Servitor) connect() error {
 	var auth_methods []ssh.AuthMethod
 
 	key_path := T.input.key
-	if key_path == "" {
+	if key_path == "" && !T.input.no_home_key {
 		if home, err := os.UserHomeDir(); err == nil {
 			candidate := home + "/.ssh/id_rsa"
 			if _, err := os.Stat(candidate); err == nil {
@@ -1159,6 +1163,9 @@ func (T *Servitor) connect() error {
 	}
 
 	if len(auth_methods) == 0 {
+		if T.input.no_home_key {
+			return fmt.Errorf("no authentication method: this system has no password saved (the server's own SSH key is only used for an administrator's systems)")
+		}
 		return fmt.Errorf("no authentication method: provide --key or --password")
 	}
 
@@ -1166,7 +1173,7 @@ func (T *Servitor) connect() error {
 	cfg := &ssh.ClientConfig{
 		User:            T.input.user,
 		Auth:            auth_methods,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: pinnedHostKey(addr),
 		Timeout:         30 * time.Second,
 	}
 

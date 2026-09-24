@@ -167,6 +167,13 @@ type Card struct {
 	// changes on its own rather than when the reader does something.
 	// Paused while the tab is hidden (see uiAutoRefresh).
 	AutoRefreshMS int `json:"auto_refresh_ms,omitempty"`
+	// Isolate renders the HTML in a sandboxed iframe with no origin: its
+	// scripts run but cannot read the page, its cookies or storage, or call
+	// anything as the viewer. Set it for HTML the viewer did not write.
+	// IsolateFetch lists the relative path prefixes the isolated content may
+	// still fetch (and load images from) through the page; empty means none.
+	Isolate      bool     `json:"isolate,omitempty"`
+	IsolateFetch []string `json:"isolate_fetch,omitempty"`
 }
 
 func (Card) componentType() string { return "card" }
@@ -202,6 +209,10 @@ type Frame struct {
 	// Height is any CSS length for the frame box (e.g. "640px", "80vh").
 	// Defaults to a tall-but-bounded viewport when empty.
 	Height string `json:"height,omitempty"`
+	// Isolate and IsolateFetch: as on Card. With Isolate set a Frame IS a
+	// sandbox (no origin), which the note above says it otherwise is not.
+	Isolate      bool     `json:"isolate,omitempty"`
+	IsolateFetch []string `json:"isolate_fetch,omitempty"`
 }
 
 func (Frame) componentType() string { return "frame" }

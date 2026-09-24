@@ -100,7 +100,9 @@ func runViewer() {
 	}
 	localPort := listener.Addr().(*net.TCPAddr).Port
 	localBase := fmt.Sprintf("http://127.0.0.1:%d", localPort)
-	httpServer := &http.Server{Handler: proxyHandler}
+	// Answers only this app's own window (launch_guard.go).
+	launchSecret := newLaunchSecret()
+	httpServer := &http.Server{Handler: guardLaunch(proxyHandler, launchSecret, localPort)}
 	go func() {
 		core.Log("[gohort-desktop] local proxy listening at %s", localBase)
 		if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
@@ -140,7 +142,7 @@ func runViewer() {
 		// working at the loopback URL.
 		AssetServer: &assetserver.Options{
 			Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				target := localBase + r.URL.RequestURI()
+				target := launchBootURL(localBase, launchSecret, r.URL.RequestURI())
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				w.Header().Set("Cache-Control", "no-store")
 				// Themed, for the same reason the window is. This page exists

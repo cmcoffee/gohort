@@ -328,6 +328,17 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 	activeChatID := strings.TrimSpace(req.ChatID)
 	msgID := inboundMsgID(req)
 
+	// Whose traffic this is: the key's (or connector's) owner, else the
+	// deployment admin for a legacy key minted without one. Resolved before
+	// anything is recorded, because the conversation it lands in is stamped
+	// with it, and a conversation that already belongs to someone else must
+	// not take another user's messages.
+	owner := T.ownerOr(key.Owner)
+	if c, ok := T.getConvo(activeChatID); ok && !inboundMayWrite(c, owner, svc) {
+		Log("[bridges] inbound on %s via %q (owner %q) dropped: that conversation belongs to another user", activeChatID, key.Name, owner)
+		return
+	}
+
 	// Dedup — a connector may re-deliver; only act once.
 	if T.seenMessage(activeChatID, msgID) {
 		return
@@ -348,7 +359,7 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 
 	// Record the conversation (identity + participant) and keep the message for
 	// the thread view.
-	T.upsertConvo(svc, activeChatID, req.Handle, req.DisplayName, req.ConversationName)
+	T.upsertConvo(owner, svc, activeChatID, req.Handle, req.DisplayName, req.ConversationName)
 	// Attribute the message to a person (learns + resolves handle→name so group
 	// chats read by who-said-it, not by phone number). Computed once here and
 	// reused for the agent dispatch below — nothing between mutates the convo's
@@ -386,10 +397,6 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 		return
 	}
 
-	owner := key.Owner
-	if owner == "" {
-		owner = T.bridgeOwner()
-	}
 	if owner == "" || !ChannelAgentRunnerReady() {
 		return
 	}
@@ -400,7 +407,7 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 	// (empty handle), groups, a chat's multiple ids, AND a contact aliased as
 	// "this is also me" all resolve to the right channel regardless of which id
 	// the message arrived on or which convo the alias was added to.
-	candidates := T.inboundIdentities(svc, activeChatID, req.Handle)
+	candidates := T.inboundIdentities(owner, svc, activeChatID, req.Handle)
 	ch, found := ChannelForInbound(RootDB, owner, svc, candidates...)
 	// Self-heal a stale group binding: a group connected before the group-aware
 	// fix bound its channel to one member's handle (the old Handle-clobber), so
@@ -525,7 +532,7 @@ func (T *Bridges) ingestInbound(key BridgeKey, req hookRequest) {
 				return // no interim status when we can't deliver it
 			}
 			if s = strings.TrimSpace(s); s != "" {
-				T.enqueueOutbox(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: s, Type: "status"})
+				T.enqueueOutbox(OutboxItem{ChatID: chatID, Handle: handle, Service: svc, Text: s, Owner: ch.Owner, Type: "status"})
 			}
 		},
 	}
@@ -613,7 +620,9 @@ func (T *Bridges) serviceHasOutput(owner, svc string) bool {
 	return !found
 }
 
-// handlePoll hands a connector ONLY its own service's pending outbound.
+// handlePoll hands a connector ONLY its own service's pending outbound, and
+// only its own owner's. OutboxItem.Owner is json "-", so the owner rides no
+// further than this filter.
 func (T *Bridges) handlePoll(w http.ResponseWriter, r *http.Request) {
 	key, ok := T.validateBridgeKey(r.Header.Get("X-API-Key"))
 	if !ok {
@@ -624,7 +633,9 @@ func (T *Bridges) handlePoll(w http.ResponseWriter, r *http.Request) {
 	if svc == "" {
 		svc = "imessage"
 	}
-	items := T.drainOutbox(svc)
+	// A legacy key minted without an owner is the deployment admin's, the same
+	// resolution ingestInbound makes for its inbound.
+	items := T.drainOutbox(svc, T.ownerOr(key.Owner))
 	if items == nil {
 		items = []OutboxItem{}
 	}

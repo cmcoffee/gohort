@@ -23,6 +23,20 @@ func (p messagingLinkImpl) ownsBridge(owner string) bool {
 	return o == "" || owner == "" || owner == o
 }
 
+// convos is the conversations owner may reach through this seam: their own,
+// plus the ownerless legacy ones when they are an admin. An unnamed owner is
+// the deployment admin, the same fallback ownsBridge allows.
+func (p messagingLinkImpl) convos(owner string) []Convo {
+	o := p.T.ownerOr(strings.TrimSpace(owner))
+	return p.T.convosFor(o, ownerIsAdmin(o))
+}
+
+// convo is one conversation owner may reach, by chat id.
+func (p messagingLinkImpl) convo(owner, chatID string) (Convo, bool) {
+	o := p.T.ownerOr(strings.TrimSpace(owner))
+	return p.T.convoFor(chatID, o, ownerIsAdmin(o))
+}
+
 func bridgeParseTime(s string) time.Time {
 	t, _ := time.Parse(time.RFC3339, strings.TrimSpace(s))
 	return t
@@ -42,7 +56,7 @@ func (p messagingLinkImpl) ListChats(owner string, limit int) ([]MessagingChatSu
 	if !p.ownsBridge(owner) {
 		return out, nil
 	}
-	for _, c := range p.T.listConvos() { // newest first
+	for _, c := range p.convos(owner) { // newest first
 		out = append(out, p.convoSummary(c))
 		if limit > 0 && len(out) >= limit {
 			break
@@ -54,6 +68,9 @@ func (p messagingLinkImpl) ListChats(owner string, limit int) ([]MessagingChatSu
 func (p messagingLinkImpl) ReadChat(owner, chatID string, limit int) ([]MessagingChatMessage, error) {
 	out := []MessagingChatMessage{}
 	if !p.ownsBridge(owner) {
+		return out, nil
+	}
+	if _, ok := p.convo(owner, chatID); !ok {
 		return out, nil
 	}
 	for _, m := range p.T.recentMessages(chatID, limit) { // oldest first
@@ -78,14 +95,14 @@ func (p messagingLinkImpl) deliver(owner, chatID, handle, text string, images []
 
 func (p messagingLinkImpl) SendToChat(owner, chatID, text string) error {
 	handle := ""
-	if c, ok := p.T.getConvo(chatID); ok {
+	if c, ok := p.convo(owner, chatID); ok {
 		handle = c.Handle
 	}
 	return p.deliver(owner, chatID, handle, text, nil)
 }
 
 func (p messagingLinkImpl) SendToHandle(owner, handle, text string) error {
-	return p.deliver(owner, p.chatIDForHandle(handle), handle, text, nil)
+	return p.deliver(owner, p.chatIDForHandle(owner, handle), handle, text, nil)
 }
 
 func (p messagingLinkImpl) DeliverMessage(owner, chatID, handle, text string, images []string) (string, error) {
@@ -137,7 +154,7 @@ func (p messagingLinkImpl) DescribeChat(owner, chatID string) (MessagingChatSumm
 	if !p.ownsBridge(owner) {
 		return MessagingChatSummary{}, false
 	}
-	c, ok := p.T.getConvo(chatID)
+	c, ok := p.convo(owner, chatID)
 	if !ok {
 		return MessagingChatSummary{}, false
 	}
@@ -155,7 +172,7 @@ func (p messagingLinkImpl) ResolveRecipient(owner, to string) (MessagingChatSumm
 	if to == "" {
 		return MessagingChatSummary{}, false
 	}
-	for _, c := range p.T.listConvos() {
+	for _, c := range p.convos(owner) {
 		if c.ChatID == to || c.Handle == to ||
 			strings.EqualFold(strings.TrimSpace(c.DisplayName), to) ||
 			containsFold(c.AliasHandles, to) {
@@ -169,13 +186,14 @@ func (p messagingLinkImpl) ResolveRecipient(owner, to string) (MessagingChatSumm
 }
 
 // chatIDForHandle returns the chat id of the conversation whose handle (or alias)
-// matches, or "" when none — a handle-only send the connector starts fresh.
-func (p messagingLinkImpl) chatIDForHandle(handle string) string {
+// matches among owner's, or "" when none — a handle-only send the connector
+// starts fresh.
+func (p messagingLinkImpl) chatIDForHandle(owner, handle string) string {
 	handle = strings.TrimSpace(handle)
 	if handle == "" {
 		return ""
 	}
-	for _, c := range p.T.listConvos() {
+	for _, c := range p.convos(owner) {
 		if c.Handle == handle || containsFold(c.AliasHandles, handle) {
 			return c.ChatID
 		}
