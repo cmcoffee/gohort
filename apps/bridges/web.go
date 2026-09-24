@@ -198,6 +198,14 @@ func (T *Bridges) handleConfig(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		_ = json.NewEncoder(w).Encode(T.config())
 	case http.MethodPost, http.MethodPatch:
+		// The bridge is the deployment's (one bridge, one messaging account),
+		// so changing where its messages go, or turning it off, is an
+		// administrator's. Any user with the Bridges grant could point
+		// SelfHandle at their own number and receive the owner's notices.
+		if !RequestIsAdmin(r) {
+			http.Error(w, "only an administrator can change the bridge's settings", http.StatusForbidden)
+			return
+		}
 		// Merge into the existing config so a partial save (the master toggle
 		// posts only {enabled}; the name field only {self_name}) doesn't reset
 		// the other field — e.g. saving your name must not flip on panic mode.
@@ -628,6 +636,11 @@ func (T *Bridges) handlePoll(w http.ResponseWriter, r *http.Request) {
 // recorded/deduped, but nothing routes to an agent and nothing is delivered.
 func (T *Bridges) handlePanic(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := RequireUser(w, r, T.DB); !ok {
+		return
+	}
+	// Turns the transport off for everyone: an administrator's switch.
+	if !RequestIsAdmin(r) {
+		http.Error(w, "only an administrator can stop the bridge", http.StatusForbidden)
 		return
 	}
 	if r.Method != http.MethodPost {

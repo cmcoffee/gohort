@@ -826,6 +826,7 @@ func TestABadComparisonCountsAsAFailure(t *testing.T) {
 // TestAGoodCheckClearsTheFailureStreak — the threshold counts CONSECUTIVE
 // failures, so an endpoint that blips and recovers keeps watching.
 func TestAGoodCheckClearsTheFailureStreak(t *testing.T) {
+	allowLoopbackPolls(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("42"))
 	}))
@@ -968,6 +969,7 @@ func TestClearingTheConditionResetsTheCount(t *testing.T) {
 // TestAThresholdThatNeverRecoversSaysSoToo: the http_poll kind has the same
 // edge trigger and the same silence, without the LLM bill.
 func TestAThresholdThatNeverRecoversSaysSoToo(t *testing.T) {
+	allowLoopbackPolls(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("500"))
 	}))
@@ -1069,4 +1071,13 @@ func TestAPacedCheckCannotOutrunTheCadence(t *testing.T) {
 	if !got.NextAttemptAt.IsZero() || got.NextAttemptWhy != "" {
 		t.Error("the ignored ask must be cleared, not reconsidered on every arm")
 	}
+}
+
+// allowLoopbackPolls lets a monitor poll an httptest server, which listens on
+// loopback: a non-admin's monitor is otherwise public-addresses only.
+func allowLoopbackPolls(t *testing.T) {
+	t.Helper()
+	prev := monitorMayReachInternal
+	monitorMayReachInternal = func(string) bool { return true }
+	t.Cleanup(func() { monitorMayReachInternal = prev })
 }

@@ -253,9 +253,12 @@ func gatherWorkspaceHelpers(primaryName, primaryBody, workspaceDir string) []Rec
 			continue
 		}
 		collected[rel] = true
-		full := filepath.Join(workspaceDir, rel)
-		info, err := os.Stat(full)
-		if err != nil || info.IsDir() {
+		full, perr := ResolveWorkspacePath(workspaceDir, rel)
+		if perr != nil {
+			continue // a symlink or an escape: not a helper the tool owns
+		}
+		info, err := os.Lstat(full)
+		if err != nil || !info.Mode().IsRegular() {
 			continue // unresolved import (stdlib / third-party / typo) — skip
 		}
 		content, err := os.ReadFile(full)

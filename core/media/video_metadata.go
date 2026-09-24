@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -179,13 +178,18 @@ func ExtractVideosMetadata(videos [][]byte) string {
 
 // runFfprobe invokes `ffprobe -show_format -show_streams` on path and parses JSON.
 func runFfprobe(path string) (*ffprobeOutput, error) {
-	cmd := exec.Command("ffprobe",
+	if err := checkMediaFile(path); err != nil {
+		return nil, err
+	}
+	cmd, cancel := ffmpegCommand(ffProbeLimit, "ffprobe",
 		"-v", "quiet",
+		"-protocol_whitelist", "file,pipe",
 		"-print_format", "json",
 		"-show_format",
 		"-show_streams",
 		path,
 	)
+	defer cancel()
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Run(); err != nil {

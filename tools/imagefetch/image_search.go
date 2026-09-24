@@ -97,7 +97,10 @@ func FetchImageBytes(rawURL, referer string, timeoutSecs int) ([]byte, error) {
 	if referer != "" {
 		req.Header.Set("Referer", referer)
 	}
-	client := &http.Client{Timeout: time.Duration(timeoutSecs) * time.Second}
+	// The URL comes from search results or the model: public addresses only,
+	// checked where the connection is actually made.
+	client := NewPublicHTTPClient()
+	client.Timeout = time.Duration(timeoutSecs) * time.Second
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("download failed: %w", err)
@@ -143,7 +146,8 @@ func inspectPage(pageURL, query string) (ogImage string, mentions bool) {
 	req.Header.Set("User-Agent", browserUA)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	client := &http.Client{Timeout: 12 * time.Second}
+	client := NewPublicHTTPClient()
+	client.Timeout = 12 * time.Second
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", false

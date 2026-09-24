@@ -6,6 +6,8 @@ import (
 	"net"
 	neturl "net/url"
 	"strings"
+
+	"github.com/cmcoffee/gohort/core/sourcehooks"
 )
 
 // RefuseNonPublicHost rejects a URL that names loopback, private, link-local or
@@ -19,10 +21,10 @@ import (
 // a browse endpoint without this is not a convenience, it is a hole punched
 // through to the LAN for anyone holding a peer key.
 //
-// Hostnames are checked literally, not resolved. Resolving would close the
-// DNS-rebinding gap but adds a lookup to every call and a TOCTOU window of its
-// own; the tool layer has always worked this way and the peer path matches it
-// rather than quietly diverging.
+// Hostnames are checked literally here, which is the fast first answer. The
+// address actually dialled is checked by NewPublicHTTPClient, which is what
+// closes a name that resolves inward and a DNS answer that changes between
+// the check and the connect.
 func RefuseNonPublicHost(rawURL string) error {
 	parsed, err := neturl.Parse(strings.TrimSpace(rawURL))
 	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") {
@@ -32,13 +34,11 @@ func RefuseNonPublicHost(rawURL string) error {
 	if host == "" {
 		return fmt.Errorf("url has no host")
 	}
-	if ip := net.ParseIP(host); ip != nil {
-		if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
-			return fmt.Errorf("refusing to reach non-public host: %s", host)
-		}
+	if ip := net.ParseIP(host); ip != nil && sourcehooks.NonPublicIP(ip) {
+		return fmt.Errorf("refusing to reach non-public host: %s", host)
 	}
 	lower := strings.ToLower(host)
-	if lower == "localhost" || strings.HasSuffix(lower, ".local") || strings.HasSuffix(lower, ".internal") {
+	if lower == "localhost" || strings.HasSuffix(lower, ".localhost") || strings.HasSuffix(lower, ".local") || strings.HasSuffix(lower, ".internal") {
 		return fmt.Errorf("refusing to reach non-public host: %s", host)
 	}
 	return nil

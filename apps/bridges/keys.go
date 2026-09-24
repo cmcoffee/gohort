@@ -49,6 +49,14 @@ func (T *Bridges) handleKeys(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		svc := strings.TrimSpace(req.Service)
+		// A key for a messaging service (imessage, …) polls and drains that
+		// service's outbox, which is the deployment owner's outgoing
+		// messages: an administrator's to mint. Anybody may mint a generic
+		// API key for their own clients.
+		if svc != "" && svc != "api" && !RequestIsAdmin(r) {
+			http.Error(w, "only an administrator can create a key for the "+svc+" bridge", http.StatusForbidden)
+			return
+		}
 		if svc == "" {
 			// A MANUALLY minted key is for the MCP server or a server-side
 			// connector — never iMessage, whose key the gohort-bridge daemon

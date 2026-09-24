@@ -16,6 +16,7 @@
 package core
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -407,10 +408,21 @@ func SaveAppSpecAs(s AppSpec, reason string) AppSpec {
 	if db == nil {
 		return s
 	}
+	prior, hadPrior := LoadAppSpec(s.Owner, s.Slug)
 	if reason != AppSaveNoHistory {
-		if prior, ok := LoadAppSpec(s.Owner, s.Slug); ok && specPageChanged(prior, s) {
+		if hadPrior && specPageChanged(prior, s) {
 			PushAppRevision(prior, reason)
 		}
+	}
+	// A shared app's approval covered what it WAS. Its page runs in every
+	// viewer's session and its scripts run with the owner's credentials for
+	// each of them, so a non-admin owner changing either takes it back out of
+	// sharing until an administrator approves the new version. Keeping the
+	// flag across edits let an owner swap in anything once the first version
+	// had been approved.
+	if hadPrior && prior.Shared && s.Shared && appServesDifferently(prior, s) && !UserIsAdmin(s.Owner) {
+		s.Shared = false
+		Log("[appspec] %s changed shared app %q: unshared until an administrator approves the new version", s.Owner, s.Slug)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	if s.Created == "" {
@@ -423,6 +435,17 @@ func SaveAppSpecAs(s AppSpec, reason string) AppSpec {
 		fn(s)
 	}
 	return s
+}
+
+// appServesDifferently reports whether what an app shows or runs changed: its
+// page, sections, data-source and action scripts, bound agent or pipeline.
+func appServesDifferently(prior, next AppSpec) bool {
+	if specPageChanged(prior, next) || prior.AgentID != next.AgentID || prior.PipelineID != next.PipelineID {
+		return true
+	}
+	a, _ := json.Marshal([]any{prior.DataSources, prior.Actions})
+	b, _ := json.Marshal([]any{next.DataSources, next.Actions})
+	return !bytes.Equal(a, b)
 }
 
 // ListAppSpecs returns every stored spec owned by the user.

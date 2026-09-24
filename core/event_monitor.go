@@ -1905,21 +1905,43 @@ func punctuationOnlyLine(t string) bool {
 // fetchAndExtract GETs the monitor's URL and pulls out the value to compare,
 // via JSONPath, then Regex, else the whole (trimmed) body. Body is capped at
 // 1 MiB and the request times out at 20s.
+//
+// Where it may point depends on who owns it. Watching a machine on the LAN is
+// a legitimate thing for an administrator's monitor to do; for anybody else a
+// poll is the server fetching a URL of their choosing on a timer, so it is
+// public addresses only, checked at the connection.
 func fetchAndExtract(ctx context.Context, m EventMonitor) (string, error) {
-	return fetchExtractURL(ctx, m.URL, m.JSONPath, m.Regex)
+	return fetchExtractURLFor(ctx, m.URL, m.JSONPath, m.Regex, monitorMayReachInternal(m.Owner))
 }
+
+// monitorMayReachInternal decides whether a monitor's owner may poll internal
+// addresses. A var so a test polling a loopback test server can stand in.
+var monitorMayReachInternal = UserIsAdmin
 
 // fetchExtractURL GETs url and pulls out the value to compare, via jsonPath,
 // then regex, else the whole (trimmed) body. Body is capped at 1 MiB and the
 // request times out at 20s. Decoupled from any record type so both the event
 // monitor and the unified trigger engine share it.
 func fetchExtractURL(ctx context.Context, url, jsonPath, regex string) (string, error) {
+	return fetchExtractURLFor(ctx, url, jsonPath, regex, false)
+}
+
+// fetchExtractURLFor is fetchExtractURL with the reach decided by the caller:
+// internal addresses only when allowInternal (an administrator's monitor).
+func fetchExtractURLFor(ctx context.Context, url, jsonPath, regex string, allowInternal bool) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("User-Agent", "gohort-operator-monitor")
 	client := &http.Client{Timeout: 20 * time.Second}
+	if !allowInternal {
+		if err := RefuseNonPublicHost(url); err != nil {
+			return "", err
+		}
+		client = NewPublicHTTPClient()
+		client.Timeout = 20 * time.Second
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err

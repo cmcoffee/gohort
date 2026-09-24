@@ -282,7 +282,14 @@ func dispatchPublicAPICall(ctx context.Context, urlStr, method, body, contentTyp
 		}
 		req.Header.Set("Content-Type", ct)
 	}
-	client := &http.Client{Timeout: publicAPITimeout}
+	// fetch_url's rules, which the comment at the call site always claimed:
+	// an http(s) URL on a public address, checked where the connection is
+	// made. An internal API is reached through a credential that names it.
+	if err := RefuseNonPublicHost(urlStr); err != nil {
+		return "", fmt.Errorf("%w (an internal API is reached through a credential whose base URL names it)", err)
+	}
+	client := NewPublicHTTPClient()
+	client.Timeout = publicAPITimeout
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("http %s %s: %w", method, urlStr, err)

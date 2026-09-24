@@ -258,8 +258,8 @@ func RegisterCustomAppReviewControl(base string) {
 		Key: "customapps.review", Label: "Scripts", Group: "Review", Order: 10,
 		Render: func(app appadmin.App) ui.Component {
 			spec, ok := loadSpec(app.Owner, app.Slug)
-			if !ok || (len(spec.DataSources) == 0 && len(spec.Actions) == 0) {
-				return nil // nothing sandboxed to review
+			if !ok || (len(spec.DataSources) == 0 && len(spec.Actions) == 0 && len(pageBrowserCode(spec)) == 0) {
+				return nil // nothing to review
 			}
 			q := fmt.Sprintf("?owner=%s&slug=%s", url.QueryEscape(app.Owner), url.QueryEscape(app.Slug))
 			return ui.DisplayPanel{
@@ -267,6 +267,7 @@ func RegisterCustomAppReviewControl(base string) {
 				Pairs: []ui.DisplayPair{
 					{Label: "Data sources", Field: "sources"},
 					{Label: "Action scripts", Field: "actions"},
+					{Label: "Code in the page", Field: "page_code"},
 					{Label: "Capabilities declared", Field: "capabilities"},
 					{Label: "Runs as", Field: "runs_as"},
 				},
@@ -429,9 +430,14 @@ func (T *CustomApps) handleAdmin(w http.ResponseWriter, r *http.Request, user st
 			// DECLARATION, not about the reach.
 			shown = "none declared (fetch and the owner's credentials are granted by default)"
 		}
+		pageCode := "none"
+		if n := len(pageBrowserCode(spec)); n > 0 {
+			pageCode = fmt.Sprintf("%d block(s) of HTML or script that run in each viewer's browser, signed in as that viewer: read them under Show scripts", n)
+		}
 		writeJSON(w, map[string]any{
 			"sources":      len(spec.DataSources),
 			"actions":      len(spec.Actions),
+			"page_code":    pageCode,
 			"capabilities": shown,
 			"runs_as":      owner,
 		})
@@ -450,11 +456,55 @@ func (T *CustomApps) handleAdmin(w http.ResponseWriter, r *http.Request, user st
 			fmt.Fprintf(&b, "\n=== action: %s (%s) ===\ncapabilities: %s\n\n%s\n",
 				a.Name, firstNonEmptyText(a.Language, "python"), capsOrNone(a.Capabilities), a.Script)
 		}
+		// The page's own HTML and script. Not sandboxed: it runs in every
+		// viewer's browser, on this site, signed in as that viewer.
+		for i, code := range pageBrowserCode(spec) {
+			fmt.Fprintf(&b, "\n=== page code %d (runs in each viewer's browser, as the viewer) ===\n\n%s\n", i+1, code)
+		}
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write([]byte(b.String()))
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+// pageBrowserCode collects every string in an app's page and sections that
+// carries HTML or script: what a Card or Frame renders into the viewer's own
+// session. The share review listed only the sandboxed scripts, so an app
+// whose page carried code read as having "nothing to review".
+func pageBrowserCode(spec AppSpec) []string {
+	var out []string
+	var walk func(any)
+	walk = func(v any) {
+		switch t := v.(type) {
+		case string:
+			low := strings.ToLower(t)
+			if strings.Contains(low, "<script") || strings.Contains(low, "javascript:") ||
+				(strings.Contains(t, "<") && strings.Contains(t, ">") && strings.Contains(low, " on")) ||
+				strings.Contains(low, "<iframe") || strings.Contains(low, "<html") || strings.Contains(low, "<style") {
+				out = append(out, t)
+			}
+		case []any:
+			for _, e := range t {
+				walk(e)
+			}
+		case map[string]any:
+			for k, e := range t {
+				if s, ok := e.(string); ok && (k == "html" || k == "srcdoc" || k == "script" || k == "js") && strings.TrimSpace(s) != "" {
+					out = append(out, s)
+					continue
+				}
+				walk(e)
+			}
+		}
+	}
+	for _, raw := range [][]byte{spec.Page, spec.Sections} {
+		var v any
+		if len(raw) > 0 && json.Unmarshal(raw, &v) == nil {
+			walk(v)
+		}
+	}
+	return out
 }
 
 func capsOrNone(caps []string) string {

@@ -1,12 +1,15 @@
 package media
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/cmcoffee/snugforge/nfo"
 )
@@ -52,6 +55,9 @@ func extractVideoFrames(data []byte, count int) ([][]byte, error) {
 	}
 	defer os.Remove(srcPath)
 
+	if err := checkMediaFile(srcPath); err != nil {
+		return nil, err
+	}
 	probe, err := runFfprobe(srcPath)
 	if err != nil {
 		return nil, fmt.Errorf("ffprobe: %w", err)
@@ -94,16 +100,19 @@ func extractVideoFrames(data []byte, count int) ([][]byte, error) {
 		// -ss before -i is faster (input seek) but less accurate on some
 		// codecs; -ss after -i is frame-accurate. We want quality over
 		// latency for vision input, so use the accurate path.
-		cmd := exec.Command("ffmpeg",
+		cmd, cancel := ffmpegCommand(ffFrameLimit, "ffmpeg",
 			"-loglevel", "error",
 			"-y",
+			"-protocol_whitelist", "file,pipe",
 			"-i", srcPath,
 			"-ss", strconv.FormatFloat(ts, 'f', 3, 64),
 			"-frames:v", "1",
 			"-q:v", "2",
 			out,
 		)
-		if err := cmd.Run(); err != nil {
+		err := cmd.Run()
+		cancel()
+		if err != nil {
 			nfo.Debug("[video] frame %d at %.2fs failed: %v", i, ts, err)
 			continue
 		}
@@ -152,17 +161,23 @@ func ExtractVideoAudio(data []byte) ([]byte, error) {
 	// -vn skips video; -ac 1 forces mono (smaller, fine for STT);
 	// -ar 16000 matches Whisper's expected sample rate (it resamples
 	// to 16k internally anyway, so sending 16k saves bytes).
-	cmd := exec.Command("ffmpeg",
+	if err := checkMediaFile(srcPath); err != nil {
+		return nil, err
+	}
+	cmd, cancel := ffmpegCommand(ffAudioLimit, "ffmpeg",
 		"-loglevel", "error",
 		"-y",
+		"-protocol_whitelist", "file,pipe",
 		"-i", srcPath,
 		"-vn",
 		"-ac", "1",
 		"-ar", "16000",
 		"-codec:a", "libmp3lame",
 		"-q:a", "5",
+		"-fs", ffAudioMaxBytes,
 		outPath,
 	)
+	defer cancel()
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("ffmpeg audio extract: %w", err)
 	}
@@ -195,16 +210,22 @@ func TranscodeAudioToWAV(data []byte) ([]byte, error) {
 
 	outPath := srcPath + ".wav"
 	defer os.Remove(outPath)
-	cmd := exec.Command("ffmpeg",
+	if err := checkMediaFile(srcPath); err != nil {
+		return nil, err
+	}
+	cmd, cancel := ffmpegCommand(ffAudioLimit, "ffmpeg",
 		"-loglevel", "error",
 		"-y",
+		"-protocol_whitelist", "file,pipe",
 		"-i", srcPath,
 		"-vn",
 		"-ac", "1",
 		"-ar", "16000",
 		"-c:a", "pcm_s16le",
+		"-fs", ffAudioMaxBytes,
 		outPath,
 	)
+	defer cancel()
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("ffmpeg audio transcode: %w", err)
 	}
@@ -235,4 +256,46 @@ func ExtractVideosFrames(videos [][]byte, perVideo int) [][]byte {
 		all = append(all, frames...)
 	}
 	return all
+}
+
+// Bounds on every ffmpeg / ffprobe run. The input is whatever somebody sent
+// (an upload, a channel message's attachment), and a crafted file can make
+// ffmpeg spin forever; without a deadline each one held a worker and a
+// process until the server restarted.
+const (
+	ffFrameLimit    = 60 * time.Second
+	ffProbeLimit    = 60 * time.Second
+	ffAudioLimit    = 5 * time.Minute
+	ffAudioMaxBytes = "104857600" // -fs: 100 MB of extracted audio
+)
+
+// ffmpegCommand is exec.Command with a deadline. The caller runs cmd and then
+// calls cancel.
+func ffmpegCommand(limit time.Duration, bin string, args ...string) (*exec.Cmd, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.WaitDelay = 5 * time.Second
+	return cmd, cancel
+}
+
+// checkMediaFile refuses an input that is a playlist or concat list rather
+// than media. ffmpeg picks its demuxer from the content, and an HLS playlist
+// or ffconcat file names OTHER files to read, local paths included, which
+// then come back as frames or audio. -protocol_whitelist keeps it off the
+// network; this keeps it off the rest of the disk.
+func checkMediaFile(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	head := make([]byte, 64)
+	n, _ := f.Read(head)
+	h := strings.ToLower(strings.TrimLeft(string(head[:n]), "\ufeff \t\r\n"))
+	for _, prefix := range []string{"#extm3u", "ffconcat", "#ext", "file ", "file'"} {
+		if strings.HasPrefix(h, prefix) {
+			return fmt.Errorf("refusing a playlist or concat list: send the media file itself")
+		}
+	}
+	return nil
 }

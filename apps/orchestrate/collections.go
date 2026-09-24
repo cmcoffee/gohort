@@ -1804,7 +1804,9 @@ func fetchAutofillURL(ctx context.Context, u string) ([]byte, string, error) {
 	// first-byte to the configured Network Timeouts so a dead URL fails
 	// fast instead of stalling autofill for the full autofillPerFetch
 	// window. The 30s fctx above stays the overall body cap.
-	resp, err := NewBoundedHTTPClient().Do(req)
+	// Public-only at dial time: the host check above reads the URL, not
+	// where its name resolves or where it redirects.
+	resp, err := NewPublicHTTPClient().Do(req)
 	if err != nil {
 		return nil, "", err
 	}

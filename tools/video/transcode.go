@@ -77,8 +77,17 @@ func transcodeVideoAction(args map[string]any, sess *ToolSession) (string, error
 		base := strings.TrimSuffix(path, ext)
 		outRel = base + "-small.mp4"
 	}
-	inputAbs := filepath.Join(sess.WorkspaceDir, path)
-	outputAbs := filepath.Join(sess.WorkspaceDir, outRel)
+	// Both paths come from the model, and ffmpeg runs on the host: joined
+	// unchecked, "../" or a planted symlink read and wrote outside the
+	// workspace.
+	inputAbs, err := ResolveWorkspacePath(sess.WorkspaceDir, path)
+	if err != nil {
+		return "", fmt.Errorf("path: %w", err)
+	}
+	outputAbs, err := ResolveWorkspacePath(sess.WorkspaceDir, outRel)
+	if err != nil {
+		return "", fmt.Errorf("output_path: %w", err)
+	}
 	// Refuse if input doesn't exist — give the LLM a clear error to
 	// retry against (typo'd path is the most common failure mode).
 	if st, err := os.Stat(inputAbs); err != nil {

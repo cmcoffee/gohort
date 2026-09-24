@@ -15,6 +15,7 @@
 package core
 
 import (
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -798,6 +799,32 @@ func QueuePendingTempToolScoped(db Database, username string, t TempTool, sessio
 	return nil
 }
 
+// toolDefinitionChanged reports whether what a tool DOES changed between two
+// versions, ignoring the governance flags an owner sets on it (lock, disable,
+// builder-only, bound-only, trial, confirm-in-chat).
+func toolDefinitionChanged(a, b TempTool) bool {
+	neutral := func(t TempTool) TempTool {
+		t.Locked, t.Disabled, t.BuilderOnly, t.BoundOnly = false, false, false, false
+		t.Trial, t.TrialSince, t.ConfirmInChat = false, time.Time{}, false
+		return t
+	}
+	return !reflect.DeepEqual(neutral(a), neutral(b))
+}
+
+// unpublishIfRedefined takes a tool back out of the deployment catalog when
+// its definition changed. Publishing is an administrator's approval of THAT
+// command or script; keeping the flag across an owner's rewrite let every
+// adopter run new code, in their own workspace and with their own
+// credentials, that nobody had looked at. The owner asks again, and the
+// admin reviews what it is now.
+func unpublishIfRedefined(p *PersistentTempTool, prev TempTool, owner string) {
+	if !p.Shared || !toolDefinitionChanged(prev, p.Tool) {
+		return
+	}
+	p.Shared = false
+	Log("[temp_tool_persist] %s changed published tool %q: taken out of the catalog until an admin approves the new version", owner, p.Tool.Name)
+}
+
 // AdminPersistTempTool writes a TempTool directly into the per-user
 // persistent pool, skipping the pending-approval queue. Used by the
 // admin-driven "promote a session draft to user-wide" surface in the
@@ -821,7 +848,9 @@ func AdminReconfigureTempTool(db Database, username string, t TempTool) error {
 	found := false
 	for i := range list {
 		if list[i].Tool.Name == t.Name {
+			prev := list[i].Tool
 			list[i].Tool = t // keep ApprovedAt/LastUsedAt/Shared/AllowedUsers
+			unpublishIfRedefined(&list[i], prev, username)
 			found = true
 			break
 		}
@@ -899,6 +928,7 @@ func AdminPersistTempTool(db Database, username string, t TempTool) error {
 		next.Shared = approved[i].Shared
 		next.AllowedUsers = approved[i].AllowedUsers
 		next.LastUsedAt = approved[i].LastUsedAt
+		unpublishIfRedefined(&next, approved[i].Tool, username)
 	}
 	rest = append(rest, next)
 	db.Set(persistentTempToolsTable, username, rest)

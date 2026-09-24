@@ -45,6 +45,8 @@ import (
 
 	"github.com/cmcoffee/gohort/core/sandbox"
 	"github.com/cmcoffee/snugforge/iotimeout"
+
+	"github.com/cmcoffee/gohort/core/sourcehooks"
 )
 
 // BrowserFetchFunc is the registration shim that lets the sandbox-hook
@@ -668,7 +670,9 @@ func (h *SandboxHook) handleFetch(conn net.Conn, params map[string]interface{}) 
 	// outbound HTTP — fetch_url, source hooks, etc. — so a dead host
 	// fails at the configured request-timeout instead of stalling
 	// until the script-side socket times out.
-	client := NewBoundedHTTPClient()
+	// Public-only: this is the uncredentialed path, so the address actually
+	// dialled must be public too (IsNonPublicHost above reads the URL only).
+	client := NewPublicHTTPClient()
 	Log("[hook/fetch] start %s %s (timeout=%s)", method, url, timeout)
 	callStart := time.Now()
 	resp, err := client.Do(req)
@@ -1104,10 +1108,10 @@ func IsNonPublicHost(host string) bool {
 		return true
 	}
 	if ip := net.ParseIP(host); ip != nil {
-		return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified()
+		return sourcehooks.NonPublicIP(ip)
 	}
 	lower := strings.ToLower(host)
-	return lower == "localhost" || strings.HasSuffix(lower, ".local") || strings.HasSuffix(lower, ".internal")
+	return lower == "localhost" || strings.HasSuffix(lower, ".localhost") || strings.HasSuffix(lower, ".local") || strings.HasSuffix(lower, ".internal")
 }
 
 func writeHookResult(conn net.Conn, result interface{}) {

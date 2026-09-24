@@ -933,6 +933,7 @@ var (
 	ApplyPaywallAuth      = sourcehooks.ApplyPaywallAuth
 	ApplyHTTPTimeouts     = sourcehooks.ApplyHTTPTimeouts
 	NewBoundedHTTPClient  = sourcehooks.NewBoundedHTTPClient
+	NewPublicHTTPClient   = sourcehooks.NewPublicHTTPClient
 	SetHookCacheDB        = sourcehooks.SetHookCacheDB
 	StartHookCacheSweeper = sourcehooks.StartHookCacheSweeper
 	SweepHookCache        = sourcehooks.SweepHookCache

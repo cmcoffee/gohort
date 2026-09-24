@@ -224,7 +224,13 @@ func (t *CreateTempToolTool) RunWithSession(args map[string]any, sess *ToolSessi
 		// them, and {workspace_dir} refs rule out the Recipe tmpdir).
 		if present := presentWorkspaceScriptRefs(cmd, sess.WorkspaceDir); len(present) == 1 && !strings.ContainsAny(present[0], "/\\") {
 			rel := present[0]
-			if content, rerr := os.ReadFile(filepath.Join(sess.WorkspaceDir, rel)); rerr == nil && len(content) > 0 {
+			// Resolved rather than joined: a symlink in the sandbox-written
+			// workspace would otherwise pull a host file into the record.
+			full, perr := ResolveWorkspacePath(sess.WorkspaceDir, rel)
+			if perr != nil {
+				full = ""
+			}
+			if content, rerr := os.ReadFile(full); full != "" && rerr == nil && len(content) > 0 {
 				// Feed the standard capture block below (script body != "")
 				// so the record is populated identically to the script_body
 				// path: LLM-facing name = the referenced filename, canonical

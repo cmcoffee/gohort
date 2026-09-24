@@ -450,11 +450,17 @@ func resolveWorkspaceImages(sess *ToolSession, paths []string) []string {
 	}
 	for _, name := range paths {
 		name = strings.TrimSpace(name)
-		clean := filepath.Clean(name)
-		if name == "" || filepath.IsAbs(clean) || strings.HasPrefix(clean, "..") {
+		if name == "" {
+			continue
+		}
+		// Resolved, not joined: the sandbox writes this directory, so a
+		// symlink planted in it would otherwise have the host read (and
+		// send out) whatever it points at.
+		full, rerr := ResolveWorkspacePath(sess.WorkspaceDir, name)
+		if rerr != nil {
 			continue // never escape the workspace
 		}
-		b, err := os.ReadFile(filepath.Join(sess.WorkspaceDir, clean))
+		b, err := os.ReadFile(full)
 		if err != nil {
 			continue
 		}

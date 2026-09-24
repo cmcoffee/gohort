@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/cmcoffee/snugforge/apiclient"
@@ -65,6 +66,86 @@ func NewBoundedHTTPClient() *http.Client {
 	tr.TLSHandshakeTimeout = HTTPConnectTimeout
 	tr.ResponseHeaderTimeout = HTTPRequestTimeout
 	return &http.Client{Transport: tr}
+}
+
+// NewPublicHTTPClient is NewBoundedHTTPClient for a URL that must be on the
+// public internet (fetch_url, a script's fetch, collection autofill, image
+// and monitor fetches). The host check the callers already make reads the URL
+// as written, which a hostname resolving to 127.0.0.1 or 169.254.169.254, a
+// DNS answer that changes between check and dial, or a public page that
+// redirects inward all walk past. This checks the address actually DIALLED,
+// after resolution, on every connection including each redirect's, and
+// re-checks a redirect's scheme.
+//
+// Not for credential-routed calls: a credential names its own (possibly
+// internal) host on purpose, and those go through the credential's client.
+func NewPublicHTTPClient() *http.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.Proxy = nil // a proxy would dial on our behalf, past the check below
+	tr.DialContext = (&net.Dialer{
+		Timeout:   HTTPConnectTimeout,
+		KeepAlive: 30 * time.Second,
+		Control: func(network, address string, _ syscall.RawConn) error {
+			host, _, err := net.SplitHostPort(address)
+			if err != nil {
+				return err
+			}
+			if ip := net.ParseIP(host); ip == nil || NonPublicIP(ip) {
+				return fmt.Errorf("refusing to connect to non-public address %s", host)
+			}
+			return nil
+		},
+	}).DialContext
+	tr.TLSHandshakeTimeout = HTTPConnectTimeout
+	tr.ResponseHeaderTimeout = HTTPRequestTimeout
+	return &http.Client{
+		Transport: tr,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("stopped after 10 redirects")
+			}
+			if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
+				return fmt.Errorf("refusing a redirect to a %s: URL", req.URL.Scheme)
+			}
+			return nil
+		},
+	}
+}
+
+var nonPublicNets = func() []*net.IPNet {
+	var out []*net.IPNet
+	for _, c := range []string{
+		"0.0.0.0/8", "100.64.0.0/10", "192.0.0.0/24", "198.18.0.0/15", "240.0.0.0/4",
+		"64:ff9b::/96", "64:ff9b:1::/48", "fc00::/7", "2001:db8::/32",
+	} {
+		if _, n, err := net.ParseCIDR(c); err == nil {
+			out = append(out, n)
+		}
+	}
+	return out
+}()
+
+// NonPublicIP reports whether ip is anything but a routable public address:
+// loopback, private, link-local (the cloud metadata address among them),
+// unspecified, multicast, CGNAT (Tailscale), NAT64 (which embeds an IPv4
+// address that may itself be private) and the other reserved ranges.
+func NonPublicIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	if v4 := ip.To4(); v4 != nil {
+		ip = v4
+	}
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() || ip.Equal(net.IPv4bcast) {
+		return true
+	}
+	for _, n := range nonPublicNets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 const sourceHookTable = "source_hooks"

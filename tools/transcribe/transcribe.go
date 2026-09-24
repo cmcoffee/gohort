@@ -79,7 +79,10 @@ func (t *TranscribeTool) RunWithSession(args map[string]any, sess *ToolSession) 
 	if filepath.IsAbs(cleaned) || strings.HasPrefix(cleaned, "..") || strings.Contains(cleaned, string(filepath.Separator)+"..") {
 		return "", fmt.Errorf("path must be inside the workspace; got %q", relPath)
 	}
-	full := filepath.Join(sess.WorkspaceDir, cleaned)
+	full, perr := ResolveWorkspacePath(sess.WorkspaceDir, cleaned)
+	if perr != nil {
+		return "", fmt.Errorf("path must be inside the workspace; got %q", relPath)
+	}
 	st, err := os.Stat(full)
 	if err != nil {
 		return "", fmt.Errorf("file not found: %w", err)
