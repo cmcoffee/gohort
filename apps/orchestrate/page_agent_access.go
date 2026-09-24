@@ -598,7 +598,7 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 			{
 				Group:    "Guardrails",
 				Title:    "How carefully they are checked",
-				Subtitle: "Quick answers straight off. Standard and Thorough reason first, which catches more and false-alarms less, at a few seconds per checked reply.",
+				Subtitle: "Quick answers straight off. Moderate and Thorough reason first, which catches more and false-alarms less, at a few seconds per checked reply.",
 				Body: ui.FormPanel{
 					// Owner-only, like the guardrails themselves: never the
 					// general PATCH, which an agent's own edit paths reach.

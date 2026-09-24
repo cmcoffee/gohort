@@ -151,8 +151,8 @@ func TestGovernanceRuleCheckingSettings(t *testing.T) {
 		}
 		return w.Body.String()
 	}
-	if got := call("GET", ""); !strings.Contains(got, `"depth":"standard"`) || !strings.Contains(got, `"if_unchecked":"block"`) {
-		t.Fatalf("defaults should be standard and block: %s", got)
+	if got := call("GET", ""); !strings.Contains(got, `"depth":"quick"`) || !strings.Contains(got, `"if_unchecked":"block"`) {
+		t.Fatalf("defaults should be quick and block: %s", got)
 	}
 	call("POST", `{"rules":"Never discuss the lunar calendar.","depth":"thorough","if_unchecked":"allow"}`)
 	if rules.GlobalRulesDepth() != rules.RuleDepthThorough || !rules.GlobalRulesFailOpen() {

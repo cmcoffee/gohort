@@ -344,13 +344,13 @@ func depthRank(d string) int {
 }
 
 // wardenDepthOptions turns a depth into how the checker is called. Quick is
-// what it always did: no reasoning. Standard and Thorough reason first, at the
+// what it always did: no reasoning. Moderate and Thorough reason first, at the
 // effort levels every provider maps for itself.
 func wardenDepthOptions(depth string) []ChatOption {
 	switch depth {
 	case prompts.RuleDepthThorough:
 		return []ChatOption{WithThink(true), WithEffort("medium")}
-	case prompts.RuleDepthStandard:
+	case prompts.RuleDepthModerate:
 		return []ChatOption{WithThink(true), WithEffort("low")}
 	default:
 		return []ChatOption{WithThink(false)}

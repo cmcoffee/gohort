@@ -29,8 +29,12 @@ func TestTheCheckReadsAsCarefullyAsItsRulesAsk(t *testing.T) {
 	if d := wardenDepth(own, ownOnly); d != prompts.RuleDepthQuick {
 		t.Errorf("an agent's own rules default to quick, as they always ran: %s", d)
 	}
-	if d := wardenDepth(own, globals); d != prompts.RuleDepthStandard {
-		t.Errorf("with the deployment's rules in the check, its depth (standard by default) applies: %s", d)
+	if d := wardenDepth(own, globals); d != prompts.RuleDepthQuick {
+		t.Errorf("the deployment's rules default to quick too: %s", d)
+	}
+	prompts.SetGlobalRulesDepth(prompts.RuleDepthModerate)
+	if d := wardenDepth(own, globals); d != prompts.RuleDepthModerate {
+		t.Errorf("with the deployment's rules in the check, its depth applies: %s", d)
 	}
 	careful := own
 	careful.GuardrailDepth = prompts.RuleDepthThorough
@@ -43,7 +47,7 @@ func TestTheCheckReadsAsCarefullyAsItsRulesAsk(t *testing.T) {
 	}
 
 	// The depth reaches the checker as a reasoning level.
-	prompts.SetGlobalRulesDepth(prompts.RuleDepthStandard)
+	prompts.SetGlobalRulesDepth(prompts.RuleDepthModerate)
 	llm := &FakeLLM{Turns: []FakeTurn{{Content: `{"verdicts":[{"rule":"Never discuss the lunar calendar.","status":"comply","reason":"unrelated"}]}`}}}
 	turn := guardTurn(t, llm, AgentRecord{Name: "X"})
 	if turn.guardrailCheckHook()(guardHookPreOutput, "The weather is fine.").Blocked {
@@ -51,7 +55,7 @@ func TestTheCheckReadsAsCarefullyAsItsRulesAsk(t *testing.T) {
 	}
 	cfg := llm.Config(0)
 	if cfg.Think == nil || !*cfg.Think || cfg.Effort != "low" {
-		t.Errorf("a standard check reasons briefly: think=%v effort=%q", cfg.Think, cfg.Effort)
+		t.Errorf("a moderate check reasons briefly: think=%v effort=%q", cfg.Think, cfg.Effort)
 	}
 }
 
@@ -78,7 +82,7 @@ func TestAFailedCheckOnGovernanceRulesBlocksWhateverTheOwnerChose(t *testing.T) 
 
 func TestGuardrailDepthIsAnAgentSettingWithADeploymentLimit(t *testing.T) {
 	s, ok := triSettings[defaultGuardrailDepth]
-	if !ok || s.framework != prompts.RuleDepthQuick || strings.Join(s.strictness, ",") != "quick,standard,thorough" {
+	if !ok || s.framework != prompts.RuleDepthQuick || strings.Join(s.strictness, ",") != "quick,moderate,thorough" {
 		t.Fatalf("depth should be a registered setting, quick by default, ordered quick to thorough: %+v", s)
 	}
 	if patchAgentFields["guardrail_depth"] {

@@ -143,7 +143,7 @@ func ruleWithoutMarkers(s string) string {
 // unenforced.
 const (
 	RuleDepthQuick    = "quick"    // the checker answers straight off
-	RuleDepthStandard = "standard" // it reasons briefly first
+	RuleDepthModerate = "moderate" // it reasons briefly first
 	RuleDepthThorough = "thorough" // it reasons at length first
 
 	globalRulesDepthKey     = "prompt_global_rules_depth"
@@ -153,13 +153,15 @@ const (
 // RuleDepths lists the depths from quickest to most thorough, which is also
 // loosest to strictest.
 func RuleDepths() []string {
-	return []string{RuleDepthQuick, RuleDepthStandard, RuleDepthThorough}
+	return []string{RuleDepthQuick, RuleDepthModerate, RuleDepthThorough}
 }
 
-// GlobalRulesDepth is how carefully the Always rules are checked. Standard
-// unless an administrator chose otherwise: the checker runs on the small model,
-// and answering straight off is where both its missed breaches and its false
-// alarms come from.
+// GlobalRulesDepth is how carefully the Always rules are checked. Quick unless
+// an administrator chose otherwise. Measured before choosing: some 325 quick
+// checks in a row reached a verdict, and the rule that looked ignored had not
+// been checked at all rather than misjudged, while reasoning first would add
+// several seconds to each of the two or more checks on every turn. Moderate and
+// Thorough are there for rules whose wording needs judgement.
 func GlobalRulesDepth() string {
 	if db := promptOverrideStore(); db != nil {
 		var v string
@@ -171,7 +173,7 @@ func GlobalRulesDepth() string {
 			}
 		}
 	}
-	return RuleDepthStandard
+	return RuleDepthQuick
 }
 
 // SetGlobalRulesDepth records the depth. Anything that is not a depth clears

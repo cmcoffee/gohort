@@ -203,7 +203,7 @@ var triSettings = map[string]triSetting{
 	defaultGuardrailDepth: {
 		key: defaultGuardrailDepth,
 		words: map[string]string{
-			prompts.RuleDepthQuick: "Quick", prompts.RuleDepthStandard: "Standard", prompts.RuleDepthThorough: "Thorough"},
+			prompts.RuleDepthQuick: "Quick", prompts.RuleDepthModerate: "Moderate", prompts.RuleDepthThorough: "Thorough"},
 		own:    func(a AgentRecord) string { return a.GuardrailDepth },
 		legacy: func(AgentRecord) (string, bool) { return "", false },
 		// Quick is what every agent's rules were checked at before this

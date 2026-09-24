@@ -461,7 +461,7 @@ func (T *OrchestrateApp) handleAgentDeclineSuggest(w http.ResponseWriter, r *htt
 // the rules wholesale, so a one-field panel posting to it would clear them.
 //
 //	GET  /api/agents/{id}/guardrail-depth -> {guardrail_depth}
-//	POST /api/agents/{id}/guardrail-depth    {guardrail_depth: "quick"|"standard"|"thorough"|""}
+//	POST /api/agents/{id}/guardrail-depth    {guardrail_depth: "quick"|"moderate"|"thorough"|""}
 func (T *OrchestrateApp) handleAgentGuardrailDepth(w http.ResponseWriter, r *http.Request, user, agentID string) {
 	udb := UserDB(T.DB, user)
 	agent, ok := loadAgent(udb, agentID)
@@ -479,7 +479,7 @@ func (T *OrchestrateApp) handleAgentGuardrailDepth(w http.ResponseWriter, r *htt
 		}
 		depth := strings.TrimSpace(body.Depth)
 		if depth != "" && depthRank(depth) == 0 && depth != prompts.RuleDepthQuick {
-			http.Error(w, "depth must be quick, standard or thorough", http.StatusBadRequest)
+			http.Error(w, "depth must be quick, moderate or thorough", http.StatusBadRequest)
 			return
 		}
 		agent.GuardrailDepth = depth

@@ -182,12 +182,12 @@ func alwaysRulesForm() ui.FormPanel {
 			Field: "depth", Type: "select", Label: "How carefully they are checked",
 			Options: []ui.SelectOption{
 				{Value: rules.RuleDepthQuick, Label: "Quick"},
-				{Value: rules.RuleDepthStandard, Label: "Standard"},
+				{Value: rules.RuleDepthModerate, Label: "Moderate"},
 				{Value: rules.RuleDepthThorough, Label: "Thorough"},
 			},
 			Help: "Every agent's replies and actions are checked against these at this depth, whatever the agent's own setting.",
 			Detail: "Quick answers straight off: fastest, and where both missed breaches and false alarms come from. " +
-				"Standard reasons briefly before deciding, a few seconds per check. Thorough reasons at length, for rules where a wrong call is expensive. " +
+				"Moderate reasons briefly before deciding, a few seconds per check. Thorough reasons at length, for rules where a wrong call is expensive. " +
 				"A reply is held until its check clears, so this is time added to every checked reply. " +
 				"An agent whose own rules are checked more carefully than this uses its own depth when both are judged together.",
 		}, {
