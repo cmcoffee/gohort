@@ -360,3 +360,23 @@ func TestNoToolOutputsRendersNothing(t *testing.T) {
 		t.Error("no outputs must render no block at all")
 	}
 }
+
+// A turn that ran nothing is told to REWRITE, never to act. The offer to "do it
+// NOW with a real tool call" is how a scheduled greeting convicted for a
+// well-wish ended up texting the owner's phone: on a turn that did nothing, the
+// only way to make a sentence true is to go and do something.
+func TestACorrectionOnATurnThatRanNothingOnlyAsksForARewrite(t *testing.T) {
+	v := TurnClaimVerdict{Unkept: true, Claim: "Wishing you a pleasant evening.", Why: "the turn did not do it"}
+	idle := unkeptClaimCorrection(v, false)
+	if strings.Contains(idle, "do it NOW") || strings.Contains(idle, "real tool call") {
+		t.Errorf("a turn that ran nothing must not be invited to act:\n%s", idle)
+	}
+	if !strings.Contains(idle, "Do not call a tool") || !strings.Contains(idle, v.Claim) {
+		t.Errorf("the rewrite correction should forbid acting and quote the claim:\n%s", idle)
+	}
+	// A turn that did work keeps the offer: the claim there is usually its
+	// last step left undone.
+	if busy := unkeptClaimCorrection(v, true); !strings.Contains(busy, "do it NOW with a real tool call") {
+		t.Errorf("a turn that did work should still be offered the tool call:\n%s", busy)
+	}
+}

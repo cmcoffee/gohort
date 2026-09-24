@@ -310,6 +310,34 @@ func judgeTurnClaim(cfg AgentLoopConfig, ev TurnClaimEvidence) (TurnClaimVerdict
 	return v, true
 }
 
+// unkeptClaimCorrection is what the loop tells a model whose reply the judge
+// convicted.
+//
+// On a turn that ran nothing it asks for a REWRITE and nothing else. The
+// correction used to offer "do it NOW with a real tool call" on every turn,
+// and on a turn that had done nothing the only way to make a sentence true is
+// to go and do something: a scheduled greeting convicted for "Wishing you a
+// pleasant evening" answered by calling notify_owner, and the owner's phone
+// got a text nobody had asked for. A judge's verdict is a claim about the
+// reply's words, so the remedy is the words. A correction must never be the
+// reason an agent sends something to somebody.
+//
+// A turn that DID work keeps the offer: a claim there is usually the last step
+// of that work left undone, and the tools it was already using are the way to
+// finish it.
+func unkeptClaimCorrection(v TurnClaimVerdict, didWork bool) string {
+	if !didWork {
+		return fmt.Sprintf("Your reply says: %q. That did not happen: %s. This turn ran nothing, so rewrite the reply to say only what is true. "+
+			"Do not call a tool to make the sentence come true: this is a correction to your wording, not a request to act, and nothing may be sent, posted or delivered because of it. "+
+			"If the user asked for something you have not done, say plainly that you have not done it. Do not apologize, do not restate the claim, and do not promise it for later.",
+			v.Claim, v.Why)
+	}
+	return fmt.Sprintf("Your reply says: %q. That did not happen: %s. The user reads your words and gets nothing else; nothing runs after your turn ends. "+
+		"Either do it NOW with a real tool call, or rewrite the reply to say plainly what actually happened and what you could not do. "+
+		"Do not apologize, do not restate the claim, and do not promise it for later.",
+		v.Claim, v.Why)
+}
+
 // Budgets for the tool-result excerpts both judges read. Deliberately generous
 // against the alternative: the whole evidence message is otherwise a couple of
 // KB on a worker-tier call, while ONE wrong conviction costs a retracted reply

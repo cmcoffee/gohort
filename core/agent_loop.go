@@ -2742,7 +2742,7 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 	// Placed before the guardrail gate on purpose: a reply that claims work
 	// it never did should be fixed before a warden spends a call judging
 	// its content, and the correction below re-prompts anyway.
-	if verdict, convicted := judgeTurnClaim(lr.cfg, TurnClaimEvidence{
+	ev := TurnClaimEvidence{
 		Request:       LatestUserContent(lr.messages),
 		Reply:         lr.rs.resp.Content,
 		ToolCalls:     lr.turnToolCalls,
@@ -2757,7 +2757,8 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 		Backgrounded:  lr.cfg.backgrounded(),
 		GivenEstimate: lr.cfg.backgroundEstimate(),
 		Unattended:    lr.cfg.Unattended,
-	}); convicted {
+	}
+	if verdict, convicted := judgeTurnClaim(lr.cfg, ev); convicted {
 		// Two independent findings share one verdict, so each branch checks
 		// its own. A machinery-only conviction reaching the claim branch
 		// would tell the model its reply "did not happen" about a sentence
@@ -2765,18 +2766,17 @@ func (lr *loopRun) finalRoundJudges() loopAction {
 		if verdict.Unkept && lr.corrections.available(correctionUnkeptClaim) && lr.round < lr.maxRounds {
 			Debug("[agent_loop] turn judge: reply claims work the turn did not do (%q), %s; re-prompting: correction %d/%d",
 				truncForLog(verdict.Claim, 80), verdict.Why, lr.corrections.spend(correctionUnkeptClaim), maxCorrectionsPerKind)
-			lr.emitDiag("unkept-claim-corrected", fmt.Sprintf("The reply said %q, which did not happen: %s. Re-prompted to do it or say so.", truncForLog(verdict.Claim, 120), verdict.Why))
+			how := "Re-prompted to do it or say so."
+			if !ev.TurnDidWork() {
+				how = "Re-prompted to rewrite it; nothing ran this turn, so it was not asked to act."
+			}
+			lr.emitDiag("unkept-claim-corrected", fmt.Sprintf("The reply said %q, which did not happen: %s. %s", truncForLog(verdict.Claim, 120), verdict.Why, how))
 			// Retract rather than settle: the claim is false and, on a
 			// streaming surface, already painted. Same call as the phantom
 			// guard makes about the same class of statement.
 			lr.retractRound()
 			lr.history[len(lr.history)-1] = Message{Role: "assistant", Content: lr.rs.resp.Content, Reasoning: lr.rs.resp.Reasoning}
-			lr.history = append(lr.history, Message{
-				Role: "user",
-				Content: frameworkNoticeTag + fmt.Sprintf(
-					"Your reply says: %q. That did not happen: %s. The user reads your words and gets nothing else; nothing runs after your turn ends. Either do it NOW with a real tool call, or rewrite the reply to say plainly what actually happened and what you could not do. Do not apologize, do not restate the claim, and do not promise it for later.",
-					verdict.Claim, verdict.Why),
-			})
+			lr.history = append(lr.history, Message{Role: "user", Content: frameworkNoticeTag + unkeptClaimCorrection(verdict, ev.TurnDidWork())})
 			return actContinue
 		}
 		if verdict.Unkept && lr.corrections.exhausted(correctionUnkeptClaim) {
