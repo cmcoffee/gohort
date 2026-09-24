@@ -904,7 +904,8 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					// controllerAgentID is the agent doing the delegating — passed
 					// so the delegate can address the channels its delegator
 					// reaches instead of handing text back up to be relayed.
-					rec := RunDelegation(sess.ContextWithNetworkConnector(sess.Context()), RootDB, owner, agent, brief, controllerAgentID)
+					dctx := sess.ContextWithNetworkConnector(sess.Context())
+					rec := RunDelegation(dctx, RootDB, owner, agent, brief, controllerAgentID)
 					if rec.Status == RunFailed {
 						return fmt.Sprintf("Delegated to %q but it failed: %s", agent, rec.Err), nil
 					}
@@ -912,16 +913,31 @@ func operatorManagementTools(sess *ToolSession, agentID string) []AgentToolDef {
 					if out == "" {
 						out = strings.TrimSpace(rec.Raw)
 					}
-					return fmt.Sprintf("Delegated to %q (pre-authorized). Result:\n%s", agent, out), nil
+					return fmt.Sprintf("Delegated to %q (pre-authorized).%s Result:\n%s", agent, privateDelegationNote(dctx, true), out), nil
 				}
 				// FromAgent rides the queued record so an APPROVED delegation runs
 				// with the same channel reach a pre-authorized one gets — the user
-				// clicking Approve isn't making a scope decision.
-				a := SaveAuthorization(RootDB, Authorization{Owner: owner, Agent: agent, Brief: brief, FromAgent: controllerAgentID})
+				// clicking Approve isn't making a scope decision. The asking
+				// conversation rides it too, so the approved run reports back
+				// here, and so does this turn's privacy, so it runs under it.
+				a := Authorization{Owner: owner, Agent: agent, Brief: brief, FromAgent: controllerAgentID}
+				qctx := context.Background()
+				if sess != nil {
+					qctx = sess.ContextWithNetworkConnector(sess.Context())
+					a.FromSession = sess.DeliverySession()
+					a.FromChatID = strings.TrimSpace(sess.ChannelChatID)
+					a.FromHandle = strings.TrimSpace(sess.ChannelHandle)
+					a.FromPrivate = !NetworkAllowedFromContext(qctx)
+				}
+				a = SaveAuthorization(RootDB, a)
 				if sess != nil && sess.PendingApprovalPrompt != nil {
 					sess.PendingApprovalPrompt(a)
 				}
-				return fmt.Sprintf("Queued a delegation to %q for the user's approval: it's in the Authorizations pane (id %s) and runs once approved.", agent, a.ID), nil
+				note := "Its result comes back to you here once it runs."
+				if a.FromSession == "" {
+					note = "Its result lands in the run ledger, not here."
+				}
+				return fmt.Sprintf("Queued a delegation to %q for the user's approval: it's in the Authorizations pane (id %s) and runs once approved. %s%s", agent, a.ID, note, privateDelegationNote(qctx, false)), nil
 			},
 		},
 		{

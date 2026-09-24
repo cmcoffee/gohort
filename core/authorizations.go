@@ -62,6 +62,21 @@ type Authorization struct {
 	// pre-authorized the target, which is not a distinction the user is making
 	// when they click Approve. Empty on legacy records (runs with its own scope).
 	FromAgent string `json:"from_agent,omitempty"`
+	// FromSession, FromChatID and FromHandle are the conversation a queued
+	// delegation was asked from, captured at queue time, so an approved run
+	// reports back into it and wakes the agent that asked. Without them the
+	// run finished into the TARGET agent's own thread, where nobody was
+	// waiting, and the asking agent went on telling the user it was still
+	// pending. Empty when nothing was watching and on legacy records.
+	FromSession string `json:"from_session,omitempty"`
+	FromChatID  string `json:"from_chat_id,omitempty"`
+	FromHandle  string `json:"from_handle,omitempty"`
+	// FromPrivate records that the asking conversation was running Private
+	// (network cut off). An approved delegation runs Private too: approving the
+	// work is not lifting the privacy it was asked under. A pre-authorized
+	// delegation inherits it from the live turn; a queued one has no live turn
+	// left to inherit from, so it is carried here.
+	FromPrivate bool `json:"from_private,omitempty"`
 }
 
 func authKey(owner, id string) string { return owner + ":" + id }

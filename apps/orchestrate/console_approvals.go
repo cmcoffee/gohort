@@ -1,7 +1,6 @@
 package orchestrate
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -62,7 +61,7 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 	// held-for-activation — this approval authorizes the BUILD, the next the
 	// switch-on. Async, like the delegate approval below.
 	if a.Action == buildAgentAction {
-		go RunDelegation(context.Background(), RootDB, a.Owner, "builder", a.Brief, a.FromAgent)
+		go T.runApprovedDelegation(a, "builder")
 		Log("[operator.approval] build_agent approved: dispatching Builder for owner=%s requester=%s", a.Owner, a.FromAgent)
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -236,8 +235,9 @@ func (T *OrchestrateApp) resolveApproval(w http.ResponseWriter, r *http.Request,
 	}
 	// a.FromAgent (captured when the delegation was queued) keeps an approved
 	// delegation's channel reach identical to a pre-authorized one's. Empty on
-	// legacy records — that run just keeps its own scope.
-	go RunDelegation(context.Background(), RootDB, a.Owner, a.Agent, a.Brief, a.FromAgent)
+	// legacy records — that run just keeps its own scope. The asking
+	// conversation's privacy is re-applied, and its result goes back there.
+	go T.runApprovedDelegation(a, a.Agent)
 	w.WriteHeader(http.StatusNoContent)
 }
 

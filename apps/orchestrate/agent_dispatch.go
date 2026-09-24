@@ -374,6 +374,12 @@ func applyForcePrivateToDispatch(ctx context.Context, subSess *ToolSession, tool
 	if !agentForcesPrivate(target) && NetworkAllowedFromContext(ctx) {
 		return ctx, tools
 	}
+	// Which of the two it was, for the log: an investigation read "ForcePrivate
+	// active on <target>" and went looking at a target that was not private.
+	why := "the requesting turn is Private"
+	if agentForcesPrivate(target) {
+		why = "the target is always Private"
+	}
 	connector := NewNetworkConnector(true)
 	ctx = WithNetworkConnector(ctx, connector)
 	if subSess != nil {
@@ -396,8 +402,8 @@ func applyForcePrivateToDispatch(ctx context.Context, subSess *ToolSession, tool
 		filtered = append(filtered, td)
 	}
 	if len(dropped) > 0 {
-		Log("[orchestrate.dispatch] ForcePrivate active on %s, dropped %d network-capable tool(s): %v",
-			target.ID, len(dropped), dropped)
+		Log("[orchestrate.dispatch] private dispatch to %s (%s), dropped %d network-capable tool(s): %v",
+			target.ID, why, len(dropped), dropped)
 	}
 	return ctx, filtered
 }

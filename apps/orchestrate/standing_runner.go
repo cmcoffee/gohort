@@ -322,6 +322,11 @@ func registerStandingRunner(app *OrchestrateApp) {
 	// the session list reads as unread). Mirrors the event-monitor notify=direct
 	// delivery. Best-effort: a missing session is recreated; failures log only.
 	RegisterStandingReporter(func(ctx context.Context, sa StandingAgent, rec RunRecord) {
+		// An approved delegation reports back to the conversation that asked
+		// (runApprovedDelegation), not into the target's own thread.
+		if capturedDelegation(ctx, rec.Raw) {
+			return
+		}
 		reportAgent := strings.TrimSpace(sa.ReportAgentID)
 		if reportAgent == "" {
 			reportAgent = sa.AgentID // legacy records: fall back to the target agent's channel
