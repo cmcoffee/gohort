@@ -151,13 +151,13 @@ func buildBundleLeadPrompt(udb Database, appliance Appliance, docs map[string]st
 	b.WriteString("This bundle is a snapshot somebody uploaded. Nothing here can be re-run, re-queried, or refreshed: if a file was not captured, its contents are not obtainable at all. So when the answer depends on something the bundle does not contain, say exactly that: name the file or the period that is missing and what it would have settled. Never fill a gap with what a system of this kind normally does; a plausible reconstruction presented as a finding is the single worst thing you can produce here.\n\n")
 
 	b.WriteString("## Your Knowledge Base\n\n")
-	b.WriteString("You maintain five structured documents about this evidence. Use `read_doc` to fetch one by name:\n\n")
+	b.WriteString("Five structured documents about this evidence are kept for you. Their current content is below under Current Knowledge Base, so there is nothing to fetch:\n\n")
 	b.WriteString("- **overview**: what this bundle is, what period it covers, which hosts and products appear\n")
 	b.WriteString("- **databases**: datastores the evidence mentions and what it says about their state\n")
 	b.WriteString("- **filesystem**, the bundle's layout: which file carries which kind of event\n")
 	b.WriteString("- **services**: the services visible in the logs and how they interact\n")
 	b.WriteString("- **apps**: the applications, their versions, their errors, and the failure sequences established so far\n\n")
-	b.WriteString("Use `update_doc` to persist new findings after any investigation.\n\n")
+	b.WriteString("You do not write them: what this session's probes find is filed into them after you answer.\n\n")
 
 	leadStaticGuidance(&b)
 	b.WriteString(linkedKnowledgeNote(appliance))

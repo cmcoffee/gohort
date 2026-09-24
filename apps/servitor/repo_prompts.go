@@ -169,13 +169,13 @@ func buildRepoLeadPrompt(appliance Appliance, docs map[string]string, cachedFact
 	writeInstructions(&b, appliance)
 
 	b.WriteString("## Your Knowledge Base\n\n")
-	b.WriteString("You maintain five structured documents about this codebase. Use `read_doc` to fetch one by name:\n\n")
+	b.WriteString("Five structured documents about this codebase are kept for you. Their current content is below under Current Knowledge Base, so there is nothing to fetch:\n\n")
 	b.WriteString("- **overview**: language, framework, build system, module path, the repository's purpose\n")
 	b.WriteString("- **databases**, data model: tables/collections, where schemas are defined, key relationships\n")
 	b.WriteString("- **filesystem**, repository layout: where each kind of thing lives, key directories and files\n")
 	b.WriteString("- **services**: the major subsystems/packages and how they depend on each other\n")
 	b.WriteString("- **apps**: entry points, request/routing flow, external integrations\n\n")
-	b.WriteString("Use `update_doc` to persist new findings after any investigation.\n\n")
+	b.WriteString("You do not write them: what this session's probes find is filed into them after you answer.\n\n")
 
 	leadStaticGuidance(&b)
 	b.WriteString(linkedKnowledgeNote(appliance))

@@ -396,7 +396,7 @@ func leadStaticGuidance(b *strings.Builder) {
 	b.WriteString("2. **Formulate a hypothesis**: what do you need to find to answer the question? What is the most direct path to that answer?\n")
 	b.WriteString("3. **Probe specifically**: each `probe` call has ONE clear goal. 'Show MySQL connection string from /etc/app/config.yml' not 'investigate databases'.\n")
 	b.WriteString("4. **Follow leads immediately**: when a probe reveals a promising pointer (file path, service name, credential), follow it now before moving to anything else.\n")
-	b.WriteString("5. **Update your docs**: call `update_doc` after each probe that yields new information.\n")
+	b.WriteString("5. **Pass findings forward**: the knowledge docs are updated after you answer, not during, so give each `probe` what earlier probes found in its `context`.\n")
 	b.WriteString("6. **Synthesize when answered**: the moment the question is fully answered with verified values, write your response. Don't keep probing once the answer is in hand.\n")
 	b.WriteString("7. **Try different angles**: if initial probes don't answer it, try a different service, config location, or access method.\n")
 	b.WriteString("8. **Escalate to a plan when the question is bigger than a probe**: if answering needs SEVERAL findings that build on each other (or a follow-up opens up an area you haven't mapped), call `set_plan` and work the steps (`mark_step_in_progress` → `record_step_findings`), then `report_gaps` before your final answer. A LATER question in a conversation can absolutely warrant this: needing a real investigation is about the question, not about whether it came first. Skip the plan for anything one probe settles.\n\n")
@@ -418,7 +418,6 @@ func leadStaticGuidance(b *strings.Builder) {
 	b.WriteString("- Never answer from training knowledge: only from probe findings or your knowledge docs.\n")
 	b.WriteString("- The richer the `context` you give the probe, the more precise its findings will be.\n")
 	b.WriteString("- For live state questions (running processes, logged-in users, open ports, disk usage), always probe: docs alone are never sufficient.\n")
-	b.WriteString("- `update_doc` is MANDATORY after every `probe` call that yields new information: call it even if findings are sparse.\n")
 	b.WriteString("- Synthesize clearly: do not dump raw command output at the user. Exact verified values only.\n\n")
 
 	b.WriteString(asciiDiagramRule)
@@ -487,13 +486,13 @@ func buildLeadSystemPrompt(udb Database, appliance Appliance, docs map[string]st
 	writeInstructions(&b, appliance)
 
 	b.WriteString("## Your Knowledge Base\n\n")
-	b.WriteString("You maintain five structured documents about this system. Use `read_doc` to fetch one by name:\n\n")
+	b.WriteString("Five structured documents about this system are kept for you. Their current content is below under Current Knowledge Base, so there is nothing to fetch:\n\n")
 	b.WriteString("- **overview**: OS, hostname, IP, system purpose, installed services, hardware\n")
 	b.WriteString("- **databases**: all database engines, schemas, connection strings, credentials, access users\n")
 	b.WriteString("- **filesystem**: key directories, config file paths, log file paths, data directories\n")
 	b.WriteString("- **services**: running services, ports, inter-service dependencies, process owners\n")
 	b.WriteString("- **apps**: application frameworks, entry points, routing, ORM models, external integrations\n\n")
-	b.WriteString("Use `update_doc` to persist new findings after any investigation.\n\n")
+	b.WriteString("You do not write them: what this session's probes find is filed into them after you answer.\n\n")
 
 	cliMaps := cliMapsForAppliance(udb, appliance.ID)
 	if len(cliMaps) > 0 {

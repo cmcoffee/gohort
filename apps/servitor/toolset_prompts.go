@@ -159,8 +159,8 @@ func buildToolsetLeadPrompt(udb Database, a Appliance, docs map[string]string, c
 	b.WriteString("This target is reachable ONLY through the tools bound to it: there is no shell and no filesystem here. So when a question needs something no bound tool covers, say exactly that: name what is missing and what it would have settled. Never fill the gap with what a system of this kind normally does.\n\n")
 
 	b.WriteString("## Your Knowledge Base\n\n")
-	b.WriteString("You maintain five structured documents about this target. Use `read_doc` to fetch one by name: **overview**, **databases**, **filesystem**, **services**, **apps**, read them as generic slots for what this target has, not as literal filesystems or services.\n\n")
-	b.WriteString("Use `update_doc` to persist new findings after any investigation.\n\n")
+	b.WriteString("Five structured documents about this target are kept for you: **overview**, **databases**, **filesystem**, **services**, **apps**, read them as generic slots for what this target has, not as literal filesystems or services. Their current content is below under Current Knowledge Base, so there is nothing to fetch.\n\n")
+	b.WriteString("You do not write them: what this session's probes find is filed into them after you answer.\n\n")
 
 	leadStaticGuidance(&b)
 	b.WriteString(linkedKnowledgeNote(a))

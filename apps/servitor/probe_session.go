@@ -2262,7 +2262,7 @@ func (pr *probeRun) chatDocTools() probeAction {
 	pr.c.read_doc_tool = AgentToolDef{
 		Tool: Tool{
 			Name:        "read_doc",
-			Description: "Read a structured knowledge document about this system. System docs: overview, databases, filesystem, services, apps. CLI maps: cli:<command> (e.g. cli:kubectl, cli:docker).",
+			Description: "Read a CLI map, cli:<command> (e.g. cli:kubectl, cli:docker). The system docs (overview, databases, filesystem, services, apps) are already in your prompt under Current Knowledge Base; reading one again returns the same text.",
 			Parameters: map[string]ToolParam{
 				"doc": {Type: "string", Description: "Document name: overview, databases, filesystem, services, apps, or cli:<command>."},
 			},
@@ -2478,7 +2478,11 @@ func (pr *probeRun) chatInvestigate() probeAction {
 	// questions ARE one probe, and taxing every follow-up with a 5-step plan
 	// would be worse than the gap.
 	pr.c.chatPlan = buildPlanTools(pr.id, false)
-	pr.c.docInvestigatorTools = append([]AgentToolDef{pr.c.read_doc_tool, pr.c.update_doc_tool, pr.c.probe_tool}, pr.c.chatPlan.All()...)
+	// No update_doc: the docs are written once, after the answer, by the
+	// consolidation pass (chatAfter), from every probe's findings. Writing
+	// them here too cost a lead round per probe, each spent re-emitting a
+	// whole markdown doc, for work consolidation then did again.
+	pr.c.docInvestigatorTools = append([]AgentToolDef{pr.c.read_doc_tool, pr.c.probe_tool}, pr.c.chatPlan.All()...)
 	assertOnlyAllowedTools("servitor.doc_investigator", pr.c.docInvestigatorTools, servitorOrchestratorToolAllowList)
 	// Lead migration (slice 2b): the investigator runs through the orchestrate
 	// SCOPED path, so its sessions and tool recordings land in the appliance
@@ -2574,9 +2578,12 @@ func (pr *probeRun) chatAfter() probeAction {
 		pr.reply = pr.c.lastProbeResult
 	}
 
-	// Consolidation and verification use allProbeResults / lastProbeResult.
+	// Consolidation and verification read every probe's findings. It was
+	// handed only the LAST probe's, which went unnoticed while the lead also
+	// wrote the docs after each probe; consolidation is the only writer now,
+	// so a multi-probe turn would otherwise file one probe and lose the rest.
 	if pr.c.lastProbeResult != "" && pr.udb != nil {
-		workerOut := pr.c.lastProbeResult
+		workerOut := pr.allFindings()
 		userQuestion := ""
 		if n := len(pr.messages); n > 0 && pr.messages[n-1].Role == "user" {
 			userQuestion = pr.messages[n-1].Content
@@ -2618,10 +2625,7 @@ func (pr *probeRun) chatAfter() probeAction {
 	// user, is skipped. When the check finds a candidate, the model runs
 	// exactly as before: it decides, not the heuristic.
 	if pr.reply != "" && len(pr.c.allProbeResults) > 0 {
-		rawFindings := strings.Join(pr.c.allProbeResults, "\n\n---\n\n")
-		if len(rawFindings) > 24000 {
-			rawFindings = rawFindings[:24000] + "\n... [truncated]"
-		}
+		rawFindings := pr.allFindings()
 		if unverified := unverifiedIdentifiers(pr.reply, rawFindings); len(unverified) == 0 {
 			Debug("[servitor] verification skipped: every identifier in the reply appears in the findings")
 		} else {
@@ -2674,6 +2678,19 @@ func (pr *probeRun) chatAfter() probeAction {
 	}
 	return actNone
 }
+
+// allFindings is every probe result this turn, joined and capped, for the
+// passes that read the turn's findings whole: consolidation and verification.
+func (pr *probeRun) allFindings() string {
+	out := strings.Join(pr.c.allProbeResults, "\n\n---\n\n")
+	if len(out) > maxTurnFindings {
+		out = out[:maxTurnFindings] + "\n... [truncated]"
+	}
+	return out
+}
+
+// maxTurnFindings caps allFindings.
+const maxTurnFindings = 24000
 
 func (pr *probeRun) finishTurn() probeAction {
 	if pr.reply == "" {
