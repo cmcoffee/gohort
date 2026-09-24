@@ -95,7 +95,12 @@ func TestAnUnattendedRunHonoursReachNone(t *testing.T) {
 	if got := host.catalog(MachinePhase{Name: "decide", Reach: ReachNone}); len(got) != 0 {
 		t.Errorf("a step that asked for no tools was handed %d", len(got))
 	}
-	if got := host.catalog(MachinePhase{Name: "work"}); len(got) == 0 {
-		t.Error("a step that asked for nothing in particular should still reach the run's pool")
+	if got := host.catalog(MachinePhase{Name: "work", Reach: ReachAll}); len(got) == 0 {
+		t.Error("a step that asked for everything should reach the run's pool")
+	}
+	// Unset, a transient step that names no tools only reasons: it is one
+	// request, and a pool would turn it into a tool loop.
+	if got := host.catalog(MachinePhase{Name: "work"}); len(got) != 0 {
+		t.Errorf("a transient step that named nothing was handed %d tools", len(got))
 	}
 }

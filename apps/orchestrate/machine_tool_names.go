@@ -324,7 +324,8 @@ func reachAdvice(udb Database, user string, def MachineDef) []string {
 func machineToolUnits(def MachineDef) []toolScopeUnit {
 	units := make([]toolScopeUnit, 0, len(def.Phases))
 	for _, p := range def.Phases {
-		units = append(units, toolScopeUnit{Label: "step " + p.Name, Reach: PhaseReach(p), Tools: p.Tools, Prompt: p.Prompt})
+		units = append(units, toolScopeUnit{Label: "step " + p.Name, Reach: PhaseReach(p), Tools: p.Tools, Prompt: p.Prompt,
+			Defaulted: strings.TrimSpace(p.Reach) == ReachUnset && len(p.Tools) == 0 && PhaseReach(p) == ReachNone})
 	}
 	return units
 }
@@ -349,6 +350,11 @@ type toolScopeUnit struct {
 	// "call knowledge_search FIRST" beside a tool list that drops it is a
 	// contradiction visible from the record alone.
 	Prompt string
+	// Defaulted marks a reach of nothing that nobody chose: a transient
+	// step naming no tools, whose unset reach resolves to none. The repair
+	// is the same as for a chosen none, but the finding has to say it was
+	// the default, or the author goes looking for a setting they never made.
+	Defaulted bool
 }
 
 // reachAdviceFor is the judgement, over whichever surface gathered the units.
@@ -539,13 +545,18 @@ func frameworkDropFindings(units []toolScopeUnit) []string {
 			continue
 		}
 		how := "its tool list does not name " + plainList(dropped)
-		if u.Reach == ReachNone {
+		fix := "name " + itThem(len(dropped)) + " in this step's tools, or clear the list and set its reach to all so the step inherits the catalog."
+		switch {
+		case u.Defaulted:
+			how = "it names no tools, and a step that runs and hands on reaches nothing unless its reach says otherwise"
+			fix = "name " + itThem(len(dropped)) + " in this step's tools, or set its reach to all so the step inherits the catalog."
+		case u.Reach == ReachNone:
 			how = "its reach admits nothing at all"
+			fix = "set its reach to all or read, and name " + itThem(len(dropped)) + " in this step's tools if the list is not empty."
 		}
 		out = append(out, u.Label+" tells the model to call "+plainList(dropped)+", but "+how+
 			", so the narrowing removes "+itThem(len(dropped))+" before the step runs. "+
-			"A framework tool is not granted by an allowlist and is not exempt from this narrowing the way the workflow controls are: "+
-			"name "+itThem(len(dropped))+" in this step's tools, or clear the list so the step inherits the catalog.")
+			"A framework tool is not granted by an allowlist and is not exempt from this narrowing the way the workflow controls are: "+fix)
 	}
 	return out
 }

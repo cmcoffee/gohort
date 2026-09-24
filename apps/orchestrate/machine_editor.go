@@ -992,11 +992,11 @@ func phaseToolFields(p MachinePhase, cat editorCatalog) []ui.FormField {
 		ui.FormField{Field: "reach", Type: "select", Label: "Tools this step may reach",
 			Options: []ui.SelectOption{
 				{Value: ReachAll, Label: "Everything the agent has",
-					Help: "The default. What the agent carries is what this step can use."},
+					Help: "The default for a step the conversation waits in, or one that names tools. What the agent carries is what this step can use."},
 				{Value: ReachRead, Label: "Read-only: nothing that writes or reaches the network",
 					Help: "For a step that gathers and reports. Searching, listing and reading stay; posting, running and fetching go."},
 				{Value: ReachNone, Label: "Nothing: this step only decides",
-					Help:   "For a step that routes, classifies, or reshapes what it was handed.",
+					Help:   "The default for a step that runs and hands on without naming tools. For a step that routes, classifies, or reshapes what it was handed.",
 					Detail: "It also spares the step building a catalog it will not use."},
 			},
 			Help:   "Says what KIND of thing this step may do.",

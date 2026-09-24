@@ -823,7 +823,7 @@ type stageOutput struct {
 // debuggable behavior — and the breadcrumb rule still holds: both the
 // repair attempt and the final failure land on the status line.
 func (T *AppCore) runDeclaredStage(ctx context.Context, stage PipelineStage, prompt string, call func(string) (string, error), status func(string)) (string, map[string]any, error) {
-	return T.runDeclaredOutput(ctx, "stage "+stage.Name, stage.ModelOutput(), prompt, call, status)
+	return T.runDeclaredOutput(ctx, "stage "+stage.Name, stage.ModelOutput(), prompt, call, nil, status)
 }
 
 // runDeclaredOutput is runDeclaredStage's body, with the stage removed.
@@ -834,7 +834,15 @@ func (T *AppCore) runDeclaredStage(ctx context.Context, stage PipelineStage, pro
 //
 // label identifies the caller in status text and reads as a noun phrase
 // ("stage plan", "phase route") because it lands mid-sentence.
-func (T *AppCore) runDeclaredOutput(ctx context.Context, label string, decl []PipelineField, prompt string, call func(string) (string, error), status func(string)) (string, map[string]any, error) {
+//
+// reformat, when the caller hands one over, is how the one repair runs:
+// a cheap call with no tools that restates the reply it already has,
+// instead of call again. It exists for a caller whose call is EXPENSIVE,
+// a tool loop or a sub-run, where the work already happened and only the
+// shape came back wrong. Asking call again would redo every search and
+// every dispatch to fix a formatting mistake. nil keeps the retry, which
+// is right where call is itself one cheap request.
+func (T *AppCore) runDeclaredOutput(ctx context.Context, label string, decl []PipelineField, prompt string, call, reformat func(string) (string, error), status func(string)) (string, map[string]any, error) {
 	contract := renderOutputContract(decl)
 	out, err := call(prompt + contract)
 	if err != nil {
@@ -844,17 +852,27 @@ func (T *AppCore) runDeclaredOutput(ctx context.Context, label string, decl []Pi
 	if derr == nil {
 		return out, fields, nil
 	}
+	// A blank reply has nothing to restate, so it goes back to call.
+	restate := reformat != nil && strings.TrimSpace(out) != ""
 	if status != nil {
-		status(label + ": reply did not match the declared shape (" + derr.Error() + "): retrying once")
+		how := "retrying once"
+		if restate {
+			how = "restating it once, without redoing the work"
+		}
+		status(label + ": reply did not match the declared shape (" + derr.Error() + "): " + how)
 	}
 	if ctx.Err() != nil {
 		return "", nil, ctx.Err()
 	}
-	repair := prompt + contract +
-		"\n\nYour previous reply could not be used: " + derr.Error() +
-		"\nIt was:\n" + previewForRepair(out) +
-		"\nReply again with ONLY the JSON object described above."
-	out, err = call(repair)
+	if restate {
+		out, err = reformat(restatePrompt(prompt, out, derr) + contract)
+	} else {
+		repair := prompt + contract +
+			"\n\nYour previous reply could not be used: " + derr.Error() +
+			"\nIt was:\n" + previewForRepair(out) +
+			"\nReply again with ONLY the JSON object described above."
+		out, err = call(repair)
+	}
 	if err != nil {
 		return "", nil, err
 	}
@@ -862,6 +880,26 @@ func (T *AppCore) runDeclaredOutput(ctx context.Context, label string, decl []Pi
 		return "", nil, Error("reply did not match the declared shape after one repair attempt: " + derr.Error())
 	}
 	return out, fields, nil
+}
+
+// restateReplyMax bounds the reply a restatement is handed. Far above
+// previewForRepair's, because here the reply IS the material: the fields
+// are read out of it, and a cut findings list comes back as a short one.
+const restateReplyMax = 24000
+
+// restatePrompt asks for a finished reply in the declared shape, handing
+// over the task only so the fields can be read against it. The work is
+// done; the call that answers this one has no tools to redo it with, and
+// is told not to invent what the reply does not say.
+func restatePrompt(task, reply string, derr error) string {
+	reply = strings.TrimSpace(reply)
+	if len(reply) > restateReplyMax {
+		reply = reply[:restateReplyMax] + "…(truncated)"
+	}
+	return "A step was given this task:\n\n" + task +
+		"\n\nIts reply is below. The work in it is done, but the reply is not in the shape the next step needs (" + derr.Error() + ")." +
+		" Restate it as the JSON object described at the end. Take its content as given: do not redo the task," +
+		" add findings it does not contain, or fill a field it left unanswered.\n\nThe reply:\n\n" + reply
 }
 
 // previewForRepair bounds how much of a failed reply is quoted back in

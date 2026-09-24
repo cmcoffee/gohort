@@ -841,11 +841,14 @@ func TestPhaseRunnerAnnouncesBeforeItRuns(t *testing.T) {
 func TestAStepThatNamesToolsGetsThem(t *testing.T) {
 	turn, _ := machineTurnFixture(t, residentMachine())
 
-	// Naming none inherits the catalog, the same as it does while a
-	// conversation waits in a resident phase. The two rules used to
-	// disagree, on the same control in the same editor.
-	if got := turn.machineCatalog(MachinePhase{Name: "triage"}); len(got) == 0 {
-		t.Error("a step that names no tools should inherit the agent's catalog")
+	// Reach "all" inherits the catalog, the same as a resident phase does
+	// with nothing set. Unset, a transient step that names no tools only
+	// reasons and is handed nothing.
+	if got := turn.machineCatalog(MachinePhase{Name: "triage", Reach: ReachAll}); len(got) == 0 {
+		t.Error("a step reaching everything should inherit the agent's catalog")
+	}
+	if got := turn.machineCatalog(MachinePhase{Name: "triage"}); len(got) != 0 {
+		t.Errorf("a transient step that names no tools should be handed none, got %d", len(got))
 	}
 
 	// The marker is how a step says it wants none — a decompose or route
@@ -1083,7 +1086,7 @@ func TestPhaseThatMatchesNothingKeepsTheWholeCatalog(t *testing.T) {
 // A machine that never mentions tools changes nothing about the agent.
 func TestPhaseWithNoToolsInheritsEverything(t *testing.T) {
 	catalog := scopeCatalog()
-	m := turnMachine{on: true, phase: MachinePhase{Name: "investigate"}}
+	m := turnMachine{on: true, phase: MachinePhase{Name: "investigate", Resident: true}}
 	out, dropped, unmatched, fellBack := m.narrowCatalog(catalog, nil)
 
 	if len(out) != len(catalog) || len(dropped) != 0 || len(unmatched) != 0 || fellBack {
@@ -1243,8 +1246,11 @@ func TestTheOldMarkerReadsAsReachNone(t *testing.T) {
 	if got := PhaseReach(MachinePhase{Tools: []string{NoToolsMarker}}); got != ReachNone {
 		t.Errorf("a stored %q should read as reach none, got %q", NoToolsMarker, got)
 	}
-	if got := PhaseReach(MachinePhase{}); got != ReachAll {
-		t.Errorf("an untouched step inherits everything, got %q", got)
+	if got := PhaseReach(MachinePhase{Resident: true}); got != ReachAll {
+		t.Errorf("an untouched resident step inherits everything, got %q", got)
+	}
+	if got := PhaseReach(MachinePhase{}); got != ReachNone {
+		t.Errorf("an untouched transient step only reasons, got %q", got)
 	}
 }
 
@@ -1500,8 +1506,8 @@ func TestTheFrameworkDropCheckStaysQuietOnWorkingSteps(t *testing.T) {
 		// Names it: it survives the narrowing.
 		{Phases: []MachinePhase{{Name: "a", Prompt: "call knowledge_search first",
 			Tools: []string{"knowledge_search", "web_search"}}}},
-		// Empty list inherits everything, so nothing is dropped.
-		{Phases: []MachinePhase{{Name: "b", Prompt: "call knowledge_search first"}}},
+		// Reach all with an empty list inherits everything, so nothing is dropped.
+		{Phases: []MachinePhase{{Name: "b", Prompt: "call knowledge_search first", Reach: ReachAll}}},
 		// A list, but the prompt never asks for a framework tool.
 		{Phases: []MachinePhase{{Name: "c", Prompt: "search the web and summarize",
 			Tools: []string{"web_search"}}}},
@@ -1735,7 +1741,7 @@ func TestATransientStepCanReachTheAgentsCorpus(t *testing.T) {
 	turn.agent.AttachedCollections = []string{"c-acme"}
 
 	var names []string
-	for _, td := range turn.machineCatalog(MachinePhase{Name: "assess",
+	for _, td := range turn.machineCatalog(MachinePhase{Name: "assess", Reach: ReachAll,
 		Prompt: "Call knowledge_search FIRST, this is not conditional."}) {
 		names = append(names, td.Tool.Name)
 	}
@@ -1820,5 +1826,21 @@ func TestBothNarrowingPathsExemptTheSamePagingTools(t *testing.T) {
 		if !machineControlTools[name] {
 			t.Errorf("core exempts %q from phase narrowing but machineControlTools does not", name)
 		}
+	}
+}
+
+// A transient step told to call a framework tool with its reach left unset
+// reaches nothing, and the finding says the DEFAULT did it, so the author is
+// not sent looking for a setting they never made.
+func TestTheFrameworkDropCheckNamesTheDefault(t *testing.T) {
+	def := MachineDef{Phases: []MachinePhase{{Name: "b", Prompt: "call knowledge_search first"}}}
+	got := strings.Join(frameworkDropFindings(machineToolUnits(def)), "\n")
+	if !strings.Contains(got, "names no tools") || !strings.Contains(got, "set its reach to all") {
+		t.Errorf("the finding should blame the default and name the fix: %q", got)
+	}
+	// The same step waiting for the person inherits, and says nothing.
+	def.Phases[0].Resident = true
+	if got := frameworkDropFindings(machineToolUnits(def)); len(got) != 0 {
+		t.Errorf("a resident step inherits the catalog: %v", got)
 	}
 }

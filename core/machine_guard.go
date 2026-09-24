@@ -66,14 +66,18 @@ func (T *AppCore) checkGuard(ctx context.Context, def MachineDef, ph MachinePhas
 		// A guard is a cheap check standing in front of the user's
 		// actual turn: worker tier, no reasoning budget, no tools. An
 		// author who wants their guard to deliberate is really asking
-		// for a transient phase.
+		// for a transient phase. The reach is SAID, not left to the
+		// default: an unset one on this probe once handed the guard the
+		// agent's whole catalog, turning a yes/no into a tool loop on
+		// every resumed turn.
 		Model:  "worker",
 		Think:  "off",
+		Reach:  ReachNone,
 		Output: guardOutput,
 	}
 	raw, fields, err := T.runDeclaredOutput(ctx, "guard on phase "+ph.Name, guardOutput,
 		def.guardPrompt(ph, cur.State, input),
-		func(p string) (string, error) { return run(ctx, probe, p) }, nil)
+		func(p string) (string, error) { return run(ctx, probe, p) }, nil, nil)
 	if err != nil {
 		note("machine_guard_failed", "the guard on phase "+ph.Name+" could not be evaluated ("+err.Error()+"); staying put")
 		return ph, false

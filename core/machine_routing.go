@@ -9,9 +9,10 @@ import (
 // only part of a phase's tool setting that survives being carried to
 // another agent or another deployment. See the field's own comment.
 const (
-	ReachAll  = ""     // inherit the agent's whole catalog
-	ReachRead = "read" // only what reads: nothing that writes, runs, or reaches the network
-	ReachNone = "none" // nothing at all; the step decides or reshapes and hands on
+	ReachUnset = ""     // not chosen: resolves by the step's kind (see PhaseReach)
+	ReachAll   = "all"  // inherit the agent's whole catalog
+	ReachRead  = "read" // only what reads: nothing that writes, runs, or reaches the network
+	ReachNone  = "none" // nothing at all; the step decides or reshapes and hands on
 )
 
 // ReachAllowsCaps is the capability set a reach permits, or nil for "no
@@ -25,11 +26,11 @@ func ReachAllowsCaps(reach string) []Capability {
 }
 
 // validReach reports whether a stored reach names one of the three
-// settings. Shared by the two authoring surfaces so neither can accept a
-// value the other refuses.
+// settings, or is unset. Shared by the two authoring surfaces so neither
+// can accept a value the other refuses.
 func validReach(reach string) bool {
 	switch strings.ToLower(strings.TrimSpace(reach)) {
-	case ReachAll, ReachRead, ReachNone:
+	case ReachUnset, ReachAll, ReachRead, ReachNone:
 		return true
 	}
 	return false
@@ -38,6 +39,15 @@ func validReach(reach string) bool {
 // PhaseReach is the phase's reach, reading the legacy marker as the
 // setting it always meant. A stored ["__none__"] predates the Reach
 // field and says exactly what ReachNone says.
+//
+// An unset reach resolves by what the step IS. A transient step that
+// names no tools, denies none, and hands its work to nobody else gets
+// NOTHING: it is a bounded transform in front of somebody's reply, and a
+// catalog turns its one request into a tool loop that goes looking before
+// it answers. Everything else inherits the whole catalog, as before: a
+// resident step is the conversation, a step naming tools or denying some
+// wants a catalog to narrow, and a delegate, pipeline, or child run
+// passes the catalog on to work that does use it.
 func PhaseReach(ph MachinePhase) string {
 	if r := strings.TrimSpace(ph.Reach); r != "" {
 		return r
@@ -47,7 +57,24 @@ func PhaseReach(ph MachinePhase) string {
 			return ReachNone
 		}
 	}
+	if ph.onlyReasons() {
+		return ReachNone
+	}
 	return ReachAll
+}
+
+// onlyReasons reports a step whose unset reach resolves to nothing: see
+// PhaseReach.
+func (p MachinePhase) onlyReasons() bool {
+	return !p.Resident && len(p.Tools) == 0 && len(p.Deny) == 0 && !p.hasRunner()
+}
+
+// hasRunner reports a step whose work is done by something other than
+// the model call itself: another agent, a pipeline, a child machine, or
+// one tool.
+func (p MachinePhase) hasRunner() bool {
+	return strings.TrimSpace(p.Agent) != "" || strings.TrimSpace(p.Pipeline) != "" ||
+		strings.TrimSpace(p.Machine) != "" || strings.TrimSpace(p.Tool) != ""
 }
 
 // PhaseTools narrows a catalog to what a phase may reach: the reach

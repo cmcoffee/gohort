@@ -159,11 +159,26 @@ func (T *AppCore) runPhase(ctx context.Context, def MachineDef, ph MachinePhase,
 		return text, def.fillStatic(ph, nil, v, st, note), nil
 	}
 	status := func(s string) { note("machine_output_repair", s) }
-	text, fields, err := T.runDeclaredOutput(ctx, "phase "+ph.Name, out, prompt, call, status)
+	text, fields, err := T.runDeclaredOutput(ctx, "phase "+ph.Name, out, prompt, call, restateCall(ctx, ph, run), status)
 	if err != nil {
 		return "", nil, Error("machine " + def.Name + ", phase " + ph.Name + ": " + err.Error())
 	}
 	return text, def.fillStatic(ph, fields, v, st, note), nil
+}
+
+// restateCall is the repair for a step whose run was expensive: one that
+// reached tools, or handed its work to an agent, a pipeline, or a child
+// run. Its reply is restated by a call standing in for the step with none
+// of that, so a formatting miss costs one small request rather than the
+// whole step again (see runDeclaredOutput). nil for a step that reaches
+// nothing, where running it again IS one small request, and a fresh try
+// can fix a reply that was wrong in substance as well as in shape.
+func restateCall(ctx context.Context, ph MachinePhase, run PhaseRunner) func(string) (string, error) {
+	if PhaseReach(ph) == ReachNone && !ph.hasRunner() {
+		return nil
+	}
+	plain := MachinePhase{Name: ph.Name, Model: ph.Model, Think: "off", Reach: ReachNone, Output: ph.Output}
+	return func(p string) (string, error) { return run(ctx, plain, p) }
 }
 
 // fillStatic merges the fields taken from variables into a step's

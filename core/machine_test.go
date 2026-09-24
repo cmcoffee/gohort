@@ -236,9 +236,9 @@ func TestInvestigationRecipeSaysHunchNeedsItsTools(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	// It used to have a last mile: tick the hunch step's tools, or it
-	// could reason but not look. A step that names nothing now inherits
-	// the agent's catalog, so the recipe runs as shipped and says what it
-	// searches with instead of what you must do first.
+	// could reason but not look. hunch says reach "all" instead, so the
+	// recipe runs as shipped with whatever the agent carries, and it has
+	// to SAY so: a transient step left unset reaches nothing.
 	if strings.Contains(def.Description, "tick the tools") {
 		t.Error("the recipe still describes the last mile that no longer exists")
 	}
@@ -1079,7 +1079,7 @@ func TestPhaseBlock_EmptyStateRendersJustTheDirective(t *testing.T) {
 func TestNoToolsMarkerBeatsAnEmptyList(t *testing.T) {
 	catalog := []AgentToolDef{{Tool: Tool{Name: "read_file"}}, {Tool: Tool{Name: "web_search"}}}
 
-	if got := PhaseTools(MachinePhase{}, catalog); len(got) != len(catalog) {
+	if got := PhaseTools(MachinePhase{Resident: true}, catalog); len(got) != len(catalog) {
 		t.Errorf("an empty list inherits the catalog, got %d", len(got))
 	}
 	if got := PhaseTools(MachinePhase{Tools: []string{NoToolsMarker}}, catalog); got != nil {
@@ -1100,7 +1100,7 @@ func TestPhaseToolsAndTier(t *testing.T) {
 		{Tool: Tool{Name: "web_search"}},
 		{Tool: Tool{Name: "knowledge_search"}},
 	}
-	if got := PhaseTools(MachinePhase{}, catalog); len(got) != 2 {
+	if got := PhaseTools(MachinePhase{Resident: true}, catalog); len(got) != 2 {
 		t.Errorf("an empty tool list inherits the whole catalog, got %d", len(got))
 	}
 	got := PhaseTools(MachinePhase{Tools: []string{"knowledge_search"}}, catalog)
@@ -1200,7 +1200,7 @@ func TestPhaseBlockNamesToolScope(t *testing.T) {
 	// A phase that names no tools inherits everything, so saying anything
 	// about scope there would be false.
 	open := MachineDef{Name: "triage"}.PhaseBlock(
-		MachinePhase{Name: "gather"}, MachineState{}, PhaseVars{})
+		MachinePhase{Name: "gather", Resident: true}, MachineState{}, PhaseVars{})
 	if strings.Contains(open, "Tools in this phase") {
 		t.Errorf("unscoped phase claimed a tool scope:\n%s", open)
 	}
@@ -1457,5 +1457,107 @@ func TestAChildsResultFoldsIntoTheParentsWorkingSet(t *testing.T) {
 	items, _ := st["answers"].Fields[AccumulatorItemsField].([]any)
 	if len(items) != 2 || items[1] != "and what the child found" {
 		t.Errorf("a child's findings should land in the parent's list: %#v", items)
+	}
+}
+
+// An unset reach resolves by what the step is. A transient step that only
+// reasons gets nothing, because a catalog turns its one request into a tool
+// loop; every step that has a use for the catalog keeps it.
+func TestUnsetReachResolvesByStepKind(t *testing.T) {
+	catalog := []AgentToolDef{{Tool: Tool{Name: "web_search"}}}
+	cases := []struct {
+		name string
+		ph   MachinePhase
+		want string
+	}{
+		{"transient, names nothing", MachinePhase{Name: "route"}, ReachNone},
+		{"transient, says all", MachinePhase{Name: "dig", Reach: ReachAll}, ReachAll},
+		{"resident", MachinePhase{Name: "reply", Resident: true}, ReachAll},
+		{"names tools", MachinePhase{Name: "dig", Tools: []string{"web_search"}}, ReachAll},
+		{"denies one", MachinePhase{Name: "dig", Deny: []string{"run_shell"}}, ReachAll},
+		{"delegates", MachinePhase{Name: "dig", Agent: "researcher"}, ReachAll},
+		{"runs a pipeline", MachinePhase{Name: "dig", Pipeline: "gather"}, ReachAll},
+		{"runs a child machine", MachinePhase{Name: "dig", Machine: "gap"}, ReachAll},
+		{"calls one tool", MachinePhase{Name: "dig", Tool: "web_search"}, ReachAll},
+	}
+	for _, c := range cases {
+		if got := PhaseReach(c.ph); got != c.want {
+			t.Errorf("%s: reach %q, want %q", c.name, got, c.want)
+		}
+	}
+	if got := PhaseTools(MachinePhase{Name: "route"}, catalog); got != nil {
+		t.Errorf("a transient step that names nothing should be handed no tools, got %d", len(got))
+	}
+}
+
+// The guard is a yes/no in front of the user's turn. It says it reaches
+// nothing, so whatever the host hands a step, the guard gets no catalog.
+func TestTheGuardReachesNothing(t *testing.T) {
+	def := MachineDef{Name: "m", Start: "chat", Phases: []MachinePhase{
+		{Name: "chat", Prompt: "talk", Resident: true, Guard: "the user has moved on"},
+	}}
+	var seen []MachinePhase
+	run := func(ctx context.Context, ph MachinePhase, prompt string) (string, error) {
+		seen = append(seen, ph)
+		return `{"stay": true}`, nil
+	}
+	cur := &MachineCursor{Phase: "chat", State: MachineState{}}
+	(&AppCore{}).checkGuard(context.Background(), def, def.Phases[0], cur, "next message", run, nil)
+	if len(seen) != 1 {
+		t.Fatalf("the guard should be one call, got %d", len(seen))
+	}
+	if PhaseReach(seen[0]) != ReachNone {
+		t.Errorf("the guard probe reaches %q, want none", PhaseReach(seen[0]))
+	}
+}
+
+// A step that went and looked, then replied in the wrong shape, is
+// RESTATED by one call with no tools. Running it again would redo every
+// search to fix a formatting miss.
+func TestAToolStepsBadShapeIsRestatedNotRerun(t *testing.T) {
+	def := MachineDef{Name: "m"}
+	ph := MachinePhase{Name: "dig", Prompt: "find it", Reach: ReachAll,
+		Output: []PipelineField{{Name: "found", Type: FieldString, Required: true}}}
+	var seen []MachinePhase
+	var prompts []string
+	run := func(ctx context.Context, p MachinePhase, prompt string) (string, error) {
+		seen = append(seen, p)
+		prompts = append(prompts, prompt)
+		if len(seen) == 1 {
+			return "I searched three places and found the answer: it is 42.", nil
+		}
+		return `{"found": "42"}`, nil
+	}
+	var notes []string
+	note := func(kind, detail string) { notes = append(notes, kind+": "+detail) }
+	_, fields, err := (&AppCore{}).runPhase(context.Background(), def, ph, PhaseVars{}, MachineState{}, run, note)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fields["found"] != "42" {
+		t.Errorf("fields = %v", fields)
+	}
+	if len(seen) != 2 {
+		t.Fatalf("want the step once and one restatement, got %d calls", len(seen))
+	}
+	if r := seen[1]; PhaseReach(r) != ReachNone || r.hasRunner() || len(r.Tools) > 0 {
+		t.Errorf("the restatement must reach nothing and run nothing: %+v", r)
+	}
+	if !strings.Contains(prompts[1], "found the answer: it is 42") || !strings.Contains(prompts[1], "do not redo the task") {
+		t.Errorf("the restatement should carry the reply and say not to redo it:\n%s", prompts[1])
+	}
+	if !strings.Contains(strings.Join(notes, "\n"), "without redoing the work") {
+		t.Errorf("the repair breadcrumb should say it restated rather than retried: %v", notes)
+	}
+
+	// A step that reaches nothing keeps the ordinary retry: running it
+	// again IS one small request.
+	seen, prompts = nil, nil
+	ph.Reach = ReachNone
+	if _, _, err := (&AppCore{}).runPhase(context.Background(), def, ph, PhaseVars{}, MachineState{}, run, note); err != nil {
+		t.Fatal(err)
+	}
+	if len(seen) != 2 || seen[1].Name != "dig" || !strings.Contains(prompts[1], "Your previous reply could not be used") {
+		t.Errorf("a tool-less step should retry itself, got %d calls", len(seen))
 	}
 }

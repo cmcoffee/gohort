@@ -142,7 +142,7 @@ func stageListProblems(stages []PipelineStage, done map[string]map[string]Pipeli
 		case StageThinkMode(s) != "" && StageThinkMode(s) != "on" && StageThinkMode(s) != "off":
 			probs = append(probs, "stage "+s.Name+": think must be \"on\", \"off\", or empty to inherit, got "+strconv.Quote(s.ThinkMode))
 		case !validReach(s.Reach):
-			probs = append(probs, "stage "+s.Name+": reach must be \"read\", \"none\", or empty to inherit everything, got "+strconv.Quote(s.Reach))
+			probs = append(probs, "stage "+s.Name+": reach must be \"all\", \"read\", \"none\", or empty to inherit everything, got "+strconv.Quote(s.Reach))
 			continue
 		case strings.Contains(s.Name, "."):
 			// A dot would make {stage:a.b} ambiguous between a stage

@@ -337,6 +337,10 @@ func (r PlaybookRule) Machine(skill SkillRecord) MachineDef {
 			Desc:   "Establishing " + fact,
 			Prompt: prompt,
 			Think:  "on",
+			// It goes and finds the fact, so it reaches the catalog. Said
+			// outright: an unset reach on a step like this one reaches
+			// nothing whenever the skill allows no tools by name.
+			Reach:  ReachAll,
 			Tools:  append([]string(nil), skill.AllowedTools...),
 			Output: []PipelineField{field, evidence},
 		}},

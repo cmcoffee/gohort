@@ -53,7 +53,7 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 					Description: "(update_phase) Tool names this step may NOT reach, subtracted last. Empty array clears.",
 					Items:       &ToolParam{Type: "string"},
 				},
-				"reach":    {Type: "string", Description: "(update_phase) \"all\" (everything the agent has, the default), \"read\" (only what reads: nothing that writes, runs, or reaches the network), or \"none\" (this step only decides).", Enum: []string{"all", "read", "none"}},
+				"reach":    {Type: "string", Description: "(update_phase) \"all\" (everything the agent has), \"read\" (only what reads: nothing that writes, runs, or reaches the network), or \"none\" (this step only decides). Unset, a transient step that names no tools reaches nothing; every other step reaches everything.", Enum: []string{"all", "read", "none"}},
 				"prompt":   {Type: "string", Description: "(update_phase) The step's directive."},
 				"desc":     {Type: "string", Description: "(update_phase) One-line summary of what the step is for."},
 				"think":    {Type: "string", Description: "(update_phase) \"on\" or \"off\".", Enum: []string{"on", "off"}},
@@ -63,7 +63,7 @@ func (t *chatTurn) machineGroupedToolDef() AgentToolDef {
 				"guard_to": {Type: "string", Description: "(update_phase) Where the guard sends it."},
 				"phases": {
 					Type:        "array",
-					Description: "(create/update/validate) Ordered phases, each an object: {\"name\": unique label, \"desc\": one line, \"prompt\": the directive}. The KEY field is \"resident\": true marks a phase user turns come back to (a turn ENDS there); false/omitted marks a transient phase that runs, produces a result, and hands straight off inside the same turn. Every machine needs at least one resident phase. Transient phases declare \"output\": [{name,type,desc,required}] and hand off with \"next\", or, to decide at run time, list the phases they may hand to in \"choices\" (the framework declares the routing field itself, do not declare one, and do not list the options in a prompt). Resident phases may NOT declare output: their reply goes to the user. A resident phase with \"next\" gets ONE turn then hands off (an intake beat); without one it stays. Add \"guard\": a plain-language condition that, checked each turn, moves the conversation out (\"the user has moved on to a different subject\"), with \"guard_to\" naming where it goes. Per-phase \"reach\" (\"all\" or \"\" for everything the agent has, \"read\", \"none\" — prefer this to naming tools; it survives being run by a different agent), \"tools\" (exact names on top of reach; empty inherits), \"deny\" (names this phase may NOT reach, subtracted last, the list for \"everything it had except this one\"), \"model\" (\"worker\"|\"lead\"), \"think\" (\"on\"|\"off\", OFF by default on a transient phase; turn it ON for one that genuinely judges, such as decomposing an ambiguous request or routing between close options). Prompts template a fixed set of built-ins, {input}/{original_input}/{established}/{prev}/{now}/{user}/{agent}/{step}/{machine} (transient only; the message AND the earlier findings are supplied anyway if you never place them) and {state:PHASE} / {state:PHASE.field} (anywhere). **Call action=\"help\" for the full spec.**",
+					Description: "(create/update/validate) Ordered phases, each an object: {\"name\": unique label, \"desc\": one line, \"prompt\": the directive}. The KEY field is \"resident\": true marks a phase user turns come back to (a turn ENDS there); false/omitted marks a transient phase that runs, produces a result, and hands straight off inside the same turn. Every machine needs at least one resident phase. Transient phases declare \"output\": [{name,type,desc,required}] and hand off with \"next\", or, to decide at run time, list the phases they may hand to in \"choices\" (the framework declares the routing field itself, do not declare one, and do not list the options in a prompt). Resident phases may NOT declare output: their reply goes to the user. A resident phase with \"next\" gets ONE turn then hands off (an intake beat); without one it stays. Add \"guard\": a plain-language condition that, checked each turn, moves the conversation out (\"the user has moved on to a different subject\"), with \"guard_to\" naming where it goes. Per-phase \"reach\" (\"all\" for everything the agent has, \"read\", \"none\"; unset, a transient phase naming no tools reaches NOTHING and every other phase reaches everything; prefer this to naming tools; it survives being run by a different agent), \"tools\" (exact names on top of reach; empty inherits), \"deny\" (names this phase may NOT reach, subtracted last, the list for \"everything it had except this one\"), \"model\" (\"worker\"|\"lead\"), \"think\" (\"on\"|\"off\", OFF by default on a transient phase; turn it ON for one that genuinely judges, such as decomposing an ambiguous request or routing between close options). Prompts template a fixed set of built-ins, {input}/{original_input}/{established}/{prev}/{now}/{user}/{agent}/{step}/{machine} (transient only; the message AND the earlier findings are supplied anyway if you never place them) and {state:PHASE} / {state:PHASE.field} (anywhere). **Call action=\"help\" for the full spec.**",
 					Items:       &ToolParam{Type: "object"},
 				},
 				"attach_to_agents": {
@@ -186,17 +186,20 @@ tool       a tool this step CALLS DIRECTLY, with "args", and no model runs at al
            call to decide to do the only thing it could do. Args are templated ({input}, {prev},
            {state:PHASE.field}), a placeholder fills a VALUE and can never become a key. A runner
            like agent/pipeline/machine, so it excludes them, and it cannot be resident.
-reach      how much of the agent's catalog this phase may touch: "all" or empty = all of it (the
-           two are the same value; "all" is what update_phase prints back), "read" = only
+reach      how much of the agent's catalog this phase may touch: "all" = all of it, "read" = only
            tools that read (nothing that writes, runs a command, or reaches the network), "none" =
            nothing, which is right for a phase that only decides or reshapes what it was given.
+           UNSET depends on the phase: a transient phase that names no tools, denies none and
+           hands its work to no agent/pipeline/machine reaches NOTHING (it is one cheap call, not
+           a tool loop); every other phase reaches everything. So a transient phase that has to
+           look something up says reach "all" or "read", or names its tools.
            PREFER THIS over naming tools. A catalog is assembled per turn out of things that move
            an MCP server publishes its tools when it connects, a credential mints its own per
            session, an attachment mints more per agent, and a machine is portable across all of
            them, so a name list written here describes one deployment and misdescribes the next.
            A capability travels.
-tools      what this phase may use, BY NAME, on top of whatever reach allowed. Empty INHERITS, in a
-           resident and a transient phase alike. Naming any tool narrows to those, plus the workflow controls,
+tools      what this phase may use, BY NAME, on top of whatever reach allowed. Empty INHERITS
+           whatever the reach allowed. Naming any tool narrows to those, plus the workflow controls,
            which never go away, plus whatever the agent's attached SOURCES grant, which attaching
            is what granted; name one of a source's own tools and the list governs those too. For a
            phase that only decides or reshapes what it was given, list the single name "__none__":
@@ -590,8 +593,9 @@ func machineFindingsText(catalog, advice []string) string {
 // not work where an omitted field means "leave it alone" and widening a
 // narrowed step back to everything has to be sayable.
 //
-// The STORED value for "inherit everything" is the empty string, so the two
-// spellings have to be translated somewhere. update_phase did it and the
+// The stored value for "inherit everything" was once the empty string, so the
+// two spellings had to be translated somewhere. It is "all" now, because empty
+// became "unset" and resolves by the step's kind (see PhaseReach). update_phase did it and the
 // whole-machine create/update path did not, which made "all" a word the
 // framework teaches and then refuses: the author reads `reach = all (inherits
 // everything the agent has)` out of one call, passes it to the next, and core

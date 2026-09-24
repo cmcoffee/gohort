@@ -19,6 +19,7 @@
     },
     {
       "name": "network",
+      "reach": "all",
       "desc": "Reachability, DNS, listeners, firewall, interface — in that order.",
       "think": "on",
       "prompt": "Work the network checks IN ORDER and stop at the first one that is wrong. Do not skip ahead to a favourite theory.\n\n1. Reachability: can the host be reached at all — ping, a route to it, a traceroute that dies somewhere specific.\n2. Name resolution: does the name resolve, to the address it should, from where the failure is seen.\n3. Listeners: is anything listening on the port — ss or netstat on the target, a connect from the source.\n4. Firewall: is the port allowed — the host firewall, then anything between.\n5. Interface: link state, address, recent changes to either.\n\nRun the checks; do not reason about what they would probably show. The first check that fails is the finding — say what it showed and why that explains the symptom. If every check passes, the domain is wrong: say what you ruled out and choose intake.\n\nThen choose ONE exit. propose_fix when you can name a single command that would fix it and a way back if it does not. escalate when the fix needs access, a change window, or a decision you do not have. intake when this is not a network problem after all.\n\nSettled so far:\n\n{state:intake.system} — {state:intake.symptom}",
@@ -34,6 +35,7 @@
     },
     {
       "name": "service",
+      "reach": "all",
       "desc": "Unit state, recent logs, config validity, dependencies, limits — in that order.",
       "think": "on",
       "prompt": "Work the service checks IN ORDER and stop at the first one that is wrong.\n\n1. Unit state: is it running, when did it last start, is it flapping — the service manager's status and its restart count.\n2. Recent logs: the last minutes of the service's own log. Read BACK from the first error to what preceded it; the first ERROR line is usually the symptom of something a few lines earlier.\n3. Config validity: the service's own config check, if it has one, or a syntax check of what it loads.\n4. Dependencies: what it needs to start — a database, a socket, a mount, another unit — and whether each is there.\n5. Limits: file descriptors, memory limit, disk space where it writes.\n\nRun the checks; do not reason about what they would probably show. The first failing check is the finding. If the cause lives in another domain — a full disk, a name that does not resolve — say so and choose intake with that domain named in the finding; do not fix it from here.\n\nThen choose ONE exit. propose_fix when you can name a single command that would fix it and a way back if it does not. escalate when the fix needs access, a change window, or a decision you do not have. intake when this is not a service problem after all.\n\nSettled so far:\n\n{state:intake.system} — {state:intake.symptom}",
@@ -49,6 +51,7 @@
     },
     {
       "name": "performance",
+      "reach": "all",
       "desc": "Load, memory, I/O wait, top consumers, recent change — in that order.",
       "think": "on",
       "prompt": "Work the performance checks IN ORDER and stop at the first one that is wrong. Slow has a cause that shows up as a number; find the number.\n\n1. Load: load average against core count, and whether it is climbing or steady.\n2. Memory: free versus available, swap in use, anything being killed for memory.\n3. I/O wait: iowait in the CPU breakdown, and which device is saturated if it is.\n4. Top consumers: the processes at the top of CPU, memory, and I/O — is one of them unexpected, or one of them new.\n5. Recent change: what changed on the system in the window the slowness started — a deploy, a cron job, a data growth, a config edit.\n\nRun the checks; do not reason about what they would probably show. A number that is high is not yet a finding — the finding is WHAT is making it high, so keep going until a check names a process or a change. If nothing is out of range, say so plainly: the system may be fine and the slowness may be elsewhere, and that belongs in intake as a different symptom.\n\nThen choose ONE exit. propose_fix when you can name a single command that would fix it and a way back if it does not — killing a runaway, clearing a cache, reverting a setting. escalate when the fix is capacity, a code change, or a decision you do not have. intake when this is not a performance problem after all.\n\nSettled so far:\n\n{state:intake.system} — {state:intake.symptom}",
@@ -64,6 +67,7 @@
     },
     {
       "name": "storage",
+      "reach": "all",
       "desc": "Space, inodes, mount state, device health, what is growing — in that order.",
       "think": "on",
       "prompt": "Work the storage checks IN ORDER and stop at the first one that is wrong.\n\n1. Space: usage per filesystem — which one is full or nearly, and whether the symptom's path is on it.\n2. Inodes: a filesystem can be full of files with space to spare; check inode usage on the same filesystems.\n3. Mount state: is it mounted, read-write, and where it should be — a read-only remount after an error looks like a full disk from the application's side.\n4. Device health: kernel messages and SMART or the array's status for the device underneath.\n5. What is growing: the largest directories and the newest large files on the full filesystem, so the fix targets the cause and not a symptom.\n\nRun the checks; do not reason about what they would probably show. The first failing check is the finding. Do not delete anything from here: name what is consuming the space and let the fix step propose it.\n\nThen choose ONE exit. propose_fix when you can name a single command that would fix it — removing a specific set of files, rotating a log, remounting — and a way back if it does not. escalate when it needs more disk, a device replacement, or a decision about whose data goes. intake when this is not a storage problem after all.\n\nSettled so far:\n\n{state:intake.system} — {state:intake.symptom}",
@@ -79,6 +83,7 @@
     },
     {
       "name": "access",
+      "reach": "all",
       "desc": "Auth log, account state, permissions, policy, keys and certificates — in that order.",
       "think": "on",
       "prompt": "Work the access checks IN ORDER and stop at the first one that is wrong. Read what the system says about the refusal before theorizing about it.\n\n1. Auth log: the exact refusal for this user at this time — the auth log, the service's own access log, the reason it gives.\n2. Account state: does the account exist, is it locked, expired, or disabled, is the shell valid.\n3. Permissions: ownership and mode on what they are trying to reach, and on the path down to it.\n4. Policy: sudo rules, group membership, an allow-list or deny-list in the service's config, a PAM rule.\n5. Keys and certificates: the key or certificate being presented, its expiry, and whether the system has the matching side.\n\nRun the checks; do not reason about what they would probably show. The first failing check is the finding. Never widen a permission or a policy from here — name exactly what is refusing and why, and let the fix step propose the narrowest change.\n\nThen choose ONE exit. propose_fix when you can name a single command that would fix it — unlocking an account, correcting a mode on one path, renewing one certificate — and a way back if it does not. escalate when the change is a policy decision, touches more than this one user or path, or needs an approver. intake when this is not an access problem after all.\n\nSettled so far:\n\n{state:intake.system} — {state:intake.symptom}",
@@ -123,6 +128,7 @@
     },
     {
       "name": "verify",
+      "reach": "all",
       "desc": "Run the check named at intake, and say whether it is fixed.",
       "prompt": "Run the check that intake said would prove it fixed, and report what it showed. Nothing else counts as verification: not the fix command's exit code, not the absence of an error, not a service that says active while the original symptom persists.\n\nThe check:\n\n{state:intake.working_means}\n\nfixed is true only when that check passes. If it does not pass, say what it showed instead, and whether the rollback should be run; a fix that ran cleanly and changed nothing is the case this step exists for.",
       "choices": ["resolved", "escalate"],

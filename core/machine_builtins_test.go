@@ -549,16 +549,23 @@ func TestAdviceOnToolsThatCannotApply(t *testing.T) {
 		t.Errorf("a delegated step already has reach: %v", def.Advice())
 	}
 
-	// Drop the delegate and naming nothing is FINE — the step inherits
-	// the agent's catalog, the same as a step the conversation waits in.
+	// Drop the delegate and a transient step that names nothing reaches
+	// nothing by default, so being told to look is flagged, and the
+	// advice says the default is why rather than a setting nobody made.
 	def.Phases[0].Agent = ""
 	def.Phases[0].Tools = nil
-	if strings.Contains(strings.Join(def.Advice(), "\n"), "the instructions send it looking") {
-		t.Errorf("a step that names nothing inherits the catalog and can look: %v", def.Advice())
+	if !strings.Contains(strings.Join(def.Advice(), "\n"), "a step that names none reaches nothing") {
+		t.Errorf("a transient step told to look with no reach should be flagged as the default: %v", def.Advice())
 	}
 
-	// Setting its reach to nothing is what takes that away, so that is
-	// what the advisory now catches.
+	// Saying "all" is what gives it the catalog back.
+	def.Phases[0].Reach = ReachAll
+	if strings.Contains(strings.Join(def.Advice(), "\n"), "the instructions send it looking") {
+		t.Errorf("a step reaching everything can look: %v", def.Advice())
+	}
+
+	// Setting its reach to nothing takes that away again, and the advice
+	// names the setting.
 	def.Phases[0].Reach = ReachNone
 	if !strings.Contains(strings.Join(def.Advice(), "\n"), "its reach is set to nothing") {
 		t.Errorf("a step told to look with its reach set to nothing should be flagged: %v", def.Advice())

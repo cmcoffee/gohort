@@ -202,8 +202,10 @@ type MachinePhase struct {
 	// produced upstream can add or rename one.
 	Args map[string]string `json:"args,omitempty"`
 
-	// Reach is the coarse tool scope: "" inherits everything, "read"
-	// keeps only what reads, "none" keeps nothing.
+	// Reach is the coarse tool scope: "all" inherits everything, "read"
+	// keeps only what reads, "none" keeps nothing. Unset resolves by the
+	// step's kind (PhaseReach): nothing for a transient step that names no
+	// tools, everything otherwise.
 	//
 	// The control most authors want, and the only one that stays true.
 	// Tools below names EXACT strings, and a catalog is assembled per
@@ -734,7 +736,11 @@ func (d MachineDef) Advice() []string {
 				"so the list here does nothing: narrow the delegate itself, or drop the delegate and let this step do the work.")
 		}
 		if PhaseReach(p) == ReachNone && strings.TrimSpace(p.Agent) == "" && wantsToLook(p.Prompt) {
-			out = append(out, "step "+name+": the instructions send it looking, but its reach is set to nothing: "+
+			why := "its reach is set to nothing"
+			if strings.TrimSpace(p.Reach) == ReachUnset {
+				why = "it names no tools, and a step that names none reaches nothing unless its reach says otherwise"
+			}
+			out = append(out, "step "+name+": the instructions send it looking, but "+why+": "+
 				"it will answer from the prompt alone. Change its reach under \"How this step runs\", or give the step to an "+
 				"agent that already has what it needs.")
 		}
@@ -1098,7 +1104,7 @@ func (d MachineDef) phaseProblems(p MachinePhase, seen map[string]bool, declared
 		probs = append(probs, "step "+name+": args belong to a tool step, name the tool it calls, or drop them")
 	}
 	if !validReach(p.Reach) {
-		probs = append(probs, "step "+name+": reach must be \"read\", \"none\", or empty to inherit everything, got "+strconv.Quote(p.Reach))
+		probs = append(probs, "step "+name+": reach must be \"all\", \"read\", \"none\", or empty for the step's default, got "+strconv.Quote(p.Reach))
 	}
 	// A deny that names the workflow controls strands the step: it could not
 	// change_phase, so the machine would have no way out of it. Refused here
