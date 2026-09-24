@@ -1055,3 +1055,20 @@ func TestThePickerOnlyOffersBindableNames(t *testing.T) {
 		}
 	}
 }
+
+// The pre_input check is a model call the person waits on before their own turn
+// starts. Unmarked, a slow model server showed up in the prep-time line as 19
+// seconds of "other"; it must be named.
+func TestTheInputGuardrailWaitIsNamedInPrepTime(t *testing.T) {
+	stub := &wardenStubLLM{reply: `{"verdicts":[{"rule":"answer in Spanish","status":"ok","reason":""}]}`}
+	turn := guardTurn(t, stub, AgentRecord{
+		Name: "X", Guardrails: "? answer in Spanish", GuardrailHooks: []string{"pre_input"},
+	})
+	turn.prep = startPrepClock()
+	turn.applyInputGuardrail([]Message{{Role: "user", Content: "hello"}})
+	var line string
+	turn.prep.render(func(s string) { line = s })
+	if !strings.Contains(line, "input guardrail") {
+		t.Errorf("the guardrail wait is not named in the prep line: %s", line)
+	}
+}

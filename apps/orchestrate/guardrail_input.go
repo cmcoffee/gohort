@@ -3,6 +3,7 @@ package orchestrate
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	. "github.com/cmcoffee/gohort/core"
 )
@@ -117,7 +118,12 @@ func (t *chatTurn) applyInputGuardrail(msgs []Message) (out []Message, decline s
 	if lastIdx < 0 || strings.TrimSpace(msgs[lastIdx].Content) == "" {
 		return msgs, ""
 	}
+	// Timed into the prep clock: this is a model call the person waits on
+	// before their own turn starts, and while it was unmarked a slow model
+	// server showed up as 19 seconds of "other".
+	guardStart := time.Now()
 	directive, blocked := t.guardrailInputDirective(buildPreInputCandidate(msgs, lastIdx))
+	t.prep.mark("input guardrail", time.Since(guardStart))
 	if blocked {
 		return msgs, t.guardrailInputDecline(msgs[lastIdx].Content)
 	}
