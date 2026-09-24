@@ -549,7 +549,13 @@ func (updateAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	// By id or by name, the same resolution agents(action="get") uses. The
 	// model reads an agent by name and then names it again here; an id-only
 	// lookup turned that into "not found" for an agent it had just been shown.
-	existing, ok := findAgentByNameOrID(sess.DB, sess.Username, id)
+	// A name two agents answer to is refused with both ids rather than
+	// resolved: this rewrites the record, and the wrong one is not undone by
+	// a second call.
+	existing, ok, err := resolveAgentRef(sess.DB, sess.Username, id)
+	if err != nil {
+		return "", err
+	}
 	if !ok {
 		return "", fmt.Errorf("agent %q not found by id or name", id)
 	}
@@ -665,7 +671,11 @@ func (cloneAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (st
 	// LLM-initiated clone preserves the source's OwnedBy (no promotion).
 	// Promotion (sub-agent → top-level) is a deliberate user choice
 	// available only via the chat UI's Clone button prompt.
-	if src, ok := findAgentByNameOrID(sess.DB, sess.Username, id); ok {
+	src, ok, err := resolveAgentRef(sess.DB, sess.Username, id)
+	if err != nil {
+		return "", err
+	}
+	if ok {
 		id = src.ID
 	}
 	saved, err := cloneAgent(sess.DB, id, sess.Username, newName, false)
@@ -713,7 +723,14 @@ func (deleteAgentTool) RunWithSession(args map[string]any, sess *ToolSession) (s
 	// or the user (via the dashboard) can remove it. Prevents one agent from
 	// deleting another's. The human dashboard path (deleteAgent direct) is
 	// unrestricted.
-	if target, ok := findAgentByNameOrID(sess.DB, sess.Username, id); ok {
+	//
+	// An ambiguous name stops here. It used to resolve to whichever same-named
+	// agent sorted first, and this is the one call that cannot be taken back.
+	target, ok, err := resolveAgentRef(sess.DB, sess.Username, id)
+	if err != nil {
+		return "", err
+	}
+	if ok {
 		if msg := agentMutationLock(target, sess); msg != "" {
 			return "", errors.New(msg)
 		}

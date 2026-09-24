@@ -110,23 +110,94 @@ func TestNoCollectionMeansNoTool(t *testing.T) {
 	}
 }
 
-// TestInChargeMatchesNameOrID pins the resolver agreement. Dispatch resolves an
-// agent by name OR id, so a CuratorAgent stored under either spelling has to be
-// found here too — a field that runs under one and reads as unset under the
-// other is the bug that already cost an afternoon on the status line.
-func TestInChargeMatchesNameOrID(t *testing.T) {
-	udb := &DBase{Store: kvlite.MemStore()}
-	for _, stored := range []string{"agent-7", "Librarian", "librarian"} {
+// stewardStores pins RootDB and VectorDB to fresh stores (sharing reads both)
+// and returns the per-user collections store for user, which is also where the
+// runner keeps that user's agents.
+func stewardStores(t *testing.T) func(user string) Database {
+	t.Helper()
+	savedRoot, savedVec := RootDB, VectorDB
+	RootDB = &DBase{Store: kvlite.MemStore()}
+	VectorDB = &DBase{Store: kvlite.MemStore()}
+	t.Cleanup(func() { RootDB, VectorDB = savedRoot, savedVec })
+	return func(user string) Database {
+		udb := UserDB(CollectionsDB(), user)
+		if udb == nil {
+			t.Fatal("no per-user store")
+		}
+		return udb
+	}
+}
+
+// TestInChargeMatchesTheOwnersAgentByIDOrResolvedName pins the resolver
+// agreement. A CuratorAgent stored as the id, or as a name the owner's agents
+// resolve to that id (older records, or set through the API), grants the
+// steward tool, in any case, because the dispatch and the status line resolve
+// it that way too.
+func TestInChargeMatchesTheOwnersAgentByIDOrResolvedName(t *testing.T) {
+	store := stewardStores(t)
+	udb := store("alice")
+	lib, err := saveAgent(udb, AgentRecord{Name: "Librarian", Owner: "alice", OrchestratorPrompt: "keeps runbooks"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, stored := range []string{lib.ID, "Librarian", "librarian"} {
 		saveCollection(udb, Collection{
-			ID: "col-" + stored, Name: "C", Owner: "alice", CuratorAgent: stored,
+			ID: "col-" + string(rune('a'+i)), Name: "C", Owner: "alice", CuratorAgent: stored,
 		})
 	}
-	got := curatedCollectionsFor(udb, "alice", "agent-7", "Librarian")
+	got := curatedCollectionsFor(udb, "alice", lib.ID)
 	if len(got) != 3 {
 		var ids []string
 		for _, c := range got {
 			ids = append(ids, c.ID+"/"+c.CuratorAgent)
 		}
 		t.Fatalf("expected all three spellings to resolve, got %v", ids)
+	}
+}
+
+// TestInChargeOnlyOfTheOwnersCollections is the name collision. Carol's
+// collection, shared with alice, names Carol's "Librarian" as its curator; the
+// deployment's own collection names a "Librarian" too. Alice's agent that is
+// also called Librarian was handed the corpus tools for both, because the match
+// ran by name over everything alice could read. It must get neither: a name
+// means an agent of whoever chose it.
+func TestInChargeOnlyOfTheOwnersCollections(t *testing.T) {
+	store := stewardStores(t)
+	alice, carol := store("alice"), store("carol")
+	mine, err := saveAgent(alice, AgentRecord{Name: "Librarian", Owner: "alice", OrchestratorPrompt: "mine"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	theirs, err := saveAgent(carol, AgentRecord{Name: "Librarian", Owner: "carol", OrchestratorPrompt: "theirs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saveCollection(carol, Collection{
+		ID: "col-carol", Name: "Legal", Owner: "carol", AllowedUsers: []string{"alice"}, CuratorAgent: "Librarian",
+	})
+	saveCollection(carol, Collection{
+		ID: "col-carol-id", Name: "Contracts", Owner: "carol", AllowedUsers: []string{"alice"}, CuratorAgent: theirs.ID,
+	})
+	RootDB.Set(GlobalCollectionsTable, "col-dep", Collection{
+		ID: "col-dep", Name: "Everyone", Scope: CollectionScopeDeployment, CuratorAgent: "Librarian",
+	})
+	saveCollection(alice, Collection{ID: "col-alice", Name: "Mine", Owner: "alice", CuratorAgent: "Librarian"})
+
+	// Alice can read all four, so the old match had all three foreign ones to
+	// pick from.
+	if n := len(ListCollections(alice, "alice")); n != 4 {
+		t.Fatalf("setup: alice should see 4 collections, sees %d", n)
+	}
+	got := curatedCollectionsFor(alice, "alice", mine.ID)
+	if len(got) != 1 || got[0].ID != "col-alice" {
+		var ids []string
+		for _, c := range got {
+			ids = append(ids, c.ID)
+		}
+		t.Fatalf("alice's Librarian must steward only alice's own collection, got %v", ids)
+	}
+	// And carol's agent is still in charge of carol's.
+	if got := curatedCollectionsFor(carol, "carol", theirs.ID); len(got) != 2 {
+		t.Fatalf("carol's Librarian lost its own collections: %+v", got)
 	}
 }

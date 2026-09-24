@@ -62,13 +62,23 @@ func (t *chatTurn) renderSkillTriggerHints(userMsg string) string {
 	for _, id := range t.agent.AllowedSkills {
 		allowed[id] = true
 	}
-	var names []string
+	// The whole allowed set, delivered ones included, is what the handles are
+	// computed over: the listing names a skill among every skill it shows, and
+	// a hint that named it differently would send the model a handle the tools
+	// do not know.
+	var set []SkillRecord
 	for _, s := range t.agentSkills() {
-		if s.Disabled || !allowed[s.ID] || t.deliveredSkills[s.ID] {
+		if !s.Disabled && allowed[s.ID] {
+			set = append(set, s)
+		}
+	}
+	var names []string
+	for _, s := range set {
+		if t.deliveredSkills[s.ID] {
 			continue
 		}
 		if SkillTriggersMatch(s, userMsg, t.docNames) {
-			names = append(names, s.Name)
+			names = append(names, s.NameAmong(set))
 		}
 	}
 	return SkillTriggerHintBlock(names)
@@ -85,8 +95,12 @@ func availableSkillsBlock(agent AgentRecord, udb Database, user string) string {
 	for _, id := range agent.AllowedSkills {
 		allowed[id] = true
 	}
+	// The agent's owner, not the runner: the skill tools resolve in the owner
+	// view (skillToolDefs), and a listing built from the runner's pool would
+	// advertise a set the tools do not serve. udb still does as the handle;
+	// skills live in one shared store keyed by username.
 	var avail []SkillRecord
-	for _, s := range AvailableSkills(udb, user) {
+	for _, s := range AvailableSkills(udb, skillOwnerFor(agent, user)) {
 		if s.Disabled || !allowed[s.ID] {
 			continue
 		}
@@ -95,6 +109,18 @@ func availableSkillsBlock(agent AgentRecord, udb Database, user string) string {
 	// Rendering lives in core (shared with phantom); this function only
 	// computes the per-agent available set.
 	return RenderAvailableSkills(avail)
+}
+
+// skillOwnerFor is whose skills an agent carries, for a surface that has the
+// record but no chatTurn: its author, the same identity ownerView gives a
+// turn. Not a seed's "system" marker, which owns no skills (the same
+// exception runner_http makes for the owner view), and the runner when the
+// record names nobody.
+func skillOwnerFor(agent AgentRecord, user string) string {
+	if o := strings.TrimSpace(agent.Owner); o != "" && o != seedOwner {
+		return o
+	}
+	return user
 }
 
 // fleetView returns the (db, user) pair to use for agent-record
@@ -306,6 +332,15 @@ func (t *chatTurn) renderAvailableAgentsBlock() string {
 	var b strings.Builder
 	b.WriteString("\n\n## Available agents\n\n")
 	b.WriteString("Specialists the user has authored. **If a question lands in one of these agents' domains, DELEGATE FIRST.** Rely on the agent for the work it's built for, when the use case fits it gives the best result: its own persona, tools, and grounded sources beat your general knowledge. This holds EVEN WHEN you could handle it with your own tools, for a question in a listed agent's domain, delegate rather than web_searching it yourself; a tool call is not a substitute for the specialist. Dispatch as your FIRST move on such a question: don't run several of your own searches and fall back to the agent only when they come up short; the specialist IS the move, not the backup. Answer yourself only when no agent's domain fits: NOT because you feel you already know it or could look it up. And don't narrate that you'll consult an agent and then answer anyway: either dispatch, or answer plainly as you.\n\nDelegate via `agents(action=\"run\", agent=\"<name>\", message=\"<the brief>\")`. **The agent remembers within this session.** It re-threads your prior dispatches to it this session (ephemeral continuity) on top of its own persona, saved facts, and knowledge base, so a follow-up to the same agent can be brief without repeating earlier context. A RELATED FOLLOW-UP goes back to the SAME agent; don't interpret or answer it yourself from the earlier result. This dispatch memory is ephemeral, scoped to this session. Re-dispatch, including the prior context in the brief: \"Earlier you summarized Acme Corp as <X>. Now tell me more about their B2B presence.\" You own the context; the sub-agent answers the question in front of it.\n\nIntegrate the answers into your reply as if they were your own: don't say \"I asked X\" or \"the X agent said\"; the user doesn't know the fleet structure. Just answer with the substance.\n\nFormat: **name**, when to delegate.\n\n")
+	// Two agents answering to one name are shown with their ids, and the
+	// model is told to dispatch by id: a name that matches more than one agent
+	// is refused rather than guessed. Only when names actually collide, so
+	// the block stays byte-identical (and cache-stable) everywhere else.
+	_, viewer := t.fleetView()
+	col := agentNameCollisions(available)
+	if len(col) > 0 {
+		b.WriteString("Where an entry below shows an id, two agents share that name: pass the id as agent=, not the name.\n\n")
+	}
 	for _, a := range available {
 		// Full description — it's the routing cue (descriptions are
 		// model-facing, per the Builder guidance), shown un-truncated so
@@ -315,7 +350,7 @@ func (t *chatTurn) renderAvailableAgentsBlock() string {
 			desc = "(no description)"
 		}
 		b.WriteString("- **")
-		b.WriteString(a.Name)
+		b.WriteString(agentListingRef(a, col, viewer))
 		b.WriteString("** ")
 		b.WriteString(desc)
 		// Deterministic dispatch contract: a sub-agent gets its structured
@@ -581,16 +616,23 @@ func (t *chatTurn) skillToolDefs() []AgentToolDef {
 		return nil
 	}
 	allowed := t.agent.AllowedSkills
+	// Resolved in the agent's OWNER view, the one agentSkills and the
+	// "Available skills" block use. They were resolved as the runner, against
+	// the runner's own pool only, so a shared or published skill the block
+	// listed answered "no skill named", and a published agent's skills
+	// answered for nobody but its author. The collection search inside stays
+	// the runner's, which is where a collection id is (or is not) a grant.
+	odb, owner := t.ownerView()
 	return []AgentToolDef{
-		BuildReadSkillTool(t.udb, t.user, allowed, t.deliveredSkills, func(s SkillRecord) string {
+		BuildReadSkillTool(odb, owner, allowed, t.deliveredSkills, func(s SkillRecord) string {
 			return t.playbookBlock(t.ctx, s)
 		}),
-		BuildSkillKnowledgeSearchTool(t.udb, t.user, allowed, t.deliveredSkills,
+		BuildSkillKnowledgeSearchTool(odb, owner, allowed, t.deliveredSkills,
 			func(skill SkillRecord, query string) string {
 				res, _ := t.knowledgeToolDefScoped([]SkillRecord{skill}).Handler(t.ctx, map[string]any{"query": query})
 				return res
 			}),
-		BuildSkillKnowledgeFetchDocTool(t.udb, t.user, allowed, t.deliveredSkills,
+		BuildSkillKnowledgeFetchDocTool(odb, owner, allowed, t.deliveredSkills,
 			func(skill SkillRecord, docID string) (string, error) {
 				return t.fetchKnowledgeDocScoped([]SkillRecord{skill}).Handler(t.ctx, map[string]any{"doc_id": docID})
 			}),

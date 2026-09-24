@@ -54,6 +54,46 @@ func deleteCollection(udb, appDB Database, u, id string) int {
 	return DeleteCollection(udb, appDB, u, id)
 }
 
+// duplicateCollectionName returns the refusal for giving one of user's
+// collections a name another of THEIR OWN already has (case-insensitive), or
+// "" when the name is free. exceptID is the collection being renamed, which
+// may keep its own name.
+//
+// Only their own: a colleague's shared "Legal" or the deployment's does not
+// take the name from them, since the list shows whose each one is. Two of
+// their own under one name is what cannot be told apart, by them on the page
+// or by a model choosing an id to attach, and by-name export refuses it.
+func duplicateCollectionName(udb Database, user, name, exceptID string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	for _, c := range listCollections(udb, user) {
+		if c.Owner != user || c.ID == exceptID {
+			continue
+		}
+		if strings.EqualFold(strings.TrimSpace(c.Name), name) {
+			return fmt.Sprintf("you already have a collection named %q (id %s): use that one, or pick a different name", c.Name, c.ID)
+		}
+	}
+	return ""
+}
+
+// collectionAccess says whose a listed collection is, in the words a model or
+// a person choosing one needs: "yours", "shared by <owner>", or "deployment".
+func collectionAccess(c Collection, user string) string {
+	switch {
+	case IsDeploymentScope(c) && c.Owner == user:
+		return "yours, published to the deployment"
+	case IsDeploymentScope(c):
+		return "deployment"
+	case c.Owner == "" || c.Owner == user:
+		return "yours"
+	default:
+		return "shared by " + c.Owner
+	}
+}
+
 // Aliases for the old unexported constant names used inside this
 // file (HTTP handler reads, etc.). External callers should use
 // the exported core.CollectionsTable / core.GlobalCollectionsTable.
@@ -157,6 +197,10 @@ func (T *OrchestrateApp) handleCollections(w http.ResponseWriter, r *http.Reques
 		name := strings.TrimSpace(body.Name)
 		if name == "" {
 			http.Error(w, "name required", http.StatusBadRequest)
+			return
+		}
+		if why := duplicateCollectionName(udb, user, name, ""); why != "" {
+			http.Error(w, why, http.StatusConflict)
 			return
 		}
 		c := Collection{
@@ -279,6 +323,12 @@ func (T *OrchestrateApp) handleCollectionOne(w http.ResponseWriter, r *http.Requ
 			}
 			if body.Name != nil {
 				if name := strings.TrimSpace(*body.Name); name != "" {
+					// A rename onto another of the owner's names makes the
+					// same pair a second create would.
+					if why := duplicateCollectionName(udb, c.Owner, name, c.ID); why != "" {
+						http.Error(w, why, http.StatusConflict)
+						return
+					}
 					c.Name = name
 				}
 			}

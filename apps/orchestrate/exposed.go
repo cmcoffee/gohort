@@ -5,11 +5,24 @@
 // runner, one session model, one memory store) and only the URL
 // surface differs.
 //
-// Slug rules: <agent name normalized via snakeFromDisplay>. Two
-// admins can't both publish "Resume Reviewer" — at exposure time we
-// scan for a slug clash and the runtime lookup returns the first
-// match in user-listing order. Admins can avoid the clash by
-// renaming one of the agents.
+// Slug rules: <PublicName or Name normalized via SnakeFromDisplay>, the
+// "base" slug. Names are per-owner, so two people can each have a
+// "Resume Reviewer" reachable on this surface: both published, or one
+// published and one peer-shared, or two peer-shared to the same person.
+// Every agent's URL has to stay unique anyway, so:
+//
+//   - One agent in each clashing group keeps the plain base slug and every
+//     other one gets "<base>-<id fragment>" (see assignExposedSlugs). The
+//     group is the whole pool, not one viewer's slice of it, so a link means
+//     the same agent to whoever it is sent to.
+//   - The lookup resolves only among the agents the VIEWER can reach, so an
+//     agent they cannot reach never shadows one they can. A plain base slug
+//     still resolves when exactly one reachable agent carries it, which keeps
+//     links that predate a clash working for the people they were made for.
+//   - Approving a publish request refuses a name another published agent
+//     already uses (approveAgentPublish): the admin is widening reach at that
+//     moment and is the right person to ask for a rename. Renames, admin
+//     direct publishes and peer shares are not gated; the suffix covers them.
 
 package orchestrate
 
@@ -18,6 +31,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -82,8 +96,9 @@ func (T *OrchestrateApp) DashboardCards(r *http.Request) []DashboardCard {
 	if len(entries) == 0 {
 		return out
 	}
+	var shown []ExposedAgentEntry
+	sameName := map[string]int{}
 	for _, e := range entries {
-		path := "/agents/" + e.Slug
 		// Per-agent access gate — a published agent is a normal app (app-access /
 		// admin), and a peer-shared agent is reachable by its AllowedUsers recipients
 		// (or its owner). AgentReachableBy composes both, so a published agent nobody
@@ -92,14 +107,25 @@ func (T *OrchestrateApp) DashboardCards(r *http.Request) []DashboardCard {
 		if !T.AgentReachableBy(r, e.Slug, e.Owner, e.AllowedUsers, e.Everyone) {
 			continue
 		}
+		shown = append(shown, e)
+		sameName[strings.ToLower(e.Name)]++
+	}
+	for _, e := range shown {
+		name := e.Name
+		// Two cards this viewer sees under one name differ only by a suffix in
+		// the URL, which nobody reads. Naming the owner is what tells them
+		// apart on the page.
+		if sameName[strings.ToLower(e.Name)] > 1 {
+			name += " (" + e.Owner + ")"
+		}
 		desc := strings.TrimSpace(e.Description)
 		if desc == "" {
 			desc = "Chat with " + e.Name + "."
 		}
 		out = append(out, DashboardCard{
-			Name: e.Name,
+			Name: name,
 			Desc: desc,
-			Path: path,
+			Path: "/agents/" + e.Slug,
 		})
 	}
 	return out
@@ -166,7 +192,8 @@ func ExposedDisplayName(a AgentRecord) string {
 // metadata the directory page needs, plus enough hooks to route
 // the user to the right chat surface.
 type ExposedAgentEntry struct {
-	Slug            string
+	Slug            string // unique across the pool; the URL to link
+	BaseSlug        string // the name-derived slug before any clash suffix
 	Name            string
 	Description     string
 	Owner           string
@@ -287,7 +314,30 @@ func (T *OrchestrateApp) AgentReachableBy(r *http.Request, slug, owner string, a
 // physical thread for every visitor without the id itself differing.
 func CortexSessionID(agentID string) string { return cortexSessionID(agentID) }
 
+// ListExposedAgents is the pool as directory rows: every agent the surface can
+// serve, each once, each with its own slug, sorted by display name. WHO may see
+// a row is the caller's AgentReachableBy check, made with the row's Slug.
 func (T *OrchestrateApp) ListExposedAgents() []ExposedAgentEntry {
+	pool := T.exposedPool()
+	out := make([]ExposedAgentEntry, 0, len(pool))
+	for _, e := range pool {
+		out = append(out, e.ExposedAgentEntry)
+	}
+	return out
+}
+
+// exposedPoolEntry is a directory row plus the record it summarizes, so the
+// slug lookup can hand back the record without loading it a second time.
+type exposedPoolEntry struct {
+	ExposedAgentEntry
+	rec AgentRecord
+}
+
+// exposedPool builds every agent the /agents/ surface can serve, each with a
+// slug no other agent in the pool shares, in a fixed order. The directory and
+// the lookup both read this one list, which is what keeps the link a card
+// shows and the agent that link opens the same agent.
+func (T *OrchestrateApp) exposedPool() []exposedPoolEntry {
 	if T.DB == nil || AuthDB == nil {
 		return nil
 	}
@@ -295,12 +345,11 @@ func (T *OrchestrateApp) ListExposedAgents() []ExposedAgentEntry {
 	if authDB == nil {
 		return nil
 	}
-	// Dedup by AgentID, then by slug, preferring user shadows over
-	// in-code seeds. Without the ID-level dedup, a single seed agent
-	// surfaces twice when one user has shadowed it (with PublicName,
-	// etc.) and another user still sees the default — they produce
-	// different slugs but represent the same record.
-	byID := map[string]ExposedAgentEntry{}
+	// Dedup by AgentID, preferring user shadows over in-code seeds. Without
+	// it a single seed agent surfaces twice when one user has shadowed it
+	// (with PublicName, etc.) and another user still sees the default: they
+	// produce different slugs but represent the same record.
+	byID := map[string]exposedPoolEntry{}
 	idIsShadow := map[string]bool{} // true if the stored entry came from a shadowing user
 	for _, u := range AuthListUsers(authDB) {
 		udb := UserDB(T.DB, u.Username)
@@ -313,43 +362,135 @@ func (T *OrchestrateApp) ListExposedAgents() []ExposedAgentEntry {
 				continue
 			}
 			// A user's record is a "shadow" when its Owner matches
-			// that user — the in-code seed defaults travel with
+			// that user; the in-code seed defaults travel with
 			// Owner=seedOwner. Shadow wins over seed.
 			isShadow := a.Owner == u.Username
-			if prior, exists := byID[a.ID]; exists {
-				if idIsShadow[a.ID] || !isShadow {
-					_ = prior
-					continue
-				}
-				// Replace seed default with this user's shadow.
+			if _, exists := byID[a.ID]; exists && (idIsShadow[a.ID] || !isShadow) {
+				continue
 			}
-			byID[a.ID] = ExposedAgentEntry{
-				Slug:            slug,
-				Name:            ExposedDisplayName(a),
-				Description:     a.Description,
-				Owner:           u.Username,
-				AgentID:         a.ID,
-				Everyone:        a.Everyone,
-				ShowOnDashboard: a.ShowOnDashboard,
-				AllowedUsers:    a.AllowedUsers,
+			byID[a.ID] = exposedPoolEntry{
+				ExposedAgentEntry: ExposedAgentEntry{
+					Slug:            slug,
+					BaseSlug:        slug,
+					Name:            ExposedDisplayName(a),
+					Description:     a.Description,
+					Owner:           u.Username,
+					AgentID:         a.ID,
+					Everyone:        a.Everyone,
+					ShowOnDashboard: a.ShowOnDashboard,
+					AllowedUsers:    a.AllowedUsers,
+				},
+				rec: a,
 			}
 			idIsShadow[a.ID] = isShadow
 		}
 	}
-	// Secondary slug dedup — two distinct agents (different IDs)
-	// can still collide on slug (e.g. two admins both publishing
-	// "Resume Reviewer"). First match in iteration order wins,
-	// matching LookupExposedAgent's semantics.
-	out := make([]ExposedAgentEntry, 0, len(byID))
-	seenSlug := map[string]bool{}
+	pool := make([]exposedPoolEntry, 0, len(byID))
 	for _, e := range byID {
-		if seenSlug[e.Slug] {
+		pool = append(pool, e)
+	}
+	assignExposedSlugs(pool)
+	// Map iteration order is random, and this list is what the dashboard
+	// renders: sorting here is what keeps the directory the same from one
+	// refresh to the next. Slug last breaks a tie between same-named agents,
+	// and slugs are unique by now.
+	sort.Slice(pool, func(i, j int) bool {
+		ni, nj := strings.ToLower(pool[i].Name), strings.ToLower(pool[j].Name)
+		if ni != nj {
+			return ni < nj
+		}
+		return pool[i].Slug < pool[j].Slug
+	})
+	return pool
+}
+
+// exposedSlugFragmentMin is the shortest id fragment a clash suffix uses: long
+// enough that two UUIDs rarely need more, short enough to read in a URL.
+const exposedSlugFragmentMin = 6
+
+// assignExposedSlugs makes every Slug in the pool unique. Agents whose base
+// slug nobody else has keep it. In a clashing group ONE agent keeps the plain
+// slug and the rest become "<base>-<id fragment>".
+//
+// Who keeps it: a published (Everyone) agent before a peer-shared one, because
+// an admin's app grant names the published agent's path ("/agents/<slug>") and
+// moving it would silently revoke every grant made for it. Then the oldest
+// agent, since it is the one whose links are already out there. Then the id,
+// so the answer never depends on the order the stores were read in.
+//
+// A base slug never contains "-" (SnakeFromDisplay emits only [a-z0-9_]), so
+// a suffixed slug can never equal some other agent's plain one.
+func assignExposedSlugs(pool []exposedPoolEntry) {
+	groups := map[string][]int{}
+	for i := range pool {
+		groups[pool[i].BaseSlug] = append(groups[pool[i].BaseSlug], i)
+	}
+	for base, idx := range groups {
+		if len(idx) < 2 {
 			continue
 		}
-		seenSlug[e.Slug] = true
-		out = append(out, e)
+		sort.Slice(idx, func(a, b int) bool {
+			x, y := pool[idx[a]], pool[idx[b]]
+			if x.Everyone != y.Everyone {
+				return x.Everyone
+			}
+			if !x.rec.Created.Equal(y.rec.Created) {
+				return x.rec.Created.Before(y.rec.Created)
+			}
+			return x.AgentID < y.AgentID
+		})
+		// Grow the fragment until it tells the whole group apart, the
+		// keeper included, so a stale suffixed link for the keeper can never
+		// also match a sibling.
+		n := exposedSlugFragmentMin
+		for ; n < 64; n++ {
+			seen := map[string]bool{}
+			clash := false
+			for _, i := range idx {
+				f := slugIDFragment(pool[i].AgentID, n)
+				if seen[f] {
+					clash = true
+					break
+				}
+				seen[f] = true
+			}
+			if !clash {
+				break
+			}
+		}
+		for _, i := range idx[1:] {
+			pool[i].Slug = base + "-" + slugIDFragment(pool[i].AgentID, n)
+		}
 	}
-	return out
+}
+
+// slugIDFragment is the first n URL-safe characters of an agent id. Agent ids
+// are UUIDs, whose leading hex is already safe; the filter is for app-agent ids,
+// which are plain strings.
+func slugIDFragment(id string, n int) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(id) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			if b.Len() == n {
+				break
+			}
+		}
+	}
+	return b.String()
+}
+
+// matchesSlugFragment reports whether slug is "<base>-<fragment>" for this
+// agent at ANY fragment length from the minimum up. A suffixed link stays
+// valid after its clash is gone and the agent is back on the plain slug, and
+// after a later clash grew the fragment, so a link someone saved keeps opening
+// what it opened.
+func (e exposedPoolEntry) matchesSlugFragment(slug string) bool {
+	rest, ok := strings.CutPrefix(slug, e.BaseSlug+"-")
+	if !ok || len(rest) < exposedSlugFragmentMin {
+		return false
+	}
+	return slugIDFragment(e.AgentID, len(rest)) == rest
 }
 
 // LookupAppAgent resolves an agent by ID or name within an owner's store, for
@@ -446,53 +587,68 @@ func (T *OrchestrateApp) PublicLatestPipelineRun(user, pipelineID string) (Pipel
 	return LatestPipelineRun(T.DB, user, pipelineID)
 }
 
-// LookupExposedAgent resolves a slug to an exposed AgentRecord plus
-// the owner's username (used to scope memory/sessions in the right
-// sub-store). Returns (zero, "", false) when no exposed agent has
-// that slug.
-func (T *OrchestrateApp) LookupExposedAgent(slug string) (AgentRecord, string, bool) {
-	if T.DB == nil || slug == "" || AuthDB == nil {
-		return AgentRecord{}, "", false
+// LookupExposedAgent resolves a URL slug to the agent it opens FOR THIS
+// VIEWER, plus its directory row (the owner, used to scope memory/sessions in
+// the right sub-store, and the canonical Slug the access gate is checked
+// against). Returns ok=false when no agent the viewer can reach answers to it.
+//
+// Only reachable agents are candidates. Resolving across the whole pool first
+// and gating second is what used to 404 a recipient: the first same-named
+// agent in user-listing order won, it was somebody else's, and the gate then
+// refused the viewer an agent they had not asked for.
+//
+// Precedence, most specific first, and each of the looser two only when it
+// names exactly one reachable agent (an ambiguous link opens nothing rather
+// than a guess):
+//
+//  1. the canonical slug, which is unique across the pool;
+//  2. "<base>-<id fragment>" at any fragment length, so a saved suffixed link
+//     survives its clash going away or its fragment growing;
+//  3. the plain base slug, so a link made before a clash still opens the
+//     agent for anyone who can reach only one agent of that name.
+func (T *OrchestrateApp) LookupExposedAgent(r *http.Request, slug string) (AgentRecord, ExposedAgentEntry, bool) {
+	if slug == "" {
+		return AgentRecord{}, ExposedAgentEntry{}, false
 	}
-	authDB := AuthDB()
-	if authDB == nil {
-		return AgentRecord{}, "", false
-	}
-	for _, u := range AuthListUsers(authDB) {
-		udb := UserDB(T.DB, u.Username)
-		for _, a := range listAgents(udb, u.Username) {
-			if !reachableAgent(a) {
-				continue
-			}
-			if ExposedSlug(a) == slug {
-				return a, u.Username, true
-			}
+	var byFragment, byBase []exposedPoolEntry
+	for _, e := range T.exposedPool() {
+		if !T.AgentReachableBy(r, e.Slug, e.Owner, e.AllowedUsers, e.Everyone) {
+			continue
+		}
+		switch {
+		case e.Slug == slug:
+			return e.rec, e.ExposedAgentEntry, true
+		case e.matchesSlugFragment(slug):
+			byFragment = append(byFragment, e)
+		case e.BaseSlug == slug:
+			byBase = append(byBase, e)
 		}
 	}
-	return AgentRecord{}, "", false
+	for _, set := range [][]exposedPoolEntry{byFragment, byBase} {
+		if len(set) == 1 {
+			return set[0].rec, set[0].ExposedAgentEntry, true
+		}
+		if len(set) > 1 {
+			break
+		}
+	}
+	return AgentRecord{}, ExposedAgentEntry{}, false
 }
 
 // lookupReachableAgentByID finds a published or peer-shared agent by record
-// id, searching every author's store — the id-keyed twin of
-// LookupExposedAgent. The owner comes back so the caller can run the per-user
-// reachability gate.
-func (T *OrchestrateApp) lookupReachableAgentByID(agentID string) (AgentRecord, string, bool) {
-	if T.DB == nil || agentID == "" || AuthDB == nil {
-		return AgentRecord{}, "", false
+// id in the pool, the id-keyed twin of LookupExposedAgent. The row comes back
+// so the caller can run the per-user reachability gate against the agent's
+// canonical slug, which is the path an admin's grant names.
+func (T *OrchestrateApp) lookupReachableAgentByID(agentID string) (AgentRecord, ExposedAgentEntry, bool) {
+	if agentID == "" {
+		return AgentRecord{}, ExposedAgentEntry{}, false
 	}
-	authDB := AuthDB()
-	if authDB == nil {
-		return AgentRecord{}, "", false
-	}
-	for _, u := range AuthListUsers(authDB) {
-		udb := UserDB(T.DB, u.Username)
-		for _, a := range listAgents(udb, u.Username) {
-			if a.ID == agentID && reachableAgent(a) {
-				return a, u.Username, true
-			}
+	for _, e := range T.exposedPool() {
+		if e.AgentID == agentID {
+			return e.rec, e.ExposedAgentEntry, true
 		}
 	}
-	return AgentRecord{}, "", false
+	return AgentRecord{}, ExposedAgentEntry{}, false
 }
 
 // memoryAgent resolves the agent whose memory a handler is about to serve for
@@ -523,8 +679,8 @@ func (T *OrchestrateApp) memoryAgent(r *http.Request, udb Database, user, agentI
 	if r == nil || AuthCurrentUser(r) != user {
 		return AgentRecord{}, false
 	}
-	a, owner, ok := T.lookupReachableAgentByID(agentID)
-	if !ok || !T.AgentReachableBy(r, ExposedSlug(a), owner, a.AllowedUsers, a.Everyone) {
+	a, e, ok := T.lookupReachableAgentByID(agentID)
+	if !ok || !T.AgentReachableBy(r, e.Slug, e.Owner, a.AllowedUsers, a.Everyone) {
 		return AgentRecord{}, false
 	}
 	return a, true

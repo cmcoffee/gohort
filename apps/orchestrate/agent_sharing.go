@@ -17,7 +17,6 @@ package orchestrate
 import (
 	"fmt"
 	"net/http"
-	"sort"
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
@@ -177,7 +176,7 @@ func SharedAgentsFor(db Database, user string) []AgentRecord {
 		// still the thing they handed over deliberately.
 		out = append(out, a)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	sortAgentsByName(out)
 	return out
 }
 

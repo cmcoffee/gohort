@@ -3,10 +3,11 @@
 // catalogs only via builderAuthoringTools when the active agent IS
 // Builder. Same exclusivity model as create_agent / add_tool / tool_def.
 //
-// Actions: list (read), get (read one), create (upsert), delete,
-// help. Skills authored here land in the calling user's per-user
-// skill pool; host agents activate them by reading the description
-// in their skill list (a trigger match adds a hint, nothing more).
+// Actions: list (read), get (read one), create, update, delete, help.
+// Skills authored here land in the calling user's per-user skill pool;
+// update and delete also reach the ones the author published. Host
+// agents activate them by reading the description in their skill list
+// (a trigger match adds a hint, nothing more).
 
 package orchestrate
 
@@ -27,12 +28,12 @@ type skillDefImpl struct{}
 
 func (skillDefImpl) Name() string { return "skill_def" }
 func (skillDefImpl) Desc() string {
-	return "Manage skills: saved domain packs (instructions + optional knowledge + tools) a host agent can draw on. Actions: list (every skill in the user's pool), get (one skill by name), create (author a skill with description, triggers, instructions, optional allowed_tools), update (patch an existing skill, only the fields you pass change, the rest are preserved), delete (drop a skill), help (full usage). Activation is model-driven: the host LLM reads each skill's description in its available-skills list and decides whether to consult the skill (via read_skill / skill_knowledge_search), so the description is the activation signal. Triggers, when set, are an optional precision nudge (substring/glob match on the message/attachments): a match surfaces a 'likely relevant this turn' hint to the host LLM, which still decides whether to consult."
+	return "Manage skills: saved domain packs (instructions + optional knowledge + tools) a host agent can draw on. Actions: list (every skill in the user's pool), get (one skill by name), create (author a NEW skill with description, triggers, instructions, optional allowed_tools; refused when you already have a skill by that name), update (patch an existing skill, only the fields you pass change, the rest are preserved), delete (drop a skill), help (full usage). Activation is model-driven: the host LLM reads each skill's description in its available-skills list and decides whether to consult the skill (via read_skill / skill_knowledge_search), so the description is the activation signal. Triggers, when set, are an optional precision nudge (substring/glob match on the message/attachments): a match surfaces a 'likely relevant this turn' hint to the host LLM, which still decides whether to consult."
 }
 func (skillDefImpl) Params() map[string]ToolParam {
 	return map[string]ToolParam{
 		"action": {Type: "string", Description: "list | get | create | update | delete | help"},
-		"name":   {Type: "string", Description: "(get / create / update / delete) Skill name. Human-readable; doubles as the lookup key for get / update / delete."},
+		"name":   {Type: "string", Description: "(get / create / update / delete) Skill name. Human-readable; doubles as the lookup key for get / update / delete (a skill's id also works there, for telling two same-named skills apart)."},
 		"description": {
 			Type:        "string",
 			Description: "(create / update) The activation cue: the host LLM reads this in its skill list and decides whether to consult the skill, so it's the primary activation signal. Write it as if completing \"Use when the user…\", naming the situations it should fire on. Specific descriptions get picked at the right time; generic ones get skipped or over-fire.",
@@ -112,8 +113,9 @@ action="get", name="<skill name>"
 action="create", name=..., description=..., instructions=...,
                  triggers=[...]?, allowed_tools=[...]?,
                  attached_collections=[...]?, create_collection=true?
-  Upsert a skill. If a skill with this name already exists in the
-  user's pool, it gets replaced (same record, new content).
+  Create a NEW skill. Refused when the user already has a skill with
+  this name, in their own pool or one they published: use
+  action="update" to change that one instead.
   attached_collections ships domain corpus alongside the skill
   searchable via knowledge_search only when the skill is active.
   create_collection=true mints a fresh empty collection named
@@ -129,7 +131,8 @@ action="update", name=..., [description / instructions / triggers /
   record. Errors if no skill with that name exists.
 
 action="delete", name=...
-  Drop a skill from the pool by name.
+  Drop a skill by name. A skill the user published deployment-wide is
+  taken back from everybody and then deleted.
 
 action="help"
   This text.
@@ -159,7 +162,10 @@ func skillDefList(sess *ToolSession) (string, error) {
 		Triggers            []string `json:"triggers,omitempty"`
 		AllowedTools        []string `json:"allowed_tools,omitempty"`
 		AttachedCollections []string `json:"attached_collections,omitempty"`
-		Updated             string   `json:"updated"`
+		// Whose it is. The list spans the user's own skills, the ones shared
+		// with them and the deployment's, and two of those can share a name.
+		From    string `json:"from,omitempty"`
+		Updated string `json:"updated"`
 	}
 	out := make([]row, 0, len(skills))
 	for _, s := range skills {
@@ -170,6 +176,7 @@ func skillDefList(sess *ToolSession) (string, error) {
 			Triggers:            s.Triggers,
 			AllowedTools:        s.AllowedTools,
 			AttachedCollections: s.AttachedCollections,
+			From:                chFirst(s.SharedFrom, s.Owner),
 			Updated:             s.Updated.Format("2006-01-02 15:04:05"),
 		})
 	}
@@ -182,12 +189,89 @@ func skillDefGet(args map[string]any, sess *ToolSession) (string, error) {
 	if name == "" {
 		return "", errors.New("name is required for action=get")
 	}
-	s, ok := FindSkillByName(sess.DB, sess.Username, name)
+	s, _, ok, err := authoredSkill(sess, name)
+	if err != nil {
+		return "", err
+	}
 	if !ok {
-		return "", fmt.Errorf("skill %q not found", name)
+		// Not one of theirs: one shared with them or the deployment's, which
+		// list shows too and get should be able to open.
+		var hits []SkillRecord
+		for _, a := range AvailableSkills(sess.DB, sess.Username) {
+			if a.ID == name || strings.EqualFold(strings.TrimSpace(a.Name), name) {
+				hits = append(hits, a)
+			}
+		}
+		switch len(hits) {
+		case 0:
+			return "", fmt.Errorf("skill %q not found", name)
+		case 1:
+			s = hits[0]
+		default:
+			return "", fmt.Errorf("more than one skill available to you is called %q - pass the id as name: %s", name, skillIDList(hits))
+		}
 	}
 	b, _ := json.Marshal(s)
 	return string(b), nil
+}
+
+// authoredSkill finds one of the caller's OWN skills by id or name, in both
+// pools an author writes to: their own, and the deployment's for one they
+// published. Publishing moves a skill out of the author's pool, so a lookup
+// that stopped there could neither update nor delete it, and a create by the
+// same name landed a private duplicate beside it.
+//
+// Two of their skills answering to one name is an error naming the ids, not a
+// pick: update and delete are writes, and the wrong one is not undone by
+// noticing afterwards.
+func authoredSkill(sess *ToolSession, key string) (s SkillRecord, published, ok bool, err error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return SkillRecord{}, false, false, nil
+	}
+	own := LoadSkills(sess.DB, sess.Username)
+	pub := PublishedSkillsBy(sess.DB, sess.Username)
+	for _, r := range own {
+		if r.ID == key {
+			return r, false, true, nil
+		}
+	}
+	for _, r := range pub {
+		if r.ID == key {
+			return r, true, true, nil
+		}
+	}
+	var hits []SkillRecord
+	var hitPublished []bool
+	for _, r := range own {
+		if strings.EqualFold(strings.TrimSpace(r.Name), key) {
+			hits, hitPublished = append(hits, r), append(hitPublished, false)
+		}
+	}
+	for _, r := range pub {
+		if strings.EqualFold(strings.TrimSpace(r.Name), key) {
+			hits, hitPublished = append(hits, r), append(hitPublished, true)
+		}
+	}
+	switch len(hits) {
+	case 0:
+		return SkillRecord{}, false, false, nil
+	case 1:
+		return hits[0], hitPublished[0], true, nil
+	}
+	return SkillRecord{}, false, false, fmt.Errorf("you have more than one skill called %q - pass the id as name to pick one: %s", key, skillIDList(hits))
+}
+
+// skillIDList renders same-named skills so the caller can pick one by id.
+func skillIDList(skills []SkillRecord) string {
+	parts := make([]string, len(skills))
+	for i, s := range skills {
+		parts[i] = s.ID
+		if who := chFirst(s.SharedFrom, s.Owner); who != "" {
+			parts[i] += " (from " + who + ")"
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
@@ -210,6 +294,20 @@ func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// A name the author already has is refused, and before anything is
+	// minted. Create used to upsert by name against the private pool only, so
+	// after the author published "Triage", creating "Triage" landed a second,
+	// private one beside it: two skills, one name, and every agent naming it
+	// resolving whichever came first. Changing an existing skill is update.
+	if prior, published, found, err := authoredSkill(sess, name); err != nil {
+		return "", err
+	} else if found {
+		where := "in your skills"
+		if published {
+			where = "published deployment-wide"
+		}
+		return "", fmt.Errorf("you already have a skill called %q (%s, id %s) - use action=update to change it, or pick another name", prior.Name, where, prior.ID)
+	}
 
 	// create_collection: mint a fresh empty collection for this skill and
 	// auto-link it, so authoring a skill + giving it a corpus is one step.
@@ -222,6 +320,12 @@ func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 	}
 	mintedCollection := ""
 	if createColl {
+		// Checked before anything is saved. A collection by this name is most
+		// likely this skill's corpus from before, and a second one of the same
+		// name is how a later attach by name picks the wrong one.
+		if clash := duplicateCollectionName(sess.DB, sess.Username, name+" Knowledge", ""); clash != "" {
+			return "", fmt.Errorf("%s - pass its id in attached_collections instead of create_collection=true", clash)
+		}
 		c := Collection{
 			ID:          UUIDv4(),
 			Owner:       sess.Username,
@@ -235,9 +339,6 @@ func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 		Log("[orchestrate.skill_def] minted collection %q (id=%s) for skill %q user=%q", c.Name, c.ID, name, sess.Username)
 	}
 
-	// Upsert by name. If an existing skill matches, reuse its ID +
-	// Created so the record's identity is preserved across edits.
-	existing, hadPrior := FindSkillByName(sess.DB, sess.Username, name)
 	rec := SkillRecord{
 		Name:                name,
 		Description:         description,
@@ -245,12 +346,6 @@ func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 		AllowedTools:        allowedTools,
 		AttachedCollections: attachedCollections,
 		Instructions:        instructions,
-	}
-	if hadPrior {
-		rec.ID = existing.ID
-		rec.Created = existing.Created
-		rec.Tools = existing.Tools // preserve already-bundled tools across an upsert
-		rec.Playbook = existing.Playbook
 	}
 	if hasPlaybook {
 		rec.Playbook = playbook
@@ -262,10 +357,6 @@ func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	verb := "created"
-	if hadPrior {
-		verb = "updated"
-	}
 	attached, unknown := attachSkillToAgents(sess, args["attach_to_agents"], saved.ID)
 	collNote := ""
 	if mintedCollection != "" {
@@ -275,7 +366,7 @@ func skillDefCreate(args map[string]any, sess *ToolSession) (string, error) {
 	if copiedTools > 0 {
 		toolNote = fmt.Sprintf(" Bundled %d tool(s) INTO the skill: they ship with it and become callable whenever the skill is consulted.", copiedTools)
 	}
-	return fmt.Sprintf("Skill %q %s.%s%s %s%s", saved.Name, verb, toolNote,
+	return fmt.Sprintf("Skill %q created.%s%s %s%s", saved.Name, toolNote,
 		attachNote(attached, unknown), activationNote(saved), collNote), nil
 }
 
@@ -416,7 +507,12 @@ func skillDefUpdate(args map[string]any, sess *ToolSession) (string, error) {
 	if name == "" {
 		return "", errors.New("name is required for action=update")
 	}
-	existing, ok := FindSkillByName(sess.DB, sess.Username, name)
+	// Their own pool or the deployment's: SaveSkill sends a published id back
+	// to the deployment copy, so the edit reaches the record everybody uses.
+	existing, published, ok, err := authoredSkill(sess, name)
+	if err != nil {
+		return "", err
+	}
 	if !ok {
 		return "", fmt.Errorf("skill %q not found: use action=create to make a new one", name)
 	}
@@ -442,7 +538,10 @@ func skillDefUpdate(args map[string]any, sess *ToolSession) (string, error) {
 		rec.AllowedTools = stringSliceFromArgs(args, "allowed_tools")
 		changed = append(changed, "allowed_tools")
 		// Re-snapshot: a newly-named local tool gets bundled into the skill.
-		if autoCopySessionToolsForSkill(sess, &rec) > 0 {
+		// Not into a published one: the deployment copy carries no bundled
+		// tools (the save strips them), and reporting "bundled_tools" for a
+		// copy that was about to be dropped would be a lie.
+		if !published && autoCopySessionToolsForSkill(sess, &rec) > 0 {
 			changed = append(changed, "bundled_tools")
 		}
 	}
@@ -475,14 +574,29 @@ func skillDefDelete(args map[string]any, sess *ToolSession) (string, error) {
 	if name == "" {
 		return "", errors.New("name is required for action=delete")
 	}
-	s, ok := FindSkillByName(sess.DB, sess.Username, name)
+	s, published, ok, err := authoredSkill(sess, name)
+	if err != nil {
+		return "", err
+	}
 	if !ok {
 		return "", fmt.Errorf("skill %q not found", name)
+	}
+	// A published skill is still its author's, and taking it back needs
+	// nobody's permission, so deleting it is taking it back and then deleting
+	// it. Through the one door that moves it, rather than reaching into the
+	// deployment pool from here.
+	if published {
+		if err := NarrowSkillToOwner(sess.DB, sess.Username, s.ID); err != nil {
+			return "", fmt.Errorf("delete skill %q: %w", s.Name, err)
+		}
 	}
 	if !DeleteSkill(sess.DB, sess.Username, s.ID) {
 		return "", fmt.Errorf("delete skill %q failed", name)
 	}
-	return fmt.Sprintf("Skill %q deleted.", name), nil
+	if published {
+		return fmt.Sprintf("Skill %q deleted. It was published deployment-wide, so nobody has it now.", s.Name), nil
+	}
+	return fmt.Sprintf("Skill %q deleted.", s.Name), nil
 }
 
 // playbookFromArgs reads the playbook argument: a JSON array of rules as a

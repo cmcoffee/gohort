@@ -15,6 +15,43 @@ import (
 	"github.com/cmcoffee/gohort/tools/temptool"
 )
 
+// Framework tools this app assembles per turn, reserved so a temp tool cannot
+// take their names. None is in the static RegisteredChatTools catalog, so the
+// creation check could not see them, and several sit behind load_tool: a
+// custom tool of the same name then held the catalog slot (dynamic tools come
+// after static ones, and the deferred tool is in neither) and answered every
+// call meant for the framework's. Reserving makes creation refuse the name and
+// hydration drop an existing shadow (agentToolDefsFromTemp), the same two
+// guards the channel and operator tools already have (channel_tools.go).
+//
+// Retired names (memory, knowledge_search, store_fact, ...) are NOT reserved:
+// nothing answers to them any more, so a custom tool using one shadows nothing.
+func init() {
+	RegisterReservedToolName(
+		// memory
+		"remember", "recall", "forget",
+		// on-demand framework tools and turn plumbing
+		"load_tool", "request_build", "hand_to_builder", "query_source",
+		"agents", "collection",
+		// Builder's authoring catalog, deferred behind load_tool on every other
+		// authoring agent (builderAuthoringTools; per-credential fetch_url_*
+		// tools are named by their credential and guarded where those mint)
+		"survey", "create_agent", "update_agent", "list_reference_sources",
+		"archetype", "eval", "clone_agent", "delete_agent", "add_tool",
+		"tool_def", "skill_def", "consult", "bridge", "connector",
+		"tool_template", "collections", "draft_oauth_credential",
+		"draft_api_credential", "update_api_credential",
+		"store_credential_secret", "check_credential",
+	)
+	// The other two deferred sets, by symbol so a name added there is
+	// reserved with it.
+	for _, set := range []map[string]bool{builderRhythmTools, onDemandTools} {
+		for n := range set {
+			RegisterReservedToolName(n)
+		}
+	}
+}
+
 // newToolSession constructs the per-turn ToolSession, then loads the
 // user's approved persistent temp tools onto it so the LLM sees them
 // alongside the built-in registry. Private mode mirrors the chat
@@ -133,11 +170,20 @@ func (t *chatTurn) loadAgentTempTools(sess *ToolSession, poolUser string, poolDB
 	loaded := LoadPersistentTempTools(poolDB, poolUser)
 	own := make(map[string]bool, len(loaded))
 	for _, p := range loaded {
+		// Only a row THIS agent would load shadows a taken tool. A row scoped
+		// to other agents is skipped below for this one, so letting it shadow
+		// here left this agent with neither tool: the adopted one hidden by a
+		// row it could never see. Builder loads every scoped row, so for it
+		// every row shadows (two tools under one name cannot both load).
+		if len(p.ScopeAgents) > 0 && !p.ScopedToAgent(t.agent.ID) && !isBuilderAgent(t.agent.ID) {
+			continue
+		}
 		own[p.Tool.Name] = true
 	}
 	// What the user took from a colleague or the deployment, each resolved to
 	// the owner it was taken from (AdoptedToolsFor). Both are opt-in: a share
-	// is a pointer, not a push. An own tool of the same name still wins.
+	// is a pointer, not a push. An own tool of the same name still wins, for
+	// the agents that tool reaches.
 	for _, p := range AdoptedToolsFor(poolDB, poolUser) {
 		if !own[p.Tool.Name] {
 			own[p.Tool.Name] = true
@@ -689,27 +735,30 @@ func (t *chatTurn) loadToolToolDef(sess *ToolSession) AgentToolDef {
 			var loaded, already, unknown []string
 			schemas := make([]map[string]any, 0, len(want))
 			for _, n := range want {
+				// Deferred authoring tool (see registerLazyAuthoringTools).
+				// Checked before the persistent pool: these are framework tools,
+				// not pool entries, so the pool lookup would miss and report the
+				// very tool the prompt index told the model to load as unknown.
+				// And before the lazy custom tools, as lazyToolFallback does: the
+				// framework's tool answers to its own name, whatever custom tool
+				// took it before the name was reserved.
+				// Handled entirely in the turn's own maps — no elevation
+				// recording (that signal is for user pool tools, and scoping a
+				// framework tool onto an agent is meaningless).
+				if dtd, isDeferred := t.deferredAuthoringDefs[n]; isDeferred {
+					t.deferredAuthoringLoaded[n] = true
+					loaded = append(loaded, n)
+					schemas = append(schemas, map[string]any{
+						"name":        dtd.Tool.Name,
+						"description": dtd.Tool.Description,
+						"parameters":  dtd.Tool.Parameters,
+					})
+					continue
+				}
 				td, ok := t.lazyCustomToolDefs[n]
 				if !ok {
 					if t.staticTempToolNames[n] || t.mountedToolNames[n] {
 						already = append(already, n)
-						continue
-					}
-					// Deferred authoring tool (see registerLazyAuthoringTools).
-					// Checked before the persistent pool: these are framework tools,
-					// not pool entries, so the pool lookup would miss and report the
-					// very tool the prompt index told the model to load as unknown.
-					// Handled entirely in the turn's own maps — no elevation
-					// recording (that signal is for user pool tools, and scoping a
-					// framework tool onto an agent is meaningless).
-					if dtd, isDeferred := t.deferredAuthoringDefs[n]; isDeferred {
-						t.deferredAuthoringLoaded[n] = true
-						loaded = append(loaded, n)
-						schemas = append(schemas, map[string]any{
-							"name":        dtd.Tool.Name,
-							"description": dtd.Tool.Description,
-							"parameters":  dtd.Tool.Parameters,
-						})
 						continue
 					}
 					// On-demand from the persistent pool. Builder skips loading
@@ -828,10 +877,6 @@ func (t *chatTurn) loadPersistentToolOnDemand(sess *ToolSession, name string) (A
 // the tool loaded so its schema also rejoins the catalog next round.
 // Wired as the agent loop's ToolFallbackResolver.
 func (t *chatTurn) lazyToolFallback(name string) (ToolHandlerFunc, bool) {
-	if td, ok := t.lazyCustomToolDefs[name]; ok {
-		t.loadedCustomTools[name] = true
-		return td.Handler, true
-	}
 	// A deferred authoring tool called DIRECTLY, load_tool skipped. The index
 	// asks for a load first, but a model acting on an index listing will often
 	// just call the tool it read about — the same habit this fallback already
@@ -839,8 +884,16 @@ func (t *chatTurn) lazyToolFallback(name string) (ToolHandlerFunc, bool) {
 	// so its schema surfaces render-late on the following rounds; refusing here
 	// would turn a working one-round authoring turn into an error plus a lecture
 	// about load_tool.
+	//
+	// Checked BEFORE the lazy custom tools: the framework's tool answers to its
+	// own name. The other order let a custom tool that took a framework name
+	// (authored before the name was reserved) catch every direct call to it.
 	if td, ok := t.deferredAuthoringDefs[name]; ok {
 		t.deferredAuthoringLoaded[name] = true
+		return td.Handler, true
+	}
+	if td, ok := t.lazyCustomToolDefs[name]; ok {
+		t.loadedCustomTools[name] = true
 		return td.Handler, true
 	}
 	return nil, false

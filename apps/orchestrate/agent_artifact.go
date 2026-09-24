@@ -97,17 +97,42 @@ func (a *agentArtifact) ExportArtifact(_ Database, name, owner string) (json.Raw
 	if udb == nil {
 		return nil, fmt.Errorf("no store for user %q", owner)
 	}
-	for _, rec := range listAgents(udb, owner) {
-		// By name, or by id: the chat page knows the agent it has open by id.
-		if rec.OwnedBy == "" && (rec.Name == name || rec.ID == name) {
-			exp, ok := buildAgentExport(udb, rec.ID, owner)
-			if !ok {
-				return nil, fmt.Errorf("no agent named %q for user %q", name, owner)
-			}
-			return json.Marshal(exp)
+	// By name, or by id: the chat page knows the agent it has open by id.
+	if rec, ok := topLevelAgentByName(udb, owner, name); ok {
+		exp, ok := buildAgentExport(udb, rec.ID, owner)
+		if !ok {
+			return nil, fmt.Errorf("no agent named %q for user %q", name, owner)
 		}
+		return json.Marshal(exp)
 	}
 	return nil, fmt.Errorf("no agent named %q for user %q", name, owner)
+}
+
+// topLevelAgentByName finds owner's top-level agent by id, by exact name, and
+// then by name ignoring case, in that order.
+//
+// The case-blind pass is what makes the import preview agree with the import:
+// the preview asks this type whether an artifact of that name already exists
+// (by exporting it), and import skips a name that differs only in case, so an
+// exact-only lookup here previewed "research agent" as an import that the
+// import then skipped.
+func topLevelAgentByName(udb Database, owner, name string) (AgentRecord, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return AgentRecord{}, false
+	}
+	all := listAgents(udb, owner)
+	for _, rec := range all {
+		if rec.OwnedBy == "" && (rec.Name == name || rec.ID == name) {
+			return rec, true
+		}
+	}
+	for _, rec := range all {
+		if rec.OwnedBy == "" && strings.EqualFold(strings.TrimSpace(rec.Name), name) {
+			return rec, true
+		}
+	}
+	return AgentRecord{}, false
 }
 
 // Dependencies folds in the exportable temp tools this agent — and its bundled
@@ -138,12 +163,9 @@ func (a *agentArtifact) Dependencies(db Database, name, owner string) []Artifact
 		self  AgentRecord
 		found bool
 	)
-	for _, rec := range listAgents(udb, owner) {
-		if rec.OwnedBy == "" && (rec.Name == name || rec.ID == name) {
-			if e, ok := buildAgentExport(udb, rec.ID, owner); ok {
-				exp, self, found = e, rec, true
-			}
-			break
+	if rec, ok := topLevelAgentByName(udb, owner, name); ok {
+		if e, ok := buildAgentExport(udb, rec.ID, owner); ok {
+			exp, self, found = e, rec, true
 		}
 	}
 	if !found {
@@ -314,13 +336,28 @@ func (a *agentArtifact) ImportArtifact(_ Database, recipe json.RawMessage, owner
 	if udb == nil {
 		return name, "", fmt.Errorf("no store for user %q", owner)
 	}
+	// Case-blind, like every other name check an agent faces: the lookup that
+	// dispatches by name ignores case, so "research agent" landing beside
+	// "Research Agent" made two agents that one name addressed.
 	for _, rec := range listAgents(udb, owner) {
-		if rec.OwnedBy == "" && rec.Name == name {
-			return name, "an agent with this name already exists", nil
+		if rec.OwnedBy == "" && strings.EqualFold(strings.TrimSpace(rec.Name), name) {
+			return name, agentNameClashDetail(rec.Name), nil
 		}
 	}
 	if _, _, err := importAgentRecipe(udb, imp, owner); err != nil {
 		return name, "", err
 	}
 	return name, "", nil
+}
+
+// agentNameClashDetail is the skip reason for a bundle agent whose name the
+// importer already uses. It says more than "already exists" because of what
+// the skip does to the REST of the bundle: pipelines and machines travel with
+// their agents referenced by NAME (an imported agent is reborn under a fresh
+// id, so only the name survives), and with the bundle's agent skipped that
+// name resolves to the importer's own, unrelated agent. The dependency check
+// then reads the reference as satisfied, so without this line the person gets
+// a pipeline quietly running an agent its author never wrote it for.
+func agentNameClashDetail(existing string) string {
+	return fmt.Sprintf("you already have an agent named %q, so this one was not imported. Any pipeline or machine in this bundle that names it will run your existing agent instead: rename one of them and import again if that is not what you want", strings.TrimSpace(existing))
 }

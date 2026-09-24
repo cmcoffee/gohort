@@ -83,6 +83,15 @@ func loadAgent(db Database, id string) (AgentRecord, bool) {
 	// Non-seed (user-created / cloned) agent: the DB record is authoritative,
 	// except for the fields a tracking instance has left to its shape.
 	if db.Get(agentsTable, id, &a) {
+		// A row saved before dispatch targets were pinned by id may still name
+		// a pipeline or machine. Pin it on this read, to what carries the name
+		// NOW, rather than leave it to match whatever takes the name later;
+		// see pinDispatchTargetNames. Written to the raw row, before any shape
+		// resolution, and without a revision: nothing the owner decided moved.
+		if pinned, changed := pinDispatchTargetNames(db, a.Owner, a.AllowedDispatchTargets); changed {
+			a.AllowedDispatchTargets = pinned
+			db.Set(agentsTable, a.ID, a)
+		}
 		a = resolveShapeInstance(a)
 		a = selfHealAllowedTools(db, a)
 		a = enforceSubAgentPosture(applyLegacyMode(migrateExposedFlag(a)))
@@ -280,6 +289,9 @@ func writeAgent(db Database, a AgentRecord, maySetLocked bool, reason string) (A
 	// on purpose: an unchanged lock is not a user decision either, but losing
 	// it would be.
 	a = recordSeedOverrides(a)
+	// After the override record, so a pinned list is not mistaken for a
+	// decision the caller made: it is the same decision, written by id.
+	a.AllowedDispatchTargets, _ = pinDispatchTargetNames(db, a.Owner, a.AllowedDispatchTargets)
 	if strings.TrimSpace(a.Name) == "" {
 		return a, fmt.Errorf("name is required")
 	}
@@ -497,8 +509,22 @@ func listAgents(db Database, owner string) []AgentRecord {
 		}
 		out = append(out, enforceSubAgentPosture(seed))
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	sortAgentsByName(out)
 	return out
+}
+
+// sortAgentsByName orders a listing by name, and by id where names tie. The
+// store's key order is not stable across processes, so an unstable sort on
+// name alone left two same-named agents in whatever order they arrived, and
+// every surface that picked "the first" one (a listing, a name lookup) picked
+// differently from one run to the next.
+func sortAgentsByName(out []AgentRecord) {
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Name != out[j].Name {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].ID < out[j].ID
+	})
 }
 
 // deleteAgent removes an agent. For seed-IDs the row is a shadow

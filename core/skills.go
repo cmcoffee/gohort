@@ -854,9 +854,13 @@ func RenderAvailableSkills(skills []SkillRecord) string {
 		return ""
 	}
 	var b strings.Builder
+	// Handles, not bare names: two skills called the same thing are listed
+	// with whose each is, and the tools' enum is built by the same rule, so
+	// the name the model copies from here is one they accept.
+	handles := skillHandles(skills)
 	b.WriteString("\n\n## Available skills\n\n")
 	b.WriteString("Domain packs you can draw on in your own context: read_skill(skill) returns its approach/instructions; skill_knowledge_search(skill, query) searches its sources (and attaches its approach the first time); skill_knowledge_fetch_doc(skill, doc_id) pulls a full document.\n\nRULE: when a listed skill covers the subject in front of you, consult it FIRST, call skill_knowledge_search (or read_skill) before web_search and before answering from memory. Its sources are authoritative for its domain and override your priors, so answering a covered question without it is a mistake even when you're confident. This fires on what you DISCOVER mid-task, not just the opening request: a repo that turns out to be Go → the Go skill, a tax-law doc → the tax skill, a PDF → the PDF skill, even if the user never named the domain. On FOLLOW-UPS the skill's instructions and what you already retrieved stay in your context: answer from that skill content, not your priors, and search the skill again only if the follow-up needs material you didn't pull. Skip a skill only for what it plainly doesn't cover or fast-changing facts (current events, latest figures). When a skill's trigger matches the turn you'll see a \"Likely relevant\" hint: treat it as a strong nudge to consult that skill, not a guarantee. Format: **name**, purpose.\n\n")
-	for _, s := range skills {
+	for i, s := range skills {
 		// Full description — descriptions are model-facing; show it
 		// un-truncated so the whole activation cue is visible.
 		desc := strings.TrimSpace(s.Description)
@@ -864,7 +868,7 @@ func RenderAvailableSkills(skills []SkillRecord) string {
 			desc = "(no description)"
 		}
 		b.WriteString("- **")
-		b.WriteString(s.Name)
+		b.WriteString(handles[i])
 		b.WriteString("** ")
 		b.WriteString(desc)
 		if trig := strings.TrimSpace(strings.Join(s.Triggers, ", ")); trig != "" {
@@ -952,17 +956,12 @@ func renderSkillTriggerHints(db Database, owner string, allowed []string, messag
 	if owner == "" || len(allowed) == 0 {
 		return ""
 	}
-	allowSet := make(map[string]bool, len(allowed))
-	for _, id := range allowed {
-		allowSet[id] = true
-	}
+	set := allowedSkillSet(db, owner, allowed)
+	handles := skillHandles(set)
 	var names []string
-	for _, s := range LoadSkills(db, owner) {
-		if s.Disabled || !allowSet[s.ID] {
-			continue
-		}
+	for i, s := range set {
 		if SkillTriggersMatch(s, message, attachmentNames) {
-			names = append(names, s.Name)
+			names = append(names, handles[i])
 		}
 	}
 	return SkillTriggerHintBlock(names)
@@ -982,48 +981,162 @@ func SkillTriggerHintBlock(names []string) string {
 	return "\n\n[Likely relevant this turn (triggers matched): " + strings.Join(quoted, ", ") + ", consult the fitting one FIRST via skill_knowledge_search / read_skill before answering. A trigger match is a hint, not a guarantee: skip a skill that doesn't actually fit.]\n\n"
 }
 
-// resolveAllowedSkill looks up a skill by name (case-insensitive),
-// gated on the allowed-ID set. Shared by the three skill tools.
+// allowedSkillSet is the set the skill tools, their enum and the "Available
+// skills" block all draw from: every skill owner may use (their own, the ones
+// shared with them, the deployment's), narrowed to the enabled ones the
+// agent's allowlist names.
+//
+// One function because there used to be two answers. The block listed
+// AvailableSkills while the tools resolved against the owner's own pool, so a
+// shared or published skill was advertised and then answered "no skill named"
+// by read_skill, and a same-named skill of the owner's own was consulted in
+// its place.
+func allowedSkillSet(db Database, owner string, allowed []string) []SkillRecord {
+	if owner == "" || len(allowed) == 0 {
+		return nil
+	}
+	allowSet := make(map[string]bool, len(allowed))
+	for _, id := range allowed {
+		allowSet[id] = true
+	}
+	var out []SkillRecord
+	for _, s := range AvailableSkills(db, owner) {
+		if s.Disabled || !allowSet[s.ID] {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// skillHandles names each skill in set the way the model must address it: the
+// bare name when it is unique in the set, the name plus whose it is when two
+// share it, and the id as well when even that does not separate them (two of
+// one person's skills with one name, which older data can hold).
+//
+// Computed over the whole set, so the listing and the tool enum, handed the
+// same set, print the same handles. A name the model sees twice with nothing
+// to tell them apart is a coin toss, and the old resolver always lost it the
+// same way: to whichever came first.
+func skillHandles(set []SkillRecord) []string {
+	out := make([]string, len(set))
+	names := make(map[string]int, len(set))
+	for _, s := range set {
+		names[strings.ToLower(strings.TrimSpace(s.Name))]++
+	}
+	for i, s := range set {
+		name := strings.TrimSpace(s.Name)
+		switch who := skillAuthor(s); {
+		case names[strings.ToLower(name)] < 2:
+			out[i] = name
+		case who != "":
+			out[i] = name + " (from " + who + ")"
+		default:
+			out[i] = name + " (" + s.ID + ")"
+		}
+	}
+	handles := make(map[string]int, len(out))
+	for _, h := range out {
+		handles[strings.ToLower(h)]++
+	}
+	for i, s := range set {
+		if handles[strings.ToLower(out[i])] < 2 {
+			continue
+		}
+		name := strings.TrimSpace(s.Name)
+		if who := skillAuthor(s); who != "" {
+			out[i] = name + " (from " + who + ", " + s.ID + ")"
+		} else {
+			out[i] = name + " (" + s.ID + ")"
+		}
+	}
+	return out
+}
+
+// skillAuthor is whose skill this is, for telling two same-named ones apart:
+// the sharer on a shared copy, the owner otherwise.
+func skillAuthor(s SkillRecord) string {
+	if who := strings.TrimSpace(s.SharedFrom); who != "" {
+		return who
+	}
+	return strings.TrimSpace(s.Owner)
+}
+
+// NameAmong is how this skill is named to the model when set is what the
+// model can see: its bare name, or the name plus whose it is when another
+// skill in set shares it. Every surface that names a skill to the model (the
+// listing, the trigger hint, the tool enum) goes through the same rule, so
+// the handle the model copies is one the tools accept.
+func (s SkillRecord) NameAmong(set []SkillRecord) string {
+	handles := skillHandles(set)
+	for i := range set {
+		if set[i].ID == s.ID {
+			return handles[i]
+		}
+	}
+	return strings.TrimSpace(s.Name)
+}
+
+// resolveAllowedSkill finds the skill the model named, among the ones this
+// agent may use. Shared by the three skill tools.
+//
+// The handle from the listing first, then an id, then a bare name. A bare
+// name that fits more than one skill is refused with the handles to choose
+// from: guessing is how the wrong skill's instructions end up steering a
+// reply with nothing to say it happened.
 func resolveAllowedSkill(db Database, owner string, allowed []string, name string) (*SkillRecord, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, fmt.Errorf("skill name is required")
 	}
-	allowSet := make(map[string]bool, len(allowed))
-	for _, id := range allowed {
-		allowSet[id] = true
-	}
-	for _, s := range LoadSkills(db, owner) {
-		if s.Disabled || !strings.EqualFold(s.Name, name) {
-			continue
+	set := allowedSkillSet(db, owner, allowed)
+	handles := skillHandles(set)
+	for i := range set {
+		if strings.EqualFold(handles[i], name) {
+			return &set[i], nil
 		}
-		if !allowSet[s.ID] {
+	}
+	for i := range set {
+		if set[i].ID == name {
+			return &set[i], nil
+		}
+	}
+	var hits []int
+	for i := range set {
+		if strings.EqualFold(strings.TrimSpace(set[i].Name), name) {
+			hits = append(hits, i)
+		}
+	}
+	if len(hits) == 1 {
+		return &set[hits[0]], nil
+	}
+	if len(hits) > 1 {
+		quoted := make([]string, len(hits))
+		for j, i := range hits {
+			quoted[j] = strconv.Quote(handles[i])
+		}
+		return nil, fmt.Errorf("more than one skill here is called %q - name the one you mean: %s", name, strings.Join(quoted, ", "))
+	}
+	for _, s := range AvailableSkills(db, owner) {
+		if !s.Disabled && strings.EqualFold(strings.TrimSpace(s.Name), name) {
 			return nil, fmt.Errorf("skill %q is not enabled here", s.Name)
 		}
-		sc := s
-		return &sc, nil
 	}
 	return nil, fmt.Errorf("no skill named %q (check the 'Available skills' block)", name)
 }
 
-// allowedSkillNames returns the names of the existing, non-disabled skills
-// in the allowed set, sorted. Used to close the skill-tool `skill`
-// parameter to an enum so the model can only name a skill that actually
-// exists — it can't invent one or address an agent (e.g. a former skill
-// that's now an agent) through the skill tools. Empty (e.g. all allowed
-// IDs are orphans) yields no enum, leaving the handler's rejection as the
-// backstop.
+// allowedSkillNames returns the handles of the skills in the allowed set,
+// sorted. Used to close the skill-tool `skill` parameter to an enum so the
+// model can only name a skill that actually exists — it can't invent one or
+// address an agent (e.g. a former skill that's now an agent) through the
+// skill tools. The same handles the "Available skills" block prints, so
+// two same-named skills are two distinct choices here too. Empty (e.g. all
+// allowed IDs are orphans) yields no enum, leaving the handler's rejection
+// as the backstop.
 func allowedSkillNames(db Database, owner string, allowed []string) []string {
-	allowSet := make(map[string]bool, len(allowed))
-	for _, id := range allowed {
-		allowSet[id] = true
-	}
-	var names []string
-	for _, s := range LoadSkills(db, owner) {
-		if s.Disabled || !allowSet[s.ID] {
-			continue
-		}
-		names = append(names, s.Name)
+	names := skillHandles(allowedSkillSet(db, owner, allowed))
+	if len(names) == 0 {
+		return nil
 	}
 	sort.Strings(names)
 	return names
@@ -1094,6 +1207,13 @@ func AttachDeliveredSkillTools(sess *ToolSession, db Database, user string, deli
 		return nil
 	}
 	var attached []string
+	// The RUNTIME user's own pool, and only that, on purpose. The skill tools
+	// resolve against the agent owner's wider set (shared, published), but a
+	// bundled tool is code, and code runs only for the person who wrote it:
+	// shared and published copies arrive with Tools stripped, and an agent
+	// owner's own skill must not run its scripts in somebody else's session
+	// just because they chatted the agent. So a delivered id that is not one
+	// of this user's own skills attaches nothing.
 	for _, s := range LoadSkills(db, user) {
 		if s.Disabled || !delivered[s.ID] || len(s.Tools) == 0 {
 			continue
@@ -1124,6 +1244,11 @@ func AttachDeliveredSkillTools(sess *ToolSession, db Database, user string, deli
 // just wants the skill's approach (a PDF-handling method, an output
 // format). Marks the skill delivered so the search tool won't repeat the
 // instructions.
+//
+// owner is whose skills these are: the AGENT's owner, not necessarily the
+// person running it. The tools resolve against everything owner may use (own,
+// shared with them, published), narrowed to allowed, which is the same set the
+// "Available skills" block lists.
 //
 // playbook, when set, resolves a skill's playbook for this turn — runs each
 // rule's establishing step and renders only the arm that applies — and its
@@ -1549,6 +1674,16 @@ func NarrowSkillToOwner(db Database, owner, id string) error {
 	}
 	if taken.Owner != owner {
 		return errString("skill " + id + " was published by " + taken.Owner + ", not " + owner)
+	}
+	// Refused rather than landed beside a same-named skill of their own: two
+	// of one person's skills under one name is a name that no longer picks a
+	// skill, in their list and in every agent that names it. Which one should
+	// give way is the author's call, so nothing here renames either.
+	for _, s := range LoadSkills(db, owner) {
+		if s.ID != taken.ID && strings.EqualFold(strings.TrimSpace(s.Name), strings.TrimSpace(taken.Name)) {
+			return errString("you already have a skill called " + s.Name +
+				" in your own skills; rename or delete that one before taking this one back, so the name has one answer")
+		}
 	}
 	store.Set(deploymentSkillsTable, "all", rest)
 	taken.AllowedUsers = nil

@@ -30,7 +30,7 @@ func collectionsListTool() ChatTool {
 		"Manage the user's Document Collections so you can wire them into agents (attached_collections=[...]). Actions: list, get, create (mint an empty collection), update (patch name/description), docs (list ingested documents), add_url (ingest one URL into the corpus), add_text (ingest text you have (markdown or JSON) as one titled document; same title replaces), remove_doc (drop one document). Use add_url to pull a known authoritative source (a statute's full-text page) into a collection, add_text to save material the user gave you or you drafted WITH the user's say-so, and remove_doc to prune noise; for bulk topic-based filling, the Knowledge surface's Auto-fill is still the better path.")
 
 	gt.AddAction("list", &GroupedToolAction{
-		Description: "List every collection the user owns. Returns [{id, name, description, documents, chunks}] sorted by most-recently-updated. Use this when the user names a collection by display name and you need its ID to pass to attached_collections, or when surveying what corpus material exists for a new agent.",
+		Description: "List every collection the user can attach: their own, ones colleagues shared with them, and the deployment's. Returns [{id, name, access, description, documents, chunks}] sorted by most-recently-updated; access is \"yours\", \"shared by <owner>\" or \"deployment\". Names are not unique across owners: an entry with name_also_used set shares its name with the listed others, so pick by access and id, and when the user named a collection without saying whose, ask which one. Use this when the user names a collection by display name and you need its ID to pass to attached_collections, or when surveying what corpus material exists for a new agent.",
 		Caps:        []Capability{CapRead},
 		Handler: func(args map[string]any, sess *ToolSession) (string, error) {
 			if sess == nil || sess.DB == nil || sess.Username == "" {
@@ -38,11 +38,23 @@ func collectionsListTool() ChatTool {
 			}
 			cols := listCollections(sess.DB, sess.Username)
 			type entry struct {
-				ID          string `json:"id"`
-				Name        string `json:"name"`
-				Description string `json:"description,omitempty"`
-				Documents   int    `json:"documents"`
-				Chunks      int    `json:"chunks"`
+				ID     string `json:"id"`
+				Name   string `json:"name"`
+				Access string `json:"access"`
+				// NameAlsoUsed lists the other entries with this name, as
+				// "<access> <id>". A model resolving "Legal" to an id reads
+				// the first match; without this, the first match was
+				// whichever was touched last, a colleague's as easily as the
+				// user's own.
+				NameAlsoUsed []string `json:"name_also_used,omitempty"`
+				Description  string   `json:"description,omitempty"`
+				Documents    int      `json:"documents"`
+				Chunks       int      `json:"chunks"`
+			}
+			byName := map[string][]Collection{}
+			for _, c := range cols {
+				k := strings.ToLower(strings.TrimSpace(c.Name))
+				byName[k] = append(byName[k], c)
 			}
 			// Same one-pass stats walk handleCollections uses —
 			// O(M) over chunks regardless of collection count.
@@ -69,12 +81,20 @@ func collectionsListTool() ChatTool {
 			out := make([]entry, 0, len(cols))
 			for _, c := range cols {
 				s := statsByID[c.ID]
+				var also []string
+				for _, o := range byName[strings.ToLower(strings.TrimSpace(c.Name))] {
+					if o.ID != c.ID {
+						also = append(also, collectionAccess(o, sess.Username)+" "+o.ID)
+					}
+				}
 				out = append(out, entry{
-					ID:          c.ID,
-					Name:        c.Name,
-					Description: c.Description,
-					Documents:   s.docs,
-					Chunks:      s.chunks,
+					ID:           c.ID,
+					Name:         c.Name,
+					Access:       collectionAccess(c, sess.Username),
+					NameAlsoUsed: also,
+					Description:  c.Description,
+					Documents:    s.docs,
+					Chunks:       s.chunks,
 				})
 			}
 			b, _ := json.Marshal(out)
@@ -122,6 +142,9 @@ func collectionsListTool() ChatTool {
 			if name == "" {
 				return "", errors.New("name is required for action=create")
 			}
+			if why := duplicateCollectionName(sess.DB, sess.Username, name, ""); why != "" {
+				return "", errors.New(why)
+			}
 			c := Collection{
 				ID:          UUIDv4(),
 				Owner:       sess.Username,
@@ -163,6 +186,9 @@ func collectionsListTool() ChatTool {
 			var changed []string
 			if _, has := args["name"]; has {
 				if s := strings.TrimSpace(stringArg(args, "name")); s != "" {
+					if why := duplicateCollectionName(sess.DB, c.Owner, s, c.ID); why != "" {
+						return "", errors.New(why)
+					}
 					c.Name = s
 					changed = append(changed, "name")
 				}

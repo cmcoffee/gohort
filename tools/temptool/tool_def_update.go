@@ -40,6 +40,12 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		Debug("[tool_def] update %q: returned after %s (last stage: %s)", name, time.Since(t0), stage)
 	}()
 	_ = stage
+	// Somebody else's tool (lent, adopted, or published) is refused before
+	// anything resolves it: the session carries a copy, and updating that copy
+	// persisted it into this user's pool, forking the owner's tool silently.
+	if owner, how := foreignToolOwner(sess, name); owner != "" {
+		return fmt.Sprintf(foreignToolMsg, name, owner, how, owner), nil
+	}
 	if persistentToolLocked(sess, name) {
 		return fmt.Sprintf(lockedToolMsg, name), nil
 	}
@@ -60,15 +66,9 @@ func updateGrouped(args map[string]any, sess *ToolSession) (string, error) {
 		}
 	}
 	if !ok {
-		// Before declaring it missing: it may be a DEPLOYMENT-WIDE shared
-		// tool. Those are callable by everyone but live in their owner's
-		// pool, so the searches above never see one you don't own. Saying
-		// "no tool named X" there is actively misleading — the model just
-		// called it.
-		if _, owner, shared := FindSharedToolWithOwner(sess.DB, name); shared {
-			return fmt.Sprintf("Tool %q is a DEPLOYMENT-WIDE SHARED tool owned by %s, so you cannot edit it from here: an edit would change it for every user. Nothing is broken and there is nothing to report. Options: ask %s to make the change; or copy it into your own pool with action=\"create\" under a NEW name (use action=\"get\" to read its current definition first) and edit that. Do NOT re-create it under the SAME name.",
-				name, owner, owner), nil
-		}
+		// A deployment-wide tool somebody else owns never reaches here:
+		// foreignToolOwner above answered for it, since saying "no tool
+		// named X" about one the model just called is actively misleading.
 		return "", fmt.Errorf("no tool named %q to update: use action=\"create\" to make a new one, or action=\"list\" to see what exists", name)
 	}
 	// Scope-preserving write-back (flattened namespace): when the resolved

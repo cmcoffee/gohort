@@ -187,6 +187,15 @@ type Collection struct {
 	// auto-fill has nobody in charge of it, and reading it is unaffected
 	// either way.
 	CuratorAgent string `json:"curator_agent,omitempty"`
+	// ImportedFrom is the id this collection travelled under in the bundle it
+	// was imported from, set only when the import had to mint a new one
+	// because that id was already somebody else's here.
+	//
+	// It exists so a skill from the same bundle, which still names the old id,
+	// can be pointed at this copy whichever of the two lands first. Without it
+	// the skill keeps an id the importer cannot read, which searches nothing
+	// today and searches the other person's corpus the day they share it.
+	ImportedFrom string `json:"imported_from,omitempty"`
 	// ClassifyOnAutofill enables the LLM judge pass during
 	// autofill. When true, every fetched + extracted candidate
 	// goes through a non-thinking worker call that decides
@@ -783,6 +792,29 @@ func ListCollections(udb Database, user string) []Collection {
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].Updated.After(out[j].Updated)
 	})
+	return out
+}
+
+// ownCollectionsNamed returns the collections user OWNS whose name matches
+// (case-insensitive, trimmed): their private ones and any they promoted to
+// the deployment, never one shared with them or the deployment's own.
+//
+// A name is only an address among one person's things. ListCollections mixes
+// in what colleagues shared and what the deployment carries, and a name match
+// over that picks whoever's "Legal" was touched last: an export that ships a
+// colleague's corpus, an import that is refused because somebody else already
+// has one, a duplicate check that blocks a name the user never used.
+func ownCollectionsNamed(udb Database, user, name string) []Collection {
+	name = strings.TrimSpace(name)
+	if name == "" || strings.TrimSpace(user) == "" {
+		return nil
+	}
+	var out []Collection
+	for _, c := range ListCollections(udb, user) {
+		if c.Owner == user && strings.EqualFold(strings.TrimSpace(c.Name), name) {
+			out = append(out, c)
+		}
+	}
 	return out
 }
 

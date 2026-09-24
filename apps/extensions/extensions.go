@@ -411,7 +411,10 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 			Key string `json:"key"`
 			// Conflict marks every row whose NAME exists in more than one bucket,
 			// so the twin is visible instead of mysterious.
-			Conflict    bool   `json:"conflict"`
+			Conflict bool `json:"conflict"`
+			// Shadows says whose same-named tool this one hides: one the user
+			// was lent or added from the catalog, which their own copy beats.
+			Shadows     string `json:"shadows,omitempty"`
 			Name        string `json:"name"`
 			Description string `json:"description,omitempty"`
 			Mode        string `json:"mode,omitempty"`
@@ -612,14 +615,42 @@ func (T *Extensions) handleUserTools(w http.ResponseWriter, r *http.Request) {
 		// its twin. Badge every copy so the user can see there IS a twin and
 		// delete or re-home the stale one, instead of fighting a record they
 		// cannot see.
+		//
+		// A tool somebody else offers under the same name is a twin too, one the
+		// user cannot see from this list: a colleague's they were lent, or one
+		// they added from the catalog. Their own copy wins (on its agents, for a
+		// scoped one), so the taken tool silently stops running; the badge and
+		// the note say so.
 		{
 			names := map[string]int{}
 			for i := range rows {
 				names[rows[i].Name]++
 			}
+			taken := map[string]string{} // name -> whose tool the user took or was lent
+			for _, p := range PeerSharedToolsFor(AuthDB(), user) {
+				taken[p.Tool.Name] = p.Owner
+			}
+			for _, p := range AdoptedToolsFor(AuthDB(), user) {
+				taken[p.Tool.Name] = p.Owner // the one that would load, when both
+			}
 			for i := range rows {
 				if names[rows[i].Name] > 1 {
 					rows[i].Conflict = true
+				}
+				_, builtin := LookupChatTool(rows[i].Name)
+				other, took := taken[rows[i].Name]
+				switch {
+				case builtin || IsReservedToolName(rows[i].Name):
+					// A tool named after a built-in never loads: hydration drops
+					// it so the built-in keeps its name. Silent unless said here.
+					rows[i].Conflict = true
+					rows[i].Shadows = "Named after a built-in tool, which runs instead; rename it to use this one"
+				case took && (rows[i].Pool || rows[i].AgentTool):
+					rows[i].Conflict = true
+					rows[i].Shadows = "Runs instead of " + other + "'s tool of this name"
+					if rows[i].AgentTool {
+						rows[i].Shadows = "Runs instead of " + other + "'s tool of this name, on these agents"
+					}
 				}
 				rows[i].Exportable = (rows[i].Pool || rows[i].AgentTool) && !rows[i].Session && !rows[i].Orphan
 			}
@@ -1120,6 +1151,17 @@ func (T *Extensions) handleUserSkills(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, publishedShareRefusal, http.StatusBadRequest)
 			return
 		}
+		// One name, one skill, per person: a create or a rename onto a name
+		// they already have (here or published) is refused. Two of their
+		// skills under one name is a name that picks neither, in this list and
+		// in every agent that names it. An edit that keeps its name is not
+		// checked, so a duplicate older data already holds can still be fixed.
+		if id == "" || !strings.EqualFold(strings.TrimSpace(rec.Name), name) {
+			if other, taken := ownSkillNamed(user, name, id); taken {
+				http.Error(w, "you already have a skill called "+other.Name+"; pick another name, or edit that one", http.StatusConflict)
+				return
+			}
+		}
 		rec.Name = name
 		rec.Description = strings.TrimSpace(body.Description)
 		rec.Instructions = body.Instructions
@@ -1234,6 +1276,17 @@ func findOwnSkill(user, id string) (ownedSkill, bool) {
 	return ownedSkill{}, false
 }
 
+// ownSkillNamed returns the user's skill, other than except, that already
+// answers to name, in either pool they write to.
+func ownSkillNamed(user, name, except string) (SkillRecord, bool) {
+	for _, s := range append(LoadSkills(AuthDB(), user), PublishedSkillsBy(AuthDB(), user)...) {
+		if s.ID != except && strings.EqualFold(strings.TrimSpace(s.Name), strings.TrimSpace(name)) {
+			return s, true
+		}
+	}
+	return SkillRecord{}, false
+}
+
 // save writes the record back. SaveSkill itself sends a published one to the
 // deployment pool, so there is one save whichever pool it came from.
 func (o ownedSkill) save() (SkillRecord, error) {
@@ -1319,20 +1372,33 @@ func (T *Extensions) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
 		}
 		publishedBy := SharedToolOwners(AuthDB())
 		// A tool already in the user's OWN pool (they authored it, and it may be
-		// the one they shared) is always active for them — "adopting" it from the
-		// catalog is a no-op, and a same-named global tool would just collide. So
-		// hide anything the user already has by name from the catalog.
+		// the one they published) is always active for them, and their own copy
+		// wins over anything taken under the same name. Their own published tool
+		// is not an offer to them at all, so it stays out of the catalog; a
+		// same-named tool somebody ELSE offers is listed, marked as shadowed.
+		// Hiding it left the user no way to see that a colleague's tool exists
+		// under a name their own copy holds, or to remove an adoption their own
+		// tool had quietly overtaken.
 		own := map[string]bool{}
 		for _, p := range LoadPersistentTempTools(AuthDB(), user) {
 			own[p.Tool.Name] = true
 		}
 		type row struct {
+			// Key is the row's identity: owner and name. A name can be offered
+			// by more than one person (two colleagues lending tools of one
+			// name, or a colleague and the deployment), and adoption is pinned
+			// to whose it is, so every offer is its own row.
+			Key         string `json:"key"`
 			Name        string `json:"name"`
 			Description string `json:"description,omitempty"`
 			Mode        string `json:"mode,omitempty"`
 			Credential  string `json:"credential,omitempty"`
 			Adopted     bool   `json:"adopted"`
 			Missing     bool   `json:"missing"`
+			// Shadowed: the user has a tool of their own under this name, and
+			// their own copy is the one their agents run (for a copy scoped to
+			// some agents, on those agents).
+			Shadowed bool `json:"shadowed"`
 			// From names the colleague who handed it over, empty for one the
 			// deployment publishes. Whose code you are about to run in your own
 			// session is the first thing to know about it.
@@ -1350,24 +1416,29 @@ func (T *Extensions) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
 			_, found := Secure().Resolve(cred, user)
 			return !found
 		}
+		listed := map[string]bool{} // owner + "/" + name
 		// A colleague's tools first: the catalog is one list of things you may
 		// take, and something handed to you personally is the more specific
-		// entry. An own tool of the same name still shadows both.
+		// entry.
 		for _, p := range PeerSharedToolsFor(AuthDB(), user) {
-			if own[p.Tool.Name] {
+			key := p.Owner + "/" + p.Tool.Name
+			if listed[key] {
 				continue
 			}
-			own[p.Tool.Name] = true
+			listed[key] = true
 			rows = append(rows, row{
+				Key:  key,
 				Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
 				Credential: p.Tool.Credential, Adopted: loadedFrom[p.Tool.Name] == p.Owner,
-				Missing: missingCred(p.Tool), From: p.Owner, Owner: p.Owner,
+				Missing: missingCred(p.Tool), Shadowed: own[p.Tool.Name],
+				From: p.Owner, Owner: p.Owner,
 			})
 		}
 		for _, p := range LoadSharedPersistentTempTools(AuthDB()) {
-			// Own tool (or a same-named one already in the pool) — not a catalog
-			// candidate; it's shown under "Extensions › Tools" instead.
-			if own[p.Tool.Name] {
+			owner := publishedBy[p.Tool.Name]
+			// The user's own published tool is theirs already: it is listed
+			// under "Extensions › Tools", not offered back to them here.
+			if owner == user {
 				continue
 			}
 			// Adopt-ACL: a restricted global tool only appears in the catalog for
@@ -1376,11 +1447,16 @@ func (T *Extensions) handleGlobalTools(w http.ResponseWriter, r *http.Request) {
 			if !CanAdoptGlobalTool(AuthDB(), user, p.Tool.Name) {
 				continue
 			}
-			owner := publishedBy[p.Tool.Name]
+			key := owner + "/" + p.Tool.Name
+			if listed[key] {
+				continue
+			}
+			listed[key] = true
 			rows = append(rows, row{
+				Key:  key,
 				Name: p.Tool.Name, Description: p.Tool.Description, Mode: p.Tool.Mode,
 				Credential: p.Tool.Credential, Adopted: owner != "" && loadedFrom[p.Tool.Name] == owner,
-				Missing: missingCred(p.Tool), Owner: owner,
+				Missing: missingCred(p.Tool), Shadowed: own[p.Tool.Name], Owner: owner,
 			})
 		}
 		writeJSON(w, rows)
@@ -1755,6 +1831,7 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 					{Field: "conflict", Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "Name conflict", Color: "danger"},
 					}},
+					{Field: "shadows", Label: "", Mute: true, Flex: 1},
 					{Field: "missing", Label: "Deps", Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "⚠ missing", Color: "danger"},
 					}},
@@ -2148,13 +2225,17 @@ func (T *Extensions) servePage(w http.ResponseWriter, r *http.Request) {
 			Detail:   "Add the ones you want and they become available to your agents; remove any you do not use.",
 			Body: ui.Table{
 				Source: "api/global-tools",
-				RowKey: "name",
+				RowKey: "key",
 				Columns: []ui.Col{
 					{Field: "name", Flex: 1},
 					{Field: "mode", Mute: true},
 					{Field: "adopted", Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "Added", Color: "success"},
 					}},
+					{Field: "shadowed", Type: "badge", Badges: []ui.BadgeMapping{
+						{Value: true, Label: "Shadowed by your own tool", Color: "warning"},
+					}},
+					{Field: "from", Label: "From", Mute: true},
 					{Field: "missing", Label: "Deps", Type: "badge", Badges: []ui.BadgeMapping{
 						{Value: true, Label: "⚠ missing", Color: "danger"},
 					}},

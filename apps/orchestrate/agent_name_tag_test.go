@@ -26,8 +26,8 @@ func TestANameResolvesWithoutItsDisplayTag(t *testing.T) {
 		{"Market Research", "a2"},
 		{"Critic", "a3"}, // untagged names still work
 	} {
-		got, ok := uniqueAgentByBaseName(agents, stripAgentTag(normalizeAgentKey(c.key)))
-		if !ok || got.ID != c.wantID {
+		got, ok, err := resolveAgentName(agents, nil, nil, c.key, "")
+		if err != nil || !ok || got.ID != c.wantID {
 			t.Errorf("%q resolved to %+v, want %s", c.key, got, c.wantID)
 		}
 	}
@@ -41,8 +41,8 @@ func TestAnAmbiguousBaseNameDoesNotGuess(t *testing.T) {
 		{ID: "a1", Name: "Research [Cortex]"},
 		{ID: "a2", Name: "Research [Fleet]"},
 	}
-	if _, ok := uniqueAgentByBaseName(agents, "research"); ok {
-		t.Fatal("an ambiguous base name picked one of two agents")
+	if _, ok, err := resolveAgentName(agents, nil, nil, "research", ""); ok || err == nil {
+		t.Fatal("an ambiguous base name picked one of two agents, or did not say it was ambiguous")
 	}
 	// And the suggestion names both, so the choice stays with the caller.
 	s := suggestAgents(agents, "Research")
@@ -61,13 +61,8 @@ func TestAnExactNameWinsOverTagStripping(t *testing.T) {
 	}
 	// "Research" matches the plain agent exactly; stripping must not make it
 	// ambiguous with the tagged one.
-	var exact AgentRecord
-	for _, a := range agents {
-		if normalizeAgentKey(a.Name) == normalizeAgentKey("Research") {
-			exact = a
-		}
-	}
-	if exact.ID != "plain" {
+	exact, _, err := resolveAgentName(agents, nil, nil, "Research", "")
+	if err != nil || exact.ID != "plain" {
 		t.Fatalf("exact match resolved to %q", exact.ID)
 	}
 }
@@ -109,8 +104,8 @@ func TestAUniquePartialNameResolves(t *testing.T) {
 		{"deal", "deal"},
 		{"comedian", "comedian"},
 	} {
-		got, ok := uniqueAgentByPartialName(agents, normalizeAgentKey(c.key))
-		if !ok || got.ID != c.wantID {
+		got, ok, err := resolveAgentName(agents, nil, nil, c.key, "")
+		if err != nil || !ok || got.ID != c.wantID {
 			t.Errorf("%q resolved to %+v, want %s", c.key, got, c.wantID)
 		}
 	}
@@ -124,8 +119,8 @@ func TestAnAmbiguousPartialNameRefuses(t *testing.T) {
 		{ID: "a", Name: "Research Assistant"},
 		{ID: "b", Name: "Research Reviewer"},
 	}
-	if _, ok := uniqueAgentByPartialName(agents, "research"); ok {
-		t.Fatal("an ambiguous fragment picked one of two agents")
+	if _, ok, err := resolveAgentName(agents, nil, nil, "research", ""); ok || err == nil {
+		t.Fatal("an ambiguous fragment picked one of two agents, or did not say it was ambiguous")
 	}
 }
 
@@ -136,7 +131,7 @@ func TestAPrefixBeatsAnInteriorMatch(t *testing.T) {
 		{ID: "deep", Name: "Deep Dive Research Agent [Fleet]"},
 		{ID: "plain", Name: "Research Agent"},
 	}
-	got, ok := uniqueAgentByPartialName(agents, "research")
+	got, ok, _ := resolveAgentName(agents, nil, nil, "research", "")
 	if !ok || got.ID != "plain" {
 		t.Fatalf("resolved to %+v, want the agent whose name begins with it", got)
 	}
@@ -148,7 +143,7 @@ func TestAPrefixBeatsAnInteriorMatch(t *testing.T) {
 func TestAVeryShortFragmentDoesNotResolve(t *testing.T) {
 	agents := []AgentRecord{{ID: "a", Name: "Comedian"}}
 	for _, frag := range []string{"c", "co", ""} {
-		if _, ok := uniqueAgentByPartialName(agents, frag); ok {
+		if _, ok, _ := resolveAgentName(agents, nil, nil, frag, ""); ok {
 			t.Errorf("%q resolved to an agent", frag)
 		}
 	}
@@ -162,15 +157,10 @@ func TestExactNameStillWinsOverAPartial(t *testing.T) {
 		{ID: "short", Name: "Research"},
 	}
 	// "Research" is exact for one and a prefix of the other; the exact one wins
-	// because findAgentByNameOrID checks exact names before ever reaching the
+	// because resolveAgentName checks exact names before ever reaching the
 	// partial fallback.
-	var exact AgentRecord
-	for _, a := range agents {
-		if strings.EqualFold(a.Name, "Research") {
-			exact = a
-		}
-	}
-	if exact.ID != "short" {
+	exact, _, err := resolveAgentName(agents, nil, nil, "Research", "")
+	if err != nil || exact.ID != "short" {
 		t.Fatalf("exact match resolved to %q", exact.ID)
 	}
 }

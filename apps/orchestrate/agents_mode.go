@@ -1,6 +1,7 @@
 package orchestrate
 
 import (
+	"sort"
 	"strings"
 	"time"
 
@@ -133,6 +134,88 @@ func dispatchListNames(list []string, ids ...string) bool {
 		}
 	}
 	return false
+}
+
+// pinDispatchTargetNames rewrites every entry of a dispatch target list that is
+// a pipeline's or machine's NAME into the id of what carries that name now.
+// Reports whether anything changed.
+//
+// dispatchListNames accepts a name for a pipeline or machine (a list edited
+// through the agent tool, or by hand, carries the name the author knows it
+// by), and a name is not an identity: delete the pipeline, or just make a new
+// one called the same, and the grant silently covered the newcomer, a target
+// the owner never picked. Pinning at save time (and on the first read of a
+// legacy row, see loadAgent) turns the name into the id it meant when it was
+// written, so a later namesake is not on the list.
+//
+// A name matching several items pins to all of them: that is exactly what the
+// entry authorized when it was pinned, and narrowing it here would silently
+// revoke a grant. An entry that is an existing agent row, a seed, or already a
+// pipeline or machine id is left alone, and so is a name nothing carries yet:
+// there is no id to pin it to, and dropping it would break a list written
+// before the pipeline it names.
+func pinDispatchTargetNames(db Database, owner string, list []string) ([]string, bool) {
+	if db == nil || len(list) == 0 {
+		return list, false
+	}
+	// Cheap exit for the common list of agent ids, so a load does not walk
+	// every pipeline and machine the user has just to find nothing to pin.
+	candidate := false
+	for _, x := range list {
+		x = strings.TrimSpace(x)
+		if x != "" && !isSeedID(x) && !db.Get(agentsTable, x, &AgentRecord{}) {
+			candidate = true
+			break
+		}
+	}
+	if !candidate {
+		return list, false
+	}
+	if owner == seedOwner {
+		owner = "" // a seed shadow's marker owner; the store is per-user anyway
+	}
+	ids := map[string]bool{}
+	byName := map[string][]string{}
+	for _, d := range ListPipelineDefs(db, owner) {
+		ids[d.ID] = true
+		k := strings.ToLower(strings.TrimSpace(d.Name))
+		byName[k] = append(byName[k], d.ID)
+	}
+	for _, d := range ListMachineDefs(db, owner) {
+		ids[d.ID] = true
+		k := strings.ToLower(strings.TrimSpace(d.Name))
+		byName[k] = append(byName[k], d.ID)
+	}
+	out := make([]string, 0, len(list))
+	seen := map[string]bool{}
+	changed := false
+	keep := func(x string) {
+		if !seen[x] {
+			seen[x] = true
+			out = append(out, x)
+		}
+	}
+	for _, x := range list {
+		t := strings.TrimSpace(x)
+		if t == "" || ids[t] || isSeedID(t) || db.Get(agentsTable, t, &AgentRecord{}) {
+			keep(x)
+			continue
+		}
+		matched := byName[strings.ToLower(t)]
+		if len(matched) == 0 {
+			keep(x)
+			continue
+		}
+		sort.Strings(matched)
+		for _, id := range matched {
+			keep(id)
+		}
+		changed = true
+	}
+	if !changed {
+		return list, false
+	}
+	return out, true
 }
 
 // dispatchListContains reports whether id is in the agent's dispatch target list.

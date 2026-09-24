@@ -1097,9 +1097,8 @@ type ArtifactPreviewResult struct {
 // bundle nor this install). Predictions reuse import's own machinery —
 // artifactExists for presence, ArtifactRecipeDependencies for references,
 // missingDepWarning for the message — so a clean preview reads identically to
-// the import result it predicts. One deliberate approximation: a tool whose
-// name matches only a PENDING draft previews as a skip, while import actually
-// replaces that draft in place.
+// the import result it predicts, a tool matching only a PENDING draft
+// included: import skips that too.
 func PreviewArtifactBundle(db Database, data []byte, owner string) (ArtifactPreviewResult, error) {
 	return previewArtifactBundle(db, data, owner, false)
 }
@@ -1107,6 +1106,21 @@ func PreviewArtifactBundle(db Database, data []byte, owner string) (ArtifactPrev
 // PreviewArtifactBundleAsUser is the dry-run twin of ImportArtifactBundleAsUser.
 func PreviewArtifactBundleAsUser(db Database, data []byte, owner string) (ArtifactPreviewResult, error) {
 	return previewArtifactBundle(db, data, owner, true)
+}
+
+// artifactImportRefuser is a type that refuses some recipes on their name
+// alone (the tool type: a built-in's name, a malformed one). Preview asks it
+// so a skip import will make is not previewed as an import.
+type artifactImportRefuser interface {
+	importRefusal(name string) string
+}
+
+// importRefused is the refusal at gives name, or "" when it has none.
+func importRefused(at ArtifactType, name string) string {
+	if r, ok := at.(artifactImportRefuser); ok {
+		return r.importRefusal(name)
+	}
+	return ""
 }
 
 func previewArtifactBundle(db Database, data []byte, owner string, userOnly bool) (ArtifactPreviewResult, error) {
@@ -1148,6 +1162,8 @@ func previewArtifactBundle(db Database, data []byte, owner string, userOnly bool
 			item.Action, item.Detail = "skip", adminOnlyArtifactDetail
 		case name == "":
 			item.Action, item.Detail = "skip", "missing artifact name"
+		case importRefused(at, name) != "":
+			item.Action, item.Detail = "skip", importRefused(at, name)
 		case artifactExists(db, ArtifactSel{Type: typ, Name: name, Owner: owner}):
 			item.Action, item.Detail = "skip", "an artifact with this name already exists on this install"
 		default:

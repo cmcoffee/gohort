@@ -106,7 +106,9 @@ func (T *AgentsApp) dispatch(w http.ResponseWriter, r *http.Request) {
 	if len(parts) > 1 {
 		rest = parts[1]
 	}
-	agent, owner, ok := orch.LookupExposedAgent(slug)
+	// The lookup resolves among the agents THIS viewer can reach, so a
+	// same-named agent somebody else owns can never shadow theirs.
+	agent, entry, ok := orch.LookupExposedAgent(r, slug)
 	if !ok {
 		http.NotFound(w, r)
 		return
@@ -116,7 +118,12 @@ func (T *AgentsApp) dispatch(w http.ResponseWriter, r *http.Request) {
 	// unpublished one is reachable by its AllowedUsers recipients and the owner,
 	// with no admin involved. Without this, anyone who guessed the slug could
 	// chat with every reachable agent regardless of visibility.
-	if !orch.AgentReachableBy(r, slug, owner, agent.AllowedUsers, agent.Everyone) {
+	//
+	// The lookup already applied it; this re-check is the gate staying where a
+	// reader of this handler expects it. Checked against the agent's canonical
+	// slug, not the URL's: a plain slug that fell back to a suffixed agent must
+	// not borrow the grant another agent holds on the plain path.
+	if !orch.AgentReachableBy(r, entry.Slug, entry.Owner, agent.AllowedUsers, agent.Everyone) {
 		http.NotFound(w, r) // 404 not 403 — don't leak slug existence
 		return
 	}

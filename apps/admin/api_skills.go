@@ -190,6 +190,15 @@ func (a *AdminApp) registerSkillsRoutes(sub *http.ServeMux) {
 				http.Error(w, "description is required", http.StatusBadRequest)
 				return
 			}
+			// One name, one skill, per person. A create (no id) or a rename
+			// onto a name they already have, here or published, is refused:
+			// two skills under one name is a name that picks neither, and the
+			// agents naming it resolve whichever comes first. An edit that
+			// keeps its name is never refused over a clash it did not cause.
+			if other, taken := ownSkillNamedLike(a.db, username, body); taken {
+				http.Error(w, "you already have a skill called "+other.Name+"; pick another name, or edit that one", http.StatusConflict)
+				return
+			}
 			// If ID is set, preserve fields that the Edit form doesn't
 			// surface from the prior record. Disabled has its own
 			// dedicated toggle endpoint (?action=enable|disable), so
@@ -339,6 +348,28 @@ func (a *AdminApp) registerSkillsRoutes(sub *http.ServeMux) {
 		_ = json.NewEncoder(w).Encode(out)
 	})
 
+}
+
+// ownSkillNamedLike returns the user's other skill (own pool or published)
+// that already answers to s's name, when s is a create or a rename. A save
+// that keeps the stored name is not checked, so older data that already holds
+// a duplicate can still be edited, and fixed.
+func ownSkillNamedLike(db Database, user string, s SkillRecord) (SkillRecord, bool) {
+	name := strings.TrimSpace(s.Name)
+	mine := append(LoadSkills(db, user), PublishedSkillsBy(db, user)...)
+	if s.ID != "" {
+		for _, p := range mine {
+			if p.ID == s.ID && strings.EqualFold(strings.TrimSpace(p.Name), name) {
+				return SkillRecord{}, false
+			}
+		}
+	}
+	for _, p := range mine {
+		if p.ID != s.ID && strings.EqualFold(strings.TrimSpace(p.Name), name) {
+			return p, true
+		}
+	}
+	return SkillRecord{}, false
 }
 
 // decodeSkillBody reads a skill from the request. The editor sends the

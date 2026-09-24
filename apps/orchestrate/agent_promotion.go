@@ -74,6 +74,9 @@ func (T *OrchestrateApp) approveAgentPublish(owner, name string) error {
 	case "mcp_exposed":
 		rec.MCPExposed = true
 	default:
+		if err := T.publishedSlugClash(rec); err != nil {
+			return err
+		}
 		// The REACH. A card is presentation and needs nobody's approval, so
 		// approving a request must not quietly add one: an owner who asked
 		// "may everybody use this" did not ask for it on the dashboard.
@@ -81,6 +84,34 @@ func (T *OrchestrateApp) approveAgentPublish(owner, name string) error {
 	}
 	_, err := saveAgent(udb, rec)
 	return err
+}
+
+// publishedSlugClash refuses to publish an agent under a name another
+// PUBLISHED agent already answers to at /agents/<slug>.
+//
+// Refusing rather than letting the runtime suffix it (assignExposedSlugs)
+// because this is the one moment somebody is deciding to widen reach, and the
+// admin approving it is the right person to ask for a rename. Published means
+// every granted user sees both cards, told apart only by a hex fragment in the
+// URL, which is a poor thing to approve on purpose. An agent that is only
+// peer-shared is not a clash: its reach is a few named people, and the suffix
+// keeps them apart without asking anybody.
+//
+// The error leaves the request pending (promotion.Approve runs this before it
+// marks the row), so approving again after the owner sets a Public name works.
+func (T *OrchestrateApp) publishedSlugClash(rec AgentRecord) error {
+	slug := ExposedSlug(rec)
+	if slug == "" {
+		return nil
+	}
+	for _, e := range T.exposedPool() {
+		if e.AgentID == rec.ID || !e.Everyone || e.BaseSlug != slug {
+			continue
+		}
+		return Error("another published agent (" + e.Name + ", owned by " + e.Owner + ") already uses /agents/" + slug +
+			"; set a different public name on this one, then approve again")
+	}
+	return nil
 }
 
 // agentPublishNeedsApproval reports whether flipping this flag ON has to be

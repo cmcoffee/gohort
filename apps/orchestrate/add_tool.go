@@ -159,7 +159,13 @@ func (addToolTool) RunWithSession(args map[string]any, sess *ToolSession) (strin
 	// single-agent flow; `agent` is the escape hatch when it isn't.
 	var target AgentRecord
 	if key := strings.TrimSpace(stringArg(args, "agent")); key != "" {
-		found, ok := findAgentByNameOrID(sess.DB, sess.Username, key)
+		// An ambiguous name is refused with the candidates' ids: attaching a
+		// tool to the wrong one of two same-named agents grants it capability
+		// nobody chose to give it.
+		found, ok, err := resolveAgentRef(sess.DB, sess.Username, key)
+		if err != nil {
+			return "", fmt.Errorf("add_tool: %w", err)
+		}
 		if !ok {
 			return "", fmt.Errorf("add_tool: no agent named or id'd %q in your fleet, call agents(action=\"list\") to see the exact names", key)
 		}

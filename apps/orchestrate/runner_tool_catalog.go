@@ -288,7 +288,7 @@ func (t *chatTurn) resolveWorkerTools(sess *ToolSession, forOrchestrator bool) (
 	// the owner's corpus, and an agent run by a granted non-owner must not
 	// write to collections that are not theirs.
 	if ownerRun {
-		if cols := curatedCollectionsFor(UserDB(t.app.DB, t.user), t.user, t.agent.ID, t.agent.Name); len(cols) > 0 {
+		if cols := curatedCollectionsFor(UserDB(t.app.DB, t.user), t.user, t.agent.ID); len(cols) > 0 {
 			if st := collectionStewardTool(cols); st != nil {
 				tools = append(tools, ChatToolToAgentToolDefWithSession(st, sess))
 				toolNames = append(toolNames, st.Name())

@@ -44,20 +44,44 @@ var stewardActions = []string{"docs", "add_url", "add_text", "remove_doc"}
 
 // curatedCollectionsFor returns the collections this agent is in charge of,
 // by id, sorted.
-func curatedCollectionsFor(udb Database, user, agentID, agentName string) []Collection {
+//
+// Matched by the agent's ID, on collections the agent's owner OWNS (or, for an
+// administrator, the deployment's own ownerless ones, which only an
+// administrator may change). It used to compare the stored curator against the
+// agent's id OR NAME across everything the user could read, so an agent of
+// theirs that happened to share a name with the curator of a colleague's
+// shared collection, or of the deployment's, was handed the corpus tools for
+// it. A name is only meaningful among the agents of whoever chose it, and the
+// collection's owner is who chose it.
+//
+// A curator stored as a NAME (older records, or one set through the API; the
+// form stores the id) is resolved to an id once per collection, through the
+// same resolver the dispatch and the status line use, against the owner's
+// agents. Resolving rather than comparing names is also what keeps two of the
+// owner's own agents that share a name from both taking the grant.
+func curatedCollectionsFor(udb Database, user, agentID string) []Collection {
+	agentID = strings.TrimSpace(agentID)
+	if agentID == "" {
+		return nil
+	}
+	admin := UserIsAdmin(user)
 	var out []Collection
 	for _, c := range ListCollections(udb, user) {
 		who := strings.TrimSpace(c.CuratorAgent)
 		if who == "" {
 			continue
 		}
-		// Matched against BOTH id and name because that is what the dispatch
-		// resolver accepts (findAgentByNameOrID), and a field that runs under
-		// one spelling while reading as unset under another is the bug that
-		// costs an afternoon.
-		if strings.EqualFold(who, agentID) || (agentName != "" && strings.EqualFold(who, agentName)) {
-			out = append(out, c)
+		ownerless := IsDeploymentScope(c) && c.Owner == ""
+		if c.Owner != user && !(ownerless && admin) {
+			continue
 		}
+		if who != agentID {
+			a, ok := findAgentByNameOrID(udb, user, who)
+			if !ok || a.ID != agentID {
+				continue
+			}
+		}
+		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out

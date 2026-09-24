@@ -900,9 +900,10 @@ func MergeAdoptedGlobalTools(db Database, username string, names []string) {
 }
 
 // QueuePendingTempTool adds a tool to the approval queue. Returns an
-// error if a same-named tool is already pending or approved (avoid
-// silent overwrites — the user should explicitly delete the old one
-// first).
+// error if a same-named tool is already approved, or already pending with
+// a different definition (avoid silent overwrites — the user should
+// explicitly delete the old one first), or if the name is one no authoring
+// path would accept.
 func QueuePendingTempTool(db Database, username string, t TempTool, sessionID string) error {
 	return QueuePendingTempToolScoped(db, username, t, sessionID, nil)
 }
@@ -913,6 +914,11 @@ func QueuePendingTempToolScoped(db Database, username string, t TempTool, sessio
 	db = tempToolStore(db)
 	if db == nil || username == "" {
 		return errString("persistence requires an authenticated user")
+	}
+	// Both import paths queue here, so the name rules every authoring path
+	// applies are checked here once (see toolArtifact.importRefusal).
+	if why := (toolArtifact{}).importRefusal(t.Name); why != "" {
+		return errString(why)
 	}
 	tempToolPersistMu.Lock()
 	defer tempToolPersistMu.Unlock()
@@ -926,20 +932,41 @@ func QueuePendingTempToolScoped(db Database, username string, t TempTool, sessio
 			return errString("a tool named " + t.Name + " is already persisted; delete it first to redefine")
 		}
 	}
-	// Pending-pool conflict is allowed and replaces in place: if the
-	// LLM is iterating on a tool definition pre-approval (typo, bad
-	// schema, missing param), the admin should see the LATEST
-	// version queued for review — not the original mistake. The new
-	// RequestedAt timestamp also bumps the entry to the top of the
-	// queue so the operator notices the update.
+	// A same-named tool already pending is NOT replaced. Replacing was meant
+	// for an author iterating on a draft, but no authoring path queues here
+	// any more: the callers are imports (a tool bundle, an agent recipe's
+	// tools), and two of those naming one tool are two different authors. The
+	// second silently took the first's place, code and scope both, so the
+	// agent the first was scoped to lost its tool on approval.
+	//
+	// The same definition is the same tool: it keeps its place in the queue
+	// and gains the new scope (empty on either side means every agent, which
+	// already covers the other). A different one is refused, and the caller
+	// reports it; the pending tool is left as it was.
 	pending := LoadPendingTempTools(db, username)
-	rest := pending[:0]
-	for _, p := range pending {
+	for i, p := range pending {
 		if p.Tool.Name != t.Name {
-			rest = append(rest, p)
+			continue
 		}
+		if !p.Tool.SameDefinition(t) {
+			return errString("a different tool named " + t.Name + " is already waiting for approval; approve or reject it first, or rename this one")
+		}
+		switch {
+		case len(p.ScopeAgents) == 0:
+		case len(scopeAgents) == 0:
+			pending[i].ScopeAgents = nil
+		default:
+			for _, id := range scopeAgents {
+				if !sliceHas(pending[i].ScopeAgents, id) {
+					pending[i].ScopeAgents = append(pending[i].ScopeAgents, id)
+				}
+			}
+		}
+		Log("[temp_tool_persist] %s: %q queued again with the same definition; kept the pending one, scope now %v", username, t.Name, pending[i].ScopeAgents)
+		db.Set(pendingTempToolsTable, username, pending)
+		return nil
 	}
-	rest = append(rest, PendingTempTool{
+	rest := append(pending, PendingTempTool{
 		Tool:             t,
 		RequestedAt:      time.Now(),
 		RequestedSession: sessionID,

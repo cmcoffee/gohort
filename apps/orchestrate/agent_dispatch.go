@@ -590,7 +590,13 @@ func (T *OrchestrateApp) runAgentSyncAppTools(ctx context.Context, agentOwner, r
 	if ownerDB == nil {
 		return syncRunResult{}, fmt.Errorf("no per-user db for agentOwner %q", agentOwner)
 	}
-	target, ok := findAgentByNameOrID(ownerDB, agentOwner, agentKey)
+	// Schedules, monitors and pipeline stages name their agent, often by
+	// name. Two agents answering to it is refused with their ids rather than
+	// run on whichever sorted first.
+	target, ok, err := resolveAgentRef(ownerDB, agentOwner, agentKey)
+	if err != nil {
+		return syncRunResult{}, err
+	}
 	if !ok {
 		return syncRunResult{}, fmt.Errorf("agent %q not found in agentOwner %q store", agentKey, agentOwner)
 	}
@@ -1416,7 +1422,13 @@ func (T *OrchestrateApp) RunAgentSyncContinuingRich(ctx context.Context, run Age
 	if ownerDB == nil {
 		return AgentSyncResult{}, fmt.Errorf("no per-user db for agentOwner %q", agentOwner)
 	}
-	target, ok := findAgentByNameOrID(ownerDB, agentOwner, agentKey)
+	// Schedules, monitors and pipeline stages name their agent, often by
+	// name. Two agents answering to it is refused with their ids rather than
+	// run on whichever sorted first.
+	target, ok, err := resolveAgentRef(ownerDB, agentOwner, agentKey)
+	if err != nil {
+		return AgentSyncResult{}, err
+	}
 	if !ok {
 		return AgentSyncResult{}, fmt.Errorf("agent %q not found in agentOwner %q store", agentKey, agentOwner)
 	}
@@ -2205,53 +2217,189 @@ func fenceObservationMarkers(body string) string {
 }
 
 // findAgentByNameOrID looks up an agent in udb either by exact ID
-// match (preferred — stable across renames) or by case-insensitive
-// name match. Returns the agent + a bool indicating found. Used
-// only by the dispatch tool; the rest of orchestrate addresses
-// agents by ID.
+// match (preferred — stable across renames) or by name. Returns the agent + a
+// bool indicating found. A name that answers to more than one agent reports
+// NOT FOUND here: this signature cannot carry the candidates, and handing back
+// whichever sorted first is how a name used to run, edit, or delete the wrong
+// agent. Callers that talk to a model or mutate a record use resolveAgentRef,
+// which says the name is ambiguous and lists the ids to pick from.
 func findAgentByNameOrID(udb Database, owner, key string) (AgentRecord, bool) {
-	key = strings.TrimSpace(key)
-	if key == "" {
+	a, ok, err := resolveAgentRef(udb, owner, key)
+	if err != nil {
+		Debug("[orchestrate] agent lookup %q for %q refused: %v", key, owner, err)
 		return AgentRecord{}, false
 	}
+	return a, ok
+}
+
+// resolveAgentRef is findAgentByNameOrID with the ambiguity spelled out: found
+// reports whether exactly one agent answers to key, and a non-nil error (an
+// *agentAmbiguityError) means several do and none was chosen.
+//
+// IDs first and unchanged: an id is exact, so there is nothing to disambiguate.
+// Names then run through resolveAgentName.
+func resolveAgentRef(udb Database, owner, key string) (AgentRecord, bool, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return AgentRecord{}, false, nil
+	}
 	if a, ok := loadAgent(udb, key); ok {
-		return a, true
+		return a, true, nil
 	}
 	// By id, for something shared with this user: their own store has no row
-	// for it, and an id is exact, so there is nothing to disambiguate.
-	for _, a := range SharedAgentsFor(orchestrateBaseDB, owner) {
-		if a.ID == key {
-			return a, true
-		}
-	}
-	// A name the user gave their OWN agent beats a framework seed or app agent
-	// carrying the same one, at EVERY tier below.
-	//
-	// The registry of app agents is process-global and its entries are hidden,
-	// so a user naming an agent "Investigator" has no way to know one already
-	// answers to that. Before this, whichever record listAgents happened to
-	// emit first won, which meant the answer depended on registration order —
-	// on which apps are compiled in. A caller asking for the agent they built
-	// and named would be handed a hidden framework agent instead, and nothing
-	// would say so.
-	//
-	// Precedence, not a tighter match: the tiers keep their own semantics
-	// (exact beats normalized beats tag-stripped beats unique-partial, and each
-	// fuzzy tier still refuses on a genuine ambiguity). They just run over the
-	// user's own agents first and over the framework's only if that finds
-	// nothing.
-	own, framework := splitOwnAndFrameworkAgents(listAgents(udb, owner))
-	// Agents somebody else shared with this user sit BETWEEN the two: after
-	// their own, because a name they chose should mean the thing they made,
-	// and before the framework's, because a colleague handing you an agent is
-	// a more specific answer than a seed that ships with every deployment.
+	// for it.
 	shared := SharedAgentsFor(orchestrateBaseDB, owner)
-	for _, group := range [][]AgentRecord{own, shared, framework} {
-		if a, ok := matchAgentByName(group, key); ok {
-			return a, true
+	for _, a := range shared {
+		if a.ID == key {
+			return a, true, nil
 		}
 	}
-	return AgentRecord{}, false
+	own, framework := splitOwnAndFrameworkAgents(listAgents(udb, owner))
+	return resolveAgentName(own, shared, framework, key, owner)
+}
+
+// agentAmbiguityError is a name that answers to more than one agent. Its text
+// is what the model reads, so it names every candidate with the id that
+// addresses it unambiguously, and whose it is when it is not the caller's.
+type agentAmbiguityError struct {
+	key        string
+	candidates []AgentRecord
+	viewer     string
+}
+
+// maxAmbiguityCandidates caps the listing: a short fragment can match half a
+// fleet, and the ids past the first handful do not help anyone pick.
+const maxAmbiguityCandidates = 8
+
+func (e *agentAmbiguityError) Error() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "agent %q is ambiguous: %d agents answer to that name, so nothing was done. Call again with agent set to the id of the one you mean:", e.key, len(e.candidates))
+	for i, a := range e.candidates {
+		if i == maxAmbiguityCandidates {
+			fmt.Fprintf(&b, " (and %d more)", len(e.candidates)-i)
+			break
+		}
+		if i > 0 {
+			b.WriteString(",")
+		}
+		fmt.Fprintf(&b, " %q (id=%s%s)", a.Name, a.ID, agentWhose(a, e.viewer))
+	}
+	b.WriteString(".")
+	return b.String()
+}
+
+// agentWhose is the owner note beside an agent in a listing that has to tell
+// same-named agents apart: nothing for the viewer's own, "built-in" for the
+// framework's, and the owner for one somebody shared.
+func agentWhose(a AgentRecord, viewer string) string {
+	switch {
+	case isSeedID(a.ID):
+		return ", built-in"
+	case a.Owner != "" && viewer != "" && a.Owner != viewer:
+		return ", shared by " + a.Owner
+	}
+	return ""
+}
+
+// resolveAgentName resolves a NAME over the three places an agent can come
+// from: the user's own, the ones shared with them, and the framework's (seeds
+// plus registered app agents).
+//
+// The tiers run strongest first (exact, case/separator-normalized,
+// display-tag-stripped, unique prefix, unique interior) and each tier is
+// tried across ALL three groups before the next, weaker one. Before this the
+// cascade ran every tier over the user's own agents first, so an own agent
+// matching only by a fragment beat a shared agent whose name was typed out in
+// full, and the first match inside a tier won outright, so two agents with the
+// same name resolved to whichever listAgents happened to emit first.
+//
+// Inside a tier:
+//   - own and shared are one rank. One match resolves; two or more are
+//     ambiguous and nothing is chosen. A colleague's agent and yours carrying
+//     the same name is exactly the case where guessing edits the wrong one.
+//   - the framework's only answers when own+shared found nothing at that
+//     tier. That precedence is deliberate: the registry of app agents is
+//     process-global and hidden, so a user naming an agent "Investigator" has
+//     no way to know one already answers to it, and the thing they built and
+//     named must be what the name means.
+//   - several framework matches are ambiguous too.
+func resolveAgentName(own, shared, framework []AgentRecord, key, viewer string) (AgentRecord, bool, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return AgentRecord{}, false, nil
+	}
+	for _, tier := range agentNameTiers(key) {
+		mine := matchAgentTier(tier, own, shared)
+		switch {
+		case len(mine) == 1:
+			return mine[0], true, nil
+		case len(mine) > 1:
+			return AgentRecord{}, false, &agentAmbiguityError{key: key, candidates: mine, viewer: viewer}
+		}
+		fw := matchAgentTier(tier, framework)
+		switch {
+		case len(fw) == 1:
+			return fw[0], true, nil
+		case len(fw) > 1:
+			return AgentRecord{}, false, &agentAmbiguityError{key: key, candidates: fw, viewer: viewer}
+		}
+	}
+	return AgentRecord{}, false, nil
+}
+
+// matchAgentTier collects every agent across groups whose name passes tier,
+// once each: an id that turns up in two groups is one agent, not a tie.
+func matchAgentTier(tier func(name string) bool, groups ...[]AgentRecord) []AgentRecord {
+	var out []AgentRecord
+	seen := map[string]bool{}
+	for _, g := range groups {
+		for _, a := range g {
+			if seen[a.ID] || !tier(a.Name) {
+				continue
+			}
+			seen[a.ID] = true
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// agentNameTiers builds the name tests for key, strongest first.
+func agentNameTiers(key string) []func(name string) bool {
+	low := strings.ToLower(key)
+	keyNorm := normalizeAgentKey(key)
+	base := stripAgentTag(keyNorm)
+	tiers := []func(string) bool{
+		func(n string) bool { return strings.ToLower(n) == low },
+		// Slug-tolerant: a target stored as "wiwee-summary" must still resolve
+		// to an agent named "WiWee Summary" or "wiwee_summary". Standing agents
+		// store the raw name string typed at creation, so separator or case
+		// drift would otherwise orphan the schedule while the agent still lists.
+		func(n string) bool { return normalizeAgentKey(n) == keyNorm },
+		// Tag-tolerant. Agent names carry display tags in brackets
+		// ("Kwik [Cortex]", "Market Research [Fleet]"), the framework's OWN
+		// convention printed in every listing, so a caller naturally writes
+		// the name without the tag. Reported live: Builder looked up
+		// "Moltbook Conversational Agent", was told it was not found, and
+		// stopped to ask about an agent sitting in the list it had just read.
+		func(n string) bool {
+			s := stripAgentTag(normalizeAgentKey(n))
+			return s == base || s == keyNorm
+		},
+	}
+	// Partial names, last. "moltbook" identifies "Moltbook Conversational
+	// Agent [Cortex]" as surely as the whole string does. A prefix beats an
+	// interior match: "research" should mean "Research Agent" rather than
+	// "Deep Dive Research". Under three characters nothing resolves: a
+	// two-letter fragment matching one agent today matches three after the
+	// next is added, so the answer would be right only until the fleet grew.
+	if len(keyNorm) >= 3 {
+		tiers = append(tiers,
+			func(n string) bool { return strings.HasPrefix(stripAgentTag(normalizeAgentKey(n)), keyNorm) },
+			func(n string) bool { return strings.Contains(stripAgentTag(normalizeAgentKey(n)), keyNorm) },
+		)
+	}
+	return tiers
 }
 
 // splitOwnAndFrameworkAgents divides a listing into the agents the user made
@@ -2273,106 +2421,6 @@ func splitOwnAndFrameworkAgents(agents []AgentRecord) (own, framework []AgentRec
 	return own, framework
 }
 
-// matchAgentByName runs the name-resolution tiers over one group of agents,
-// strongest first. Split out of findAgentByNameOrID so the same cascade can be
-// applied to the user's own agents and then, only if it comes up empty, to the
-// framework's.
-func matchAgentByName(agents []AgentRecord, key string) (AgentRecord, bool) {
-	if len(agents) == 0 {
-		return AgentRecord{}, false
-	}
-	low := strings.ToLower(key)
-	for _, a := range agents {
-		if strings.ToLower(a.Name) == low {
-			return a, true
-		}
-	}
-	// Slug-tolerant fallback: a target stored as "wiwee-summary" must still
-	// resolve to an agent named "WiWee Summary" or "wiwee_summary". Standing
-	// agents store the raw name string typed at creation, so any separator or
-	// case drift between that string and the agent's Name would otherwise
-	// orphan the schedule while the agent still lists fine. Matched last so an
-	// exact name always wins over a normalized collision.
-	keyNorm := normalizeAgentKey(key)
-	for _, a := range agents {
-		if normalizeAgentKey(a.Name) == keyNorm {
-			return a, true
-		}
-	}
-	// Tag-tolerant fallback, matched last. Agent names carry display tags in
-	// brackets — "Kwik [Cortex]", "Market Research [Fleet]" — which is this
-	// framework's OWN convention, printed in every listing an agent reads. So
-	// a caller naturally writes the name without the tag, and exact matching
-	// then fails on an agent that plainly exists: reported live as Builder
-	// looking up "Moltbook Conversational Agent", being told it was not found,
-	// and having to stop and ask which agent was meant while the agent sat in
-	// the list it had just read.
-	//
-	// Ambiguity is NOT resolved by guessing. If two agents share a base name
-	// and differ only by tag, the bare name means neither, and the caller gets
-	// the not-found path — where the suggestion list names both and the choice
-	// stays theirs.
-	if base := stripAgentTag(keyNorm); base != keyNorm {
-		if a, ok := uniqueAgentByBaseName(agents, base); ok {
-			return a, true
-		}
-	}
-	var matches []AgentRecord
-	for _, a := range agents {
-		if stripAgentTag(normalizeAgentKey(a.Name)) == keyNorm {
-			matches = append(matches, a)
-		}
-	}
-	if len(matches) == 1 {
-		return matches[0], true
-	}
-	// Last resort: a UNIQUE partial name. "moltbook" identifies "Moltbook
-	// Conversational Agent [Cortex]" as surely as the whole string does, and
-	// callers shorten names — a model reading a fleet listing writes the
-	// distinctive word, not the four-word title with its tag. Reported live:
-	// Builder looked up "moltbook", was told no such agent existed, and
-	// repeated that to the user as fact about an agent it had just seen listed.
-	//
-	// Same rule as everywhere above: unique or nothing. A prefix matching two
-	// agents means neither, because resolving it would edit whichever happened
-	// to sort first — and an authoring tool silently rewriting the wrong agent
-	// is the one outcome worse than a failed lookup.
-	if a, ok := uniqueAgentByPartialName(agents, keyNorm); ok {
-		return a, true
-	}
-	return AgentRecord{}, false
-}
-
-// uniqueAgentByPartialName resolves a name fragment when exactly one agent
-// contains it. Prefix matches are preferred over interior ones: "research"
-// should mean "Research Agent" rather than "Deep Dive Research", and only
-// falls through to interior matching when no name begins with the fragment.
-func uniqueAgentByPartialName(agents []AgentRecord, frag string) (AgentRecord, bool) {
-	if len(frag) < 3 {
-		// Too short to identify anything. A two-letter fragment matching one
-		// agent today matches three after the next one is added, so the
-		// resolution would be correct only until the fleet grew.
-		return AgentRecord{}, false
-	}
-	var prefix, interior []AgentRecord
-	for _, a := range agents {
-		name := stripAgentTag(normalizeAgentKey(a.Name))
-		switch {
-		case strings.HasPrefix(name, frag):
-			prefix = append(prefix, a)
-		case strings.Contains(name, frag):
-			interior = append(interior, a)
-		}
-	}
-	if len(prefix) == 1 {
-		return prefix[0], true
-	}
-	if len(prefix) == 0 && len(interior) == 1 {
-		return interior[0], true
-	}
-	return AgentRecord{}, false
-}
-
 // stripAgentTag removes a trailing bracketed display tag from an already-
 // normalized name: "kwik [cortex]" becomes "kwik".
 func stripAgentTag(norm string) string {
@@ -2383,17 +2431,32 @@ func stripAgentTag(norm string) string {
 	return strings.TrimSpace(norm[:i])
 }
 
-// uniqueAgentByBaseName returns the single agent whose tag-stripped name
-// matches, or reports false when none or several do.
-func uniqueAgentByBaseName(agents []AgentRecord, base string) (AgentRecord, bool) {
-	var found AgentRecord
-	n := 0
+// agentNameCollisions reports which names in a listing more than one agent
+// answers to, keyed by normalizeAgentKey. A listing that tells the model to
+// address agents by name has to print the id beside these, or two agents that
+// read identically can only be reached by a lookup that refuses them both.
+func agentNameCollisions(agents []AgentRecord) map[string]bool {
+	count := map[string]int{}
 	for _, a := range agents {
-		if stripAgentTag(normalizeAgentKey(a.Name)) == base {
-			found, n = a, n+1
+		count[normalizeAgentKey(a.Name)]++
+	}
+	out := map[string]bool{}
+	for k, n := range count {
+		if n > 1 {
+			out[k] = true
 		}
 	}
-	return found, n == 1
+	return out
+}
+
+// agentListingRef is the handle a listing prints for an agent: its name, plus
+// its id (and whose it is) when the name collides with another in the same
+// listing.
+func agentListingRef(a AgentRecord, collisions map[string]bool, viewer string) string {
+	if !collisions[normalizeAgentKey(a.Name)] {
+		return a.Name
+	}
+	return fmt.Sprintf("%s (id=%s%s)", a.Name, a.ID, agentWhose(a, viewer))
 }
 
 // suggestAgents lists the agents closest to a name that did not resolve.

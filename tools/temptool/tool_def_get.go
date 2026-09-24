@@ -86,6 +86,11 @@ func getGrouped(args map[string]any, sess *ToolSession) (string, error) {
 			if sess.BundledToolNames[name] {
 				src = "agent-bundled (attached to this agent's record: delete removes it from the record)"
 			}
+			// A lent or adopted tool is live here too; saying so up front
+			// keeps the model from trying to update what update will refuse.
+			if owner, how := foreignToolOwner(sess, name); owner != "" {
+				src = fmt.Sprintf("owned by %s (%s): reading is always allowed, only editing is not. To change its behavior, copy it under a NEW name with action=\"create\" and edit that", owner, how)
+			}
 			return fmt.Sprintf("source: %s\n%s", src, string(body)), nil
 		}
 	}
@@ -157,6 +162,50 @@ func loadExistingToolRecord(sess *ToolSession, name string) (TempTool, bool) {
 	}
 	return TempTool{}, false
 }
+
+// foreignToolOwner reports whose tool name is when the user does not own it
+// but can see it: one they took from a colleague or the deployment (what their
+// agents load), one a colleague lent them, or one the deployment publishes.
+// how says which, for the message. Empty owner when the user has a copy of
+// their own (pool, pending queue, session draft or an agent's kit): then the
+// name is theirs to edit, and it is the copy their agents run anyway.
+//
+// Why update needs it: a lent or adopted tool rides in the session like any
+// other, so loadExistingToolRecord resolves it there, and the write-back then
+// persists the edit into the EDITOR's pool. That is a fork, not an edit: the
+// owner's tool is unchanged, and the new own copy shadows it from then on.
+func foreignToolOwner(sess *ToolSession, name string) (owner, how string) {
+	if sess == nil || sess.DB == nil || sess.Username == "" || name == "" {
+		return "", ""
+	}
+	if toolInUserPools(sess, name) || toolInSessionDrafts(sess, name) {
+		return "", ""
+	}
+	if FindUserAgentTool != nil {
+		if _, _, found := FindUserAgentTool(sess.DB, sess.Username, name); found {
+			return "", ""
+		}
+	}
+	for _, p := range AdoptedToolsFor(sess.DB, sess.Username) {
+		if p.Tool.Name == name {
+			return p.Owner, "you added it from the tool catalog"
+		}
+	}
+	for _, p := range PeerSharedToolsFor(sess.DB, sess.Username) {
+		if p.Tool.Name == name {
+			return p.Owner, "they shared it with you"
+		}
+	}
+	if _, o, ok := FindSharedToolWithOwner(sess.DB, name); ok && o != sess.Username {
+		return o, "it is published deployment-wide"
+	}
+	return "", ""
+}
+
+// foreignToolMsg is update's refusal for a tool somebody else owns. Returned
+// as a result, not an error: nothing is broken, and an error reads as a
+// failure to retry.
+const foreignToolMsg = "Tool %q belongs to %s (%s), so you cannot change it: an update here would only fork a copy into your own pool that hides theirs from then on. Nothing is broken and there is nothing to report. Ask %s to make the change, or copy it under a NEW name with action=\"create\" (read its definition with action=\"get\" first) to make your own version. Do NOT re-create it under the same name."
 
 // toolInUserPools reports whether the name has a durable home in the user's
 // persistent pool or pending-approval queue. Used to pick the write-back /

@@ -33,7 +33,17 @@ func (T *OrchestrateApp) handleCollectionSteward(w http.ResponseWriter, r *http.
 		// be renamed or not built yet, and a choice that could not be recorded
 		// until its agent existed would have to be remembered by a person. The
 		// status line reports one that does not resolve.
+		//
+		// A name that DOES resolve is stored as the id it resolves to, so it
+		// is resolved once, here, against the agents of the person choosing,
+		// rather than on every run: the grant matches by id
+		// (curatedCollectionsFor), and an id survives a rename.
 		c.CuratorAgent = strings.TrimSpace(body.CuratorAgent)
+		if c.CuratorAgent != "" {
+			if a, ok := findAgentByNameOrID(UserDB(T.DB, user), user, c.CuratorAgent); ok && a.ID != "" {
+				c.CuratorAgent = a.ID
+			}
+		}
 		saveCollection(UserDB(T.DB, user), c)
 		writeJSON(w, map[string]any{"ok": true})
 	default:

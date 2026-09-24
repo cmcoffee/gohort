@@ -448,9 +448,9 @@ func (t *chatTurn) machineAttachGapsForNamed(args map[string]any, def MachineDef
 		if key == "" {
 			continue
 		}
-		ag, ok := t.findAgentByNameOrID(key)
-		if !ok {
-			out = append(out, "no agent found named "+strconv.Quote(key))
+		ag, why := t.ownAgentByNameOrID(key)
+		if why != "" {
+			out = append(out, why)
 			continue
 		}
 		out = append(out, machineAttachGaps(t.udb, t.user, def, ag)...)
@@ -622,9 +622,13 @@ func (t *chatTurn) attachMachineToAgents(raw any, machineID string) (attached, u
 		if key == "" {
 			continue
 		}
-		ag, ok := t.findAgentByNameOrID(key)
-		if !ok {
-			unknown = append(unknown, key)
+		ag, why := t.ownAgentByNameOrID(key)
+		if ag.ID == "" {
+			if strings.HasPrefix(why, "no agent found") {
+				unknown = append(unknown, key)
+			} else {
+				unknown = append(unknown, key+" ("+why+")")
+			}
 			continue
 		}
 		if msg := agentEditRefusal(ag, t.user); msg != "" {
@@ -645,19 +649,32 @@ func (t *chatTurn) attachMachineToAgents(raw any, machineID string) (attached, u
 	return attached, unknown
 }
 
-// findAgentByNameOrID resolves an agent the caller owns, by id first
-// then case-insensitive name — the same lookup order the pipeline tool's
-// attach pass uses.
-func (t *chatTurn) findAgentByNameOrID(key string) (AgentRecord, bool) {
-	if ag, ok := loadAgent(t.udb, key); ok && (ag.Owner == "" || ag.Owner == t.user) {
-		return ag, true
+// ownAgentByNameOrID resolves an agent the caller owns, by id first then
+// case-insensitive name. why is empty on success and otherwise says what went
+// wrong: no such agent, or a name several of the caller's agents answer to.
+// That used to be the first match, so attaching a machine to a duplicated
+// name put it on whichever agent listed first.
+func (t *chatTurn) ownAgentByNameOrID(key string) (ag AgentRecord, why string) {
+	if a, ok := loadAgent(t.udb, key); ok && (a.Owner == "" || a.Owner == t.user) {
+		return a, ""
 	}
-	for _, ag := range listAgents(t.udb, t.user) {
-		if strings.EqualFold(ag.Name, key) {
-			return ag, true
+	var hits []AgentRecord
+	for _, a := range listAgents(t.udb, t.user) {
+		if strings.EqualFold(a.Name, key) {
+			hits = append(hits, a)
 		}
 	}
-	return AgentRecord{}, false
+	switch len(hits) {
+	case 0:
+		return AgentRecord{}, "no agent found named " + strconv.Quote(key)
+	case 1:
+		return hits[0], ""
+	}
+	ids := make([]string, 0, len(hits))
+	for _, a := range hits {
+		ids = append(ids, a.ID)
+	}
+	return AgentRecord{}, fmt.Sprintf("%d of your agents are named %q, so nothing was done: use the id of the one you mean (%s)", len(hits), key, strings.Join(ids, ", "))
 }
 
 func (t *chatTurn) machineList() (string, error) {

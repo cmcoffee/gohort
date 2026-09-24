@@ -590,7 +590,10 @@ func (t *chatTurn) agentsGetAction(args map[string]any) (string, error) {
 	a, ok := loadAgent(fleetDB, key)
 	if !ok {
 		// Not a raw id — try it as a name before giving up.
-		a, ok = findAgentByNameOrID(fleetDB, fleetUser, key)
+		var err error
+		if a, ok, err = t.resolveFleetAgent(fleetDB, fleetUser, key); err != nil {
+			return "", err
+		}
 	}
 	if !ok || (a.Owner != fleetUser && a.Owner != seedOwner) {
 		// Name the near misses. Against a fleet of dozens, a bare "not found"
@@ -651,7 +654,10 @@ func (t *chatTurn) agentsRunToolAction(args map[string]any) (string, error) {
 		return "", errors.New("agent and tool are required for action=run_tool")
 	}
 	fleetDB, fleetUser := t.fleetView()
-	target, ok := findAgentByNameOrID(fleetDB, fleetUser, key)
+	target, ok, err := t.resolveFleetAgent(fleetDB, fleetUser, key)
+	if err != nil {
+		return "", err
+	}
 	if !ok {
 		return "", fmt.Errorf("agent %q not found in your store: call agents(action=list) to see what's available", key)
 	}
@@ -796,7 +802,10 @@ func (t *chatTurn) agentsRunGate(args map[string]any) (AgentRecord, string, erro
 		return AgentRecord{}, "", errors.New("agent and message are required for action=run")
 	}
 	fleetDB, fleetUser := t.fleetView()
-	target, ok := findAgentByNameOrID(fleetDB, fleetUser, key)
+	target, ok, err := t.resolveFleetAgent(fleetDB, fleetUser, key)
+	if err != nil {
+		return AgentRecord{}, "", err
+	}
 	if !ok {
 		return AgentRecord{}, "", fmt.Errorf("agent %q not found in your store: call agents(action=list) to see what's available", key)
 	}
@@ -1554,4 +1563,37 @@ func boolArgDefault(args map[string]any, key string, def bool) bool {
 		}
 	}
 	return def
+}
+
+// resolveFleetAgent is the agents tool's by-name-or-id lookup: resolveAgentRef,
+// with the agents this caller is not allowed to know about taken out of any
+// ambiguity before it is reported.
+//
+// agents(get) answers "not found" for a Builder the caller may not dispatch
+// and for retired seeds, identically to a genuinely absent name, so the error
+// cannot be used to learn what exists but is hidden. An ambiguity listing ids
+// would undo that, so concealed candidates are dropped first: none left reads
+// as not found, one left is the answer, and only a real choice between agents
+// the caller can see comes back as an ambiguity.
+func (t *chatTurn) resolveFleetAgent(fleetDB Database, fleetUser, key string) (AgentRecord, bool, error) {
+	a, ok, err := resolveAgentRef(fleetDB, fleetUser, key)
+	var amb *agentAmbiguityError
+	if !errors.As(err, &amb) {
+		return a, ok, err
+	}
+	var visible []AgentRecord
+	for _, c := range amb.candidates {
+		if (isBuilderAgent(c.ID) && !t.canDispatchBuilder()) || isFleetRetiredSeed(c.ID) || isRetiringArchetypeSeed(c.ID) {
+			continue
+		}
+		visible = append(visible, c)
+	}
+	switch len(visible) {
+	case 0:
+		return AgentRecord{}, false, nil
+	case 1:
+		return visible[0], true, nil
+	}
+	amb.candidates = visible
+	return AgentRecord{}, false, amb
 }

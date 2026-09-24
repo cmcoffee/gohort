@@ -3217,6 +3217,28 @@ func init() {
 		},
 	})
 
+	// takenToolsView is what a user's agents actually load under each name
+	// they could take: whose adopted tool resolves (AdoptedToolsFor, the
+	// runtime's own resolver), and which names their own tools hold, for every
+	// agent (ownAll) or only the agents a scoped copy is on (ownSome). An own
+	// copy wins. The ledger used to say "Taken: your agents load it" whenever
+	// the name was on the adoption list, which was false when the adoption was
+	// pinned to somebody else's tool of that name and false when the user's
+	// own tool held the name.
+	takenToolsView := func(user string) (loadedFrom map[string]string, ownAll, ownSome map[string]bool) {
+		loadedFrom, ownAll, ownSome = map[string]string{}, map[string]bool{}, map[string]bool{}
+		for _, p := range AdoptedToolsFor(nil, user) {
+			loadedFrom[p.Tool.Name] = p.Owner
+		}
+		for _, p := range LoadPersistentTempTools(nil, user) {
+			if len(p.ScopeAgents) == 0 {
+				ownAll[p.Tool.Name] = true
+			} else {
+				ownSome[p.Tool.Name] = true
+			}
+		}
+		return
+	}
 	shareledger.Register("tool", shareledger.Provider{
 		Label: "Tool",
 		Candidates: func(owner string) []shareledger.Grant {
@@ -3269,14 +3291,22 @@ func init() {
 		},
 		ToMe: func(user string) []shareledger.Grant {
 			var out []shareledger.Grant
-			adopted := LoadAdoptedGlobalTools(nil, user)
+			loadedFrom, ownAll, ownSome := takenToolsView(user)
 			for _, p := range PeerSharedToolsFor(nil, user) {
+				name := p.Tool.Name
 				detail := "Take it from your Tools catalog to load it for your agents."
-				if adopted[p.Tool.Name] {
+				switch other := loadedFrom[name]; {
+				case ownAll[name]:
+					detail = "Your own tool of this name runs instead; rename yours to use this one."
+				case other == p.Owner && ownSome[name]:
+					detail = "Taken: your agents load it, except those that carry your own tool of this name."
+				case other == p.Owner:
 					detail = "Taken: your agents load it."
+				case other != "":
+					detail = "Your agents load " + other + "'s tool of this name instead; take this one from your Tools catalog to switch."
 				}
 				out = append(out, shareledger.Grant{
-					ID: p.Tool.Name, Name: p.Tool.Name, Owner: p.Owner,
+					ID: name, Name: name, Owner: p.Owner,
 					Reach: "Offered to you", Detail: detail,
 				})
 			}
@@ -3285,9 +3315,15 @@ func init() {
 		Manifest: func(owner, id, recipient string) []string {
 			// A shared tool is an offer: it sits in their catalog until they
 			// take it. Somebody who was never told that has a tool their
-			// agents do not load and no reason to look.
-			if LoadAdoptedGlobalTools(nil, recipient)[id] {
+			// agents do not load and no reason to look. "Loads" is the
+			// resolver's answer, not a name on their list: the name may be
+			// pinned to somebody else's tool, or their own tool may hold it.
+			loadedFrom, ownAll, _ := takenToolsView(recipient)
+			if loadedFrom[id] == owner && !ownAll[id] {
 				return nil
+			}
+			if ownAll[id] {
+				return []string{"You have a tool of your own called \"" + id + "\", and yours runs instead of this one; rename yours to use it."}
 			}
 			return []string{"Take \"" + id + "\" from your Tools catalog in Extensions; until you do, your agents do not load it."}
 		},

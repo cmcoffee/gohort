@@ -226,7 +226,15 @@ func (h *machineHost) runToolPhase(ctx context.Context, ph MachinePhase, tool, p
 
 // runDelegatedPhase dispatches one step to another agent.
 func (h *machineHost) runDelegatedPhase(ctx context.Context, ph MachinePhase, ref, prompt string, base PhaseRunner) (string, error) {
-	target, found := findAgentByNameOrID(h.udb, h.user, ref)
+	target, found, err := resolveAgentRef(h.udb, h.user, ref)
+	if err != nil {
+		// Two agents answer to the name. Not the missing-agent case below:
+		// the agent the author meant probably IS here, and doing the step
+		// inline would hide that the machine can no longer tell which one.
+		// Refused, the way a pipeline stage refuses, with the ids to repoint
+		// the step at.
+		return "", Error("step " + ph.Name + ": " + err.Error())
+	}
 	if !found {
 		// Broken-dependency posture: a machine is portable and the agent it
 		// names may simply not exist in this deployment. Run the step inline

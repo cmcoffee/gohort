@@ -160,9 +160,9 @@ func (connectorArtifact) ImportArtifact(db Database, recipe json.RawMessage, own
 // Per-user scope: export needs the owning user; import lands the tool in that
 // user's PENDING pool via QueuePendingTempTool — never active. A tool recipe
 // carries executable code (command_template / script_body / recipe files), so
-// human approval before it can fire is the whole point. QueuePendingTempTool
-// refuses to shadow an already-active tool of the same name (surfaced as a skip)
-// and replaces a same-named pending draft in place.
+// human approval before it can fire is the whole point. An already-active or
+// already-pending tool of the same name is a skip, as preview predicts, and so
+// is a name no authoring path would accept (importRefusal).
 type toolArtifact struct{}
 
 func (toolArtifact) ArtifactType() string { return "tool" }
@@ -289,6 +289,24 @@ func findOwnedTempTool(db Database, name, owner string) (TempTool, bool) {
 	return TempTool{}, false
 }
 
+// importRefusal says why a tool recipe may not be imported under name, or "".
+// The rules every authoring path applies to a new name (tool_def's
+// checkNewToolName): the lower-case snake_case form, not a registered
+// built-in, not a reserved framework name. An import skipped all three, so a
+// bundle could queue a tool called send_message or tool_def, and approving it
+// put a stub in front of the real tool. Asked where both import paths queue
+// (QueuePendingTempToolScoped) and by preview (artifactImportRefuser), so the
+// preview and the import agree.
+func (toolArtifact) importRefusal(name string) string {
+	if !validToolNameStr(name) {
+		return "the tool name must be lower-case letters, digits and underscores (at most 64)"
+	}
+	if _, builtin := LookupChatTool(name); builtin || IsReservedToolName(name) {
+		return "this is the name of a built-in tool; rename the tool in the bundle to import it"
+	}
+	return ""
+}
+
 // IsExportableTool reports whether name resolves to a temp tool owned by owner
 // that the "tool" artifact type can export. It is the predicate another
 // artifact type uses to declare a dependency on a tool it references by name
@@ -311,6 +329,16 @@ func (toolArtifact) ImportArtifact(db Database, recipe json.RawMessage, owner st
 	name := strings.TrimSpace(t.Name)
 	if name == "" {
 		return "", "", Error("missing tool name")
+	}
+	t.Name = name
+	// A same-named tool already waiting for review is skipped, not replaced:
+	// preview says "skip" for it (artifactExists finds pending drafts), and
+	// replacing it swapped the code an administrator may be halfway through
+	// reading, scope and all, while the preview promised nothing would change.
+	for _, p := range LoadPendingTempTools(db, owner) {
+		if p.Tool.Name == name {
+			return name, "a tool with this name is already waiting for approval; approve or reject that one first", nil
+		}
 	}
 	// Lands in the pending pool for review. An already-active same-named tool
 	// makes this return an error (delete-first), which we surface as a skip so
@@ -536,6 +564,9 @@ func (skillArtifact) ImportArtifact(db Database, recipe json.RawMessage, owner s
 	}
 	s.Embedding = nil
 	s.Disabled = true
+	// A collection from the same bundle that landed first under a re-minted id
+	// is what this skill's old id means here (see retargetImportedSkillRefs).
+	s.AttachedCollections = remapImportedCollectionRefs(owner, s.AttachedCollections)
 	// Share state is this install's fact about a record, never part of the
 	// recipe: a list of usernames names strangers here, and SharedFrom only
 	// ever describes a recipient's view copy.
@@ -624,6 +655,8 @@ func (collectionArtifact) ListArtifacts(_ Database) []ArtifactSel {
 		if udb == nil {
 			continue
 		}
+		var mine []Collection
+		named := map[string]int{}
 		for _, k := range udb.Keys(CollectionsTable) {
 			var c Collection
 			if !udb.Get(CollectionsTable, k, &c) {
@@ -632,7 +665,20 @@ func (collectionArtifact) ListArtifacts(_ Database) []ArtifactSel {
 			if c.Owner != u.Username || IsDeploymentScope(c) {
 				continue
 			}
-			out = append(out, ArtifactSel{Type: "collection", Name: c.Name, Owner: u.Username})
+			mine = append(mine, c)
+			named[strings.ToLower(strings.TrimSpace(c.Name))]++
+		}
+		// A name two of them share is selected by id: by name, the export
+		// refuses it as ambiguous (findCollectionForExport), and before that
+		// refusal both selections exported whichever was touched last, so an
+		// account backup silently carried one corpus twice and the other not
+		// at all.
+		for _, c := range mine {
+			sel := c.Name
+			if named[strings.ToLower(strings.TrimSpace(c.Name))] > 1 {
+				sel = c.ID
+			}
+			out = append(out, ArtifactSel{Type: "collection", Name: sel, Owner: u.Username})
 		}
 	}
 	return out
@@ -643,21 +689,32 @@ func (collectionArtifact) ListArtifacts(_ Database) []ArtifactSel {
 // skill's AttachedCollections) are IDs, so the dependency closure and the
 // existence probe address collections the same way humans' export buttons
 // address them by name.
-func findCollectionForExport(owner, nameOrID string) (Collection, bool) {
+//
+// An ID is exact, so it resolves through everything the owner can read. A NAME
+// resolves among the owner's OWN collections only: a colleague's shared
+// "Legal" is theirs to export, and matching it here shipped their corpus under
+// this owner's bundle whenever it was the most recently touched. Two own
+// collections with the name is an error naming both ids, never a silent pick.
+func findCollectionForExport(owner, nameOrID string) (Collection, error) {
 	udb := UserDB(CollectionsDB(), owner)
-	if c, ok := LoadCollection(udb, owner, strings.TrimSpace(nameOrID)); ok {
-		return c, true
+	key := strings.TrimSpace(nameOrID)
+	if c, ok := LoadCollection(udb, owner, key); ok {
+		return c, nil
 	}
-	lower := strings.ToLower(strings.TrimSpace(nameOrID))
-	if lower == "" {
-		return Collection{}, false
+	matches := ownCollectionsNamed(udb, owner, key)
+	switch len(matches) {
+	case 0:
+		return Collection{}, fmt.Errorf("no collection named %q for user %q", key, owner)
+	case 1:
+		return matches[0], nil
 	}
-	for _, c := range ListCollections(udb, owner) {
-		if strings.ToLower(strings.TrimSpace(c.Name)) == lower {
-			return c, true
-		}
+	var ids []string
+	for _, c := range matches {
+		ids = append(ids, c.ID)
 	}
-	return Collection{}, false
+	sort.Strings(ids)
+	return Collection{}, fmt.Errorf("%d collections named %q for user %q (ids %s): export by id",
+		len(matches), key, owner, strings.Join(ids, ", "))
 }
 
 // collectionChunks reads every chunk under the collection's source tag from
@@ -695,9 +752,9 @@ func (collectionArtifact) ExportArtifact(_ Database, name, owner string) (json.R
 	if owner == "" {
 		return nil, Error("collection export requires an owner")
 	}
-	c, ok := findCollectionForExport(owner, name)
-	if !ok {
-		return nil, fmt.Errorf("no collection named %q for user %q", name, owner)
+	c, err := findCollectionForExport(owner, name)
+	if err != nil {
+		return nil, err
 	}
 	pc := PortableCollection{
 		ID:                 c.ID,
@@ -722,7 +779,7 @@ func (collectionArtifact) ExportArtifact(_ Database, name, owner string) (json.R
 	return json.Marshal(pc)
 }
 
-func (collectionArtifact) ImportArtifact(_ Database, recipe json.RawMessage, owner string) (string, string, error) {
+func (collectionArtifact) ImportArtifact(db Database, recipe json.RawMessage, owner string) (string, string, error) {
 	owner = strings.TrimSpace(owner)
 	if owner == "" {
 		return "", "", Error("collection import requires an owner")
@@ -741,27 +798,31 @@ func (collectionArtifact) ImportArtifact(_ Database, recipe json.RawMessage, own
 	}
 	udb := UserDB(base, owner)
 	// The recipe's ID is preserved (it's what skills in the same bundle
-	// reference), so same-ID — including a deployment-scoped one like
-	// deployment-knowledge — skips, same as a name collision.
+	// reference), so an id the importer can already read — including a
+	// deployment-scoped one like deployment-knowledge — skips: the skills
+	// reach that collection as they are. The detail says whose it is, so a
+	// skip onto somebody else's corpus reads as that and not as "you have it".
 	id := strings.TrimSpace(pc.ID)
 	if id == "" {
 		id = UUIDv4()
 	}
-	if _, exists := LoadCollection(udb, owner, id); exists {
-		return name, "a collection with this id already exists", nil
+	if ex, exists := LoadCollection(udb, owner, id); exists {
+		return name, collectionPresentDetail(ex, owner), nil
+	}
+	// A name collides with the importer's OWN collections only. A colleague's
+	// shared "Legal" or the deployment's is not the importer's, and letting it
+	// block the import left them no way to have a "Legal" of their own.
+	if len(ownCollectionsNamed(udb, owner, name)) > 0 {
+		return name, "you already have a collection with this name", nil
 	}
 	// Chunks are stored under the GLOBAL source collection:<id>, so a traveled
 	// ID that some OTHER user's (or a deployment) collection already holds
 	// would write this import's text into their corpus. The ID is kept only
-	// while no collection anywhere uses it; otherwise it is reminted, which
-	// costs only the in-bundle wiring to that one collection.
+	// while no collection anywhere uses it; otherwise it is reminted, and the
+	// old one is kept as ImportedFrom so the bundle's skills can follow it.
+	origin := ""
 	if collectionIDInUse(id) {
-		id = UUIDv4()
-	}
-	for _, c := range ListCollections(udb, owner) {
-		if strings.EqualFold(strings.TrimSpace(c.Name), name) {
-			return name, "a collection with this name already exists", nil
-		}
+		origin, id = id, UUIDv4()
 	}
 	c := Collection{
 		ID:                 id,
@@ -771,13 +832,97 @@ func (collectionArtifact) ImportArtifact(_ Database, recipe json.RawMessage, own
 		FilterRules:        pc.FilterRules,
 		ClassifyOnAutofill: pc.ClassifyOnAutofill,
 		IngestedURLs:       pc.IngestedURLs,
+		ImportedFrom:       origin,
 		Created:            time.Now(),
 	}
 	SaveCollection(udb, c) // always user-scoped on import; admin can re-scope locally
+	if origin != "" {
+		retargetImportedSkillRefs(db, owner, origin, id)
+	}
 	if len(pc.Chunks) > 0 {
 		go ingestImportedCollectionChunks(id, name, pc.Chunks)
 	}
 	return name, "", nil
+}
+
+// collectionPresentDetail is the skip reason when the traveled id is already
+// readable here, naming whose collection that is.
+func collectionPresentDetail(c Collection, owner string) string {
+	switch {
+	case c.Owner == owner:
+		return "a collection with this id already exists"
+	case IsDeploymentScope(c):
+		return fmt.Sprintf("a collection with this id already exists here (the deployment's %q), so this bundle's skills search that one", c.Name)
+	default:
+		return fmt.Sprintf("a collection with this id already exists here (%q, shared with you by %s), so this bundle's skills search that one", c.Name, c.Owner)
+	}
+}
+
+// retargetImportedSkillRefs points the importer's imported skills that name a
+// re-minted collection id at the new one. The bundle machinery hands nothing
+// from one artifact to the next, and the skill normally lands FIRST (the
+// export closure puts a skill before the collections it attaches), so this is
+// the collection's half; remapImportedCollectionRefs is the skill's half for
+// the opposite order.
+//
+// Only DISABLED skills, which is how every import lands: a skill the owner has
+// enabled and is using is never rewired behind their back. And only a
+// reference the owner cannot read, which is every reference to from here, by
+// construction: an id they can read skipped the import before it re-minted.
+func retargetImportedSkillRefs(db Database, owner, from, to string) {
+	for _, s := range LoadSkills(db, owner) {
+		if !s.Disabled {
+			continue
+		}
+		hit := false
+		for i, cid := range s.AttachedCollections {
+			if strings.TrimSpace(cid) == from {
+				s.AttachedCollections[i] = to
+				hit = true
+			}
+		}
+		if !hit {
+			continue
+		}
+		if _, err := SaveSkillAs(db, owner, s, "collection import re-pointed its collection"); err != nil {
+			Log("[artifacts] skill %q: could not re-point collection %s to %s: %v", s.Name, from, to, err)
+			continue
+		}
+		Log("[artifacts] skill %q: collection %s was re-minted on import; now attached to %s", s.Name, from, to)
+	}
+}
+
+// remapImportedCollectionRefs is retargetImportedSkillRefs for a skill that
+// lands AFTER its collection: an attached id the owner cannot read, which one
+// of their own collections was imported from, becomes that collection's id. A
+// readable id is left alone, since it already names a collection they can use.
+func remapImportedCollectionRefs(owner string, ids []string) []string {
+	if len(ids) == 0 {
+		return ids
+	}
+	udb := UserDB(CollectionsDB(), owner)
+	var from map[string]string
+	for i, cid := range ids {
+		cid = strings.TrimSpace(cid)
+		if cid == "" {
+			continue
+		}
+		if _, ok := LoadCollection(udb, owner, cid); ok {
+			continue
+		}
+		if from == nil {
+			from = map[string]string{}
+			for _, c := range ListCollections(udb, owner) {
+				if c.Owner == owner && c.ImportedFrom != "" {
+					from[c.ImportedFrom] = c.ID
+				}
+			}
+		}
+		if to, ok := from[cid]; ok {
+			ids[i] = to
+		}
+	}
+	return ids
 }
 
 // collectionIDInUse reports whether any collection record, in any user's store

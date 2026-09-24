@@ -112,7 +112,7 @@ func TestCollectionArtifact_ImportPreservesIDLandsUserScoped(t *testing.T) {
 	}
 	renamedID, _ := json.Marshal(PortableCollection{ID: "coll-88", Name: "k8s docs"})
 	_, skip, err = collectionArtifact{}.ImportArtifact(nil, renamedID, "bob")
-	if err != nil || !strings.Contains(skip, "name already exists") {
+	if err != nil || !strings.Contains(skip, "collection with this name") {
 		t.Fatalf("same-name import must skip: skip=%q err=%v", skip, err)
 	}
 }
@@ -173,6 +173,167 @@ func TestIngestImportedCollectionChunks_NoEmbeddingBackend(t *testing.T) {
 		}
 		if ch.Date == "" {
 			t.Fatalf("date must be kept or stamped: %+v", ch)
+		}
+	}
+}
+
+// collectionTestUsers registers users on a fresh auth store, which is what the
+// import's id-in-use probe and ListArtifacts enumerate.
+func collectionTestUsers(t *testing.T, users ...string) {
+	t.Helper()
+	adb := &DBase{Store: kvlite.MemStore()}
+	for _, u := range users {
+		adb.Set(AuthTable, "user:"+u, AuthUser{Username: u})
+	}
+	prev := AuthDB
+	AuthDB = func() Database { return adb }
+	t.Cleanup(func() { AuthDB = prev })
+}
+
+// A name is an address among the owner's OWN collections. Carol's shared
+// "Legal" and the deployment's "Handbook" are readable by alice, and by-name
+// export used to ship whichever was touched last under alice's bundle.
+func TestCollectionExportByNameIsOwnOnly(t *testing.T) {
+	collectionTestDB(t)
+	SaveCollection(UserDB(CollectionsDB(), "carol"), Collection{
+		ID: "carol-legal", Owner: "carol", Name: "Legal", AllowedUsers: []string{"alice"},
+	})
+	RootDB.Set(GlobalCollectionsTable, "dep-hb", Collection{ID: "dep-hb", Name: "Handbook", Scope: CollectionScopeDeployment})
+	if _, ok := LoadCollection(UserDB(CollectionsDB(), "alice"), "alice", "carol-legal"); !ok {
+		t.Fatal("setup: the shared collection should be readable by alice")
+	}
+	for _, name := range []string{"Legal", "legal", "Handbook"} {
+		if _, err := (collectionArtifact{}).ExportArtifact(nil, name, "alice"); err == nil {
+			t.Errorf("export of %q by name resolved to a collection alice does not own", name)
+		}
+	}
+	// Her own "Legal" is the one a name means, even when carol's is newer.
+	seedCollection(t, "alice", "alice-legal", "Legal")
+	SaveCollection(UserDB(CollectionsDB(), "carol"), Collection{
+		ID: "carol-legal", Owner: "carol", Name: "Legal", AllowedUsers: []string{"alice"},
+	})
+	recipe, err := collectionArtifact{}.ExportArtifact(nil, "Legal", "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pc PortableCollection
+	_ = json.Unmarshal(recipe, &pc)
+	if pc.ID != "alice-legal" {
+		t.Errorf("by-name export picked %q, want alice's own", pc.ID)
+	}
+	// Two of her own under one name is ambiguous: an error naming both, never
+	// a silent pick.
+	seedCollection(t, "alice", "alice-legal-2", "LEGAL")
+	_, err = collectionArtifact{}.ExportArtifact(nil, "Legal", "alice")
+	if err == nil || !strings.Contains(err.Error(), "alice-legal") || !strings.Contains(err.Error(), "alice-legal-2") {
+		t.Errorf("duplicate own names must refuse, naming the ids: %v", err)
+	}
+	// An id is exact, so it still resolves (a skill attached to a shared
+	// collection is satisfied by it).
+	if _, err := (collectionArtifact{}).ExportArtifact(nil, "alice-legal-2", "alice"); err != nil {
+		t.Errorf("by-id export: %v", err)
+	}
+}
+
+// Two own collections sharing a name are selected by id, or "export all" and
+// the account backup would carry one corpus twice (or now, fail as ambiguous).
+func TestCollectionListArtifactsSelectsDuplicateNamesByID(t *testing.T) {
+	collectionTestDB(t)
+	collectionTestUsers(t, "alice")
+	seedCollection(t, "alice", "c1", "Legal")
+	seedCollection(t, "alice", "c2", "legal")
+	seedCollection(t, "alice", "c3", "Runbooks")
+	got := map[string]bool{}
+	for _, s := range (collectionArtifact{}).ListArtifacts(nil) {
+		got[s.Name] = true
+	}
+	for _, want := range []string{"c1", "c2", "Runbooks"} {
+		if !got[want] {
+			t.Errorf("selection %q missing from %v", want, got)
+		}
+	}
+	b, err := ExportArtifactBundleShallow(RootDB, (collectionArtifact{}).ListArtifacts(nil))
+	if err != nil {
+		t.Fatalf("export all: %v", err)
+	}
+	ids := map[string]bool{}
+	for _, a := range b.Artifacts {
+		var pc PortableCollection
+		_ = json.Unmarshal(a.Recipe, &pc)
+		ids[pc.ID] = true
+	}
+	if len(ids) != 3 {
+		t.Errorf("export all must carry each collection once, got %v", ids)
+	}
+}
+
+// Being shared a colleague's "Legal" (or the deployment carrying one) must not
+// block importing a "Legal" of your own. Only your own name collides.
+func TestCollectionImportNameCollidesWithOwnOnly(t *testing.T) {
+	collectionTestDB(t)
+	SaveCollection(UserDB(CollectionsDB(), "carol"), Collection{
+		ID: "carol-legal", Owner: "carol", Name: "Legal", AllowedUsers: []string{"alice"},
+	})
+	RootDB.Set(GlobalCollectionsTable, "dep-hb", Collection{ID: "dep-hb", Name: "Handbook", Scope: CollectionScopeDeployment})
+	for _, name := range []string{"Legal", "Handbook"} {
+		recipe, _ := json.Marshal(PortableCollection{ID: "new-" + name, Name: name})
+		_, skip, err := collectionArtifact{}.ImportArtifact(nil, recipe, "alice")
+		if err != nil || skip != "" {
+			t.Fatalf("import %q was blocked by somebody else's collection: skip=%q err=%v", name, skip, err)
+		}
+	}
+	recipe, _ := json.Marshal(PortableCollection{ID: "another", Name: "legal"})
+	_, skip, err := collectionArtifact{}.ImportArtifact(nil, recipe, "alice")
+	if err != nil || !strings.Contains(skip, "already have a collection with this name") {
+		t.Fatalf("her own name must still collide: skip=%q err=%v", skip, err)
+	}
+	// A traveled id she can already read skips, and says whose it is.
+	shared, _ := json.Marshal(PortableCollection{ID: "carol-legal", Name: "Something"})
+	_, skip, _ = collectionArtifact{}.ImportArtifact(nil, shared, "alice")
+	if !strings.Contains(skip, "shared with you by carol") {
+		t.Errorf("a skip onto a colleague's collection must say so: %q", skip)
+	}
+}
+
+// When a traveled collection id is somebody else's here, the import re-mints
+// it, and the bundle's skill must follow to the new id in either import order.
+// Left on the old id it searched nothing, and the day that collection's owner
+// shared it with the importer, it would have searched THEIR corpus instead.
+func TestCollectionRemintRepointsTheBundlesSkill(t *testing.T) {
+	for _, collectionFirst := range []bool{false, true} {
+		collectionTestDB(t)
+		collectionTestUsers(t, "alice", "bob")
+		seedCollection(t, "bob", "bobs-coll", "Bob's notes")
+
+		skill, _ := json.Marshal(SkillRecord{Name: "law", Description: "Use for case law.", AttachedCollections: []string{"bobs-coll"}})
+		coll, _ := json.Marshal(PortableCollection{ID: "bobs-coll", Name: "Case Law"})
+		arts := []PortableArtifact{{Type: "skill", Name: "law", Recipe: skill}, {Type: "collection", Name: "bobs-coll", Recipe: coll}}
+		if collectionFirst {
+			arts[0], arts[1] = arts[1], arts[0]
+		}
+		data, _ := json.Marshal(ArtifactBundle{Bundle: ArtifactBundleFormat, Artifacts: arts})
+		res, err := ImportArtifactBundleAsUser(RootDB, data, "alice")
+		if err != nil || res.Imported != 2 {
+			t.Fatalf("collectionFirst=%v: import: %+v err=%v", collectionFirst, res, err)
+		}
+		var mine Collection
+		for _, c := range ListCollections(UserDB(CollectionsDB(), "alice"), "alice") {
+			if c.Name == "Case Law" {
+				mine = c
+			}
+		}
+		if mine.ID == "" || mine.ID == "bobs-coll" {
+			t.Fatalf("collectionFirst=%v: expected a re-minted import, got %+v", collectionFirst, mine)
+		}
+		s, ok := FindSkillByName(RootDB, "alice", "law")
+		if !ok {
+			t.Fatalf("collectionFirst=%v: skill did not land", collectionFirst)
+		}
+		if len(s.AttachedCollections) != 1 || s.AttachedCollections[0] != mine.ID {
+			t.Errorf("collectionFirst=%v: skill attaches %v, want the imported copy %s", collectionFirst, s.AttachedCollections, mine.ID)
+		}
+		if len(res.Warnings) != 0 {
+			t.Errorf("collectionFirst=%v: a re-pointed skill has nothing missing: %v", collectionFirst, res.Warnings)
 		}
 	}
 }
