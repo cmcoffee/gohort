@@ -16,8 +16,23 @@ import (
 // write a schema and a fatal one; the default belongs in the description, with
 // the caller omitting the param.
 //
+// errorReporter is the slice of testing.T the check needs, so the rule can be
+// pinned against a recorder rather than a hand-built testing.T (whose Failed()
+// also reports race-detector hits from anywhere in the binary).
+type errorReporter interface {
+	Helper()
+	Errorf(format string, args ...any)
+}
+
+// enumRecorder counts reported errors without failing the enclosing test.
+type enumRecorder struct{ errors int }
+
+func (r *enumRecorder) Helper()               {}
+func (r *enumRecorder) Errorf(string, ...any) { r.errors++ }
+func (r *enumRecorder) Failed() bool          { return r.errors > 0 }
+
 // walkToolParams checks every param a tool declares, nested objects included.
-func assertNoEmptyEnumValue(t *testing.T, toolName string, params map[string]ToolParam) {
+func assertNoEmptyEnumValue(t errorReporter, toolName string, params map[string]ToolParam) {
 	t.Helper()
 	for name, p := range params {
 		for i, v := range p.Enum {
@@ -45,7 +60,7 @@ func TestEmptyEnumValueIsRejectedByTheCheck(t *testing.T) {
 	fake := map[string]ToolParam{
 		"surface": {Type: "string", Enum: []string{"", "session"}},
 	}
-	sub := &testing.T{}
+	sub := &enumRecorder{}
 	assertNoEmptyEnumValue(sub, "fake_tool", fake)
 	if !sub.Failed() {
 		t.Fatal("the check does not actually catch an empty enum value")
@@ -54,7 +69,7 @@ func TestEmptyEnumValueIsRejectedByTheCheck(t *testing.T) {
 	ok := map[string]ToolParam{
 		"surface": {Type: "string", Enum: []string{"session", "cortex"}},
 	}
-	sub2 := &testing.T{}
+	sub2 := &enumRecorder{}
 	assertNoEmptyEnumValue(sub2, "fake_tool", ok)
 	if sub2.Failed() {
 		t.Error("the check fires on a valid enum")

@@ -9,6 +9,7 @@ package core
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -142,11 +143,18 @@ func TestAFanoutBodyCanRunAChildRunPerItem(t *testing.T) {
 		t.Fatalf("a fanout body of child runs should validate: %v", err)
 	}
 	rec := &recorder{reply: func(string, string, int) string { return `{"list": ["one", "two"]}` }}
-	var ran []string
+	// Fanout branches call the hook at the same time, so the record of
+	// what ran is guarded.
+	var (
+		mu  sync.Mutex
+		ran []string
+	)
 	out, _, err := new(AppCore).RunPipelineDefHooks(context.Background(), def, "seed", PipelineHooks{
 		Dispatch: rec.fn,
 		Machine: func(_ context.Context, _, input string) (string, map[string]any, error) {
+			mu.Lock()
 			ran = append(ran, input)
+			mu.Unlock()
 			return "filled: " + input, nil, nil
 		},
 	})

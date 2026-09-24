@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -74,11 +75,15 @@ func TestSendGuardPerRecipientAndCrossRound(t *testing.T) {
 		}
 		return nil
 	})
+	// Round 1's two calls dispatch in parallel, so the tally is guarded.
+	var mu sync.Mutex
 	seen := map[string]int{}
 	sendTool := AgentToolDef{
 		Tool: Tool{Name: "message_contact", Parameters: map[string]ToolParam{"to": {Type: "string"}, "text": {Type: "string"}}},
 		Handler: func(ctx context.Context, args map[string]any) (string, error) {
+			mu.Lock()
 			seen[fmt.Sprint(args["to"])]++
+			mu.Unlock()
 			return "sent", nil
 		},
 	}
