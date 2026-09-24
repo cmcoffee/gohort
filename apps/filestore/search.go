@@ -26,6 +26,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/cmcoffee/gohort/core/bundle"
 )
 
 // Caps. These are deliberately not configurable.
@@ -35,7 +37,9 @@ import (
 // with it. An operator who could raise them would raise them exactly
 // once, in the moment they were most sure they needed the whole file.
 const (
-	maxMatches     = 60      // hits returned by one search
+	maxMatches     = 60      // hits returned by one search, unless the caller asks for more
+	maxMatchesCeil = 200     // the most a caller may ask for; see SearchOpts.Max
+	maxCountFiles  = 200     // files listed by a count-only search
 	maxLineRunes   = 400     // a single line is truncated past this
 	maxContext     = 8       // lines either side of a hit
 	maxWindowLines = 400     // lines one read may return
@@ -93,9 +97,29 @@ type SearchOpts struct {
 	Pattern    string // regular expression; a plain string is a valid one
 	Glob       string // optional filename filter, e.g. "*.log"
 	IgnoreCase bool
-	Since      time.Time // skip files not modified since
-	Context    int       // lines either side; clamped to maxContext
-	Max        int       // hits; clamped to maxMatches
+	// Since and Until are a time window applied to LINES, by the timestamp
+	// each line carries. A line with none (the body of a stack trace, a
+	// wrapped message) inherits the last timestamp above it in its file, so a
+	// window never cuts an exception off from the line that dated it; lines
+	// before a file's first timestamp are outside any window. A file whose
+	// modification time is before Since is skipped unread.
+	Since, Until time.Time
+	Context      int // lines either side; clamped to maxContext
+	// Max is how many matches the reply shows: maxMatches when unset, never
+	// more than maxMatchesCeil. A caller raises it for a narrow, deliberate
+	// search; it is not a way to read a noisy file whole.
+	Max int
+	// PerFile caps how many of ONE file's matches may be shown, so a noisy
+	// file cannot take the whole budget from the others. Zero means no
+	// per-file cap. Lifted when only one file is searched: the cap exists to
+	// share the budget, and there is nobody to share it with.
+	PerFile int
+	// Skip drops this many matches from the front of the result, for paging:
+	// the same search with Skip set to what was shown returns the next page.
+	Skip int
+	// CountOnly returns per-file match totals and no lines at all, over every
+	// file, with no Max. It answers how OFTEN, which a capped list cannot.
+	CountOnly bool
 	// Deadline bounds the whole search. Zero uses searchDeadline. A
 	// search that runs out of time returns what it found and says so
 	// rather than failing: partial evidence with a warning beats no
@@ -103,19 +127,38 @@ type SearchOpts struct {
 	Deadline time.Duration
 }
 
+// FileTally is one searched file's count: every match in it, and how many of
+// those were let into the result (the per-file cap is the difference).
+type FileTally struct {
+	File    string `json:"file"`
+	Matches int    `json:"matches"`
+	Kept    int    `json:"kept"`
+}
+
 // SearchResult is one search's answer plus what it did NOT do.
 //
-// Both truncations are reported, and they mean different things. Capped
-// is "there are more matches than we return"; Stopped is "we gave up
-// before looking everywhere". An investigator who reads a partial result
-// as a complete one concludes something is absent when nobody looked.
+// Every truncation is reported, and they mean different things. Capped is
+// "there are more matches than we return", and it says WHERE: CutInFiles are
+// the files that had more than PerFile, Unsearched how many files the global
+// cap left unread. Stopped is "we gave up before looking everywhere". An
+// investigator who reads a partial result as a complete one concludes
+// something is absent when nobody looked.
 type SearchResult struct {
-	Matches []Match
-	Capped  bool
-	Stopped string // empty when the search finished; otherwise why it did not
-	Scanned int    // files actually read
-	Bytes   int64  // bytes read across those files
-	Elapsed time.Duration
+	Matches    []Match
+	Capped     bool
+	Stopped    string // empty when the search finished; otherwise why it did not
+	Scanned    int    // files actually read
+	Considered int    // files the search could have read
+	Bytes      int64  // bytes read across those files
+	Elapsed    time.Duration
+	Max        int         // the limits that applied, so the reply can state them
+	PerFile    int         // 0 when no per-file cap applied
+	Skipped    int         // matches dropped by Skip
+	Tallies    []FileTally // files with at least one match, in search order (count-only: by count)
+	CutInFiles []FileTally // files that had more matches than PerFile allowed
+	Unsearched int         // files the global cap left unread
+	Untimed    int         // files left out of a time window because they carry no timestamps
+	Total      int         // matches counted across the files searched
 }
 
 // resolveUnder joins rel to root and proves the result is still inside
@@ -250,10 +293,11 @@ func (g gzReadCloser) Close() error {
 
 // Search runs a pattern across a root and returns bounded matches.
 //
-// Returns the matches plus whether the cap was hit, because "60 matches"
-// and "the first 60 of many" are different answers and an investigator
-// acting on the first as though it were the second draws a conclusion
-// from a truncated set.
+// Returns the matches plus whether and where a cap was hit, because "60
+// matches" and "the first 60 of many" are different answers and an
+// investigator acting on the first as though it were the second draws a
+// conclusion from a truncated set.
+//
 // Search takes a context because its own deadline is a ceiling, not an answer
 // to a person. The default budget is fifteen minutes and the agent loop only
 // tests for cancellation between rounds, so before this a Stop pressed during a
@@ -275,10 +319,23 @@ func Search(ctx context.Context, root string, opts SearchOpts) (SearchResult, er
 	if err != nil {
 		return res, fmt.Errorf("that pattern is not a valid regular expression: %w", err)
 	}
+	if !opts.Since.IsZero() && !opts.Until.IsZero() && opts.Until.Before(opts.Since) {
+		return res, fmt.Errorf("the time window ends before it starts")
+	}
 	ctxLines := clamp(opts.Context, 0, maxContext)
+	if opts.CountOnly {
+		ctxLines = 0
+	}
 	limit := opts.Max
-	if limit <= 0 || limit > maxMatches {
+	if limit <= 0 {
 		limit = maxMatches
+	}
+	if limit > maxMatchesCeil {
+		limit = maxMatchesCeil
+	}
+	skip := opts.Skip
+	if skip < 0 {
+		skip = 0
 	}
 
 	files, err := List(root, opts.Glob)
@@ -286,6 +343,13 @@ func Search(ctx context.Context, root string, opts SearchOpts) (SearchResult, er
 		return res, err
 	}
 	rootAbs, _ := filepath.EvalSymlinks(root)
+	res.Considered = len(files)
+	res.Max = limit
+	perFile := opts.PerFile
+	if perFile <= 0 || len(files) <= 1 || opts.CountOnly {
+		perFile = 0
+	}
+	res.PerFile = perFile
 
 	budget := opts.Deadline
 	if budget <= 0 {
@@ -294,14 +358,16 @@ func Search(ctx context.Context, root string, opts SearchOpts) (SearchResult, er
 	started := time.Now()
 	deadline := started.Add(budget)
 	var scanned int64
+	win := window{since: opts.Since, until: opts.Until}
 
-	for _, lf := range files {
-		if len(res.Matches) >= limit {
+	for i, lf := range files {
+		if !opts.CountOnly && len(res.Matches) >= limit {
 			res.Capped = true
+			res.Unsearched = len(files) - i
 			break
 		}
 		if !opts.Since.IsZero() && lf.Modified.Before(opts.Since) {
-			continue
+			continue // written to for the last time before the window opens
 		}
 		if lf.Size > maxFileBytes {
 			continue
@@ -324,13 +390,45 @@ func Search(ctx context.Context, root string, opts SearchOpts) (SearchResult, er
 			res.Stopped = fmt.Sprintf("stopped after reading %d MB, at %d of %d files", scanned>>20, res.Scanned, len(files))
 			break
 		}
-		got, hitCap, read := searchFile(ctx, filepath.Join(rootAbs, lf.Rel), lf.Rel, re, ctxLines, limit-len(res.Matches), deadline)
-		res.Matches = append(res.Matches, got...)
+		path := filepath.Join(rootAbs, lf.Rel)
+		fw := win
+		if win.set() {
+			fw.format, fw.year = detectFileFormat(path, lf.Modified)
+		}
+		room := limit - len(res.Matches)
+		if opts.CountOnly {
+			room = 0
+		}
+		fr := searchFile(ctx, path, lf.Rel, re, ctxLines, fileLimits{keep: perFile, skip: skip, room: room}, fw, deadline)
+		res.Matches = append(res.Matches, fr.shown...)
+		skip -= fr.skipped
+		res.Skipped += fr.skipped
 		res.Scanned++
-		scanned += read
-		if hitCap {
+		scanned += fr.read
+		res.Total += fr.total
+		if win.set() && !fr.timed {
+			res.Untimed++
+		}
+		if fr.total > 0 {
+			t := FileTally{File: lf.Rel, Matches: fr.total, Kept: fr.kept}
+			res.Tallies = append(res.Tallies, t)
+			if perFile > 0 && fr.total > perFile {
+				res.CutInFiles = append(res.CutInFiles, t)
+			}
+		}
+		if fr.stopped {
+			res.Stopped = fmt.Sprintf("stopped inside %s after %s, having read %d of %d files", lf.Rel, time.Since(started).Round(time.Second), res.Scanned, len(files))
+			break
+		}
+		if !opts.CountOnly && fr.overflow {
 			res.Capped = true
 		}
+	}
+	if len(res.CutInFiles) > 0 {
+		res.Capped = true
+	}
+	if opts.CountOnly {
+		sort.SliceStable(res.Tallies, func(i, j int) bool { return res.Tallies[i].Matches > res.Tallies[j].Matches })
 	}
 	// A cancel inside the LAST file leaves the loop by its own condition, so
 	// the error has to be asked for again on the way out or a stopped search
@@ -343,47 +441,105 @@ func Search(ctx context.Context, root string, opts SearchOpts) (SearchResult, er
 	return res, nil
 }
 
-// searchFile scans one file, keeping a small ring of preceding lines so a
-// hit can carry its context without a second pass over the file.
-func searchFile(ctx context.Context, path, rel string, re *regexp.Regexp, ctxLines, limit int, deadline time.Time) ([]Match, bool, int64) {
-	if limit <= 0 {
-		return nil, true, 0
+// window is a search's time window, with what one file needs to read it.
+type window struct {
+	since, until time.Time
+	format       string // the file's detected log format
+	year         int    // for a format that carries no year (syslog)
+}
+
+func (w window) set() bool { return !w.since.IsZero() || !w.until.IsZero() }
+
+// holds reports whether a line dated t is inside the window. A zero t (no
+// timestamp seen yet in the file) is outside any window.
+func (w window) holds(t time.Time) bool {
+	if t.IsZero() {
+		return false
 	}
+	if !w.since.IsZero() && t.Before(w.since) {
+		return false
+	}
+	return w.until.IsZero() || !t.After(w.until)
+}
+
+// detectFileFormat reads the head of a file to decide how its lines are
+// dated, and supplies the year a syslog line leaves out from when the file
+// was last written.
+func detectFileFormat(path string, modified time.Time) (string, int) {
 	rc, err := open(path)
 	if err != nil {
-		return nil, false, 0
+		return bundle.FormatText, modified.Year()
 	}
 	defer rc.Close()
-	var read int64
+	sc := bufio.NewScanner(rc)
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	var sample []string
+	for len(sample) < 60 && sc.Scan() {
+		sample = append(sample, sc.Text())
+	}
+	return bundle.DetectFormat(sample), modified.Year()
+}
+
+// fileLimits is what one file may contribute: keep caps the matches it lets
+// into the stream (0 = no cap), skip is how many stream matches are still to
+// be dropped for paging, room is how many may still be shown.
+type fileLimits struct {
+	keep, skip, room int
+}
+
+// fileResult is one file's part of a search.
+type fileResult struct {
+	shown    []Match
+	total    int  // every match in the file
+	kept     int  // matches let into the stream (shown + skipped)
+	skipped  int  // stream matches dropped for paging
+	overflow bool // stream matches this file had beyond the room left
+	timed    bool // the file carried at least one timestamp
+	stopped  bool // the deadline or a cancel cut the file short
+	read     int64
+}
+
+// searchFile scans one file, keeping a small ring of preceding lines so a
+// hit can carry its context without a second pass over the file. It reads
+// the whole file even once nothing more will be shown, because the COUNT is
+// part of the answer: "15 shown of 340" needs the 340.
+func searchFile(ctx context.Context, path, rel string, re *regexp.Regexp, ctxLines int, lim fileLimits, win window, deadline time.Time) fileResult {
+	var fr fileResult
+	rc, err := open(path)
+	if err != nil {
+		return fr
+	}
+	defer rc.Close()
 
 	sc := bufio.NewScanner(rc)
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 
-	var out []Match
 	var ring []string
-	// pending tracks hits still collecting their trailing context.
+	// pending tracks shown hits still collecting their trailing context.
 	type pending struct {
 		idx  int
 		left int
 	}
 	var waiting []pending
+	var lineTime time.Time
 
 	lineNo := 0
 	for sc.Scan() {
 		lineNo++
-		read += int64(len(sc.Bytes())) + 1
+		fr.read += int64(len(sc.Bytes())) + 1
 		// One clock read per 4096 lines rather than per line: the check
 		// has to be cheap enough that it is never the reason to skip it.
 		// A .gz that decompresses to something enormous is caught here
 		// and nowhere else — its on-disk size passed the file cap.
 		if lineNo%4096 == 0 && (time.Now().After(deadline) || ctx.Err() != nil) {
-			return out, true, read
+			fr.stopped = true
+			return fr
 		}
 		line := truncateRunes(sc.Text(), maxLineRunes)
 
 		for i := 0; i < len(waiting); {
 			w := waiting[i]
-			out[w.idx].After = append(out[w.idx].After, line)
+			fr.shown[w.idx].After = append(fr.shown[w.idx].After, line)
 			w.left--
 			if w.left == 0 {
 				waiting = append(waiting[:i], waiting[i+1:]...)
@@ -393,21 +549,35 @@ func searchFile(ctx context.Context, path, rel string, re *regexp.Regexp, ctxLin
 			i++
 		}
 
-		if re.MatchString(line) && len(out) < limit {
-			m := Match{File: rel, Line: lineNo, Text: line}
-			if ctxLines > 0 && len(ring) > 0 {
-				m.Before = append(m.Before, ring...)
+		inWindow := true
+		if win.set() {
+			if ts, ok := bundle.ParseTime(win.format, win.year, line); ok {
+				lineTime = ts
+				fr.timed = true
 			}
-			out = append(out, m)
-			if ctxLines > 0 {
-				waiting = append(waiting, pending{idx: len(out) - 1, left: ctxLines})
-			}
-			if len(out) >= limit {
-				// Keep scanning only long enough to finish the trailing
-				// context already promised, then stop.
-				if len(waiting) == 0 {
-					return out, true, read
+			inWindow = win.holds(lineTime)
+		}
+
+		if inWindow && re.MatchString(line) {
+			fr.total++
+			switch {
+			case lim.keep > 0 && fr.kept >= lim.keep:
+				// Past this file's share: counted, not kept.
+			case fr.skipped < lim.skip:
+				fr.kept++
+				fr.skipped++
+			case len(fr.shown) < lim.room:
+				fr.kept++
+				m := Match{File: rel, Line: lineNo, Text: line}
+				if ctxLines > 0 && len(ring) > 0 {
+					m.Before = append(m.Before, ring...)
 				}
+				fr.shown = append(fr.shown, m)
+				if ctxLines > 0 {
+					waiting = append(waiting, pending{idx: len(fr.shown) - 1, left: ctxLines})
+				}
+			default:
+				fr.overflow = true
 			}
 		}
 
@@ -418,7 +588,7 @@ func searchFile(ctx context.Context, path, rel string, re *regexp.Regexp, ctxLin
 			}
 		}
 	}
-	return out, len(out) >= limit, read
+	return fr
 }
 
 // Read returns a window of lines around a point in one file.
@@ -639,4 +809,53 @@ func EnsureSub(root, within string) (string, error) {
 		return "", fmt.Errorf("that subfolder resolves outside the store")
 	}
 	return resolved, nil
+}
+
+// FileSpan is the first and last timestamp one file carries, read from its
+// head and its tail rather than the whole of it, so a listing can say what
+// period each file covers without a search. lastKnown is false for a
+// compressed file, whose end cannot be reached without reading all of it.
+// ok is false when the head carries no timestamp at all.
+func FileSpan(root string, lf LogFile) (first, last time.Time, lastKnown, ok bool) {
+	rootAbs, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return
+	}
+	path := filepath.Join(rootAbs, lf.Rel)
+	format, year := detectFileFormat(path, lf.Modified)
+	rc, err := open(path)
+	if err != nil {
+		return
+	}
+	sc := bufio.NewScanner(rc)
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for n := 0; n < 500 && sc.Scan(); n++ {
+		if ts, found := bundle.ParseTime(format, year, sc.Text()); found {
+			first, ok = ts, true
+			break
+		}
+	}
+	rc.Close()
+	if !ok || lf.Gzipped {
+		return
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	const tail = 256 << 10
+	if lf.Size > tail {
+		if _, err := f.Seek(lf.Size-tail, io.SeekStart); err != nil {
+			return
+		}
+	}
+	sc = bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for sc.Scan() {
+		if ts, found := bundle.ParseTime(format, year, sc.Text()); found {
+			last, lastKnown = ts, true
+		}
+	}
+	return
 }

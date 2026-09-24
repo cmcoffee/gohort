@@ -264,13 +264,29 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 					return "That subfolder has no files in it.", nil
 				}
 				var b strings.Builder
-				fmt.Fprintf(&b, "Files in %s, newest first:\n", within)
+				fmt.Fprintf(&b, "Files in %s, newest first, with the period each one covers:\n", within)
+				// What period each file covers, from its first and last
+				// timestamp, so a question about one day can go to the files
+				// that hold it. Bounded by a clock: a head and a tail per file
+				// is cheap, but not free across hundreds of files on a slow
+				// disk, and the listing must come back.
+				spanBudget := time.Now().Add(10 * time.Second)
+				spansCut := false
 				for i, f := range files {
 					if i >= 200 {
 						fmt.Fprintf(&b, "…and %d more.\n", len(files)-i)
 						break
 					}
-					fmt.Fprintf(&b, "- %s: %s, %s\n", f.Rel, HumanSize(f.Size), f.Modified.Format("2006-01-02 15:04"))
+					span := ""
+					if time.Now().Before(spanBudget) {
+						span = describeSpan(dir, f)
+					} else {
+						spansCut = true
+					}
+					fmt.Fprintf(&b, "- %s: %s, %s%s\n", f.Rel, HumanSize(f.Size), f.Modified.Format("2006-01-02 15:04"), span)
+				}
+				if spansCut {
+					b.WriteString("(Covered periods were not read for the files after the time budget ran out; list a narrower subfolder for those.)\n")
 				}
 				return b.String(), nil
 			},
@@ -278,13 +294,19 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 		{
 			Tool: Tool{
 				Name:        "search_" + slug,
-				Description: fmt.Sprintf("Search the %q file store for a pattern, returning matching lines with a few lines of context.%s This is a regular-expression search over raw lines, NOT a semantic one: search for what would literally BE in the text (an error string, an id, a stack frame, a config key), not for a description of it. Compressed .gz files are searched too. Results are capped, and the reply says so when the cap was hit, which matters, because a capped result cannot tell you how OFTEN something occurs.", label, about),
+				Description: fmt.Sprintf("Search the %q file store for a pattern, returning matching lines with a few lines of context.%s This is a regular-expression search over raw lines, NOT a semantic one: search for what would literally BE in the text (an error string, an id, a stack frame, a config key), not for a description of it. Compressed .gz files are searched too. Results are capped: each file contributes at most per_file matches so one noisy file cannot crowd out the rest, and the reply says where anything was cut. To learn how OFTEN something occurs, or whether it occurs at all, use count=true: per-file totals over every file, no lines.", label, about),
 				Parameters: map[string]ToolParam{
 					"pattern":     {Type: "string", Description: "A regular expression. A plain string is a valid one. Prefer something distinctive over something common."},
 					"within":      {Type: "string", Description: "Optional subfolder to search. Omit to search the whole store. Use list_" + slug + " to see what is there."},
 					"file_glob":   {Type: "string", Description: "Optional filename filter, e.g. \"*.log\" or \"catalina*\". Narrows a large tree."},
 					"ignore_case": {Type: "boolean", Description: "Match case-insensitively. Default false: use it when hunting a word, not when hunting an identifier."},
 					"context":     {Type: "number", Description: "Lines either side of each hit (0-8, default 2)."},
+					"since":       {Type: "string", Description: "Optional start of a time window, e.g. \"2026-08-17\" or \"2026-08-17 02:00:00\". Applied to each line's own timestamp; a line with none (a traceback line) takes the time of the last dated line above it. Use this rather than putting dates in the pattern."},
+					"until":       {Type: "string", Description: "Optional end of the time window, same formats as since."},
+					"count":       {Type: "boolean", Description: "Return per-file match totals only, no lines, over every file with no match cap. The cheap way to answer how often, or whether at all."},
+					"max_matches": {Type: "number", Description: fmt.Sprintf("How many matches to show (default %d, at most %d). Raise it for a narrow, deliberate search.", maxMatches, maxMatchesCeil)},
+					"per_file":    {Type: "number", Description: fmt.Sprintf("How many matches one file may contribute (default %d). Lifted automatically when only one file is searched.", defaultPerFile)},
+					"skip":        {Type: "number", Description: "Skip this many matches, for paging: repeat the same search with skip set to the matches already seen to get the next page."},
 				},
 				Required: []string{"pattern"},
 				Caps:     []Capability{CapRead},
@@ -298,16 +320,43 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 				if n, ok := numArg(args, "context"); ok {
 					ctxLines = n
 				}
-				res, err := Search(sess.Context(), dir, SearchOpts{
+				opts := SearchOpts{
 					Pattern:    stringArg(args, "pattern"),
 					Glob:       stringArg(args, "file_glob"),
 					IgnoreCase: boolArg(args, "ignore_case"),
 					Context:    ctxLines,
-				})
+					CountOnly:  boolArg(args, "count"),
+					PerFile:    defaultPerFile,
+				}
+				if n, ok := numArg(args, "max_matches"); ok {
+					opts.Max = n
+				}
+				if n, ok := numArg(args, "per_file"); ok && n > 0 {
+					opts.PerFile = n
+				}
+				if n, ok := numArg(args, "skip"); ok {
+					opts.Skip = n
+				}
+				if opts.Since, err = ParseBundleArgTime(stringArg(args, "since")); err != nil {
+					return "", err
+				}
+				if opts.Until, err = ParseBundleArgTime(stringArg(args, "until")); err != nil {
+					return "", err
+				}
+				res, err := Search(sess.Context(), dir, opts)
 				if err != nil {
 					return "", err
 				}
+				if opts.CountOnly {
+					return renderCounts(res, opts.Pattern), nil
+				}
 				if len(res.Matches) == 0 {
+					if res.Skipped > 0 {
+						return fmt.Sprintf("No more matches: all %d were already paged past (skip=%d).", res.Skipped, opts.Skip), nil
+					}
+					if res.Untimed > 0 && res.Untimed == res.Scanned {
+						return fmt.Sprintf("Nothing matched inside the time window, but none of the %d file(s) searched carry timestamps the window could be applied to. Search again without since/until.", res.Untimed), nil
+					}
 					// A search that ran out of time and found nothing is
 					// NOT "nothing matched" — saying so would report an
 					// absence nobody established.
@@ -359,6 +408,48 @@ func (s storeSource) itemTools(sess *ToolSession, user, itemID string) []AgentTo
 	}
 }
 
+// describeSpan is the covered-period suffix of one listing line.
+func describeSpan(dir string, f LogFile) string {
+	first, last, lastKnown, ok := FileSpan(dir, f)
+	switch {
+	case !ok:
+		return ", no timestamps"
+	case !lastKnown:
+		return ", from " + first.Format("2006-01-02 15:04:05") + " (compressed: its end was not read)"
+	default:
+		return ", covers " + first.Format("2006-01-02 15:04:05") + " to " + last.Format("2006-01-02 15:04:05")
+	}
+}
+
+// defaultPerFile is how many matches one file contributes when the caller
+// does not say. A quarter of the default budget, so at least four files get a
+// look before any one of them fills it.
+const defaultPerFile = maxMatches / 4
+
+// renderCounts is the count-only answer: per-file totals, busiest first.
+func renderCounts(res SearchResult, pattern string) string {
+	var b strings.Builder
+	if res.Total == 0 {
+		fmt.Fprintf(&b, "No matches for %q in %d of %d files searched.\n", pattern, res.Scanned, res.Considered)
+	} else {
+		fmt.Fprintf(&b, "%d matches for %q in %d file(s), of %d searched (%d in scope):\n", res.Total, pattern, len(res.Tallies), res.Scanned, res.Considered)
+		for i, t := range res.Tallies {
+			if i == maxCountFiles {
+				fmt.Fprintf(&b, "...and %d more file(s) with matches, not listed.\n", len(res.Tallies)-i)
+				break
+			}
+			fmt.Fprintf(&b, "%7d  %s\n", t.Matches, t.File)
+		}
+	}
+	if res.Untimed > 0 {
+		fmt.Fprintf(&b, "%d file(s) carry no timestamps, so the time window left them out.\n", res.Untimed)
+	}
+	if res.Stopped != "" {
+		b.WriteString("INCOMPLETE: " + res.Stopped + ". Totals cover only what was read.\n")
+	}
+	return b.String()
+}
+
 // renderMatches formats hits for a model: grouped by file, line-numbered,
 // and explicit about truncation.
 func renderMatches(res SearchResult) string {
@@ -384,8 +475,35 @@ func renderMatches(res SearchResult) string {
 	if res.Elapsed > 5*time.Second {
 		fmt.Fprintf(&b, "\n(read %d files, %d MB, in %s)\n", res.Scanned, res.Bytes>>20, res.Elapsed.Round(time.Second))
 	}
-	if res.Capped {
-		b.WriteString("\n(result cap reached: these are the first matches, not all of them. Narrow the pattern or the file_glob before concluding anything about how often this occurs.)\n")
+	shownFrom := res.Skipped + 1
+	fmt.Fprintf(&b, "\nShowing matches %d-%d of %d counted in %d of %d files searched. Limits: max_matches=%d",
+		shownFrom, res.Skipped+len(res.Matches), res.Total, res.Scanned, res.Considered, res.Max)
+	if res.PerFile > 0 {
+		fmt.Fprintf(&b, ", per_file=%d", res.PerFile)
+	}
+	b.WriteString(".\n")
+	// WHERE a cut happened, because the two call for different next steps:
+	// a cut inside a file is read by narrowing to that file, a cut across
+	// files by counting or paging.
+	if len(res.CutInFiles) > 0 {
+		var parts []string
+		for i, t := range res.CutInFiles {
+			if i == 8 {
+				parts = append(parts, fmt.Sprintf("and %d more", len(res.CutInFiles)-i))
+				break
+			}
+			parts = append(parts, fmt.Sprintf("%s (%d of %d)", t.File, t.Kept, t.Matches))
+		}
+		fmt.Fprintf(&b, "Cut WITHIN files by per_file: %s. Search one of them with file_glob to see all its matches; the per-file cap lifts for a single file.\n", strings.Join(parts, ", "))
+	}
+	if res.Unsearched > 0 {
+		fmt.Fprintf(&b, "Cut ACROSS files: max_matches was reached and %d file(s) were not searched, so nothing here says how often this occurs in them. Use count=true for totals everywhere, or skip=%d for the next page.\n",
+			res.Unsearched, res.Skipped+len(res.Matches))
+	} else if res.Capped && len(res.CutInFiles) == 0 {
+		fmt.Fprintf(&b, "Cut at max_matches: there are more matches than shown. Use skip=%d for the next page, or count=true for totals.\n", res.Skipped+len(res.Matches))
+	}
+	if res.Untimed > 0 {
+		fmt.Fprintf(&b, "%d file(s) carry no timestamps, so the time window left them out.\n", res.Untimed)
 	}
 	// Different sentence from the cap, deliberately. The cap means there
 	// are more matches; this means part of the store was never read, so
