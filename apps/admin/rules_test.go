@@ -132,3 +132,41 @@ func TestTheAlwaysListOffersBreachModes(t *testing.T) {
 		t.Errorf("the field should carry its modes to the page: %s", raw)
 	}
 }
+
+// How carefully the Always rules are checked, and what a failed check does,
+// save beside the rules. A post carrying only the rules leaves them alone.
+func TestGovernanceRuleCheckingSettings(t *testing.T) {
+	store := &DBase{Store: kvlite.MemStore()}
+	SetPromptOverrideDB(store)
+	t.Cleanup(func() { SetPromptOverrideDB(nil) })
+	a := &AdminApp{db: &DBase{Store: kvlite.MemStore()}}
+	mux := http.NewServeMux()
+	a.registerRulesRoutes(mux)
+	call := func(method, body string) string {
+		t.Helper()
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest(method, "/api/global-rules", strings.NewReader(body)))
+		if w.Code/100 != 2 {
+			t.Fatalf("%s: %d %s", method, w.Code, w.Body.String())
+		}
+		return w.Body.String()
+	}
+	if got := call("GET", ""); !strings.Contains(got, `"depth":"standard"`) || !strings.Contains(got, `"if_unchecked":"block"`) {
+		t.Fatalf("defaults should be standard and block: %s", got)
+	}
+	call("POST", `{"rules":"Never discuss the lunar calendar.","depth":"thorough","if_unchecked":"allow"}`)
+	if rules.GlobalRulesDepth() != rules.RuleDepthThorough || !rules.GlobalRulesFailOpen() {
+		t.Fatalf("settings not saved: %s %v", rules.GlobalRulesDepth(), rules.GlobalRulesFailOpen())
+	}
+	call("POST", `{"rules":"Never discuss the lunar calendar."}`)
+	if rules.GlobalRulesDepth() != rules.RuleDepthThorough || !rules.GlobalRulesFailOpen() {
+		t.Error("a post of the rules alone reset how they are checked")
+	}
+	fields := map[string]bool{}
+	for _, f := range alwaysRulesForm().Fields {
+		fields[f.Field] = true
+	}
+	if !fields["depth"] || !fields["if_unchecked"] {
+		t.Errorf("the Always form should carry both settings: %v", fields)
+	}
+}

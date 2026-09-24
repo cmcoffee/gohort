@@ -318,6 +318,8 @@ var deploymentSettingOrder = []struct {
 		"Whether code running in an agent's sandbox may open connections."},
 	{defaultInboundMode, "Which agents may dispatch to an agent",
 		"Who an agent accepts work from. Anyone, only its named callers, or nobody."},
+	{defaultGuardrailDepth, "How carefully an agent's own guardrails are checked",
+		"Quick answers straight off; Standard and Thorough reason first, adding a few seconds to each checked reply. The deployment's Rules have their own depth, under Governance."},
 	{defaultShareCortex, "A shared agent's standing thread",
 		"Whether somebody the agent is shared with sees what it has been doing."},
 	{defaultShareReference, "A shared agent's attached knowledge",

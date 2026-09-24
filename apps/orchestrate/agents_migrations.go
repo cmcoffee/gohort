@@ -103,6 +103,7 @@ func applyBuilderDeploymentState(seed *AgentRecord, shadow AgentRecord) {
 	seed.Guardrails = shadow.Guardrails
 	seed.GuardrailHooks = shadow.GuardrailHooks
 	seed.GuardrailFailClosed = shadow.GuardrailFailClosed
+	seed.GuardrailDepth = shadow.GuardrailDepth
 	seed.GuardrailDeclines = shadow.GuardrailDeclines
 	seed.GuardrailsDisabled = shadow.GuardrailsDisabled
 	seed.GuardrailExceptions = shadow.GuardrailExceptions

@@ -454,3 +454,40 @@ func (T *OrchestrateApp) handleAgentDeclineSuggest(w http.ResponseWriter, r *htt
 	Log("[orchestrate.guardrails] agent=%s decline suggest: %d returned, %d kept after leak filter", agentID, len(lines), len(clean))
 	writeJSON(w, map[string]any{"declines": clean})
 }
+
+// handleAgentGuardrailDepth reads and sets how carefully this agent's own
+// guardrails are checked. Its own endpoint, owner-only like the guardrails
+// themselves, rather than a field on the guardrails POST: that body replaces
+// the rules wholesale, so a one-field panel posting to it would clear them.
+//
+//	GET  /api/agents/{id}/guardrail-depth -> {guardrail_depth}
+//	POST /api/agents/{id}/guardrail-depth    {guardrail_depth: "quick"|"standard"|"thorough"|""}
+func (T *OrchestrateApp) handleAgentGuardrailDepth(w http.ResponseWriter, r *http.Request, user, agentID string) {
+	udb := UserDB(T.DB, user)
+	agent, ok := loadAgent(udb, agentID)
+	if !ok || (agent.Owner != user && agent.Owner != seedOwner) {
+		http.Error(w, "agent not found", http.StatusNotFound)
+		return
+	}
+	if r.Method == http.MethodPost {
+		var body struct {
+			Depth string `json:"guardrail_depth"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		depth := strings.TrimSpace(body.Depth)
+		if depth != "" && depthRank(depth) == 0 && depth != prompts.RuleDepthQuick {
+			http.Error(w, "depth must be quick, standard or thorough", http.StatusBadRequest)
+			return
+		}
+		agent.GuardrailDepth = depth
+		if _, err := saveAgent(udb, agent); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		Log("[orchestrate.guardrail] agent=%s check depth set to %q by owner", agent.ID, depth)
+	}
+	writeJSON(w, map[string]any{"guardrail_depth": agent.GuardrailDepth})
+}

@@ -5755,9 +5755,9 @@
           // the MIDDLE of a turn gets watched.
           var hookLevels = [
             {name: 'Off', hooks: [], off: true,
-             desc: 'Enforcement suspended. Your rules stay exactly as written and nothing checks them \u2014 no warden calls, and live token streaming comes back. Use it to find out whether a guardrail is behind a wrong refusal, or what a turn costs without one, instead of deleting the rules to test.'},
+             desc: 'Enforcement of your rules suspended. They stay exactly as written and nothing checks them. Use it to find out whether one of your guardrails is behind a wrong refusal, or what a turn costs without them, instead of deleting the rules to test. The deployment\u2019s own Rules are still checked on every request, action and reply, and while there are any, replies are still held until their check clears.'},
             {name: 'Fast', hooks: ['pre_input', 'pre_action'],
-             desc: 'Checks the incoming request (with recent context) and consequential tool calls before they run. The cheapest setting that still enforces: one check per turn plus one per consequential call, and live token streaming stays on because nothing has to hold the reply back. It does NOT judge what the agent SAYS, so a rule about disclosure can be broken by a reply: pick it when latency matters more than that.'},
+             desc: 'Checks the incoming request (with recent context) and consequential tool calls before they run. The cheapest setting that still enforces: one check per turn plus one per consequential call. It does NOT judge what the agent SAYS against your rules, so a rule about disclosure can be broken by a reply: pick it when latency matters more than that. The deployment\u2019s own Rules are checked on replies regardless, so while there are any, replies are held until their check clears.'},
             {name: 'Light', hooks: ['pre_input', 'pre_output'],
              desc: 'Checks the incoming request (with recent context) and the reply before it is sent. Covers what the agent says but not what it DOES: a consequential tool call runs unjudged.'},
             {name: 'Balanced', hooks: ['pre_input', 'pre_action', 'pre_output'],

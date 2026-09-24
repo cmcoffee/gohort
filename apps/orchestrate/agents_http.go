@@ -134,6 +134,7 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				req.Guardrails = existing.Guardrails
 				req.GuardrailHooks = existing.GuardrailHooks
 				req.GuardrailFailClosed = existing.GuardrailFailClosed
+				req.GuardrailDepth = existing.GuardrailDepth
 				req.GuardrailDeclines = existing.GuardrailDeclines
 				req.GuardrailsDisabled = existing.GuardrailsDisabled
 				req.AuthorizedIdentities = existing.AuthorizedIdentities
@@ -167,6 +168,7 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 				req.Guardrails = existing.Guardrails
 				req.GuardrailHooks = existing.GuardrailHooks
 				req.GuardrailFailClosed = existing.GuardrailFailClosed
+				req.GuardrailDepth = existing.GuardrailDepth
 				req.GuardrailDeclines = existing.GuardrailDeclines
 				req.GuardrailsDisabled = existing.GuardrailsDisabled
 				req.AuthorizedIdentities = existing.AuthorizedIdentities
@@ -538,6 +540,10 @@ func (T *OrchestrateApp) handleAgentOne(w http.ResponseWriter, r *http.Request) 
 	// Revisions: the list, one version read-only, and the way back.
 	if sub, isRev := revisionAction(action); isRev {
 		T.handleAgentRevisions(w, r, user, id, sub)
+		return
+	}
+	if action == "guardrail-depth" {
+		T.handleAgentGuardrailDepth(w, r, user, id)
 		return
 	}
 	if action == "guardrails" {

@@ -986,6 +986,13 @@ type AgentRecord struct {
 	// rules differ in severity should carry the strict ones on their own agent.
 	GuardrailFailClosed bool `json:"guardrail_fail_closed,omitempty"`
 
+	// GuardrailDepth is how carefully this agent's OWN rules are checked:
+	// "quick", "standard" or "thorough", empty to follow the deployment
+	// default (see triSettings). The deployment's Always rules are checked at
+	// the depth an administrator set for them, and a check judging both uses
+	// the more careful of the two.
+	GuardrailDepth string `json:"guardrail_depth,omitempty"`
+
 	// GuardrailExceptions are named conditions a rule can be linked to. The
 	// warden receives each linked condition on an "Except:" line under the rule
 	// it belongs to, and a rule whose exception holds is COMPLIED WITH — no new

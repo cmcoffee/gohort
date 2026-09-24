@@ -8,6 +8,7 @@ import (
 	"time"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/prompts"
 	"github.com/cmcoffee/gohort/core/textutil"
 )
 
@@ -108,16 +109,7 @@ const (
 //
 // Empty finding = ordinary check, byte-identical to what runWarden always sent.
 func (T *OrchestrateApp) runWardenWithFinding(ctx context.Context, agent AgentRecord, hookPoint, candidate string, req requesterIdentity, finding string, opts ...ChatOption) ([]guardrailVerdict, error) {
-	rules := rulesInPlayFor(enforcedGuardrailRules(agent), req)
-	// Narrowed to the rules that have anything to say about THIS check. A rule
-	// bound to a tool (guardrailToolMarker) is sent only when that tool is the
-	// one being judged, and never on a check with no tool call in it. Every
-	// enforced rule used to be sent on every consequential call, so an agent
-	// with a dozen rules paid for all twelve to judge one — and eleven of them
-	// were reading about a tool they could not have an opinion on, which is
-	// prompt weight AND an invitation to flag the wrong thing.
-	rules = rulesForTool(rules, wardenToolInPlay(hookPoint, candidate))
-	rules = rulesAtHook(rules, agent, hookPoint)
+	rules := wardenRules(agent, hookPoint, candidate, req)
 	if len(rules) == 0 {
 		// Said out loud for the same reason a passing check is: a narrowing
 		// that leaves nothing to ask looks exactly like a guard that is not
@@ -204,14 +196,21 @@ func (T *OrchestrateApp) runWardenWithFinding(ctx context.Context, agent AgentRe
 		{Role: "system", Content: wardenSystemPrompt},
 		{Role: "user", Content: b.String()},
 	}
-	cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	depth := wardenDepth(agent, rules)
+	timeout := 30 * time.Second
+	if depth != prompts.RuleDepthQuick {
+		// Reasoning first takes longer than answering straight off, and a
+		// check that times out is a check that did not happen.
+		timeout = 90 * time.Second
+	}
+	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	// Caller options last so a retry's re-sampling overrides these defaults.
 	call := append([]ChatOption{
 		WithRouteKey("app.orchestrate.warden"),
-		WithThink(false),
 		WithTemperature(0.1),
-	}, opts...)
+	}, wardenDepthOptions(depth)...)
+	call = append(call, opts...)
 	resp, err := T.WorkerChat(cctx, msgs, call...)
 	if err != nil {
 		return nil, err
@@ -288,4 +287,72 @@ func worstVerdict(vs []guardrailVerdict) string {
 		}
 	}
 	return worst
+}
+
+// wardenRules is what one check judges: the enforced rules in play for this
+// requester, narrowed to the tool being judged and to this hook.
+//
+// Narrowed to the rules that have anything to say about THIS check. A rule
+// bound to a tool (guardrailToolMarker) is sent only when that tool is the one
+// being judged, and never on a check with no tool call in it. Every enforced
+// rule used to be sent on every consequential call, so an agent with a dozen
+// rules paid for all twelve to judge one, and eleven of them were reading about
+// a tool they could not have an opinion on, which is prompt weight AND an
+// invitation to flag the wrong thing. At a hook the owner did not pick, only
+// the deployment's rules remain (rulesAtHook).
+//
+// One function because the check's depth and what happens when it fails both
+// depend on WHICH rules it judged, and three copies of the narrowing would
+// drift.
+func wardenRules(agent AgentRecord, hookPoint, candidate string, req requesterIdentity) []guardrailRule {
+	rules := rulesInPlayFor(enforcedGuardrailRules(agent), req)
+	rules = rulesForTool(rules, wardenToolInPlay(hookPoint, candidate))
+	return rulesAtHook(rules, agent, hookPoint)
+}
+
+// judgesGlobal reports whether any of these rules is the deployment's.
+func judgesGlobal(rules []guardrailRule) bool {
+	for _, r := range rules {
+		if r.Global {
+			return true
+		}
+	}
+	return false
+}
+
+// wardenDepth is how carefully a check judging these rules reads: the agent's
+// own depth, raised to the deployment's when the deployment's rules are among
+// them. Never lowered: an owner may check their own rules more carefully than
+// the deployment asks, and judging both at once must not undo that.
+func wardenDepth(agent AgentRecord, rules []guardrailRule) string {
+	depth := resolveSetting(RootDB, agent, defaultGuardrailDepth)
+	if judgesGlobal(rules) && depthRank(prompts.GlobalRulesDepth()) > depthRank(depth) {
+		depth = prompts.GlobalRulesDepth()
+	}
+	return depth
+}
+
+// depthRank orders the depths; anything unknown reads as quick, the loosest,
+// which is what every check did before depths existed.
+func depthRank(d string) int {
+	for i, v := range prompts.RuleDepths() {
+		if v == d {
+			return i
+		}
+	}
+	return 0
+}
+
+// wardenDepthOptions turns a depth into how the checker is called. Quick is
+// what it always did: no reasoning. Standard and Thorough reason first, at the
+// effort levels every provider maps for itself.
+func wardenDepthOptions(depth string) []ChatOption {
+	switch depth {
+	case prompts.RuleDepthThorough:
+		return []ChatOption{WithThink(true), WithEffort("medium")}
+	case prompts.RuleDepthStandard:
+		return []ChatOption{WithThink(true), WithEffort("low")}
+	default:
+		return []ChatOption{WithThink(false)}
+	}
 }

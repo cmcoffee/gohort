@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/prompts"
 )
 
 // The settings that can carry a fleet default. Named, not open: a key nobody
@@ -34,6 +35,7 @@ const (
 	defaultShareNotes       = "share_notes"
 	defaultShareUploads     = "share_uploads"
 	defaultInboundMode      = "inbound_mode"
+	defaultGuardrailDepth   = "guardrail_depth"
 )
 
 // Tri-state values. Empty is the third and is never written: it is what a
@@ -197,6 +199,20 @@ var triSettings = map[string]triSetting{
 		framework:  settingOn,
 		values:     onOff(),
 		strictness: looseToStrict(),
+	},
+	defaultGuardrailDepth: {
+		key: defaultGuardrailDepth,
+		words: map[string]string{
+			prompts.RuleDepthQuick: "Quick", prompts.RuleDepthStandard: "Standard", prompts.RuleDepthThorough: "Thorough"},
+		own:    func(a AgentRecord) string { return a.GuardrailDepth },
+		legacy: func(AgentRecord) (string, bool) { return "", false },
+		// Quick is what every agent's rules were checked at before this
+		// existed, and a deployment that sets nothing keeps it.
+		framework: prompts.RuleDepthQuick,
+		values:    prompts.RuleDepths(),
+		// Quicker is looser: a limit says "no agent's rules are checked more
+		// hastily than this".
+		strictness: prompts.RuleDepths(),
 	},
 	defaultInboundMode: {
 		key: defaultInboundMode,

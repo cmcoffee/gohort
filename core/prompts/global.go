@@ -135,6 +135,88 @@ func ruleWithoutMarkers(s string) string {
 	return strings.TrimSpace(rest)
 }
 
+// How carefully the Always rules are checked, and what happens when a check
+// cannot reach a verdict. Set by an administrator beside the rules themselves,
+// and not left to each agent's owner: an owner's own settings used to decide
+// both for the deployment's rules too, so an agent set to check only incoming
+// messages, or to let a failed check through, carried an admin's rule
+// unenforced.
+const (
+	RuleDepthQuick    = "quick"    // the checker answers straight off
+	RuleDepthStandard = "standard" // it reasons briefly first
+	RuleDepthThorough = "thorough" // it reasons at length first
+
+	globalRulesDepthKey     = "prompt_global_rules_depth"
+	globalRulesUncheckedKey = "prompt_global_rules_unchecked"
+)
+
+// RuleDepths lists the depths from quickest to most thorough, which is also
+// loosest to strictest.
+func RuleDepths() []string {
+	return []string{RuleDepthQuick, RuleDepthStandard, RuleDepthThorough}
+}
+
+// GlobalRulesDepth is how carefully the Always rules are checked. Standard
+// unless an administrator chose otherwise: the checker runs on the small model,
+// and answering straight off is where both its missed breaches and its false
+// alarms come from.
+func GlobalRulesDepth() string {
+	if db := promptOverrideStore(); db != nil {
+		var v string
+		if db.Get(OverrideTable, globalRulesDepthKey, &v) {
+			for _, d := range RuleDepths() {
+				if v == d {
+					return v
+				}
+			}
+		}
+	}
+	return RuleDepthStandard
+}
+
+// SetGlobalRulesDepth records the depth. Anything that is not a depth clears
+// it back to the default rather than storing a value nothing reads.
+func SetGlobalRulesDepth(v string) {
+	db := promptOverrideStore()
+	if db == nil {
+		return
+	}
+	for _, d := range RuleDepths() {
+		if v == d {
+			db.Set(OverrideTable, globalRulesDepthKey, v)
+			return
+		}
+	}
+	db.Unset(OverrideTable, globalRulesDepthKey)
+}
+
+// GlobalRulesFailOpen reports whether a reply or action goes through when the
+// check on the Always rules cannot reach a verdict. False unless an
+// administrator said so: a rule written to stop something, that stops nothing
+// whenever the checker hiccups, is a rule an attacker gets to switch off.
+func GlobalRulesFailOpen() bool {
+	if db := promptOverrideStore(); db != nil {
+		var v string
+		if db.Get(OverrideTable, globalRulesUncheckedKey, &v) {
+			return v == "allow"
+		}
+	}
+	return false
+}
+
+// SetGlobalRulesFailOpen records it.
+func SetGlobalRulesFailOpen(open bool) {
+	db := promptOverrideStore()
+	if db == nil {
+		return
+	}
+	if open {
+		db.Set(OverrideTable, globalRulesUncheckedKey, "allow")
+		return
+	}
+	db.Unset(OverrideTable, globalRulesUncheckedKey)
+}
+
 // itoa avoids pulling strconv in for two call sites.
 func itoa(n int) string {
 	if n == 0 {

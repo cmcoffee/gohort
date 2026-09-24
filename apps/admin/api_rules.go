@@ -34,6 +34,10 @@ func (a *AdminApp) registerRulesRoutes(sub *http.ServeMux) {
 		if r.Method == http.MethodPost {
 			var req struct {
 				Rules string `json:"rules"`
+				// Pointers: a caller that sends only the rules leaves how they
+				// are checked alone rather than resetting it.
+				Depth     *string `json:"depth"`
+				Unchecked *string `json:"if_unchecked"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				http.Error(w, "bad request", http.StatusBadRequest)
@@ -44,7 +48,14 @@ func (a *AdminApp) registerRulesRoutes(sub *http.ServeMux) {
 				list = append(list, rules.StyleRule{Text: line})
 			}
 			rules.SetGlobalRules(list)
-			Log("[admin] global rules saved by %s: %d", AuthCurrentUser(r), len(list))
+			if req.Depth != nil {
+				rules.SetGlobalRulesDepth(*req.Depth)
+			}
+			if req.Unchecked != nil {
+				rules.SetGlobalRulesFailOpen(*req.Unchecked == "allow")
+			}
+			Log("[admin] global rules saved by %s: %d, checked %s, if unchecked %s", AuthCurrentUser(r), len(list),
+				rules.GlobalRulesDepth(), uncheckedWord(rules.GlobalRulesFailOpen()))
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]any{"ok": true})
 			return
@@ -54,7 +65,8 @@ func (a *AdminApp) registerRulesRoutes(sub *http.ServeMux) {
 			lines = append(lines, rule.Text)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"rules": strings.Join(lines, "\n")})
+		json.NewEncoder(w).Encode(map[string]any{"rules": strings.Join(lines, "\n"),
+			"depth": rules.GlobalRulesDepth(), "if_unchecked": uncheckedWord(rules.GlobalRulesFailOpen())})
 	})
 	sub.HandleFunc("/api/style-rules", func(w http.ResponseWriter, r *http.Request) {
 		if !a.requireAdmin(w, r) {
@@ -166,8 +178,35 @@ func alwaysRulesForm() ui.FormPanel {
 			AssistPrompt: "You write operator rules that bind an AI assistant's conduct: short imperative " +
 				"lines, one obligation each. State the boundary and what to do when a request would cross " +
 				"it. Be concrete about the behaviour, not aspirational about values. Do not use em-dashes.",
+		}, {
+			Field: "depth", Type: "select", Label: "How carefully they are checked",
+			Options: []ui.SelectOption{
+				{Value: rules.RuleDepthQuick, Label: "Quick"},
+				{Value: rules.RuleDepthStandard, Label: "Standard"},
+				{Value: rules.RuleDepthThorough, Label: "Thorough"},
+			},
+			Help: "Every agent's replies and actions are checked against these at this depth, whatever the agent's own setting.",
+			Detail: "Quick answers straight off: fastest, and where both missed breaches and false alarms come from. " +
+				"Standard reasons briefly before deciding, a few seconds per check. Thorough reasons at length, for rules where a wrong call is expensive. " +
+				"A reply is held until its check clears, so this is time added to every checked reply. " +
+				"An agent whose own rules are checked more carefully than this uses its own depth when both are judged together.",
+		}, {
+			Field: "if_unchecked", Type: "select", Label: "If a check cannot reach a verdict",
+			Options: []ui.SelectOption{
+				{Value: "block", Label: "Block the reply or action"},
+				{Value: "allow", Label: "Let it through, and record that it went unchecked"},
+			},
+			Help: "The checker is a model call and can fail. Blocking is the safe side for rules written to stop something.",
 		}},
 	}
+}
+
+// uncheckedWord is the stored spelling of the fail policy.
+func uncheckedWord(open bool) string {
+	if open {
+		return "allow"
+	}
+	return "block"
 }
 
 // alwaysRuleModes are what a breach of an Always rule does. The markers are the

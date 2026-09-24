@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	. "github.com/cmcoffee/gohort/core"
+	"github.com/cmcoffee/gohort/core/prompts"
 )
 
 // guardrailCheckHook builds the AgentLoopConfig.GuardrailCheck for this turn,
@@ -181,13 +182,18 @@ func (t *chatTurn) guardrailCheckHookCtx(ctx context.Context) func(hookPoint, ca
 		if !rulesActive || !guardrailHookActive(t.agent, hookPoint) {
 			return pass
 		}
+		// What a check that cannot reach a verdict does. The owner picks it for
+		// their own rules (GuardrailFailClosed); an administrator picks it for
+		// the deployment's (Governance, Rules), and it is not the owner's to
+		// relax. Blocking wins when either says so.
+		failClosed := t.agent.GuardrailFailClosed ||
+			(judgesGlobal(wardenRules(t.agent, hookPoint, candidate, who)) && !prompts.GlobalRulesFailOpen())
 		verdicts, err := t.app.runWarden(ctx, t.agent, hookPoint, candidate, who)
 		if err != nil {
 			// The warden is itself an LLM call, so an infra hiccup has to have
-			// a policy. The owner picks it per agent (GuardrailFailClosed);
-			// either way the gap is recorded, never silent.
-			if t.agent.GuardrailFailClosed {
-				t.turnDiag("guardrail-blocked", fmt.Sprintf("Guardrail check could not run (%v): BLOCKED (this agent fails closed).", err))
+			// a policy; either way the gap is recorded, never silent.
+			if failClosed {
+				t.turnDiag("guardrail-blocked", fmt.Sprintf("Guardrail check could not run (%v): BLOCKED (set to block when a check cannot run).", err))
 				Log("[orchestrate.guardrail] agent=%s fail-closed block at %s: warden error: %v", t.agent.ID, hookPoint, err)
 				return GuardrailDecision{Blocked: true, Message: guardrailNoVerdictMessage()}
 			}
@@ -217,9 +223,9 @@ func (t *chatTurn) guardrailCheckHookCtx(ctx context.Context) func(hookPoint, ca
 				if strings.TrimSpace(reason) == "" {
 					reason = "warden verdict unreadable"
 				}
-				if t.agent.GuardrailFailClosed {
+				if failClosed {
 					t.turnDiag("guardrail-blocked", fmt.Sprintf(
-						"Guardrail check at %s could not reach a verdict (%s): BLOCKED (this agent fails closed). Retried once.", hookPoint, reason))
+						"Guardrail check at %s could not reach a verdict (%s): BLOCKED (set to block when a check cannot run). Retried once.", hookPoint, reason))
 					Log("[orchestrate.guardrail] agent=%s fail-closed block at %s after retry (%s)", t.agent.ID, hookPoint, reason)
 					return GuardrailDecision{Blocked: true, Message: guardrailNoVerdictMessage()}
 				}

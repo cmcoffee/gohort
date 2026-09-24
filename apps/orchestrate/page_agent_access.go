@@ -101,6 +101,7 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 	// owns a few fields and must not carry the whole record: a FormPanel posts
 	// everything it holds, and everything it does not hold would be blanked.
 	patchURL := T.WebPrefix() + "/api/agents/" + url.PathEscape(agent.ID)
+	depthURL := patchURL + "/guardrail-depth"
 	// The lock has its own door: Locked is not a patchable field, so that one
 	// place stays the single source of truth for it.
 	lockURL := patchURL + "/lock"
@@ -592,6 +593,24 @@ func (T *OrchestrateApp) renderAgentAccess(w http.ResponseWriter, r *http.Reques
 				Body: ui.ClientRegion{
 					Action: "orchestrate_rules_modal",
 					Args:   map[string]any{"only": "guardrails", "agent": agent.ID},
+				},
+			},
+			{
+				Group:    "Guardrails",
+				Title:    "How carefully they are checked",
+				Subtitle: "Quick answers straight off. Standard and Thorough reason first, which catches more and false-alarms less, at a few seconds per checked reply.",
+				Body: ui.FormPanel{
+					// Owner-only, like the guardrails themselves: never the
+					// general PATCH, which an agent's own edit paths reach.
+					Source:  depthURL,
+					PostURL: depthURL,
+					Fields: []ui.FormField{
+						{Field: "guardrail_depth", Type: "select", Label: "Check depth for this agent's own guardrails",
+							Options: settingOptions(RootDB, defaultGuardrailDepth),
+							Help:    settingSource(RootDB, agent, defaultGuardrailDepth),
+							Detail: "This is about the rules written above. The deployment's own Rules are checked at the depth an administrator set for them, and when a check judges both, the more careful depth is used.\n\n" +
+								"A reply is held until its check clears, so the depth is time added to every reply this agent's guardrails judge."},
+					},
 				},
 			},
 			{
