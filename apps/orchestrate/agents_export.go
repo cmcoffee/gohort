@@ -130,6 +130,7 @@ func importAgentRecipe(udb Database, imp agentExport, owner string) (AgentRecord
 	rec.OwnedBy = ""
 	rec.Created = time.Time{}
 	rec.Updated = time.Time{}
+	makeImportedAgentInert(&rec)
 	// Recipes carry tools inline (both pre- and post-flatten exports). Hold
 	// them aside: they fold into the unified store AFTER the save assigns the
 	// reborn agent its id — the record itself stays tool-free.
@@ -139,7 +140,7 @@ func importAgentRecipe(udb Database, imp agentExport, owner string) (AgentRecord
 	if err != nil {
 		return AgentRecord{}, 0, err
 	}
-	foldImportedTools(udb, owner, &saved, inlineTools)
+	queueImportedTools(udb, owner, saved, inlineTools)
 	subCount := 0
 	for _, s := range imp.SubAgents {
 		if strings.TrimSpace(s.Name) == "" || strings.TrimSpace(s.OrchestratorPrompt) == "" {
@@ -151,6 +152,7 @@ func importAgentRecipe(udb Database, imp agentExport, owner string) (AgentRecord
 		s.OwnedBy = saved.ID
 		s.Created = time.Time{}
 		s.Updated = time.Time{}
+		makeImportedAgentInert(&s)
 		subTools := s.Tools
 		s.Tools = nil
 		savedSub, serr := saveAgent(udb, s)
@@ -158,27 +160,96 @@ func importAgentRecipe(udb Database, imp agentExport, owner string) (AgentRecord
 			Log("[orchestrate.agents] import: sub-agent %q failed: %v", s.Name, serr)
 			continue
 		}
-		foldImportedTools(udb, owner, &savedSub, subTools)
+		queueImportedTools(udb, owner, savedSub, subTools)
 		subCount++
 	}
 	return saved, subCount, nil
 }
 
-// foldImportedTools lands a recipe's inline tools in the unified store scoped
-// to the reborn agent, via the same conflict policy the flatten migration
-// uses (identical dup → merge, diverged → orphan with provenance).
-func foldImportedTools(udb Database, owner string, saved *AgentRecord, tools []TempTool) {
-	if len(tools) == 0 {
-		return
+// makeImportedAgentInert resets what a recipe must not decide for the install
+// it lands on. An import is somebody else's file, so it arrives as a new,
+// private agent under the importer, exactly as if they had just created it:
+//
+//   - Reach: not published to everyone, not on inbound MCP, not on the
+//     dashboard, shared with nobody, not reachable by Builder. Everyone and
+//     MCPExposed need an admin's approval on every other path; a recipe that
+//     set them would skip it. Usernames in a share list also name people on
+//     ANOTHER install.
+//   - Autonomy: no tools pre-approved for unattended runs, no authorized
+//     identities (a master key for every "@" rule). Both are grants this
+//     install never made.
+//   - Safety: guardrails on and failing closed, the new-agent hook set when
+//     the recipe has none, and nothing that WIDENS the tool-result scanner
+//     (trusted sources, skipped tools, tightening turned off). Rules and scan
+//     settings that only tighten travel unchanged; they are the recipe.
+//
+// The owner can change any of it afterwards through the normal controls,
+// which is where each of these decisions belongs.
+func makeImportedAgentInert(a *AgentRecord) {
+	a.Exposed = false
+	a.Everyone = false
+	a.MCPExposed = false
+	a.ShowOnDashboard = false
+	a.AllowedUsers = nil
+	a.AllowBuilderDispatch = false
+	a.PendingApproval = false
+
+	a.AutoApproveTools = nil
+	a.AuthorizedIdentities = nil
+
+	a.GuardrailsDisabled = false
+	a.GuardrailFailClosed = defaultNewAgentFailClosed
+	if len(a.GuardrailHooks) == 0 {
+		a.GuardrailHooks = defaultNewAgentGuardrailHooks()
 	}
-	carrier := *saved
-	carrier.Tools = tools
-	moved, merged, orphaned := foldAgentToolsIntoStore(udb, owner, &carrier)
-	if orphaned > 0 {
-		Log("[orchestrate.agents] import %q: %d tool(s) diverged from your existing tools, imported copies are in Orphaned tools", saved.Name, orphaned)
+	a.ScanTrustedSources = nil
+	a.ScanToolsSkip = nil
+	a.ScanTightenDisabled = false
+}
+
+// queueImportedTools lands a recipe's inline tools for review, scoped to the
+// reborn agent. A tool is executable code from outside this install, so it
+// goes to the PENDING pool, the same place a standalone tool import lands,
+// and fires only after an admin approves it. Approval keeps the scope, so the
+// tool joins this agent's kit and no other.
+//
+// A tool the importer ALREADY has, with an identical definition, is not new
+// code: it just gains this agent in its scope. A same-named tool whose
+// definition differs is kept aside in Orphaned tools, as the flatten
+// migration does, rather than replacing the one already approved.
+func queueImportedTools(udb Database, owner string, saved AgentRecord, tools []TempTool) {
+	var orphans []OrphanedTempTool
+	queued := 0
+	for _, t := range tools {
+		if existing, ok := UserToolByName(udb, owner, t.Name); ok {
+			if tempToolDefEqual(t, existing.Tool) {
+				if len(existing.ScopeAgents) > 0 && !existing.ScopedToAgent(saved.ID) {
+					SetUserToolScopeAgents(udb, owner, t.Name,
+						append(append([]string{}, existing.ScopeAgents...), saved.ID))
+				}
+				continue
+			}
+			orphans = append(orphans, OrphanedTempTool{
+				Tool:            t,
+				FormerAgentID:   saved.ID,
+				FormerAgentName: saved.Name,
+				OrphanedAt:      time.Now(),
+			})
+			continue
+		}
+		if err := QueuePendingTempToolScoped(udb, owner, t, "import", []string{saved.ID}); err != nil {
+			Log("[orchestrate.agents] import %q: tool %q not queued: %v", saved.Name, t.Name, err)
+			continue
+		}
+		queued++
 	}
-	_ = moved
-	_ = merged
+	if len(orphans) > 0 {
+		AddOrphanedTempTools(udb, owner, orphans)
+		Log("[orchestrate.agents] import %q: %d tool(s) diverged from your existing tools, imported copies are in Orphaned tools", saved.Name, len(orphans))
+	}
+	if queued > 0 {
+		Log("[orchestrate.agents] import %q: %d tool(s) queued for approval", saved.Name, queued)
+	}
 }
 
 // safeFilename returns a slug suitable for the Content-Disposition

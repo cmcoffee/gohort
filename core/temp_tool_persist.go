@@ -362,6 +362,11 @@ type PendingTempTool struct {
 	Tool             TempTool  `json:"tool"`
 	RequestedAt      time.Time `json:"requested_at"`
 	RequestedSession string    `json:"requested_session,omitempty"`
+	// ScopeAgents carries the agent scope the tool should have ONCE approved
+	// (see PersistentTempTool.ScopeAgents). Set when an imported agent recipe
+	// brings its tools with it: they wait here for review, and approval lands
+	// them in that agent's kit rather than widening them to every agent.
+	ScopeAgents []string `json:"scope_agents,omitempty"`
 }
 
 // PersistentTempTool is an approved tool that loads into every new
@@ -748,6 +753,12 @@ func MergeAdoptedGlobalTools(db Database, username string, names []string) {
 // silent overwrites — the user should explicitly delete the old one
 // first).
 func QueuePendingTempTool(db Database, username string, t TempTool, sessionID string) error {
+	return QueuePendingTempToolScoped(db, username, t, sessionID, nil)
+}
+
+// QueuePendingTempToolScoped is QueuePendingTempTool for a tool that should be
+// scoped to particular agents once approved (an imported agent's own tools).
+func QueuePendingTempToolScoped(db Database, username string, t TempTool, sessionID string, scopeAgents []string) error {
 	db = tempToolStore(db)
 	if db == nil || username == "" {
 		return errString("persistence requires an authenticated user")
@@ -781,6 +792,7 @@ func QueuePendingTempTool(db Database, username string, t TempTool, sessionID st
 		Tool:             t,
 		RequestedAt:      time.Now(),
 		RequestedSession: sessionID,
+		ScopeAgents:      scopeAgents,
 	})
 	db.Set(pendingTempToolsTable, username, rest)
 	return nil
@@ -973,8 +985,9 @@ func ApprovePendingTempTool(db Database, username, name string) error {
 		}
 	}
 	deduped = append(deduped, PersistentTempTool{
-		Tool:       moved.Tool,
-		ApprovedAt: time.Now(),
+		Tool:        moved.Tool,
+		ApprovedAt:  time.Now(),
+		ScopeAgents: moved.ScopeAgents,
 	})
 	db.Set(pendingTempToolsTable, username, rest)
 	db.Set(persistentTempToolsTable, username, deduped)

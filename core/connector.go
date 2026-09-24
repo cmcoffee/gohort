@@ -180,6 +180,19 @@ func ListConnectors(db Database) []Connector {
 // across a re-save; re-saving an already-approved connector re-materializes it
 // so edits take effect.
 func SaveConnector(db Database, c Connector) error {
+	return saveConnector(db, c, true)
+}
+
+// SaveConnectorDraft is SaveConnector for a connector that did not originate
+// here: an imported recipe. It never auto-approves. An auto-approving kind
+// earns that on create because the person creating it chose its target on
+// this install; an imported one arrives with somebody else's URL and body, so
+// it waits for an admin like every other imported artifact.
+func SaveConnectorDraft(db Database, c Connector) error {
+	return saveConnector(db, c, false)
+}
+
+func saveConnector(db Database, c Connector, autoApprove bool) error {
 	if db == nil {
 		return fmt.Errorf("connector store not ready")
 	}
@@ -217,7 +230,7 @@ func SaveConnector(db Database, c Connector) error {
 	}
 	// Fresh connector of an auto-approving kind (reaches out only through
 	// already-governed resources) → materialize now, no separate approval.
-	if !existed && connectorAutoApproves(h) {
+	if autoApprove && !existed && connectorAutoApproves(h) {
 		if err := ApproveConnector(db, c.Name); err != nil {
 			return fmt.Errorf("saved, but auto-approve failed: %w", err)
 		}

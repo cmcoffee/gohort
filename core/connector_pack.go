@@ -137,10 +137,9 @@ type ConnectorImportResult struct {
 }
 
 // ImportConnectorPack reconstitutes connectors from pack bytes as new records
-// owned by owner. Each connector goes through SaveConnector, so GOVERNANCE
-// RE-APPLIES on import exactly as on create: remote_mcp / desktop_* land
-// UNAPPROVED and inert until an admin approves them; rest_poll auto-approves
-// (it reaches out only through an already-governed credential). A name that
+// owned by owner. Every connector lands UNAPPROVED and inert until an admin
+// approves it (SaveConnectorDraft), including kinds that auto-approve on
+// create: an imported recipe's target was chosen somewhere else. A name that
 // already exists is SKIPPED, never overwritten — import can't clobber a live
 // integration. Referenced credentials must exist on this install; a validate
 // failure surfaces as a per-connector skip, not a fatal error, so the rest of
@@ -172,7 +171,7 @@ func ImportConnectorPack(db Database, data []byte, owner string) (ConnectorImpor
 			Spec:     pc.Spec,
 			Owner:    owner,
 		}
-		if err := SaveConnector(db, c); err != nil {
+		if err := SaveConnectorDraft(db, c); err != nil {
 			res.Skipped = append(res.Skipped, ConnectorImportSkip{Name: name, Reason: err.Error()})
 			continue
 		}

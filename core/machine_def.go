@@ -1557,14 +1557,12 @@ func ImportMachine(udb Database, owner string, recipe MachineDef) (MachineDef, e
 			recipe.ID = ""
 		}
 	}
+	// A recipe arriving with a recipient list or Published on it would assert
+	// a grant the importer never made. Export strips them; this strips them
+	// again, because an import door has to hold on its own against a
+	// hand-written file.
+	recipe = ExportMachine(recipe)
 	recipe.Owner = owner
-	// A recipe arriving with a recipient list on it would assert a grant the
-	// importer never made — and one naming users of a deployment it came from.
-	// Export strips it; this strips it again, because an import door has to
-	// hold on its own against a hand-written file.
-	recipe.AllowedUsers = nil
-	recipe.Created = time.Time{}
-	recipe.Updated = time.Time{}
 	return SaveMachineDef(udb, recipe), nil
 }
 

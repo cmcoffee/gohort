@@ -215,6 +215,10 @@ func ExportPipeline(d PipelineDef) PipelineDef {
 // the same recipe twice makes a copy instead of clobbering. Owner and
 // timestamps are always the importer's.
 func ImportPipeline(udb Database, owner string, recipe PipelineDef) (PipelineDef, error) {
+	// The import door holds on its own against a hand-written file: strip
+	// what export strips (scope, recipient list, Published, history), so a
+	// recipe cannot arrive already published to every user.
+	recipe = ExportPipeline(recipe)
 	if recipe.ID != "" {
 		if _, exists := LoadPipelineDef(udb, "", recipe.ID); exists {
 			recipe.ID = ""

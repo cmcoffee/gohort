@@ -34,10 +34,10 @@ func init() {
 // ---- connector -------------------------------------------------------------
 
 // connectorArtifact makes a Connector portable. Recipe is a PortableConnector
-// (already identity-free / secret-free). Import goes through SaveConnector, so
-// governance re-applies exactly as on create: remote_mcp / desktop_* land
-// UNAPPROVED, rest_poll auto-approves (it reaches out only through an
-// already-governed credential). Global (admin) scope — Owner is ignored.
+// (already identity-free / secret-free). Import goes through
+// SaveConnectorDraft, so every kind lands UNAPPROVED, including rest_poll,
+// which auto-approves only when created here. Global (admin) scope; Owner
+// records who imported it.
 type connectorArtifact struct{}
 
 func (connectorArtifact) ArtifactType() string { return "connector" }
@@ -139,7 +139,7 @@ func (connectorArtifact) ImportArtifact(db Database, recipe json.RawMessage, own
 		Spec:     pc.Spec,
 		Owner:    owner,
 	}
-	if err := SaveConnector(db, c); err != nil {
+	if err := SaveConnectorDraft(db, c); err != nil {
 		return name, "", err
 	}
 	return name, "", nil
@@ -376,6 +376,9 @@ func (skillArtifact) ExportArtifact(db Database, name, owner string) (json.RawMe
 	s.Embedding = nil
 	s.Created = time.Time{}
 	s.Updated = time.Time{}
+	s.AllowedUsers = nil // who it is shared with here names nobody there
+	s.SharedFrom = ""
+	s.SharedOmitted = nil
 	// Bundled tools ship their scripts inline; backfill any legacy tool whose
 	// script still lives only in the on-disk workspace (same rule as the tool
 	// artifact's marshalExportedTool). LoadSkills decodes a fresh copy, so
@@ -487,6 +490,12 @@ func (skillArtifact) ImportArtifact(db Database, recipe json.RawMessage, owner s
 	}
 	s.Embedding = nil
 	s.Disabled = true
+	// Share state is this install's fact about a record, never part of the
+	// recipe: a list of usernames names strangers here, and SharedFrom only
+	// ever describes a recipient's view copy.
+	s.AllowedUsers = nil
+	s.SharedFrom = ""
+	s.SharedOmitted = nil
 	if _, err := SaveSkill(db, owner, s); err != nil {
 		return name, "", err
 	}
@@ -685,6 +694,14 @@ func (collectionArtifact) ImportArtifact(_ Database, recipe json.RawMessage, own
 	if _, exists := LoadCollection(udb, owner, id); exists {
 		return name, "a collection with this id already exists", nil
 	}
+	// Chunks are stored under the GLOBAL source collection:<id>, so a traveled
+	// ID that some OTHER user's (or a deployment) collection already holds
+	// would write this import's text into their corpus. The ID is kept only
+	// while no collection anywhere uses it; otherwise it is reminted, which
+	// costs only the in-bundle wiring to that one collection.
+	if collectionIDInUse(id) {
+		id = UUIDv4()
+	}
 	for _, c := range ListCollections(udb, owner) {
 		if strings.EqualFold(strings.TrimSpace(c.Name), name) {
 			return name, "a collection with this name already exists", nil
@@ -705,6 +722,37 @@ func (collectionArtifact) ImportArtifact(_ Database, recipe json.RawMessage, own
 		go ingestImportedCollectionChunks(id, name, pc.Chunks)
 	}
 	return name, "", nil
+}
+
+// collectionIDInUse reports whether any collection record, in any user's store
+// or the deployment table, already holds id. A read error on the user list
+// reads as in use: the answer only decides whether to mint a fresh ID, and a
+// fresh ID is always safe.
+func collectionIDInUse(id string) bool {
+	if RootDB != nil {
+		var c Collection
+		if RootDB.Get(GlobalCollectionsTable, id, &c) {
+			return true
+		}
+	}
+	base := CollectionsDB()
+	if base == nil || AuthDB == nil {
+		return false
+	}
+	adb := AuthDB()
+	if adb == nil {
+		return true
+	}
+	if _, err := adb.TryKeys(AuthTable); err != nil {
+		return true
+	}
+	for _, u := range AuthListUsers(adb) {
+		var c Collection
+		if UserDB(base, u.Username).Get(CollectionsTable, id, &c) {
+			return true
+		}
+	}
+	return false
 }
 
 // ingestImportedCollectionChunks is the background re-embed pass behind a
@@ -828,12 +876,31 @@ func (credentialArtifact) ImportArtifact(_ Database, recipe json.RawMessage, _ s
 	if name == "" {
 		return "", "", Error("missing credential name")
 	}
+	// Always a GLOBAL credential, whatever Owner the recipe names. Keeping a
+	// traveled Owner would save into that user's namespace, past the global
+	// collision check below, onto a record whose stored secret survives the
+	// overwrite.
+	c.Owner = ""
 	if _, exists := api.Load(name); exists {
 		return name, "a credential with this name already exists", nil
 	}
 	c.CreatedAt = time.Time{}
 	c.LastUsedAt = time.Time{}
 	c.Pending = false
+	// Grants this install never made: shares and lend policy name people
+	// elsewhere, bindings name tools elsewhere, Managed names a subsystem
+	// here that did not create it. Skipping TLS verification is a weakening
+	// the admin chooses, not one a file asserts. Restrictions (AllowedUsers,
+	// Secured, method and URL limits) travel: a stranger's name in an
+	// allowlist grants nobody anything.
+	c.SharedReadOnly = nil
+	c.SharedReadWrite = nil
+	c.SharedForAgents = nil
+	c.Lending = ""
+	c.ApprovedToolBindings = nil
+	c.RevokedToolBindings = nil
+	c.Managed = ""
+	c.InsecureSkipTLS = false
 	// Land inert — every imported credential is a draft the admin reviews and
 	// enables. oauth2 / key-style go through their draft-save (which forces
 	// disabled + a "(pending)" secret placeholder); a no-auth (url-allowlist-

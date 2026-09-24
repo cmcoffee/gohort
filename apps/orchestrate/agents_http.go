@@ -201,6 +201,18 @@ func (T *OrchestrateApp) handleAgentList(w http.ResponseWriter, r *http.Request)
 		if fromToolsModal {
 			curateToolsFromModal(T.DB, user, &req)
 		}
+		// Reach that needs an administrator (everyone, inbound MCP) changes
+		// only through the publish door, which files a promotion request for a
+		// non-admin (agentPublishNeedsApproval). A whole-record save keeps the
+		// stored values, and a new record starts unpublished.
+		if !requestIsAdminAgent(r) {
+			req.Exposed, req.Everyone, req.MCPExposed = false, false, false
+			if req.ID != "" {
+				if existing, ok := loadAgent(udb, req.ID); ok {
+					req.Everyone, req.MCPExposed = existing.Everyone, existing.MCPExposed
+				}
+			}
+		}
 		// Flattened namespace: tools live in the unified store; the GET view
 		// synthesizes them onto the record, so a full-form save must never
 		// write that view back into storage.

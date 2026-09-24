@@ -249,7 +249,7 @@ Typical flow for a calendar:
 		Handler:     connectorExport,
 	})
 	gt.AddAction("import", &GroupedToolAction{
-		Description: "Import a connector pack (the JSON produced by export) as new DRAFT connectors owned by the user. Governance still applies: remote_mcp / desktop_* land UNAPPROVED (an admin must approve them); rest_poll goes live if its credential exists. A name that already exists is SKIPPED, never overwritten. Referenced credentials must exist (or be drafted) on this install.",
+		Description: "Import a connector pack (the JSON produced by export) as new DRAFT connectors owned by the user. Every imported connector lands UNAPPROVED until an admin approves it, whatever its kind. A name that already exists is SKIPPED, never overwritten. Referenced credentials must exist (or be drafted) on this install.",
 		Params:      map[string]ToolParam{"pack": {Type: "string", Description: "The connector pack JSON, a full pack {\"bundle\":...,\"connectors\":[...]}, a single connector object, or an array of connectors."}},
 		Required:    []string{"pack"},
 		Handler:     connectorImport,
@@ -913,7 +913,7 @@ func connectorImport(args map[string]any, sess *ToolSession) (string, error) {
 		b.WriteString("No connectors imported.")
 	} else {
 		fmt.Fprintf(&b, "Imported %d connector(s): %s.\n", len(res.Imported), strings.Join(res.Imported, ", "))
-		b.WriteString("remote_mcp / desktop_* land UNAPPROVED: an admin approves them in Admin > Connectors before their tools go live. rest_poll goes live if its credential is already registered.")
+		b.WriteString("Every imported connector lands UNAPPROVED: an admin approves it in Admin > Connectors before it goes live.")
 	}
 	if len(res.Skipped) > 0 {
 		b.WriteString("\nSkipped:")

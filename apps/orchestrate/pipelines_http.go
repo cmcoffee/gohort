@@ -261,6 +261,9 @@ func (T *OrchestrateApp) handlePipelineOne(w http.ResponseWriter, r *http.Reques
 			body.ID = def.ID
 			body.Owner = user
 			body.AllowedUsers = def.AllowedUsers
+			// Published is an administrator's approval, reached only through
+			// the promotion queue; an edit form must not be able to assert it.
+			body.Published = def.Published
 			body.Created = def.Created
 			if err := body.Validate(); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
